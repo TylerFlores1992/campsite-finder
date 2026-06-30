@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db/client';
+import { mutate } from '@/lib/db/client';
 
 export async function POST(request: NextRequest) {
   const userId = request.headers.get('x-user-id');
@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Valid email required' }, { status: 400 });
   }
 
-  await query(
+  await mutate(
     `INSERT INTO users (id, email) VALUES ($1, $2)
      ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email`,
     [userId, email.toLowerCase().trim()]

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query, queryOne } from '@/lib/db/client';
+import { queryOne, mutate } from '@/lib/db/client';
 import { verifyWebhookSignature } from '@/lib/campflare/client';
 import { dispatchNotifications, buildPayloadFromWebhook } from '@/lib/notifications';
 import type { CampflareWebhookPayload } from '@/lib/campflare/types';
@@ -7,8 +7,7 @@ import type { CampflareWebhookPayload } from '@/lib/campflare/types';
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const rawBody = await req.text();
 
-  // Verify the request came from Campflare
-  const signature = req.headers.get('x-campflare-signature'); // ← confirm header name from docs
+  const signature = req.headers.get('x-campflare-signature');
   if (!verifyWebhookSignature(rawBody, signature)) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
@@ -28,7 +27,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     await handleSubscriptionExpired(event);
   }
 
-  // Always 200 so Campflare doesn't retry indefinitely
   return NextResponse.json({ received: true });
 }
 
@@ -39,7 +37,6 @@ async function handleAvailabilityFound(event: CampflareWebhookPayload): Promise<
     return;
   }
 
-  // Load the watch + campground name
   const watch = await queryOne<{
     id: string;
     user_id: string;
@@ -58,10 +55,8 @@ async function handleAvailabilityFound(event: CampflareWebhookPayload): Promise<
     return;
   }
 
-  // De-duplicate: don't spam the user if Campflare fires multiple times for same opening
   if (watch.notification_sent_at) {
-    const lastSent = new Date(watch.notification_sent_at);
-    const hoursSince = (Date.now() - lastSent.getTime()) / 1000 / 60 / 60;
+    const hoursSince = (Date.now() - new Date(watch.notification_sent_at).getTime()) / 3_600_000;
     if (hoursSince < 1) {
       console.log(`[campflare webhook] Already notified ${hoursSince.toFixed(1)}h ago — skipping`);
       return;
@@ -73,27 +68,17 @@ async function handleAvailabilityFound(event: CampflareWebhookPayload): Promise<
     [watch.campground_id]
   );
 
-  const payload = await buildPayloadFromWebhook(
-    event,
-    watch,
-    campground?.name ?? 'Campground'
-  );
-
+  const payload = await buildPayloadFromWebhook(event, watch, campground?.name ?? 'Campground');
   await dispatchNotifications(payload);
 
-  // Mark notification sent time
-  await query(
-    'UPDATE watches SET notification_sent_at = NOW() WHERE id = $1',
-    [watchId]
-  );
+  await mutate('UPDATE watches SET notification_sent_at = NOW() WHERE id = $1', [watchId]);
 }
 
 async function handleSubscriptionExpired(event: CampflareWebhookPayload): Promise<void> {
   const watchId = event.metadata?.watch_id;
   if (!watchId) return;
 
-  // Deactivate the watch since Campflare subscription has expired
-  await query(
+  await mutate(
     `UPDATE watches SET active = false, campflare_sub_id = NULL WHERE id = $1`,
     [watchId]
   );

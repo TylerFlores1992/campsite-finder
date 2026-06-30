@@ -1,4 +1,4 @@
-import { query } from '@/lib/db/client';
+import { query, mutate } from '@/lib/db/client';
 import { sendEmail } from './email';
 import { sendSms } from './sms';
 import type { CampflareWebhookPayload } from '@/lib/campflare/types';
@@ -20,7 +20,7 @@ async function logNotification(
   status: 'sent' | 'failed',
   error?: string
 ): Promise<void> {
-  await query(
+  await mutate(
     `INSERT INTO notifications (user_id, watch_id, campground_id, channel, status, payload, error)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [

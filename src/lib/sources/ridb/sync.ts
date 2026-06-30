@@ -1,4 +1,4 @@
-import { query } from '@/lib/db/client';
+﻿import { mutate } from '@/lib/db/client';
 import { searchCampgroundsNear, searchCampgroundsByState, getAllFacilityCampsites } from './client';
 import type { RIDBFacility } from './client';
 import { transformFacility, transformCampsite } from './transform';
@@ -6,7 +6,7 @@ import type { SyncOptions, SyncResult } from '../types';
 import type { Campground, Campsite } from '@/lib/types';
 
 async function upsertCampground(cg: Campground): Promise<void> {
-  await query(
+  await mutate(
     `INSERT INTO campgrounds (
       id, source, name, description, location,
       address, amenities, activities, environment_tags, site_types,
@@ -49,7 +49,7 @@ async function upsertCampground(cg: Campground): Promise<void> {
 }
 
 async function upsertCampsite(cs: Campsite): Promise<void> {
-  await query(
+  await mutate(
     `INSERT INTO campsites (
       id, campground_id, name, type, loop,
       max_occupants, max_vehicle_length,
@@ -137,7 +137,7 @@ export async function syncRIDB(options: SyncOptions = {}): Promise<SyncResult> {
     stateCode,
   } = options;
 
-  const [logRow] = await query<{ id: number }>(
+  const [logRow] = await mutate<{ id: number }>(
     `INSERT INTO sync_log (source, started_at) VALUES ('ridb', NOW()) RETURNING id`
   );
   const logId = logRow?.id;
@@ -154,9 +154,9 @@ export async function syncRIDB(options: SyncOptions = {}): Promise<SyncResult> {
       console.log(`[RIDB sync] Searching ${radiusMiles}mi radius around ${lat},${lng}...`);
       facilities = await searchCampgroundsNear(lat, lng, radiusMiles, maxFacilities);
     }
-    console.log(`[RIDB sync] Found ${facilities.length} campgrounds — syncing with concurrency 15...`);
+    console.log(`[RIDB sync] Found ${facilities.length} campgrounds â€” syncing with concurrency 15...`);
 
-    // Process 15 facilities at a time — fast but respectful to RIDB's API
+    // Process 15 facilities at a time â€” fast but respectful to RIDB's API
     const results = await pMap(facilities, (f) => syncFacility(f, errors), 15);
 
     for (const r of results) {
@@ -169,7 +169,7 @@ export async function syncRIDB(options: SyncOptions = {}): Promise<SyncResult> {
 
   const durationMs = Date.now() - startMs;
 
-  await query(
+  await mutate(
     `UPDATE sync_log SET
       finished_at = NOW(), facilities_synced = $1, campsites_synced = $2,
       error = $3, metadata = $4
@@ -188,3 +188,5 @@ export async function syncRIDB(options: SyncOptions = {}): Promise<SyncResult> {
 
   return { facilitiesSynced, campsitesSynced, errors, durationMs };
 }
+
+

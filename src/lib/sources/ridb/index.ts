@@ -1,19 +1,18 @@
-import { query, queryOne } from '@/lib/db/client';
+import { query, queryOne, getSupabaseAdmin } from '@/lib/db/client';
 import { getCached, setCached } from '@/lib/cache/redis';
 import type { Campground, Campsite, CampgroundAvailability, SearchParams } from '@/lib/types';
 import type { CampgroundSource, SyncOptions, SyncResult } from '../types';
 import { syncRIDB } from './sync';
 import { getAvailabilityFromRecGov } from '@/lib/availability/recgov';
 
-// Map DB row (snake_case) to Campground type (camelCase)
 function rowToCampground(row: Record<string, unknown>): Campground {
   return {
     id: row.id as string,
     source: row.source as string,
     name: row.name as string,
     description: row.description as string | null,
-    latitude: parseFloat(row.latitude as string),
-    longitude: parseFloat(row.longitude as string),
+    latitude: typeof row.latitude === 'number' ? row.latitude : parseFloat(row.latitude as string),
+    longitude: typeof row.longitude === 'number' ? row.longitude : parseFloat(row.longitude as string),
     address: (row.address ?? {}) as Campground['address'],
     amenities: (row.amenities ?? []) as string[],
     activities: (row.activities ?? []) as string[],
@@ -27,7 +26,7 @@ function rowToCampground(row: Record<string, unknown>): Campground {
     petsAllowed: row.pets_allowed as boolean,
     photos: (row.photos ?? []) as Campground['photos'],
     lastSyncedAt: row.last_synced_at as string | null,
-    distanceMiles: row.distance_miles ? parseFloat(row.distance_miles as string) : undefined,
+    distanceMiles: row.distance_miles != null ? parseFloat(row.distance_miles as string) : undefined,
   };
 }
 
@@ -51,42 +50,21 @@ export class RIDBSource implements CampgroundSource {
   readonly id = 'ridb';
 
   async searchByRadius(params: SearchParams): Promise<Campground[]> {
-    const {
-      lat,
-      lng,
-      radiusMiles,
-      siteType,
-      amenities,
-      limit = 50,
-      offset = 0,
-    } = params;
-
+    const { lat, lng, radiusMiles, siteType, amenities, limit = 50 } = params;
     const radiusMeters = radiusMiles * 1609.344;
 
-    const rows = await query<Record<string, unknown>>(
-      `SELECT
-        c.*,
-        ST_X(c.location::geometry) AS longitude,
-        ST_Y(c.location::geometry) AS latitude,
-        ST_Distance(
-          c.location::geography,
-          ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
-        ) / 1609.344 AS distance_miles
-      FROM campgrounds c
-      WHERE
-        ST_DWithin(
-          c.location::geography,
-          ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
-          $3
-        )
-        AND ($4::text IS NULL OR $4 = ANY(c.site_types))
-        AND ($5::text[] IS NULL OR c.amenities @> $5::text[])
-      ORDER BY distance_miles ASC
-      LIMIT $6 OFFSET $7`,
-      [lng, lat, radiusMeters, siteType ?? null, amenities ?? null, limit, offset]
-    );
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase.rpc('search_campgrounds_nearby', {
+      p_lat: lat,
+      p_lng: lng,
+      p_radius_meters: radiusMeters,
+      p_limit: limit * 3, // fetch 3× so availability filtering has room
+      p_site_type: siteType ?? null,
+      p_amenities: amenities && amenities.length > 0 ? amenities : null,
+    });
 
-    return rows.map(rowToCampground);
+    if (error) throw new Error(`Radius search failed: ${error.message}`);
+    return ((data ?? []) as Record<string, unknown>[]).map(rowToCampground);
   }
 
   async getDetail(campgroundId: string): Promise<Campground | null> {
@@ -94,18 +72,24 @@ export class RIDBSource implements CampgroundSource {
     const cached = await getCached<Campground>(cacheKey);
     if (cached) return cached;
 
-    const row = await queryOne<Record<string, unknown>>(
-      `SELECT
-        c.*,
-        ST_X(c.location::geometry) AS longitude,
-        ST_Y(c.location::geometry) AS latitude
-      FROM campgrounds c WHERE c.id = $1`,
-      [campgroundId]
-    );
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from('campgrounds')
+      .select('*, lat:location->lat, lng:location->lng')
+      .eq('id', campgroundId)
+      .single();
 
-    if (!row) return null;
-    const campground = rowToCampground(row);
-    await setCached(cacheKey, campground, 3600); // 1 hour TTL for facility metadata
+    if (error || !data) return null;
+
+    // Get lat/lng via a separate RPC since we need ST_X/ST_Y
+    const rows = await query<Record<string, unknown>>(
+      `SELECT *, ST_X(location::geometry) AS longitude, ST_Y(location::geometry) AS latitude
+       FROM campgrounds WHERE id = '${campgroundId.replace(/'/g, "''")}'`
+    );
+    if (!rows[0]) return null;
+
+    const campground = rowToCampground(rows[0]);
+    await setCached(cacheKey, campground, 3600);
     return campground;
   }
 
@@ -114,12 +98,16 @@ export class RIDBSource implements CampgroundSource {
     const cached = await getCached<Campsite[]>(cacheKey);
     if (cached) return cached;
 
-    const rows = await query<Record<string, unknown>>(
-      'SELECT * FROM campsites WHERE campground_id = $1 ORDER BY loop, name',
-      [campgroundId]
-    );
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from('campsites')
+      .select('*')
+      .eq('campground_id', campgroundId)
+      .order('loop')
+      .order('name');
 
-    const campsites = rows.map(rowToCampsite);
+    if (error) throw new Error(`getCampsites failed: ${error.message}`);
+    const campsites = ((data ?? []) as Record<string, unknown>[]).map(rowToCampsite);
     await setCached(cacheKey, campsites, 3600);
     return campsites;
   }
@@ -130,7 +118,6 @@ export class RIDBSource implements CampgroundSource {
     if (cached) return cached;
 
     const availability = await getAvailabilityFromRecGov(campgroundId, month);
-    // Cache for 15 minutes — availability is the perishable part
     await setCached(cacheKey, availability, 900);
     return availability;
   }
