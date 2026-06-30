@@ -3,7 +3,6 @@
  * Run once to apply the database schema.
  * Usage: npx tsx scripts/setup-db.ts
  */
-import { config } from 'fs';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 

@@ -160,7 +160,7 @@ export async function searchCampgroundsByState(
   while (all.length < maxResults) {
     const data = await searchFacilities({
       state: stateCode,
-      activity: 9, // Camping
+      activity: '9', // Camping
       limit: pageSize,
       offset,
       full: true,
