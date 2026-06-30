@@ -30,6 +30,13 @@ const maxFacilities = Number(process.argv[3] ?? 500);
 const states = arg === 'ALL' ? ALL_STATES : arg.split(',').map((s) => s.trim().toUpperCase());
 
 async function run() {
+  // Verify Supabase connectivity before starting the loop.
+  console.log('[run-sync] Checking Supabase connectivity...');
+  const { getSupabaseAdmin } = await import('../src/lib/db/client');
+  const { data, error } = await getSupabaseAdmin().rpc('exec_select', { query_text: 'SELECT 1 AS ok' });
+  if (error) throw new Error(`Supabase connectivity check failed: ${error.message}`);
+  console.log('[run-sync] Supabase connected. Starting sync for:', states.join(', '));
+
   const totals = { facilitiesSynced: 0, campsitesSynced: 0, errors: 0 };
 
   for (const stateCode of states) {
@@ -46,6 +53,12 @@ async function run() {
   }
 
   console.log('\nTotal:', JSON.stringify(totals, null, 2));
+
+  // Exit 1 if every state errored (real connectivity/auth failure, not just empty results).
+  if (totals.errors > 0 && totals.facilitiesSynced === 0 && totals.campsitesSynced === 0) {
+    console.error('[run-sync] All states errored with 0 synced — treating as failure.');
+    process.exit(1);
+  }
 }
 
 run()
