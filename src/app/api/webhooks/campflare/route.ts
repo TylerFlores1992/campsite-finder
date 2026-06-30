@@ -19,7 +19,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  console.log(`[campflare webhook] event=${event.event} alert=${event.data?.alert_id}`);
+  console.log(`[campflare webhook] raw body:`, rawBody);
 
   if (event.event === 'v2-availability-alert-notification') {
     await handleAvailabilityNotification(event);
