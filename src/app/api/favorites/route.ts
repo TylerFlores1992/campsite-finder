@@ -1,0 +1,66 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { query, queryOne } from '@/lib/db/client';
+
+// Simple user identity: we read a userId from a header or query param.
+// Phase 1: client generates a UUID and stores it in localStorage, sends it on every request.
+// Phase 2+: replace with a real auth token.
+function getUserId(request: NextRequest): string | null {
+  return (
+    request.headers.get('x-user-id') ??
+    request.nextUrl.searchParams.get('userId') ??
+    null
+  );
+}
+
+async function ensureUser(userId: string): Promise<void> {
+  await query(
+    `INSERT INTO users (id, email) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`,
+    [userId]
+  );
+}
+
+export async function GET(request: NextRequest) {
+  const userId = getUserId(request);
+  if (!userId) return NextResponse.json({ error: 'userId required' }, { status: 400 });
+
+  const rows = await query<{ campground_id: string; created_at: string }>(
+    'SELECT campground_id, created_at FROM favorites WHERE user_id = $1 ORDER BY created_at DESC',
+    [userId]
+  );
+
+  return NextResponse.json({ favorites: rows.map((r) => r.campground_id) });
+}
+
+export async function POST(request: NextRequest) {
+  const userId = getUserId(request);
+  if (!userId) return NextResponse.json({ error: 'userId required' }, { status: 400 });
+
+  const { campgroundId } = await request.json();
+  if (!campgroundId) return NextResponse.json({ error: 'campgroundId required' }, { status: 400 });
+
+  await ensureUser(userId);
+  await query(
+    `INSERT INTO favorites (user_id, campground_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [userId, campgroundId]
+  );
+
+  return NextResponse.json({ ok: true });
+}
+
+export async function DELETE(request: NextRequest) {
+  const userId = getUserId(request);
+  if (!userId) return NextResponse.json({ error: 'userId required' }, { status: 400 });
+
+  const campgroundId =
+    request.nextUrl.searchParams.get('campgroundId') ??
+    (await request.json().catch(() => ({}))).campgroundId;
+
+  if (!campgroundId) return NextResponse.json({ error: 'campgroundId required' }, { status: 400 });
+
+  await query(
+    'DELETE FROM favorites WHERE user_id = $1 AND campground_id = $2',
+    [userId, campgroundId]
+  );
+
+  return NextResponse.json({ ok: true });
+}
