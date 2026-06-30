@@ -1,0 +1,36 @@
+name: Nightly RIDB Sync
+
+on:
+  schedule:
+    # 9:00 UTC = 1-2am Pacific, depending on DST
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      states:
+        description: 'Comma-separated state codes, or ALL'
+        required: false
+        default: 'ALL'
+      maxFacilities:
+        description: 'Max facilities per state'
+        required: false
+        default: '1000'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - name: Run RIDB sync
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RIDB_API_KEY: ${{ secrets.RIDB_API_KEY }}
+        run: npx tsx scripts/run-sync.ts "${{ github.event.inputs.states || 'ALL' }}" "${{ github.event.inputs.maxFacilities || '1000' }}"

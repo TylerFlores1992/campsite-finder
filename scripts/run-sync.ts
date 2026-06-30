@@ -17,15 +17,40 @@ try {
 
 import { syncRIDB } from '../src/lib/sources/ridb/sync';
 
-const stateCode = process.argv[2] ?? 'CA';
-const maxFacilities = Number(process.argv[3] ?? 500);
+const ALL_STATES = [
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+  'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+  'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+  'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+  'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY',
+];
 
-syncRIDB({ stateCode, maxFacilities })
-  .then((result) => {
-    console.log('\nSync result:', JSON.stringify(result, null, 2));
-    process.exit(0);
-  })
+const arg = process.argv[2] ?? 'CA';
+const maxFacilities = Number(process.argv[3] ?? 500);
+const states = arg === 'ALL' ? ALL_STATES : arg.split(',').map((s) => s.trim().toUpperCase());
+
+async function run() {
+  const totals = { facilitiesSynced: 0, campsitesSynced: 0, errors: 0 };
+
+  for (const stateCode of states) {
+    console.log(`\n=== Syncing ${stateCode} ===`);
+    try {
+      const result = await syncRIDB({ stateCode, maxFacilities });
+      totals.facilitiesSynced += result.facilitiesSynced;
+      totals.campsitesSynced += result.campsitesSynced;
+      totals.errors += result.errors.length;
+    } catch (err) {
+      console.error(`Sync failed for ${stateCode}:`, err);
+      totals.errors++;
+    }
+  }
+
+  console.log('\nTotal:', JSON.stringify(totals, null, 2));
+}
+
+run()
+  .then(() => process.exit(0))
   .catch((err) => {
-    console.error('Sync failed:', err);
+    console.error('Sync run failed:', err);
     process.exit(1);
   });
