@@ -56,10 +56,11 @@ export function verifyWebhookSignature(authHeader: string | null): boolean {
 
   const token = authHeader.replace(/^Bearer\s+/i, '');
   try {
-    jwt.verify(token, secret, { algorithms: ['HS256'] });
+    // The dashboard secret is base64url text; the actual HMAC key is its decoded bytes.
+    jwt.verify(token, Buffer.from(secret, 'base64url'), { algorithms: ['HS256'] });
     return true;
   } catch (err) {
-    console.warn('[Campflare] Webhook JWT verification failed:', (err as Error).message, 'token:', token);
+    console.warn('[Campflare] Webhook JWT verification failed:', (err as Error).message);
     return false;
   }
 }

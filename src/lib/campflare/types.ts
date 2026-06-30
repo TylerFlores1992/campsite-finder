@@ -56,6 +56,6 @@ export interface CampflareWebhookData {
 }
 
 export interface CampflareWebhookPayload {
-  event: 'v2_availability_alert_notification';
+  event: 'v2-availability-alert-notification';
   data: CampflareWebhookData;
 }

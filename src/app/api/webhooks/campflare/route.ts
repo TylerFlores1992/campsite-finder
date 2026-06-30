@@ -21,7 +21,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   console.log(`[campflare webhook] event=${event.event} alert=${event.data?.alert_id}`);
 
-  if (event.event === 'v2_availability_alert_notification') {
+  if (event.event === 'v2-availability-alert-notification') {
     await handleAvailabilityNotification(event);
   }
 
