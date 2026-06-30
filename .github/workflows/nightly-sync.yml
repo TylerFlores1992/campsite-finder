@@ -28,35 +28,6 @@ jobs:
 
       - run: npm ci
 
-      - name: Check secrets are set
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          RIDB_API_KEY: ${{ secrets.RIDB_API_KEY }}
-        run: |
-          echo "NEXT_PUBLIC_SUPABASE_URL length: ${#NEXT_PUBLIC_SUPABASE_URL}"
-          echo "SUPABASE_SERVICE_ROLE_KEY length: ${#SUPABASE_SERVICE_ROLE_KEY}"
-          echo "RIDB_API_KEY length: ${#RIDB_API_KEY}"
-          [ -n "$NEXT_PUBLIC_SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$RIDB_API_KEY" ] || (echo "ERROR: one or more secrets are empty" && exit 1)
-
-      - name: Sanity check (node, tsx, supabase fetch)
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: |
-          echo "node: $(node --version)"
-          echo "tsx: $(npx tsx --version)"
-          node -e "
-            const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-            const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-            console.log('url prefix:', url?.slice(0,8));
-            fetch(url + '/rest/v1/rpc/exec_select', {
-              method: 'POST',
-              headers: { apikey: key, Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ query_text: 'SELECT 1 AS ok' })
-            }).then(r => r.text().then(t => console.log('HTTP', r.status, t.slice(0,100)))).catch(e => console.error('fetch error:', e.message));
-          "
-
       - name: Run RIDB sync
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
