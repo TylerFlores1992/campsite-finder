@@ -7,8 +7,8 @@ import type { CampflareWebhookPayload } from '@/lib/campflare/types';
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const rawBody = await req.text();
 
-  const signature = req.headers.get('x-campflare-signature');
-  if (!verifyWebhookSignature(rawBody, signature)) {
+  const authHeader = req.headers.get('authorization');
+  if (!verifyWebhookSignature(authHeader)) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
@@ -19,19 +19,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  console.log(`[campflare webhook] event=${event.event} sub=${event.subscription_id}`);
+  console.log(`[campflare webhook] event=${event.event} alert=${event.data?.alert_id}`);
 
-  if (event.event === 'availability.found') {
-    await handleAvailabilityFound(event);
-  } else if (event.event === 'subscription.expired') {
-    await handleSubscriptionExpired(event);
+  if (event.event === 'v2_availability_alert_notification') {
+    await handleAvailabilityNotification(event);
   }
 
   return NextResponse.json({ received: true });
 }
 
-async function handleAvailabilityFound(event: CampflareWebhookPayload): Promise<void> {
-  const watchId = event.metadata?.watch_id;
+async function handleAvailabilityNotification(event: CampflareWebhookPayload): Promise<void> {
+  const watchId = event.data?.metadata?.watch_id;
   if (!watchId) {
     console.error('[campflare webhook] Missing watch_id in metadata');
     return;
@@ -63,24 +61,8 @@ async function handleAvailabilityFound(event: CampflareWebhookPayload): Promise<
     }
   }
 
-  const campground = await queryOne<{ name: string }>(
-    'SELECT name FROM campgrounds WHERE id = $1',
-    [watch.campground_id]
-  );
-
-  const payload = await buildPayloadFromWebhook(event, watch, campground?.name ?? 'Campground');
+  const payload = await buildPayloadFromWebhook(event, watch);
   await dispatchNotifications(payload);
 
   await mutate('UPDATE watches SET notification_sent_at = NOW() WHERE id = $1', [watchId]);
-}
-
-async function handleSubscriptionExpired(event: CampflareWebhookPayload): Promise<void> {
-  const watchId = event.metadata?.watch_id;
-  if (!watchId) return;
-
-  await mutate(
-    `UPDATE watches SET active = false, campflare_sub_id = NULL WHERE id = $1`,
-    [watchId]
-  );
-  console.log(`[campflare webhook] Deactivated watch ${watchId} (subscription expired)`);
 }

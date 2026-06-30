@@ -1,12 +1,9 @@
-// Campflare API client.
-// Docs: https://campflare.com/api
-// IMPORTANT: Exact endpoint paths and auth header name need to be confirmed
-// from the real API docs once credentials arrive. Update BASE_URL and auth
-// header below — everything else should work as-is.
+// Campflare API v2 client — https://docs-v2.campflare.com
 
-import type { CampflareSubscription, CreateSubscriptionParams } from './types';
+import jwt from 'jsonwebtoken';
+import type { CampflareAlert, CreateAlertParams } from './types';
 
-const BASE_URL = 'https://api.campflare.com/v1'; // ← confirm from real docs
+const BASE_URL = 'https://api.campflare.com/v2';
 
 function getApiKey(): string {
   const key = process.env.CAMPFLARE_API_KEY;
@@ -14,15 +11,11 @@ function getApiKey(): string {
   return key;
 }
 
-async function campflareRequest<T>(
-  method: string,
-  path: string,
-  body?: unknown
-): Promise<T> {
+async function campflareRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method,
     headers: {
-      'Authorization': `Bearer ${getApiKey()}`, // ← confirm auth scheme from docs
+      'Authorization': getApiKey(),
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     },
@@ -37,49 +30,36 @@ async function campflareRequest<T>(
   return response.json() as Promise<T>;
 }
 
-/** Create a campground availability subscription. Returns the subscription ID to store. */
-export async function createSubscription(
-  params: CreateSubscriptionParams
-): Promise<CampflareSubscription> {
-  return campflareRequest<CampflareSubscription>('POST', '/subscriptions', params);
+/** Create an availability alert for one or more campgrounds. */
+export async function createAlert(params: CreateAlertParams): Promise<CampflareAlert> {
+  return campflareRequest<CampflareAlert>('POST', '/alert/create', params);
 }
 
-/** Cancel a subscription (call when user removes a watch). */
-export async function deleteSubscription(subscriptionId: string): Promise<void> {
-  await campflareRequest<void>('DELETE', `/subscriptions/${subscriptionId}`);
+/** Cancel an alert (call when user removes a watch). */
+export async function cancelAlert(alertId: string): Promise<CampflareAlert> {
+  return campflareRequest<CampflareAlert>('POST', `/alert/${alertId}/cancel`);
 }
 
-/** List active subscriptions (useful for admin/debug). */
-export async function listSubscriptions(): Promise<CampflareSubscription[]> {
-  const data = await campflareRequest<{ subscriptions: CampflareSubscription[] }>(
-    'GET',
-    '/subscriptions'
-  );
-  return data.subscriptions;
+/** Fetch a single alert by ID. */
+export async function getAlert(alertId: string): Promise<CampflareAlert> {
+  return campflareRequest<CampflareAlert>('GET', `/alert/${alertId}`);
 }
 
-/** Verify a webhook signature to ensure it came from Campflare.
- *  IMPORTANT: Confirm the exact signing scheme from the real docs.
- *  Many services use HMAC-SHA256 of the raw body with a shared secret.
- */
-export function verifyWebhookSignature(
-  rawBody: string,
-  signatureHeader: string | null
-): boolean {
+/** Verify a webhook's `authorization` header — a JWT (HS256) signed with the dashboard webhook secret. */
+export function verifyWebhookSignature(authHeader: string | null): boolean {
   const secret = process.env.CAMPFLARE_WEBHOOK_SECRET;
   if (!secret) {
-    // If no secret configured, skip verification (dev mode only)
     console.warn('[Campflare] CAMPFLARE_WEBHOOK_SECRET not set — skipping signature check');
     return true;
   }
-  if (!signatureHeader) return false;
+  if (!authHeader) return false;
 
-  // Standard HMAC-SHA256 verification — adapt if Campflare uses a different scheme
-  const { createHmac } = require('crypto');
-  const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
-  // Constant-time comparison to prevent timing attacks
-  const a = Buffer.from(expected, 'hex');
-  const b = Buffer.from(signatureHeader.replace('sha256=', ''), 'hex');
-  if (a.length !== b.length) return false;
-  return require('crypto').timingSafeEqual(a, b);
+  const token = authHeader.replace(/^Bearer\s+/i, '');
+  try {
+    jwt.verify(token, secret, { algorithms: ['HS256'] });
+    return true;
+  } catch (err) {
+    console.warn('[Campflare] Webhook JWT verification failed:', (err as Error).message);
+    return false;
+  }
 }

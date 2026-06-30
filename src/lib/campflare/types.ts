@@ -1,41 +1,61 @@
-// Campflare API types.
-// IMPORTANT: These are modeled from public docs and the API evangelist repo.
-// Confirm exact field names against the real API docs once you have credentials.
-// Adapt client.ts accordingly — the rest of the app talks through these types.
+// Campflare API v2 types — https://docs-v2.campflare.com
 
-export interface CampflareSubscription {
-  id: string;           // e.g. "sub_abc123"
-  status: 'active' | 'paused' | 'expired';
-  facility_id: string;  // RIDB facility ID
-  start_date: string;   // YYYY-MM-DD
-  end_date: string;
+export interface CampflareDateRange {
+  starting_date: string; // YYYY-MM-DD
   nights: number;
-  webhook_url: string;
-  metadata: Record<string, string>;
+}
+
+export interface CampflareAvailabilityFilter {
+  date_ranges: CampflareDateRange[];
+  status?: string[];
+  campsite_kinds?: string[];
+  min_rv_length?: number;
+  min_trailer_length?: number;
+}
+
+export interface CampflareAlertNotification {
+  id: string;
+  sent_at: string;
+  campground_id: string;
+  campsite_id: string;
+  webhook_http_response_code: string;
+  webhook_status: 'delivered' | 'error' | 'no-webhook';
+  date_range: CampflareDateRange;
+}
+
+export interface CampflareAlert {
+  id: string;
+  status: 'active' | 'canceled' | 'expired';
+  campground_ids: string[];
+  parameters: CampflareAvailabilityFilter;
   created_at: string;
+  canceled_at?: string;
+  metadata?: Record<string, string>;
+  webhook_override_url?: string;
+  notifications: CampflareAlertNotification[];
+}
+
+export interface CreateAlertParams {
+  campground_ids: string[];
+  parameters: CampflareAvailabilityFilter;
+  metadata?: Record<string, string>;
+  webhook_override_url?: string;
+}
+
+export interface CampflareWebhookData {
+  alert_id: string;
+  notification_id: string;
+  sent_at: string;
+  campground_id: string;
+  campsite_id: string;
+  campsite_name: string;
+  campground_name: string;
+  reservation_url: string;
+  date_range: CampflareDateRange;
+  metadata?: Record<string, string>;
 }
 
 export interface CampflareWebhookPayload {
-  event: 'availability.found' | 'subscription.expired';
-  subscription_id: string;
-  metadata: Record<string, string>; // includes watch_id we set on creation
-  availability?: {
-    facility_id: string;
-    facility_name: string;
-    campsite_id?: string;
-    campsite_name?: string;
-    campsite_type?: string;
-    available_dates: string[]; // YYYY-MM-DD array
-    booking_url: string;
-  };
-  timestamp: string;
-}
-
-export interface CreateSubscriptionParams {
-  facility_id: string;
-  start_date: string;
-  end_date: string;
-  nights?: number;
-  webhook_url: string;
-  metadata?: Record<string, string>;
+  event: 'v2_availability_alert_notification';
+  data: CampflareWebhookData;
 }

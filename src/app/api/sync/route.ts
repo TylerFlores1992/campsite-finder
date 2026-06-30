@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncRIDB } from '@/lib/sources/ridb/sync';
 
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
-  // Accept secret via header OR body.secret
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   const secret = (request.headers.get('x-sync-secret') ?? body.secret) as string | null;
 

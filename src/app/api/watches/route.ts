@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query, queryOne, mutate } from '@/lib/db/client';
-import { createSubscription, deleteSubscription } from '@/lib/campflare/client';
+import { createAlert, cancelAlert } from '@/lib/campflare/client';
+import type { CampflareDateRange } from '@/lib/campflare/types';
 
 function getUserId(request: NextRequest): string | null {
   return request.headers.get('x-user-id') ?? request.nextUrl.searchParams.get('userId') ?? null;
@@ -8,6 +9,21 @@ function getUserId(request: NextRequest): string | null {
 
 async function ensureUser(userId: string): Promise<void> {
   await mutate(`INSERT INTO users (id, email) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`, [userId]);
+}
+
+/** Build one date_range entry per possible check-in date so any minNights-night
+ *  stay within [startDate, endDate) is covered. Capped to avoid huge payloads. */
+function buildDateRanges(startDate: string, endDate: string, minNights: number): CampflareDateRange[] {
+  const ranges: CampflareDateRange[] = [];
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const cursor = new Date(start);
+
+  while (cursor < end && ranges.length < 60) {
+    ranges.push({ starting_date: cursor.toISOString().slice(0, 10), nights: minNights });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return ranges.length > 0 ? ranges : [{ starting_date: startDate, nights: minNights }];
 }
 
 export async function GET(request: NextRequest) {
@@ -47,8 +63,8 @@ export async function POST(request: NextRequest) {
 
   if (existing) {
     if (existing.campflare_sub_id) {
-      await deleteSubscription(existing.campflare_sub_id).catch((err) =>
-        console.warn('[watches] Failed to cancel old Campflare sub:', err.message)
+      await cancelAlert(existing.campflare_sub_id).catch((err) =>
+        console.warn('[watches] Failed to cancel old Campflare alert:', err.message)
       );
     }
     await mutate(`UPDATE watches SET active = false WHERE id = $1`, [existing.id]);
@@ -66,18 +82,19 @@ export async function POST(request: NextRequest) {
 
   if (webhookBase && process.env.CAMPFLARE_API_KEY) {
     try {
-      const sub = await createSubscription({
-        facility_id: campgroundId,
-        start_date: startDate,
-        end_date: endDate,
-        nights: minNights,
-        webhook_url: `${webhookBase}/api/webhooks/campflare`,
+      const alert = await createAlert({
+        campground_ids: [campgroundId],
+        parameters: {
+          date_ranges: buildDateRanges(startDate, endDate, minNights),
+          campsite_kinds: siteType ? [siteType] : undefined,
+        },
+        webhook_override_url: `${webhookBase}/api/webhooks/campflare`,
         metadata: { watch_id: row.id, user_id: userId },
       });
-      await mutate(`UPDATE watches SET campflare_sub_id = $1 WHERE id = $2`, [sub.id, row.id]);
-      console.log(`[watches] Campflare subscription created: ${sub.id}`);
+      await mutate(`UPDATE watches SET campflare_sub_id = $1 WHERE id = $2`, [alert.id, row.id]);
+      console.log(`[watches] Campflare alert created: ${alert.id}`);
     } catch (err) {
-      console.error('[watches] Campflare subscription failed (watch still saved):', (err as Error).message);
+      console.error('[watches] Campflare alert creation failed (watch still saved):', (err as Error).message);
     }
   } else {
     console.log('[watches] Watch saved (Campflare skipped — key or URL not set)');
@@ -99,8 +116,8 @@ export async function DELETE(request: NextRequest) {
   );
 
   if (watch?.campflare_sub_id) {
-    await deleteSubscription(watch.campflare_sub_id).catch((err) =>
-      console.warn('[watches] Failed to cancel Campflare sub on delete:', err.message)
+    await cancelAlert(watch.campflare_sub_id).catch((err) =>
+      console.warn('[watches] Failed to cancel Campflare alert on delete:', err.message)
     );
   }
 

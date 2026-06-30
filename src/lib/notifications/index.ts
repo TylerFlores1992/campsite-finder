@@ -147,18 +147,24 @@ export async function buildPayloadFromWebhook(
     campground_id: string;
     start_date: string;
     end_date: string;
-  },
-  campgroundName: string
+  }
 ): Promise<NotificationPayload> {
+  const { data } = event;
+  const startingDate = data.date_range.starting_date;
+  const dates = Array.from({ length: data.date_range.nights }, (_, i) => {
+    const d = new Date(startingDate);
+    d.setDate(d.getDate() + i);
+    return d.toISOString().slice(0, 10);
+  });
+
   return {
     userId: watch.user_id,
     watchId: watch.id,
     campgroundId: watch.campground_id,
-    campgroundName,
-    availableDates: event.availability?.available_dates ?? [],
+    campgroundName: data.campground_name,
+    availableDates: dates,
     bookingUrl:
-      event.availability?.booking_url ??
-      `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
+      data.reservation_url ?? `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
     startDate: watch.start_date,
     endDate: watch.end_date,
   };
