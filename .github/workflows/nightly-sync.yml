@@ -28,6 +28,17 @@ jobs:
 
       - run: npm ci
 
+      - name: Check secrets are set
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RIDB_API_KEY: ${{ secrets.RIDB_API_KEY }}
+        run: |
+          echo "NEXT_PUBLIC_SUPABASE_URL length: ${#NEXT_PUBLIC_SUPABASE_URL}"
+          echo "SUPABASE_SERVICE_ROLE_KEY length: ${#SUPABASE_SERVICE_ROLE_KEY}"
+          echo "RIDB_API_KEY length: ${#RIDB_API_KEY}"
+          [ -n "$NEXT_PUBLIC_SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -n "$RIDB_API_KEY" ] || (echo "ERROR: one or more secrets are empty" && exit 1)
+
       - name: Run RIDB sync
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
