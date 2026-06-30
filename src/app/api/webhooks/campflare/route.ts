@@ -19,17 +19,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  console.log(`[campflare webhook] raw body:`, rawBody);
+  console.log(`[campflare webhook] notification=${event.notification_id} alert=${event.alert_id}`);
 
-  if (event.event === 'v2-availability-alert-notification') {
-    await handleAvailabilityNotification(event);
-  }
+  await handleAvailabilityNotification(event);
 
   return NextResponse.json({ received: true });
 }
 
 async function handleAvailabilityNotification(event: CampflareWebhookPayload): Promise<void> {
-  const watchId = event.data?.metadata?.watch_id;
+  const watchId = event.metadata?.watch_id;
   if (!watchId) {
     console.error('[campflare webhook] Missing watch_id in metadata');
     return;

@@ -42,7 +42,10 @@ export interface CreateAlertParams {
   webhook_override_url?: string;
 }
 
-export interface CampflareWebhookData {
+// The webhook POST body itself is flat — no event/data envelope. The event
+// type ("v2-availability-alert-notification") is only present as a claim
+// inside the signed JWT in the `authorization` header, not in the JSON body.
+export interface CampflareWebhookPayload {
   alert_id: string;
   notification_id: string;
   sent_at: string;
@@ -53,9 +56,4 @@ export interface CampflareWebhookData {
   reservation_url: string;
   date_range: CampflareDateRange;
   metadata?: Record<string, string>;
-}
-
-export interface CampflareWebhookPayload {
-  event: 'v2-availability-alert-notification';
-  data: CampflareWebhookData;
 }

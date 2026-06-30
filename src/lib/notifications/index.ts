@@ -149,9 +149,8 @@ export async function buildPayloadFromWebhook(
     end_date: string;
   }
 ): Promise<NotificationPayload> {
-  const { data } = event;
-  const startingDate = data.date_range.starting_date;
-  const dates = Array.from({ length: data.date_range.nights }, (_, i) => {
+  const startingDate = event.date_range.starting_date;
+  const dates = Array.from({ length: event.date_range.nights }, (_, i) => {
     const d = new Date(startingDate);
     d.setDate(d.getDate() + i);
     return d.toISOString().slice(0, 10);
@@ -161,10 +160,10 @@ export async function buildPayloadFromWebhook(
     userId: watch.user_id,
     watchId: watch.id,
     campgroundId: watch.campground_id,
-    campgroundName: data.campground_name,
+    campgroundName: event.campground_name,
     availableDates: dates,
     bookingUrl:
-      data.reservation_url ?? `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
+      event.reservation_url || `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
     startDate: watch.start_date,
     endDate: watch.end_date,
   };
