@@ -14,7 +14,6 @@ interface CampgroundCardProps {
   // Pass these when a date search is active
   searchDates?: { startDate: string; endDate: string };
   siteType?: string | null;
-  userId?: string;
 }
 
 const SITE_TYPE_ICONS: Record<string, React.ReactNode> = {
@@ -41,7 +40,6 @@ export default function CampgroundCard({
   onFavorite,
   searchDates,
   siteType,
-  userId,
 }: CampgroundCardProps) {
   const photo = campground.photos.find((p) => p.isPrimary) ?? campground.photos[0];
   const address = [campground.address.city, campground.address.state].filter(Boolean).join(', ');
@@ -174,14 +172,13 @@ export default function CampgroundCard({
           </Link>
           <div className="flex items-center gap-1.5">
             {/* Watch button: show when booked or unchecked and dates are active */}
-            {searchDates && campground.hasAvailability !== true && userId && (
+            {searchDates && campground.hasAvailability !== true && (
               <WatchButton
                 campgroundId={campground.id}
                 campgroundName={campground.name}
                 startDate={searchDates.startDate}
                 endDate={searchDates.endDate}
                 siteType={siteType}
-                userId={userId}
               />
             )}
             {campground.reservationsUrl && campground.hasAvailability === true && (

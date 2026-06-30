@@ -15,28 +15,24 @@ interface Watch {
 }
 
 interface WatchesPanelProps {
-  userId: string;
   onClose: () => void;
 }
 
-export default function WatchesPanel({ userId, onClose }: WatchesPanelProps) {
+export default function WatchesPanel({ onClose }: WatchesPanelProps) {
   const [watches, setWatches] = useState<Watch[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`/api/watches?userId=${userId}`)
+    fetch('/api/watches')
       .then((r) => r.json())
       .then((d) => setWatches(d.watches ?? []))
       .finally(() => setLoading(false));
-  }, [userId]);
+  }, []);
 
   async function removeWatch(id: string) {
     setDeleting(id);
-    await fetch(`/api/watches?id=${id}`, {
-      method: 'DELETE',
-      headers: { 'x-user-id': userId },
-    });
+    await fetch(`/api/watches?id=${id}`, { method: 'DELETE' });
     setWatches((w) => w.filter((x) => x.id !== id));
     setDeleting(null);
   }

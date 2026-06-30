@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { Loader2, Map as MapIcon, List, AlertCircle, Bell } from 'lucide-react';
+import { useUser, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 import SearchBar from '@/components/SearchBar';
 import CampgroundCard from '@/components/CampgroundCard';
 import Filters, { FilterState } from '@/components/Filters';
@@ -30,17 +31,8 @@ const DEFAULT_FILTERS: FilterState = {
   showers: false,
 };
 
-function getUserId(): string {
-  if (typeof window === 'undefined') return '';
-  let id = localStorage.getItem('campsite-user-id');
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem('campsite-user-id', id);
-  }
-  return id;
-}
-
 export default function HomePage() {
+  const { isSignedIn } = useUser();
   const [view, setView] = useState<'split' | 'map' | 'list'>('split');
   const [searchState, setSearchState] = useState<SearchState | null>(null);
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
@@ -51,15 +43,14 @@ export default function HomePage() {
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [watchesOpen, setWatchesOpen] = useState(false);
 
-  // Load favorites on mount
+  // Load favorites when signed in
   useEffect(() => {
-    const userId = getUserId();
-    if (!userId) return;
-    fetch(`/api/favorites?userId=${userId}`)
-      .then((r) => r.json())
+    if (!isSignedIn) { setFavorites(new Set()); return; }
+    fetch('/api/favorites')
+      .then((r) => r.ok ? r.json() : { favorites: [] })
       .then((data) => setFavorites(new Set(data.favorites ?? [])))
       .catch(() => {});
-  }, []);
+  }, [isSignedIn]);
 
   const search = useCallback(
     async (state: SearchState, activeFilters: FilterState = filters) => {
@@ -108,22 +99,20 @@ export default function HomePage() {
   }
 
   async function toggleFavorite(campgroundId: string) {
-    const userId = getUserId();
+    if (!isSignedIn) { window.location.href = '/sign-in'; return; }
     const isFav = favorites.has(campgroundId);
     const next = new Set(favorites);
 
     if (isFav) {
       next.delete(campgroundId);
       setFavorites(next);
-      await fetch(`/api/favorites?campgroundId=${campgroundId}&userId=${userId}`, {
-        method: 'DELETE',
-      });
+      await fetch(`/api/favorites?campgroundId=${campgroundId}`, { method: 'DELETE' });
     } else {
       next.add(campgroundId);
       setFavorites(next);
       await fetch('/api/favorites', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ campgroundId }),
       });
     }
@@ -156,7 +145,7 @@ export default function HomePage() {
   return (
     <div className="flex flex-col h-screen bg-gray-50">
       {watchesOpen && (
-        <WatchesPanel userId={getUserId()} onClose={() => setWatchesOpen(false)} />
+        <WatchesPanel onClose={() => setWatchesOpen(false)} />
       )}
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-4 py-3 z-10 shadow-sm">
@@ -167,13 +156,34 @@ export default function HomePage() {
               <SearchBar onSearch={(p) => search(p)} />
             </div>
             <button
-              onClick={() => setWatchesOpen(true)}
+              onClick={() => {
+                if (!isSignedIn) { window.location.href = '/sign-in'; return; }
+                setWatchesOpen(true);
+              }}
               className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700 transition-colors"
               title="My watches"
             >
               <Bell size={15} />
               <span className="hidden sm:inline">Watches</span>
             </button>
+
+            {/* Auth */}
+            {isSignedIn ? (
+              <UserButton />
+            ) : (
+              <div className="flex items-center gap-2 shrink-0">
+                <SignInButton mode="redirect">
+                  <button className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
+                    Sign in
+                  </button>
+                </SignInButton>
+                <SignUpButton mode="redirect">
+                  <button className="text-sm px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors">
+                    Sign up
+                  </button>
+                </SignUpButton>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-between flex-wrap gap-2">
@@ -289,7 +299,6 @@ export default function HomePage() {
                               : undefined
                           }
                           siteType={filters.siteType}
-                          userId={getUserId()}
                         />
                       ))}
                     </div>
