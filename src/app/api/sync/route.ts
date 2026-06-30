@@ -1,25 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { runMigrations } from '@/lib/db/client';
 import { syncRIDB } from '@/lib/sources/ridb/sync';
 
 export async function POST(request: NextRequest) {
-  const secret = request.headers.get('x-sync-secret');
+  // Accept secret via header OR body.secret
+  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const secret = (request.headers.get('x-sync-secret') ?? body.secret) as string | null;
+
   if (secret !== process.env.SYNC_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const body = await request.json().catch(() => ({}));
-
   try {
-    // Run migrations first in case schema is out of date
-    await runMigrations();
-
     const result = await syncRIDB({
-      lat: body.lat,
-      lng: body.lng,
-      radiusMiles: body.radiusMiles ?? 300,
-      maxFacilities: body.maxFacilities ?? 500,
-      stateCode: body.stateCode,
+      lat: body.lat as number | undefined,
+      lng: body.lng as number | undefined,
+      radiusMiles: (body.radiusMiles as number) ?? 300,
+      maxFacilities: (body.maxFacilities as number) ?? 500,
+      stateCode: body.stateCode as string | undefined,
     });
 
     return NextResponse.json(result);
@@ -29,7 +26,6 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Also expose a GET for quick health check (no secret needed)
 export async function GET() {
   return NextResponse.json({ ok: true, message: 'POST to trigger a sync' });
 }
