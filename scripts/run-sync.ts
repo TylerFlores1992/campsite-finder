@@ -30,11 +30,24 @@ const maxFacilities = Number(process.argv[3] ?? 500);
 const states = arg === 'ALL' ? ALL_STATES : arg.split(',').map((s) => s.trim().toUpperCase());
 
 async function run() {
-  // Verify Supabase connectivity before starting the loop.
+  // Verify Supabase connectivity before starting the loop (plain fetch, no client lib).
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !supabaseKey) throw new Error('NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set');
   console.log('[run-sync] Checking Supabase connectivity...');
-  const { getSupabaseAdmin } = await import('../src/lib/db/client');
-  const { data, error } = await getSupabaseAdmin().rpc('exec_select', { query_text: 'SELECT 1 AS ok' });
-  if (error) throw new Error(`Supabase connectivity check failed: ${error.message}`);
+  const testRes = await fetch(`${supabaseUrl}/rest/v1/rpc/exec_select`, {
+    method: 'POST',
+    headers: {
+      apikey: supabaseKey,
+      Authorization: `Bearer ${supabaseKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query_text: 'SELECT 1 AS ok' }),
+  });
+  if (!testRes.ok) {
+    const body = await testRes.text().catch(() => '');
+    throw new Error(`Supabase connectivity check failed: HTTP ${testRes.status} ${body}`);
+  }
   console.log('[run-sync] Supabase connected. Starting sync for:', states.join(', '));
 
   const totals = { facilitiesSynced: 0, campsitesSynced: 0, errors: 0 };
