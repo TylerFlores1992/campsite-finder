@@ -59,7 +59,7 @@ export function verifyWebhookSignature(authHeader: string | null): boolean {
     jwt.verify(token, secret, { algorithms: ['HS256'] });
     return true;
   } catch (err) {
-    console.warn('[Campflare] Webhook JWT verification failed:', (err as Error).message);
+    console.warn('[Campflare] Webhook JWT verification failed:', (err as Error).message, 'token:', token);
     return false;
   }
 }
