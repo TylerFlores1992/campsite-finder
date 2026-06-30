@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# one-off local scripts that may contain secrets
+scripts/fix-exec-dml.mjs
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
