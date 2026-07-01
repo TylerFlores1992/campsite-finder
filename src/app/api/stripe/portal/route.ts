@@ -3,7 +3,7 @@ import Stripe from 'stripe';
 import { requireAuth } from '@/lib/auth';
 import { queryOne } from '@/lib/db/client';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!.trim());
 
 export async function POST() {
   const userId = await requireAuth();
