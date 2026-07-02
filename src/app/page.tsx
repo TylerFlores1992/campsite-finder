@@ -42,6 +42,7 @@ export default function HomePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [watchesOpen, setWatchesOpen] = useState(false);
+  const [isSubscribed, setIsSubscribed] = useState(false);
 
   // Load favorites when signed in
   useEffect(() => {
@@ -51,6 +52,21 @@ export default function HomePage() {
       .then((data) => setFavorites(new Set(data.favorites ?? [])))
       .catch(() => {});
   }, [isSignedIn]);
+
+  // Load subscription status when signed in
+  useEffect(() => {
+    if (!isSignedIn) { setIsSubscribed(false); return; }
+    fetch('/api/subscription/status')
+      .then((r) => r.ok ? r.json() : { active: false })
+      .then((data) => setIsSubscribed(!!data.active))
+      .catch(() => {});
+  }, [isSignedIn]);
+
+  async function openBillingPortal() {
+    const res = await fetch('/api/stripe/portal', { method: 'POST' });
+    const data = await res.json();
+    if (data.url) window.location.href = data.url;
+  }
 
   const search = useCallback(
     async (state: SearchState, activeFilters: FilterState = filters) => {
@@ -169,7 +185,17 @@ export default function HomePage() {
 
             {/* Auth */}
             {isSignedIn ? (
-              <UserButton />
+              <div className="flex items-center gap-2 shrink-0">
+                {isSubscribed && (
+                  <button
+                    onClick={openBillingPortal}
+                    className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+                  >
+                    Manage subscription
+                  </button>
+                )}
+                <UserButton />
+              </div>
             ) : (
               <div className="flex items-center gap-2 shrink-0">
                 <SignInButton mode="redirect">

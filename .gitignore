@@ -42,3 +42,4 @@ scripts/fix-exec-dml.mjs
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+scripts/apply-migration-004.mjs
