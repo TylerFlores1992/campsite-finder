@@ -34,3 +34,10 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           RIDB_API_KEY: ${{ secrets.RIDB_API_KEY }}
         run: npx tsx scripts/run-sync.ts "${{ github.event.inputs.states || 'ALL' }}" "${{ github.event.inputs.maxFacilities || '1000' }}"
+
+      - name: Run ReserveCalifornia sync
+        if: always()
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npx tsx scripts/run-sync-rc.ts

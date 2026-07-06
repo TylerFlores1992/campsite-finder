@@ -30,6 +30,7 @@ try {
 
 import { query, mutate } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
+import { getRCAvailableDates } from '../src/lib/availability/reservecalifornia';
 import { dispatchNotifications } from '../src/lib/notifications';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 15_000);
@@ -45,6 +46,8 @@ interface WatchRow {
   end_date: string;   // YYYY-MM-DD (check-out)
   min_nights: number;
   campground_name: string;
+  campground_source: string;
+  reservations_url: string | null;
 }
 
 /** Months (YYYY-MM) that the nights of [start, end) span. */
@@ -89,7 +92,8 @@ async function loadWatches(): Promise<WatchRow[]> {
   return query<WatchRow>(
     `SELECT w.id, w.user_id, w.campground_id,
             w.start_date::text, w.end_date::text, w.min_nights,
-            c.name AS campground_name
+            c.name AS campground_name, c.source AS campground_source,
+            c.reservations_url
      FROM watches w
      JOIN campgrounds c ON c.id = w.campground_id
      WHERE w.active = true
@@ -157,9 +161,12 @@ async function cycle(): Promise<void> {
     return;
   }
 
-  // One recreation.gov fetch per unique campground+month, shared across watches.
+  const ridbWatches = watches.filter((w) => w.campground_source !== 'reservecalifornia');
+  const rcWatches = watches.filter((w) => w.campground_source === 'reservecalifornia');
+
+  // recreation.gov: one fetch per unique campground+month, shared across watches.
   const pairs = new Set<string>();
-  for (const w of watches) {
+  for (const w of ridbWatches) {
     for (const month of monthsForRange(w.start_date, w.end_date)) {
       pairs.add(`${w.campground_id}|${month}`);
     }
@@ -177,9 +184,33 @@ async function cycle(): Promise<void> {
     RECGOV_CONCURRENCY
   );
 
+  // ReserveCalifornia: one grid fetch per campground spanning all of its watches.
+  const rcSpans = new Map<string, { start: string; end: string }>();
+  for (const w of rcWatches) {
+    const span = rcSpans.get(w.campground_id);
+    rcSpans.set(w.campground_id, {
+      start: span && span.start < w.start_date ? span.start : w.start_date,
+      end: span && span.end > w.end_date ? span.end : w.end_date,
+    });
+  }
+  const rcDates = new Map<string, string[]>();
+  await pMap(
+    [...rcSpans.entries()],
+    async ([campgroundId, span]) => {
+      rcDates.set(campgroundId, await getRCAvailableDates(campgroundId, span.start, span.end));
+    },
+    RECGOV_CONCURRENCY
+  );
+
   let notified = 0;
   for (const watch of watches) {
-    const openDates = availableDatesForWatch(watch, monthData);
+    const openDates =
+      watch.campground_source === 'reservecalifornia'
+        ? (() => {
+            const nights = new Set(nightsOfRange(watch.start_date, watch.end_date));
+            return (rcDates.get(watch.campground_id) ?? []).filter((d) => nights.has(d));
+          })()
+        : availableDatesForWatch(watch, monthData);
     if (openDates.length === 0) continue;
     if (!hasConsecutiveRun(openDates, watch.min_nights)) continue;
 
@@ -198,7 +229,10 @@ async function cycle(): Promise<void> {
         campgroundId: watch.campground_id,
         campgroundName: watch.campground_name,
         availableDates: openDates,
-        bookingUrl: `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
+        bookingUrl:
+          watch.campground_source === 'reservecalifornia'
+            ? watch.reservations_url ?? 'https://www.reservecalifornia.com/'
+            : `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
         startDate: watch.start_date,
         endDate: watch.end_date,
       });
@@ -214,7 +248,7 @@ async function cycle(): Promise<void> {
   ).catch((err) => console.error('[poller] last_checked_at update failed:', err));
 
   console.log(
-    `[poller] heartbeat — ${watches.length} watches, ${pairs.size} recgov fetches, ${notified} notified`
+    `[poller] heartbeat — ${watches.length} watches (${rcWatches.length} RC), ${pairs.size} recgov + ${rcSpans.size} RC fetches, ${notified} notified`
   );
 }
 

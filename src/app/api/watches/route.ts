@@ -77,7 +77,14 @@ export async function POST(request: NextRequest) {
   const webhookBase = process.env.NEXT_PUBLIC_APP_URL
     ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
 
-  if (webhookBase && process.env.CAMPFLARE_API_KEY) {
+  // Campflare only monitors recreation.gov — non-RIDB campgrounds (e.g. ReserveCalifornia)
+  // are covered exclusively by our own Fly.io poller.
+  const cgSource = await queryOne<{ source: string }>(
+    `SELECT source FROM campgrounds WHERE id = $1`,
+    [campgroundId]
+  );
+
+  if (cgSource?.source === 'ridb' && webhookBase && process.env.CAMPFLARE_API_KEY) {
     try {
       const alert = await createAlert({
         campground_ids: [campgroundId],

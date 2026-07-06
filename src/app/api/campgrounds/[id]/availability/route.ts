@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ridbSource } from '@/lib/sources/ridb';
+import { getRCAvailabilityForMonth } from '@/lib/availability/reservecalifornia';
+import { isRcCampgroundId } from '@/lib/sources/reservecalifornia/client';
 
 export async function GET(
   request: NextRequest,
@@ -15,7 +17,9 @@ export async function GET(
   }
 
   try {
-    const availability = await ridbSource.getAvailability(id, month);
+    const availability = isRcCampgroundId(id)
+      ? await getRCAvailabilityForMonth(id, month)
+      : await ridbSource.getAvailability(id, month);
     return NextResponse.json(availability);
   } catch (err) {
     console.error('[availability] Error:', err);
