@@ -1,0 +1,22 @@
+# Fly.io config for the availability poller worker.
+# Deploy from the repo root:
+#   fly deploy --config worker/fly.toml --dockerfile worker/Dockerfile
+#
+# Required secrets (fly secrets set KEY=value --app campsite-finder-worker):
+#   NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+#   RESEND_API_KEY, EMAIL_FROM
+
+app = "campsite-finder-worker"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  POLL_INTERVAL_MS = "15000"
+
+# No [[services]] section — this is a pure background worker with no HTTP traffic.
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

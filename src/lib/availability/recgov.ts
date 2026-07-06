@@ -54,15 +54,19 @@ export async function getAvailabilityFromRecGov(
   let rawCampsites: Record<string, RecGovCampsite> = {};
 
   try {
-    const response = await axios.get(`${BASE}/${campgroundId}/month`, {
-      params: { start_date: startDate },
-      timeout: 10000,
-      headers: {
-        // mimic the browser — this is an unofficial API
-        'User-Agent': 'Mozilla/5.0 (compatible; CampsiteFinder/1.0)',
-        Accept: 'application/json',
-      },
-    });
+    // recreation.gov rejects unencoded ':' in query params ("query not encoded"),
+    // and axios's default serializer leaves ':' bare — encode the URL ourselves.
+    const response = await axios.get(
+      `${BASE}/${campgroundId}/month?start_date=${encodeURIComponent(startDate)}`,
+      {
+        timeout: 10000,
+        headers: {
+          // mimic the browser — this is an unofficial API
+          'User-Agent': 'Mozilla/5.0 (compatible; CampsiteFinder/1.0)',
+          Accept: 'application/json',
+        },
+      }
+    );
     rawCampsites = response.data?.campsites ?? {};
   } catch (err) {
     console.warn(`[RecGov availability] Failed for ${campgroundId}/${month}:`, (err as Error).message);
