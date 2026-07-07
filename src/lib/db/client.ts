@@ -56,8 +56,14 @@ export async function mutate<T = Record<string, unknown>>(
   params?: unknown[]
 ): Promise<T[]> {
   const finalSql = params ? interpolate(sql, params) : sql;
+  // Detect RETURNING on the raw template (params can contain the word
+  // "returning" as data — e.g. campground descriptions).
+  const hasReturning = /\breturning\b/i.test(sql);
   const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase.rpc('exec_dml', { query_text: finalSql });
+  const { data, error } = await supabase.rpc('exec_dml', {
+    query_text: finalSql,
+    with_result: hasReturning,
+  });
   if (error) throw new Error(`DB mutate error: ${error.message}\nSQL: ${finalSql}`);
   return (data as T[]) ?? [];
 }

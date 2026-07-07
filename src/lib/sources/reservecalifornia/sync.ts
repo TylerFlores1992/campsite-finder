@@ -153,7 +153,7 @@ async function syncFacilityUnits(
   await mutate(
     `UPDATE campgrounds SET
        site_types = $1,
-       amenities = (SELECT array_agg(DISTINCT a) FROM unnest(amenities || $2::text[]) a),
+       amenities = COALESCE((SELECT array_agg(DISTINCT a) FROM unnest(amenities || $2::text[]) a), ARRAY[]::text[]),
        updated_at = NOW()
      WHERE id = $3`,
     [[...siteTypes], extraAmenities, campgroundId]

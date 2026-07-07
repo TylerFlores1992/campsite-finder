@@ -126,7 +126,7 @@ async function syncFacility(
         `UPDATE campgrounds SET
            site_types = $1,
            pets_allowed = $2,
-           amenities = (SELECT array_agg(DISTINCT a) FROM unnest(amenities || $3::text[]) a),
+           amenities = COALESCE((SELECT array_agg(DISTINCT a) FROM unnest(amenities || $3::text[]) a), ARRAY[]::text[]),
            updated_at = NOW()
          WHERE id = $4`,
         [rollups.siteTypes, rollups.petsAllowed, extraAmenities, facility.FacilityID]

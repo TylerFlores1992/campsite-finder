@@ -61,11 +61,16 @@ END; $$;
 -- Generic DML executor (INSERT/UPDATE/DELETE). Statements with RETURNING are
 -- wrapped in a CTE (data-modifying CTEs support RETURNING; bare subqueries don't)
 -- so the affected rows come back as JSON. Statements without RETURNING just run.
-CREATE OR REPLACE FUNCTION exec_dml(query_text text)
+-- Callers should pass with_result explicitly: the ILIKE fallback misfires when
+-- the *data* contains the word "returning" (e.g. campground descriptions).
+CREATE OR REPLACE FUNCTION exec_dml(query_text text, with_result boolean DEFAULT NULL)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE result jsonb;
+DECLARE
+  result jsonb;
+  use_cte boolean;
 BEGIN
-  IF query_text ILIKE '%RETURNING%' THEN
+  use_cte := COALESCE(with_result, query_text ILIKE ('%RETURN' || 'ING%'));
+  IF use_cte THEN
     EXECUTE format('WITH __dml__ AS (%s) SELECT coalesce(json_agg(t), ''[]''::json) FROM __dml__ t', query_text) INTO result;
     RETURN COALESCE(result, '[]'::jsonb);
   ELSE
