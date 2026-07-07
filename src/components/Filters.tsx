@@ -1,12 +1,11 @@
 'use client';
 
-import { Dog, Accessibility, Zap, Droplets, Home, Car, Tent } from 'lucide-react';
+import { Dog, Zap, Droplets, Home, Car, Tent } from 'lucide-react';
 
 export interface FilterState {
   siteType: string | null;
   rvLength: number | null;
   pets: boolean;
-  ada: boolean;
   electric: boolean;
   water: boolean;
   showers: boolean;
@@ -80,7 +79,6 @@ export default function Filters({ filters, onChange }: FiltersProps) {
       {/* Amenity toggles */}
       {[
         { key: 'pets' as const, label: 'Pet-friendly', icon: <Dog size={13} /> },
-        { key: 'ada' as const, label: 'ADA', icon: <Accessibility size={13} /> },
         { key: 'electric' as const, label: 'Electric', icon: <Zap size={13} /> },
         { key: 'water' as const, label: 'Water', icon: <Droplets size={13} /> },
       ].map(({ key, label, icon }) => (

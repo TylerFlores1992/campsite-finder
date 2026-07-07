@@ -27,7 +27,6 @@ const DEFAULT_FILTERS: FilterState = {
   siteType: null,
   rvLength: null,
   pets: false,
-  ada: false,
   electric: false,
   water: false,
   showers: false,
@@ -101,7 +100,6 @@ export default function HomePage() {
 
         let results: Campground[] = data.campgrounds ?? [];
         if (activeFilters.pets) results = results.filter((c) => c.petsAllowed);
-        if (activeFilters.ada) results = results.filter((c) => c.adaAccessible);
 
         // If the user picked a specific campground from the suggestions,
         // pin it to the top of the list (even when fully booked) and select it.
