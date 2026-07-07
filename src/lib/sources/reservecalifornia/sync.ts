@@ -3,12 +3,9 @@ import { fetchPlaces, fetchFacilities, fetchUnitTypes, fetchGrid, rcCampgroundId
 import type { RCPlace, RCFacility, RCGridUnit } from './client';
 import type { SyncResult } from '../types';
 
-/**
- * Booking deep link. The current SPA routes by place; facility-level deep
- * links are not stable, so land users on the park page.
- */
+/** Booking deep link — the current SPA serves park pages at /park/{PlaceId}. */
 function bookingUrl(placeId: number): string {
-  return `https://www.reservecalifornia.com/Web/Default.aspx#!park/${placeId}`;
+  return `https://www.reservecalifornia.com/park/${placeId}`;
 }
 
 async function upsertFacility(facility: RCFacility, place: RCPlace): Promise<void> {
