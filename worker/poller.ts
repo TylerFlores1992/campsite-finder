@@ -30,7 +30,7 @@ try {
 
 import { query, mutate } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
-import { getRCAvailableDates } from '../src/lib/availability/reservecalifornia';
+import { hasRCAvailabilityInRange } from '../src/lib/availability/reservecalifornia';
 import { dispatchNotifications } from '../src/lib/notifications';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 15_000);
@@ -117,27 +117,37 @@ async function claimNotification(watchId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-/** Dates within the watch window that have at least one available campsite. */
+/**
+ * Dates a single campsite can host the required consecutive stay within the
+ * watch window. Nights open at different sites don't combine into a bookable
+ * stay, so we check per site and return the first qualifying run's dates.
+ */
 function availableDatesForWatch(
   watch: WatchRow,
   monthData: Map<string, Awaited<ReturnType<typeof getAvailabilityFromRecGov>>>
 ): string[] {
   const nights = nightsOfRange(watch.start_date, watch.end_date);
-  const open = new Set<string>();
+  const nightSet = new Set(nights);
+  const required = Math.max(watch.min_nights, nights.length);
 
+  const bySite = new Map<string, Set<string>>();
   for (const month of monthsForRange(watch.start_date, watch.end_date)) {
     const avail = monthData.get(`${watch.campground_id}|${month}`);
     if (!avail) continue;
     for (const cs of avail.campsites) {
+      const open = bySite.get(cs.campsiteId) ?? new Set<string>();
       for (const day of cs.availability) {
-        if (day.status === 'available' && nights.includes(day.date)) {
-          open.add(day.date);
-        }
+        if (day.status === 'available' && nightSet.has(day.date)) open.add(day.date);
       }
+      bySite.set(cs.campsiteId, open);
     }
   }
 
-  return [...open].sort();
+  for (const open of bySite.values()) {
+    const dates = [...open].sort();
+    if (hasConsecutiveRun(dates, required)) return dates;
+  }
+  return [];
 }
 
 /** True if `dates` contains a run of at least minNights consecutive days. */
@@ -184,20 +194,15 @@ async function cycle(): Promise<void> {
     RECGOV_CONCURRENCY
   );
 
-  // ReserveCalifornia: one grid fetch per campground spanning all of its watches.
-  const rcSpans = new Map<string, { start: string; end: string }>();
-  for (const w of rcWatches) {
-    const span = rcSpans.get(w.campground_id);
-    rcSpans.set(w.campground_id, {
-      start: span && span.start < w.start_date ? span.start : w.start_date,
-      end: span && span.end > w.end_date ? span.end : w.end_date,
-    });
-  }
-  const rcDates = new Map<string, string[]>();
+  // ReserveCalifornia: check each watch for a single unit hosting the full stay.
+  const rcResults = new Map<string, string[]>(); // watch.id -> qualifying dates
   await pMap(
-    [...rcSpans.entries()],
-    async ([campgroundId, span]) => {
-      rcDates.set(campgroundId, await getRCAvailableDates(campgroundId, span.start, span.end));
+    rcWatches,
+    async (w) => {
+      const nights = nightsOfRange(w.start_date, w.end_date);
+      const required = Math.max(w.min_nights, nights.length);
+      const ok = await hasRCAvailabilityInRange(w.campground_id, w.start_date, w.end_date, required);
+      rcResults.set(w.id, ok ? nights : []);
     },
     RECGOV_CONCURRENCY
   );
@@ -206,13 +211,9 @@ async function cycle(): Promise<void> {
   for (const watch of watches) {
     const openDates =
       watch.campground_source === 'reservecalifornia'
-        ? (() => {
-            const nights = new Set(nightsOfRange(watch.start_date, watch.end_date));
-            return (rcDates.get(watch.campground_id) ?? []).filter((d) => nights.has(d));
-          })()
+        ? rcResults.get(watch.id) ?? []
         : availableDatesForWatch(watch, monthData);
     if (openDates.length === 0) continue;
-    if (!hasConsecutiveRun(openDates, watch.min_nights)) continue;
 
     if (!(await claimNotification(watch.id))) {
       console.log(`[poller] watch ${watch.id}: availability found but already notified — skipping`);
@@ -248,7 +249,7 @@ async function cycle(): Promise<void> {
   ).catch((err) => console.error('[poller] last_checked_at update failed:', err));
 
   console.log(
-    `[poller] heartbeat — ${watches.length} watches (${rcWatches.length} RC), ${pairs.size} recgov + ${rcSpans.size} RC fetches, ${notified} notified`
+    `[poller] heartbeat — ${watches.length} watches (${rcWatches.length} RC), ${pairs.size} recgov + ${rcWatches.length} RC fetches, ${notified} notified`
   );
 }
 

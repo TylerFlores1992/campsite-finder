@@ -120,19 +120,30 @@ export async function hasAvailabilityInRange(
     cur.setMonth(cur.getMonth() + 1);
   }
 
+  // Collect per-campsite availability across months so a stay spanning a month
+  // boundary still counts as consecutive at the same site.
+  const bySite = new Map<string, Map<string, boolean>>();
   for (const month of months) {
     const avail = await getAvailabilityFromRecGov(campgroundId, month);
     for (const cs of avail.campsites) {
-      // Count consecutive available nights for this campsite in range
-      let consecutive = 0;
+      const days = bySite.get(cs.campsiteId) ?? new Map<string, boolean>();
       for (const day of cs.availability) {
-        if (day.date < startDate || day.date > endDate) continue;
-        if (day.status === 'available') {
-          consecutive++;
-          if (consecutive >= minNights) return true;
-        } else {
-          consecutive = 0;
-        }
+        // Nights of the stay are [startDate, endDate) — checkout day isn't a night.
+        if (day.date < startDate || day.date >= endDate) continue;
+        days.set(day.date, day.status === 'available');
+      }
+      bySite.set(cs.campsiteId, days);
+    }
+  }
+
+  for (const days of bySite.values()) {
+    let consecutive = 0;
+    for (const date of [...days.keys()].sort()) {
+      if (days.get(date)) {
+        consecutive++;
+        if (consecutive >= minNights) return true;
+      } else {
+        consecutive = 0;
       }
     }
   }

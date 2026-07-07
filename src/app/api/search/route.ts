@@ -44,11 +44,19 @@ export async function GET(request: NextRequest) {
     let results: Array<typeof campgrounds[0] & { hasAvailability?: boolean }> = campgrounds;
 
     if (startDate && endDate) {
+      // "Available" means one campsite can host the WHOLE stay: every night
+      // from check-in up to (not including) check-out, consecutively.
+      const stayNights = Math.max(
+        1,
+        Math.round((Date.parse(endDate) - Date.parse(startDate)) / 86_400_000)
+      );
+      const requiredNights = Math.max(minNights, stayNights);
+
       const checks = await Promise.allSettled(
         campgrounds.map((cg) =>
           cg.source === 'reservecalifornia'
-            ? hasRCAvailabilityInRange(cg.id, startDate, endDate, minNights)
-            : hasAvailabilityInRange(cg.id, startDate, endDate, minNights)
+            ? hasRCAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
+            : hasAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
         )
       );
       results = campgrounds.map((cg, i) => ({

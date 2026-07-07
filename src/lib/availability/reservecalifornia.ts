@@ -48,14 +48,34 @@ export function hasConsecutiveRun(dates: string[], minNights: number): boolean {
   return false;
 }
 
+/**
+ * True if a SINGLE unit can host `minNights` consecutive nights within
+ * [startDate, endDate). Nights open at different units don't combine into
+ * a bookable stay.
+ */
 export async function hasRCAvailabilityInRange(
   campgroundId: string,
   startDate: string,
   endDate: string,
   minNights = 1
 ): Promise<boolean> {
-  const dates = await getRCAvailableDates(campgroundId, startDate, endDate);
-  return hasConsecutiveRun(dates, minNights);
+  const facilityId = rcFacilityIdFromCampgroundId(campgroundId);
+  if (!Number.isFinite(facilityId)) return false;
+
+  try {
+    const grid = await fetchGrid(facilityId, startDate, endDate);
+    for (const unit of Object.values(grid.Facility?.Units ?? {})) {
+      if (!unit.AllowWebBooking) continue;
+      const dates = Object.values(unit.Slices ?? {})
+        .filter((s) => s.IsFree && !s.IsBlocked && s.Date >= startDate && s.Date < endDate)
+        .map((s) => s.Date)
+        .sort();
+      if (hasConsecutiveRun(dates, minNights)) return true;
+    }
+  } catch (err) {
+    console.warn(`[RC availability] Range check failed for ${campgroundId}:`, (err as Error).message);
+  }
+  return false;
 }
 
 /** Month calendar in the same shape the recgov module returns. */
