@@ -20,6 +20,7 @@ interface SearchState {
   radiusMiles: number;
   startDate?: string;
   endDate?: string;
+  focusCampgroundId?: string;
 }
 
 const DEFAULT_FILTERS: FilterState = {
@@ -97,6 +98,17 @@ export default function HomePage() {
         let results: Campground[] = data.campgrounds ?? [];
         if (activeFilters.pets) results = results.filter((c) => c.petsAllowed);
         if (activeFilters.ada) results = results.filter((c) => c.adaAccessible);
+
+        // If the user picked a specific campground from the suggestions,
+        // pin it to the top of the list (even when fully booked) and select it.
+        if (state.focusCampgroundId) {
+          const idx = results.findIndex((c) => c.id === state.focusCampgroundId);
+          if (idx > 0) {
+            const [focus] = results.splice(idx, 1);
+            results.unshift(focus);
+          }
+          if (idx >= 0) setSelectedId(state.focusCampgroundId);
+        }
 
         setCampgrounds(results);
       } catch (err) {

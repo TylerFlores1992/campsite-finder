@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { Search, MapPin, Loader2, Tent } from 'lucide-react';
 
 interface SearchBarProps {
@@ -11,6 +10,7 @@ interface SearchBarProps {
     radiusMiles: number;
     startDate?: string;
     endDate?: string;
+    focusCampgroundId?: string;
   }) => void;
 }
 
@@ -25,12 +25,13 @@ interface CampgroundSuggestion {
   name: string;
   city: string | null;
   state: string | null;
+  latitude: number;
+  longitude: number;
 }
 
 const RADIUS_OPTIONS = [25, 50, 100, 200];
 
 export default function SearchBar({ onSearch }: SearchBarProps) {
-  const router = useRouter();
   const [location, setLocation] = useState('');
   const [radiusMiles, setRadiusMiles] = useState(50);
   const [startDate, setStartDate] = useState('');
@@ -42,6 +43,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
   const [campgroundHits, setCampgroundHits] = useState<CampgroundSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [pickedCoords, setPickedCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [focusCampgroundId, setFocusCampgroundId] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -61,6 +63,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
   function handleLocationInput(value: string) {
     setLocation(value);
     setPickedCoords(null);
+    setFocusCampgroundId(null);
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (value.trim().length < 2 || value === 'Current location') {
@@ -109,9 +112,13 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
     });
   }
 
+  // Fill the location with the campground so the user can finish dates/radius;
+  // the search will center on it and pin it to the top of the results.
   function pickCampground(cg: CampgroundSuggestion) {
+    setLocation(cg.name);
+    setPickedCoords({ lat: cg.latitude, lng: cg.longitude });
+    setFocusCampgroundId(cg.id);
     setShowSuggestions(false);
-    router.push(`/campground/${cg.id}`);
   }
 
   function useCurrentLocation() {
@@ -170,6 +177,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
         radiusMiles,
         startDate: startDate || undefined,
         endDate: endDate || undefined,
+        focusCampgroundId: focusCampgroundId ?? undefined,
       });
     } else if (location === 'Current location') {
       navigator.geolocation.getCurrentPosition((pos) => {

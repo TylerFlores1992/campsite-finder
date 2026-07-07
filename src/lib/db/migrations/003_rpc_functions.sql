@@ -17,6 +17,7 @@ RETURNS TABLE (
   reservable boolean, reservations_url text,
   ada_accessible boolean, pets_allowed boolean,
   photos jsonb, last_synced_at timestamptz,
+  latitude double precision, longitude double precision,
   distance_miles double precision
 )
 LANGUAGE plpgsql SECURITY DEFINER
@@ -30,6 +31,8 @@ BEGIN
     c.reservable, c.reservations_url,
     c.ada_accessible, c.pets_allowed,
     c.photos, c.last_synced_at,
+    ST_Y(c.location::geometry) AS latitude,
+    ST_X(c.location::geometry) AS longitude,
     ST_Distance(c.location::geography, ST_MakePoint(p_lng, p_lat)::geography) / 1609.34 AS distance_miles
   FROM campgrounds c
   WHERE
