@@ -28,8 +28,14 @@ export async function getSubscriptionStatus(userId: string): Promise<string | nu
   return row?.status ?? null;
 }
 
-/** Return true if the user has an active or trialing subscription. */
+/** Return true if the user has an active/trialing subscription or is a beta tester. */
 export async function hasActiveSubscription(userId: string): Promise<boolean> {
+  const beta = await queryOne<{ is_beta: boolean }>(
+    'SELECT is_beta FROM users WHERE id = $1',
+    [userId]
+  );
+  if (beta?.is_beta) return true;
+
   const status = await getSubscriptionStatus(userId);
   return status === 'active' || status === 'trialing';
 }
