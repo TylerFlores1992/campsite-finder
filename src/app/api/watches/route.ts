@@ -34,7 +34,11 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const userId = await requireAuth();
 
-  // Require an active subscription to create watches
+  // Ensure the users row exists BEFORE the subscription gate — beta flagging
+  // and Stripe webhooks both need the row to be present.
+  await syncUser(userId);
+
+  // Require an active subscription (or beta flag) to create watches
   const subscribed = await hasActiveSubscription(userId);
   if (!subscribed) {
     return NextResponse.json(
@@ -49,8 +53,6 @@ export async function POST(request: NextRequest) {
   if (!campgroundId || !startDate || !endDate) {
     return NextResponse.json({ error: 'campgroundId, startDate, endDate required' }, { status: 400 });
   }
-
-  await syncUser(userId);
 
   const existing = await queryOne<{ id: string; campflare_sub_id: string | null }>(
     `SELECT id, campflare_sub_id FROM watches
