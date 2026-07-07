@@ -1,0 +1,25 @@
+name: Worker Watchdog
+
+# Checks that the Fly.io availability poller is alive. When the health
+# endpoint reports stale (or is unreachable), this job FAILS — GitHub then
+# emails the repo owner automatically. No secrets needed.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check worker heartbeat
+        run: |
+          set -o pipefail
+          body=$(curl -sf --max-time 30 https://camphawk.app/api/health/worker) || {
+            echo "::error::Worker health check FAILED — the availability poller looks DOWN. Check https://fly.io/apps/campsite-finder-worker/monitoring"
+            curl -s https://camphawk.app/api/health/worker || true
+            exit 1
+          }
+          echo "Worker healthy: $body"

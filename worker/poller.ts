@@ -164,9 +164,17 @@ function hasConsecutiveRun(dates: string[], minNights: number): boolean {
   return false;
 }
 
+async function beat(watchesChecked: number): Promise<void> {
+  await mutate(
+    `UPDATE worker_heartbeat SET beat_at = NOW(), watches_checked = $1 WHERE id = 1`,
+    [watchesChecked]
+  ).catch((err) => console.error('[poller] heartbeat write failed:', err));
+}
+
 async function cycle(): Promise<void> {
   const watches = await loadWatches();
   if (watches.length === 0) {
+    await beat(0);
     console.log(`[poller] heartbeat — no active watches`);
     return;
   }
@@ -247,6 +255,8 @@ async function cycle(): Promise<void> {
     `UPDATE watches SET last_checked_at = NOW() WHERE id::text = ANY($1)`,
     [watches.map((w) => w.id)]
   ).catch((err) => console.error('[poller] last_checked_at update failed:', err));
+
+  await beat(watches.length);
 
   console.log(
     `[poller] heartbeat — ${watches.length} watches (${rcWatches.length} RC), ${pairs.size} recgov + ${rcWatches.length} RC fetches, ${notified} notified`
