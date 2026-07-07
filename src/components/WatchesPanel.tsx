@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { X, Bell, Trash2, Loader2, CalendarDays } from 'lucide-react';
+import { X, Bell, Trash2, Loader2, CalendarDays, MessageSquare, Check } from 'lucide-react';
 
 interface Watch {
   id: string;
@@ -22,13 +22,50 @@ export default function WatchesPanel({ onClose }: WatchesPanelProps) {
   const [watches, setWatches] = useState<Watch[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [phone, setPhone] = useState('');
+  const [phoneSaved, setPhoneSaved] = useState(false);
+  const [phoneSaving, setPhoneSaving] = useState(false);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/watches')
       .then((r) => r.json())
       .then((d) => setWatches(d.watches ?? []))
       .finally(() => setLoading(false));
+    fetch('/api/user/phone')
+      .then((r) => (r.ok ? r.json() : { phone: null }))
+      .then((d) => {
+        if (d.phone) {
+          setPhone(d.phone);
+          setPhoneSaved(true);
+        }
+      })
+      .catch(() => {});
   }, []);
+
+  async function savePhone() {
+    setPhoneSaving(true);
+    setPhoneError(null);
+    try {
+      const res = await fetch('/api/user/phone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        setPhoneError(d.error ?? 'Could not save');
+        setPhoneSaved(false);
+      } else {
+        setPhone(d.phone ?? '');
+        setPhoneSaved(!!d.phone);
+      }
+    } catch {
+      setPhoneError('Could not save');
+    } finally {
+      setPhoneSaving(false);
+    }
+  }
 
   async function removeWatch(id: string) {
     setDeleting(id);
@@ -119,9 +156,41 @@ export default function WatchesPanel({ onClose }: WatchesPanelProps) {
           ))}
         </div>
 
-        <div className="border-t px-5 py-4">
+        <div className="border-t px-5 py-4 space-y-3">
+          <div>
+            <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-1.5">
+              <MessageSquare size={12} className="text-green-600" />
+              Text me too (optional)
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="tel"
+                placeholder="(805) 555-1234"
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  setPhoneSaved(false);
+                }}
+                className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
+              />
+              <button
+                onClick={savePhone}
+                disabled={phoneSaving || phoneSaved}
+                className="px-3 py-1.5 text-sm rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors flex items-center gap-1"
+              >
+                {phoneSaving ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : phoneSaved ? (
+                  <Check size={13} />
+                ) : (
+                  'Save'
+                )}
+              </button>
+            </div>
+            {phoneError && <p className="text-xs text-red-500 mt-1">{phoneError}</p>}
+          </div>
           <p className="text-xs text-gray-400 text-center">
-            You'll get one email per opening. Remove anytime.
+            You'll get one email{phoneSaved ? ' and text' : ''} per opening. Remove anytime.
           </p>
         </div>
       </div>

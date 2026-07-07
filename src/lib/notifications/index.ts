@@ -48,6 +48,15 @@ async function getUserEmail(userId: string): Promise<string | null> {
   return email;
 }
 
+/** Get the user's phone (E.164) from the DB, or null if not on file. */
+async function getUserPhone(userId: string): Promise<string | null> {
+  const rows = await query<{ phone: string | null }>(
+    'SELECT phone FROM users WHERE id = $1',
+    [userId]
+  );
+  return rows[0]?.phone ?? null;
+}
+
 /** Fire all applicable notification channels for a campflare availability event. */
 export async function dispatchNotifications(payload: NotificationPayload): Promise<void> {
   console.log(
@@ -85,15 +94,16 @@ async function dispatchEmail(payload: NotificationPayload): Promise<void> {
 }
 
 async function dispatchSms(payload: NotificationPayload): Promise<void> {
-  // SMS requires Twilio credentials + a phone number on the user record.
-  // For v1, phone is not yet collected — this is a no-op until Phase 2 auth lands.
   if (!process.env.TWILIO_ACCOUNT_SID) return;
+
+  const phone = await getUserPhone(payload.userId);
+  if (!phone) return; // no phone on file — email-only user
 
   try {
     const dates = payload.availableDates.slice(0, 3).join(', ');
     const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3} more` : '';
     await sendSms({
-      to: '', // TODO: pull from user profile once phone collection is added
+      to: phone,
       body: `⛺ ${payload.campgroundName} has availability: ${dates}${more}. Book: ${payload.bookingUrl}`,
     });
     await logNotification(payload, 'sms', 'sent');
