@@ -18,6 +18,7 @@ export default function CampgroundMap({ campgrounds, selectedId, onSelect, cente
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<import('mapbox-gl').Map | null>(null);
   const markersRef = useRef(new globalThis.Map<string, import('mapbox-gl').Marker>());
+  const lastFitRef = useRef<string>('');
   const [loaded, setLoaded] = useState(false);
 
   // Initialize map
@@ -98,6 +99,19 @@ export default function CampgroundMap({ campgrounds, selectedId, onSelect, cente
         .addTo(map);
 
       existing.set(cg.id, marker);
+    }
+
+    // Fit the view to the current result set (only when the set actually changes)
+    const signature = campgrounds.map((c) => c.id).sort().join(',');
+    if (campgrounds.length > 0 && signature !== lastFitRef.current) {
+      lastFitRef.current = signature;
+      if (campgrounds.length === 1) {
+        map.flyTo({ center: [campgrounds[0].longitude, campgrounds[0].latitude], zoom: 11, duration: 800 });
+      } else {
+        const bounds = new mapboxgl!.default.LngLatBounds();
+        for (const cg of campgrounds) bounds.extend([cg.longitude, cg.latitude]);
+        map.fitBounds(bounds, { padding: 60, maxZoom: 11, duration: 800 });
+      }
     }
   }, [campgrounds, loaded, selectedId, onSelect]);
 

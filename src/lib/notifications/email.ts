@@ -25,7 +25,7 @@ export async function sendEmail(params: EmailParams): Promise<void> {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: process.env.EMAIL_FROM ?? 'CampsiteFinder <notifications@yourdomain.com>',
+      from: process.env.EMAIL_FROM ?? 'Camp Hawk <alerts@camphawk.app>',
       to: [params.to],
       subject: params.subject,
       html: params.html,

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import {
   ArrowLeft,
   MapPin,
@@ -16,6 +17,8 @@ import {
   CalendarDays,
 } from 'lucide-react';
 import type { Campground, Campsite, CampgroundAvailability } from '@/lib/types';
+
+const CampgroundMap = dynamic(() => import('@/components/Map'), { ssr: false });
 
 function AvailabilityCalendar({
   campgroundId,
@@ -239,7 +242,9 @@ export default function CampgroundDetailPage() {
               rel="noopener noreferrer"
               className="shrink-0 flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white font-medium text-sm rounded-xl hover:bg-green-700 transition-colors"
             >
-              Book on Recreation.gov
+              {campground.source === 'reservecalifornia'
+                ? 'Book on ReserveCalifornia'
+                : 'Book on Recreation.gov'}
               <ExternalLink size={13} />
             </a>
           )}
@@ -292,6 +297,19 @@ export default function CampgroundDetailPage() {
             )}
           </div>
         </div>
+
+        {/* Location map */}
+        {campground.latitude != null && campground.longitude != null && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <h2 className="font-semibold text-gray-800 mb-3">Location</h2>
+            <div className="h-64 rounded-xl overflow-hidden">
+              <CampgroundMap
+                campgrounds={[campground]}
+                center={{ lat: campground.latitude, lng: campground.longitude }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Availability calendar */}
         <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">

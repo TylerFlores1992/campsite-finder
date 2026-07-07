@@ -141,7 +141,7 @@ function buildEmailHtml(payload: NotificationPayload): string {
   </a>
 
   <p style="margin-top:32px;font-size:12px;color:#999">
-    You're receiving this because you set up a watch on CampsiteFinder.
+    You're receiving this because you set up a watch on Camp Hawk.
     <br>To stop watching this campground, visit your watches in the app.
   </p>
 </body>

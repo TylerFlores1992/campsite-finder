@@ -166,51 +166,56 @@ export default function HomePage() {
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-4 py-3 z-10 shadow-sm">
         <div className="max-w-screen-2xl mx-auto space-y-3">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold text-green-700 shrink-0">⛺ CampsiteFinder</h1>
-            <div className="flex-1">
-              <SearchBar onSearch={(p) => search(p)} />
-            </div>
-            <button
-              onClick={() => {
-                if (!isSignedIn) { window.location.href = '/sign-in'; return; }
-                setWatchesOpen(true);
-              }}
-              className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700 transition-colors"
-              title="My watches"
-            >
-              <Bell size={15} />
-              <span className="hidden sm:inline">Watches</span>
-            </button>
+          {/* Top row: brand + actions (wraps cleanly on mobile) */}
+          <div className="flex items-center justify-between gap-2">
+            <h1 className="text-xl font-bold text-green-800 shrink-0 flex items-center gap-1.5">
+              <span className="text-2xl">🦅</span> Camp Hawk
+            </h1>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  if (!isSignedIn) { window.location.href = '/sign-in'; return; }
+                  setWatchesOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700 transition-colors"
+                title="My watches"
+              >
+                <Bell size={15} />
+                <span className="hidden sm:inline">Watches</span>
+              </button>
 
-            {/* Auth */}
-            {isSignedIn ? (
-              <div className="flex items-center gap-2 shrink-0">
-                {isSubscribed && (
-                  <button
-                    onClick={openBillingPortal}
-                    className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
-                  >
-                    Manage subscription
-                  </button>
-                )}
-                <UserButton />
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 shrink-0">
-                <SignInButton mode="redirect">
-                  <button className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
-                    Sign in
-                  </button>
-                </SignInButton>
-                <SignUpButton mode="redirect">
-                  <button className="text-sm px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors">
-                    Sign up
-                  </button>
-                </SignUpButton>
-              </div>
-            )}
+              {/* Auth */}
+              {isSignedIn ? (
+                <div className="flex items-center gap-2">
+                  {isSubscribed && (
+                    <button
+                      onClick={openBillingPortal}
+                      className="hidden sm:block text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+                    >
+                      Manage subscription
+                    </button>
+                  )}
+                  <UserButton />
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <SignInButton mode="redirect">
+                    <button className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
+                      Sign in
+                    </button>
+                  </SignInButton>
+                  <SignUpButton mode="redirect">
+                    <button className="text-sm px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors">
+                      Sign up
+                    </button>
+                  </SignUpButton>
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* Search row */}
+          <SearchBar onSearch={(p) => search(p)} />
 
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-3 flex-wrap">
@@ -245,13 +250,28 @@ export default function HomePage() {
       {/* Main content */}
       <main className="flex-1 overflow-hidden max-w-screen-2xl mx-auto w-full">
         {!searchState ? (
-          <div className="h-full flex flex-col items-center justify-center text-center px-4 gap-4">
-            <div className="text-6xl">⛺</div>
-            <h2 className="text-2xl font-bold text-gray-800">Find your next campsite</h2>
+          <div className="h-full flex flex-col items-center justify-center text-center px-4 gap-5 overflow-y-auto py-8">
+            <div className="text-6xl">🦅</div>
+            <h2 className="text-3xl font-bold text-gray-800">Snag campsites the moment they open</h2>
             <p className="text-gray-500 max-w-md">
-              Search by location to see available campsites near you. Filter by dates, site type,
-              and amenities to find the perfect spot.
+              Search thousands of campgrounds across US public lands and California State Parks —
+              and when your spot is booked solid, Camp Hawk watches it and alerts you within
+              seconds of a cancellation.
             </p>
+            <div className="flex flex-wrap justify-center gap-3 max-w-lg">
+              {[
+                { icon: '⚡', label: 'Alerts in seconds, not hours' },
+                { icon: '🏕️', label: 'Recreation.gov + CA State Parks' },
+                { icon: '📱', label: 'Email & text notifications' },
+              ].map((f) => (
+                <span
+                  key={f.label}
+                  className="inline-flex items-center gap-1.5 text-sm text-gray-600 bg-white border border-gray-200 rounded-full px-3 py-1.5 shadow-sm"
+                >
+                  <span>{f.icon}</span> {f.label}
+                </span>
+              ))}
+            </div>
             <p className="text-sm text-gray-400">
               Or hit{' '}
               <button onClick={handleTonight} className="text-amber-600 font-medium underline">
@@ -263,12 +283,16 @@ export default function HomePage() {
         ) : (
           <div
             className={`h-full flex ${
-              view === 'list' ? 'flex-col' : view === 'map' ? '' : 'flex-row'
+              view === 'list' ? 'flex-col' : view === 'map' ? '' : 'flex-col md:flex-row'
             }`}
           >
             {/* Map panel */}
             {view !== 'list' && (
-              <div className={`${view === 'split' ? 'w-1/2' : 'w-full'} h-full p-3`}>
+              <div
+                className={`${
+                  view === 'split' ? 'w-full md:w-1/2 h-2/5 md:h-full' : 'w-full h-full'
+                } p-3`}
+              >
                 <CampgroundMap
                   campgrounds={campgrounds}
                   selectedId={selectedId}
@@ -282,7 +306,9 @@ export default function HomePage() {
             {/* List panel */}
             {view !== 'map' && (
               <div
-                className={`${view === 'split' ? 'w-1/2' : 'w-full'} h-full overflow-y-auto p-3`}
+                className={`${
+                  view === 'split' ? 'w-full md:w-1/2 h-3/5 md:h-full' : 'w-full h-full'
+                } overflow-y-auto p-3`}
               >
                 {loading ? (
                   <div className="flex items-center justify-center h-32 gap-2 text-gray-500">

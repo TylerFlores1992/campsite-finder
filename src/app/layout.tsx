@@ -14,8 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CampsiteFinder — Find available campsites near you",
-  description: "Search real-time campsite availability across US public lands. Filter by date, site type, amenities, and distance.",
+  title: "Camp Hawk — Snag campsites the moment they open up",
+  description:
+    "Search real-time campsite availability across US public lands and California State Parks. Watch booked campgrounds and get alerted within seconds of a cancellation.",
 };
 
 export default function RootLayout({
