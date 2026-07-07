@@ -72,7 +72,9 @@ export interface RIDBCampsite {
   CampsiteReservable: boolean;
   CampsiteLatitude: number | null;
   CampsiteLongitude: number | null;
-  ATTRIBUTE?: { AttributeName: string; AttributeValue: string }[];
+  // NB: RIDB's actual field name is ATTRIBUTES (plural)
+  ATTRIBUTES?: { AttributeName: string; AttributeValue: string }[];
+  PERMITTEDEQUIPMENT?: { EquipmentName: string; MaxLength: number }[];
 }
 
 // ---------- API methods ----------

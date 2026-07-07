@@ -8,7 +8,8 @@ CREATE OR REPLACE FUNCTION search_campgrounds_nearby(
   p_radius_meters double precision,
   p_limit integer DEFAULT 50,
   p_site_type text DEFAULT NULL,
-  p_amenities text[] DEFAULT NULL
+  p_amenities text[] DEFAULT NULL,
+  p_rv_length integer DEFAULT NULL
 )
 RETURNS TABLE (
   id text, source text, name text, description text,
@@ -39,6 +40,10 @@ BEGIN
     ST_DWithin(c.location::geography, ST_MakePoint(p_lng, p_lat)::geography, p_radius_meters)
     AND (p_site_type IS NULL OR p_site_type = ANY(c.site_types))
     AND (p_amenities IS NULL OR p_amenities <@ c.amenities)
+    AND (p_rv_length IS NULL OR EXISTS (
+      SELECT 1 FROM campsites cs
+      WHERE cs.campground_id = c.id AND cs.max_vehicle_length >= p_rv_length
+    ))
   ORDER BY distance_miles
   LIMIT p_limit;
 END;

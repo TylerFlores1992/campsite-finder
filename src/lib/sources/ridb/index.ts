@@ -50,7 +50,7 @@ export class RIDBSource implements CampgroundSource {
   readonly id = 'ridb';
 
   async searchByRadius(params: SearchParams): Promise<Campground[]> {
-    const { lat, lng, radiusMiles, siteType, amenities, limit = 50 } = params;
+    const { lat, lng, radiusMiles, siteType, amenities, rvLength, limit = 50 } = params;
     const radiusMeters = radiusMiles * 1609.344;
 
     const supabase = getSupabaseAdmin();
@@ -61,6 +61,7 @@ export class RIDBSource implements CampgroundSource {
       p_limit: limit * 3, // fetch 3× so availability filtering has room
       p_site_type: siteType ?? null,
       p_amenities: amenities && amenities.length > 0 ? amenities : null,
+      p_rv_length: rvLength && rvLength > 0 ? Math.round(rvLength) : null,
     });
 
     if (error) throw new Error(`Radius search failed: ${error.message}`);

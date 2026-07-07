@@ -19,6 +19,8 @@ export async function GET(request: NextRequest) {
   const endDate = searchParams.get('endDate') ?? undefined;
   const siteType = searchParams.get('siteType') ?? undefined;
   const amenities = searchParams.get('amenities')?.split(',').filter(Boolean);
+  const rvLengthRaw = parseInt(searchParams.get('rvLength') ?? '', 10);
+  const rvLength = Number.isFinite(rvLengthRaw) && rvLengthRaw > 0 ? rvLengthRaw : undefined;
   const minNights = parseInt(searchParams.get('minNights') ?? '1', 10);
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '50', 10), 100);
   const offset = parseInt(searchParams.get('offset') ?? '0', 10);
@@ -31,6 +33,7 @@ export async function GET(request: NextRequest) {
     endDate,
     siteType,
     amenities,
+    rvLength,
     minNights,
     limit: limit * 3, // fetch extra so we can filter by availability
     offset,

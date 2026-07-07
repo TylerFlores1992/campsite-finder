@@ -25,6 +25,7 @@ interface SearchState {
 
 const DEFAULT_FILTERS: FilterState = {
   siteType: null,
+  rvLength: null,
   pets: false,
   ada: false,
   electric: false,
@@ -87,6 +88,9 @@ export default function HomePage() {
         ...(state.startDate ? { startDate: state.startDate } : {}),
         ...(state.endDate ? { endDate: state.endDate } : {}),
         ...(activeFilters.siteType ? { siteType: activeFilters.siteType } : {}),
+        ...(activeFilters.siteType === 'rv' && activeFilters.rvLength
+          ? { rvLength: String(activeFilters.rvLength) }
+          : {}),
         ...(amenities.length > 0 ? { amenities: amenities.join(',') } : {}),
       });
 

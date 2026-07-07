@@ -44,15 +44,40 @@ function deriveEnvironmentTags(name: string, description: string): string[] {
   return [...new Set(tags)];
 }
 
-// Normalize campsite type from RIDB's freeform strings
+// Normalize campsite type from RIDB's freeform strings.
+// Careful: "STANDARD NONELECTRIC" contains the substring "electric" — match
+// specific tokens, and check tent-only before RV.
 function normalizeSiteType(type: string): string {
   const t = type.toLowerCase();
-  if (t.includes('cabin') || t.includes('lodge') || t.includes('yurt') || t.includes('tent only')) {
-    return t.includes('cabin') ? 'cabin' : t.includes('yurt') ? 'yurt' : 'cabin';
-  }
-  if (t.includes('rv') || t.includes('full hookup') || t.includes('electric')) return 'rv';
+  if (t.includes('cabin') || t.includes('lodge') || t.includes('shelter')) return 'cabin';
+  if (t.includes('yurt')) return 'yurt';
   if (t.includes('group')) return 'group';
+  if (t.includes('tent only') || t.includes('walk to') || t.includes('hike to') || t.includes('boat in')) return 'tent';
+  if (t.includes('rv')) return 'rv';
+  // STANDARD sites are drive-in: usable by tents and (usually) RVs
+  if (t.includes('standard')) return 'standard';
   return 'tent';
+}
+
+/** Does the campsite accommodate an RV/trailer (per permitted equipment or type)? */
+function isRvCapable(cs: RIDBCampsite): boolean {
+  const equip = cs.PERMITTEDEQUIPMENT ?? [];
+  if (equip.some((e) => /rv|trailer|fifth wheel|camper|motorhome/i.test(e.EquipmentName))) return true;
+  return /(^|\s)rv(\s|$)/i.test(cs.CampsiteType);
+}
+
+/** Largest permitted vehicle/trailer length for a campsite, or null. */
+function maxEquipmentLength(cs: RIDBCampsite): number | null {
+  const equip = (cs.PERMITTEDEQUIPMENT ?? []).filter((e) =>
+    /rv|trailer|fifth wheel|camper|motorhome/i.test(e.EquipmentName)
+  );
+  const lengths = equip.map((e) => e.MaxLength).filter((n) => Number.isFinite(n) && n > 0);
+  return lengths.length > 0 ? Math.max(...lengths) : null;
+}
+
+/** True when the RIDB type string indicates electric hookups. */
+function isElectricSite(cs: RIDBCampsite): boolean {
+  return /(?<!non)electric/i.test(cs.CampsiteType.replace(/\s+/g, ''));
 }
 
 // Extract amenities from facility description + attributes
@@ -98,21 +123,11 @@ export function transformFacility(facility: RIDBFacility): Campground {
     (a) => a.AddressType === 'Default'
   ) ?? facility.FACILITYADDRESS?.[0];
 
-  // Derive site types from campsites if present
-  const siteTypes = [
-    ...new Set(
-      (facility.CAMPSITE ?? []).map((cs) => normalizeSiteType(cs.CampsiteType))
-    ),
-  ];
-
-  // Check pets from campsite attributes
-  const petsAllowed = (facility.CAMPSITE ?? []).some((cs) =>
-    (cs.ATTRIBUTE ?? []).some(
-      (a) =>
-        a.AttributeName.toLowerCase().includes('pet') &&
-        a.AttributeValue.toLowerCase() === 'yes'
-    )
-  );
+  // Initial guesses from the (shallow) embedded campsite list — the sync
+  // overwrites these via deriveCampgroundRollups once full campsites load.
+  const rollups = deriveCampgroundRollups(facility.CAMPSITE ?? []);
+  const siteTypes = rollups.siteTypes;
+  const petsAllowed = rollups.petsAllowed;
 
   return {
     id: facility.FacilityID,
@@ -146,7 +161,7 @@ export function transformFacility(facility: RIDBFacility): Campground {
 
 export function transformCampsite(cs: RIDBCampsite): Campsite {
   const attrs: Record<string, string> = {};
-  for (const a of cs.ATTRIBUTE ?? []) {
+  for (const a of cs.ATTRIBUTES ?? []) {
     attrs[a.AttributeName] = a.AttributeValue;
   }
 
@@ -154,9 +169,14 @@ export function transformCampsite(cs: RIDBCampsite): Campsite {
     ? parseInt(attrs['Max Num of People'], 10)
     : null;
 
-  const maxVehicleLength = attrs['Max Vehicle Length']
+  // Prefer permitted-equipment lengths (per-equipment, reliable); fall back to
+  // the "Max Vehicle Length" attribute, which is often 0/absent.
+  const attrVehicleLength = attrs['Max Vehicle Length']
     ? parseInt(attrs['Max Vehicle Length'], 10)
-    : null;
+    : NaN;
+  const maxVehicleLength =
+    maxEquipmentLength(cs) ??
+    (Number.isFinite(attrVehicleLength) && attrVehicleLength > 0 ? attrVehicleLength : null);
 
   const petsAllowed =
     attrs['Pets Allowed']?.toLowerCase() === 'yes' ||
@@ -169,10 +189,42 @@ export function transformCampsite(cs: RIDBCampsite): Campsite {
     type: normalizeSiteType(cs.CampsiteType),
     loop: cs.Loop || null,
     maxOccupants: isNaN(maxOccupants!) ? null : maxOccupants,
-    maxVehicleLength: isNaN(maxVehicleLength!) ? null : maxVehicleLength,
+    maxVehicleLength,
     adaAccessible: cs.CampsiteAccessible,
     petsAllowed,
     reservable: cs.CampsiteReservable,
     attributes: attrs,
   };
+}
+
+/**
+ * Campground-level rollups derived from full campsite records (the embedded
+ * CAMPSITE array on facility search responses lacks ATTRIBUTES/equipment, so
+ * these must come from the per-facility campsites endpoint).
+ */
+export function deriveCampgroundRollups(campsites: RIDBCampsite[]): {
+  siteTypes: string[];
+  petsAllowed: boolean;
+  hasElectric: boolean;
+} {
+  const siteTypes = new Set<string>();
+  let petsAllowed = false;
+  let hasElectric = false;
+
+  for (const cs of campsites) {
+    const t = normalizeSiteType(cs.CampsiteType);
+    if (t === 'standard') {
+      siteTypes.add('tent');
+      if (isRvCapable(cs)) siteTypes.add('rv');
+    } else {
+      siteTypes.add(t);
+      if (t !== 'rv' && isRvCapable(cs)) siteTypes.add('rv');
+    }
+    if (isElectricSite(cs)) hasElectric = true;
+    if ((cs.ATTRIBUTES ?? []).some(
+      (a) => a.AttributeName.toLowerCase().includes('pet') && a.AttributeValue.toLowerCase() === 'yes'
+    )) petsAllowed = true;
+  }
+
+  return { siteTypes: [...siteTypes], petsAllowed, hasElectric };
 }

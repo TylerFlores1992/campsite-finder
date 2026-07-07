@@ -74,7 +74,15 @@ export interface RCGridUnit {
   AllowWebBooking: boolean;
   IsWebViewable: boolean;
   UnitCategoryId: number;
+  UnitTypeId: number;
+  VehicleLength: number;
   Slices: Record<string, RCGridSlice>;
+}
+
+export interface RCUnitType {
+  UnitTypeId: number;
+  UnitCategoryId: number;
+  Name: string;
 }
 
 export interface RCGrid {
@@ -98,6 +106,11 @@ export async function fetchPlaces(): Promise<RCPlace[]> {
 
 export async function fetchFacilities(): Promise<RCFacility[]> {
   return rdrGet<RCFacility[]>('/fd/facilities');
+}
+
+/** Catalog of unit types (id → name like "Tent Only - Walk-In", "Hook Up (E)"). */
+export async function fetchUnitTypes(): Promise<RCUnitType[]> {
+  return rdrGet<RCUnitType[]>('/fd/unittypes');
 }
 
 /** Per-unit availability grid for a facility over an arbitrary date range. */

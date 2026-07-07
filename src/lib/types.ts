@@ -72,6 +72,7 @@ export interface SearchParams {
   endDate?: string;   // YYYY-MM-DD
   siteType?: string;
   amenities?: string[];
+  rvLength?: number; // minimum vehicle length the campground must accommodate
   minNights?: number;
   limit?: number;
   offset?: number;

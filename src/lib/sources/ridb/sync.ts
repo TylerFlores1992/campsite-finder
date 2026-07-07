@@ -1,7 +1,7 @@
 ﻿import { mutate } from '@/lib/db/client';
 import { searchCampgroundsNear, searchCampgroundsByState, getAllFacilityCampsites } from './client';
 import type { RIDBFacility } from './client';
-import { transformFacility, transformCampsite } from './transform';
+import { transformFacility, transformCampsite, deriveCampgroundRollups } from './transform';
 import type { SyncOptions, SyncResult } from '../types';
 import type { Campground, Campsite } from '@/lib/types';
 
@@ -103,12 +103,10 @@ async function syncFacility(
     await upsertCampground(campground);
     campgrounds++;
 
-    // Use campsite data already embedded in the full=true response.
-    // Only do a separate fetch if the facility returned no campsites.
-    let rawCampsites = facility.CAMPSITE ?? [];
-    if (rawCampsites.length === 0) {
-      rawCampsites = await getAllFacilityCampsites(facility.FacilityID);
-    }
+    // Always fetch campsites from the per-facility endpoint — the CAMPSITE
+    // array embedded in facility search responses omits ATTRIBUTES and
+    // PERMITTEDEQUIPMENT (vehicle lengths, pets, hookups).
+    const rawCampsites = await getAllFacilityCampsites(facility.FacilityID);
 
     for (const cs of rawCampsites) {
       try {
@@ -117,6 +115,22 @@ async function syncFacility(
       } catch (err) {
         errors.push(`Campsite ${cs.CampsiteID}: ${(err as Error).message}`);
       }
+    }
+
+    // Roll campsite-level facts up to the campground row (site types, pets,
+    // electric hookups) — the facility payload alone can't provide these.
+    if (rawCampsites.length > 0) {
+      const rollups = deriveCampgroundRollups(rawCampsites);
+      const extraAmenities = rollups.hasElectric ? ['electric hookup'] : [];
+      await mutate(
+        `UPDATE campgrounds SET
+           site_types = $1,
+           pets_allowed = $2,
+           amenities = (SELECT array_agg(DISTINCT a) FROM unnest(amenities || $3::text[]) a),
+           updated_at = NOW()
+         WHERE id = $4`,
+        [rollups.siteTypes, rollups.petsAllowed, extraAmenities, facility.FacilityID]
+      );
     }
   } catch (err) {
     errors.push(`Facility ${facility.FacilityID}: ${(err as Error).message}`);
