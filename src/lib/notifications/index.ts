@@ -104,7 +104,7 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
     const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3} more` : '';
     await sendSms({
       to: phone,
-      body: `⛺ ${payload.campgroundName} has availability: ${dates}${more}. Book: ${payload.bookingUrl}`,
+      body: `Camp Hawk: ⛺ ${payload.campgroundName} has availability: ${dates}${more}. Book now: ${payload.bookingUrl}. Reply STOP to opt out.`,
     });
     await logNotification(payload, 'sms', 'sent');
   } catch (err) {
