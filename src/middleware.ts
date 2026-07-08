@@ -5,6 +5,7 @@ const isPublicRoute = createRouteMatcher([
   '/',
   '/privacy',
   '/terms',
+  '/sms-opt-in',
   '/campground/(.*)',
   '/api/search(.*)',
   '/api/suggest(.*)',
