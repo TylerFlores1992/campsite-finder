@@ -93,11 +93,37 @@ export interface RCGrid {
   };
 }
 
-async function rdrGet<T>(path: string): Promise<T> {
+/**
+ * Fetch from the RDR API — directly when this host's IPs pass RC's WAF
+ * (Vercel, residential), or via our Vercel proxy when RC_PROXY_URL is set
+ * (Fly.io and GitHub runners get 403'd directly).
+ */
+async function rdrFetch<T>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+  const proxyUrl = process.env.RC_PROXY_URL;
+  const proxySecret = process.env.RC_PROXY_SECRET ?? process.env.SYNC_SECRET;
+
+  if (proxyUrl && proxySecret) {
+    const res = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-sync-secret': proxySecret },
+      body: JSON.stringify({ path, method: opts.method ?? 'GET', body: opts.body }),
+    });
+    if (!res.ok) throw new Error(`RC proxy ${path} → ${res.status}`);
+    return res.json() as Promise<T>;
+  }
+
   const base = await rdrBase();
-  const res = await fetch(`${base}${path}`, { headers: HEADERS });
-  if (!res.ok) throw new Error(`RC RDR GET ${path} → ${res.status}`);
+  const res = await fetch(`${base}${path}`, {
+    method: opts.method ?? 'GET',
+    headers: { ...HEADERS, ...(opts.body ? { 'Content-Type': 'application/json' } : {}) },
+    ...(opts.body ? { body: JSON.stringify(opts.body) } : {}),
+  });
+  if (!res.ok) throw new Error(`RC RDR ${opts.method ?? 'GET'} ${path} → ${res.status}`);
   return res.json() as Promise<T>;
+}
+
+async function rdrGet<T>(path: string): Promise<T> {
+  return rdrFetch<T>(path);
 }
 
 export async function fetchPlaces(): Promise<RCPlace[]> {
@@ -119,11 +145,9 @@ export async function fetchGrid(
   startDate: string, // YYYY-MM-DD
   endDate: string
 ): Promise<RCGrid> {
-  const base = await rdrBase();
-  const res = await fetch(`${base}/search/grid`, {
+  return rdrFetch<RCGrid>('/search/grid', {
     method: 'POST',
-    headers: { ...HEADERS, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+    body: {
       FacilityId: facilityId,
       StartDate: startDate,
       EndDate: endDate,
@@ -138,10 +162,8 @@ export async function fetchGrid(
       UnitSort: 'orderby',
       InSeasonOnly: true,
       WebOnly: true,
-    }),
+    },
   });
-  if (!res.ok) throw new Error(`RC RDR grid ${facilityId} → ${res.status}`);
-  return res.json() as Promise<RCGrid>;
 }
 
 /** Our campground id convention for ReserveCalifornia facilities. */

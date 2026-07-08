@@ -32,6 +32,7 @@ import { query, mutate } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
 import { hasRCAvailabilityInRange } from '../src/lib/availability/reservecalifornia';
 import { syncReserveCalifornia } from '../src/lib/sources/reservecalifornia/sync';
+import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
 import { dispatchNotifications } from '../src/lib/notifications';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 15_000);
@@ -293,15 +294,13 @@ async function rcSyncIfDue(): Promise<void> {
 async function main() {
   console.log(`[poller] starting — interval ${POLL_INTERVAL_MS / 1000}s, recgov concurrency ${RECGOV_CONCURRENCY}`);
 
-  // Startup probe: can this Fly machine reach ReserveCalifornia's API at all?
+  // Startup probe: verify the RC API is reachable via the configured path
+  // (direct, or through the Vercel proxy when RC_PROXY_URL is set).
   try {
-    const res = await fetch(
-      'https://california-rdr.prod.cali.rd12.recreation-management.tylerapp.com/rdr/fd/unittypes',
-      { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CampsiteFinder/1.0)', Accept: 'application/json' } }
-    );
-    console.log(`[poller] RC connectivity probe: HTTP ${res.status}`);
+    const types = await fetchUnitTypes();
+    console.log(`[poller] RC connectivity probe OK — ${types.length} unit types (via ${process.env.RC_PROXY_URL ? 'proxy' : 'direct'})`);
   } catch (err) {
-    console.error('[poller] RC connectivity probe failed:', (err as Error).message);
+    console.error('[poller] RC connectivity probe FAILED — RC watches will not alert:', (err as Error).message);
   }
 
   rcSyncIfDue();
