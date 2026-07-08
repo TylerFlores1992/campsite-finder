@@ -10,8 +10,9 @@ export async function sendSms(params: SmsParams): Promise<void> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const from = process.env.TWILIO_FROM_NUMBER;
+  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
 
-  if (!accountSid || !authToken || !from) {
+  if (!accountSid || !authToken || (!from && !messagingServiceSid)) {
     console.log('[sms] Twilio not configured — would have sent:');
     console.log(`  To: ${params.to}`);
     console.log(`  Body: ${params.body}`);
@@ -23,7 +24,13 @@ export async function sendSms(params: SmsParams): Promise<void> {
     return;
   }
 
-  const body = new URLSearchParams({ To: params.to, From: from, Body: params.body });
+  // Prefer the Messaging Service (carries the A2P campaign association);
+  // fall back to the raw From number.
+  const body = new URLSearchParams({
+    To: params.to,
+    Body: params.body,
+    ...(messagingServiceSid ? { MessagingServiceSid: messagingServiceSid } : { From: from! }),
+  });
 
   const response = await fetch(
     `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
