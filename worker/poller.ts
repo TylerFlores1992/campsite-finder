@@ -31,6 +31,7 @@ try {
 import { query, mutate } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
 import { hasRCAvailabilityInRange } from '../src/lib/availability/reservecalifornia';
+import { syncReserveCalifornia } from '../src/lib/sources/reservecalifornia/sync';
 import { dispatchNotifications } from '../src/lib/notifications';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 15_000);
@@ -263,8 +264,48 @@ async function cycle(): Promise<void> {
   );
 }
 
+// ReserveCalifornia's WAF blocks GitHub Actions runner IPs (403), so the
+// nightly RC refresh runs here on Fly instead. Runs when the last successful
+// RC sync is older than ~22h; checked hourly.
+const RC_SYNC_MAX_AGE_HOURS = 22;
+let rcSyncRunning = false;
+
+async function rcSyncIfDue(): Promise<void> {
+  if (rcSyncRunning) return;
+  rcSyncRunning = true;
+  try {
+    const row = await query<{ age_hours: number }>(
+      `SELECT EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 3600 AS age_hours
+       FROM sync_log WHERE source = 'reservecalifornia' AND facilities_synced > 0`
+    );
+    const age = row[0]?.age_hours;
+    if (age != null && age < RC_SYNC_MAX_AGE_HOURS) return;
+    console.log(`[poller] RC sync due (last success ${age?.toFixed(1) ?? 'never'}h ago) — starting`);
+    const result = await syncReserveCalifornia();
+    console.log(`[poller] RC sync finished: ${result.facilitiesSynced} campgrounds, ${result.campsitesSynced} units, ${result.errors.length} errors`);
+  } catch (err) {
+    console.error('[poller] RC sync failed:', err);
+  } finally {
+    rcSyncRunning = false;
+  }
+}
+
 async function main() {
   console.log(`[poller] starting — interval ${POLL_INTERVAL_MS / 1000}s, recgov concurrency ${RECGOV_CONCURRENCY}`);
+
+  // Startup probe: can this Fly machine reach ReserveCalifornia's API at all?
+  try {
+    const res = await fetch(
+      'https://california-rdr.prod.cali.rd12.recreation-management.tylerapp.com/rdr/fd/unittypes',
+      { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CampsiteFinder/1.0)', Accept: 'application/json' } }
+    );
+    console.log(`[poller] RC connectivity probe: HTTP ${res.status}`);
+  } catch (err) {
+    console.error('[poller] RC connectivity probe failed:', (err as Error).message);
+  }
+
+  rcSyncIfDue();
+  setInterval(rcSyncIfDue, 60 * 60 * 1000);
   // Run cycles back-to-back on a fixed cadence; skip a tick if the previous cycle is still running.
   let running = false;
   const tick = async () => {
