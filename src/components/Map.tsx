@@ -130,18 +130,18 @@ export default function CampgroundMap({ campgrounds, selectedId, onSelect, cente
       <style>{`
         .campsite-marker { cursor: pointer; }
         .marker-pin {
-          background: #16a34a;
-          color: white;
+          background: #2C5741;
+          color: #FAF7F2;
           border-radius: 50% 50% 50% 0;
           width: 32px; height: 32px;
           transform: rotate(-45deg);
           display: flex; align-items: center; justify-content: center;
-          box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+          box-shadow: 0 2px 6px rgba(31,61,46,0.35);
           transition: background 0.15s, transform 0.15s;
         }
         .marker-pin svg { transform: rotate(45deg); }
         .marker-pin:hover, .marker-pin.selected {
-          background: #15803d;
+          background: #E8873A;
           transform: rotate(-45deg) scale(1.2);
         }
       `}</style>

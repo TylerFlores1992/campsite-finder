@@ -208,7 +208,9 @@ export default function CampgroundDetailPage() {
             )}
           </div>
         ) : (
-          <div className="rounded-2xl h-48 bg-green-50 flex items-center justify-center text-5xl">⛺</div>
+          <div className="rounded-2xl h-48 bg-green-50 border border-green-100 flex items-center justify-center text-5xl">
+            ⛺
+          </div>
         )}
 
         {/* Header */}
@@ -240,7 +242,7 @@ export default function CampgroundDetailPage() {
               href={campground.reservationsUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="shrink-0 flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white font-medium text-sm rounded-xl hover:bg-green-700 transition-colors"
+              className="shrink-0 flex items-center gap-1.5 px-5 py-2.5 bg-amber-500 text-white font-display font-semibold text-sm rounded-xl shadow-md shadow-amber-500/25 hover:bg-amber-600 hover:shadow-lg transition-all"
             >
               {campground.source === 'reservecalifornia'
                 ? 'Book on ReserveCalifornia'

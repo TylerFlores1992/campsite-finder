@@ -1,14 +1,71 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #FAF7F2; /* warm cream */
+  --foreground: #2B2B2B; /* charcoal ink */
+}
+
+/*
+ * Camp Hawk brand tokens.
+ * The green/amber/blue/gray scales are REDEFINED so every existing
+ * Tailwind class site-wide picks up the outdoorsy palette:
+ *   green → deep forest · amber → sunset ember · blue → lake sky
+ *   gray → warm stone neutrals
+ */
+@theme {
+  /* forest greens */
+  --color-green-50: #EEF3EE;
+  --color-green-100: #DCE8DD;
+  --color-green-200: #BAD1BE;
+  --color-green-300: #8FB197;
+  --color-green-400: #5E8C6B;
+  --color-green-500: #3E6B4E;
+  --color-green-600: #2C5741;
+  --color-green-700: #1F3D2E;
+  --color-green-800: #182F24;
+  --color-green-900: #12241B;
+
+  /* sunset ember */
+  --color-amber-50: #FBF0E3;
+  --color-amber-100: #F8E3CC;
+  --color-amber-200: #F1CBA1;
+  --color-amber-300: #EFAF6C;
+  --color-amber-400: #EB9950;
+  --color-amber-500: #E8873A;
+  --color-amber-600: #D5732A;
+  --color-amber-700: #B45E1F;
+  --color-amber-800: #8F4A18;
+  --color-amber-900: #703A13;
+
+  /* lake / sky */
+  --color-blue-50: #EDF3F6;
+  --color-blue-100: #DCE9EF;
+  --color-blue-200: #B9D2DD;
+  --color-blue-300: #8FB4C4;
+  --color-blue-400: #6E9DB1;
+  --color-blue-500: #5B8FA8;
+  --color-blue-600: #4A7B92;
+  --color-blue-700: #3C637A;
+
+  /* warm stone neutrals */
+  --color-gray-50: #F6F2EB;
+  --color-gray-100: #EFE9DF;
+  --color-gray-200: #E3DBCE;
+  --color-gray-300: #CFC6B6;
+  --color-gray-400: #9A9284;
+  --color-gray-500: #756E62;
+  --color-gray-600: #57524A;
+  --color-gray-700: #423E38;
+  --color-gray-800: #33302B;
+  --color-gray-900: #2B2B2B;
+
+  --font-display: var(--font-sora);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
 }
 
@@ -18,11 +75,22 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-inter), Arial, Helvetica, sans-serif;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-sora), var(--font-inter), sans-serif;
+  letter-spacing: -0.01em;
 }
 
 input,
 select,
 textarea {
-  color: #171717;
+  color: #2B2B2B;
+}
+
+/* accessible focus without harsh default outlines */
+:focus-visible {
+  outline: 2px solid #5E8C6B;
+  outline-offset: 2px;
 }

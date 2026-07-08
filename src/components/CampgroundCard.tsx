@@ -46,8 +46,8 @@ export default function CampgroundCard({
 
   return (
     <div
-      className={`bg-white rounded-xl overflow-hidden shadow-sm border transition-all cursor-pointer hover:shadow-md ${
-        isSelected ? 'border-green-500 ring-1 ring-green-500' : 'border-gray-200'
+      className={`bg-white rounded-2xl overflow-hidden shadow-sm border transition-all duration-200 cursor-pointer hover:shadow-lg hover:-translate-y-0.5 ${
+        isSelected ? 'border-amber-500 ring-2 ring-amber-400/60' : 'border-gray-100'
       }`}
       onClick={onSelect}
     >
@@ -154,8 +154,8 @@ export default function CampgroundCard({
               </span>
             )}
             {campground.hasAvailability === false && (
-              <span className="inline-flex items-center gap-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">
-                Fully booked
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                Booked — watch it
               </span>
             )}
           </div>

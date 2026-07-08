@@ -9,6 +9,7 @@ import CampgroundCard from '@/components/CampgroundCard';
 import Filters, { FilterState } from '@/components/Filters';
 import QuickFilters, { getTonight, getThisWeekend } from '@/components/QuickFilters';
 import WatchesPanel from '@/components/WatchesPanel';
+import Logo from '@/components/Logo';
 import type { Campground } from '@/lib/types';
 
 // Load map only client-side
@@ -182,9 +183,7 @@ export default function HomePage() {
         <div className="max-w-screen-2xl mx-auto space-y-3">
           {/* Top row: brand + actions (wraps cleanly on mobile) */}
           <div className="flex items-center justify-between gap-2">
-            <h1 className="text-xl font-bold text-green-800 shrink-0 flex items-center gap-1.5">
-              <span className="text-2xl">🦅</span> Camp Hawk
-            </h1>
+            <Logo markSize={34} className="shrink-0" />
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
@@ -264,15 +263,16 @@ export default function HomePage() {
       {/* Main content */}
       <main className="flex-1 overflow-hidden max-w-screen-2xl mx-auto w-full">
         {!searchState ? (
-          <div className="h-full flex flex-col items-center justify-center text-center px-4 gap-5 overflow-y-auto py-8">
-            <div className="text-6xl">🦅</div>
-            <h2 className="text-3xl font-bold text-gray-800">Snag campsites the moment they open</h2>
-            <p className="text-gray-500 max-w-md">
-              Search thousands of campgrounds across US public lands and California State Parks —
-              and when your spot is booked solid, Camp Hawk watches it and alerts you within
-              seconds of a cancellation.
+          <div className="relative h-full flex flex-col items-center justify-center text-center px-4 gap-6 overflow-y-auto py-10">
+            <h2 className="font-display text-4xl sm:text-5xl font-extrabold text-green-700 max-w-2xl leading-[1.08]">
+              Get notified the instant a campsite opens up
+            </h2>
+            <p className="text-gray-500 max-w-md text-lg leading-relaxed">
+              Search thousands of campgrounds across US public lands and California State Parks.
+              When your spot is booked solid, CampHawk watches it around the clock and alerts you
+              within seconds of a cancellation.
             </p>
-            <div className="flex flex-wrap justify-center gap-3 max-w-lg">
+            <div className="flex flex-wrap justify-center gap-2.5 max-w-lg">
               {[
                 { icon: '⚡', label: 'Alerts in seconds, not hours' },
                 { icon: '🏕️', label: 'Recreation.gov + CA State Parks' },
@@ -280,19 +280,35 @@ export default function HomePage() {
               ].map((f) => (
                 <span
                   key={f.label}
-                  className="inline-flex items-center gap-1.5 text-sm text-gray-600 bg-white border border-gray-200 rounded-full px-3 py-1.5 shadow-sm"
+                  className="inline-flex items-center gap-1.5 text-sm text-gray-600 bg-white border border-gray-100 rounded-full px-3.5 py-1.5 shadow-sm"
                 >
                   <span>{f.icon}</span> {f.label}
                 </span>
               ))}
             </div>
-            <p className="text-sm text-gray-400">
-              Or hit{' '}
-              <button onClick={handleTonight} className="text-amber-600 font-medium underline">
-                Available tonight
-              </button>{' '}
-              to find something right now.
-            </p>
+            <button
+              onClick={handleTonight}
+              className="mt-1 px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-display font-semibold text-base shadow-md shadow-amber-500/25 transition-all hover:shadow-lg hover:-translate-y-0.5"
+            >
+              ⛺ Find a site for tonight
+            </button>
+
+            {/* ridgeline accent */}
+            <svg
+              viewBox="0 0 1440 190"
+              preserveAspectRatio="none"
+              className="pointer-events-none absolute bottom-10 left-0 w-full h-36 opacity-[0.08]"
+              aria-hidden="true"
+            >
+              <path d="M0 190V120l110-60 130 75 105-95 150 105 120-70 145 85 110-105 160 115 105-60 135 80 70-45v145H0z" fill="#1F3D2E" />
+              <path d="M0 190v-40l150-70 160 85 130-55 170 75 150-90 180 95 140-60 170 70 90-35 100 25v0H0z" fill="#2C5741" opacity="0.7" />
+            </svg>
+
+            <footer className="absolute bottom-3 left-0 right-0 flex items-center justify-center gap-4 text-xs text-gray-400">
+              <span>© {new Date().getFullYear()} CampHawk</span>
+              <a href="/terms" className="hover:text-green-700 underline-offset-2 hover:underline">Terms</a>
+              <a href="/privacy" className="hover:text-green-700 underline-offset-2 hover:underline">Privacy</a>
+            </footer>
           </div>
         ) : (
           <div
@@ -335,9 +351,15 @@ export default function HomePage() {
                     {error}
                   </div>
                 ) : campgrounds.length === 0 ? (
-                  <div className="text-center py-12 text-gray-500">
-                    <p className="text-lg font-medium">No campgrounds found</p>
-                    <p className="text-sm mt-1">Try expanding your radius or adjusting filters.</p>
+                  <div className="text-center py-14 px-6">
+                    <div className="text-5xl mb-3">🌲</div>
+                    <p className="font-display text-lg font-semibold text-gray-700">
+                      Nothing out here but trees
+                    </p>
+                    <p className="text-sm mt-1.5 text-gray-500 max-w-xs mx-auto">
+                      Try a wider radius, different dates, or fewer filters — or search another
+                      area entirely.
+                    </p>
                   </div>
                 ) : (
                   <>

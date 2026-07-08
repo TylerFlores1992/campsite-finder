@@ -1,9 +1,12 @@
-export const metadata = { title: 'Terms of Service — Camp Hawk' };
+import Logo from '@/components/Logo';
+
+export const metadata = { title: 'Terms of Service — CampHawk' };
 
 export default function TermsPage() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-10 text-gray-800">
-      <h1 className="text-2xl font-bold mb-1">Camp Hawk Terms of Service</h1>
+      <a href="/" className="inline-block mb-6"><Logo markSize={30} /></a>
+      <h1 className="text-2xl font-bold mb-1">CampHawk Terms of Service</h1>
       <p className="text-sm text-gray-500 mb-8">Last updated: July 7, 2026</p>
 
       <div className="space-y-6 text-sm leading-relaxed">
