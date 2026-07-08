@@ -3,6 +3,8 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 // Protect all routes except public ones
 const isPublicRoute = createRouteMatcher([
   '/',
+  '/privacy',
+  '/terms',
   '/campground/(.*)',
   '/api/search(.*)',
   '/api/suggest(.*)',
