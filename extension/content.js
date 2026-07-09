@@ -61,8 +61,12 @@
   }
 
   function nextMonthButton() {
-    return Array.from(document.querySelectorAll('button[aria-label]')).find((b) =>
-      /next month|next|forward/i.test(b.getAttribute('aria-label') || '')
+    const btns = Array.from(document.querySelectorAll('button[aria-label]'));
+    // The calendar arrow is labeled exactly "Next" — must NOT match the photo
+    // slideshow's "Next image" button, which appears earlier in the DOM.
+    return (
+      btns.find((b) => (b.getAttribute('aria-label') || '').trim().toLowerCase() === 'next') ||
+      btns.find((b) => /next month|forward/i.test(b.getAttribute('aria-label') || ''))
     );
   }
 
