@@ -141,23 +141,36 @@
     );
   }
 
-  // rec.gov fetches availability after initial page load — wait for the
-  // calendar's date buttons to actually render before we try to click them.
+  // rec.gov fetches availability after page load and cells briefly render
+  // disabled while the data paints. Wait until at least one cell shows a real
+  // status ("- Available"/"- Checkout"/"- Current Reservation"), not just any
+  // date — otherwise we misread a still-loading cell as booked.
   async function waitForCalendar() {
     for (let i = 0; i < 40; i++) {
-      if (Number.isFinite(displayedRange().max)) return true;
+      const painted = labeled().some((b) =>
+        /, 20\d\d\b.*-\s*(available|checkout|current reservation|reserved|not yet released)/i.test(
+          b.getAttribute('aria-label') || ''
+        )
+      );
+      if (painted) return true;
       await sleep(300);
     }
-    return false;
+    return Number.isFinite(displayedRange().max); // fall back to "any cell exists"
   }
 
   // --- 3. select dates + add to cart (honest reporting) ---------------------
   async function run(auto) {
     setStatus('Loading availability…');
     if (!(await waitForCalendar())) return setStatus('Availability calendar didn’t load — book manually.');
+    await sleep(400); // small settle so every cell's status is final
 
     setStatus('Finding your dates…');
-    const checkinBtn = await locate(dates.checkin);
+    let checkinBtn = await locate(dates.checkin);
+    // One retry: a cell can still be transitioning from disabled → available.
+    if (checkinBtn && isBooked(checkinBtn)) {
+      await sleep(1000);
+      checkinBtn = await locate(dates.checkin);
+    }
     if (!checkinBtn) return setStatus('Couldn’t find these dates on the calendar — book manually.');
     if (isBooked(checkinBtn)) return setStatus('This site looks booked for those dates now.');
 
