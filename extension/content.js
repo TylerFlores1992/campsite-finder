@@ -118,10 +118,22 @@
     );
   }
 
+  // rec.gov fetches availability after initial page load — wait for the
+  // calendar's date buttons to actually render before we try to click them.
+  async function waitForCalendar() {
+    for (let i = 0; i < 40; i++) {
+      if (Number.isFinite(displayedRange().max)) return true;
+      await sleep(300);
+    }
+    return false;
+  }
+
   // --- 3. select dates + add to cart (honest reporting) ---------------------
   async function run(auto) {
-    setStatus('Finding your dates…');
+    setStatus('Loading availability…');
+    if (!(await waitForCalendar())) return setStatus('Availability calendar didn’t load — book manually.');
 
+    setStatus('Finding your dates…');
     const checkinBtn = await locate(dates.checkin);
     if (!checkinBtn) return setStatus('Couldn’t find these dates on the calendar — book manually.');
     if (isBooked(checkinBtn)) return setStatus('This site looks booked for those dates now.');
