@@ -53,18 +53,38 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // rec.gov's calendar day cells are React-aria pressable <div role="button">
+  // (NOT <button>), named via aria-label. Arrows are real <button>s. So we
+  // query on aria-label across all elements.
+  function labeled() {
+    return Array.from(document.querySelectorAll('[aria-label]'));
+  }
+
   function dateButton(iso) {
     const needle = ariaDate(iso);
-    return Array.from(document.querySelectorAll('button[aria-label]')).find((b) =>
-      (b.getAttribute('aria-label') || '').includes(needle)
-    );
+    return labeled().find((b) => (b.getAttribute('aria-label') || '').includes(needle));
+  }
+
+  // React-aria's usePress listens for pointer events, not synthetic clicks — a
+  // bare .click() is ignored. Dispatch a full pointerdown→pointerup→click press.
+  function press(el) {
+    el.scrollIntoView({ block: 'center', behavior: 'instant' });
+    const r = el.getBoundingClientRect();
+    const o = {
+      bubbles: true, cancelable: true, composed: true,
+      clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+      pointerId: 1, pointerType: 'mouse', button: 0, isPrimary: true,
+    };
+    el.dispatchEvent(new PointerEvent('pointerdown', { ...o, buttons: 1 }));
+    el.dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: o.clientX, clientY: o.clientY }));
   }
 
   // Calendar arrows are labeled exactly "Next"/"Previous" — must NOT match the
   // photo slideshow's "Next image" button.
   function arrow(word) {
-    const btns = Array.from(document.querySelectorAll('button[aria-label]'));
-    return btns.find((b) => (b.getAttribute('aria-label') || '').trim().toLowerCase() === word);
+    // Exact "next"/"previous" — excludes the slideshow's "Next image" button.
+    return labeled().find((b) => (b.getAttribute('aria-label') || '').trim().toLowerCase() === word);
   }
 
   function ym(iso) {
@@ -75,7 +95,7 @@
   // Min/max year-month currently rendered in the calendar (from date aria-labels).
   function displayedRange() {
     let min = Infinity, max = -Infinity;
-    for (const b of document.querySelectorAll('button[aria-label]')) {
+    for (const b of labeled()) {
       const m = (b.getAttribute('aria-label') || '').match(/(\w+) \d{1,2}, (\d{4})/);
       if (!m) continue;
       const mi = MONTHS.indexOf(m[1]);
@@ -98,23 +118,26 @@
       if (target > max && Number.isFinite(max)) btn = arrow('next');
       else if (target < min && Number.isFinite(min)) btn = arrow('previous');
       else return null; // target month is displayed but the day isn't a button
-      if (!btn || btn.disabled) return null;
-      btn.click();
+      if (!btn || btn.getAttribute('aria-disabled') === 'true') return null;
+      press(btn);
       await sleep(550);
     }
     return null;
   }
 
-  function isBooked(btn) {
-    const label = (btn.getAttribute('aria-label') || '').toLowerCase();
-    return btn.disabled || /reserved|current reservation|not available|walk-up/.test(label);
+  function isBooked(el) {
+    const label = (el.getAttribute('aria-label') || '').toLowerCase();
+    return (
+      el.getAttribute('aria-disabled') === 'true' ||
+      /reserved|current reservation|not available|not yet released|walk-up|walk up/.test(label)
+    );
   }
 
   // The primary CTA near the price relabels itself as dates are chosen:
-  // "Enter Dates" → "Add to Cart" / "Book Now".
+  // "Enter Dates" → "Add to Cart".
   function ctaButton() {
-    return Array.from(document.querySelectorAll('button')).find((b) =>
-      /add to cart|book now|reserve|enter dates/i.test((b.textContent || '').trim())
+    return Array.from(document.querySelectorAll('button, [role="button"]')).find((b) =>
+      /add to cart|book now|reserve/i.test((b.textContent || '').trim())
     );
   }
 
@@ -138,22 +161,19 @@
     if (!checkinBtn) return setStatus('Couldn’t find these dates on the calendar — book manually.');
     if (isBooked(checkinBtn)) return setStatus('This site looks booked for those dates now.');
 
-    checkinBtn.click();
+    press(checkinBtn);
     await sleep(500);
-    // checkout uses the night AFTER the last night; rec.gov's range picker wants
-    // the checkout day itself, which our fragment already carries.
+    // rec.gov's range picker wants the checkout day itself, which our fragment carries.
     const checkoutBtn = await locate(dates.checkout);
-    if (checkoutBtn && !isBooked(checkoutBtn)) { checkoutBtn.click(); await sleep(600); }
+    if (checkoutBtn && !isBooked(checkoutBtn)) { press(checkoutBtn); await sleep(700); }
 
-    setStatus('Dates selected.');
     if (!auto) return setStatus('Dates selected — review and add to cart on the page.');
 
-    // Auto path: only click the CTA if it has actually become a booking action.
-    await sleep(700);
+    // Auto path: only press the CTA once it has become a real booking action.
+    await sleep(600);
     const cta = ctaButton();
-    const label = (cta?.textContent || '').trim().toLowerCase();
-    if (cta && !cta.disabled && /add to cart|book now|reserve/.test(label)) {
-      cta.click();
+    if (cta && cta.getAttribute('aria-disabled') !== 'true' && !cta.disabled) {
+      press(cta);
       setStatus('✓ Sent to cart — finish checkout on the page.');
     } else {
       setStatus('Dates selected. Use the booking button on the page to finish.');
