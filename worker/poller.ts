@@ -119,37 +119,44 @@ async function claimNotification(watchId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+interface WatchResult {
+  dates: string[];
+  campsiteId: string | null;
+  campsiteName: string | null;
+}
+
 /**
  * Dates a single campsite can host the required consecutive stay within the
  * watch window. Nights open at different sites don't combine into a bookable
- * stay, so we check per site and return the first qualifying run's dates.
+ * stay, so we check per site and return the first qualifying run's dates —
+ * along with that site's id/name, so the alert can link straight to it.
  */
 function availableDatesForWatch(
   watch: WatchRow,
   monthData: Map<string, Awaited<ReturnType<typeof getAvailabilityFromRecGov>>>
-): string[] {
+): WatchResult {
   const nights = nightsOfRange(watch.start_date, watch.end_date);
   const nightSet = new Set(nights);
   const required = Math.max(watch.min_nights, nights.length);
 
-  const bySite = new Map<string, Set<string>>();
+  const bySite = new Map<string, { open: Set<string>; name: string | null }>();
   for (const month of monthsForRange(watch.start_date, watch.end_date)) {
     const avail = monthData.get(`${watch.campground_id}|${month}`);
     if (!avail) continue;
     for (const cs of avail.campsites) {
-      const open = bySite.get(cs.campsiteId) ?? new Set<string>();
+      const entry = bySite.get(cs.campsiteId) ?? { open: new Set<string>(), name: cs.campsiteName };
       for (const day of cs.availability) {
-        if (day.status === 'available' && nightSet.has(day.date)) open.add(day.date);
+        if (day.status === 'available' && nightSet.has(day.date)) entry.open.add(day.date);
       }
-      bySite.set(cs.campsiteId, open);
+      bySite.set(cs.campsiteId, entry);
     }
   }
 
-  for (const open of bySite.values()) {
-    const dates = [...open].sort();
-    if (hasConsecutiveRun(dates, required)) return dates;
+  for (const [campsiteId, entry] of bySite) {
+    const dates = [...entry.open].sort();
+    if (hasConsecutiveRun(dates, required)) return { dates, campsiteId, campsiteName: entry.name };
   }
-  return [];
+  return { dates: [], campsiteId: null, campsiteName: null };
 }
 
 /** True if `dates` contains a run of at least minNights consecutive days. */
@@ -219,11 +226,11 @@ async function cycle(): Promise<void> {
 
   let notified = 0;
   for (const watch of watches) {
-    const openDates =
+    const result: WatchResult =
       watch.campground_source === 'reservecalifornia'
-        ? rcResults.get(watch.id) ?? []
+        ? { dates: rcResults.get(watch.id) ?? [], campsiteId: null, campsiteName: null }
         : availableDatesForWatch(watch, monthData);
-    if (openDates.length === 0) continue;
+    if (result.dates.length === 0) continue;
 
     if (!(await claimNotification(watch.id))) {
       console.log(`[poller] watch ${watch.id}: availability found but already notified — skipping`);
@@ -231,7 +238,7 @@ async function cycle(): Promise<void> {
     }
 
     console.log(
-      `[poller] AVAILABILITY: ${watch.campground_name} (${watch.campground_id}) — ${openDates.join(', ')} — notifying watch ${watch.id}`
+      `[poller] AVAILABILITY: ${watch.campground_name} (${watch.campground_id}) — ${result.dates.join(', ')} — notifying watch ${watch.id}`
     );
     try {
       await dispatchNotifications({
@@ -239,11 +246,14 @@ async function cycle(): Promise<void> {
         watchId: watch.id,
         campgroundId: watch.campground_id,
         campgroundName: watch.campground_name,
-        availableDates: openDates,
+        availableDates: result.dates,
         bookingUrl:
           watch.campground_source === 'reservecalifornia'
             ? watch.reservations_url ?? 'https://www.reservecalifornia.com/'
-            : `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
+            : result.campsiteId
+              ? `https://www.recreation.gov/camping/campsites/${result.campsiteId}`
+              : `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
+        campsiteName: result.campsiteName,
         startDate: watch.start_date,
         endDate: watch.end_date,
       });

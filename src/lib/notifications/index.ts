@@ -10,6 +10,8 @@ export interface NotificationPayload {
   campgroundName: string;
   availableDates: string[];
   bookingUrl: string;
+  /** Specific site name/number, when the detection path knows which site is open. */
+  campsiteName?: string | null;
   startDate: string;
   endDate: string;
 }
@@ -102,9 +104,10 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
   try {
     const dates = payload.availableDates.slice(0, 3).join(', ');
     const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3} more` : '';
+    const site = payload.campsiteName ? ` — Site ${payload.campsiteName}` : '';
     await sendSms({
       to: phone,
-      body: `Camp Hawk: ⛺ ${payload.campgroundName} has availability: ${dates}${more}. Book now: ${payload.bookingUrl}. Reply STOP to opt out.`,
+      body: `Camp Hawk: ⛺ ${payload.campgroundName}${site} has availability: ${dates}${more}. Book now: ${payload.bookingUrl}. Reply STOP to opt out.`,
     });
     await logNotification(payload, 'sms', 'sent');
   } catch (err) {
@@ -125,7 +128,7 @@ function buildEmailHtml(payload: NotificationPayload): string {
   <p style="margin-top:0;color:#555">A cancellation opened up at a campground you're watching.</p>
 
   <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:20px;margin:20px 0">
-    <h3 style="margin:0 0 8px">${payload.campgroundName}</h3>
+    <h3 style="margin:0 0 8px">${payload.campgroundName}${payload.campsiteName ? ` — Site ${payload.campsiteName}` : ''}</h3>
     <p style="margin:0 0 12px;color:#555">
       Your watch: <strong>${payload.startDate}</strong> → <strong>${payload.endDate}</strong>
     </p>
@@ -137,7 +140,7 @@ function buildEmailHtml(payload: NotificationPayload): string {
 
   <a href="${payload.bookingUrl}"
      style="display:inline-block;background:#16a34a;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">
-    Book Now on Recreation.gov →
+    ${payload.campsiteName ? 'View Site & Book →' : 'Book Now on Recreation.gov →'}
   </a>
 
   <p style="margin-top:32px;font-size:12px;color:#999">
@@ -174,6 +177,7 @@ export async function buildPayloadFromWebhook(
     availableDates: dates,
     bookingUrl:
       event.reservation_url || `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
+    campsiteName: event.campsite_name || null,
     startDate: watch.start_date,
     endDate: watch.end_date,
   };
