@@ -60,25 +60,47 @@
     );
   }
 
-  function nextMonthButton() {
+  // Calendar arrows are labeled exactly "Next"/"Previous" — must NOT match the
+  // photo slideshow's "Next image" button.
+  function arrow(word) {
     const btns = Array.from(document.querySelectorAll('button[aria-label]'));
-    // The calendar arrow is labeled exactly "Next" — must NOT match the photo
-    // slideshow's "Next image" button, which appears earlier in the DOM.
-    return (
-      btns.find((b) => (b.getAttribute('aria-label') || '').trim().toLowerCase() === 'next') ||
-      btns.find((b) => /next month|forward/i.test(b.getAttribute('aria-label') || ''))
-    );
+    return btns.find((b) => (b.getAttribute('aria-label') || '').trim().toLowerCase() === word);
   }
 
-  // Find a date button, paging the calendar forward if it's not rendered yet.
+  function ym(iso) {
+    const [y, m] = iso.split('-').map(Number);
+    return y * 100 + m;
+  }
+
+  // Min/max year-month currently rendered in the calendar (from date aria-labels).
+  function displayedRange() {
+    let min = Infinity, max = -Infinity;
+    for (const b of document.querySelectorAll('button[aria-label]')) {
+      const m = (b.getAttribute('aria-label') || '').match(/(\w+) \d{1,2}, (\d{4})/);
+      if (!m) continue;
+      const mi = MONTHS.indexOf(m[1]);
+      if (mi < 0) continue;
+      const v = Number(m[2]) * 100 + (mi + 1);
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    return { min, max };
+  }
+
+  // Find a date button, paging the calendar toward it (forward OR back).
   async function locate(iso) {
-    for (let i = 0; i < 6; i++) {
+    const target = ym(iso);
+    for (let i = 0; i < 16; i++) {
       const b = dateButton(iso);
       if (b) return b;
-      const next = nextMonthButton();
-      if (!next || next.disabled) break;
-      next.click();
-      await sleep(350);
+      const { min, max } = displayedRange();
+      let btn = null;
+      if (target > max && Number.isFinite(max)) btn = arrow('next');
+      else if (target < min && Number.isFinite(min)) btn = arrow('previous');
+      else return null; // target month is displayed but the day isn't a button
+      if (!btn || btn.disabled) return null;
+      btn.click();
+      await sleep(550);
     }
     return null;
   }
