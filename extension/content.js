@@ -40,62 +40,85 @@
   const dates = readFragmentDates() || stashedDates();
   if (!dates) return; // not a CampHawk-originated visit — do nothing
 
-  // --- 2. React-safe field setter -------------------------------------------
-  // Setting input.value directly doesn't notify React. Use the native setter
-  // then dispatch a bubbling input event.
-  function setReactValue(el, value) {
-    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-    setter ? setter.call(el, value) : (el.value = value);
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+  // --- 2. calendar helpers ---------------------------------------------------
+  // rec.gov renders availability as a grid of <button> elements whose
+  // aria-label looks like "Friday, August 14, 2026 - Available" (or
+  // "- Current Reservation" when booked). We match by the date portion.
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+  function ariaDate(iso) {
+    const [y, m, d] = iso.split('-').map(Number);
+    return `${MONTHS[m - 1]} ${d}, ${y}`;
   }
 
-  function fmt(iso) {
-    // rec.gov's date fields render MM/DD/YYYY
-    const [y, mo, d] = iso.split('-');
-    return `${mo}/${d}/${y}`;
-  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // --- 3. best-effort autofill + add-to-cart --------------------------------
-  function fillDates() {
-    let filled = 0;
-    const inputs = Array.from(document.querySelectorAll('input'));
-    const checkin = inputs.find((i) =>
-      /check.?in|arriv|start/i.test((i.getAttribute('aria-label') || '') + (i.id || '') + (i.name || ''))
+  function dateButton(iso) {
+    const needle = ariaDate(iso);
+    return Array.from(document.querySelectorAll('button[aria-label]')).find((b) =>
+      (b.getAttribute('aria-label') || '').includes(needle)
     );
-    const checkout = inputs.find((i) =>
-      /check.?out|depart|end/i.test((i.getAttribute('aria-label') || '') + (i.id || '') + (i.name || ''))
-    );
-    if (checkin) { setReactValue(checkin, fmt(dates.checkin)); filled++; }
-    if (checkout) { setReactValue(checkout, fmt(dates.checkout)); filled++; }
-    return filled;
   }
 
-  function clickAddToCart() {
-    const btn = Array.from(document.querySelectorAll('button, a')).find((b) =>
-      /add to cart|book (this )?site|reserve/i.test(b.textContent || '')
+  function nextMonthButton() {
+    return Array.from(document.querySelectorAll('button[aria-label]')).find((b) =>
+      /next month|next|forward/i.test(b.getAttribute('aria-label') || '')
     );
-    if (btn && !btn.disabled) { btn.click(); return true; }
-    return false;
   }
 
+  // Find a date button, paging the calendar forward if it's not rendered yet.
+  async function locate(iso) {
+    for (let i = 0; i < 6; i++) {
+      const b = dateButton(iso);
+      if (b) return b;
+      const next = nextMonthButton();
+      if (!next || next.disabled) break;
+      next.click();
+      await sleep(350);
+    }
+    return null;
+  }
+
+  function isBooked(btn) {
+    const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+    return btn.disabled || /reserved|current reservation|not available|walk-up/.test(label);
+  }
+
+  // The primary CTA near the price relabels itself as dates are chosen:
+  // "Enter Dates" → "Add to Cart" / "Book Now".
+  function ctaButton() {
+    return Array.from(document.querySelectorAll('button')).find((b) =>
+      /add to cart|book now|reserve|enter dates/i.test((b.textContent || '').trim())
+    );
+  }
+
+  // --- 3. select dates + add to cart (honest reporting) ---------------------
   async function run(auto) {
-    setStatus('Filling your dates…');
-    const filled = fillDates();
-    if (auto) {
-      // Give rec.gov's grid a moment to react to the date change before booking.
-      await new Promise((r) => setTimeout(r, 1200));
-      const clicked = clickAddToCart();
-      setStatus(
-        clicked
-          ? '✓ Added to cart — finish checkout on the page.'
-          : filled
-            ? 'Dates filled. Click “Add to cart” on the page.'
-            : 'Couldn’t auto-fill — book manually below.'
-      );
+    setStatus('Finding your dates…');
+
+    const checkinBtn = await locate(dates.checkin);
+    if (!checkinBtn) return setStatus('Couldn’t find these dates on the calendar — book manually.');
+    if (isBooked(checkinBtn)) return setStatus('This site looks booked for those dates now.');
+
+    checkinBtn.click();
+    await sleep(500);
+    // checkout uses the night AFTER the last night; rec.gov's range picker wants
+    // the checkout day itself, which our fragment already carries.
+    const checkoutBtn = await locate(dates.checkout);
+    if (checkoutBtn && !isBooked(checkoutBtn)) { checkoutBtn.click(); await sleep(600); }
+
+    setStatus('Dates selected.');
+    if (!auto) return setStatus('Dates selected — review and add to cart on the page.');
+
+    // Auto path: only click the CTA if it has actually become a booking action.
+    await sleep(700);
+    const cta = ctaButton();
+    const label = (cta?.textContent || '').trim().toLowerCase();
+    if (cta && !cta.disabled && /add to cart|book now|reserve/.test(label)) {
+      cta.click();
+      setStatus('✓ Sent to cart — finish checkout on the page.');
     } else {
-      setStatus(filled ? 'Dates filled — review and add to cart.' : 'Couldn’t find the date fields on this page.');
+      setStatus('Dates selected. Use the booking button on the page to finish.');
     }
   }
 
