@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <div class="mark" aria-hidden="true">🦅</div>
+      <div>
+        <h1>CampHawk Quick Cart</h1>
+        <p class="sub">Auto-add to cart on Recreation.gov</p>
+      </div>
+    </header>
+
+    <div class="disclaimer" id="disclaimer">
+      <strong>⚠️ Read before enabling</strong>
+      <p>
+        This feature fills your dates and clicks <em>Add to cart</em> for you when you open a
+        CampHawk alert link — running entirely in <strong>this browser</strong>, in your own
+        signed-in Recreation.gov session. CampHawk never sees or stores your Recreation.gov login.
+      </p>
+      <p>
+        <strong>Automating Recreation.gov may violate its Terms of Service and can get your
+        Recreation.gov account suspended or banned.</strong> You use this feature entirely at your
+        own risk. CampHawk is not responsible for any action taken against your account.
+      </p>
+      <label class="accept">
+        <input type="checkbox" id="accept" />
+        <span>I understand the risk and accept full responsibility.</span>
+      </label>
+    </div>
+
+    <div class="toggle-row">
+      <div>
+        <div class="toggle-label">Auto add-to-cart</div>
+        <div class="toggle-state" id="state">Off</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="enabled" disabled />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <p class="foot">
+      Off by default. Turn it off any time to go back to a normal (manual) checkout.
+    </p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

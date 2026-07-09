@@ -251,7 +251,9 @@ async function cycle(): Promise<void> {
           watch.campground_source === 'reservecalifornia'
             ? watch.reservations_url ?? 'https://www.reservecalifornia.com/'
             : result.campsiteId
-              ? `https://www.recreation.gov/camping/campsites/${result.campsiteId}`
+              // #camphawk fragment carries the dates for the browser extension's
+              // optional autofill. Fragments are never sent to rec.gov's server.
+              ? `https://www.recreation.gov/camping/campsites/${result.campsiteId}#camphawk=${watch.start_date}_${watch.end_date}`
               : `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
         campsiteName: result.campsiteName,
         startDate: watch.start_date,

@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "CampHawk Quick Cart",
+  "version": "0.1.0",
+  "description": "When you tap a CampHawk alert, optionally auto-fill dates and add the site to your cart on Recreation.gov — in your own browser session.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.recreation.gov/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "CampHawk Quick Cart"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.recreation.gov/*"],
+      "run_at": "document_idle",
+      "js": ["content.js"]
+    }
+  ]
+}
