@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "description": "When you tap a CampHawk alert, optionally auto-fill dates and add the site to your cart on Recreation.gov — in your own browser session.",
   "permissions": ["storage"],
-  "host_permissions": ["https://www.recreation.gov/*"],
+  "host_permissions": [
+    "https://www.recreation.gov/*",
+    "https://www.reservecalifornia.com/*",
+    "https://rdapi.reservecalifornia.com/*"
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "CampHawk Quick Cart"
@@ -14,6 +18,11 @@
       "matches": ["https://www.recreation.gov/*"],
       "run_at": "document_idle",
       "js": ["content.js"]
+    },
+    {
+      "matches": ["https://www.reservecalifornia.com/*"],
+      "run_at": "document_idle",
+      "js": ["content-rc.js"]
     }
   ]
 }

@@ -78,6 +78,36 @@ export async function hasRCAvailabilityInRange(
   return false;
 }
 
+/**
+ * Like hasRCAvailabilityInRange, but returns the specific open unit so an alert
+ * can deep-link straight to booking it. null if nothing qualifies.
+ */
+export async function findRCOpenUnit(
+  campgroundId: string,
+  startDate: string,
+  endDate: string,
+  minNights = 1
+): Promise<{ unitId: number; sleepingUnitId: number | null } | null> {
+  const facilityId = rcFacilityIdFromCampgroundId(campgroundId);
+  if (!Number.isFinite(facilityId)) return null;
+  try {
+    const grid = await fetchGrid(facilityId, startDate, endDate);
+    for (const unit of Object.values(grid.Facility?.Units ?? {})) {
+      if (!unit.AllowWebBooking) continue;
+      const dates = Object.values(unit.Slices ?? {})
+        .filter((s) => s.IsFree && !s.IsBlocked && s.Date >= startDate && s.Date < endDate)
+        .map((s) => s.Date)
+        .sort();
+      if (hasConsecutiveRun(dates, minNights)) {
+        return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null };
+      }
+    }
+  } catch (err) {
+    console.warn(`[RC availability] findRCOpenUnit failed for ${campgroundId}:`, (err as Error).message);
+  }
+  return null;
+}
+
 /** Month calendar in the same shape the recgov module returns. */
 export async function getRCAvailabilityForMonth(
   campgroundId: string,

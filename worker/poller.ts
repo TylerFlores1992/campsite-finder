@@ -30,7 +30,7 @@ try {
 
 import { query, mutate } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
-import { hasRCAvailabilityInRange } from '../src/lib/availability/reservecalifornia';
+import { findRCOpenUnit } from '../src/lib/availability/reservecalifornia';
 import { syncReserveCalifornia } from '../src/lib/sources/reservecalifornia/sync';
 import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
 import { dispatchNotifications } from '../src/lib/notifications';
@@ -211,24 +211,25 @@ async function cycle(): Promise<void> {
     RECGOV_CONCURRENCY
   );
 
-  // ReserveCalifornia: check each watch for a single unit hosting the full stay.
-  const rcResults = new Map<string, string[]>(); // watch.id -> qualifying dates
+  // ReserveCalifornia: find the specific open unit hosting the full stay.
+  const rcResults = new Map<string, { dates: string[]; unitId: number; sleepingUnitId: number | null }>();
   await pMap(
     rcWatches,
     async (w) => {
       const nights = nightsOfRange(w.start_date, w.end_date);
       const required = Math.max(w.min_nights, nights.length);
-      const ok = await hasRCAvailabilityInRange(w.campground_id, w.start_date, w.end_date, required);
-      rcResults.set(w.id, ok ? nights : []);
+      const open = await findRCOpenUnit(w.campground_id, w.start_date, w.end_date, required);
+      if (open) rcResults.set(w.id, { dates: nights, unitId: open.unitId, sleepingUnitId: open.sleepingUnitId });
     },
     RECGOV_CONCURRENCY
   );
 
   let notified = 0;
   for (const watch of watches) {
+    const rc = rcResults.get(watch.id);
     const result: WatchResult =
       watch.campground_source === 'reservecalifornia'
-        ? { dates: rcResults.get(watch.id) ?? [], campsiteId: null, campsiteName: null }
+        ? { dates: rc?.dates ?? [], campsiteId: null, campsiteName: null }
         : availableDatesForWatch(watch, monthData);
     if (result.dates.length === 0) continue;
 
@@ -249,7 +250,11 @@ async function cycle(): Promise<void> {
         availableDates: result.dates,
         bookingUrl:
           watch.campground_source === 'reservecalifornia'
-            ? watch.reservations_url ?? 'https://www.reservecalifornia.com/'
+            // #camphawk-rc fragment (unitId_arrival_nights_sleepingUnitId) lets the
+            // extension add the exact unit to the RC cart. Fragment never hits RC's server.
+            ? `${watch.reservations_url ?? 'https://www.reservecalifornia.com/'}${
+                rc ? `#camphawk-rc=${rc.unitId}_${watch.start_date}_${result.dates.length}_${rc.sleepingUnitId ?? ''}` : ''
+              }`
             : result.campsiteId
               // #camphawk fragment carries the dates for the browser extension's
               // optional autofill. Fragments are never sent to rec.gov's server.

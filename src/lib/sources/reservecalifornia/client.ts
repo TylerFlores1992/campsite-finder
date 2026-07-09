@@ -76,6 +76,7 @@ export interface RCGridUnit {
   UnitCategoryId: number;
   UnitTypeId: number;
   VehicleLength: number;
+  SleepingUnitIds?: number[];
   Slices: Record<string, RCGridSlice>;
 }
 
