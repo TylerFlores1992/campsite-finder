@@ -9,17 +9,25 @@
  * the token anywhere else.
  */
 (function () {
-  let last = null;
+  let lastToken = null, lastCartKey = null;
   function post(v) {
     if (!v) return;
     const token = String(v).replace(/^Bearer\s+/i, '').trim();
-    if (token.length > 20) { last = token; window.postMessage({ __camphawk_token: token }, '*'); }
+    if (token.length > 20) { lastToken = token; window.postMessage({ __camphawk_token: token }, '*'); }
   }
-  // Re-broadcast the last token for a while, so a listener that attaches after
-  // RC's initial API calls still receives it.
+  // The shoppingCartKey (a GUID) rides in RC request BODIES, not headers.
+  function grabBody(body) {
+    try {
+      if (typeof body !== 'string' || body.indexOf('shoppingCartKey') < 0) return;
+      const o = JSON.parse(body);
+      if (o && o.shoppingCartKey) { lastCartKey = o.shoppingCartKey; window.postMessage({ __camphawk_cartkey: o.shoppingCartKey }, '*'); }
+    } catch {}
+  }
+  // Re-broadcast so a listener that attaches after RC's initial calls still gets them.
   let n = 0;
   const iv = setInterval(() => {
-    if (last) window.postMessage({ __camphawk_token: last }, '*');
+    if (lastToken) window.postMessage({ __camphawk_token: lastToken }, '*');
+    if (lastCartKey) window.postMessage({ __camphawk_cartkey: lastCartKey }, '*');
     if (++n > 20) clearInterval(iv);
   }, 1500);
 
@@ -30,6 +38,8 @@
     try { if (String(k).toLowerCase() === 'accesstoken') post(val); } catch {}
     return setHdr.apply(this, arguments);
   };
+  const send = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function (body) { grabBody(body); return send.apply(this, arguments); };
 
   const origFetch = window.fetch;
   if (origFetch) {
@@ -40,6 +50,7 @@
           if (typeof Headers !== 'undefined' && h instanceof Headers) post(h.get('accesstoken'));
           else post(h.accesstoken || h.Accesstoken);
         }
+        if (init && init.body) grabBody(init.body);
       } catch {}
       return origFetch.apply(this, arguments);
     };

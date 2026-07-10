@@ -36,21 +36,29 @@
 
   // The page-world grabber (rc-inject.js) posts the live token here. RC's token
   // is Okta-encrypted in localStorage, so this capture is the only way to read it.
-  let capturedToken = ls('ssoAccessToken') || ls('accessToken') || null;
-  const tokenWaiters = [];
+  let capturedToken = null, capturedCartKey = null;
+  const tokenWaiters = [], cartKeyWaiters = [];
   window.addEventListener('message', (e) => {
-    if (e.source === window && e.data && e.data.__camphawk_token) {
+    if (e.source !== window || !e.data) return;
+    if (e.data.__camphawk_token) {
       capturedToken = e.data.__camphawk_token;
       tokenWaiters.splice(0).forEach((fn) => fn(capturedToken));
     }
+    if (e.data.__camphawk_cartkey) {
+      capturedCartKey = e.data.__camphawk_cartkey;
+      cartKeyWaiters.splice(0).forEach((fn) => fn(capturedCartKey));
+    }
   });
-  function getToken(timeoutMs = 12000) {
-    if (capturedToken) return Promise.resolve(capturedToken);
+  function waitFor(getVal, waiters, timeoutMs) {
+    const v = getVal();
+    if (v) return Promise.resolve(v);
     return new Promise((resolve) => {
       const t = setTimeout(() => resolve(null), timeoutMs);
-      tokenWaiters.push((tok) => { clearTimeout(t); resolve(tok); });
+      waiters.push((val) => { clearTimeout(t); resolve(val); });
     });
   }
+  const getToken = (ms = 12000) => waitFor(() => capturedToken, tokenWaiters, ms);
+  const getCartKey = (ms = 12000) => waitFor(() => capturedCartKey, cartKeyWaiters, ms);
 
   function occupantName() {
     const direct = ls('customerName') || ls('ssoCustomerName');
@@ -61,6 +69,7 @@
     } catch { return ''; }
   }
 
+  let _cartKey = '';
   function buildPayload() {
     return {
       arrivalDate: job.arrivalDate,
@@ -94,7 +103,7 @@
       promoCode: null,
       reservationVehicles: [],
       selectedClassification: null,
-      shoppingCartKey: ls('shoppingCartKey') || '',
+      shoppingCartKey: _cartKey,
       sleepingUnit: job.sleepingUnitId
         ? { isWheeled: false, name: '', sleepingUnitTypeID: job.sleepingUnitId }
         : null,
@@ -110,8 +119,10 @@
 
   async function addToCart() {
     setStatus('Reading your session…');
-    const token = await getToken();
+    const [token, cartKey] = await Promise.all([getToken(), getCartKey()]);
     if (!token) { setStatus('Couldn’t read your RC login — make sure you’re signed in, then click Add to cart.'); return; }
+    if (!cartKey) { setStatus('Couldn’t read your cart — click the cart icon once, then Add to cart.'); return; }
+    _cartKey = cartKey;
     setStatus('Adding to your cart…');
     try {
       // RC's rdApi wants the same token in BOTH accesstoken and authorization,
