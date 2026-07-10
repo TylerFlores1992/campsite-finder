@@ -34,9 +34,12 @@ export default function TermsPage() {
         <section>
           <h2 className="font-semibold text-base mb-2">Text alerts</h2>
           <p>
-            Text alerts are opt-in via your account settings. Message frequency varies with
-            campsite availability. Message and data rates may apply. Reply STOP to opt out or
-            HELP for help. See our{' '}
+            Text alerts are <strong>optional and separate from these Terms</strong> — agreeing to
+            this Terms of Service does <strong>not</strong> opt you into text messages, and SMS
+            consent is never required to create an account, subscribe, or use any CampHawk feature.
+            You opt in only by deliberately entering your number and checking the consent box in
+            your account settings. Message frequency varies with campsite availability. Message and
+            data rates may apply. Reply STOP to opt out or HELP for help. See our{' '}
             <a href="/privacy" className="text-green-700 underline">Privacy Policy</a> for how
             your number is handled.
           </p>
