@@ -10,6 +10,7 @@ import Filters, { FilterState } from '@/components/Filters';
 import QuickFilters, { getTonight, getThisWeekend } from '@/components/QuickFilters';
 import WatchesPanel from '@/components/WatchesPanel';
 import Logo from '@/components/Logo';
+import SubscribeGate from '@/components/SubscribeGate';
 import type { Campground } from '@/lib/types';
 
 // Load map only client-side
@@ -45,6 +46,8 @@ export default function HomePage() {
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [watchesOpen, setWatchesOpen] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
+  const [everSubscribed, setEverSubscribed] = useState(false);
+  const [subLoaded, setSubLoaded] = useState(false);
 
   // Load favorites when signed in
   useEffect(() => {
@@ -55,13 +58,30 @@ export default function HomePage() {
       .catch(() => {});
   }, [isSignedIn]);
 
-  // Load subscription status when signed in
+  // Load subscription status when signed in. After returning from Stripe
+  // (?subscribed=1) the webhook may lag, so poll a few times until active.
   useEffect(() => {
-    if (!isSignedIn) { setIsSubscribed(false); return; }
-    fetch('/api/subscription/status')
-      .then((r) => r.ok ? r.json() : { active: false })
-      .then((data) => setIsSubscribed(!!data.active))
-      .catch(() => {});
+    if (!isSignedIn) { setIsSubscribed(false); setSubLoaded(true); return; }
+    const justPaid = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('subscribed');
+    let cancelled = false;
+    let tries = 0;
+
+    async function poll() {
+      try {
+        const r = await fetch('/api/subscription/status');
+        const data = r.ok ? await r.json() : { active: false, everSubscribed: false };
+        if (cancelled) return;
+        setIsSubscribed(!!data.active);
+        setEverSubscribed(!!data.everSubscribed);
+        setSubLoaded(true);
+        if (justPaid && !data.active && tries++ < 5) setTimeout(poll, 2000);
+      } catch {
+        if (!cancelled) setSubLoaded(true);
+      }
+    }
+    setSubLoaded(false);
+    poll();
+    return () => { cancelled = true; };
   }, [isSignedIn]);
 
   async function openBillingPortal() {
@@ -171,6 +191,12 @@ export default function HomePage() {
       const { start, end } = getThisWeekend();
       search({ ...searchState, startDate: start, endDate: end });
     }
+  }
+
+  // Signed-in users without an active subscription (new, expired, or cancelled)
+  // get the full-screen subscribe gate — no usable app without a subscription.
+  if (isSignedIn && subLoaded && !isSubscribed) {
+    return <SubscribeGate returning={everSubscribed} />;
   }
 
   return (
@@ -286,12 +312,30 @@ export default function HomePage() {
                 </span>
               ))}
             </div>
-            <button
-              onClick={handleTonight}
-              className="mt-1 px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-display font-semibold text-base shadow-md shadow-amber-500/25 transition-all hover:shadow-lg hover:-translate-y-0.5"
-            >
-              ⛺ Find a site for tonight
-            </button>
+            {isSignedIn ? (
+              <button
+                onClick={handleTonight}
+                className="mt-1 px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-display font-semibold text-base shadow-md shadow-amber-500/25 transition-all hover:shadow-lg hover:-translate-y-0.5"
+              >
+                ⛺ Find a site for tonight
+              </button>
+            ) : (
+              <div className="mt-1 flex flex-col items-center gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <SignUpButton mode="redirect">
+                    <button className="px-7 py-3.5 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-display font-semibold text-base shadow-md transition-all hover:-translate-y-0.5">
+                      Start your free trial
+                    </button>
+                  </SignUpButton>
+                  <SignInButton mode="redirect">
+                    <button className="px-7 py-3.5 rounded-2xl bg-white border border-gray-200 text-gray-700 font-display font-semibold text-base hover:bg-gray-50 transition-all">
+                      Sign in
+                    </button>
+                  </SignInButton>
+                </div>
+                <p className="text-sm text-gray-400">7-day free trial · then $5/mo or $50/yr · cancel anytime</p>
+              </div>
+            )}
 
             {/* ridgeline accent */}
             <svg

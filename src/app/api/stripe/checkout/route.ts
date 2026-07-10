@@ -19,12 +19,21 @@ export async function POST(req: NextRequest) {
 
   const user = await queryOne<{ email: string }>('SELECT email FROM users WHERE id = $1', [userId]);
 
+  // First-time subscribers get a 7-day free trial; returning/expired customers
+  // (who already have a subscription row) don't get another one.
+  const prior = await queryOne<{ id: string }>(
+    'SELECT id FROM subscriptions WHERE user_id = $1 LIMIT 1',
+    [userId]
+  );
+  const trialDays = prior ? undefined : 7;
+
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
     payment_method_types: ['card'],
     line_items: [{ price: priceId, quantity: 1 }],
     customer_email: user?.email ?? undefined,
     metadata: { clerk_user_id: userId },
+    ...(trialDays ? { subscription_data: { trial_period_days: trialDays } } : {}),
     success_url: `${process.env.NEXT_PUBLIC_APP_URL}/?subscribed=1`,
     cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/`,
   });
