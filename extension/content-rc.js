@@ -34,6 +34,24 @@
 
   const ls = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 
+  // The page-world grabber (rc-inject.js) posts the live token here. RC's token
+  // is Okta-encrypted in localStorage, so this capture is the only way to read it.
+  let capturedToken = ls('ssoAccessToken') || ls('accessToken') || null;
+  const tokenWaiters = [];
+  window.addEventListener('message', (e) => {
+    if (e.source === window && e.data && e.data.__camphawk_token) {
+      capturedToken = e.data.__camphawk_token;
+      tokenWaiters.splice(0).forEach((fn) => fn(capturedToken));
+    }
+  });
+  function getToken(timeoutMs = 12000) {
+    if (capturedToken) return Promise.resolve(capturedToken);
+    return new Promise((resolve) => {
+      const t = setTimeout(() => resolve(null), timeoutMs);
+      tokenWaiters.push((tok) => { clearTimeout(t); resolve(tok); });
+    });
+  }
+
   function occupantName() {
     const direct = ls('customerName') || ls('ssoCustomerName');
     if (direct) return direct;
@@ -91,8 +109,9 @@
   }
 
   async function addToCart() {
-    const token = ls('ssoAccessToken') || ls('accessToken');
-    if (!token) { setStatus('Sign in to ReserveCalifornia first, then reopen the alert.'); return; }
+    setStatus('Reading your session…');
+    const token = await getToken();
+    if (!token) { setStatus('Couldn’t read your RC login — make sure you’re signed in, then click Add to cart.'); return; }
     setStatus('Adding to your cart…');
     try {
       // RC's rdApi wants the same token in BOTH accesstoken and authorization,

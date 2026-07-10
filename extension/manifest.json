@@ -21,6 +21,12 @@
     },
     {
       "matches": ["https://www.reservecalifornia.com/*"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "js": ["rc-inject.js"]
+    },
+    {
+      "matches": ["https://www.reservecalifornia.com/*"],
       "run_at": "document_idle",
       "js": ["content-rc.js"]
     }
