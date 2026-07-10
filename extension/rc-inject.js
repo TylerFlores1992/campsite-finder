@@ -15,12 +15,24 @@
     const token = String(v).replace(/^Bearer\s+/i, '').trim();
     if (token.length > 20) { lastToken = token; window.postMessage({ __camphawk_token: token }, '*'); }
   }
-  // The shoppingCartKey (a GUID) rides in RC request BODIES, not headers.
+  function setCartKey(k) {
+    if (!k || !/^[0-9a-f-]{30,}$/i.test(k)) return;
+    lastCartKey = k;
+    window.postMessage({ __camphawk_cartkey: k }, '*');
+  }
+  // The real shoppingCartKey (a GUID) rides in RC request bodies AND URLs.
   function grabBody(body) {
     try {
       if (typeof body !== 'string' || body.indexOf('shoppingCartKey') < 0) return;
       const o = JSON.parse(body);
-      if (o && o.shoppingCartKey) { lastCartKey = o.shoppingCartKey; window.postMessage({ __camphawk_cartkey: o.shoppingCartKey }, '*'); }
+      if (o && o.shoppingCartKey) setCartKey(o.shoppingCartKey);
+    } catch {}
+  }
+  function grabUrl(u) {
+    try {
+      const url = typeof u === 'string' ? u : (u && u.url) || '';
+      const m = url.match(/shoppingCartKey=([0-9a-fA-F-]{30,})/);
+      if (m) setCartKey(m[1]);
     } catch {}
   }
   // Re-broadcast so a listener that attaches after RC's initial calls still gets them.
@@ -33,6 +45,8 @@
 
   // Capture ONLY the RC-specific "accesstoken" header — other services (Okta,
   // analytics) set "authorization" with different tokens that would 401 here.
+  const openXHR = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (m, u) { try { grabUrl(u); } catch {} return openXHR.apply(this, arguments); };
   const setHdr = XMLHttpRequest.prototype.setRequestHeader;
   XMLHttpRequest.prototype.setRequestHeader = function (k, val) {
     try { if (String(k).toLowerCase() === 'accesstoken') post(val); } catch {}
@@ -45,6 +59,7 @@
   if (origFetch) {
     window.fetch = function (input, init) {
       try {
+        grabUrl(input);
         const h = (init && init.headers) || (input && input.headers);
         if (h) {
           if (typeof Headers !== 'undefined' && h instanceof Headers) post(h.get('accesstoken'));

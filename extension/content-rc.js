@@ -119,11 +119,12 @@
 
   async function addToCart() {
     setStatus('Reading your session…');
-    // Token is required (auth); the cart key is a client-minted GUID — reuse the
-    // session's if we captured it, otherwise generate one like the site does.
-    const [token, cartKey] = await Promise.all([getToken(), getCartKey(4000)]);
-    if (!token) { setStatus('Couldn’t read your RC login — make sure you’re signed in, then click Add to cart.'); return; }
-    _cartKey = cartKey || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    // Both required: token (auth) and the session's REAL cart key (a minted one
+    // creates a separate phantom cart the UI never shows).
+    const [token, cartKey] = await Promise.all([getToken(), getCartKey(5000)]);
+    if (!token) { setStatus('Couldn’t read your RC login — sign in, then click Add to cart.'); return; }
+    if (!cartKey) { setStatus('Click the 🛒 cart icon once (to start your cart), then click Add to cart.'); return; }
+    _cartKey = cartKey;
     setStatus('Adding to your cart…');
     try {
       // RC's rdApi wants the same token in BOTH accesstoken and authorization,
