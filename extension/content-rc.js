@@ -95,10 +95,18 @@
     if (!token) { setStatus('Sign in to ReserveCalifornia first, then reopen the alert.'); return; }
     setStatus('Adding to your cart…');
     try {
+      // RC's rdApi wants the same token in BOTH accesstoken and authorization,
+      // plus two constant headers (installationsidentity=cali, storeid=111).
       const res = await fetch(ENDPOINT, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        headers: {
+          'Content-Type': 'application/json',
+          accesstoken: token,
+          authorization: 'Bearer ' + token,
+          installationsidentity: 'cali',
+          storeid: '111',
+        },
         body: JSON.stringify(buildPayload()),
       });
       if (res.ok) {
