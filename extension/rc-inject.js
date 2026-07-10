@@ -23,12 +23,11 @@
     if (++n > 20) clearInterval(iv);
   }, 1500);
 
+  // Capture ONLY the RC-specific "accesstoken" header — other services (Okta,
+  // analytics) set "authorization" with different tokens that would 401 here.
   const setHdr = XMLHttpRequest.prototype.setRequestHeader;
   XMLHttpRequest.prototype.setRequestHeader = function (k, val) {
-    try {
-      const kl = String(k).toLowerCase();
-      if (kl === 'accesstoken' || kl === 'authorization') post(val);
-    } catch {}
+    try { if (String(k).toLowerCase() === 'accesstoken') post(val); } catch {}
     return setHdr.apply(this, arguments);
   };
 
@@ -38,8 +37,8 @@
       try {
         const h = (init && init.headers) || (input && input.headers);
         if (h) {
-          if (typeof Headers !== 'undefined' && h instanceof Headers) post(h.get('accesstoken') || h.get('authorization'));
-          else post(h.accesstoken || h.Accesstoken || h.authorization || h.Authorization);
+          if (typeof Headers !== 'undefined' && h instanceof Headers) post(h.get('accesstoken'));
+          else post(h.accesstoken || h.Accesstoken);
         }
       } catch {}
       return origFetch.apply(this, arguments);
