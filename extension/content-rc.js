@@ -132,9 +132,13 @@
         setStatus('✓ Added to cart — review & check out on ReserveCalifornia.');
       } else {
         let detail = '';
-        try { detail = (await res.text()).slice(0, 160); } catch {}
-        console.log('[CampHawk RC] error body:', detail);
-        setStatus(`RC declined (HTTP ${res.status}): ${detail || 'book manually below.'}`);
+        try {
+          const raw = await res.text();
+          console.log('[CampHawk RC] full error body:', raw);
+          const j = JSON.parse(raw);
+          detail = j.errors ? Object.keys(j.errors).join(', ') : (j.title || raw.slice(0, 160));
+        } catch {}
+        setStatus(`RC declined (${res.status}) — fields: ${detail || 'see console'}`);
       }
     } catch (e) {
       setStatus('Couldn’t reach RC — book manually.');
