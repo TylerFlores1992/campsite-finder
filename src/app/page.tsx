@@ -134,6 +134,20 @@ export default function HomePage() {
         }
 
         setCampgrounds(results);
+
+        // On mobile the search form fills the whole screen, pushing results below
+        // the fold — scroll them into view so a search visibly produces results.
+        if (typeof window !== 'undefined' && window.innerWidth < 768) {
+          requestAnimationFrame(() =>
+            setTimeout(
+              () =>
+                document
+                  .getElementById('search-results')
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+              80
+            )
+          );
+        }
       } catch (err) {
         setError((err as Error).message);
         setCampgrounds([]);
@@ -200,7 +214,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
+    <div className="flex flex-col min-h-screen md:h-screen bg-gray-50">
       {watchesOpen && (
         <WatchesPanel onClose={() => setWatchesOpen(false)} />
       )}
@@ -291,7 +305,7 @@ export default function HomePage() {
       </header>
 
       {/* Main content */}
-      <main className="flex-1 overflow-hidden max-w-screen-2xl mx-auto w-full">
+      <main className="flex-1 md:overflow-hidden max-w-screen-2xl mx-auto w-full">
         {!searchState ? (
           <div className="relative h-full flex flex-col items-center justify-center text-center px-4 gap-6 overflow-y-auto py-10">
             <h2 className="font-display text-4xl sm:text-5xl font-extrabold text-green-700 max-w-2xl leading-[1.08]">
@@ -377,7 +391,8 @@ export default function HomePage() {
           </div>
         ) : (
           <div
-            className={`h-full flex ${
+            id="search-results"
+            className={`flex md:h-full ${
               view === 'list' ? 'flex-col' : view === 'map' ? '' : 'flex-col md:flex-row'
             }`}
           >
@@ -385,7 +400,7 @@ export default function HomePage() {
             {view !== 'list' && (
               <div
                 className={`${
-                  view === 'split' ? 'w-full md:w-1/2 h-2/5 md:h-full' : 'w-full h-full'
+                  view === 'split' ? 'w-full md:w-1/2 h-[45vh] md:h-full' : 'w-full h-[70vh] md:h-full'
                 } p-3`}
               >
                 <CampgroundMap
@@ -402,8 +417,8 @@ export default function HomePage() {
             {view !== 'map' && (
               <div
                 className={`${
-                  view === 'split' ? 'w-full md:w-1/2 h-3/5 md:h-full' : 'w-full h-full'
-                } overflow-y-auto p-3`}
+                  view === 'split' ? 'w-full md:w-1/2 md:h-full' : 'w-full md:h-full'
+                } md:overflow-y-auto p-3`}
               >
                 {loading ? (
                   <div className="flex items-center justify-center h-32 gap-2 text-gray-500">
