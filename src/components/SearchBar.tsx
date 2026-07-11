@@ -285,7 +285,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
             onKeyDown={(e) => {
               if (e.key === 'Escape') setShowSuggestions(false);
             }}
-            className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
+            className="w-full pl-8 pr-9 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
           />
           <button
             type="button"
