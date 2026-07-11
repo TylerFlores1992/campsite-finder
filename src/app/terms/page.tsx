@@ -1,21 +1,21 @@
 import Logo from '@/components/Logo';
 
-export const metadata = { title: 'Terms of Service — Camp Hawk' };
+export const metadata = { title: 'Terms of Service — CampHawk' };
 
 export default function TermsPage() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-10 text-gray-800">
       <a href="/" className="inline-block mb-6"><Logo markSize={30} /></a>
-      <h1 className="text-2xl font-bold mb-1">Camp Hawk Terms of Service</h1>
+      <h1 className="text-2xl font-bold mb-1">CampHawk Terms of Service</h1>
       <p className="text-sm text-gray-500 mb-8">Last updated: July 7, 2026</p>
 
       <div className="space-y-6 text-sm leading-relaxed">
         <section>
           <h2 className="font-semibold text-base mb-2">The service</h2>
           <p>
-            Camp Hawk (camphawk.app) helps you find campsite availability across US public lands
+            CampHawk (camphawk.app) helps you find campsite availability across US public lands
             and California State Parks, and alerts you by email and (optionally) text message when
-            a campground you watch becomes available. Camp Hawk is not affiliated with
+            a campground you watch becomes available. CampHawk is not affiliated with
             Recreation.gov, ReserveCalifornia, the National Park Service, or California State
             Parks. All bookings happen on the official reservation sites.
           </p>
@@ -26,7 +26,7 @@ export default function TermsPage() {
           <p>
             Availability data comes from third-party reservation systems and can change at any
             moment. Alerts are best-effort: a site may already be taken by the time you act, and
-            we cannot guarantee delivery timing of any notification. Camp Hawk is provided
+            we cannot guarantee delivery timing of any notification. CampHawk is provided
             &quot;as is&quot; without warranties of any kind.
           </p>
         </section>
@@ -36,7 +36,7 @@ export default function TermsPage() {
           <p>
             Text alerts are <strong>optional and separate from these Terms</strong> — agreeing to
             this Terms of Service does <strong>not</strong> opt you into text messages, and SMS
-            consent is never required to create an account, subscribe, or use any Camp Hawk feature.
+            consent is never required to create an account, subscribe, or use any CampHawk feature.
             You opt in only by deliberately entering your number and checking the consent box in
             your account settings. Message frequency varies with campsite availability. Message and
             data rates may apply. Reply STOP to opt out or HELP for help. See our{' '}

@@ -47,7 +47,7 @@ export default function SmsOptIn({ demo = false, initialPhone = '', initialSaved
   return (
     <div className="space-y-2.5">
       <p className="text-[11px] leading-snug text-gray-600 bg-green-50 border border-green-100 rounded-lg px-2.5 py-2">
-        <strong>Text alerts are optional.</strong> Camp Hawk works fully with email alerts alone —
+        <strong>Text alerts are optional.</strong> CampHawk works fully with email alerts alone —
         you never need to give a phone number to create an account, subscribe, or use any feature.
         Adding your number and checking the box below is entirely voluntary, and you can skip it.
       </p>
@@ -79,7 +79,7 @@ export default function SmsOptIn({ demo = false, initialPhone = '', initialSaved
           className="mt-0.5 accent-green-600"
         />
         <span>
-          Yes, I&apos;d like to receive automated text messages from Camp Hawk when campgrounds
+          Yes, I&apos;d like to receive automated text messages from CampHawk when campgrounds
           I&apos;m watching have availability. Consent is not a condition of purchase.
         </span>
       </label>

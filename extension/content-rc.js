@@ -1,5 +1,5 @@
 /*
- * Camp Hawk Quick Cart — ReserveCalifornia (CA State Parks).
+ * CampHawk Quick Cart — ReserveCalifornia (CA State Parks).
  *
  * RC's cart is API-driven, so unlike rec.gov we don't drive the DOM — we POST
  * the same request the site does, from the user's own logged-in session:
@@ -7,7 +7,7 @@
  *   Authorization: Bearer <ssoAccessToken from localStorage>
  * The alert link carries #camphawk-rc={unitId}_{arrival}_{nights}_{sleepingUnitId}.
  *
- * Runs entirely in the user's browser/session; Camp Hawk never sees their RC login.
+ * Runs entirely in the user's browser/session; CampHawk never sees their RC login.
  *
  * NOTE (maintainers): a couple of payload fields (extraValues, customerClassificationId,
  * sleepingUnit.name) are unit/customer-specific. We send best-effort defaults captured
@@ -147,7 +147,7 @@
         let detail = '';
         try {
           const raw = await res.text();
-          console.log('[Camp Hawk RC] full error body:', raw);
+          console.log('[CampHawk RC] full error body:', raw);
           const j = JSON.parse(raw);
           detail = j.errors ? Object.keys(j.errors).join(', ') : (j.title || raw.slice(0, 160));
         } catch {}
@@ -170,7 +170,7 @@
       'box-shadow:0 6px 24px rgba(0,0,0,.28);display:flex;align-items:center;gap:12px;max-width:92vw';
     bar.innerHTML =
       '<span style="font-size:18px">🦅</span>' +
-      `<span><strong>Camp Hawk</strong> · CA State Parks · ${job.arrivalDate} (${job.nights} night${job.nights > 1 ? 's' : ''})<br>` +
+      `<span><strong>CampHawk</strong> · CA State Parks · ${job.arrivalDate} (${job.nights} night${job.nights > 1 ? 's' : ''})<br>` +
       '<span id="camphawk-rc-status" style="opacity:.85"></span></span>';
     const btn = document.createElement('button');
     btn.textContent = 'Add to cart';
@@ -188,6 +188,6 @@
 
   chrome.storage.local.get({ accepted: false, enabled: false }, ({ accepted, enabled }) => {
     if (accepted && enabled) addToCart();
-    else setStatus('Auto-cart off — use the button, or enable it in the Camp Hawk extension.');
+    else setStatus('Auto-cart off — use the button, or enable it in the CampHawk extension.');
   });
 })();

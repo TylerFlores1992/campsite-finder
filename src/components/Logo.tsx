@@ -1,5 +1,5 @@
 /**
- * Camp Hawk brand mark: hawk in flight over layered mountains and a lake,
+ * CampHawk brand mark: hawk in flight over layered mountains and a lake,
  * under a sunset-amber sky. Flat vector, reads at favicon size.
  *
  * NOTE: this is an AI-coded SVG concept — solid for shipping now, but plan a
@@ -84,7 +84,7 @@ export default function Logo({ markSize = 34, mono = false, className }: LogoPro
         className={`font-display font-bold tracking-tight ${mono ? '' : 'text-green-700'}`}
         style={{ fontSize: markSize * 0.62 }}
       >
-        Camp Hawk
+        CampHawk
       </span>
     </span>
   );

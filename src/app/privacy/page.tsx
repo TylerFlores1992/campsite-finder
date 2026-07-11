@@ -1,19 +1,19 @@
 import Logo from '@/components/Logo';
 
-export const metadata = { title: 'Privacy Policy — Camp Hawk' };
+export const metadata = { title: 'Privacy Policy — CampHawk' };
 
 export default function PrivacyPage() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-10 text-gray-800">
       <a href="/" className="inline-block mb-6"><Logo markSize={30} /></a>
-      <h1 className="text-2xl font-bold mb-1">Camp Hawk Privacy Policy</h1>
+      <h1 className="text-2xl font-bold mb-1">CampHawk Privacy Policy</h1>
       <p className="text-sm text-gray-500 mb-8">Last updated: July 7, 2026</p>
 
       <div className="space-y-6 text-sm leading-relaxed">
         <section>
           <h2 className="font-semibold text-base mb-2">What we collect</h2>
           <p>
-            When you create a Camp Hawk account we collect your email address. If you choose to
+            When you create a CampHawk account we collect your email address. If you choose to
             receive text alerts, we also collect the mobile phone number you provide. We store the
             campground watches, favorites, and search preferences you create in the app.
           </p>
@@ -48,7 +48,7 @@ export default function PrivacyPage() {
           <h2 className="font-semibold text-base mb-2">Sharing</h2>
           <p>
             We do not sell or share your personal information. Data is processed by the service
-            providers that run Camp Hawk (hosting, database, email, SMS, payments) solely to
+            providers that run CampHawk (hosting, database, email, SMS, payments) solely to
             provide the service.
           </p>
         </section>

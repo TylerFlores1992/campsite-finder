@@ -1,17 +1,17 @@
 /*
- * Camp Hawk Quick Cart — content script (Recreation.gov).
+ * CampHawk Quick Cart — content script (Recreation.gov).
  *
  * Flow:
- *  1. A Camp Hawk alert link looks like
+ *  1. A CampHawk alert link looks like
  *       https://www.recreation.gov/camping/campsites/{id}#camphawk=2026-07-10_2026-07-12
  *     The #fragment is never sent to rec.gov's servers — we read it here.
  *  2. We stash the dates (they survive rec.gov's in-app navigation), then show a
- *     small Camp Hawk banner with a "Fill dates & add to cart" button.
+ *     small CampHawk banner with a "Fill dates & add to cart" button.
  *  3. If the user has turned the toggle ON *and* accepted the risk, we also try
  *     to do it automatically.
  *
  * Everything runs in the user's own logged-in session, in their own browser, on
- * their own IP. Camp Hawk servers never see their Recreation.gov credentials.
+ * their own IP. CampHawk servers never see their Recreation.gov credentials.
  *
  * IMPORTANT (for maintainers): rec.gov is a React SPA and ships no stable public
  * DOM contract. The selectors below are best-effort with fallbacks and MUST be
@@ -38,7 +38,7 @@
   }
 
   const dates = readFragmentDates() || stashedDates();
-  if (!dates) return; // not a Camp Hawk-originated visit — do nothing
+  if (!dates) return; // not a CampHawk-originated visit — do nothing
 
   // --- 2. calendar helpers ---------------------------------------------------
   // rec.gov renders availability as a grid of <button> elements whose
@@ -193,7 +193,7 @@
     }
   }
 
-  // --- 4. on-page Camp Hawk banner (feedback + manual fallback) ---------------
+  // --- 4. on-page CampHawk banner (feedback + manual fallback) ---------------
   let statusEl;
   function setStatus(text) { if (statusEl) statusEl.textContent = text; }
 
@@ -205,7 +205,7 @@
       'border-radius:14px;box-shadow:0 6px 24px rgba(0,0,0,.28);display:flex;align-items:center;gap:12px;max-width:92vw';
     bar.innerHTML =
       '<span style="font-size:18px">🦅</span>' +
-      `<span><strong>Camp Hawk</strong> · ${dates.checkin} → ${dates.checkout}<br>` +
+      `<span><strong>CampHawk</strong> · ${dates.checkin} → ${dates.checkout}<br>` +
       '<span id="camphawk-status" style="opacity:.85"></span></span>';
 
     const btn = document.createElement('button');
@@ -231,6 +231,6 @@
   // --- 5. auto-run only if enabled AND risk accepted -------------------------
   chrome.storage.local.get({ accepted: false, enabled: false }, ({ accepted, enabled }) => {
     if (accepted && enabled) run(true);
-    else setStatus('Auto-cart is off — use the button, or enable it in the Camp Hawk extension.');
+    else setStatus('Auto-cart is off — use the button, or enable it in the CampHawk extension.');
   });
 })();

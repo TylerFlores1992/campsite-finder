@@ -107,7 +107,7 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
     const site = payload.campsiteName ? ` — Site ${payload.campsiteName}` : '';
     await sendSms({
       to: phone,
-      body: `Camp Hawk: ⛺ ${payload.campgroundName}${site} has availability: ${dates}${more}. Book now: ${payload.bookingUrl}. Reply STOP to opt out.`,
+      body: `CampHawk: ⛺ ${payload.campgroundName}${site} has availability: ${dates}${more}. Book now: ${payload.bookingUrl}. Reply STOP to opt out.`,
     });
     await logNotification(payload, 'sms', 'sent');
   } catch (err) {
@@ -144,7 +144,7 @@ function buildEmailHtml(payload: NotificationPayload): string {
   </a>
 
   <p style="margin-top:32px;font-size:12px;color:#999">
-    You're receiving this because you set up a watch on Camp Hawk.
+    You're receiving this because you set up a watch on CampHawk.
     <br>To stop watching this campground, visit your watches in the app.
   </p>
 </body>

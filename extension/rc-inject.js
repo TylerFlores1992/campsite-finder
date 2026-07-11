@@ -1,5 +1,5 @@
 /*
- * Camp Hawk — ReserveCalifornia token grabber (runs in the PAGE's world).
+ * CampHawk — ReserveCalifornia token grabber (runs in the PAGE's world).
  *
  * RC's auth token is stored AES-encrypted by Okta and only decrypted in the
  * page's JS memory, so a normal (isolated-world) content script can't read it.

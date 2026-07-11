@@ -1,8 +1,8 @@
-# Camp Hawk Quick Cart — Chrome extension
+# CampHawk Quick Cart — Chrome extension
 
-Optional companion to Camp Hawk. When you open a Camp Hawk alert link, it can fill
+Optional companion to CampHawk. When you open a CampHawk alert link, it can fill
 your dates and click **Add to cart** on Recreation.gov — running entirely in your
-own browser, in your own signed-in session. **Camp Hawk servers never see your
+own browser, in your own signed-in session. **CampHawk servers never see your
 Recreation.gov login.**
 
 ## ⚠️ Risk
@@ -14,10 +14,10 @@ Use at your own risk.
 
 ## How it works
 
-1. Camp Hawk alert links to a booked-then-opened site include a `#camphawk=IN_OUT`
+1. CampHawk alert links to a booked-then-opened site include a `#camphawk=IN_OUT`
    URL fragment (e.g. `…/campsites/12345#camphawk=2026-07-10_2026-07-12`). URL
    fragments are never transmitted to rec.gov's servers.
-2. The content script reads the dates, shows a small Camp Hawk banner, and offers
+2. The content script reads the dates, shows a small CampHawk banner, and offers
    a **Fill dates & add to cart** button.
 3. If you've turned the toggle on *and* accepted the risk, it also runs
    automatically on page load.
@@ -27,7 +27,7 @@ Use at your own risk.
 1. Chrome → `chrome://extensions`
 2. Toggle **Developer mode** (top right)
 3. **Load unpacked** → select this `extension/` folder
-4. Click the Camp Hawk icon → read the disclaimer → check "I accept" → flip the
+4. Click the CampHawk icon → read the disclaimer → check "I accept" → flip the
    toggle on (or leave it off and use the button manually)
 
 ## Known limitations
