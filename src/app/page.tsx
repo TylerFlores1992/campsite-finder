@@ -400,7 +400,9 @@ export default function HomePage() {
             {view !== 'list' && (
               <div
                 className={`${
-                  view === 'split' ? 'w-full md:w-1/2 h-[45vh] md:h-full' : 'w-full h-[70vh] md:h-full'
+                  view === 'split'
+                    ? 'w-full md:w-1/2 h-[45vh] [@media(max-height:720px)]:h-[34vh] md:h-full'
+                    : 'w-full h-[70vh] md:h-full'
                 } p-3`}
               >
                 <CampgroundMap
@@ -447,10 +449,10 @@ export default function HomePage() {
                       {campgrounds.length} campground{campgrounds.length !== 1 ? 's' : ''} found
                     </p>
                     {(!searchState?.startDate || !searchState?.endDate) && (
-                      <div className="mb-3 flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl bg-green-50 border border-green-100 px-3.5 py-3">
-                        <p className="text-sm text-green-800 flex-1">
+                      <div className="mb-3 flex flex-row items-center gap-2 rounded-xl bg-green-50 border border-green-100 px-3 py-2">
+                        <p className="text-xs sm:text-sm text-green-800 flex-1 leading-snug">
                           <span className="mr-1">📅</span>
-                          Add dates to see availability and set a cancellation alert when your spot is booked.
+                          Add dates to see availability and set a cancellation alert.
                         </p>
                         <button
                           onClick={handleThisWeekend}
