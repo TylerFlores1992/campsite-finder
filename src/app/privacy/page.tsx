@@ -1,12 +1,12 @@
 import Logo from '@/components/Logo';
 
-export const metadata = { title: 'Privacy Policy — CampHawk' };
+export const metadata = { title: 'Privacy Policy — Camp Hawk' };
 
 export default function PrivacyPage() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-10 text-gray-800">
       <a href="/" className="inline-block mb-6"><Logo markSize={30} /></a>
-      <h1 className="text-2xl font-bold mb-1">CampHawk Privacy Policy</h1>
+      <h1 className="text-2xl font-bold mb-1">Camp Hawk Privacy Policy</h1>
       <p className="text-sm text-gray-500 mb-8">Last updated: July 7, 2026</p>
 
       <div className="space-y-6 text-sm leading-relaxed">

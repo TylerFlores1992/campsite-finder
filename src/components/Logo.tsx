@@ -84,7 +84,7 @@ export default function Logo({ markSize = 34, mono = false, className }: LogoPro
         className={`font-display font-bold tracking-tight ${mono ? '' : 'text-green-700'}`}
         style={{ fontSize: markSize * 0.62 }}
       >
-        CampHawk
+        Camp Hawk
       </span>
     </span>
   );

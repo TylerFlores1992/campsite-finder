@@ -51,7 +51,7 @@ export default function SubscribeGate({ returning }: SubscribeGateProps) {
         <p className="mt-3 text-gray-500 max-w-md">
           {returning
             ? 'Your subscription has ended. Resubscribe to set watches and get instant cancellation alerts again.'
-            : 'CampHawk watches booked campgrounds around the clock and pings you the moment a cancellation opens up.'}
+            : 'Camp Hawk watches booked campgrounds around the clock and pings you the moment a cancellation opens up.'}
         </p>
 
         <ul className="mt-6 space-y-2 text-left max-w-md w-full">

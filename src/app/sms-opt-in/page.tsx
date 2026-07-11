@@ -1,7 +1,7 @@
 import SmsOptIn from '@/components/SmsOptIn';
 import Logo from '@/components/Logo';
 
-export const metadata = { title: 'SMS Alert Opt-In — CampHawk' };
+export const metadata = { title: 'SMS Alert Opt-In — Camp Hawk' };
 
 /**
  * Public, non-functional copy of the SMS opt-in form that lives inside the
@@ -19,7 +19,7 @@ export default function SmsOptInDemoPage() {
         subscription, or checkout — those flows never ask for a phone number or SMS consent.
         Text alerts are a separate, voluntary add-on: a user must deliberately type their number
         and tick the unchecked consent box here before any text is sent. Users can skip this
-        entirely and continue using every CampHawk feature with email alerts only.
+        entirely and continue using every Camp Hawk feature with email alerts only.
       </p>
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
         <SmsOptIn demo />

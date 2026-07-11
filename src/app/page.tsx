@@ -315,7 +315,7 @@ export default function HomePage() {
             </h2>
             <p className="text-gray-500 max-w-md text-lg leading-relaxed">
               Search thousands of campgrounds across US public lands and California State Parks.
-              When your spot is booked solid, CampHawk watches it around the clock and alerts you
+              When your spot is booked solid, Camp Hawk watches it around the clock and alerts you
               within seconds of a cancellation.
             </p>
 
@@ -323,7 +323,7 @@ export default function HomePage() {
             <div className="w-full max-w-sm rounded-2xl bg-white border border-gray-100 shadow-lg p-4 text-left">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-lg">🦅</span>
-                <span className="font-display font-semibold text-sm text-gray-800">CampHawk alert</span>
+                <span className="font-display font-semibold text-sm text-gray-800">Camp Hawk alert</span>
                 <span className="ml-auto text-[10px] font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full">just now</span>
               </div>
               <p className="text-sm text-gray-700">
@@ -386,7 +386,7 @@ export default function HomePage() {
             </svg>
 
             <footer className="absolute bottom-3 left-0 right-0 flex items-center justify-center gap-4 text-xs text-gray-400">
-              <span>© {new Date().getFullYear()} CampHawk</span>
+              <span>© {new Date().getFullYear()} Camp Hawk</span>
               <a href="/terms" className="hover:text-green-700 underline-offset-2 hover:underline">Terms</a>
               <a href="/privacy" className="hover:text-green-700 underline-offset-2 hover:underline">Privacy</a>
             </footer>

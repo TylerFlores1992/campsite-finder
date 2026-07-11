@@ -20,7 +20,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CampHawk — Get notified the instant a campsite opens up",
+  title: "Camp Hawk — Get notified the instant a campsite opens up",
   description:
     "Search real-time campsite availability across US public lands and California State Parks. Watch booked campgrounds and get alerted within seconds of a cancellation.",
 };
