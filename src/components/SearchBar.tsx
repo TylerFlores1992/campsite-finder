@@ -31,6 +31,43 @@ interface CampgroundSuggestion {
 
 const RADIUS_OPTIONS = [25, 50, 100, 200];
 
+interface MapboxFeature {
+  center?: [number, number];
+  place_name?: string;
+  id?: string;
+  properties?: { short_code?: string };
+  context?: { id: string; short_code?: string; text?: string }[];
+}
+
+const US_STATES: Record<string, string> = {
+  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA',
+  colorado: 'CO', connecticut: 'CT', delaware: 'DE', florida: 'FL', georgia: 'GA',
+  hawaii: 'HI', idaho: 'ID', illinois: 'IL', indiana: 'IN', iowa: 'IA',
+  kansas: 'KS', kentucky: 'KY', louisiana: 'LA', maine: 'ME', maryland: 'MD',
+  massachusetts: 'MA', michigan: 'MI', minnesota: 'MN', mississippi: 'MS', missouri: 'MO',
+  montana: 'MT', nebraska: 'NE', nevada: 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ',
+  'new mexico': 'NM', 'new york': 'NY', 'north carolina': 'NC', 'north dakota': 'ND', ohio: 'OH',
+  oklahoma: 'OK', oregon: 'OR', pennsylvania: 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
+  'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT', vermont: 'VT',
+  virginia: 'VA', washington: 'WA', 'west virginia': 'WV', wisconsin: 'WI', wyoming: 'WY',
+};
+
+/** Parse a US state from the tail of a query, e.g. "Yosemite, CA" or "Bend, Oregon". */
+function stateFromQuery(q: string): string | null {
+  const seg = q.split(',').pop()?.trim().toLowerCase() ?? '';
+  if (/^[a-z]{2}$/.test(seg)) return seg.toUpperCase();
+  return US_STATES[seg] ?? null;
+}
+
+/** The two-letter state code a Mapbox feature sits in (from its region context). */
+function featureStateCode(f: MapboxFeature): string | null {
+  if (f.id?.startsWith('region')) {
+    return f.properties?.short_code?.replace(/^US-/i, '').toUpperCase() ?? null;
+  }
+  const region = (f.context ?? []).find((c) => c.id?.startsWith('region'));
+  return region?.short_code?.replace(/^US-/i, '').toUpperCase() ?? null;
+}
+
 export default function SearchBar({ onSearch }: SearchBarProps) {
   const [location, setLocation] = useState('');
   const [radiusMiles, setRadiusMiles] = useState(50);
@@ -77,7 +114,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
       const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
       const [placeRes, cgRes] = await Promise.allSettled([
         fetch(
-          `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(value)}.json?country=US&types=place,region&access_token=${token}&limit=4`
+          `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(value)}.json?country=US&types=place,locality,region,poi&access_token=${token}&limit=5`
         ).then((r) => r.json()),
         fetch(`/api/suggest?q=${encodeURIComponent(value)}`).then((r) => r.json()),
       ]);
@@ -149,12 +186,44 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
     if (!location) return;
     setGeocoding(true);
     try {
+      // 1. Prefer our own campground DB — it knows park/area names (e.g.
+      //    "Yosemite") that Mapbox mis-geocodes to a tiny town in Kentucky.
+      const sug = await fetch(`/api/suggest?q=${encodeURIComponent(location)}`)
+        .then((r) => r.json())
+        .catch(() => ({ campgrounds: [] }));
+      const cg = sug.campgrounds?.[0];
+      if (cg?.latitude && cg?.longitude) {
+        onSearch({
+          lat: cg.latitude,
+          lng: cg.longitude,
+          radiusMiles,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+        });
+        return;
+      }
+
+      // 2. Fall back to Mapbox for plain place/city names.
       const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+      // autocomplete=false: this is a full submitted query, so do real geocoding
+      // (prefix/autocomplete mode fuzzy-matches tokens and never surfaces
+      // "Yosemite, CA" as the park). Include POIs (parks are POIs) + several
+      // candidates so we can prefer the one in the state the user typed.
       const res = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(location)}.json?country=US&types=place,address,region&access_token=${token}&limit=1`
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(location)}.json?country=US&types=place,locality,region,poi&autocomplete=false&limit=5&access_token=${token}`
       );
       const data = await res.json();
-      const [lng, lat] = data.features?.[0]?.center ?? [];
+      const feats: MapboxFeature[] = data.features ?? [];
+      if (feats.length === 0) {
+        alert('Could not find that location. Try a city name like "Denver, CO".');
+        return;
+      }
+
+      // If the query names a US state, prefer a candidate actually in that state.
+      const wantState = stateFromQuery(location);
+      const chosen =
+        (wantState && feats.find((f) => featureStateCode(f) === wantState)) || feats[0];
+      const [lng, lat] = chosen.center ?? [];
       if (!lat || !lng) {
         alert('Could not find that location. Try a city name like "Denver, CO".');
         return;

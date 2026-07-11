@@ -256,33 +256,37 @@ export default function HomePage() {
           {/* Search row */}
           <SearchBar onSearch={(p) => search(p)} />
 
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-3 flex-wrap">
-              <QuickFilters onTonight={handleTonight} onThisWeekend={handleThisWeekend} />
-              <Filters filters={filters} onChange={handleFiltersChange} />
-            </div>
+          {/* Filters + view toggle only matter once there are results. On mobile
+              the filter chips scroll horizontally instead of stacking tall. */}
+          {searchState && (
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-3 overflow-x-auto flex-nowrap py-0.5 -mx-1 px-1">
+                <QuickFilters onTonight={handleTonight} onThisWeekend={handleThisWeekend} />
+                <Filters filters={filters} onChange={handleFiltersChange} />
+              </div>
 
-            {/* View toggle */}
-            <div className="flex rounded-lg border border-gray-200 overflow-hidden bg-white shrink-0">
-              {(['split', 'map', 'list'] as const).map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setView(v)}
-                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                    view === v ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-50'
-                  }`}
-                >
-                  {v === 'split' ? (
-                    <span className="flex items-center gap-1"><MapIcon size={13} /><List size={13} /></span>
-                  ) : v === 'map' ? (
-                    <MapIcon size={13} />
-                  ) : (
-                    <List size={13} />
-                  )}
-                </button>
-              ))}
+              {/* View toggle */}
+              <div className="flex rounded-lg border border-gray-200 overflow-hidden bg-white shrink-0">
+                {(['split', 'map', 'list'] as const).map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setView(v)}
+                    className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                      view === v ? 'bg-green-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    {v === 'split' ? (
+                      <span className="flex items-center gap-1"><MapIcon size={13} /><List size={13} /></span>
+                    ) : v === 'map' ? (
+                      <MapIcon size={13} />
+                    ) : (
+                      <List size={13} />
+                    )}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </header>
 
@@ -298,6 +302,23 @@ export default function HomePage() {
               When your spot is booked solid, CampHawk watches it around the clock and alerts you
               within seconds of a cancellation.
             </p>
+
+            {/* Sample alert — shows the product's payoff at a glance */}
+            <div className="w-full max-w-sm rounded-2xl bg-white border border-gray-100 shadow-lg p-4 text-left">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-lg">🦅</span>
+                <span className="font-display font-semibold text-sm text-gray-800">CampHawk alert</span>
+                <span className="ml-auto text-[10px] font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full">just now</span>
+              </div>
+              <p className="text-sm text-gray-700">
+                ⛺ <strong>Lower Pines, Yosemite</strong> just opened up for your dates
+                <strong> Jul 10–12</strong>.
+              </p>
+              <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-amber-500 rounded-lg px-3 py-1.5">
+                Book now on Recreation.gov →
+              </div>
+              <p className="mt-2 text-[11px] text-gray-400">⏱ Sent within seconds — act before it&apos;s gone.</p>
+            </div>
             <div className="flex flex-wrap justify-center gap-2.5 max-w-lg">
               {[
                 { icon: '⚡', label: 'Alerts in seconds, not hours' },

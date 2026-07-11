@@ -19,8 +19,9 @@ export async function GET(request: NextRequest) {
             ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude
      FROM campgrounds
      WHERE name ILIKE '%' || $1 || '%'
-     ORDER BY (name ILIKE $1 || '%') DESC, length(name)
-     LIMIT 6`,
+        OR address->>'city' ILIKE '%' || $1 || '%'
+     ORDER BY (name ILIKE $1 || '%') DESC, (address->>'city' ILIKE $1 || '%') DESC, length(name)
+     LIMIT 8`,
     [q]
   );
 
