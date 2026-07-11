@@ -74,7 +74,7 @@ export default function Filters({ filters, onChange }: FiltersProps) {
         </div>
       )}
 
-      <div className="w-px h-6 bg-gray-200 mx-1" />
+      <div className="hidden md:block w-px h-6 bg-gray-200 mx-1" />
 
       {/* Amenity toggles */}
       {[

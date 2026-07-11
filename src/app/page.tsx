@@ -273,14 +273,16 @@ export default function HomePage() {
           {/* Filters + view toggle only matter once there are results. On mobile
               the filter chips scroll horizontally instead of stacking tall. */}
           {searchState && (
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-3 overflow-x-auto flex-nowrap py-0.5 -mx-1 px-1">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              {/* Chips wrap onto multiple lines at every width so all filters are
+                  visible without swiping (wide screens still fit on one row). */}
+              <div className="order-2 md:order-1 flex flex-wrap items-center gap-2 md:gap-3">
                 <QuickFilters onTonight={handleTonight} onThisWeekend={handleThisWeekend} />
                 <Filters filters={filters} onChange={handleFiltersChange} />
               </div>
 
-              {/* View toggle */}
-              <div className="flex rounded-lg border border-gray-200 overflow-hidden bg-white shrink-0">
+              {/* View toggle — own row (top-right) on mobile, right side on desktop */}
+              <div className="order-1 md:order-2 self-end md:self-auto flex rounded-lg border border-gray-200 overflow-hidden bg-white shrink-0">
                 {(['split', 'map', 'list'] as const).map((v) => (
                   <button
                     key={v}
