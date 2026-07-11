@@ -20,6 +20,25 @@ import type { Campground, Campsite, CampgroundAvailability } from '@/lib/types';
 
 const CampgroundMap = dynamic(() => import('@/components/Map'), { ssr: false });
 
+/** RIDB descriptions arrive as HTML markup. Strip tags to clean, readable text
+ * while preserving paragraph/list breaks (rendered via whitespace-pre-line). */
+function htmlToText(html: string): string {
+  return html
+    .replace(/<\s*(br|\/p|\/h[1-6]|\/li|\/div)\s*\/?>/gi, '\n')
+    .replace(/<\s*li[^>]*>/gi, '• ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&(#39|apos|rsquo|lsquo);/gi, "'")
+    .replace(/&(quot|ldquo|rdquo);/gi, '"')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]*\n[ \t]*/g, '\n')
+    .trim();
+}
+
 function AvailabilityCalendar({
   campgroundId,
   month,
@@ -214,7 +233,7 @@ export default function CampgroundDetailPage() {
         )}
 
         {/* Header */}
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{campground.name}</h1>
             {address && (
@@ -257,7 +276,7 @@ export default function CampgroundDetailPage() {
           <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
             <h2 className="font-semibold text-gray-800 mb-2">About</h2>
             <p className="text-sm text-gray-600 leading-relaxed whitespace-pre-line">
-              {campground.description}
+              {htmlToText(campground.description)}
             </p>
           </div>
         )}

@@ -431,6 +431,20 @@ export default function HomePage() {
                     <p className="text-sm text-gray-500 mb-3">
                       {campgrounds.length} campground{campgrounds.length !== 1 ? 's' : ''} found
                     </p>
+                    {(!searchState?.startDate || !searchState?.endDate) && (
+                      <div className="mb-3 flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl bg-green-50 border border-green-100 px-3.5 py-3">
+                        <p className="text-sm text-green-800 flex-1">
+                          <span className="mr-1">📅</span>
+                          Add dates to see availability and set a cancellation alert when your spot is booked.
+                        </p>
+                        <button
+                          onClick={handleThisWeekend}
+                          className="shrink-0 self-start sm:self-auto text-xs font-semibold text-white bg-green-600 hover:bg-green-700 rounded-lg px-3 py-1.5 transition-colors"
+                        >
+                          Try this weekend
+                        </button>
+                      </div>
+                    )}
                     <div
                       className={`grid gap-3 ${
                         view === 'list'
