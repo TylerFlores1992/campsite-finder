@@ -44,6 +44,14 @@ export default function CampgroundCard({
   const photo = campground.photos.find((p) => p.isPrimary) ?? campground.photos[0];
   const address = [campground.address.city, campground.address.state].filter(Boolean).join(', ');
 
+  // No campground photos exist in our data, so fall back to a static map of the
+  // location — real, unique per campground, and always available.
+  const mapToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+  const staticMapUrl =
+    !photo && mapToken && Number.isFinite(campground.longitude) && Number.isFinite(campground.latitude)
+      ? `https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/static/pin-s+f59e0b(${campground.longitude},${campground.latitude})/${campground.longitude},${campground.latitude},9.5,0/400x240@2x?access_token=${mapToken}`
+      : null;
+
   return (
     <div
       className={`bg-white rounded-2xl overflow-hidden shadow-sm border transition-all duration-200 cursor-pointer hover:shadow-lg hover:-translate-y-0.5 ${
@@ -59,6 +67,14 @@ export default function CampgroundCard({
             src={photo.url}
             alt={photo.title ?? campground.name}
             className="w-full h-full object-cover"
+          />
+        ) : staticMapUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={staticMapUrl}
+            alt={`Map showing the location of ${campground.name}`}
+            className="w-full h-full object-cover"
+            loading="lazy"
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-green-50">
