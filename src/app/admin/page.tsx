@@ -1,7 +1,9 @@
 import { currentUser } from '@clerk/nextjs/server';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import Stripe from 'stripe';
 import Logo from '@/components/Logo';
+import AdminAutoRefresh from '@/components/AdminAutoRefresh';
 import { query, queryOne } from '@/lib/db/client';
 
 export const dynamic = 'force-dynamic';
@@ -22,6 +24,33 @@ async function safe<T>(p: Promise<T | null>, fallback: T): Promise<T> {
   } catch {
     return fallback;
   }
+}
+
+/** Realized MRR from Stripe: sum active subscriptions, normalized to monthly.
+ *  (Trialing subs aren't paying yet, so they're excluded.) Returns null on error. */
+async function computeMrr(): Promise<{ monthly: number; activeCount: number } | null> {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) return null;
+  const stripe = new Stripe(key.trim());
+  let cents = 0;
+  let activeCount = 0;
+  for await (const sub of stripe.subscriptions.list({
+    status: 'active',
+    limit: 100,
+    expand: ['data.items.data.price'],
+  })) {
+    activeCount++;
+    for (const item of sub.items.data) {
+      const amt = (item.price.unit_amount ?? 0) * (item.quantity ?? 1);
+      const ivl = item.price.recurring?.interval;
+      const ic = item.price.recurring?.interval_count ?? 1;
+      if (ivl === 'year') cents += amt / (12 * ic);
+      else if (ivl === 'month') cents += amt / ic;
+      else if (ivl === 'week') cents += (amt * 52) / 12 / ic;
+      else if (ivl === 'day') cents += (amt * 365) / 12 / ic;
+    }
+  }
+  return { monthly: cents / 100, activeCount };
 }
 
 export default async function AdminPage() {
@@ -102,6 +131,8 @@ export default async function AdminPage() {
       ),
     ]);
 
+  const mrr = await computeMrr().catch(() => null);
+
   const subMap = Object.fromEntries(subRows.map((r) => [r.status, r.n]));
   const cgTotal = cgRows.reduce((s, r) => s + r.n, 0);
   const workerHealthy = !!beat && beat.age_s < 300;
@@ -127,7 +158,10 @@ export default async function AdminPage() {
             Admin
           </span>
         </div>
-        <Link href="/" className="text-sm text-gray-500 hover:text-green-700">← Back to site</Link>
+        <div className="flex items-center gap-4">
+          <AdminAutoRefresh intervalMs={30000} />
+          <Link href="/" className="text-sm text-gray-500 hover:text-green-700">← Back to site</Link>
+        </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-8 space-y-8">
@@ -164,7 +198,14 @@ export default async function AdminPage() {
           </div>
 
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <h2 className="font-display font-semibold text-gray-800 mb-4">Subscriptions</h2>
+            <h2 className="font-display font-semibold text-gray-800">Subscriptions</h2>
+            <p className="mt-1 font-display text-3xl font-extrabold text-green-700">
+              {mrr ? `$${mrr.monthly.toFixed(2)}` : '—'}
+              <span className="text-sm font-normal text-gray-400"> /mo MRR</span>
+            </p>
+            <p className="text-xs text-gray-400 mb-4">
+              {mrr ? `${mrr.activeCount} paying · normalized monthly` : 'Stripe unavailable'}
+            </p>
             <ul className="space-y-2.5 text-sm">
               <StatusRow label="Active" value={subMap['active'] ?? 0} color="bg-green-500" />
               <StatusRow label="Trialing" value={subMap['trialing'] ?? 0} color="bg-blue-500" />

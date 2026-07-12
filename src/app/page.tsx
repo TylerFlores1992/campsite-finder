@@ -35,7 +35,9 @@ const DEFAULT_FILTERS: FilterState = {
 };
 
 export default function HomePage() {
-  const { isSignedIn } = useUser();
+  const { isSignedIn, user } = useUser();
+  // Convenience link only; /admin is enforced server-side by ADMIN_EMAILS.
+  const isAdmin = user?.primaryEmailAddress?.emailAddress?.toLowerCase() === 'tylerflores1992@gmail.com';
   const [view, setView] = useState<'split' | 'map' | 'list'>('split');
   const [searchState, setSearchState] = useState<SearchState | null>(null);
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
@@ -252,6 +254,14 @@ export default function HomePage() {
               {/* Auth */}
               {isSignedIn ? (
                 <div className="flex items-center gap-2">
+                  {isAdmin && (
+                    <a
+                      href="/admin"
+                      className="text-sm px-3 py-1.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
+                    >
+                      Admin
+                    </a>
+                  )}
                   {isSubscribed && (
                     <button
                       onClick={openBillingPortal}
