@@ -223,7 +223,19 @@ export default function HomePage() {
         <div className="max-w-screen-2xl mx-auto space-y-3">
           {/* Top row: brand + actions (wraps cleanly on mobile) */}
           <div className="flex items-center justify-between gap-2">
-            <Logo markSize={34} className="shrink-0" />
+            <button
+              type="button"
+              onClick={() => {
+                setSearchState(null);
+                setCampgrounds([]);
+                setSelectedId(null);
+                setError(null);
+              }}
+              aria-label="CampHawk home"
+              className="shrink-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-green-400"
+            >
+              <Logo markSize={34} />
+            </button>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
