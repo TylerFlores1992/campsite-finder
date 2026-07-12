@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 
-// TEMPORARY: verifies Sentry captures server errors in production.
-// Remove after confirming the test error appears in Sentry → Issues.
+// TEMPORARY diagnostic: reports whether the Sentry DSN is present at runtime
+// and whether an event flushes. Remove after confirming.
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  if (process.env.SENTRY_CHECK !== 'off') {
-    throw new Error('CampHawk Sentry verification test — safe to ignore');
-  }
-  return NextResponse.json({ ok: true });
+  const hasDsn = !!process.env.NEXT_PUBLIC_SENTRY_DSN;
+  Sentry.captureException(new Error('CampHawk Sentry verification test — safe to ignore'));
+  const flushed = await Sentry.flush(3000);
+  return NextResponse.json({ hasDsn, flushed });
 }
