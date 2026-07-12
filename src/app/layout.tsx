@@ -23,6 +23,20 @@ export const metadata: Metadata = {
   title: "CampHawk — Get notified the instant a campsite opens up",
   description:
     "Search real-time campsite availability across US public lands and California State Parks. Watch booked campgrounds and get alerted within seconds of a cancellation.",
+  openGraph: {
+    title: "CampHawk — Get notified the instant a campsite opens up",
+    description:
+      "Watch booked campgrounds and get alerted within seconds of a cancellation.",
+    images: ["/logo-full.png"],
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "CampHawk",
+    description:
+      "Get notified the instant a campsite opens up.",
+    images: ["/logo-full.png"],
+  },
 };
 
 export default function RootLayout({

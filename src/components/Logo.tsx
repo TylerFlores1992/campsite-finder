@@ -75,16 +75,24 @@ interface LogoProps {
   className?: string;
 }
 
-/** Full horizontal lockup: mark + wordmark. */
+/** Full horizontal lockup: hawk badge mark + two-tone wordmark. */
 export default function Logo({ markSize = 34, mono = false, className }: LogoProps) {
   return (
-    <span className={`inline-flex items-center gap-2.5 ${className ?? ''}`}>
-      <HawkMark size={markSize} mono={mono} />
+    <span className={`inline-flex items-center gap-2 ${className ?? ''}`}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/logo-mark.png"
+        alt="CampHawk"
+        style={{ height: markSize, width: 'auto' }}
+        className="shrink-0 select-none"
+        draggable={false}
+      />
       <span
-        className={`font-display font-bold tracking-tight ${mono ? '' : 'text-green-700'}`}
-        style={{ fontSize: markSize * 0.62 }}
+        className="font-display font-bold tracking-tight leading-none"
+        style={{ fontSize: markSize * 0.6 }}
       >
-        CampHawk
+        <span className={mono ? '' : 'text-green-800'}>Camp</span>
+        <span className={mono ? '' : 'text-[#4a3423]'}>Hawk</span>
       </span>
     </span>
   );
