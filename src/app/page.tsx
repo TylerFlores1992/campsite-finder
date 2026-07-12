@@ -309,8 +309,29 @@ export default function HomePage() {
       {/* Main content */}
       <main className="flex-1 md:overflow-hidden max-w-screen-2xl mx-auto w-full">
         {!searchState ? (
-          <div className="relative h-full flex flex-col items-center justify-center text-center px-4 gap-6 overflow-y-auto py-10">
-            <h2 className="font-display text-4xl sm:text-5xl font-extrabold text-green-700 max-w-2xl leading-[1.08]">
+          <div className="relative isolate h-full flex flex-col items-center justify-center text-center px-4 gap-6 overflow-y-auto pt-10 pb-24 bg-gradient-to-b from-[#F7F3E9] via-[#EEF1E6] to-[#D9E5D2]">
+            {/* On-brand scenery: warm sky glow + layered ridgelines matching the logo */}
+            <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+              <div className="absolute -top-28 left-1/2 -translate-x-1/2 h-[34rem] w-[34rem] rounded-full bg-[#F4C583]/30 blur-3xl" />
+              <svg
+                viewBox="0 0 1440 400"
+                preserveAspectRatio="none"
+                className="absolute bottom-0 left-0 h-[34%] w-full"
+              >
+                {/* back range (sage) */}
+                <path d="M0 400V180l180-92 190 104 180-96 210 112 190-104 200 108 90-40v320H0z" fill="#93AC8B" opacity="0.55" />
+                {/* mid range */}
+                <path d="M0 400V236l220-98 210 112 190-104 210 116 220-104 180 96v182H0z" fill="#4F6F4A" opacity="0.85" />
+                {/* front range */}
+                <path d="M0 400V300l260-74 250 96 240-72 260 84 190-58v124H0z" fill="#2C4A2E" />
+                {/* pines on the front ridge */}
+                <g fill="#1F3D2E">
+                  <path d="M180 330l14 34h-28zM176 348l18 30h-36zM172 366l22 26h-44z" />
+                  <path d="M1250 322l13 32h-26zM1246 340l17 28h-34zM1242 358l21 24h-42z" />
+                </g>
+              </svg>
+            </div>
+            <h2 className="font-display text-4xl sm:text-5xl font-extrabold text-green-800 max-w-2xl leading-[1.08]">
               Get notified the instant a campsite opens up
             </h2>
             <p className="text-gray-500 max-w-md text-lg leading-relaxed">
@@ -370,25 +391,14 @@ export default function HomePage() {
                     </button>
                   </SignInButton>
                 </div>
-                <p className="text-sm text-gray-400">7-day free trial · then $5/mo or $50/yr · cancel anytime</p>
+                <p className="text-sm text-gray-600">7-day free trial · then $5/mo or $50/yr · cancel anytime</p>
               </div>
             )}
 
-            {/* ridgeline accent */}
-            <svg
-              viewBox="0 0 1440 190"
-              preserveAspectRatio="none"
-              className="pointer-events-none absolute bottom-10 left-0 w-full h-36 opacity-[0.08]"
-              aria-hidden="true"
-            >
-              <path d="M0 190V120l110-60 130 75 105-95 150 105 120-70 145 85 110-105 160 115 105-60 135 80 70-45v145H0z" fill="#1F3D2E" />
-              <path d="M0 190v-40l150-70 160 85 130-55 170 75 150-90 180 95 140-60 170 70 90-35 100 25v0H0z" fill="#2C5741" opacity="0.7" />
-            </svg>
-
-            <footer className="absolute bottom-3 left-0 right-0 flex items-center justify-center gap-4 text-xs text-gray-400">
+            <footer className="absolute bottom-3 left-0 right-0 flex items-center justify-center gap-4 text-xs text-white/75">
               <span>© {new Date().getFullYear()} CampHawk</span>
-              <a href="/terms" className="hover:text-green-700 underline-offset-2 hover:underline">Terms</a>
-              <a href="/privacy" className="hover:text-green-700 underline-offset-2 hover:underline">Privacy</a>
+              <a href="/terms" className="hover:text-white underline-offset-2 hover:underline">Terms</a>
+              <a href="/privacy" className="hover:text-white underline-offset-2 hover:underline">Privacy</a>
             </footer>
           </div>
         ) : (
