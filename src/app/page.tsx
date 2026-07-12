@@ -388,7 +388,7 @@ export default function HomePage() {
                     </button>
                   </SignInButton>
                 </div>
-                <p className="text-sm text-gray-600">7-day free trial · then $5/mo or $50/yr · cancel anytime</p>
+                <p className="text-sm text-gray-600">7-day free trial · then $2.50/mo or $20/yr · cancel anytime</p>
               </div>
             )}
 

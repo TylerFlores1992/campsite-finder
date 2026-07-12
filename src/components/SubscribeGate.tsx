@@ -70,7 +70,7 @@ export default function SubscribeGate({ returning }: SubscribeGateProps) {
             className="flex-1 px-5 py-3.5 rounded-2xl bg-green-600 text-white font-display font-semibold shadow-md hover:bg-green-700 disabled:opacity-60 transition-all flex items-center justify-center gap-2"
           >
             {loading === 'monthly' ? <Loader2 size={16} className="animate-spin" /> : null}
-            $5 / month
+            $2.50 / month
           </button>
           <button
             onClick={() => subscribe('yearly')}
@@ -78,7 +78,7 @@ export default function SubscribeGate({ returning }: SubscribeGateProps) {
             className="flex-1 px-5 py-3.5 rounded-2xl bg-amber-500 text-white font-display font-semibold shadow-md hover:bg-amber-600 disabled:opacity-60 transition-all flex items-center justify-center gap-2"
           >
             {loading === 'yearly' ? <Loader2 size={16} className="animate-spin" /> : null}
-            $50 / year <span className="text-amber-100 text-xs font-normal">(save 17%)</span>
+            $20 / year <span className="text-amber-100 text-xs font-normal">(save 33%)</span>
           </button>
         </div>
 

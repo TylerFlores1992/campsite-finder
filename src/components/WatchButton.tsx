@@ -61,13 +61,13 @@ export default function WatchButton({ campgroundId, campgroundName, startDate, e
           onClick={() => startCheckout('monthly')}
           className="text-xs px-2 py-1 rounded bg-green-600 text-white hover:bg-green-700 transition-colors"
         >
-          $5/mo
+          $2.50/mo
         </button>
         <button
           onClick={() => startCheckout('yearly')}
           className="text-xs px-2 py-1 rounded bg-green-600 text-white hover:bg-green-700 transition-colors"
         >
-          $50/yr
+          $20/yr
         </button>
       </div>
     );
