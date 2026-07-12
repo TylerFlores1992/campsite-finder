@@ -24,7 +24,7 @@ export async function GET() {
      FROM watches w
      JOIN campgrounds c ON c.id = w.campground_id
      WHERE w.user_id = $1 AND w.active = true
-       AND w.end_date >= CURRENT_DATE
+       AND w.end_date > CURRENT_DATE
      ORDER BY w.created_at DESC`,
     [userId]
   );

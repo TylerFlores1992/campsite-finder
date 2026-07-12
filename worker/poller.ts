@@ -99,7 +99,7 @@ async function loadWatches(): Promise<WatchRow[]> {
      FROM watches w
      JOIN campgrounds c ON c.id = w.campground_id
      WHERE w.active = true
-       AND w.end_date >= CURRENT_DATE
+       AND w.end_date > CURRENT_DATE
        AND (w.notification_sent_at IS NULL OR w.notification_sent_at < NOW() - ${RENOTIFY_WINDOW})`
   );
 }

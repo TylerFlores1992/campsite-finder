@@ -46,7 +46,9 @@ export default function WatchesPanel({ onClose }: WatchesPanelProps) {
   }
 
   function formatDate(d: string) {
-    return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    // Parse as local midnight ('T00:00:00'), not UTC, so a YYYY-MM-DD date
+    // doesn't shift a day earlier in negative-offset timezones.
+    return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
   return (
