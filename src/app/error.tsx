@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import * as Sentry from '@sentry/nextjs';
 import Logo from '@/components/Logo';
 
 export default function Error({
@@ -11,8 +12,9 @@ export default function Error({
   reset: () => void;
 }) {
   useEffect(() => {
-    // Surfaced in the browser console and (once wired) an error monitor.
     console.error(error);
+    // No-ops unless a Sentry DSN is configured.
+    Sentry.captureException(error);
   }, [error]);
 
   return (

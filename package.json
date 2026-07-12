@@ -11,10 +11,13 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.107.0",
     "@clerk/nextjs": "^7.5.11",
+    "@sentry/nextjs": "^10.65.0",
     "@stripe/stripe-js": "^9.8.0",
     "@supabase/supabase-js": "^2.110.0",
     "@types/jsonwebtoken": "^9.0.10",
     "@upstash/redis": "^1.38.0",
+    "@vercel/analytics": "^2.0.1",
+    "@vercel/speed-insights": "^2.0.0",
     "axios": "^1.18.1",
     "date-fns": "^4.4.0",
     "jsonwebtoken": "^9.0.3",
