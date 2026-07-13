@@ -102,23 +102,29 @@ async function ensureLogin(user) {
   loggingIn.add(user.userId);
   log(`🔐 ${who} enabled auto-cart but isn't signed in — opening a recreation.gov login window. Sign in; I'll detect it automatically.`);
   try {
+    let signedIn = false;
     await withBrowser(user.userId, async (ctx) => {
       const page = await ctx.newPage();
       await page.goto('https://www.recreation.gov/sign-in').catch(() => {});
-      const deadline = Date.now() + 10 * 60 * 1000; // 10 min to sign in
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 3000));
-        let url;
-        try { url = page.url(); } catch { return; } // window closed
-        if (url && url.includes('recreation.gov') && !url.includes('/sign-in')) {
-          await new Promise((r) => setTimeout(r, 1500)); // let the session settle
-          fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
-          log(`✅ ${who} signed in — auto-cart is now active for them.`);
-          return;
-        }
-      }
-      log(`⌛ ${who} login window timed out — re-toggle auto-cart, or run: npm run login -- "${who}"`);
+      log(`   → Sign in for ${who} in the window that opened, then CLOSE that window. (I'll also auto-detect a redirect.)`);
+      await new Promise((resolve) => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; resolve(); } };
+        ctx.once('close', finish);   // user closed the window → treat as done
+        page.once('close', finish);
+        const timer = setInterval(() => {
+          let u;
+          try { u = page.url(); } catch { clearInterval(timer); return finish(); }
+          if (u && u.includes('recreation.gov') && !u.includes('/sign-in')) { clearInterval(timer); finish(); }
+        }, 3000);
+        setTimeout(() => { clearInterval(timer); finish(); }, 10 * 60 * 1000); // safety
+      });
+      signedIn = true;
     });
+    if (signedIn) {
+      fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
+      log(`✅ ${who} is set up — auto-cart is now active for them.`);
+    }
   } catch (e) {
     log(`  login error for ${who}: ${e.message}`);
   } finally {
