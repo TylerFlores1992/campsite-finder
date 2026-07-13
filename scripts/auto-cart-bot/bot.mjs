@@ -42,6 +42,11 @@ const PROFILES_DIR = path.resolve(__dirname, process.env.PROFILES_DIR || 'profil
 const HANDLED_FILE = path.join(__dirname, 'handled.json');
 const CARTED_FILE = path.join(__dirname, 'carted.json');
 const CHANNEL = process.env.CHROME_CHANNEL || undefined; // e.g. "chromium" on a Pi
+// WSLg/VM compositors often can't paint Chromium's GPU output (window opens but
+// stays blank/won't focus). Software rendering + an explicit on-screen position
+// fixes it. Override with CHROME_ARGS if needed.
+const LAUNCH_ARGS = (process.env.CHROME_ARGS ??
+  '--disable-gpu --window-position=40,40 --window-size=1200,860').split(' ').filter(Boolean);
 
 const log = (m) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
 const profileDir = (userId) => path.join(PROFILES_DIR, String(userId).replace(/[^A-Za-z0-9_-]/g, '_'));
@@ -77,6 +82,7 @@ async function withBrowser(userId, fn) {
   const ctx = await chromium.launchPersistentContext(profileDir(userId), {
     headless: false,
     viewport: null,
+    args: LAUNCH_ARGS,
     ...(CHANNEL ? { channel: CHANNEL } : {}),
   });
   try { return await fn(ctx); }
