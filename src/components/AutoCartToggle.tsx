@@ -68,7 +68,10 @@ export default function AutoCartToggle() {
       <p className="mt-1 text-[11px] text-gray-400 leading-snug">
         {enabled
           ? 'On — your openings will be added to your recreation.gov cart by the CampHawk auto-cart bot. Requires the bot running + your one-time rec.gov login.'
-          : 'Have openings auto-added to your recreation.gov cart via the CampHawk auto-cart bot (advanced).'}
+          : 'Have openings auto-added to your recreation.gov cart via the CampHawk auto-cart bot (advanced).'}{' '}
+        <a href="/auto-cart" target="_blank" className="text-green-700 underline underline-offset-2">
+          How it works
+        </a>
       </p>
     </div>
   );
