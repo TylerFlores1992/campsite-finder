@@ -1,54 +1,59 @@
-# CampHawk personal auto-cart bot
+# CampHawk personal auto-cart bot (multi-account)
 
-Watches CampHawk for openings on **your** watches and automatically adds the
-site to **your own** recreation.gov cart — running on your machine, in your
-logged-in browser, on your IP. It stops at the cart; **you review and pay.**
+Runs on one always-on machine and, whenever a watched site opens up for an
+**enrolled** CampHawk user, adds it to **that user's own** recreation.gov cart —
+each in their own logged-in browser profile. It stops at the cart; the user
+checks out (their cart syncs to their phone, so they can finish anywhere).
 
-- **recreation.gov** → fully automatic (selects your dates, clicks *Add to Cart*).
-  rec.gov's cart is tied to your account, so it syncs to your phone — you can finish
-  checkout from anywhere.
-- **ReserveCalifornia** → the bot just logs a note. RC's cart is session/client-bound
-  (it wouldn't sync to your phone), so auto-carting it on your desktop is pointless
-  when you're away. Instead, CampHawk's email/text alert links straight to the RC
-  booking page — tap it on your phone and finish there.
+- **recreation.gov** → fully automatic (dates + *Add to Cart*), account-tied so it
+  reaches their phone.
+- **ReserveCalifornia** → the bot just logs a note. RC's cart is session-bound and
+  wouldn't sync to a phone; the CampHawk email/text alert links to the RC page to
+  finish on mobile instead.
 
-> **Heads up:** this automates *your own account* for personal use. recreation.gov's
-> terms discourage automated access — this tool behaves like a normal human session
-> (your login, your IP, gentle polling) and does not try to evade anything. Use at
-> your own discretion.
+**No passwords are ever stored.** Each person signs into their *own* browser profile
+once; only the resulting session lives on the machine.
+
+> **Heads up:** this automates each person's *own* account for personal use.
+> recreation.gov's terms discourage automated access — the bot behaves like a normal
+> human session (their login, this machine's IP, gentle polling) and evades nothing.
+> Running friends' accounts means you're custodian of their sessions — a trust call.
 
 ---
 
-## One-time setup
+## How enrollment works
+1. A user (you or a friend) opens the CampHawk app → **Watches** panel → flips
+   **"Auto-cart openings"** ON. That adds them to the bot's roster.
+2. On the bot machine, you run a one-time **login** for that person so their session
+   is saved (they type their own rec.gov password — you never see it).
+3. From then on, the bot auto-carts their openings. Adding another friend = they
+   toggle it on + one login. No code or config changes.
 
+---
+
+## One-time setup (the machine)
 Requires **Node 18+**.
 
-**1. Set the shared secret in CampHawk (Vercel).**
-Pick a long random string. In Vercel → your project → Settings → Environment
-Variables (Production), add:
+**1. Master token in Vercel.** Set `AUTOCART_TOKEN` (a long random string) in your
+CampHawk Vercel project (Production) and redeploy. This one token lets the bot pull
+every enrolled user's feed.
 
-```
-AUTOCART_TOKEN = <that long random string>
-```
-Redeploy so it takes effect.
-
-**2. Install the bot.**
+**2. Install.**
 ```bash
 cd scripts/auto-cart-bot
 npm install
-npx playwright install chromium
-cp .env.example .env
+npx playwright install chromium     # on a Pi see "Raspberry Pi" below
+cp .env.example .env                 # paste the same AUTOCART_TOKEN
 ```
-Edit `.env` and paste the **same** `AUTOCART_TOKEN` you set in Vercel.
 
-**3. Sign in once (saves your session).**
+**3. Sign each enrolled person in (once each).**
 ```bash
-npm run login
+npm run login                 # lists enrolled users, pick one
+# or target one directly:
+npm run login -- friend@example.com
 ```
-A browser opens to recreation.gov (and ReserveCalifornia). Log in to whichever you
-use, then return to the terminal and press **Enter**. Your session is saved to
-`chrome-profile/` and reused every run — you won't need to log in again unless the
-site logs you out.
+A browser opens to recreation.gov — that person signs in, then you press **Enter**.
+Their session is saved to `profiles/<their-id>/` and reused every run.
 
 ---
 
@@ -56,19 +61,11 @@ site logs you out.
 ```bash
 npm start
 ```
-Leave the terminal **and** the browser window open. When one of your watched sites
-opens up, the bot:
+Leave it running. When any enrolled user's watched site opens, the bot carts it in
+their profile and leaves the tab ready for them to check out. Stop with **Ctrl+C**.
 
-1. hears about it from CampHawk (within your poll interval),
-2. opens the site in a new tab, picks your dates, and clicks **Add to Cart**,
-3. leaves the tab open — you just review and **check out**.
-
-Stop anytime with **Ctrl+C**.
-
-### Keeping it always-on
-For true "set and forget," run it on a machine that stays awake (an old laptop, a
-mini-PC, or a Raspberry Pi). The browser must be able to open (headed), so use a
-machine with a display or a virtual one.
+If someone has an opening but hasn't logged in yet, the bot prints the exact
+`npm run login` command for them and skips (no crash).
 
 ---
 
@@ -76,15 +73,22 @@ machine with a display or a virtual one.
 | Var | Default | Meaning |
 |-----|---------|---------|
 | `CAMPHAWK_URL` | `https://camphawk.app` | Your CampHawk site |
-| `AUTOCART_TOKEN` | — | Must match the value in Vercel |
-| `POLL_MS` | `20000` | How often to check for openings (ms) |
-| `WINDOW_MIN` | `15` | How far back to consider an opening "fresh" (min) |
+| `AUTOCART_TOKEN` | — | Master token; must match Vercel |
+| `POLL_MS` | `20000` | How often to check (ms) |
+| `WINDOW_MIN` | `15` | How far back an opening counts as fresh (min) |
+| `CHROME_CHANNEL` | — | Set to `chromium` to use the system browser (Raspberry Pi) |
 
-## Notes & limits
-- The bot acts on openings CampHawk already detects for your watches, so set up your
-  watches in the app first.
-- recreation.gov is a React app with no stable public DOM; selectors are best-effort
-  with fallbacks (ported from the CampHawk browser extension). If the site changes and
-  a cart misses, the tab is left open so you can finish manually.
-- It never stores or sees your recreation.gov / ReserveCalifornia password — those live
-  only in your local browser profile.
+## Raspberry Pi notes
+- Playwright's bundled Chromium is flaky on ARM. Instead: `sudo apt install chromium`
+  and set `CHROME_CHANNEL=chromium` in `.env`.
+- On a screenless Pi, run under a virtual display: `xvfb-run npm start`. Do the
+  one-time logins with a monitor or over VNC.
+- Use an 8GB Pi if running several accounts (≈0.5–1 GB of RAM per open browser).
+
+## Notes
+- The bot only acts on openings CampHawk already detects for each user's watches — so
+  they set up their watches in the app first.
+- rec.gov is a React app with no stable public DOM; selectors are best-effort with
+  fallbacks (ported from the CampHawk browser extension). On a miss, the tab is left
+  open to finish manually.
+- Passwords are never stored or seen — only each person's local browser session.

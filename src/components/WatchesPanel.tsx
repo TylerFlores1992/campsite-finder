@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { X, Bell, Trash2, Loader2, CalendarDays } from 'lucide-react';
 import SmsOptIn from './SmsOptIn';
+import AutoCartToggle from './AutoCartToggle';
 
 interface Watch {
   id: string;
@@ -135,6 +136,7 @@ export default function WatchesPanel({ onClose }: WatchesPanelProps) {
         </div>
 
         <div className="border-t px-4 py-3 space-y-2">
+          <AutoCartToggle />
           {phoneLoaded && (
             <SmsOptIn
               compact
