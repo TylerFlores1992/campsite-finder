@@ -71,8 +71,8 @@ export default function AutoCartToggle() {
         </div>
         <p className="mt-1 text-[11px] text-gray-400 leading-snug">
           {enabled
-            ? 'On — your openings will be added to your recreation.gov cart by the CampHawk auto-cart bot. Requires the bot running + your one-time rec.gov login.'
-            : 'Have openings auto-added to your recreation.gov cart via the CampHawk auto-cart bot (advanced).'}{' '}
+            ? 'On — openings you’re watching are added to your recreation.gov cart automatically. One-time recreation.gov sign-in required.'
+            : 'Have openings added to your recreation.gov cart automatically, so you just check out.'}{' '}
           <a href="/auto-cart" target="_blank" className="text-green-700 underline underline-offset-2">
             How it works
           </a>
@@ -98,33 +98,25 @@ export default function AutoCartToggle() {
 
             <div className="flex items-center gap-2">
               <Zap size={18} className="text-amber-500" />
-              <h3 className="font-display font-bold text-gray-900">Auto-cart is on — 2 more steps</h3>
+              <h3 className="font-display font-bold text-gray-900">Auto-cart is on!</h3>
             </div>
             <p className="mt-1 text-sm text-gray-500">
-              This isn&apos;t fully automatic just yet. Here&apos;s what makes it work:
+              When a site you&apos;re watching opens, it&apos;s added to your recreation.gov cart
+              automatically — you just finish checkout on your phone.
             </p>
 
-            <ol className="mt-4 space-y-3">
-              <li className="flex gap-2.5">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-green-600 text-white text-xs font-semibold">1</span>
-                <p className="text-sm text-gray-700 leading-relaxed">
-                  The <strong>CampHawk auto-cart bot</strong> must be running on an always-on
-                  computer — yours, or a friend&apos;s who shares their setup. It&apos;s what does
-                  the carting.
-                </p>
-              </li>
-              <li className="flex gap-2.5">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-green-600 text-white text-xs font-semibold">2</span>
-                <p className="text-sm text-gray-700 leading-relaxed">
-                  A recreation.gov <strong>login window opens on that machine</strong> — sign in
-                  once and close it. Your password is never shared or stored.
-                </p>
-              </li>
-            </ol>
+            <div className="mt-4 rounded-xl bg-green-50 border border-green-100 px-3.5 py-3">
+              <p className="text-sm text-green-900 font-medium">One-time setup</p>
+              <p className="mt-1 text-sm text-green-800 leading-relaxed">
+                You&apos;ll sign into <strong>recreation.gov once</strong> so it can add sites to
+                your cart — a login window opens, you sign in and close it. Your password is never
+                shared or stored.
+              </p>
+            </div>
 
             <p className="mt-4 text-xs text-gray-500 leading-relaxed">
-              After that, openings land in your rec.gov cart automatically — finish checkout on
-              your phone. California State Parks come as a tap-to-book link in your alert instead.
+              California State Parks aren&apos;t auto-carted — those come as a tap-to-book link in
+              your alert to finish on your phone.
             </p>
 
             <div className="mt-5 flex items-center gap-3">

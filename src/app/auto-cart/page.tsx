@@ -49,11 +49,7 @@ export default function AutoCartHelpPage() {
           <ul className="space-y-2 text-sm text-gray-600">
             <li>✅ A <strong>CampHawk account</strong> with at least one watch set up.</li>
             <li>✅ A <strong>recreation.gov account</strong> (the site you actually book on).</li>
-            <li>
-              ✅ Someone running the <strong>CampHawk auto-cart bot</strong> on an always-on
-              computer (you, or a friend who shares their setup). The bot is what does the
-              carting — auto-cart doesn&apos;t work without it running.
-            </li>
+            <li>✅ That&apos;s it — turn on the toggle and do a one-time sign-in (below).</li>
           </ul>
         </section>
 
@@ -69,18 +65,13 @@ export default function AutoCartHelpPage() {
               <strong>&ldquo;Auto-cart openings&rdquo;</strong> on. That enrolls you with the bot.
             </Step>
             <Step n={3} title="Sign in to recreation.gov once">
-              The bot opens a recreation.gov <strong>login window</strong> on the machine
-              it&apos;s running on. Sign in there once and close the window — that saves your
-              session. <strong>Your password is never shared with CampHawk or stored anywhere</strong>{' '}
-              — only your own browser session lives on that machine.
-              <br />
-              <span className="text-gray-500">
-                Not at that computer? Whoever runs the bot can open the login for you (in person
-                or via screen-share) — you type your own password.
-              </span>
+              A recreation.gov <strong>login window opens</strong> — sign in and close it. That
+              saves your session so sites can be added to your cart.{' '}
+              <strong>Your password is never shared with CampHawk or stored anywhere</strong> —
+              only your own browser session is kept.
             </Step>
             <Step n={4} title="You're done">
-              From now on, when a watched site opens, the bot adds it to your cart within seconds.
+              From now on, when a watched site opens, it&apos;s added to your cart within seconds.
               You get your normal CampHawk alert — open recreation.gov on your phone, and it&apos;s
               already in your cart. Just <strong>check out</strong>.
             </Step>
@@ -109,7 +100,7 @@ export default function AutoCartHelpPage() {
             </li>
             <li>
               This automates <em>your own</em> account for personal use. Keep your watches current
-              so the bot knows what to grab.
+              so it knows what to grab.
             </li>
           </ul>
         </section>
