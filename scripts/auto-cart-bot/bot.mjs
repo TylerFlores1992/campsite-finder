@@ -12,7 +12,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { cartRecGov } from './recgov.mjs';
-import { cartReserveCalifornia } from './reservecalifornia.mjs';
+import { noteReserveCalifornia } from './reservecalifornia.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -82,7 +82,7 @@ async function runMode() {
       saveHandled(handled);
       log(`🔔 opening: ${job.campgroundName} (${job.startDate}→${job.endDate}) [${job.source}]`);
       try {
-        if (job.source === 'reservecalifornia') await cartReserveCalifornia(context, job, log);
+        if (job.source === 'reservecalifornia') await noteReserveCalifornia(job, log);
         else await cartRecGov(context, job, log);
       } catch (e) { log(`  handler error: ${e.message}`); }
     }

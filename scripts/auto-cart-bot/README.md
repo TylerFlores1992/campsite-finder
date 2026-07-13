@@ -5,9 +5,12 @@ site to **your own** recreation.gov cart — running on your machine, in your
 logged-in browser, on your IP. It stops at the cart; **you review and pay.**
 
 - **recreation.gov** → fully automatic (selects your dates, clicks *Add to Cart*).
-- **ReserveCalifornia** → opens the booking page in your session and tells you the
-  exact unit + dates to grab (a couple of clicks). RC's cart can't be driven
-  reliably headless yet.
+  rec.gov's cart is tied to your account, so it syncs to your phone — you can finish
+  checkout from anywhere.
+- **ReserveCalifornia** → the bot just logs a note. RC's cart is session/client-bound
+  (it wouldn't sync to your phone), so auto-carting it on your desktop is pointless
+  when you're away. Instead, CampHawk's email/text alert links straight to the RC
+  booking page — tap it on your phone and finish there.
 
 > **Heads up:** this automates *your own account* for personal use. recreation.gov's
 > terms discourage automated access — this tool behaves like a normal human session
