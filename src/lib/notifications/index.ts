@@ -136,7 +136,7 @@ function buildEmailHtml(payload: NotificationPayload): string {
     <ul style="margin:0;padding-left:20px">${dateList}</ul>
   </div>
 
-  <p style="color:#ef4444;font-weight:600">⏱ Act fast — holds expire in ~15 minutes.</p>
+  <p style="color:#ef4444;font-weight:600">⏱ Cancellations go fast — book as soon as you can before someone else grabs it.</p>
 
   <a href="${payload.bookingUrl}"
      style="display:inline-block;background:#16a34a;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">
