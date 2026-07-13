@@ -61,11 +61,18 @@ Their session is saved to `profiles/<their-id>/` and reused every run.
 ```bash
 npm start
 ```
-Leave it running. When any enrolled user's watched site opens, the bot carts it in
-their profile and leaves the tab ready for them to check out. Stop with **Ctrl+C**.
+Leave it running. **At idle it opens no browsers** — it just polls. When an enrolled
+user's site opens, it spins up *their* browser, adds the site to their cart, then
+**closes the browser**. Because rec.gov's cart is account-tied, the item is waiting in
+their account and they finish checkout **on their phone**. This on-demand model keeps
+RAM near zero between hits, so one machine can serve many users. Stop with **Ctrl+C**.
 
-If someone has an opening but hasn't logged in yet, the bot prints the exact
-`npm run login` command for them and skips (no crash).
+- **One cart per site per person** — once a site is successfully carted for someone, the
+  bot won't re-cart it (a *failed* attempt can still retry on a later alert).
+- `MAX_CONCURRENCY` (default 1) caps how many browsers run at once — raise it on a
+  beefier machine if several people get hits simultaneously.
+- If someone has an opening but hasn't logged in yet, the bot prints the exact
+  `npm run login` command for them and skips (no crash).
 
 ---
 
@@ -76,6 +83,7 @@ If someone has an opening but hasn't logged in yet, the bot prints the exact
 | `AUTOCART_TOKEN` | — | Master token; must match Vercel |
 | `POLL_MS` | `20000` | How often to check (ms) |
 | `WINDOW_MIN` | `15` | How far back an opening counts as fresh (min) |
+| `MAX_CONCURRENCY` | `1` | Max browsers open at once (raise on a beefier box) |
 | `CHROME_CHANNEL` | — | Set to `chromium` to use the system browser (Raspberry Pi) |
 
 ## Raspberry Pi notes

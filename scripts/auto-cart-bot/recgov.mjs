@@ -82,22 +82,26 @@ export async function cartRecGov(context, job, log) {
         if (co && !isBooked(co)) { press(co); await sleep(700); }
         await sleep(600);
         const cta = ctaButton();
-        if (cta && cta.getAttribute('aria-disabled') !== 'true' && !cta.disabled) { press(cta); return 'carted'; }
+        if (cta && cta.getAttribute('aria-disabled') !== 'true' && !cta.disabled) {
+          press(cta);
+          await sleep(2800); // let the add-to-cart request reach the server before we close
+          return 'carted';
+        }
         return 'cta-not-ready';
       },
       { checkin: job.startDate, checkout: job.endDate }
     );
 
     if (result === 'carted') {
-      log(`  ✓ ADDED TO CART: ${job.campgroundName} (${job.startDate}→${job.endDate}) — finish checkout in the open tab`);
-      return true; // leave the tab open for you to pay
+      log(`  ✓ ADDED TO CART: ${job.campgroundName} (${job.startDate}→${job.endDate}) — it's in the account cart; finish on your phone`);
+      return true; // caller closes the browser; the cart is server-side and syncs to the phone
     }
     log(`  ✗ rec.gov: ${job.campgroundName} — ${result}`);
-    await page.close().catch(() => {});
     return false;
   } catch (err) {
     log(`  ✗ rec.gov error for ${job.campgroundName}: ${err.message}`);
-    await page.close().catch(() => {});
     return false;
+  } finally {
+    await page.close().catch(() => {});
   }
 }

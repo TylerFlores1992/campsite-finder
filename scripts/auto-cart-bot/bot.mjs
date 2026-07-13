@@ -1,14 +1,15 @@
-// CampHawk personal auto-cart bot — multi-account.
+// CampHawk personal auto-cart bot — multi-account, on-demand.
 //   node bot.mjs --login            → pick an enrolled user and sign them in once
 //   node bot.mjs --login <email>    → sign in a specific enrolled user
-//   node bot.mjs                    → watch CampHawk and auto-cart openings for all
-//                                     enrolled users, each in their own browser profile
+//   node bot.mjs                    → watch CampHawk; when a site opens for an enrolled
+//                                     user, spin up their browser, add it to their cart,
+//                                     then close the browser. Idle = no browsers open.
 //
-// Each user opts in via the CampHawk app ("Auto-cart" toggle in Watches). The bot
-// pulls the roster with one master token (AUTOCART_TOKEN) and routes each opening to
-// that user's own logged-in browser profile (profiles/<userId>). Nobody's password is
-// ever stored — each person signs into their own profile once. rec.gov only (RC is
-// session-bound and handled by the phone alert). Stops at the cart; users check out.
+// Each user opts in via the CampHawk app ("Auto-cart" toggle). The bot pulls the roster
+// with one master token (AUTOCART_TOKEN) and routes each opening to that user's own
+// browser profile (profiles/<userId>). No passwords are stored — each person signs into
+// their own profile once. rec.gov's cart is account-tied, so it syncs to their phone —
+// that's why we can close the window right after carting. RC is alert-only (phone link).
 
 import { chromium } from 'playwright';
 import fs from 'node:fs';
@@ -36,21 +37,25 @@ const CAMPHAWK_URL = (process.env.CAMPHAWK_URL || 'https://camphawk.app').replac
 const TOKEN = process.env.AUTOCART_TOKEN; // master token
 const POLL_MS = Number(process.env.POLL_MS || 20000);
 const WINDOW_MIN = Number(process.env.WINDOW_MIN || 15);
+const MAX_CONCURRENCY = Math.max(1, Number(process.env.MAX_CONCURRENCY || 1)); // browsers open at once
 const PROFILES_DIR = path.resolve(__dirname, process.env.PROFILES_DIR || 'profiles');
 const HANDLED_FILE = path.join(__dirname, 'handled.json');
-const CHANNEL = process.env.CHROME_CHANNEL || undefined; // e.g. "chromium" on a Raspberry Pi
+const CARTED_FILE = path.join(__dirname, 'carted.json');
+const CHANNEL = process.env.CHROME_CHANNEL || undefined; // e.g. "chromium" on a Pi
 
 const log = (m) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
 const profileDir = (userId) => path.join(PROFILES_DIR, String(userId).replace(/[^A-Za-z0-9_-]/g, '_'));
+const siteKey = (userId, bookingUrl) => `${userId}::${bookingUrl.split('#')[0]}`;
 
-function loadHandled() {
-  try { return new Map(JSON.parse(fs.readFileSync(HANDLED_FILE, 'utf8'))); } catch { return new Map(); }
-}
-function saveHandled(map) {
-  const cutoff = Date.now() - 2 * 3600 * 1000;
+function loadMap(file) { try { return new Map(JSON.parse(fs.readFileSync(file, 'utf8'))); } catch { return new Map(); } }
+function saveMap(file, map, maxAgeMs) {
+  const cutoff = Date.now() - maxAgeMs;
   for (const [k, t] of map) if (t < cutoff) map.delete(k);
-  fs.writeFileSync(HANDLED_FILE, JSON.stringify([...map]));
+  fs.writeFileSync(file, JSON.stringify([...map]));
 }
+
+const handled = loadMap(HANDLED_FILE); // notification id -> ts (avoid re-processing a notification)
+const carted = loadMap(CARTED_FILE);   // userId::site -> ts  (one successful cart per site per person)
 
 function ask(q) {
   return new Promise((res) => {
@@ -67,17 +72,42 @@ async function fetchRoster() {
   return (await res.json()).users || [];
 }
 
-// Reuse one persistent context per user for the session.
-const contexts = new Map();
-async function getContext(userId) {
-  if (contexts.has(userId)) return contexts.get(userId);
+// Launch a fresh headed browser for a user, run fn, always close it afterward.
+async function withBrowser(userId, fn) {
   const ctx = await chromium.launchPersistentContext(profileDir(userId), {
     headless: false,
     viewport: null,
     ...(CHANNEL ? { channel: CHANNEL } : {}),
   });
-  contexts.set(userId, ctx);
-  return ctx;
+  try { return await fn(ctx); }
+  finally { await ctx.close().catch(() => {}); }
+}
+
+// --- on-demand queue (bounded concurrency) --------------------------------
+const queue = [];
+let active = 0;
+
+function enqueue(item) { queue.push(item); pump(); }
+function pump() {
+  while (active < MAX_CONCURRENCY && queue.length) {
+    const item = queue.shift();
+    active++;
+    processJob(item).catch((e) => log(`  handler error: ${e.message}`)).finally(() => { active--; pump(); });
+  }
+}
+
+async function processJob({ user, job }) {
+  const who = user.email || user.userId;
+  const key = siteKey(user.userId, job.bookingUrl);
+  if (carted.has(key)) return; // already carted this site for this person
+  if (!fs.existsSync(profileDir(user.userId))) {
+    log(`  ⚠ no saved login for ${who} — run: npm run login -- "${who}"`);
+    return;
+  }
+  log(`  ⧉ opening browser for ${who}…`);
+  const ok = await withBrowser(user.userId, (ctx) => cartRecGov(ctx, job, log));
+  if (ok) { carted.set(key, Date.now()); saveMap(CARTED_FILE, carted, 30 * 864e5); }
+  log(`  ⧉ closed browser for ${who}`);
 }
 
 async function loginMode(target) {
@@ -85,7 +115,7 @@ async function loginMode(target) {
   let users = [];
   try { users = await fetchRoster(); } catch (e) { log(`Could not reach roster: ${e.message}`); process.exit(1); }
   if (users.length === 0) {
-    log('No enrolled users yet. Have each person toggle "Auto-cart" ON in the CampHawk app (Watches panel), then re-run.');
+    log('No enrolled users. Have each person toggle "Auto-cart" ON in the CampHawk app first.');
     process.exit(0);
   }
   let user = target
@@ -94,45 +124,34 @@ async function loginMode(target) {
   if (!user) {
     console.log('\nEnrolled users:');
     users.forEach((u, i) => console.log(`  ${i + 1}. ${u.email || u.userId}`));
-    const pick = await ask('\nNumber to sign in: ');
-    user = users[Number(pick) - 1];
+    user = users[Number(await ask('\nNumber to sign in: ')) - 1];
   }
   if (!user) { log('No user selected.'); process.exit(1); }
-
   log(`Opening a browser for ${user.email || user.userId}. Sign in to recreation.gov, then press Enter here.`);
-  const ctx = await getContext(user.userId);
-  await (await ctx.newPage()).goto('https://www.recreation.gov/sign-in').catch(() => {});
-  await ask('Press Enter once signed in… ');
-  await ctx.close();
-  contexts.delete(user.userId);
+  await withBrowser(user.userId, async (ctx) => {
+    await (await ctx.newPage()).goto('https://www.recreation.gov/sign-in').catch(() => {});
+    await ask('Press Enter once signed in… ');
+  });
   log(`Saved session for ${user.email || user.userId}.`);
   process.exit(0);
 }
 
 async function runMode() {
   if (!TOKEN) { log('ERROR: AUTOCART_TOKEN (master) not set. See .env.example.'); process.exit(1); }
-  const handled = loadHandled();
-  log(`Watching ${CAMPHAWK_URL} for all enrolled users, every ${POLL_MS / 1000}s. Ctrl+C to stop.`);
+  log(`Watching ${CAMPHAWK_URL} for all enrolled users, every ${POLL_MS / 1000}s (browsers open only on a hit; up to ${MAX_CONCURRENCY} at once). Ctrl+C to stop.`);
 
   async function tick() {
-    let users = [];
+    let users;
     try { users = await fetchRoster(); } catch (e) { log(`poll error: ${e.message}`); return; }
     for (const user of users) {
       for (const job of user.jobs || []) {
         if (handled.has(job.id)) continue;
         handled.set(job.id, Date.now());
-        saveHandled(handled);
-        const who = user.email || user.userId;
-        log(`🔔 [${who}] ${job.campgroundName} (${job.startDate}→${job.endDate}) [${job.source}]`);
-        try {
-          if (job.source === 'reservecalifornia') { await noteReserveCalifornia(job, log); continue; }
-          if (!fs.existsSync(profileDir(user.userId))) {
-            log(`  ⚠ no saved login for ${who} — run: npm run login -- "${user.email || user.userId}"`);
-            continue;
-          }
-          const ctx = await getContext(user.userId);
-          await cartRecGov(ctx, job, log);
-        } catch (e) { log(`  handler error: ${e.message}`); }
+        saveMap(HANDLED_FILE, handled, 2 * 3600 * 1000);
+        if (job.source === 'reservecalifornia') { await noteReserveCalifornia(job, log); continue; }
+        if (carted.has(siteKey(user.userId, job.bookingUrl))) continue;
+        log(`🔔 [${user.email || user.userId}] ${job.campgroundName} (${job.startDate}→${job.endDate})`);
+        enqueue({ user, job });
       }
     }
   }
@@ -141,6 +160,6 @@ async function runMode() {
   setInterval(tick, POLL_MS);
 }
 
-const loginIdx = process.argv.indexOf('--login');
-if (loginIdx !== -1) loginMode(process.argv[loginIdx + 1] && !process.argv[loginIdx + 1].startsWith('-') ? process.argv[loginIdx + 1] : undefined);
+const li = process.argv.indexOf('--login');
+if (li !== -1) loginMode(process.argv[li + 1] && !process.argv[li + 1].startsWith('-') ? process.argv[li + 1] : undefined);
 else runMode();
