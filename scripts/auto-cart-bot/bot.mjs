@@ -89,6 +89,43 @@ async function withBrowser(userId, fn) {
   finally { await ctx.close().catch(() => {}); }
 }
 
+// A user is "ready" once they've completed a sign-in (marker written on success).
+const readyMarker = (userId) => path.join(profileDir(userId), '.camphawk-ready');
+const isLoggedIn = (userId) => fs.existsSync(readyMarker(userId));
+const loggingIn = new Set();
+
+// Auto-open a rec.gov login window for a newly-enrolled user and detect completion
+// (rec.gov redirects away from /sign-in once you're in). No CLI, no "press Enter".
+async function ensureLogin(user) {
+  const who = user.email || user.userId;
+  if (isLoggedIn(user.userId) || loggingIn.has(user.userId)) return;
+  loggingIn.add(user.userId);
+  log(`🔐 ${who} enabled auto-cart but isn't signed in — opening a recreation.gov login window. Sign in; I'll detect it automatically.`);
+  try {
+    await withBrowser(user.userId, async (ctx) => {
+      const page = await ctx.newPage();
+      await page.goto('https://www.recreation.gov/sign-in').catch(() => {});
+      const deadline = Date.now() + 10 * 60 * 1000; // 10 min to sign in
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 3000));
+        let url;
+        try { url = page.url(); } catch { return; } // window closed
+        if (url && url.includes('recreation.gov') && !url.includes('/sign-in')) {
+          await new Promise((r) => setTimeout(r, 1500)); // let the session settle
+          fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
+          log(`✅ ${who} signed in — auto-cart is now active for them.`);
+          return;
+        }
+      }
+      log(`⌛ ${who} login window timed out — re-toggle auto-cart, or run: npm run login -- "${who}"`);
+    });
+  } catch (e) {
+    log(`  login error for ${who}: ${e.message}`);
+  } finally {
+    loggingIn.delete(user.userId);
+  }
+}
+
 // --- on-demand queue (bounded concurrency) --------------------------------
 const queue = [];
 let active = 0;
@@ -106,8 +143,8 @@ async function processJob({ user, job }) {
   const who = user.email || user.userId;
   const key = siteKey(user.userId, job.bookingUrl);
   if (carted.has(key)) return; // already carted this site for this person
-  if (!fs.existsSync(profileDir(user.userId))) {
-    log(`  ⚠ no saved login for ${who} — run: npm run login -- "${who}"`);
+  if (!isLoggedIn(user.userId)) {
+    log(`  ⚠ ${who} isn't signed in yet — skipping this one (login window should be open).`);
     return;
   }
   log(`  ⧉ opening browser for ${who}…`);
@@ -137,6 +174,7 @@ async function loginMode(target) {
   await withBrowser(user.userId, async (ctx) => {
     await (await ctx.newPage()).goto('https://www.recreation.gov/sign-in').catch(() => {});
     await ask('Press Enter once signed in… ');
+    fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
   });
   log(`Saved session for ${user.email || user.userId}.`);
   process.exit(0);
@@ -150,6 +188,8 @@ async function runMode() {
     let users;
     try { users = await fetchRoster(); } catch (e) { log(`poll error: ${e.message}`); return; }
     for (const user of users) {
+      // Newly enrolled + not signed in yet → auto-open a login window (non-blocking).
+      if (!isLoggedIn(user.userId)) ensureLogin(user);
       for (const job of user.jobs || []) {
         if (handled.has(job.id)) continue;
         handled.set(job.id, Date.now());
