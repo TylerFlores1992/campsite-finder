@@ -6,9 +6,11 @@
   "description": "Personal auto-cart bot — watches CampHawk for openings and adds the site to your own recreation.gov / ReserveCalifornia cart automatically.",
   "scripts": {
     "login": "node bot.mjs --login",
-    "start": "node bot.mjs"
+    "start": "node bot.mjs",
+    "broker": "node broker.mjs"
   },
   "dependencies": {
-    "playwright": "^1.49.0"
+    "playwright": "^1.49.0",
+    "ws": "^8.21.0"
   }
 }

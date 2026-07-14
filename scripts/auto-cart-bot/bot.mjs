@@ -42,6 +42,10 @@ const PROFILES_DIR = path.resolve(__dirname, process.env.PROFILES_DIR || 'profil
 const HANDLED_FILE = path.join(__dirname, 'handled.json');
 const CARTED_FILE = path.join(__dirname, 'carted.json');
 const CHANNEL = process.env.CHROME_CHANNEL || undefined; // e.g. "chromium" on a Pi
+// 'local'  → the bot pops a login window on this machine when someone enrolls.
+// 'remote' → sign-in is done through the web broker (broker.mjs); the bot never
+//            opens its own login window (it just waits for the ready-marker).
+const LOGIN_MODE = (process.env.LOGIN_MODE || 'local').toLowerCase();
 // WSLg/VM compositors often can't paint Chromium's GPU output (window opens but
 // stays blank/won't focus). Software rendering + an explicit on-screen position
 // fixes it. Override with CHROME_ARGS if needed.
@@ -126,6 +130,7 @@ async function recgovLoggedIn(ctx) {
 
 async function ensureLogin(user) {
   const who = user.email || user.userId;
+  if (LOGIN_MODE === 'remote') return; // sign-in handled by the web broker (broker.mjs)
   if (isLoggedIn(user.userId) || loggingIn.has(user.userId)) return;
   loggingIn.add(user.userId);
   log(`🔐 ${who}: opening a one-time recreation.gov sign-in window — sign in there and I finish automatically. (Closing it without signing in turns auto-cart back off; just toggle it on again to retry.)`);

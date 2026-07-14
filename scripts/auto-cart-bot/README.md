@@ -81,10 +81,51 @@ RAM near zero between hits, so one machine can serve many users. Stop with **Ctr
 |-----|---------|---------|
 | `CAMPHAWK_URL` | `https://camphawk.app` | Your CampHawk site |
 | `AUTOCART_TOKEN` | — | Master token; must match Vercel |
-| `POLL_MS` | `20000` | How often to check (ms) |
+| `POLL_MS` | `5000` | How often to check (ms) |
 | `WINDOW_MIN` | `15` | How far back an opening counts as fresh (min) |
 | `MAX_CONCURRENCY` | `1` | Max browsers open at once (raise on a beefier box) |
 | `CHROME_CHANNEL` | — | Set to `chromium` to use the system browser (Raspberry Pi) |
+
+| `LOGIN_MODE` | `local` | `remote` = sign-in via the web broker (see below) |
+| `BROKER_PORT` | `8787` | Port the remote-sign-in broker listens on |
+
+## Remote sign-in (friends sign in from any computer)
+
+By default sign-in happens **on this machine** (`npm run login`). With the **broker**
+turned on, a friend can do their one-time rec.gov sign-in **from their own computer** —
+CampHawk streams a live rec.gov login running here, they type into it, and the session
+saves here. Their password goes straight to rec.gov on this machine; it never touches
+the CampHawk web app. No cookie files, no remote-desktop app.
+
+**On the mini PC:**
+```bash
+npm install                 # pulls in `ws`
+# in .env:
+LOGIN_MODE=remote           # stop the bot from opening its own login windows
+BROKER_PORT=8787
+npm run broker              # run this alongside `npm start`
+```
+
+**Expose the broker to the web with a free Cloudflare Tunnel** (stable hostname, no
+open ports on your router, supports websockets):
+```bash
+# one-time: install cloudflared, then
+cloudflared tunnel --url http://localhost:8787
+# → prints a wss URL like  wss://something.trycloudflare.com
+# (for a permanent hostname, create a named tunnel → wss://broker.camphawk.app)
+```
+
+**In Vercel** (CampHawk project → Production), set:
+```
+BROKER_WS_URL = wss://broker.camphawk.app   # the tunnel's wss URL
+```
+Redeploy. Now the app's **"Sign into recreation.gov now"** button (and `/connect`)
+opens the live sign-in for whoever's logged in. The moment they finish, auto-cart goes
+active and the page closes itself.
+
+Security: the connect token is HMAC-signed with `AUTOCART_TOKEN`, expires in ~5 min,
+and only ever authorizes the signed-in user's own session. Keep the tunnel URL private
+and the token secret strong.
 
 ## Raspberry Pi notes
 - Playwright's bundled Chromium is flaky on ARM. Instead: `sudo apt install chromium`

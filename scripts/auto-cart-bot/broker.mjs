@@ -1,0 +1,182 @@
+// CampHawk remote sign-in broker (Option C) — runs on the mini PC alongside bot.mjs.
+//   node broker.mjs
+//
+// Lets a friend complete their one-time recreation.gov sign-in from ANY computer,
+// with the resulting session landing in this machine's browser profile (where the
+// bot reads it). No cookie files, no remote-desktop app.
+//
+// Flow: the CampHawk /connect page opens a websocket here (through a Cloudflare
+// Tunnel), sends a short-lived HMAC token as its first message; we verify it,
+// launch that user's own browser profile at rec.gov/sign-in, and stream the live
+// page to their browser (CDP screencast) while forwarding their clicks/keys back.
+// The instant a real session exists we write the ready-marker and close — exactly
+// like the local sign-in, just driven remotely.
+
+import { chromium } from 'playwright';
+import { WebSocketServer } from 'ws';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { verifyConnectToken } from './token.mjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+(function loadEnv() {
+  const p = path.join(__dirname, '.env');
+  if (!fs.existsSync(p)) return;
+  for (const line of fs.readFileSync(p, 'utf8').split('\n')) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (!m) continue;
+    let v = m[2].trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    if (!(m[1] in process.env)) process.env[m[1]] = v;
+  }
+})();
+
+const SECRET = process.env.AUTOCART_TOKEN;
+const PORT = Number(process.env.BROKER_PORT || 8787);
+const PROFILES_DIR = path.resolve(__dirname, process.env.PROFILES_DIR || 'profiles');
+const CHANNEL = process.env.CHROME_CHANNEL || undefined;
+const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
+// Headed by default (fewer bot-detection surprises than headless); the window is
+// shoved offscreen since nobody looks at the mini PC directly. Streaming captures
+// it regardless. On a headless Linux box, set BROKER_HEADLESS=1.
+const HEADLESS = /^(1|true|yes)$/i.test(process.env.BROKER_HEADLESS || '');
+const LAUNCH_ARGS = (process.env.CHROME_ARGS ??
+  '--disable-gpu --window-position=-3000,-3000 --window-size=1000,760').split(' ').filter(Boolean);
+
+const log = (m) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const profileDir = (userId) => path.join(PROFILES_DIR, String(userId).replace(/[^A-Za-z0-9_-]/g, '_'));
+const readyMarker = (userId) => path.join(profileDir(userId), '.camphawk-ready');
+
+// Same session check the bot uses: load the account page in a throwaway tab —
+// logged in stays there, logged out bounces to /sign-in.
+async function recgovLoggedIn(ctx) {
+  let p;
+  try {
+    p = await ctx.newPage();
+    await p.goto('https://www.recreation.gov/account/profile', { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await sleep(2500);
+    const u = (p.url() || '').toLowerCase();
+    return u.includes('recreation.gov') && !u.includes('sign-in') && !u.includes('signin') && !u.includes('login');
+  } catch {
+    return false;
+  } finally {
+    if (p) await p.close().catch(() => {});
+  }
+}
+
+if (!SECRET) { log('ERROR: AUTOCART_TOKEN (master) not set. See .env.example.'); process.exit(1); }
+
+// One in-flight session per user (a reconnect replaces the old one).
+const sessions = new Map(); // userId -> { close }
+
+const wss = new WebSocketServer({ port: PORT });
+log(`Remote sign-in broker listening on ws://0.0.0.0:${PORT} (expose via a tunnel). Ctrl+C to stop.`);
+
+wss.on('connection', (ws) => {
+  let session = null;
+  let authed = false;
+
+  const sendJson = (o) => { try { ws.send(JSON.stringify(o)); } catch {} };
+
+  ws.on('message', async (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+    // First message must be the auth token; nothing else is honored until then.
+    if (!authed) {
+      const userId = msg?.token ? verifyConnectToken(msg.token, SECRET) : null;
+      if (!userId) { sendJson({ t: 'error', message: 'bad or expired token' }); ws.close(); return; }
+      authed = true;
+      session = await startSession(userId, ws, sendJson).catch((e) => {
+        log(`  session start failed: ${e.message}`);
+        sendJson({ t: 'error', message: 'could not start sign-in session' });
+        ws.close();
+        return null;
+      });
+      return;
+    }
+
+    // Post-auth: forward input events to the live page.
+    if (session?.onInput) await session.onInput(msg).catch(() => {});
+  });
+
+  ws.on('close', () => { if (session?.close) session.close('client disconnected'); });
+  ws.on('error', () => { if (session?.close) session.close('socket error'); });
+});
+
+async function startSession(userId, ws, sendJson) {
+  // Replace any existing session for this user.
+  if (sessions.get(userId)) sessions.get(userId).close('replaced by new connection');
+
+  log(`🔐 remote sign-in started for ${userId}`);
+  const ctx = await chromium.launchPersistentContext(profileDir(userId), {
+    headless: HEADLESS,
+    viewport: null,
+    args: LAUNCH_ARGS,
+    ...(CHANNEL ? { channel: CHANNEL } : {}),
+  });
+  const page = ctx.pages()[0] || (await ctx.newPage());
+  await page.goto('https://www.recreation.gov/sign-in').catch(() => {});
+
+  const client = await ctx.newCDPSession(page);
+  let dims = { w: 1000, h: 760 };
+  client.on('Page.screencastFrame', async ({ data, metadata, sessionId }) => {
+    if (metadata?.deviceWidth) dims = { w: metadata.deviceWidth, h: metadata.deviceHeight };
+    sendJson({ t: 'frame', data, w: dims.w, h: dims.h });
+    await client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+  });
+  await client.send('Page.startScreencast', { format: 'jpeg', quality: 55, everyNthFrame: 1 });
+
+  let done = false;
+  let closed = false;
+  const close = async (reason) => {
+    if (closed) return;
+    closed = true;
+    sessions.delete(userId);
+    clearInterval(poll);
+    await client.send('Page.stopScreencast').catch(() => {});
+    await ctx.close().catch(() => {});
+    log(`  session ended for ${userId}${reason ? ` (${reason})` : ''}`);
+  };
+
+  // Watch for a completed login without disturbing the streamed page (uses a
+  // throwaway tab). Once real, persist the marker and tell the client.
+  const poll = setInterval(async () => {
+    if (done || closed) return;
+    if (await recgovLoggedIn(ctx)) {
+      done = true;
+      fs.mkdirSync(profileDir(userId), { recursive: true });
+      fs.writeFileSync(readyMarker(userId), new Date().toISOString());
+      log(`✅ ${userId} signed in remotely — auto-cart active.`);
+      sendJson({ t: 'done' });
+      await close('signed in');
+    }
+  }, 3000);
+
+  const deadline = setTimeout(() => close('timed out'), LOGIN_TIMEOUT_MS);
+  deadline.unref?.();
+
+  // Map viewer input (canvas-space) onto the real page.
+  const onInput = async (m) => {
+    if (done || closed) return;
+    const px = Math.round((m.x ?? 0) * dims.w);
+    const py = Math.round((m.y ?? 0) * dims.h);
+    switch (m.t) {
+      case 'move': await page.mouse.move(px, py); break;
+      case 'down': await page.mouse.move(px, py); await page.mouse.down({ button: m.button || 'left' }); break;
+      case 'up': await page.mouse.up({ button: m.button || 'left' }); break;
+      case 'click': await page.mouse.click(px, py, { button: m.button || 'left' }); break;
+      case 'wheel': await page.mouse.wheel(m.dx || 0, m.dy || 0); break;
+      case 'text': if (m.text) await page.keyboard.insertText(m.text); break;
+      case 'key': if (m.key) await page.keyboard.press(m.key); break;
+    }
+  };
+
+  const session = { close, onInput };
+  sessions.set(userId, session);
+  sendJson({ t: 'ready', w: dims.w, h: dims.h });
+  return session;
+}

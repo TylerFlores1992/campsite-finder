@@ -119,19 +119,25 @@ export default function AutoCartToggle() {
               your alert to finish on your phone.
             </p>
 
-            <div className="mt-5 flex items-center gap-3">
+            <a
+              href="/connect"
+              className="mt-5 block w-full text-center px-4 py-2.5 rounded-xl bg-green-600 text-white text-sm font-display font-semibold hover:bg-green-700 transition-colors"
+            >
+              Sign into recreation.gov now
+            </a>
+            <div className="mt-3 flex items-center gap-3">
               <a
                 href="/auto-cart"
                 target="_blank"
-                className="flex-1 text-center px-4 py-2.5 rounded-xl bg-green-600 text-white text-sm font-display font-semibold hover:bg-green-700 transition-colors"
+                className="flex-1 text-center px-4 py-2 rounded-xl border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50"
               >
                 Read the full guide
               </a>
               <button
                 onClick={() => setShowGuide(false)}
-                className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50"
+                className="px-4 py-2 rounded-xl border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50"
               >
-                Got it
+                Later
               </button>
             </div>
           </div>
