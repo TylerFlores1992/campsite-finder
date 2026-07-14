@@ -38,10 +38,11 @@ const PORT = Number(process.env.BROKER_PORT || 8787);
 const PROFILES_DIR = path.resolve(__dirname, process.env.PROFILES_DIR || 'profiles');
 const CHANNEL = process.env.CHROME_CHANNEL || undefined;
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
-// Headed by default (fewer bot-detection surprises than headless); the window is
-// shoved offscreen since nobody looks at the mini PC directly. Streaming captures
-// it regardless. On a headless Linux box, set BROKER_HEADLESS=1.
-const HEADLESS = /^(1|true|yes)$/i.test(process.env.BROKER_HEADLESS || '');
+// Headless by default: nobody watches the mini PC directly (the whole point is
+// remote streaming), and headless makes screencast + background login-checks
+// reliable — a headed browser throttles/steals focus when a check tab opens.
+// Set BROKER_HEADLESS=0 to watch the real window while debugging.
+const HEADLESS = !/^(0|false|no|off)$/i.test(process.env.BROKER_HEADLESS ?? '');
 const LAUNCH_ARGS = (process.env.CHROME_ARGS ??
   '--disable-gpu --window-position=-3000,-3000 --window-size=1000,760').split(' ').filter(Boolean);
 
@@ -50,16 +51,26 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const profileDir = (userId) => path.join(PROFILES_DIR, String(userId).replace(/[^A-Za-z0-9_-]/g, '_'));
 const readyMarker = (userId) => path.join(profileDir(userId), '.camphawk-ready');
 
-// Same session check the bot uses: load the account page in a throwaway tab —
-// logged in stays there, logged out bounces to /sign-in.
+// Definitive login check (a logged-in session visiting /sign-in just stays there,
+// so URL-watching the sign-in page can't tell). Load the account page in a
+// throwaway tab: logged-OUT bounces to /sign-in (client-side, so let it settle),
+// logged-IN stays on /account. Bail to false the instant we see a sign-in URL;
+// only return true if it holds on /account the whole window. In headless mode the
+// tab is invisible and doesn't disturb the page the user is signing in on.
 async function recgovLoggedIn(ctx) {
   let p;
   try {
     p = await ctx.newPage();
     await p.goto('https://www.recreation.gov/account/profile', { waitUntil: 'domcontentloaded', timeout: 25000 });
-    await sleep(2500);
-    const u = (p.url() || '').toLowerCase();
-    return u.includes('recreation.gov') && !u.includes('sign-in') && !u.includes('signin') && !u.includes('login');
+    const deadline = Date.now() + 8000;
+    let onAccount = false;
+    while (Date.now() < deadline) {
+      const u = (p.url() || '').toLowerCase();
+      if (/sign-?in|log-?in/.test(u)) return false;
+      onAccount = u.includes('recreation.gov') && u.includes('/account');
+      await sleep(800);
+    }
+    return onAccount;
   } catch {
     return false;
   } finally {
@@ -108,8 +119,13 @@ wss.on('connection', (ws) => {
 });
 
 async function startSession(userId, ws, sendJson) {
-  // Replace any existing session for this user.
-  if (sessions.get(userId)) sessions.get(userId).close('replaced by new connection');
+  // Replace any existing session for this user (e.g. they reopened the page) —
+  // tell the stale client so it doesn't sit frozen, then tear it down.
+  const prev = sessions.get(userId);
+  if (prev) {
+    prev.sendJson?.({ t: 'error', message: 'This sign-in was reopened in another tab.' });
+    prev.close('replaced by new connection');
+  }
 
   log(`🔐 remote sign-in started for ${userId}`);
   const ctx = await chromium.launchPersistentContext(profileDir(userId), {
@@ -142,19 +158,25 @@ async function startSession(userId, ws, sendJson) {
     log(`  session ended for ${userId}${reason ? ` (${reason})` : ''}`);
   };
 
-  // Watch for a completed login without disturbing the streamed page (uses a
-  // throwaway tab). Once real, persist the marker and tell the client.
+  // Poll the definitive account-page check (invisible in headless). `checking`
+  // guards against overlapping checks since each can take a few seconds.
+  let checking = false;
   const poll = setInterval(async () => {
-    if (done || closed) return;
-    if (await recgovLoggedIn(ctx)) {
-      done = true;
-      fs.mkdirSync(profileDir(userId), { recursive: true });
-      fs.writeFileSync(readyMarker(userId), new Date().toISOString());
-      log(`✅ ${userId} signed in remotely — auto-cart active.`);
-      sendJson({ t: 'done' });
-      await close('signed in');
+    if (done || closed || checking) return;
+    checking = true;
+    try {
+      if (await recgovLoggedIn(ctx)) {
+        done = true;
+        fs.mkdirSync(profileDir(userId), { recursive: true });
+        fs.writeFileSync(readyMarker(userId), new Date().toISOString());
+        log(`✅ ${userId} signed in remotely — auto-cart active.`);
+        sendJson({ t: 'done' });
+        await close('signed in');
+      }
+    } finally {
+      checking = false;
     }
-  }, 3000);
+  }, 6000);
 
   const deadline = setTimeout(() => close('timed out'), LOGIN_TIMEOUT_MS);
   deadline.unref?.();
@@ -175,7 +197,7 @@ async function startSession(userId, ws, sendJson) {
     }
   };
 
-  const session = { close, onInput };
+  const session = { close, onInput, sendJson };
   sessions.set(userId, session);
   sendJson({ t: 'ready', w: dims.w, h: dims.h });
   return session;
