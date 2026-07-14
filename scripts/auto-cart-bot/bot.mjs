@@ -35,7 +35,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const CAMPHAWK_URL = (process.env.CAMPHAWK_URL || 'https://camphawk.app').replace(/\/$/, '');
 const TOKEN = process.env.AUTOCART_TOKEN; // master token
-const POLL_MS = Number(process.env.POLL_MS || 20000);
+const POLL_MS = Number(process.env.POLL_MS || 5000);
 const WINDOW_MIN = Number(process.env.WINDOW_MIN || 15);
 const MAX_CONCURRENCY = Math.max(1, Number(process.env.MAX_CONCURRENCY || 1)); // browsers open at once
 const PROFILES_DIR = path.resolve(__dirname, process.env.PROFILES_DIR || 'profiles');
@@ -49,6 +49,16 @@ const LAUNCH_ARGS = (process.env.CHROME_ARGS ??
   '--disable-gpu --window-position=40,40 --window-size=1200,860').split(' ').filter(Boolean);
 
 const log = (m) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Flip a user's auto-cart enrollment on the CampHawk side (master token).
+async function setEnrollment(userId, enabled) {
+  await fetch(`${CAMPHAWK_URL}/api/auto-cart/enrollment`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, enabled }),
+  });
+}
 const profileDir = (userId) => path.join(PROFILES_DIR, String(userId).replace(/[^A-Za-z0-9_-]/g, '_'));
 const siteKey = (userId, bookingUrl) => `${userId}::${bookingUrl.split('#')[0]}`;
 
@@ -118,18 +128,19 @@ async function ensureLogin(user) {
   const who = user.email || user.userId;
   if (isLoggedIn(user.userId) || loggingIn.has(user.userId)) return;
   loggingIn.add(user.userId);
-  log(`🔐 ${who} needs a one-time recreation.gov sign-in — opening a login window. Sign in there; I detect it and finish automatically (closing the window without signing in won't count).`);
+  log(`🔐 ${who}: opening a one-time recreation.gov sign-in window — sign in there and I finish automatically. (Closing it without signing in turns auto-cart back off; just toggle it on again to retry.)`);
   let ok = false;
   try {
     await withBrowser(user.userId, async (ctx) => {
       const page = await ctx.newPage();
+      let closed = false;
+      page.on('close', () => { closed = true; });   // wake up the instant they close it
       await page.goto('https://www.recreation.gov/sign-in').catch(() => {});
       const deadline = Date.now() + 10 * 60 * 1000; // 10 min to sign in
-      await new Promise((r) => setTimeout(r, 20000)); // give them time before first check
-      while (Date.now() < deadline) {
-        if (page.isClosed()) return;                 // window closed → abort, no marker
+      await sleep(6000);                            // brief head start before first check
+      while (Date.now() < deadline && !closed) {
         if (await recgovLoggedIn(ctx)) { ok = true; return; }
-        await new Promise((r) => setTimeout(r, 8000));
+        for (let i = 0; i < 4 && !closed; i++) await sleep(1000); // ~4s, wakes early on close
       }
     });
   } catch (e) {
@@ -141,7 +152,8 @@ async function ensureLogin(user) {
     fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
     log(`✅ ${who} signed in — auto-cart is now active.`);
   } else {
-    log(`… ${who} isn't signed in yet — I'll reopen the window on the next check, or run: npm run login -- "${who}"`);
+    log(`↩︎ ${who} didn't finish signing in — turning their auto-cart back OFF. Toggle it on again to retry.`);
+    await setEnrollment(user.userId, false).catch((e) => log(`  couldn't reset toggle for ${who}: ${e.message}`));
   }
 }
 
