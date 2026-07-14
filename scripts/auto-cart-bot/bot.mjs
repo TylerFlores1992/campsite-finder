@@ -96,39 +96,52 @@ const loggingIn = new Set();
 
 // Auto-open a rec.gov login window for a newly-enrolled user and detect completion
 // (rec.gov redirects away from /sign-in once you're in). No CLI, no "press Enter".
+// Verify a real recreation.gov session: load the account page in a throwaway tab —
+// logged in stays there, logged out bounces to /sign-in. This is what confirms a
+// login (closing the window without signing in no longer counts).
+async function recgovLoggedIn(ctx) {
+  let p;
+  try {
+    p = await ctx.newPage();
+    await p.goto('https://www.recreation.gov/account/profile', { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await new Promise((r) => setTimeout(r, 2500));
+    const u = (p.url() || '').toLowerCase();
+    return u.includes('recreation.gov') && !u.includes('sign-in') && !u.includes('signin') && !u.includes('login');
+  } catch {
+    return false;
+  } finally {
+    if (p) await p.close().catch(() => {});
+  }
+}
+
 async function ensureLogin(user) {
   const who = user.email || user.userId;
   if (isLoggedIn(user.userId) || loggingIn.has(user.userId)) return;
   loggingIn.add(user.userId);
-  log(`🔐 ${who} enabled auto-cart but isn't signed in — opening a recreation.gov login window. Sign in; I'll detect it automatically.`);
+  log(`🔐 ${who} needs a one-time recreation.gov sign-in — opening a login window. Sign in there; I detect it and finish automatically (closing the window without signing in won't count).`);
+  let ok = false;
   try {
-    let signedIn = false;
     await withBrowser(user.userId, async (ctx) => {
       const page = await ctx.newPage();
       await page.goto('https://www.recreation.gov/sign-in').catch(() => {});
-      log(`   → Sign in for ${who} in the window that opened, then CLOSE that window. (I'll also auto-detect a redirect.)`);
-      await new Promise((resolve) => {
-        let done = false;
-        const finish = () => { if (!done) { done = true; resolve(); } };
-        ctx.once('close', finish);   // user closed the window → treat as done
-        page.once('close', finish);
-        const timer = setInterval(() => {
-          let u;
-          try { u = page.url(); } catch { clearInterval(timer); return finish(); }
-          if (u && u.includes('recreation.gov') && !u.includes('/sign-in')) { clearInterval(timer); finish(); }
-        }, 3000);
-        setTimeout(() => { clearInterval(timer); finish(); }, 10 * 60 * 1000); // safety
-      });
-      signedIn = true;
+      const deadline = Date.now() + 10 * 60 * 1000; // 10 min to sign in
+      await new Promise((r) => setTimeout(r, 20000)); // give them time before first check
+      while (Date.now() < deadline) {
+        if (page.isClosed()) return;                 // window closed → abort, no marker
+        if (await recgovLoggedIn(ctx)) { ok = true; return; }
+        await new Promise((r) => setTimeout(r, 8000));
+      }
     });
-    if (signedIn) {
-      fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
-      log(`✅ ${who} is set up — auto-cart is now active for them.`);
-    }
   } catch (e) {
-    log(`  login error for ${who}: ${e.message}`);
+    log(`  login check error for ${who}: ${e.message}`);
   } finally {
     loggingIn.delete(user.userId);
+  }
+  if (ok) {
+    fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
+    log(`✅ ${who} signed in — auto-cart is now active.`);
+  } else {
+    log(`… ${who} isn't signed in yet — I'll reopen the window on the next check, or run: npm run login -- "${who}"`);
   }
 }
 
@@ -177,12 +190,18 @@ async function loginMode(target) {
   }
   if (!user) { log('No user selected.'); process.exit(1); }
   log(`Opening a browser for ${user.email || user.userId}. Sign in to recreation.gov, then press Enter here.`);
+  let ok = false;
   await withBrowser(user.userId, async (ctx) => {
     await (await ctx.newPage()).goto('https://www.recreation.gov/sign-in').catch(() => {});
     await ask('Press Enter once signed in… ');
-    fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
+    ok = await recgovLoggedIn(ctx);
   });
-  log(`Saved session for ${user.email || user.userId}.`);
+  if (ok) {
+    fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
+    log(`Saved session for ${user.email || user.userId}.`);
+  } else {
+    log(`Hmm — you don't look signed in to recreation.gov yet. Re-run once you've signed in.`);
+  }
   process.exit(0);
 }
 
