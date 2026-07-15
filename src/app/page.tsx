@@ -87,9 +87,17 @@ export default function HomePage() {
   }, [isSignedIn]);
 
   async function openBillingPortal() {
-    const res = await fetch('/api/stripe/portal', { method: 'POST' });
-    const data = await res.json();
-    if (data.url) window.location.href = data.url;
+    try {
+      const res = await fetch('/api/stripe/portal', { method: 'POST' });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        alert(data.message || "We couldn't open your billing portal. Please try again or contact support.");
+      }
+    } catch {
+      alert("We couldn't open your billing portal. Please try again.");
+    }
   }
 
   const search = useCallback(
