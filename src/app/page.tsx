@@ -62,6 +62,18 @@ export default function HomePage() {
       .catch(() => {});
   }, [isSignedIn, isSubscribed, watchesOpen]);
 
+  // Whether a phone number is saved — drives the "get text alerts" nudge on the
+  // subscriber home. undefined = unknown, null = none saved. Refreshes when the
+  // Watches panel closes (the compliant SMS opt-in form lives there).
+  const [phone, setPhone] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!isSignedIn || !isSubscribed) { setPhone(undefined); return; }
+    fetch('/api/user/phone')
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((d: { phone?: string | null }) => setPhone(d.phone ?? null))
+      .catch(() => {});
+  }, [isSignedIn, isSubscribed, watchesOpen]);
+
   // Load favorites when signed in
   useEffect(() => {
     if (!isSignedIn) { setFavorites(new Set()); return; }
@@ -407,6 +419,17 @@ export default function HomePage() {
               <span className="text-[10px] font-bold text-white bg-amber-500 rounded-full px-1.5 py-0.5">NEW</span>
               ⚡ Auto-cart — openings land in your recreation.gov cart automatically. Turn it on →
             </button>
+
+            {/* Text-alert nudge — only when no number is saved. Opens the Watches
+                panel, where the carrier-compliant SMS opt-in form lives. */}
+            {phone === null && (
+              <button
+                onClick={() => setWatchesOpen(true)}
+                className="inline-flex items-center gap-2 text-sm text-gray-700 bg-white/90 border border-green-200 rounded-full px-4 py-2 shadow-sm hover:bg-green-50 transition-colors"
+              >
+                📱 Get alerts by text too — add your phone number →
+              </button>
+            )}
 
             <footer className="absolute bottom-3 left-0 right-0 flex items-center justify-center gap-4 text-xs text-gray-600 [text-shadow:_0_1px_6px_rgb(255_255_255_/_0.8)]">
               <span>© {new Date().getFullYear()} CampHawk</span>
