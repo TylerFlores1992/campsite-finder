@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { MapPin, Tent, Car, Home, Dog, Accessibility, BookmarkPlus, BookmarkCheck } from 'lucide-react';
+import { MapPin, Tent, Car, Home, Dog, Accessibility, BookmarkPlus, BookmarkCheck, Zap } from 'lucide-react';
 import type { Campground } from '@/lib/types';
 import WatchButton from './WatchButton';
 
@@ -79,6 +79,17 @@ export default function CampgroundCard({
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-green-50">
             <Tent size={40} className="text-green-300" />
+          </div>
+        )}
+
+        {/* Auto-cart badge — rec.gov (ridb) sites can be added to the cart automatically */}
+        {campground.source === 'ridb' && (
+          <div
+            className="absolute top-2 left-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/90 text-white text-[11px] font-semibold backdrop-blur-sm shadow-sm"
+            title="Auto-cart available — CampHawk can add openings here to your recreation.gov cart automatically"
+          >
+            <Zap size={11} />
+            Auto-cart
           </div>
         )}
 
