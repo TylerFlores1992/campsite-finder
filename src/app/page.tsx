@@ -339,6 +339,8 @@ export default function HomePage() {
       <main className="flex-1 md:overflow-hidden max-w-screen-2xl mx-auto w-full">
         {!searchState && needsSubscription ? (
           <SubscribeGate returning={everSubscribed} />
+        ) : !searchState && !isSignedIn ? (
+          <SubscribeGate signedOut />
         ) : !searchState ? (
           <div className="relative isolate h-full flex flex-col items-center justify-center text-center px-4 gap-6 overflow-y-auto pt-10 pb-24 bg-[#F3EFE0]">
             {/* CampHawk hero scene + soft scrim so text stays legible over it */}
@@ -386,30 +388,14 @@ export default function HomePage() {
                 </span>
               ))}
             </div>
-            {isSignedIn ? (
-              <button
-                onClick={handleTonight}
-                className="mt-1 px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-display font-semibold text-base shadow-md shadow-amber-500/25 transition-all hover:shadow-lg hover:-translate-y-0.5"
-              >
-                ⛺ Find a site for tonight
-              </button>
-            ) : (
-              <div className="mt-1 flex flex-col items-center gap-3">
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <SignUpButton mode="redirect">
-                    <button className="px-7 py-3.5 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-display font-semibold text-base shadow-md transition-all hover:-translate-y-0.5">
-                      Start your free trial
-                    </button>
-                  </SignUpButton>
-                  <SignInButton mode="redirect">
-                    <button className="px-7 py-3.5 rounded-2xl bg-white border border-gray-200 text-gray-700 font-display font-semibold text-base hover:bg-gray-50 transition-all">
-                      Sign in
-                    </button>
-                  </SignInButton>
-                </div>
-                <p className="text-sm text-gray-600">7-day free trial · then $2.50/mo or $20/yr · cancel anytime</p>
-              </div>
-            )}
+            {/* Only active subscribers reach this hero (visitors and unsubscribed
+                users get the SubscribeGate marketing panel instead). */}
+            <button
+              onClick={handleTonight}
+              className="mt-1 px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-display font-semibold text-base shadow-md shadow-amber-500/25 transition-all hover:shadow-lg hover:-translate-y-0.5"
+            >
+              ⛺ Find a site for tonight
+            </button>
 
             <footer className="absolute bottom-3 left-0 right-0 flex items-center justify-center gap-4 text-xs text-gray-600 [text-shadow:_0_1px_6px_rgb(255_255_255_/_0.8)]">
               <span>© {new Date().getFullYear()} CampHawk</span>

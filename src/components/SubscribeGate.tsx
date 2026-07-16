@@ -2,18 +2,25 @@
 
 import { useState } from 'react';
 import { Loader2, Bell, Zap, Map as MapIcon, Tent } from 'lucide-react';
+import { SignInButton, SignUpButton } from '@clerk/nextjs';
 
-/** Marketing + subscribe surfaces for signed-in users WITHOUT an active
- *  subscription. Search stays free (the bar is right above in the header) —
- *  these sell the paid part: 24/7 watching, instant alerts, and Auto-cart.
+/** Marketing panel + subscribe surfaces. One consistent pitch for every
+ *  non-paying audience — the CTA is the only thing that changes:
  *
+ *  - signed OUT            → sign-up / sign-in buttons
+ *  - signed in, never paid → Stripe checkout buttons + trial copy
+ *  - signed in, lapsed     → Stripe checkout buttons + resubscribe copy
+ *
+ *  Search stays free for everyone (the bar is right above in the header).
  *  - <SubscribeGate>   full panel shown in place of the landing hero
  *  - <SubscribeBanner> slim strip above search results so browsing stays open
  */
 
 interface SubscribeGateProps {
   /** true if the user has subscribed before (expired/cancelled) → no free trial, "resubscribe" copy. */
-  returning: boolean;
+  returning?: boolean;
+  /** true for visitors with no account → auth CTAs instead of checkout. */
+  signedOut?: boolean;
 }
 
 function useCheckout() {
@@ -96,10 +103,21 @@ function PricingButtons({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
 
 /** Full marketing panel — rendered where the landing hero normally goes, so the
  *  header (with the working search bar) stays right above it. */
-export default function SubscribeGate({ returning }: SubscribeGateProps) {
+export default function SubscribeGate({ returning = false, signedOut = false }: SubscribeGateProps) {
+  const headline = signedOut
+    ? 'Get notified the instant a campsite opens up'
+    : returning
+      ? 'Welcome back — reactivate your alerts'
+      : 'Never miss a campsite cancellation again';
+  const subcopy = signedOut
+    ? 'Search thousands of campgrounds free — right above, no account needed. When your spot is booked solid, CampHawk watches it around the clock and alerts you within seconds of a cancellation.'
+    : returning
+      ? 'Your subscription has ended, so watching and alerts are paused. Searching still works — resubscribe to start catching cancellations again.'
+      : 'Searching is free — try it right above. A subscription turns on the good part: 24/7 watching of booked campgrounds, instant email + text alerts, and Auto-cart.';
+
   return (
     <div className="relative isolate h-full flex flex-col items-center text-center px-4 pt-10 pb-16 gap-6 overflow-y-auto bg-[#F3EFE0]">
-      {/* Same hero scene as the landing page, softened so cards stay legible */}
+      {/* Same hero scene as ever, softened so cards stay legible */}
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/hero-bg.png" alt="" className="h-full w-full object-cover object-center" />
@@ -108,13 +126,31 @@ export default function SubscribeGate({ returning }: SubscribeGateProps) {
 
       <div className="text-4xl">🦅</div>
       <h1 className="font-display text-3xl sm:text-4xl font-extrabold text-green-800 max-w-2xl leading-tight [text-shadow:_0_1px_10px_rgb(255_255_255_/_0.7)]">
-        {returning ? 'Welcome back — reactivate your alerts' : 'Never miss a campsite cancellation again'}
+        {headline}
       </h1>
       <p className="text-gray-700 max-w-xl text-base sm:text-lg leading-relaxed [text-shadow:_0_1px_8px_rgb(255_255_255_/_0.85)]">
-        {returning
-          ? 'Your subscription has ended, so watching and alerts are paused. Searching still works — resubscribe to start catching cancellations again.'
-          : 'Searching is free — try it right above. A subscription turns on the good part: 24/7 watching of booked campgrounds, instant email + text alerts, and Auto-cart.'}
+        {subcopy}
       </p>
+
+      {/* Sample alert — the product's payoff at a glance (skipped for lapsed
+          subscribers, who already know it) */}
+      {!returning && (
+        <div className="w-full max-w-sm rounded-2xl bg-white border border-gray-100 shadow-lg p-4 text-left">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-lg">🦅</span>
+            <span className="font-display font-semibold text-sm text-gray-800">CampHawk alert</span>
+            <span className="ml-auto text-[10px] font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full">just now</span>
+          </div>
+          <p className="text-sm text-gray-700">
+            ⛺ <strong>Lower Pines, Yosemite</strong> just opened up for your dates
+            <strong> Jul 10–12</strong>.
+          </p>
+          <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-amber-500 rounded-lg px-3 py-1.5">
+            Book now on Recreation.gov →
+          </div>
+          <p className="mt-2 text-[11px] text-gray-400">⏱ Sent within seconds — act before it&apos;s gone.</p>
+        </div>
+      )}
 
       {/* Feature grid */}
       <div className="grid sm:grid-cols-2 gap-3 w-full max-w-2xl text-left">
@@ -134,20 +170,41 @@ export default function SubscribeGate({ returning }: SubscribeGateProps) {
         ))}
       </div>
 
-      {/* Pricing */}
+      {/* CTA card: auth for visitors, checkout for signed-in users */}
       <div className="w-full max-w-md rounded-2xl bg-white/95 border border-gray-100 shadow-lg p-5">
         <p className="font-display font-bold text-gray-900">
           {returning ? 'Pick up where you left off' : 'Start your 7-day free trial'}
         </p>
-        <div className="mt-3 flex flex-col sm:flex-row gap-3">
-          <PricingButtons size="lg" />
-        </div>
-        <p className="mt-3 text-sm text-gray-500">
-          {returning ? 'Cancel anytime.' : '7-day free trial · cancel anytime before you’re charged.'}
-        </p>
+        {signedOut ? (
+          <>
+            <div className="mt-3 flex flex-col sm:flex-row gap-3">
+              <SignUpButton mode="redirect">
+                <button className="flex-1 px-5 py-3.5 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-display font-semibold shadow-md transition-all">
+                  Start your free trial
+                </button>
+              </SignUpButton>
+              <SignInButton mode="redirect">
+                <button className="flex-1 px-5 py-3.5 rounded-2xl bg-white border border-gray-200 text-gray-700 font-display font-semibold hover:bg-gray-50 transition-all">
+                  Sign in
+                </button>
+              </SignInButton>
+            </div>
+            <p className="mt-3 text-sm text-gray-500">7-day free trial · then $2.50/mo or $20/yr · cancel anytime</p>
+          </>
+        ) : (
+          <>
+            <div className="mt-3 flex flex-col sm:flex-row gap-3">
+              <PricingButtons size="lg" />
+            </div>
+            <p className="mt-3 text-sm text-gray-500">
+              {returning ? 'Cancel anytime.' : '7-day free trial · cancel anytime before you’re charged.'}
+            </p>
+          </>
+        )}
       </div>
 
       <p className="text-xs text-gray-500 [text-shadow:_0_1px_6px_rgb(255_255_255_/_0.8)]">
+        © {new Date().getFullYear()} CampHawk ·{' '}
         <a href="/terms" className="underline underline-offset-2">Terms</a> ·{' '}
         <a href="/privacy" className="underline underline-offset-2">Privacy</a>
       </p>
@@ -157,7 +214,7 @@ export default function SubscribeGate({ returning }: SubscribeGateProps) {
 
 /** Slim persistent strip above search results for unsubscribed users — browsing
  *  stays open, the upgrade path stays one tap away. */
-export function SubscribeBanner({ returning }: SubscribeGateProps) {
+export function SubscribeBanner({ returning = false }: SubscribeGateProps) {
   return (
     <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 bg-amber-50 border-b border-amber-200 px-3 py-2">
       <span className="text-xs text-amber-900">
