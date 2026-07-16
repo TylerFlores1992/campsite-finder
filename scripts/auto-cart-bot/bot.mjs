@@ -63,6 +63,15 @@ async function setEnrollment(userId, enabled) {
     body: JSON.stringify({ userId, enabled }),
   });
 }
+
+// Tell CampHawk the one-time rec.gov sign-in succeeded (drives app UI state).
+async function reportConnected(userId) {
+  await fetch(`${CAMPHAWK_URL}/api/auto-cart/enrollment`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, connected: true }),
+  }).catch(() => {});
+}
 const profileDir = (userId) => path.join(PROFILES_DIR, String(userId).replace(/[^A-Za-z0-9_-]/g, '_'));
 const siteKey = (userId, bookingUrl) => `${userId}::${bookingUrl.split('#')[0]}`;
 
@@ -155,6 +164,7 @@ async function ensureLogin(user) {
   }
   if (ok) {
     fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
+    await reportConnected(user.userId);
     log(`✅ ${who} signed in — auto-cart is now active.`);
   } else {
     log(`↩︎ ${who} didn't finish signing in — turning their auto-cart back OFF. Toggle it on again to retry.`);
@@ -215,6 +225,7 @@ async function loginMode(target) {
   });
   if (ok) {
     fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
+    await reportConnected(user.userId);
     log(`Saved session for ${user.email || user.userId}.`);
   } else {
     log(`Hmm — you don't look signed in to recreation.gov yet. Re-run once you've signed in.`);

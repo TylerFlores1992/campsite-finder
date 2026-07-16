@@ -74,6 +74,17 @@ export default function HomePage() {
       .catch(() => {});
   }, [isSignedIn, isSubscribed, watchesOpen]);
 
+  // Hide the Auto-cart nudge once setup is genuinely finished: toggle ON and the
+  // one-time rec.gov sign-in completed on the bot machine (reported by the bot).
+  const [autocartDone, setAutocartDone] = useState(false);
+  useEffect(() => {
+    if (!isSignedIn || !isSubscribed) { setAutocartDone(false); return; }
+    fetch('/api/user/autocart')
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((d: { enabled?: boolean; connected?: boolean }) => setAutocartDone(!!d.enabled && !!d.connected))
+      .catch(() => {});
+  }, [isSignedIn, isSubscribed, watchesOpen]);
+
   // Load favorites when signed in
   useEffect(() => {
     if (!isSignedIn) { setFavorites(new Set()); return; }
@@ -411,14 +422,17 @@ export default function HomePage() {
               </p>
             )}
 
-            {/* Cross-sell the newest feature to existing subscribers */}
-            <button
-              onClick={() => setWatchesOpen(true)}
-              className="inline-flex items-center gap-2 text-sm text-gray-700 bg-white/90 border border-amber-200 rounded-full px-4 py-2 shadow-sm hover:bg-amber-50 transition-colors"
-            >
-              <span className="text-[10px] font-bold text-white bg-amber-500 rounded-full px-1.5 py-0.5">NEW</span>
-              ⚡ Auto-cart — openings land in your recreation.gov cart automatically. Turn it on →
-            </button>
+            {/* Cross-sell the newest feature — hidden once auto-cart is on AND the
+                one-time rec.gov sign-in has completed. */}
+            {!autocartDone && (
+              <button
+                onClick={() => setWatchesOpen(true)}
+                className="inline-flex items-center gap-2 text-sm text-gray-700 bg-white/90 border border-amber-200 rounded-full px-4 py-2 shadow-sm hover:bg-amber-50 transition-colors"
+              >
+                <span className="text-[10px] font-bold text-white bg-amber-500 rounded-full px-1.5 py-0.5">NEW</span>
+                ⚡ Auto-cart — openings land in your recreation.gov cart automatically. Turn it on →
+              </button>
+            )}
 
             {/* Text-alert nudge — only when no number is saved. Opens the Watches
                 panel, where the carrier-compliant SMS opt-in form lives. */}

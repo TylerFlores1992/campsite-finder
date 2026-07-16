@@ -34,6 +34,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 })();
 
 const SECRET = process.env.AUTOCART_TOKEN;
+const CAMPHAWK_URL = (process.env.CAMPHAWK_URL || 'https://camphawk.app').replace(/\/$/, '');
 const PORT = Number(process.env.BROKER_PORT || 8787);
 const PROFILES_DIR = path.resolve(__dirname, process.env.PROFILES_DIR || 'profiles');
 const CHANNEL = process.env.CHROME_CHANNEL || undefined;
@@ -170,6 +171,12 @@ async function startSession(userId, ws, sendJson) {
         fs.mkdirSync(profileDir(userId), { recursive: true });
         fs.writeFileSync(readyMarker(userId), new Date().toISOString());
         log(`✅ ${userId} signed in remotely — auto-cart active.`);
+        // Tell CampHawk the one-time sign-in is done (drives app UI state).
+        fetch(`${CAMPHAWK_URL}/api/auto-cart/enrollment`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${SECRET}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, connected: true }),
+        }).catch(() => {});
         sendJson({ t: 'done' });
         await close('signed in');
       }

@@ -4,11 +4,15 @@ import { mutate, queryOne } from '@/lib/db/client';
 
 export async function GET() {
   const userId = await requireAuth();
-  const row = await queryOne<{ autocart_enabled: boolean }>(
-    'SELECT autocart_enabled FROM users WHERE id = $1',
+  const row = await queryOne<{ autocart_enabled: boolean; autocart_connected: boolean }>(
+    'SELECT autocart_enabled, autocart_connected FROM users WHERE id = $1',
     [userId]
   );
-  return NextResponse.json({ enabled: !!row?.autocart_enabled });
+  // connected = the one-time rec.gov sign-in finished on the bot machine.
+  return NextResponse.json({
+    enabled: !!row?.autocart_enabled,
+    connected: !!row?.autocart_connected,
+  });
 }
 
 export async function POST(req: NextRequest) {
