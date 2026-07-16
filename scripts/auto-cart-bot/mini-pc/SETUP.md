@@ -1,7 +1,8 @@
 # Mini-PC setup (GMKtec, Windows) — CampHawk auto-cart 24/7
 
 Follow top to bottom on the mini PC. Assumes Windows. ~30 min. Values you'll need:
-- **AUTOCART_TOKEN**: `19c756c6ba6a7da67b487a645c73073ea3558a4463f8a04d29d381b90570e747`
+- **AUTOCART_TOKEN**: copy it from Vercel → CampHawk project → Settings → Environment
+  Variables → `AUTOCART_TOKEN` (never commit the value to this repo — it's public).
 - **Hostname for remote sign-in**: `broker.camphawk.app`
 - GitHub repo: `TylerFlores1992/campsite-finder`
 
@@ -36,7 +37,7 @@ notepad .env
 Set these (leave the rest default):
 ```
 CAMPHAWK_URL=https://camphawk.app
-AUTOCART_TOKEN=19c756c6ba6a7da67b487a645c73073ea3558a4463f8a04d29d381b90570e747
+AUTOCART_TOKEN=<paste the value from Vercel → AUTOCART_TOKEN>
 POLL_MS=5000
 WINDOW_MIN=15
 LOGIN_MODE=remote
