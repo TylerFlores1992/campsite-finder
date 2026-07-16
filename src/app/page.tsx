@@ -50,6 +50,17 @@ export default function HomePage() {
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [everSubscribed, setEverSubscribed] = useState(false);
   const [subLoaded, setSubLoaded] = useState(false);
+  const [watchCount, setWatchCount] = useState<number | null>(null);
+
+  // Watch count for the subscriber home screen. Depends on watchesOpen so the
+  // count refreshes after the panel closes (watches may have been removed).
+  useEffect(() => {
+    if (!isSignedIn || !isSubscribed) { setWatchCount(null); return; }
+    fetch('/api/watches')
+      .then((r) => (r.ok ? r.json() : { watches: [] }))
+      .then((d) => setWatchCount((d.watches ?? []).length))
+      .catch(() => {});
+  }, [isSignedIn, isSubscribed, watchesOpen]);
 
   // Load favorites when signed in
   useEffect(() => {
@@ -349,52 +360,52 @@ export default function HomePage() {
               <img src="/hero-bg.png" alt="" className="h-full w-full object-cover object-center" />
               <div className="absolute inset-0 bg-gradient-to-b from-[#F3EFE0]/45 via-[#F3EFE0]/25 to-[#F3EFE0]/55" />
             </div>
-            <h2 className="font-display text-4xl sm:text-5xl font-extrabold text-green-800 max-w-2xl leading-[1.08] [text-shadow:_0_1px_10px_rgb(255_255_255_/_0.7)]">
-              Get notified the instant a campsite opens up
+            {/* Only active subscribers reach this hero (visitors and unsubscribed
+                users get the SubscribeGate marketing panel instead) — so skip the
+                sales pitch and get them moving. */}
+            <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-green-800 max-w-xl leading-tight [text-shadow:_0_1px_10px_rgb(255_255_255_/_0.7)]">
+              Welcome back{user?.firstName ? `, ${user.firstName}` : ''} — where to next?
             </h2>
-            <p className="text-gray-700 max-w-md text-lg leading-relaxed [text-shadow:_0_1px_8px_rgb(255_255_255_/_0.85)]">
-              Search thousands of campgrounds across US public lands and California State Parks.
-              When your spot is booked solid, CampHawk watches it around the clock and alerts you
-              within seconds of a cancellation.
+            <p className="text-gray-700 max-w-md text-base sm:text-lg leading-relaxed [text-shadow:_0_1px_8px_rgb(255_255_255_/_0.85)]">
+              Search a spot above, jump into a quick trip, or check on your watches.
             </p>
 
-            {/* Sample alert — shows the product's payoff at a glance */}
-            <div className="w-full max-w-sm rounded-2xl bg-white border border-gray-100 shadow-lg p-4 text-left">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-lg">🦅</span>
-                <span className="font-display font-semibold text-sm text-gray-800">CampHawk alert</span>
-                <span className="ml-auto text-[10px] font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full">just now</span>
-              </div>
-              <p className="text-sm text-gray-700">
-                ⛺ <strong>Lower Pines, Yosemite</strong> just opened up for your dates
-                <strong> Jul 10–12</strong>.
+            {/* Quick actions */}
+            <div className="flex flex-wrap justify-center gap-3">
+              <button
+                onClick={handleTonight}
+                className="px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-display font-semibold text-base shadow-md shadow-amber-500/25 transition-all hover:shadow-lg hover:-translate-y-0.5"
+              >
+                ⛺ Tonight
+              </button>
+              <button
+                onClick={handleThisWeekend}
+                className="px-6 py-3 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-display font-semibold text-base shadow-md transition-all hover:shadow-lg hover:-translate-y-0.5"
+              >
+                🌲 This weekend
+              </button>
+              <button
+                onClick={() => setWatchesOpen(true)}
+                className="px-6 py-3 rounded-2xl bg-white border border-gray-200 text-gray-700 font-display font-semibold text-base shadow-sm hover:bg-gray-50 transition-all"
+              >
+                🔔 My watches{watchCount !== null ? ` (${watchCount})` : ''}
+              </button>
+            </div>
+
+            {watchCount === 0 && (
+              <p className="text-sm text-gray-600 max-w-sm [text-shadow:_0_1px_6px_rgb(255_255_255_/_0.8)]">
+                No watches yet — search a booked campground and tap <strong>Watch</strong> to get
+                cancellation alerts.
               </p>
-              <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-amber-500 rounded-lg px-3 py-1.5">
-                Book now on Recreation.gov →
-              </div>
-              <p className="mt-2 text-[11px] text-gray-400">⏱ Sent within seconds — act before it&apos;s gone.</p>
-            </div>
-            <div className="flex flex-wrap justify-center gap-2.5 max-w-lg">
-              {[
-                { icon: '⚡', label: 'Alerts in seconds, not hours' },
-                { icon: '🏕️', label: 'Recreation.gov + CA State Parks' },
-                { icon: '📱', label: 'Email & text notifications' },
-              ].map((f) => (
-                <span
-                  key={f.label}
-                  className="inline-flex items-center gap-1.5 text-sm text-gray-600 bg-white border border-gray-100 rounded-full px-3.5 py-1.5 shadow-sm"
-                >
-                  <span>{f.icon}</span> {f.label}
-                </span>
-              ))}
-            </div>
-            {/* Only active subscribers reach this hero (visitors and unsubscribed
-                users get the SubscribeGate marketing panel instead). */}
+            )}
+
+            {/* Cross-sell the newest feature to existing subscribers */}
             <button
-              onClick={handleTonight}
-              className="mt-1 px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-display font-semibold text-base shadow-md shadow-amber-500/25 transition-all hover:shadow-lg hover:-translate-y-0.5"
+              onClick={() => setWatchesOpen(true)}
+              className="inline-flex items-center gap-2 text-sm text-gray-700 bg-white/90 border border-amber-200 rounded-full px-4 py-2 shadow-sm hover:bg-amber-50 transition-colors"
             >
-              ⛺ Find a site for tonight
+              <span className="text-[10px] font-bold text-white bg-amber-500 rounded-full px-1.5 py-0.5">NEW</span>
+              ⚡ Auto-cart — openings land in your recreation.gov cart automatically. Turn it on →
             </button>
 
             <footer className="absolute bottom-3 left-0 right-0 flex items-center justify-center gap-4 text-xs text-gray-600 [text-shadow:_0_1px_6px_rgb(255_255_255_/_0.8)]">
