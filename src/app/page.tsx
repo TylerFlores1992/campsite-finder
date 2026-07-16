@@ -10,7 +10,7 @@ import Filters, { FilterState } from '@/components/Filters';
 import QuickFilters, { getTonight, getThisWeekend } from '@/components/QuickFilters';
 import WatchesPanel from '@/components/WatchesPanel';
 import Logo from '@/components/Logo';
-import SubscribeGate from '@/components/SubscribeGate';
+import SubscribeGate, { SubscribeBanner } from '@/components/SubscribeGate';
 import type { Campground } from '@/lib/types';
 
 // Load map only client-side
@@ -217,11 +217,10 @@ export default function HomePage() {
     }
   }
 
-  // Signed-in users without an active subscription (new, expired, or cancelled)
-  // get the full-screen subscribe gate — no usable app without a subscription.
-  if (isSignedIn && subLoaded && !isSubscribed) {
-    return <SubscribeGate returning={everSubscribed} />;
-  }
+  // Signed-in users without an active subscription can still SEARCH (same as
+  // signed-out visitors) — the hero swaps to a marketing/subscribe panel and a
+  // slim banner rides above results. Watch creation stays server-gated (402).
+  const needsSubscription = isSignedIn && subLoaded && !isSubscribed;
 
   return (
     <div className="flex flex-col min-h-screen md:h-screen bg-gray-50">
@@ -338,7 +337,9 @@ export default function HomePage() {
 
       {/* Main content */}
       <main className="flex-1 md:overflow-hidden max-w-screen-2xl mx-auto w-full">
-        {!searchState ? (
+        {!searchState && needsSubscription ? (
+          <SubscribeGate returning={everSubscribed} />
+        ) : !searchState ? (
           <div className="relative isolate h-full flex flex-col items-center justify-center text-center px-4 gap-6 overflow-y-auto pt-10 pb-24 bg-[#F3EFE0]">
             {/* CampHawk hero scene + soft scrim so text stays legible over it */}
             <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
@@ -417,12 +418,14 @@ export default function HomePage() {
             </footer>
           </div>
         ) : (
-          <div
-            id="search-results"
-            className={`flex md:h-full ${
-              view === 'list' ? 'flex-col' : view === 'map' ? '' : 'flex-col md:flex-row'
-            }`}
-          >
+          <div className="flex flex-col md:h-full">
+            {needsSubscription && <SubscribeBanner returning={everSubscribed} />}
+            <div
+              id="search-results"
+              className={`flex flex-1 min-h-0 ${
+                view === 'list' ? 'flex-col' : view === 'map' ? '' : 'flex-col md:flex-row'
+              }`}
+            >
             {/* Map panel */}
             {view !== 'list' && (
               <div
@@ -517,6 +520,7 @@ export default function HomePage() {
                 )}
               </div>
             )}
+            </div>
           </div>
         )}
       </main>
