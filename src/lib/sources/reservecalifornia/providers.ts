@@ -63,6 +63,15 @@ export const USEDIRECT_PROVIDERS: UseDirectProvider[] = [
     fallbackBase: 'https://msprdr.usedirect.com/MSPRDR/rdr',
     parkUrl: () => 'https://icampmo1.usedirect.com/',
   },
+  {
+    source: 'floridastateparks',
+    idPrefix: 'fl',
+    name: 'Florida State Parks',
+    state: 'FL',
+    rdrBase: 'https://floridardr.usedirect.com/Floridardr/rdr',
+    fallbackBase: 'https://floridardr.usedirect.com/Floridardr/rdr',
+    parkUrl: () => 'https://reserve.floridastateparks.org/Web/',
+  },
 ];
 
 export function providerBySource(source: string): UseDirectProvider | undefined {
