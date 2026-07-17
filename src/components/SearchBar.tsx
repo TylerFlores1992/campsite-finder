@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Search, MapPin, Loader2, Tent } from 'lucide-react';
+import DateRangePicker from './DateRangePicker';
 
 interface SearchBarProps {
   onSearch: (params: {
@@ -356,27 +357,12 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
         </select>
       </div>
 
-      {/* Dates */}
-      <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">Check-in</label>
-        <input
-          type="date"
-          value={startDate}
-          min={new Date().toISOString().slice(0, 10)}
-          onChange={(e) => setStartDate(e.target.value)}
-          className="py-2 px-3 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
-        />
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">Check-out</label>
-        <input
-          type="date"
-          value={endDate}
-          min={startDate || new Date().toISOString().slice(0, 10)}
-          onChange={(e) => setEndDate(e.target.value)}
-          className="py-2 px-3 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
-        />
-      </div>
+      {/* Dates — single smooth range picker */}
+      <DateRangePicker
+        startDate={startDate}
+        endDate={endDate}
+        onChange={(s, e) => { setStartDate(s); setEndDate(e); }}
+      />
 
       <button
         type="submit"
