@@ -30,7 +30,7 @@ interface CampgroundSuggestion {
   longitude: number;
 }
 
-const RADIUS_OPTIONS = [25, 50, 100, 200];
+const RADIUS_OPTIONS = [10, 25, 50, 100, 200];
 
 interface MapboxFeature {
   center?: [number, number];
@@ -71,7 +71,7 @@ function featureStateCode(f: MapboxFeature): string | null {
 
 export default function SearchBar({ onSearch }: SearchBarProps) {
   const [location, setLocation] = useState('');
-  const [radiusMiles, setRadiusMiles] = useState(50);
+  const [radiusMiles, setRadiusMiles] = useState(25);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [locating, setLocating] = useState(false);
