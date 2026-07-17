@@ -45,6 +45,24 @@ export const USEDIRECT_PROVIDERS: UseDirectProvider[] = [
     fallbackBase: 'https://azrdr.usedirect.com/azrdr/rdr',
     parkUrl: () => 'https://azstateparks.com/reserve/',
   },
+  {
+    source: 'minnesotastateparks',
+    idPrefix: 'mn',
+    name: 'Minnesota State Parks',
+    state: 'MN',
+    rdrBase: 'https://mnrdr.usedirect.com/minnesotardr/rdr',
+    fallbackBase: 'https://mnrdr.usedirect.com/minnesotardr/rdr',
+    parkUrl: () => 'https://reservemn.usedirect.com/',
+  },
+  {
+    source: 'missouristateparks',
+    idPrefix: 'mo',
+    name: 'Missouri State Parks',
+    state: 'MO',
+    rdrBase: 'https://msprdr.usedirect.com/MSPRDR/rdr',
+    fallbackBase: 'https://msprdr.usedirect.com/MSPRDR/rdr',
+    parkUrl: () => 'https://icampmo1.usedirect.com/',
+  },
 ];
 
 export function providerBySource(source: string): UseDirectProvider | undefined {
