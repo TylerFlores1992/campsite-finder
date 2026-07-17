@@ -101,11 +101,13 @@ export default function DateRangePicker({ startDate, endDate, onChange }: DateRa
       {open && (
         <div className="absolute top-full left-0 mt-2 z-50 bg-white rounded-2xl shadow-xl border border-gray-200 p-3 sm:p-4">
           <div className="flex items-start gap-6">
+            {/* Both nav arrows live on the first month so paging works at every
+                width (the second month is hidden on mobile). */}
             <MonthGrid y={view.y} m={view.m} today={today} startDate={startDate} endDate={provisionalEnd}
-              onPick={pick} onHover={setHover} showPrev onPrev={() => shiftMonth(-1)} onNext={() => shiftMonth(1)} />
+              onPick={pick} onHover={setHover} showPrev showNext onPrev={() => shiftMonth(-1)} onNext={() => shiftMonth(1)} />
             <div className="hidden sm:block">
               <MonthGrid y={view.m === 11 ? view.y + 1 : view.y} m={(view.m + 1) % 12} today={today}
-                startDate={startDate} endDate={provisionalEnd} onPick={pick} onHover={setHover} showNext onNext={() => shiftMonth(1)} />
+                startDate={startDate} endDate={provisionalEnd} onPick={pick} onHover={setHover} />
             </div>
           </div>
           <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
