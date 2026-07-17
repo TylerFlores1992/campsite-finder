@@ -2,6 +2,20 @@ import { query, mutate } from '@/lib/db/client';
 import { sendEmail } from './email';
 import { sendSms } from './sms';
 import type { CampflareWebhookPayload } from '@/lib/campflare/types';
+import { USEDIRECT_PROVIDERS } from '@/lib/sources/reservecalifornia/providers';
+
+/** Human label for the booking provider, from the booking URL (registry-driven). */
+function providerLabel(bookingUrl: string): string {
+  if (bookingUrl.includes('recreation.gov')) return 'Recreation.gov';
+  const p = USEDIRECT_PROVIDERS.find((pr) => {
+    try {
+      return bookingUrl.includes(new URL(pr.parkUrl(0)).host);
+    } catch {
+      return false;
+    }
+  });
+  return p?.name ?? 'the reservation site';
+}
 
 export interface NotificationPayload {
   userId: string;
@@ -143,8 +157,7 @@ function buildEmailHtml(payload: NotificationPayload): string {
   const dateList = payload.availableDates
     .map((d) => `<li style="margin:4px 0">${d}</li>`)
     .join('');
-  const isRC = payload.bookingUrl.includes('reservecalifornia');
-  const provider = isRC ? 'ReserveCalifornia' : 'Recreation.gov';
+  const provider = providerLabel(payload.bookingUrl);
   const siteSuffix = payload.campsiteName ? ` — Site ${payload.campsiteName}` : '';
   const comingSoon = payload.kind === 'coming_soon';
 

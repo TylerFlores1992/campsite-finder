@@ -64,8 +64,8 @@ const FEATURE_CARDS = [
   },
   {
     icon: <Tent size={18} className="text-green-700" />,
-    title: 'Federal + California coverage',
-    body: 'Recreation.gov campgrounds nationwide — national parks, forests, and lakes — plus ReserveCalifornia state parks. 3,000+ campgrounds and counting.',
+    title: 'Federal + state park coverage',
+    body: 'Recreation.gov campgrounds nationwide — national parks, forests, and lakes — plus California and Arizona state parks, with more states rolling out. 3,400+ campgrounds and counting.',
     badge: null,
   },
 ];

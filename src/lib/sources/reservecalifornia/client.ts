@@ -1,37 +1,41 @@
-// ReserveCalifornia (CA State Parks) client.
+// UseDirect / RDR API client (ReserveCalifornia, Arizona State Parks, …).
 //
-// The site is backed by Tyler Technologies' RDR API (formerly UseDirect).
-// The API host has moved before (calirdr.usedirect.com is dead), so we
-// discover the current base URL from the site's runtime config.json and
-// fall back to the last known host.
+// All these systems are backed by Tyler Technologies' RDR API (formerly
+// UseDirect): same /fd/* + /search/grid endpoints and grid shape. Each state is a
+// UseDirectProvider (see providers.ts); pass one to every call. Hosts can move, so
+// providers with a configUrl discover the current base at runtime.
 
-const CONFIG_URL = 'https://www.reservecalifornia.com/config.json';
-const FALLBACK_RDR_BASE =
-  'https://california-rdr.prod.cali.rd12.recreation-management.tylerapp.com/rdr';
+import {
+  type UseDirectProvider,
+  providerByCampgroundId,
+  USEDIRECT_PROVIDERS,
+} from './providers';
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (compatible; CampsiteFinder/1.0)',
   Accept: 'application/json',
 };
 
-let _base: string | null = null;
+const _baseCache = new Map<string, string>(); // provider.source -> resolved RDR base
 
-async function rdrBase(): Promise<string> {
-  if (_base) return _base;
-  try {
-    const res = await fetch(CONFIG_URL, { headers: HEADERS });
-    if (res.ok) {
-      const config = (await res.json()) as { rdrApiUrl?: string };
-      if (config.rdrApiUrl) {
-        _base = config.rdrApiUrl.replace(/\/+$/, '');
-        return _base;
+async function rdrBase(provider: UseDirectProvider): Promise<string> {
+  const cached = _baseCache.get(provider.source);
+  if (cached) return cached;
+  let base = provider.rdrBase ?? provider.fallbackBase;
+  if (provider.configUrl) {
+    try {
+      const res = await fetch(provider.configUrl, { headers: HEADERS });
+      if (res.ok) {
+        const config = (await res.json()) as { rdrApiUrl?: string };
+        if (config.rdrApiUrl) base = config.rdrApiUrl;
       }
+    } catch {
+      // fall through to static/fallback base
     }
-  } catch {
-    // fall through to hardcoded host
   }
-  _base = FALLBACK_RDR_BASE;
-  return _base;
+  base = base.replace(/\/+$/, '');
+  _baseCache.set(provider.source, base);
+  return base;
 }
 
 export interface RCPlace {
@@ -68,8 +72,7 @@ export interface RCGridSlice {
   /** Active reservation on this night (>0 = booked). */
   ReservationId?: number;
   /** Set when the night is cancelled-but-held: an ISO local timestamp
-   *  ("2026-07-18T08:00:00") for when RC releases it back for booking (typically
-   *  8am the next day). null when free/booked/blocked. */
+   *  ("2026-07-18T08:00:00") for when it releases (usually 8am next day). */
   Lock?: string | null;
 }
 
@@ -101,11 +104,17 @@ export interface RCGrid {
 }
 
 /**
- * Fetch from the RDR API — directly when this host's IPs pass RC's WAF
- * (Vercel, residential), or via our Vercel proxy when RC_PROXY_URL is set
- * (Fly.io and GitHub runners get 403'd directly).
+ * Fetch from a provider's RDR API — directly when this host's IPs pass the WAF
+ * (Vercel, residential), or via our Vercel proxy when RC_PROXY_URL is set (Fly.io
+ * and GitHub runners get 403'd directly). The proxy is passed the resolved base so
+ * it forwards to the right state.
  */
-async function rdrFetch<T>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+async function rdrFetch<T>(
+  provider: UseDirectProvider,
+  path: string,
+  opts: { method?: string; body?: unknown } = {}
+): Promise<T> {
+  const base = await rdrBase(provider);
   const proxyUrl = process.env.RC_PROXY_URL;
   const proxySecret = process.env.RC_PROXY_SECRET ?? process.env.SYNC_SECRET;
 
@@ -113,13 +122,12 @@ async function rdrFetch<T>(path: string, opts: { method?: string; body?: unknown
     const res = await fetch(proxyUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-sync-secret': proxySecret },
-      body: JSON.stringify({ path, method: opts.method ?? 'GET', body: opts.body }),
+      body: JSON.stringify({ base, path, method: opts.method ?? 'GET', body: opts.body }),
     });
     if (!res.ok) throw new Error(`RC proxy ${path} → ${res.status}`);
     return res.json() as Promise<T>;
   }
 
-  const base = await rdrBase();
   const res = await fetch(`${base}${path}`, {
     method: opts.method ?? 'GET',
     headers: { ...HEADERS, ...(opts.body ? { 'Content-Type': 'application/json' } : {}) },
@@ -129,30 +137,27 @@ async function rdrFetch<T>(path: string, opts: { method?: string; body?: unknown
   return res.json() as Promise<T>;
 }
 
-async function rdrGet<T>(path: string): Promise<T> {
-  return rdrFetch<T>(path);
+export function fetchPlaces(provider: UseDirectProvider): Promise<RCPlace[]> {
+  return rdrFetch<RCPlace[]>(provider, '/fd/places');
 }
 
-export async function fetchPlaces(): Promise<RCPlace[]> {
-  return rdrGet<RCPlace[]>('/fd/places');
-}
-
-export async function fetchFacilities(): Promise<RCFacility[]> {
-  return rdrGet<RCFacility[]>('/fd/facilities');
+export function fetchFacilities(provider: UseDirectProvider): Promise<RCFacility[]> {
+  return rdrFetch<RCFacility[]>(provider, '/fd/facilities');
 }
 
 /** Catalog of unit types (id → name like "Tent Only - Walk-In", "Hook Up (E)"). */
-export async function fetchUnitTypes(): Promise<RCUnitType[]> {
-  return rdrGet<RCUnitType[]>('/fd/unittypes');
+export function fetchUnitTypes(provider: UseDirectProvider): Promise<RCUnitType[]> {
+  return rdrFetch<RCUnitType[]>(provider, '/fd/unittypes');
 }
 
 /** Per-unit availability grid for a facility over an arbitrary date range. */
-export async function fetchGrid(
+export function fetchGrid(
+  provider: UseDirectProvider,
   facilityId: number,
   startDate: string, // YYYY-MM-DD
   endDate: string
 ): Promise<RCGrid> {
-  return rdrFetch<RCGrid>('/search/grid', {
+  return rdrFetch<RCGrid>(provider, '/search/grid', {
     method: 'POST',
     body: {
       FacilityId: facilityId,
@@ -173,15 +178,19 @@ export async function fetchGrid(
   });
 }
 
-/** Our campground id convention for ReserveCalifornia facilities. */
-export function rcCampgroundId(facilityId: number): string {
-  return `rc-${facilityId}`;
+/** Our campground id convention: `${idPrefix}-${facilityId}`. */
+export function campgroundIdFor(provider: UseDirectProvider, facilityId: number): string {
+  return `${provider.idPrefix}-${facilityId}`;
 }
 
-export function rcFacilityIdFromCampgroundId(campgroundId: string): number {
-  return Number(campgroundId.replace(/^rc-/, ''));
+/** Extract the numeric facility id from any UseDirect campground id (rc-123, az-45). */
+export function facilityIdFromCampgroundId(campgroundId: string): number {
+  return Number(campgroundId.replace(/^[a-z]+-/, ''));
 }
 
-export function isRcCampgroundId(campgroundId: string): boolean {
-  return campgroundId.startsWith('rc-');
+/** True if this campground id belongs to any UseDirect provider. */
+export function isUseDirectCampgroundId(campgroundId: string): boolean {
+  return !!providerByCampgroundId(campgroundId);
 }
+
+export { USEDIRECT_PROVIDERS };

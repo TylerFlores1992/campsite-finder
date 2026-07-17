@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ridbSource } from '@/lib/sources/ridb';
 import { hasAvailabilityInRange } from '@/lib/availability/recgov';
 import { hasRCAvailabilityInRange } from '@/lib/availability/reservecalifornia';
+import { isUseDirectSource } from '@/lib/sources/reservecalifornia/providers';
 import type { SearchParams } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
@@ -57,7 +58,7 @@ export async function GET(request: NextRequest) {
 
       const checks = await Promise.allSettled(
         campgrounds.map((cg) =>
-          cg.source === 'reservecalifornia'
+          isUseDirectSource(cg.source)
             ? hasRCAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
             : hasAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
         )

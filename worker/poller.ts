@@ -31,8 +31,9 @@ try {
 import { query, mutate } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
-import { syncReserveCalifornia } from '../src/lib/sources/reservecalifornia/sync';
+import { syncAllUseDirect } from '../src/lib/sources/reservecalifornia/sync';
 import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
+import { isUseDirectSource, USEDIRECT_PROVIDERS } from '../src/lib/sources/reservecalifornia/providers';
 import { dispatchNotifications } from '../src/lib/notifications';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 15_000);
@@ -206,8 +207,8 @@ async function cycle(): Promise<void> {
     return;
   }
 
-  const ridbWatches = watches.filter((w) => w.campground_source !== 'reservecalifornia');
-  const rcWatches = watches.filter((w) => w.campground_source === 'reservecalifornia');
+  const ridbWatches = watches.filter((w) => !isUseDirectSource(w.campground_source));
+  const rcWatches = watches.filter((w) => isUseDirectSource(w.campground_source));
 
   // recreation.gov: one fetch per unique campground+month, shared across watches.
   const pairs = new Set<string>();
@@ -259,7 +260,7 @@ async function cycle(): Promise<void> {
   for (const watch of watches) {
     const rc = rcResults.get(watch.id);
     const result: WatchResult =
-      watch.campground_source === 'reservecalifornia'
+      isUseDirectSource(watch.campground_source)
         ? { dates: rc?.dates ?? [], campsiteId: null, campsiteName: null }
         : availableDatesForWatch(watch, monthData);
     if (result.dates.length === 0) continue;
@@ -280,7 +281,7 @@ async function cycle(): Promise<void> {
         campgroundName: watch.campground_name,
         availableDates: result.dates,
         bookingUrl:
-          watch.campground_source === 'reservecalifornia'
+          isUseDirectSource(watch.campground_source)
             // #camphawk-rc fragment (unitId_arrival_nights_sleepingUnitId) lets the
             // extension add the exact unit to the RC cart. Fragment never hits RC's server.
             ? `${watch.reservations_url ?? 'https://www.reservecalifornia.com/'}${
@@ -298,7 +299,7 @@ async function cycle(): Promise<void> {
       notified++;
       // A held site that just went live: clear the held marker so a future
       // cancellation of the same site alerts again.
-      if (watch.campground_source === 'reservecalifornia' && watch.rc_hold_notified_for) {
+      if (isUseDirectSource(watch.campground_source) && watch.rc_hold_notified_for) {
         await mutate(`UPDATE watches SET rc_hold_notified_for = NULL WHERE id = $1`, [watch.id]).catch(() => {});
       }
     } catch (err) {
@@ -360,15 +361,25 @@ async function rcSyncIfDue(): Promise<void> {
   if (rcSyncRunning) return;
   rcSyncRunning = true;
   try {
-    const row = await query<{ age_hours: number }>(
-      `SELECT EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 3600 AS age_hours
-       FROM sync_log WHERE source = 'reservecalifornia' AND facilities_synced > 0`
+    // "Due" when the OLDEST provider's last successful sync is stale (or a
+    // provider has never synced) — so a newly added state syncs on the next tick.
+    const sources = USEDIRECT_PROVIDERS.map((p) => p.source);
+    const row = await query<{ age_hours: number | null; synced_sources: number }>(
+      `SELECT EXTRACT(EPOCH FROM (NOW() - MIN(last_ok))) / 3600 AS age_hours,
+              COUNT(*) AS synced_sources
+       FROM (
+         SELECT source, MAX(finished_at) AS last_ok
+         FROM sync_log WHERE source = ANY($1) AND facilities_synced > 0
+         GROUP BY source
+       ) t`,
+      [sources]
     );
     const age = row[0]?.age_hours;
-    if (age != null && age < RC_SYNC_MAX_AGE_HOURS) return;
-    console.log(`[poller] RC sync due (last success ${age?.toFixed(1) ?? 'never'}h ago) — starting`);
-    const result = await syncReserveCalifornia();
-    console.log(`[poller] RC sync finished: ${result.facilitiesSynced} campgrounds, ${result.campsitesSynced} units, ${result.errors.length} errors`);
+    const allSynced = Number(row[0]?.synced_sources ?? 0) >= sources.length;
+    if (allSynced && age != null && age < RC_SYNC_MAX_AGE_HOURS) return;
+    console.log(`[poller] UseDirect sync due (oldest ${age?.toFixed(1) ?? 'never'}h ago) — starting`);
+    const result = await syncAllUseDirect();
+    console.log(`[poller] UseDirect sync finished: ${result.facilitiesSynced} campgrounds, ${result.campsitesSynced} units, ${result.errors.length} errors`);
   } catch (err) {
     console.error('[poller] RC sync failed:', err);
   } finally {
@@ -382,8 +393,8 @@ async function main() {
   // Startup probe: verify the RC API is reachable via the configured path
   // (direct, or through the Vercel proxy when RC_PROXY_URL is set).
   try {
-    const types = await fetchUnitTypes();
-    console.log(`[poller] RC connectivity probe OK — ${types.length} unit types (via ${process.env.RC_PROXY_URL ? 'proxy' : 'direct'})`);
+    const types = await fetchUnitTypes(USEDIRECT_PROVIDERS[0]);
+    console.log(`[poller] UseDirect connectivity probe OK — ${types.length} unit types (via ${process.env.RC_PROXY_URL ? 'proxy' : 'direct'})`);
   } catch (err) {
     console.error('[poller] RC connectivity probe FAILED — RC watches will not alert:', (err as Error).message);
   }

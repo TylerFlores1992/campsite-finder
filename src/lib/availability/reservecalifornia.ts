@@ -1,23 +1,25 @@
-// Availability checks for ReserveCalifornia campgrounds via the RDR grid API.
+// Availability checks for UseDirect campgrounds (ReserveCalifornia, Arizona State
+// Parks, …) via the RDR grid API. The provider is derived from the campground id
+// prefix (rc-, az-), so all call sites stay source-agnostic.
 
-import { fetchGrid, rcFacilityIdFromCampgroundId } from '@/lib/sources/reservecalifornia/client';
+import { fetchGrid, facilityIdFromCampgroundId } from '@/lib/sources/reservecalifornia/client';
+import { providerByCampgroundId } from '@/lib/sources/reservecalifornia/providers';
 import type { CampgroundAvailability, CampsiteAvailability, AvailabilityDay } from '@/lib/types';
 
 /**
  * Dates within [startDate, endDate) where at least one unit is free.
- * Returns a sorted list of YYYY-MM-DD strings. Errors return [] (best-effort,
- * matching the recgov module's behavior).
+ * Returns a sorted list of YYYY-MM-DD strings. Errors return [] (best-effort).
  */
 export async function getRCAvailableDates(
   campgroundId: string,
   startDate: string,
   endDate: string
 ): Promise<string[]> {
-  const facilityId = rcFacilityIdFromCampgroundId(campgroundId);
-  if (!Number.isFinite(facilityId)) return [];
+  const provider = providerByCampgroundId(campgroundId);
+  if (!provider) return [];
 
   try {
-    const grid = await fetchGrid(facilityId, startDate, endDate);
+    const grid = await fetchGrid(provider, facilityIdFromCampgroundId(campgroundId), startDate, endDate);
     const open = new Set<string>();
     for (const unit of Object.values(grid.Facility?.Units ?? {})) {
       if (!unit.AllowWebBooking) continue;
@@ -29,7 +31,7 @@ export async function getRCAvailableDates(
     }
     return [...open].sort();
   } catch (err) {
-    console.warn(`[RC availability] Failed for ${campgroundId}:`, (err as Error).message);
+    console.warn(`[UseDirect availability] Failed for ${campgroundId}:`, (err as Error).message);
     return [];
   }
 }
@@ -50,8 +52,7 @@ export function hasConsecutiveRun(dates: string[], minNights: number): boolean {
 
 /**
  * True if a SINGLE unit can host `minNights` consecutive nights within
- * [startDate, endDate). Nights open at different units don't combine into
- * a bookable stay.
+ * [startDate, endDate). Nights open at different units don't combine.
  */
 export async function hasRCAvailabilityInRange(
   campgroundId: string,
@@ -59,11 +60,11 @@ export async function hasRCAvailabilityInRange(
   endDate: string,
   minNights = 1
 ): Promise<boolean> {
-  const facilityId = rcFacilityIdFromCampgroundId(campgroundId);
-  if (!Number.isFinite(facilityId)) return false;
+  const provider = providerByCampgroundId(campgroundId);
+  if (!provider) return false;
 
   try {
-    const grid = await fetchGrid(facilityId, startDate, endDate);
+    const grid = await fetchGrid(provider, facilityIdFromCampgroundId(campgroundId), startDate, endDate);
     for (const unit of Object.values(grid.Facility?.Units ?? {})) {
       if (!unit.AllowWebBooking) continue;
       const dates = Object.values(unit.Slices ?? {})
@@ -73,7 +74,7 @@ export async function hasRCAvailabilityInRange(
       if (hasConsecutiveRun(dates, minNights)) return true;
     }
   } catch (err) {
-    console.warn(`[RC availability] Range check failed for ${campgroundId}:`, (err as Error).message);
+    console.warn(`[UseDirect availability] Range check failed for ${campgroundId}:`, (err as Error).message);
   }
   return false;
 }
@@ -88,10 +89,10 @@ export async function findRCOpenUnit(
   endDate: string,
   minNights = 1
 ): Promise<{ unitId: number; sleepingUnitId: number | null } | null> {
-  const facilityId = rcFacilityIdFromCampgroundId(campgroundId);
-  if (!Number.isFinite(facilityId)) return null;
+  const provider = providerByCampgroundId(campgroundId);
+  if (!provider) return null;
   try {
-    const grid = await fetchGrid(facilityId, startDate, endDate);
+    const grid = await fetchGrid(provider, facilityIdFromCampgroundId(campgroundId), startDate, endDate);
     for (const unit of Object.values(grid.Facility?.Units ?? {})) {
       if (!unit.AllowWebBooking) continue;
       const dates = Object.values(unit.Slices ?? {})
@@ -103,18 +104,17 @@ export async function findRCOpenUnit(
       }
     }
   } catch (err) {
-    console.warn(`[RC availability] findRCOpenUnit failed for ${campgroundId}:`, (err as Error).message);
+    console.warn(`[UseDirect availability] findRCOpenUnit failed for ${campgroundId}:`, (err as Error).message);
   }
   return null;
 }
 
 /**
- * Find a unit whose full stay is currently in ReserveCalifornia's cancelled-but-
- * held state — booked night was cancelled, and RC holds it locked until a release
- * time (usually 8am the next day) before it's bookable again. Returns the unit and
- * that release time (`availableAt`, ISO local) so we can tell the user when it goes
- * live. null if nothing qualifies. A held night is: not free, not blocked, no active
- * reservation, and a Lock timestamp set.
+ * Find a unit whose full stay is currently in UseDirect's cancelled-but-held state
+ * — booked night was cancelled, and it's locked until a release time (usually 8am
+ * next day). Returns the unit and that release time (`availableAt`, ISO local) so
+ * we can tell the user when it goes live. A held night is: not free, not blocked,
+ * no active reservation, and a Lock timestamp set.
  */
 export async function findRCHeldUnit(
   campgroundId: string,
@@ -122,10 +122,10 @@ export async function findRCHeldUnit(
   endDate: string,
   minNights = 1
 ): Promise<{ unitId: number; sleepingUnitId: number | null; dates: string[]; availableAt: string } | null> {
-  const facilityId = rcFacilityIdFromCampgroundId(campgroundId);
-  if (!Number.isFinite(facilityId)) return null;
+  const provider = providerByCampgroundId(campgroundId);
+  if (!provider) return null;
   try {
-    const grid = await fetchGrid(facilityId, startDate, endDate);
+    const grid = await fetchGrid(provider, facilityIdFromCampgroundId(campgroundId), startDate, endDate);
     for (const unit of Object.values(grid.Facility?.Units ?? {})) {
       if (!unit.AllowWebBooking) continue;
       const held = Object.values(unit.Slices ?? {})
@@ -141,14 +141,12 @@ export async function findRCHeldUnit(
         .sort((a, b) => a.Date.localeCompare(b.Date));
       const dates = held.map((s) => s.Date);
       if (hasConsecutiveRun(dates, minNights)) {
-        // All nights of one cancelled reservation share a Lock; if a run spans a
-        // couple, use the latest so "available at" is when the whole stay is free.
         const availableAt = held.reduce((max, s) => (s.Lock! > max ? s.Lock! : max), held[0].Lock!);
         return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, dates, availableAt };
       }
     }
   } catch (err) {
-    console.warn(`[RC availability] findRCHeldUnit failed for ${campgroundId}:`, (err as Error).message);
+    console.warn(`[UseDirect availability] findRCHeldUnit failed for ${campgroundId}:`, (err as Error).message);
   }
   return null;
 }
@@ -158,14 +156,15 @@ export async function getRCAvailabilityForMonth(
   campgroundId: string,
   month: string // YYYY-MM
 ): Promise<CampgroundAvailability> {
-  const facilityId = rcFacilityIdFromCampgroundId(campgroundId);
+  const provider = providerByCampgroundId(campgroundId);
   const start = `${month}-01`;
   const [y, m] = month.split('-').map(Number);
   const end = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10); // first of next month
 
   const campsites: CampsiteAvailability[] = [];
   try {
-    const grid = await fetchGrid(facilityId, start, end);
+    if (!provider) throw new Error(`no UseDirect provider for ${campgroundId}`);
+    const grid = await fetchGrid(provider, facilityIdFromCampgroundId(campgroundId), start, end);
     for (const unit of Object.values(grid.Facility?.Units ?? {})) {
       const days: AvailabilityDay[] = Object.values(unit.Slices ?? {})
         .map((slice) => ({
@@ -184,7 +183,7 @@ export async function getRCAvailabilityForMonth(
       });
     }
   } catch (err) {
-    console.warn(`[RC availability] Month grid failed for ${campgroundId}/${month}:`, (err as Error).message);
+    console.warn(`[UseDirect availability] Month grid failed for ${campgroundId}/${month}:`, (err as Error).message);
   }
 
   const availableCount = campsites.filter((cs) =>

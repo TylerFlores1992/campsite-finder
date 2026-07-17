@@ -86,9 +86,9 @@ export default function AutoCartHelpPage() {
               account, so it shows up wherever you&apos;re logged in.
             </li>
             <li>
-              <strong>California State Parks</strong> (ReserveCalifornia) aren&apos;t auto-carted —
-              their cart doesn&apos;t sync across devices. For those, your CampHawk alert includes a
-              direct booking link: tap it on your phone and finish there.
+              <strong>State parks</strong> (California&apos;s ReserveCalifornia, Arizona) aren&apos;t
+              auto-carted — their cart doesn&apos;t sync across devices. For those, your CampHawk alert
+              includes a direct booking link: tap it on your phone and finish there.
             </li>
             <li>
               <strong>One grab per site.</strong> Once a specific site is carted for you, it
