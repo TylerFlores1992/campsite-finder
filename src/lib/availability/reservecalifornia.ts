@@ -108,6 +108,51 @@ export async function findRCOpenUnit(
   return null;
 }
 
+/**
+ * Find a unit whose full stay is currently in ReserveCalifornia's cancelled-but-
+ * held state — booked night was cancelled, and RC holds it locked until a release
+ * time (usually 8am the next day) before it's bookable again. Returns the unit and
+ * that release time (`availableAt`, ISO local) so we can tell the user when it goes
+ * live. null if nothing qualifies. A held night is: not free, not blocked, no active
+ * reservation, and a Lock timestamp set.
+ */
+export async function findRCHeldUnit(
+  campgroundId: string,
+  startDate: string,
+  endDate: string,
+  minNights = 1
+): Promise<{ unitId: number; sleepingUnitId: number | null; dates: string[]; availableAt: string } | null> {
+  const facilityId = rcFacilityIdFromCampgroundId(campgroundId);
+  if (!Number.isFinite(facilityId)) return null;
+  try {
+    const grid = await fetchGrid(facilityId, startDate, endDate);
+    for (const unit of Object.values(grid.Facility?.Units ?? {})) {
+      if (!unit.AllowWebBooking) continue;
+      const held = Object.values(unit.Slices ?? {})
+        .filter(
+          (s) =>
+            !s.IsFree &&
+            !s.IsBlocked &&
+            !(s.ReservationId && s.ReservationId > 0) &&
+            !!s.Lock &&
+            s.Date >= startDate &&
+            s.Date < endDate
+        )
+        .sort((a, b) => a.Date.localeCompare(b.Date));
+      const dates = held.map((s) => s.Date);
+      if (hasConsecutiveRun(dates, minNights)) {
+        // All nights of one cancelled reservation share a Lock; if a run spans a
+        // couple, use the latest so "available at" is when the whole stay is free.
+        const availableAt = held.reduce((max, s) => (s.Lock! > max ? s.Lock! : max), held[0].Lock!);
+        return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, dates, availableAt };
+      }
+    }
+  } catch (err) {
+    console.warn(`[RC availability] findRCHeldUnit failed for ${campgroundId}:`, (err as Error).message);
+  }
+  return null;
+}
+
 /** Month calendar in the same shape the recgov module returns. */
 export async function getRCAvailabilityForMonth(
   campgroundId: string,

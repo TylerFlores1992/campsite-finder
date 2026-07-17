@@ -65,6 +65,12 @@ export interface RCGridSlice {
   IsBlocked: boolean;
   IsWalkin: boolean;
   MinStay: number;
+  /** Active reservation on this night (>0 = booked). */
+  ReservationId?: number;
+  /** Set when the night is cancelled-but-held: an ISO local timestamp
+   *  ("2026-07-18T08:00:00") for when RC releases it back for booking (typically
+   *  8am the next day). null when free/booked/blocked. */
+  Lock?: string | null;
 }
 
 export interface RCGridUnit {

@@ -30,7 +30,7 @@ try {
 
 import { query, mutate } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
-import { findRCOpenUnit } from '../src/lib/availability/reservecalifornia';
+import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
 import { syncReserveCalifornia } from '../src/lib/sources/reservecalifornia/sync';
 import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
 import { dispatchNotifications } from '../src/lib/notifications';
@@ -50,6 +50,7 @@ interface WatchRow {
   campground_name: string;
   campground_source: string;
   reservations_url: string | null;
+  rc_hold_notified_for: string | null;
 }
 
 /** Months (YYYY-MM) that the nights of [start, end) span. */
@@ -94,6 +95,7 @@ async function loadWatches(): Promise<WatchRow[]> {
   return query<WatchRow>(
     `SELECT w.id, w.user_id, w.campground_id,
             w.start_date::text, w.end_date::text, w.min_nights,
+            w.rc_hold_notified_for,
             c.name AS campground_name, c.source AS campground_source,
             c.reservations_url
      FROM watches w
@@ -115,6 +117,22 @@ async function claimNotification(watchId: string): Promise<boolean> {
        AND (notification_sent_at IS NULL OR notification_sent_at < NOW() - ${RENOTIFY_WINDOW})
      RETURNING id`,
     [watchId]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Claim the right to send the ReserveCalifornia "coming soon" heads-up for this
+ * held release. Deduped by the release timestamp (a held site sits in this state
+ * for hours, so we must alert once, not every cycle). Does NOT touch
+ * notification_sent_at, so the real "now available" alert still fires at release.
+ */
+async function claimHoldNotification(watchId: string, releaseAt: string): Promise<boolean> {
+  const rows = await mutate<{ id: string }>(
+    `UPDATE watches SET rc_hold_notified_for = $2
+     WHERE id = $1 AND active = true AND rc_hold_notified_for IS DISTINCT FROM $2
+     RETURNING id`,
+    [watchId, releaseAt]
   );
   return rows.length > 0;
 }
@@ -224,6 +242,19 @@ async function cycle(): Promise<void> {
     RECGOV_CONCURRENCY
   );
 
+  // ReserveCalifornia held state: cancelled sites RC locks until a release time
+  // (~8am next day). Only check watches that aren't already bookable now.
+  const rcHeld = new Map<string, { dates: string[]; availableAt: string }>();
+  await pMap(
+    rcWatches.filter((w) => !rcResults.has(w.id)),
+    async (w) => {
+      const required = Math.max(w.min_nights, nightsOfRange(w.start_date, w.end_date).length);
+      const held = await findRCHeldUnit(w.campground_id, w.start_date, w.end_date, required);
+      if (held) rcHeld.set(w.id, { dates: held.dates, availableAt: held.availableAt });
+    },
+    RECGOV_CONCURRENCY
+  );
+
   let notified = 0;
   for (const watch of watches) {
     const rc = rcResults.get(watch.id);
@@ -265,8 +296,45 @@ async function cycle(): Promise<void> {
         endDate: watch.end_date,
       });
       notified++;
+      // A held site that just went live: clear the held marker so a future
+      // cancellation of the same site alerts again.
+      if (watch.campground_source === 'reservecalifornia' && watch.rc_hold_notified_for) {
+        await mutate(`UPDATE watches SET rc_hold_notified_for = NULL WHERE id = $1`, [watch.id]).catch(() => {});
+      }
     } catch (err) {
       console.error(`[poller] notification failed for watch ${watch.id}:`, err);
+    }
+  }
+
+  // ReserveCalifornia "coming soon" heads-up: a watched site is cancelled-but-held
+  // and will release at a known time. Deduped per release time (separate from the
+  // available claim, so the "now bookable" alert still fires when it opens).
+  for (const w of rcWatches) {
+    if (rcResults.has(w.id)) continue; // already alerted as available above
+    const held = rcHeld.get(w.id);
+    if (!held) continue;
+    if (!(await claimHoldNotification(w.id, held.availableAt))) continue;
+
+    console.log(
+      `[poller] COMING SOON: ${w.campground_name} (${w.campground_id}) — releases ${held.availableAt} — notifying watch ${w.id}`
+    );
+    try {
+      await dispatchNotifications({
+        userId: w.user_id,
+        watchId: w.id,
+        campgroundId: w.campground_id,
+        campgroundName: w.campground_name,
+        availableDates: held.dates,
+        bookingUrl: w.reservations_url ?? 'https://www.reservecalifornia.com/',
+        campsiteName: null,
+        startDate: w.start_date,
+        endDate: w.end_date,
+        kind: 'coming_soon',
+        availableAt: held.availableAt,
+      });
+      notified++;
+    } catch (err) {
+      console.error(`[poller] coming-soon notification failed for watch ${w.id}:`, err);
     }
   }
 
