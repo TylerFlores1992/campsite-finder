@@ -26,8 +26,12 @@ const ALL_STATES = [
 ];
 
 const arg = process.argv[2] ?? 'CA';
-const maxFacilities = Number(process.argv[3] ?? 500);
-const states = arg === 'ALL' ? ALL_STATES : arg.split(',').map((s) => s.trim().toUpperCase());
+// 'ALL'/'NATIONAL' → one address-independent national pass (catches facilities
+// with a blank address that per-state search drops). A specific state list still
+// runs the per-state path (handy for dev).
+const national = arg === 'ALL' || arg === 'NATIONAL';
+const maxFacilities = Number(process.argv[3] ?? (national ? 20000 : 500));
+const states = national ? [] : arg.split(',').map((s) => s.trim().toUpperCase());
 
 async function run() {
   // Verify Supabase connectivity before starting the loop (plain fetch, no client lib).
@@ -48,20 +52,33 @@ async function run() {
     const body = await testRes.text().catch(() => '');
     throw new Error(`Supabase connectivity check failed: HTTP ${testRes.status} ${body}`);
   }
-  console.log('[run-sync] Supabase connected. Starting sync for:', states.join(', '));
+  console.log('[run-sync] Supabase connected. Starting', national ? 'NATIONAL sync' : `sync for: ${states.join(', ')}`);
 
   const totals = { facilitiesSynced: 0, campsitesSynced: 0, errors: 0 };
 
-  for (const stateCode of states) {
-    console.log(`\n=== Syncing ${stateCode} ===`);
+  if (national) {
+    console.log('\n=== National sync (all camping facilities) ===');
     try {
-      const result = await syncRIDB({ stateCode, maxFacilities });
+      const result = await syncRIDB({ national: true, maxFacilities });
       totals.facilitiesSynced += result.facilitiesSynced;
       totals.campsitesSynced += result.campsitesSynced;
       totals.errors += result.errors.length;
     } catch (err) {
-      console.error(`Sync failed for ${stateCode}:`, err);
+      console.error('National sync failed:', err);
       totals.errors++;
+    }
+  } else {
+    for (const stateCode of states) {
+      console.log(`\n=== Syncing ${stateCode} ===`);
+      try {
+        const result = await syncRIDB({ stateCode, maxFacilities });
+        totals.facilitiesSynced += result.facilitiesSynced;
+        totals.campsitesSynced += result.campsitesSynced;
+        totals.errors += result.errors.length;
+      } catch (err) {
+        console.error(`Sync failed for ${stateCode}:`, err);
+        totals.errors++;
+      }
     }
   }
 

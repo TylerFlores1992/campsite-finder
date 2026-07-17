@@ -21,6 +21,7 @@ export interface CampgroundSource {
 
 export interface SyncOptions {
   stateCode?: string;    // limit sync to a specific state
+  national?: boolean;    // fetch ALL camping facilities nationwide (address-independent)
   radiusMiles?: number;  // limit sync to campgrounds within radius of a point
   lat?: number;
   lng?: number;

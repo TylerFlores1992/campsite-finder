@@ -1,5 +1,5 @@
 ﻿import { mutate } from '@/lib/db/client';
-import { searchCampgroundsNear, searchCampgroundsByState, getAllFacilityCampsites } from './client';
+import { searchCampgroundsNear, searchCampgroundsByState, searchAllCampgrounds, getAllFacilityCampsites } from './client';
 import type { RIDBFacility } from './client';
 import { transformFacility, transformCampsite, deriveCampgroundRollups } from './transform';
 import type { SyncOptions, SyncResult } from '../types';
@@ -91,7 +91,7 @@ async function pMap<T, R>(
   return results;
 }
 
-async function syncFacility(
+export async function syncFacility(
   facility: RIDBFacility,
   errors: string[]
 ): Promise<{ campgrounds: number; campsites: number }> {
@@ -149,6 +149,7 @@ export async function syncRIDB(options: SyncOptions = {}): Promise<SyncResult> {
     radiusMiles = 300,
     maxFacilities = 2000,
     stateCode,
+    national = false,
   } = options;
 
   const [logRow] = await mutate<{ id: number }>(
@@ -161,7 +162,10 @@ export async function syncRIDB(options: SyncOptions = {}): Promise<SyncResult> {
 
   try {
     let facilities: RIDBFacility[];
-    if (stateCode) {
+    if (national) {
+      console.log(`[RIDB sync] Fetching ALL camping facilities nationwide (address-independent)...`);
+      facilities = await searchAllCampgrounds(maxFacilities);
+    } else if (stateCode) {
       console.log(`[RIDB sync] Fetching campgrounds in state: ${stateCode}...`);
       facilities = await searchCampgroundsByState(stateCode, maxFacilities);
     } else {

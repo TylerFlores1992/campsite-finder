@@ -177,6 +177,34 @@ export async function searchCampgroundsByState(
   return all.slice(0, maxResults);
 }
 
+/**
+ * Fetch every camping facility nationwide (activity 9), paginating through all
+ * results. Unlike the per-state search, this doesn't rely on a facility's address
+ * state code — so facilities with a missing/blank address (e.g. newer USFS sites
+ * like Gull Lake Campground) are still included, as long as they have coordinates.
+ */
+export async function searchAllCampgrounds(maxResults = 20000): Promise<RIDBFacility[]> {
+  const pageSize = 50;
+  let offset = 0;
+  const all: RIDBFacility[] = [];
+
+  while (all.length < maxResults) {
+    const data = await searchFacilities({
+      activity: '9', // Camping
+      limit: pageSize,
+      offset,
+      full: true,
+    });
+
+    all.push(...data.RECDATA.filter(isCampground));
+
+    if (offset + pageSize >= data.METADATA.RESULTS.TOTAL_COUNT || data.RECDATA.length < pageSize) break;
+    offset += pageSize;
+  }
+
+  return all.slice(0, maxResults);
+}
+
 /** Search all campground-type facilities near a location, handling pagination. */
 export async function searchCampgroundsNear(
   lat: number,
