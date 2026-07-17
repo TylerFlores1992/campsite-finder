@@ -1,9 +1,10 @@
-import { currentUser } from '@clerk/nextjs/server';
+import { currentUser, clerkClient } from '@clerk/nextjs/server';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import Stripe from 'stripe';
 import Logo from '@/components/Logo';
 import AdminAutoRefresh from '@/components/AdminAutoRefresh';
+import BetaTesters from '@/components/BetaTesters';
 import { query, queryOne } from '@/lib/db/client';
 
 export const dynamic = 'force-dynamic';
@@ -133,6 +134,13 @@ export default async function AdminPage() {
 
   const mrr = await computeMrr().catch(() => null);
 
+  // True signup count from Clerk (our users table only has rows for people who've
+  // taken an action, so it undercounts — this is what the Clerk dashboard shows).
+  const clerkTotal = await safe(
+    (async () => (await clerkClient()).users.getCount())(),
+    null as number | null
+  );
+
   const subMap = Object.fromEntries(subRows.map((r) => [r.status, r.n]));
   const cgTotal = cgRows.reduce((s, r) => s + r.n, 0);
   const workerHealthy = !!beat && beat.age_s < 300;
@@ -167,7 +175,11 @@ export default async function AdminPage() {
       <main className="max-w-6xl mx-auto px-4 py-8 space-y-8">
         {/* KPI row */}
         <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Kpi label="Users" value={usersAgg.total} sub={`+${usersAgg.new_7d} this week`} />
+          <Kpi
+            label="Users"
+            value={clerkTotal ?? usersAgg.total}
+            sub={`${usersAgg.total} active in app · +${usersAgg.new_7d} this week`}
+          />
           <Kpi label="Active subscribers" value={activeSub.n} sub={`${subMap['trialing'] ?? 0} on trial`} accent="green" />
           <Kpi label="Active watches" value={watchAgg.active} sub={`${watchAgg.watchers} watchers`} />
           <Kpi label="Alerts sent" value={alertAgg.sent} sub={`+${alertAgg.sent_7d} this week`} accent="amber" />
@@ -266,6 +278,11 @@ export default async function AdminPage() {
               ))}
             </div>
           </div>
+        </section>
+
+        {/* Beta testers */}
+        <section>
+          <BetaTesters />
         </section>
 
         {/* Quick links */}
