@@ -65,12 +65,13 @@ async function setEnrollment(userId, enabled) {
   });
 }
 
-// Tell CampHawk the one-time rec.gov sign-in succeeded (drives app UI state).
-async function reportConnected(userId) {
+// Tell CampHawk whether the user's one-time rec.gov sign-in is good (drives app UI:
+// connected=true after a successful sign-in; false when we detect the session died).
+async function reportConnected(userId, connected = true) {
   await fetch(`${CAMPHAWK_URL}/api/auto-cart/enrollment`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId, connected: true }),
+    body: JSON.stringify({ userId, connected }),
   }).catch(() => {});
 }
 
@@ -214,7 +215,17 @@ async function processJob({ user, job }) {
   log(`  ⧉ opening browser for ${who}…`);
   const outcome = await withBrowser(user.userId, (ctx) => cartRecGov(ctx, job, log));
   await reportResult(job.id, outcome);
-  if (outcome === 'carted') { carted.set(key, Date.now()); saveMap(CARTED_FILE, carted, 30 * 864e5); }
+  if (outcome === 'carted') {
+    carted.set(key, Date.now());
+    saveMap(CARTED_FILE, carted, 30 * 864e5);
+  } else if (outcome === 'session-expired') {
+    // The saved rec.gov session died — stop pretending we can cart. Clear the
+    // ready marker (so the bot re-requests a sign-in) and flip the app's
+    // "connected" state off so the user is prompted to reconnect.
+    try { fs.unlinkSync(readyMarker(user.userId)); } catch {}
+    await reportConnected(user.userId, false);
+    log(`  ⚠ ${who}: rec.gov session expired — cleared the saved login; they'll be asked to reconnect.`);
+  }
   log(`  ⧉ closed browser for ${who}`);
 }
 

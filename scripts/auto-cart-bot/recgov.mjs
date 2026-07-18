@@ -3,10 +3,15 @@
 // site lands in your own cart on your own IP. Stops at the cart — you review and pay.
 //
 // Returns the outcome string so the bot can report it to CampHawk:
-//   'carted'                                        → success (in the cart)
+//   'carted'                                        → success, VERIFIED present in the cart
+//   'add-not-confirmed'                             → clicked Add to Cart but the cart stayed
+//                                                     empty (expired session / extra step)
 //   'already-booked' | 'dates-not-found'            → the site was gone by the time we tried
 //   'calendar-not-loaded' | 'cta-not-ready'         → page/selector problem
 //   'error'                                         → navigation/exception
+// Anything other than 'carted' makes the server re-verify availability and send a
+// normal "still open — book it" alert (if it's genuinely still open) instead of a
+// false "it's in your cart".
 export async function cartRecGov(context, job, log) {
   const url = job.bookingUrl.split('#')[0];
   const page = await context.newPage();
@@ -87,25 +92,73 @@ export async function cartRecGov(context, job, log) {
         if (co && !isBooked(co)) { press(co); await sleep(700); }
         await sleep(600);
         const cta = ctaButton();
-        if (cta && cta.getAttribute('aria-disabled') !== 'true' && !cta.disabled) {
-          press(cta);
-          await sleep(2800); // let the add-to-cart request reach the server before we close
-          return 'carted';
+        if (!cta || cta.getAttribute('aria-disabled') === 'true' || cta.disabled) return 'cta-not-ready';
+        press(cta);
+        await sleep(1800);
+        // Some sites pop a confirmation dialog (equipment / occupancy / need-to-know)
+        // with a final add/confirm button. Best-effort: click it if present.
+        const dialog = document.querySelector('[role="dialog"], [aria-modal="true"]');
+        let handledDialog = false;
+        if (dialog) {
+          const confirm = Array.from(dialog.querySelectorAll('button, [role="button"]'))
+            .find((b) => /add to cart|reserve|confirm|continue|acknowledge|agree|^yes\b|^save\b/i.test((b.textContent || '').trim()));
+          if (confirm && confirm.getAttribute('aria-disabled') !== 'true' && !confirm.disabled) {
+            press(confirm);
+            handledDialog = true;
+            await sleep(1800);
+          }
         }
-        return 'cta-not-ready';
+        return handledDialog ? 'cta-pressed+dialog' : 'cta-pressed';
       },
       { checkin: job.startDate, checkout: job.endDate }
     );
 
-    if (result === 'carted') {
-      log(`  ✓ ADDED TO CART: ${job.campgroundName} (${job.startDate}→${job.endDate}) — it's in the account cart; finish on your phone`);
-      return 'carted'; // caller closes the browser; the cart is server-side and syncs to the phone
+    log(`  · rec.gov: ${job.campgroundName} — page step: ${result}`);
+    if (result === 'cta-pressed' || result === 'cta-pressed+dialog') {
+      // Never claim success blind: verify the item actually landed in the cart.
+      const v = await verifyCart(context, log);
+      if (v === 'ok') {
+        log(`  ✓ ADDED TO CART: ${job.campgroundName} (${job.startDate}→${job.endDate}) — confirmed in the account cart`);
+        return 'carted';
+      }
+      if (v === 'signin') {
+        log(`  ✗ ${job.campgroundName} — rec.gov session has expired; the add didn't take. This user needs to reconnect.`);
+        return 'session-expired';
+      }
+      log(`  ✗ ${job.campgroundName} — clicked Add to Cart but the cart is still empty (${v}) — add didn't take`);
+      return 'add-not-confirmed';
     }
-    log(`  ✗ rec.gov: ${job.campgroundName} — ${result}`);
     return result; // the failure reason (already-booked / dates-not-found / calendar-not-loaded / cta-not-ready)
   } catch (err) {
     log(`  ✗ rec.gov error for ${job.campgroundName}: ${err.message}`);
     return 'error';
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+// Confirm the site really landed in the cart. Polls the cart page for a definitive
+// signal so we never report 'carted' on a silent add failure. Returns:
+//   'ok'      → cart has an item (checkout affordance present)
+//   'empty'   → cart page loaded and says it's empty (add didn't take)
+//   'signin'  → cart bounced to sign-in (the rec.gov session has expired)
+//   'unknown' → no definitive signal in time (treat as not-carted; fail closed)
+async function verifyCart(context, log) {
+  const page = await context.newPage();
+  try {
+    await page.goto('https://www.recreation.gov/cart', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    for (let i = 0; i < 14; i++) {
+      const url = (page.url() || '').toLowerCase();
+      if (/sign-?in|\/login/.test(url)) return 'signin';
+      const txt = (await page.evaluate(() => document.body.innerText || '')).toLowerCase();
+      if (txt.includes('your cart is empty')) return 'empty';
+      if (/checkout|order summary|remove item|reservation details|proceed to/i.test(txt)) return 'ok';
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return 'unknown';
+  } catch (e) {
+    log(`  cart verify error: ${e.message}`);
+    return 'unknown';
   } finally {
     await page.close().catch(() => {});
   }
