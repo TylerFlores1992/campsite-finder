@@ -17,6 +17,7 @@ const isPublicRoute = createRouteMatcher([
   '/api/webhooks/(.*)',
   '/api/auto-cart/(.*)',
   '/api/rc-proxy',
+  '/api/ra-reach',
   '/sign-in(.*)',
   '/sign-up(.*)',
 ]);
