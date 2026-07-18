@@ -140,9 +140,11 @@ async function withBrowser(userId, fn, { headless = false } = {}) {
       args: LAUNCH_ARGS,
       ...(CHANNEL ? { channel: CHANNEL } : {}),
     });
-    // Re-inject the carried-over rec.gov session cookies (persistent profiles drop
-    // session cookies on close), and snapshot them again afterward to stay current.
-    await restoreSession(ctx, profileDir(userId));
+    // Re-inject the carried-over rec.gov session (cookies + localStorage) — the
+    // persistent profile doesn't reliably keep it across a close — and snapshot it
+    // again afterward to follow any rotation.
+    const r = await restoreSession(ctx, profileDir(userId));
+    if (r.cookies || r.ls) log(`  ↻ restored session (${r.cookies} cookies + ${r.ls} localStorage keys)`);
     try { return await fn(ctx); }
     finally {
       await saveSession(ctx, profileDir(userId)).catch(() => {});

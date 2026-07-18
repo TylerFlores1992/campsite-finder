@@ -24,33 +24,48 @@ import path from 'node:path';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Where a user's carried-over cookies live (inside their profile dir).
-export const sessionFile = (profileDir) => path.join(profileDir, 'session-cookies.json');
+// Where a user's carried-over session (cookies + localStorage) lives.
+export const sessionFile = (profileDir) => path.join(profileDir, 'session-state.json');
 
-// Snapshot the context's cookies to disk (call while logged in). Returns count.
+// Snapshot the FULL session to disk (call while logged in): cookies + per-origin
+// localStorage. rec.gov's logged-in state lives partly in a localStorage token,
+// which the persistent profile doesn't reliably carry across a close — so cookies
+// alone weren't enough. Returns {cookies, ls} counts.
 export async function saveSession(ctx, profileDir) {
   try {
-    const cookies = await ctx.cookies();
-    fs.writeFileSync(sessionFile(profileDir), JSON.stringify(cookies));
-    return cookies.length;
+    const state = await ctx.storageState();
+    fs.writeFileSync(sessionFile(profileDir), JSON.stringify(state));
+    const ls = (state.origins || []).reduce((n, o) => n + (o.localStorage?.length || 0), 0);
+    return { cookies: state.cookies?.length || 0, ls };
   } catch {
-    return 0;
+    return { cookies: 0, ls: 0 };
   }
 }
 
-// Re-inject saved cookies into a freshly-launched context (call before navigating).
-// Returns how many were restored (0 = none saved yet).
+// Re-inject the saved session into a freshly-launched context (call before
+// navigating): cookies via addCookies, localStorage via an init script that runs
+// on every page before the app's scripts. Returns {cookies, ls} restored.
 export async function restoreSession(ctx, profileDir) {
   try {
-    const cookies = JSON.parse(fs.readFileSync(sessionFile(profileDir), 'utf8'));
-    if (Array.isArray(cookies) && cookies.length) {
-      await ctx.addCookies(cookies);
-      return cookies.length;
+    const state = JSON.parse(fs.readFileSync(sessionFile(profileDir), 'utf8'));
+    let cookies = 0;
+    let ls = 0;
+    if (Array.isArray(state.cookies) && state.cookies.length) {
+      await ctx.addCookies(state.cookies);
+      cookies = state.cookies.length;
     }
+    for (const o of state.origins || []) {
+      if (o.localStorage?.length) {
+        await ctx.addInitScript((items) => {
+          try { for (const it of items) window.localStorage.setItem(it.name, it.value); } catch { /* cross-origin */ }
+        }, o.localStorage);
+        ls += o.localStorage.length;
+      }
+    }
+    return { cookies, ls };
   } catch {
-    /* no saved session yet */
+    return { cookies: 0, ls: 0 };
   }
-  return 0;
 }
 
 // The exact header CTA rec.gov shows when logged out (a few label variants).

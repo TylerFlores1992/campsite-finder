@@ -155,8 +155,8 @@ async function startSession(userId, ws, sendJson) {
         // Snapshot the live session cookies NOW, while the browser is open and
         // signed in — rec.gov's session cookie is dropped when this context
         // closes, so this is what lets the bot's later browser stay logged in.
-        const n = await saveSession(ctx, profileDir(userId));
-        log(`✅ ${userId} signed in remotely — auto-cart active. (saved ${n} session cookies)`);
+        const s = await saveSession(ctx, profileDir(userId));
+        log(`✅ ${userId} signed in remotely — auto-cart active. (saved ${s.cookies} cookies + ${s.ls} localStorage keys)`);
         // Tell CampHawk the one-time sign-in is done (drives app UI state).
         fetch(`${CAMPHAWK_URL}/api/auto-cart/enrollment`, {
           method: 'POST',
