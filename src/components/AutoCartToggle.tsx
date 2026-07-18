@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Zap, X } from 'lucide-react';
+import { Zap, X, AlertTriangle } from 'lucide-react';
 
 /** Opt-in for the personal auto-cart bot. Flipping it on just enrolls the user
  *  (adds them to the bot's roster); the bot + a one-time rec.gov login still
@@ -9,14 +9,18 @@ import { Zap, X } from 'lucide-react';
  *  "what's next" guide so nobody is left wondering why nothing happened. */
 export default function AutoCartToggle() {
   const [enabled, setEnabled] = useState(false);
+  const [connected, setConnected] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
 
   useEffect(() => {
     fetch('/api/user/autocart')
-      .then((r) => (r.ok ? r.json() : { enabled: false }))
-      .then((d) => setEnabled(!!d.enabled))
+      .then((r) => (r.ok ? r.json() : { enabled: false, connected: true }))
+      .then((d) => {
+        setEnabled(!!d.enabled);
+        setConnected(d.connected !== false);
+      })
       .catch(() => {})
       .finally(() => setLoaded(true));
   }, []);
@@ -33,6 +37,7 @@ export default function AutoCartToggle() {
       });
       const d = await r.json();
       setEnabled(!!d.enabled);
+      if (typeof d.connected === 'boolean') setConnected(d.connected);
       if (d.enabled) setShowGuide(true); // show the "what's next" steps on enable
     } catch {
       setEnabled(!next);
@@ -42,6 +47,10 @@ export default function AutoCartToggle() {
   }
 
   if (!loaded) return null;
+
+  // Enrolled but the rec.gov sign-in on the bot has lapsed (or was never done):
+  // the toggle stays ON (that's the intent) but auto-cart is paused until reconnect.
+  const needsReconnect = enabled && !connected;
 
   return (
     <>
@@ -59,7 +68,7 @@ export default function AutoCartToggle() {
             onClick={toggle}
             disabled={saving}
             className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-60 ${
-              enabled ? 'bg-green-600' : 'bg-gray-300'
+              needsReconnect ? 'bg-amber-500' : enabled ? 'bg-green-600' : 'bg-gray-300'
             }`}
           >
             <span
@@ -70,13 +79,30 @@ export default function AutoCartToggle() {
           </button>
         </div>
         <p className="mt-1 text-[11px] text-gray-400 leading-snug">
-          {enabled
-            ? 'On — openings you’re watching are added to your recreation.gov cart automatically. One-time recreation.gov sign-in required.'
-            : 'Have openings added to your recreation.gov cart automatically, so you just check out.'}{' '}
+          {needsReconnect
+            ? 'Paused — your recreation.gov sign-in needs to be reconnected before openings can be carted.'
+            : enabled
+              ? 'On — openings you’re watching are added to your recreation.gov cart automatically. One-time recreation.gov sign-in required.'
+              : 'Have openings added to your recreation.gov cart automatically, so you just check out.'}{' '}
           <a href="/auto-cart" target="_blank" className="text-green-700 underline underline-offset-2">
             How it works
           </a>
         </p>
+
+        {needsReconnect && (
+          <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-2">
+            <span className="flex items-center gap-1.5 text-[11px] font-medium text-amber-800 leading-snug">
+              <AlertTriangle size={13} className="shrink-0 text-amber-500" />
+              Reconnect your recreation.gov sign-in to resume auto-cart.
+            </span>
+            <a
+              href="/connect"
+              className="shrink-0 px-2.5 py-1 rounded-lg bg-amber-500 text-white text-[11px] font-display font-semibold hover:bg-amber-600 transition-colors"
+            >
+              Reconnect
+            </a>
+          </div>
+        )}
       </div>
 
       {showGuide && (
