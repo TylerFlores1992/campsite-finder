@@ -15,6 +15,26 @@
 export async function cartRecGov(context, job, log) {
   const url = job.bookingUrl.split('#')[0];
   const page = await context.newPage();
+  // Capture the write API calls the SPA makes when we click Add to Cart, so a
+  // silent failure tells us WHY (e.g. a 4xx demanding equipment/occupants) rather
+  // than just "cart empty". Only non-GET recreation.gov calls — a booking makes few.
+  const netlog = [];
+  page.on('request', (req) => {
+    try {
+      if (req.method() === 'GET' || !/recreation\.gov/.test(req.url())) return;
+      const p = (req.postData() || '').replace(/\s+/g, ' ').slice(0, 300);
+      netlog.push(`→ ${req.method()} ${req.url().replace(/^https?:\/\/[^/]+/, '')}${p ? ` body=${p}` : ''}`);
+    } catch { /* ignore */ }
+  });
+  page.on('response', async (res) => {
+    try {
+      const req = res.request();
+      if (req.method() === 'GET' || !/recreation\.gov/.test(res.url())) return;
+      let body = '';
+      if (res.status() >= 400) { try { body = (await res.text()).replace(/\s+/g, ' ').slice(0, 200); } catch { /* ignore */ } }
+      netlog.push(`← ${res.status()} ${req.method()} ${res.url().replace(/^https?:\/\/[^/]+/, '')}${body ? ` | ${body}` : ''}`);
+    } catch { /* ignore */ }
+  });
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
@@ -126,6 +146,8 @@ export async function cartRecGov(context, job, log) {
         return 'session-expired';
       }
       log(`  ✗ ${job.campgroundName} — clicked Add to Cart but the cart is still empty (${v}) — add didn't take`);
+      if (netlog.length) { log(`  ⓘ write API calls during add:`); for (const n of netlog.slice(-12)) log(`      ${n}`); }
+      else log(`  ⓘ NO write (non-GET) API call fired on click — the Add-to-Cart click isn't triggering a request`);
       return 'add-not-confirmed';
     }
     return result; // the failure reason (already-booked / dates-not-found / calendar-not-loaded / cta-not-ready)
