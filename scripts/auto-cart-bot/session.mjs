@@ -1,4 +1,15 @@
-// Reliable recreation.gov login detection, shared by the bot and the broker.
+// Reliable recreation.gov login detection + session persistence, shared by the
+// bot and the broker.
+//
+// Persistence: rec.gov keeps you signed in with a SESSION cookie (no expiry).
+// Playwright's persistent profile drops session cookies when the context closes,
+// so the broker signs in fine but the bot's next fresh browser is logged out.
+// Fix: while logged in, snapshot the cookies to a file (saveSession); on every
+// launch, re-inject them before navigating (restoreSession). localStorage already
+// survives in the persistent profile, so cookies are all we need to carry over.
+
+import fs from 'node:fs';
+import path from 'node:path';
 //
 // The old check watched the URL ("/account/profile stays put when logged in,
 // bounces to /sign-in when out"). That is WRONG: rec.gov signs you in through a
@@ -12,6 +23,35 @@
 // presence of that button = logged out, its absence (on a loaded page) = logged in.
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Where a user's carried-over cookies live (inside their profile dir).
+export const sessionFile = (profileDir) => path.join(profileDir, 'session-cookies.json');
+
+// Snapshot the context's cookies to disk (call while logged in). Returns count.
+export async function saveSession(ctx, profileDir) {
+  try {
+    const cookies = await ctx.cookies();
+    fs.writeFileSync(sessionFile(profileDir), JSON.stringify(cookies));
+    return cookies.length;
+  } catch {
+    return 0;
+  }
+}
+
+// Re-inject saved cookies into a freshly-launched context (call before navigating).
+// Returns how many were restored (0 = none saved yet).
+export async function restoreSession(ctx, profileDir) {
+  try {
+    const cookies = JSON.parse(fs.readFileSync(sessionFile(profileDir), 'utf8'));
+    if (Array.isArray(cookies) && cookies.length) {
+      await ctx.addCookies(cookies);
+      return cookies.length;
+    }
+  } catch {
+    /* no saved session yet */
+  }
+  return 0;
+}
 
 // The exact header CTA rec.gov shows when logged out (a few label variants).
 const LOGIN_LABELS = /^(log\s?in|sign\s?in|sign\s?up or log\s?in|log\s?in or sign\s?up|sign\s?up \/ log\s?in)$/i;

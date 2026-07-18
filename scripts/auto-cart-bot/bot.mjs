@@ -18,7 +18,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { cartRecGov } from './recgov.mjs';
 import { noteReserveCalifornia } from './reservecalifornia.mjs';
-import { recgovLoginState } from './session.mjs';
+import { recgovLoginState, saveSession, restoreSession } from './session.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -140,8 +140,14 @@ async function withBrowser(userId, fn, { headless = false } = {}) {
       args: LAUNCH_ARGS,
       ...(CHANNEL ? { channel: CHANNEL } : {}),
     });
+    // Re-inject the carried-over rec.gov session cookies (persistent profiles drop
+    // session cookies on close), and snapshot them again afterward to stay current.
+    await restoreSession(ctx, profileDir(userId));
     try { return await fn(ctx); }
-    finally { await ctx.close().catch(() => {}); }
+    finally {
+      await saveSession(ctx, profileDir(userId)).catch(() => {});
+      await ctx.close().catch(() => {});
+    }
   } finally {
     inUse.delete(userId);
   }

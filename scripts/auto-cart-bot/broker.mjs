@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyConnectToken } from './token.mjs';
-import { recgovLoginState } from './session.mjs';
+import { recgovLoginState, saveSession } from './session.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -152,7 +152,11 @@ async function startSession(userId, ws, sendJson) {
         done = true;
         fs.mkdirSync(profileDir(userId), { recursive: true });
         fs.writeFileSync(readyMarker(userId), new Date().toISOString());
-        log(`✅ ${userId} signed in remotely — auto-cart active.`);
+        // Snapshot the live session cookies NOW, while the browser is open and
+        // signed in — rec.gov's session cookie is dropped when this context
+        // closes, so this is what lets the bot's later browser stay logged in.
+        const n = await saveSession(ctx, profileDir(userId));
+        log(`✅ ${userId} signed in remotely — auto-cart active. (saved ${n} session cookies)`);
         // Tell CampHawk the one-time sign-in is done (drives app UI state).
         fetch(`${CAMPHAWK_URL}/api/auto-cart/enrollment`, {
           method: 'POST',
