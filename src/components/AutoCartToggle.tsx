@@ -115,7 +115,7 @@ export default function AutoCartToggle() {
             </div>
 
             <p className="mt-4 text-xs text-gray-500 leading-relaxed">
-              State parks (California, Arizona, Florida, Minnesota, Missouri) aren&apos;t auto-carted — those come as a tap-to-book link in
+              State parks (California, Texas, Arizona, Florida, New York, Oregon, and more) aren&apos;t auto-carted — those come as a tap-to-book link in
               your alert to finish on your phone.
             </p>
 

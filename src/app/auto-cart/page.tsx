@@ -86,7 +86,7 @@ export default function AutoCartHelpPage() {
               account, so it shows up wherever you&apos;re logged in.
             </li>
             <li>
-              <strong>State parks</strong> (California, Arizona, Florida, Minnesota, Missouri) aren&apos;t
+              <strong>State parks</strong> (California, Texas, Arizona, Florida, New York, Oregon, and more) aren&apos;t
               auto-carted — their cart doesn&apos;t sync across devices. For those, your CampHawk alert
               includes a direct booking link: tap it on your phone and finish there.
             </li>

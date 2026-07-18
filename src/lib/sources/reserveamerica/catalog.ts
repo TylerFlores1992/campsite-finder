@@ -36,19 +36,28 @@ export async function fetchParkCatalog(contract: RAContract): Promise<RAPark[]> 
     `/campgroundDirectoryList.do?contractCode=${contract.contractCode}`;
   const listUrl = listPath.startsWith('http') ? listPath : `https://${contract.host}${listPath}`;
 
-  // 2. Parse parkId + name. Each park appears twice (an "Enter Date" placeholder
-  //    link + the real UPPERCASE name link) — keep the longest non-placeholder name.
+  // 2. Parse parkId + name from the park anchors. Each park is linked several
+  //    times; the placeholder link reads "Enter Date" while the real name sits on
+  //    another anchor. Layouts vary by contract: some states put the name on a
+  //    second campgroundDetails.do link (NY), others on a facilityDetails.do link
+  //    (TX). Read the name from either, keep the longest non-placeholder one, and
+  //    synthesize a canonical campgroundDetails.do path (present for every park,
+  //    and where the coord OG-meta lives) from the slug.
   const list = await html(listUrl, cookie);
-  const byId = new Map<number, { name: string; detailPath: string }>();
-  for (const m of list.matchAll(/href='(\/camping\/[a-z0-9-]+\/r\/campgroundDetails\.do\?[^']*parkId=(\d+)[^']*)'[^>]*>([^<]{2,80})</gi)) {
-    const detailPath = m[1];
+  const byId = new Map<number, { name: string; slug: string }>();
+  for (const m of list.matchAll(/href='\/camping\/([a-z0-9-]+)\/r\/(?:campground|facility)Details\.do\?[^']*parkId=(\d+)[^']*'[^>]*>([^<]{2,80})</gi)) {
+    const slug = m[1];
     const id = Number(m[2]);
     const name = m[3].trim();
     if (/^enter date$/i.test(name)) continue;
     const prev = byId.get(id);
-    if (!prev || name.length > prev.name.length) byId.set(id, { name, detailPath });
+    if (!prev || name.length > prev.name.length) byId.set(id, { name, slug });
   }
-  return [...byId.entries()].map(([parkId, v]) => ({ parkId, name: v.name, detailPath: v.detailPath }));
+  return [...byId.entries()].map(([parkId, v]) => ({
+    parkId,
+    name: v.name,
+    detailPath: `/camping/${v.slug}/r/campgroundDetails.do?contractCode=${contract.contractCode}&parkId=${parkId}`,
+  }));
 }
 
 /** Read a park's authoritative coordinates from its detail page's Open Graph meta. */
