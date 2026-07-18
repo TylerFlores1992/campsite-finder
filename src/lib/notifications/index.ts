@@ -7,6 +7,7 @@ import { USEDIRECT_PROVIDERS } from '@/lib/sources/reservecalifornia/providers';
 /** Human label for the booking provider, from the booking URL (registry-driven). */
 function providerLabel(bookingUrl: string): string {
   if (bookingUrl.includes('recreation.gov')) return 'Recreation.gov';
+  if (bookingUrl.includes('reserveamerica')) return 'ReserveAmerica';
   const p = USEDIRECT_PROVIDERS.find((pr) => {
     try {
       return bookingUrl.includes(new URL(pr.parkUrl(0)).host);

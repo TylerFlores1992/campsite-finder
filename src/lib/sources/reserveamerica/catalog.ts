@@ -11,6 +11,7 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 export interface RAPark {
   parkId: number;
   name: string;
+  detailPath: string; // /camping/<slug>/r/campgroundDetails.do?...parkId=N (for coords)
 }
 
 async function session(host: string): Promise<string> {
@@ -38,13 +39,36 @@ export async function fetchParkCatalog(contract: RAContract): Promise<RAPark[]> 
   // 2. Parse parkId + name. Each park appears twice (an "Enter Date" placeholder
   //    link + the real UPPERCASE name link) — keep the longest non-placeholder name.
   const list = await html(listUrl, cookie);
-  const byId = new Map<number, string>();
-  for (const m of list.matchAll(/campgroundDetails\.do\?[^']*parkId=(\d+)[^']*'[^>]*>([^<]{2,80})</gi)) {
-    const id = Number(m[1]);
-    const name = m[2].trim();
+  const byId = new Map<number, { name: string; detailPath: string }>();
+  for (const m of list.matchAll(/href='(\/camping\/[a-z0-9-]+\/r\/campgroundDetails\.do\?[^']*parkId=(\d+)[^']*)'[^>]*>([^<]{2,80})</gi)) {
+    const detailPath = m[1];
+    const id = Number(m[2]);
+    const name = m[3].trim();
     if (/^enter date$/i.test(name)) continue;
     const prev = byId.get(id);
-    if (!prev || name.length > prev.length) byId.set(id, name);
+    if (!prev || name.length > prev.name.length) byId.set(id, { name, detailPath });
   }
-  return [...byId.entries()].map(([parkId, name]) => ({ parkId, name }));
+  return [...byId.entries()].map(([parkId, v]) => ({ parkId, name: v.name, detailPath: v.detailPath }));
+}
+
+/** Read a park's authoritative coordinates from its detail page's Open Graph meta. */
+export async function fetchParkCoords(
+  contract: RAContract,
+  detailPath: string,
+  cookie: string
+): Promise<[number, number] | null> {
+  try {
+    const body = await html(`https://${contract.host}${detailPath}`, cookie);
+    const lat = body.match(/place:location:latitude"\s*content='(-?\d+\.\d+)'/);
+    const lng = body.match(/place:location:longitude"\s*content='(-?\d+\.\d+)'/);
+    if (!lat || !lng) return null;
+    return [Number(lng[1]), Number(lat[1])]; // [lng, lat]
+  } catch {
+    return null;
+  }
+}
+
+/** Session cookie for coord fetching (exported for the sync). */
+export async function raSession(host: string): Promise<string> {
+  return session(host);
 }

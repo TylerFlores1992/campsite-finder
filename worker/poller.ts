@@ -31,6 +31,7 @@ try {
 import { query, mutate } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
+import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
 import { syncAllUseDirect } from '../src/lib/sources/reservecalifornia/sync';
 import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
 import { isUseDirectSource, USEDIRECT_PROVIDERS } from '../src/lib/sources/reservecalifornia/providers';
@@ -207,8 +208,11 @@ async function cycle(): Promise<void> {
     return;
   }
 
-  const ridbWatches = watches.filter((w) => !isUseDirectSource(w.campground_source));
+  const raWatches = watches.filter((w) => w.campground_source === 'reserveamerica');
   const rcWatches = watches.filter((w) => isUseDirectSource(w.campground_source));
+  const ridbWatches = watches.filter(
+    (w) => !isUseDirectSource(w.campground_source) && w.campground_source !== 'reserveamerica'
+  );
 
   // recreation.gov: one fetch per unique campground+month, shared across watches.
   const pairs = new Set<string>();
@@ -256,13 +260,28 @@ async function cycle(): Promise<void> {
     RECGOV_CONCURRENCY
   );
 
+  // ReserveAmerica: HTML-scrape check for a site bookable across the full stay.
+  const raResults = new Map<string, { dates: string[]; siteIds: number[] }>();
+  await pMap(
+    raWatches,
+    async (w) => {
+      const nights = nightsOfRange(w.start_date, w.end_date);
+      const required = Math.max(w.min_nights, nights.length);
+      const open = await findReserveAmericaOpen(w.campground_id, w.start_date, w.end_date, required);
+      if (open) raResults.set(w.id, { dates: nights, siteIds: open.siteIds });
+    },
+    RECGOV_CONCURRENCY
+  );
+
   let notified = 0;
   for (const watch of watches) {
     const rc = rcResults.get(watch.id);
     const result: WatchResult =
-      isUseDirectSource(watch.campground_source)
-        ? { dates: rc?.dates ?? [], campsiteId: null, campsiteName: null }
-        : availableDatesForWatch(watch, monthData);
+      watch.campground_source === 'reserveamerica'
+        ? { dates: raResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
+        : isUseDirectSource(watch.campground_source)
+          ? { dates: rc?.dates ?? [], campsiteId: null, campsiteName: null }
+          : availableDatesForWatch(watch, monthData);
     if (result.dates.length === 0) continue;
 
     if (!(await claimNotification(watch.id))) {
@@ -281,7 +300,9 @@ async function cycle(): Promise<void> {
         campgroundName: watch.campground_name,
         availableDates: result.dates,
         bookingUrl:
-          isUseDirectSource(watch.campground_source)
+          watch.campground_source === 'reserveamerica'
+            ? (watch.reservations_url ?? 'https://www.reserveamerica.com/')
+            : isUseDirectSource(watch.campground_source)
             // #camphawk-rc fragment (unitId_arrival_nights_sleepingUnitId) lets the
             // extension add the exact unit to the RC cart. Fragment never hits RC's server.
             ? `${watch.reservations_url ?? 'https://www.reservecalifornia.com/'}${
