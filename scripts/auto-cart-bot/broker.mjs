@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyConnectToken } from './token.mjs';
+import { recgovLoginState } from './session.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -52,31 +53,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const profileDir = (userId) => path.join(PROFILES_DIR, String(userId).replace(/[^A-Za-z0-9_-]/g, '_'));
 const readyMarker = (userId) => path.join(profileDir(userId), '.camphawk-ready');
 
-// Definitive login check (a logged-in session visiting /sign-in just stays there,
-// so URL-watching the sign-in page can't tell). Load the account page in a
-// throwaway tab: logged-OUT bounces to /sign-in (client-side, so let it settle),
-// logged-IN stays on /account. Bail to false the instant we see a sign-in URL;
-// only return true if it holds on /account the whole window. In headless mode the
-// tab is invisible and doesn't disturb the page the user is signing in on.
+// Confirm a real recreation.gov session via the DOM (shared with the bot — see
+// session.mjs). The previous URL-based check was fooled by rec.gov's modal login
+// (the URL never becomes /sign-in when logged out), so it could write the
+// ready-marker for a session that was never actually established.
 async function recgovLoggedIn(ctx) {
-  let p;
-  try {
-    p = await ctx.newPage();
-    await p.goto('https://www.recreation.gov/account/profile', { waitUntil: 'domcontentloaded', timeout: 25000 });
-    const deadline = Date.now() + 8000;
-    let onAccount = false;
-    while (Date.now() < deadline) {
-      const u = (p.url() || '').toLowerCase();
-      if (/sign-?in|log-?in/.test(u)) return false;
-      onAccount = u.includes('recreation.gov') && u.includes('/account');
-      await sleep(800);
-    }
-    return onAccount;
-  } catch {
-    return false;
-  } finally {
-    if (p) await p.close().catch(() => {});
-  }
+  return (await recgovLoginState(ctx)) === 'in';
 }
 
 if (!SECRET) { log('ERROR: AUTOCART_TOKEN (master) not set. See .env.example.'); process.exit(1); }

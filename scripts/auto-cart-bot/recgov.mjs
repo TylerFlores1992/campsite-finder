@@ -40,6 +40,13 @@ export async function cartRecGov(context, job, log) {
 
     const result = await page.evaluate(
       async ({ checkin, checkout }) => {
+        // Bail early if this browser isn't actually signed in — rec.gov shows a
+        // "Sign Up or Log In" header button only when logged out, and silently
+        // refuses to cart. Catching it here avoids a pointless add attempt.
+        const loginRe = /^(log\s?in|sign\s?in|sign\s?up or log\s?in|log\s?in or sign\s?up|sign\s?up \/ log\s?in)$/i;
+        if (Array.from(document.querySelectorAll('button, a')).some((e) => loginRe.test((e.textContent || '').trim()))) {
+          return 'logged-out';
+        }
         const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
         const ariaDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return `${MONTHS[m - 1]} ${d}, ${y}`; };
         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -134,6 +141,10 @@ export async function cartRecGov(context, job, log) {
     );
 
     log(`  · rec.gov: ${job.campgroundName} — page step: ${result}`);
+    if (result === 'logged-out') {
+      log(`  ✗ ${job.campgroundName} — this browser is NOT signed in to rec.gov; can't cart. Reconnect needed.`);
+      return 'session-expired';
+    }
     if (result === 'cta-pressed' || result === 'cta-pressed+dialog') {
       // Never claim success blind: verify the item actually landed in the cart.
       const v = await verifyCart(context, log);

@@ -18,6 +18,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { cartRecGov } from './recgov.mjs';
 import { noteReserveCalifornia } from './reservecalifornia.mjs';
+import { recgovLoginState } from './session.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -151,24 +152,11 @@ const readyMarker = (userId) => path.join(profileDir(userId), '.camphawk-ready')
 const isLoggedIn = (userId) => fs.existsSync(readyMarker(userId));
 const loggingIn = new Set();
 
-// Auto-open a rec.gov login window for a newly-enrolled user and detect completion
-// (rec.gov redirects away from /sign-in once you're in). No CLI, no "press Enter".
-// Verify a real recreation.gov session: load the account page in a throwaway tab —
-// logged in stays there, logged out bounces to /sign-in. This is what confirms a
-// login (closing the window without signing in no longer counts).
+// Confirm a real recreation.gov session (DOM-based; see session.mjs). The old
+// URL check was fooled by rec.gov's modal login and false-reported logged-out as
+// logged-in.
 async function recgovLoggedIn(ctx) {
-  let p;
-  try {
-    p = await ctx.newPage();
-    await p.goto('https://www.recreation.gov/account/profile', { waitUntil: 'domcontentloaded', timeout: 25000 });
-    await new Promise((r) => setTimeout(r, 2500));
-    const u = (p.url() || '').toLowerCase();
-    return u.includes('recreation.gov') && !u.includes('sign-in') && !u.includes('signin') && !u.includes('login');
-  } catch {
-    return false;
-  } finally {
-    if (p) await p.close().catch(() => {});
-  }
+  return (await recgovLoginState(ctx)) === 'in';
 }
 
 async function ensureLogin(user) {
@@ -220,21 +208,15 @@ async function keepSessionsWarm() {
     if (!isLoggedIn(user.userId) || inUse.has(user.userId)) continue;
     const who = user.email || user.userId;
     try {
-      const ok = await withBrowser(user.userId, async (ctx) => {
-        const p = await ctx.newPage();
-        try {
-          await p.goto('https://www.recreation.gov/account/profile', { waitUntil: 'domcontentloaded', timeout: 25000 });
-          await sleep(6000); // dwell so the SPA's token refresh runs
-          const u = (p.url() || '').toLowerCase();
-          return u.includes('recreation.gov') && !/sign-?in|login/.test(u);
-        } finally { await p.close().catch(() => {}); }
-      }, { headless: true });
-      if (ok) {
+      const state = await withBrowser(user.userId, (ctx) => recgovLoginState(ctx), { headless: true });
+      if (state === 'in') {
         log(`♻ ${who}: rec.gov session kept warm`);
-      } else {
+      } else if (state === 'out') {
         try { fs.unlinkSync(readyMarker(user.userId)); } catch {}
         await reportConnected(user.userId, false);
         log(`⚠ ${who}: rec.gov session expired (idle) — cleared login; they'll be asked to reconnect.`);
+      } else {
+        log(`  ${who}: keepalive inconclusive (page didn't load) — leaving session as-is.`);
       }
     } catch (e) {
       log(`  keepalive error for ${who}: ${e.message}`);
