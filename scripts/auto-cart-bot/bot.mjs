@@ -37,6 +37,9 @@ const CAMPHAWK_URL = (process.env.CAMPHAWK_URL || 'https://camphawk.app').replac
 const TOKEN = process.env.AUTOCART_TOKEN; // master token
 // Tight poll: auto-cart openings are a race, so react within ~2s of a job landing.
 const POLL_MS = Number(process.env.POLL_MS || 2000);
+// Keep each signed-in rec.gov session warm this often, so it never dies from
+// inactivity between (rare) cart events — the fix for "re-sign-in every few days".
+const KEEPALIVE_MS = Number(process.env.KEEPALIVE_MS || 4 * 3600 * 1000); // 4h
 const WINDOW_MIN = Number(process.env.WINDOW_MIN || 15);
 const MAX_CONCURRENCY = Math.max(1, Number(process.env.MAX_CONCURRENCY || 1)); // browsers open at once
 const PROFILES_DIR = path.resolve(__dirname, process.env.PROFILES_DIR || 'profiles');
@@ -118,16 +121,29 @@ async function fetchRoster() {
   return (await res.json()).users || [];
 }
 
-// Launch a fresh headed browser for a user, run fn, always close it afterward.
-async function withBrowser(userId, fn) {
-  const ctx = await chromium.launchPersistentContext(profileDir(userId), {
-    headless: false,
-    viewport: null,
-    args: LAUNCH_ARGS,
-    ...(CHANNEL ? { channel: CHANNEL } : {}),
-  });
-  try { return await fn(ctx); }
-  finally { await ctx.close().catch(() => {}); }
+// One browser per profile at a time — the persistent profile dir has a singleton
+// lock, so a keepalive refresh must never overlap a cart/login on the same user.
+const inUse = new Set();
+
+// Launch a browser on a user's persistent profile, run fn, always close it.
+// Headed by default (the proven cart flow); pass {headless:true} for background
+// work like the session keepalive.
+async function withBrowser(userId, fn, { headless = false } = {}) {
+  for (let i = 0; inUse.has(userId) && i < 240; i++) await sleep(500); // wait up to ~2 min
+  if (inUse.has(userId)) throw new Error('profile busy');
+  inUse.add(userId);
+  try {
+    const ctx = await chromium.launchPersistentContext(profileDir(userId), {
+      headless,
+      viewport: null,
+      args: LAUNCH_ARGS,
+      ...(CHANNEL ? { channel: CHANNEL } : {}),
+    });
+    try { return await fn(ctx); }
+    finally { await ctx.close().catch(() => {}); }
+  } finally {
+    inUse.delete(userId);
+  }
 }
 
 // A user is "ready" once they've completed a sign-in (marker written on success).
@@ -187,6 +203,42 @@ async function ensureLogin(user) {
   } else {
     log(`↩︎ ${who} didn't finish signing in — turning their auto-cart back OFF. Toggle it on again to retry.`);
     await setEnrollment(user.userId, false).catch((e) => log(`  couldn't reset toggle for ${who}: ${e.message}`));
+  }
+}
+
+// Keep every signed-in user's rec.gov session alive. The bot only opens a browser
+// when there's a cancellation to cart — which can be days apart — so an idle
+// session dies and the user is forced to re-sign-in. Since the mini PC is on 24/7,
+// we quietly load an authenticated page every few hours: that rolls the session's
+// expiry server-side and lets the SPA silently refresh its token. If the session
+// has genuinely died, we clear it and flip the app to "reconnect" NOW (during the
+// day) instead of the user discovering it on a missed cancellation.
+async function keepSessionsWarm() {
+  let users;
+  try { users = await fetchRoster(); } catch { return; }
+  for (const user of users) {
+    if (!isLoggedIn(user.userId) || inUse.has(user.userId)) continue;
+    const who = user.email || user.userId;
+    try {
+      const ok = await withBrowser(user.userId, async (ctx) => {
+        const p = await ctx.newPage();
+        try {
+          await p.goto('https://www.recreation.gov/account/profile', { waitUntil: 'domcontentloaded', timeout: 25000 });
+          await sleep(6000); // dwell so the SPA's token refresh runs
+          const u = (p.url() || '').toLowerCase();
+          return u.includes('recreation.gov') && !/sign-?in|login/.test(u);
+        } finally { await p.close().catch(() => {}); }
+      }, { headless: true });
+      if (ok) {
+        log(`♻ ${who}: rec.gov session kept warm`);
+      } else {
+        try { fs.unlinkSync(readyMarker(user.userId)); } catch {}
+        await reportConnected(user.userId, false);
+        log(`⚠ ${who}: rec.gov session expired (idle) — cleared login; they'll be asked to reconnect.`);
+      }
+    } catch (e) {
+      log(`  keepalive error for ${who}: ${e.message}`);
+    }
   }
 }
 
@@ -287,6 +339,11 @@ async function runMode() {
 
   await tick();
   setInterval(tick, POLL_MS);
+
+  // Keep signed-in sessions alive so nobody has to re-sign-in every few days.
+  log(`Session keepalive every ${Math.round(KEEPALIVE_MS / 3600000)}h.`);
+  setTimeout(keepSessionsWarm, 30_000); // once shortly after startup
+  setInterval(keepSessionsWarm, KEEPALIVE_MS);
 }
 
 const li = process.argv.indexOf('--login');
