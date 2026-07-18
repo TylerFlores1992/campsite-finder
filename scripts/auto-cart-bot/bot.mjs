@@ -35,7 +35,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const CAMPHAWK_URL = (process.env.CAMPHAWK_URL || 'https://camphawk.app').replace(/\/$/, '');
 const TOKEN = process.env.AUTOCART_TOKEN; // master token
-const POLL_MS = Number(process.env.POLL_MS || 5000);
+// Tight poll: auto-cart openings are a race, so react within ~2s of a job landing.
+const POLL_MS = Number(process.env.POLL_MS || 2000);
 const WINDOW_MIN = Number(process.env.WINDOW_MIN || 15);
 const MAX_CONCURRENCY = Math.max(1, Number(process.env.MAX_CONCURRENCY || 1)); // browsers open at once
 const PROFILES_DIR = path.resolve(__dirname, process.env.PROFILES_DIR || 'profiles');
@@ -71,6 +72,22 @@ async function reportConnected(userId) {
     headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ userId, connected: true }),
   }).catch(() => {});
+}
+
+// Report the outcome of a cart attempt back to CampHawk. This is what gates the
+// user's alert: 'carted' → "it's in your cart" text; anything else → the server
+// re-verifies and only alerts if the site is genuinely still open (no false hope).
+async function reportResult(jobId, outcome) {
+  if (!jobId) return;
+  try {
+    await fetch(`${CAMPHAWK_URL}/api/auto-cart/result`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId, outcome }),
+    });
+  } catch (e) {
+    log(`  couldn't report cart result: ${e.message}`);
+  }
 }
 const profileDir = (userId) => path.join(PROFILES_DIR, String(userId).replace(/[^A-Za-z0-9_-]/g, '_'));
 const siteKey = (userId, bookingUrl) => `${userId}::${bookingUrl.split('#')[0]}`;
@@ -191,11 +208,13 @@ async function processJob({ user, job }) {
   if (carted.has(key)) return; // already carted this site for this person
   if (!isLoggedIn(user.userId)) {
     log(`  ⚠ ${who} isn't signed in yet — skipping this one (login window should be open).`);
+    await reportResult(job.id, 'skipped-not-logged-in');
     return;
   }
   log(`  ⧉ opening browser for ${who}…`);
-  const ok = await withBrowser(user.userId, (ctx) => cartRecGov(ctx, job, log));
-  if (ok) { carted.set(key, Date.now()); saveMap(CARTED_FILE, carted, 30 * 864e5); }
+  const outcome = await withBrowser(user.userId, (ctx) => cartRecGov(ctx, job, log));
+  await reportResult(job.id, outcome);
+  if (outcome === 'carted') { carted.set(key, Date.now()); saveMap(CARTED_FILE, carted, 30 * 864e5); }
   log(`  ⧉ closed browser for ${who}`);
 }
 

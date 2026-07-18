@@ -1,7 +1,12 @@
 // Recreation.gov add-to-cart, ported from the proven CampHawk extension content
 // script. Runs in YOUR logged-in browser (persistent Playwright context), so the
 // site lands in your own cart on your own IP. Stops at the cart — you review and pay.
-
+//
+// Returns the outcome string so the bot can report it to CampHawk:
+//   'carted'                                        → success (in the cart)
+//   'already-booked' | 'dates-not-found'            → the site was gone by the time we tried
+//   'calendar-not-loaded' | 'cta-not-ready'         → page/selector problem
+//   'error'                                         → navigation/exception
 export async function cartRecGov(context, job, log) {
   const url = job.bookingUrl.split('#')[0];
   const page = await context.newPage();
@@ -94,13 +99,13 @@ export async function cartRecGov(context, job, log) {
 
     if (result === 'carted') {
       log(`  ✓ ADDED TO CART: ${job.campgroundName} (${job.startDate}→${job.endDate}) — it's in the account cart; finish on your phone`);
-      return true; // caller closes the browser; the cart is server-side and syncs to the phone
+      return 'carted'; // caller closes the browser; the cart is server-side and syncs to the phone
     }
     log(`  ✗ rec.gov: ${job.campgroundName} — ${result}`);
-    return false;
+    return result; // the failure reason (already-booked / dates-not-found / calendar-not-loaded / cta-not-ready)
   } catch (err) {
     log(`  ✗ rec.gov error for ${job.campgroundName}: ${err.message}`);
-    return false;
+    return 'error';
   } finally {
     await page.close().catch(() => {});
   }

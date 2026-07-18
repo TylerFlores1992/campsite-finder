@@ -30,8 +30,10 @@ export interface NotificationPayload {
   startDate: string;
   endDate: string;
   /** 'available' = bookable now (default). 'coming_soon' = ReserveCalifornia held
-   *  a cancelled site that releases at `availableAt` — a heads-up before it's live. */
-  kind?: 'available' | 'coming_soon';
+   *  a cancelled site that releases at `availableAt` — a heads-up before it's live.
+   *  'carted' = the auto-cart bot already added this exact site to the user's
+   *  recreation.gov cart — they just need to check out. */
+  kind?: 'available' | 'coming_soon' | 'carted';
   /** For 'coming_soon': ISO-local release time (e.g. "2026-07-18T08:00:00"). */
   availableAt?: string | null;
 }
@@ -115,12 +117,15 @@ async function dispatchEmail(payload: NotificationPayload): Promise<void> {
   if (!email) return; // no email on file yet (v1 anonymous users)
 
   const comingSoon = payload.kind === 'coming_soon';
+  const carted = payload.kind === 'carted';
   try {
     await sendEmail({
       to: email,
-      subject: comingSoon
-        ? `⏳ Opening soon: ${payload.campgroundName}`
-        : `⛺ Campsite available: ${payload.campgroundName}`,
+      subject: carted
+        ? `✅ In your cart: ${payload.campgroundName} — check out now`
+        : comingSoon
+          ? `⏳ Opening soon: ${payload.campgroundName}`
+          : `⛺ Campsite available: ${payload.campgroundName}`,
       html: buildEmailHtml(payload),
     });
     await logNotification(payload, 'email', 'sent');
@@ -139,7 +144,10 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
   try {
     const site = payload.campsiteName ? ` — Site ${payload.campsiteName}` : '';
     let body: string;
-    if (payload.kind === 'coming_soon') {
+    if (payload.kind === 'carted') {
+      // The bot already added this exact site to the user's rec.gov cart.
+      body = `CampHawk: ✅ ${payload.campgroundName}${site} (${payload.startDate}→${payload.endDate}) is in your recreation.gov cart — check out now, it's only held ~15 min: https://www.recreation.gov/cart Reply STOP to opt out.`;
+    } else if (payload.kind === 'coming_soon') {
       // ReserveCalifornia held a cancellation — heads-up before it's bookable.
       body = `CampHawk: ⏳ ${payload.campgroundName}${site} was just cancelled and opens up ${formatReleaseTime(payload.availableAt, true)}. We'll text you when it's bookable. Reply STOP to opt out.`;
     } else {
@@ -161,6 +169,38 @@ function buildEmailHtml(payload: NotificationPayload): string {
   const provider = providerLabel(payload.bookingUrl);
   const siteSuffix = payload.campsiteName ? ` — Site ${payload.campsiteName}` : '';
   const comingSoon = payload.kind === 'coming_soon';
+
+  // Auto-cart success: we already added this exact site to the user's rec.gov
+  // cart — the only thing left is to check out before the ~15-minute hold lapses.
+  if (payload.kind === 'carted') {
+    return `
+<!DOCTYPE html>
+<html>
+<body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#1a1a1a">
+  <h2 style="color:#16a34a;margin-bottom:4px">✅ It's in your cart — check out now</h2>
+  <p style="margin-top:0;color:#555">CampHawk caught a cancellation and added it straight to your recreation.gov cart. Recreation.gov only holds a cart for about <strong>15 minutes</strong>, so finish checkout right away.</p>
+
+  <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:20px;margin:20px 0">
+    <h3 style="margin:0 0 8px">${payload.campgroundName}${siteSuffix}</h3>
+    <p style="margin:0;color:#555">
+      <strong>${payload.startDate}</strong> → <strong>${payload.endDate}</strong>
+    </p>
+  </div>
+
+  <a href="https://www.recreation.gov/cart"
+     style="display:inline-block;background:#16a34a;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">
+    Check out on Recreation.gov →
+  </a>
+
+  <p style="margin-top:16px;color:#555">Signed in on your phone? The cart is tied to your account, so it's already waiting there too.</p>
+
+  <p style="margin-top:32px;font-size:12px;color:#999">
+    You're receiving this because you set up a watch on CampHawk with auto-cart on.
+    <br>To stop watching this campground, visit your watches in the app.
+  </p>
+</body>
+</html>`;
+  }
 
   // Coming-soon (ReserveCalifornia held cancellation): heads-up, not "book now".
   if (comingSoon) {

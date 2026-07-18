@@ -4,3 +4,4 @@ chrome-profile/
 handled.json
 carted.json
 .env
+logs/

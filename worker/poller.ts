@@ -35,9 +35,16 @@ import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
 import { syncAllUseDirect } from '../src/lib/sources/reservecalifornia/sync';
 import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
 import { isUseDirectSource, USEDIRECT_PROVIDERS } from '../src/lib/sources/reservecalifornia/providers';
-import { dispatchNotifications } from '../src/lib/notifications';
+import { dispatchNotifications, type NotificationPayload } from '../src/lib/notifications';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 15_000);
+// Auto-cart rec.gov watches run on their own tighter loop so a cancellation gets
+// into the cart before someone else grabs it. Detection latency for these is
+// bounded by this interval instead of the slower main cycle.
+const AUTOCART_POLL_INTERVAL_MS = Number(process.env.AUTOCART_POLL_INTERVAL_MS ?? 6_000);
+// How long after detection we let the bot attempt the cart before the reconciler
+// re-verifies availability and decides the fallback alert (see 014_autocart_jobs).
+const RECONCILE_DELAY_SEC = Number(process.env.AUTOCART_RECONCILE_DELAY_SEC ?? 35);
 const RECGOV_CONCURRENCY = 4;
 // Matches the Campflare webhook handler: re-notify only if the last alert is >1h old.
 const RENOTIFY_WINDOW = "interval '1 hour'";
@@ -53,6 +60,22 @@ interface WatchRow {
   campground_source: string;
   reservations_url: string | null;
   rc_hold_notified_for: string | null;
+  autocart_enabled: boolean;
+  autocart_connected: boolean;
+}
+
+/**
+ * A watch handled by the tighter auto-cart lane: a recreation.gov site whose owner
+ * is enrolled in auto-cart AND has a live rec.gov session. For these we don't alert
+ * on detection — we create a pending job, let the bot try to cart it, and decide the
+ * alert on the outcome (see reconcileAutocartJobs + 014_autocart_jobs.sql).
+ */
+function isAutocartLane(w: WatchRow): boolean {
+  return (
+    w.campground_source === 'ridb' &&
+    w.autocart_enabled === true &&
+    w.autocart_connected === true
+  );
 }
 
 /** Months (YYYY-MM) that the nights of [start, end) span. */
@@ -99,9 +122,12 @@ async function loadWatches(): Promise<WatchRow[]> {
             w.start_date::text, w.end_date::text, w.min_nights,
             w.rc_hold_notified_for,
             c.name AS campground_name, c.source AS campground_source,
-            c.reservations_url
+            c.reservations_url,
+            COALESCE(u.autocart_enabled, false) AS autocart_enabled,
+            COALESCE(u.autocart_connected, false) AS autocart_connected
      FROM watches w
      JOIN campgrounds c ON c.id = w.campground_id
+     JOIN users u ON u.id = w.user_id
      WHERE w.active = true
        AND w.end_date > CURRENT_DATE
        AND (w.notification_sent_at IS NULL OR w.notification_sent_at < NOW() - ${RENOTIFY_WINDOW})`
@@ -208,9 +234,12 @@ async function cycle(): Promise<void> {
     return;
   }
 
-  const raWatches = watches.filter((w) => w.campground_source === 'reserveamerica');
-  const rcWatches = watches.filter((w) => isUseDirectSource(w.campground_source));
-  const ridbWatches = watches.filter(
+  // Auto-cart rec.gov watches are handled by the tighter autocartCycle() below;
+  // everything else runs here on the main cadence.
+  const mainWatches = watches.filter((w) => !isAutocartLane(w));
+  const raWatches = mainWatches.filter((w) => w.campground_source === 'reserveamerica');
+  const rcWatches = mainWatches.filter((w) => isUseDirectSource(w.campground_source));
+  const ridbWatches = mainWatches.filter(
     (w) => !isUseDirectSource(w.campground_source) && w.campground_source !== 'reserveamerica'
   );
 
@@ -274,7 +303,7 @@ async function cycle(): Promise<void> {
   );
 
   let notified = 0;
-  for (const watch of watches) {
+  for (const watch of mainWatches) {
     const rc = rcResults.get(watch.id);
     const result: WatchResult =
       watch.campground_source === 'reserveamerica'
@@ -372,6 +401,121 @@ async function cycle(): Promise<void> {
   );
 }
 
+// --- Auto-cart lane -------------------------------------------------------
+// A tighter loop for recreation.gov watches whose owner is enrolled in auto-cart
+// AND signed in. On a hit we DON'T alert immediately — that's how you get false
+// hope when a site is gone before we grab it. Instead we record a pending
+// autocart_job; the bot carts it and reports the outcome; the alert is decided
+// later: carted → "it's in your cart" (sent by /api/auto-cart/result);
+// still-open-after-a-beat → normal alert; gone → silence (reconciler below).
+
+/** Build the NotificationPayload for a rec.gov auto-cart opening. */
+function autocartPayload(watch: WatchRow, result: WatchResult): NotificationPayload {
+  return {
+    userId: watch.user_id,
+    watchId: watch.id,
+    campgroundId: watch.campground_id,
+    campgroundName: watch.campground_name,
+    availableDates: result.dates,
+    bookingUrl: result.campsiteId
+      ? `https://www.recreation.gov/camping/campsites/${result.campsiteId}#camphawk=${watch.start_date}_${watch.end_date}`
+      : `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
+    campsiteName: result.campsiteName,
+    startDate: watch.start_date,
+    endDate: watch.end_date,
+  };
+}
+
+async function autocartCycle(): Promise<void> {
+  const watches = (await loadWatches()).filter(isAutocartLane);
+  if (watches.length > 0) {
+    // One recgov fetch per unique campground+month, shared across these watches.
+    const pairs = new Set<string>();
+    for (const w of watches) for (const m of monthsForRange(w.start_date, w.end_date)) pairs.add(`${w.campground_id}|${m}`);
+    const monthData = new Map<string, Awaited<ReturnType<typeof getAvailabilityFromRecGov>>>();
+    await pMap([...pairs], async (pair) => {
+      const [campgroundId, month] = pair.split('|');
+      monthData.set(pair, await getAvailabilityFromRecGov(campgroundId, month));
+    }, RECGOV_CONCURRENCY);
+
+    for (const watch of watches) {
+      const result = availableDatesForWatch(watch, monthData);
+      if (result.dates.length === 0) continue;
+      if (!(await claimNotification(watch.id))) continue; // main cycle / prior tick won the claim
+      const payload = autocartPayload(watch, result);
+      if (!result.campsiteId) {
+        // No specific site to cart → behave like a normal alert.
+        await dispatchNotifications(payload).catch((e) => console.error('[poller] autocart normal dispatch failed:', e));
+        continue;
+      }
+      await mutate(
+        `INSERT INTO autocart_jobs (watch_id, user_id, campground_id, campsite_id, payload)
+         VALUES ($1, $2, $3, $4, $5::jsonb)`,
+        [watch.id, watch.user_id, watch.campground_id, result.campsiteId, JSON.stringify(payload)]
+      );
+      console.log(`[poller] AUTOCART OPENING: ${watch.campground_name} site ${result.campsiteId} (${result.dates.join(', ')}) — job queued, waiting on the bot (watch ${watch.id})`);
+    }
+    await mutate(`UPDATE watches SET last_checked_at = NOW() WHERE id::text = ANY($1)`, [watches.map((w) => w.id)]).catch(() => {});
+  }
+  await reconcileAutocartJobs();
+}
+
+interface AutocartJobRow {
+  id: string;
+  campground_id: string;
+  campsite_id: string;
+  payload: NotificationPayload;
+  cart_outcome: string | null;
+}
+
+/**
+ * Decide pending auto-cart jobs the bot didn't resolve as carted. After
+ * RECONCILE_DELAY_SEC the cart attempt has had its chance, so we re-verify the
+ * exact site live and either send the normal "book it" alert (still open) or stay
+ * silent (gone). The carted ones are resolved by /api/auto-cart/result.
+ */
+async function reconcileAutocartJobs(): Promise<void> {
+  const jobs = await query<AutocartJobRow>(
+    `SELECT id, campground_id, campsite_id, payload, cart_outcome
+     FROM autocart_jobs
+     WHERE resolution IS NULL AND detected_at < NOW() - INTERVAL '${RECONCILE_DELAY_SEC} seconds'
+     ORDER BY detected_at ASC LIMIT 50`
+  );
+  for (const job of jobs) {
+    const p = job.payload;
+    const stillOpen = await recheckCampsite(job.campground_id, job.campsite_id, p.startDate, p.endDate);
+    const resolution = stillOpen ? 'alerted' : 'silent';
+    // Atomic claim: only one resolver wins (guards against the result endpoint racing).
+    const claimed = await mutate<{ id: string }>(
+      `UPDATE autocart_jobs SET resolution = $2, resolved_at = NOW()
+       WHERE id = $1 AND resolution IS NULL RETURNING id`,
+      [job.id, resolution]
+    );
+    if (claimed.length === 0) continue;
+    if (stillOpen) {
+      console.log(`[poller] autocart fallback: ${p.campgroundName} still open (cart_outcome=${job.cart_outcome ?? 'none'}) — sending normal alert (job ${job.id})`);
+      await dispatchNotifications(p).catch((e) => console.error(`[poller] autocart fallback dispatch failed for ${job.id}:`, e));
+    } else {
+      console.log(`[poller] autocart fallback: ${p.campgroundName} gone (cart_outcome=${job.cart_outcome ?? 'none'}) — staying silent (job ${job.id})`);
+    }
+  }
+}
+
+/** Re-verify a specific rec.gov campsite can still host the full [start, end) stay. */
+async function recheckCampsite(campgroundId: string, campsiteId: string, startDate: string, endDate: string): Promise<boolean> {
+  const nights = nightsOfRange(startDate, endDate);
+  const nightSet = new Set(nights);
+  const open = new Set<string>();
+  for (const month of monthsForRange(startDate, endDate)) {
+    const avail = await getAvailabilityFromRecGov(campgroundId, month);
+    for (const cs of avail.campsites) {
+      if (String(cs.campsiteId) !== String(campsiteId)) continue;
+      for (const day of cs.availability) if (day.status === 'available' && nightSet.has(day.date)) open.add(day.date);
+    }
+  }
+  return hasConsecutiveRun([...open].sort(), nights.length);
+}
+
 // ReserveCalifornia's WAF blocks GitHub Actions runner IPs (403), so the
 // nightly RC refresh runs here on Fly instead. Runs when the last successful
 // RC sync is older than ~22h; checked hourly.
@@ -437,6 +581,23 @@ async function main() {
   };
   await tick();
   setInterval(tick, POLL_INTERVAL_MS);
+
+  // Tighter, independent loop for auto-cart rec.gov watches + job reconciliation.
+  console.log(`[poller] auto-cart lane — interval ${AUTOCART_POLL_INTERVAL_MS / 1000}s, reconcile after ${RECONCILE_DELAY_SEC}s`);
+  let acRunning = false;
+  const acTick = async () => {
+    if (acRunning) return;
+    acRunning = true;
+    try {
+      await autocartCycle();
+    } catch (err) {
+      console.error('[poller] autocart cycle failed:', err);
+    } finally {
+      acRunning = false;
+    }
+  };
+  await acTick();
+  setInterval(acTick, AUTOCART_POLL_INTERVAL_MS);
 }
 
 main();
