@@ -56,10 +56,27 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > park directory is empty — it migrated off), and none of their reservation SPAs
 > (cpwshop, tnstateparks, camping.nj.gov, parkreservations.maryland.gov, alapark,
 > mdwfp, arkansasstateparks, southcarolinaparks…) reference an `*rdr*` host in their
-> bundles. They run on **Camis / GoingToCamp** (WA, WI, MA, ME, SD, ND — note the
-> `<state>.goingtocamp.com` pattern) or on **Aspira's non-RA products** (CO, MI, TN,
-> WV, KS, MS). Growing past 28 states means a new adapter for one of those platforms,
-> not another registry entry. GoingToCamp is the bigger single unlock.
+> bundles. Growing past 28 states means a new adapter, not another registry entry.
+>
+> **GoingToCamp (Camis) — surveyed 2026-07-19, only worth ~2 states.** Tenants are
+> `<name>.goingtocamp.com`, but of the US ones only **Washington (167 locations) and
+> Wisconsin (64)** exist — the rest of the platform is Canadian (Manitoba, Nova
+> Scotia, Yukon, Long Point). MA/ME/SD/ND/VT are *not* on it.
+> - Catalog side is easy: `GET /api/resourcelocation` returns clean JSON with
+>   `localizedValues[].fullName`, address, website, and `gpsCoordinates` as a
+>   `"lat, lng"` **string** (not numeric fields). Coverage is uneven — WA has coords
+>   for 136/167, **WI has none**, so WI would need name geocoding like RA does.
+>   `GET /api/resourcecategory` gives the site types (Campsite, Cabin, Yurt, Group
+>   Camp, Day Use Facility…), so day-use rows can be filtered out.
+> - Availability side is the hard part and is **unproven**: `/api/availability/*`
+>   endpoints exist but GET without params is a 400, and **POST is blocked by Azure
+>   WAF (403) from datacenter IPs** — the same class of problem as the UseDirect
+>   CloudFront 403s, so it would likely need the `/api/rc-proxy` treatment or a
+>   residential path. Cracking the request shape means reading the Angular bundle.
+>
+> Verdict: ~2 states (WA is a genuinely big camping state; WI is messier), with the
+> availability half carrying real WAF risk. Aspira's non-RA products (CO, MI, TN, WV,
+> KS, MS) are the larger prize by state count but were not surveyed.
 
 > **Known gap — UseDirect unit catalogs.** For some UseDirect providers (currently
 > Florida, Ohio, Illinois, Virginia) the per-facility unit sync comes back empty:
