@@ -24,6 +24,11 @@ export const RA_CONTRACTS: RAContract[] = [
   { contractCode: 'OR', host: 'oregonstateparks.reserveamerica.com', name: 'Oregon State Parks', state: 'OR' },
   { contractCode: 'UT', host: 'utahstateparks.reserveamerica.com', name: 'Utah State Parks', state: 'UT' },
   { contractCode: 'NC', host: 'northcarolinastateparks.reserveamerica.com', name: 'North Carolina State Parks', state: 'NC' },
+  { contractCode: 'KY', host: 'kentuckystateparks.reserveamerica.com', name: 'Kentucky State Parks', state: 'KY' },
+  { contractCode: 'IA', host: 'iowastateparks.reserveamerica.com', name: 'Iowa State Parks', state: 'IA' },
+  { contractCode: 'IN', host: 'indianastateparks.reserveamerica.com', name: 'Indiana State Parks', state: 'IN' },
+  { contractCode: 'GA', host: 'gastateparks.reserveamerica.com', name: 'Georgia State Parks', state: 'GA' },
+  { contractCode: 'NE', host: 'nebraskastateparks.reserveamerica.com', name: 'Nebraska State Parks', state: 'NE' },
 ];
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
