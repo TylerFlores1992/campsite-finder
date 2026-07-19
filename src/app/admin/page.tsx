@@ -288,11 +288,19 @@ export default async function AdminPage() {
         {/* Quick links */}
         <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
           <h2 className="font-display font-semibold text-gray-800 mb-4">Open the deep dashboards</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            <QuickLink href="https://console.twilio.com" label="Twilio" desc="SMS · delivery · A2P" />
             <QuickLink href="https://dashboard.stripe.com" label="Stripe" desc="Revenue · MRR · payouts" />
-            <QuickLink href="https://camphawk.sentry.io/issues" label="Sentry" desc="Errors · crashes" />
-            <QuickLink href="https://vercel.com/dashboard" label="Vercel" desc="Traffic · Web Vitals" />
+            <QuickLink href="https://supabase.com/dashboard" label="Supabase" desc="Database · SQL" />
+            <QuickLink href="https://fly.io/apps/campsite-finder-worker" label="Fly.io" desc="Poller worker · logs" />
+            <QuickLink href="https://resend.com/emails" label="Resend" desc="Email delivery" />
             <QuickLink href="https://dashboard.clerk.com" label="Clerk" desc="User accounts" />
+            <QuickLink href="https://camphawk.sentry.io/issues" label="Sentry" desc="Errors · crashes" />
+            <QuickLink href="https://vercel.com/dashboard" label="Vercel" desc="Deploys · Web Vitals" />
+            <QuickLink href="https://dash.cloudflare.com" label="Cloudflare" desc="DNS · broker tunnel" />
+            <QuickLink href="https://github.com/TylerFlores1992/campsite-finder" label="GitHub" desc="Code · deploys" />
+            <QuickLink href="https://account.mapbox.com" label="Mapbox" desc="Maps · usage" />
+            <QuickLink href="https://ridb.recreation.gov/profile" label="RIDB" desc="Recreation.gov API" />
           </div>
         </section>
 

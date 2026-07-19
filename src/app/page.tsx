@@ -85,6 +85,37 @@ export default function HomePage() {
       .catch(() => {});
   }, [isSignedIn, isSubscribed, watchesOpen]);
 
+  // Restore a search from the URL on first load, so pressing "Back to results"
+  // on a campground detail page returns to the results instead of the landing.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    const lat = sp.get('lat');
+    const lng = sp.get('lng');
+    if (!lat || !lng) return;
+    const restored: FilterState = {
+      siteType: (sp.get('siteType') as FilterState['siteType']) ?? null,
+      rvLength: sp.get('rvLength') ? Number(sp.get('rvLength')) : null,
+      pets: sp.get('pets') === '1',
+      electric: sp.get('electric') === '1',
+      water: sp.get('water') === '1',
+      showers: sp.get('showers') === '1',
+    };
+    setFilters(restored);
+    search(
+      {
+        lat: Number(lat),
+        lng: Number(lng),
+        radiusMiles: Number(sp.get('radius') ?? 25),
+        startDate: sp.get('startDate') ?? undefined,
+        endDate: sp.get('endDate') ?? undefined,
+        focusCampgroundId: sp.get('focus') ?? undefined,
+      },
+      restored
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Load favorites when signed in
   useEffect(() => {
     if (!isSignedIn) { setFavorites(new Set()); return; }
@@ -139,6 +170,26 @@ export default function HomePage() {
       setLoading(true);
       setError(null);
       setSearchState(state);
+
+      // Mirror the search into the URL so "Back to results" from a campground
+      // detail page restores this exact search (see the restore-on-mount effect).
+      if (typeof window !== 'undefined') {
+        const urlp = new URLSearchParams({
+          lat: String(state.lat),
+          lng: String(state.lng),
+          radius: String(state.radiusMiles),
+          ...(state.startDate ? { startDate: state.startDate } : {}),
+          ...(state.endDate ? { endDate: state.endDate } : {}),
+          ...(state.focusCampgroundId ? { focus: state.focusCampgroundId } : {}),
+          ...(activeFilters.siteType ? { siteType: activeFilters.siteType } : {}),
+          ...(activeFilters.siteType === 'rv' && activeFilters.rvLength ? { rvLength: String(activeFilters.rvLength) } : {}),
+          ...(activeFilters.pets ? { pets: '1' } : {}),
+          ...(activeFilters.electric ? { electric: '1' } : {}),
+          ...(activeFilters.water ? { water: '1' } : {}),
+          ...(activeFilters.showers ? { showers: '1' } : {}),
+        });
+        window.history.replaceState(null, '', `/?${urlp.toString()}`);
+      }
 
       const amenities: string[] = [];
       if (activeFilters.electric) amenities.push('electric hookup');
@@ -273,6 +324,7 @@ export default function HomePage() {
                 setCampgrounds([]);
                 setSelectedId(null);
                 setError(null);
+                if (typeof window !== 'undefined') window.history.replaceState(null, '', '/');
               }}
               aria-label="CampHawk home"
               className="shrink-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-green-400"

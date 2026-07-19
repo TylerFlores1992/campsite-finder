@@ -47,7 +47,7 @@ const FEATURE_CARDS = [
   {
     icon: <Bell size={18} className="text-green-700" />,
     title: 'Alerts in seconds',
-    body: 'We watch booked campgrounds around the clock and email + text you the moment a site opens up — usually within seconds of the cancellation.',
+    body: 'We watch booked campgrounds around the clock and email + text you the moment a site opens up — usually within seconds of the cancellation. Keep up to 10 active watches at a time.',
     badge: null,
   },
   {
