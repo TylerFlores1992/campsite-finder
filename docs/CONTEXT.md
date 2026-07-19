@@ -75,8 +75,32 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 >   residential path. Cracking the request shape means reading the Angular bundle.
 >
 > Verdict: ~2 states (WA is a genuinely big camping state; WI is messier), with the
-> availability half carrying real WAF risk. Aspira's non-RA products (CO, MI, TN, WV,
-> KS, MS) are the larger prize by state count but were not surveyed.
+> availability half carrying real WAF risk.
+>
+> **The "Aspira six" are really FOUR different platforms — surveyed 2026-07-19.**
+> CO/MI/TN/WV/KS/MS do *not* share a backend, so there is no 6-state unlock:
+> - **TN + SC = one product** (best cluster). Identical stack: Apache + ColdFusion
+>   (`cfid`/`cftoken` cookies, `CF_CLIENT_TSP_LV` vs `CF_CLIENT_SCP_LV` — differs only
+>   by state), same "Reservations | <State> State Parks" title. Active Network.
+> - **MI + MS = one product.** Proven identical: both serve the *same
+>   content-hashed bundles* (`chunk-DXUNNUAM.js`, `chunk-C5FZKBQ3.js`,
+>   `chunk-RWNUTB4V.js`), same 42-tag skeleton, same `/api/csp-violation`. Michigan is
+>   a big camping state, so this cluster is worth more than its state count suggests.
+> - **CO = bespoke.** "Colorado Parks and Wildlife IPAWS", ASP.NET, Active Network
+>   (`actv_kuid_*` cookie), and behind a queue-it gate. Hostile; 1 state.
+> - **WV = not a campground system at all.** `wvstateparks.com` is a WordPress
+>   brochure site; real booking is `reservations.wvstateparks.com`, which runs
+>   **Inntopia** (a resort/lodging platform — cabins and lodges, not campsites).
+> - **LA = bespoke** ASP.NET at `reservations.gooutdoorslouisiana.com`. KS did not
+>   resolve at `reserve.ksoutdoors.com`.
+>
+> None of these expose a JSON API from their bundles (unlike UseDirect/GoingToCamp) —
+> they'd be HTML-scrape integrations in the ReserveAmerica mold.
+>
+> **Bottom line: no remaining integration unlocks more than 2 states.** Ranked by
+> value-for-effort: GoingToCamp (WA+WI, catalog API already proven, availability is
+> the risk) → MI+MS (one app, Michigan is a big camping market) → TN+SC (ColdFusion
+> scrape, reuses RA-style expertise) → CO/LA/WV (1 state each or lodging-only).
 
 > **Known gap — UseDirect unit catalogs.** For some UseDirect providers (currently
 > Florida, Ohio, Illinois, Virginia) the per-facility unit sync comes back empty:
