@@ -246,10 +246,10 @@ async function processJob({ user, job }) {
     return;
   }
   log(`  ⧉ opening browser for ${who}…`);
-  // Run the cart HEADLESS, same as the broker (which signs in headless and stays
-  // logged in). Testing whether a headed launch was reading a different session
-  // state than the headless one on this profile.
-  const outcome = await withBrowser(user.userId, (ctx) => cartRecGov(ctx, job, log), { headless: true });
+  // Run the cart HEADED. rec.gov's anti-bot gate ("abnormal activity") rejects
+  // headless Chromium (fingerprinted as automation) — the add returns 200 with
+  // ok:false. A real headed browser on the residential mini PC passes the gate.
+  const outcome = await withBrowser(user.userId, (ctx) => cartRecGov(ctx, job, log), { headless: false });
   await reportResult(job.id, outcome);
   if (outcome === 'carted') {
     carted.set(key, Date.now());
