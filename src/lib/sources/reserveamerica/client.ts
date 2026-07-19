@@ -34,6 +34,8 @@ export const RA_CONTRACTS: RAContract[] = [
   { contractCode: 'MT', host: 'montanastateparks.reserveamerica.com', name: 'Montana State Parks', state: 'MT' },
   { contractCode: 'RI', host: 'rhodeislandstateparks.reserveamerica.com', name: 'Rhode Island State Parks', state: 'RI' },
   { contractCode: 'NM', host: 'newmexicostateparks.reserveamerica.com', name: 'New Mexico State Parks', state: 'NM' },
+  { contractCode: 'AK', host: 'alaskastateparks.reserveamerica.com', name: 'Alaska State Parks', state: 'AK' },
+  { contractCode: 'CT', host: 'connecticutstateparks.reserveamerica.com', name: 'Connecticut State Parks', state: 'CT' },
 ];
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';

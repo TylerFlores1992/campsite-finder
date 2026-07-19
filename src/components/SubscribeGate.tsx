@@ -65,7 +65,7 @@ const FEATURE_CARDS = [
   {
     icon: <Tent size={18} className="text-green-700" />,
     title: 'Federal + state park coverage',
-    body: 'Recreation.gov campgrounds nationwide — national parks, forests, and lakes — plus state parks in California, Texas, Arizona, Florida, New York, Oregon, Utah, North Carolina, Minnesota, Missouri, Kentucky, Iowa, Indiana, Georgia, Nebraska, Pennsylvania, New Hampshire, Montana, Rhode Island, and New Mexico, with more rolling out. 5,500+ campgrounds and counting.',
+    body: 'Recreation.gov campgrounds nationwide — national parks, forests, and lakes — plus state parks in 27 states — including California, Texas, Arizona, Florida, New York, Oregon, Utah, Nevada, Ohio, Virginia, Illinois, Wyoming, Pennsylvania, and more, with additional states rolling out. 5,500+ campgrounds and counting.',
     badge: null,
   },
 ];
