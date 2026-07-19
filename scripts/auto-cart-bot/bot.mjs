@@ -214,15 +214,9 @@ async function keepSessionsWarm() {
     const who = user.email || user.userId;
     try {
       const state = await withBrowser(user.userId, (ctx) => recgovLoginState(ctx), { headless: true });
-      if (state === 'in') {
-        log(`♻ ${who}: rec.gov session kept warm`);
-      } else if (state === 'out') {
-        try { fs.unlinkSync(readyMarker(user.userId)); } catch {}
-        await reportConnected(user.userId, false);
-        log(`⚠ ${who}: rec.gov session expired (idle) — cleared login; they'll be asked to reconnect.`);
-      } else {
-        log(`  ${who}: keepalive inconclusive (page didn't load) — leaving session as-is.`);
-      }
+      // DIAGNOSTIC: log the headless login state without clearing anything, so we
+      // can compare it against the headed cart's view of the same profile.
+      log(`♻ ${who}: keepalive headless login check → ${state}`);
     } catch (e) {
       log(`  keepalive error for ${who}: ${e.message}`);
     }
@@ -252,18 +246,19 @@ async function processJob({ user, job }) {
     return;
   }
   log(`  ⧉ opening browser for ${who}…`);
-  const outcome = await withBrowser(user.userId, (ctx) => cartRecGov(ctx, job, log));
+  // Run the cart HEADLESS, same as the broker (which signs in headless and stays
+  // logged in). Testing whether a headed launch was reading a different session
+  // state than the headless one on this profile.
+  const outcome = await withBrowser(user.userId, (ctx) => cartRecGov(ctx, job, log), { headless: true });
   await reportResult(job.id, outcome);
   if (outcome === 'carted') {
     carted.set(key, Date.now());
     saveMap(CARTED_FILE, carted, 30 * 864e5);
   } else if (outcome === 'session-expired') {
-    // The saved rec.gov session died — stop pretending we can cart. Clear the
-    // ready marker (so the bot re-requests a sign-in) and flip the app's
-    // "connected" state off so the user is prompted to reconnect.
-    try { fs.unlinkSync(readyMarker(user.userId)); } catch {}
-    await reportConnected(user.userId, false);
-    log(`  ⚠ ${who}: rec.gov session expired — cleared the saved login; they'll be asked to reconnect.`);
+    // NOTE: intentionally NOT clearing the ready marker here while we diagnose the
+    // session-persistence issue — a single logged-out launch may be an artifact,
+    // and keeping the marker lets us retest without a fresh reconnect each time.
+    log(`  ⚠ ${who}: rec.gov session not detected on this launch (marker kept for retest).`);
   }
   log(`  ⧉ closed browser for ${who}`);
 }
