@@ -19,10 +19,12 @@ export async function cartRecGov(context, job, log) {
   // silent failure tells us WHY (e.g. a 4xx demanding equipment/occupants) rather
   // than just "cart empty". Only non-GET recreation.gov calls — a booking makes few.
   const netlog = [];
+  const isBooking = (u) => /reservation|\/cart|checkout/i.test(u);
   page.on('request', (req) => {
     try {
       if (req.method() === 'GET' || !/recreation\.gov/.test(req.url())) return;
-      const p = (req.postData() || '').replace(/\s+/g, ' ').slice(0, 300);
+      const cap = isBooking(req.url()) ? 1500 : 200;
+      const p = (req.postData() || '').replace(/\s+/g, ' ').slice(0, cap);
       netlog.push(`→ ${req.method()} ${req.url().replace(/^https?:\/\/[^/]+/, '')}${p ? ` body=${p}` : ''}`);
     } catch { /* ignore */ }
   });
@@ -30,8 +32,11 @@ export async function cartRecGov(context, job, log) {
     try {
       const req = res.request();
       if (req.method() === 'GET' || !/recreation\.gov/.test(res.url())) return;
+      // Capture the response body for booking calls (even on 200) and any error.
       let body = '';
-      if (res.status() >= 400) { try { body = (await res.text()).replace(/\s+/g, ' ').slice(0, 200); } catch { /* ignore */ } }
+      if (res.status() >= 400 || isBooking(res.url())) {
+        try { body = (await res.text()).replace(/\s+/g, ' ').slice(0, 600); } catch { /* ignore */ }
+      }
       netlog.push(`← ${res.status()} ${req.method()} ${res.url().replace(/^https?:\/\/[^/]+/, '')}${body ? ` | ${body}` : ''}`);
     } catch { /* ignore */ }
   });
