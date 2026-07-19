@@ -1,23 +1,24 @@
-// Recreation.gov add-to-cart, ported from the proven CampHawk extension content
-// script. Runs in YOUR logged-in browser (persistent Playwright context), so the
-// site lands in your own cart on your own IP. Stops at the cart — you review and pay.
+// Recreation.gov add-to-cart. Runs in YOUR logged-in browser (persistent, HEADED
+// Playwright context) so the site lands in your own cart on your own IP, and the
+// real headed browser passes rec.gov's anti-bot gate. Stops at the cart.
 //
-// Returns the outcome string so the bot can report it to CampHawk:
-//   'carted'                                        → success, VERIFIED present in the cart
-//   'add-not-confirmed'                             → clicked Add to Cart but the cart stayed
-//                                                     empty (expired session / extra step)
-//   'already-booked' | 'dates-not-found'            → the site was gone by the time we tried
-//   'calendar-not-loaded' | 'cta-not-ready'         → page/selector problem
-//   'error'                                         → navigation/exception
-// Anything other than 'carted' makes the server re-verify availability and send a
-// normal "still open — book it" alert (if it's genuinely still open) instead of a
-// false "it's in your cart".
+// Uses Playwright's REAL mouse clicks (trusted events) — react-aria's range
+// calendar ignores synthetic dispatched events for the check-out hover, so the
+// range only forms with genuine pointer input.
+//
+// Returns the outcome string the bot reports to CampHawk:
+//   'carted'                      → success, VERIFIED present in the cart
+//   'add-not-confirmed'           → clicked Add to Cart but cart stayed empty
+//   'range-not-formed(sel=N)'     → couldn't select a multi-day range (N cells stuck)
+//   'already-booked'|'dates-not-found'|'cta-not-ready'|'calendar-not-loaded' → page issue
+//   'session-expired'             → not signed in / cart bounced to sign-in
+//   'error'                       → navigation/exception
+// Anything but 'carted' makes the server re-verify and send a normal alert.
 export async function cartRecGov(context, job, log) {
   const url = job.bookingUrl.split('#')[0];
   const page = await context.newPage();
-  // Capture the write API calls the SPA makes when we click Add to Cart, so a
-  // silent failure tells us WHY (e.g. a 4xx demanding equipment/occupants) rather
-  // than just "cart empty". Only non-GET recreation.gov calls — a booking makes few.
+  // Capture the write API calls the SPA makes on Add to Cart, so a silent failure
+  // tells us WHY (e.g. a 4xx / anti-bot ok:false) rather than just "cart empty".
   const netlog = [];
   const isBooking = (u) => /reservation|\/cart|checkout/i.test(u);
   page.on('request', (req) => {
@@ -32,7 +33,6 @@ export async function cartRecGov(context, job, log) {
     try {
       const req = res.request();
       if (req.method() === 'GET' || !/recreation\.gov/.test(res.url())) return;
-      // Capture the response body for booking calls (even on 200) and any error.
       let body = '';
       if (res.status() >= 400 || isBooking(res.url())) {
         try { body = (await res.text()).replace(/\s+/g, ' ').slice(0, 600); } catch { /* ignore */ }
@@ -40,149 +40,139 @@ export async function cartRecGov(context, job, log) {
       netlog.push(`← ${res.status()} ${req.method()} ${res.url().replace(/^https?:\/\/[^/]+/, '')}${body ? ` | ${body}` : ''}`);
     } catch { /* ignore */ }
   });
+
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const ariaDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return `${MONTHS[m - 1]} ${d}, ${y}`; };
+  const ymOf = (iso) => { const [y, m] = iso.split('-').map(Number); return y * 100 + m; };
+
+  // Displayed month span + the target date cell's viewport-center coords / booked flag.
+  const probe = (label) => page.evaluate((lbl) => {
+    const cells = Array.from(document.querySelectorAll('button[aria-label]'))
+      .filter((b) => /,\s*20\d\d/.test(b.getAttribute('aria-label') || ''));
+    const MO = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    let min = Infinity, max = -Infinity;
+    for (const b of cells) {
+      const m = (b.getAttribute('aria-label') || '').match(/(\w+) \d{1,2}, (\d{4})/);
+      if (!m) continue; const mi = MO.indexOf(m[1]); if (mi < 0) continue;
+      const v = Number(m[2]) * 100 + (mi + 1); if (v < min) min = v; if (v > max) max = v;
+    }
+    const el = cells.find((b) => (b.getAttribute('aria-label') || '').includes(lbl));
+    let cell = null;
+    if (el) {
+      el.scrollIntoView({ block: 'center' });
+      const r = el.getBoundingClientRect();
+      const lab = (el.getAttribute('aria-label') || '').toLowerCase();
+      const booked = el.getAttribute('aria-disabled') === 'true' || /reserved|current reservation|not available|not yet released|walk.?up/.test(lab);
+      cell = { x: r.left + r.width / 2, y: r.top + r.height / 2, booked, ok: r.width > 0 && r.height > 0 };
+    }
+    return { cell, min, max };
+  }, label);
+
+  // The calendar's own month arrows are exactly "Next"/"Previous" (the slideshow's
+  // are "Next image"/"Previous image", so the exact-match locator won't hit those).
+  const clickArrow = async (word) => {
+    const loc = page.locator(`button[aria-label="${word}"]`);
+    if (await loc.count()) { await loc.first().click({ timeout: 3000 }).catch(() => {}); return true; }
+    return false;
+  };
+
+  // Real mouse click on a date, navigating months into view first.
+  const clickDate = async (iso) => {
+    const label = ariaDate(iso), target = ymOf(iso);
+    for (let i = 0; i < 16; i++) {
+      const { cell, min, max } = await probe(label);
+      if (cell && cell.ok) {
+        if (cell.booked) return 'booked';
+        await page.mouse.move(cell.x, cell.y);
+        await page.waitForTimeout(150);
+        await page.mouse.click(cell.x, cell.y);
+        return 'clicked';
+      }
+      let moved = false;
+      if (Number.isFinite(max) && target > max) moved = await clickArrow('Next');
+      else if (Number.isFinite(min) && target < min) moved = await clickArrow('Previous');
+      if (!moved) return 'not-found';
+      await page.waitForTimeout(500);
+    }
+    return 'not-found';
+  };
+
+  const selCount = () => page.evaluate(() =>
+    Array.from(document.querySelectorAll('[aria-label]')).filter((b) => /\bselected\b/i.test(b.getAttribute('aria-label') || '')).length);
+
+  const ctaInfo = () => page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('button, [role="button"]'))
+      .find((x) => /add to cart|book now|reserve/i.test((x.textContent || '').trim()));
+    if (!b) return null;
+    b.scrollIntoView({ block: 'center' });
+    const r = b.getBoundingClientRect();
+    return { text: (b.textContent || '').trim().slice(0, 24), x: r.left + r.width / 2, y: r.top + r.height / 2, disabled: b.getAttribute('aria-disabled') === 'true' || b.disabled, ok: r.width > 0 };
+  });
+
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-    const result = await page.evaluate(
-      async ({ checkin, checkout }) => {
-        // (Login pre-check temporarily disabled for diagnosis — proceed with the
-        // add attempt regardless so the network capture logs rec.gov's own
-        // event_login_status. A genuine logged-out just becomes add-not-confirmed.)
-        const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-        const ariaDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return `${MONTHS[m - 1]} ${d}, ${y}`; };
-        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-        const labeled = () => Array.from(document.querySelectorAll('[aria-label]'));
-        const dateButton = (iso) => { const n = ariaDate(iso); return labeled().find((b) => (b.getAttribute('aria-label') || '').includes(n)); };
+    // Wait for the calendar to paint availability.
+    await page.waitForFunction(() =>
+      Array.from(document.querySelectorAll('[aria-label]')).some((b) => /,\s*20\d\d.*-\s*(available|checkout|reserved|current reservation|not yet released)/i.test(b.getAttribute('aria-label') || '')),
+      { timeout: 25000 }).catch(() => {});
+    await page.waitForTimeout(800);
+    if ((await selCount()) === 0 && !(await ctaInfo())) {
+      // sanity: is the calendar even here?
+      const painted = await page.evaluate(() => Array.from(document.querySelectorAll('[aria-label]')).some((b) => /,\s*20\d\d/.test(b.getAttribute('aria-label') || '')));
+      if (!painted) return 'calendar-not-loaded';
+    }
 
-        // react-aria's usePress needs real pointer events, not a bare .click().
-        // The pointerover/pointermove FIRST is essential for the RANGE calendar:
-        // it registers the hover so clicking the check-out date completes the range.
-        // Without it only the check-in anchor sticks → a 0-night range rec.gov rejects.
-        const press = (el) => {
-          el.scrollIntoView({ block: 'center', behavior: 'instant' });
-          const r = el.getBoundingClientRect();
-          const o = { bubbles: true, cancelable: true, composed: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, pointerId: 1, pointerType: 'mouse', button: 0, isPrimary: true };
-          el.dispatchEvent(new PointerEvent('pointerover', { ...o }));
-          el.dispatchEvent(new PointerEvent('pointermove', { ...o }));
-          el.dispatchEvent(new PointerEvent('pointerdown', { ...o, buttons: 1 }));
-          el.dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0 }));
-          el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: o.clientX, clientY: o.clientY }));
-        };
-        const arrow = (word) => labeled().find((b) => (b.getAttribute('aria-label') || '').trim().toLowerCase() === word);
-        const ym = (iso) => { const [y, m] = iso.split('-').map(Number); return y * 100 + m; };
-        const displayedRange = () => {
-          let min = Infinity, max = -Infinity;
-          for (const b of labeled()) {
-            const m = (b.getAttribute('aria-label') || '').match(/(\w+) \d{1,2}, (\d{4})/);
-            if (!m) continue;
-            const mi = MONTHS.indexOf(m[1]);
-            if (mi < 0) continue;
-            const v = Number(m[2]) * 100 + (mi + 1);
-            if (v < min) min = v;
-            if (v > max) max = v;
-          }
-          return { min, max };
-        };
-        const locate = async (iso) => {
-          const target = ym(iso);
-          for (let i = 0; i < 16; i++) {
-            const b = dateButton(iso);
-            if (b) return b;
-            const { min, max } = displayedRange();
-            let btn = null;
-            if (target > max && Number.isFinite(max)) btn = arrow('next');
-            else if (target < min && Number.isFinite(min)) btn = arrow('previous');
-            else return null;
-            if (!btn || btn.getAttribute('aria-disabled') === 'true') return null;
-            press(btn);
-            await sleep(550);
-          }
-          return null;
-        };
-        const isBooked = (el) => {
-          const label = (el.getAttribute('aria-label') || '').toLowerCase();
-          return el.getAttribute('aria-disabled') === 'true' || /reserved|current reservation|not available|not yet released|walk-up|walk up/.test(label);
-        };
-        const ctaButton = () => Array.from(document.querySelectorAll('button, [role="button"]')).find((b) => /add to cart|book now|reserve/i.test((b.textContent || '').trim()));
-        const waitForCalendar = async () => {
-          for (let i = 0; i < 40; i++) {
-            const painted = labeled().some((b) => /, 20\d\d\b.*-\s*(available|checkout|current reservation|reserved|not yet released)/i.test(b.getAttribute('aria-label') || ''));
-            if (painted) return true;
-            await sleep(300);
-          }
-          return Number.isFinite(displayedRange().max);
-        };
+    // Select the date range with REAL mouse clicks; retry until it forms.
+    let formed = false, sel = 0;
+    for (let attempt = 0; attempt < 4 && !formed; attempt++) {
+      const ci = await clickDate(job.startDate);
+      if (ci === 'not-found') return 'dates-not-found';
+      if (ci === 'booked') return 'already-booked';
+      await page.waitForTimeout(700);
+      await clickDate(job.endDate);
+      await page.waitForTimeout(800);
+      sel = await selCount();
+      formed = sel >= 2 && !!(await ctaInfo());
+      if (!formed) await page.waitForTimeout(600);
+    }
+    log(`  · rec.gov: ${job.campgroundName} — range sel=${sel}`);
+    if (!formed) return `range-not-formed(sel=${sel})`;
 
-        if (!(await waitForCalendar())) return 'calendar-not-loaded';
-        await sleep(600);
-        let ci = await locate(checkin);
-        if (ci && isBooked(ci)) { await sleep(1000); ci = await locate(checkin); }
-        if (!ci) return 'dates-not-found';
-        if (isBooked(ci)) return 'already-booked';
+    const cta = await ctaInfo();
+    if (!cta || cta.disabled || !cta.ok) return 'cta-not-ready';
+    await page.mouse.move(cta.x, cta.y);
+    await page.waitForTimeout(150);
+    await page.mouse.click(cta.x, cta.y);
+    await page.waitForTimeout(2000);
 
-        // Select the date RANGE, retrying until the calendar shows a real
-        // multi-day selection. react-aria needs the pointerover (in press) to
-        // complete the check-out end; a single stuck anchor = a 0-night range that
-        // rec.gov rejects ("dates don't match our format"). selCount counts the
-        // cells the calendar marks "selected" (start + nights + checkout day ≥ 2).
-        const selCount = () => labeled().filter((b) => /\bselected\b/i.test(b.getAttribute('aria-label') || '')).length;
-        let formed = false;
-        for (let attempt = 0; attempt < 4 && !formed; attempt++) {
-          const c1 = await locate(checkin);
-          if (!c1 || isBooked(c1)) break;
-          press(c1);
-          await sleep(900);
-          const co = await locate(checkout);
-          if (co && !isBooked(co)) { press(co); await sleep(900); }
-          formed = selCount() >= 2 && !!ctaButton();
-          if (!formed) await sleep(500);
-        }
-        if (!formed) return `range-not-formed(sel=${selCount()})`;
+    // Best-effort confirmation dialog (equipment / occupancy / need-to-know).
+    const dlgBox = await page.evaluate(() => {
+      const d = document.querySelector('[role="dialog"], [aria-modal="true"]');
+      if (!d) return null;
+      const b = Array.from(d.querySelectorAll('button, [role="button"]'))
+        .find((x) => /add to cart|reserve|confirm|continue|acknowledge|agree|^yes\b|^save\b/i.test((x.textContent || '').trim()) && x.getAttribute('aria-disabled') !== 'true' && !x.disabled);
+      if (!b) return null;
+      b.scrollIntoView({ block: 'center' });
+      const r = b.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    if (dlgBox) { await page.mouse.click(dlgBox.x, dlgBox.y); await page.waitForTimeout(1800); }
+    log(`  · rec.gov: ${job.campgroundName} — clicked Add to Cart${dlgBox ? '+dialog' : ''}`);
 
-        const cta = ctaButton();
-        if (!cta || cta.getAttribute('aria-disabled') === 'true' || cta.disabled) return 'cta-not-ready';
-        press(cta);
-        await sleep(1800);
-        // Some sites pop a confirmation dialog (equipment / occupancy / need-to-know)
-        // with a final add/confirm button. Best-effort: click it if present.
-        const dialog = document.querySelector('[role="dialog"], [aria-modal="true"]');
-        let handledDialog = false;
-        if (dialog) {
-          const confirm = Array.from(dialog.querySelectorAll('button, [role="button"]'))
-            .find((b) => /add to cart|reserve|confirm|continue|acknowledge|agree|^yes\b|^save\b/i.test((b.textContent || '').trim()));
-          if (confirm && confirm.getAttribute('aria-disabled') !== 'true' && !confirm.disabled) {
-            press(confirm);
-            handledDialog = true;
-            await sleep(1800);
-          }
-        }
-        return handledDialog ? 'cta-pressed+dialog' : 'cta-pressed';
-      },
-      { checkin: job.startDate, checkout: job.endDate }
-    );
-
-    log(`  · rec.gov: ${job.campgroundName} — page step: ${result}`);
-    if (result === 'logged-out') {
-      log(`  ✗ ${job.campgroundName} — this browser is NOT signed in to rec.gov; can't cart. Reconnect needed.`);
+    // Verify the item actually landed in the cart.
+    const v = await verifyCart(context, log);
+    if (v === 'ok') {
+      log(`  ✓ ADDED TO CART: ${job.campgroundName} (${job.startDate}→${job.endDate}) — confirmed in the account cart`);
+      return 'carted';
+    }
+    if (v === 'signin') {
+      log(`  ✗ ${job.campgroundName} — rec.gov session has expired; reconnect needed.`);
       return 'session-expired';
     }
-    if (result === 'cta-pressed' || result === 'cta-pressed+dialog') {
-      // Never claim success blind: verify the item actually landed in the cart.
-      const v = await verifyCart(context, log);
-      if (v === 'ok') {
-        log(`  ✓ ADDED TO CART: ${job.campgroundName} (${job.startDate}→${job.endDate}) — confirmed in the account cart`);
-        return 'carted';
-      }
-      if (v === 'signin') {
-        log(`  ✗ ${job.campgroundName} — rec.gov session has expired; the add didn't take. This user needs to reconnect.`);
-        return 'session-expired';
-      }
-      log(`  ✗ ${job.campgroundName} — clicked Add to Cart but the cart is still empty (${v}) — add didn't take`);
-      if (netlog.length) { log(`  ⓘ write API calls during add:`); for (const n of netlog.slice(-12)) log(`      ${n}`); }
-      else log(`  ⓘ NO write (non-GET) API call fired on click — the Add-to-Cart click isn't triggering a request`);
-      return 'add-not-confirmed';
-    }
-    return result; // the failure reason (already-booked / dates-not-found / calendar-not-loaded / cta-not-ready)
+    log(`  ✗ ${job.campgroundName} — clicked Add to Cart but the cart is still empty (${v}) — add didn't take`);
+    if (netlog.length) { log(`  ⓘ write API calls during add:`); for (const n of netlog.slice(-12)) log(`      ${n}`); }
+    return 'add-not-confirmed';
   } catch (err) {
     log(`  ✗ rec.gov error for ${job.campgroundName}: ${err.message}`);
     return 'error';
