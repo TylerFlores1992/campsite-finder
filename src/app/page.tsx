@@ -313,7 +313,7 @@ export default function HomePage() {
         <WatchesPanel onClose={() => setWatchesOpen(false)} />
       )}
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-4 py-3 z-10 shadow-sm">
+      <header className="bg-background/90 backdrop-blur border-b border-gray-200 px-4 py-3 z-10">
         <div className="max-w-screen-2xl mx-auto space-y-3">
           {/* Top row: brand + actions (wraps cleanly on mobile) */}
           <div className="flex items-center justify-between gap-2">
@@ -337,7 +337,7 @@ export default function HomePage() {
                   if (!isSignedIn) { window.location.href = '/sign-in'; return; }
                   setWatchesOpen(true);
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 hover:text-amber-700 transition-colors"
                 title="My watches"
               >
                 <Bell size={15} />
@@ -368,12 +368,12 @@ export default function HomePage() {
               ) : (
                 <div className="flex items-center gap-2">
                   <SignInButton mode="redirect">
-                    <button className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
+                    <button className="text-sm font-medium px-3 py-1.5 rounded-lg text-gray-700 hover:text-green-800 transition-colors">
                       Sign in
                     </button>
                   </SignInButton>
                   <SignUpButton mode="redirect">
-                    <button className="text-sm px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors">
+                    <button className="text-sm font-semibold px-5 py-2 rounded-full bg-green-800 text-white hover:bg-green-900 shadow-sm transition-colors">
                       Sign up
                     </button>
                   </SignUpButton>

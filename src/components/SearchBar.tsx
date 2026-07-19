@@ -267,11 +267,11 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex flex-wrap gap-2 items-end bg-white rounded-2xl shadow-lg border border-gray-200 p-3"
+      className="flex flex-wrap gap-2 items-end bg-white rounded-2xl shadow-lg ring-1 ring-black/5 border border-gray-100 p-2.5"
     >
       {/* Location input + suggestions */}
       <div className="flex-1 min-w-48 relative" ref={wrapperRef}>
-        <label className="block text-xs font-medium text-gray-500 mb-1">Location</label>
+        <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1 ml-1">Location</label>
         <div className="relative flex items-center">
           <Search size={14} className="absolute left-2.5 text-gray-400" />
           <input
@@ -286,7 +286,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
             onKeyDown={(e) => {
               if (e.key === 'Escape') setShowSuggestions(false);
             }}
-            className="w-full pl-8 pr-9 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
+            className="w-full pl-8 pr-9 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
           />
           <button
             type="button"
@@ -342,12 +342,12 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
       </div>
 
       {/* Radius */}
-      <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">Radius</label>
+      <div className="sm:border-l sm:border-gray-200 sm:pl-3">
+        <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1 ml-0.5">Radius</label>
         <select
           value={radiusMiles}
           onChange={(e) => setRadiusMiles(Number(e.target.value))}
-          className="py-2 px-3 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400 bg-white"
+          className="py-2 px-3 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400 bg-white"
         >
           {RADIUS_OPTIONS.map((r) => (
             <option key={r} value={r}>
@@ -367,7 +367,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
       <button
         type="submit"
         disabled={!location || geocoding}
-        className="px-5 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+        className="px-6 py-3 bg-green-600 text-white text-sm font-semibold rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
       >
         {geocoding ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
         Search

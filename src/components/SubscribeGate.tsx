@@ -3,21 +3,18 @@
 import { useState } from 'react';
 import {
   Loader2,
-  Bell,
+  Clock,
   Zap,
   Map as MapIcon,
-  Tent,
+  Compass,
   Check,
-  Search,
-  BellRing,
-  ShieldCheck,
 } from 'lucide-react';
 import { SignInButton, SignUpButton } from '@clerk/nextjs';
 
 /** Marketing panel + subscribe surfaces. One consistent pitch for every
  *  non-paying audience — the CTA is the only thing that changes:
  *
- *  - signed OUT            → sign-up / sign-in buttons
+ *  - signed OUT            → sign-up / sign-in live in the header (clean landing)
  *  - signed in, never paid → Stripe checkout buttons + trial copy
  *  - signed in, lapsed     → Stripe checkout buttons + resubscribe copy
  *
@@ -55,54 +52,28 @@ function useCheckout() {
 
 const FEATURE_CARDS = [
   {
-    icon: Bell,
-    iconClass: 'text-green-700',
-    iconBg: 'bg-green-50 ring-green-100',
+    icon: Clock,
     title: 'Alerts in seconds',
-    body: 'We watch booked campgrounds around the clock and email + text you the moment a site opens up — usually within seconds of the cancellation. Keep up to 10 active watches at a time.',
+    body: 'We watch booked campgrounds around the clock and email + text you the moment a site opens up — usually within seconds of the cancellation.',
     badge: null as string | null,
   },
   {
     icon: Zap,
-    iconClass: 'text-amber-600',
-    iconBg: 'bg-amber-50 ring-amber-100',
     title: 'Auto-cart',
     body: 'Openings on recreation.gov can be added to your cart automatically. Your phone buzzes and the site is already waiting in your cart — just check out.',
     badge: 'NEW' as string | null,
   },
   {
     icon: MapIcon,
-    iconClass: 'text-blue-600',
-    iconBg: 'bg-blue-50 ring-blue-100',
     title: 'Live search — free for everyone',
     body: 'Search thousands of campgrounds with real-time availability, an interactive map, and filters for tents, RVs, hookups, and pets. Try it right above — no subscription needed.',
     badge: null as string | null,
   },
   {
-    icon: Tent,
-    iconClass: 'text-green-700',
-    iconBg: 'bg-green-50 ring-green-100',
+    icon: Compass,
     title: 'Federal + state park coverage',
-    body: 'Recreation.gov campgrounds nationwide — national parks, forests, and lakes — plus state parks in California, Texas, Arizona, Florida, New York, Oregon, Utah, North Carolina, Minnesota, and Missouri, with more rolling out. 5,500+ campgrounds and counting.',
+    body: 'Recreation.gov campgrounds nationwide — national parks, forests, and lakes — plus state parks in CA, TX, AZ, FL, NY, MN, and more. 5,500+ campgrounds and counting.',
     badge: null as string | null,
-  },
-];
-
-const HOW_IT_WORKS = [
-  {
-    icon: Search,
-    label: 'Search any campground',
-    detail: 'Free, no account needed.',
-  },
-  {
-    icon: BellRing,
-    label: 'Watch the booked ones',
-    detail: 'We monitor them 24/7.',
-  },
-  {
-    icon: Zap,
-    label: 'Grab the cancellation',
-    detail: 'Instant alert + auto-cart.',
   },
 ];
 
@@ -158,155 +129,85 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
     : returning
       ? 'Your subscription has ended, so watching and alerts are paused. Searching still works — resubscribe to start catching cancellations again.'
       : 'Searching is free — try it right above. A subscription turns on the good part: 24/7 watching of booked campgrounds, instant email + text alerts, and Auto-cart.';
-  const eyebrow = returning ? 'Your watches are paused' : 'Real-time cancellation alerts';
 
   return (
-    <div className="relative isolate h-full flex flex-col items-center text-center px-4 pt-10 pb-16 gap-8 overflow-y-auto bg-[#F3EFE0]">
-      {/* Same hero scene as ever, softened so cards stay legible */}
+    <div className="relative isolate min-h-full flex flex-col items-center text-center px-4 pt-12 sm:pt-16 pb-16 gap-10 sm:gap-12 overflow-y-auto bg-background">
+      {/* Hero scene, softened at the top so the search bar and headline stay crisp */}
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/hero-bg.png" alt="" className="h-full w-full object-cover object-center" />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#F3EFE0]/70 via-[#F3EFE0]/45 to-[#F3EFE0]/80" />
+        <div className="absolute inset-0 bg-gradient-to-b from-background via-background/40 to-background/70" />
       </div>
 
       {/* Hero */}
-      <div className="flex flex-col items-center gap-4 pt-2">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-white/90 border border-green-200 px-3 py-1 text-xs font-semibold text-green-700 shadow-sm backdrop-blur">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-green-600" />
-          </span>
-          {eyebrow}
-        </span>
-
-        <h1 className="font-display text-3xl sm:text-5xl font-extrabold text-green-800 max-w-2xl leading-[1.1] text-balance [text-shadow:_0_1px_10px_rgb(255_255_255_/_0.7)]">
+      <div className="flex flex-col items-center gap-5 pt-2 max-w-3xl">
+        <h1 className="font-serif text-4xl sm:text-6xl font-semibold text-green-800 leading-[1.05] text-balance [text-shadow:_0_1px_12px_rgb(250_247_242_/_0.8)]">
           {headline}
         </h1>
-        <p className="text-gray-700 max-w-xl text-base sm:text-lg leading-relaxed text-pretty [text-shadow:_0_1px_8px_rgb(255_255_255_/_0.85)]">
+        <p className="text-gray-600 max-w-xl text-base sm:text-lg leading-relaxed text-pretty [text-shadow:_0_1px_8px_rgb(250_247_242_/_0.9)]">
           {subcopy}
         </p>
-
-        {/* Trust / stats row */}
-        <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 text-sm font-medium text-green-800">
-          <span className="inline-flex items-center gap-1.5">
-            <Tent size={15} className="text-green-700" /> 5,500+ campgrounds
-          </span>
-          <span aria-hidden className="text-green-300">•</span>
-          <span className="inline-flex items-center gap-1.5">
-            <Zap size={15} className="text-amber-600" /> Alerts in seconds
-          </span>
-          <span aria-hidden className="text-green-300">•</span>
-          <span className="inline-flex items-center gap-1.5">
-            <ShieldCheck size={15} className="text-green-700" /> Cancel anytime
-          </span>
-        </div>
       </div>
 
-      {/* Feature grid */}
-      <div className="grid sm:grid-cols-2 gap-3 w-full max-w-2xl text-left">
+      {/* Feature grid — translucent cream cards over the hero scene */}
+      <div className="grid sm:grid-cols-2 gap-5 w-full max-w-4xl text-left">
         {FEATURE_CARDS.map((f) => {
           const Icon = f.icon;
           return (
             <div
               key={f.title}
-              className="group rounded-2xl bg-white/95 border border-gray-100 shadow-sm p-4 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-gray-200"
+              className="group rounded-2xl bg-background/70 ring-1 ring-black/5 shadow-sm backdrop-blur-sm p-6 transition-all hover:bg-background/85 hover:shadow-md hover:-translate-y-0.5"
             >
               <div className="flex items-center gap-2.5">
-                <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ring-1 ${f.iconBg}`}>
-                  <Icon size={18} className={f.iconClass} />
-                </span>
-                <h3 className="font-display font-bold text-sm text-gray-900">{f.title}</h3>
+                <Icon size={20} className="shrink-0 text-amber-600" />
+                <h3 className="font-serif text-lg font-semibold text-green-800">{f.title}</h3>
                 {f.badge && (
-                  <span className="ml-auto text-[10px] font-bold text-white bg-amber-500 rounded-full px-1.5 py-0.5">
+                  <span className="ml-1 text-[10px] font-bold tracking-wide text-white bg-amber-500 rounded-full px-2 py-0.5">
                     {f.badge}
                   </span>
                 )}
               </div>
-              <p className="mt-2.5 text-sm text-gray-600 leading-relaxed">{f.body}</p>
+              <p className="mt-3 text-sm text-gray-600 leading-relaxed">{f.body}</p>
             </div>
           );
         })}
       </div>
 
-      {/* How it works — compact 3-step flow */}
-      <div className="w-full max-w-2xl">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {HOW_IT_WORKS.map((step, i) => {
-            const Icon = step.icon;
-            return (
-              <div
-                key={step.label}
-                className="flex items-center gap-3 rounded-2xl bg-white/70 border border-gray-100 px-4 py-3 text-left backdrop-blur-sm"
-              >
-                <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 text-white font-display font-bold text-sm">
-                  {i + 1}
-                </span>
-                <div className="min-w-0">
-                  <p className="flex items-center gap-1.5 font-display font-semibold text-sm text-gray-900">
-                    <Icon size={14} className="text-green-700 shrink-0" />
-                    {step.label}
-                  </p>
-                  <p className="text-xs text-gray-500 leading-snug">{step.detail}</p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* CTA card: auth for visitors, checkout for signed-in users */}
-      <div className="w-full max-w-md rounded-3xl bg-white/95 border border-gray-100 shadow-lg ring-1 ring-green-100/60 p-6">
-        <p className="font-display text-lg font-bold text-gray-900">
-          {returning ? 'Pick up where you left off' : 'Start your 7-day free trial'}
-        </p>
-        {!returning && (
-          <p className="mt-1 text-sm text-gray-500">
-            Then just <span className="font-semibold text-green-700">$2.50/mo</span> or{' '}
-            <span className="font-semibold text-green-700">$20/yr</span>.
+      {/* CTA — checkout for signed-in users who need a subscription. Signed-out
+          visitors convert through the Sign up button in the header (clean hero). */}
+      {!signedOut && (
+        <div className="w-full max-w-md rounded-3xl bg-background/90 ring-1 ring-green-100 shadow-lg backdrop-blur-sm p-6 text-left">
+          <p className="font-serif text-xl font-semibold text-green-800">
+            {returning ? 'Pick up where you left off' : 'Start your 7-day free trial'}
           </p>
-        )}
-
-        {/* What's included */}
-        <ul className="mt-4 grid gap-2 text-left">
-          {INCLUDED.map((item) => (
-            <li key={item} className="flex items-center gap-2 text-sm text-gray-700">
-              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-100">
-                <Check size={12} className="text-green-700" />
-              </span>
-              {item}
-            </li>
-          ))}
-        </ul>
-
-        {signedOut ? (
-          <>
-            <div className="mt-5 flex flex-col sm:flex-row gap-3">
-              <SignUpButton mode="redirect">
-                <button className="flex-1 px-5 py-3.5 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-display font-semibold shadow-md shadow-green-600/25 transition-all hover:-translate-y-0.5">
-                  Start your free trial
-                </button>
-              </SignUpButton>
-              <SignInButton mode="redirect">
-                <button className="flex-1 px-5 py-3.5 rounded-2xl bg-white border border-gray-200 text-gray-700 font-display font-semibold hover:bg-gray-50 transition-all">
-                  Sign in
-                </button>
-              </SignInButton>
-            </div>
-            <p className="mt-3 text-xs text-gray-500">7-day free trial · then $2.50/mo or $20/yr · cancel anytime</p>
-          </>
-        ) : (
-          <>
-            <div className="mt-5 flex flex-col sm:flex-row gap-3">
-              <PricingButtons size="lg" />
-            </div>
-            <p className="mt-3 text-xs text-gray-500">
-              {returning ? 'Cancel anytime.' : 'Free for 7 days · cancel anytime before you\u2019re charged.'}
+          {!returning && (
+            <p className="mt-1 text-sm text-gray-500">
+              Then just <span className="font-semibold text-green-700">$2.50/mo</span> or{' '}
+              <span className="font-semibold text-green-700">$20/yr</span>.
             </p>
-          </>
-        )}
-      </div>
+          )}
 
-      <p className="text-xs text-gray-500 [text-shadow:_0_1px_6px_rgb(255_255_255_/_0.8)]">
+          <ul className="mt-4 grid gap-2">
+            {INCLUDED.map((item) => (
+              <li key={item} className="flex items-center gap-2 text-sm text-gray-700">
+                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-100">
+                  <Check size={12} className="text-green-700" />
+                </span>
+                {item}
+              </li>
+            ))}
+          </ul>
+
+          <div className="mt-5 flex flex-col sm:flex-row gap-3">
+            <PricingButtons size="lg" />
+          </div>
+          <p className="mt-3 text-xs text-gray-500">
+            {returning ? 'Cancel anytime.' : 'Free for 7 days · cancel anytime before you\u2019re charged.'}
+          </p>
+        </div>
+      )}
+
+      <p className="text-xs text-gray-500 [text-shadow:_0_1px_6px_rgb(250_247_242_/_0.9)]">
         © {new Date().getFullYear()} CampHawk ·{' '}
         <a href="/terms" className="underline underline-offset-2 hover:text-green-800">Terms</a> ·{' '}
         <a href="/privacy" className="underline underline-offset-2 hover:text-green-800">Privacy</a>

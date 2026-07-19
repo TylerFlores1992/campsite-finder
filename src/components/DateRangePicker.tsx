@@ -74,13 +74,13 @@ export default function DateRangePicker({ startDate, endDate, onChange }: DateRa
         : 'Add dates';
 
   return (
-    <div className="relative" ref={ref}>
-      <label className="block text-xs font-medium text-gray-500 mb-1">Dates</label>
+    <div className="relative sm:border-l sm:border-gray-200 sm:pl-3" ref={ref}>
+      <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1 ml-0.5">Dates</label>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className={`flex items-center gap-2 py-2 px-3 text-sm border rounded-lg bg-white transition-colors min-w-[11rem] ${
-          open ? 'border-green-400 ring-2 ring-green-400' : 'border-gray-200 hover:border-gray-300'
+        className={`flex items-center gap-2 py-2 px-3 text-sm rounded-lg bg-white transition-colors min-w-[11rem] ${
+          open ? 'ring-2 ring-green-400' : 'hover:bg-gray-50'
         }`}
       >
         <Calendar size={14} className="text-gray-400 shrink-0" />
