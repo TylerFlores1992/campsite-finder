@@ -18,7 +18,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { cartRecGov } from './recgov.mjs';
 import { noteReserveCalifornia } from './reservecalifornia.mjs';
-import { recgovLoginState, saveSession, restoreSession } from './session.mjs';
+import { recgovLoginState } from './session.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -134,22 +134,19 @@ async function withBrowser(userId, fn, { headless = false } = {}) {
   if (inUse.has(userId)) throw new Error('profile busy');
   inUse.add(userId);
   try {
+    // The rec.gov session lives in the persistent profile on disk — Chromium keeps
+    // it across launches, so we do NOT snapshot/re-inject it. (An earlier attempt to
+    // save & restore storageState here actively CORRUPTED the profile: saves ran on
+    // logged-out closes too, and restoring that stale snapshot overwrote the good
+    // session. The keepalive is what prevents the profile's session from expiring.)
     const ctx = await chromium.launchPersistentContext(profileDir(userId), {
       headless,
       viewport: null,
       args: LAUNCH_ARGS,
       ...(CHANNEL ? { channel: CHANNEL } : {}),
     });
-    // Re-inject the carried-over rec.gov session (cookies + localStorage) — the
-    // persistent profile doesn't reliably keep it across a close — and snapshot it
-    // again afterward to follow any rotation.
-    const r = await restoreSession(ctx, profileDir(userId));
-    if (r.cookies || r.ls) log(`  ↻ restored session (${r.cookies} cookies + ${r.ls} localStorage keys)`);
     try { return await fn(ctx); }
-    finally {
-      await saveSession(ctx, profileDir(userId)).catch(() => {});
-      await ctx.close().catch(() => {});
-    }
+    finally { await ctx.close().catch(() => {}); }
   } finally {
     inUse.delete(userId);
   }
