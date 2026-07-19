@@ -41,10 +41,12 @@ export async function cartRecGov(context, job, log) {
     const result = await page.evaluate(
       async ({ checkin, checkout }) => {
         // Bail early if this browser isn't actually signed in — rec.gov shows a
-        // "Sign Up or Log In" header button only when logged out, and silently
-        // refuses to cart. Catching it here avoids a pointless add attempt.
+        // "Sign Up or Log In" header button only when logged out. It must be
+        // VISIBLE: the SPA keeps a hidden copy in the DOM even when logged in, and
+        // matching that hidden node was falsely reporting logged-out.
         const loginRe = /^(log\s?in|sign\s?in|sign\s?up or log\s?in|log\s?in or sign\s?up|sign\s?up \/ log\s?in)$/i;
-        if (Array.from(document.querySelectorAll('button, a')).some((e) => loginRe.test((e.textContent || '').trim()))) {
+        const visible = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+        if (Array.from(document.querySelectorAll('button, a')).some((e) => loginRe.test((e.textContent || '').trim()) && visible(e))) {
           return 'logged-out';
         }
         const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];

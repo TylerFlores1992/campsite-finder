@@ -83,9 +83,12 @@ export async function recgovLoginState(ctx) {
     if (/\/sign-?in|\/login/.test(u)) return 'out';
     return await p.evaluate((src) => {
       const re = new RegExp(src, 'i');
-      const labels = Array.from(document.querySelectorAll('button, a')).map((e) => (e.textContent || '').trim());
-      if (!labels.length) return 'unknown';
-      return labels.some((t) => re.test(t)) ? 'out' : 'in';
+      const visible = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      const btns = Array.from(document.querySelectorAll('button, a'));
+      if (!btns.length) return 'unknown';
+      // A VISIBLE "Sign Up or Log In" button means logged out; the SPA also keeps a
+      // hidden copy when logged in, which must not count.
+      return btns.some((e) => re.test((e.textContent || '').trim()) && visible(e)) ? 'out' : 'in';
     }, LOGIN_LABELS.source);
   } catch {
     return 'unknown';
