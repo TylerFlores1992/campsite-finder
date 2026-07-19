@@ -45,9 +45,11 @@ export async function cartRecGov(context, job, log) {
   const ariaDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return `${MONTHS[m - 1]} ${d}, ${y}`; };
   const ymOf = (iso) => { const [y, m] = iso.split('-').map(Number); return y * 100 + m; };
 
-  // Displayed month span + the target date cell's viewport-center coords / booked flag.
+  // Displayed month span + the target date cell's viewport-center coords / booked
+  // flag. Date cells are react-aria role=button DIVs, not <button>s — match any
+  // [aria-label] that looks like a date.
   const probe = (label) => page.evaluate((lbl) => {
-    const cells = Array.from(document.querySelectorAll('button[aria-label]'))
+    const cells = Array.from(document.querySelectorAll('[aria-label]'))
       .filter((b) => /,\s*20\d\d/.test(b.getAttribute('aria-label') || ''));
     const MO = ['January','February','March','April','May','June','July','August','September','October','November','December'];
     let min = Infinity, max = -Infinity;
@@ -68,10 +70,11 @@ export async function cartRecGov(context, job, log) {
     return { cell, min, max };
   }, label);
 
-  // The calendar's own month arrows are exactly "Next"/"Previous" (the slideshow's
-  // are "Next image"/"Previous image", so the exact-match locator won't hit those).
+  // The calendar's own month arrows have accessible name exactly "Next"/"Previous"
+  // (the slideshow's are "Next image"/"Previous image"). getByRole matches whether
+  // they're <button>s or role=button divs.
   const clickArrow = async (word) => {
-    const loc = page.locator(`button[aria-label="${word}"]`);
+    const loc = page.getByRole('button', { name: word, exact: true });
     if (await loc.count()) { await loc.first().click({ timeout: 3000 }).catch(() => {}); return true; }
     return false;
   };
