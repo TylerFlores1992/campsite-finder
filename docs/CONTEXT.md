@@ -33,15 +33,29 @@ Each source has an adapter in `src/lib/availability/` and a catalog sync in
   rec.gov account, so it syncs to your phone).
 - **UseDirect / US eDirect platform** — one integration, many states via a provider
   registry (`src/lib/sources/reservecalifornia/providers.ts`): California
-  (ReserveCalifornia), Arizona, Florida, Minnesota, Missouri. Clean JSON API. Also
-  detects "coming soon" held cancellations (the `Lock` field) for a heads-up alert.
-- **ReserveAmerica (Aspira)** — New York, Texas, Oregon (more addable). No JSON API;
+  (ReserveCalifornia), Arizona, Florida, Minnesota, Missouri, Nevada, Ohio, Wyoming,
+  Illinois, Virginia. Clean JSON API. Also detects "coming soon" held cancellations
+  (the `Lock` field) for a heads-up alert. Adding a state is ~one registry entry:
+  find its RDR base by grepping the state's reserve-SPA JS bundle for a
+  `*rdr*.usedirect.com` or `*rdr*.recreation-management.tylerapp.com` host, then
+  verify `<base>/fd/places` returns 200 JSON.
+- **ReserveAmerica (Aspira)** — New York, Texas, Oregon, Utah, North Carolina,
+  Kentucky, Iowa, Indiana, Georgia, Nebraska, Pennsylvania, New Hampshire, Montana,
+  Rhode Island, New Mexico, Alaska, Connecticut (more addable). No JSON API;
   availability is scraped from server-rendered HTML. Catalog paginates 25/page (watch
   for that). Coords come from each park's detail-page Open Graph meta.
 
-All non-rec.gov sources are **alert-only** (their carts are session-bound and don't
-sync to a phone). Adding a source = availability adapter + catalog sync + wire into
-search/worker/notifications + update coverage copy.
+State-park coverage spans **27 states** across those two platforms, plus federal
+Recreation.gov nationwide. All non-rec.gov sources are **alert-only** (their carts are
+session-bound and don't sync to a phone). Adding a source = availability adapter +
+catalog sync + wire into search/worker/notifications + update coverage copy.
+
+> **Known gap — UseDirect unit catalogs.** For some UseDirect providers (currently
+> Florida, Ohio, Illinois, Virginia) the per-facility unit sync comes back empty:
+> the `/search/grid` POST that enumerates units hits intermittent CloudFront `403`s
+> under the sync's concurrent load. The campground rows still sync (fully searchable
+> and watchable) — only the unit-level filter data (site type, RV length) is missing,
+> and it accretes over successive nightly worker syncs. Not a code bug; a rate-limit.
 
 ## The core flow
 

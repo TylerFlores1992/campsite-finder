@@ -52,6 +52,23 @@ run elsewhere (see Deploy).
 | **Alert worker** (`worker/poller.ts`) | Fly.io app `campsite-finder-worker` | `flyctl deploy --config worker/fly.toml --dockerfile worker/Dockerfile --remote-only` (needs Fly login). Only needed when you change `worker/` or `src/lib` it uses. |
 | **Auto-cart bot** (`scripts/auto-cart-bot/`) | The mini PC only | `git push`, then run `mini-pc/update.bat` on the mini PC (via RustDesk). It can't run anywhere else — it drives a real logged-in recreation.gov browser. |
 
+## Catalog syncs (which campgrounds exist)
+
+Availability is checked live per watch; the **catalog** (which campgrounds/units
+exist) is populated by these syncs. Data is national and shared, so you rarely run
+these by hand — but here's how each source refreshes:
+
+| Source | Runs | Manual re-sync |
+|--------|------|----------------|
+| **RIDB** (rec.gov, federal) | Nightly GitHub Action (`.github/workflows/nightly-sync.yml`) | `npx tsx scripts/run-sync.ts ALL` |
+| **ReserveAmerica** (state parks) | Same nightly Action (added step) | `npx tsx scripts/run-sync-ra.ts` |
+| **UseDirect** (state parks) | On the **Fly worker** hourly (`rcSyncIfDue` in `worker/poller.ts`) — NOT in the GitHub Action, because some RDR hosts WAF-block datacenter IPs and it routes through the `/api/rc-proxy` on Vercel | `npx tsx scripts/run-sync-ud.ts` (run from a **residential IP** — it forces direct, no proxy) |
+
+Adding a state park system is usually a one-line registry entry — `RA_CONTRACTS`
+(`src/lib/sources/reserveamerica/client.ts`) or `USEDIRECT_PROVIDERS`
+(`src/lib/sources/reservecalifornia/providers.ts`) — plus a sync run and the coverage
+copy. See `docs/CONTEXT.md` for the platform-detection method.
+
 ## Repo layout (orientation)
 
 ```
