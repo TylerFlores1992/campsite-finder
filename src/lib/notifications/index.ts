@@ -145,8 +145,10 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
     const site = payload.campsiteName ? ` — Site ${payload.campsiteName}` : '';
     let body: string;
     if (payload.kind === 'carted') {
-      // The bot already added this exact site to the user's rec.gov cart.
-      body = `CampHawk: ✅ ${payload.campgroundName}${site} (${payload.startDate}→${payload.endDate}) is in your recreation.gov cart — check out now, it's only held ~15 min: https://www.recreation.gov/cart Reply STOP to opt out.`;
+      // The bot already added this exact site to the user's rec.gov cart. Keep the
+      // ONLY tappable link the cart URL — no bare "recreation.gov" domain and no
+      // date range (phones auto-linkify both). Dates are in the email.
+      body = `CampHawk: ✅ ${payload.campgroundName}${site} is in your cart — check out now, it's only held ~15 min: https://www.recreation.gov/cart Reply STOP to opt out.`;
     } else if (payload.kind === 'coming_soon') {
       // ReserveCalifornia held a cancellation — heads-up before it's bookable.
       body = `CampHawk: ⏳ ${payload.campgroundName}${site} was just cancelled and opens up ${formatReleaseTime(payload.availableAt, true)}. We'll text you when it's bookable. Reply STOP to opt out.`;

@@ -61,6 +61,24 @@ export async function POST(request: NextRequest) {
     [userId, campgroundId, startDate, endDate]
   );
 
+  // Cap active watches per account. Replacing an existing watch (same campground +
+  // dates) is fine since the net count doesn't grow.
+  if (!existing) {
+    const cnt = await queryOne<{ n: number }>(
+      `SELECT count(*)::int AS n FROM watches WHERE user_id = $1 AND active = true`,
+      [userId]
+    );
+    if ((cnt?.n ?? 0) >= 10) {
+      return NextResponse.json(
+        {
+          error: 'watch_limit',
+          message: 'You can watch up to 10 campgrounds at a time. Remove one to add another.',
+        },
+        { status: 409 }
+      );
+    }
+  }
+
   if (existing) {
     if (existing.campflare_sub_id) {
       await cancelAlert(existing.campflare_sub_id).catch((err) =>

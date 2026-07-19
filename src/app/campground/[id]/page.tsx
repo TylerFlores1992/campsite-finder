@@ -42,9 +42,13 @@ function htmlToText(html: string): string {
 function AvailabilityCalendar({
   campgroundId,
   month,
+  reservationsUrl,
+  providerName,
 }: {
   campgroundId: string;
   month: string;
+  reservationsUrl?: string | null;
+  providerName?: string;
 }) {
   const [data, setData] = useState<CampgroundAvailability | null>(null);
   const [loading, setLoading] = useState(true);
@@ -96,25 +100,32 @@ function AvailabilityCalendar({
           const dateStr = `${month}-${String(day).padStart(2, '0')}`;
           const isPast = dateStr < today;
           const isAvail = availDays.has(dateStr);
-          return (
-            <div
+          const clickable = isAvail && !isPast && !!reservationsUrl;
+          const cls = `block text-center py-1.5 rounded font-medium ${
+            isPast ? 'text-gray-300' : isAvail ? 'bg-green-100 text-green-700' : 'bg-red-50 text-red-400'
+          } ${clickable ? 'cursor-pointer ring-1 ring-inset ring-green-300 hover:bg-green-200' : ''}`;
+          return clickable ? (
+            <a
               key={dateStr}
-              className={`text-center py-1.5 rounded font-medium ${
-                isPast
-                  ? 'text-gray-300'
-                  : isAvail
-                  ? 'bg-green-100 text-green-700'
-                  : 'bg-red-50 text-red-400'
-              }`}
+              href={reservationsUrl!}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`See available sites on ${dateStr} and book${providerName ? ` on ${providerName}` : ''}`}
+              className={cls}
             >
               {day}
-            </div>
+            </a>
+          ) : (
+            <div key={dateStr} className={cls}>{day}</div>
           );
         })}
       </div>
-      <div className="flex gap-4 mt-3 text-xs text-gray-500">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-xs text-gray-500">
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-green-100 inline-block" /> Available</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-red-50 inline-block" /> Unavailable</span>
+        {reservationsUrl && availDays.size > 0 && (
+          <span className="text-green-700">Tap an available day to see open sites &amp; book →</span>
+        )}
       </div>
     </div>
   );
@@ -271,6 +282,49 @@ export default function CampgroundDetailPage() {
           )}
         </div>
 
+        {/* Availability calendar — first */}
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-gray-800">Availability</h2>
+            <div className="flex items-center gap-2">
+              <button onClick={prevMonth} className="p-1 rounded hover:bg-gray-100">
+                <ChevronLeft size={16} />
+              </button>
+              <span className="text-sm font-medium text-gray-700 min-w-24 text-center">
+                {new Date(availMonth + '-15').toLocaleString('default', { month: 'long', year: 'numeric' })}
+              </span>
+              <button onClick={nextMonth} className="p-1 rounded hover:bg-gray-100">
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+          <AvailabilityCalendar
+            campgroundId={params.id}
+            month={availMonth}
+            reservationsUrl={campground.reservationsUrl}
+            providerName={
+              campground.source === 'reservecalifornia'
+                ? 'ReserveCalifornia'
+                : campground.source === 'reserveamerica'
+                ? 'ReserveAmerica'
+                : 'Recreation.gov'
+            }
+          />
+        </div>
+
+        {/* Location map — second */}
+        {campground.latitude != null && campground.longitude != null && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <h2 className="font-semibold text-gray-800 mb-3">Location</h2>
+            <div className="h-64 rounded-xl overflow-hidden">
+              <CampgroundMap
+                campgrounds={[campground]}
+                center={{ lat: campground.latitude, lng: campground.longitude }}
+              />
+            </div>
+          </div>
+        )}
+
         {/* Description */}
         {campground.description && (
           <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
@@ -317,38 +371,6 @@ export default function CampgroundDetailPage() {
               <p className="text-sm text-gray-400">No activity data available</p>
             )}
           </div>
-        </div>
-
-        {/* Location map */}
-        {campground.latitude != null && campground.longitude != null && (
-          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-            <h2 className="font-semibold text-gray-800 mb-3">Location</h2>
-            <div className="h-64 rounded-xl overflow-hidden">
-              <CampgroundMap
-                campgrounds={[campground]}
-                center={{ lat: campground.latitude, lng: campground.longitude }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Availability calendar */}
-        <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-gray-800">Availability</h2>
-            <div className="flex items-center gap-2">
-              <button onClick={prevMonth} className="p-1 rounded hover:bg-gray-100">
-                <ChevronLeft size={16} />
-              </button>
-              <span className="text-sm font-medium text-gray-700 min-w-24 text-center">
-                {new Date(availMonth + '-15').toLocaleString('default', { month: 'long', year: 'numeric' })}
-              </span>
-              <button onClick={nextMonth} className="p-1 rounded hover:bg-gray-100">
-                <ChevronRight size={16} />
-              </button>
-            </div>
-          </div>
-          <AvailabilityCalendar campgroundId={params.id} month={availMonth} />
         </div>
 
         {/* Campsites list */}

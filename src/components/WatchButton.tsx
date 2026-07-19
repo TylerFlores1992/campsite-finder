@@ -14,7 +14,7 @@ interface WatchButtonProps {
 
 export default function WatchButton({ campgroundId, campgroundName, startDate, endDate, siteType }: WatchButtonProps) {
   const { isSignedIn } = useUser();
-  const [state, setState] = useState<'idle' | 'loading' | 'watching' | 'subscribe'>('idle');
+  const [state, setState] = useState<'idle' | 'loading' | 'watching' | 'subscribe' | 'limit'>('idle');
 
   async function createWatch() {
     setState('loading');
@@ -24,6 +24,7 @@ export default function WatchButton({ campgroundId, campgroundName, startDate, e
       body: JSON.stringify({ campgroundId, startDate, endDate, siteType }),
     });
     if (res.status === 402) { setState('subscribe'); return; }
+    if (res.status === 409) { setState('limit'); return; } // 10-watch cap reached
     if (res.ok) { setState('watching'); return; }
     setState('idle');
   }
@@ -49,6 +50,14 @@ export default function WatchButton({ campgroundId, campgroundName, startDate, e
     return (
       <span className="inline-flex items-center gap-1 text-xs text-green-700 font-medium">
         <Check size={12} /> Alert set
+      </span>
+    );
+  }
+
+  if (state === 'limit') {
+    return (
+      <span className="inline-flex items-center text-xs text-amber-700" onClick={(e) => e.stopPropagation()}>
+        Watch limit reached (10) — remove one first.
       </span>
     );
   }

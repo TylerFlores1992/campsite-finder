@@ -124,33 +124,12 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
         <div className="absolute inset-0 bg-gradient-to-b from-[#F3EFE0]/60 via-[#F3EFE0]/40 to-[#F3EFE0]/70" />
       </div>
 
-      <div className="text-4xl">🦅</div>
       <h1 className="font-display text-3xl sm:text-4xl font-extrabold text-green-800 max-w-2xl leading-tight [text-shadow:_0_1px_10px_rgb(255_255_255_/_0.7)]">
         {headline}
       </h1>
       <p className="text-gray-700 max-w-xl text-base sm:text-lg leading-relaxed [text-shadow:_0_1px_8px_rgb(255_255_255_/_0.85)]">
         {subcopy}
       </p>
-
-      {/* Sample alert — the product's payoff at a glance (skipped for lapsed
-          subscribers, who already know it) */}
-      {!returning && (
-        <div className="w-full max-w-sm rounded-2xl bg-white border border-gray-100 shadow-lg p-4 text-left">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-lg">🦅</span>
-            <span className="font-display font-semibold text-sm text-gray-800">CampHawk alert</span>
-            <span className="ml-auto text-[10px] font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full">just now</span>
-          </div>
-          <p className="text-sm text-gray-700">
-            ⛺ <strong>Lower Pines, Yosemite</strong> just opened up for your dates
-            <strong> Jul 10–12</strong>.
-          </p>
-          <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-amber-500 rounded-lg px-3 py-1.5">
-            Book now on Recreation.gov →
-          </div>
-          <p className="mt-2 text-[11px] text-gray-400">⏱ Sent within seconds — act before it&apos;s gone.</p>
-        </div>
-      )}
 
       {/* Feature grid */}
       <div className="grid sm:grid-cols-2 gap-3 w-full max-w-2xl text-left">
