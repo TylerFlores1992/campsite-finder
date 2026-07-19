@@ -17,26 +17,25 @@
 export async function cartRecGov(context, job, log) {
   const url = job.bookingUrl.split('#')[0];
   const page = await context.newPage();
-  // Capture the write API calls the SPA makes on Add to Cart, so a silent failure
-  // tells us WHY (e.g. a 4xx / anti-bot ok:false) rather than just "cart empty".
+  // Capture the reservation/cart API calls so a silent failure tells us WHY (a 4xx
+  // rule violation, an anti-bot ok:false, etc.) rather than just "cart empty". Only
+  // booking calls — analytics is noise, and the request body is trimmed to keep the
+  // useful dates/night_map without the giant gate_a anti-bot token.
   const netlog = [];
   const isBooking = (u) => /reservation|\/cart|checkout/i.test(u);
   page.on('request', (req) => {
     try {
-      if (req.method() === 'GET' || !/recreation\.gov/.test(req.url())) return;
-      const cap = isBooking(req.url()) ? 1500 : 200;
-      const p = (req.postData() || '').replace(/\s+/g, ' ').slice(0, cap);
+      if (req.method() === 'GET' || !isBooking(req.url())) return;
+      const p = (req.postData() || '').replace(/"gate_a".*$/, '"gate_a":<omitted>}').replace(/\s+/g, ' ').slice(0, 400);
       netlog.push(`→ ${req.method()} ${req.url().replace(/^https?:\/\/[^/]+/, '')}${p ? ` body=${p}` : ''}`);
     } catch { /* ignore */ }
   });
   page.on('response', async (res) => {
     try {
       const req = res.request();
-      if (req.method() === 'GET' || !/recreation\.gov/.test(res.url())) return;
+      if (req.method() === 'GET' || !isBooking(res.url())) return;
       let body = '';
-      if (res.status() >= 400 || isBooking(res.url())) {
-        try { body = (await res.text()).replace(/\s+/g, ' ').slice(0, 600); } catch { /* ignore */ }
-      }
+      try { body = (await res.text()).replace(/\s+/g, ' ').slice(0, 400); } catch { /* ignore */ }
       netlog.push(`← ${res.status()} ${req.method()} ${res.url().replace(/^https?:\/\/[^/]+/, '')}${body ? ` | ${body}` : ''}`);
     } catch { /* ignore */ }
   });

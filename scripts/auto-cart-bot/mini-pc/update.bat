@@ -13,6 +13,10 @@ taskkill /FI "WINDOWTITLE eq Cloudflare tunnel*" /T /F >nul 2>&1
 REM Dedicated bot host: node.exe is only the bot + broker, so clear any strays.
 taskkill /IM node.exe /F >nul 2>&1
 taskkill /IM cloudflared.exe /F >nul 2>&1
+REM Also kill any Chromium the bot/broker left behind, so a stale browser can't
+REM hold the profile or linger after an update.
+taskkill /IM chrome.exe /F >nul 2>&1
+taskkill /IM headless_shell.exe /F >nul 2>&1
 timeout /t 2 /nobreak >nul
 
 echo(
