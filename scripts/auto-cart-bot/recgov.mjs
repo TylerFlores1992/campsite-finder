@@ -55,10 +55,15 @@ export async function cartRecGov(context, job, log) {
         const dateButton = (iso) => { const n = ariaDate(iso); return labeled().find((b) => (b.getAttribute('aria-label') || '').includes(n)); };
 
         // react-aria's usePress needs real pointer events, not a bare .click().
+        // The pointerover/pointermove FIRST is essential for the RANGE calendar:
+        // it registers the hover so clicking the check-out date completes the range.
+        // Without it only the check-in anchor sticks → a 0-night range rec.gov rejects.
         const press = (el) => {
           el.scrollIntoView({ block: 'center', behavior: 'instant' });
           const r = el.getBoundingClientRect();
           const o = { bubbles: true, cancelable: true, composed: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, pointerId: 1, pointerType: 'mouse', button: 0, isPrimary: true };
+          el.dispatchEvent(new PointerEvent('pointerover', { ...o }));
+          el.dispatchEvent(new PointerEvent('pointermove', { ...o }));
           el.dispatchEvent(new PointerEvent('pointerdown', { ...o, buttons: 1 }));
           el.dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0 }));
           el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: o.clientX, clientY: o.clientY }));
