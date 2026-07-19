@@ -41,14 +41,25 @@ Each source has an adapter in `src/lib/availability/` and a catalog sync in
   verify `<base>/fd/places` returns 200 JSON.
 - **ReserveAmerica (Aspira)** — New York, Texas, Oregon, Utah, North Carolina,
   Kentucky, Iowa, Indiana, Georgia, Nebraska, Pennsylvania, New Hampshire, Montana,
-  Rhode Island, New Mexico, Alaska, Connecticut (more addable). No JSON API;
+  Rhode Island, New Mexico, Alaska, Connecticut, Delaware (more addable). No JSON API;
   availability is scraped from server-rendered HTML. Catalog paginates 25/page (watch
   for that). Coords come from each park's detail-page Open Graph meta.
 
-State-park coverage spans **27 states** across those two platforms, plus federal
+State-park coverage spans **28 states** across those two platforms, plus federal
 Recreation.gov nationwide. All non-rec.gov sources are **alert-only** (their carts are
 session-bound and don't sync to a phone). Adding a source = availability adapter +
 catalog sync + wire into search/worker/notifications + update coverage copy.
+
+> **The remaining 22 states need a THIRD platform — don't re-probe them.** As of
+> 2026-07-19 every uncovered state was probed against both integrations and none hit:
+> all guessed `*.reserveamerica.com` subdomains fail DNS (Colorado's resolves but its
+> park directory is empty — it migrated off), and none of their reservation SPAs
+> (cpwshop, tnstateparks, camping.nj.gov, parkreservations.maryland.gov, alapark,
+> mdwfp, arkansasstateparks, southcarolinaparks…) reference an `*rdr*` host in their
+> bundles. They run on **Camis / GoingToCamp** (WA, WI, MA, ME, SD, ND — note the
+> `<state>.goingtocamp.com` pattern) or on **Aspira's non-RA products** (CO, MI, TN,
+> WV, KS, MS). Growing past 28 states means a new adapter for one of those platforms,
+> not another registry entry. GoingToCamp is the bigger single unlock.
 
 > **Known gap — UseDirect unit catalogs.** For some UseDirect providers (currently
 > Florida, Ohio, Illinois, Virginia) the per-facility unit sync comes back empty:
