@@ -114,16 +114,31 @@ export async function cartRecGov(context, job, log) {
         };
 
         if (!(await waitForCalendar())) return 'calendar-not-loaded';
-        await sleep(400);
+        await sleep(600);
         let ci = await locate(checkin);
         if (ci && isBooked(ci)) { await sleep(1000); ci = await locate(checkin); }
         if (!ci) return 'dates-not-found';
         if (isBooked(ci)) return 'already-booked';
-        press(ci);
-        await sleep(500);
-        const co = await locate(checkout);
-        if (co && !isBooked(co)) { press(co); await sleep(700); }
-        await sleep(600);
+
+        // Select the date RANGE, retrying until the calendar shows a real
+        // multi-day selection. react-aria needs the pointerover (in press) to
+        // complete the check-out end; a single stuck anchor = a 0-night range that
+        // rec.gov rejects ("dates don't match our format"). selCount counts the
+        // cells the calendar marks "selected" (start + nights + checkout day ≥ 2).
+        const selCount = () => labeled().filter((b) => /\bselected\b/i.test(b.getAttribute('aria-label') || '')).length;
+        let formed = false;
+        for (let attempt = 0; attempt < 4 && !formed; attempt++) {
+          const c1 = await locate(checkin);
+          if (!c1 || isBooked(c1)) break;
+          press(c1);
+          await sleep(900);
+          const co = await locate(checkout);
+          if (co && !isBooked(co)) { press(co); await sleep(900); }
+          formed = selCount() >= 2 && !!ctaButton();
+          if (!formed) await sleep(500);
+        }
+        if (!formed) return `range-not-formed(sel=${selCount()})`;
+
         const cta = ctaButton();
         if (!cta || cta.getAttribute('aria-disabled') === 'true' || cta.disabled) return 'cta-not-ready';
         press(cta);
