@@ -247,17 +247,22 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 >     the app's badge map (unlabeled, tiny counts) — deliberately EXCLUDED. The
 >     adapter's `CAMPING_TEMPLATE_KEYS = {1, 2}` counts camping + cabins as a hit,
 >     mirroring GTC's lodging-inclusive `Nightly`; narrow to `{1}` for campsites-only.
->   - **The ONE open item before shipping:** reachability from Fly/Vercel is UNTESTED —
->     the recon, whole-stay check and legend all came from a residential IP; the cloud
->     dev env's proxy denies these hosts outright, so datacenter IPs are unproven. Run
->     `scripts/probe-tnsc-reachability.ts` from the Fly worker before deciding
->     worker-direct vs a proxy. NOTE: TN is behind an **AWS ALB, not the Azure WAF**
->     that blocks Vercel from Camis, and showed no datacenter-IP block in any test, so
->     the prior is that both Fly and Vercel reach it — but confirm at deploy time (a
->     Fly deploy is required to ship TN anyway, since the worker imports the registry).
->     `flyctl ssh` may 403 on the tunnel from some networks (environmental); if so,
->     test with a `node -e 'fetch(...)'` one-liner in the container or fold the check
->     into the post-deploy `e2e` verification.
+>   - **Reachability: MEASURED 2026-07-20, and it is the SAME direction as UseDirect
+>     (Fly blocked, Vercel fine) — the REVERSE of GoingToCamp.** The Fly worker gets
+>     `403 on landing` from the portal's WAF (intermittent, and even "successful"
+>     landings return empty), while **Vercel and residential reach it fine** (the prod
+>     `/api/search` returns real `hasAvailability` for TN parks). The AWS-ALB "should
+>     be fine from a datacenter" prior was WRONG — don't trust ALB-vs-Azure to predict
+>     WAF IP policy; measure it.
+>   - **So the worker routes TN availability through a Vercel proxy**, exactly like
+>     UseDirect's `/api/rc-proxy`: `src/app/api/tnsc-availability` does the whole
+>     CSRF handshake + batched POST from a Vercel IP and returns parsed rows; the
+>     client (`fetchAvailabilityBatch`) calls it when **`TNSC_AVAILABILITY_URL`** is
+>     set (Fly worker only) and calls the portal directly otherwise (Vercel routes,
+>     residential, the sync). It does the WHOLE batch, not per-request like rc-proxy,
+>     because the portal's CSRF token + cookie are session-bound to one IP. Set
+>     `TNSC_AVAILABILITY_URL=https://camphawk.app/api/tnsc-availability` on the Fly
+>     worker (auth: the shared `SYNC_SECRET`, which the worker already carries).
 >   - **SC needs its own recon** — its portal front-end differs (no embedded park
 >     array, no foreUP link on the landing). Same vendor/stack, so likely the same
 >     `/library/ajax/` endpoint, but unproven. TN and SC share plumbing, per-state
@@ -429,6 +434,9 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
 
 GoingToCamp search (`GTC_AVAILABILITY_URL` on Vercel → the Fly worker endpoint;
 authenticated with `SYNC_SECRET`, which the worker app now also carries),
+TN/SC availability (`TNSC_AVAILABILITY_URL` on the **Fly worker** → the Vercel
+`/api/tnsc-availability` route — the OPPOSITE direction from GTC, because the
+portal blocks Fly and allows Vercel; also `SYNC_SECRET`-authenticated),
 Supabase (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`), Clerk
 (`NEXT_PUBLIC_CLERK_*`, `CLERK_SECRET_KEY`, `CLERK_WEBHOOK_SECRET`), Stripe
 (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_MONTHLY/_YEARLY`),

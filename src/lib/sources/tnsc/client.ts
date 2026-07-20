@@ -171,6 +171,25 @@ export async function fetchAvailabilityBatch(
   const hit = batchCache.get(key);
   if (hit && Date.now() - hit.at < BATCH_TTL_MS) return hit.rows;
 
+  // The portal's WAF blocks datacenter IPs — measured: the Fly worker gets `403 on
+  // landing`, while Vercel and residential are fine (the reverse of GoingToCamp).
+  // So when TNSC_AVAILABILITY_URL is set (on the Fly worker only), route the whole
+  // handshake+POST through that Vercel endpoint; otherwise call the portal directly
+  // (Vercel routes, residential, the sync). Same env-gated shape as GTC's remote.
+  const rows = process.env.TNSC_AVAILABILITY_URL
+    ? await fetchAvailabilityViaProxy(provider, fromIso, toIso)
+    : await fetchAvailabilityDirect(provider, fromIso, toIso);
+
+  batchCache.set(key, { at: Date.now(), rows });
+  return rows;
+}
+
+/** Direct portal call: GET landing for CSRF+cookie, then the batched POST. */
+async function fetchAvailabilityDirect(
+  provider: TnscProvider,
+  fromIso: string,
+  toIso: string
+): Promise<Map<number, TnscParkAvailability>> {
   const { session } = await openPortal(provider);
   const body = new URLSearchParams({
     fromDate: usDate(fromIso),
@@ -210,9 +229,57 @@ export async function fetchAvailabilityBatch(
     const availableSites = camping.reduce((n, t) => n + (Number(t.available) || 0), 0);
     out.set(row.accountKey, { availableSites, templates });
   }
-
-  batchCache.set(key, { at: Date.now(), rows: out });
   return out;
+}
+
+/** Wire form of one park's availability, for the proxy hop. */
+export interface TnscProxyRow {
+  parkId: number;
+  availableSites: number;
+  templates: TnscTemplate[];
+}
+
+/**
+ * Ask the Vercel proxy (TNSC_AVAILABILITY_URL) for the batch — used by the Fly
+ * worker, whose IP the portal's WAF blocks. Vercel does the CSRF handshake and
+ * POST from an allowed IP and returns the already-parsed rows. Authenticated with
+ * SYNC_SECRET, which the worker app carries.
+ */
+async function fetchAvailabilityViaProxy(
+  provider: TnscProvider,
+  fromIso: string,
+  toIso: string
+): Promise<Map<number, TnscParkAvailability>> {
+  const res = await fetch(process.env.TNSC_AVAILABILITY_URL!, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-sync-secret': process.env.SYNC_SECRET ?? '',
+    },
+    body: JSON.stringify({ state: provider.state, fromDate: fromIso, toDate: toIso }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) throw new Error(`TNSC ${provider.state}: proxy ${res.status}`);
+  const rows = (await res.json()) as TnscProxyRow[];
+  const out = new Map<number, TnscParkAvailability>();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    out.set(r.parkId, { availableSites: r.availableSites, templates: r.templates ?? [] });
+  }
+  return out;
+}
+
+/** Run the direct batch and serialize it for the proxy response (Vercel side). */
+export async function fetchAvailabilityBatchAsProxyRows(
+  provider: TnscProvider,
+  fromIso: string,
+  toIso: string
+): Promise<TnscProxyRow[]> {
+  const batch = await fetchAvailabilityDirect(provider, fromIso, toIso);
+  return [...batch.entries()].map(([parkId, v]) => ({
+    parkId,
+    availableSites: v.availableSites,
+    templates: v.templates,
+  }));
 }
 
 /** Whether one park has a campsite bookable for the whole stay [fromIso, toIso). */
@@ -225,12 +292,5 @@ export async function tnscStayAvailability(
   const batch = await fetchAvailabilityBatch(provider, fromIso, toIso);
   const row = batch.get(parkId);
   const availableSites = row?.availableSites ?? 0;
-  // TEMP diagnostic (remove once TN worker path is confirmed): distinguishes a
-  // soft-blocked/empty response (batch.size === 0) from a present-but-zero park.
-  console.log(
-    `[TNSC] batch ${provider.state} ${fromIso}..${toIso}: ${batch.size} parks; park ${parkId} ${
-      row ? `present, templates=${JSON.stringify(row.templates)}` : 'ABSENT'
-    }`
-  );
   return { available: availableSites > 0, availableSites };
 }
