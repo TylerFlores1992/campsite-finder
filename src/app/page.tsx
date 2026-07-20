@@ -310,14 +310,14 @@ export default function HomePage() {
   const showLandingBg = !searchState;
 
   return (
-    <div className="relative flex flex-col min-h-screen md:h-screen bg-gray-50">
+    <div className={`relative flex flex-col min-h-screen md:h-screen ${showLandingBg ? 'bg-transparent' : 'bg-gray-50'}`}>
       {/* Full-screen landing scene — one continuous background behind the header
           and hero on the landing views (hidden once a search is active). */}
       {showLandingBg && (
         <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/hero-bg-wide.png" alt="" className="h-full w-full object-cover object-center" />
-          <div className="absolute inset-0 bg-gradient-to-b from-background/70 via-background/25 to-background/60" />
+          <img src="/hero-bg-wide.png" alt="" className="h-full w-full object-cover object-bottom" />
+          <div className="absolute inset-0 bg-gradient-to-b from-background/35 via-transparent to-background/15" />
         </div>
       )}
       {watchesOpen && (
