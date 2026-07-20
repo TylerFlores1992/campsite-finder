@@ -15,7 +15,9 @@ try {
     if (!trimmed || trimmed.startsWith('#')) continue;
     const [key, ...rest] = trimmed.split('=');
     if (key && rest.length && !process.env[key.trim()]) {
-      process.env[key.trim()] = rest.join('=').trim();
+      // Strip surrounding quotes: newer Vercel CLI writes KEY="value", and a
+      // literal quote in e.g. NEXT_PUBLIC_SUPABASE_URL makes it an invalid URL.
+      process.env[key.trim()] = rest.join('=').trim().replace(/^(['"])(.*)\1$/, '$2');
     }
   }
 } catch {
