@@ -124,8 +124,14 @@ export default async function AdminPage() {
         null
       ),
       safe(
-        query<{ source: string; finished_at: string | null; facilities_synced: number | null; error: string | null }>(
-          `SELECT DISTINCT ON (source) source, finished_at::text, facilities_synced, error
+        query<{
+          source: string;
+          finished_at: string | null;
+          facilities_synced: number | null;
+          error: string | null;
+          metadata: { totalErrors?: number } | null;
+        }>(
+          `SELECT DISTINCT ON (source) source, finished_at::text, facilities_synced, error, metadata
            FROM sync_log ORDER BY source, started_at DESC`
         ),
         []
@@ -268,14 +274,45 @@ export default async function AdminPage() {
             <div className="mt-4 space-y-1.5 text-sm">
               <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Last sync</p>
               {syncRows.length === 0 && <p className="text-gray-400 text-xs">No sync runs recorded.</p>}
-              {syncRows.map((s) => (
-                <div key={s.source} className="flex items-center justify-between">
-                  <span className="text-gray-600">{s.source}</span>
-                  <span className={s.error ? 'text-red-600' : 'text-gray-500'}>
-                    {s.error ? 'failed' : s.finished_at ? `${new Date(s.finished_at).toLocaleString()} · ${s.facilities_synced ?? 0}` : 'in progress'}
-                  </span>
-                </div>
-              ))}
+              {syncRows.map((s) => {
+                // A sync writes `error` if ANY single facility had a problem, so
+                // treating non-null error as failure marked ~20 of 33 sources red
+                // while every one of them had actually synced. What matters is
+                // whether anything landed: 0 synced is a real failure, >0 with
+                // errors is a partial (skipped day-use parks, UseDirect grid
+                // 403s), and those must still show their date and count.
+                const synced = s.facilities_synced ?? 0;
+                const errCount = s.metadata?.totalErrors ?? null;
+                const stamp = s.finished_at ? new Date(s.finished_at).toLocaleString() : null;
+
+                if (!stamp) {
+                  return (
+                    <div key={s.source} className="flex items-center justify-between">
+                      <span className="text-gray-600">{s.source}</span>
+                      <span className="text-gray-500">in progress</span>
+                    </div>
+                  );
+                }
+
+                const failed = synced === 0;
+                const partial = !failed && !!s.error;
+                return (
+                  <div key={s.source} className="flex items-center justify-between">
+                    <span className="text-gray-600">{s.source}</span>
+                    <span
+                      className={failed ? 'text-red-600' : partial ? 'text-amber-600' : 'text-gray-500'}
+                      title={s.error ?? undefined}
+                    >
+                      {/* "warnings", not "skipped": for RA/GoingToCamp these are
+                          parks skipped for missing coords, but for UseDirect they
+                          are unit-catalog 403s on campgrounds that DID sync. */}
+                      {failed
+                        ? `failed · ${stamp}`
+                        : `${stamp} · ${synced}${partial ? ` · ${errCount ?? 'some'} warnings` : ''}`}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </section>
