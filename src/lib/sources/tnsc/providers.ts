@@ -56,15 +56,22 @@ export const TNSC_PROVIDERS: TnscProvider[] = [
 export const TNSC_SOURCE = 'tnsc';
 
 /**
- * Which `templateKey`s in the availability response are CAMPSITES (vs cabins,
- * lodge rooms, shelters, etc). Observed keys so far: 1 (the large-count type —
- * standard campsites), 2, 4. This is a FIRST GUESS: the exact legend has not been
- * decoded from the app source yet (see docs/CONTEXT.md open item). Until it is,
- * `null` means "count every template as camping" — deliberately wide, so we never
- * miss a real opening; narrow once the legend is known so a cabin/lodge opening
- * can't fire a tent watch (cf. GoingToCamp's GtcBookingCategory note).
+ * Which `templateKey`s in the availability response count as a bookable overnight
+ * stay. Decoded from the app's own `templateMap` (2026-07-20):
+ *   1 = Camping ('Limited Camping' / 'Camping Sold Out'; the large-inventory type)
+ *   2 = Cabins  ('Limited Cabins'  / 'Cabins Sold Out')
+ *   4 = present in availability data but NOT in the app's badge map — unlabeled,
+ *       tiny counts, often 100%. Deliberately EXCLUDED until identified (likely a
+ *       day-use / add-on / group product); including it risks firing a campground
+ *       alert on something that isn't an overnight site.
+ *
+ * We include BOTH camping and cabins, mirroring GoingToCamp's deliberate choice
+ * that `Nightly` spans campsites AND lodging — a cabin opening at a watched park is
+ * a valid hit. Narrow to `new Set([1])` if TN watches should be campsites-only.
+ * `null` would mean "count every template" — do not use it now that the legend is
+ * known, or templateKey 4 would leak back in.
  */
-export const CAMPING_TEMPLATE_KEYS: Set<number> | null = null;
+export const CAMPING_TEMPLATE_KEYS: Set<number> | null = new Set([1, 2]);
 
 /** Per-state bbox, so a bad coordinate can't land a park in the wrong state. */
 export const TNSC_BBOX: Record<string, [number, number, number, number]> = {

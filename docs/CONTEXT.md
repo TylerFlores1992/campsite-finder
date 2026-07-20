@@ -242,13 +242,22 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 >     evaluation. So the adapter does NOT intersect per-night, like GTC. Also: 50 of
 >     63 parks appear in the availability response — the other 13 are day-use/no-camping
 >     parks that correctly drop out (matches the `data-product` camping filter).
->   - **Open items before shipping:** (1) reachability from Fly/Vercel is UNTESTED —
->     the recon and the whole-stay check both ran from a residential IP; the cloud dev
->     env's proxy denies these hosts outright, so datacenter IPs are unproven. Run
->     `scripts/probe-tnsc-reachability.ts` from the Fly worker with the full UA before
->     deciding worker-direct vs proxy. (2) `templateKey` legend (seen 1/2/4) → which
->     are campsites vs cabins/lodge, so a cabin opening doesn't fire a tent watch (same
->     concern as GTC's `bookingCategoryId`).
+>   - **templateKey legend: DECODED (2026-07-20)** from the app's `templateMap`:
+>     `1 = Camping`, `2 = Cabins`, and `4` is present in availability data but NOT in
+>     the app's badge map (unlabeled, tiny counts) — deliberately EXCLUDED. The
+>     adapter's `CAMPING_TEMPLATE_KEYS = {1, 2}` counts camping + cabins as a hit,
+>     mirroring GTC's lodging-inclusive `Nightly`; narrow to `{1}` for campsites-only.
+>   - **The ONE open item before shipping:** reachability from Fly/Vercel is UNTESTED —
+>     the recon, whole-stay check and legend all came from a residential IP; the cloud
+>     dev env's proxy denies these hosts outright, so datacenter IPs are unproven. Run
+>     `scripts/probe-tnsc-reachability.ts` from the Fly worker before deciding
+>     worker-direct vs a proxy. NOTE: TN is behind an **AWS ALB, not the Azure WAF**
+>     that blocks Vercel from Camis, and showed no datacenter-IP block in any test, so
+>     the prior is that both Fly and Vercel reach it — but confirm at deploy time (a
+>     Fly deploy is required to ship TN anyway, since the worker imports the registry).
+>     `flyctl ssh` may 403 on the tunnel from some networks (environmental); if so,
+>     test with a `node -e 'fetch(...)'` one-liner in the container or fold the check
+>     into the post-deploy `e2e` verification.
 >   - **SC needs its own recon** — its portal front-end differs (no embedded park
 >     array, no foreUP link on the landing). Same vendor/stack, so likely the same
 >     `/library/ajax/` endpoint, but unproven. TN and SC share plumbing, per-state
