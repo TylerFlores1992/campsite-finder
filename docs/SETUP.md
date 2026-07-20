@@ -60,13 +60,20 @@ run elsewhere (see Deploy).
 > worker. That works from a home connection (the block is on Vercel's IPs, not
 > datacenter IPs generally) — so GoingToCamp availability can look fine locally and
 > still need the worker path in production.
+>
+> TN/SC is the mirror image: `TNSC_AVAILABILITY_URL` is set on the **Fly worker**
+> only, so the worker uses the Vercel proxy while local runs and the sync call the
+> portal **directly** (fine from a residential IP — the portal's WAF blocks
+> datacenter IPs, i.e. Fly, not homes). So TN availability can look fine locally and
+> from Vercel, yet the worker still needs the proxy — which is exactly what bit us:
+> the worker got `403 on landing` until `TNSC_AVAILABILITY_URL` was wired.
 
 ## Deploy — three separate targets
 
 | Piece | Lives on | How to deploy |
 |-------|----------|----------------|
-| **Website** (Next.js) | Vercel | **Auto-deploys on every `git push` to `master`.** Nothing else to do. |
-| **Alert worker** (`worker/poller.ts`) | Fly.io app `campsite-finder-worker` | `flyctl deploy --config worker/fly.toml --dockerfile worker/Dockerfile --remote-only` (needs Fly login, and run it from the repo root — the build context is the whole repo). **The deploy leaves the poller stopped; you must `flyctl machine start <primary-id>` afterward, or alerting stays dead silently — see `docs/CONTEXT.md`.** Only needed when you change `worker/` or `src/lib` it uses — **including adding a ReserveAmerica contract or GoingToCamp tenant**, since the worker imports those registries and a stale worker silently never alerts for the new state. Also serves `POST /gtc/availability` for the website's search page. |
+| **Website** (Next.js) | Vercel | **Auto-deploys on every `git push` to `master`.** Usually nothing else to do — but note (observed 2026-07-20) a master merge can build a new Production deployment that **does not re-alias `camphawk.app` to it**, so a new route keeps 404ing while `vercel ls` shows the build `Ready`. If that happens, force it with `vercel --prod` from the repo root (or promote the deployment); worth checking the project's Git auto-alias setting. Also: **a new `SYNC_SECRET`-protected `/api/*` route 404s until it's added to `isPublicRoute` in `src/middleware.ts`** (Clerk's `auth.protect()` returns 404, not 401 — see `docs/CONTEXT.md`). |
+| **Alert worker** (`worker/poller.ts`) | Fly.io app `campsite-finder-worker` | `flyctl deploy --config worker/fly.toml --dockerfile worker/Dockerfile --remote-only` (needs Fly login, and run it from the repo root — the build context is the whole repo). **The deploy leaves the poller stopped; you must `flyctl machine start <primary-id>` afterward, or alerting stays dead silently — see `docs/CONTEXT.md`.** Only needed when you change `worker/` or `src/lib` it uses — **including adding a ReserveAmerica contract, GoingToCamp tenant, or TN/SC provider**, since the worker imports those registries and a stale worker silently never alerts for the new state. Serves `POST /gtc/availability` for the website's search page, and calls **out** to Vercel's `/api/tnsc-availability` for TN openings (needs `TNSC_AVAILABILITY_URL` set — see the proxy note below). |
 | **Auto-cart bot** (`scripts/auto-cart-bot/`) | The mini PC only | `git push`, then run `mini-pc/update.bat` on the mini PC (via RustDesk). It can't run anywhere else — it drives a real logged-in recreation.gov browser. |
 
 ## Catalog syncs (which campgrounds exist)
@@ -81,19 +88,24 @@ these by hand — but here's how each source refreshes:
 | **ReserveAmerica** (state parks) | Same nightly Action (added step) | `npx tsx scripts/run-sync-ra.ts` (all contracts), or `npx tsx scripts/run-sync-ra.ts DE` for one state — use the single-state form when adding one, a full run re-scrapes ~18 states |
 | **GoingToCamp** (WA/MI/WI/MS) | On the **Fly worker** hourly (`gtcSyncIfDue` in `worker/poller.ts`, fires at 22h staleness) — NOT in the GitHub Action, because the Camis WAF blocks Vercel and the worker throttles itself | `npx tsx scripts/run-sync-gtc.ts` (all), or `... run-sync-gtc.ts WA` for one state. Needs `NEXT_PUBLIC_MAPBOX_TOKEN` — most rows are geocoded from their full street address. |
 | **UseDirect** (state parks) | On the **Fly worker** hourly (`rcSyncIfDue` in `worker/poller.ts`) — NOT in the GitHub Action, because some RDR hosts WAF-block datacenter IPs and it routes through the `/api/rc-proxy` on Vercel | `npx tsx scripts/run-sync-ud.ts` (run from a **residential IP** — it forces direct, no proxy) |
-| **TN/SC State Parks** (ColdFusion portal) | **NOT YET WIRED into any scheduled sync** — scaffolded, TN verified, SC unverified; datacenter reachability untested (run from a **residential IP** for now) | `npx tsx scripts/run-sync-tnsc.ts` (verified providers), or `... run-sync-tnsc.ts TN`. Coordinates are embedded in the portal (no geocoding). See `docs/CONTEXT.md` for the open items before shipping. |
+| **TN State Parks** (ColdFusion portal) | **No scheduled sync yet** — TN shipped 2026-07-20 (39 parks) via a manual run; there is no worker `*SyncIfDue` for it, so the catalog only refreshes when you run it by hand. SC is stubbed (`verified:false`) pending its own recon. | `npx tsx scripts/run-sync-tnsc.ts TN` (verified providers only). Run from a **residential IP** — the portal's WAF blocks datacenter IPs. Coordinates are embedded in the portal (no geocoding). |
 
 Adding a state to an **existing** platform is usually a one-line registry entry —
 `RA_CONTRACTS` (`src/lib/sources/reserveamerica/client.ts`), `USEDIRECT_PROVIDERS`
-(`src/lib/sources/reservecalifornia/providers.ts`), or `GOINGTOCAMP_PROVIDERS`
-(`src/lib/sources/goingtocamp/providers.ts`) — plus a sync run and the coverage copy
-(`src/app/layout.tsx` metadata, SubscribeGate).
+(`src/lib/sources/reservecalifornia/providers.ts`), `GOINGTOCAMP_PROVIDERS`
+(`src/lib/sources/goingtocamp/providers.ts`), or `TNSC_PROVIDERS`
+(`src/lib/sources/tnsc/providers.ts`) — plus a sync run and the coverage copy
+(`src/app/layout.tsx` metadata, SubscribeGate). **South Carolina is the one live
+cheap-ish add:** it's already stubbed in `TNSC_PROVIDERS` (`verified:false`) and
+reuses TN's client + Vercel proxy, but its landing renders differently, so its
+catalog parse needs its own recon before flipping `verified:true`.
 
 **Then deploy the Fly worker.** The worker imports those registries, so a push alone
 leaves it stale and the new state's watches never alert — silently, with no error.
-Confirm with `scripts/e2e-gtc-alert.mts` (it sends a real email/SMS; see
-`docs/CONTEXT.md`). As of 2026-07-19 there are **no cheap registry adds left** — every
-remaining state needs a new adapter. See `docs/CONTEXT.md` before going hunting.
+Confirm with `scripts/e2e-gtc-alert.mts` / `scripts/e2e-tnsc-alert.mts` (they send a
+real email/SMS; see `docs/CONTEXT.md`). Apart from SC, there are **no cheap registry
+adds left** — every remaining state needs a new adapter. See `docs/CONTEXT.md` before
+going hunting.
 
 ## Repo layout (orientation)
 
@@ -121,10 +133,18 @@ scripts/            run-sync*.ts catalog syncs; e2e-gtc-alert.mts (live alert te
                     SENDS REAL EMAIL/SMS)
 ```
 
-> **Proxy directions are opposite for the two WAF'd sources — don't copy one to the
-> other.** UseDirect: Fly is blocked, Vercel is fine, so the worker calls out through
-> `/api/rc-proxy` on Vercel. GoingToCamp: **Vercel** is blocked, Fly is fine, so the
-> website calls in to the worker's `/gtc/availability`. See `docs/CONTEXT.md`.
+> **Proxy directions differ per WAF'd source — don't copy one to the other.** Three
+> WAF'd sources, two directions:
+> - **UseDirect** — Fly blocked, Vercel fine → the worker calls **out** to
+>   `/api/rc-proxy` on Vercel (forwards individual RDR requests).
+> - **TN/SC** — Fly blocked, Vercel fine (same direction as UseDirect) → the worker
+>   calls **out** to `/api/tnsc-availability` on Vercel, gated by `TNSC_AVAILABILITY_URL`.
+>   Unlike rc-proxy it does the WHOLE batch in one hop, because the portal's CSRF
+>   token + cookie are session-bound to one IP.
+> - **GoingToCamp** — **Vercel** blocked, Fly fine (the reverse) → the website calls
+>   **in** to the worker's `/gtc/availability`.
+>
+> See `docs/CONTEXT.md`.
 
 ## Working from another device — quickest paths
 

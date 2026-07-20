@@ -213,7 +213,9 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
 > GoingToCamp above, what actually remains here is small:
-> - **TN + SC = same stack, but NOT one drop-in adapter — and it has a clean JSON
+> - **TENNESSEE SHIPPED 2026-07-20 — 39 camping parks, live and alerting** (e2e:
+>   real opening → email + SMS, verified). SC is still stubbed (`verified:false`).
+>   **TN + SC = same stack, but NOT one drop-in adapter — and it has a clean JSON
 >   API, not an HTML scrape (recon 2026-07-20, corrects the earlier guess).** Both are
 >   Apache + ColdFusion at `reserve.<state>parks.com` (`cfid`/`cftoken`,
 >   `CF_CLIENT_TSP_LV` vs `CF_CLIENT_SCP_LV` — differs only by the 3-letter state
@@ -263,6 +265,15 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 >     because the portal's CSRF token + cookie are session-bound to one IP. Set
 >     `TNSC_AVAILABILITY_URL=https://camphawk.app/api/tnsc-availability` on the Fly
 >     worker (auth: the shared `SYNC_SECRET`, which the worker already carries).
+>   - **GOTCHA that cost real time: a new `SYNC_SECRET`-protected `/api/*` route
+>     404s silently until it's in the Clerk middleware allowlist.** `src/middleware.ts`
+>     runs `clerkMiddleware` on every `/api/*` (matcher `/(api|trpc)(.*)`), and
+>     `auth.protect()` returns **404** (not 401) for any route not in `isPublicRoute`.
+>     The proxy route built and deployed fine but 404'd the worker for this reason —
+>     the fix was adding `/api/tnsc-availability` next to `/api/rc-proxy` in that list.
+>     The route does its own secret check, so this is safe. **Any future worker→Vercel
+>     proxy route must be added there too**, or it fails exactly this way: builds green,
+>     serves 404, no error anywhere.
 >   - **SC needs its own recon** — its portal front-end differs (no embedded park
 >     array, no foreUP link on the landing). Same vendor/stack, so likely the same
 >     `/library/ajax/` endpoint, but unproven. TN and SC share plumbing, per-state
@@ -278,11 +289,12 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > None of these expose a JSON API from their bundles (unlike UseDirect/GoingToCamp) —
 > they'd be HTML-scrape integrations in the ReserveAmerica mold.
 >
-> **Bottom line: GoingToCamp is DONE (shipped 2026-07-19). What's left is thin.**
-> The next-best target is **TN + SC** — same ColdFusion portal, and TN turns out to
-> have a **clean batched JSON availability API** (GTC-shaped, not the HTML scrape first
-> assumed — see the corrected TN+SC note above). TN is fully fingerprinted; SC still
-> needs its own recon. After that it's CO / LA / WV at
+> **Bottom line: GoingToCamp (2026-07-19) and Tennessee (2026-07-20) are DONE.
+> What's left is thin.** The next target is **South Carolina** — same ColdFusion
+> portal as TN, so it reuses all the TN plumbing (the Vercel proxy, the client), but
+> its landing renders differently (no embedded park array, no foreUP link) so its
+> catalog parse needs its own recon before flipping `verified:true`. After that it's
+> CO / LA / WV at
 > 1 state each (and WV is lodging-only, so really 2). Nothing remaining has
 > GoingToCamp's ratio of states-to-effort; weigh a new adapter against other work
 > rather than assuming coverage is the priority.
