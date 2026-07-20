@@ -49,7 +49,7 @@ run elsewhere (see Deploy).
 | Piece | Lives on | How to deploy |
 |-------|----------|----------------|
 | **Website** (Next.js) | Vercel | **Auto-deploys on every `git push` to `master`.** Nothing else to do. |
-| **Alert worker** (`worker/poller.ts`) | Fly.io app `campsite-finder-worker` | `flyctl deploy --config worker/fly.toml --dockerfile worker/Dockerfile --remote-only` (needs Fly login). Only needed when you change `worker/` or `src/lib` it uses. |
+| **Alert worker** (`worker/poller.ts`) | Fly.io app `campsite-finder-worker` | `flyctl deploy --config worker/fly.toml --dockerfile worker/Dockerfile --remote-only` (needs Fly login). Only needed when you change `worker/` or `src/lib` it uses — **including adding a ReserveAmerica contract or GoingToCamp tenant**, since the worker imports those registries and a stale worker silently never alerts for the new state. Also serves `POST /gtc/availability` for the website's search page. |
 | **Auto-cart bot** (`scripts/auto-cart-bot/`) | The mini PC only | `git push`, then run `mini-pc/update.bat` on the mini PC (via RustDesk). It can't run anywhere else — it drives a real logged-in recreation.gov browser. |
 
 ## Catalog syncs (which campgrounds exist)

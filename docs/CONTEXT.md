@@ -153,15 +153,28 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 >   **When testing this WAF, always send the full UA, or the result is meaningless.**
 > - **IP reputation is separate**, and only Vercel fails it.
 >
-> Consequences, both deliberate:
+> Consequences, all deliberate:
 > - The **worker polls Camis directly** — no proxy, unlike RC. Alerting works.
+> - **Vercel asks Fly for search availability.** The worker exposes
+>   `POST /gtc/availability` (`worker/http-server.ts`) — shared-secret header, POST
+>   only, no DB access, returns booleans and nothing else. The search route batches
+>   every GTC campground into one call (`lib/availability/goingtocamp-remote.ts`)
+>   and falls back to the direct adapter when `GTC_AVAILABILITY_URL` is unset
+>   (local dev on a residential IP). Results cache 90s, which also keeps us under
+>   the WAF's burst threshold when a user pans the map. Verified live: Olympia WA
+>   returns 45 GTC campgrounds, 0 unknown, 23 available.
 > - The **search-path adapter throws** instead of returning `false` on a transport
->   error, because search runs on Vercel. `Promise.allSettled` renders a rejection
->   as *unknown* availability; returning `false` would stamp a confident
->   "Booked — watch it" badge on all 362 GTC campgrounds even when sites are free.
->   Live availability badges for GTC therefore read "unknown" on the website, while
->   watch alerts are accurate. Fixing the badges needs a residential/Fly-side
->   availability endpoint — not done.
+>   error. `Promise.allSettled` renders a rejection — and a `null` from the worker —
+>   as *unknown*; only an explicit `false` renders "Booked — watch it". Returning
+>   `false` on failure would stamp that badge on all 362 GTC campgrounds even when
+>   sites are free.
+>
+> **`worker/fly.toml`'s autostop settings are load-bearing.** The app gained an
+> `[http_service]` for the endpoint above, and it must not change how the poller
+> runs: `auto_stop_machines = "off"` (the poller runs continuously and must never
+> be stopped for being idle) and `auto_start_machines = false` (starting the
+> standby machine would double the Camis request rate for no benefit). The worker
+> app also needed public IPs allocated — it had none as a pure background service.
 >
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
@@ -264,6 +277,8 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
 
 ## Environment variables (names only — values in `.env.local` / Vercel / Fly)
 
+GoingToCamp search (`GTC_AVAILABILITY_URL` on Vercel → the Fly worker endpoint;
+authenticated with `SYNC_SECRET`, which the worker app now also carries),
 Supabase (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`), Clerk
 (`NEXT_PUBLIC_CLERK_*`, `CLERK_SECRET_KEY`, `CLERK_WEBHOOK_SECRET`), Stripe
 (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_MONTHLY/_YEARLY`),
