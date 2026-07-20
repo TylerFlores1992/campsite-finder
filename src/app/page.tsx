@@ -340,7 +340,7 @@ export default function HomePage() {
               aria-label="CampHawk home"
               className="shrink-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-green-400"
             >
-              <Logo markSize={34} />
+              <Logo markSize={52} />
             </button>
             <div className="flex items-center gap-2">
               <button
