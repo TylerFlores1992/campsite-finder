@@ -34,6 +34,8 @@ import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservec
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
 import { findGoingToCampOpen } from '../src/lib/availability/goingtocamp';
 import { isGoingToCampSource, GOINGTOCAMP_PROVIDERS } from '../src/lib/sources/goingtocamp/providers';
+import { findTnscOpen } from '../src/lib/availability/tnsc';
+import { isTnscSource } from '../src/lib/sources/tnsc/providers';
 import { fetchLocations } from '../src/lib/sources/goingtocamp/client';
 import { syncAllGoingToCamp } from '../src/lib/sources/goingtocamp/sync';
 import { startHttpServer } from './http-server';
@@ -246,10 +248,12 @@ async function cycle(): Promise<void> {
   const raWatches = mainWatches.filter((w) => w.campground_source === 'reserveamerica');
   const rcWatches = mainWatches.filter((w) => isUseDirectSource(w.campground_source));
   const gtcWatches = mainWatches.filter((w) => isGoingToCampSource(w.campground_source));
+  const tnscWatches = mainWatches.filter((w) => isTnscSource(w.campground_source));
   const ridbWatches = mainWatches.filter(
     (w) =>
       !isUseDirectSource(w.campground_source) &&
       !isGoingToCampSource(w.campground_source) &&
+      !isTnscSource(w.campground_source) &&
       w.campground_source !== 'reserveamerica'
   );
 
@@ -325,6 +329,24 @@ async function cycle(): Promise<void> {
     RECGOV_CONCURRENCY
   );
 
+  // TN/SC ColdFusion portal: batched whole-stay availability, keyed by parkId. The
+  // client caches the per-range batch, so N watches on one date range share a single
+  // POST. No per-site ids — alerts are park+date. (Whether the worker's IP can reach
+  // the portal is unverified; findTnscOpen swallows errors, so an unreachable portal
+  // simply never alerts rather than crashing the cycle — and would need the same
+  // fix-then-verify as GoingToCamp did. See docs/CONTEXT.md.)
+  const tnscResults = new Map<string, { dates: string[] }>();
+  await pMap(
+    tnscWatches,
+    async (w) => {
+      const nights = nightsOfRange(w.start_date, w.end_date);
+      const required = Math.max(w.min_nights, nights.length);
+      const open = await findTnscOpen(w.campground_id, w.start_date, w.end_date, required);
+      if (open) tnscResults.set(w.id, { dates: nights });
+    },
+    RECGOV_CONCURRENCY
+  );
+
   let notified = 0;
   for (const watch of mainWatches) {
     const rc = rcResults.get(watch.id);
@@ -333,6 +355,8 @@ async function cycle(): Promise<void> {
         ? { dates: raResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
         : isGoingToCampSource(watch.campground_source)
           ? { dates: gtcResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
+        : isTnscSource(watch.campground_source)
+          ? { dates: tnscResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
         : isUseDirectSource(watch.campground_source)
           ? { dates: rc?.dates ?? [], campsiteId: null, campsiteName: null }
           : availableDatesForWatch(watch, monthData);
@@ -365,6 +389,10 @@ async function cycle(): Promise<void> {
             : isGoingToCampSource(watch.campground_source)
             // Camis has no per-site deep link, so the tenant's booking page is the CTA.
             ? (watch.reservations_url ?? 'https://goingtocamp.com/')
+            : isTnscSource(watch.campground_source)
+            // TN/SC portal reports counts, not site ids → no deep link; the park's
+            // booking page (reservations_url) is the CTA.
+            ? (watch.reservations_url ?? 'https://reserve.tnstateparks.com/')
             : isUseDirectSource(watch.campground_source)
             // #camphawk-rc fragment (unitId_arrival_nights_sleepingUnitId) lets the
             // extension add the exact unit to the RC cart. Fragment never hits RC's server.

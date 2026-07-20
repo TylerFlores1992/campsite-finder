@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://camphawk.app"),
   title: "CampHawk — Get notified the instant a campsite opens up",
   description:
-    "Search real-time campsite availability across US public lands and state parks in California, Texas, Arizona, Florida, New York, Oregon, Utah, North Carolina, Minnesota, Missouri, Kentucky, Iowa, Indiana, Georgia, Nebraska, Pennsylvania, New Hampshire, Montana, Rhode Island, New Mexico, Nevada, Ohio, Wyoming, Illinois, Virginia, Alaska, Connecticut, Delaware, Washington, Michigan, Wisconsin & Mississippi. Watch booked campgrounds and get alerted within seconds of a cancellation.",
+    "Search real-time campsite availability across US public lands and state parks in California, Texas, Arizona, Florida, New York, Oregon, Utah, North Carolina, Minnesota, Missouri, Kentucky, Iowa, Indiana, Georgia, Nebraska, Pennsylvania, New Hampshire, Montana, Rhode Island, New Mexico, Nevada, Ohio, Wyoming, Illinois, Virginia, Alaska, Connecticut, Delaware, Washington, Michigan, Wisconsin, Mississippi & Tennessee. Watch booked campgrounds and get alerted within seconds of a cancellation.",
   openGraph: {
     title: "CampHawk — Get notified the instant a campsite opens up",
     description:

@@ -5,8 +5,10 @@ import { hasRCAvailabilityInRange } from '@/lib/availability/reservecalifornia';
 import { hasReserveAmericaAvailabilityInRange } from '@/lib/availability/reserveamerica';
 import { hasGoingToCampAvailabilityInRange } from '@/lib/availability/goingtocamp';
 import { fetchGoingToCampAvailability } from '@/lib/availability/goingtocamp-remote';
+import { hasTnscAvailabilityInRange } from '@/lib/availability/tnsc';
 import { isUseDirectSource } from '@/lib/sources/reservecalifornia/providers';
 import { isGoingToCampSource } from '@/lib/sources/goingtocamp/providers';
+import { isTnscSource } from '@/lib/sources/tnsc/providers';
 import type { SearchParams } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
@@ -77,7 +79,14 @@ export async function GET(request: NextRequest) {
         campgrounds.map((cg) =>
           cg.source === 'reserveamerica'
             ? hasReserveAmericaAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
-            : isGoingToCampSource(cg.source)
+            : isTnscSource(cg.source)
+              // TN/SC ColdFusion portal. Batched + cached inside the adapter, and
+              // it THROWS on transport failure → allSettled renders unknown, never a
+              // false "booked". Datacenter reachability is unverified (see the tnsc
+              // client) — if Vercel turns out blocked like GoingToCamp, this moves to
+              // a worker-remote path; until then a direct call that 403s is safe.
+              ? hasTnscAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
+              : isGoingToCampSource(cg.source)
               // Already resolved above; fall back to a direct call only when the
               // worker endpoint isn't configured (local dev, residential IP).
               ? gtcAvailability.has(cg.id)

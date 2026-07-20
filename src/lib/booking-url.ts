@@ -49,7 +49,8 @@
  */
 
 export interface BookingLinkOpts {
-  /** Campground `source` column: 'ridb' | 'reserveamerica' | 'reservecalifornia' | 'goingtocamp' | … */
+  /** Campground `source` column: 'ridb' | 'reserveamerica' | 'reservecalifornia' | 'goingtocamp' | 'tnsc' | …
+   *  ('tnsc' has no verified date/site deep-link params, so it falls through to the plain reservationsUrl). */
   source?: string | null;
   /** The campground's stored reservations_url — the fallback, and the base for RA. */
   reservationsUrl?: string | null;

@@ -213,10 +213,55 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
 > GoingToCamp above, what actually remains here is small:
-> - **TN + SC = one product** (the only real cluster left). Identical stack: Apache +
->   ColdFusion (`cfid`/`cftoken` cookies, `CF_CLIENT_TSP_LV` vs `CF_CLIENT_SCP_LV` —
->   differs only by state), same "Reservations | <State> State Parks" title. Active
->   Network. No JSON API in the bundles → an HTML scrape in the RA mold.
+> - **TN + SC = same stack, but NOT one drop-in adapter — and it has a clean JSON
+>   API, not an HTML scrape (recon 2026-07-20, corrects the earlier guess).** Both are
+>   Apache + ColdFusion at `reserve.<state>parks.com` (`cfid`/`cftoken`,
+>   `CF_CLIENT_TSP_LV` vs `CF_CLIENT_SCP_LV` — differs only by the 3-letter state
+>   prefix), same "Reservations | <State> State Parks" title, both behind an AWS ALB.
+>   **The `foreupsoftware.com` links on the page are GOLF tee-times only** (`class="btn
+>   resBtn golf"`), not camping — a red herring; camping books through the portal.
+>
+>   **TN is a GoingToCamp-shaped adapter, not an RA one:**
+>   - **Catalog** — one GET of the portal landing embeds a JS array
+>     `{ name, city, url:'/slug', parkId, lat, lng }` for every park (**coords
+>     included — no geocoding**), plus card `data-*` attrs: `data-product`
+>     (`"camping,cabins,shelters,programs"` — filter to camping), `data-maxrv`,
+>     `data-amp20/30/50`, `data-sewer` for RV/hookup filters.
+>   - **Availability — batched JSON, whole-stay native.** GET landing → scrape
+>     `#csrfToken` (+ session cookie), then ONE
+>     `POST /library/ajax/landingPageAvailability.html` with
+>     `fromDate=MM/DD/YYYY & toDate=MM/DD/YYYY & csrfToken` returns
+>     `[{ accountKey, templates:[{templateKey, available, total}] }]` for **all parks
+>     at once**. **`accountKey === parkId`** (the app stores by accountKey and reads by
+>     parkID — same id space), so no join table. `available > 0` on a camping
+>     `templateKey` = opening. Range-evaluated in one call → maps to the whole-stay
+>     rule natively, like GTC, no per-night intersection.
+>   - **Whole-stay: CONFIRMED (residential, 2026-07-20).** The one batched POST at
+>     1/3/5 nights from the same start returned shrinking totals (2140 → 1742 → 1686
+>     available sites across all parks), the signature of whole-consecutive-stay
+>     evaluation. So the adapter does NOT intersect per-night, like GTC. Also: 50 of
+>     63 parks appear in the availability response — the other 13 are day-use/no-camping
+>     parks that correctly drop out (matches the `data-product` camping filter).
+>   - **templateKey legend: DECODED (2026-07-20)** from the app's `templateMap`:
+>     `1 = Camping`, `2 = Cabins`, and `4` is present in availability data but NOT in
+>     the app's badge map (unlabeled, tiny counts) — deliberately EXCLUDED. The
+>     adapter's `CAMPING_TEMPLATE_KEYS = {1, 2}` counts camping + cabins as a hit,
+>     mirroring GTC's lodging-inclusive `Nightly`; narrow to `{1}` for campsites-only.
+>   - **The ONE open item before shipping:** reachability from Fly/Vercel is UNTESTED —
+>     the recon, whole-stay check and legend all came from a residential IP; the cloud
+>     dev env's proxy denies these hosts outright, so datacenter IPs are unproven. Run
+>     `scripts/probe-tnsc-reachability.ts` from the Fly worker before deciding
+>     worker-direct vs a proxy. NOTE: TN is behind an **AWS ALB, not the Azure WAF**
+>     that blocks Vercel from Camis, and showed no datacenter-IP block in any test, so
+>     the prior is that both Fly and Vercel reach it — but confirm at deploy time (a
+>     Fly deploy is required to ship TN anyway, since the worker imports the registry).
+>     `flyctl ssh` may 403 on the tunnel from some networks (environmental); if so,
+>     test with a `node -e 'fetch(...)'` one-liner in the container or fold the check
+>     into the post-deploy `e2e` verification.
+>   - **SC needs its own recon** — its portal front-end differs (no embedded park
+>     array, no foreUP link on the landing). Same vendor/stack, so likely the same
+>     `/library/ajax/` endpoint, but unproven. TN and SC share plumbing, per-state
+>     catalog handling — not a single registry entry.
 > - **CO = bespoke.** "Colorado Parks and Wildlife IPAWS", ASP.NET, Active Network
 >   (`actv_kuid_*` cookie), and behind a queue-it gate. Hostile; 1 state.
 > - **WV = not a campground system at all.** `wvstateparks.com` is a WordPress
@@ -229,8 +274,10 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > they'd be HTML-scrape integrations in the ReserveAmerica mold.
 >
 > **Bottom line: GoingToCamp is DONE (shipped 2026-07-19). What's left is thin.**
-> The next-best target is **TN + SC** — 2 states on one ColdFusion product, no JSON
-> API, so an HTML scrape in the ReserveAmerica mold. After that it's CO / LA / WV at
+> The next-best target is **TN + SC** — same ColdFusion portal, and TN turns out to
+> have a **clean batched JSON availability API** (GTC-shaped, not the HTML scrape first
+> assumed — see the corrected TN+SC note above). TN is fully fingerprinted; SC still
+> needs its own recon. After that it's CO / LA / WV at
 > 1 state each (and WV is lodging-only, so really 2). Nothing remaining has
 > GoingToCamp's ratio of states-to-effort; weigh a new adapter against other work
 > rather than assuming coverage is the priority.
