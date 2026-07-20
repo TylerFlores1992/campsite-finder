@@ -66,26 +66,60 @@ interface GtcMapAvailability {
 }
 
 /**
- * The tenant hosts sit behind an Azure WAF that starts serving a JS challenge
- * page (HTML, not JSON) when requests arrive in bursts. It clears on its own once
- * traffic is spaced out, so treat it as a rate limit: back off and retry rather
- * than failing the sync. Keep concurrency low at call sites.
+ * Fetch from a tenant's API.
+ *
+ * The hosts sit behind an Azure WAF with two distinct behaviours, and both are
+ * handled here:
+ *
+ * - **Datacenter IPs are blocked outright.** Verified from Fly: both
+ *   washington.goingtocamp.com and midnrreservations.com return `403` + an HTML
+ *   challenge page. So when GTC_PROXY_URL is set (Fly worker) we route through
+ *   the Vercel proxy, exactly like RC_PROXY_URL does for UseDirect. Without it a
+ *   GTC watch would silently report "no availability" forever.
+ * - **Bursty traffic gets challenged even from allowed IPs**, and clears once
+ *   traffic is spaced out. That's a rate limit, so back off and retry rather than
+ *   failing the sync — and keep concurrency low at call sites.
  */
-async function gtcFetch<T>(provider: GoingToCampProvider, path: string, attempt = 0): Promise<T> {
-  const url = `https://${provider.host}${path}`;
-  const res = await fetch(url, {
-    headers: { 'User-Agent': UA, Accept: 'application/json', Referer: `https://${provider.host}/` },
-    signal: AbortSignal.timeout(30_000),
-  });
-  const body = await res.text();
+async function gtcFetch<T>(
+  provider: GoingToCampProvider,
+  path: string,
+  query: Record<string, string | number> = {},
+  attempt = 0
+): Promise<T> {
+  const proxyUrl = process.env.GTC_PROXY_URL;
+  const proxySecret = process.env.GTC_PROXY_SECRET ?? process.env.SYNC_SECRET;
+
+  let status: number;
+  let body: string;
+
+  if (proxyUrl && proxySecret) {
+    const res = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-sync-secret': proxySecret },
+      body: JSON.stringify({ host: provider.host, path, query }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    status = res.status;
+    body = await res.text();
+  } else {
+    const qs = new URLSearchParams(
+      Object.entries(query).map(([k, v]) => [k, String(v)])
+    ).toString();
+    const res = await fetch(`https://${provider.host}${path}${qs ? `?${qs}` : ''}`, {
+      headers: { 'User-Agent': UA, Accept: 'application/json', Referer: `https://${provider.host}/` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    status = res.status;
+    body = await res.text();
+  }
 
   const challenged = body.includes('Azure WAF') || body.includes('.azwaf');
-  if ((challenged || res.status === 429 || res.status >= 500) && attempt < 3) {
+  if ((challenged || status === 429 || status === 502 || status >= 500) && attempt < 3) {
     await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
-    return gtcFetch<T>(provider, path, attempt + 1);
+    return gtcFetch<T>(provider, path, query, attempt + 1);
   }
   if (challenged) throw new Error(`GTC ${provider.state}: WAF challenge on ${path} after retries`);
-  if (!res.ok) throw new Error(`GTC ${provider.state}: ${res.status} on ${path}`);
+  if (status !== 200) throw new Error(`GTC ${provider.state}: ${status} on ${path}`);
 
   try {
     return JSON.parse(body) as T;
@@ -151,16 +185,12 @@ export async function gtcStayAvailability(
   startDate: string,
   endDate: string
 ): Promise<GtcStayResult> {
-  const qs = new URLSearchParams({
-    resourceLocationId: String(resourceLocationId),
-    bookingCategoryId: String(GtcBookingCategory.Nightly),
+  const maps = await gtcFetch<GtcMapAvailability[]>(provider, '/api/availability/resourcelocation', {
+    resourceLocationId,
+    bookingCategoryId: GtcBookingCategory.Nightly,
     startDate,
     endDate,
   });
-  const maps = await gtcFetch<GtcMapAvailability[]>(
-    provider,
-    `/api/availability/resourcelocation?${qs.toString()}`
-  );
 
   const resourceIds: number[] = [];
   const heldResourceIds: number[] = [];
