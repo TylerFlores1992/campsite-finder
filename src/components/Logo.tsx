@@ -79,9 +79,9 @@ interface LogoProps {
 export default function Logo({ markSize = 34, mono = false, className }: LogoProps) {
   const fontSize = markSize * 0.6;
   // The badge PNG carries transparent padding, so its visible emblem is ~60% of
-  // the box. Sizing the image at ~1.45x the wordmark font makes the emblem read
-  // just slightly larger than the cap height of the "C" — balanced, not oversized.
-  const imageSize = fontSize * 1.45;
+  // the box. Sizing the image at ~1.9x the wordmark font makes the visible emblem
+  // read just slightly larger than the cap height of the "C" — balanced, not oversized.
+  const imageSize = fontSize * 1.9;
   return (
     <span className={`inline-flex items-center gap-2 ${className ?? ''}`}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
