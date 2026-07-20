@@ -17,6 +17,7 @@ import {
   CalendarDays,
 } from 'lucide-react';
 import type { Campground, Campsite, CampgroundAvailability } from '@/lib/types';
+import { bookingLink } from '@/lib/booking-url';
 
 const CampgroundMap = dynamic(() => import('@/components/Map'), { ssr: false });
 
@@ -37,20 +38,6 @@ function htmlToText(html: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]*\n[ \t]*/g, '\n')
     .trim();
-}
-
-/** Booking URL for a specific clicked date. ReserveAmerica's matrix takes an
- *  arrival date (calarvdate=M/D/YYYY); Recreation.gov and ReserveCalifornia don't
- *  accept a reliable date in the URL, so those open the campground/park page (its
- *  availability grid shows the clicked date). */
-function bookingUrlForDate(reservationsUrl: string | null | undefined, source: string | undefined, dateStr: string): string | undefined {
-  if (!reservationsUrl) return undefined;
-  if (source === 'reserveamerica') {
-    const [y, m, d] = dateStr.split('-').map(Number);
-    const sep = reservationsUrl.includes('?') ? '&' : '?';
-    return `${reservationsUrl}${sep}calarvdate=${m}/${d}/${y}&sitepage=true`;
-  }
-  return reservationsUrl;
 }
 
 function AvailabilityCalendar({
@@ -123,7 +110,7 @@ function AvailabilityCalendar({
           return clickable ? (
             <a
               key={dateStr}
-              href={bookingUrlForDate(reservationsUrl, source, dateStr)!}
+              href={bookingLink({ source, reservationsUrl, date: dateStr })!}
               target="_blank"
               rel="noopener noreferrer"
               title={`See available sites on ${dateStr} and book${providerName ? ` on ${providerName}` : ''}`}

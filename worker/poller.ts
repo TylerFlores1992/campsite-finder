@@ -41,6 +41,7 @@ import { syncAllUseDirect } from '../src/lib/sources/reservecalifornia/sync';
 import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
 import { isUseDirectSource, USEDIRECT_PROVIDERS } from '../src/lib/sources/reservecalifornia/providers';
 import { dispatchNotifications, type NotificationPayload } from '../src/lib/notifications';
+import { bookingLink } from '../src/lib/booking-url';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 15_000);
 // Auto-cart rec.gov watches run on their own tighter loop so a cancellation gets
@@ -354,7 +355,13 @@ async function cycle(): Promise<void> {
         availableDates: result.dates,
         bookingUrl:
           watch.campground_source === 'reserveamerica'
-            ? (watch.reservations_url ?? 'https://www.reserveamerica.com/')
+            // Land on the arrival date's site grid, not the undated park page.
+            // Same calarvdate form the detail-page calendar already uses.
+            ? (bookingLink({
+                source: 'reserveamerica',
+                reservationsUrl: watch.reservations_url,
+                date: watch.start_date,
+              }) ?? 'https://www.reserveamerica.com/')
             : isGoingToCampSource(watch.campground_source)
             // Camis has no per-site deep link, so the tenant's booking page is the CTA.
             ? (watch.reservations_url ?? 'https://goingtocamp.com/')

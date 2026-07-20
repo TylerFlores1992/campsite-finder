@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { Loader2, Map as MapIcon, List, AlertCircle, Bell } from 'lucide-react';
 import { useUser, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
@@ -45,12 +45,48 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Set only by a MAP PIN click, which hoists that campground to the top of the
+  // list. Kept separate from selectedId on purpose: clicking a *card* selects it
+  // too, and reordering the list under the cursor you just clicked is jarring.
+  const [hoistId, setHoistId] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [watchesOpen, setWatchesOpen] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [everSubscribed, setEverSubscribed] = useState(false);
   const [subLoaded, setSubLoaded] = useState(false);
   const [watchCount, setWatchCount] = useState<number | null>(null);
+
+  // Clicking a pin puts that campground first in the list. Derived rather than a
+  // splice of `campgrounds`, so the underlying distance ranking survives: picking
+  // a different pin re-hoists from the original order instead of compounding
+  // earlier moves, and clearing the selection restores it exactly.
+  const orderedCampgrounds = useMemo(() => {
+    if (!hoistId) return campgrounds;
+    const idx = campgrounds.findIndex((c) => c.id === hoistId);
+    if (idx <= 0) return campgrounds; // absent, or already first
+    const next = campgrounds.slice();
+    next.unshift(next.splice(idx, 1)[0]);
+    return next;
+  }, [campgrounds, hoistId]);
+
+  // Pin click: select, hoist, and bring the hoisted card into view. In split view
+  // on desktop the list is its own scroll container, so scrolling the page does
+  // nothing — scroll the container itself. On mobile the list sits below the map
+  // and isn't its own scroller, so bring the panel into view instead.
+  const selectFromMap = useCallback((id: string) => {
+    setSelectedId(id);
+    setHoistId(id);
+    requestAnimationFrame(() => {
+      const el = listRef.current;
+      if (!el) return;
+      if (typeof window !== 'undefined' && window.innerWidth < 768) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        el.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    });
+  }, []);
 
   // Watch count for the subscriber home screen. Depends on watchesOpen so the
   // count refreshes after the panel closes (watches may have been removed).
@@ -169,6 +205,7 @@ export default function HomePage() {
     async (state: SearchState, activeFilters: FilterState = filters) => {
       setLoading(true);
       setError(null);
+      setHoistId(null); // a pin hoist from the previous result set shouldn't carry over
       setSearchState(state);
 
       // Mirror the search into the URL so "Back to results" from a campground
@@ -524,7 +561,7 @@ export default function HomePage() {
                 <CampgroundMap
                   campgrounds={campgrounds}
                   selectedId={selectedId}
-                  onSelect={setSelectedId}
+                  onSelect={selectFromMap}
                   center={searchState ? { lat: searchState.lat, lng: searchState.lng } : undefined}
                   radiusMiles={searchState?.radiusMiles}
                 />
@@ -534,6 +571,7 @@ export default function HomePage() {
             {/* List panel */}
             {view !== 'map' && (
               <div
+                ref={listRef}
                 className={`${
                   view === 'split' ? 'w-full md:w-1/2 md:h-full' : 'w-full md:h-full'
                 } md:overflow-y-auto p-3`}
@@ -585,7 +623,7 @@ export default function HomePage() {
                           : 'grid-cols-1'
                       }`}
                     >
-                      {campgrounds.map((cg) => (
+                      {orderedCampgrounds.map((cg) => (
                         <CampgroundCard
                           key={cg.id}
                           campground={cg}
