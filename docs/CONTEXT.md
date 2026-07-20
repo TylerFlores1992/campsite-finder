@@ -45,7 +45,11 @@ Each source has an adapter in `src/lib/availability/` and a catalog sync in
   availability is scraped from server-rendered HTML. Catalog paginates 25/page (watch
   for that). Coords come from each park's detail-page Open Graph meta.
 
-State-park coverage spans **28 states** across those two platforms, plus federal
+- **GoingToCamp / Camis** — `source='goingtocamp'`, ids `gtc-<ST>-<resourceLocationId>`
+  (ids are negative, e.g. `gtc-WA--2147483647`). Washington, Michigan, Wisconsin,
+  Mississippi. Clean JSON API; see `src/lib/sources/goingtocamp/`. Alert-only.
+
+State-park coverage spans **32 states** across those platforms, plus federal
 Recreation.gov nationwide. All non-rec.gov sources are **alert-only** (their carts are
 session-bound and don't sync to a phone). Adding a source = availability adapter +
 catalog sync + wire into search/worker/notifications + update coverage copy.
@@ -58,7 +62,7 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > mdwfp, arkansasstateparks, southcarolinaparks…) reference an `*rdr*` host in their
 > bundles. Growing past 28 states means a new adapter, not another registry entry.
 >
-> **GoingToCamp (Camis) — the next integration. 4 states, API cracked 2026-07-19.**
+> **GoingToCamp (Camis) — SHIPPED 2026-07-19. 362 campgrounds across 4 states.**
 > **Do NOT identify this platform by domain name.** Two of its four US tenants use
 > vanity domains, which is why an earlier pass misfiled them as "Aspira":
 >
@@ -92,15 +96,43 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 >   and returns one verdict per site. That matches CampHawk's "one site, all
 >   consecutive nights" rule **natively** — no per-night set intersection like RA.
 >   Day-use-only parks correctly return `[]` (e.g. Anderson Lake).
-> - **ONE OPEN TASK: decode the `availability` enum.** Observed values 0,1,2,3,4,5,7
->   — looks like a 3-bit mask. `0` is clearly unavailable; `7` is the common
->   available-looking value; a date +150d out returns `2` for every site (likely
->   "outside the booking window"). Must be decoded against the live site before this
->   ships — guessing here would produce false alerts.
+> - **The `availability` enum — decoded from the app's own source, and `0` means
+>   AVAILABLE.** Not a bitmask; a plain enum (found in the lazy chunks; the app's test
+>   is literally `resourceAvailabilities[id].every(s => s.availability === Available)`):
+>   ```
+>   0 Available   1 Unavailable  2 NotOperating  3 NonReservable
+>   4 Closed      5 Invalid      6 InvalidBookingCategory
+>   7 PartiallyAvailable         8 Held
+>   ```
+>   **Do not invert this.** An earlier guess here had `7` as the available value —
+>   backwards, and it would have alerted on `PartiallyAvailable` (only part of the
+>   requested range is free, i.e. NOT bookable for the whole stay) while missing every
+>   real opening. Consistent with observation: +150d out returns `2` everywhere
+>   (outside booking window), +3d returns all-nonzero (booked solid), +45d shows a mix.
+>   **`8 = Held` is the cancelled-but-not-yet-released state** — the same opportunity
+>   as ReserveCalifornia's `Lock` field, so coming-soon alerts are possible here too.
+> - **Reading the source requires a real browser.** Plain `curl` of the site HTML
+>   returns the *Azure WAF challenge page*, not the app (the `/api/*` endpoints are
+>   unaffected). Load it in the browser pane, then fetch the chunks from inside the
+>   page — that's how the enum above was recovered.
 >
-> Verdict: **best remaining target by a wide margin** — 4 states incl. two big camping
-> markets (WA, MI), a clean JSON catalog, and whole-stay availability that fits our
-> semantics better than ReserveAmerica's does.
+> - **`bookingCategoryId` matters — pass `0` (Nightly).** These tenants sell day-use
+>   and rentals through the same API (Mississippi lists Museum Entry, Golf Cart,
+>   Kayak, Birthday Party and Fireworks Show as bookable resources), so querying
+>   across all categories would let a kayak rental fire a campground alert. The
+>   app's enum: `Nightly=0, DayUse=1, FixedLength=2, PartialSeasonal=3, Rental=4,
+>   BackCountry=5`. Note `Nightly` spans campsites AND lodging (cabins, cottages,
+>   motel rooms), so a cabin opening can satisfy a watch — deliberate, narrow by
+>   resource category if that ever needs changing.
+> - **Coordinates come from geocoding the FULL street address**, not the park name.
+>   Only WA ships `gpsCoordinates` reliably (136/167); MI has 15, WI and MS none.
+>   A complete address ("4235 State Park Rd, Sardis, Mississippi 38666") geocodes
+>   unambiguously, unlike RA's name-only attempt that put Allegany in NYC. Rows with
+>   neither coords nor a street address are skipped rather than guessed, and every
+>   result is bbox-checked against its state before insert.
+>
+> Synced live: **WA 145, MI 144, WI 54, MS 19 = 362 campgrounds, 0 outside their
+> state bbox.** Sync via `npx tsx scripts/run-sync-gtc.ts [WA|MI|WI|MS]`.
 >
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into

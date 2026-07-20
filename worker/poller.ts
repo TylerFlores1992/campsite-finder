@@ -32,6 +32,8 @@ import { query, mutate } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
+import { findGoingToCampOpen } from '../src/lib/availability/goingtocamp';
+import { isGoingToCampSource } from '../src/lib/sources/goingtocamp/providers';
 import { syncAllUseDirect } from '../src/lib/sources/reservecalifornia/sync';
 import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
 import { isUseDirectSource, USEDIRECT_PROVIDERS } from '../src/lib/sources/reservecalifornia/providers';
@@ -239,8 +241,12 @@ async function cycle(): Promise<void> {
   const mainWatches = watches.filter((w) => !isAutocartLane(w));
   const raWatches = mainWatches.filter((w) => w.campground_source === 'reserveamerica');
   const rcWatches = mainWatches.filter((w) => isUseDirectSource(w.campground_source));
+  const gtcWatches = mainWatches.filter((w) => isGoingToCampSource(w.campground_source));
   const ridbWatches = mainWatches.filter(
-    (w) => !isUseDirectSource(w.campground_source) && w.campground_source !== 'reserveamerica'
+    (w) =>
+      !isUseDirectSource(w.campground_source) &&
+      !isGoingToCampSource(w.campground_source) &&
+      w.campground_source !== 'reserveamerica'
   );
 
   // recreation.gov: one fetch per unique campground+month, shared across watches.
@@ -302,12 +308,27 @@ async function cycle(): Promise<void> {
     RECGOV_CONCURRENCY
   );
 
+  // GoingToCamp: the Camis API answers whole-stay directly, so one call per watch.
+  const gtcResults = new Map<string, { dates: string[]; resourceIds: number[] }>();
+  await pMap(
+    gtcWatches,
+    async (w) => {
+      const nights = nightsOfRange(w.start_date, w.end_date);
+      const required = Math.max(w.min_nights, nights.length);
+      const open = await findGoingToCampOpen(w.campground_id, w.start_date, w.end_date, required);
+      if (open) gtcResults.set(w.id, { dates: nights, resourceIds: open.resourceIds });
+    },
+    RECGOV_CONCURRENCY
+  );
+
   let notified = 0;
   for (const watch of mainWatches) {
     const rc = rcResults.get(watch.id);
     const result: WatchResult =
       watch.campground_source === 'reserveamerica'
         ? { dates: raResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
+        : isGoingToCampSource(watch.campground_source)
+          ? { dates: gtcResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
         : isUseDirectSource(watch.campground_source)
           ? { dates: rc?.dates ?? [], campsiteId: null, campsiteName: null }
           : availableDatesForWatch(watch, monthData);
@@ -331,6 +352,9 @@ async function cycle(): Promise<void> {
         bookingUrl:
           watch.campground_source === 'reserveamerica'
             ? (watch.reservations_url ?? 'https://www.reserveamerica.com/')
+            : isGoingToCampSource(watch.campground_source)
+            // Camis has no per-site deep link, so the tenant's booking page is the CTA.
+            ? (watch.reservations_url ?? 'https://goingtocamp.com/')
             : isUseDirectSource(watch.campground_source)
             // #camphawk-rc fragment (unitId_arrival_nights_sleepingUnitId) lets the
             // extension add the exact unit to the RC cart. Fragment never hits RC's server.

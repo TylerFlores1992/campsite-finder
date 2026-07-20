@@ -3,7 +3,9 @@ import { ridbSource } from '@/lib/sources/ridb';
 import { hasAvailabilityInRange } from '@/lib/availability/recgov';
 import { hasRCAvailabilityInRange } from '@/lib/availability/reservecalifornia';
 import { hasReserveAmericaAvailabilityInRange } from '@/lib/availability/reserveamerica';
+import { hasGoingToCampAvailabilityInRange } from '@/lib/availability/goingtocamp';
 import { isUseDirectSource } from '@/lib/sources/reservecalifornia/providers';
+import { isGoingToCampSource } from '@/lib/sources/goingtocamp/providers';
 import type { SearchParams } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
@@ -61,9 +63,11 @@ export async function GET(request: NextRequest) {
         campgrounds.map((cg) =>
           cg.source === 'reserveamerica'
             ? hasReserveAmericaAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
-            : isUseDirectSource(cg.source)
-              ? hasRCAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
-              : hasAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
+            : isGoingToCampSource(cg.source)
+              ? hasGoingToCampAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
+              : isUseDirectSource(cg.source)
+                ? hasRCAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
+                : hasAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
         )
       );
       results = campgrounds.map((cg, i) => ({

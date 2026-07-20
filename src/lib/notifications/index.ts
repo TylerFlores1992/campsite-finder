@@ -3,11 +3,14 @@ import { sendEmail } from './email';
 import { sendSms } from './sms';
 import type { CampflareWebhookPayload } from '@/lib/campflare/types';
 import { USEDIRECT_PROVIDERS } from '@/lib/sources/reservecalifornia/providers';
+import { GOINGTOCAMP_PROVIDERS } from '@/lib/sources/goingtocamp/providers';
 
 /** Human label for the booking provider, from the booking URL (registry-driven). */
 function providerLabel(bookingUrl: string): string {
   if (bookingUrl.includes('recreation.gov')) return 'Recreation.gov';
   if (bookingUrl.includes('reserveamerica')) return 'ReserveAmerica';
+  const gtc = GOINGTOCAMP_PROVIDERS.find((pr) => bookingUrl.includes(pr.host));
+  if (gtc) return gtc.name;
   const p = USEDIRECT_PROVIDERS.find((pr) => {
     try {
       return bookingUrl.includes(new URL(pr.parkUrl(0)).host);
