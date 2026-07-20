@@ -301,10 +301,22 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
 
 ### Hard-won gotchas (these cost real debugging time)
 
-- **Must run HEADED.** rec.gov has an anti-bot gate (a `gate_a` token). Headless
-  Chromium gets flagged (`{ok:false, error:"abnormal activity"}`); a real headed
-  browser on the residential mini PC passes. A browser window flashes on the mini PC
-  per cart — expected.
+- **Must run HEADED — *everywhere* that touches rec.gov, not just the cart.** rec.gov
+  has an anti-bot gate (a `gate_a` token). Headless Chromium gets flagged
+  (`{ok:false, error:"abnormal activity"}`); a real headed browser on the residential
+  mini PC passes. A browser window flashes on the mini PC per cart — expected.
+  The revert that established this only flipped the *cart* call, leaving the session
+  keepalive headless for months; it now runs headed too. If you add another rec.gov
+  browser path, default it to headed.
+- **Never clear a login on a single login-state read.** The keepalive is the only
+  thing that deletes a ready-marker outside a cart attempt, so a false "logged out"
+  there costs the user a re-sign-in — discovered, painfully, on a *missed
+  cancellation*. Two causes conspired: the headless launch above, and
+  `recgovLoginState` sampling once at a fixed 3.5s delay, which catches rec.gov's SPA
+  mid-hydration while it still shows the logged-out header. `recgovLoginState` now
+  polls until the signal settles ('in' returns immediately, 'out' only if it holds),
+  and the keepalive additionally requires a second confirming read before clearing.
+  **'unknown' must never clear anything** — that's what it's for.
 - **Date picker = react-aria RANGE calendar of `role="button"` divs.** Synthetic
   dispatched events do NOT complete the range (only the check-in anchor sticks →
   0-night payload → 400). Use **Playwright real mouse clicks** (`page.mouse`).
