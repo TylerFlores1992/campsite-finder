@@ -307,13 +307,24 @@ export default function HomePage() {
   // slim banner rides above results. Watch creation stays server-gated (402).
   const needsSubscription = isSignedIn && subLoaded && !isSubscribed;
 
+  const showLandingBg = !searchState;
+
   return (
-    <div className="flex flex-col min-h-screen md:h-screen bg-gray-50">
+    <div className="relative flex flex-col min-h-screen md:h-screen bg-gray-50">
+      {/* Full-screen landing scene — one continuous background behind the header
+          and hero on the landing views (hidden once a search is active). */}
+      {showLandingBg && (
+        <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/hero-bg-wide.png" alt="" className="h-full w-full object-cover object-center" />
+          <div className="absolute inset-0 bg-gradient-to-b from-background/70 via-background/25 to-background/60" />
+        </div>
+      )}
       {watchesOpen && (
         <WatchesPanel onClose={() => setWatchesOpen(false)} />
       )}
       {/* Header */}
-      <header className="bg-background/90 backdrop-blur border-b border-gray-200 px-4 py-3 z-10">
+      <header className={`${showLandingBg ? 'bg-transparent border-transparent' : 'bg-background/90 border-gray-200'} backdrop-blur px-4 py-3 z-10 border-b`}>
         <div className="max-w-screen-2xl mx-auto space-y-3">
           {/* Top row: brand + actions (wraps cleanly on mobile) */}
           <div className="flex items-center justify-between gap-2">
@@ -428,13 +439,7 @@ export default function HomePage() {
         ) : !searchState && !isSignedIn ? (
           <SubscribeGate signedOut />
         ) : !searchState ? (
-          <div className="relative isolate h-full flex flex-col items-center justify-center text-center px-4 gap-6 overflow-y-auto pt-10 pb-24 bg-[#F3EFE0]">
-            {/* CampHawk hero scene + soft scrim so text stays legible over it */}
-            <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/hero-bg.png" alt="" className="h-full w-full object-cover object-center" />
-              <div className="absolute inset-0 bg-gradient-to-b from-[#F3EFE0]/45 via-[#F3EFE0]/25 to-[#F3EFE0]/55" />
-            </div>
+          <div className="relative isolate h-full flex flex-col items-center justify-center text-center px-4 gap-6 overflow-y-auto pt-10 pb-24">
             {/* Only active subscribers reach this hero (visitors and unsubscribed
                 users get the SubscribeGate marketing panel instead) — so skip the
                 sales pitch and get them moving. */}

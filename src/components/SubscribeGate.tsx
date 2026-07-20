@@ -6,7 +6,7 @@ import {
   Clock,
   Zap,
   Map as MapIcon,
-  Compass,
+  Globe,
   Check,
 } from 'lucide-react';
 import { SignInButton, SignUpButton } from '@clerk/nextjs';
@@ -70,7 +70,7 @@ const FEATURE_CARDS = [
     badge: null as string | null,
   },
   {
-    icon: Compass,
+    icon: Globe,
     title: 'Federal + state park coverage',
     body: 'Recreation.gov campgrounds nationwide — national parks, forests, and lakes — plus state parks in CA, TX, AZ, FL, NY, MN, and more. 5,500+ campgrounds and counting.',
     badge: null as string | null,
@@ -131,14 +131,7 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
       : 'Searching is free — try it right above. A subscription turns on the good part: 24/7 watching of booked campgrounds, instant email + text alerts, and Auto-cart.';
 
   return (
-    <div className="relative isolate min-h-full flex flex-col items-center text-center px-4 pt-12 sm:pt-16 pb-16 gap-10 sm:gap-12 overflow-y-auto bg-background">
-      {/* Hero scene, softened at the top so the search bar and headline stay crisp */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/hero-bg.png" alt="" className="h-full w-full object-cover object-center" />
-        <div className="absolute inset-0 bg-gradient-to-b from-background via-background/40 to-background/70" />
-      </div>
-
+    <div className="relative isolate min-h-full flex flex-col items-center text-center px-4 pt-12 sm:pt-16 pb-16 gap-10 sm:gap-12 overflow-y-auto">
       {/* Hero */}
       <div className="flex flex-col items-center gap-5 pt-2 max-w-3xl">
         <h1 className="font-serif text-4xl sm:text-6xl font-semibold text-green-800 leading-[1.05] text-balance [text-shadow:_0_1px_12px_rgb(250_247_242_/_0.8)]">

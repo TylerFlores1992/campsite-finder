@@ -81,10 +81,10 @@ export default function Logo({ markSize = 34, mono = false, className }: LogoPro
     <span className={`inline-flex items-center gap-2 ${className ?? ''}`}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/logo-mark.png"
+        src="/logo-badge.png"
         alt="CampHawk"
-        style={{ height: markSize, width: 'auto' }}
-        className="shrink-0 select-none"
+        style={{ height: markSize, width: markSize }}
+        className="shrink-0 select-none object-contain"
         draggable={false}
       />
       <span
