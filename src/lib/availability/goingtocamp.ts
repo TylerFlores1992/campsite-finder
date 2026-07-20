@@ -15,6 +15,14 @@ export function isGoingToCampCampgroundId(campgroundId: string): boolean {
  * No per-night intersection here — unlike ReserveAmerica, the Camis API already
  * answers whole-stay, so `minNights` only matters for widening a same-day range
  * into a real one.
+ *
+ * DELIBERATELY THROWS on a transport failure instead of returning false, unlike
+ * the other adapters. This runs in the search path on Vercel, whose IPs the Camis
+ * WAF blocks with a 403 (the Fly worker and residential IPs are fine — the
+ * reverse of the UseDirect situation). Search wraps these in `allSettled` and
+ * renders a rejection as *unknown* availability, whereas `false` would render a
+ * confident "Booked — watch it" badge on all 362 GoingToCamp campgrounds even
+ * when sites are free. Unknown is honest; false is a lie.
  */
 export async function hasGoingToCampAvailabilityInRange(
   campgroundId: string,
@@ -25,15 +33,16 @@ export async function hasGoingToCampAvailabilityInRange(
   const parsed = parseGoingToCampId(campgroundId);
   if (!parsed) return false;
   const end = widenEnd(startDate, endDate, minNights);
-  try {
-    const r = await gtcStayAvailability(parsed.provider, parsed.resourceLocationId, startDate, end);
-    return r.available;
-  } catch {
-    return false; // best-effort, matching the other adapters
-  }
+  const r = await gtcStayAvailability(parsed.provider, parsed.resourceLocationId, startDate, end);
+  return r.available;
 }
 
-/** Like the above, but returns the bookable resource ids (for alert deep-linking). */
+/**
+ * Like the above, but returns the bookable resource ids (for alert deep-linking).
+ * This one DOES swallow errors: it runs on the Fly worker, which can reach Camis,
+ * and the poller's contract is best-effort — a transient failure must not take
+ * down the whole cycle.
+ */
 export async function findGoingToCampOpen(
   campgroundId: string,
   startDate: string,

@@ -72,6 +72,3 @@ export function goingToCampId(provider: GoingToCampProvider, resourceLocationId:
 export function isGoingToCampSource(source: string): boolean {
   return source === GOINGTOCAMP_SOURCE;
 }
-
-/** Tenant hosts the Vercel proxy is allowed to forward to (WAF workaround). */
-export const GOINGTOCAMP_ALLOWED_HOSTS = GOINGTOCAMP_PROVIDERS.map((p) => p.host);

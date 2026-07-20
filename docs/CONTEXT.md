@@ -132,7 +132,36 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 >   result is bbox-checked against its state before insert.
 >
 > Synced live: **WA 145, MI 144, WI 54, MS 19 = 362 campgrounds, 0 outside their
-> state bbox.** Sync via `npx tsx scripts/run-sync-gtc.ts [WA|MI|WI|MS]`.
+> state bbox.** Sync via `npx tsx scripts/run-sync-gtc.ts [WA|MI|WI|MS]`, and
+> automatically on the Fly worker (`gtcSyncIfDue`, hourly check / 22h staleness).
+>
+> **WAF reachability — measured, and it is the INVERSE of UseDirect. Don't build a
+> proxy here.**
+>
+> | From | Reaches Camis? |
+> |------|----------------|
+> | Residential | yes |
+> | **Fly worker** | **yes** — startup probe reads 167 WA locations |
+> | **Vercel** | **no** — 403 even with correct headers |
+>
+> Two separate WAF behaviours, easy to confuse (I conflated them once and drew the
+> wrong conclusion):
+> - **User-Agent is load-bearing.** A request without a realistic *full* browser UA
+>   gets 403 **from any IP, including residential**. `Mozilla/5.0`, `curl/8.5.0`
+>   and a bare `fetch()` with no UA all 403; the full Chrome UA string returns 200.
+>   A first Fly test used a bare fetch and "proved" Fly was blocked — it wasn't.
+>   **When testing this WAF, always send the full UA, or the result is meaningless.**
+> - **IP reputation is separate**, and only Vercel fails it.
+>
+> Consequences, both deliberate:
+> - The **worker polls Camis directly** — no proxy, unlike RC. Alerting works.
+> - The **search-path adapter throws** instead of returning `false` on a transport
+>   error, because search runs on Vercel. `Promise.allSettled` renders a rejection
+>   as *unknown* availability; returning `false` would stamp a confident
+>   "Booked — watch it" badge on all 362 GTC campgrounds even when sites are free.
+>   Live availability badges for GTC therefore read "unknown" on the website, while
+>   watch alerts are accurate. Fixing the badges needs a residential/Fly-side
+>   availability endpoint — not done.
 >
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into

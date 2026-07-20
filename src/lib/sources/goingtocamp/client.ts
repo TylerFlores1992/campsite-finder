@@ -68,17 +68,20 @@ interface GtcMapAvailability {
 /**
  * Fetch from a tenant's API.
  *
- * The hosts sit behind an Azure WAF with two distinct behaviours, and both are
- * handled here:
+ * Three things about the Azure WAF in front of these hosts, all measured:
  *
- * - **Datacenter IPs are blocked outright.** Verified from Fly: both
- *   washington.goingtocamp.com and midnrreservations.com return `403` + an HTML
- *   challenge page. So when GTC_PROXY_URL is set (Fly worker) we route through
- *   the Vercel proxy, exactly like RC_PROXY_URL does for UseDirect. Without it a
- *   GTC watch would silently report "no availability" forever.
- * - **Bursty traffic gets challenged even from allowed IPs**, and clears once
- *   traffic is spaced out. That's a rate limit, so back off and retry rather than
- *   failing the sync — and keep concurrency low at call sites.
+ * 1. **`UA` below is load-bearing — do not shorten it.** The WAF rejects requests
+ *    without a realistic full browser User-Agent with a `403` + HTML challenge
+ *    page. `Mozilla/5.0`, `curl/8.5.0` and a bare `fetch()` with no UA all 403
+ *    even from a residential IP; the full string returns 200.
+ * 2. **Vercel's IPs are blocked, the Fly worker's are not** — the reverse of the
+ *    UseDirect situation, so there is deliberately no proxy here. Verified: the
+ *    worker's startup probe reads 167 WA locations directly, while the same
+ *    request from a Vercel route 403s. That's why the search-path adapter throws
+ *    rather than reporting "not available" (see availability/goingtocamp.ts).
+ * 3. **Bursty traffic gets challenged even from an allowed IP**, and clears once
+ *    traffic is spaced out. That's a rate limit, so back off and retry rather
+ *    than failing the sync — and keep concurrency low at call sites.
  */
 async function gtcFetch<T>(
   provider: GoingToCampProvider,
@@ -86,40 +89,22 @@ async function gtcFetch<T>(
   query: Record<string, string | number> = {},
   attempt = 0
 ): Promise<T> {
-  const proxyUrl = process.env.GTC_PROXY_URL;
-  const proxySecret = process.env.GTC_PROXY_SECRET ?? process.env.SYNC_SECRET;
-
-  let status: number;
-  let body: string;
-
-  if (proxyUrl && proxySecret) {
-    const res = await fetch(proxyUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-sync-secret': proxySecret },
-      body: JSON.stringify({ host: provider.host, path, query }),
-      signal: AbortSignal.timeout(30_000),
-    });
-    status = res.status;
-    body = await res.text();
-  } else {
-    const qs = new URLSearchParams(
-      Object.entries(query).map(([k, v]) => [k, String(v)])
-    ).toString();
-    const res = await fetch(`https://${provider.host}${path}${qs ? `?${qs}` : ''}`, {
-      headers: { 'User-Agent': UA, Accept: 'application/json', Referer: `https://${provider.host}/` },
-      signal: AbortSignal.timeout(30_000),
-    });
-    status = res.status;
-    body = await res.text();
-  }
+  const qs = new URLSearchParams(
+    Object.entries(query).map(([k, v]) => [k, String(v)])
+  ).toString();
+  const res = await fetch(`https://${provider.host}${path}${qs ? `?${qs}` : ''}`, {
+    headers: { 'User-Agent': UA, Accept: 'application/json', Referer: `https://${provider.host}/` },
+    signal: AbortSignal.timeout(30_000),
+  });
+  const body = await res.text();
 
   const challenged = body.includes('Azure WAF') || body.includes('.azwaf');
-  if ((challenged || status === 429 || status === 502 || status >= 500) && attempt < 3) {
+  if ((challenged || res.status === 429 || res.status >= 500) && attempt < 3) {
     await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
     return gtcFetch<T>(provider, path, query, attempt + 1);
   }
   if (challenged) throw new Error(`GTC ${provider.state}: WAF challenge on ${path} after retries`);
-  if (status !== 200) throw new Error(`GTC ${provider.state}: ${status} on ${path}`);
+  if (!res.ok) throw new Error(`GTC ${provider.state}: ${res.status} on ${path}`);
 
   try {
     return JSON.parse(body) as T;

@@ -17,9 +17,6 @@ const isPublicRoute = createRouteMatcher([
   '/api/webhooks/(.*)',
   '/api/auto-cart/(.*)',
   '/api/rc-proxy',
-  // Guarded by its own x-sync-secret header, not Clerk. Must be public or the
-  // middleware 404s it (same trap as /robots.txt and /sitemap.xml).
-  '/api/gtc-proxy',
   '/sign-in(.*)',
   '/sign-up(.*)',
 ]);
