@@ -336,12 +336,14 @@ async function cycle(): Promise<void> {
   // simply never alerts rather than crashing the cycle — and would need the same
   // fix-then-verify as GoingToCamp did. See docs/CONTEXT.md.)
   const tnscResults = new Map<string, { dates: string[] }>();
+  if (tnscWatches.length > 0) console.log(`[poller] checking ${tnscWatches.length} TN/SC watch(es)`);
   await pMap(
     tnscWatches,
     async (w) => {
       const nights = nightsOfRange(w.start_date, w.end_date);
       const required = Math.max(w.min_nights, nights.length);
       const open = await findTnscOpen(w.campground_id, w.start_date, w.end_date, required);
+      console.log(`[poller] TN/SC ${w.campground_id} (${w.start_date}..${w.end_date}): ${open ? `OPEN ${open.availableSites} sites` : 'no opening'}`);
       if (open) tnscResults.set(w.id, { dates: nights });
     },
     RECGOV_CONCURRENCY

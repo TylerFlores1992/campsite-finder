@@ -69,7 +69,11 @@ export async function findTnscOpen(
   try {
     const r = await tnscStayAvailability(parsed.provider, parsed.parkId, startDate, end);
     return r.available ? { availableSites: r.availableSites } : null;
-  } catch {
+  } catch (err) {
+    // Log (don't rethrow) — the poller is best-effort. Matches the ReserveAmerica
+    // adapter's pattern so a worker-side reachability/CSRF failure is visible in
+    // flyctl logs instead of silently never alerting.
+    console.warn(`[TNSC] availability failed for ${campgroundId}:`, (err as Error).message);
     return null;
   }
 }
