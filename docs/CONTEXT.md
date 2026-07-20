@@ -192,6 +192,24 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > standby machine would double the Camis request rate for no benefit). The worker
 > app also needed public IPs allocated — it had none as a pure background service.
 >
+> > **Consequence: a `flyctl deploy` leaves the poller STOPPED. Always start it
+> > manually afterward.** The rolling deploy stops each machine to swap the image,
+> > and `auto_start_machines = false` means nothing brings it back — flyctl even
+> > prints "Machine … reached stopped state" and calls that "a good state", so the
+> > deploy *looks* successful while alerting is dead. Observed 2026-07-20: ~60s of
+> > downtime before it was caught. After every deploy:
+> >
+> > ```
+> > flyctl status --config worker/fly.toml            # expect one started, one stopped
+> > flyctl machine start <primary-id> --config worker/fly.toml
+> > flyctl logs --config worker/fly.toml --no-tail    # expect a [poller] heartbeat
+> > ```
+> >
+> > **Start ONE machine only.** There are two; the second is a standby, and starting
+> > it doubles the Camis request rate for no benefit (that's the whole reason
+> > `auto_start_machines` is false). The primary is whichever ID the pre-deploy logs
+> > show heartbeating.
+>
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
 > GoingToCamp above, what actually remains here is small:
