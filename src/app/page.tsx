@@ -316,7 +316,7 @@ export default function HomePage() {
       {showLandingBg && (
         <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/hero-bg-wide.png" alt="" className="h-full w-full object-cover object-bottom" />
+          <img src="/hero-bg-wide.png" alt="" className="h-full w-full object-cover object-bottom translate-y-[12%]" />
           <div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/70 to-background/60" />
         </div>
       )}
@@ -340,7 +340,7 @@ export default function HomePage() {
               aria-label="CampHawk home"
               className="shrink-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-green-400"
             >
-              <Logo markSize={68} />
+              <Logo markSize={85} />
             </button>
             <div className="flex items-center gap-2">
               <button

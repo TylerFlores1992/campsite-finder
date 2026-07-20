@@ -6,7 +6,7 @@ import {
   Clock,
   Zap,
   Map as MapIcon,
-  Globe,
+  Globe2,
   Check,
 } from 'lucide-react';
 import { SignInButton, SignUpButton } from '@clerk/nextjs';
@@ -70,7 +70,7 @@ const FEATURE_CARDS = [
     badge: null as string | null,
   },
   {
-    icon: Globe,
+    icon: Globe2,
     title: 'Federal + state park coverage',
     body: 'Recreation.gov campgrounds nationwide — national parks, forests, and lakes — plus state parks in CA, TX, AZ, FL, NY, MN, and more. 5,500+ campgrounds and counting.',
     badge: null as string | null,
