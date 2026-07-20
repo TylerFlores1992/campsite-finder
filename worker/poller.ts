@@ -33,7 +33,9 @@ import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
 import { findGoingToCampOpen } from '../src/lib/availability/goingtocamp';
-import { isGoingToCampSource } from '../src/lib/sources/goingtocamp/providers';
+import { isGoingToCampSource, GOINGTOCAMP_PROVIDERS } from '../src/lib/sources/goingtocamp/providers';
+import { fetchLocations } from '../src/lib/sources/goingtocamp/client';
+import { syncAllGoingToCamp } from '../src/lib/sources/goingtocamp/sync';
 import { syncAllUseDirect } from '../src/lib/sources/reservecalifornia/sync';
 import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
 import { isUseDirectSource, USEDIRECT_PROVIDERS } from '../src/lib/sources/reservecalifornia/providers';
@@ -576,6 +578,43 @@ async function rcSyncIfDue(): Promise<void> {
   }
 }
 
+// GoingToCamp catalog refresh. Lives here rather than in the nightly GitHub
+// Action because these tenants sit behind an Azure WAF that challenges bursty
+// traffic; the worker syncs one tenant at a time on a slow cadence, and the
+// client backs off on a challenge. Same due-check shape as rcSyncIfDue.
+const GTC_SYNC_MAX_AGE_HOURS = 22;
+let gtcSyncRunning = false;
+
+async function gtcSyncIfDue(): Promise<void> {
+  if (gtcSyncRunning) return;
+  gtcSyncRunning = true;
+  try {
+    const sources = GOINGTOCAMP_PROVIDERS.map((p) => `goingtocamp-${p.state}`);
+    const row = await query<{ age_hours: number | null; synced_sources: number }>(
+      `SELECT EXTRACT(EPOCH FROM (NOW() - MIN(last_ok))) / 3600 AS age_hours,
+              COUNT(*) AS synced_sources
+       FROM (
+         SELECT source, MAX(finished_at) AS last_ok
+         FROM sync_log WHERE source = ANY($1) AND facilities_synced > 0
+         GROUP BY source
+       ) t`,
+      [sources]
+    );
+    const age = row[0]?.age_hours;
+    const allSynced = Number(row[0]?.synced_sources ?? 0) >= sources.length;
+    if (allSynced && age != null && age < GTC_SYNC_MAX_AGE_HOURS) return;
+    console.log(`[poller] GoingToCamp sync due (oldest ${age?.toFixed(1) ?? 'never'}h ago) — starting`);
+    const result = await syncAllGoingToCamp();
+    console.log(
+      `[poller] GoingToCamp sync finished: ${result.facilitiesSynced} campgrounds, ${result.errors.length} errors`
+    );
+  } catch (err) {
+    console.error('[poller] GoingToCamp sync failed:', err);
+  } finally {
+    gtcSyncRunning = false;
+  }
+}
+
 async function main() {
   console.log(`[poller] starting — interval ${POLL_INTERVAL_MS / 1000}s, recgov concurrency ${RECGOV_CONCURRENCY}`);
 
@@ -588,8 +627,25 @@ async function main() {
     console.error('[poller] RC connectivity probe FAILED — RC watches will not alert:', (err as Error).message);
   }
 
+  // Startup probe: these hosts are WAF'd, and datacenter reachability was never
+  // verified from Fly — so say so loudly rather than letting GTC watches quietly
+  // never alert.
+  try {
+    const locs = await fetchLocations(GOINGTOCAMP_PROVIDERS[0]);
+    console.log(
+      `[poller] GoingToCamp connectivity probe OK — ${locs.length} ${GOINGTOCAMP_PROVIDERS[0].state} locations`
+    );
+  } catch (err) {
+    console.error(
+      '[poller] GoingToCamp connectivity probe FAILED — GTC watches will not alert:',
+      (err as Error).message
+    );
+  }
+
   rcSyncIfDue();
   setInterval(rcSyncIfDue, 60 * 60 * 1000);
+  gtcSyncIfDue();
+  setInterval(gtcSyncIfDue, 60 * 60 * 1000);
   // Run cycles back-to-back on a fixed cadence; skip a tick if the previous cycle is still running.
   let running = false;
   const tick = async () => {
