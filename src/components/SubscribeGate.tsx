@@ -149,6 +149,43 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
         </p>
       </div>
 
+      {/* Signed-out CTA — sits above the feature grid. Visitors need an account
+          before checkout, so these route through Clerk sign-up / sign-in. */}
+      {signedOut && (
+        <div className="w-full max-w-md rounded-3xl bg-background/90 ring-1 ring-green-100 shadow-lg backdrop-blur-sm p-6 text-center">
+          <p className="font-serif text-xl font-semibold text-green-800">
+            Start your 7-day free trial
+          </p>
+
+          <ul className="mt-4 grid gap-2 text-left">
+            {INCLUDED.map((item) => (
+              <li key={item} className="flex items-center gap-2 text-sm text-gray-700">
+                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-100">
+                  <Check size={12} className="text-green-700" />
+                </span>
+                {item}
+              </li>
+            ))}
+          </ul>
+
+          <div className="mt-5 flex flex-col gap-3">
+            <SignUpButton mode="redirect">
+              <button className="w-full px-5 py-3.5 rounded-2xl font-display font-semibold text-white bg-green-600 hover:bg-green-700 shadow-md shadow-green-600/25 transition-all hover:-translate-y-0.5">
+                Start your free trial
+              </button>
+            </SignUpButton>
+            <SignInButton mode="redirect">
+              <button className="w-full px-5 py-3.5 rounded-2xl font-display font-semibold text-green-700 bg-white border border-green-200 hover:bg-green-50 transition-colors">
+                Sign in
+              </button>
+            </SignInButton>
+          </div>
+          <p className="mt-3 text-xs text-gray-500">
+            7-day free trial · then $2.50/mo or $20/yr · cancel anytime
+          </p>
+        </div>
+      )}
+
       {/* Feature grid — translucent cream cards over the hero scene */}
       <div className="grid sm:grid-cols-2 gap-5 w-full max-w-4xl text-left">
         {FEATURE_CARDS.map((f) => {
