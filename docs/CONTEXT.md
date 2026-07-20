@@ -18,7 +18,9 @@ subscription turns on watching + instant email/SMS alerts + (rec.gov only) auto-
 - **Clerk** — auth (production instance on camphawk.app).
 - **Stripe** — subscriptions ($2.50/mo, $20/yr). Live in prod; test keys locally.
 - **Fly.io** — the always-on cancellation poller (`worker/poller.ts`, app
-  `campsite-finder-worker`).
+  `campsite-finder-worker`). It also serves one HTTP endpoint
+  (`worker/http-server.ts`) that the website calls for GoingToCamp availability,
+  because Vercel's IPs are WAF-blocked from that source.
 - **Resend** (email) + **Twilio** (SMS, A2P-approved) — alerts.
 - **Mapbox** — geocoding + maps.
 - A **mini PC** (Windows, always-on, residential IP) — hosts the auto-cart bot.
@@ -54,13 +56,22 @@ Recreation.gov nationwide. All non-rec.gov sources are **alert-only** (their car
 session-bound and don't sync to a phone). Adding a source = availability adapter +
 catalog sync + wire into search/worker/notifications + update coverage copy.
 
-> **The remaining 22 states need a THIRD platform — don't re-probe them.** As of
-> 2026-07-19 every uncovered state was probed against both integrations and none hit:
-> all guessed `*.reserveamerica.com` subdomains fail DNS (Colorado's resolves but its
-> park directory is empty — it migrated off), and none of their reservation SPAs
-> (cpwshop, tnstateparks, camping.nj.gov, parkreservations.maryland.gov, alapark,
-> mdwfp, arkansasstateparks, southcarolinaparks…) reference an `*rdr*` host in their
-> bundles. Growing past 28 states means a new adapter, not another registry entry.
+> **Adding a state to an existing source REQUIRES a Fly worker deploy, not just a
+> push.** The worker imports `RA_CONTRACTS` / `USEDIRECT_PROVIDERS` /
+> `GOINGTOCAMP_PROVIDERS` directly, so on a stale worker the new state's watches hit
+> a registry lookup that returns `undefined` and silently `return false` — searchable
+> on the website, but **never alerting, with no error anywhere**. This nearly shipped
+> with Delaware. Verify after deploy with `scripts/e2e-gtc-alert.mts` (below).
+
+> **The 18 still-uncovered states each need a NEW adapter — don't re-probe them.** As
+> of 2026-07-19 every uncovered state was probed against UseDirect and ReserveAmerica
+> and none hit: all guessed `*.reserveamerica.com` subdomains fail DNS (Colorado's
+> resolves but its park directory is empty — it migrated off), and none of their
+> reservation SPAs (cpwshop, tnstateparks, camping.nj.gov,
+> parkreservations.maryland.gov, alapark, mdwfp, arkansasstateparks,
+> southcarolinaparks…) reference an `*rdr*` host in their bundles. Four of the states
+> that pass then turned out to be GoingToCamp (below); the rest need new adapters,
+> not registry entries.
 >
 > **GoingToCamp (Camis) — SHIPPED 2026-07-19. 362 campgrounds across 4 states.**
 > **Do NOT identify this platform by domain name.** Two of its four US tenants use
@@ -80,16 +91,21 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 >
 > - **Catalog:** `GET /api/resourcelocation` → `localizedValues[].fullName`, address,
 >   website, and `gpsCoordinates` as a `"lat, lng"` **string** (not numeric fields).
->   Only WA is well-covered; **WI and MS have zero coords and MI only 15**, so the
->   sync needs name geocoding like RA's. `GET /api/resourcecategory` gives site types
+>   Only WA is well-covered; **WI and MS have zero coords and MI only 15**, so most
+>   rows are geocoded — from the **full street address**, never the park name (see
+>   the coordinates note below). `GET /api/resourcecategory` gives site types
 >   (Campsite, Cabin, Yurt, Group Camp, Day Use Facility…) to filter day-use rows.
-> - **Availability — WORKS, and the WAF is not a blocker.** The earlier "Azure WAF
->   403" was **POST-only**; the GET form is fine from a datacenter IP:
+> - **Availability — the working call:**
 >   ```
 >   GET /api/availability/resourcelocation
 >       ?resourceLocationId=<id>&bookingCategoryId=0&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
 >   ```
 >   → `[{ mapId, mapAvailabilities, resourceAvailabilities: { <resourceId>: [{ availability, remainingQuota }] } }]`
+>
+>   It must carry a **full browser User-Agent**, and it works from residential and
+>   Fly but **not from Vercel** — see the reachability table further down, which is
+>   the authoritative version. (An earlier draft of this section claimed the WAF was
+>   "POST-only" and that GET "is fine from a datacenter IP". Both were wrong.)
 > - **It is whole-stay, not per-night — which is exactly what we want.** The
 >   per-resource array stays length 1 no matter how many nights the range spans
 >   (verified at 1/2/3/5/7 nights): the API evaluates the entire `[start, end)` range
@@ -194,10 +210,12 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > None of these expose a JSON API from their bundles (unlike UseDirect/GoingToCamp) —
 > they'd be HTML-scrape integrations in the ReserveAmerica mold.
 >
-> **Bottom line: build GoingToCamp next** — 4 states (WA/MI/WI/MS), clean JSON on both
-> the catalog and availability sides, and whole-stay semantics that fit our alert rule
-> natively. Everything after it is a distant second: TN+SC (2 states, ColdFusion
-> scrape) then CO/LA/WV (1 state each, or lodging-only).
+> **Bottom line: GoingToCamp is DONE (shipped 2026-07-19). What's left is thin.**
+> The next-best target is **TN + SC** — 2 states on one ColdFusion product, no JSON
+> API, so an HTML scrape in the ReserveAmerica mold. After that it's CO / LA / WV at
+> 1 state each (and WV is lodging-only, so really 2). Nothing remaining has
+> GoingToCamp's ratio of states-to-effort; weigh a new adapter against other work
+> rather than assuming coverage is the priority.
 >
 > **Survey lesson worth keeping: fingerprint by API behaviour, not by domain or
 > bundle.** Domain names misled (MI/MS are Camis on vanity hosts), and so did shared
@@ -212,6 +230,15 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > and watchable) — only the unit-level filter data (site type, RV length) is missing,
 > and it accretes over successive nightly worker syncs. Not a code bug; a rate-limit.
 
+> **Reading `sync_log`: a non-null `error` does NOT mean the sync failed.** Every
+> sync writes that column when *any single facility* had a problem, so a run that
+> imported 478 campgrounds with 478 unit-catalog 403s looks identical to a total
+> outage if you only check `error IS NOT NULL`. The admin panel did exactly that and
+> showed 20 of 33 sources red while all 33 had synced. **The signal that matters is
+> `facilities_synced = 0`**; anything above zero with errors is a partial. Typical
+> benign causes: UseDirect grid 403s (above), and parks skipped for missing coords in
+> ReserveAmerica/GoingToCamp. `metadata.totalErrors` carries the count.
+
 ## The core flow
 
 1. **Search** (`src/app/api/search`) — radius + dates + filters; branches on `source`
@@ -221,6 +248,22 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
    opening it dispatches notifications. Branches by source; uses an atomic claim on
    `notification_sent_at` (1-hour re-notify window) so it never double-alerts.
 4. **Notifications** (`src/lib/notifications/`) — email (Resend) + SMS (Twilio).
+
+### Verifying a source actually alerts
+
+"The code path matches the working one" is not verification — the registry-staleness
+trap above produces exactly that illusion. `scripts/e2e-gtc-alert.mts` proves it for
+real: it creates a watch on a campground that currently *has* availability, waits for
+the poller, reports the notification rows, then deletes the watch and its
+notifications. **It sends a real email and SMS**, so run it deliberately, never in CI.
+Adapt it to another source by swapping the campground query and availability helper.
+
+Two traps it documents, because the first run hit both:
+- **Target a real account.** A seeded test user has no deliverable address, so
+  dispatch runs and records nothing — which looks like a failure but isn't one.
+- **Don't read `notifications` the moment `notification_sent_at` appears.** The
+  poller claims that timestamp *before* dispatching, so an immediate read races the
+  send and reports a false failure. Wait ~12s.
 
 ## Auto-cart (rec.gov only) — the interesting part
 
