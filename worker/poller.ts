@@ -36,6 +36,7 @@ import { findGoingToCampOpen } from '../src/lib/availability/goingtocamp';
 import { isGoingToCampSource, GOINGTOCAMP_PROVIDERS } from '../src/lib/sources/goingtocamp/providers';
 import { fetchLocations } from '../src/lib/sources/goingtocamp/client';
 import { syncAllGoingToCamp } from '../src/lib/sources/goingtocamp/sync';
+import { startHttpServer } from './http-server';
 import { syncAllUseDirect } from '../src/lib/sources/reservecalifornia/sync';
 import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
 import { isUseDirectSource, USEDIRECT_PROVIDERS } from '../src/lib/sources/reservecalifornia/providers';
@@ -641,6 +642,11 @@ async function main() {
       (err as Error).message
     );
   }
+
+  // Serves GoingToCamp availability to the website's search page, which runs on
+  // Vercel and is WAF-blocked from Camis. Started before the poll loop but never
+  // awaited into it — an HTTP failure must not affect alerting.
+  startHttpServer();
 
   rcSyncIfDue();
   setInterval(rcSyncIfDue, 60 * 60 * 1000);
