@@ -225,5 +225,12 @@ export async function tnscStayAvailability(
   const batch = await fetchAvailabilityBatch(provider, fromIso, toIso);
   const row = batch.get(parkId);
   const availableSites = row?.availableSites ?? 0;
+  // TEMP diagnostic (remove once TN worker path is confirmed): distinguishes a
+  // soft-blocked/empty response (batch.size === 0) from a present-but-zero park.
+  console.log(
+    `[TNSC] batch ${provider.state} ${fromIso}..${toIso}: ${batch.size} parks; park ${parkId} ${
+      row ? `present, templates=${JSON.stringify(row.templates)}` : 'ABSENT'
+    }`
+  );
   return { available: availableSites > 0, availableSites };
 }
