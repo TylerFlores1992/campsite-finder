@@ -236,13 +236,19 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 >     parkID — same id space), so no join table. `available > 0` on a camping
 >     `templateKey` = opening. Range-evaluated in one call → maps to the whole-stay
 >     rule natively, like GTC, no per-night intersection.
+>   - **Whole-stay: CONFIRMED (residential, 2026-07-20).** The one batched POST at
+>     1/3/5 nights from the same start returned shrinking totals (2140 → 1742 → 1686
+>     available sites across all parks), the signature of whole-consecutive-stay
+>     evaluation. So the adapter does NOT intersect per-night, like GTC. Also: 50 of
+>     63 parks appear in the availability response — the other 13 are day-use/no-camping
+>     parks that correctly drop out (matches the `data-product` camping filter).
 >   - **Open items before shipping:** (1) reachability from Fly/Vercel is UNTESTED —
->     the recon ran from a residential IP; the cloud dev env's proxy denies these hosts
->     outright, so it proved nothing about datacenter IPs. Test with the full UA before
->     deciding worker-direct vs proxy. (2) Confirm `available` = whole *consecutive*
->     stay (1-night vs 5-night count check). (3) `templateKey` legend (seen 1/2/4) →
->     which are campsites vs cabins/lodge, so a cabin opening doesn't fire a tent watch
->     (same concern as GTC's `bookingCategoryId`).
+>     the recon and the whole-stay check both ran from a residential IP; the cloud dev
+>     env's proxy denies these hosts outright, so datacenter IPs are unproven. Run
+>     `scripts/probe-tnsc-reachability.ts` from the Fly worker with the full UA before
+>     deciding worker-direct vs proxy. (2) `templateKey` legend (seen 1/2/4) → which
+>     are campsites vs cabins/lodge, so a cabin opening doesn't fire a tent watch (same
+>     concern as GTC's `bookingCategoryId`).
 >   - **SC needs its own recon** — its portal front-end differs (no embedded park
 >     array, no foreUP link on the landing). Same vendor/stack, so likely the same
 >     `/library/ajax/` endpoint, but unproven. TN and SC share plumbing, per-state

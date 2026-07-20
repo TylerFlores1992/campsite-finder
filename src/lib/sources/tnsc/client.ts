@@ -157,9 +157,10 @@ const batchCache = new Map<string, { at: number; rows: Map<number, TnscParkAvail
  * Fetch availability for ALL of a provider's parks over [fromIso, toIso). Returns
  * a map parkId → counts. Does the CSRF handshake, then the single POST.
  *
- * Whole-stay: the portal evaluates the fromDate→toDate range as one booking query,
- * so a nonzero `available` reflects sites open for the entire span — NOT per-night.
- * (Flagged for a 1-night-vs-5-night confirmation before ship; see docs/CONTEXT.md.)
+ * Whole-stay: CONFIRMED (residential, 2026-07-20) — the portal evaluates the
+ * fromDate→toDate range as one booking query, so a nonzero `available` reflects
+ * sites open for the ENTIRE span, NOT per-night. A 1/3/5-night sweep from one start
+ * returned shrinking totals (2140→1742→1686), so we do not intersect per-night.
  */
 export async function fetchAvailabilityBatch(
   provider: TnscProvider,
