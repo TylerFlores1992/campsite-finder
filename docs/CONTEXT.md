@@ -58,34 +58,57 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > mdwfp, arkansasstateparks, southcarolinaparks…) reference an `*rdr*` host in their
 > bundles. Growing past 28 states means a new adapter, not another registry entry.
 >
-> **GoingToCamp (Camis) — surveyed 2026-07-19, only worth ~2 states.** Tenants are
-> `<name>.goingtocamp.com`, but of the US ones only **Washington (167 locations) and
-> Wisconsin (64)** exist — the rest of the platform is Canadian (Manitoba, Nova
-> Scotia, Yukon, Long Point). MA/ME/SD/ND/VT are *not* on it.
-> - Catalog side is easy: `GET /api/resourcelocation` returns clean JSON with
->   `localizedValues[].fullName`, address, website, and `gpsCoordinates` as a
->   `"lat, lng"` **string** (not numeric fields). Coverage is uneven — WA has coords
->   for 136/167, **WI has none**, so WI would need name geocoding like RA does.
->   `GET /api/resourcecategory` gives the site types (Campsite, Cabin, Yurt, Group
->   Camp, Day Use Facility…), so day-use rows can be filtered out.
-> - Availability side is the hard part and is **unproven**: `/api/availability/*`
->   endpoints exist but GET without params is a 400, and **POST is blocked by Azure
->   WAF (403) from datacenter IPs** — the same class of problem as the UseDirect
->   CloudFront 403s, so it would likely need the `/api/rc-proxy` treatment or a
->   residential path. Cracking the request shape means reading the Angular bundle.
+> **GoingToCamp (Camis) — the next integration. 4 states, API cracked 2026-07-19.**
+> **Do NOT identify this platform by domain name.** Two of its four US tenants use
+> vanity domains, which is why an earlier pass misfiled them as "Aspira":
 >
-> Verdict: ~2 states (WA is a genuinely big camping state; WI is messier), with the
-> availability half carrying real WAF risk.
+> | State | Host | Locations | w/ coords |
+> |-------|------|-----------|-----------|
+> | WA | `washington.goingtocamp.com` | 167 | 136 |
+> | MI | `midnrreservations.com` | 148 | 15 |
+> | WI | `wisconsin.goingtocamp.com` | 64 | 0 |
+> | MS | `reserve.mdwfp.com` | 21 | 0 |
 >
-> **The "Aspira six" are really FOUR different platforms — surveyed 2026-07-19.**
-> CO/MI/TN/WV/KS/MS do *not* share a backend, so there is no 6-state unlock:
-> - **TN + SC = one product** (best cluster). Identical stack: Apache + ColdFusion
->   (`cfid`/`cftoken` cookies, `CF_CLIENT_TSP_LV` vs `CF_CLIENT_SCP_LV` — differs only
->   by state), same "Reservations | <State> State Parks" title. Active Network.
-> - **MI + MS = one product.** Proven identical: both serve the *same
->   content-hashed bundles* (`chunk-DXUNNUAM.js`, `chunk-C5FZKBQ3.js`,
->   `chunk-RWNUTB4V.js`), same 42-tag skeleton, same `/api/csp-violation`. Michigan is
->   a big camping state, so this cluster is worth more than its state count suggests.
+> The reliable test is the API itself: `GET /api/resourcelocation` returning a JSON
+> array. Every other uncovered state was swept with it — no further hits, so this is
+> all 4. (The rest of the platform is Canadian: Manitoba, Nova Scotia, Yukon, Long
+> Point.) MA/ME/SD/ND/VT are *not* on it.
+>
+> - **Catalog:** `GET /api/resourcelocation` → `localizedValues[].fullName`, address,
+>   website, and `gpsCoordinates` as a `"lat, lng"` **string** (not numeric fields).
+>   Only WA is well-covered; **WI and MS have zero coords and MI only 15**, so the
+>   sync needs name geocoding like RA's. `GET /api/resourcecategory` gives site types
+>   (Campsite, Cabin, Yurt, Group Camp, Day Use Facility…) to filter day-use rows.
+> - **Availability — WORKS, and the WAF is not a blocker.** The earlier "Azure WAF
+>   403" was **POST-only**; the GET form is fine from a datacenter IP:
+>   ```
+>   GET /api/availability/resourcelocation
+>       ?resourceLocationId=<id>&bookingCategoryId=0&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+>   ```
+>   → `[{ mapId, mapAvailabilities, resourceAvailabilities: { <resourceId>: [{ availability, remainingQuota }] } }]`
+> - **It is whole-stay, not per-night — which is exactly what we want.** The
+>   per-resource array stays length 1 no matter how many nights the range spans
+>   (verified at 1/2/3/5/7 nights): the API evaluates the entire `[start, end)` range
+>   and returns one verdict per site. That matches CampHawk's "one site, all
+>   consecutive nights" rule **natively** — no per-night set intersection like RA.
+>   Day-use-only parks correctly return `[]` (e.g. Anderson Lake).
+> - **ONE OPEN TASK: decode the `availability` enum.** Observed values 0,1,2,3,4,5,7
+>   — looks like a 3-bit mask. `0` is clearly unavailable; `7` is the common
+>   available-looking value; a date +150d out returns `2` for every site (likely
+>   "outside the booking window"). Must be decoded against the live site before this
+>   ships — guessing here would produce false alerts.
+>
+> Verdict: **best remaining target by a wide margin** — 4 states incl. two big camping
+> markets (WA, MI), a clean JSON catalog, and whole-stay availability that fits our
+> semantics better than ReserveAmerica's does.
+>
+> **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
+> CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
+> GoingToCamp above, what actually remains here is small:
+> - **TN + SC = one product** (the only real cluster left). Identical stack: Apache +
+>   ColdFusion (`cfid`/`cftoken` cookies, `CF_CLIENT_TSP_LV` vs `CF_CLIENT_SCP_LV` —
+>   differs only by state), same "Reservations | <State> State Parks" title. Active
+>   Network. No JSON API in the bundles → an HTML scrape in the RA mold.
 > - **CO = bespoke.** "Colorado Parks and Wildlife IPAWS", ASP.NET, Active Network
 >   (`actv_kuid_*` cookie), and behind a queue-it gate. Hostile; 1 state.
 > - **WV = not a campground system at all.** `wvstateparks.com` is a WordPress
@@ -97,10 +120,16 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > None of these expose a JSON API from their bundles (unlike UseDirect/GoingToCamp) —
 > they'd be HTML-scrape integrations in the ReserveAmerica mold.
 >
-> **Bottom line: no remaining integration unlocks more than 2 states.** Ranked by
-> value-for-effort: GoingToCamp (WA+WI, catalog API already proven, availability is
-> the risk) → MI+MS (one app, Michigan is a big camping market) → TN+SC (ColdFusion
-> scrape, reuses RA-style expertise) → CO/LA/WV (1 state each or lodging-only).
+> **Bottom line: build GoingToCamp next** — 4 states (WA/MI/WI/MS), clean JSON on both
+> the catalog and availability sides, and whole-stay semantics that fit our alert rule
+> natively. Everything after it is a distant second: TN+SC (2 states, ColdFusion
+> scrape) then CO/LA/WV (1 state each, or lodging-only).
+>
+> **Survey lesson worth keeping: fingerprint by API behaviour, not by domain or
+> bundle.** Domain names misled (MI/MS are Camis on vanity hosts), and so did shared
+> asset hashes (the "identical chunks" that looked like a private Aspira product were
+> just the Camis app). A single `GET /api/resourcelocation` settled it. Also: don't
+> match `/edirect/i` — it hits the word "**r**edirect" on every page on the web.
 
 > **Known gap — UseDirect unit catalogs.** For some UseDirect providers (currently
 > Florida, Ohio, Illinois, Virginia) the per-facility unit sync comes back empty:
