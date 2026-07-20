@@ -267,6 +267,36 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
    `notification_sent_at` (1-hour re-notify window) so it never double-alerts.
 4. **Notifications** (`src/lib/notifications/`) — email (Resend) + SMS (Twilio).
 
+### Booking links — how specific each provider lets us be
+
+`src/lib/booking-url.ts` is the one place that turns campground + site + date into a
+URL, shared by the alert dispatch and the detail-page availability calendar so a
+link never gets more specific in one place than the other. **Only add a parameter
+you have watched take effect** — a link that looks dated but silently lands on a
+generic page is worse than an honest generic one, because the alert promises dates
+the page doesn't honor.
+
+- **Recreation.gov — site yes, date NO. Measured 2026-07-19; don't re-probe.**
+  `/camping/campsites/<campsiteId>` is a real per-site page (rec.gov links to it
+  itself). Dates are *not* deep-linkable, verified three ways: `/availability` and
+  `?date=` are both stripped back to the bare campground URL; `?checkin=&checkout=`
+  survive but never reach the calendar (the bundle maps those from
+  `search.checkin_time` — they're the *search* route's params); and the site page
+  has no date inputs at all.
+- **ReserveAmerica — date yes.** `calarvdate=M/D/YYYY&sitepage=true`.
+- **UseDirect / GoingToCamp — unverified, so no params.** Plain reservations URL.
+
+> **The `#camphawk` fragments belong to the poller, not to `booking-url.ts`.** The
+> poller emits `…/campsites/<id>#camphawk=<start>_<end>` and
+> `…#camphawk-rc=<unitId>_<arrival>_<nights>_<sleepingUnitId>`, which the Chrome
+> extension in `extension/` uses to autofill dates and add to cart. Fragments never
+> reach the provider's server. Routing those two branches through `booking-url.ts`
+> without carrying the fragment would silently strip the autofill.
+>
+> **They also do nothing on a phone** — extensions don't run in mobile Chrome, which
+> is where SMS links get tapped. So for rec.gov the realistic ceiling is "lands on
+> the right site, dates not filled in." That's the provider's limit, not a bug.
+
 ### Verifying a source actually alerts
 
 "The code path matches the working one" is not verification — the registry-staleness
@@ -361,7 +391,40 @@ Resend (`RESEND_API_KEY`, `EMAIL_FROM`), Twilio (`TWILIO_*`), Mapbox
 The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 `BROKER_PORT`, `POLL_MS`).
 
+> **`NEXT_PUBLIC_*` vars are inlined at BUILD time, so a bad value lies dormant
+> until someone triggers a build — and then looks like that day's code broke it.**
+> This cost real debugging time on 2026-07-20: a third-party integration (v0) had
+> written its own Clerk **development** keys into Vercel Production. Nothing changed
+> until an unrelated push rebuilt the site, which baked in the dev publishable key
+> and pointed camphawk.app at a Clerk dev instance — a *separate user table*. The
+> symptoms pointed everywhere but the real cause: the account looked signed in
+> (Clerk worked fine, just the wrong instance), the Admin button still showed
+> (it's a client-side email check, no DB), the subscription read as never-subscribed,
+> and every watch vanished — because the watches fetch is gated on `isSubscribed`,
+> so one failed lookup hides them all. Only the Clerk handshake URL
+> (`*.clerk.accounts.dev`, a dev hostname) revealed it.
+>
+> Lessons worth keeping:
+> - **When auth or subscription state goes strange, check the Clerk hostname first.**
+>   Production is the camphawk.app instance; anything `*.clerk.accounts.dev` with a
+>   random animal name is a dev instance and its users are a different table.
+> - **Ask what changed in the environment before theorizing about the code.** The
+>   push that "caused" it only triggered a rebuild.
+> - **`/api/subscription/status` is the fastest probe.** `active:false,
+>   everSubscribed:false` on a known subscriber means wrong identity, not lost data.
+> - **Live vs test keys must be checked in pairs.** Clerk failed loudly; Stripe would
+>   not — a `sk_test_` key in Production accepts checkouts and takes no money.
+> - The client masks failures: `r.ok ? await r.json() : { active: false }` renders a
+>   500 identically to a genuine non-subscriber. Same shape as the `sync_log` trap.
+>
+> Vercel's env-var **"Last Updated"** column is how you find what an integration
+> touched. Note `AUTOCART_TOKEN`, `SYNC_SECRET` and `GTC_AVAILABILITY_URL` are *our
+> own* shared secrets, not vendor-issued — they must match the mini PC's `.env` and
+> the Fly worker, so copy from those sides rather than generating fresh values.
+
 ## Deploy targets
 
 See `docs/SETUP.md`. Short version: website auto-deploys on `git push`; the Fly worker
-deploys via `flyctl`; the mini-PC bot updates via `git push` + `update.bat` on the box.
+deploys via `flyctl` **and must then be started by hand** (see the autostop note
+above — the deploy leaves it stopped and alerting silently dead); the mini-PC bot
+updates via `git push` + `update.bat` on the box.

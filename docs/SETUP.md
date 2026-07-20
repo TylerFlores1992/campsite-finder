@@ -7,6 +7,9 @@ How to work on this project from any machine.
 - **Node.js 20+** and **git**
 - A GitHub login (to push) — `gh auth login` or a personal access token
 - Optional, only for deploying the pieces below: the **Vercel CLI** and **Fly CLI**
+  (Fly CLI on Windows: `iwr https://fly.io/install.ps1 -useb | iex`, then reopen the
+  shell and `flyctl auth login`; deploy commands must run from the repo root, since
+  the Docker build context is the whole repo)
 
 ## 1. Get the code
 
@@ -34,6 +37,14 @@ Stripe, Mapbox, Resend, Twilio, the auto-cart token, etc.). Two ways to get them
 > Note: `.env.local` intentionally uses **Stripe TEST** keys for local dev, while
 > Vercel Production uses LIVE keys. If you `vercel env pull`, double-check you're
 > not running live Stripe against a local server.
+
+> **Careful with anything that writes env vars for you.** `NEXT_PUBLIC_*` values are
+> inlined at build time, so a wrong one sits harmless until the next build and then
+> breaks the site in a way that looks like that day's code did it. A v0 integration
+> put Clerk **dev** keys into Vercel Production once and took auth down on the next
+> unrelated push. If auth or subscription state goes strange, check the Clerk
+> hostname before anything else — see the env-var note in `docs/CONTEXT.md` for the
+> full symptom list and the `/api/subscription/status` probe.
 
 ## 3. Run it
 
@@ -94,10 +105,16 @@ src/lib/            Core logic
   sources/          catalog sync per platform (ridb, reservecalifornia [+UseDirect states],
                     reserveamerica, goingtocamp)
   notifications/    email + SMS dispatch
+  booking-url.ts    the one place that builds a booking link (site/date deep links);
+                    records what each provider actually honors — see docs/CONTEXT.md
   db/               Supabase client + migrations/
 src/components/     UI (SearchBar, map, WatchesPanel, AutoCartToggle, SubscribeGate, …)
 worker/             Fly.io cancellation poller (poller.ts)
                     http-server.ts  POST /gtc/availability, for the Vercel search page
+extension/          Optional Chrome extension ("CampHawk Quick Cart") that reads the
+                    #camphawk / #camphawk-rc fragments in alert links to autofill dates
+                    and add to cart, in the user's own browser. Desktop only —
+                    extensions don't run in mobile Chrome. Ships OFF by default.
 scripts/auto-cart-bot/  Mini-PC Playwright bot + remote sign-in broker
 scripts/            run-sync*.ts catalog syncs; e2e-gtc-alert.mts (live alert test —
                     SENDS REAL EMAIL/SMS)
