@@ -103,14 +103,21 @@ function PricingButtons({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
         onClick={() => subscribe('yearly')}
         disabled={!!loading}
         className={`${base} relative bg-green-600 text-white hover:bg-green-700 ${
-          size === 'lg' ? 'shadow-green-600/25' : ''
+          size === 'lg' ? 'shadow-green-600/25 flex-col gap-0.5' : ''
         }`}
       >
         {loading === 'yearly' ? <Loader2 size={size === 'lg' ? 16 : 12} className="animate-spin" /> : null}
-        $20 / year{' '}
-        <span className={size === 'lg' ? 'text-green-100 text-xs font-normal' : 'text-green-100 font-normal'}>
-          (save 33%)
-        </span>
+        {size === 'lg' ? (
+          <>
+            <span className="leading-tight">$20 / year</span>
+            <span className="text-green-100 text-xs font-normal leading-tight">(save 33%)</span>
+          </>
+        ) : (
+          <>
+            $20 / year{' '}
+            <span className="text-green-100 font-normal">(save 33%)</span>
+          </>
+        )}
       </button>
     </>
   );
