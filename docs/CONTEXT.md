@@ -401,14 +401,30 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
   - **carted** → "✅ it's in your cart, check out" (email + SMS).
   - **not carted** → the poller re-verifies the site is still open ~35s later and
     sends a normal "still open — book it" alert, or stays **silent** if it's gone.
-    This also covers a bot that's offline — a re-verify decides, never a false carted.
 - `autocart_jobs` is also the permanent record of every cart attempt.
+
+> **The lane is gated on a live-bot heartbeat (migration `015`), because the silent
+> branch above silently swallowed a real cancellation.** A watch only enters this lane
+> when the owner reads `autocart_connected = true` — but that flag goes stale (the
+> keepalive is what flips it, and only every 90m). With a dead session still reading
+> connected, a hot opening was queued, never carted, and the 35s re-verify found it
+> gone → **no alert at all**, while a plain alerter (CampNab) texted the user. Observed
+> 2026-07-21 on Silver Lake. Fix: the roster poll (~2s) stamps `autocart_bot_heartbeat`;
+> the poller (`isBotOnline`) requires a fresh beat before routing an opening into this
+> lane. A stale/absent beat drops those watches onto the **main cadence → immediate
+> normal alert**. **Fail-OPEN by contract:** a missing row or a read error counts as
+> offline, so we alert rather than swallow — losing auto-carting (everyone gets normal
+> alerts) is the acceptable failure, a silent miss is not. So "a re-verify covers an
+> offline bot" was wrong twice over: the 35s gamble loses hot sites, and the heartbeat —
+> not the re-verify — is what now catches an offline bot.
 
 ### The mini-PC bot
 
 - `bot.mjs` — watches the roster, carts openings, reports outcomes; a **keepalive**
-  loads an authenticated rec.gov page every few hours so the session never dies from
-  idle.
+  loads an authenticated rec.gov page every **90m** (was 4h — sessions were still
+  expiring inside the 4h gap, which is also the window where `autocart_connected`
+  reads stale and swallows an opening; see the heartbeat note above) so the session
+  never dies from idle.
 - `broker.mjs` — a websocket server (exposed via a Cloudflare tunnel at
   broker.camphawk.app) that lets a user do the one-time rec.gov sign-in remotely from
   any device (streams the login page via CDP). No passwords ever touch our servers.

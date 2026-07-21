@@ -224,4 +224,27 @@ production backend safe (established 2026-07-21):
   sync across devices, so read `docs/CONTEXT.md` for the full picture.
 - **Run/poke at the site yourself:** Path in sections 1–3 above.
 
+## Claude Code on the web — session environment
+
+Web sessions run in an ephemeral sandbox with a **restrictive outbound network
+policy**: only GitHub + package registries (npm/pypi) are reachable. `camphawk.app`,
+`fly.io`/`api.machines.dev`, and `*.supabase.co` are all **blocked**, so from a web
+session you can read/build/lint the code and push to GitHub, but you cannot deploy the
+Fly worker, run migrations against Supabase, or hit the live app.
+
+- **Deps:** a SessionStart hook (`.claude/hooks/session-start.sh`, registered in
+  `.claude/settings.json`) runs `npm install` on session start so typecheck/lint/build
+  work without a manual install. It's remote-only (`CLAUDE_CODE_REMOTE`) and
+  **synchronous** (the session waits ~30s the first time; the container caches after).
+- **To let a web session do Fly/Supabase ops:** two env-config actions (not code) —
+  (1) widen the environment's **network policy** to allow `fly.io`, `api.fly.io`,
+  `api.machines.dev`, `registry.fly.io`, and the `*.supabase.co` host; (2) add scoped
+  secrets — `FLY_API_TOKEN` (`fly tokens create deploy -a campsite-finder-worker`, not
+  an org-admin token) and `SUPABASE_DB_URL` (least-privilege role, for `psql`) or
+  `SUPABASE_ACCESS_TOKEN`. Then set env `ENABLE_OPS_TOOLS=1` and the hook installs
+  flyctl + the Supabase CLI. Under the default locked-down policy flyctl can't even be
+  *downloaded* (fly.io blocked), which is why that block stays off by default.
+- The **mini-PC bot** can never be driven from a web session regardless — it needs a
+  headed browser on the residential box (RustDesk).
+
 See `docs/CONTEXT.md` for architecture and the decisions/gotchas behind the code.
