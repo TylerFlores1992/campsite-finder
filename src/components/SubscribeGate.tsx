@@ -138,13 +138,13 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
       : 'Searching is free — try it right above. A subscription turns on the good part: 24/7 watching of booked campgrounds, instant email + text alerts, and Auto-cart.';
 
   return (
-    <div className="relative isolate min-h-full flex flex-col items-center text-center px-4 pt-12 sm:pt-16 pb-16 gap-10 sm:gap-12">
+    <div className="relative isolate min-h-full flex flex-col items-center text-center px-4 pt-8 sm:pt-10 pb-12 gap-6 sm:gap-8">
       {/* Hero */}
-      <div className="flex flex-col items-center gap-5 pt-2 max-w-3xl">
-        <h1 className="font-serif text-4xl sm:text-6xl font-semibold text-green-800 leading-[1.05] text-balance [text-shadow:_0_1px_12px_rgb(250_247_242_/_0.8)]">
+      <div className="flex flex-col items-center gap-3 max-w-3xl">
+        <h1 className="font-serif text-4xl sm:text-5xl font-semibold text-green-800 leading-[1.05] text-balance [text-shadow:_0_1px_12px_rgb(250_247_242_/_0.8)]">
           {headline}
         </h1>
-        <p className="text-gray-600 max-w-xl text-base sm:text-lg leading-relaxed text-pretty [text-shadow:_0_1px_8px_rgb(250_247_242_/_0.9)]">
+        <p className="text-gray-600 max-w-xl text-sm sm:text-base leading-relaxed text-pretty [text-shadow:_0_1px_8px_rgb(250_247_242_/_0.9)]">
           {subcopy}
         </p>
       </div>
@@ -152,12 +152,12 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
       {/* Signed-out CTA — sits above the feature grid. Visitors need an account
           before checkout, so these route through Clerk sign-up / sign-in. */}
       {signedOut && (
-        <div className="w-full max-w-md rounded-3xl bg-background/90 ring-1 ring-green-100 shadow-lg backdrop-blur-sm p-6 text-center">
-          <p className="font-serif text-xl font-semibold text-green-800">
+        <div className="w-full max-w-md rounded-3xl bg-background/90 ring-1 ring-green-100 shadow-lg backdrop-blur-sm p-5 text-center">
+          <p className="font-serif text-lg font-semibold text-green-800">
             Start your 7-day free trial
           </p>
 
-          <ul className="mt-4 grid gap-2 text-left">
+          <ul className="mt-3 grid gap-1.5 text-left">
             {INCLUDED.map((item) => (
               <li key={item} className="flex items-center gap-2 text-sm text-gray-700">
                 <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-100">
@@ -168,43 +168,43 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
             ))}
           </ul>
 
-          <div className="mt-5 flex flex-col gap-3">
+          <div className="mt-4 flex flex-col gap-2.5">
             <SignUpButton mode="redirect">
-              <button className="w-full px-5 py-3.5 rounded-2xl font-display font-semibold text-white bg-green-600 hover:bg-green-700 shadow-md shadow-green-600/25 transition-all hover:-translate-y-0.5">
+              <button className="w-full px-5 py-3 rounded-2xl font-display font-semibold text-white bg-green-600 hover:bg-green-700 shadow-md shadow-green-600/25 transition-all hover:-translate-y-0.5">
                 Start your free trial
               </button>
             </SignUpButton>
             <SignInButton mode="redirect">
-              <button className="w-full px-5 py-3.5 rounded-2xl font-display font-semibold text-green-700 bg-white border border-green-200 hover:bg-green-50 transition-colors">
+              <button className="w-full px-5 py-3 rounded-2xl font-display font-semibold text-green-700 bg-white border border-green-200 hover:bg-green-50 transition-colors">
                 Sign in
               </button>
             </SignInButton>
           </div>
-          <p className="mt-3 text-xs text-gray-500">
+          <p className="mt-2.5 text-xs text-gray-500">
             7-day free trial · then $2.50/mo or $20/yr · cancel anytime
           </p>
         </div>
       )}
 
       {/* Feature grid — translucent cream cards over the hero scene */}
-      <div className="grid sm:grid-cols-2 gap-5 w-full max-w-md sm:max-w-4xl text-left mx-auto">
+      <div className="grid sm:grid-cols-2 gap-4 w-full max-w-md sm:max-w-4xl text-left mx-auto">
         {FEATURE_CARDS.map((f) => {
           const Icon = f.icon;
           return (
             <div
               key={f.title}
-              className="group rounded-2xl bg-background/70 ring-1 ring-black/5 shadow-sm backdrop-blur-sm p-6 transition-all hover:bg-background/85 hover:shadow-md hover:-translate-y-0.5"
+              className="group rounded-2xl bg-background/70 ring-1 ring-black/5 shadow-sm backdrop-blur-sm p-5 transition-all hover:bg-background/85 hover:shadow-md hover:-translate-y-0.5"
             >
               <div className="flex items-center gap-2.5">
-                <Icon size={20} className="shrink-0 text-amber-600" />
-                <h3 className="font-serif text-lg font-semibold text-green-800">{f.title}</h3>
+                <Icon size={18} className="shrink-0 text-amber-600" />
+                <h3 className="font-serif text-base font-semibold text-green-800">{f.title}</h3>
                 {f.badge && (
                   <span className="ml-1 text-[10px] font-bold tracking-wide text-white bg-amber-500 rounded-full px-2 py-0.5">
                     {f.badge}
                   </span>
                 )}
               </div>
-              <p className="mt-3 text-sm text-gray-600 leading-relaxed">{f.body}</p>
+              <p className="mt-2 text-sm text-gray-600 leading-relaxed">{f.body}</p>
             </div>
           );
         })}
