@@ -67,6 +67,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-fraunces);
 }
 
 /* The app is designed light-only — no dark-mode variable flip, otherwise

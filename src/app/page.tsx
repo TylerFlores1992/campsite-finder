@@ -344,13 +344,24 @@ export default function HomePage() {
   // slim banner rides above results. Watch creation stays server-gated (402).
   const needsSubscription = isSignedIn && subLoaded && !isSubscribed;
 
+  const showLandingBg = !searchState;
+
   return (
-    <div className="flex flex-col min-h-screen md:h-screen bg-gray-50">
+    <div className={`relative flex flex-col min-h-screen md:h-screen ${showLandingBg ? 'bg-transparent' : 'bg-gray-50'}`}>
+      {/* Full-screen landing scene — one continuous background behind the header
+          and hero on the landing views (hidden once a search is active). */}
+      {showLandingBg && (
+        <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/hero-bg-wide.png" alt="" className="h-full w-full object-cover object-bottom translate-y-[12%]" />
+          <div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/70 to-background/60" />
+        </div>
+      )}
       {watchesOpen && (
         <WatchesPanel onClose={() => setWatchesOpen(false)} />
       )}
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-4 py-3 z-10 shadow-sm">
+      <header className={`${showLandingBg ? 'bg-transparent border-transparent' : 'bg-background/90 border-gray-200'} backdrop-blur px-4 py-3 z-10 border-b`}>
         <div className="max-w-screen-2xl mx-auto space-y-3">
           {/* Top row: brand + actions (wraps cleanly on mobile) */}
           <div className="flex items-center justify-between gap-2">
@@ -366,7 +377,7 @@ export default function HomePage() {
               aria-label="CampHawk home"
               className="shrink-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-green-400"
             >
-              <Logo markSize={34} />
+              <Logo markSize={40} />
             </button>
             <div className="flex items-center gap-2">
               <button
@@ -374,7 +385,7 @@ export default function HomePage() {
                   if (!isSignedIn) { window.location.href = '/sign-in'; return; }
                   setWatchesOpen(true);
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 hover:text-amber-700 transition-colors"
                 title="My watches"
               >
                 <Bell size={15} />
@@ -405,12 +416,12 @@ export default function HomePage() {
               ) : (
                 <div className="flex items-center gap-2">
                   <SignInButton mode="redirect">
-                    <button className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
+                    <button className="text-sm font-medium px-3 py-1.5 rounded-lg text-gray-700 hover:text-green-800 transition-colors">
                       Sign in
                     </button>
                   </SignInButton>
                   <SignUpButton mode="redirect">
-                    <button className="text-sm px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors">
+                    <button className="text-sm font-semibold px-5 py-2 rounded-full bg-green-800 text-white hover:bg-green-900 shadow-sm transition-colors">
                       Sign up
                     </button>
                   </SignUpButton>
@@ -465,13 +476,7 @@ export default function HomePage() {
         ) : !searchState && !isSignedIn ? (
           <SubscribeGate signedOut />
         ) : !searchState ? (
-          <div className="relative isolate h-full flex flex-col items-center justify-center text-center px-4 gap-6 overflow-y-auto pt-10 pb-24 bg-[#F3EFE0]">
-            {/* CampHawk hero scene + soft scrim so text stays legible over it */}
-            <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/hero-bg.png" alt="" className="h-full w-full object-cover object-center" />
-              <div className="absolute inset-0 bg-gradient-to-b from-[#F3EFE0]/45 via-[#F3EFE0]/25 to-[#F3EFE0]/55" />
-            </div>
+          <div className="relative isolate h-full flex flex-col items-center justify-center text-center px-4 gap-6 overflow-y-auto pt-10 pb-24">
             {/* Only active subscribers reach this hero (visitors and unsubscribed
                 users get the SubscribeGate marketing panel instead) — so skip the
                 sales pitch and get them moving. */}
