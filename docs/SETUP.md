@@ -226,24 +226,43 @@ production backend safe (established 2026-07-21):
 
 ## Claude Code on the web — session environment
 
-Web sessions run in an ephemeral sandbox with a **restrictive outbound network
-policy**: only GitHub + package registries (npm/pypi) are reachable. `camphawk.app`,
-`fly.io`/`api.machines.dev`, and `*.supabase.co` are all **blocked**, so from a web
-session you can read/build/lint the code and push to GitHub, but you cannot deploy the
-Fly worker, run migrations against Supabase, or hit the live app.
+Web sessions run in an ephemeral Anthropic-managed sandbox. Behaviour is governed by
+the **environment** you pick in the session's environment selector (the **cloud icon**
+next to where you start a task — there is no separate "Environments" page; hover an
+entry and click its gear to edit). An environment sets a network-access level, env
+vars, and a setup-script field.
 
 - **Deps:** a SessionStart hook (`.claude/hooks/session-start.sh`, registered in
-  `.claude/settings.json`) runs `npm install` on session start so typecheck/lint/build
-  work without a manual install. It's remote-only (`CLAUDE_CODE_REMOTE`) and
-  **synchronous** (the session waits ~30s the first time; the container caches after).
-- **To let a web session do Fly/Supabase ops:** two env-config actions (not code) —
-  (1) widen the environment's **network policy** to allow `fly.io`, `api.fly.io`,
-  `api.machines.dev`, `registry.fly.io`, and the `*.supabase.co` host; (2) add scoped
-  secrets — `FLY_API_TOKEN` (`fly tokens create deploy -a campsite-finder-worker`, not
-  an org-admin token) and `SUPABASE_DB_URL` (least-privilege role, for `psql`) or
-  `SUPABASE_ACCESS_TOKEN`. Then set env `ENABLE_OPS_TOOLS=1` and the hook installs
-  flyctl + the Supabase CLI. Under the default locked-down policy flyctl can't even be
-  *downloaded* (fly.io blocked), which is why that block stays off by default.
+  `.claude/settings.json`) runs `npm install` so typecheck/lint/build work without a
+  manual install. It's remote-only (`CLAUDE_CODE_REMOTE`), **synchronous** (~30s the
+  first time; the container caches after), and **restores `package-lock.json`** after
+  install — npm re-normalizes the lockfile in the sandbox, which would otherwise leave
+  the repo dirty every session. Leave the environment's own "Setup script" field empty;
+  this committed hook is the setup. A real dependency change goes through a
+  `package.json` edit + commit, not the hook.
+- **Network access levels** (per environment): **None** / **Trusted** (default —
+  package registries + GitHub only) / **Full** (any domain) / **Custom** (your
+  allowlist, optionally plus the defaults). Under **Trusted**, `camphawk.app`,
+  `*.fly.io`/`api.machines.dev`, and `*.supabase.co` are all **blocked** — so a default
+  session can read/build/lint and push to GitHub, but cannot deploy the Fly worker, run
+  the catalog syncs against Supabase, or hit the live app. GitHub always works (separate
+  proxy), no token needed.
+- **To make a web session fully able to deploy/sync (e.g. add a state end-to-end):**
+  (1) set the environment's network access to **Full** (or **Custom** with the provider
+  host + `api.mapbox.com` + `*.supabase.co` + `*.fly.io` + `api.machines.dev`);
+  (2) add env vars — `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (the sync
+  scripts authenticate via `getSupabaseAdmin`), `NEXT_PUBLIC_MAPBOX_TOKEN` (geocoding),
+  and `FLY_API_TOKEN` (a **deploy**-scoped token: `fly tokens create deploy -a
+  campsite-finder-worker`, not org-admin); (3) set `ENABLE_OPS_TOOLS=1` so the hook
+  installs flyctl + the Supabase CLI (flyctl downloads from fly.io, so this needs the
+  network open first — that's why the block is off by default).
+- **No secrets store yet:** env vars are stored in the environment config as plaintext,
+  visible to anyone who can edit it. Keep the Fly token deploy-scoped, prefer a
+  least-privilege Supabase role over the full service-role key where practical, and
+  rotate after. Never put these in `NEXT_PUBLIC_*` build settings.
+- Network level and env vars are **persistent per environment** (set once, apply to
+  every future session) but changes only take effect in a **new** session — the running
+  container keeps the policy it started with.
 - The **mini-PC bot** can never be driven from a web session regardless — it needs a
   headed browser on the residential box (RustDesk).
 
