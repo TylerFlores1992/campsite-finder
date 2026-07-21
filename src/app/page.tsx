@@ -347,7 +347,7 @@ export default function HomePage() {
   const showLandingBg = !searchState;
 
   return (
-    <div className={`relative flex flex-col min-h-screen md:h-screen ${showLandingBg ? 'bg-transparent' : 'bg-gray-50'}`}>
+    <div className={`relative flex flex-col min-h-screen ${searchState ? 'md:h-screen' : ''} ${showLandingBg ? 'bg-transparent' : 'bg-gray-50'}`}>
       {/* Full-screen landing scene — one continuous background behind the header
           and hero on the landing views (hidden once a search is active). */}
       {showLandingBg && (
@@ -472,7 +472,7 @@ export default function HomePage() {
       {/* Main content */}
       <main
         className={`flex-1 max-w-screen-2xl mx-auto w-full ${
-          searchState ? 'md:flex md:flex-col md:overflow-hidden' : 'md:overflow-y-auto'
+          searchState ? 'md:flex md:flex-col md:overflow-hidden' : ''
         }`}
       >
         {!searchState && needsSubscription ? (
