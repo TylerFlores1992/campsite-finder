@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db/client';
+import { query, mutate } from '@/lib/db/client';
 import type { NotificationPayload } from '@/lib/notifications';
 
 export const dynamic = 'force-dynamic';
@@ -13,6 +13,11 @@ export async function GET(req: NextRequest) {
   if (req.headers.get('authorization') !== `Bearer ${token}`) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
+
+  // This authorized poll is the bot's liveness beacon: stamp the heartbeat the
+  // Fly poller reads to know the bot is actually online (015_autocart_bot_heartbeat).
+  // Fire-and-forget — a heartbeat write must never block or fail the roster feed.
+  mutate(`UPDATE autocart_bot_heartbeat SET beat_at = NOW() WHERE id = 1`).catch(() => {});
 
   const windowMin = Math.min(60, Math.max(2, Number(req.nextUrl.searchParams.get('windowMin') ?? 15)));
 
