@@ -151,14 +151,27 @@ scripts/            run-sync*.ts catalog syncs; e2e-gtc-alert.mts (live alert te
 The UI is iterated in **v0** (linked to this GitHub repo). Setup that keeps the
 production backend safe (established 2026-07-21):
 
-- **`master` is branch-protected** — a ruleset requires a PR before merging
-  (0 approvals, so you can self-merge). v0 pushes to its own branch and opens a PR;
-  direct pushes to `master` are rejected. Keep it that way.
-- **Review the PR's diff before merging — v0 regenerates whole files** and can
+- **Branch protection: tried, then turned OFF (2026-07-21).** A `master` ruleset
+  requiring a PR was set up so v0 changes got reviewed, but with a solo dev it added
+  more friction than it was worth, so it's **disabled** (the ruleset still exists in
+  GitHub → Settings → Rules → Rulesets, set to Disabled — flip to Active to re-enable).
+  Current workflow: **changes go straight to `master`** (Claude commits directly; v0
+  can too). Trade-off: a bad push reaches production directly, so the safety net is
+  "look before you push." Re-enable the ruleset if v0 or a second agent starts
+  clobbering `master`.
+- **Review the diff before it hits `master` — v0 regenerates whole files** and can
   silently drop backend wiring. Danger files to eyeball every time: `src/middleware.ts`
   (auth gate + the `/api/rc-proxy` and `/api/tnsc-availability` allowlists),
   `src/app/api/**`, `src/lib/**`, `src/app/layout.tsx` (the `<ClerkProvider>` wrapper),
   `next.config.ts`, `package.json`. A clean v0 PR touches only components/styles/assets.
+- **Two load-bearing UI details a v0 regen has dropped before (2026-07-21):**
+  (1) the **`export const viewport`** in `src/app/layout.tsx` — without it phones open
+  zoomed in and off-center (Next won't emit the viewport meta on its own here); and
+  (2) the landing must **scroll as a normal document** — only the *search-results*
+  view uses the fixed-viewport app layout (`md:h-screen` + inner `overflow-y-auto`),
+  gated on `searchState` in `src/app/page.tsx`. If the whole page gets `md:h-screen`
+  again, the landing gets the "ugly nested scrollbar" back. `Logo` is also fluid
+  (`clamp()`), so it shrinks on phones — don't hard-code a big fixed size in the header.
 - **v0's preview needs Clerk keys or it crash-loops.** The whole app is wrapped in
   `<ClerkProvider>` and `clerkMiddleware()` runs on every request, and **both throw
   without keys** — the publishable key alone stops the provider crash but the
@@ -170,6 +183,17 @@ production backend safe (established 2026-07-21):
 - **NEVER let v0 sync env vars to Vercel Production.** Dev keys belong in v0's preview
   only. Dev keys reaching Production is exactly the outage in `docs/CONTEXT.md`'s
   env-var note — it's the same failure class, just the opposite direction.
+- **There is ONE Vercel project — `campsite-finder` — and it owns camphawk.app.**
+  It's linked to this GitHub repo, so every push to `master` auto-builds here. v0 once
+  renamed it to `v0-frontend`, which caused a long "nothing I deploy shows up" hunt
+  (it looked like two projects fighting over the domain); it's since been renamed back
+  to `campsite-finder`. Don't create a second Vercel project for this app, and don't
+  let v0 spin up its own — the domain must stay on the one GitHub-connected project.
+- **The production alias is flaky — a `master` push builds but doesn't always
+  repoint camphawk.app to the new build.** Symptom: `vercel ls` shows the new deploy
+  `Ready`, but camphawk.app still serves the old one (incognito confirms it's not
+  cache). Fix: **Deployments → the newest `master` build → ⋯ → Promote to Production**.
+  Worth fixing the project's auto-assign setting so this stops recurring.
 
 > **A front-end-only merge to `master` can still break the backend.** Learned the
 > hard way 2026-07-21: production had the `/api/tnsc-availability` middleware fix only
@@ -179,6 +203,18 @@ production backend safe (established 2026-07-21):
 > **Lesson: `master` must be the source of truth — don't let a manual `vercel --prod`
 > from a branch outrun what's merged, and after any merge re-check that camphawk.app
 > serves the routes you expect (the auto-alias is flaky — see the Website deploy row).**
+
+> **"Merged" ≠ "on `master`" ≠ "deployed" ≠ "what the user sees" — verify the whole
+> chain.** A whole session was lost describing UI fixes the user couldn't see because
+> they never actually reached the deployed `master`: the fixes were committed to a
+> shared feature branch that a *second agent* was also editing, and the PR that got
+> merged captured a different snapshot. Two habits that would've caught it in seconds:
+> (1) after pushing, confirm the change is really on `master`
+> (`git show origin/master:<file> | grep <the-change>`), not just on a branch; and
+> (2) don't run two agents/sessions on the same branch at once — parallel edits to
+> one branch are how the fixes got stranded and the history became a tangle. With
+> branch protection off, prefer committing straight to `master` so there's no branch
+> to fall out of sync.
 
 ## Working from another device — quickest paths
 
