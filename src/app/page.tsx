@@ -470,7 +470,7 @@ export default function HomePage() {
       </header>
 
       {/* Main content */}
-      <main className="flex-1 md:overflow-hidden max-w-screen-2xl mx-auto w-full">
+      <main className="flex-1 md:overflow-hidden md:flex md:flex-col max-w-screen-2xl mx-auto w-full">
         {!searchState && needsSubscription ? (
           <SubscribeGate returning={everSubscribed} />
         ) : !searchState && !isSignedIn ? (
