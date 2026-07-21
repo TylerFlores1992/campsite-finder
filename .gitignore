@@ -43,3 +43,6 @@ scripts/fix-exec-dml.mjs
 *.tsbuildinfo
 next-env.d.ts
 scripts/apply-migration-004.mjs
+
+# clerk configuration (can include secrets)
+/.clerk/
