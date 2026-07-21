@@ -138,7 +138,7 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
       : 'Searching is free — try it right above. A subscription turns on the good part: 24/7 watching of booked campgrounds, instant email + text alerts, and Auto-cart.';
 
   return (
-    <div className="relative isolate min-h-full flex flex-col items-center text-center px-4 pt-12 sm:pt-16 pb-16 gap-10 sm:gap-12 overflow-y-auto">
+    <div className="relative isolate min-h-full md:h-full flex flex-col items-center text-center px-4 pt-12 sm:pt-16 pb-16 gap-10 sm:gap-12 overflow-y-auto">
       {/* Hero */}
       <div className="flex flex-col items-center gap-5 pt-2 max-w-3xl">
         <h1 className="font-serif text-4xl sm:text-6xl font-semibold text-green-800 leading-[1.05] text-balance [text-shadow:_0_1px_12px_rgb(250_247_242_/_0.8)]">
