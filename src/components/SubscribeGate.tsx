@@ -187,7 +187,7 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
       )}
 
       {/* Feature grid — translucent cream cards over the hero scene */}
-      <div className="grid sm:grid-cols-2 gap-5 w-full max-w-4xl text-left">
+      <div className="grid sm:grid-cols-2 gap-5 w-full max-w-md sm:max-w-4xl text-left mx-auto">
         {FEATURE_CARDS.map((f) => {
           const Icon = f.icon;
           return (
