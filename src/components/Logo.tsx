@@ -77,23 +77,26 @@ interface LogoProps {
 
 /** Full horizontal lockup: hawk badge mark + two-tone wordmark. */
 export default function Logo({ markSize = 34, mono = false, className }: LogoProps) {
-  const fontSize = markSize * 0.6;
-  // The badge PNG carries transparent padding, so its visible emblem is ~60% of
-  // the box. This multiplier sizes only the image; the wordmark font is unchanged.
-  const imageSize = fontSize * 3.8;
+  const maxFont = markSize * 0.6;
+  // Fluid size: pins to ~58% on phones, reaches full size (`markSize` = desktop max)
+  // by ~tablet width. This keeps the header lockup from overflowing a ~360px screen
+  // (which pushed the whole page wide and made it open zoomed on mobile).
+  const minFont = maxFont * 0.58;
+  const fontSize = `clamp(${minFont.toFixed(1)}px, ${(maxFont * 0.143).toFixed(2)}vw, ${maxFont.toFixed(1)}px)`;
+  // Badge PNG has transparent padding, so its visible emblem is ~60% of the box.
+  // Sizing it in `em` (of the wrapper's font-size) makes it track the wordmark fluidly.
   return (
-    <span className={`inline-flex items-center gap-2 ${className ?? ''}`}>
+    <span className={`inline-flex items-center gap-2 ${className ?? ''}`} style={{ fontSize }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src="/logo-badge.png"
         alt="CampHawk"
-        style={{ height: imageSize, width: imageSize }}
+        style={{ height: '3.8em', width: '3.8em' }}
         className="shrink-0 select-none object-contain"
         draggable={false}
       />
       <span
         className="font-serif font-semibold tracking-tight leading-none"
-        style={{ fontSize }}
       >
         <span className={mono ? '' : 'text-green-800'}>Camp</span>
         <span className={mono ? '' : 'text-[#4a3423]'}>Hawk</span>

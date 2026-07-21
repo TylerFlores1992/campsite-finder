@@ -64,7 +64,7 @@ export default function RootLayout({
     <ClerkProvider>
       <html
         lang="en"
-        className={`${sora.variable} ${inter.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased`}
+        className={`${sora.variable} ${inter.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased overflow-x-clip`}
       >
         <body className="min-h-full flex flex-col overflow-x-clip">
           {children}
