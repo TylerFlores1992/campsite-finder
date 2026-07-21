@@ -51,7 +51,13 @@ Each source has an adapter in `src/lib/availability/` and a catalog sync in
   (ids are negative, e.g. `gtc-WA--2147483647`). Washington, Michigan, Wisconsin,
   Mississippi. Clean JSON API; see `src/lib/sources/goingtocamp/`. Alert-only.
 
-State-park coverage spans **32 states** across those platforms, plus federal
+- **TN/SC State Parks (ColdFusion portal)** — `source='tnsc'`, ids `tnsc-<ST>-<parkId>`.
+  Tennessee live (shipped 2026-07-20); South Carolina stubbed/unverified. Clean
+  batched JSON availability API; see `src/lib/sources/tnsc/`. Alert-only, and the
+  worker reaches it **through a Vercel proxy** (`/api/tnsc-availability`) because the
+  portal's WAF blocks Fly — see the detailed TN+SC note below.
+
+State-park coverage spans **33 states** across those platforms, plus federal
 Recreation.gov nationwide. All non-rec.gov sources are **alert-only** (their carts are
 session-bound and don't sync to a phone). Adding a source = availability adapter +
 catalog sync + wire into search/worker/notifications + update coverage copy.
