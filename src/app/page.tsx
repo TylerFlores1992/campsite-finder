@@ -347,7 +347,7 @@ export default function HomePage() {
   const showLandingBg = !searchState;
 
   return (
-    <div className={`relative flex flex-col min-h-screen md:h-screen ${showLandingBg ? 'bg-transparent' : 'bg-gray-50'}`}>
+    <div className={`relative flex flex-col min-h-screen ${searchState ? 'md:h-screen' : ''} ${showLandingBg ? 'bg-transparent' : 'bg-gray-50'}`}>
       {/* Full-screen landing scene — one continuous background behind the header
           and hero on the landing views (hidden once a search is active). */}
       {showLandingBg && (
@@ -361,7 +361,7 @@ export default function HomePage() {
         <WatchesPanel onClose={() => setWatchesOpen(false)} />
       )}
       {/* Header */}
-      <header className={`${showLandingBg ? 'bg-transparent border-transparent' : 'bg-background/90 border-gray-200'} backdrop-blur px-4 py-3 z-10 border-b`}>
+      <header className={`${showLandingBg ? 'bg-transparent border-transparent' : 'bg-background/90 border-gray-200'} backdrop-blur px-3 sm:px-4 py-3 z-10 border-b`}>
         <div className="max-w-screen-2xl mx-auto space-y-3">
           {/* Top row: brand + actions (wraps cleanly on mobile) */}
           <div className="flex items-center justify-between gap-2">
@@ -379,7 +379,7 @@ export default function HomePage() {
             >
               <Logo markSize={40} />
             </button>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               <button
                 onClick={() => {
                   if (!isSignedIn) { window.location.href = '/sign-in'; return; }
@@ -414,14 +414,14 @@ export default function HomePage() {
                   <UserButton />
                 </div>
               ) : (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2">
                   <SignInButton mode="redirect">
-                    <button className="text-sm font-medium px-3 py-1.5 rounded-lg text-gray-700 hover:bg-gray-50 hover:text-green-800 transition-colors">
+                    <button className="text-sm font-medium px-2.5 sm:px-3 py-1.5 rounded-lg text-gray-700 hover:bg-gray-50 hover:text-green-800 transition-colors">
                       Sign in
                     </button>
                   </SignInButton>
                   <SignUpButton mode="redirect">
-                    <button className="text-sm font-semibold px-5 py-2 rounded-full bg-green-800 text-white hover:bg-green-900 shadow-sm transition-colors">
+                    <button className="text-sm font-semibold px-4 sm:px-5 py-2 rounded-full bg-green-800 text-white hover:bg-green-900 shadow-sm transition-colors">
                       Sign up
                     </button>
                   </SignUpButton>
@@ -472,7 +472,7 @@ export default function HomePage() {
       {/* Main content */}
       <main
         className={`flex-1 max-w-screen-2xl mx-auto w-full ${
-          searchState ? 'md:flex md:flex-col md:overflow-hidden' : 'md:overflow-y-auto'
+          searchState ? 'md:flex md:flex-col md:overflow-hidden' : ''
         }`}
       >
         {!searchState && needsSubscription ? (

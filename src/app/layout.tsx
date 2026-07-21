@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Sora, Inter, Geist_Mono, Fraunces } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/next";
@@ -48,6 +48,13 @@ export const metadata: Metadata = {
   },
 };
 
+// Explicit mobile viewport — without this a stray bit of horizontal overflow makes
+// phones render the page wider than the screen (opens zoomed in, content off-center).
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -57,9 +64,9 @@ export default function RootLayout({
     <ClerkProvider>
       <html
         lang="en"
-        className={`${sora.variable} ${inter.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased`}
+        className={`${sora.variable} ${inter.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased overflow-x-clip`}
       >
-        <body className="min-h-full flex flex-col">
+        <body className="min-h-full flex flex-col overflow-x-clip">
           {children}
           <Analytics />
           <SpeedInsights />
