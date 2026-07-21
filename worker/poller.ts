@@ -54,6 +54,12 @@ const AUTOCART_POLL_INTERVAL_MS = Number(process.env.AUTOCART_POLL_INTERVAL_MS ?
 // re-verifies availability and decides the fallback alert (see 014_autocart_jobs).
 const RECONCILE_DELAY_SEC = Number(process.env.AUTOCART_RECONCILE_DELAY_SEC ?? 35);
 const RECGOV_CONCURRENCY = 4;
+// How fresh the mini-PC bot's heartbeat must be for us to treat it as online. The
+// bot polls the roster every ~2s, so anything older than this means it's down (box
+// off, process crashed, network cut). When it's stale we do NOT route rec.gov
+// openings into the silent auto-cart lane — they fall back to normal immediate
+// alerts, because a dead bot must never silently swallow a cancellation.
+const AUTOCART_BOT_STALE_SEC = Number(process.env.AUTOCART_BOT_STALE_SEC ?? 60);
 // Matches the Campflare webhook handler: re-notify only if the last alert is >1h old.
 const RENOTIFY_WINDOW = "interval '1 hour'";
 
@@ -78,12 +84,32 @@ interface WatchRow {
  * on detection — we create a pending job, let the bot try to cart it, and decide the
  * alert on the outcome (see reconcileAutocartJobs + 014_autocart_jobs.sql).
  */
-function isAutocartLane(w: WatchRow): boolean {
+function isAutocartLane(w: WatchRow, botOnline: boolean): boolean {
   return (
+    botOnline &&
     w.campground_source === 'ridb' &&
     w.autocart_enabled === true &&
     w.autocart_connected === true
   );
+}
+
+/**
+ * Is the mini-PC bot actually online? Reads the heartbeat it stamps on every
+ * roster poll (015_autocart_bot_heartbeat). Fail-OPEN: a missing row or a read
+ * error returns false, so auto-cart watches fall back to normal immediate alerts
+ * rather than being silently swallowed by a lane no live bot is servicing.
+ */
+async function isBotOnline(): Promise<boolean> {
+  try {
+    const rows = await query<{ fresh: boolean }>(
+      `SELECT beat_at > NOW() - INTERVAL '${AUTOCART_BOT_STALE_SEC} seconds' AS fresh
+       FROM autocart_bot_heartbeat WHERE id = 1`
+    );
+    return rows[0]?.fresh === true;
+  } catch (err) {
+    console.error('[poller] bot heartbeat read failed — treating bot as offline:', (err as Error).message);
+    return false;
+  }
 }
 
 /** Months (YYYY-MM) that the nights of [start, end) span. */
@@ -243,8 +269,11 @@ async function cycle(): Promise<void> {
   }
 
   // Auto-cart rec.gov watches are handled by the tighter autocartCycle() below;
-  // everything else runs here on the main cadence.
-  const mainWatches = watches.filter((w) => !isAutocartLane(w));
+  // everything else runs here on the main cadence. When the bot is offline the
+  // auto-cart lane is empty, so those watches drop through to here and alert
+  // immediately like any normal watch.
+  const botOnline = await isBotOnline();
+  const mainWatches = watches.filter((w) => !isAutocartLane(w, botOnline));
   const raWatches = mainWatches.filter((w) => w.campground_source === 'reserveamerica');
   const rcWatches = mainWatches.filter((w) => isUseDirectSource(w.campground_source));
   const gtcWatches = mainWatches.filter((w) => isGoingToCampSource(w.campground_source));
@@ -491,7 +520,11 @@ function autocartPayload(watch: WatchRow, result: WatchResult): NotificationPayl
 }
 
 async function autocartCycle(): Promise<void> {
-  const watches = (await loadWatches()).filter(isAutocartLane);
+  // If the bot is offline the lane is empty (the main cycle alerts these watches
+  // immediately instead); we still fall through to reconcile any jobs queued
+  // before it dropped.
+  const botOnline = await isBotOnline();
+  const watches = (await loadWatches()).filter((w) => isAutocartLane(w, botOnline));
   if (watches.length > 0) {
     // One recgov fetch per unique campground+month, shared across these watches.
     const pairs = new Set<string>();

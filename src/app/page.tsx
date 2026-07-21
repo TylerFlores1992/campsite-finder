@@ -353,7 +353,7 @@ export default function HomePage() {
       {showLandingBg && (
         <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/hero-bg-wide.png" alt="" className="h-full w-full object-cover object-[28%_22%] md:object-bottom md:translate-y-[12%]" />
+          <img src="/hero-bg-wide.png" alt="" className="h-full w-full object-cover object-[24%_18%] translate-y-[16%] md:object-[36%_100%] md:translate-y-[26%]" />
           <div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/70 to-background/60" />
         </div>
       )}

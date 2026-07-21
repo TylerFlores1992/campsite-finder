@@ -40,7 +40,11 @@ const TOKEN = process.env.AUTOCART_TOKEN; // master token
 const POLL_MS = Number(process.env.POLL_MS || 2000);
 // Keep each signed-in rec.gov session warm this often, so it never dies from
 // inactivity between (rare) cart events — the fix for "re-sign-in every few days".
-const KEEPALIVE_MS = Number(process.env.KEEPALIVE_MS || 4 * 3600 * 1000); // 4h
+// Tightened from 4h to 90m: sessions were still expiring inside the 4h gap, and a
+// stale gap is also when the app still reads "connected" while the session is dead,
+// so an opening gets routed into the silent auto-cart lane and never alerts. The
+// box is on 24/7; the only cost is the keepalive window flashing a bit more often.
+const KEEPALIVE_MS = Number(process.env.KEEPALIVE_MS || 90 * 60 * 1000); // 90m
 const WINDOW_MIN = Number(process.env.WINDOW_MIN || 15);
 const MAX_CONCURRENCY = Math.max(1, Number(process.env.MAX_CONCURRENCY || 1)); // browsers open at once
 const PROFILES_DIR = path.resolve(__dirname, process.env.PROFILES_DIR || 'profiles');
