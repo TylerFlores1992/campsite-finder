@@ -353,7 +353,7 @@ export default function HomePage() {
       {showLandingBg && (
         <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/hero-bg-wide.png" alt="" className="h-full w-full object-cover object-bottom translate-y-[12%]" />
+          <img src="/hero-bg-wide.png" alt="" className="h-full w-full object-cover object-[28%_22%] md:object-bottom md:translate-y-[12%]" />
           <div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/70 to-background/60" />
         </div>
       )}
@@ -385,7 +385,7 @@ export default function HomePage() {
                   if (!isSignedIn) { window.location.href = '/sign-in'; return; }
                   setWatchesOpen(true);
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 hover:text-amber-700 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-amber-700 transition-colors"
                 title="My watches"
               >
                 <Bell size={15} />
@@ -416,7 +416,7 @@ export default function HomePage() {
               ) : (
                 <div className="flex items-center gap-2">
                   <SignInButton mode="redirect">
-                    <button className="text-sm font-medium px-3 py-1.5 rounded-lg text-gray-700 hover:text-green-800 transition-colors">
+                    <button className="text-sm font-medium px-3 py-1.5 rounded-lg text-gray-700 hover:bg-gray-50 hover:text-green-800 transition-colors">
                       Sign in
                     </button>
                   </SignInButton>
@@ -470,7 +470,11 @@ export default function HomePage() {
       </header>
 
       {/* Main content */}
-      <main className="flex-1 md:overflow-hidden max-w-screen-2xl mx-auto w-full">
+      <main
+        className={`flex-1 max-w-screen-2xl mx-auto w-full ${
+          searchState ? 'md:flex md:flex-col md:overflow-hidden' : 'md:overflow-y-auto'
+        }`}
+      >
         {!searchState && needsSubscription ? (
           <SubscribeGate returning={everSubscribed} />
         ) : !searchState && !isSignedIn ? (

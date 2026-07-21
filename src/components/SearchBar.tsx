@@ -347,7 +347,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
         <select
           value={radiusMiles}
           onChange={(e) => setRadiusMiles(Number(e.target.value))}
-          className="py-2 px-3 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400 bg-white"
+          className="py-2 px-3 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400 bg-white cursor-pointer hover:bg-gray-50 transition-colors"
         >
           {RADIUS_OPTIONS.map((r) => (
             <option key={r} value={r}>
@@ -367,7 +367,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
       <button
         type="submit"
         disabled={!location || geocoding}
-        className="px-6 py-3 bg-green-600 text-white text-sm font-semibold rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+        className="w-full sm:w-auto justify-center px-6 py-3 bg-green-600 text-white text-sm font-semibold rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
       >
         {geocoding ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
         Search

@@ -489,6 +489,12 @@ The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 >   not — a `sk_test_` key in Production accepts checkouts and takes no money.
 > - The client masks failures: `r.ok ? await r.json() : { active: false }` renders a
 >   500 identically to a genuine non-subscriber. Same shape as the `sync_log` trap.
+> - **Direction matters — dev keys in the v0 *preview* are fine and in fact required.**
+>   v0's preview crash-loops without Clerk keys (`<ClerkProvider>` and `clerkMiddleware`
+>   both throw), so its env needs a matched dev-instance `pk_test_`/`sk_test_` pair —
+>   see `docs/SETUP.md` ("Front-end changes via v0"). That's safe because it never
+>   touches Production. The outage above was the *opposite* direction: dev keys landing
+>   in Vercel **Production**. Keep the two apart and never let v0 sync env to prod.
 >
 > Vercel's env-var **"Last Updated"** column is how you find what an integration
 > touched. Note `AUTOCART_TOKEN`, `SYNC_SECRET` and `GTC_AVAILABILITY_URL` are *our

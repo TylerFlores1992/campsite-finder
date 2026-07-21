@@ -138,7 +138,7 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
       : 'Searching is free — try it right above. A subscription turns on the good part: 24/7 watching of booked campgrounds, instant email + text alerts, and Auto-cart.';
 
   return (
-    <div className="relative isolate min-h-full flex flex-col items-center text-center px-4 pt-8 sm:pt-10 pb-12 gap-6 sm:gap-8 overflow-y-auto">
+    <div className="relative isolate min-h-full flex flex-col items-center text-center px-4 pt-8 sm:pt-10 pb-12 gap-6 sm:gap-8">
       {/* Hero */}
       <div className="flex flex-col items-center gap-3 max-w-3xl">
         <h1 className="font-serif text-4xl sm:text-5xl font-semibold text-green-800 leading-[1.05] text-balance [text-shadow:_0_1px_12px_rgb(250_247_242_/_0.8)]">
@@ -187,7 +187,7 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
       )}
 
       {/* Feature grid — translucent cream cards over the hero scene */}
-      <div className="grid sm:grid-cols-2 gap-4 w-full max-w-4xl text-left">
+      <div className="grid sm:grid-cols-2 gap-4 w-full max-w-md sm:max-w-4xl text-left mx-auto">
         {FEATURE_CARDS.map((f) => {
           const Icon = f.icon;
           return (
