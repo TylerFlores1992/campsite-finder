@@ -146,6 +146,40 @@ scripts/            run-sync*.ts catalog syncs; e2e-gtc-alert.mts (live alert te
 >
 > See `docs/CONTEXT.md`.
 
+## Front-end changes via v0
+
+The UI is iterated in **v0** (linked to this GitHub repo). Setup that keeps the
+production backend safe (established 2026-07-21):
+
+- **`master` is branch-protected** — a ruleset requires a PR before merging
+  (0 approvals, so you can self-merge). v0 pushes to its own branch and opens a PR;
+  direct pushes to `master` are rejected. Keep it that way.
+- **Review the PR's diff before merging — v0 regenerates whole files** and can
+  silently drop backend wiring. Danger files to eyeball every time: `src/middleware.ts`
+  (auth gate + the `/api/rc-proxy` and `/api/tnsc-availability` allowlists),
+  `src/app/api/**`, `src/lib/**`, `src/app/layout.tsx` (the `<ClerkProvider>` wrapper),
+  `next.config.ts`, `package.json`. A clean v0 PR touches only components/styles/assets.
+- **v0's preview needs Clerk keys or it crash-loops.** The whole app is wrapped in
+  `<ClerkProvider>` and `clerkMiddleware()` runs on every request, and **both throw
+  without keys** — the publishable key alone stops the provider crash but the
+  middleware then errors on a missing `CLERK_SECRET_KEY`, and v0 flash-refreshes
+  forever. Fix: in **v0's** env settings add a **matched Clerk _development_-instance
+  pair** — `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_…` **and**
+  `CLERK_SECRET_KEY=sk_test_…` (they must be from the same instance, or Clerk rejects
+  the mismatch). Dev-instance keys govern a throwaway user table, so this is safe.
+- **NEVER let v0 sync env vars to Vercel Production.** Dev keys belong in v0's preview
+  only. Dev keys reaching Production is exactly the outage in `docs/CONTEXT.md`'s
+  env-var note — it's the same failure class, just the opposite direction.
+
+> **A front-end-only merge to `master` can still break the backend.** Learned the
+> hard way 2026-07-21: production had the `/api/tnsc-availability` middleware fix only
+> via a manual `vercel --prod` from a branch that was *ahead* of `master`. Merging an
+> unrelated v0 UI PR then auto-deployed `master` (which still lacked that allowlist
+> line) and 404'd the route → TN alerting went down until the middleware PR was merged.
+> **Lesson: `master` must be the source of truth — don't let a manual `vercel --prod`
+> from a branch outrun what's merged, and after any merge re-check that camphawk.app
+> serves the routes you expect (the auto-alias is flaky — see the Website deploy row).**
+
 ## Working from another device — quickest paths
 
 - **Just keep directing changes (like via Claude Code):** clone the repo on the
