@@ -127,8 +127,9 @@ async function fetchRoster() {
 const inUse = new Set();
 
 // Launch a browser on a user's persistent profile, run fn, always close it.
-// Headed by default (the proven cart flow); pass {headless:true} for background
-// work like the session keepalive.
+// Headed by default, and everything that touches rec.gov should stay that way —
+// it fingerprints headless Chromium. The {headless} option is kept for local
+// dry runs against other sites, not for rec.gov work.
 async function withBrowser(userId, fn, { headless = false } = {}) {
   for (let i = 0; inUse.has(userId) && i < 240; i++) await sleep(500); // wait up to ~2 min
   if (inUse.has(userId)) throw new Error('profile busy');
@@ -202,8 +203,8 @@ async function ensureLogin(user) {
 // Keep every signed-in user's rec.gov session alive. The bot only opens a browser
 // when there's a cancellation to cart — which can be days apart — so an idle
 // session dies and the user is forced to re-sign-in. Since the mini PC is on 24/7,
-// we quietly load an authenticated page every few hours: that rolls the session's
-// expiry server-side and lets the SPA silently refresh its token. If the session
+// we load an authenticated page every few hours: that rolls the session's expiry
+// server-side and lets the SPA refresh its token. If the session
 // has genuinely died, we clear it and flip the app to "reconnect" NOW (during the
 // day) instead of the user discovering it on a missed cancellation.
 async function keepSessionsWarm() {
@@ -213,15 +214,29 @@ async function keepSessionsWarm() {
     if (!isLoggedIn(user.userId) || inUse.has(user.userId)) continue;
     const who = user.email || user.userId;
     try {
-      const state = await withBrowser(user.userId, (ctx) => recgovLoginState(ctx), { headless: true });
+      // HEADED, like the cart path. rec.gov fingerprints headless Chromium (see
+      // processJob), and this runs against the same profile the cart depends on —
+      // a keepalive that gets gated refreshes nothing and can misread the session.
+      // A window flashes on the mini PC every few hours; that's expected.
+      //
+      // Clearing a login is destructive (it forces the user to re-sign-in), so it
+      // takes TWO independent settled reads. One read is not enough: a single 'out'
+      // from a slow hydration or a transient gate used to nuke a live session, which
+      // the user only discovered on a missed cancellation.
+      const state = await withBrowser(user.userId, async (ctx) => {
+        const first = await recgovLoginState(ctx);
+        if (first !== 'out') return first;
+        await sleep(5000);
+        return await recgovLoginState(ctx); // confirm before we destroy anything
+      }, { headless: false });
       if (state === 'in') {
         log(`♻ ${who}: rec.gov session kept warm`);
       } else if (state === 'out') {
         try { fs.unlinkSync(readyMarker(user.userId)); } catch {}
         await reportConnected(user.userId, false);
-        log(`⚠ ${who}: rec.gov session expired (idle) — cleared login; they'll be asked to reconnect.`);
+        log(`⚠ ${who}: rec.gov session expired (idle, confirmed twice) — cleared login; they'll be asked to reconnect.`);
       } else {
-        log(`  ${who}: keepalive inconclusive (page didn't load) — leaving session as-is.`);
+        log(`  ${who}: keepalive inconclusive — leaving session as-is.`);
       }
     } catch (e) {
       log(`  keepalive error for ${who}: ${e.message}`);

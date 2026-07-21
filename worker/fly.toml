@@ -14,8 +14,22 @@ primary_region = "sjc"
 
 [env]
   POLL_INTERVAL_MS = "15000"
+  PORT = "8080"
 
-# No [[services]] section — this is a pure background worker with no HTTP traffic.
+# This is primarily a background poller. The HTTP service exists for ONE endpoint
+# (POST /gtc/availability, shared-secret guarded) that the Vercel search page
+# calls, because Camis' WAF 403s Vercel's IPs but not Fly's.
+#
+# The autostop/autostart settings are load-bearing: the poller must run
+# continuously, so machines must NEVER be stopped for being idle, and Fly must
+# not start the second (standby) machine on traffic — two live pollers would
+# double the Camis request rate for no benefit.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
 
 [[vm]]
   size = "shared-cpu-1x"

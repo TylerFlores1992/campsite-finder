@@ -32,10 +32,18 @@ import { query, mutate } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
+import { findGoingToCampOpen } from '../src/lib/availability/goingtocamp';
+import { isGoingToCampSource, GOINGTOCAMP_PROVIDERS } from '../src/lib/sources/goingtocamp/providers';
+import { findTnscOpen } from '../src/lib/availability/tnsc';
+import { isTnscSource } from '../src/lib/sources/tnsc/providers';
+import { fetchLocations } from '../src/lib/sources/goingtocamp/client';
+import { syncAllGoingToCamp } from '../src/lib/sources/goingtocamp/sync';
+import { startHttpServer } from './http-server';
 import { syncAllUseDirect } from '../src/lib/sources/reservecalifornia/sync';
 import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
 import { isUseDirectSource, USEDIRECT_PROVIDERS } from '../src/lib/sources/reservecalifornia/providers';
 import { dispatchNotifications, type NotificationPayload } from '../src/lib/notifications';
+import { bookingLink } from '../src/lib/booking-url';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 15_000);
 // Auto-cart rec.gov watches run on their own tighter loop so a cancellation gets
@@ -239,8 +247,14 @@ async function cycle(): Promise<void> {
   const mainWatches = watches.filter((w) => !isAutocartLane(w));
   const raWatches = mainWatches.filter((w) => w.campground_source === 'reserveamerica');
   const rcWatches = mainWatches.filter((w) => isUseDirectSource(w.campground_source));
+  const gtcWatches = mainWatches.filter((w) => isGoingToCampSource(w.campground_source));
+  const tnscWatches = mainWatches.filter((w) => isTnscSource(w.campground_source));
   const ridbWatches = mainWatches.filter(
-    (w) => !isUseDirectSource(w.campground_source) && w.campground_source !== 'reserveamerica'
+    (w) =>
+      !isUseDirectSource(w.campground_source) &&
+      !isGoingToCampSource(w.campground_source) &&
+      !isTnscSource(w.campground_source) &&
+      w.campground_source !== 'reserveamerica'
   );
 
   // recreation.gov: one fetch per unique campground+month, shared across watches.
@@ -302,12 +316,49 @@ async function cycle(): Promise<void> {
     RECGOV_CONCURRENCY
   );
 
+  // GoingToCamp: the Camis API answers whole-stay directly, so one call per watch.
+  const gtcResults = new Map<string, { dates: string[]; resourceIds: number[] }>();
+  await pMap(
+    gtcWatches,
+    async (w) => {
+      const nights = nightsOfRange(w.start_date, w.end_date);
+      const required = Math.max(w.min_nights, nights.length);
+      const open = await findGoingToCampOpen(w.campground_id, w.start_date, w.end_date, required);
+      if (open) gtcResults.set(w.id, { dates: nights, resourceIds: open.resourceIds });
+    },
+    RECGOV_CONCURRENCY
+  );
+
+  // TN/SC ColdFusion portal: batched whole-stay availability, keyed by parkId. The
+  // client caches the per-range batch, so N watches on one date range share a single
+  // POST. No per-site ids — alerts are park+date. (Whether the worker's IP can reach
+  // the portal is unverified; findTnscOpen swallows errors, so an unreachable portal
+  // simply never alerts rather than crashing the cycle — and would need the same
+  // fix-then-verify as GoingToCamp did. See docs/CONTEXT.md.)
+  const tnscResults = new Map<string, { dates: string[] }>();
+  if (tnscWatches.length > 0) console.log(`[poller] checking ${tnscWatches.length} TN/SC watch(es)`);
+  await pMap(
+    tnscWatches,
+    async (w) => {
+      const nights = nightsOfRange(w.start_date, w.end_date);
+      const required = Math.max(w.min_nights, nights.length);
+      const open = await findTnscOpen(w.campground_id, w.start_date, w.end_date, required);
+      console.log(`[poller] TN/SC ${w.campground_id} (${w.start_date}..${w.end_date}): ${open ? `OPEN ${open.availableSites} sites` : 'no opening'}`);
+      if (open) tnscResults.set(w.id, { dates: nights });
+    },
+    RECGOV_CONCURRENCY
+  );
+
   let notified = 0;
   for (const watch of mainWatches) {
     const rc = rcResults.get(watch.id);
     const result: WatchResult =
       watch.campground_source === 'reserveamerica'
         ? { dates: raResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
+        : isGoingToCampSource(watch.campground_source)
+          ? { dates: gtcResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
+        : isTnscSource(watch.campground_source)
+          ? { dates: tnscResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
         : isUseDirectSource(watch.campground_source)
           ? { dates: rc?.dates ?? [], campsiteId: null, campsiteName: null }
           : availableDatesForWatch(watch, monthData);
@@ -330,7 +381,20 @@ async function cycle(): Promise<void> {
         availableDates: result.dates,
         bookingUrl:
           watch.campground_source === 'reserveamerica'
-            ? (watch.reservations_url ?? 'https://www.reserveamerica.com/')
+            // Land on the arrival date's site grid, not the undated park page.
+            // Same calarvdate form the detail-page calendar already uses.
+            ? (bookingLink({
+                source: 'reserveamerica',
+                reservationsUrl: watch.reservations_url,
+                date: watch.start_date,
+              }) ?? 'https://www.reserveamerica.com/')
+            : isGoingToCampSource(watch.campground_source)
+            // Camis has no per-site deep link, so the tenant's booking page is the CTA.
+            ? (watch.reservations_url ?? 'https://goingtocamp.com/')
+            : isTnscSource(watch.campground_source)
+            // TN/SC portal reports counts, not site ids → no deep link; the park's
+            // booking page (reservations_url) is the CTA.
+            ? (watch.reservations_url ?? 'https://reserve.tnstateparks.com/')
             : isUseDirectSource(watch.campground_source)
             // #camphawk-rc fragment (unitId_arrival_nights_sleepingUnitId) lets the
             // extension add the exact unit to the RC cart. Fragment never hits RC's server.
@@ -552,6 +616,43 @@ async function rcSyncIfDue(): Promise<void> {
   }
 }
 
+// GoingToCamp catalog refresh. Lives here rather than in the nightly GitHub
+// Action because these tenants sit behind an Azure WAF that challenges bursty
+// traffic; the worker syncs one tenant at a time on a slow cadence, and the
+// client backs off on a challenge. Same due-check shape as rcSyncIfDue.
+const GTC_SYNC_MAX_AGE_HOURS = 22;
+let gtcSyncRunning = false;
+
+async function gtcSyncIfDue(): Promise<void> {
+  if (gtcSyncRunning) return;
+  gtcSyncRunning = true;
+  try {
+    const sources = GOINGTOCAMP_PROVIDERS.map((p) => `goingtocamp-${p.state}`);
+    const row = await query<{ age_hours: number | null; synced_sources: number }>(
+      `SELECT EXTRACT(EPOCH FROM (NOW() - MIN(last_ok))) / 3600 AS age_hours,
+              COUNT(*) AS synced_sources
+       FROM (
+         SELECT source, MAX(finished_at) AS last_ok
+         FROM sync_log WHERE source = ANY($1) AND facilities_synced > 0
+         GROUP BY source
+       ) t`,
+      [sources]
+    );
+    const age = row[0]?.age_hours;
+    const allSynced = Number(row[0]?.synced_sources ?? 0) >= sources.length;
+    if (allSynced && age != null && age < GTC_SYNC_MAX_AGE_HOURS) return;
+    console.log(`[poller] GoingToCamp sync due (oldest ${age?.toFixed(1) ?? 'never'}h ago) — starting`);
+    const result = await syncAllGoingToCamp();
+    console.log(
+      `[poller] GoingToCamp sync finished: ${result.facilitiesSynced} campgrounds, ${result.errors.length} errors`
+    );
+  } catch (err) {
+    console.error('[poller] GoingToCamp sync failed:', err);
+  } finally {
+    gtcSyncRunning = false;
+  }
+}
+
 async function main() {
   console.log(`[poller] starting — interval ${POLL_INTERVAL_MS / 1000}s, recgov concurrency ${RECGOV_CONCURRENCY}`);
 
@@ -564,8 +665,30 @@ async function main() {
     console.error('[poller] RC connectivity probe FAILED — RC watches will not alert:', (err as Error).message);
   }
 
+  // Startup probe: these hosts are WAF'd, and datacenter reachability was never
+  // verified from Fly — so say so loudly rather than letting GTC watches quietly
+  // never alert.
+  try {
+    const locs = await fetchLocations(GOINGTOCAMP_PROVIDERS[0]);
+    console.log(
+      `[poller] GoingToCamp connectivity probe OK — ${locs.length} ${GOINGTOCAMP_PROVIDERS[0].state} locations`
+    );
+  } catch (err) {
+    console.error(
+      '[poller] GoingToCamp connectivity probe FAILED — GTC watches will not alert:',
+      (err as Error).message
+    );
+  }
+
+  // Serves GoingToCamp availability to the website's search page, which runs on
+  // Vercel and is WAF-blocked from Camis. Started before the poll loop but never
+  // awaited into it — an HTTP failure must not affect alerting.
+  startHttpServer();
+
   rcSyncIfDue();
   setInterval(rcSyncIfDue, 60 * 60 * 1000);
+  gtcSyncIfDue();
+  setInterval(gtcSyncIfDue, 60 * 60 * 1000);
   // Run cycles back-to-back on a fixed cadence; skip a tick if the previous cycle is still running.
   let running = false;
   const tick = async () => {

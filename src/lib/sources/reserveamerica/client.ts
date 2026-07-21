@@ -24,6 +24,19 @@ export const RA_CONTRACTS: RAContract[] = [
   { contractCode: 'OR', host: 'oregonstateparks.reserveamerica.com', name: 'Oregon State Parks', state: 'OR' },
   { contractCode: 'UT', host: 'utahstateparks.reserveamerica.com', name: 'Utah State Parks', state: 'UT' },
   { contractCode: 'NC', host: 'northcarolinastateparks.reserveamerica.com', name: 'North Carolina State Parks', state: 'NC' },
+  { contractCode: 'KY', host: 'kentuckystateparks.reserveamerica.com', name: 'Kentucky State Parks', state: 'KY' },
+  { contractCode: 'IA', host: 'iowastateparks.reserveamerica.com', name: 'Iowa State Parks', state: 'IA' },
+  { contractCode: 'IN', host: 'indianastateparks.reserveamerica.com', name: 'Indiana State Parks', state: 'IN' },
+  { contractCode: 'GA', host: 'gastateparks.reserveamerica.com', name: 'Georgia State Parks', state: 'GA' },
+  { contractCode: 'NE', host: 'nebraskastateparks.reserveamerica.com', name: 'Nebraska State Parks', state: 'NE' },
+  { contractCode: 'PA', host: 'pennsylvaniastateparks.reserveamerica.com', name: 'Pennsylvania State Parks', state: 'PA' },
+  { contractCode: 'NH', host: 'newhampshirestateparks.reserveamerica.com', name: 'New Hampshire State Parks', state: 'NH' },
+  { contractCode: 'MT', host: 'montanastateparks.reserveamerica.com', name: 'Montana State Parks', state: 'MT' },
+  { contractCode: 'RI', host: 'rhodeislandstateparks.reserveamerica.com', name: 'Rhode Island State Parks', state: 'RI' },
+  { contractCode: 'NM', host: 'newmexicostateparks.reserveamerica.com', name: 'New Mexico State Parks', state: 'NM' },
+  { contractCode: 'AK', host: 'alaskastateparks.reserveamerica.com', name: 'Alaska State Parks', state: 'AK' },
+  { contractCode: 'CT', host: 'connecticutstateparks.reserveamerica.com', name: 'Connecticut State Parks', state: 'CT' },
+  { contractCode: 'DE', host: 'delawarestateparks.reserveamerica.com', name: 'Delaware State Parks', state: 'DE' },
 ];
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';

@@ -35,6 +35,12 @@ jobs:
           RIDB_API_KEY: ${{ secrets.RIDB_API_KEY }}
         run: npx tsx scripts/run-sync.ts "${{ github.event.inputs.states || 'ALL' }}" "${{ github.event.inputs.maxFacilities || '20000' }}"
 
+      - name: Run ReserveAmerica sync
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npx tsx scripts/run-sync-ra.ts
+
       # NB: the ReserveCalifornia sync does NOT run here — their WAF blocks
       # GitHub Actions runner IPs with 403. It runs daily on the Fly.io worker
       # instead (see worker/poller.ts rcSyncIfDue).

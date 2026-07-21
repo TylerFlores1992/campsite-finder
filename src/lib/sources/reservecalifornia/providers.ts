@@ -72,6 +72,53 @@ export const USEDIRECT_PROVIDERS: UseDirectProvider[] = [
     fallbackBase: 'https://floridardr.usedirect.com/Floridardr/rdr',
     parkUrl: () => 'https://reserve.floridastateparks.org/Web/',
   },
+  {
+    source: 'nevadastateparks',
+    idPrefix: 'nv',
+    name: 'Nevada State Parks',
+    state: 'NV',
+    rdrBase: 'https://nevadardr.usedirect.com/nevadardr/rdr',
+    fallbackBase: 'https://nevadardr.usedirect.com/nevadardr/rdr',
+    parkUrl: () => 'https://www.reservenevada.com/NevadaWeb/',
+  },
+  {
+    source: 'ohiostateparks',
+    idPrefix: 'oh',
+    name: 'Ohio State Parks',
+    state: 'OH',
+    rdrBase: 'https://ohiordr.usedirect.com/Ohiordr/rdr',
+    fallbackBase: 'https://ohiordr.usedirect.com/Ohiordr/rdr',
+    parkUrl: () => 'https://reserveohio.com/OhioCampWeb/',
+  },
+  {
+    source: 'wyomingstateparks',
+    idPrefix: 'wy',
+    name: 'Wyoming State Parks',
+    state: 'WY',
+    rdrBase: 'https://wyordr.usedirect.com/wyomingrdr/rdr',
+    fallbackBase: 'https://wyordr.usedirect.com/wyomingrdr/rdr',
+    parkUrl: () => 'https://reserve.wyoming.gov/Web/',
+  },
+  {
+    // Newer Tyler-hosted RDR (like RC's current base). Host may rotate; no
+    // config.json discovery endpoint found, so static + fallback for now.
+    source: 'illinoisstateparks',
+    idPrefix: 'il',
+    name: 'Illinois State Parks',
+    state: 'IL',
+    rdrBase: 'https://il-rdr.recreation-management.tylerapp.com/IllinoisRDR/rdr',
+    fallbackBase: 'https://il-rdr.recreation-management.tylerapp.com/IllinoisRDR/rdr',
+    parkUrl: () => 'https://recreation.exploremoreil.com/IllinoisWeb/',
+  },
+  {
+    source: 'virginiastateparks',
+    idPrefix: 'va',
+    name: 'Virginia State Parks',
+    state: 'VA',
+    rdrBase: 'https://prod-va-rdr.recreation-management.tylerapp.com/virginiardr/rdr',
+    fallbackBase: 'https://prod-va-rdr.recreation-management.tylerapp.com/virginiardr/rdr',
+    parkUrl: () => 'https://www.reservevaparks.com/Web/',
+  },
 ];
 
 export function providerBySource(source: string): UseDirectProvider | undefined {

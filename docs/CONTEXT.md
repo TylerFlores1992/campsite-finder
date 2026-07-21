@@ -18,7 +18,9 @@ subscription turns on watching + instant email/SMS alerts + (rec.gov only) auto-
 - **Clerk** — auth (production instance on camphawk.app).
 - **Stripe** — subscriptions ($2.50/mo, $20/yr). Live in prod; test keys locally.
 - **Fly.io** — the always-on cancellation poller (`worker/poller.ts`, app
-  `campsite-finder-worker`).
+  `campsite-finder-worker`). It also serves one HTTP endpoint
+  (`worker/http-server.ts`) that the website calls for GoingToCamp availability,
+  because Vercel's IPs are WAF-blocked from that source.
 - **Resend** (email) + **Twilio** (SMS, A2P-approved) — alerts.
 - **Mapbox** — geocoding + maps.
 - A **mini PC** (Windows, always-on, residential IP) — hosts the auto-cart bot.
@@ -33,15 +35,279 @@ Each source has an adapter in `src/lib/availability/` and a catalog sync in
   rec.gov account, so it syncs to your phone).
 - **UseDirect / US eDirect platform** — one integration, many states via a provider
   registry (`src/lib/sources/reservecalifornia/providers.ts`): California
-  (ReserveCalifornia), Arizona, Florida, Minnesota, Missouri. Clean JSON API. Also
-  detects "coming soon" held cancellations (the `Lock` field) for a heads-up alert.
-- **ReserveAmerica (Aspira)** — New York, Texas, Oregon (more addable). No JSON API;
+  (ReserveCalifornia), Arizona, Florida, Minnesota, Missouri, Nevada, Ohio, Wyoming,
+  Illinois, Virginia. Clean JSON API. Also detects "coming soon" held cancellations
+  (the `Lock` field) for a heads-up alert. Adding a state is ~one registry entry:
+  find its RDR base by grepping the state's reserve-SPA JS bundle for a
+  `*rdr*.usedirect.com` or `*rdr*.recreation-management.tylerapp.com` host, then
+  verify `<base>/fd/places` returns 200 JSON.
+- **ReserveAmerica (Aspira)** — New York, Texas, Oregon, Utah, North Carolina,
+  Kentucky, Iowa, Indiana, Georgia, Nebraska, Pennsylvania, New Hampshire, Montana,
+  Rhode Island, New Mexico, Alaska, Connecticut, Delaware (more addable). No JSON API;
   availability is scraped from server-rendered HTML. Catalog paginates 25/page (watch
   for that). Coords come from each park's detail-page Open Graph meta.
 
-All non-rec.gov sources are **alert-only** (their carts are session-bound and don't
-sync to a phone). Adding a source = availability adapter + catalog sync + wire into
-search/worker/notifications + update coverage copy.
+- **GoingToCamp / Camis** — `source='goingtocamp'`, ids `gtc-<ST>-<resourceLocationId>`
+  (ids are negative, e.g. `gtc-WA--2147483647`). Washington, Michigan, Wisconsin,
+  Mississippi. Clean JSON API; see `src/lib/sources/goingtocamp/`. Alert-only.
+
+State-park coverage spans **32 states** across those platforms, plus federal
+Recreation.gov nationwide. All non-rec.gov sources are **alert-only** (their carts are
+session-bound and don't sync to a phone). Adding a source = availability adapter +
+catalog sync + wire into search/worker/notifications + update coverage copy.
+
+> **Adding a state to an existing source REQUIRES a Fly worker deploy, not just a
+> push.** The worker imports `RA_CONTRACTS` / `USEDIRECT_PROVIDERS` /
+> `GOINGTOCAMP_PROVIDERS` directly, so on a stale worker the new state's watches hit
+> a registry lookup that returns `undefined` and silently `return false` — searchable
+> on the website, but **never alerting, with no error anywhere**. This nearly shipped
+> with Delaware. Verify after deploy with `scripts/e2e-gtc-alert.mts` (below).
+
+> **The 18 still-uncovered states each need a NEW adapter — don't re-probe them.** As
+> of 2026-07-19 every uncovered state was probed against UseDirect and ReserveAmerica
+> and none hit: all guessed `*.reserveamerica.com` subdomains fail DNS (Colorado's
+> resolves but its park directory is empty — it migrated off), and none of their
+> reservation SPAs (cpwshop, tnstateparks, camping.nj.gov,
+> parkreservations.maryland.gov, alapark, mdwfp, arkansasstateparks,
+> southcarolinaparks…) reference an `*rdr*` host in their bundles. Four of the states
+> that pass then turned out to be GoingToCamp (below); the rest need new adapters,
+> not registry entries.
+>
+> **GoingToCamp (Camis) — SHIPPED 2026-07-19. 362 campgrounds across 4 states.**
+> **Do NOT identify this platform by domain name.** Two of its four US tenants use
+> vanity domains, which is why an earlier pass misfiled them as "Aspira":
+>
+> | State | Host | Locations | w/ coords |
+> |-------|------|-----------|-----------|
+> | WA | `washington.goingtocamp.com` | 167 | 136 |
+> | MI | `midnrreservations.com` | 148 | 15 |
+> | WI | `wisconsin.goingtocamp.com` | 64 | 0 |
+> | MS | `reserve.mdwfp.com` | 21 | 0 |
+>
+> The reliable test is the API itself: `GET /api/resourcelocation` returning a JSON
+> array. Every other uncovered state was swept with it — no further hits, so this is
+> all 4. (The rest of the platform is Canadian: Manitoba, Nova Scotia, Yukon, Long
+> Point.) MA/ME/SD/ND/VT are *not* on it.
+>
+> - **Catalog:** `GET /api/resourcelocation` → `localizedValues[].fullName`, address,
+>   website, and `gpsCoordinates` as a `"lat, lng"` **string** (not numeric fields).
+>   Only WA is well-covered; **WI and MS have zero coords and MI only 15**, so most
+>   rows are geocoded — from the **full street address**, never the park name (see
+>   the coordinates note below). `GET /api/resourcecategory` gives site types
+>   (Campsite, Cabin, Yurt, Group Camp, Day Use Facility…) to filter day-use rows.
+> - **Availability — the working call:**
+>   ```
+>   GET /api/availability/resourcelocation
+>       ?resourceLocationId=<id>&bookingCategoryId=0&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+>   ```
+>   → `[{ mapId, mapAvailabilities, resourceAvailabilities: { <resourceId>: [{ availability, remainingQuota }] } }]`
+>
+>   It must carry a **full browser User-Agent**, and it works from residential and
+>   Fly but **not from Vercel** — see the reachability table further down, which is
+>   the authoritative version. (An earlier draft of this section claimed the WAF was
+>   "POST-only" and that GET "is fine from a datacenter IP". Both were wrong.)
+> - **It is whole-stay, not per-night — which is exactly what we want.** The
+>   per-resource array stays length 1 no matter how many nights the range spans
+>   (verified at 1/2/3/5/7 nights): the API evaluates the entire `[start, end)` range
+>   and returns one verdict per site. That matches CampHawk's "one site, all
+>   consecutive nights" rule **natively** — no per-night set intersection like RA.
+>   Day-use-only parks correctly return `[]` (e.g. Anderson Lake).
+> - **The `availability` enum — decoded from the app's own source, and `0` means
+>   AVAILABLE.** Not a bitmask; a plain enum (found in the lazy chunks; the app's test
+>   is literally `resourceAvailabilities[id].every(s => s.availability === Available)`):
+>   ```
+>   0 Available   1 Unavailable  2 NotOperating  3 NonReservable
+>   4 Closed      5 Invalid      6 InvalidBookingCategory
+>   7 PartiallyAvailable         8 Held
+>   ```
+>   **Do not invert this.** An earlier guess here had `7` as the available value —
+>   backwards, and it would have alerted on `PartiallyAvailable` (only part of the
+>   requested range is free, i.e. NOT bookable for the whole stay) while missing every
+>   real opening. Consistent with observation: +150d out returns `2` everywhere
+>   (outside booking window), +3d returns all-nonzero (booked solid), +45d shows a mix.
+>   **`8 = Held` is the cancelled-but-not-yet-released state** — the same opportunity
+>   as ReserveCalifornia's `Lock` field, so coming-soon alerts are possible here too.
+> - **Reading the source requires a real browser.** Plain `curl` of the site HTML
+>   returns the *Azure WAF challenge page*, not the app (the `/api/*` endpoints are
+>   unaffected). Load it in the browser pane, then fetch the chunks from inside the
+>   page — that's how the enum above was recovered.
+>
+> - **`bookingCategoryId` matters — pass `0` (Nightly).** These tenants sell day-use
+>   and rentals through the same API (Mississippi lists Museum Entry, Golf Cart,
+>   Kayak, Birthday Party and Fireworks Show as bookable resources), so querying
+>   across all categories would let a kayak rental fire a campground alert. The
+>   app's enum: `Nightly=0, DayUse=1, FixedLength=2, PartialSeasonal=3, Rental=4,
+>   BackCountry=5`. Note `Nightly` spans campsites AND lodging (cabins, cottages,
+>   motel rooms), so a cabin opening can satisfy a watch — deliberate, narrow by
+>   resource category if that ever needs changing.
+> - **Coordinates come from geocoding the FULL street address**, not the park name.
+>   Only WA ships `gpsCoordinates` reliably (136/167); MI has 15, WI and MS none.
+>   A complete address ("4235 State Park Rd, Sardis, Mississippi 38666") geocodes
+>   unambiguously, unlike RA's name-only attempt that put Allegany in NYC. Rows with
+>   neither coords nor a street address are skipped rather than guessed, and every
+>   result is bbox-checked against its state before insert.
+>
+> Synced live: **WA 145, MI 144, WI 54, MS 19 = 362 campgrounds, 0 outside their
+> state bbox.** Sync via `npx tsx scripts/run-sync-gtc.ts [WA|MI|WI|MS]`, and
+> automatically on the Fly worker (`gtcSyncIfDue`, hourly check / 22h staleness).
+>
+> **WAF reachability — measured, and it is the INVERSE of UseDirect. Don't build a
+> proxy here.**
+>
+> | From | Reaches Camis? |
+> |------|----------------|
+> | Residential | yes |
+> | **Fly worker** | **yes** — startup probe reads 167 WA locations |
+> | **Vercel** | **no** — 403 even with correct headers |
+>
+> Two separate WAF behaviours, easy to confuse (I conflated them once and drew the
+> wrong conclusion):
+> - **User-Agent is load-bearing.** A request without a realistic *full* browser UA
+>   gets 403 **from any IP, including residential**. `Mozilla/5.0`, `curl/8.5.0`
+>   and a bare `fetch()` with no UA all 403; the full Chrome UA string returns 200.
+>   A first Fly test used a bare fetch and "proved" Fly was blocked — it wasn't.
+>   **When testing this WAF, always send the full UA, or the result is meaningless.**
+> - **IP reputation is separate**, and only Vercel fails it.
+>
+> Consequences, all deliberate:
+> - The **worker polls Camis directly** — no proxy, unlike RC. Alerting works.
+> - **Vercel asks Fly for search availability.** The worker exposes
+>   `POST /gtc/availability` (`worker/http-server.ts`) — shared-secret header, POST
+>   only, no DB access, returns booleans and nothing else. The search route batches
+>   every GTC campground into one call (`lib/availability/goingtocamp-remote.ts`)
+>   and falls back to the direct adapter when `GTC_AVAILABILITY_URL` is unset
+>   (local dev on a residential IP). Results cache 90s, which also keeps us under
+>   the WAF's burst threshold when a user pans the map. Verified live: Olympia WA
+>   returns 45 GTC campgrounds, 0 unknown, 23 available.
+> - The **search-path adapter throws** instead of returning `false` on a transport
+>   error. `Promise.allSettled` renders a rejection — and a `null` from the worker —
+>   as *unknown*; only an explicit `false` renders "Booked — watch it". Returning
+>   `false` on failure would stamp that badge on all 362 GTC campgrounds even when
+>   sites are free.
+>
+> **`worker/fly.toml`'s autostop settings are load-bearing.** The app gained an
+> `[http_service]` for the endpoint above, and it must not change how the poller
+> runs: `auto_stop_machines = "off"` (the poller runs continuously and must never
+> be stopped for being idle) and `auto_start_machines = false` (starting the
+> standby machine would double the Camis request rate for no benefit). The worker
+> app also needed public IPs allocated — it had none as a pure background service.
+>
+> > **Consequence: a `flyctl deploy` leaves the poller STOPPED. Always start it
+> > manually afterward.** The rolling deploy stops each machine to swap the image,
+> > and `auto_start_machines = false` means nothing brings it back — flyctl even
+> > prints "Machine … reached stopped state" and calls that "a good state", so the
+> > deploy *looks* successful while alerting is dead. Observed 2026-07-20: ~60s of
+> > downtime before it was caught. After every deploy:
+> >
+> > ```
+> > flyctl status --config worker/fly.toml            # expect one started, one stopped
+> > flyctl machine start <primary-id> --config worker/fly.toml
+> > flyctl logs --config worker/fly.toml --no-tail    # expect a [poller] heartbeat
+> > ```
+> >
+> > **Start ONE machine only.** There are two; the second is a standby, and starting
+> > it doubles the Camis request rate for no benefit (that's the whole reason
+> > `auto_start_machines` is false). The primary is whichever ID the pre-deploy logs
+> > show heartbeating.
+>
+> **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
+> CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
+> GoingToCamp above, what actually remains here is small:
+> - **TN + SC = same stack, but NOT one drop-in adapter — and it has a clean JSON
+>   API, not an HTML scrape (recon 2026-07-20, corrects the earlier guess).** Both are
+>   Apache + ColdFusion at `reserve.<state>parks.com` (`cfid`/`cftoken`,
+>   `CF_CLIENT_TSP_LV` vs `CF_CLIENT_SCP_LV` — differs only by the 3-letter state
+>   prefix), same "Reservations | <State> State Parks" title, both behind an AWS ALB.
+>   **The `foreupsoftware.com` links on the page are GOLF tee-times only** (`class="btn
+>   resBtn golf"`), not camping — a red herring; camping books through the portal.
+>
+>   **TN is a GoingToCamp-shaped adapter, not an RA one:**
+>   - **Catalog** — one GET of the portal landing embeds a JS array
+>     `{ name, city, url:'/slug', parkId, lat, lng }` for every park (**coords
+>     included — no geocoding**), plus card `data-*` attrs: `data-product`
+>     (`"camping,cabins,shelters,programs"` — filter to camping), `data-maxrv`,
+>     `data-amp20/30/50`, `data-sewer` for RV/hookup filters.
+>   - **Availability — batched JSON, whole-stay native.** GET landing → scrape
+>     `#csrfToken` (+ session cookie), then ONE
+>     `POST /library/ajax/landingPageAvailability.html` with
+>     `fromDate=MM/DD/YYYY & toDate=MM/DD/YYYY & csrfToken` returns
+>     `[{ accountKey, templates:[{templateKey, available, total}] }]` for **all parks
+>     at once**. **`accountKey === parkId`** (the app stores by accountKey and reads by
+>     parkID — same id space), so no join table. `available > 0` on a camping
+>     `templateKey` = opening. Range-evaluated in one call → maps to the whole-stay
+>     rule natively, like GTC, no per-night intersection.
+>   - **Whole-stay: CONFIRMED (residential, 2026-07-20).** The one batched POST at
+>     1/3/5 nights from the same start returned shrinking totals (2140 → 1742 → 1686
+>     available sites across all parks), the signature of whole-consecutive-stay
+>     evaluation. So the adapter does NOT intersect per-night, like GTC. Also: 50 of
+>     63 parks appear in the availability response — the other 13 are day-use/no-camping
+>     parks that correctly drop out (matches the `data-product` camping filter).
+>   - **templateKey legend: DECODED (2026-07-20)** from the app's `templateMap`:
+>     `1 = Camping`, `2 = Cabins`, and `4` is present in availability data but NOT in
+>     the app's badge map (unlabeled, tiny counts) — deliberately EXCLUDED. The
+>     adapter's `CAMPING_TEMPLATE_KEYS = {1, 2}` counts camping + cabins as a hit,
+>     mirroring GTC's lodging-inclusive `Nightly`; narrow to `{1}` for campsites-only.
+>   - **Reachability: MEASURED 2026-07-20, and it is the SAME direction as UseDirect
+>     (Fly blocked, Vercel fine) — the REVERSE of GoingToCamp.** The Fly worker gets
+>     `403 on landing` from the portal's WAF (intermittent, and even "successful"
+>     landings return empty), while **Vercel and residential reach it fine** (the prod
+>     `/api/search` returns real `hasAvailability` for TN parks). The AWS-ALB "should
+>     be fine from a datacenter" prior was WRONG — don't trust ALB-vs-Azure to predict
+>     WAF IP policy; measure it.
+>   - **So the worker routes TN availability through a Vercel proxy**, exactly like
+>     UseDirect's `/api/rc-proxy`: `src/app/api/tnsc-availability` does the whole
+>     CSRF handshake + batched POST from a Vercel IP and returns parsed rows; the
+>     client (`fetchAvailabilityBatch`) calls it when **`TNSC_AVAILABILITY_URL`** is
+>     set (Fly worker only) and calls the portal directly otherwise (Vercel routes,
+>     residential, the sync). It does the WHOLE batch, not per-request like rc-proxy,
+>     because the portal's CSRF token + cookie are session-bound to one IP. Set
+>     `TNSC_AVAILABILITY_URL=https://camphawk.app/api/tnsc-availability` on the Fly
+>     worker (auth: the shared `SYNC_SECRET`, which the worker already carries).
+>   - **SC needs its own recon** — its portal front-end differs (no embedded park
+>     array, no foreUP link on the landing). Same vendor/stack, so likely the same
+>     `/library/ajax/` endpoint, but unproven. TN and SC share plumbing, per-state
+>     catalog handling — not a single registry entry.
+> - **CO = bespoke.** "Colorado Parks and Wildlife IPAWS", ASP.NET, Active Network
+>   (`actv_kuid_*` cookie), and behind a queue-it gate. Hostile; 1 state.
+> - **WV = not a campground system at all.** `wvstateparks.com` is a WordPress
+>   brochure site; real booking is `reservations.wvstateparks.com`, which runs
+>   **Inntopia** (a resort/lodging platform — cabins and lodges, not campsites).
+> - **LA = bespoke** ASP.NET at `reservations.gooutdoorslouisiana.com`. KS did not
+>   resolve at `reserve.ksoutdoors.com`.
+>
+> None of these expose a JSON API from their bundles (unlike UseDirect/GoingToCamp) —
+> they'd be HTML-scrape integrations in the ReserveAmerica mold.
+>
+> **Bottom line: GoingToCamp is DONE (shipped 2026-07-19). What's left is thin.**
+> The next-best target is **TN + SC** — same ColdFusion portal, and TN turns out to
+> have a **clean batched JSON availability API** (GTC-shaped, not the HTML scrape first
+> assumed — see the corrected TN+SC note above). TN is fully fingerprinted; SC still
+> needs its own recon. After that it's CO / LA / WV at
+> 1 state each (and WV is lodging-only, so really 2). Nothing remaining has
+> GoingToCamp's ratio of states-to-effort; weigh a new adapter against other work
+> rather than assuming coverage is the priority.
+>
+> **Survey lesson worth keeping: fingerprint by API behaviour, not by domain or
+> bundle.** Domain names misled (MI/MS are Camis on vanity hosts), and so did shared
+> asset hashes (the "identical chunks" that looked like a private Aspira product were
+> just the Camis app). A single `GET /api/resourcelocation` settled it. Also: don't
+> match `/edirect/i` — it hits the word "**r**edirect" on every page on the web.
+
+> **Known gap — UseDirect unit catalogs.** For some UseDirect providers (currently
+> Florida, Ohio, Illinois, Virginia) the per-facility unit sync comes back empty:
+> the `/search/grid` POST that enumerates units hits intermittent CloudFront `403`s
+> under the sync's concurrent load. The campground rows still sync (fully searchable
+> and watchable) — only the unit-level filter data (site type, RV length) is missing,
+> and it accretes over successive nightly worker syncs. Not a code bug; a rate-limit.
+
+> **Reading `sync_log`: a non-null `error` does NOT mean the sync failed.** Every
+> sync writes that column when *any single facility* had a problem, so a run that
+> imported 478 campgrounds with 478 unit-catalog 403s looks identical to a total
+> outage if you only check `error IS NOT NULL`. The admin panel did exactly that and
+> showed 20 of 33 sources red while all 33 had synced. **The signal that matters is
+> `facilities_synced = 0`**; anything above zero with errors is a partial. Typical
+> benign causes: UseDirect grid 403s (above), and parks skipped for missing coords in
+> ReserveAmerica/GoingToCamp. `metadata.totalErrors` carries the count.
 
 ## The core flow
 
@@ -52,6 +318,52 @@ search/worker/notifications + update coverage copy.
    opening it dispatches notifications. Branches by source; uses an atomic claim on
    `notification_sent_at` (1-hour re-notify window) so it never double-alerts.
 4. **Notifications** (`src/lib/notifications/`) — email (Resend) + SMS (Twilio).
+
+### Booking links — how specific each provider lets us be
+
+`src/lib/booking-url.ts` is the one place that turns campground + site + date into a
+URL, shared by the alert dispatch and the detail-page availability calendar so a
+link never gets more specific in one place than the other. **Only add a parameter
+you have watched take effect** — a link that looks dated but silently lands on a
+generic page is worse than an honest generic one, because the alert promises dates
+the page doesn't honor.
+
+- **Recreation.gov — site yes, date NO. Measured 2026-07-19; don't re-probe.**
+  `/camping/campsites/<campsiteId>` is a real per-site page (rec.gov links to it
+  itself). Dates are *not* deep-linkable, verified three ways: `/availability` and
+  `?date=` are both stripped back to the bare campground URL; `?checkin=&checkout=`
+  survive but never reach the calendar (the bundle maps those from
+  `search.checkin_time` — they're the *search* route's params); and the site page
+  has no date inputs at all.
+- **ReserveAmerica — date yes.** `calarvdate=M/D/YYYY&sitepage=true`.
+- **UseDirect / GoingToCamp — unverified, so no params.** Plain reservations URL.
+
+> **The `#camphawk` fragments belong to the poller, not to `booking-url.ts`.** The
+> poller emits `…/campsites/<id>#camphawk=<start>_<end>` and
+> `…#camphawk-rc=<unitId>_<arrival>_<nights>_<sleepingUnitId>`, which the Chrome
+> extension in `extension/` uses to autofill dates and add to cart. Fragments never
+> reach the provider's server. Routing those two branches through `booking-url.ts`
+> without carrying the fragment would silently strip the autofill.
+>
+> **They also do nothing on a phone** — extensions don't run in mobile Chrome, which
+> is where SMS links get tapped. So for rec.gov the realistic ceiling is "lands on
+> the right site, dates not filled in." That's the provider's limit, not a bug.
+
+### Verifying a source actually alerts
+
+"The code path matches the working one" is not verification — the registry-staleness
+trap above produces exactly that illusion. `scripts/e2e-gtc-alert.mts` proves it for
+real: it creates a watch on a campground that currently *has* availability, waits for
+the poller, reports the notification rows, then deletes the watch and its
+notifications. **It sends a real email and SMS**, so run it deliberately, never in CI.
+Adapt it to another source by swapping the campground query and availability helper.
+
+Two traps it documents, because the first run hit both:
+- **Target a real account.** A seeded test user has no deliverable address, so
+  dispatch runs and records nothing — which looks like a failure but isn't one.
+- **Don't read `notifications` the moment `notification_sent_at` appears.** The
+  poller claims that timestamp *before* dispatching, so an immediate read races the
+  send and reports a false failure. Wait ~12s.
 
 ## Auto-cart (rec.gov only) — the interesting part
 
@@ -89,10 +401,22 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
 
 ### Hard-won gotchas (these cost real debugging time)
 
-- **Must run HEADED.** rec.gov has an anti-bot gate (a `gate_a` token). Headless
-  Chromium gets flagged (`{ok:false, error:"abnormal activity"}`); a real headed
-  browser on the residential mini PC passes. A browser window flashes on the mini PC
-  per cart — expected.
+- **Must run HEADED — *everywhere* that touches rec.gov, not just the cart.** rec.gov
+  has an anti-bot gate (a `gate_a` token). Headless Chromium gets flagged
+  (`{ok:false, error:"abnormal activity"}`); a real headed browser on the residential
+  mini PC passes. A browser window flashes on the mini PC per cart — expected.
+  The revert that established this only flipped the *cart* call, leaving the session
+  keepalive headless for months; it now runs headed too. If you add another rec.gov
+  browser path, default it to headed.
+- **Never clear a login on a single login-state read.** The keepalive is the only
+  thing that deletes a ready-marker outside a cart attempt, so a false "logged out"
+  there costs the user a re-sign-in — discovered, painfully, on a *missed
+  cancellation*. Two causes conspired: the headless launch above, and
+  `recgovLoginState` sampling once at a fixed 3.5s delay, which catches rec.gov's SPA
+  mid-hydration while it still shows the logged-out header. `recgovLoginState` now
+  polls until the signal settles ('in' returns immediately, 'out' only if it holds),
+  and the keepalive additionally requires a second confirming read before clearing.
+  **'unknown' must never clear anything** — that's what it's for.
 - **Date picker = react-aria RANGE calendar of `role="button"` divs.** Synthetic
   dispatched events do NOT complete the range (only the check-in anchor sticks →
   0-night payload → 400). Use **Playwright real mouse clicks** (`page.mouse`).
@@ -108,6 +432,11 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
 
 ## Environment variables (names only — values in `.env.local` / Vercel / Fly)
 
+GoingToCamp search (`GTC_AVAILABILITY_URL` on Vercel → the Fly worker endpoint;
+authenticated with `SYNC_SECRET`, which the worker app now also carries),
+TN/SC availability (`TNSC_AVAILABILITY_URL` on the **Fly worker** → the Vercel
+`/api/tnsc-availability` route — the OPPOSITE direction from GTC, because the
+portal blocks Fly and allows Vercel; also `SYNC_SECRET`-authenticated),
 Supabase (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`), Clerk
 (`NEXT_PUBLIC_CLERK_*`, `CLERK_SECRET_KEY`, `CLERK_WEBHOOK_SECRET`), Stripe
 (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_MONTHLY/_YEARLY`),
@@ -117,7 +446,40 @@ Resend (`RESEND_API_KEY`, `EMAIL_FROM`), Twilio (`TWILIO_*`), Mapbox
 The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 `BROKER_PORT`, `POLL_MS`).
 
+> **`NEXT_PUBLIC_*` vars are inlined at BUILD time, so a bad value lies dormant
+> until someone triggers a build — and then looks like that day's code broke it.**
+> This cost real debugging time on 2026-07-20: a third-party integration (v0) had
+> written its own Clerk **development** keys into Vercel Production. Nothing changed
+> until an unrelated push rebuilt the site, which baked in the dev publishable key
+> and pointed camphawk.app at a Clerk dev instance — a *separate user table*. The
+> symptoms pointed everywhere but the real cause: the account looked signed in
+> (Clerk worked fine, just the wrong instance), the Admin button still showed
+> (it's a client-side email check, no DB), the subscription read as never-subscribed,
+> and every watch vanished — because the watches fetch is gated on `isSubscribed`,
+> so one failed lookup hides them all. Only the Clerk handshake URL
+> (`*.clerk.accounts.dev`, a dev hostname) revealed it.
+>
+> Lessons worth keeping:
+> - **When auth or subscription state goes strange, check the Clerk hostname first.**
+>   Production is the camphawk.app instance; anything `*.clerk.accounts.dev` with a
+>   random animal name is a dev instance and its users are a different table.
+> - **Ask what changed in the environment before theorizing about the code.** The
+>   push that "caused" it only triggered a rebuild.
+> - **`/api/subscription/status` is the fastest probe.** `active:false,
+>   everSubscribed:false` on a known subscriber means wrong identity, not lost data.
+> - **Live vs test keys must be checked in pairs.** Clerk failed loudly; Stripe would
+>   not — a `sk_test_` key in Production accepts checkouts and takes no money.
+> - The client masks failures: `r.ok ? await r.json() : { active: false }` renders a
+>   500 identically to a genuine non-subscriber. Same shape as the `sync_log` trap.
+>
+> Vercel's env-var **"Last Updated"** column is how you find what an integration
+> touched. Note `AUTOCART_TOKEN`, `SYNC_SECRET` and `GTC_AVAILABILITY_URL` are *our
+> own* shared secrets, not vendor-issued — they must match the mini PC's `.env` and
+> the Fly worker, so copy from those sides rather than generating fresh values.
+
 ## Deploy targets
 
 See `docs/SETUP.md`. Short version: website auto-deploys on `git push`; the Fly worker
-deploys via `flyctl`; the mini-PC bot updates via `git push` + `update.bat` on the box.
+deploys via `flyctl` **and must then be started by hand** (see the autostop note
+above — the deploy leaves it stopped and alerting silently dead); the mini-PC bot
+updates via `git push` + `update.bat` on the box.

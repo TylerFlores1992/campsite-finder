@@ -3,7 +3,12 @@ import { ridbSource } from '@/lib/sources/ridb';
 import { hasAvailabilityInRange } from '@/lib/availability/recgov';
 import { hasRCAvailabilityInRange } from '@/lib/availability/reservecalifornia';
 import { hasReserveAmericaAvailabilityInRange } from '@/lib/availability/reserveamerica';
+import { hasGoingToCampAvailabilityInRange } from '@/lib/availability/goingtocamp';
+import { fetchGoingToCampAvailability } from '@/lib/availability/goingtocamp-remote';
+import { hasTnscAvailabilityInRange } from '@/lib/availability/tnsc';
 import { isUseDirectSource } from '@/lib/sources/reservecalifornia/providers';
+import { isGoingToCampSource } from '@/lib/sources/goingtocamp/providers';
+import { isTnscSource } from '@/lib/sources/tnsc/providers';
 import type { SearchParams } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
@@ -57,18 +62,49 @@ export async function GET(request: NextRequest) {
       );
       const requiredNights = Math.max(minNights, stayNights);
 
+      // GoingToCamp goes through the Fly worker in one batched call: Camis' WAF
+      // blocks Vercel's IPs, and Fly's it doesn't. Anything it can't answer stays
+      // undefined (unknown) rather than being shown as booked.
+      const gtcCampgrounds = campgrounds.filter((cg) => isGoingToCampSource(cg.source));
+      const gtcAvailability = await fetchGoingToCampAvailability(
+        gtcCampgrounds.map((cg) => ({
+          campgroundId: cg.id,
+          startDate,
+          endDate,
+          minNights: requiredNights,
+        }))
+      );
+
       const checks = await Promise.allSettled(
         campgrounds.map((cg) =>
           cg.source === 'reserveamerica'
             ? hasReserveAmericaAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
-            : isUseDirectSource(cg.source)
-              ? hasRCAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
-              : hasAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
+            : isTnscSource(cg.source)
+              // TN/SC ColdFusion portal. Batched + cached inside the adapter, and
+              // it THROWS on transport failure → allSettled renders unknown, never a
+              // false "booked". Datacenter reachability is unverified (see the tnsc
+              // client) — if Vercel turns out blocked like GoingToCamp, this moves to
+              // a worker-remote path; until then a direct call that 403s is safe.
+              ? hasTnscAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
+              : isGoingToCampSource(cg.source)
+              // Already resolved above; fall back to a direct call only when the
+              // worker endpoint isn't configured (local dev, residential IP).
+              ? gtcAvailability.has(cg.id)
+                ? Promise.resolve(gtcAvailability.get(cg.id))
+                : hasGoingToCampAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
+              : isUseDirectSource(cg.source)
+                ? hasRCAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
+                : hasAvailabilityInRange(cg.id, startDate, endDate, requiredNights)
         )
       );
       results = campgrounds.map((cg, i) => ({
         ...cg,
-        hasAvailability: checks[i].status === 'fulfilled' ? (checks[i] as PromiseFulfilledResult<boolean>).value : undefined,
+        // `null` from the worker means "couldn't determine" → unknown, same as a
+        // rejected check. Only an explicit false renders as booked.
+        hasAvailability:
+          checks[i].status === 'fulfilled'
+            ? ((checks[i] as PromiseFulfilledResult<boolean | null | undefined>).value ?? undefined)
+            : undefined,
       }));
       // Sort: available first, then unknown, then fully booked
       results.sort((a, b) => {
