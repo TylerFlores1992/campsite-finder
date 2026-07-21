@@ -14,6 +14,12 @@ cd "$CLAUDE_PROJECT_DIR"
 
 echo "[session-start] installing npm dependencies…"
 npm install --no-audit --no-fund
+# npm install re-normalizes package-lock.json in the sandbox (prunes entries that
+# don't match the resolved tree), which leaves the repo dirty every session and
+# trips the "uncommitted changes" stop-hook. We only want the node_modules, not a
+# lockfile rewrite — so restore it. (A real dependency change would come through
+# an intentional package.json edit + commit, not this hook.)
+git -C "$CLAUDE_PROJECT_DIR" checkout -- package-lock.json 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Fly.io / Supabase ops tooling — STAGED, OFF by default.
