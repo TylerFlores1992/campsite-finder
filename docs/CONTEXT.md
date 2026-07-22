@@ -223,7 +223,9 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > GoingToCamp above, what actually remains here is small:
 > - **TENNESSEE SHIPPED 2026-07-20 — 39 camping parks, live and alerting** (e2e:
 >   real opening → email + SMS, verified). **SOUTH CAROLINA SHIPPED 2026-07-22 — 34
->   camping parks (of 50), live** (`variant:'html-grid'`; recon in the SC note below).
+>   camping parks (of 50), live and e2e-verified** (real Aiken opening → email + SMS
+>   both `sent`, worker deployed with the SC provider; `variant:'html-grid'`, recon in
+>   the SC note below).
 >   **TN + SC = same stack, but NOT one drop-in adapter — TN has a clean JSON
 >   API, SC is an HTML park-grid filter (recon 2026-07-20/22).** Both are
 >   Apache + ColdFusion at `reserve.<state>parks.com` (`cfid`/`cftoken`,

@@ -104,9 +104,11 @@ brand-new adapter, not a registry entry.
 **Then deploy the Fly worker.** The worker imports those registries, so a push alone
 leaves it stale and the new state's watches never alert — silently, with no error.
 Confirm with `scripts/e2e-gtc-alert.mts` / `scripts/e2e-tnsc-alert.mts` (they send a
-real email/SMS; see `docs/CONTEXT.md`). With SC shipped, there are **no cheap registry
-adds left** — every remaining state needs a new adapter. See `docs/CONTEXT.md` before
-going hunting.
+real email/SMS; see `docs/CONTEXT.md`). `e2e-tnsc-alert.mts` targets `tnsc-TN-%` — swap
+the id filter to `tnsc-SC-%` to re-verify SC (done once at launch, 2026-07-22), and run
+it with `NODE_USE_ENV_PROXY=1` from a web session (see the session-environment section).
+With SC shipped, there are **no cheap registry adds left** — every remaining state needs
+a new adapter. See `docs/CONTEXT.md` before going hunting.
 
 ## Repo layout (orientation)
 
@@ -255,8 +257,57 @@ vars, and a setup-script field.
   scripts authenticate via `getSupabaseAdmin`), `NEXT_PUBLIC_MAPBOX_TOKEN` (geocoding),
   and `FLY_API_TOKEN` (a **deploy**-scoped token: `fly tokens create deploy -a
   campsite-finder-worker`, not org-admin); (3) set `ENABLE_OPS_TOOLS=1` so the hook
-  installs flyctl + the Supabase CLI (flyctl downloads from fly.io, so this needs the
-  network open first — that's why the block is off by default).
+  installs flyctl + the Supabase CLI. The Supabase CLI comes from npm and installs
+  fine; **flyctl does NOT** — see the next bullet.
+- **Three web-session gotchas that cost real time (2026-07-22, shipping SC end-to-end).**
+  Even with **Full** network, `ENABLE_OPS_TOOLS=1`, and `FLY_API_TOKEN` all set, the
+  out-of-the-box path still fails at three spots. All have workarounds that DO work
+  fully from a web session (SC was deployed + e2e-alerted this way):
+  - **flyctl won't install.** The hook's `fly.io/install.sh` resolves the binary to a
+    **GitHub release asset**, and web-session `github.com` traffic is **per-repo
+    gated** by Anthropic's GitHub proxy (403 "GitHub access to this repository is not
+    enabled for this session") — it only allows the repos added to the session, and
+    `superfly/flyctl` isn't one. `add_repo` can't help either (cross-owner adds are
+    rejected). Workaround: pull flyctl out of its **Docker Hub image** (Docker Hub is
+    reachable), which needs no GitHub: fetch the `flyio/flyctl:latest` manifest +
+    layers from `registry-1.docker.io` (anon token from `auth.docker.io`), untar the
+    layers, and the binary is at `/flyctl` — drop it on `PATH`. It authenticates via
+    `FLY_API_TOKEN` (`flyctl auth whoami` confirms).
+  - **Node's `fetch` ignores the agent proxy**, so any sync/e2e script that reaches
+    the reservation portal, Mapbox, or Supabase gets a connection error or a WAF 403
+    (the sandbox's direct egress IP is datacenter-blocked). Run every `npx tsx`
+    sync/e2e with **`NODE_USE_ENV_PROXY=1`** so Node routes through the proxy (which is
+    allowlisted). `curl` already uses the proxy; only Node needs this.
+  - **Neither Fly remote builder works from the sandbox, so `flyctl deploy` (which
+    builds) can't run here.** The **depot** builder (the default) fails its gRPC TLS
+    handshake — the agent proxy MITMs it and depot's client bundles its own CA roots,
+    so it ignores both `SSL_CERT_FILE` and the system trust store (unfixable). The
+    **classic** builder (`--depot=false`) returns `unauthorized` — the app-scoped
+    `FLY_API_TOKEN` can't provision a builder machine. Workaround: **build locally and
+    deploy the pre-built image.** A `docker` CLI + buildx are present; start the daemon
+    by hand (`dockerd &` — you're root) and it uses the proxy for its own registry
+    pulls/pushes fine. But **buildkit's `RUN` steps run in an isolated netns that can't
+    reach the proxy**, so an in-build `npm ci` has no network — instead build an image
+    that **COPYs the already-installed `node_modules`** (the SessionStart hook ran
+    `npm install`, and the worker runs via `tsx`, so dev+prod deps are already there):
+    ```
+    # Dockerfile.deploy (throwaway; do NOT commit — canonical worker/Dockerfile does npm ci)
+    FROM node:22-slim
+    WORKDIR /app
+    COPY package.json package-lock.json tsconfig.json ./
+    COPY node_modules ./node_modules
+    COPY src ./src
+    COPY worker ./worker
+    CMD ["npx","tsx","worker/poller.ts"]
+    ```
+    Then `flyctl auth docker`, `docker build -f Dockerfile.deploy -t registry.fly.io/campsite-finder-worker:<tag> .`
+    (a Dockerfile-specific `Dockerfile.deploy.dockerignore` that keeps `node_modules`,
+    since the repo `.dockerignore` excludes it), `docker push …` (retry on a transient
+    502 — the layers resume), then **`flyctl deploy --image registry.fly.io/campsite-finder-worker:<tag> --config worker/fly.toml`**.
+    Observed 2026-07-22: the `--image` deploy brought the primary back **started** on
+    its own (the rolling restart left it up) — but still `flyctl status` and confirm a
+    `[poller] heartbeat` after, because the build-path deploy's "leaves it stopped"
+    warning above is the safe assumption.
 - **No secrets store yet:** env vars are stored in the environment config as plaintext,
   visible to anyone who can edit it. Keep the Fly token deploy-scoped, prefer a
   least-privilege Supabase role over the full service-role key where practical, and
