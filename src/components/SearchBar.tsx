@@ -326,7 +326,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
             onKeyDown={(e) => {
               if (e.key === 'Escape') setShowSuggestions(false);
             }}
-            className="w-full pl-8 pr-11 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
+            className="w-full pl-8 pr-12 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
           />
           <button
             type="button"
@@ -334,7 +334,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
             title="Use my location"
             className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-green-600 transition-colors"
           >
-            {locating ? <Loader2 size={20} className="animate-spin" /> : <MapPin size={20} />}
+            {locating ? <Loader2 size={36} className="animate-spin" /> : <MapPin size={36} />}
           </button>
         </div>
 
