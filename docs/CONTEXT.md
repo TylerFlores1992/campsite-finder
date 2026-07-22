@@ -482,9 +482,11 @@ shown once it's **honest**:
    Saturday → weekend demand) for a 2-night stay, writing the same rows. "High demand"
    is set by `scripts/seed-probe-targets.ts`, which demand-scans a broad sample and
    keeps the ones **booked solid** on a peak weekend (a site that's always open has no
-   cancellation signal). Seeded **rec.gov-only** so far (largest catalog, datacenter-
-   reachable); the poller's probe path is source-agnostic, so broadening is just seeding
-   other sources.
+   cancellation signal). Seeded for **rec.gov (150) + ReserveCalifornia (120)** so far
+   — CA state parks are the highest-demand, highest-cancellation sites (the scan found
+   ~75% booked solid). The poller's probe path is source-agnostic, so broadening is
+   pure seeding: `seed-probe-targets.ts --source=<source>` (rec.gov is datacenter-clean;
+   UseDirect routes through the agent proxy, so add `NODE_USE_ENV_PROXY=1`).
 3. **Aggregation** (`src/lib/likelihood.ts`, server-only) — reads the time series into
    an opening rate, **always bucketed on `lead_days`** (`LEAD_BUCKETS`: a site 3 days
    out vs 45 days out is a different game — never blend them) over a trailing window,
@@ -511,9 +513,11 @@ shown once it's **honest**:
 > at **17** (14→next Sat) and **45**, nights=2, ~9% overall open rate (believable for a
 > booked-solid roster; 0% would mean the demand scan picked sites that never open).
 
-> **Remaining to broaden (not blockers):** roster is rec.gov-only; a per-watch number
-> in the Watches panel (`getOpeningRate` already supports it) isn't wired yet; and the
-> signal needs a few weeks of history before the longer-lead buckets are dense.
+> **Remaining to broaden (not blockers):** roster covers rec.gov + ReserveCalifornia;
+> other UseDirect states and GoingToCamp could be seeded next (GoingToCamp would need a
+> reachable checker in the seed's `isOpenInRange`, since Camis blocks datacenter IPs).
+> The signal still needs a few weeks of history before the longer-lead buckets are dense.
+> (Per-watch odds, card badge, and detail ladder are all wired.)
 
 ### Booking links — how specific each provider lets us be
 

@@ -8,14 +8,16 @@
  * open has no cancellation signal worth surfacing. The poller then probes this
  * roster hourly (probeRosterIfDue) and records availability_observations over time.
  *
- * Scoped to rec.gov (source='ridb') by default: it's the largest catalog, has a
- * clean API reachable from datacenter IPs, and is the flagship (only auto-cart)
- * source. Other sources can be added later — the poller's probe path is
- * source-agnostic; only this seed's reachability is rec.gov-friendly here.
+ * Defaults to rec.gov (source='ridb'); pass --source to scan another catalog. The
+ * poller's probe path is already source-agnostic, so any source landed in
+ * probe_targets is probed automatically — this seed just needs an availability
+ * checker that's reachable from where it runs. Supported here: rec.gov ('ridb') and
+ * any UseDirect source (reservecalifornia, ohiostateparks, …). UseDirect routes
+ * through the agent proxy, so run those with NODE_USE_ENV_PROXY=1.
  *
- * Run (from a machine that can reach rec.gov + Supabase; from a web session add
+ * Run (from a machine that can reach the source + Supabase; from a web session add
  * NODE_USE_ENV_PROXY=1):
- *   npx tsx scripts/seed-probe-targets.ts [--sample=600] [--cap=200] [--arrival=YYYY-MM-DD] [--nights=2] [--dry]
+ *   npx tsx scripts/seed-probe-targets.ts [--source=ridb] [--sample=600] [--cap=200] [--arrival=YYYY-MM-DD] [--nights=2] [--dry]
  */
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
@@ -32,16 +34,27 @@ try {
 
 import { query, mutate, sqlit } from '../src/lib/db/client';
 import { hasAvailabilityInRange } from '../src/lib/availability/recgov';
+import { hasRCAvailabilityInRange } from '../src/lib/availability/reservecalifornia';
+import { isUseDirectSource } from '../src/lib/sources/reservecalifornia/providers';
 
 function arg(name: string, def?: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
   return hit ? hit.split('=').slice(1).join('=') : def;
 }
 const DRY = process.argv.includes('--dry');
+const SOURCE = arg('source', 'ridb')!;
 const SAMPLE = Number(arg('sample', '600'));
 const CAP = Number(arg('cap', '200'));
 const NIGHTS = Number(arg('nights', '2'));
 const CONCURRENCY = 3;
+
+/** Whole-stay availability for the demand scan, dispatched by source. Throws on an
+ *  unsupported source (so we never silently seed a catalog we can't actually probe). */
+function isOpenInRange(id: string, arrival: string, end: string, nights: number): Promise<boolean> {
+  if (SOURCE === 'ridb') return hasAvailabilityInRange(id, arrival, end, nights);
+  if (isUseDirectSource(SOURCE)) return hasRCAvailabilityInRange(id, arrival, end, nights);
+  throw new Error(`--source=${SOURCE} not supported by this seed yet (add a checker in isOpenInRange)`);
+}
 
 /** First Saturday roughly a month out — a representative peak-demand weekend. */
 function defaultArrival(): string {
@@ -74,10 +87,10 @@ async function pMap<T, R>(items: T[], fn: (item: T) => Promise<R>, limit: number
 async function main() {
   const arrival = arg('arrival', defaultArrival())!;
   const end = checkout(arrival, NIGHTS);
-  console.log(`[seed] demand-scan: sample ${SAMPLE} rec.gov campgrounds for a ${NIGHTS}-night stay ${arrival}→${end}, keep booked-solid up to ${CAP}${DRY ? ' (DRY RUN)' : ''}`);
+  console.log(`[seed] demand-scan: sample ${SAMPLE} ${SOURCE} campgrounds for a ${NIGHTS}-night stay ${arrival}→${end}, keep booked-solid up to ${CAP}${DRY ? ' (DRY RUN)' : ''}`);
 
   const sample = await query<{ id: string; name: string }>(
-    `SELECT id, name FROM campgrounds WHERE source = 'ridb' AND reservable ORDER BY random() LIMIT ${SAMPLE}`
+    `SELECT id, name FROM campgrounds WHERE source = ${sqlit(SOURCE)} AND reservable ORDER BY random() LIMIT ${SAMPLE}`
   );
   console.log(`[seed] probing ${sample.length} campgrounds…`);
 
@@ -87,7 +100,7 @@ async function main() {
     sample,
     async (cg) => {
       try {
-        const isOpen = await hasAvailabilityInRange(cg.id, arrival, end, NIGHTS);
+        const isOpen = await isOpenInRange(cg.id, arrival, end, NIGHTS);
         probed++;
         if (isOpen) open++;
         else bookedSolid.push(cg); // no whole-stay opening = high demand
@@ -111,7 +124,7 @@ async function main() {
   if (keep.length === 0) { console.log('[seed] nothing to insert'); return; }
 
   const reason = `demand-scan ${arrival} booked-solid`;
-  const values = keep.map((c) => `(${sqlit(c.id)}, 'ridb', ${sqlit(reason)})`).join(', ');
+  const values = keep.map((c) => `(${sqlit(c.id)}, ${sqlit(SOURCE)}, ${sqlit(reason)})`).join(', ');
   await mutate(
     `INSERT INTO probe_targets (campground_id, source, reason)
      VALUES ${values}
