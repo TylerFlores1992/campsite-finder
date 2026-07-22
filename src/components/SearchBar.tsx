@@ -11,6 +11,8 @@ interface SearchBarProps {
     radiusMiles: number;
     startDate?: string;
     endDate?: string;
+    flexNights?: number;
+    flexDays?: 'weekend';
     focusCampgroundId?: string;
   }) => void;
 }
@@ -74,6 +76,11 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
   const [radiusMiles, setRadiusMiles] = useState(25);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  // Flexible dates (feature C): treat [startDate, endDate] as a window and match any
+  // `flexNights` consecutive nights inside it, optionally weekends-only.
+  const [flexOn, setFlexOn] = useState(false);
+  const [flexNights, setFlexNights] = useState(2);
+  const [flexWeekend, setFlexWeekend] = useState(false);
   const [locating, setLocating] = useState(false);
   const [geocoding, setGeocoding] = useState(false);
 
@@ -86,6 +93,17 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Dates + flexible-date payload shared by every search entry point.
+  function dateParams() {
+    return {
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+      ...(flexOn && startDate && endDate
+        ? { flexNights, ...(flexWeekend ? { flexDays: 'weekend' as const } : {}) }
+        : {}),
+    };
+  }
 
   // Close suggestions on outside click
   useEffect(() => {
@@ -145,8 +163,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
       lat: p.lat,
       lng: p.lng,
       radiusMiles,
-      startDate: startDate || undefined,
-      endDate: endDate || undefined,
+      ...dateParams(),
     });
   }
 
@@ -171,8 +188,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           radiusMiles,
-          startDate: startDate || undefined,
-          endDate: endDate || undefined,
+          ...dateParams(),
         });
       },
       () => {
@@ -198,8 +214,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
           lat: cg.latitude,
           lng: cg.longitude,
           radiusMiles,
-          startDate: startDate || undefined,
-          endDate: endDate || undefined,
+          ...dateParams(),
         });
         return;
       }
@@ -229,7 +244,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
         alert('Could not find that location. Try a city name like "Denver, CO".');
         return;
       }
-      onSearch({ lat, lng, radiusMiles, startDate: startDate || undefined, endDate: endDate || undefined });
+      onSearch({ lat, lng, radiusMiles, ...dateParams() });
     } catch {
       alert('Geocoding failed. Check your Mapbox token.');
     } finally {
@@ -245,8 +260,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
         lat: pickedCoords.lat,
         lng: pickedCoords.lng,
         radiusMiles,
-        startDate: startDate || undefined,
-        endDate: endDate || undefined,
+        ...dateParams(),
         focusCampgroundId: focusCampgroundId ?? undefined,
       });
     } else if (location === 'Current location') {
@@ -255,8 +269,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           radiusMiles,
-          startDate: startDate || undefined,
-          endDate: endDate || undefined,
+          ...dateParams(),
         });
       });
     } else {
@@ -358,11 +371,48 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
       </div>
 
       {/* Dates — single smooth range picker */}
-      <DateRangePicker
-        startDate={startDate}
-        endDate={endDate}
-        onChange={(s, e) => { setStartDate(s); setEndDate(e); }}
-      />
+      <div className="flex flex-col">
+        <DateRangePicker
+          startDate={startDate}
+          endDate={endDate}
+          onChange={(s, e) => { setStartDate(s); setEndDate(e); }}
+        />
+        {/* Flexible dates: the range above becomes a search window. */}
+        <div className="flex items-center gap-2 mt-1.5 ml-1 flex-wrap">
+          <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={flexOn}
+              onChange={(e) => setFlexOn(e.target.checked)}
+              className="rounded border-gray-300 text-green-600 focus:ring-green-400"
+            />
+            Flexible dates
+          </label>
+          {flexOn && (
+            <>
+              <select
+                value={flexNights}
+                onChange={(e) => setFlexNights(Number(e.target.value))}
+                className="py-1 px-1.5 text-xs rounded-md border border-gray-200 bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-green-400"
+                aria-label="Nights"
+              >
+                {[1, 2, 3, 4, 5, 6, 7].map((n) => (
+                  <option key={n} value={n}>{n} night{n > 1 ? 's' : ''}</option>
+                ))}
+              </select>
+              <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={flexWeekend}
+                  onChange={(e) => setFlexWeekend(e.target.checked)}
+                  className="rounded border-gray-300 text-green-600 focus:ring-green-400"
+                />
+                Weekends only
+              </label>
+            </>
+          )}
+        </div>
+      </div>
 
       <button
         type="submit"

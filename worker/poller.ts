@@ -45,6 +45,37 @@ import { isUseDirectSource, USEDIRECT_PROVIDERS } from '../src/lib/sources/reser
 import { dispatchNotifications, type NotificationPayload } from '../src/lib/notifications';
 import { bookingLink } from '../src/lib/booking-url';
 import { runDetectionCanary, runDeliveryCanary } from './canary';
+import { findQualifyingRun, flexCandidateStays, isFlexible, type FlexDays, type FlexSpec } from '../src/lib/availability/flex';
+
+/** The flexible-date spec carried by a watch row (fixed whole-stay when nights null). */
+function flexOf(w: { flex_nights: number | null; flex_days: string | null }): FlexSpec {
+  return { nights: w.flex_nights, days: (w.flex_days as FlexDays) ?? null };
+}
+
+/**
+ * Run a whole-stay availability probe for a watch, handling flexible dates. Fixed
+ * watches probe their one [start,end] stay. Flexible watches probe each candidate
+ * run within the window (capped) and stop at the first opening — reporting the
+ * matched range so the alert deep-links to those exact nights, not the whole window.
+ */
+async function probeFlexStay<T>(
+  w: { start_date: string; end_date: string; min_nights: number; flex_nights: number | null; flex_days: string | null },
+  probe: (start: string, end: string, required: number) => Promise<T | null>
+): Promise<{ start: string; end: string; dates: string[]; result: T } | null> {
+  const spec = flexOf(w);
+  if (isFlexible(spec)) {
+    for (const c of flexCandidateStays(w.start_date, w.end_date, spec.nights!, spec.days)) {
+      const nights = nightsOfRange(c.start, c.end);
+      const r = await probe(c.start, c.end, nights.length);
+      if (r) return { start: c.start, end: c.end, dates: nights, result: r };
+    }
+    return null;
+  }
+  const nights = nightsOfRange(w.start_date, w.end_date);
+  const required = Math.max(w.min_nights, nights.length);
+  const r = await probe(w.start_date, w.end_date, required);
+  return r ? { start: w.start_date, end: w.end_date, dates: nights, result: r } : null;
+}
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 15_000);
 // Auto-cart rec.gov watches run on their own tighter loop so a cancellation gets
@@ -82,6 +113,8 @@ interface WatchRow {
   reservations_url: string | null;
   rc_hold_notified_for: string | null;
   muted_site_ids: string[];
+  flex_nights: number | null;
+  flex_days: string | null;
   autocart_enabled: boolean;
   autocart_connected: boolean;
 }
@@ -134,6 +167,14 @@ function monthsForRange(startDate: string, endDate: string): string[] {
 }
 
 /** All nights of [start, end) as YYYY-MM-DD strings. */
+/** Checkout date (YYYY-MM-DD) = the day after the last night of a run. */
+function checkoutAfter(nights: string[], fallback: string): string {
+  if (nights.length === 0) return fallback;
+  const d = new Date(`${nights[nights.length - 1]}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 function nightsOfRange(startDate: string, endDate: string): string[] {
   const nights: string[] = [];
   const cur = new Date(`${startDate}T00:00:00Z`);
@@ -162,7 +203,7 @@ async function loadWatches(): Promise<WatchRow[]> {
   return query<WatchRow>(
     `SELECT w.id, w.user_id, w.campground_id,
             w.start_date::text, w.end_date::text, w.min_nights,
-            w.rc_hold_notified_for, w.muted_site_ids,
+            w.rc_hold_notified_for, w.muted_site_ids, w.flex_nights, w.flex_days,
             c.name AS campground_name, c.source AS campground_source,
             c.reservations_url,
             COALESCE(u.autocart_enabled, false) AS autocart_enabled,
@@ -241,10 +282,18 @@ function availableDatesForWatch(
   }
 
   const muted = new Set(watch.muted_site_ids ?? []);
+  const spec = flexOf(watch);
   for (const [campsiteId, entry] of bySite) {
     if (muted.has(campsiteId)) continue; // site-specific mute — keep looking for another
     const dates = [...entry.open].sort();
-    if (hasConsecutiveRun(dates, required)) return { dates, campsiteId, campsiteName: entry.name };
+    // Flexible: match any flex_nights run (optionally weekend) within the window, and
+    // report just that run. Fixed: the legacy whole-[start,end] stay.
+    const run = isFlexible(spec)
+      ? findQualifyingRun(dates, spec.nights!, spec.days)
+      : hasConsecutiveRun(dates, required)
+        ? dates
+        : null;
+    if (run) return { dates: run, campsiteId, campsiteName: entry.name };
   }
   return { dates: [], campsiteId: null, campsiteName: null };
 }
@@ -323,8 +372,9 @@ async function cycle(): Promise<void> {
     async (w) => {
       const nights = nightsOfRange(w.start_date, w.end_date);
       const required = Math.max(w.min_nights, nights.length);
-      const open = await findRCOpenUnit(w.campground_id, w.start_date, w.end_date, required, w.muted_site_ids);
-      if (open) rcResults.set(w.id, { dates: nights, unitId: open.unitId, sleepingUnitId: open.sleepingUnitId });
+      const open = await findRCOpenUnit(w.campground_id, w.start_date, w.end_date, required, w.muted_site_ids, flexOf(w));
+      // Flexible watches report just the matched run; fixed report the whole stay.
+      if (open) rcResults.set(w.id, { dates: open.dates.length ? open.dates : nights, unitId: open.unitId, sleepingUnitId: open.sleepingUnitId });
     },
     RECGOV_CONCURRENCY
   );
@@ -343,27 +393,23 @@ async function cycle(): Promise<void> {
   );
 
   // ReserveAmerica: HTML-scrape check for a site bookable across the full stay.
-  const raResults = new Map<string, { dates: string[]; siteIds: number[] }>();
+  const raResults = new Map<string, { dates: string[]; siteIds: number[]; start: string; end: string }>();
   await pMap(
     raWatches,
     async (w) => {
-      const nights = nightsOfRange(w.start_date, w.end_date);
-      const required = Math.max(w.min_nights, nights.length);
-      const open = await findReserveAmericaOpen(w.campground_id, w.start_date, w.end_date, required);
-      if (open) raResults.set(w.id, { dates: nights, siteIds: open.siteIds });
+      const m = await probeFlexStay(w, (s, e, required) => findReserveAmericaOpen(w.campground_id, s, e, required));
+      if (m) raResults.set(w.id, { dates: m.dates, siteIds: m.result.siteIds, start: m.start, end: m.end });
     },
     RECGOV_CONCURRENCY
   );
 
   // GoingToCamp: the Camis API answers whole-stay directly, so one call per watch.
-  const gtcResults = new Map<string, { dates: string[]; resourceIds: number[] }>();
+  const gtcResults = new Map<string, { dates: string[]; resourceIds: number[]; start: string; end: string }>();
   await pMap(
     gtcWatches,
     async (w) => {
-      const nights = nightsOfRange(w.start_date, w.end_date);
-      const required = Math.max(w.min_nights, nights.length);
-      const open = await findGoingToCampOpen(w.campground_id, w.start_date, w.end_date, required);
-      if (open) gtcResults.set(w.id, { dates: nights, resourceIds: open.resourceIds });
+      const m = await probeFlexStay(w, (s, e, required) => findGoingToCampOpen(w.campground_id, s, e, required));
+      if (m) gtcResults.set(w.id, { dates: m.dates, resourceIds: m.result.resourceIds, start: m.start, end: m.end });
     },
     RECGOV_CONCURRENCY
   );
@@ -374,16 +420,17 @@ async function cycle(): Promise<void> {
   // the portal is unverified; findTnscOpen swallows errors, so an unreachable portal
   // simply never alerts rather than crashing the cycle — and would need the same
   // fix-then-verify as GoingToCamp did. See docs/CONTEXT.md.)
-  const tnscResults = new Map<string, { dates: string[] }>();
+  const tnscResults = new Map<string, { dates: string[]; start: string; end: string }>();
   if (tnscWatches.length > 0) console.log(`[poller] checking ${tnscWatches.length} TN/SC watch(es)`);
   await pMap(
     tnscWatches,
     async (w) => {
-      const nights = nightsOfRange(w.start_date, w.end_date);
-      const required = Math.max(w.min_nights, nights.length);
-      const open = await findTnscOpen(w.campground_id, w.start_date, w.end_date, required);
-      console.log(`[poller] TN/SC ${w.campground_id} (${w.start_date}..${w.end_date}): ${open ? `OPEN ${open.availableSites} sites` : 'no opening'}`);
-      if (open) tnscResults.set(w.id, { dates: nights });
+      const m = await probeFlexStay(w, async (s, e, required) => {
+        const open = await findTnscOpen(w.campground_id, s, e, required);
+        console.log(`[poller] TN/SC ${w.campground_id} (${s}..${e}): ${open ? `OPEN ${open.availableSites} sites` : 'no opening'}`);
+        return open;
+      });
+      if (m) tnscResults.set(w.id, { dates: m.dates, start: m.start, end: m.end });
     },
     RECGOV_CONCURRENCY
   );
@@ -403,6 +450,12 @@ async function cycle(): Promise<void> {
           ? { dates: rc?.dates ?? [], campsiteId: rc ? String(rc.unitId) : null, campsiteName: rc ? `Unit ${rc.unitId}` : null }
           : availableDatesForWatch(watch, monthData);
     if (result.dates.length === 0) continue;
+
+    // Matched stay range: for flexible watches this is the run inside the window;
+    // for fixed watches it equals the watch's own [start,end]. Deep links and the
+    // alert's dates use this so the user lands on the exact nights that opened.
+    const matchStart = result.dates[0] ?? watch.start_date;
+    const matchEnd = checkoutAfter(result.dates, watch.end_date);
 
     if (!(await claimNotification(watch.id))) {
       console.log(`[poller] watch ${watch.id}: availability found but already notified — skipping`);
@@ -426,7 +479,7 @@ async function cycle(): Promise<void> {
             ? (bookingLink({
                 source: 'reserveamerica',
                 reservationsUrl: watch.reservations_url,
-                date: watch.start_date,
+                date: matchStart,
               }) ?? 'https://www.reserveamerica.com/')
             : isGoingToCampSource(watch.campground_source)
             // Park + dates deep link (create-booking/results base stored as
@@ -434,8 +487,8 @@ async function cycle(): Promise<void> {
             ? (bookingLink({
                 source: 'goingtocamp',
                 reservationsUrl: watch.reservations_url,
-                date: watch.start_date,
-                endDate: watch.end_date,
+                date: matchStart,
+                endDate: matchEnd,
               }) ?? 'https://goingtocamp.com/')
             : isTnscSource(watch.campground_source)
             // TN/SC portal reports counts, not site ids → no deep link; the park's
@@ -451,17 +504,17 @@ async function cycle(): Promise<void> {
                 reservationsUrl: watch.reservations_url,
                 campgroundId: watch.campground_id,
               }) ?? watch.reservations_url ?? 'https://www.reservecalifornia.com/'}${
-                rc ? `#camphawk-rc=${rc.unitId}_${watch.start_date}_${result.dates.length}_${rc.sleepingUnitId ?? ''}` : ''
+                rc ? `#camphawk-rc=${rc.unitId}_${matchStart}_${result.dates.length}_${rc.sleepingUnitId ?? ''}` : ''
               }`
             : result.campsiteId
               // #camphawk fragment carries the dates for the browser extension's
               // optional autofill. Fragments are never sent to rec.gov's server.
-              ? `https://www.recreation.gov/camping/campsites/${result.campsiteId}#camphawk=${watch.start_date}_${watch.end_date}`
+              ? `https://www.recreation.gov/camping/campsites/${result.campsiteId}#camphawk=${matchStart}_${matchEnd}`
               : `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
         campsiteId: result.campsiteId,
         campsiteName: result.campsiteName,
-        startDate: watch.start_date,
-        endDate: watch.end_date,
+        startDate: matchStart,
+        endDate: matchEnd,
       });
       notified++;
       // A held site that just went live: clear the held marker so a future

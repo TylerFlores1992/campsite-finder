@@ -15,6 +15,8 @@ interface Watch {
   created_at: string;
   notification_sent_at: string | null;
   muted_site_ids?: string[];
+  flex_nights?: number | null;
+  flex_days?: string | null;
 }
 
 interface WatchesPanelProps {
@@ -118,6 +120,12 @@ export default function WatchesPanel({ onClose }: WatchesPanelProps) {
                   <span>
                     {formatDate(w.start_date)} – {formatDate(w.end_date)}
                   </span>
+                  {w.flex_nights ? (
+                    <span className="bg-green-100 px-1.5 py-0.5 rounded text-green-700 font-medium">
+                      {w.flex_nights} night{w.flex_nights > 1 ? 's' : ''}
+                      {w.flex_days === 'weekend' ? ', weekends' : ', flexible'}
+                    </span>
+                  ) : null}
                   {w.site_type && (
                     <span className="bg-gray-200 px-1.5 py-0.5 rounded text-gray-600">
                       {w.site_type}

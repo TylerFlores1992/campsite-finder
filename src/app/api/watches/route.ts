@@ -49,11 +49,37 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { campgroundId, startDate, endDate, minNights = 1, siteType } = body;
+  const { campgroundId, startDate, endDate, minNights = 1, siteType, flexNights, flexDays } = body;
 
   if (!campgroundId || !startDate || !endDate) {
     return NextResponse.json({ error: 'campgroundId, startDate, endDate required' }, { status: 400 });
   }
+
+  // Flexible dates (feature C): [startDate, endDate] is a search window and we match
+  // any `flexNights` consecutive nights inside it, optionally weekends-only. NULL/absent
+  // = a fixed whole-stay watch (legacy behavior). Validate the shape.
+  let flexNightsVal: number | null = null;
+  let flexDaysVal: 'weekend' | null = null;
+  if (flexNights != null) {
+    const n = Number(flexNights);
+    const windowNights = Math.round(
+      (new Date(`${endDate}T00:00:00Z`).getTime() - new Date(`${startDate}T00:00:00Z`).getTime()) / 86_400_000
+    );
+    if (!Number.isInteger(n) || n < 1 || n > windowNights) {
+      return NextResponse.json(
+        { error: 'flexNights must be a positive integer no longer than the date window' },
+        { status: 400 }
+      );
+    }
+    flexNightsVal = n;
+    if (flexDays != null) {
+      if (flexDays !== 'weekend') {
+        return NextResponse.json({ error: "flexDays must be 'weekend' or omitted" }, { status: 400 });
+      }
+      flexDaysVal = 'weekend';
+    }
+  }
+  const isFlex = flexNightsVal != null;
 
   const existing = await queryOne<{ id: string; campflare_sub_id: string | null }>(
     `SELECT id, campflare_sub_id FROM watches
@@ -89,10 +115,10 @@ export async function POST(request: NextRequest) {
   }
 
   const [row] = await mutate<{ id: string }>(
-    `INSERT INTO watches (user_id, campground_id, start_date, end_date, min_nights, site_type)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO watches (user_id, campground_id, start_date, end_date, min_nights, site_type, flex_nights, flex_days)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING id`,
-    [userId, campgroundId, startDate, endDate, minNights, siteType ?? null]
+    [userId, campgroundId, startDate, endDate, minNights, siteType ?? null, flexNightsVal, flexDaysVal]
   );
 
   const webhookBase = process.env.NEXT_PUBLIC_APP_URL
@@ -105,7 +131,10 @@ export async function POST(request: NextRequest) {
     [campgroundId]
   );
 
-  if (cgSource?.source === 'ridb' && webhookBase && process.env.CAMPFLARE_API_KEY) {
+  // Flexible watches skip Campflare: it monitors one fixed range per arrival and can't
+  // express the weekend/window constraint, so a match could fire a wrong-dates alert.
+  // Our own poller enforces the flex spec precisely, so it's the sole source for flex.
+  if (!isFlex && cgSource?.source === 'ridb' && webhookBase && process.env.CAMPFLARE_API_KEY) {
     try {
       const alert = await createAlert({
         campground_ids: [campgroundId],

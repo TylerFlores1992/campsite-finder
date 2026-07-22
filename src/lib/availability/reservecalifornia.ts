@@ -5,6 +5,7 @@
 import { fetchGrid, facilityIdFromCampgroundId } from '@/lib/sources/reservecalifornia/client';
 import { providerByCampgroundId } from '@/lib/sources/reservecalifornia/providers';
 import type { CampgroundAvailability, CampsiteAvailability, AvailabilityDay } from '@/lib/types';
+import { findQualifyingRun, type FlexSpec } from '@/lib/availability/flex';
 
 /**
  * Dates within [startDate, endDate) where at least one unit is free.
@@ -88,11 +89,16 @@ export async function findRCOpenUnit(
   startDate: string,
   endDate: string,
   minNights = 1,
-  excludeUnitIds?: string[]
-): Promise<{ unitId: number; sleepingUnitId: number | null } | null> {
+  excludeUnitIds?: string[],
+  flex?: FlexSpec
+): Promise<{ unitId: number; sleepingUnitId: number | null; dates: string[] } | null> {
   const provider = providerByCampgroundId(campgroundId);
   if (!provider) return null;
   const muted = new Set(excludeUnitIds ?? []);
+  // Flexible: find any run of `flex.nights` (optionally weekend) within [start,end).
+  // Fixed: the whole [start,end) stay (report every open night of the window).
+  const flexible = flex?.nights != null && flex.nights > 0;
+  const runLength = flexible ? flex!.nights! : minNights;
   try {
     const grid = await fetchGrid(provider, facilityIdFromCampgroundId(campgroundId), startDate, endDate);
     for (const unit of Object.values(grid.Facility?.Units ?? {})) {
@@ -103,8 +109,11 @@ export async function findRCOpenUnit(
         .filter((s) => s.IsFree && !s.IsBlocked && s.Date >= startDate && s.Date < endDate)
         .map((s) => s.Date)
         .sort();
-      if (hasConsecutiveRun(dates, minNights)) {
-        return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null };
+      if (flexible) {
+        const run = findQualifyingRun(dates, runLength, flex!.days);
+        if (run) return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, dates: run };
+      } else if (hasConsecutiveRun(dates, runLength)) {
+        return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, dates };
       }
     }
   } catch (err) {

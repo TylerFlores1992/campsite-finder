@@ -22,6 +22,8 @@ interface SearchState {
   radiusMiles: number;
   startDate?: string;
   endDate?: string;
+  flexNights?: number;
+  flexDays?: 'weekend';
   focusCampgroundId?: string;
 }
 
@@ -145,6 +147,8 @@ export default function HomePage() {
         radiusMiles: Number(sp.get('radius') ?? 25),
         startDate: sp.get('startDate') ?? undefined,
         endDate: sp.get('endDate') ?? undefined,
+        flexNights: sp.get('flexNights') ? Number(sp.get('flexNights')) : undefined,
+        flexDays: sp.get('flexDays') === 'weekend' ? 'weekend' : undefined,
         focusCampgroundId: sp.get('focus') ?? undefined,
       },
       restored
@@ -217,6 +221,8 @@ export default function HomePage() {
           radius: String(state.radiusMiles),
           ...(state.startDate ? { startDate: state.startDate } : {}),
           ...(state.endDate ? { endDate: state.endDate } : {}),
+          ...(state.flexNights ? { flexNights: String(state.flexNights) } : {}),
+          ...(state.flexDays ? { flexDays: state.flexDays } : {}),
           ...(state.focusCampgroundId ? { focus: state.focusCampgroundId } : {}),
           ...(activeFilters.siteType ? { siteType: activeFilters.siteType } : {}),
           ...(activeFilters.siteType === 'rv' && activeFilters.rvLength ? { rvLength: String(activeFilters.rvLength) } : {}),
@@ -239,6 +245,8 @@ export default function HomePage() {
         radius: String(state.radiusMiles),
         ...(state.startDate ? { startDate: state.startDate } : {}),
         ...(state.endDate ? { endDate: state.endDate } : {}),
+        ...(state.flexNights ? { flexNights: String(state.flexNights) } : {}),
+        ...(state.flexDays ? { flexDays: state.flexDays } : {}),
         ...(activeFilters.siteType ? { siteType: activeFilters.siteType } : {}),
         ...(activeFilters.siteType === 'rv' && activeFilters.rvLength
           ? { rvLength: String(activeFilters.rvLength) }
@@ -642,7 +650,12 @@ export default function HomePage() {
                           onFavorite={() => toggleFavorite(cg.id)}
                           searchDates={
                             searchState?.startDate && searchState?.endDate
-                              ? { startDate: searchState.startDate, endDate: searchState.endDate }
+                              ? {
+                                  startDate: searchState.startDate,
+                                  endDate: searchState.endDate,
+                                  flexNights: searchState.flexNights,
+                                  flexDays: searchState.flexDays,
+                                }
                               : undefined
                           }
                           siteType={filters.siteType}
