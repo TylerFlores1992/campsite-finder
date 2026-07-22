@@ -11,13 +11,12 @@ subscription turns on watching + instant email/SMS alerts + (rec.gov only) auto-
 Watches can be a fixed stay or **flexible** — "any N nights in this window,
 optionally weekends" (see "Flexible dates" under the core flow).
 
-> **Roadmap status (from the A–E "what's worth building" list).** A (alert-health
-> canary), B (verified UseDirect/GoingToCamp deep-links), C (flexible dates), and D
-> (smarter notifications: one-tap stop/reopen, site-specific mute, dead-man's switch)
-> are all **shipped**. **Next up: E — cancellation-likelihood signal.** We already
-> poll availability continuously, so that history is a dataset: surface "this site
-> cancels often, ~X% chance of an opening in your window" as a differentiator. Not
-> started — this is where to resume.
+> **Roadmap status (from the A–E "what's worth building" list) — ALL SHIPPED
+> (2026-07-22).** A (alert-health canary), B (verified UseDirect/GoingToCamp
+> deep-links), C (flexible dates), D (smarter notifications: one-tap stop/reopen,
+> site-specific mute, dead-man's switch), and E (cancellation-likelihood signal) are
+> all live. See "Cancellation-likelihood (feature E)" under the core flow for how E
+> works and what's left to broaden.
 
 ## Stack
 
@@ -462,6 +461,60 @@ source path pass the canary:
 > nothing. (A single canary phone that is also a real user's number is fine; if you
 > ever want canary and real alerts to look different, point `CANARY_PHONE` elsewhere.)
 
+### Cancellation-likelihood (feature E — SHIPPED 2026-07-22)
+
+"This site had a bookable opening on ~X% of recent checks for a stay this far out."
+The product already polls availability constantly; E stops throwing that observation
+away and turns it into a differentiator. Four parts, split so the number is only ever
+shown once it's **honest**:
+
+1. **Recorder** (`worker/poller.ts`, `recordObservations`) — every cycle already knows
+   whether each watched window has a whole-stay opening; it now appends that to
+   `availability_observations` (migration `020`): one row = (campground, arrival,
+   nights, `lead_days`, `had_opening`) at a point in time. **Self-throttled to ≤1 row
+   per window per `OBSERVATION_INTERVAL_MS` (1h)** — 15s detection granularity would
+   write millions of near-dup rows/day. Best-effort: every failure is swallowed so it
+   can never touch alerting, and it degrades to a no-op if migration 020 isn't applied.
+   A 90-day retention prune runs every 6h.
+2. **Probe roster** (`probeRosterIfDue`, `probe_targets` migration `021`) — the recorder
+   only sees campgrounds someone watches, so a curated roster of **high-demand** sites
+   is probed hourly at fixed lead-times (`PROBE_LEAD_DAYS=14,45`, snapped to the next
+   Saturday → weekend demand) for a 2-night stay, writing the same rows. "High demand"
+   is set by `scripts/seed-probe-targets.ts`, which demand-scans a broad sample and
+   keeps the ones **booked solid** on a peak weekend (a site that's always open has no
+   cancellation signal). Seeded **rec.gov-only** so far (largest catalog, datacenter-
+   reachable); the poller's probe path is source-agnostic, so broadening is just seeding
+   other sources.
+3. **Aggregation** (`src/lib/likelihood.ts`, server-only) — reads the time series into
+   an opening rate, **always bucketed on `lead_days`** (`LEAD_BUCKETS`: a site 3 days
+   out vs 45 days out is a different game — never blend them) over a trailing window,
+   gated on a **minimum sample count** (`enough`). `getOpeningRate` (one lead-window,
+   for a per-watch number later), `campgroundBuckets` (the full ladder, detail page),
+   `getHeadlines(ids)` (one batched query for a whole search page → each campground's
+   best-sampled `enough` bucket, absent when none qualify).
+4. **UI** — search attaches a `likelihood` headline to each result (best-effort, never
+   fails a search); `CampgroundCard` shows a positive-framed pill ("Frequent openings"
+   / "Opens up sometimes" / "Rarely opens up") with a precise-% tooltip. The detail
+   page's "How often it opens up" card (`/api/likelihood`, public) renders the per-lead
+   ladder, a "still learning" note while buckets are thin, and **hides entirely** for a
+   site with no history.
+
+> **The honesty gate is the whole point — don't lower it to make the UI look alive.**
+> `minSamples` (default 20) is why nothing showed the day E launched: at 1 sample per
+> bucket per hour, roster sites cross the gate in ~a day, and only then does a badge or
+> bar appear. Showing a rate off 3 samples would be worse than showing nothing.
+
+> **Sanity-check with the readout, not by eyeballing prod.**
+> `NODE_USE_ENV_PROXY=1 npx tsx scripts/likelihood-readout.mts` prints corpus size,
+> accrual/hr, `lead_days`/nights/source spread, and per-bucket + per-campground rates.
+> Healthy launch-day signature: ~300 rows/hr (150 targets × 2 leads), leads clustering
+> at **17** (14→next Sat) and **45**, nights=2, ~9% overall open rate (believable for a
+> booked-solid roster; 0% would mean the demand scan picked sites that never open).
+
+> **Remaining to broaden (not blockers):** roster is rec.gov-only; a per-watch number
+> in the Watches panel (`getOpeningRate` already supports it) isn't wired yet; and the
+> signal needs a few weeks of history before the longer-lead buckets are dense.
+
 ### Booking links — how specific each provider lets us be
 
 `src/lib/booking-url.ts` is the one place that turns campground + site + date into a
@@ -607,6 +660,10 @@ the dedicated sink the delivery canary sends synthetic alerts to (unset = that
 leg records "skipped", a warn not a page); `CANARY_DELIVERY_INTERVAL_MS` and
 `CANARY_DETECT_INTERVAL_MS` — cadences, both non-secret and declared in
 `worker/fly.toml [env]` (delivery defaults to 6h in code, pinned to 24h there).
+Cancellation-likelihood (feature E, on the **Fly worker**, all non-secret with
+in-code defaults — override only to tune): `OBSERVATION_INTERVAL_MS` (per-window
+record throttle, 1h), `OBSERVATION_RETENTION_DAYS` (90), `PROBE_INTERVAL_MS`
+(roster cadence, 1h), `PROBE_LEAD_DAYS` (`14,45`), `PROBE_NIGHTS` (2).
 The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 `BROKER_PORT`, `POLL_MS`).
 

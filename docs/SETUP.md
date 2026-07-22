@@ -90,6 +90,15 @@ these by hand — but here's how each source refreshes:
 | **UseDirect** (state parks) | On the **Fly worker** hourly (`rcSyncIfDue` in `worker/poller.ts`) — NOT in the GitHub Action, because some RDR hosts WAF-block datacenter IPs and it routes through the `/api/rc-proxy` on Vercel | `npx tsx scripts/run-sync-ud.ts` (run from a **residential IP** — it forces direct, no proxy) |
 | **TN/SC State Parks** (ColdFusion portal) | **No scheduled sync yet** — TN shipped 2026-07-20 (39 parks), SC 2026-07-22 (34 camping parks); there is no worker `*SyncIfDue` for either, so the catalog only refreshes when you run it by hand. | `npx tsx scripts/run-sync-tnsc.ts TN` / `... SC` (or no arg = all verified). Run from a **residential IP** — the portal's WAF blocks datacenter IPs. TN coords are embedded; **SC coords come from a curated `SC_PARK_COORDS` table** (portal ships none; name-geocoding was worthless — see `docs/CONTEXT.md`), so no Mapbox token is needed. |
 
+**Feature-E probe roster (not a catalog sync).** `scripts/seed-probe-targets.ts`
+populates `probe_targets` — the high-demand campgrounds the worker probes hourly for
+the cancellation-likelihood signal. It's a **one-time-ish demand scan** (keeps sites
+booked solid on a peak weekend), rec.gov-only for now, run by hand:
+`NODE_USE_ENV_PROXY=1 npx tsx scripts/seed-probe-targets.ts` (add `--dry` to preview).
+Migrations `020_availability_history` + `021_probe_targets` must be applied first.
+Sanity-check the resulting signal with `scripts/likelihood-readout.mts`. See
+"Cancellation-likelihood (feature E)" in `docs/CONTEXT.md`.
+
 Adding a state to an **existing** platform is usually a one-line registry entry —
 `RA_CONTRACTS` (`src/lib/sources/reserveamerica/client.ts`), `USEDIRECT_PROVIDERS`
 (`src/lib/sources/reservecalifornia/providers.ts`), `GOINGTOCAMP_PROVIDERS`
