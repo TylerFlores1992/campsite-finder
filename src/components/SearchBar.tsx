@@ -397,16 +397,19 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
         </select>
       </div>
 
-      {/* Dates — single smooth range picker */}
-      <div className="flex flex-col">
-        <DateRangePicker
-          startDate={startDate}
-          endDate={endDate}
-          onChange={(s, e) => { setStartDate(s); setEndDate(e); }}
-        />
-        {/* Flexible dates: the range above becomes a search window. Styled to match the
-            rest of the bar — same text size/color, same green focus and rounded control. */}
-        <div className="flex items-center gap-3 mt-1.5 ml-1 flex-wrap text-sm text-gray-700">
+      {/* Dates — single smooth range picker (flexible-date toggle now lives above the
+          Search button, so this column stays single-height). */}
+      <DateRangePicker
+        startDate={startDate}
+        endDate={endDate}
+        onChange={(s, e) => { setStartDate(s); setEndDate(e); }}
+      />
+
+      {/* Flexible-date controls sit directly above the Search button. Keeping them out
+          of the Dates column lets that column stay single-height, tightening the bar.
+          Styled to match the rest of the bar (text-sm/gray-700, green focus, rounded). */}
+      <div className="flex flex-col w-full sm:w-auto gap-1 sm:items-end">
+        <div className="flex items-center gap-3 flex-wrap text-sm text-gray-700 sm:justify-end">
           <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
             <input
               type="checkbox"
@@ -440,16 +443,10 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
             </>
           )}
         </div>
-      </div>
-
-      {/* Invisible label spacer keeps the button aligned with the input controls
-          (not the field labels) now that the form top-aligns its children. */}
-      <div className="flex flex-col w-full sm:w-auto">
-        <span aria-hidden className="hidden sm:block text-[11px] font-semibold uppercase tracking-wider mb-1 invisible select-none">Go</span>
         <button
           type="submit"
           disabled={!location || geocoding}
-          className="w-full justify-center px-6 py-2 bg-green-600 text-white text-sm font-semibold rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+          className="w-full sm:w-auto justify-center px-6 py-2 bg-green-600 text-white text-sm font-semibold rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
         >
           {geocoding ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
           Search
