@@ -9,10 +9,12 @@ interface WatchButtonProps {
   campgroundName: string;
   startDate: string;
   endDate: string;
+  flexNights?: number;
+  flexDays?: 'weekend';
   siteType?: string | null;
 }
 
-export default function WatchButton({ campgroundId, campgroundName, startDate, endDate, siteType }: WatchButtonProps) {
+export default function WatchButton({ campgroundId, campgroundName, startDate, endDate, flexNights, flexDays, siteType }: WatchButtonProps) {
   const { isSignedIn } = useUser();
   const [state, setState] = useState<'idle' | 'loading' | 'watching' | 'subscribe' | 'limit'>('idle');
 
@@ -21,7 +23,7 @@ export default function WatchButton({ campgroundId, campgroundName, startDate, e
     const res = await fetch('/api/watches', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campgroundId, startDate, endDate, siteType }),
+      body: JSON.stringify({ campgroundId, startDate, endDate, siteType, flexNights, flexDays }),
     });
     if (res.status === 402) { setState('subscribe'); return; }
     if (res.status === 409) { setState('limit'); return; } // 10-watch cap reached

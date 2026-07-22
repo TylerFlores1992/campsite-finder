@@ -29,6 +29,10 @@ export async function GET(request: NextRequest) {
   const rvLengthRaw = parseInt(searchParams.get('rvLength') ?? '', 10);
   const rvLength = Number.isFinite(rvLengthRaw) && rvLengthRaw > 0 ? rvLengthRaw : undefined;
   const minNights = parseInt(searchParams.get('minNights') ?? '1', 10);
+  // Flexible search (feature C): match any `flexNights` consecutive nights within the
+  // date window instead of requiring the whole [startDate, endDate] stay.
+  const flexNightsRaw = parseInt(searchParams.get('flexNights') ?? '', 10);
+  const flexNights = Number.isFinite(flexNightsRaw) && flexNightsRaw > 0 ? flexNightsRaw : undefined;
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '50', 10), 100);
   const offset = parseInt(searchParams.get('offset') ?? '0', 10);
 
@@ -60,7 +64,8 @@ export async function GET(request: NextRequest) {
         1,
         Math.round((Date.parse(endDate) - Date.parse(startDate)) / 86_400_000)
       );
-      const requiredNights = Math.max(minNights, stayNights);
+      // Flexible: only the shorter run must fit inside the window. Fixed: the whole stay.
+      const requiredNights = flexNights ?? Math.max(minNights, stayNights);
 
       // GoingToCamp goes through the Fly worker in one batched call: Camis' WAF
       // blocks Vercel's IPs, and Fly's it doesn't. Anything it can't answer stays

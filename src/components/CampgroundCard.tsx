@@ -12,7 +12,7 @@ interface CampgroundCardProps {
   onSelect?: () => void;
   onFavorite?: () => void;
   // Pass these when a date search is active
-  searchDates?: { startDate: string; endDate: string };
+  searchDates?: { startDate: string; endDate: string; flexNights?: number; flexDays?: 'weekend' };
   siteType?: string | null;
 }
 
@@ -205,6 +205,8 @@ export default function CampgroundCard({
                 campgroundName={campground.name}
                 startDate={searchDates.startDate}
                 endDate={searchDates.endDate}
+                flexNights={searchDates.flexNights}
+                flexDays={searchDates.flexDays}
                 siteType={siteType}
               />
             )}
