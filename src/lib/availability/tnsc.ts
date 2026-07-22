@@ -1,6 +1,6 @@
 // Availability adapter for Tennessee / South Carolina State Parks campgrounds.
-// Campground ids are `tnsc-<ST>-<parkId>` (e.g. tnsc-TN-25). All call sites stay
-// source-agnostic.
+// Campground ids are `tnsc-<ST>-<key>`: TN keys on its numeric parkId (`tnsc-TN-25`),
+// SC keys on its slug (`tnsc-SC-andrew-jackson`). All call sites stay source-agnostic.
 //
 // The underlying portal call is BATCHED — one POST answers every park for a date
 // range (see sources/tnsc/client.ts). The per-campground helpers below ride that
@@ -10,7 +10,8 @@ import { parseTnscId } from '@/lib/sources/tnsc/providers';
 import { tnscStayAvailability } from '@/lib/sources/tnsc/client';
 
 export function isTnscCampgroundId(campgroundId: string): boolean {
-  return /^tnsc-[A-Z]{2}-\d+$/.test(campgroundId);
+  // TN keys are numeric (`tnsc-TN-25`), SC keys are slugs (`tnsc-SC-andrew-jackson`).
+  return /^tnsc-[A-Z]{2}-.+$/.test(campgroundId);
 }
 
 /** Ensure the range covers at least `minNights` nights. */
@@ -45,7 +46,7 @@ export async function hasTnscAvailabilityInRange(
   const parsed = parseTnscId(campgroundId);
   if (!parsed) return false;
   const end = widenEnd(startDate, endDate, minNights);
-  const r = await tnscStayAvailability(parsed.provider, parsed.parkId, startDate, end);
+  const r = await tnscStayAvailability(parsed.provider, parsed.key, startDate, end);
   return r.available;
 }
 
@@ -67,7 +68,7 @@ export async function findTnscOpen(
   if (!parsed) return null;
   const end = widenEnd(startDate, endDate, minNights);
   try {
-    const r = await tnscStayAvailability(parsed.provider, parsed.parkId, startDate, end);
+    const r = await tnscStayAvailability(parsed.provider, parsed.key, startDate, end);
     return r.available ? { availableSites: r.availableSites } : null;
   } catch (err) {
     // Log (don't rethrow) — the poller is best-effort. Matches the ReserveAmerica

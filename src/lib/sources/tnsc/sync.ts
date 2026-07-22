@@ -26,6 +26,39 @@ function inState(state: string, lng: number, lat: number): boolean {
   return lat >= b[0] && lat <= b[1] && lng >= b[2] && lng <= b[3];
 }
 
+/**
+ * SC's portal ships no coordinates or addresses — only a park name — so those rows
+ * are geocoded here (the `html-grid` variant leaves `lat`/`lng` null). We bias
+ * Mapbox hard toward the state: the query names the park + "State Park, South
+ * Carolina", and the request carries the state `bbox` + a proximity to its centre,
+ * so a generic name (`Aiken` is also a city) resolves to the park, not the town.
+ * The caller still bbox-checks the result, so a bad geocode is dropped, never
+ * misplaced — matching GoingToCamp's "skip rather than guess" rule for coordless rows.
+ * Returns `[lng, lat]` or null (no token / no hit / network error).
+ */
+async function geocodeByName(state: string, name: string): Promise<[number, number] | null> {
+  const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+  const b = TNSC_BBOX[state];
+  if (!token || !b) return null;
+  const stateName = state === 'SC' ? 'South Carolina' : state;
+  const query = `${name} State Park, ${stateName}`;
+  // TNSC_BBOX is [minLat, maxLat, minLng, maxLng]; Mapbox wants minLng,minLat,maxLng,maxLat.
+  const bbox = `${b[2]},${b[0]},${b[3]},${b[1]}`;
+  const proximity = `${(b[2] + b[3]) / 2},${(b[0] + b[1]) / 2}`;
+  const url =
+    `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json` +
+    `?access_token=${token}&country=us&limit=1&bbox=${bbox}&proximity=${proximity}`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { features?: { center?: [number, number] }[] };
+    const center = json.features?.[0]?.center;
+    return center && center.length === 2 ? [center[0], center[1]] : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Sync one provider's camping parks into the campgrounds table. */
 export async function syncTnsc(provider: TnscProvider): Promise<SyncResult> {
   const startMs = Date.now();
@@ -57,18 +90,25 @@ export async function syncTnsc(provider: TnscProvider): Promise<SyncResult> {
     );
 
     for (const park of parks) {
-      if (!Number.isFinite(park.lat) || !Number.isFinite(park.lng)) {
-        errors.push(`${provider.state} ${park.parkId} (${park.name}): no coords`);
+      // Coords are embedded for TN; SC ships none, so geocode from the park name.
+      let lng = park.lng;
+      let lat = park.lat;
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+        const hit = await geocodeByName(provider.state, park.name);
+        if (hit) [lng, lat] = hit;
+      }
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+        errors.push(`${provider.state} ${park.key} (${park.name}): no coords`);
         continue;
       }
-      if (!inState(provider.state, park.lng, park.lat)) {
+      if (!inState(provider.state, lng!, lat!)) {
         errors.push(
-          `${provider.state} ${park.parkId} (${park.name}): coords outside state (${park.lat},${park.lng})`
+          `${provider.state} ${park.key} (${park.name}): coords outside state (${lat},${lng})`
         );
         continue;
       }
 
-      const id = tnscId(provider, park.parkId);
+      const id = tnscId(provider, park.key);
       try {
         await mutate(
           `INSERT INTO campgrounds (
@@ -90,8 +130,8 @@ export async function syncTnsc(provider: TnscProvider): Promise<SyncResult> {
           [
             id,
             park.name,
-            park.lng,
-            park.lat,
+            lng,
+            lat,
             JSON.stringify({ street: null, city: park.city, state: provider.state, zip: null }),
             // Deep-link to the park's own portal page where possible; the slug is
             // site-relative on the marketing host, so fall back to the booking root.

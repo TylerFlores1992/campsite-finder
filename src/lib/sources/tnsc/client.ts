@@ -22,7 +22,7 @@
 // GoingToCamp / UseDirect reachability split in docs/CONTEXT.md).
 
 import type { TnscProvider } from './providers';
-import { CAMPING_TEMPLATE_KEYS } from './providers';
+import { CAMPING_TEMPLATE_KEYS, SC_CAMPING_PRODUCT_KEY } from './providers';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
@@ -30,14 +30,22 @@ const UA =
 // ── Catalog ────────────────────────────────────────────────────────────────
 
 export interface TnscPark {
-  parkId: number;
+  /**
+   * Stable per-park key that forms the id segment and keys availability. TN: its
+   * numeric `parkId` as a string (`'25'`); SC: its slug (`'aiken'`). Opaque to
+   * callers — always compared as a string against the availability batch.
+   */
+  key: string;
+  /** TN's numeric accountKey/parkId; `null` for SC (the grid has no parkId). */
+  parkId: number | null;
   name: string;
   city: string | null;
-  /** Site-relative slug from the embedded array, e.g. `/big-ridge`. */
+  /** Park slug (`big-ridge` / `aiken`) — SC's is also its key. */
   slug: string;
-  lat: number;
-  lng: number;
-  /** Product categories the park offers, from `data-product` (e.g. camping,cabins). */
+  /** Embedded for TN; `null` for SC, whose portal ships no coords (geocoded in sync). */
+  lat: number | null;
+  lng: number | null;
+  /** Product categories the park offers (e.g. camping, cabins/lodging, day-use). */
   products: string[];
 }
 
@@ -75,16 +83,53 @@ async function openPortal(provider: TnscProvider): Promise<{ session: PortalSess
 }
 
 /**
- * Every park for a provider, parsed from the landing page's embedded JS array
- * (`{ name, city, url:'/slug', parkId, lat, lng }`) enriched with the per-card
- * `data-product` list. Coordinates come embedded — no geocoding needed.
- *
- * TN-ONLY for now: SC's landing does not embed this array (see providers.ts). When
- * SC is verified, branch here on `provider.state`.
+ * Every park for a provider, keyed and shaped per variant:
+ *  - `embedded-json` (TN): the landing's embedded JS array + per-card `data-product`.
+ *  - `html-grid` (SC): the landing's `.parkGridItem` cards (slug + name + data-*).
  */
 export async function fetchParkCatalog(provider: TnscProvider): Promise<TnscPark[]> {
   const { html } = await openPortal(provider);
+  return provider.variant === 'html-grid'
+    ? parseGridCatalog(html)
+    : parseEmbeddedCatalog(html);
+}
 
+/**
+ * SC (`html-grid`): parse the landing's `.parkGridItem` cards. Each card is a
+ * `<div class="parkLink" data-action="<slug>">` wrapping a `<div class="parkGridItem"
+ * data-camping data-lodging data-day-use data-maxrv …>` and an `<h4>Name</h4>`.
+ * There is NO parkId and NO coordinates — the slug is the key, and coords are
+ * geocoded from the name in the sync. `data-action` can be `slug/camping`; the app
+ * itself keys on `data-action.split('/')[0]`, so we do too.
+ */
+function parseGridCatalog(html: string): TnscPark[] {
+  const parks: TnscPark[] = [];
+  const seen = new Set<string>();
+  // Split on each park card so a per-card regex can't leak across cards.
+  for (const card of html.split(/<div class="parkLink"/).slice(1)) {
+    const slug = (card.match(/^\s*data-action="([^"]+)"/) || [])[1];
+    if (!slug) continue;
+    const key = slug.split('/')[0].trim();
+    if (!key || seen.has(key)) continue;
+    const name = (card.match(/<h4[^>]*>([^<]+)<\/h4>/) || [])[1]?.trim();
+    if (!name) continue;
+    seen.add(key);
+    const has = (attr: string) => new RegExp(`data-${attr}="true"`, 'i').test(card);
+    const products: string[] = [];
+    if (has('camping')) products.push('camping');
+    if (has('lodging')) products.push('lodging');
+    if (has('day-use')) products.push('day-use');
+    parks.push({ key, parkId: null, name, city: null, slug: key, lat: null, lng: null, products });
+  }
+  return parks;
+}
+
+/**
+ * TN (`embedded-json`): parse the landing page's embedded JS array
+ * (`{ name, city, url:'/slug', parkId, lat, lng }`) enriched with the per-card
+ * `data-product` list. Coordinates come embedded — no geocoding needed.
+ */
+function parseEmbeddedCatalog(html: string): TnscPark[] {
   // 1. The embedded park objects. Each looks like:
   //    { name: 'Big Ridge State Park', city: 'Maynardville', url: '/big-ridge',
   //      parkId: '25', lat: 36.26, lng: -83.91 }
@@ -93,11 +138,13 @@ export async function fetchParkCatalog(provider: TnscProvider): Promise<TnscPark
     /name:\s*'([^']+)'\s*,\s*city:\s*'([^']*)'\s*,\s*url:\s*'([^']*)'\s*,\s*parkId:\s*'?(\d+)'?\s*,\s*lat:\s*(-?\d+(?:\.\d+)?)\s*,\s*lng:\s*(-?\d+(?:\.\d+)?)/g;
   for (const m of html.matchAll(objRe)) {
     const parkId = Number(m[4]);
+    const slug = m[3].trim().replace(/^\//, '');
     parks.set(parkId, {
+      key: String(parkId),
       parkId,
       name: m[1].trim(),
       city: m[2].trim() || null,
-      slug: m[3].trim(),
+      slug,
       lat: Number(m[5]),
       lng: Number(m[6]),
       products: [],
@@ -144,6 +191,12 @@ function usDate(iso: string): string {
   return `${m}/${d}/${y}`;
 }
 
+/** Zero-padded MM/DD/YYYY, matching SC's `checkin`/`checkout` inputs. */
+function usDatePadded(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${m}/${d}/${y}`;
+}
+
 /**
  * Short-lived cache of the whole-portal availability batch, keyed by
  * host+range. One POST answers every park, so N watches on the same date range
@@ -151,22 +204,24 @@ function usDate(iso: string): string {
  * user pans the map, mirroring the GoingToCamp 90s cache.
  */
 const BATCH_TTL_MS = 90_000;
-const batchCache = new Map<string, { at: number; rows: Map<number, TnscParkAvailability> }>();
+const batchCache = new Map<string, { at: number; rows: Map<string, TnscParkAvailability> }>();
 
 /**
  * Fetch availability for ALL of a provider's parks over [fromIso, toIso). Returns
- * a map parkId → counts. Does the CSRF handshake, then the single POST.
+ * a map park-key → counts (TN: parkId string; SC: slug). Does the CSRF handshake,
+ * then the single POST.
  *
- * Whole-stay: CONFIRMED (residential, 2026-07-20) — the portal evaluates the
- * fromDate→toDate range as one booking query, so a nonzero `available` reflects
- * sites open for the ENTIRE span, NOT per-night. A 1/3/5-night sweep from one start
- * returned shrinking totals (2140→1742→1686), so we do not intersect per-night.
+ * Whole-stay: CONFIRMED for both — the portal evaluates the fromDate→toDate range as
+ * one booking query, so a hit reflects sites open for the ENTIRE span, NOT per-night
+ * (TN: a 1/3/5-night sweep returned shrinking totals 2140→1742→1686, 2026-07-20; SC:
+ * the getStateWide filter set shrinks with the range, 2026-07-22). Never intersect
+ * per-night.
  */
 export async function fetchAvailabilityBatch(
   provider: TnscProvider,
   fromIso: string,
   toIso: string
-): Promise<Map<number, TnscParkAvailability>> {
+): Promise<Map<string, TnscParkAvailability>> {
   const key = `${provider.host}|${fromIso}|${toIso}`;
   const hit = batchCache.get(key);
   if (hit && Date.now() - hit.at < BATCH_TTL_MS) return hit.rows;
@@ -189,7 +244,18 @@ async function fetchAvailabilityDirect(
   provider: TnscProvider,
   fromIso: string,
   toIso: string
-): Promise<Map<number, TnscParkAvailability>> {
+): Promise<Map<string, TnscParkAvailability>> {
+  return provider.variant === 'html-grid'
+    ? fetchAvailabilityDirectGrid(provider, fromIso, toIso)
+    : fetchAvailabilityDirectJson(provider, fromIso, toIso);
+}
+
+/** TN (`embedded-json`): batched JSON POST keyed by `accountKey === parkId`. */
+async function fetchAvailabilityDirectJson(
+  provider: TnscProvider,
+  fromIso: string,
+  toIso: string
+): Promise<Map<string, TnscParkAvailability>> {
   const { session } = await openPortal(provider);
   const body = new URLSearchParams({
     fromDate: usDate(fromIso),
@@ -220,21 +286,73 @@ async function fetchAvailabilityDirect(
     throw new Error(`TNSC ${provider.state}: non-JSON availability (CSRF/session?)`);
   }
 
-  const out = new Map<number, TnscParkAvailability>();
+  const out = new Map<string, TnscParkAvailability>();
   for (const row of Array.isArray(rows) ? rows : []) {
     const templates = Array.isArray(row.templates) ? row.templates : [];
     const camping = templates.filter(
       (t) => CAMPING_TEMPLATE_KEYS === null || CAMPING_TEMPLATE_KEYS.has(t.templateKey)
     );
     const availableSites = camping.reduce((n, t) => n + (Number(t.available) || 0), 0);
-    out.set(row.accountKey, { availableSites, templates });
+    out.set(String(row.accountKey), { availableSites, templates });
+  }
+  return out;
+}
+
+/**
+ * SC (`html-grid`): POST the search form to `getStateWide.html` with the stay dates
+ * and the camping product filter. The portal replies with the re-rendered park grid
+ * containing ONLY parks that have a bookable camping site for the whole stay, so a
+ * park's presence == an opening. There is no per-site count (the grid carries no
+ * badge), so `availableSites` is a sentinel `1` meaning "≥1 bookable" — enough for
+ * an alert-only source. Requires the `CSRFToken`, cookie, and `stage=2`; without the
+ * token the endpoint returns an empty grid (measured 2026-07-22).
+ */
+async function fetchAvailabilityDirectGrid(
+  provider: TnscProvider,
+  fromIso: string,
+  toIso: string
+): Promise<Map<string, TnscParkAvailability>> {
+  const { session } = await openPortal(provider);
+  const body = new URLSearchParams({
+    CSRFToken: session.csrfToken,
+    view: 'map',
+    checkin: usDatePadded(fromIso),
+    checkout: usDatePadded(toIso),
+    productKey: SC_CAMPING_PRODUCT_KEY,
+    stage: '2',
+  }).toString();
+
+  const res = await fetch(`https://${provider.host}/library/ajax/getStateWide.html`, {
+    method: 'POST',
+    headers: {
+      'User-Agent': UA,
+      Accept: 'text/html',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Cookie: session.cookie,
+      Referer: `https://${provider.host}/`,
+    },
+    body,
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) throw new Error(`TNSC ${provider.state}: ${res.status} on availability`);
+  const html = await res.text();
+
+  // Each returned card is `<div class="parkLink" data-action="<slug>">`; the slug
+  // (before any `/camping` suffix) is the park key, mirroring parseGridCatalog.
+  const out = new Map<string, TnscParkAvailability>();
+  for (const card of html.split(/<div class="parkLink"/).slice(1)) {
+    const slug = (card.match(/^\s*data-action="([^"]+)"/) || [])[1];
+    if (!slug) continue;
+    const key = slug.split('/')[0].trim();
+    if (key) out.set(key, { availableSites: 1, templates: [] });
   }
   return out;
 }
 
 /** Wire form of one park's availability, for the proxy hop. */
 export interface TnscProxyRow {
-  parkId: number;
+  /** Park key (TN parkId string / SC slug) — matches the availability batch key. */
+  key: string;
   availableSites: number;
   templates: TnscTemplate[];
 }
@@ -249,7 +367,7 @@ async function fetchAvailabilityViaProxy(
   provider: TnscProvider,
   fromIso: string,
   toIso: string
-): Promise<Map<number, TnscParkAvailability>> {
+): Promise<Map<string, TnscParkAvailability>> {
   const res = await fetch(process.env.TNSC_AVAILABILITY_URL!, {
     method: 'POST',
     headers: {
@@ -261,9 +379,9 @@ async function fetchAvailabilityViaProxy(
   });
   if (!res.ok) throw new Error(`TNSC ${provider.state}: proxy ${res.status}`);
   const rows = (await res.json()) as TnscProxyRow[];
-  const out = new Map<number, TnscParkAvailability>();
+  const out = new Map<string, TnscParkAvailability>();
   for (const r of Array.isArray(rows) ? rows : []) {
-    out.set(r.parkId, { availableSites: r.availableSites, templates: r.templates ?? [] });
+    out.set(r.key, { availableSites: r.availableSites, templates: r.templates ?? [] });
   }
   return out;
 }
@@ -275,8 +393,8 @@ export async function fetchAvailabilityBatchAsProxyRows(
   toIso: string
 ): Promise<TnscProxyRow[]> {
   const batch = await fetchAvailabilityDirect(provider, fromIso, toIso);
-  return [...batch.entries()].map(([parkId, v]) => ({
-    parkId,
+  return [...batch.entries()].map(([key, v]) => ({
+    key,
     availableSites: v.availableSites,
     templates: v.templates,
   }));
@@ -285,12 +403,12 @@ export async function fetchAvailabilityBatchAsProxyRows(
 /** Whether one park has a campsite bookable for the whole stay [fromIso, toIso). */
 export async function tnscStayAvailability(
   provider: TnscProvider,
-  parkId: number,
+  key: string,
   fromIso: string,
   toIso: string
 ): Promise<{ available: boolean; availableSites: number }> {
   const batch = await fetchAvailabilityBatch(provider, fromIso, toIso);
-  const row = batch.get(parkId);
+  const row = batch.get(key);
   const availableSites = row?.availableSites ?? 0;
   return { available: availableSites > 0, availableSites };
 }

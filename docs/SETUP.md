@@ -88,22 +88,23 @@ these by hand — but here's how each source refreshes:
 | **ReserveAmerica** (state parks) | Same nightly Action (added step) | `npx tsx scripts/run-sync-ra.ts` (all contracts), or `npx tsx scripts/run-sync-ra.ts DE` for one state — use the single-state form when adding one, a full run re-scrapes ~18 states |
 | **GoingToCamp** (WA/MI/WI/MS) | On the **Fly worker** hourly (`gtcSyncIfDue` in `worker/poller.ts`, fires at 22h staleness) — NOT in the GitHub Action, because the Camis WAF blocks Vercel and the worker throttles itself | `npx tsx scripts/run-sync-gtc.ts` (all), or `... run-sync-gtc.ts WA` for one state. Needs `NEXT_PUBLIC_MAPBOX_TOKEN` — most rows are geocoded from their full street address. |
 | **UseDirect** (state parks) | On the **Fly worker** hourly (`rcSyncIfDue` in `worker/poller.ts`) — NOT in the GitHub Action, because some RDR hosts WAF-block datacenter IPs and it routes through the `/api/rc-proxy` on Vercel | `npx tsx scripts/run-sync-ud.ts` (run from a **residential IP** — it forces direct, no proxy) |
-| **TN State Parks** (ColdFusion portal) | **No scheduled sync yet** — TN shipped 2026-07-20 (39 parks) via a manual run; there is no worker `*SyncIfDue` for it, so the catalog only refreshes when you run it by hand. SC is stubbed (`verified:false`) pending its own recon. | `npx tsx scripts/run-sync-tnsc.ts TN` (verified providers only). Run from a **residential IP** — the portal's WAF blocks datacenter IPs. Coordinates are embedded in the portal (no geocoding). |
+| **TN/SC State Parks** (ColdFusion portal) | **No scheduled sync yet** — TN shipped 2026-07-20 (39 parks), SC 2026-07-22 (34 camping parks); there is no worker `*SyncIfDue` for either, so the catalog only refreshes when you run it by hand. | `npx tsx scripts/run-sync-tnsc.ts TN` / `... SC` (or no arg = all verified). Run from a **residential IP** — the portal's WAF blocks datacenter IPs. TN coords are embedded; **SC coords are geocoded from the park name, so an SC sync needs `NEXT_PUBLIC_MAPBOX_TOKEN`.** |
 
 Adding a state to an **existing** platform is usually a one-line registry entry —
 `RA_CONTRACTS` (`src/lib/sources/reserveamerica/client.ts`), `USEDIRECT_PROVIDERS`
 (`src/lib/sources/reservecalifornia/providers.ts`), `GOINGTOCAMP_PROVIDERS`
 (`src/lib/sources/goingtocamp/providers.ts`), or `TNSC_PROVIDERS`
 (`src/lib/sources/tnsc/providers.ts`) — plus a sync run and the coverage copy
-(`src/app/layout.tsx` metadata, SubscribeGate). **South Carolina is the one live
-cheap-ish add:** it's already stubbed in `TNSC_PROVIDERS` (`verified:false`) and
-reuses TN's client + Vercel proxy, but its landing renders differently, so its
-catalog parse needs its own recon before flipping `verified:true`.
+(`src/app/layout.tsx` metadata, SubscribeGate). **South Carolina shipped 2026-07-22**
+(the last cheap-ish add): it reused TN's ColdFusion backend + Vercel proxy but needed
+its own `html-grid` catalog/availability branch in `client.ts` (slug-keyed, geocoded
+coords) — see the SC recon note in `docs/CONTEXT.md`. Every remaining state needs a
+brand-new adapter, not a registry entry.
 
 **Then deploy the Fly worker.** The worker imports those registries, so a push alone
 leaves it stale and the new state's watches never alert — silently, with no error.
 Confirm with `scripts/e2e-gtc-alert.mts` / `scripts/e2e-tnsc-alert.mts` (they send a
-real email/SMS; see `docs/CONTEXT.md`). Apart from SC, there are **no cheap registry
+real email/SMS; see `docs/CONTEXT.md`). With SC shipped, there are **no cheap registry
 adds left** — every remaining state needs a new adapter. See `docs/CONTEXT.md` before
 going hunting.
 

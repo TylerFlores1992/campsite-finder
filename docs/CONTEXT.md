@@ -51,11 +51,13 @@ Each source has an adapter in `src/lib/availability/` and a catalog sync in
   (ids are negative, e.g. `gtc-WA--2147483647`). Washington, Michigan, Wisconsin,
   Mississippi. Clean JSON API; see `src/lib/sources/goingtocamp/`. Alert-only.
 
-- **TN/SC State Parks (ColdFusion portal)** — `source='tnsc'`, ids `tnsc-<ST>-<parkId>`.
-  Tennessee live (shipped 2026-07-20); South Carolina stubbed/unverified. Clean
-  batched JSON availability API; see `src/lib/sources/tnsc/`. Alert-only, and the
-  worker reaches it **through a Vercel proxy** (`/api/tnsc-availability`) because the
-  portal's WAF blocks Fly — see the detailed TN+SC note below.
+- **TN/SC State Parks (ColdFusion portal)** — `source='tnsc'`, ids `tnsc-<ST>-<key>`
+  (TN keys on parkId, `tnsc-TN-25`; SC keys on slug, `tnsc-SC-aiken`). Tennessee
+  live (shipped 2026-07-20); **South Carolina live (shipped 2026-07-22)**. Same
+  ColdFusion backend + WAF direction, but two different front-ends: TN is a batched
+  JSON availability API, SC is an HTML park-grid filter (see the TN+SC note below).
+  See `src/lib/sources/tnsc/`. Alert-only, and the worker reaches both **through a
+  Vercel proxy** (`/api/tnsc-availability`) because the portal's WAF blocks Fly.
 
 State-park coverage spans **33 states** across those platforms, plus federal
 Recreation.gov nationwide. All non-rec.gov sources are **alert-only** (their carts are
@@ -220,9 +222,10 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
 > GoingToCamp above, what actually remains here is small:
 > - **TENNESSEE SHIPPED 2026-07-20 — 39 camping parks, live and alerting** (e2e:
->   real opening → email + SMS, verified). SC is still stubbed (`verified:false`).
->   **TN + SC = same stack, but NOT one drop-in adapter — and it has a clean JSON
->   API, not an HTML scrape (recon 2026-07-20, corrects the earlier guess).** Both are
+>   real opening → email + SMS, verified). **SOUTH CAROLINA SHIPPED 2026-07-22 — 34
+>   camping parks (of 50), live** (`variant:'html-grid'`; recon in the SC note below).
+>   **TN + SC = same stack, but NOT one drop-in adapter — TN has a clean JSON
+>   API, SC is an HTML park-grid filter (recon 2026-07-20/22).** Both are
 >   Apache + ColdFusion at `reserve.<state>parks.com` (`cfid`/`cftoken`,
 >   `CF_CLIENT_TSP_LV` vs `CF_CLIENT_SCP_LV` — differs only by the 3-letter state
 >   prefix), same "Reservations | <State> State Parks" title, both behind an AWS ALB.
@@ -280,10 +283,37 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 >     The route does its own secret check, so this is safe. **Any future worker→Vercel
 >     proxy route must be added there too**, or it fails exactly this way: builds green,
 >     serves 404, no error anywhere.
->   - **SC needs its own recon** — its portal front-end differs (no embedded park
->     array, no foreUP link on the landing). Same vendor/stack, so likely the same
->     `/library/ajax/` endpoint, but unproven. TN and SC share plumbing, per-state
->     catalog handling — not a single registry entry.
+>   - **SC RECONNED + SHIPPED 2026-07-22 — and it is NOT TN's JSON path.** The shared
+>     ColdFusion backend was the only thing that carried over; SC's front-end is a
+>     different shape (`variant:'html-grid'` in `providers.ts`), so it gets its own
+>     catalog + availability branch in `client.ts`:
+>     - **No parkId, no coords, no address.** The landing renders `.parkGridItem`
+>       cards keyed by a **slug** (`data-action="aiken"`) with a display name and
+>       `data-camping/lodging/day-use/maxrv/…` flags — nothing else. So SC campgrounds
+>       key on the slug (`tnsc-SC-aiken`), and the id parser + availability batch were
+>       generalized from `number` parkId to a **string key** to hold both (TN's numeric
+>       id still parses, `tnsc-([A-Z]{2})-(.+)`).
+>     - **Availability is an HTML grid filter, not JSON.** `POST /library/ajax/getStateWide.html`
+>       with `CSRFToken`, `checkin`/`checkout` (padded MM/DD/YYYY), `productKey=4`
+>       (camping; 5=lodging, 6=day-use), `stage=2` returns the re-rendered grid
+>       containing ONLY parks with a bookable camping site for the whole stay. So a
+>       park's **presence == an opening** — a park-level boolean, no per-site count
+>       (`availableSites` is a sentinel `1`). Whole-stay (the set shrinks with the
+>       range: 33 parks +3d vs 32 +150d, 2026-07-22). **The token is required** — no
+>       `CSRFToken` → empty grid.
+>     - **camping-only, deliberately.** SC's `productKey=5` "Lodging" bundles lodge
+>       rooms + villas with camper cabins (hotel-like), broader than TN's single
+>       `Cabins` template, so we don't let it fire a campground alert. `SC_CAMPING_PRODUCT_KEY`
+>       in `providers.ts`; set `'4,5'` to include lodging.
+>     - **Coords are geocoded from the park name** (`"<name> State Park, South Carolina"`,
+>       Mapbox with the SC `bbox` + proximity bias, then the same in-state bbox reject
+>       as GTC — a bad hit is dropped and logged, never misplaced). SC is the only tnsc
+>       state that needs a Mapbox token to sync.
+>     - Reachability is the SAME as TN (Fly blocked, Vercel fine), so SC reuses the
+>       existing `/api/tnsc-availability` proxy unchanged — the proxy route keys on
+>       `state`, and the wire row now carries `key` instead of `parkId`.
+>     - **Still no scheduled sync** (like TN): refresh with `npx tsx scripts/run-sync-tnsc.ts SC`
+>       from a residential IP, then **deploy the Fly worker** so it picks up SC watches.
 > - **CO = bespoke.** "Colorado Parks and Wildlife IPAWS", ASP.NET, Active Network
 >   (`actv_kuid_*` cookie), and behind a queue-it gate. Hostile; 1 state.
 > - **WV = not a campground system at all.** `wvstateparks.com` is a WordPress
@@ -295,15 +325,13 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > None of these expose a JSON API from their bundles (unlike UseDirect/GoingToCamp) —
 > they'd be HTML-scrape integrations in the ReserveAmerica mold.
 >
-> **Bottom line: GoingToCamp (2026-07-19) and Tennessee (2026-07-20) are DONE.
-> What's left is thin.** The next target is **South Carolina** — same ColdFusion
-> portal as TN, so it reuses all the TN plumbing (the Vercel proxy, the client), but
-> its landing renders differently (no embedded park array, no foreUP link) so its
-> catalog parse needs its own recon before flipping `verified:true`. After that it's
-> CO / LA / WV at
-> 1 state each (and WV is lodging-only, so really 2). Nothing remaining has
-> GoingToCamp's ratio of states-to-effort; weigh a new adapter against other work
-> rather than assuming coverage is the priority.
+> **Bottom line: GoingToCamp (2026-07-19), Tennessee (2026-07-20), and South Carolina
+> (2026-07-22) are DONE. What's left is thin and expensive.** SC was the last cheap-ish
+> add (it reused TN's backend + proxy). What remains is CO / LA / WV at 1 state each
+> (and WV is lodging-only, so really 2), and **each needs a brand-new adapter** — none
+> shares an existing backend. Nothing remaining has GoingToCamp's ratio of
+> states-to-effort; weigh a new adapter against other work rather than assuming
+> coverage is the priority.
 >
 > **Survey lesson worth keeping: fingerprint by API behaviour, not by domain or
 > bundle.** Domain names misled (MI/MS are Camis on vanity hosts), and so did shared

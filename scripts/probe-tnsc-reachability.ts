@@ -45,7 +45,7 @@ async function main() {
     parks = await fetchParkCatalog(provider);
     const withCamping = parks.filter((p) => p.products.some((x) => /camp/i.test(x)));
     console.log(`CATALOG: ok — ${parks.length} parks parsed, ${withCamping.length} offering camping.`);
-    console.log(`  sample: ${parks.slice(0, 3).map((p) => `${p.name} (id ${p.parkId})`).join('; ')}`);
+    console.log(`  sample: ${parks.slice(0, 3).map((p) => `${p.name} (key ${p.key})`).join('; ')}`);
   } catch (err) {
     console.error(`CATALOG: FAILED — ${(err as Error).message}`);
     console.error('  → landing GET or CSRF scrape blocked from this IP. Likely a WAF/HTML challenge.');
@@ -61,14 +61,14 @@ async function main() {
     console.error('No parks to test availability against.');
     process.exit(2);
   }
-  console.log(`\nAVAILABILITY: park "${target.name}" (id ${target.parkId}), starting ${from}`);
+  console.log(`\nAVAILABILITY: park "${target.name}" (key ${target.key}), starting ${from}`);
 
   const counts: Record<number, number | string> = {};
   for (const nights of [1, 3, 5]) {
     const to = addDaysIso(from, nights);
     try {
       const batch = await fetchAvailabilityBatch(provider, from, to);
-      const row = batch.get(target.parkId);
+      const row = batch.get(target.key);
       counts[nights] = row?.availableSites ?? 0;
       console.log(
         `  ${nights} night(s) [${from}→${to}]: ${row?.availableSites ?? 0} camping sites available` +

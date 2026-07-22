@@ -13,8 +13,23 @@
 // books through the ColdFusion portal itself. Fingerprint by the availability API
 // (POST /library/ajax/landingPageAvailability.html → JSON), not by page links.
 
+/**
+ * TN and SC share the ColdFusion backend but NOT the front-end, so catalog +
+ * availability are handled two different ways (recon 2026-07-22):
+ *
+ * - `embedded-json` (TN): the landing embeds a JS park array (parkId, coords) and
+ *   availability is a batched JSON POST to `landingPageAvailability.html` keyed by
+ *   `accountKey === parkId`. Rich: per-park site counts, embedded coordinates.
+ * - `html-grid` (SC): the landing renders `.parkGridItem` cards keyed by a **slug**
+ *   (`data-action`), with NO parkId, NO coordinates, NO address. Availability is a
+ *   POST to `getStateWide.html` that returns the re-rendered grid filtered to the
+ *   parks with a bookable camping site for the whole stay — so it's a park-level
+ *   **boolean by slug** (no per-site count), and coordinates must be geocoded.
+ */
+export type TnscVariant = 'embedded-json' | 'html-grid';
+
 export interface TnscProvider {
-  /** Two-letter state; also the id segment (`tnsc-TN-25`). */
+  /** Two-letter state; also the first id segment (`tnsc-TN-25`, `tnsc-SC-aiken`). */
   state: string;
   /** Portal host, e.g. `reserve.tnstateparks.com`. */
   host: string;
@@ -22,12 +37,14 @@ export interface TnscProvider {
   name: string;
   /** Public booking entry point (reservations_url + alert CTA). */
   bookingUrl: string;
+  /** Which front-end shape this state's portal renders — selects the catalog +
+   *  availability path in client.ts. See {@link TnscVariant}. */
+  variant: TnscVariant;
   /**
    * Whether this state's catalog/availability path is verified working. TN was
-   * fingerprinted 2026-07-20; SC's portal front-end differs and is UNVERIFIED —
-   * it likely shares the same `/library/ajax/` endpoint, but that is unproven, so
-   * it stays flagged off until its own recon confirms the catalog + availability
-   * shape. Do not enable in search/worker until `verified: true`.
+   * fingerprinted 2026-07-20; SC was reconned 2026-07-22 — it turned out to be the
+   * `html-grid` variant (slug-keyed grid, geocoded coords), not a drop-in of TN's
+   * JSON path. Do not enable in search/worker until `verified: true`.
    */
   verified: boolean;
 }
@@ -38,19 +55,33 @@ export const TNSC_PROVIDERS: TnscProvider[] = [
     host: 'reserve.tnstateparks.com',
     name: 'Tennessee State Parks',
     bookingUrl: 'https://reserve.tnstateparks.com/',
+    variant: 'embedded-json',
     verified: true,
   },
   {
-    // UNVERIFIED — SC portal renders its park list differently from TN (no embedded
-    // JS array, no foreUP link). Same ColdFusion stack, so the availability POST is
-    // probably identical, but the catalog path needs its own recon before enabling.
+    // SC shares TN's ColdFusion stack + WAF direction (Fly blocked, Vercel fine, so
+    // it reuses the /api/tnsc-availability proxy), but its front-end is the
+    // `html-grid` variant: slug-keyed `.parkGridItem` cards with no parkId/coords,
+    // and availability via getStateWide.html (presence == bookable). Reconned and
+    // verified 2026-07-22.
     state: 'SC',
     host: 'reserve.southcarolinaparks.com',
     name: 'South Carolina State Parks',
     bookingUrl: 'https://reserve.southcarolinaparks.com/',
-    verified: false,
+    variant: 'html-grid',
+    verified: true,
   },
 ];
+
+/**
+ * The `productKey` the SC `getStateWide.html` filter uses for camping (decoded from
+ * the landing's product buttons 2026-07-22: camping=4, lodging=5, day-use=6).
+ * Camping-only, deliberately: unlike TN's cabins (a single `Cabins` template), SC's
+ * "Lodging" product bundles lodge ROOMS and villas with camper cabins, which are
+ * hotel-like, not a campsite — so we don't let them fire a campground alert. Query
+ * `'4,5'` if a watch should also hit SC lodging.
+ */
+export const SC_CAMPING_PRODUCT_KEY = '4';
 
 /** Our single source value in the campgrounds table. */
 export const TNSC_SOURCE = 'tnsc';
@@ -84,18 +115,27 @@ export function tnscProviderByState(state: string): TnscProvider | undefined {
   return TNSC_PROVIDERS.find((p) => p.state === state.toUpperCase());
 }
 
-export function tnscId(provider: TnscProvider, parkId: number): string {
-  return `tnsc-${provider.state}-${parkId}`;
+/**
+ * Build a campground id. The key is per-variant: TN uses its numeric `parkId`
+ * (`tnsc-TN-25`), SC uses its slug (`tnsc-SC-aiken`). Both are opaque strings from
+ * everywhere but this module — availability keys the batch by this same string.
+ */
+export function tnscId(provider: TnscProvider, key: string | number): string {
+  return `tnsc-${provider.state}-${key}`;
 }
 
-/** Parse `tnsc-TN-25` → provider + parkId. */
+/**
+ * Parse a campground id → provider + park key. The key is everything after the
+ * state segment, kept as a string so it covers both TN's numeric parkId and SC's
+ * slug (which itself contains hyphens, e.g. `tnsc-SC-andrew-jackson`).
+ */
 export function parseTnscId(
   campgroundId: string
-): { provider: TnscProvider; parkId: number } | null {
-  const m = campgroundId.match(/^tnsc-([A-Z]{2})-(\d+)$/);
+): { provider: TnscProvider; key: string } | null {
+  const m = campgroundId.match(/^tnsc-([A-Z]{2})-(.+)$/);
   if (!m) return null;
   const provider = tnscProviderByState(m[1]);
-  return provider ? { provider, parkId: Number(m[2]) } : null;
+  return provider ? { provider, key: m[2] } : null;
 }
 
 export function isTnscSource(source: string): boolean {
