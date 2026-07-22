@@ -15,6 +15,10 @@ primary_region = "sjc"
 [env]
   POLL_INTERVAL_MS = "15000"
   PORT = "8080"
+  # Delivery canary (synthetic email+SMS send proving the last mile). Daily, not the
+  # 6h code default: the SMS send costs A2P money and once/day still catches a Twilio
+  # outage well within the window we'd want to know it broke.
+  CANARY_DELIVERY_INTERVAL_MS = "86400000"
 
 # This is primarily a background poller. The HTTP service exists for ONE endpoint
 # (POST /gtc/availability, shared-secret guarded) that the Vercel search page
