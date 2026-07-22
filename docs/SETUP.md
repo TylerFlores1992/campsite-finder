@@ -158,6 +158,25 @@ scripts/            run-sync*.ts catalog syncs; e2e-gtc-alert.mts (live alert te
 >
 > See `docs/CONTEXT.md`.
 
+## Screenshotting UI from a web session (component isolation)
+
+`scripts/screenshot-component.mts` renders ONE React component into a bare static
+page (project Tailwind, no Next/Clerk/data) on a plain localhost port and screenshots
+it with the pre-installed Chromium. This exists because, from a Claude-web session,
+the **live site can't be browsed** (the agent proxy resets headless-Chromium TLS) and
+the full Next app pulls in Clerk's dev-browser redirect — isolation sidesteps both
+(nothing leaves localhost, no TLS in the path). Use it to eyeball layout/spacing/
+alignment before shipping.
+
+```
+npx tsx scripts/screenshot-component.mts search-bar --out=/tmp/x.png --width=1400 --height=420
+```
+
+Add a preset to the `PRESETS` map for a component that needs realistic props; or pass
+a `.tsx` path (default export, no props) ad-hoc. Needs `playwright-core` (a
+devDependency) + the image's `/opt/pw-browsers` Chromium. **Scope: presentational
+components only** — not real data, auth, or full-page composition.
+
 ## Front-end changes via v0
 
 The UI is iterated in **v0** (linked to this GitHub repo). Setup that keeps the
