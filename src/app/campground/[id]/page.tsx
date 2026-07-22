@@ -67,11 +67,20 @@ function AvailabilityCalendar({
   if (loading) return <div className="flex items-center gap-2 text-gray-400 py-4"><Loader2 size={16} className="animate-spin" /> Loading availability...</div>;
   if (!data) return null;
 
-  const availDays = new Set(
-    data.campsites.flatMap((cs) =>
-      cs.availability.filter((d) => d.status === 'available').map((d) => d.date)
-    )
-  );
+  // Map each open date → a specific campsite that's open that day. rec.gov's
+  // per-site page (`/camping/campsites/<id>`) is the most specific link that
+  // provably works (dates aren't deep-linkable there — see booking-url.ts), so
+  // landing on a real open site beats dumping the user on the generic campground
+  // page. bookingLink only uses campsiteId for rec.gov; other sources ignore it.
+  const dateToOpenSite = new Map<string, string>();
+  for (const cs of data.campsites) {
+    for (const d of cs.availability) {
+      if (d.status === 'available' && !dateToOpenSite.has(d.date)) {
+        dateToOpenSite.set(d.date, cs.campsiteId);
+      }
+    }
+  }
+  const availDays = new Set(dateToOpenSite.keys());
 
   // Build calendar grid
   const [year, mo] = month.split('-').map(Number);
@@ -110,10 +119,10 @@ function AvailabilityCalendar({
           return clickable ? (
             <a
               key={dateStr}
-              href={bookingLink({ source, reservationsUrl, campgroundId, date: dateStr })!}
+              href={bookingLink({ source, reservationsUrl, campgroundId, date: dateStr, campsiteId: dateToOpenSite.get(dateStr) })!}
               target="_blank"
               rel="noopener noreferrer"
-              title={`See available sites on ${dateStr} and book${providerName ? ` on ${providerName}` : ''}`}
+              title={`See an open site for ${dateStr} and book${providerName ? ` on ${providerName}` : ''}`}
               className={cls}
             >
               {day}
