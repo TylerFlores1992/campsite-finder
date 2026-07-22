@@ -94,6 +94,21 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
+  // Coarse IP-based location (Vercel edge headers) for when precise GPS is off/denied.
+  // null if the edge can't place the IP (local dev, some corporate IPs).
+  async function ipLocation(): Promise<{ lat: number; lng: number } | null> {
+    try {
+      const res = await fetch('/api/geo');
+      if (res.ok) {
+        const d = await res.json();
+        if (Number.isFinite(d?.lat) && Number.isFinite(d?.lng)) return { lat: d.lat, lng: d.lng };
+      }
+    } catch {
+      /* fall through */
+    }
+    return null;
+  }
+
   // Dates + flexible-date payload shared by every search entry point.
   function dateParams() {
     return {
@@ -191,9 +206,17 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
           ...dateParams(),
         });
       },
-      () => {
+      async () => {
+        // Location off / denied — fall back to coarse IP location before giving up.
+        const ip = await ipLocation();
         setLocating(false);
-        alert('Could not get your location. Try entering a city or address instead.');
+        if (ip) {
+          setLocation('Current location');
+          setPickedCoords({ lat: ip.lat, lng: ip.lng });
+          onSearch({ lat: ip.lat, lng: ip.lng, radiusMiles, ...dateParams() });
+        } else {
+          alert('Could not get your location. Try entering a city or address instead.');
+        }
       },
       { timeout: 10000 }
     );
@@ -264,14 +287,18 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
         focusCampgroundId: focusCampgroundId ?? undefined,
       });
     } else if (location === 'Current location') {
-      navigator.geolocation.getCurrentPosition((pos) => {
-        onSearch({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          radiusMiles,
-          ...dateParams(),
-        });
-      });
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          onSearch({ lat: pos.coords.latitude, lng: pos.coords.longitude, radiusMiles, ...dateParams() });
+        },
+        async () => {
+          // Location off / denied — fall back to coarse IP location before giving up.
+          const ip = await ipLocation();
+          if (ip) onSearch({ lat: ip.lat, lng: ip.lng, radiusMiles, ...dateParams() });
+          else alert('Could not get your location. Try entering a city or address instead.');
+        },
+        { timeout: 8000, maximumAge: 300_000 }
+      );
     } else {
       geocodeAndSearch();
     }

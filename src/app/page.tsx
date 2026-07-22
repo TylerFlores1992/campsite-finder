@@ -46,6 +46,10 @@ export default function HomePage() {
   const [campgrounds, setCampgrounds] = useState<Campground[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Quick-trip (Tonight / This weekend) location resolution: busy spinner + a note
+  // shown when we can't detect a location at all (so the button never dies silently).
+  const [geoBusy, setGeoBusy] = useState(false);
+  const [geoNote, setGeoNote] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Set only by a MAP PIN click, which hoists that campground to the top of the
   // list. Kept separate from selectedId on purpose: clicking a *card* selects it
@@ -323,28 +327,58 @@ export default function HomePage() {
     }
   }
 
-  function handleTonight() {
-    if (!searchState) {
-      navigator.geolocation.getCurrentPosition((pos) => {
-        const { start, end } = getTonight();
-        search({ lat: pos.coords.latitude, lng: pos.coords.longitude, radiusMiles: 50, startDate: start, endDate: end });
-      });
-    } else {
-      const { start, end } = getTonight();
-      search({ ...searchState, startDate: start, endDate: end });
+  // Resolve a starting location for a quick trip. Precise browser GPS first, but fall
+  // back to coarse IP-based location (Vercel edge headers, via /api/geo) when location
+  // services are off, the permission is denied, or GPS times out — so the buttons work
+  // regardless of device settings. null only if every path fails.
+  const resolveLocation = useCallback(async (): Promise<{ lat: number; lng: number } | null> => {
+    const gps = await new Promise<{ lat: number; lng: number } | null>((resolve) => {
+      if (typeof navigator === 'undefined' || !navigator.geolocation) return resolve(null);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => resolve(null), // denied / unavailable / timed out — fall through to IP
+        { timeout: 8000, maximumAge: 300_000 }
+      );
+    });
+    if (gps) return gps;
+    try {
+      const res = await fetch('/api/geo');
+      if (res.ok) {
+        const d = await res.json();
+        if (Number.isFinite(d?.lat) && Number.isFinite(d?.lng)) return { lat: d.lat, lng: d.lng };
+      }
+    } catch {
+      /* network error — fall through to the type-a-location hint */
     }
+    return null;
+  }, []);
+
+  const quickTrip = useCallback(
+    async (radiusMiles: number, dates: { start: string; end: string }) => {
+      // Already searching somewhere? Just re-run with the quick-trip dates.
+      if (searchState) {
+        search({ ...searchState, startDate: dates.start, endDate: dates.end });
+        return;
+      }
+      setGeoNote(null);
+      setGeoBusy(true);
+      const loc = await resolveLocation();
+      setGeoBusy(false);
+      if (!loc) {
+        setGeoNote('Couldn’t detect your location. Type a city or park in the search box above to start.');
+        return;
+      }
+      search({ lat: loc.lat, lng: loc.lng, radiusMiles, startDate: dates.start, endDate: dates.end });
+    },
+    [searchState, resolveLocation, search]
+  );
+
+  function handleTonight() {
+    quickTrip(50, getTonight());
   }
 
   function handleThisWeekend() {
-    if (!searchState) {
-      navigator.geolocation.getCurrentPosition((pos) => {
-        const { start, end } = getThisWeekend();
-        search({ lat: pos.coords.latitude, lng: pos.coords.longitude, radiusMiles: 100, startDate: start, endDate: end });
-      });
-    } else {
-      const { start, end } = getThisWeekend();
-      search({ ...searchState, startDate: start, endDate: end });
-    }
+    quickTrip(100, getThisWeekend());
   }
 
   // Signed-in users without an active subscription can still SEARCH (same as
@@ -503,15 +537,17 @@ export default function HomePage() {
             <div className="flex flex-wrap justify-center gap-3">
               <button
                 onClick={handleTonight}
-                className="px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-display font-semibold text-base shadow-md shadow-amber-500/25 transition-all hover:shadow-lg hover:-translate-y-0.5"
+                disabled={geoBusy}
+                className="px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-display font-semibold text-base shadow-md shadow-amber-500/25 transition-all hover:shadow-lg hover:-translate-y-0.5 disabled:opacity-60 disabled:cursor-wait disabled:translate-y-0"
               >
-                ⛺ Tonight
+                {geoBusy ? 'Finding you…' : '⛺ Tonight'}
               </button>
               <button
                 onClick={handleThisWeekend}
-                className="px-6 py-3 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-display font-semibold text-base shadow-md transition-all hover:shadow-lg hover:-translate-y-0.5"
+                disabled={geoBusy}
+                className="px-6 py-3 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-display font-semibold text-base shadow-md transition-all hover:shadow-lg hover:-translate-y-0.5 disabled:opacity-60 disabled:cursor-wait disabled:translate-y-0"
               >
-                🌲 This weekend
+                {geoBusy ? 'Finding you…' : '🌲 This weekend'}
               </button>
               <button
                 onClick={() => setWatchesOpen(true)}
@@ -520,6 +556,12 @@ export default function HomePage() {
                 🔔 My watches{watchCount !== null ? ` (${watchCount})` : ''}
               </button>
             </div>
+
+            {geoNote && (
+              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 max-w-sm">
+                {geoNote}
+              </p>
+            )}
 
             {watchCount === 0 && (
               <p className="text-sm text-gray-600 max-w-sm [text-shadow:_0_1px_6px_rgb(255_255_255_/_0.8)]">
