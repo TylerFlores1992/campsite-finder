@@ -110,7 +110,7 @@ function AvailabilityCalendar({
           return clickable ? (
             <a
               key={dateStr}
-              href={bookingLink({ source, reservationsUrl, date: dateStr })!}
+              href={bookingLink({ source, reservationsUrl, campgroundId, date: dateStr })!}
               target="_blank"
               rel="noopener noreferrer"
               title={`See available sites on ${dateStr} and book${providerName ? ` on ${providerName}` : ''}`}

@@ -45,6 +45,11 @@ export interface GtcLocalizedValues {
 
 export interface GtcLocation {
   resourceLocationId: number;
+  /** Booking "transaction location" — needed for the create-booking deep link.
+   *  Usually equals resourceLocationId, but not always (so read it, don't derive it). */
+  transactionLocationId?: number;
+  /** The park's root map id — the deep link's `mapId`. `null` for day-use parks. */
+  rootMapId?: number | null;
   gpsCoordinates?: string; // "lat, lng" STRING — not numeric fields
   region?: string;
   regionCode?: string; // zip
@@ -52,6 +57,34 @@ export interface GtcLocation {
   phoneNumber?: string;
   email?: string;
   localizedValues?: GtcLocalizedValues[];
+}
+
+/**
+ * The GoingToCamp booking deep-link BASE for a park (dates appended later by
+ * booking-url.ts). Encodes the three ids from the resourcelocation payload plus the
+ * "any equipment / 1 person" defaults. Returns null when the park can't be
+ * deep-linked (missing ids / day-use park with no `rootMapId`) — caller falls back
+ * to the tenant root. Verified 2026-07-22 (see booking-url.ts). `tenantBookingUrl`
+ * is the provider's root, e.g. `https://washington.goingtocamp.com/`.
+ */
+export function goingToCampBookingBase(tenantBookingUrl: string, loc: GtcLocation): string | null {
+  const tl = loc.transactionLocationId;
+  const rl = loc.resourceLocationId;
+  const mapId = loc.rootMapId;
+  if (tl == null || rl == null || mapId == null) return null;
+  const params = new URLSearchParams({
+    transactionLocationId: String(tl),
+    resourceLocationId: String(rl),
+    mapId: String(mapId),
+    searchTabGroupId: '0',
+    bookingCategoryId: '0',
+    isReserving: 'true',
+    equipmentId: '-32768',
+    subEquipmentId: '-32768',
+    peopleCapacityCategoryCounts: '[[-32767,null,1,null]]',
+    view: 'list',
+  });
+  return `${tenantBookingUrl.replace(/\/$/, '')}/create-booking/results?${params.toString()}`;
 }
 
 interface GtcResourceSlice {

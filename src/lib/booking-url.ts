@@ -31,11 +31,29 @@
  *   one was already proven in the detail-page calendar; it now applies to alerts
  *   too, which previously sent the bare park URL.
  *
- * - **ReserveCalifornia / UseDirect and GoingToCamp — UNVERIFIED, so no params.**
- *   Both are alert-only sources and neither has had its deep-link format measured
- *   the way the two above have. They fall through to the plain reservations URL on
- *   purpose. If you verify one, add a branch here and note the evidence — do not
- *   add a guess.
+ * - **GoingToCamp — park + dates YES (verified 2026-07-22, residential browser).**
+ *   The booking flow's results page is a real deep link:
+ *     `…/create-booking/results?transactionLocationId=<tl>&resourceLocationId=<rl>
+ *        &mapId=<rootMapId>&bookingCategoryId=0&startDate=<Y-M-D>&endDate=<Y-M-D>
+ *        &nights=<n>&equipmentId=-32768&subEquipmentId=-32768&…`
+ *   All three ids come from the `/api/resourcelocation` response we already sync
+ *   (`resourceLocationId`, `transactionLocationId`, `rootMapId`), so the GTC sync
+ *   stores that whole base (minus dates) as the campground's `reservations_url`, and
+ *   this helper appends the stay. Confirmed by rebuilding a park we never captured
+ *   (Alta Lake) from scratch: it landed on that park's site list with the dates
+ *   pre-filled. Equipment/party default to "any / 1 person" (`-32768`) — the widest
+ *   match; the user narrows on the page. A bare tenant-root URL (pre-sync, or a
+ *   day-use park with `rootMapId=null`) falls through unchanged.
+ *
+ * - **ReserveCalifornia — facility YES, date NO (verified 2026-07-22).**
+ *   `reservecalifornia.com/park/<placeId>/<facilityId>` deep-links to the specific
+ *   loop that opened (confirmed landing on the exact loop for a facility we rebuilt
+ *   from our id). `<placeId>` is already in `reservations_url` (`/park/<placeId>`),
+ *   `<facilityId>` is the trailing number of our campground id (`rc-708` → `708`).
+ *   Dates are NOT URL-linkable here — that's exactly why the poller emits the
+ *   `#camphawk-rc` extension fragment to autofill them — so no date param. Gated on
+ *   the reservecalifornia.com host: other UseDirect states use generic reserve
+ *   landings that don't take a facility path, and stay unverified → no param.
  *
  * ## This helper does NOT own the alert links' `#camphawk` fragments
  *
@@ -52,15 +70,32 @@ export interface BookingLinkOpts {
   /** Campground `source` column: 'ridb' | 'reserveamerica' | 'reservecalifornia' | 'goingtocamp' | 'tnsc' | …
    *  ('tnsc' has no verified date/site deep-link params, so it falls through to the plain reservationsUrl). */
   source?: string | null;
-  /** The campground's stored reservations_url — the fallback, and the base for RA. */
+  /** The campground's stored reservations_url — the fallback, the base for RA, and
+   *  (for GoingToCamp, post-sync) the create-booking deep-link base. */
   reservationsUrl?: string | null;
   /** Provider's site id, when we know which specific site opened. Recreation.gov only. */
   campsiteId?: string | null;
-  /** Arrival date, YYYY-MM-DD. Only ReserveAmerica does anything with it. */
+  /** Our campground id — used to pull the ReserveCalifornia facility id (trailing number). */
+  campgroundId?: string | null;
+  /** Arrival date, YYYY-MM-DD. ReserveAmerica + GoingToCamp use it. */
   date?: string | null;
+  /** Departure date, YYYY-MM-DD. GoingToCamp uses it for `nights` (defaults to 1). */
+  endDate?: string | null;
 }
 
-export function bookingLink({ source, reservationsUrl, campsiteId, date }: BookingLinkOpts): string | undefined {
+/** Whole nights between two ISO dates, floored at 1. */
+function nightsBetween(start: string, end?: string | null): number {
+  if (!end) return 1;
+  const n = Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000);
+  return Number.isFinite(n) && n >= 1 ? n : 1;
+}
+
+/** ISO date one day after `iso`. */
+function nextDay(iso: string): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+}
+
+export function bookingLink({ source, reservationsUrl, campsiteId, campgroundId, date, endDate }: BookingLinkOpts): string | undefined {
   // Recreation.gov: the site page is the most specific thing that exists. It stands
   // alone (not derived from reservationsUrl), so it works even when a campground's
   // stored URL is a facility-specific one.
@@ -75,6 +110,22 @@ export function bookingLink({ source, reservationsUrl, campsiteId, date }: Booki
     if (!y || !m || !d) return reservationsUrl; // malformed date — don't build a broken param
     const sep = reservationsUrl.includes('?') ? '&' : '?';
     return `${reservationsUrl}${sep}calarvdate=${m}/${d}/${y}&sitepage=true`;
+  }
+
+  // GoingToCamp: append the stay to the park deep-link base. Only fires once the
+  // sync has stored that base (contains `create-booking/results`); a bare tenant
+  // root falls through so nothing breaks pre-sync or for day-use parks. See header.
+  if (source === 'goingtocamp' && date && reservationsUrl.includes('create-booking/results')) {
+    const sep = reservationsUrl.includes('?') ? '&' : '?';
+    return `${reservationsUrl}${sep}startDate=${date}&endDate=${endDate ?? nextDay(date)}&nights=${nightsBetween(date, endDate)}`;
+  }
+
+  // ReserveCalifornia: deep-link to the specific facility (loop). Host-gated so only
+  // reservecalifornia.com/park/<placeId> URLs qualify; other UseDirect states' generic
+  // reserve pages stay unverified. No date param (not URL-linkable — see header).
+  if (campgroundId && /reservecalifornia\.com\/park\/\d+$/.test(reservationsUrl)) {
+    const facilityId = campgroundId.match(/(\d+)$/)?.[1];
+    if (facilityId) return `${reservationsUrl}/${facilityId}`;
   }
 
   return reservationsUrl;

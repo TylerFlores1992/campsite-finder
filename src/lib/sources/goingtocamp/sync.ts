@@ -5,7 +5,7 @@ import {
   goingToCampId,
   type GoingToCampProvider,
 } from './providers';
-import { fetchLocations, parseGpsCoordinates, type GtcLocation } from './client';
+import { fetchLocations, parseGpsCoordinates, goingToCampBookingBase, type GtcLocation } from './client';
 import type { SyncResult } from '../types';
 
 /**
@@ -151,7 +151,10 @@ export async function syncGoingToCamp(provider: GoingToCampProvider): Promise<Sy
                 state: provider.state,
                 zip: (loc.regionCode ?? '').trim() || null,
               }),
-              provider.bookingUrl,
+              // Store the create-booking deep-link base (dates appended by
+              // booking-url.ts); fall back to the tenant root for day-use parks that
+              // can't be deep-linked (no rootMapId).
+              goingToCampBookingBase(provider.bookingUrl, loc) ?? provider.bookingUrl,
               (loc.phoneNumber ?? '').trim() || null,
               (loc.email ?? '').trim() || null,
             ]

@@ -425,16 +425,28 @@ async function cycle(): Promise<void> {
                 date: watch.start_date,
               }) ?? 'https://www.reserveamerica.com/')
             : isGoingToCampSource(watch.campground_source)
-            // Camis has no per-site deep link, so the tenant's booking page is the CTA.
-            ? (watch.reservations_url ?? 'https://goingtocamp.com/')
+            // Park + dates deep link (create-booking/results base stored as
+            // reservations_url by the sync). Falls back to the tenant root pre-sync.
+            ? (bookingLink({
+                source: 'goingtocamp',
+                reservationsUrl: watch.reservations_url,
+                date: watch.start_date,
+                endDate: watch.end_date,
+              }) ?? 'https://goingtocamp.com/')
             : isTnscSource(watch.campground_source)
             // TN/SC portal reports counts, not site ids → no deep link; the park's
             // booking page (reservations_url) is the CTA.
             ? (watch.reservations_url ?? 'https://reserve.tnstateparks.com/')
             : isUseDirectSource(watch.campground_source)
-            // #camphawk-rc fragment (unitId_arrival_nights_sleepingUnitId) lets the
-            // extension add the exact unit to the RC cart. Fragment never hits RC's server.
-            ? `${watch.reservations_url ?? 'https://www.reservecalifornia.com/'}${
+            // Deep-link to the specific facility (loop) — bookingLink turns RC's
+            // /park/<placeId> into /park/<placeId>/<facilityId>. The #camphawk-rc
+            // fragment (unitId_arrival_nights_sleepingUnitId) still rides along so the
+            // extension can autofill the cart; it never hits RC's server.
+            ? `${bookingLink({
+                source: watch.campground_source,
+                reservationsUrl: watch.reservations_url,
+                campgroundId: watch.campground_id,
+              }) ?? watch.reservations_url ?? 'https://www.reservecalifornia.com/'}${
                 rc ? `#camphawk-rc=${rc.unitId}_${watch.start_date}_${result.dates.length}_${rc.sleepingUnitId ?? ''}` : ''
               }`
             : result.campsiteId
