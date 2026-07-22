@@ -537,86 +537,99 @@ async function cycle(): Promise<void> {
   }
 
   const monthData = new Map<string, Awaited<ReturnType<typeof getAvailabilityFromRecGov>>>();
-  await pMap(
-    [...pairs],
-    async (pair) => {
-      const [campgroundId, month] = pair.split('|');
-      // getAvailabilityFromRecGov swallows fetch errors and returns empty campsites,
-      // so a transient failure never looks like "nothing available → skip" incorrectly.
-      monthData.set(pair, await getAvailabilityFromRecGov(campgroundId, month));
-    },
-    RECGOV_CONCURRENCY
-  );
-
-  // ReserveCalifornia: find the specific open unit hosting the full stay.
   const rcResults = new Map<string, { dates: string[]; unitId: number; sleepingUnitId: number | null }>();
-  await pMap(
-    rcWatches,
-    async (w) => {
-      const nights = nightsOfRange(w.start_date, w.end_date);
-      const required = Math.max(w.min_nights, nights.length);
-      const open = await findRCOpenUnit(w.campground_id, w.start_date, w.end_date, required, w.muted_site_ids, flexOf(w));
-      // Flexible watches report just the matched run; fixed report the whole stay.
-      if (open) rcResults.set(w.id, { dates: open.dates.length ? open.dates : nights, unitId: open.unitId, sleepingUnitId: open.sleepingUnitId });
-    },
-    RECGOV_CONCURRENCY
-  );
-
-  // ReserveCalifornia held state: cancelled sites RC locks until a release time
-  // (~8am next day). Only check watches that aren't already bookable now.
   const rcHeld = new Map<string, { dates: string[]; availableAt: string }>();
-  await pMap(
-    rcWatches.filter((w) => !rcResults.has(w.id)),
-    async (w) => {
-      const required = Math.max(w.min_nights, nightsOfRange(w.start_date, w.end_date).length);
-      const held = await findRCHeldUnit(w.campground_id, w.start_date, w.end_date, required);
-      if (held) rcHeld.set(w.id, { dates: held.dates, availableAt: held.availableAt });
-    },
-    RECGOV_CONCURRENCY
-  );
-
-  // ReserveAmerica: HTML-scrape check for a site bookable across the full stay.
   const raResults = new Map<string, { dates: string[]; siteIds: number[]; start: string; end: string }>();
-  await pMap(
-    raWatches,
-    async (w) => {
-      const m = await probeFlexStay(w, (s, e, required) => findReserveAmericaOpen(w.campground_id, s, e, required));
-      if (m) raResults.set(w.id, { dates: m.dates, siteIds: m.result.siteIds, start: m.start, end: m.end });
-    },
-    RECGOV_CONCURRENCY
-  );
-
-  // GoingToCamp: the Camis API answers whole-stay directly, so one call per watch.
   const gtcResults = new Map<string, { dates: string[]; resourceIds: number[]; start: string; end: string }>();
-  await pMap(
-    gtcWatches,
-    async (w) => {
-      const m = await probeFlexStay(w, (s, e, required) => findGoingToCampOpen(w.campground_id, s, e, required));
-      if (m) gtcResults.set(w.id, { dates: m.dates, resourceIds: m.result.resourceIds, start: m.start, end: m.end });
-    },
-    RECGOV_CONCURRENCY
-  );
-
-  // TN/SC ColdFusion portal: batched whole-stay availability, keyed by parkId. The
-  // client caches the per-range batch, so N watches on one date range share a single
-  // POST. No per-site ids — alerts are park+date. (Whether the worker's IP can reach
-  // the portal is unverified; findTnscOpen swallows errors, so an unreachable portal
-  // simply never alerts rather than crashing the cycle — and would need the same
-  // fix-then-verify as GoingToCamp did. See docs/CONTEXT.md.)
   const tnscResults = new Map<string, { dates: string[]; start: string; end: string }>();
   if (tnscWatches.length > 0) console.log(`[poller] checking ${tnscWatches.length} TN/SC watch(es)`);
-  await pMap(
-    tnscWatches,
-    async (w) => {
-      const m = await probeFlexStay(w, async (s, e, required) => {
-        const open = await findTnscOpen(w.campground_id, s, e, required);
-        console.log(`[poller] TN/SC ${w.campground_id} (${s}..${e}): ${open ? `OPEN ${open.availableSites} sites` : 'no opening'}`);
-        return open;
-      });
-      if (m) tnscResults.set(w.id, { dates: m.dates, start: m.start, end: m.end });
-    },
-    RECGOV_CONCURRENCY
-  );
+
+  // The per-source fetch phases run CONCURRENTLY. They're independent (each writes
+  // its own result map from a disjoint set of watches), so running them in parallel
+  // means a slow/throttled source (e.g. rec.gov under a 429 storm eating 10s
+  // timeouts) can no longer head-of-line-block every other source and stretch the
+  // whole cycle — the reason one bad provider used to degrade alert latency for all.
+  // Per-provider concurrency is UNCHANGED: each phase still bounds its own fanout
+  // with pMap(RECGOV_CONCURRENCY), so no single provider is hit any harder.
+  await Promise.all([
+    // recreation.gov. getAvailabilityFromRecGov swallows fetch errors and returns
+    // empty campsites, so a transient failure never looks like "nothing available →
+    // skip" incorrectly; it also self-throttles via a breaker under a 429 storm.
+    pMap(
+      [...pairs],
+      async (pair) => {
+        const [campgroundId, month] = pair.split('|');
+        monthData.set(pair, await getAvailabilityFromRecGov(campgroundId, month));
+      },
+      RECGOV_CONCURRENCY
+    ),
+
+    // ReserveCalifornia: available units first, THEN the held/coming-soon check for
+    // watches not already bookable — ordered, so this pair stays a single task.
+    (async () => {
+      // Find the specific open unit hosting the full stay.
+      await pMap(
+        rcWatches,
+        async (w) => {
+          const nights = nightsOfRange(w.start_date, w.end_date);
+          const required = Math.max(w.min_nights, nights.length);
+          const open = await findRCOpenUnit(w.campground_id, w.start_date, w.end_date, required, w.muted_site_ids, flexOf(w));
+          // Flexible watches report just the matched run; fixed report the whole stay.
+          if (open) rcResults.set(w.id, { dates: open.dates.length ? open.dates : nights, unitId: open.unitId, sleepingUnitId: open.sleepingUnitId });
+        },
+        RECGOV_CONCURRENCY
+      );
+      // Held state: cancelled sites RC locks until a release time (~8am next day).
+      // Only check watches that aren't already bookable now.
+      await pMap(
+        rcWatches.filter((w) => !rcResults.has(w.id)),
+        async (w) => {
+          const required = Math.max(w.min_nights, nightsOfRange(w.start_date, w.end_date).length);
+          const held = await findRCHeldUnit(w.campground_id, w.start_date, w.end_date, required);
+          if (held) rcHeld.set(w.id, { dates: held.dates, availableAt: held.availableAt });
+        },
+        RECGOV_CONCURRENCY
+      );
+    })(),
+
+    // ReserveAmerica: HTML-scrape check for a site bookable across the full stay.
+    pMap(
+      raWatches,
+      async (w) => {
+        const m = await probeFlexStay(w, (s, e, required) => findReserveAmericaOpen(w.campground_id, s, e, required));
+        if (m) raResults.set(w.id, { dates: m.dates, siteIds: m.result.siteIds, start: m.start, end: m.end });
+      },
+      RECGOV_CONCURRENCY
+    ),
+
+    // GoingToCamp: the Camis API answers whole-stay directly, so one call per watch.
+    pMap(
+      gtcWatches,
+      async (w) => {
+        const m = await probeFlexStay(w, (s, e, required) => findGoingToCampOpen(w.campground_id, s, e, required));
+        if (m) gtcResults.set(w.id, { dates: m.dates, resourceIds: m.result.resourceIds, start: m.start, end: m.end });
+      },
+      RECGOV_CONCURRENCY
+    ),
+
+    // TN/SC ColdFusion portal: batched whole-stay availability, keyed by parkId. The
+    // client caches the per-range batch, so N watches on one date range share a single
+    // POST. No per-site ids — alerts are park+date. (findTnscOpen swallows errors, so
+    // an unreachable portal simply never alerts rather than crashing the cycle. See
+    // docs/CONTEXT.md.)
+    pMap(
+      tnscWatches,
+      async (w) => {
+        const m = await probeFlexStay(w, async (s, e, required) => {
+          const open = await findTnscOpen(w.campground_id, s, e, required);
+          console.log(`[poller] TN/SC ${w.campground_id} (${s}..${e}): ${open ? `OPEN ${open.availableSites} sites` : 'no opening'}`);
+          return open;
+        });
+        if (m) tnscResults.set(w.id, { dates: m.dates, start: m.start, end: m.end });
+      },
+      RECGOV_CONCURRENCY
+    ),
+  ]);
 
   let notified = 0;
   // Feature E: this cycle's open/booked observation per watched window, recorded
