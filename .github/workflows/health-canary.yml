@@ -34,6 +34,7 @@ jobs:
           TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
           TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          TWILIO_MESSAGING_SERVICE_SID: ${{ secrets.TWILIO_MESSAGING_SERVICE_SID }}
           HEALTH_ALERT_EMAIL: ${{ secrets.HEALTH_ALERT_EMAIL }}
           HEALTH_ALERT_PHONE: ${{ secrets.HEALTH_ALERT_PHONE }}
         run: npx tsx scripts/health-page.mts
