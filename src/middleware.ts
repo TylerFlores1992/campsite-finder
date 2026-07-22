@@ -11,6 +11,7 @@ const isPublicRoute = createRouteMatcher([
   '/sitemap.xml',
   '/campground/(.*)',
   '/w/(.*)',
+  '/b/(.*)',
   '/api/search(.*)',
   '/api/suggest(.*)',
   '/api/health/(.*)',

@@ -1,7 +1,7 @@
 import { query, mutate } from '@/lib/db/client';
 import { sendEmail } from './email';
 import { sendSms } from './sms';
-import { actionUrlFor } from './actions';
+import { actionUrlFor, mintBookingToken, bookLink } from './actions';
 import type { CampflareWebhookPayload } from '@/lib/campflare/types';
 import { USEDIRECT_PROVIDERS } from '@/lib/sources/reservecalifornia/providers';
 import { GOINGTOCAMP_PROVIDERS } from '@/lib/sources/goingtocamp/providers';
@@ -181,32 +181,32 @@ async function dispatchSms(payload: NotificationPayload, links: ActionLinks): Pr
   const phone = await getUserPhone(payload.userId);
   if (!phone) return; // no phone on file — email-only user
 
-  // One-tap actions. Mute first (the common "not that site again" case), then Stop.
-  // The carrier "Reply STOP" (full opt-out) stays for compliance — distinct from the
-  // per-watch Stop link. Both are short DB-backed /w/ links.
-  const actions =
-    (links.muteUrl && links.siteName ? ` Mute ${links.siteName}: ${links.muteUrl}` : '') +
-    (links.stopUrl ? ` Stop watching: ${links.stopUrl}` : '');
+  // SMS is kept to ONE segment: no emoji (emoji forces UCS-2 at 70 chars/seg), URLs
+  // shown scheme-less (phones auto-linkify bare domains), and the long booking URL
+  // routed through a short camphawk.app/b/<token> redirect. The per-message "Reply
+  // STOP" is dropped — the Twilio Messaging Service's Advanced Opt-Out handles STOP/
+  // HELP and the initial disclosure. Mute + Stop are short /w/ links.
+  const strip = (u: string) => u.replace(/^https?:\/\/(www\.)?/, '');
+  const site = payload.campsiteName ? ` Site ${payload.campsiteName}` : '';
+  const name = payload.campgroundName.replace(/\s+(campground|cg)\.?$/i, '');
+  const muteTxt = links.muteUrl && links.siteName ? ` Mute ${links.siteName}: ${strip(links.muteUrl)}` : '';
+  const stopTxt = links.stopUrl ? ` Stop: ${strip(links.stopUrl)}` : '';
 
   try {
-    const site = payload.campsiteName ? ` — Site ${payload.campsiteName}` : '';
     let body: string;
     if (payload.kind === 'carted') {
-      // The bot already added this exact site to the user's rec.gov cart. Keep the
-      // ONLY tappable link the cart URL — no bare "recreation.gov" domain and no
-      // date range (phones auto-linkify both). Dates are in the email.
-      body = `CampHawk: ✅ ${payload.campgroundName}${site} is in your cart — check out now, it's only held ~15 min: https://www.recreation.gov/cart Reply STOP to opt out.`;
+      body = `CampHawk: ${name}${site} is in your cart — check out now, held ~15 min: recreation.gov/cart`;
     } else if (payload.kind === 'coming_soon') {
-      // ReserveCalifornia held a cancellation — heads-up before it's bookable.
-      body = `CampHawk: ⏳ ${payload.campgroundName}${site} was just cancelled and opens up ${formatReleaseTime(payload.availableAt, true)}. We'll text you when it's bookable.${actions} Reply STOP to opt out.`;
+      body = `CampHawk: ${name}${site} was just cancelled, opens ${formatReleaseTime(payload.availableAt, true)}. We'll text when it's bookable.${muteTxt}${stopTxt}`;
     } else {
       const dates = payload.availableDates.slice(0, 3).join(', ');
-      const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3} more` : '';
-      // Strip any #camphawk… fragment for SMS: it only drives the desktop browser
-      // extension, which never runs on the phone where a texted link is tapped, so
-      // it's wasted bytes (and SMS bytes are segments = money). Email keeps it.
-      const smsBookingUrl = payload.bookingUrl.split('#')[0];
-      body = `CampHawk: ⛺ ${payload.campgroundName}${site} open: ${dates}${more}. Book: ${smsBookingUrl}${actions} Reply STOP to opt out.`;
+      const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3}` : '';
+      // Short-link the booking URL (fragment stripped — the #camphawk extension hint
+      // does nothing on a phone). Falls back to the scheme-less full URL if minting fails.
+      const full = payload.bookingUrl.split('#')[0];
+      const tok = await mintBookingToken(payload.watchId, full, payload.campsiteId ?? null);
+      const bookTxt = tok ? strip(bookLink(tok)) : strip(full);
+      body = `CampHawk: ${name}${site} open ${dates}${more}. Book: ${bookTxt}${muteTxt}${stopTxt}`;
     }
     await sendSms({ to: phone, body });
     await logNotification(payload, 'sms', 'sent');

@@ -6,13 +6,54 @@ import { query, mutate } from '@/lib/db/client';
 import { sendEmail } from './email';
 import { sendSms } from './sms';
 
-export type WatchAction = 'stop' | 'reopen' | 'mute_site' | 'keep' | 'cancel';
+export type WatchAction = 'stop' | 'reopen' | 'mute_site' | 'keep' | 'cancel' | 'book';
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://camphawk.app').replace(/\/$/, '');
 
-/** Full one-tap URL for a token. */
+/** ~8-char opaque token (48 bits). Short enough for SMS, wide enough to not collide. */
+function genToken(): string {
+  return randomBytes(6).toString('base64url');
+}
+
+/** Full one-tap action URL for a token. */
 export function actionLink(token: string): string {
   return `${APP_URL}/w/${token}`;
+}
+
+/** Full booking short-link for a token (302-redirects to the real booking URL). */
+export function bookLink(token: string): string {
+  return `${APP_URL}/b/${token}`;
+}
+
+/**
+ * Mint (or reuse) a booking short-link: a `book` token whose redirect_url is the full
+ * booking URL. Keyed per (watch, site) so it's stable. Returns the token, or null on
+ * failure (caller falls back to the full URL).
+ */
+export async function mintBookingToken(watchId: string, url: string, siteId?: string | null): Promise<string | null> {
+  const token = genToken();
+  try {
+    const rows = await mutate<{ token: string }>(
+      `INSERT INTO action_tokens (token, watch_id, action, site_id, redirect_url)
+       VALUES ($1, $2, 'book', $3, $4)
+       ON CONFLICT (watch_id, action, COALESCE(site_id, '')) DO UPDATE SET redirect_url = EXCLUDED.redirect_url
+       RETURNING token`,
+      [token, watchId, siteId ?? null, url]
+    );
+    return rows[0]?.token ?? token;
+  } catch (err) {
+    console.error(`[actions] mint booking link for ${watchId} failed:`, (err as Error).message);
+    return null;
+  }
+}
+
+/** Resolve a booking short-link token to its destination URL (or null). */
+export async function resolveBooking(token: string): Promise<string | null> {
+  const [row] = await query<{ redirect_url: string | null }>(
+    `SELECT redirect_url FROM action_tokens WHERE token = $1 AND action = 'book' AND expires_at > NOW()`,
+    [token]
+  );
+  return row?.redirect_url ?? null;
 }
 
 /**
@@ -25,7 +66,7 @@ export async function mintActionToken(
   action: WatchAction,
   siteId?: string | null
 ): Promise<string | null> {
-  const token = randomBytes(8).toString('base64url'); // ~11 chars
+  const token = genToken();
   try {
     const rows = await mutate<{ token: string }>(
       `INSERT INTO action_tokens (token, watch_id, action, site_id)
