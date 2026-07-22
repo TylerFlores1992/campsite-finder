@@ -88,7 +88,7 @@ these by hand — but here's how each source refreshes:
 | **ReserveAmerica** (state parks) | Same nightly Action (added step) | `npx tsx scripts/run-sync-ra.ts` (all contracts), or `npx tsx scripts/run-sync-ra.ts DE` for one state — use the single-state form when adding one, a full run re-scrapes ~18 states |
 | **GoingToCamp** (WA/MI/WI/MS) | On the **Fly worker** hourly (`gtcSyncIfDue` in `worker/poller.ts`, fires at 22h staleness) — NOT in the GitHub Action, because the Camis WAF blocks Vercel and the worker throttles itself | `npx tsx scripts/run-sync-gtc.ts` (all), or `... run-sync-gtc.ts WA` for one state. Needs `NEXT_PUBLIC_MAPBOX_TOKEN` — most rows are geocoded from their full street address. |
 | **UseDirect** (state parks) | On the **Fly worker** hourly (`rcSyncIfDue` in `worker/poller.ts`) — NOT in the GitHub Action, because some RDR hosts WAF-block datacenter IPs and it routes through the `/api/rc-proxy` on Vercel | `npx tsx scripts/run-sync-ud.ts` (run from a **residential IP** — it forces direct, no proxy) |
-| **TN/SC State Parks** (ColdFusion portal) | **No scheduled sync yet** — TN shipped 2026-07-20 (39 parks), SC 2026-07-22 (34 camping parks); there is no worker `*SyncIfDue` for either, so the catalog only refreshes when you run it by hand. | `npx tsx scripts/run-sync-tnsc.ts TN` / `... SC` (or no arg = all verified). Run from a **residential IP** — the portal's WAF blocks datacenter IPs. TN coords are embedded; **SC coords are geocoded from the park name, so an SC sync needs `NEXT_PUBLIC_MAPBOX_TOKEN`.** |
+| **TN/SC State Parks** (ColdFusion portal) | **No scheduled sync yet** — TN shipped 2026-07-20 (39 parks), SC 2026-07-22 (34 camping parks); there is no worker `*SyncIfDue` for either, so the catalog only refreshes when you run it by hand. | `npx tsx scripts/run-sync-tnsc.ts TN` / `... SC` (or no arg = all verified). Run from a **residential IP** — the portal's WAF blocks datacenter IPs. TN coords are embedded; **SC coords come from a curated `SC_PARK_COORDS` table** (portal ships none; name-geocoding was worthless — see `docs/CONTEXT.md`), so no Mapbox token is needed. |
 
 Adding a state to an **existing** platform is usually a one-line registry entry —
 `RA_CONTRACTS` (`src/lib/sources/reserveamerica/client.ts`), `USEDIRECT_PROVIDERS`
@@ -97,7 +97,7 @@ Adding a state to an **existing** platform is usually a one-line registry entry 
 (`src/lib/sources/tnsc/providers.ts`) — plus a sync run and the coverage copy
 (`src/app/layout.tsx` metadata, SubscribeGate). **South Carolina shipped 2026-07-22**
 (the last cheap-ish add): it reused TN's ColdFusion backend + Vercel proxy but needed
-its own `html-grid` catalog/availability branch in `client.ts` (slug-keyed, geocoded
+its own `html-grid` catalog/availability branch in `client.ts` (slug-keyed, curated
 coords) — see the SC recon note in `docs/CONTEXT.md`. Every remaining state needs a
 brand-new adapter, not a registry entry.
 

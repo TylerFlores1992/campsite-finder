@@ -10,13 +10,17 @@ import { fetchParkCatalog, type TnscPark } from './client';
 import type { SyncResult } from '../types';
 
 /**
- * A park must actually offer camping to be a campground row. The portal's
- * `data-product` lists what each park sells (camping, cabins, shelters, programs,
- * golf). If the attribute is missing entirely we keep the park rather than drop it
- * — better a searchable park with an empty availability answer than a silent gap.
+ * A park must actually offer camping to be a campground row. The `products` list
+ * comes from the portal's per-park flags. Its emptiness means different things per
+ * variant, so the fallback is variant-aware:
+ *  - `embedded-json` (TN): `data-product` can be absent on a card, so empty means
+ *    "unknown" — keep it rather than risk a silent gap.
+ *  - `html-grid` (SC): every card carries explicit `data-camping/lodging/day-use`
+ *    booleans, so empty is DEFINITIVE "sells nothing bookable" (e.g. brand-new
+ *    parks with no facilities yet) — drop it.
  */
-function offersCamping(park: TnscPark): boolean {
-  if (park.products.length === 0) return true;
+function offersCamping(park: TnscPark, variant: TnscProvider['variant']): boolean {
+  if (park.products.length === 0) return variant !== 'html-grid';
   return park.products.some((p) => /camp/i.test(p));
 }
 
@@ -26,38 +30,6 @@ function inState(state: string, lng: number, lat: number): boolean {
   return lat >= b[0] && lat <= b[1] && lng >= b[2] && lng <= b[3];
 }
 
-/**
- * SC's portal ships no coordinates or addresses — only a park name — so those rows
- * are geocoded here (the `html-grid` variant leaves `lat`/`lng` null). We bias
- * Mapbox hard toward the state: the query names the park + "State Park, South
- * Carolina", and the request carries the state `bbox` + a proximity to its centre,
- * so a generic name (`Aiken` is also a city) resolves to the park, not the town.
- * The caller still bbox-checks the result, so a bad geocode is dropped, never
- * misplaced — matching GoingToCamp's "skip rather than guess" rule for coordless rows.
- * Returns `[lng, lat]` or null (no token / no hit / network error).
- */
-async function geocodeByName(state: string, name: string): Promise<[number, number] | null> {
-  const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
-  const b = TNSC_BBOX[state];
-  if (!token || !b) return null;
-  const stateName = state === 'SC' ? 'South Carolina' : state;
-  const query = `${name} State Park, ${stateName}`;
-  // TNSC_BBOX is [minLat, maxLat, minLng, maxLng]; Mapbox wants minLng,minLat,maxLng,maxLat.
-  const bbox = `${b[2]},${b[0]},${b[3]},${b[1]}`;
-  const proximity = `${(b[2] + b[3]) / 2},${(b[0] + b[1]) / 2}`;
-  const url =
-    `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json` +
-    `?access_token=${token}&country=us&limit=1&bbox=${bbox}&proximity=${proximity}`;
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) return null;
-    const json = (await res.json()) as { features?: { center?: [number, number] }[] };
-    const center = json.features?.[0]?.center;
-    return center && center.length === 2 ? [center[0], center[1]] : null;
-  } catch {
-    return null;
-  }
-}
 
 /** Sync one provider's camping parks into the campgrounds table. */
 export async function syncTnsc(provider: TnscProvider): Promise<SyncResult> {
@@ -84,19 +56,16 @@ export async function syncTnsc(provider: TnscProvider): Promise<SyncResult> {
   let facilitiesSynced = 0;
   try {
     const all = await fetchParkCatalog(provider);
-    const parks = all.filter(offersCamping);
+    const parks = all.filter((p) => offersCamping(p, provider.variant));
     console.log(
       `[TNSC ${provider.state} sync] ${all.length} parks, ${parks.length} offering camping`
     );
 
     for (const park of parks) {
-      // Coords are embedded for TN; SC ships none, so geocode from the park name.
-      let lng = park.lng;
-      let lat = park.lat;
-      if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
-        const hit = await geocodeByName(provider.state, park.name);
-        if (hit) [lng, lat] = hit;
-      }
+      // Coords are embedded for TN and come from SC_PARK_COORDS for SC; a null here
+      // means a camping park with no curated coordinate — skip + log for backfill.
+      const lng = park.lng;
+      const lat = park.lat;
       if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
         errors.push(`${provider.state} ${park.key} (${park.name}): no coords`);
         continue;

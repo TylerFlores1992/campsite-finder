@@ -305,10 +305,15 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 >       rooms + villas with camper cabins (hotel-like), broader than TN's single
 >       `Cabins` template, so we don't let it fire a campground alert. `SC_CAMPING_PRODUCT_KEY`
 >       in `providers.ts`; set `'4,5'` to include lodging.
->     - **Coords are geocoded from the park name** (`"<name> State Park, South Carolina"`,
->       Mapbox with the SC `bbox` + proximity bias, then the same in-state bbox reject
->       as GTC — a bad hit is dropped and logged, never misplaced). SC is the only tnsc
->       state that needs a Mapbox token to sync.
+>     - **Coords are a CURATED table** (`SC_PARK_COORDS` in `providers.ts`), NOT
+>       geocoded. Name-geocoding was tried first and is worthless here: Mapbox has no
+>       POI for these parks and collapses `"<name> State Park, South Carolina"` onto a
+>       "State Park" **neighborhood in Columbia** — only 5 of 43 resolved, ~20 stacked
+>       on that one wrong point (inside the state bbox, so the bbox reject can't catch
+>       it). The table is sourced from OpenStreetMap park/protected_area geometries
+>       (+ one street-address hit for H. Cooper Black), each verified in the SC bbox.
+>       A camping park missing from the table is skipped + logged (fail-loud). So SC
+>       needs **no Mapbox token** to sync, unlike an earlier draft of this note.
 >     - Reachability is the SAME as TN (Fly blocked, Vercel fine), so SC reuses the
 >       existing `/api/tnsc-availability` proxy unchanged — the proxy route keys on
 >       `state`, and the wire row now carries `key` instead of `parkId`.

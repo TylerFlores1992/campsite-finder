@@ -22,7 +22,7 @@
 // GoingToCamp / UseDirect reachability split in docs/CONTEXT.md).
 
 import type { TnscProvider } from './providers';
-import { CAMPING_TEMPLATE_KEYS, SC_CAMPING_PRODUCT_KEY } from './providers';
+import { CAMPING_TEMPLATE_KEYS, SC_CAMPING_PRODUCT_KEY, SC_PARK_COORDS } from './providers';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
@@ -42,7 +42,7 @@ export interface TnscPark {
   city: string | null;
   /** Park slug (`big-ridge` / `aiken`) — SC's is also its key. */
   slug: string;
-  /** Embedded for TN; `null` for SC, whose portal ships no coords (geocoded in sync). */
+  /** Embedded for TN; for SC, filled from the curated SC_PARK_COORDS table (`null` if absent). */
   lat: number | null;
   lng: number | null;
   /** Product categories the park offers (e.g. camping, cabins/lodging, day-use). */
@@ -98,8 +98,9 @@ export async function fetchParkCatalog(provider: TnscProvider): Promise<TnscPark
  * SC (`html-grid`): parse the landing's `.parkGridItem` cards. Each card is a
  * `<div class="parkLink" data-action="<slug>">` wrapping a `<div class="parkGridItem"
  * data-camping data-lodging data-day-use data-maxrv …>` and an `<h4>Name</h4>`.
- * There is NO parkId and NO coordinates — the slug is the key, and coords are
- * geocoded from the name in the sync. `data-action` can be `slug/camping`; the app
+ * There is NO parkId and NO coordinates — the slug is the key, and coordinates come
+ * from the curated `SC_PARK_COORDS` table (the portal ships none and name-geocoding
+ * is unreliable; see providers.ts). `data-action` can be `slug/camping`; the app
  * itself keys on `data-action.split('/')[0]`, so we do too.
  */
 function parseGridCatalog(html: string): TnscPark[] {
@@ -119,7 +120,11 @@ function parseGridCatalog(html: string): TnscPark[] {
     if (has('camping')) products.push('camping');
     if (has('lodging')) products.push('lodging');
     if (has('day-use')) products.push('day-use');
-    parks.push({ key, parkId: null, name, city: null, slug: key, lat: null, lng: null, products });
+    const coords = SC_PARK_COORDS[key];
+    parks.push({
+      key, parkId: null, name, city: null, slug: key,
+      lng: coords?.[0] ?? null, lat: coords?.[1] ?? null, products,
+    });
   }
   return parks;
 }

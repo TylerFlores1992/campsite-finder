@@ -24,7 +24,8 @@
  *   (`data-action`), with NO parkId, NO coordinates, NO address. Availability is a
  *   POST to `getStateWide.html` that returns the re-rendered grid filtered to the
  *   parks with a bookable camping site for the whole stay — so it's a park-level
- *   **boolean by slug** (no per-site count), and coordinates must be geocoded.
+ *   **boolean by slug** (no per-site count), and coordinates come from the curated
+ *   `SC_PARK_COORDS` table (the portal ships none).
  */
 export type TnscVariant = 'embedded-json' | 'html-grid';
 
@@ -43,7 +44,7 @@ export interface TnscProvider {
   /**
    * Whether this state's catalog/availability path is verified working. TN was
    * fingerprinted 2026-07-20; SC was reconned 2026-07-22 — it turned out to be the
-   * `html-grid` variant (slug-keyed grid, geocoded coords), not a drop-in of TN's
+   * `html-grid` variant (slug-keyed grid, curated coords), not a drop-in of TN's
    * JSON path. Do not enable in search/worker until `verified: true`.
    */
   verified: boolean;
@@ -82,6 +83,57 @@ export const TNSC_PROVIDERS: TnscProvider[] = [
  * `'4,5'` if a watch should also hit SC lodging.
  */
 export const SC_CAMPING_PRODUCT_KEY = '4';
+
+/**
+ * SC park coordinates, keyed by slug (`[lng, lat]`). CURATED, not geocoded: the SC
+ * portal ships no coords/addresses, and name-geocoding is worthless here — Mapbox
+ * has no POI for these parks and collapses `"<name> State Park, South Carolina"`
+ * onto a "State Park" *neighborhood* in Columbia (measured 2026-07-22: only 5 of 43
+ * resolved, ~20 stacked on one wrong point). So these are sourced from OpenStreetMap
+ * (park/protected_area geometries), with a handful by published street address
+ * (H. Cooper Black) — every value verified inside the SC bbox.
+ *
+ * Only camping parks need an entry; a slug that's missing here is skipped + logged
+ * by the sync (fail-loud), so a park SC newly opens camping at surfaces for backfill
+ * rather than landing at a wrong default. Keep sorted by slug.
+ */
+export const SC_PARK_COORDS: Record<string, [number, number]> = {
+  // slug -> [lng, lat]
+  'aiken': [-81.48611, 33.54883],
+  'andrew-jackson': [-80.80623, 34.84035],
+  'baker-creek': [-82.35648, 33.89215],
+  'barnwell': [-81.30345, 33.33143],
+  'calhoun-falls': [-82.61868, 34.10645],
+  'cheraw': [-79.91694, 34.62504],
+  'chester': [-81.23998, 34.67671],
+  'colleton': [-80.61644, 33.06268],
+  'croft': [-81.84637, 34.87863],
+  'devils-fork': [-82.95442, 34.95869],
+  'dreher-island': [-81.41507, 34.09582],
+  'edisto-beach': [-80.31029, 32.5074],
+  'givhans-ferry': [-80.37436, 33.03538],
+  'h-cooper-black': [-79.92805, 34.56449],
+  'hamilton-branch': [-82.21131, 33.75138],
+  'hickory-knob': [-82.41932, 33.88427],
+  'hunting-island': [-80.46341, 32.35188],
+  'huntington-beach': [-79.06228, 33.51319],
+  'jones-gap': [-82.58013, 35.12198],
+  'keowee-toxaway': [-82.88589, 34.92453],
+  'kings-mountain': [-81.35111, 35.13218],
+  'lake-greenwood': [-81.95595, 34.19318],
+  'lake-hartwell': [-83.03388, 34.49411],
+  'lake-wateree': [-80.86139, 34.43267],
+  'lee': [-80.19893, 34.21173],
+  'little-pee-dee': [-79.28183, 34.32507],
+  'myrtle-beach': [-78.93113, 33.65059],
+  'oconee': [-83.10144, 34.8645],
+  'paris-mountain': [-82.39019, 34.94201],
+  'poinsett': [-80.53906, 33.80503],
+  'sadlers-creek': [-82.82332, 34.42116],
+  'santee': [-80.49108, 33.52141],
+  'sesquicentennial': [-80.90533, 34.08806],
+  'table-rock': [-82.7139, 35.03647],
+};
 
 /** Our single source value in the campgrounds table. */
 export const TNSC_SOURCE = 'tnsc';
