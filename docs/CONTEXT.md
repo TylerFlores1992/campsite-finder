@@ -8,6 +8,8 @@ No secrets here — only names of things. Secrets live in `.env.local` / Vercel 
 CampHawk (**camphawk.app**) watches booked campgrounds and alerts you within seconds
 of a cancellation, so you can grab the spot. Search is free for everyone; a
 subscription turns on watching + instant email/SMS alerts + (rec.gov only) auto-cart.
+Watches can be a fixed stay or **flexible** — "any N nights in this window,
+optionally weekends" (see "Flexible dates" under the core flow).
 
 ## Stack
 
@@ -371,6 +373,52 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
    opening it dispatches notifications. Branches by source; uses an atomic claim on
    `notification_sent_at` (1-hour re-notify window) so it never double-alerts.
 4. **Notifications** (`src/lib/notifications/`) — email (Resend) + SMS (Twilio).
+
+### Flexible dates (feature C — SHIPPED 2026-07-22)
+
+A watch or search can ask for **"any N consecutive nights within [start, end]"**
+instead of one fixed stay, optionally **weekends-only** (the run must include a
+Saturday night). The columns are `watches.flex_nights` (run length; NULL = a legacy
+fixed whole-stay watch, unchanged) and `watches.flex_days` (`'weekend'` | NULL),
+added by migration `019`. `flex_nights` NULL everywhere means nothing about existing
+watches changed.
+
+`src/lib/availability/flex.ts` is the whole matcher, and it has **two shapes because
+the sources split two ways** (the same split as everything else — see the sources
+section):
+
+- **Full-grid sources (rec.gov, ReserveCalifornia)** already return every open night,
+  so `findQualifyingRun(openNights, nights, days)` scans that set directly for the
+  first qualifying run. Near-free and exact — no extra upstream calls.
+- **Whole-stay sources (GoingToCamp, ReserveAmerica, TN/SC)** answer one date range at
+  a time, so `flexCandidateStays(window, nights, days, cap=40)` enumerates the
+  candidate arrival→checkout ranges to probe, **capped at 40**. A wide window +
+  short run would otherwise fan out into hundreds of upstream calls per cycle; the cap
+  means we check the first 40 candidates this cycle, which is fine because the poller
+  re-runs every ~15s. In the poller this is wrapped by `probeFlexStay(watch, probe)`,
+  which fixed watches fall through (one probe of their one stay).
+
+> **The alert reports the MATCHED run, not the window.** For a flexible watch the
+> poller computes `matchStart`/`matchEnd` from the run it found and uses those for the
+> alert dates, the `#camphawk`/`#camphawk-rc` fragments, and every deep link — never
+> the watch's whole `[start_date, end_date]`. A "your Sat–Sun is open" alert that
+> deep-linked to the 7-day window would be a lie the booking page wouldn't honor.
+
+> **Flexible rec.gov watches deliberately SKIP Campflare** (`api/watches` gates it on
+> `!isFlex`). Campflare monitors one fixed range per arrival and can't express a
+> window or a weekend constraint, so a Campflare match could fire a wrong-dates alert.
+> The 15s Fly poller enforces the flex spec precisely and is the sole source for flex
+> watches — same latency as our ReserveCalifornia watches, slightly slower than
+> Campflare's push for *fixed* rec.gov watches. That was the tradeoff to avoid wrong
+> alerts; revisit with weekend-aware Campflare ranges if the latency ever matters.
+
+> **Search flex is intentionally looser than watch flex.** `/api/search?flexNights=N`
+> just shortens the required run to "any N consecutive nights in the window" (the
+> grid-source `hasXInRange` checks already express exactly that); it does **not**
+> apply the weekend constraint in the annotation, since search is discovery and the
+> watch is what enforces the precise spec. UI is a "Flexible dates" checkbox in
+> `SearchBar` (nights + weekends), threaded through `page` → `CampgroundCard` →
+> `WatchButton` so a watch created from flexible results inherits the spec.
 
 ### Booking links — how specific each provider lets us be
 
