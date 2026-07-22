@@ -145,6 +145,21 @@ export async function runDeliveryCanary(): Promise<void> {
   const canaryEmail = process.env.CANARY_EMAIL;
   const canaryPhone = process.env.CANARY_PHONE;
 
+  // Throttle to at most one real send per interval, ACROSS restarts. The poller calls
+  // this once on every boot (so it fires soon after first setup), but without this
+  // guard every deploy/restart would send a real SMS — which cost the operator a burst
+  // of texts. We key off the last real delivery attempt recorded in the DB (skips don't
+  // count), so N reboots inside one interval still send only once. The scheduled
+  // interval tick is naturally older than the interval, so it always proceeds.
+  const intervalMs = Number(process.env.CANARY_DELIVERY_INTERVAL_MS ?? 6 * 60 * 60 * 1000);
+  const [last] = await query<{ last_run_at: string | null }>(
+    `SELECT max(last_run_at)::text AS last_run_at FROM alert_canary
+     WHERE key IN ('delivery:email', 'delivery:sms') AND detail NOT LIKE 'skipped%'`
+  ).catch(() => [{ last_run_at: null }] as { last_run_at: string | null }[]);
+  if (last?.last_run_at && Date.now() - Date.parse(last.last_run_at) < intervalMs * 0.9) {
+    return; // a real delivery probe already ran this interval — don't re-send on reboot
+  }
+
   if (canaryEmail) {
     await probe('delivery:email', async () => {
       await sendEmail({
