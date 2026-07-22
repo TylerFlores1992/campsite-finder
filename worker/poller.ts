@@ -81,6 +81,7 @@ interface WatchRow {
   campground_source: string;
   reservations_url: string | null;
   rc_hold_notified_for: string | null;
+  muted_site_ids: string[];
   autocart_enabled: boolean;
   autocart_connected: boolean;
 }
@@ -161,7 +162,7 @@ async function loadWatches(): Promise<WatchRow[]> {
   return query<WatchRow>(
     `SELECT w.id, w.user_id, w.campground_id,
             w.start_date::text, w.end_date::text, w.min_nights,
-            w.rc_hold_notified_for,
+            w.rc_hold_notified_for, w.muted_site_ids,
             c.name AS campground_name, c.source AS campground_source,
             c.reservations_url,
             COALESCE(u.autocart_enabled, false) AS autocart_enabled,
@@ -239,7 +240,9 @@ function availableDatesForWatch(
     }
   }
 
+  const muted = new Set(watch.muted_site_ids ?? []);
   for (const [campsiteId, entry] of bySite) {
+    if (muted.has(campsiteId)) continue; // site-specific mute — keep looking for another
     const dates = [...entry.open].sort();
     if (hasConsecutiveRun(dates, required)) return { dates, campsiteId, campsiteName: entry.name };
   }
@@ -320,7 +323,7 @@ async function cycle(): Promise<void> {
     async (w) => {
       const nights = nightsOfRange(w.start_date, w.end_date);
       const required = Math.max(w.min_nights, nights.length);
-      const open = await findRCOpenUnit(w.campground_id, w.start_date, w.end_date, required);
+      const open = await findRCOpenUnit(w.campground_id, w.start_date, w.end_date, required, w.muted_site_ids);
       if (open) rcResults.set(w.id, { dates: nights, unitId: open.unitId, sleepingUnitId: open.sleepingUnitId });
     },
     RECGOV_CONCURRENCY
@@ -396,7 +399,8 @@ async function cycle(): Promise<void> {
         : isTnscSource(watch.campground_source)
           ? { dates: tnscResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
         : isUseDirectSource(watch.campground_source)
-          ? { dates: rc?.dates ?? [], campsiteId: null, campsiteName: null }
+          // Surface the RC unit as the mutable "site" (id + friendly label).
+          ? { dates: rc?.dates ?? [], campsiteId: rc ? String(rc.unitId) : null, campsiteName: rc ? `Unit ${rc.unitId}` : null }
           : availableDatesForWatch(watch, monthData);
     if (result.dates.length === 0) continue;
 
@@ -454,6 +458,7 @@ async function cycle(): Promise<void> {
               // optional autofill. Fragments are never sent to rec.gov's server.
               ? `https://www.recreation.gov/camping/campsites/${result.campsiteId}#camphawk=${watch.start_date}_${watch.end_date}`
               : `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
+        campsiteId: result.campsiteId,
         campsiteName: result.campsiteName,
         startDate: watch.start_date,
         endDate: watch.end_date,

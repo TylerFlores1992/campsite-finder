@@ -87,14 +87,18 @@ export async function findRCOpenUnit(
   campgroundId: string,
   startDate: string,
   endDate: string,
-  minNights = 1
+  minNights = 1,
+  excludeUnitIds?: string[]
 ): Promise<{ unitId: number; sleepingUnitId: number | null } | null> {
   const provider = providerByCampgroundId(campgroundId);
   if (!provider) return null;
+  const muted = new Set(excludeUnitIds ?? []);
   try {
     const grid = await fetchGrid(provider, facilityIdFromCampgroundId(campgroundId), startDate, endDate);
     for (const unit of Object.values(grid.Facility?.Units ?? {})) {
       if (!unit.AllowWebBooking) continue;
+      if (muted.has(String(unit.UnitId))) continue; // site-specific mute — skip this unit
+
       const dates = Object.values(unit.Slices ?? {})
         .filter((s) => s.IsFree && !s.IsBlocked && s.Date >= startDate && s.Date < endDate)
         .map((s) => s.Date)

@@ -1,6 +1,7 @@
 import { query, mutate } from '@/lib/db/client';
 import { sendEmail } from './email';
 import { sendSms } from './sms';
+import { actionUrlFor } from './actions';
 import type { CampflareWebhookPayload } from '@/lib/campflare/types';
 import { USEDIRECT_PROVIDERS } from '@/lib/sources/reservecalifornia/providers';
 import { GOINGTOCAMP_PROVIDERS } from '@/lib/sources/goingtocamp/providers';
@@ -33,6 +34,9 @@ export interface NotificationPayload {
   bookingUrl: string;
   /** Specific site name/number, when the detection path knows which site is open. */
   campsiteName?: string | null;
+  /** Specific site id (rec.gov campsiteId / RC unitId) — the mute target + poller key.
+   *  Present only for site-level sources; null for count-only (GoingToCamp, TN/SC). */
+  campsiteId?: string | null;
   startDate: string;
   endDate: string;
   /** 'available' = bookable now (default). 'coming_soon' = ReserveCalifornia held
@@ -100,14 +104,31 @@ async function getUserPhone(userId: string): Promise<string | null> {
 }
 
 /** Fire all applicable notification channels for a campflare availability event. */
+/** One-tap action links for an alert: always Stop; Mute-site when we know the site. */
+interface ActionLinks {
+  stopUrl: string | null;
+  muteUrl: string | null;
+  siteName: string | null;
+}
+
+async function mintActionLinks(payload: NotificationPayload): Promise<ActionLinks> {
+  const [stopUrl, muteUrl] = await Promise.all([
+    actionUrlFor(payload.watchId, 'stop'),
+    payload.campsiteId ? actionUrlFor(payload.watchId, 'mute_site', payload.campsiteId) : Promise.resolve(null),
+  ]);
+  return { stopUrl, muteUrl, siteName: payload.campsiteName ?? payload.campsiteId ?? null };
+}
+
 export async function dispatchNotifications(payload: NotificationPayload): Promise<void> {
   console.log(
     `[notifications] Dispatching for watch ${payload.watchId}: ${payload.availableDates.length} dates open at ${payload.campgroundName}`
   );
 
+  const links = await mintActionLinks(payload);
+
   const [emailResult, smsResult] = await Promise.allSettled([
-    dispatchEmail(payload),
-    dispatchSms(payload),
+    dispatchEmail(payload, links),
+    dispatchSms(payload, links),
   ]);
 
   if (emailResult.status === 'rejected') {
@@ -118,7 +139,20 @@ export async function dispatchNotifications(payload: NotificationPayload): Promi
   }
 }
 
-async function dispatchEmail(payload: NotificationPayload): Promise<void> {
+/** Small "manage this watch" footer appended to every alert email. */
+function actionFooterHtml(links: ActionLinks): string {
+  const parts: string[] = [];
+  if (links.muteUrl && links.siteName) {
+    parts.push(`<a href="${links.muteUrl}" style="color:#6b7280">Mute site ${links.siteName}</a> (keep hearing about other sites)`);
+  }
+  if (links.stopUrl) {
+    parts.push(`<a href="${links.stopUrl}" style="color:#6b7280">Stop watching this campground</a>`);
+  }
+  if (parts.length === 0) return '';
+  return `<p style="margin-top:24px;font-size:12px;color:#9ca3af;border-top:1px solid #eee;padding-top:12px">${parts.join(' &nbsp;·&nbsp; ')}</p>`;
+}
+
+async function dispatchEmail(payload: NotificationPayload, links: ActionLinks): Promise<void> {
   const email = await getUserEmail(payload.userId);
   if (!email) return; // no email on file yet (v1 anonymous users)
 
@@ -132,7 +166,7 @@ async function dispatchEmail(payload: NotificationPayload): Promise<void> {
         : comingSoon
           ? `⏳ Opening soon: ${payload.campgroundName}`
           : `⛺ Campsite available: ${payload.campgroundName}`,
-      html: buildEmailHtml(payload),
+      html: buildEmailHtml(payload).replace('</body>', `${actionFooterHtml(links)}</body>`),
     });
     await logNotification(payload, 'email', 'sent');
   } catch (err) {
@@ -141,11 +175,18 @@ async function dispatchEmail(payload: NotificationPayload): Promise<void> {
   }
 }
 
-async function dispatchSms(payload: NotificationPayload): Promise<void> {
+async function dispatchSms(payload: NotificationPayload, links: ActionLinks): Promise<void> {
   if (!process.env.TWILIO_ACCOUNT_SID) return;
 
   const phone = await getUserPhone(payload.userId);
   if (!phone) return; // no phone on file — email-only user
+
+  // One-tap actions. Mute first (the common "not that site again" case), then Stop.
+  // The carrier "Reply STOP" (full opt-out) stays for compliance — distinct from the
+  // per-watch Stop link. Both are short DB-backed /w/ links.
+  const actions =
+    (links.muteUrl && links.siteName ? ` Mute ${links.siteName}: ${links.muteUrl}` : '') +
+    (links.stopUrl ? ` Stop watching: ${links.stopUrl}` : '');
 
   try {
     const site = payload.campsiteName ? ` — Site ${payload.campsiteName}` : '';
@@ -157,11 +198,15 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
       body = `CampHawk: ✅ ${payload.campgroundName}${site} is in your cart — check out now, it's only held ~15 min: https://www.recreation.gov/cart Reply STOP to opt out.`;
     } else if (payload.kind === 'coming_soon') {
       // ReserveCalifornia held a cancellation — heads-up before it's bookable.
-      body = `CampHawk: ⏳ ${payload.campgroundName}${site} was just cancelled and opens up ${formatReleaseTime(payload.availableAt, true)}. We'll text you when it's bookable. Reply STOP to opt out.`;
+      body = `CampHawk: ⏳ ${payload.campgroundName}${site} was just cancelled and opens up ${formatReleaseTime(payload.availableAt, true)}. We'll text you when it's bookable.${actions} Reply STOP to opt out.`;
     } else {
       const dates = payload.availableDates.slice(0, 3).join(', ');
       const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3} more` : '';
-      body = `CampHawk: ⛺ ${payload.campgroundName}${site} has availability: ${dates}${more}. Book now: ${payload.bookingUrl}. Reply STOP to opt out.`;
+      // Strip any #camphawk… fragment for SMS: it only drives the desktop browser
+      // extension, which never runs on the phone where a texted link is tapped, so
+      // it's wasted bytes (and SMS bytes are segments = money). Email keeps it.
+      const smsBookingUrl = payload.bookingUrl.split('#')[0];
+      body = `CampHawk: ⛺ ${payload.campgroundName}${site} open: ${dates}${more}. Book: ${smsBookingUrl}${actions} Reply STOP to opt out.`;
     }
     await sendSms({ to: phone, body });
     await logNotification(payload, 'sms', 'sent');

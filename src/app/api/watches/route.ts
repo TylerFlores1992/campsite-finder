@@ -125,6 +125,26 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ id: row.id, ok: true });
 }
 
+// Manage a watch's site mutes. Body: { id, unmuteSiteId } to un-mute one site, or
+// { id, clearMutes: true } to clear them all. Ownership-scoped.
+export async function PATCH(request: NextRequest) {
+  const userId = await requireAuth();
+  const body = (await request.json().catch(() => ({}))) as { id?: string; unmuteSiteId?: string; clearMutes?: boolean };
+  if (!body.id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+
+  if (body.clearMutes) {
+    await mutate(`UPDATE watches SET muted_site_ids = '{}' WHERE id = $1 AND user_id = $2`, [body.id, userId]);
+  } else if (body.unmuteSiteId) {
+    await mutate(
+      `UPDATE watches SET muted_site_ids = array_remove(muted_site_ids, $3) WHERE id = $1 AND user_id = $2`,
+      [body.id, userId, String(body.unmuteSiteId)]
+    );
+  } else {
+    return NextResponse.json({ error: 'unmuteSiteId or clearMutes required' }, { status: 400 });
+  }
+  return NextResponse.json({ ok: true });
+}
+
 export async function DELETE(request: NextRequest) {
   const userId = await requireAuth();
 

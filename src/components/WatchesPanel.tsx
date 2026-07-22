@@ -14,6 +14,7 @@ interface Watch {
   site_type: string | null;
   created_at: string;
   notification_sent_at: string | null;
+  muted_site_ids?: string[];
 }
 
 interface WatchesPanelProps {
@@ -44,6 +45,17 @@ export default function WatchesPanel({ onClose }: WatchesPanelProps) {
     await fetch(`/api/watches?id=${id}`, { method: 'DELETE' });
     setWatches((w) => w.filter((x) => x.id !== id));
     setDeleting(null);
+  }
+
+  async function unmuteSite(id: string, siteId: string) {
+    setWatches((ws) =>
+      ws.map((x) => (x.id === id ? { ...x, muted_site_ids: (x.muted_site_ids ?? []).filter((s) => s !== siteId) } : x))
+    );
+    await fetch('/api/watches', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, unmuteSiteId: siteId }),
+    }).catch(() => {});
   }
 
   function formatDate(d: string) {
@@ -89,7 +101,7 @@ export default function WatchesPanel({ onClose }: WatchesPanelProps) {
               <Bell size={32} className="mx-auto text-gray-200 mb-3" />
               <p className="text-sm text-gray-500 font-medium">No active watches</p>
               <p className="text-xs text-gray-400 mt-1">
-                Search with dates and click "Notify me" on a booked campground.
+                Search with dates and click &ldquo;Notify me&rdquo; on a booked campground.
               </p>
             </div>
           )}
@@ -116,6 +128,21 @@ export default function WatchesPanel({ onClose }: WatchesPanelProps) {
                   <p className="text-xs text-green-600 mt-1.5 font-medium">
                     ✓ Alert sent {new Date(w.notification_sent_at).toLocaleDateString()}
                   </p>
+                )}
+                {(w.muted_site_ids?.length ?? 0) > 0 && (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1 text-xs text-gray-500">
+                    <span>Muted:</span>
+                    {w.muted_site_ids!.map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => unmuteSite(w.id, s)}
+                        className="bg-gray-200 hover:bg-gray-300 px-1.5 py-0.5 rounded text-gray-600"
+                        title={`Unmute site ${s}`}
+                      >
+                        {s} ✕
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
               <button
