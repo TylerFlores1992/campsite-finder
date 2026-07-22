@@ -60,7 +60,7 @@ export default async function AdminPage() {
   // 404 (not 403) for non-admins so the page's existence isn't revealed.
   if (!email || !ADMIN_EMAILS.includes(email)) notFound();
 
-  const [usersAgg, signupRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows] =
+  const [usersAgg, signupRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows] =
     await Promise.all([
       safe(
         queryOne<{ total: number; new_7d: number; new_30d: number }>(
@@ -133,6 +133,13 @@ export default async function AdminPage() {
         }>(
           `SELECT DISTINCT ON (source) source, finished_at::text, facilities_synced, error, metadata
            FROM sync_log ORDER BY source, started_at DESC`
+        ),
+        []
+      ),
+      safe(
+        query<{ key: string; ok: boolean; age_s: number | null; consecutive_failures: number; detail: string | null }>(
+          `SELECT key, ok, extract(epoch FROM now()-last_run_at)::int age_s, consecutive_failures, detail
+           FROM alert_canary WHERE key LIKE 'detect:%' OR key LIKE 'delivery:%' ORDER BY key`
         ),
         []
       ),
@@ -270,6 +277,36 @@ export default async function AdminPage() {
                     : `STALE · last beat ${Math.round(beat.age_s / 60)} min ago`
                   : 'no heartbeat recorded'}
               </span>
+            </div>
+            <div className="mt-4 space-y-1.5 text-sm">
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Alert canary</p>
+              {canaryRows.length === 0 && <p className="text-gray-400 text-xs">No canary runs recorded.</p>}
+              {canaryRows.map((c) => {
+                const skipped = (c.detail ?? '').startsWith('skipped');
+                // Detection runs ~2 min, delivery ~6 h — flag a run that's gone quiet.
+                const staleS = c.key.startsWith('delivery:') ? 7 * 3600 : 600;
+                const stale = c.age_s != null && c.age_s > staleS;
+                const color =
+                  skipped || (!c.ok && c.consecutive_failures < 2)
+                    ? 'bg-amber-500'
+                    : c.ok && !stale
+                      ? 'bg-green-500'
+                      : 'bg-red-500';
+                const ageLabel =
+                  c.age_s == null ? 'never' : c.age_s < 90 ? `${c.age_s}s` : `${Math.round(c.age_s / 60)}m`;
+                return (
+                  <div key={c.key} className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-2 text-gray-600">
+                      <span className={`h-2 w-2 rounded-full ${color}`} />
+                      {c.key}
+                    </span>
+                    <span className="text-gray-500 truncate max-w-[60%]" title={c.detail ?? undefined}>
+                      {ageLabel}
+                      {c.consecutive_failures > 0 ? ` · ${c.consecutive_failures}✗` : ''}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
             <div className="mt-4 space-y-1.5 text-sm">
               <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Last sync</p>

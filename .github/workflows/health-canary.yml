@@ -1,0 +1,39 @@
+name: Alert-health pager
+
+# Hits /api/health/status every 5 minutes and pages the owner (email + SMS) when it
+# reports `down`. The canary itself runs in the Fly poller (worker/canary.ts); this
+# is only the external watchdog that turns a 503 into a page — deliberately OUTSIDE
+# Fly/Vercel so it still fires if the app or worker is the thing that's down.
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+# Never let a slow run pile up on the 5-minute cadence.
+concurrency:
+  group: health-canary
+  cancel-in-progress: false
+
+jobs:
+  page:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Check health and page on failure
+        env:
+          NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          HEALTH_ALERT_EMAIL: ${{ secrets.HEALTH_ALERT_EMAIL }}
+          HEALTH_ALERT_PHONE: ${{ secrets.HEALTH_ALERT_PHONE }}
+        run: npx tsx scripts/health-page.mts

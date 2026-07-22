@@ -44,6 +44,7 @@ import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
 import { isUseDirectSource, USEDIRECT_PROVIDERS } from '../src/lib/sources/reservecalifornia/providers';
 import { dispatchNotifications, type NotificationPayload } from '../src/lib/notifications';
 import { bookingLink } from '../src/lib/booking-url';
+import { runDetectionCanary, runDeliveryCanary } from './canary';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 15_000);
 // Auto-cart rec.gov watches run on their own tighter loop so a cancellation gets
@@ -54,6 +55,12 @@ const AUTOCART_POLL_INTERVAL_MS = Number(process.env.AUTOCART_POLL_INTERVAL_MS ?
 // re-verifies availability and decides the fallback alert (see 014_autocart_jobs).
 const RECONCILE_DELAY_SEC = Number(process.env.AUTOCART_RECONCILE_DELAY_SEC ?? 35);
 const RECGOV_CONCURRENCY = 4;
+// Alert-health canary cadences. Detection is cheap (one fetch per source) so it
+// runs often; delivery actually SENDS (Resend/Twilio), so it's slow by default to
+// avoid spamming the canary sink — /api/health/status staleness thresholds track
+// these (see the route). Both overridable via env.
+const CANARY_DETECT_INTERVAL_MS = Number(process.env.CANARY_DETECT_INTERVAL_MS ?? 120_000);
+const CANARY_DELIVERY_INTERVAL_MS = Number(process.env.CANARY_DELIVERY_INTERVAL_MS ?? 6 * 60 * 60 * 1000);
 // How fresh the mini-PC bot's heartbeat must be for us to treat it as online. The
 // bot polls the roster every ~2s, so anything older than this means it's down (box
 // off, process crashed, network cut). When it's stale we do NOT route rec.gov
@@ -722,6 +729,29 @@ async function main() {
   setInterval(rcSyncIfDue, 60 * 60 * 1000);
   gtcSyncIfDue();
   setInterval(gtcSyncIfDue, 60 * 60 * 1000);
+
+  // Alert-health canary — non-overlapping, best-effort (never throws into the loop).
+  console.log(
+    `[poller] canary — detection every ${CANARY_DETECT_INTERVAL_MS / 1000}s, delivery every ${(CANARY_DELIVERY_INTERVAL_MS / 3_600_000).toFixed(1)}h`
+  );
+  let detectRunning = false;
+  const detectCanary = async () => {
+    if (detectRunning) return;
+    detectRunning = true;
+    try { await runDetectionCanary(); } catch (err) { console.error('[canary] detection cycle failed:', err); }
+    finally { detectRunning = false; }
+  };
+  let deliveryRunning = false;
+  const deliveryCanary = async () => {
+    if (deliveryRunning) return;
+    deliveryRunning = true;
+    try { await runDeliveryCanary(); } catch (err) { console.error('[canary] delivery cycle failed:', err); }
+    finally { deliveryRunning = false; }
+  };
+  detectCanary();
+  setInterval(detectCanary, CANARY_DETECT_INTERVAL_MS);
+  deliveryCanary();
+  setInterval(deliveryCanary, CANARY_DELIVERY_INTERVAL_MS);
   // Run cycles back-to-back on a fixed cadence; skip a tick if the previous cycle is still running.
   let running = false;
   const tick = async () => {
