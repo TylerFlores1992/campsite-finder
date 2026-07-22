@@ -307,13 +307,13 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex flex-wrap gap-2 items-end bg-white rounded-2xl shadow-lg ring-1 ring-black/5 border border-gray-100 p-2.5"
+      className="flex flex-wrap gap-2 items-start bg-white rounded-2xl shadow-lg ring-1 ring-black/5 border border-gray-100 p-2.5"
     >
       {/* Location input + suggestions */}
       <div className="flex-1 min-w-48 relative" ref={wrapperRef}>
         <label className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1 ml-1">Location</label>
         <div className="relative flex items-center">
-          <Search size={14} className="absolute left-2.5 text-gray-400" />
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             ref={inputRef}
             type="text"
@@ -326,15 +326,15 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
             onKeyDown={(e) => {
               if (e.key === 'Escape') setShowSuggestions(false);
             }}
-            className="w-full pl-8 pr-9 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
+            className="w-full pl-8 pr-11 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
           />
           <button
             type="button"
             onClick={useCurrentLocation}
             title="Use my location"
-            className="absolute right-2 text-gray-400 hover:text-green-600 transition-colors"
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-green-600 transition-colors"
           >
-            {locating ? <Loader2 size={14} className="animate-spin" /> : <MapPin size={14} />}
+            {locating ? <Loader2 size={20} className="animate-spin" /> : <MapPin size={20} />}
           </button>
         </div>
 
@@ -404,14 +404,15 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
           endDate={endDate}
           onChange={(s, e) => { setStartDate(s); setEndDate(e); }}
         />
-        {/* Flexible dates: the range above becomes a search window. */}
-        <div className="flex items-center gap-2 mt-1.5 ml-1 flex-wrap">
-          <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+        {/* Flexible dates: the range above becomes a search window. Styled to match the
+            rest of the bar — same text size/color, same green focus and rounded control. */}
+        <div className="flex items-center gap-3 mt-1.5 ml-1 flex-wrap text-sm text-gray-700">
+          <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
             <input
               type="checkbox"
               checked={flexOn}
               onChange={(e) => setFlexOn(e.target.checked)}
-              className="rounded border-gray-300 text-green-600 focus:ring-green-400"
+              className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-400"
             />
             Flexible dates
           </label>
@@ -420,19 +421,19 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
               <select
                 value={flexNights}
                 onChange={(e) => setFlexNights(Number(e.target.value))}
-                className="py-1 px-1.5 text-xs rounded-md border border-gray-200 bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-green-400"
+                className="py-1.5 px-2.5 text-sm rounded-lg bg-white cursor-pointer hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-green-400 transition-colors"
                 aria-label="Nights"
               >
                 {[1, 2, 3, 4, 5, 6, 7].map((n) => (
                   <option key={n} value={n}>{n} night{n > 1 ? 's' : ''}</option>
                 ))}
               </select>
-              <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+              <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={flexWeekend}
                   onChange={(e) => setFlexWeekend(e.target.checked)}
-                  className="rounded border-gray-300 text-green-600 focus:ring-green-400"
+                  className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-400"
                 />
                 Weekends only
               </label>
@@ -441,14 +442,19 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
         </div>
       </div>
 
-      <button
-        type="submit"
-        disabled={!location || geocoding}
-        className="w-full sm:w-auto justify-center px-6 py-3 bg-green-600 text-white text-sm font-semibold rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-      >
-        {geocoding ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
-        Search
-      </button>
+      {/* Invisible label spacer keeps the button aligned with the input controls
+          (not the field labels) now that the form top-aligns its children. */}
+      <div className="flex flex-col w-full sm:w-auto">
+        <span aria-hidden className="hidden sm:block text-[11px] font-semibold uppercase tracking-wider mb-1 invisible select-none">Go</span>
+        <button
+          type="submit"
+          disabled={!location || geocoding}
+          className="w-full justify-center px-6 py-2 bg-green-600 text-white text-sm font-semibold rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+        >
+          {geocoding ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+          Search
+        </button>
+      </div>
     </form>
   );
 }
