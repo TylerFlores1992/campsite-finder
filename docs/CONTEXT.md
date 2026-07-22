@@ -11,6 +11,14 @@ subscription turns on watching + instant email/SMS alerts + (rec.gov only) auto-
 Watches can be a fixed stay or **flexible** — "any N nights in this window,
 optionally weekends" (see "Flexible dates" under the core flow).
 
+> **Roadmap status (from the A–E "what's worth building" list).** A (alert-health
+> canary), B (verified UseDirect/GoingToCamp deep-links), C (flexible dates), and D
+> (smarter notifications: one-tap stop/reopen, site-specific mute, dead-man's switch)
+> are all **shipped**. **Next up: E — cancellation-likelihood signal.** We already
+> poll availability continuously, so that history is a dataset: surface "this site
+> cancels often, ~X% chance of an opening in your window" as a differentiator. Not
+> started — this is where to resume.
+
 ## Stack
 
 - **Next.js (App Router)** on **Vercel** — website + API routes.
@@ -420,6 +428,40 @@ section):
 > `SearchBar` (nights + weekends), threaded through `page` → `CampgroundCard` →
 > `WatchButton` so a watch created from flexible results inherits the spec.
 
+### Alert-health canary (feature A — SHIPPED, monitoring)
+
+`worker/canary.ts` runs inside the poller (the real production vantage point, so it
+exercises the same proxy paths as live alerting) and stamps the `alert_canary` table
+(migration `016`). `/api/health/status` reads those rows and turns them into
+`ok` / `degraded` (200) / `down` (503) for an external uptime monitor to page on.
+Two layers, both using the **throwing** fetch functions — never the error-swallowing
+`find*Open` helpers, which return null on a transport failure and would let a dead
+source path pass the canary:
+
+1. **detect:<source>** — one real availability/catalog fetch per source succeeded.
+   Cheap (no send), so it runs every `CANARY_DETECT_INTERVAL_MS` (120s).
+2. **delivery:email / delivery:sms** — Resend/Twilio actually **accepted** a synthetic
+   send to `CANARY_EMAIL` / `CANARY_PHONE` (proves the last mile, not just detection).
+
+> **The SMS delivery canary is the highest-value one, not disposable.** SMS is both
+> the primary channel users act on and the one that fails *silently* (A2P suspension,
+> Twilio balance, carrier filtering); email via Resend rarely breaks and fails loudly.
+> An email-only canary literally cannot detect a Twilio outage. So keep the SMS leg —
+> it's cheap to run infrequently. Pinned to **daily** (`CANARY_DELIVERY_INTERVAL_MS`
+> in `worker/fly.toml`), which still catches an outage well within a useful window at
+> ~1/4 the 6h-default cost.
+
+> **The delivery canary self-throttles across restarts, and MUST — the poller calls
+> it once on every boot.** That immediate call exists so it fires soon after first
+> setup, but without a guard every deploy/restart would send a real SMS. It cost the
+> operator a burst of texts on 2026-07-22 (several worker deploys in one afternoon,
+> one text each). `runDeliveryCanary` now checks the last real delivery attempt in
+> `alert_canary` and skips if one ran within ~90% of the interval, so N reboots inside
+> one interval send once. The scheduled interval tick is always older than the
+> interval, so it still proceeds. Detection's immediate boot run is fine — it sends
+> nothing. (A single canary phone that is also a real user's number is fine; if you
+> ever want canary and real alerts to look different, point `CANARY_PHONE` elsewhere.)
+
 ### Booking links — how specific each provider lets us be
 
 `src/lib/booking-url.ts` is the one place that turns campground + site + date into a
@@ -560,6 +602,11 @@ Supabase (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`), Clerk
 Resend (`RESEND_API_KEY`, `EMAIL_FROM`), Twilio (`TWILIO_*`), Mapbox
 (`NEXT_PUBLIC_MAPBOX_TOKEN`), RIDB (`RIDB_API_KEY`), auto-cart
 (`AUTOCART_TOKEN`, `BROKER_WS_URL`), `NEXT_PUBLIC_APP_URL`, `SYNC_SECRET`.
+Alert-health canary (on the **Fly worker**): `CANARY_EMAIL` / `CANARY_PHONE` —
+the dedicated sink the delivery canary sends synthetic alerts to (unset = that
+leg records "skipped", a warn not a page); `CANARY_DELIVERY_INTERVAL_MS` and
+`CANARY_DETECT_INTERVAL_MS` — cadences, both non-secret and declared in
+`worker/fly.toml [env]` (delivery defaults to 6h in code, pinned to 24h there).
 The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 `BROKER_PORT`, `POLL_MS`).
 
