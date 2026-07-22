@@ -55,9 +55,11 @@ function AvailabilityCalendar({
 }) {
   const [data, setData] = useState<CampgroundAvailability | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
+    setSelectedDate(null); // a picked day from the old month has no meaning in the new one
     fetch(`/api/campgrounds/${campgroundId}/availability?month=${month}`)
       .then((r) => r.json())
       .then((d) => { setData(d); setLoading(false); })
@@ -67,11 +69,27 @@ function AvailabilityCalendar({
   if (loading) return <div className="flex items-center gap-2 text-gray-400 py-4"><Loader2 size={16} className="animate-spin" /> Loading availability...</div>;
   if (!data) return null;
 
-  const availDays = new Set(
-    data.campsites.flatMap((cs) =>
-      cs.availability.filter((d) => d.status === 'available').map((d) => d.date)
-    )
-  );
+  // Collect ALL sites open on each date, not just one. rec.gov's per-site page
+  // (`/camping/campsites/<id>`) is the most specific link that provably works
+  // (dates aren't deep-linkable there — see booking-url.ts), so when several
+  // sites are open we let the user pick rather than guessing one for them.
+  const dateToOpenSites = new Map<string, typeof data.campsites>();
+  for (const cs of data.campsites) {
+    for (const d of cs.availability) {
+      if (d.status === 'available') {
+        const list = dateToOpenSites.get(d.date) ?? [];
+        list.push(cs);
+        dateToOpenSites.set(d.date, list);
+      }
+    }
+  }
+  const availDays = new Set(dateToOpenSites.keys());
+
+  // rec.gov is the only source with a verified per-site deep link, so it's the
+  // only one where listing individual sites gives distinct links. For everyone
+  // else the day is a single link to the provider's park/reservations page.
+  const hasPerSiteLinks = source === 'ridb';
+  const selectedSites = selectedDate ? dateToOpenSites.get(selectedDate) ?? [] : [];
 
   // Build calendar grid
   const [year, mo] = month.split('-').map(Number);
@@ -104,30 +122,82 @@ function AvailabilityCalendar({
           const isPast = dateStr < today;
           const isAvail = availDays.has(dateStr);
           const clickable = isAvail && !isPast && !!reservationsUrl;
-          const cls = `block text-center py-1.5 rounded font-medium ${
+          const isSelected = clickable && dateStr === selectedDate;
+          const openCount = clickable ? dateToOpenSites.get(dateStr)?.length ?? 0 : 0;
+          const cls = `block w-full text-center py-1.5 rounded font-medium ${
             isPast ? 'text-gray-300' : isAvail ? 'bg-green-100 text-green-700' : 'bg-red-50 text-red-400'
-          } ${clickable ? 'cursor-pointer ring-1 ring-inset ring-green-300 hover:bg-green-200' : ''}`;
-          return clickable ? (
+          } ${clickable ? 'cursor-pointer ring-1 ring-inset ring-green-300 hover:bg-green-200' : ''} ${
+            isSelected ? 'ring-2 ring-green-500 bg-green-200' : ''
+          }`;
+
+          if (!clickable) return <div key={dateStr} className={cls}>{day}</div>;
+
+          // rec.gov: multiple sites can be open — reveal the list so the user picks.
+          if (hasPerSiteLinks) {
+            return (
+              <button
+                key={dateStr}
+                type="button"
+                onClick={() => setSelectedDate((cur) => (cur === dateStr ? null : dateStr))}
+                title={`${openCount} site${openCount !== 1 ? 's' : ''} open on ${dateStr} — tap to choose`}
+                className={cls}
+              >
+                {day}
+              </button>
+            );
+          }
+
+          // Single verified link (park/reservations page, date-carrying for RA).
+          return (
             <a
               key={dateStr}
               href={bookingLink({ source, reservationsUrl, campgroundId, date: dateStr })!}
               target="_blank"
               rel="noopener noreferrer"
-              title={`See available sites on ${dateStr} and book${providerName ? ` on ${providerName}` : ''}`}
+              title={`See open sites for ${dateStr} and book${providerName ? ` on ${providerName}` : ''}`}
               className={cls}
             >
               {day}
             </a>
-          ) : (
-            <div key={dateStr} className={cls}>{day}</div>
           );
         })}
       </div>
+
+      {/* Open-site picker for the tapped rec.gov day */}
+      {hasPerSiteLinks && selectedDate && (
+        <div className="mt-3 rounded-xl border border-green-200 bg-green-50/60 p-3">
+          <div className="text-xs font-medium text-gray-700 mb-2">
+            {selectedSites.length} open site{selectedSites.length !== 1 ? 's' : ''} on {selectedDate}
+            <span className="text-gray-400 font-normal"> — pick one to book on {providerName ?? 'the provider'}</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+            {selectedSites.map((cs) => (
+              <a
+                key={cs.campsiteId}
+                href={bookingLink({ source, reservationsUrl, date: selectedDate, campsiteId: cs.campsiteId })!}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-between gap-2 rounded-lg bg-white border border-gray-100 px-3 py-2 text-xs hover:border-green-300 hover:bg-green-50 transition-colors"
+              >
+                <span className="min-w-0">
+                  <span className="font-medium text-gray-700">{cs.campsiteName ?? cs.campsiteId}</span>
+                  {cs.loop && <span className="text-gray-400"> · Loop {cs.loop}</span>}
+                  {cs.campsiteType && <span className="block text-gray-400 capitalize">{cs.campsiteType.toLowerCase()}</span>}
+                </span>
+                <ExternalLink size={12} className="shrink-0 text-green-600" />
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-xs text-gray-500">
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-green-100 inline-block" /> Available</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-red-50 inline-block" /> Unavailable</span>
         {reservationsUrl && availDays.size > 0 && (
-          <span className="text-green-700">Tap an available day to see open sites &amp; book →</span>
+          <span className="text-green-700">
+            {hasPerSiteLinks ? 'Tap an available day to choose an open site →' : 'Tap an available day to see open sites & book →'}
+          </span>
         )}
       </div>
     </div>
