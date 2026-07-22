@@ -28,7 +28,7 @@ try {
   // no .env.local — rely on environment
 }
 
-import { query, mutate } from '../src/lib/db/client';
+import { query, mutate, sqlit } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
@@ -100,6 +100,69 @@ const CANARY_DELIVERY_INTERVAL_MS = Number(process.env.CANARY_DELIVERY_INTERVAL_
 const AUTOCART_BOT_STALE_SEC = Number(process.env.AUTOCART_BOT_STALE_SEC ?? 60);
 // Matches the Campflare webhook handler: re-notify only if the last alert is >1h old.
 const RENOTIFY_WINDOW = "interval '1 hour'";
+
+// --- Cancellation-likelihood recorder (feature E) --------------------------
+// Every cycle the poller already knows whether each watched campground has a
+// qualifying whole-stay opening; this persists that observation as a time series
+// (availability_observations, migration 020) so the likelihood signal — "opens up
+// on ~X% of recent checks" — can be computed later from real history. This is only
+// the RECORDER; aggregation + UI ship once enough data has accrued for the number
+// to be honest.
+//
+// It records at most one row per (campground, arrival, nights) window per
+// OBSERVATION_INTERVAL_MS: 15s detection granularity is far finer than a
+// cancellation-frequency signal needs, and unthrottled it would write millions of
+// near-duplicate rows a day. Recording is strictly best-effort — every failure is
+// swallowed so it can never affect alerting (and so it degrades to a no-op on a prod
+// database that hasn't had migration 020 applied yet).
+const OBSERVATION_INTERVAL_MS = Number(process.env.OBSERVATION_INTERVAL_MS ?? 60 * 60 * 1000);
+const OBSERVATION_RETENTION_DAYS = Number(process.env.OBSERVATION_RETENTION_DAYS ?? 90);
+const OBSERVATION_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// In-memory throttle (key -> last recorded epoch ms). Process-lifetime only; a
+// restart just permits one extra row per window, which is harmless.
+const lastObservationAt = new Map<string, number>();
+let lastObservationPruneAt = 0;
+
+function daysBetween(fromISO: string, toISO: string): number {
+  return Math.round((Date.parse(toISO) - Date.parse(fromISO)) / 86_400_000);
+}
+
+/**
+ * Persist this cycle's open/booked observation for each watched window, throttled
+ * to one row per window per OBSERVATION_INTERVAL_MS. Best-effort: never throws.
+ */
+async function recordObservations(rows: Array<{ w: WatchRow; hadOpening: boolean }>): Promise<void> {
+  const now = Date.now();
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const values: string[] = [];
+  for (const { w, hadOpening } of rows) {
+    const nights = w.flex_nights ?? nightsOfRange(w.start_date, w.end_date).length;
+    const key = `${w.campground_id}|${w.start_date}|${nights}`;
+    if (now - (lastObservationAt.get(key) ?? 0) < OBSERVATION_INTERVAL_MS) continue;
+    lastObservationAt.set(key, now);
+    const leadDays = daysBetween(todayISO, w.start_date);
+    values.push(
+      `(${sqlit(w.campground_id)}, ${sqlit(w.campground_source)}, ${sqlit(w.start_date)}, ${nights}, ${leadDays}, ${hadOpening})`
+    );
+  }
+  if (values.length === 0) return;
+  await mutate(
+    `INSERT INTO availability_observations
+       (campground_id, source, arrival_date, nights, lead_days, had_opening)
+     VALUES ${values.join(', ')}`
+  ).catch((err) => console.error('[poller] observation record failed (non-fatal):', err.message));
+}
+
+/** Drop observations past the retention window. Best-effort, at most every 6h. */
+async function pruneObservationsIfDue(): Promise<void> {
+  const now = Date.now();
+  if (now - lastObservationPruneAt < OBSERVATION_PRUNE_INTERVAL_MS) return;
+  lastObservationPruneAt = now;
+  await mutate(
+    `DELETE FROM availability_observations
+     WHERE observed_at < NOW() - INTERVAL '${OBSERVATION_RETENTION_DAYS} days'`
+  ).catch((err) => console.error('[poller] observation prune failed (non-fatal):', err.message));
+}
 
 interface WatchRow {
   id: string;
@@ -436,6 +499,11 @@ async function cycle(): Promise<void> {
   );
 
   let notified = 0;
+  // Feature E: this cycle's open/booked observation per watched window, recorded
+  // (throttled) after the notify loop. Covers every main-lane watch; auto-cart-lane
+  // rec.gov watches are handled in autocartCycle and fall into this lane whenever the
+  // bot is offline, so popular sites are still sampled.
+  const observed: Array<{ w: WatchRow; hadOpening: boolean }> = [];
   for (const watch of mainWatches) {
     const rc = rcResults.get(watch.id);
     const result: WatchResult =
@@ -449,6 +517,7 @@ async function cycle(): Promise<void> {
           // Surface the RC unit as the mutable "site" (id + friendly label).
           ? { dates: rc?.dates ?? [], campsiteId: rc ? String(rc.unitId) : null, campsiteName: rc ? `Unit ${rc.unitId}` : null }
           : availableDatesForWatch(watch, monthData);
+    observed.push({ w: watch, hadOpening: result.dates.length > 0 });
     if (result.dates.length === 0) continue;
 
     // Matched stay range: for flexible watches this is the run inside the window;
@@ -563,6 +632,10 @@ async function cycle(): Promise<void> {
     `UPDATE watches SET last_checked_at = NOW() WHERE id::text = ANY($1)`,
     [watches.map((w) => w.id)]
   ).catch((err) => console.error('[poller] last_checked_at update failed:', err));
+
+  // Feature E: persist this cycle's observations (throttled) and prune old history.
+  await recordObservations(observed);
+  await pruneObservationsIfDue();
 
   await beat(watches.length);
 
