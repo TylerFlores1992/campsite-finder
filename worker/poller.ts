@@ -29,7 +29,7 @@ try {
 }
 
 import { query, mutate, sqlit } from '../src/lib/db/client';
-import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
+import { getAvailabilityFromRecGov, hasAvailabilityInRange } from '../src/lib/availability/recgov';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
 import { findGoingToCampOpen } from '../src/lib/availability/goingtocamp';
@@ -127,6 +127,29 @@ function daysBetween(fromISO: string, toISO: string): number {
   return Math.round((Date.parse(toISO) - Date.parse(fromISO)) / 86_400_000);
 }
 
+type ObsRow = {
+  campgroundId: string;
+  source: string;
+  arrivalDate: string;
+  nights: number;
+  leadDays: number;
+  hadOpening: boolean;
+};
+
+/** Batch-insert observation rows. Best-effort: never throws (a not-yet-applied
+ *  migration 020 or a transient DB error must never touch alerting). */
+async function insertObservationRows(rows: ObsRow[]): Promise<void> {
+  if (rows.length === 0) return;
+  const values = rows.map(
+    (r) => `(${sqlit(r.campgroundId)}, ${sqlit(r.source)}, ${sqlit(r.arrivalDate)}, ${r.nights}, ${r.leadDays}, ${r.hadOpening})`
+  );
+  await mutate(
+    `INSERT INTO availability_observations
+       (campground_id, source, arrival_date, nights, lead_days, had_opening)
+     VALUES ${values.join(', ')}`
+  ).catch((err) => console.error('[poller] observation record failed (non-fatal):', err.message));
+}
+
 /**
  * Persist this cycle's open/booked observation for each watched window, throttled
  * to one row per window per OBSERVATION_INTERVAL_MS. Best-effort: never throws.
@@ -134,23 +157,102 @@ function daysBetween(fromISO: string, toISO: string): number {
 async function recordObservations(rows: Array<{ w: WatchRow; hadOpening: boolean }>): Promise<void> {
   const now = Date.now();
   const todayISO = new Date().toISOString().slice(0, 10);
-  const values: string[] = [];
+  const out: ObsRow[] = [];
   for (const { w, hadOpening } of rows) {
     const nights = w.flex_nights ?? nightsOfRange(w.start_date, w.end_date).length;
     const key = `${w.campground_id}|${w.start_date}|${nights}`;
     if (now - (lastObservationAt.get(key) ?? 0) < OBSERVATION_INTERVAL_MS) continue;
     lastObservationAt.set(key, now);
-    const leadDays = daysBetween(todayISO, w.start_date);
-    values.push(
-      `(${sqlit(w.campground_id)}, ${sqlit(w.campground_source)}, ${sqlit(w.start_date)}, ${nights}, ${leadDays}, ${hadOpening})`
-    );
+    out.push({
+      campgroundId: w.campground_id,
+      source: w.campground_source,
+      arrivalDate: w.start_date,
+      nights,
+      leadDays: daysBetween(todayISO, w.start_date),
+      hadOpening,
+    });
   }
-  if (values.length === 0) return;
-  await mutate(
-    `INSERT INTO availability_observations
-       (campground_id, source, arrival_date, nights, lead_days, had_opening)
-     VALUES ${values.join(', ')}`
-  ).catch((err) => console.error('[poller] observation record failed (non-fatal):', err.message));
+  await insertObservationRows(out);
+}
+
+// --- Probe roster (feature E) ----------------------------------------------
+// Sample a curated set of high-demand campgrounds (probe_targets, migration 021)
+// on a fixed hourly cadence, so the likelihood signal covers popular sites nobody
+// happens to be watching. Each target is probed at a few standard lead-times off
+// "today" (not fixed calendar dates, which would drift toward lead 0 and expire),
+// keeping lead_days buckets stable across weeks. Reuses the exact adapters the
+// watch path uses, so it inherits every source's proxy/WAF handling for free.
+const PROBE_INTERVAL_MS = Number(process.env.PROBE_INTERVAL_MS ?? 60 * 60 * 1000);
+const PROBE_LEAD_DAYS = (process.env.PROBE_LEAD_DAYS ?? '14,45')
+  .split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
+const PROBE_NIGHTS = Number(process.env.PROBE_NIGHTS ?? 2); // a weekend-length stay
+const PROBE_CONCURRENCY = 3;
+let probeRunning = false;
+
+/** The [start, checkout) of a PROBE_NIGHTS stay arriving the next Saturday on or
+ *  after today+leadDays — weekend demand is where cancellations bite. */
+function probeArrival(leadDays: number): { start: string; end: string } {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() + leadDays);
+  while (d.getUTCDay() !== 6) d.setUTCDate(d.getUTCDate() + 1); // 6 = Saturday
+  const start = d.toISOString().slice(0, 10);
+  const e = new Date(d);
+  e.setUTCDate(e.getUTCDate() + PROBE_NIGHTS);
+  return { start, end: e.toISOString().slice(0, 10) };
+}
+
+/** Whole-stay availability for any source, dispatching to the same adapters the
+ *  poll cycle uses. True = a bookable stay exists across [start, end). */
+async function probeWholeStayOpen(source: string, campgroundId: string, start: string, end: string, nights: number): Promise<boolean> {
+  if (isUseDirectSource(source)) return !!(await findRCOpenUnit(campgroundId, start, end, nights));
+  if (isGoingToCampSource(source)) return !!(await findGoingToCampOpen(campgroundId, start, end, nights));
+  if (isTnscSource(source)) return !!(await findTnscOpen(campgroundId, start, end, nights));
+  if (source === 'reserveamerica') return !!(await findReserveAmericaOpen(campgroundId, start, end, nights));
+  return hasAvailabilityInRange(campgroundId, start, end, nights); // rec.gov
+}
+
+/** Probe every active roster target once across the standard lead windows and
+ *  record the results. Non-overlapping and best-effort. */
+async function probeRosterIfDue(): Promise<void> {
+  if (probeRunning) return;
+  probeRunning = true;
+  try {
+    const targets = await query<{ campground_id: string; source: string }>(
+      `SELECT campground_id, source FROM probe_targets WHERE active`
+    ).catch(() => [] as { campground_id: string; source: string }[]);
+    if (targets.length === 0) return;
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const windows = PROBE_LEAD_DAYS.map((lead) => probeArrival(lead));
+    const rows: ObsRow[] = [];
+    await pMap(
+      targets,
+      async (t) => {
+        for (const w of windows) {
+          try {
+            const open = await probeWholeStayOpen(t.source, t.campground_id, w.start, w.end, PROBE_NIGHTS);
+            rows.push({
+              campgroundId: t.campground_id,
+              source: t.source,
+              arrivalDate: w.start,
+              nights: PROBE_NIGHTS,
+              leadDays: daysBetween(todayISO, w.start),
+              hadOpening: open,
+            });
+          } catch {
+            // transport/WAF error for this window → no row, rather than a false 'booked'
+          }
+        }
+      },
+      PROBE_CONCURRENCY
+    );
+    await insertObservationRows(rows);
+    console.log(`[poller] probe roster — ${targets.length} targets × ${windows.length} windows → ${rows.length} observations`);
+  } catch (err) {
+    console.error('[poller] probe roster failed (non-fatal):', (err as Error).message);
+  } finally {
+    probeRunning = false;
+  }
 }
 
 /** Drop observations past the retention window. Best-effort, at most every 6h. */
@@ -872,6 +974,12 @@ async function main() {
   setInterval(rcSyncIfDue, 60 * 60 * 1000);
   gtcSyncIfDue();
   setInterval(gtcSyncIfDue, 60 * 60 * 1000);
+
+  // Feature E probe roster: sample high-demand campgrounds hourly so the
+  // cancellation-likelihood signal covers popular sites nobody is watching.
+  console.log(`[poller] probe roster — every ${(PROBE_INTERVAL_MS / 3_600_000).toFixed(1)}h, leads [${PROBE_LEAD_DAYS.join(', ')}]d × ${PROBE_NIGHTS}n`);
+  probeRosterIfDue();
+  setInterval(probeRosterIfDue, PROBE_INTERVAL_MS);
 
   // Alert-health canary — non-overlapping, best-effort (never throws into the loop).
   console.log(
