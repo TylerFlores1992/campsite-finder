@@ -46,6 +46,7 @@ import { dispatchNotifications, type NotificationPayload } from '../src/lib/noti
 import { bookingLink } from '../src/lib/booking-url';
 import { runDetectionCanary, runDeliveryCanary } from './canary';
 import { findQualifyingRun, flexCandidateStays, isFlexible, type FlexDays, type FlexSpec } from '../src/lib/availability/flex';
+import { markAlive, msSinceAlive } from './liveness';
 
 /** The flexible-date spec carried by a watch row (fixed whole-stay when nights null). */
 function flexOf(w: { flex_nights: number | null; flex_days: string | null }): FlexSpec {
@@ -92,6 +93,15 @@ const RECGOV_CONCURRENCY = 4;
 // these (see the route). Both overridable via env.
 const CANARY_DETECT_INTERVAL_MS = Number(process.env.CANARY_DETECT_INTERVAL_MS ?? 120_000);
 const CANARY_DELIVERY_INTERVAL_MS = Number(process.env.CANARY_DELIVERY_INTERVAL_MS ?? 6 * 60 * 60 * 1000);
+// Self-heal watchdog: if no heartbeat has landed in the DB for this long, the
+// machine's networking has wedged (2026-07-22 incident — process up, all egress
+// timing out, alerting silently dead). Exit so Fly reboots the microVM and
+// re-establishes networking, no human needed. Set WELL above the worst legitimate
+// slow cycle (~2 min under a heavy catalog-sync burst) so only a true wedge trips
+// it, and below /api/health/status's 5-min WORKER_STALE page so we self-heal
+// before a human is paged. Checked on WATCHDOG_CHECK_INTERVAL_MS.
+const WATCHDOG_STALE_MS = Number(process.env.WATCHDOG_STALE_MS ?? 4 * 60 * 1000);
+const WATCHDOG_CHECK_INTERVAL_MS = Number(process.env.WATCHDOG_CHECK_INTERVAL_MS ?? 30_000);
 // How fresh the mini-PC bot's heartbeat must be for us to treat it as online. The
 // bot polls the roster every ~2s, so anything older than this means it's down (box
 // off, process crashed, network cut). When it's stale we do NOT route rec.gov
@@ -478,10 +488,18 @@ function hasConsecutiveRun(dates: string[], minNights: number): boolean {
 }
 
 async function beat(watchesChecked: number): Promise<void> {
-  await mutate(
-    `UPDATE worker_heartbeat SET beat_at = NOW(), watches_checked = $1 WHERE id = 1`,
-    [watchesChecked]
-  ).catch((err) => console.error('[poller] heartbeat write failed:', err));
+  try {
+    await mutate(
+      `UPDATE worker_heartbeat SET beat_at = NOW(), watches_checked = $1 WHERE id = 1`,
+      [watchesChecked]
+    );
+    // Only mark liveness on a SUCCESSFUL write — proof the poller reached the DB
+    // this cycle. A network wedge makes this throw, so liveness goes stale and
+    // the watchdog (main) reboots the machine. See worker/liveness.ts.
+    markAlive();
+  } catch (err) {
+    console.error('[poller] heartbeat write failed:', err);
+  }
 }
 
 async function cycle(): Promise<void> {
@@ -1003,6 +1021,22 @@ async function main() {
   setInterval(detectCanary, CANARY_DETECT_INTERVAL_MS);
   deliveryCanary();
   setInterval(deliveryCanary, CANARY_DELIVERY_INTERVAL_MS);
+
+  // Self-heal watchdog — reboot the machine if the poller stops landing heartbeats
+  // (a wedged-but-"started" machine; see WATCHDOG_STALE_MS + worker/liveness.ts).
+  // markAlive() starts the clock at boot, so the first cycle has WATCHDOG_STALE_MS
+  // of grace before this can fire.
+  console.log(`[poller] watchdog — reboot if no heartbeat lands for ${(WATCHDOG_STALE_MS / 1000).toFixed(0)}s`);
+  setInterval(() => {
+    const stale = msSinceAlive();
+    if (stale > WATCHDOG_STALE_MS) {
+      console.error(
+        `[poller] WATCHDOG: no successful heartbeat in ${(stale / 1000).toFixed(0)}s — ` +
+          `machine egress is wedged; exiting so Fly reboots the VM to restore networking.`
+      );
+      process.exit(1);
+    }
+  }, WATCHDOG_CHECK_INTERVAL_MS);
   // Run cycles back-to-back on a fixed cadence; skip a tick if the previous cycle is still running.
   let running = false;
   const tick = async () => {

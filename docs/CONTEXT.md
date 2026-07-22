@@ -227,6 +227,38 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > > `auto_start_machines` is false). The primary is whichever ID the pre-deploy logs
 > > show heartbeating.
 >
+> > **A THIRD worker failure mode: "started but network-wedged" → `restart`, not
+> > `start`. Now self-healing (2026-07-22).** Distinct from the two above (a *stopped*
+> > machine after deploy, and a *hung cycle*): the machine shows `STATE=started`, the
+> > Node process is alive and its event loop is running, but the microVM's **egress
+> > has wedged** — *every* outbound fetch times out, including Supabase. Signature in
+> > the logs: `[RecGov availability] … timeout` **and** `[poller] cycle failed: DB
+> > query error: TypeError: fetch failed` (the DB, not just a provider). Because the
+> > heartbeat/canary writes are themselves DB calls, they throw too, so every
+> > `worker_heartbeat`/`alert_canary` row **freezes at the last moment egress worked**
+> > and `/api/health/status` pages `down` with the heartbeat stale and ALL five
+> > `detect:*` failing at once — the tell that it's worker-side, not a provider
+> > outage (five different backends, two proxy directions, don't fail together). The
+> > manual fix is **`flyctl machine restart <primary-id>`** (a `start` is a no-op — it's
+> > already "started"); the reboot re-establishes networking. Observed once: ~30 min
+> > of silent dead alerting before the pager caught it.
+> >
+> > **Self-heal (so a human isn't the recovery path):** the poller now runs a
+> > **watchdog** (`worker/liveness.ts` + `WATCHDOG_STALE_MS`, default 4 min) that
+> > `process.exit(1)`s when no heartbeat has landed in the DB for that long; Fly's
+> > `on-failure` restart policy then reboots the VM, same effect as the manual
+> > restart. Liveness is marked ONLY on a *successful* `beat()` DB write, so a wedge
+> > (write throws) correctly goes stale. `/health` on the worker now reports **503**
+> > once stale (was an unconditional `{ok:true}` that stayed green through the wedge),
+> > wired to a Fly `[[http_service.checks]]` for visibility — but the watchdog, not
+> > the Fly check, is the actual trigger. Threshold is set *below* the route's 5-min
+> > `WORKER_STALE` page and *above* the worst legit slow cycle (~2 min under a heavy
+> > catalog-sync burst), so it self-heals before paging without false-tripping. **A
+> > standing rec.gov `429` / GoingToCamp-timeout throttle on the Fly egress IP is a
+> > SEPARATE, external thing** — clean provider-side rate-limits, not a wedge; a
+> > restart may or may not clear them (the standby shares the region's IP reputation),
+> > and they usually age out on their own.
+>
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
 > GoingToCamp above, what actually remains here is small:

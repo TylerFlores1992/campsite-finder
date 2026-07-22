@@ -13,9 +13,15 @@ import {
   hasGoingToCampAvailabilityInRange,
   isGoingToCampCampgroundId,
 } from '../src/lib/availability/goingtocamp';
+import { msSinceAlive } from './liveness';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const MAX_ITEMS = 60;
+// `/health` reports unhealthy once the poller has gone this long without landing a
+// heartbeat — the Fly HTTP check, the load balancer, and the external uptime
+// monitor all key off it. Matches the poller's watchdog window (worker/liveness.ts);
+// the in-process watchdog is what actually reboots, this just exposes the state.
+const HEALTH_STALE_MS = Number(process.env.WATCHDOG_STALE_MS ?? 4 * 60 * 1000);
 
 /**
  * Short-lived cache. The Camis WAF challenges bursty traffic, and a search page
@@ -87,9 +93,14 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
 
-  // Unauthenticated liveness check — carries no data.
+  // Unauthenticated health check — carries no data. Reports READINESS, not just
+  // process-liveness: 503 once the poller stops landing heartbeats (a wedged
+  // machine), so the Fly check / LB / uptime monitor see the wedge the old
+  // unconditional {ok:true} hid. The poller's own watchdog is what reboots.
   if (req.method === 'GET' && url.pathname === '/health') {
-    return json(res, 200, { ok: true });
+    const stale = msSinceAlive();
+    const ok = stale < HEALTH_STALE_MS;
+    return json(res, ok ? 200 : 503, { ok, heartbeatAgeMs: stale });
   }
 
   if (url.pathname !== '/gtc/availability') return json(res, 404, { error: 'not found' });

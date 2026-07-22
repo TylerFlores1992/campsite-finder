@@ -35,6 +35,20 @@ primary_region = "sjc"
   auto_start_machines = false
   min_machines_running = 1
 
+# Readiness check on the poller's /health, which reports 503 once heartbeats stop
+# landing (a wedged-but-"started" machine — the 2026-07-22 incident). This surfaces
+# the wedge to the load balancer, deploy gating, and `flyctl status`. NOTE: the
+# actual auto-recovery is the poller's in-process watchdog (it process.exit(1)s so
+# Fly reboots the VM) — this check is the visible signal, not the trigger, because
+# Fly's "restart on failing check" behavior is not something we want to rely on for
+# alerting uptime. grace_period covers the poller's startup probes before cycle 1.
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "90s"
+  method = "get"
+  path = "/health"
+
 [[vm]]
   size = "shared-cpu-1x"
   memory = "256mb"
