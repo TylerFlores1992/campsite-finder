@@ -26,10 +26,13 @@ const { query, mutate } = await import('../src/lib/db/client');
 const { sendEmail } = await import('../src/lib/notifications/email');
 const { sendSms } = await import('../src/lib/notifications/sms');
 
-const PAGE_THROTTLE_MIN = Number(process.env.HEALTH_PAGE_THROTTLE_MIN ?? 30);
-const base = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://camphawk.app').replace(/\/$/, '');
-const email = process.env.HEALTH_ALERT_EMAIL ?? 'tylerflores1992@gmail.com';
-const phone = process.env.HEALTH_ALERT_PHONE ?? null;
+const PAGE_THROTTLE_MIN = Number(process.env.HEALTH_PAGE_THROTTLE_MIN || 30);
+// NB: use `||`, not `??` — GitHub Actions passes an unset/empty secret as "" (not
+// undefined), and `?? ` wouldn't fall back on an empty string. An empty APP_URL
+// there once made `base=""`, which failed the fetch and FALSE-paged "endpoint down".
+const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://camphawk.app').replace(/\/$/, '');
+const email = process.env.HEALTH_ALERT_EMAIL || 'tylerflores1992@gmail.com';
+const phone = process.env.HEALTH_ALERT_PHONE || null;
 
 interface Check { name: string; level: 'ok' | 'warn' | 'fail'; detail: string }
 interface Status { status: 'ok' | 'degraded' | 'down'; checkedAt: string; checks: Check[] }
