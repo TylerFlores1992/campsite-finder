@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CalendarDays,
+  TrendingUp,
 } from 'lucide-react';
 import type { Campground, Campsite, CampgroundAvailability } from '@/lib/types';
 import { bookingLink } from '@/lib/booking-url';
@@ -204,6 +205,72 @@ function AvailabilityCalendar({
   );
 }
 
+interface LadderBucket {
+  bucket: string;
+  label: string;
+  rate: number | null;
+  samples: number;
+  openings: number;
+  enough: boolean;
+}
+
+/**
+ * Cancellation-likelihood ladder (feature E): how often this site has had a bookable
+ * opening lately, by how far out the stay is. Renders nothing until there's any
+ * history; shows a "still learning" note while buckets are too thin to be honest.
+ */
+function CancellationOdds({ campgroundId }: { campgroundId: string }) {
+  const [buckets, setBuckets] = useState<LadderBucket[] | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/likelihood?campgroundId=${encodeURIComponent(campgroundId)}`)
+      .then((r) => (r.ok ? r.json() : { buckets: [] }))
+      .then((d) => { if (live) setBuckets(d.buckets ?? []); })
+      .catch(() => { if (live) setBuckets([]); });
+    return () => { live = false; };
+  }, [campgroundId]);
+
+  if (!buckets) return null; // still loading — no flash
+  const hasAny = buckets.some((b) => b.samples > 0);
+  if (!hasAny) return null; // no history for this site → don't show the card at all
+  const ready = buckets.filter((b) => b.enough && b.rate != null);
+
+  return (
+    <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+      <h2 className="font-semibold text-gray-800 mb-1 flex items-center gap-1.5">
+        <TrendingUp size={16} className="text-green-600" /> How often it opens up
+      </h2>
+      <p className="text-xs text-gray-500 mb-3">
+        Share of recent checks that found a bookable opening, by how far ahead you&rsquo;re looking.
+      </p>
+      {ready.length === 0 ? (
+        <p className="text-sm text-gray-500">
+          Still learning this site&rsquo;s pattern — we started tracking recently. Check back soon.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {ready.map((b) => {
+            const pct = Math.round((b.rate ?? 0) * 100);
+            return (
+              <div key={b.bucket} className="flex items-center gap-3">
+                <span className="text-xs text-gray-600 w-28 shrink-0 capitalize">{b.label}</span>
+                <div className="flex-1 h-2.5 rounded-full bg-gray-100 overflow-hidden">
+                  <div className="h-full rounded-full bg-green-500" style={{ width: `${Math.max(pct, 2)}%` }} />
+                </div>
+                <span className="text-xs font-semibold text-gray-700 w-9 text-right">{pct}%</span>
+              </div>
+            );
+          })}
+          <p className="text-[11px] text-gray-400 pt-1">
+            Based on {ready.reduce((n, b) => n + b.samples, 0)} recent checks. Past openings don&rsquo;t guarantee future ones.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CampgroundDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -385,6 +452,9 @@ export default function CampgroundDetailPage() {
             }
           />
         </div>
+
+        {/* Cancellation likelihood (feature E) — hidden until this site has history */}
+        <CancellationOdds campgroundId={params.id} />
 
         {/* Location map — second */}
         {campground.latitude != null && campground.longitude != null && (

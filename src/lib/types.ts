@@ -27,6 +27,16 @@ export interface Campground {
   distanceMiles?: number;
   availableSiteCount?: number;
   hasAvailability?: boolean; // true=open, false=booked, undefined=unchecked
+  // Cancellation-likelihood headline (feature E), attached by search when enough
+  // history has accrued for the number to be honest. Absent = no signal to show.
+  likelihood?: CampgroundLikelihood;
+}
+
+/** A one-line cancellation-likelihood headline for a campground (feature E). */
+export interface CampgroundLikelihood {
+  rate: number; // opening rate 0..1 of the representative lead window
+  label: string; // human label for that window, e.g. "3–6 weeks out"
+  samples: number; // observations behind it
 }
 
 export interface Campsite {

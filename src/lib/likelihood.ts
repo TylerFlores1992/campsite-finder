@@ -10,6 +10,15 @@
 // Server-only (uses the service-role DB client). The UI/API half consumes this.
 
 import { query } from '@/lib/db/client';
+import type { CampgroundLikelihood } from '@/lib/types';
+
+const BUCKET_CASE = `CASE
+              WHEN lead_days BETWEEN 0 AND 3 THEN '0-3'
+              WHEN lead_days BETWEEN 4 AND 7 THEN '4-7'
+              WHEN lead_days BETWEEN 8 AND 21 THEN '8-21'
+              WHEN lead_days BETWEEN 22 AND 45 THEN '22-45'
+              ELSE '46+'
+            END`;
 
 /** Opening rate for one (campground, lead-window) slice of history. */
 export interface OpeningRate {
@@ -99,13 +108,7 @@ export async function campgroundBuckets(
   const windowDays = opts.windowDays ?? DEFAULTS.windowDays;
   const minSamples = opts.minSamples ?? DEFAULTS.minSamples;
   const rows = await query<{ bucket: string; samples: number; openings: number }>(
-    `SELECT CASE
-              WHEN lead_days BETWEEN 0 AND 3 THEN '0-3'
-              WHEN lead_days BETWEEN 4 AND 7 THEN '4-7'
-              WHEN lead_days BETWEEN 8 AND 21 THEN '8-21'
-              WHEN lead_days BETWEEN 22 AND 45 THEN '22-45'
-              ELSE '46+'
-            END AS bucket,
+    `SELECT ${BUCKET_CASE} AS bucket,
             count(*)::int AS samples,
             count(*) FILTER (WHERE had_opening)::int AS openings
        FROM availability_observations
@@ -128,4 +131,45 @@ export async function campgroundBuckets(
       enough: samples >= minSamples,
     };
   });
+}
+
+/**
+ * Batched cancellation-likelihood headline for many campgrounds at once — one query
+ * for a whole page of search results. For each campground we pick its BEST-SAMPLED
+ * bucket that clears `minSamples` (most reliable, not cherry-picked by rate) and
+ * return that bucket's rate + label. Campgrounds with no bucket yet at `minSamples`
+ * are simply absent from the map (no honest number to show → no badge).
+ */
+export async function getHeadlines(
+  campgroundIds: string[],
+  opts: { windowDays?: number; minSamples?: number } = {}
+): Promise<Map<string, CampgroundLikelihood>> {
+  const out = new Map<string, CampgroundLikelihood>();
+  if (campgroundIds.length === 0) return out;
+  const windowDays = opts.windowDays ?? DEFAULTS.windowDays;
+  const minSamples = opts.minSamples ?? DEFAULTS.minSamples;
+
+  const rows = await query<{ campground_id: string; bucket: string; samples: number; openings: number }>(
+    `SELECT campground_id, ${BUCKET_CASE} AS bucket,
+            count(*)::int AS samples,
+            count(*) FILTER (WHERE had_opening)::int AS openings
+       FROM availability_observations
+      WHERE campground_id = ANY($1)
+        AND observed_at >= now() - ($2 || ' days')::interval
+      GROUP BY 1, 2`,
+    [campgroundIds, windowDays]
+  );
+
+  // Per campground, keep the enough-sampled bucket with the most samples.
+  const best = new Map<string, { samples: number; openings: number; bucket: string }>();
+  for (const r of rows) {
+    if (r.samples < minSamples) continue;
+    const cur = best.get(r.campground_id);
+    if (!cur || r.samples > cur.samples) best.set(r.campground_id, r);
+  }
+  const labelOf = (key: string) => LEAD_BUCKETS.find((b) => b.key === key)?.label ?? key;
+  for (const [id, b] of best) {
+    out.set(id, { rate: b.openings / b.samples, label: labelOf(b.bucket), samples: b.samples });
+  }
+  return out;
 }

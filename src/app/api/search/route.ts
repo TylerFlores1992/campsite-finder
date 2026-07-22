@@ -9,6 +9,7 @@ import { hasTnscAvailabilityInRange } from '@/lib/availability/tnsc';
 import { isUseDirectSource } from '@/lib/sources/reservecalifornia/providers';
 import { isGoingToCampSource } from '@/lib/sources/goingtocamp/providers';
 import { isTnscSource } from '@/lib/sources/tnsc/providers';
+import { getHeadlines } from '@/lib/likelihood';
 import type { SearchParams } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
@@ -116,6 +117,21 @@ export async function GET(request: NextRequest) {
         const score = (x: typeof a) => x.hasAvailability === true ? 0 : x.hasAvailability === undefined ? 1 : 2;
         return score(a) - score(b) || (a.distanceMiles ?? 0) - (b.distanceMiles ?? 0);
       });
+    }
+
+    // Cancellation-likelihood headline (feature E): one batched query for the whole
+    // result page, attached where enough history exists. Best-effort — a signal is a
+    // nice-to-have, never a reason to fail a search.
+    try {
+      const headlines = await getHeadlines(results.map((c) => c.id));
+      if (headlines.size > 0) {
+        results = results.map((c) => {
+          const h = headlines.get(c.id);
+          return h ? { ...c, likelihood: h } : c;
+        });
+      }
+    } catch (err) {
+      console.warn('[search] likelihood headlines failed (non-fatal):', (err as Error).message);
     }
 
     return NextResponse.json({
