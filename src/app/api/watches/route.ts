@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query, queryOne, mutate } from '@/lib/db/client';
 import { requireAuth, syncUser, hasActiveSubscription } from '@/lib/auth';
 import { createAlert, cancelAlert } from '@/lib/campflare/client';
+import { getOpeningRate } from '@/lib/likelihood';
 import type { CampflareDateRange } from '@/lib/campflare/types';
+
+const DAY_MS = 86_400_000;
+const daysBetween = (fromISO: string, toISO: string) =>
+  Math.round((Date.parse(`${toISO}T00:00:00Z`) - Date.parse(`${fromISO}T00:00:00Z`)) / DAY_MS);
 
 function buildDateRanges(startDate: string, endDate: string, minNights: number): CampflareDateRange[] {
   const ranges: CampflareDateRange[] = [];
@@ -27,6 +32,26 @@ export async function GET() {
        AND w.end_date > CURRENT_DATE
      ORDER BY w.created_at DESC`,
     [userId]
+  );
+
+  // Per-watch cancellation likelihood (feature E): "how often has this site had an
+  // opening for a stay this far out?" — computed for THIS watch's lead time + nights,
+  // attached only when enough history exists (else omitted → UI shows "still learning").
+  // Best-effort: a likelihood hiccup must never break the watches list.
+  const today = new Date().toISOString().slice(0, 10);
+  await Promise.all(
+    rows.map(async (w) => {
+      try {
+        const start = String(w.start_date).slice(0, 10);
+        const lead = daysBetween(today, start);
+        if (lead < 0) return; // stay already started
+        const nights = (w.flex_nights as number | null) ?? Math.max(1, daysBetween(start, String(w.end_date).slice(0, 10)));
+        const r = await getOpeningRate(w.campground_id as string, lead, { nights });
+        if (r.enough && r.rate != null) w.likelihood = { rate: r.rate, samples: r.samples };
+      } catch {
+        /* non-fatal — omit likelihood for this watch */
+      }
+    })
   );
 
   return NextResponse.json({ watches: rows });

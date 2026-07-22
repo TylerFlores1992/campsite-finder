@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { X, Bell, Trash2, Loader2, CalendarDays } from 'lucide-react';
+import { X, Bell, Trash2, Loader2, CalendarDays, TrendingUp } from 'lucide-react';
 import SmsOptIn from './SmsOptIn';
 import AutoCartToggle from './AutoCartToggle';
 
@@ -17,6 +17,7 @@ interface Watch {
   muted_site_ids?: string[];
   flex_nights?: number | null;
   flex_days?: string | null;
+  likelihood?: { rate: number; samples: number }; // feature E, present only when honest
 }
 
 interface WatchesPanelProps {
@@ -135,6 +136,17 @@ export default function WatchesPanel({ onClose }: WatchesPanelProps) {
                 {w.notification_sent_at && (
                   <p className="text-xs text-green-600 mt-1.5 font-medium">
                     ✓ Alert sent {new Date(w.notification_sent_at).toLocaleDateString()}
+                  </p>
+                )}
+                {w.likelihood && (
+                  <p
+                    className="text-xs text-gray-500 mt-1.5 flex items-center gap-1"
+                    title={`This site had a bookable opening on ~${Math.round(w.likelihood.rate * 100)}% of recent checks for stays around this far out (${w.likelihood.samples} checks). Past openings don't guarantee future ones.`}
+                  >
+                    <TrendingUp size={11} className="text-green-600 shrink-0" />
+                    <span>
+                      ~<strong className="text-gray-700">{Math.round(w.likelihood.rate * 100)}%</strong> chance for your dates
+                    </span>
                   </p>
                 )}
                 {(w.muted_site_ids?.length ?? 0) > 0 && (
