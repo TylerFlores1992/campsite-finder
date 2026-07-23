@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Search, MapPin, Loader2, Tent } from 'lucide-react';
+import { Search, MapPin, Loader2, Tent, Info, X } from 'lucide-react';
 import DateRangePicker from './DateRangePicker';
 
 interface SearchBarProps {
@@ -81,6 +81,7 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
   const [flexOn, setFlexOn] = useState(false);
   const [flexNights, setFlexNights] = useState(2);
   const [flexWeekend, setFlexWeekend] = useState(false);
+  const [showFlexHelp, setShowFlexHelp] = useState(false);
   const [locating, setLocating] = useState(false);
   const [geocoding, setGeocoding] = useState(false);
 
@@ -443,6 +444,47 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
             </>
           )}
         </div>
+
+        {/* How-to for flexible dates — appears directly beneath the flexible-date
+            controls, only when the toggle is on. Click the link to expand an inline
+            explainer; click again (or the X) to collapse it. */}
+        {flexOn && (
+          <div className="w-full sm:w-auto sm:max-w-xs sm:items-end sm:text-right">
+            <button
+              type="button"
+              onClick={() => setShowFlexHelp((v) => !v)}
+              aria-expanded={showFlexHelp}
+              className="inline-flex items-center gap-1 text-xs font-medium text-green-700 hover:text-green-800 hover:underline focus:outline-none focus:ring-2 focus:ring-green-400 rounded"
+            >
+              <Info size={13} />
+              How flexible dates work
+            </button>
+            {showFlexHelp && (
+              <div className="mt-1.5 text-left text-xs leading-relaxed text-gray-600 bg-green-50 border border-green-100 rounded-lg p-3 relative">
+                <button
+                  type="button"
+                  onClick={() => setShowFlexHelp(false)}
+                  aria-label="Close"
+                  className="absolute top-1.5 right-1.5 text-gray-400 hover:text-gray-600 focus:outline-none"
+                >
+                  <X size={13} />
+                </button>
+                <p className="font-semibold text-gray-800 mb-1 pr-4">Any stay that fits your window</p>
+                <p className="mb-2">
+                  Instead of one exact check-in/out, you give a wider date range and the number of
+                  nights you want. We&apos;ll alert you when <em>any</em> stay that long opens up
+                  anywhere inside that window — great for &ldquo;any weekend this summer&rdquo; trips.
+                </p>
+                <ol className="list-decimal list-inside space-y-0.5">
+                  <li>Set the date range to the whole span you could travel.</li>
+                  <li>Pick how many nights you want in the <strong>nights</strong> dropdown.</li>
+                  <li>Optionally check <strong>Weekends only</strong> to match Fri/Sat nights.</li>
+                </ol>
+              </div>
+            )}
+          </div>
+        )}
+
         <button
           type="submit"
           disabled={!location || geocoding}
