@@ -14,6 +14,10 @@ export default function ConnectPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  // A real, focusable text input that catches the on-screen keyboard on phones — a
+  // <canvas> can't raise a soft keyboard. Tapping the stream focuses this (within the
+  // tap gesture, so iOS/Android open the keyboard), and we forward what's typed.
+  const kbRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState('');
 
@@ -80,16 +84,32 @@ export default function ConnectPage() {
   };
   const btn = (b: number) => (b === 2 ? 'right' : b === 1 ? 'middle' : 'left');
 
+  // Named keys (and, on desktop, everything) come through keydown. Printable text is
+  // NOT sent from here — `beforeinput` handles it, so soft keyboards that fire only a
+  // generic keydown (Android: keyCode 229) still work, and desktop doesn't double-send.
+  const named = ['Enter', 'Backspace', 'Tab', 'Delete', 'Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (status !== 'live') return;
-    const named = ['Enter', 'Backspace', 'Tab', 'Delete', 'Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
-    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      send({ t: 'text', text: e.key });
-      e.preventDefault();
-    } else if (named.includes(e.key)) {
+    if (named.includes(e.key)) {
       send({ t: 'key', key: e.key });
       e.preventDefault();
     }
+  };
+
+  // Primary text channel — fires reliably for on-screen keyboards on iOS/Android AND
+  // desktop. We keep the hidden input empty (preventDefault) so every event is a clean
+  // delta. Backspace on an empty field yields no beforeinput, so it's handled in keydown.
+  const onBeforeInput = (e: React.FormEvent<HTMLInputElement>) => {
+    if (status !== 'live') return;
+    const ie = e.nativeEvent as InputEvent;
+    if ((ie.inputType === 'insertText' || ie.inputType === 'insertFromPaste') && ie.data) {
+      for (const ch of ie.data) send({ t: 'text', text: ch });
+    } else if (ie.inputType === 'deleteContentBackward') {
+      send({ t: 'key', key: 'Backspace' });
+    } else if (ie.inputType === 'insertLineBreak' || ie.inputType === 'insertParagraph') {
+      send({ t: 'key', key: 'Enter' });
+    }
+    e.preventDefault();
   };
 
   return (
@@ -128,18 +148,35 @@ export default function ConnectPage() {
 
         {(status === 'live' || status === 'connecting') && (
           <div className={status === 'live' ? 'mt-6' : 'hidden'}>
-            <p className="mb-2 text-xs text-gray-400">Click into the window, then type as usual. Sign in and it finishes on its own.</p>
-            <canvas
-              ref={canvasRef}
-              tabIndex={0}
-              onPointerMove={(e) => status === 'live' && send({ t: 'move', ...rel(e) })}
-              onPointerDown={(e) => { canvasRef.current?.focus(); send({ t: 'down', ...rel(e), button: btn(e.button) }); }}
-              onPointerUp={(e) => send({ t: 'up', ...rel(e), button: btn(e.button) })}
-              onWheel={(e) => send({ t: 'wheel', dx: e.deltaX, dy: e.deltaY })}
-              onKeyDown={onKeyDown}
-              onContextMenu={(e) => e.preventDefault()}
-              className="w-full cursor-crosshair rounded-xl border border-gray-300 bg-white shadow-sm outline-none focus:ring-2 focus:ring-green-500"
-            />
+            <p className="mb-2 text-xs text-gray-400">Tap the window and type as usual — on phones the keyboard opens when you tap a text field. Sign in and it finishes on its own.</p>
+            <div className="relative">
+              <canvas
+                ref={canvasRef}
+                onPointerMove={(e) => status === 'live' && send({ t: 'move', ...rel(e) })}
+                onPointerDown={(e) => { kbRef.current?.focus(); send({ t: 'down', ...rel(e), button: btn(e.button) }); }}
+                onPointerUp={(e) => send({ t: 'up', ...rel(e), button: btn(e.button) })}
+                onWheel={(e) => send({ t: 'wheel', dx: e.deltaX, dy: e.deltaY })}
+                onContextMenu={(e) => e.preventDefault()}
+                className="w-full cursor-crosshair rounded-xl border border-gray-300 bg-white shadow-sm outline-none"
+              />
+              {/* Off-screen-ish but focusable (not display:none, or iOS won't show the
+                  keyboard). Focused synchronously on canvas tap. Empty + preventDefault
+                  so each keystroke is a clean delta forwarded to the remote page. */}
+              <input
+                ref={kbRef}
+                type="text"
+                inputMode="text"
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                aria-hidden="true"
+                tabIndex={-1}
+                onKeyDown={onKeyDown}
+                onBeforeInput={onBeforeInput}
+                className="absolute bottom-1 left-1 h-px w-px border-0 bg-transparent p-0 text-transparent opacity-0 outline-none"
+              />
+            </div>
           </div>
         )}
 

@@ -580,7 +580,41 @@ shown once it's **honest**:
 > other UseDirect states and GoingToCamp could be seeded next (GoingToCamp would need a
 > reachable checker in the seed's `isOpenInRange`, since Camis blocks datacenter IPs).
 > The signal still needs a few weeks of history before the longer-lead buckets are dense.
-> (Per-watch odds, card badge, and detail ladder are all wired.)
+
+> **⏸ THE DISPLAY IS PAUSED (2026-07-23) — data collection is NOT.** All three UI
+> surfaces (Watches-panel per-watch "% chance for your dates", `CampgroundCard` badge,
+> and the detail-page "How often it opens up" ladder) are hidden for now: with limited
+> history too many read a discouraging **0% / "rarely opens up"**, which lands as "no
+> hope" rather than "not enough data yet". The recorder/aggregation/APIs are untouched
+> and still accruing, so restoring is cheap — the detail ladder is behind a
+> `SHOW_LIKELIHOOD: boolean` flag in `campground/[id]/page.tsx` (grep `SHOW_LIKELIHOOD`);
+> the Watches-panel and card blocks were commented out (grep `is hidden`). Bring all
+> three back together once the longer-lead buckets are dense.
+
+### Per-watch manage page + alert action links (feature D, reworked 2026-07-23)
+
+The old alert-SMS tail of two one-tap links (`Mute <site>: …  Stop: …`) is collapsed
+into **one `Manage:` link** to a per-watch manage page. Email keeps the richer footer
+(separate Mute/Stop links via `mintActionLinks`).
+
+- **Page** `/manage/<token>` + **API** `/api/manage/<token>` — authorized by a stable
+  `manage` `action_tokens` row (`manageUrlFor` / `resolveManageToken`), the same
+  magic-link model as the `/w/` links, so a tapped SMS opens it with **no login**. Both
+  routes are in `isPublicRoute`. GET returns the watch + its alert history (from the
+  `notifications` table) + the campground's **full** site list (fetched client-side from
+  the existing `/api/campgrounds/<id>/availability`, so it works for rec.gov AND
+  ReserveCalifornia — RC returns `String(UnitId)` sites, same shape). POST does
+  `stop` / `resume` / `mute` / `unmute` / `remove`, each scoped to the token's watch.
+  The `manage_url` is also returned per watch by `/api/watches` for the Watches panel.
+- **Muting a site turns off BOTH alerts AND auto-cart for that site — no separate
+  control.** Both the alert path and the auto-cart-job path run through
+  `availableDatesForWatch()` (rec.gov) / `findRCOpenUnit()` (RC), which skip
+  `muted_site_ids`; the bot only carts poller-created `autocart_jobs`, so a muted site
+  never produces a job and is never carted. (There is intentionally NO per-site
+  auto-cart column — mute is the single lever.)
+- **No campsite-map embed exists.** Providers don't expose per-site coordinates and
+  RIDB stores no map media, so the manage page links out to the booking site's own
+  campsite map (`recreation.gov/camping/campgrounds/<id>`) rather than drawing one.
 
 ### Booking links — how specific each provider lets us be
 
