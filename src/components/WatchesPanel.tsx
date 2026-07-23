@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { X, Bell, Trash2, Loader2, CalendarDays, TrendingUp } from 'lucide-react';
+import { X, Bell, Trash2, Loader2, CalendarDays, TrendingUp, SlidersHorizontal } from 'lucide-react';
 import SmsOptIn from './SmsOptIn';
 import AutoCartToggle from './AutoCartToggle';
 
@@ -18,6 +18,7 @@ interface Watch {
   flex_nights?: number | null;
   flex_days?: string | null;
   likelihood?: { rate: number; samples: number }; // feature E, present only when honest
+  manage_url?: string;
 }
 
 interface WatchesPanelProps {
@@ -163,6 +164,15 @@ export default function WatchesPanel({ onClose }: WatchesPanelProps) {
                       </button>
                     ))}
                   </div>
+                )}
+                {w.manage_url && (
+                  <a
+                    href={w.manage_url}
+                    className="inline-flex items-center gap-1 mt-2 text-xs font-medium text-green-700 hover:underline"
+                  >
+                    <SlidersHorizontal size={11} />
+                    Manage
+                  </a>
                 )}
               </div>
               <button

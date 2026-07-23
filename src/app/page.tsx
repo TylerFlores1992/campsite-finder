@@ -578,6 +578,12 @@ export default function HomePage() {
               >
                 🔔 My watches{watchCount !== null ? ` (${watchCount})` : ''}
               </button>
+              <button
+                onClick={() => setFavoritesOpen(true)}
+                className="px-6 py-3 rounded-2xl bg-white border border-gray-200 text-gray-700 font-display font-semibold text-base shadow-sm hover:bg-gray-50 transition-all"
+              >
+                ❤️ My favorites{favorites.size > 0 ? ` (${favorites.size})` : ''}
+              </button>
             </div>
 
             {geoNote && (
