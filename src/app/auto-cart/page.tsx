@@ -65,10 +65,10 @@ export default function AutoCartHelpPage() {
               <strong>&ldquo;Auto-cart openings&rdquo;</strong> on. That enrolls you with the bot.
             </Step>
             <Step n={3} title="Sign in to recreation.gov once">
-              A recreation.gov <strong>login window opens</strong> — sign in and close it. That
-              saves your session so sites can be added to your cart.{' '}
-              <strong>Your password is never shared with CampHawk or stored anywhere</strong> —
-              only your own browser session is kept.
+              You enter your recreation.gov email and password once. They&apos;re saved,{' '}
+              <strong>encrypted, on your own CampHawk mini-PC</strong> so auto-cart stays connected —
+              and re-connects on its own if the session drops.{' '}
+              <strong>Never sent to CampHawk&apos;s servers.</strong>
             </Step>
             <Step n={4} title="You're done">
               From now on, when a watched site opens, it&apos;s added to your cart within seconds.

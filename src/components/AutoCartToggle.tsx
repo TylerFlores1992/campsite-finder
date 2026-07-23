@@ -135,8 +135,8 @@ export default function AutoCartToggle() {
               <p className="text-sm text-green-900 font-medium">One-time setup</p>
               <p className="mt-1 text-sm text-green-800 leading-relaxed">
                 You&apos;ll sign into <strong>recreation.gov once</strong> so it can add sites to
-                your cart — a login window opens, you sign in and close it. Your password is never
-                shared or stored.
+                your cart. Your login is saved, <strong>encrypted, on your own CampHawk mini-PC</strong>{' '}
+                so auto-cart stays connected — never sent to CampHawk&apos;s servers.
               </p>
             </div>
 
