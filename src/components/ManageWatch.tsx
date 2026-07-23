@@ -12,7 +12,6 @@ import {
   Tent,
   Trash2,
   Map as MapIcon,
-  ExternalLink,
 } from 'lucide-react';
 
 interface Watch {
@@ -64,6 +63,35 @@ export default function ManageWatch({ token }: { token: string }) {
   const [removed, setRemoved] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
+  // Pull the campground's full campsite list so sites can be muted ahead of time.
+  // Best-effort: providers other than rec.gov / ReserveCalifornia may not enumerate,
+  // in which case we fall back to whatever seed sites we have.
+  const loadAllSites = useCallback(async (w: Watch, seed: Site[]) => {
+    try {
+      const month = w.start_date.slice(0, 7);
+      const r = await fetch(`/api/campgrounds/${w.campground_id}/availability?month=${month}`);
+      if (r.ok) {
+        const a = await r.json();
+        const sites: Site[] = (a.campsites ?? []).map((cs: { campsiteId: string; campsiteName: string | null; loop: string | null }) => ({
+          id: cs.campsiteId,
+          name: cs.campsiteName,
+          loop: cs.loop,
+        }));
+        if (sites.length > 0) {
+          // Merge in any seed/muted site not present in this month's inventory.
+          const ids = new Set(sites.map((s) => s.id));
+          for (const s of seed) if (!ids.has(s.id)) sites.push(s);
+          sites.sort((x, y) => (x.loop ?? '').localeCompare(y.loop ?? '') || (x.name ?? x.id).localeCompare(y.name ?? y.id));
+          setAllSites(sites);
+          return;
+        }
+      }
+      setAllSites(seed);
+    } catch {
+      setAllSites(seed);
+    }
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const r = await fetch(`/api/manage/${token}`);
@@ -89,36 +117,7 @@ export default function ManageWatch({ token }: { token: string }) {
     } finally {
       setLoading(false);
     }
-  }, [token]);
-
-  // Pull the campground's full campsite list so sites can be muted ahead of time.
-  // Best-effort: providers other than rec.gov / ReserveCalifornia may not enumerate,
-  // in which case we fall back to whatever seed sites we have.
-  async function loadAllSites(w: Watch, seed: Site[]) {
-    try {
-      const month = w.start_date.slice(0, 7);
-      const r = await fetch(`/api/campgrounds/${w.campground_id}/availability?month=${month}`);
-      if (r.ok) {
-        const a = await r.json();
-        const sites: Site[] = (a.campsites ?? []).map((cs: { campsiteId: string; campsiteName: string | null; loop: string | null }) => ({
-          id: cs.campsiteId,
-          name: cs.campsiteName,
-          loop: cs.loop,
-        }));
-        if (sites.length > 0) {
-          // Merge in any seed/muted site not present in this month's inventory.
-          const ids = new Set(sites.map((s) => s.id));
-          for (const s of seed) if (!ids.has(s.id)) sites.push(s);
-          sites.sort((x, y) => (x.loop ?? '').localeCompare(y.loop ?? '') || (x.name ?? x.id).localeCompare(y.name ?? y.id));
-          setAllSites(sites);
-          return;
-        }
-      }
-      setAllSites(seed);
-    } catch {
-      setAllSites(seed);
-    }
-  }
+  }, [token, loadAllSites]);
 
   useEffect(() => {
     load();
@@ -190,15 +189,12 @@ export default function ManageWatch({ token }: { token: string }) {
     : null;
 
   const isRecGov = watch.source === 'ridb';
+  // Deep link to the booking site's own campsite map. We can't embed it (no public
+  // map-image API, and rec.gov's interactive map can't be iframed), so we link out.
   const mapUrl =
     isRecGov
       ? `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`
       : watch.reservations_url;
-  const token_ = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
-  const staticMap =
-    watch.latitude != null && watch.longitude != null && token_
-      ? `https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/static/pin-l+2e7d32(${watch.longitude},${watch.latitude})/${watch.longitude},${watch.latitude},12/600x240@2x?access_token=${token_}`
-      : null;
 
   return (
     <div className="space-y-4">
@@ -309,31 +305,18 @@ export default function ManageWatch({ token }: { token: string }) {
           </ul>
         )}
 
-        {/* Campsite map */}
-        {(staticMap || mapUrl) && (
+        {/* Link out to the booking site's campsite map (can't be embedded). */}
+        {mapUrl && (
           <div className="mt-4 pt-4 border-t border-gray-100">
-            <h3 className="text-xs font-semibold text-gray-700 flex items-center gap-1.5 mb-2">
-              <MapIcon size={13} className="text-green-600" /> Campsite map
-            </h3>
-            {staticMap && (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img
-                src={staticMap}
-                alt={`Map of ${watch.campground_name}`}
-                className="w-full rounded-xl border border-gray-100"
-              />
-            )}
-            {mapUrl && (
-              <a
-                href={mapUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 mt-2 text-xs font-medium text-green-700 hover:underline"
-              >
-                <ExternalLink size={12} />
-                {isRecGov ? 'Open the interactive campsite map on Recreation.gov' : 'View campsite map on the booking site'}
-              </a>
-            )}
+            <a
+              href={mapUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 hover:underline"
+            >
+              <MapIcon size={13} />
+              {isRecGov ? 'View campsite map on Recreation.gov' : 'View campsite map on the booking site'}
+            </a>
           </div>
         )}
       </div>
