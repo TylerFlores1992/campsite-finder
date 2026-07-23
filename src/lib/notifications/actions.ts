@@ -6,7 +6,7 @@ import { query, mutate } from '@/lib/db/client';
 import { sendEmail } from './email';
 import { sendSms } from './sms';
 
-export type WatchAction = 'stop' | 'reopen' | 'mute_site' | 'keep' | 'cancel' | 'book';
+export type WatchAction = 'stop' | 'reopen' | 'mute_site' | 'keep' | 'cancel' | 'book' | 'manage';
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://camphawk.app').replace(/\/$/, '');
 
@@ -23,6 +23,26 @@ export function actionLink(token: string): string {
 /** Full booking short-link for a token (302-redirects to the real booking URL). */
 export function bookLink(token: string): string {
   return `${APP_URL}/b/${token}`;
+}
+
+/** Full per-watch manage-page URL for a token (resolved by the public /manage/<token> route). */
+export function manageLink(token: string): string {
+  return `${APP_URL}/manage/${token}`;
+}
+
+/** Get (or create) the stable manage token for a watch, and return its full URL. */
+export async function manageUrlFor(watchId: string): Promise<string | null> {
+  const t = await mintActionToken(watchId, 'manage');
+  return t ? manageLink(t) : null;
+}
+
+/** Resolve a live `manage` token to its watch id (or null if invalid/expired). */
+export async function resolveManageToken(token: string): Promise<string | null> {
+  const [row] = await query<{ watch_id: string }>(
+    `SELECT watch_id FROM action_tokens WHERE token = $1 AND action = 'manage' AND expires_at > NOW()`,
+    [token]
+  );
+  return row?.watch_id ?? null;
 }
 
 /**

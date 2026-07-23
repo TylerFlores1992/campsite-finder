@@ -3,6 +3,7 @@ import { query, queryOne, mutate } from '@/lib/db/client';
 import { requireAuth, syncUser, hasActiveSubscription } from '@/lib/auth';
 import { createAlert, cancelAlert } from '@/lib/campflare/client';
 import { getOpeningRate } from '@/lib/likelihood';
+import { manageUrlFor } from '@/lib/notifications/actions';
 import type { CampflareDateRange } from '@/lib/campflare/types';
 
 const DAY_MS = 86_400_000;
@@ -50,6 +51,13 @@ export async function GET() {
         if (r.enough && r.rate != null) w.likelihood = { rate: r.rate, samples: r.samples };
       } catch {
         /* non-fatal — omit likelihood for this watch */
+      }
+      // Stable per-watch manage-page link for the panel's Manage button. Best-effort:
+      // a mint hiccup just omits the button rather than breaking the list.
+      try {
+        w.manage_url = await manageUrlFor(w.id as string);
+      } catch {
+        /* non-fatal */
       }
     })
   );
