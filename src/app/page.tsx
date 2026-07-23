@@ -2,13 +2,14 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { Loader2, Map as MapIcon, List, AlertCircle, Bell } from 'lucide-react';
+import { Loader2, Map as MapIcon, List, AlertCircle, Bell, Heart } from 'lucide-react';
 import { useUser, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 import SearchBar from '@/components/SearchBar';
 import CampgroundCard from '@/components/CampgroundCard';
 import Filters, { FilterState } from '@/components/Filters';
 import QuickFilters, { getTonight, getThisWeekend } from '@/components/QuickFilters';
 import WatchesPanel from '@/components/WatchesPanel';
+import FavoritesPanel, { type FavoriteCampground } from '@/components/FavoritesPanel';
 import Logo from '@/components/Logo';
 import SubscribeGate, { SubscribeBanner } from '@/components/SubscribeGate';
 import type { Campground } from '@/lib/types';
@@ -58,6 +59,7 @@ export default function HomePage() {
   const listRef = useRef<HTMLDivElement>(null);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [watchesOpen, setWatchesOpen] = useState(false);
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [everSubscribed, setEverSubscribed] = useState(false);
   const [subLoaded, setSubLoaded] = useState(false);
@@ -402,6 +404,15 @@ export default function HomePage() {
       {watchesOpen && (
         <WatchesPanel onClose={() => setWatchesOpen(false)} />
       )}
+      {favoritesOpen && (
+        <FavoritesPanel
+          onClose={() => setFavoritesOpen(false)}
+          onSelect={(f: FavoriteCampground) => {
+            setFavoritesOpen(false);
+            search({ lat: f.latitude, lng: f.longitude, radiusMiles: 25, focusCampgroundId: f.id });
+          }}
+        />
+      )}
       {/* Header */}
       <header className={`${showLandingBg ? 'bg-transparent border-transparent' : 'bg-background/90 border-gray-200'} backdrop-blur px-3 sm:px-4 py-3 z-10 border-b`}>
         <div className="max-w-screen-2xl mx-auto space-y-3">
@@ -433,6 +444,18 @@ export default function HomePage() {
                 <Bell size={15} />
                 <span className="hidden sm:inline">Watches</span>
               </button>
+
+              {/* Favorites — subscriber-only view of saved campgrounds. */}
+              {isSignedIn && isSubscribed && (
+                <button
+                  onClick={() => setFavoritesOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-rose-600 transition-colors"
+                  title="My favorites"
+                >
+                  <Heart size={15} />
+                  <span className="hidden sm:inline">Favorites</span>
+                </button>
+              )}
 
               {/* Auth */}
               {isSignedIn ? (
