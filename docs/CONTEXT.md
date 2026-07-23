@@ -707,6 +707,22 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
 > + a missed one) on top of `autocart_connected`. A stale or NULL stamp fails open to
 > the normal alert lane — same contract as the heartbeat. Shrinking the keepalive to
 > 30m bounds the worst-case swallow window; this guard closes it to near-zero.
+>
+> **If the session keeps dying despite the 30m keepalive — escalation ladder (idea,
+> not built).** Each rung trades convenience for risk; take them in order:
+> 1. **"Keep me signed in" / "Remember me" at login** — the intended way to get a
+>    long-lived session. Zero new secrets. Try this FIRST; likely fixes recurring
+>    death on its own.
+> 2. **Store the user's rec.gov credentials on the mini-PC to auto-relogin** when the
+>    session dies. Kills the reconnect friction entirely, but it's a real step up in
+>    risk and should be a LAST resort: a stored password is a reusable master key
+>    (bigger blast radius than a scoped, expiring session cookie), likely against
+>    rec.gov ToS, and useless if rec.gov ever adds CAPTCHA/2FA. If ever built:
+>    owner-only + explicit opt-in, encrypted with **Windows DPAPI / Credential
+>    Manager** (never plaintext), used ONLY locally on the box, and **never sent to
+>    CampHawk servers**. Note the mini-PC already holds a live session (the persistent
+>    Chromium profile = account access), so this widens an existing exposure rather
+>    than creating a brand-new one — but a password's blast radius is much larger.
 
 ### The mini-PC bot
 
