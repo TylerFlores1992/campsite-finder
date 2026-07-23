@@ -666,10 +666,20 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
 ### The mini-PC bot
 
 - `bot.mjs` — watches the roster, carts openings, reports outcomes; a **keepalive**
-  loads an authenticated rec.gov page every **90m** (was 4h — sessions were still
-  expiring inside the 4h gap, which is also the window where `autocart_connected`
-  reads stale and swallows an opening; see the heartbeat note above) so the session
-  never dies from idle.
+  loads an authenticated rec.gov page every **30m** (`KEEPALIVE_MS`) so the session
+  never dies from idle. Stepped down 4h → 90m → 30m as rec.gov's idle TTL kept
+  proving shorter than the refresh gap: on 2026-07-22 a session kept warm at 21:04
+  was found dead by the next keepalive at 22:35 (~90m later, confirmed-twice 'out'),
+  so the idle TTL is under 90m; 30m refreshes inside any TTL ≳40m. The stale gap is
+  also the window where `autocart_connected` reads stale and swallows an opening (see
+  the heartbeat note above), so shrinking it shrinks that failure window too.
+  **Separately, the mini-PC's Wi-Fi drops out periodically** (cloudflared logged
+  DNS/adapter loss — `No DNS servers configured`, `unreachable network` — around
+  10:00 and 03:55 UTC on 2026-07-22, both early-morning Pacific), the classic
+  Windows Wi-Fi-adapter power-management / sleep signature. It knocks the bot AND the
+  broker tunnel offline during those windows, so fix it at the OS: adapter Power
+  Management "allow the computer to turn off this device" OFF, sleep = Never, or wire
+  to ethernet.
 - `broker.mjs` — a websocket server (exposed via a Cloudflare tunnel at
   broker.camphawk.app) that lets a user do the one-time rec.gov sign-in remotely from
   any device (streams the login page via CDP). No passwords ever touch our servers.
