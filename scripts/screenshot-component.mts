@@ -47,7 +47,7 @@ const PRESETS: Record<string, Preset> = {
   'search-bar': {
     label: 'SearchBar (landing search bar)',
     entry: `import SearchBar from '@/components/SearchBar';
-      export const node = <SearchBar onSearch={() => {}} />;`,
+      export const node = <SearchBar onSearch={() => {}} onTonight={() => {}} onThisWeekend={() => {}} />;`,
     // The real bar sits on the cream hero over a max-width container.
     frame: 'max-w-3xl w-full mx-auto',
   },

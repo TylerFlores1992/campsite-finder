@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Search, MapPin, Loader2, Tent, Info, X } from 'lucide-react';
+import { Search, MapPin, Loader2, Tent, Info, X, Sun, CalendarDays } from 'lucide-react';
 import DateRangePicker from './DateRangePicker';
 
 interface SearchBarProps {
@@ -15,6 +15,10 @@ interface SearchBarProps {
     flexDays?: 'weekend';
     focusCampgroundId?: string;
   }) => void;
+  /** Quick-trip shortcuts shown by the date picker (auto-locate + search). */
+  onTonight?: () => void;
+  onThisWeekend?: () => void;
+  quickBusy?: boolean;
 }
 
 interface PlaceSuggestion {
@@ -71,7 +75,7 @@ function featureStateCode(f: MapboxFeature): string | null {
   return region?.short_code?.replace(/^US-/i, '').toUpperCase() ?? null;
 }
 
-export default function SearchBar({ onSearch }: SearchBarProps) {
+export default function SearchBar({ onSearch, onTonight, onThisWeekend, quickBusy }: SearchBarProps) {
   const [location, setLocation] = useState('');
   const [radiusMiles, setRadiusMiles] = useState(25);
   const [startDate, setStartDate] = useState('');
@@ -398,13 +402,40 @@ export default function SearchBar({ onSearch }: SearchBarProps) {
         </select>
       </div>
 
-      {/* Dates — single smooth range picker (flexible-date toggle now lives above the
-          Search button, so this column stays single-height). */}
-      <DateRangePicker
-        startDate={startDate}
-        endDate={endDate}
-        onChange={(s, e) => { setStartDate(s); setEndDate(e); }}
-      />
+      {/* Dates — the range picker plus the Tonight / This weekend quick-trip shortcuts
+          (auto-locate + search), which live here by the dates rather than as a hero
+          centerpiece. */}
+      <div className="flex flex-col gap-1.5">
+        <DateRangePicker
+          startDate={startDate}
+          endDate={endDate}
+          onChange={(s, e) => { setStartDate(s); setEndDate(e); }}
+        />
+        {(onTonight || onThisWeekend) && (
+          <div className="flex gap-1.5">
+            {onTonight && (
+              <button
+                type="button"
+                onClick={onTonight}
+                disabled={quickBusy}
+                className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 transition-colors disabled:opacity-60 disabled:cursor-wait"
+              >
+                <Sun size={12} /> {quickBusy ? 'Finding you…' : 'Tonight'}
+              </button>
+            )}
+            {onThisWeekend && (
+              <button
+                type="button"
+                onClick={onThisWeekend}
+                disabled={quickBusy}
+                className="inline-flex items-center gap-1 rounded-full bg-green-50 border border-green-200 px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-100 transition-colors disabled:opacity-60 disabled:cursor-wait"
+              >
+                <CalendarDays size={12} /> This weekend
+              </button>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Flexible-date controls sit directly above the Search button. Keeping them out
           of the Dates column lets that column stay single-height, tightening the bar.
