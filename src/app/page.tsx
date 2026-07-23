@@ -7,7 +7,7 @@ import { useUser, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 import SearchBar from '@/components/SearchBar';
 import CampgroundCard from '@/components/CampgroundCard';
 import Filters, { FilterState } from '@/components/Filters';
-import QuickFilters, { getTonight, getThisWeekend } from '@/components/QuickFilters';
+import { getTonight, getThisWeekend } from '@/components/QuickFilters';
 import WatchesPanel from '@/components/WatchesPanel';
 import FavoritesPanel, { type FavoriteCampground } from '@/components/FavoritesPanel';
 import Logo from '@/components/Logo';
@@ -496,7 +496,7 @@ export default function HomePage() {
           </div>
 
           {/* Search row */}
-          <SearchBar onSearch={(p) => search(p)} />
+          <SearchBar onSearch={(p) => search(p)} onTonight={handleTonight} onThisWeekend={handleThisWeekend} quickBusy={geoBusy} />
 
           {/* Filters + view toggle only matter once there are results. On mobile
               the filter chips scroll horizontally instead of stacking tall. */}
@@ -505,7 +505,7 @@ export default function HomePage() {
               {/* Chips wrap onto multiple lines at every width so all filters are
                   visible without swiping (wide screens still fit on one row). */}
               <div className="order-2 md:order-1 flex flex-wrap items-center gap-2 md:gap-3">
-                <QuickFilters onTonight={handleTonight} onThisWeekend={handleThisWeekend} />
+                {/* Tonight / This weekend now live in the search bar by the dates. */}
                 <Filters filters={filters} onChange={handleFiltersChange} />
               </div>
 
@@ -553,25 +553,12 @@ export default function HomePage() {
               Welcome back{user?.firstName ? `, ${user.firstName}` : ''} — where to next?
             </h2>
             <p className="text-gray-700 max-w-md text-base sm:text-lg leading-relaxed [text-shadow:_0_1px_8px_rgb(255_255_255_/_0.85)]">
-              Search a spot above, jump into a quick trip, or check on your watches.
+              Search a spot above — or jump straight to Tonight / This weekend right by the dates.
             </p>
 
-            {/* Quick actions */}
+            {/* Quick actions — Tonight / This weekend now live in the search bar by the
+                dates; the hero keeps the account shortcuts. */}
             <div className="flex flex-wrap justify-center gap-3">
-              <button
-                onClick={handleTonight}
-                disabled={geoBusy}
-                className="px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-display font-semibold text-base shadow-md shadow-amber-500/25 transition-all hover:shadow-lg hover:-translate-y-0.5 disabled:opacity-60 disabled:cursor-wait disabled:translate-y-0"
-              >
-                {geoBusy ? 'Finding you…' : '⛺ Tonight'}
-              </button>
-              <button
-                onClick={handleThisWeekend}
-                disabled={geoBusy}
-                className="px-6 py-3 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-display font-semibold text-base shadow-md transition-all hover:shadow-lg hover:-translate-y-0.5 disabled:opacity-60 disabled:cursor-wait disabled:translate-y-0"
-              >
-                {geoBusy ? 'Finding you…' : '🌲 This weekend'}
-              </button>
               <button
                 onClick={() => setWatchesOpen(true)}
                 className="px-6 py-3 rounded-2xl bg-white border border-gray-200 text-gray-700 font-display font-semibold text-base shadow-sm hover:bg-gray-50 transition-all"

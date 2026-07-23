@@ -14,6 +14,16 @@ export async function POST(req: NextRequest) {
   const userId = await requireAuth();
   await syncUser(userId);
 
+  // Beta testers have complimentary full access — never send them to Stripe, so a
+  // stray subscribe CTA can't charge them (this is why melinda.flores0501 got billed).
+  const beta = await queryOne<{ is_beta: boolean }>('SELECT is_beta FROM users WHERE id = $1', [userId]);
+  if (beta?.is_beta) {
+    return NextResponse.json(
+      { error: 'beta_access', message: 'You have complimentary beta access — no subscription needed.' },
+      { status: 400 }
+    );
+  }
+
   const { interval = 'monthly' } = await req.json().catch(() => ({}));
   const priceId = PRICE_IDS[interval] ?? PRICE_IDS.monthly;
 
