@@ -13,6 +13,10 @@ interface WatchRow {
   id: string;
   campground_id: string;
   campground_name: string;
+  source: string;
+  reservations_url: string | null;
+  latitude: number | null;
+  longitude: number | null;
   start_date: string;
   end_date: string;
   min_nights: number;
@@ -28,6 +32,8 @@ interface WatchRow {
 async function loadWatch(watchId: string): Promise<WatchRow | null> {
   const [w] = await query<WatchRow>(
     `SELECT w.id, w.campground_id, c.name AS campground_name,
+            c.source, c.reservations_url,
+            ST_Y(c.location::geometry) AS latitude, ST_X(c.location::geometry) AS longitude,
             w.start_date::text, w.end_date::text, w.min_nights,
             w.flex_nights, w.flex_days, w.site_type, w.active, w.auto_cart,
             w.muted_site_ids, w.created_at::text
@@ -93,6 +99,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   const { op, siteId } = await req.json().catch(() => ({}));
 
   switch (op) {
+    case 'remove':
+      // Permanent delete (cascades action_tokens + notifications keep their SET NULL).
+      await mutate(`DELETE FROM watches WHERE id = $1`, [watchId]);
+      return NextResponse.json({ ok: true, removed: true });
     case 'stop':
       await mutate(`UPDATE watches SET active = false WHERE id = $1`, [watchId]);
       break;

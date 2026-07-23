@@ -69,14 +69,21 @@ const PRESETS: Record<string, Preset> = {
     label: 'ManageWatch (per-watch manage page)',
     entry: `import ManageWatch from '@/components/ManageWatch';
       if (typeof window !== 'undefined') {
-        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({
-          watch: { id: 'w1', campground_name: 'Kirk Creek Campground', start_date: '2026-09-04', end_date: '2026-09-07', min_nights: 2, flex_nights: 2, flex_days: 'weekend', site_type: null, active: true, auto_cart: true, muted_site_ids: ['A14'] },
-          alerts: [
-            { created_at: '2026-08-20T15:00:00Z', channel: 'sms', status: 'sent', site_name: 'A12', dates: ['2026-09-04','2026-09-05'], kind: 'available' },
-            { created_at: '2026-08-18T09:00:00Z', channel: 'email', status: 'sent', site_name: 'A14', dates: ['2026-09-06'], kind: 'coming_soon' },
-          ],
-          sites: [ { id: 'A12', name: 'Site A12', muted: false }, { id: 'A14', name: 'Site A14', muted: true } ],
-        }) });
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/availability')) {
+            return { ok: true, status: 200, json: async () => ({ campsites:
+              ['A01','A02','A12','A14','B03','B07','B12','C05','C09'].map((id, i) => ({ campsiteId: id, campsiteName: 'Site ' + id, loop: id[0] === 'A' ? 'Ocean Loop' : id[0] === 'B' ? 'Creek Loop' : 'Ridge Loop' })) }) };
+          }
+          return { ok: true, status: 200, json: async () => ({
+            watch: { id: 'w1', campground_id: '233116', campground_name: 'Kirk Creek Campground', source: 'ridb', reservations_url: null, latitude: 35.99, longitude: -121.49, start_date: '2026-09-04', end_date: '2026-09-07', min_nights: 2, flex_nights: 2, flex_days: 'weekend', site_type: null, active: true, auto_cart: true, muted_site_ids: ['A14'] },
+            alerts: [
+              { created_at: '2026-08-20T15:00:00Z', channel: 'sms', status: 'sent', site_name: 'A12', dates: ['2026-09-04','2026-09-05'], kind: 'available' },
+              { created_at: '2026-08-18T09:00:00Z', channel: 'email', status: 'sent', site_name: 'A14', dates: ['2026-09-06'], kind: 'coming_soon' },
+            ],
+            sites: [ { id: 'A12', name: 'Site A12' }, { id: 'A14', name: 'Site A14' } ],
+          }) };
+        };
       }
       export const node = <ManageWatch token="demo" />;`,
     frame: 'max-w-lg w-full mx-auto',
