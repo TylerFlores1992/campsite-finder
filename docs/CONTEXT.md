@@ -256,8 +256,23 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > > catalog-sync burst), so it self-heals before paging without false-tripping. **A
 > > standing rec.gov `429` / GoingToCamp-timeout throttle on the Fly egress IP is a
 > > SEPARATE, external thing** — clean provider-side rate-limits, not a wedge; a
-> > restart may or may not clear them (the standby shares the region's IP reputation),
-> > and they usually age out on their own.
+> > restart may or may not clear them (the standby shares the region's IP reputation —
+> > a **same-region failover does NOT escape a rec.gov throttle; verified 2026-07-22**,
+> > both sjc machines 429'd identically), and they usually age out on their own.
+> >
+> > **A THIRD mode the watchdog is BLIND to — the timeout cascade (observed
+> > 2026-07-22, issue #14).** When rec.gov degrades from fast `429`s to slow **10s
+> > timeouts**, the hanging connections exhaust the outbound socket pool / starve the
+> > event loop, so *every* provider (RA, RC, GoingToCamp) and the `:8080` health server
+> > start timing out too (health check **flaps** passing↔failing). But the Supabase
+> > `beat()` write still succeeds, so **the heartbeat stays FRESH and the watchdog never
+> > fires** — `/api/health/status` shows `worker.heartbeat: ok` with ALL `detect:*`
+> > **timing out** (distinct from the full wedge, where the heartbeat freezes too).
+> > Alerting is silently dead; only a manual **`flyctl machine restart`** clears it (the
+> > fresh process drains the backlog, rec.gov drops back to fast 429s). Durable fix is
+> > tracked in **issue #14**: shorter rec.gov timeout, cap concurrent rec.gov in-flight,
+> > trip the breaker on timeouts (not just 429s), and key the watchdog off a recent
+> > *successful external fetch* rather than just the heartbeat.
 >
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into

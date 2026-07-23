@@ -284,7 +284,12 @@ vars, and a setup-script field.
   (2) add env vars — `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (the sync
   scripts authenticate via `getSupabaseAdmin`), `NEXT_PUBLIC_MAPBOX_TOKEN` (geocoding),
   and `FLY_API_TOKEN` (a **deploy**-scoped token: `fly tokens create deploy -a
-  campsite-finder-worker`, not org-admin); (3) set `ENABLE_OPS_TOOLS=1` so the hook
+  campsite-finder-worker`, not org-admin — so a leak only risks that one app, and an
+  interactive `fly auth login` elsewhere is unaffected by revoking it). **Rotating it
+  is self-contained:** it lives ONLY in this env config — **no GitHub workflow deploys
+  to Fly** (deploys are manual; the `worker-watchdog` Action just curls health), so
+  after `fly tokens create deploy` + revoking the old one, update it here (and any local
+  copy) and nothing else. (3) set `ENABLE_OPS_TOOLS=1` so the hook
   installs flyctl + the Supabase CLI. The Supabase CLI comes from npm and installs
   fine; **flyctl does NOT** — see the next bullet.
 - **Three web-session gotchas that cost real time (2026-07-22, shipping SC end-to-end).**
