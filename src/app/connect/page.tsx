@@ -18,6 +18,7 @@ export default function ConnectPage() {
   // <canvas> can't raise a soft keyboard. Tapping the stream focuses this (within the
   // tap gesture, so iOS/Android open the keyboard), and we forward what's typed.
   const kbRef = useRef<HTMLInputElement>(null);
+  const kbPrevRef = useRef(''); // last seen value of the hidden input, for delta diffing
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState('');
 
@@ -84,10 +85,10 @@ export default function ConnectPage() {
   };
   const btn = (b: number) => (b === 2 ? 'right' : b === 1 ? 'middle' : 'left');
 
-  // Named keys (and, on desktop, everything) come through keydown. Printable text is
-  // NOT sent from here — `beforeinput` handles it, so soft keyboards that fire only a
-  // generic keydown (Android: keyCode 229) still work, and desktop doesn't double-send.
-  const named = ['Enter', 'Backspace', 'Tab', 'Delete', 'Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+  // Non-text keys only (they don't change the input's value, so the value-diff below
+  // won't see them): Enter/Tab/arrows/etc. Backspace/Delete DO shrink the value and are
+  // handled by the diff, so they're intentionally NOT here (avoids double-sending).
+  const named = ['Enter', 'Tab', 'Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (status !== 'live') return;
     if (named.includes(e.key)) {
@@ -96,20 +97,24 @@ export default function ConnectPage() {
     }
   };
 
-  // Primary text channel — fires reliably for on-screen keyboards on iOS/Android AND
-  // desktop. We keep the hidden input empty (preventDefault) so every event is a clean
-  // delta. Backspace on an empty field yields no beforeinput, so it's handled in keydown.
-  const onBeforeInput = (e: React.FormEvent<HTMLInputElement>) => {
+  // Text channel — the reliable one across iOS/Android/desktop. React's `onBeforeInput`
+  // often doesn't expose `inputType`/`data`, so instead we let the hidden input hold the
+  // typed text and diff its value on every `input` event (composition-friendly, and it
+  // catches soft-keyboard backspace that keydown misses on Android). Append → forward the
+  // new chars as text; shrink → forward Backspace(s). Cursor edits mid-string are rare in
+  // a login, so a non-append/non-trim change just replays the whole value.
+  const onTextInput = (e: React.FormEvent<HTMLInputElement>) => {
     if (status !== 'live') return;
-    const ie = e.nativeEvent as InputEvent;
-    if ((ie.inputType === 'insertText' || ie.inputType === 'insertFromPaste') && ie.data) {
-      for (const ch of ie.data) send({ t: 'text', text: ch });
-    } else if (ie.inputType === 'deleteContentBackward') {
-      send({ t: 'key', key: 'Backspace' });
-    } else if (ie.inputType === 'insertLineBreak' || ie.inputType === 'insertParagraph') {
-      send({ t: 'key', key: 'Enter' });
+    const v = e.currentTarget.value;
+    const prev = kbPrevRef.current;
+    if (v.length > prev.length && v.startsWith(prev)) {
+      for (const ch of v.slice(prev.length)) send({ t: 'text', text: ch });
+    } else if (v.length < prev.length && prev.startsWith(v)) {
+      for (let i = 0; i < prev.length - v.length; i++) send({ t: 'key', key: 'Backspace' });
+    } else if (v !== prev) {
+      for (const ch of v) send({ t: 'text', text: ch });
     }
-    e.preventDefault();
+    kbPrevRef.current = v;
   };
 
   return (
@@ -175,7 +180,7 @@ export default function ConnectPage() {
                 onPointerUp={(e) => send({ t: 'up', ...rel(e), button: btn(e.button) })}
                 onWheel={(e) => send({ t: 'wheel', dx: e.deltaX, dy: e.deltaY })}
                 onKeyDown={onKeyDown}
-                onBeforeInput={onBeforeInput}
+                onInput={onTextInput}
                 onContextMenu={(e) => e.preventDefault()}
                 className="absolute inset-0 h-full w-full cursor-crosshair touch-none rounded-xl bg-transparent text-transparent caret-transparent opacity-0 outline-none"
               />
