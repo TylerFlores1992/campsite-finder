@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, CheckCircle2, ShieldCheck, AlertTriangle } from 'lucide-react';
 
-// Remote one-time recreation.gov sign-in. This page streams a live rec.gov login
-// running on the mini-PC (via the broker + Cloudflare Tunnel) so anyone can do
-// their one-time sign-in from any computer. Your password goes straight into
-// recreation.gov on the machine that stores the session — never to CampHawk.
+// Remote one-time recreation.gov sign-in. Primary path: the user enters their
+// rec.gov email/password into a normal form here; the credentials are sent over the
+// encrypted WebSocket to their own CampHawk mini-PC, which types them into rec.gov
+// once and never stores them. If that can't complete automatically (CAPTCHA/2FA/odd
+// form), we fall back to the live streamed rec.gov login (the mini-PC also screencasts
+// the page the whole time) so the user can finish it by hand.
 
 type Status = 'idle' | 'connecting' | 'live' | 'done' | 'error';
 
@@ -21,6 +23,13 @@ export default function ConnectPage() {
   const kbPrevRef = useRef(''); // last seen value of the hidden input, for delta diffing
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState('');
+  // 'form' = our own credential fields (primary); 'stream' = fall back to the live
+  // rec.gov window when the broker can't finish automatically.
+  const [mode, setMode] = useState<'form' | 'stream'>('form');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [note, setNote] = useState('');
 
   const send = (o: unknown) => {
     const ws = wsRef.current;
@@ -61,6 +70,8 @@ export default function ConnectPage() {
       if (m.t === 'ready' || m.t === 'live') setStatus('live');
       else if (m.t === 'frame' && m.data) drawFrame(m.data, m.w || 1000, m.h || 760);
       else if (m.t === 'done') { setStatus('done'); ws.close(); }
+      // Broker couldn't finish from the credentials alone — reveal the live window.
+      else if (m.t === 'manual') { setSubmitting(false); setMode('stream'); setNote(m.message || 'Please finish signing in in the window below.'); }
       else if (m.t === 'error') { setStatus('error'); setError(m.message || 'The sign-in service reported an error.'); }
     };
   }, []);
@@ -144,16 +155,16 @@ export default function ConnectPage() {
           <h1 className="font-display text-xl font-bold">Connect recreation.gov</h1>
         </div>
         <p className="mt-1 text-sm text-gray-500">
-          Sign in once so CampHawk can add openings to your cart. This is a live recreation.gov
-          window running on the CampHawk machine — your password goes straight to recreation.gov and
-          is never seen or stored by CampHawk.
+          Sign in once so CampHawk can add openings to your cart. Your recreation.gov email and
+          password are sent over an encrypted connection to your own CampHawk mini-PC, used once to
+          sign in, and never stored.
         </p>
 
         {status === 'idle' && (
           <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 text-center">
             <p className="text-sm text-gray-600">
-              Click below to open a secure recreation.gov sign-in. Sign in as you normally would; this
-              page closes itself automatically once you&apos;re in.
+              Click below to start a secure sign-in. You&apos;ll enter your recreation.gov email and
+              password, and this page closes itself automatically once you&apos;re in.
             </p>
             <button
               onClick={start}
@@ -170,9 +181,59 @@ export default function ConnectPage() {
           </div>
         )}
 
+        {/* Primary: our own credential form (real native inputs — the mobile keyboard
+            just works). Submitting sends the credentials to the mini-PC to type into
+            rec.gov. Hidden once we fall back to the streamed window. */}
+        {status === 'live' && mode === 'form' && (
+          <form
+            onSubmit={(e) => { e.preventDefault(); if (!email || !password) return; setSubmitting(true); send({ t: 'login', email, password }); }}
+            className="mt-6 space-y-3 rounded-2xl border border-gray-200 bg-white p-5"
+          >
+            <label className="block text-sm font-medium text-gray-700">
+              recreation.gov email
+              <input
+                type="email"
+                autoComplete="username"
+                inputMode="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={submitting}
+                className="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-60"
+              />
+            </label>
+            <label className="block text-sm font-medium text-gray-700">
+              recreation.gov password
+              <input
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={submitting}
+                className="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-60"
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={submitting || !email || !password}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 px-5 py-2.5 font-display text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              {submitting ? <><Loader2 size={15} className="animate-spin" /> Signing you in…</> : 'Sign in'}
+            </button>
+            <p className="text-center text-[11px] text-gray-400">
+              Sent encrypted to your CampHawk mini-PC, used once, never stored.
+            </p>
+          </form>
+        )}
+
+        {/* Fallback: the live streamed rec.gov window (also used if the form can't
+            finish automatically). Mounted whenever live so frames keep drawing, but
+            only shown once we switch to 'stream' mode. */}
         {(status === 'live' || status === 'connecting') && (
-          <div className={status === 'live' ? 'mt-6' : 'hidden'}>
-            <p className="mb-2 text-xs text-gray-400">Tap the window and type as usual — on phones the keyboard opens when you tap a text field. Sign in and it finishes on its own.</p>
+          <div className={status === 'live' && mode === 'stream' ? 'mt-6' : 'hidden'}>
+            {note && <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{note}</p>}
+            <p className="mb-2 text-xs text-gray-400">Tap the window and type as usual — the keyboard opens when you tap a field. Sign in and it finishes on its own.</p>
             <div className="relative">
               {/* Canvas only DISPLAYS the stream — it can't hold a mobile keyboard. */}
               <canvas

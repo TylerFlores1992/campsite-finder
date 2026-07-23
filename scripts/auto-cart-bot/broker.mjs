@@ -172,9 +172,45 @@ async function startSession(userId, ws, sendJson) {
   const deadline = setTimeout(() => close('timed out'), LOGIN_TIMEOUT_MS);
   deadline.unref?.();
 
+  // Type the user's credentials into rec.gov's sign-in form (the primary path — the
+  // viewer sends them from its own fields instead of tapping the streamed page).
+  // Selectors are best-effort; on ANY problem (form not found, wrong password, CAPTCHA/
+  // 2FA, or login just doesn't land) we tell the viewer to fall back to the live window
+  // ('manual'), where the screencast is already running for them to finish by hand. On
+  // success the existing login-detection loop writes the ready-marker and sends 'done'.
+  const EMAIL_SEL = 'input[type="email"], input[name="email"], input[autocomplete="username"], input[autocomplete="email"], input#email';
+  const PW_SEL = 'input[type="password"], input[name="password"], input[autocomplete="current-password"], input#password';
+  const doLogin = async (email, password) => {
+    if (done || closed || !email || !password) return;
+    try {
+      const em = page.locator(EMAIL_SEL).first();
+      await em.waitFor({ state: 'visible', timeout: 8000 });
+      await em.fill(email);
+      let pw = page.locator(PW_SEL).first();
+      if (!(await pw.isVisible().catch(() => false))) {
+        // Two-step forms: submit the email, then the password field appears.
+        await page.keyboard.press('Enter').catch(() => {});
+        await page.waitForTimeout(1200);
+        pw = page.locator(PW_SEL).first();
+        await pw.waitFor({ state: 'visible', timeout: 8000 });
+      }
+      await pw.fill(password);
+      const btn = page.getByRole('button', { name: /log ?in|sign ?in/i }).first();
+      if (await btn.isVisible().catch(() => false)) await btn.click().catch(() => {});
+      else await page.keyboard.press('Enter').catch(() => {});
+    } catch {
+      sendJson({ t: 'manual', message: 'Please finish signing in in the window below.' });
+      return;
+    }
+    // The detection loop flips `done` on success. Give it ~15s; otherwise hand off.
+    for (let i = 0; i < 15 && !done && !closed; i++) await new Promise((r) => setTimeout(r, 1000));
+    if (!done && !closed) sendJson({ t: 'manual', message: "Couldn't finish sign-in automatically — please complete it in the window below." });
+  };
+
   // Map viewer input (canvas-space) onto the real page.
   const onInput = async (m) => {
     if (done || closed) return;
+    if (m.t === 'login') { await doLogin(m.email, m.password); return; }
     const px = Math.round((m.x ?? 0) * dims.w);
     const py = Math.round((m.y ?? 0) * dims.h);
     switch (m.t) {
