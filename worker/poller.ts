@@ -292,6 +292,20 @@ interface WatchRow {
   flex_days: string | null;
   autocart_enabled: boolean;
   autocart_connected: boolean;
+  autocart_verified_at: string | null;
+}
+
+// How recently the bot must have confirmed a user's rec.gov session (via a keepalive
+// or sign-in stamping autocart_verified_at) for the auto-cart lane to be used. The bot
+// keepalive runs ~every 30m; this allows one missed keepalive before we fail open to
+// normal alerts, so a session that silently dies mid-interval can't keep swallowing
+// openings into a lane the bot can't service. Override with AUTOCART_SESSION_STALE_MS.
+const AUTOCART_SESSION_STALE_MS = Number(process.env.AUTOCART_SESSION_STALE_MS ?? 45 * 60 * 1000);
+
+/** Has the bot confirmed this user's rec.gov session recently enough to trust it? */
+function autocartSessionFresh(w: WatchRow): boolean {
+  if (!w.autocart_verified_at) return false; // never verified → fail open to normal alert
+  return Date.now() - Date.parse(w.autocart_verified_at) < AUTOCART_SESSION_STALE_MS;
 }
 
 /**
@@ -305,7 +319,8 @@ function isAutocartLane(w: WatchRow, botOnline: boolean): boolean {
     botOnline &&
     w.campground_source === 'ridb' &&
     w.autocart_enabled === true &&
-    w.autocart_connected === true
+    w.autocart_connected === true &&
+    autocartSessionFresh(w)
   );
 }
 
@@ -382,7 +397,8 @@ async function loadWatches(): Promise<WatchRow[]> {
             c.name AS campground_name, c.source AS campground_source,
             c.reservations_url,
             COALESCE(u.autocart_enabled, false) AS autocart_enabled,
-            COALESCE(u.autocart_connected, false) AS autocart_connected
+            COALESCE(u.autocart_connected, false) AS autocart_connected,
+            u.autocart_verified_at::text AS autocart_verified_at
      FROM watches w
      JOIN campgrounds c ON c.id = w.campground_id
      JOIN users u ON u.id = w.user_id

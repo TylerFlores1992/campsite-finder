@@ -22,6 +22,11 @@ export async function POST(req: NextRequest) {
     `UPDATE users SET
        autocart_enabled = COALESCE($1, autocart_enabled),
        autocart_connected = COALESCE($2, autocart_connected),
+       -- Stamp the freshness marker whenever the bot confirms a live session
+       -- (connected=true, i.e. a sign-in or a keepalive "kept warm"). The poller
+       -- treats the auto-cart lane as usable only while this stays recent, so a
+       -- session that silently dies between keepalives fails open to normal alerts.
+       autocart_verified_at = CASE WHEN $2 IS TRUE THEN NOW() ELSE autocart_verified_at END,
        updated_at = NOW()
      WHERE id = $3`,
     [typeof enabled === 'boolean' ? enabled : null, typeof connected === 'boolean' ? connected : null, userId]

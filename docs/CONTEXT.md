@@ -269,10 +269,26 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > > fires** — `/api/health/status` shows `worker.heartbeat: ok` with ALL `detect:*`
 > > **timing out** (distinct from the full wedge, where the heartbeat freezes too).
 > > Alerting is silently dead; only a manual **`flyctl machine restart`** clears it (the
-> > fresh process drains the backlog, rec.gov drops back to fast 429s). Durable fix is
-> > tracked in **issue #14**: shorter rec.gov timeout, cap concurrent rec.gov in-flight,
-> > trip the breaker on timeouts (not just 429s), and key the watchdog off a recent
-> > *successful external fetch* rather than just the heartbeat.
+> > fresh process drains the backlog, rec.gov drops back to fast 429s).
+> >
+> > **Partially mitigated 2026-07-22 (commit `dfd4541`) — two of the four issue-#14
+> > items shipped:** (1) the six per-source fetch phases now run **concurrently**
+> > (`Promise.all` in `worker/poller.ts cycle()`) instead of sequentially, so a
+> > slow/throttled rec.gov phase no longer head-of-line-blocks RC/RA/GTC/TN-SC —
+> > cycle time is `max(phase)`, not `sum(phase)`, and the other sources keep detecting
+> > at full speed. (2) A process-local **rec.gov throttle breaker** in
+> > `src/lib/availability/recgov.ts` OPENs after `RECGOV_BREAKER_TRIP` (default 3)
+> > consecutive throttle failures — counting **both 429 AND timeout** (issue-#14 item
+> > "trip the breaker on timeouts") — and short-circuits `getAvailabilityFromRecGov`
+> > to empty (no network, no 10s stall) for `RECGOV_BREAKER_COOLDOWN_MS` (default 60s),
+> > with a half-open probe that closes it on the next success. Empty during cooldown is
+> > the same result the storm already produced, so detection loses nothing; the cycle
+> > stays fast and we stop feeding the ban. Per-process state, so it only trips in the
+> > throttled Fly worker, never Vercel search on its own IP. **Still open in issue #14:**
+> > shorten the rec.gov request timeout (still 10s), and key the watchdog off a recent
+> > *successful external fetch* rather than just the heartbeat (so the cascade — fresh
+> > heartbeat, all detects timing out — actually trips the self-heal). The breaker
+> > blunts the cascade but a hard 10s-timeout storm can still outpace a 60s cooldown.
 >
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
@@ -646,14 +662,35 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
 > alerts) is the acceptable failure, a silent miss is not. So "a re-verify covers an
 > offline bot" was wrong twice over: the 35s gamble loses hot sites, and the heartbeat —
 > not the re-verify — is what now catches an offline bot.
+>
+> **Second fail-open layer — session freshness (`autocart_verified_at`, migration 022).**
+> The heartbeat proves the *bot machine* is alive, but not that the *rec.gov session*
+> is. A session can silently die between keepalives while `autocart_connected` still
+> reads true, so an opening in that gap still gets swallowed. Fix: the bot stamps
+> `users.autocart_verified_at = NOW()` on every sign-in and every keepalive "kept warm"
+> (via `POST /api/auto-cart/enrollment` connected=true), and `isAutocartLane` requires
+> that stamp to be within `AUTOCART_SESSION_STALE_MS` (default 45m ≈ one 30m keepalive
+> + a missed one) on top of `autocart_connected`. A stale or NULL stamp fails open to
+> the normal alert lane — same contract as the heartbeat. Shrinking the keepalive to
+> 30m bounds the worst-case swallow window; this guard closes it to near-zero.
 
 ### The mini-PC bot
 
 - `bot.mjs` — watches the roster, carts openings, reports outcomes; a **keepalive**
-  loads an authenticated rec.gov page every **90m** (was 4h — sessions were still
-  expiring inside the 4h gap, which is also the window where `autocart_connected`
-  reads stale and swallows an opening; see the heartbeat note above) so the session
-  never dies from idle.
+  loads an authenticated rec.gov page every **30m** (`KEEPALIVE_MS`) so the session
+  never dies from idle. Stepped down 4h → 90m → 30m as rec.gov's idle TTL kept
+  proving shorter than the refresh gap: on 2026-07-22 a session kept warm at 21:04
+  was found dead by the next keepalive at 22:35 (~90m later, confirmed-twice 'out'),
+  so the idle TTL is under 90m; 30m refreshes inside any TTL ≳40m. The stale gap is
+  also the window where `autocart_connected` reads stale and swallows an opening (see
+  the heartbeat note above), so shrinking it shrinks that failure window too.
+  **Separately, the mini-PC's Wi-Fi drops out periodically** (cloudflared logged
+  DNS/adapter loss — `No DNS servers configured`, `unreachable network` — around
+  10:00 and 03:55 UTC on 2026-07-22, both early-morning Pacific), the classic
+  Windows Wi-Fi-adapter power-management / sleep signature. It knocks the bot AND the
+  broker tunnel offline during those windows, so fix it at the OS: adapter Power
+  Management "allow the computer to turn off this device" OFF, sleep = Never, or wire
+  to ethernet.
 - `broker.mjs` — a websocket server (exposed via a Cloudflare tunnel at
   broker.camphawk.app) that lets a user do the one-time rec.gov sign-in remotely from
   any device (streams the login page via CDP). No passwords ever touch our servers.
@@ -715,6 +752,13 @@ Cancellation-likelihood (feature E, on the **Fly worker**, all non-secret with
 in-code defaults — override only to tune): `OBSERVATION_INTERVAL_MS` (per-window
 record throttle, 1h), `OBSERVATION_RETENTION_DAYS` (90), `PROBE_INTERVAL_MS`
 (roster cadence, 1h), `PROBE_LEAD_DAYS` (`14,45`), `PROBE_NIGHTS` (2).
+Worker resilience tunables (on the **Fly worker**, all non-secret with in-code
+defaults): `WATCHDOG_STALE_MS` (self-heal `process.exit(1)` when no heartbeat lands
+for this long, 4 min); rec.gov throttle breaker `RECGOV_BREAKER_TRIP` (consecutive
+429/timeout failures that OPEN the breaker, 3) and `RECGOV_BREAKER_COOLDOWN_MS`
+(short-circuit-to-empty window before a half-open probe, 60s); `RECGOV_CONCURRENCY`
+(per-provider fanout bound within a phase — note the six per-source phases now run
+concurrently as of `dfd4541`, so this bounds each provider, not the whole cycle).
 The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 `BROKER_PORT`, `POLL_MS`).
 

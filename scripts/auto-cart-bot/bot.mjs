@@ -40,11 +40,15 @@ const TOKEN = process.env.AUTOCART_TOKEN; // master token
 const POLL_MS = Number(process.env.POLL_MS || 2000);
 // Keep each signed-in rec.gov session warm this often, so it never dies from
 // inactivity between (rare) cart events — the fix for "re-sign-in every few days".
-// Tightened from 4h to 90m: sessions were still expiring inside the 4h gap, and a
-// stale gap is also when the app still reads "connected" while the session is dead,
-// so an opening gets routed into the silent auto-cart lane and never alerts. The
-// box is on 24/7; the only cost is the keepalive window flashing a bit more often.
-const KEEPALIVE_MS = Number(process.env.KEEPALIVE_MS || 90 * 60 * 1000); // 90m
+// Tightened 4h → 90m → 30m as rec.gov's idle session TTL kept proving shorter than
+// the refresh gap. The 30m step is evidence-based: on 2026-07-22 a session was kept
+// warm at 21:04 and the next keepalive at 22:35 (~90m later) found it already dead
+// (confirmed-twice 'out'), i.e. the idle TTL is under 90m. Refreshing every 30m stays
+// inside any TTL ≳40m with margin. A stale gap is also when the app still reads
+// "connected" while the session is dead, so an opening gets routed into the silent
+// auto-cart lane and never alerts. The box is on 24/7; the only cost is the headed
+// keepalive window flashing a bit more often. Override with KEEPALIVE_MS if needed.
+const KEEPALIVE_MS = Number(process.env.KEEPALIVE_MS || 30 * 60 * 1000); // 30m
 const WINDOW_MIN = Number(process.env.WINDOW_MIN || 15);
 const MAX_CONCURRENCY = Math.max(1, Number(process.env.MAX_CONCURRENCY || 1)); // browsers open at once
 const PROFILES_DIR = path.resolve(__dirname, process.env.PROFILES_DIR || 'profiles');
@@ -234,6 +238,12 @@ async function keepSessionsWarm() {
         return await recgovLoginState(ctx); // confirm before we destroy anything
       }, { headless: false });
       if (state === 'in') {
+        // Refresh the server-side freshness marker (autocart_verified_at) so the
+        // poller keeps this user in the auto-cart lane. Without a recent stamp the
+        // poller fails open to normal alerts — which is what we want if a keepalive
+        // ever stops landing (dead box / network drop), but on a healthy keepalive
+        // we must re-assert the session is live.
+        await reportConnected(user.userId, true);
         log(`♻ ${who}: rec.gov session kept warm`);
       } else if (state === 'out') {
         try { fs.unlinkSync(readyMarker(user.userId)); } catch {}
