@@ -758,7 +758,12 @@ for this long, 4 min); rec.gov throttle breaker `RECGOV_BREAKER_TRIP` (consecuti
 429/timeout failures that OPEN the breaker, 3) and `RECGOV_BREAKER_COOLDOWN_MS`
 (short-circuit-to-empty window before a half-open probe, 60s); `RECGOV_CONCURRENCY`
 (per-provider fanout bound within a phase — note the six per-source phases now run
-concurrently as of `dfd4541`, so this bounds each provider, not the whole cycle).
+concurrently as of `dfd4541`, so this bounds each provider, not the whole cycle);
+`AUTOCART_SESSION_STALE_MS` (how recently the bot must have stamped
+`autocart_verified_at` for the poller to use the auto-cart lane — default 45m ≈ one
+30m keepalive + a missed one; stale/NULL fails open to normal alerts). The bot-side
+keepalive cadence itself is `KEEPALIVE_MS` (default 30m), set in the mini-PC's own
+`.env`, not on Fly.
 The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 `BROKER_PORT`, `POLL_MS`).
 

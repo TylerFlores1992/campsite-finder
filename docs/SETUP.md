@@ -296,16 +296,25 @@ vars, and a setup-script field.
   Even with **Full** network, `ENABLE_OPS_TOOLS=1`, and `FLY_API_TOKEN` all set, the
   out-of-the-box path still fails at three spots. All have workarounds that DO work
   fully from a web session (SC was deployed + e2e-alerted this way):
-  - **flyctl won't install.** The hook's `fly.io/install.sh` resolves the binary to a
-    **GitHub release asset**, and web-session `github.com` traffic is **per-repo
+  - **flyctl won't install — but CHECK `~/.fly/bin` FIRST; the hook's WARN lies.** The
+    SessionStart hook logs `WARN: flyctl install failed (network policy still blocking
+    fly.io?)`, which reads as "you have no flyctl." **Do not trust it** — observed
+    2026-07-23 that `~/.fly/bin/flyctl` was already present and fully working (v0.4.74,
+    `flyctl auth whoami` OK via `FLY_API_TOKEN`), and a full worker deploy ran from that
+    binary. So before assuming you can't deploy, run `export PATH="$HOME/.fly/bin:$PATH";
+    flyctl version`. (This misleading warning cost real time across several sessions —
+    the CLI kept insisting it "couldn't deploy Fly" when it could.) Only if flyctl is
+    genuinely absent do you need the fallback below.
+    The reason the hook's own install fails: `fly.io/install.sh` resolves the binary to
+    a **GitHub release asset**, and web-session `github.com` traffic is **per-repo
     gated** by Anthropic's GitHub proxy (403 "GitHub access to this repository is not
     enabled for this session") — it only allows the repos added to the session, and
     `superfly/flyctl` isn't one. `add_repo` can't help either (cross-owner adds are
-    rejected). Workaround: pull flyctl out of its **Docker Hub image** (Docker Hub is
-    reachable), which needs no GitHub: fetch the `flyio/flyctl:latest` manifest +
-    layers from `registry-1.docker.io` (anon token from `auth.docker.io`), untar the
-    layers, and the binary is at `/flyctl` — drop it on `PATH`. It authenticates via
-    `FLY_API_TOKEN` (`flyctl auth whoami` confirms).
+    rejected). Fallback when `~/.fly/bin` really is empty: pull flyctl out of its
+    **Docker Hub image** (Docker Hub is reachable), which needs no GitHub: fetch the
+    `flyio/flyctl:latest` manifest + layers from `registry-1.docker.io` (anon token from
+    `auth.docker.io`), untar the layers, and the binary is at `/flyctl` — drop it on
+    `PATH`. It authenticates via `FLY_API_TOKEN` (`flyctl auth whoami` confirms).
   - **Node's `fetch` ignores the agent proxy**, so any sync/e2e script that reaches
     the reservation portal, Mapbox, or Supabase gets a connection error or a WAF 403
     (the sandbox's direct egress IP is datacenter-blocked). Run every `npx tsx`
@@ -340,7 +349,12 @@ vars, and a setup-script field.
     Observed 2026-07-22: the `--image` deploy brought the primary back **started** on
     its own (the rolling restart left it up) — but still `flyctl status` and confirm a
     `[poller] heartbeat` after, because the build-path deploy's "leaves it stopped"
-    warning above is the safe assumption.
+    warning above is the safe assumption. **Re-confirmed 2026-07-23** shipping the SMS
+    link + auto-cart session-guard changes (tag `ehealth-987bbfd`): same flow worked
+    end-to-end, primary came back `started`, `worker_heartbeat` fresh within seconds.
+    One time-saver learned that run: `docker build`'s final "exporting layers" step for
+    the large `node_modules` layer easily exceeds a 2-min foreground timeout — run the
+    build (and the push) in the background and poll, rather than assuming a hang.
 - **No secrets store yet:** env vars are stored in the environment config as plaintext,
   visible to anyone who can edit it. Keep the Fly token deploy-scoped, prefer a
   least-privilege Supabase role over the full service-role key where practical, and
