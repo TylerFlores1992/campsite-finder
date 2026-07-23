@@ -107,10 +107,20 @@ export async function GET() {
   //    (docs: a non-null error is NOT failure), so a source that never synced or
   //    synced zero shows here. Warn-level: catalog staleness degrades search, not
   //    the alert path the canaries cover.
+  //
+  //    Only consider FINISHED syncs (finished_at IS NOT NULL). An in-flight or
+  //    interrupted sync leaves a row with finished_at=null and facilities_synced=null
+  //    — that's "no completion record", NOT a completed-but-empty run, and reading it
+  //    as "synced 0 facilities" produced recurring false warns whenever an orphaned
+  //    row happened to be a source's newest (e.g. a catalog sync killed mid-run by a
+  //    worker restart). Basing freshness on the last COMPLETED sync also still catches
+  //    a source whose syncs stop finishing: its latest finished row simply ages past
+  //    SYNC_STALE_MS and trips the stale branch below.
   try {
     const syncs = await query<{ source: string; finished_at: string | null; facilities_synced: number | null }>(
       `SELECT DISTINCT ON (source) source, finished_at::text, facilities_synced
-         FROM sync_log ORDER BY source, started_at DESC`
+         FROM sync_log WHERE finished_at IS NOT NULL
+         ORDER BY source, finished_at DESC`
     );
     let staleSources = 0;
     let zeroSources = 0;
