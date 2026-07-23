@@ -21,6 +21,8 @@ export default function ConnectPage() {
   // tap gesture, so iOS/Android open the keyboard), and we forward what's typed.
   const kbRef = useRef<HTMLInputElement>(null);
   const kbPrevRef = useRef(''); // last seen value of the hidden input, for delta diffing
+  const loginTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // form-submit safety timeout
+  const clearLoginTimer = () => { if (loginTimerRef.current) { clearTimeout(loginTimerRef.current); loginTimerRef.current = null; } };
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState('');
   // 'form' = our own credential fields (primary); 'stream' = fall back to the live
@@ -69,10 +71,10 @@ export default function ConnectPage() {
       try { m = JSON.parse(ev.data); } catch { return; }
       if (m.t === 'ready' || m.t === 'live') setStatus('live');
       else if (m.t === 'frame' && m.data) drawFrame(m.data, m.w || 1000, m.h || 760);
-      else if (m.t === 'done') { setStatus('done'); ws.close(); }
+      else if (m.t === 'done') { clearLoginTimer(); setStatus('done'); ws.close(); }
       // Broker couldn't finish from the credentials alone — reveal the live window.
-      else if (m.t === 'manual') { setSubmitting(false); setMode('stream'); setNote(m.message || 'Please finish signing in in the window below.'); }
-      else if (m.t === 'error') { setStatus('error'); setError(m.message || 'The sign-in service reported an error.'); }
+      else if (m.t === 'manual') { clearLoginTimer(); setSubmitting(false); setMode('stream'); setNote(m.message || 'Please finish signing in in the window below.'); }
+      else if (m.t === 'error') { clearLoginTimer(); setStatus('error'); setError(m.message || 'The sign-in service reported an error.'); }
     };
   }, []);
 
@@ -84,7 +86,7 @@ export default function ConnectPage() {
     img.src = `data:image/jpeg;base64,${b64}`;
   }
 
-  useEffect(() => () => wsRef.current?.close(), []);
+  useEffect(() => () => { wsRef.current?.close(); clearLoginTimer(); }, []);
 
   // Lock zoom while on this page. Pinch/double-tap zoom shifts the visual viewport,
   // which threw off the tap→page coordinate math (taps landed in the wrong spot —
@@ -186,7 +188,20 @@ export default function ConnectPage() {
             rec.gov. Hidden once we fall back to the streamed window. */}
         {status === 'live' && mode === 'form' && (
           <form
-            onSubmit={(e) => { e.preventDefault(); if (!email || !password) return; setSubmitting(true); send({ t: 'login', email, password }); }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!email || !password) return;
+              setSubmitting(true);
+              send({ t: 'login', email, password });
+              // Safety net: if the mini-PC broker doesn't answer (e.g. it's on older code
+              // that doesn't know the 'login' message), don't hang — fall back to the window.
+              clearLoginTimer();
+              loginTimerRef.current = setTimeout(() => {
+                setSubmitting(false);
+                setMode('stream');
+                setNote('Automatic sign-in didn’t respond — please finish in the window below.');
+              }, 40000);
+            }}
             className="mt-6 space-y-3 rounded-2xl border border-gray-200 bg-white p-5"
           >
             <label className="block text-sm font-medium text-gray-700">
@@ -224,6 +239,13 @@ export default function ConnectPage() {
             <p className="text-center text-[11px] text-gray-400">
               Sent encrypted to your CampHawk mini-PC, used once, never stored.
             </p>
+            <button
+              type="button"
+              onClick={() => { clearLoginTimer(); setSubmitting(false); setMode('stream'); }}
+              className="block w-full text-center text-xs text-gray-400 hover:text-gray-600 hover:underline"
+            >
+              Trouble signing in? Use the recreation.gov window instead
+            </button>
           </form>
         )}
 
