@@ -58,7 +58,7 @@ export default function ConnectPage() {
       ws = new WebSocket(brokerUrl);
     } catch {
       setStatus('error');
-      setError('Could not reach the sign-in service. Is the mini PC online?');
+      setError('Could not reach the sign-in service. Is your CampHawk server online?');
       return;
     }
     wsRef.current = ws;
@@ -159,8 +159,8 @@ export default function ConnectPage() {
         </div>
         <p className="mt-1 text-sm text-gray-500">
           Sign in so CampHawk can add openings to your cart. Your recreation.gov email and password
-          are sent over an encrypted connection to your own CampHawk mini-PC and saved there,
-          encrypted, so auto-cart stays connected — <strong>never sent to CampHawk&apos;s servers</strong>.
+          are sent over an encrypted connection to your own CampHawk server and saved there,
+          encrypted, so auto-cart stays connected — <strong>never uploaded to CampHawk&apos;s cloud</strong>.
         </p>
 
         {status === 'idle' && (
@@ -240,8 +240,8 @@ export default function ConnectPage() {
               />
               <span>
                 <strong>Save my login to keep auto-cart connected (required).</strong> It&apos;s
-                stored, encrypted, on your own CampHawk mini-PC so the bot can re-connect on its own
-                if the session drops. Never sent to CampHawk&apos;s servers.
+                stored, encrypted, on your own CampHawk server so the bot can re-connect on its own
+                if the session drops. Never uploaded to CampHawk&apos;s cloud.
               </span>
             </label>
             <button
@@ -257,7 +257,7 @@ export default function ConnectPage() {
               </p>
             )}
             <p className="text-center text-[11px] text-gray-400">
-              Saved encrypted on your own mini-PC — never sent to CampHawk&apos;s servers.
+              Saved encrypted on your own CampHawk server — never uploaded to CampHawk&apos;s cloud.
             </p>
             <button
               type="button"
