@@ -51,6 +51,20 @@ const PRESETS: Record<string, Preset> = {
     // The real bar sits on the cream hero over a max-width container.
     frame: 'max-w-3xl w-full mx-auto',
   },
+  'favorites-panel': {
+    label: 'FavoritesPanel (subscriber saved-campgrounds slide-over)',
+    // Stub fetch so the panel renders populated instead of its empty state.
+    entry: `import FavoritesPanel from '@/components/FavoritesPanel';
+      if (typeof window !== 'undefined') {
+        window.fetch = async () => ({ ok: true, json: async () => ({ favorites: [
+          { id: '1', name: 'Kirk Creek Campground', city: 'Big Sur', state: 'CA', latitude: 0, longitude: 0, source: 'ridb', reservations_url: null },
+          { id: '2', name: 'Wrights Beach', city: 'Bodega Bay', state: 'CA', latitude: 0, longitude: 0, source: 'reservecalifornia', reservations_url: null },
+          { id: '3', name: 'Point Reyes Hike-In', city: 'Point Reyes', state: 'CA', latitude: 0, longitude: 0, source: 'ridb', reservations_url: null },
+        ] }) });
+      }
+      export const node = <FavoritesPanel onClose={() => {}} onSelect={() => {}} />;`,
+    frame: 'w-full h-full',
+  },
 };
 
 function parseArgs() {
