@@ -66,9 +66,9 @@ export default function AutoCartHelpPage() {
             </Step>
             <Step n={3} title="Sign in to recreation.gov once">
               You enter your recreation.gov email and password once. They&apos;re saved,{' '}
-              <strong>encrypted, on your own CampHawk mini-PC</strong> so auto-cart stays connected —
+              <strong>encrypted, on your own CampHawk server</strong> so auto-cart stays connected —
               and re-connects on its own if the session drops.{' '}
-              <strong>Never sent to CampHawk&apos;s servers.</strong>
+              <strong>Never uploaded to CampHawk&apos;s cloud.</strong>
             </Step>
             <Step n={4} title="You're done">
               From now on, when a watched site opens, it&apos;s added to your cart within seconds.
