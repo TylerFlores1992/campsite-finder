@@ -269,10 +269,26 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > > fires** — `/api/health/status` shows `worker.heartbeat: ok` with ALL `detect:*`
 > > **timing out** (distinct from the full wedge, where the heartbeat freezes too).
 > > Alerting is silently dead; only a manual **`flyctl machine restart`** clears it (the
-> > fresh process drains the backlog, rec.gov drops back to fast 429s). Durable fix is
-> > tracked in **issue #14**: shorter rec.gov timeout, cap concurrent rec.gov in-flight,
-> > trip the breaker on timeouts (not just 429s), and key the watchdog off a recent
-> > *successful external fetch* rather than just the heartbeat.
+> > fresh process drains the backlog, rec.gov drops back to fast 429s).
+> >
+> > **Partially mitigated 2026-07-22 (commit `dfd4541`) — two of the four issue-#14
+> > items shipped:** (1) the six per-source fetch phases now run **concurrently**
+> > (`Promise.all` in `worker/poller.ts cycle()`) instead of sequentially, so a
+> > slow/throttled rec.gov phase no longer head-of-line-blocks RC/RA/GTC/TN-SC —
+> > cycle time is `max(phase)`, not `sum(phase)`, and the other sources keep detecting
+> > at full speed. (2) A process-local **rec.gov throttle breaker** in
+> > `src/lib/availability/recgov.ts` OPENs after `RECGOV_BREAKER_TRIP` (default 3)
+> > consecutive throttle failures — counting **both 429 AND timeout** (issue-#14 item
+> > "trip the breaker on timeouts") — and short-circuits `getAvailabilityFromRecGov`
+> > to empty (no network, no 10s stall) for `RECGOV_BREAKER_COOLDOWN_MS` (default 60s),
+> > with a half-open probe that closes it on the next success. Empty during cooldown is
+> > the same result the storm already produced, so detection loses nothing; the cycle
+> > stays fast and we stop feeding the ban. Per-process state, so it only trips in the
+> > throttled Fly worker, never Vercel search on its own IP. **Still open in issue #14:**
+> > shorten the rec.gov request timeout (still 10s), and key the watchdog off a recent
+> > *successful external fetch* rather than just the heartbeat (so the cascade — fresh
+> > heartbeat, all detects timing out — actually trips the self-heal). The breaker
+> > blunts the cascade but a hard 10s-timeout storm can still outpace a 60s cooldown.
 >
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
@@ -715,6 +731,13 @@ Cancellation-likelihood (feature E, on the **Fly worker**, all non-secret with
 in-code defaults — override only to tune): `OBSERVATION_INTERVAL_MS` (per-window
 record throttle, 1h), `OBSERVATION_RETENTION_DAYS` (90), `PROBE_INTERVAL_MS`
 (roster cadence, 1h), `PROBE_LEAD_DAYS` (`14,45`), `PROBE_NIGHTS` (2).
+Worker resilience tunables (on the **Fly worker**, all non-secret with in-code
+defaults): `WATCHDOG_STALE_MS` (self-heal `process.exit(1)` when no heartbeat lands
+for this long, 4 min); rec.gov throttle breaker `RECGOV_BREAKER_TRIP` (consecutive
+429/timeout failures that OPEN the breaker, 3) and `RECGOV_BREAKER_COOLDOWN_MS`
+(short-circuit-to-empty window before a half-open probe, 60s); `RECGOV_CONCURRENCY`
+(per-provider fanout bound within a phase — note the six per-source phases now run
+concurrently as of `dfd4541`, so this bounds each provider, not the whole cycle).
 The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 `BROKER_PORT`, `POLL_MS`).
 
