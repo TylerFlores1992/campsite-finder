@@ -19,6 +19,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyConnectToken } from './token.mjs';
 import { recgovLoginState } from './session.mjs';
+import { openLoginModalAndFill } from './recgov-login.mjs';
+import { saveCreds } from './credstore.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -175,54 +177,39 @@ async function startSession(userId, ws, sendJson) {
   const deadline = setTimeout(() => close('timed out'), LOGIN_TIMEOUT_MS);
   deadline.unref?.();
 
-  // Type the user's credentials into rec.gov's sign-in form (the primary path — the
-  // viewer sends them from its own fields instead of tapping the streamed page).
-  // Selectors are best-effort; on ANY problem (form not found, wrong password, CAPTCHA/
+  // Type the user's credentials into rec.gov's login modal (the primary path — the
+  // viewer sends them from its own fields instead of tapping the streamed page). Uses
+  // the shared login helper. On ANY problem (form not found, wrong password, CAPTCHA/
   // 2FA, or login just doesn't land) we tell the viewer to fall back to the live window
-  // ('manual'), where the screencast is already running for them to finish by hand. On
-  // success the existing login-detection loop writes the ready-marker and sends 'done'.
-  const EMAIL_SEL = 'input[type="email"], input[name="email"], input[autocomplete="username"], input[autocomplete="email"], input#email';
-  const PW_SEL = 'input[type="password"], input[name="password"], input[autocomplete="current-password"], input#password';
-  const doLogin = async (email, password) => {
+  // ('manual'), where the screencast is already running to finish by hand. On success
+  // the existing login-detection loop writes the ready-marker and sends 'done' — and if
+  // `remember` was set, we persist the credentials ENCRYPTED so the bot can auto-relogin.
+  const doLogin = async (email, password, remember) => {
     if (done || closed || !email || !password) return;
     try {
-      // Open the login modal from the header "Sign Up / Log In" (there's no form on
-      // the page itself). Try button role, then link role, then a text match.
-      let opener = page.getByRole('button', { name: /log ?in/i }).first();
-      if (!(await opener.isVisible().catch(() => false))) opener = page.getByRole('link', { name: /log ?in/i }).first();
-      if (!(await opener.isVisible().catch(() => false))) opener = page.locator('button:has-text("Log In"), a:has-text("Log In")').first();
-      if (await opener.isVisible().catch(() => false)) { await opener.click().catch(() => {}); await page.waitForTimeout(1500); }
-
-      const em = page.locator(EMAIL_SEL).first();
-      await em.waitFor({ state: 'visible', timeout: 8000 });
-      await em.fill(email);
-      let pw = page.locator(PW_SEL).first();
-      if (!(await pw.isVisible().catch(() => false))) {
-        // Two-step forms: submit the email, then the password field appears.
-        await page.keyboard.press('Enter').catch(() => {});
-        await page.waitForTimeout(1200);
-        pw = page.locator(PW_SEL).first();
-        await pw.waitFor({ state: 'visible', timeout: 8000 });
-      }
-      await pw.fill(password);
-      // Submit from INSIDE the modal/form (not the header "Log In", which would just
-      // toggle the modal); fall back to Enter in the password field.
-      const submit = page.locator('[role="dialog"] button:has-text("Log In"), [role="dialog"] button:has-text("Sign In"), form button[type="submit"]').first();
-      if (await submit.isVisible().catch(() => false)) await submit.click().catch(() => {});
-      else await pw.press('Enter').catch(() => {});
+      await openLoginModalAndFill(page, email, password);
     } catch {
       sendJson({ t: 'manual', message: 'Please finish signing in in the window below.' });
       return;
     }
-    // The detection loop flips `done` on success. Give it ~15s; otherwise hand off.
-    for (let i = 0; i < 15 && !done && !closed; i++) await new Promise((r) => setTimeout(r, 1000));
+    // Wait for a confirmed logged-in state; store creds on success, else hand off.
+    for (let i = 0; i < 15 && !done && !closed; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      if (await recgovLoggedIn(ctx).catch(() => false)) {
+        if (remember) {
+          try { saveCreds(profileDir(userId), email, password); log(`🔒 saved encrypted login for ${userId} (auto-relogin enabled)`); }
+          catch (e) { log(`  couldn't save login for ${userId}: ${e.message}`); }
+        }
+        return; // detection loop writes the marker + sends 'done'
+      }
+    }
     if (!done && !closed) sendJson({ t: 'manual', message: "Couldn't finish sign-in automatically — please complete it in the window below." });
   };
 
   // Map viewer input (canvas-space) onto the real page.
   const onInput = async (m) => {
     if (done || closed) return;
-    if (m.t === 'login') { await doLogin(m.email, m.password); return; }
+    if (m.t === 'login') { await doLogin(m.email, m.password, m.remember); return; }
     const px = Math.round((m.x ?? 0) * dims.w);
     const py = Math.round((m.y ?? 0) * dims.h);
     switch (m.t) {
