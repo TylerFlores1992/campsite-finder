@@ -181,31 +181,34 @@ async function dispatchSms(payload: NotificationPayload, links: ActionLinks): Pr
   const phone = await getUserPhone(payload.userId);
   if (!phone) return; // no phone on file — email-only user
 
-  // SMS is kept to ONE segment: no emoji (emoji forces UCS-2 at 70 chars/seg), URLs
-  // shown scheme-less (phones auto-linkify bare domains), and the long booking URL
-  // routed through a short camphawk.app/b/<token> redirect. The per-message "Reply
-  // STOP" is dropped — the Twilio Messaging Service's Advanced Opt-Out handles STOP/
-  // HELP and the initial disclosure. Mute + Stop are short /w/ links.
-  const strip = (u: string) => u.replace(/^https?:\/\/(www\.)?/, '');
+  // URLs keep their `https://` scheme so every SMS client renders them as tappable
+  // links. We previously stripped the scheme to save 8 chars/link and stay in one
+  // segment, relying on clients to auto-linkify the bare domain — but that's
+  // unreliable (a bare `camphawk.app/b/<token>` with a path is NOT linkified on many
+  // Android/RCS clients), so alerts arrived with dead links. Clickability wins; the
+  // extra scheme may spill a link-heavy alert into a second segment, which is a fine
+  // trade for a working CTA. The long booking URL is still routed through a short
+  // camphawk.app/b/<token> redirect. The per-message "Reply STOP" is dropped — the
+  // Twilio Messaging Service's Advanced Opt-Out handles STOP/HELP; Mute + Stop are /w/ links.
   const site = payload.campsiteName ? ` Site ${payload.campsiteName}` : '';
   const name = payload.campgroundName.replace(/\s+(campground|cg)\.?$/i, '');
-  const muteTxt = links.muteUrl && links.siteName ? ` Mute ${links.siteName}: ${strip(links.muteUrl)}` : '';
-  const stopTxt = links.stopUrl ? ` Stop: ${strip(links.stopUrl)}` : '';
+  const muteTxt = links.muteUrl && links.siteName ? ` Mute ${links.siteName}: ${links.muteUrl}` : '';
+  const stopTxt = links.stopUrl ? ` Stop: ${links.stopUrl}` : '';
 
   try {
     let body: string;
     if (payload.kind === 'carted') {
-      body = `CampHawk: ${name}${site} is in your cart — check out now, held ~15 min: recreation.gov/cart`;
+      body = `CampHawk: ${name}${site} is in your cart — check out now, held ~15 min: https://www.recreation.gov/cart`;
     } else if (payload.kind === 'coming_soon') {
       body = `CampHawk: ${name}${site} was just cancelled, opens ${formatReleaseTime(payload.availableAt, true)}. We'll text when it's bookable.${muteTxt}${stopTxt}`;
     } else {
       const dates = payload.availableDates.slice(0, 3).join(', ');
       const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3}` : '';
       // Short-link the booking URL (fragment stripped — the #camphawk extension hint
-      // does nothing on a phone). Falls back to the scheme-less full URL if minting fails.
+      // does nothing on a phone). Falls back to the full URL if minting fails.
       const full = payload.bookingUrl.split('#')[0];
       const tok = await mintBookingToken(payload.watchId, full, payload.campsiteId ?? null);
-      const bookTxt = tok ? strip(bookLink(tok)) : strip(full);
+      const bookTxt = tok ? bookLink(tok) : full;
       body = `CampHawk: ${name}${site} open ${dates}${more}. Book: ${bookTxt}${muteTxt}${stopTxt}`;
     }
     await sendSms({ to: phone, body });
