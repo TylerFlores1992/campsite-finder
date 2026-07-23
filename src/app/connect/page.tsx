@@ -30,6 +30,7 @@ export default function ConnectPage() {
   const [mode, setMode] = useState<'form' | 'stream'>('form');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [note, setNote] = useState('');
 
@@ -192,7 +193,7 @@ export default function ConnectPage() {
               e.preventDefault();
               if (!email || !password) return;
               setSubmitting(true);
-              send({ t: 'login', email, password });
+              send({ t: 'login', email, password, remember });
               // Safety net: if the mini-PC broker doesn't answer (e.g. it's on older code
               // that doesn't know the 'login' message), don't hang — fall back to the window.
               clearLoginTimer();
@@ -228,6 +229,19 @@ export default function ConnectPage() {
                 disabled={submitting}
                 className="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-60"
               />
+            </label>
+            <label className="flex items-start gap-2 text-xs text-gray-600">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+                disabled={submitting}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+              />
+              <span>
+                Keep me signed in — save my login on my mini-PC (encrypted) so it can
+                re-connect automatically if the session drops. Never sent to CampHawk.
+              </span>
             </label>
             <button
               type="submit"

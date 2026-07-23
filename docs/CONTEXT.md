@@ -707,6 +707,32 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
 > + a missed one) on top of `autocart_connected`. A stale or NULL stamp fails open to
 > the normal alert lane — same contract as the heartbeat. Shrinking the keepalive to
 > 30m bounds the worst-case swallow window; this guard closes it to near-zero.
+>
+> **Session keeps dying despite the 30m keepalive → saved-login auto-relogin
+> (BUILT 2026-07-23).** When the keepalive confirms the session died, the bot now
+> re-logs-in on its own from the user's saved credentials instead of forcing a manual
+> reconnect. How it's wired, and the guardrails:
+> - **Opt-in** via a "Keep me signed in" checkbox on `/connect`; the credentials ride
+>   the same encrypted WebSocket to the mini-PC, and `broker.mjs` persists them **only
+>   after a confirmed login**.
+> - **Encryption** (`credstore.mjs`): Windows **DPAPI, CurrentUser scope** (PowerShell
+>   `ProtectedData`; plaintext piped over stdin, never a command line) — decryptable
+>   only by the same Windows user on the same box, no key to manage. Non-Windows falls
+>   back to AES-256-GCM with a 0600 key (weaker, dev only). Stored in the git-ignored
+>   `profiles/<user>/` dir; **never sent to CampHawk servers**.
+> - **Auto-relogin** (`recgov-login.mjs` `attemptLoginWithCreds`, shared with the
+>   broker): opens the homepage → login modal → fills → waits for a confirmed 'in'.
+> - **CAPTCHA/2FA/wrong-password fallback:** any failure → `connected=false` (so the
+>   `autocart_verified_at` guard + `/api/health/status` surface it, never silent) and
+>   the user is asked to reconnect. Failures are counted; after **2** consecutive fails
+>   the saved login is **purged** (`deleteCreds`) to avoid hammering rec.gov / lockout.
+> - **Staleness:** the same 30m keepalive that catches a dead session drives the
+>   relogin, so a changed password / expired creds get detected and cleared, not left
+>   silently broken.
+> - **Risk note kept for the record:** a stored password is a reusable master key —
+>   bigger blast radius than the scoped, expiring session cookie the profile already
+>   holds — and likely against rec.gov ToS. It's owner-only and local-only, but that's
+>   the trade being made.
 
 ### The mini-PC bot
 

@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 import { cartRecGov } from './recgov.mjs';
 import { noteReserveCalifornia } from './reservecalifornia.mjs';
 import { recgovLoginState } from './session.mjs';
+import { attemptLoginWithCreds } from './recgov-login.mjs';
+import { hasCreds, loadCreds, deleteCreds, bumpReloginFails, resetReloginFails } from './credstore.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -246,6 +248,28 @@ async function keepSessionsWarm() {
         await reportConnected(user.userId, true);
         log(`♻ ${who}: rec.gov session kept warm`);
       } else if (state === 'out') {
+        // Session died. If the user saved their login, try to re-login automatically
+        // instead of forcing a manual reconnect.
+        const dir = profileDir(user.userId);
+        if (hasCreds(dir)) {
+          const creds = loadCreds(dir);
+          const ok = creds
+            ? await withBrowser(user.userId, (ctx) => attemptLoginWithCreds(ctx, creds.email, creds.password), { headless: false }).catch(() => false)
+            : false;
+          if (ok) {
+            fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
+            await reportConnected(user.userId, true);
+            resetReloginFails(dir);
+            log(`🔓 ${who}: session had expired — auto-relogin from saved login succeeded, session restored`);
+            continue;
+          }
+          // Failed: wrong password, or a CAPTCHA/2FA we can't pass. Cap retries so we
+          // don't hammer rec.gov (lockout risk) — after 2 fails, purge the saved login
+          // and fall through to the normal "reconnect" path.
+          const fails = bumpReloginFails(dir);
+          if (fails >= 2) { deleteCreds(dir); log(`  ${who}: saved login failed ${fails}× (bad password or CAPTCHA/2FA) — cleared it; manual reconnect needed`); }
+          else log(`  ${who}: auto-relogin failed (attempt ${fails}) — will retry next cycle or on manual reconnect`);
+        }
         try { fs.unlinkSync(readyMarker(user.userId)); } catch {}
         await reportConnected(user.userId, false);
         log(`⚠ ${who}: rec.gov session expired (idle, confirmed twice) — cleared login; they'll be asked to reconnect.`);
