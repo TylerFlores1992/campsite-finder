@@ -150,18 +150,17 @@ export default function ConnectPage() {
           <div className={status === 'live' ? 'mt-6' : 'hidden'}>
             <p className="mb-2 text-xs text-gray-400">Tap the window and type as usual — on phones the keyboard opens when you tap a text field. Sign in and it finishes on its own.</p>
             <div className="relative">
+              {/* Canvas only DISPLAYS the stream — it can't hold a mobile keyboard. */}
               <canvas
                 ref={canvasRef}
-                onPointerMove={(e) => status === 'live' && send({ t: 'move', ...rel(e) })}
-                onPointerDown={(e) => { kbRef.current?.focus(); send({ t: 'down', ...rel(e), button: btn(e.button) }); }}
-                onPointerUp={(e) => send({ t: 'up', ...rel(e), button: btn(e.button) })}
-                onWheel={(e) => send({ t: 'wheel', dx: e.deltaX, dy: e.deltaY })}
-                onContextMenu={(e) => e.preventDefault()}
-                className="w-full cursor-crosshair rounded-xl border border-gray-300 bg-white shadow-sm outline-none"
+                className="pointer-events-none w-full rounded-xl border border-gray-300 bg-white shadow-sm"
               />
-              {/* Off-screen-ish but focusable (not display:none, or iOS won't show the
-                  keyboard). Focused synchronously on canvas tap. Empty + preventDefault
-                  so each keystroke is a clean delta forwarded to the remote page. */}
+              {/* A transparent, full-size text input overlaid on the stream. It IS the
+                  tap target, so focus — and the phone's on-screen keyboard — never leaves
+                  it (the old off-screen input lost focus on touch-end, so the keyboard
+                  flickered away). `touch-none` stops the browser treating a tap/drag as a
+                  scroll (which was also blurring it). Kept empty + preventDefault so each
+                  keystroke is a clean delta forwarded to the remote page. */}
               <input
                 ref={kbRef}
                 type="text"
@@ -170,11 +169,15 @@ export default function ConnectPage() {
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
-                aria-hidden="true"
-                tabIndex={-1}
+                aria-label="recreation.gov sign-in"
+                onPointerMove={(e) => status === 'live' && send({ t: 'move', ...rel(e) })}
+                onPointerDown={(e) => { kbRef.current?.focus(); send({ t: 'down', ...rel(e), button: btn(e.button) }); }}
+                onPointerUp={(e) => send({ t: 'up', ...rel(e), button: btn(e.button) })}
+                onWheel={(e) => send({ t: 'wheel', dx: e.deltaX, dy: e.deltaY })}
                 onKeyDown={onKeyDown}
                 onBeforeInput={onBeforeInput}
-                className="absolute bottom-1 left-1 h-px w-px border-0 bg-transparent p-0 text-transparent opacity-0 outline-none"
+                onContextMenu={(e) => e.preventDefault()}
+                className="absolute inset-0 h-full w-full cursor-crosshair touch-none rounded-xl bg-transparent text-transparent caret-transparent opacity-0 outline-none"
               />
             </div>
           </div>
