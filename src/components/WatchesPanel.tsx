@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { X, Bell, Trash2, Loader2, CalendarDays, TrendingUp, SlidersHorizontal } from 'lucide-react';
+import { X, Bell, Trash2, Loader2, CalendarDays, SlidersHorizontal } from 'lucide-react';
 import SmsOptIn from './SmsOptIn';
 import AutoCartToggle from './AutoCartToggle';
 
@@ -139,17 +139,9 @@ export default function WatchesPanel({ onClose }: WatchesPanelProps) {
                     ✓ Alert sent {new Date(w.notification_sent_at).toLocaleDateString()}
                   </p>
                 )}
-                {w.likelihood && (
-                  <p
-                    className="text-xs text-gray-500 mt-1.5 flex items-center gap-1"
-                    title={`This site had a bookable opening on ~${Math.round(w.likelihood.rate * 100)}% of recent checks for stays around this far out (${w.likelihood.samples} checks). Past openings don't guarantee future ones.`}
-                  >
-                    <TrendingUp size={11} className="text-green-600 shrink-0" />
-                    <span>
-                      ~<strong className="text-gray-700">{Math.round(w.likelihood.rate * 100)}%</strong> chance for your dates
-                    </span>
-                  </p>
-                )}
+                {/* Per-watch cancellation-likelihood "% chance for your dates" is hidden
+                    for now: with limited history many watches read a discouraging 0%.
+                    The data is still computed (w.likelihood) so this can be restored. */}
                 {(w.muted_site_ids?.length ?? 0) > 0 && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1 text-xs text-gray-500">
                     <span>Muted:</span>
