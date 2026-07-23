@@ -238,6 +238,12 @@ async function keepSessionsWarm() {
         return await recgovLoginState(ctx); // confirm before we destroy anything
       }, { headless: false });
       if (state === 'in') {
+        // Refresh the server-side freshness marker (autocart_verified_at) so the
+        // poller keeps this user in the auto-cart lane. Without a recent stamp the
+        // poller fails open to normal alerts — which is what we want if a keepalive
+        // ever stops landing (dead box / network drop), but on a healthy keepalive
+        // we must re-assert the session is live.
+        await reportConnected(user.userId, true);
         log(`♻ ${who}: rec.gov session kept warm`);
       } else if (state === 'out') {
         try { fs.unlinkSync(readyMarker(user.userId)); } catch {}

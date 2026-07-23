@@ -662,6 +662,17 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
 > alerts) is the acceptable failure, a silent miss is not. So "a re-verify covers an
 > offline bot" was wrong twice over: the 35s gamble loses hot sites, and the heartbeat —
 > not the re-verify — is what now catches an offline bot.
+>
+> **Second fail-open layer — session freshness (`autocart_verified_at`, migration 022).**
+> The heartbeat proves the *bot machine* is alive, but not that the *rec.gov session*
+> is. A session can silently die between keepalives while `autocart_connected` still
+> reads true, so an opening in that gap still gets swallowed. Fix: the bot stamps
+> `users.autocart_verified_at = NOW()` on every sign-in and every keepalive "kept warm"
+> (via `POST /api/auto-cart/enrollment` connected=true), and `isAutocartLane` requires
+> that stamp to be within `AUTOCART_SESSION_STALE_MS` (default 45m ≈ one 30m keepalive
+> + a missed one) on top of `autocart_connected`. A stale or NULL stamp fails open to
+> the normal alert lane — same contract as the heartbeat. Shrinking the keepalive to
+> 30m bounds the worst-case swallow window; this guard closes it to near-zero.
 
 ### The mini-PC bot
 
