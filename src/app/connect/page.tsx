@@ -158,9 +158,9 @@ export default function ConnectPage() {
           <h1 className="font-display text-xl font-bold">Connect recreation.gov</h1>
         </div>
         <p className="mt-1 text-sm text-gray-500">
-          Sign in once so CampHawk can add openings to your cart. Your recreation.gov email and
-          password are sent over an encrypted connection to your own CampHawk mini-PC, used once to
-          sign in, and never stored.
+          Sign in so CampHawk can add openings to your cart. Your recreation.gov email and password
+          are sent over an encrypted connection to your own CampHawk mini-PC and saved there,
+          encrypted, so auto-cart stays connected — <strong>never sent to CampHawk&apos;s servers</strong>.
         </p>
 
         {status === 'idle' && (
@@ -239,19 +239,25 @@ export default function ConnectPage() {
                 className="mt-0.5 h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
               />
               <span>
-                Keep me signed in — save my login on my mini-PC (encrypted) so it can
-                re-connect automatically if the session drops. Never sent to CampHawk.
+                <strong>Save my login to keep auto-cart connected (required).</strong> It&apos;s
+                stored, encrypted, on your own CampHawk mini-PC so the bot can re-connect on its own
+                if the session drops. Never sent to CampHawk&apos;s servers.
               </span>
             </label>
             <button
               type="submit"
-              disabled={submitting || !email || !password}
+              disabled={submitting || !email || !password || !remember}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 px-5 py-2.5 font-display text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
             >
               {submitting ? <><Loader2 size={15} className="animate-spin" /> Signing you in…</> : 'Sign in'}
             </button>
+            {!remember && (
+              <p className="text-center text-[11px] text-amber-700">
+                Auto-cart needs your saved login to stay connected — check the box above to continue.
+              </p>
+            )}
             <p className="text-center text-[11px] text-gray-400">
-              Sent encrypted to your CampHawk mini-PC, used once, never stored.
+              Saved encrypted on your own mini-PC — never sent to CampHawk&apos;s servers.
             </p>
             <button
               type="button"
