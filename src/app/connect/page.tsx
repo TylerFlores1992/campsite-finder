@@ -75,9 +75,28 @@ export default function ConnectPage() {
 
   useEffect(() => () => wsRef.current?.close(), []);
 
-  // Map a pointer event to 0..1 canvas-relative coords the broker scales to the page.
+  // Lock zoom while on this page. Pinch/double-tap zoom shifts the visual viewport,
+  // which threw off the tap→page coordinate math (taps landed in the wrong spot —
+  // the "acts odd when you zoom" bug). Restored on leave so other pages can zoom.
+  useEffect(() => {
+    const head = document.head;
+    const existing = head.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
+    const prev = existing?.content ?? null;
+    const meta = existing ?? document.createElement('meta');
+    meta.name = 'viewport';
+    meta.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
+    if (!existing) head.appendChild(meta);
+    return () => {
+      if (!existing) meta.remove();
+      else if (prev !== null) meta.content = prev;
+    };
+  }, []);
+
+  // Map a pointer event to 0..1 coords of the tap surface (the overlay itself), which
+  // the broker scales onto the remote page. Using the event's own target rect keeps
+  // this accurate regardless of layout.
   const rel = (e: React.PointerEvent | React.MouseEvent | React.WheelEvent) => {
-    const rect = canvasRef.current!.getBoundingClientRect();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     return {
       x: Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
       y: Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)),
