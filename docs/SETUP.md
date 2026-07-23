@@ -140,7 +140,8 @@ extension/          Optional Chrome extension ("CampHawk Quick Cart") that reads
                     #camphawk / #camphawk-rc fragments in alert links to autofill dates
                     and add to cart, in the user's own browser. Desktop only —
                     extensions don't run in mobile Chrome. Ships OFF by default.
-scripts/auto-cart-bot/  Mini-PC Playwright bot + remote sign-in broker
+scripts/auto-cart-bot/  Mini-PC Playwright bot + sign-in broker (credential-form login
+                    via recgov-login.mjs; encrypted saved creds via credstore.mjs)
 scripts/            run-sync*.ts catalog syncs; e2e-gtc-alert.mts (live alert test —
                     SENDS REAL EMAIL/SMS)
 ```

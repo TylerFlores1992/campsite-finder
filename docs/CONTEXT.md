@@ -752,15 +752,33 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
   Management "allow the computer to turn off this device" OFF, sleep = Never, or wire
   to ethernet.
 - `broker.mjs` — a websocket server (exposed via a Cloudflare tunnel at
-  broker.camphawk.app) that lets a user do the one-time rec.gov sign-in remotely from
-  any device (streams the login page via CDP). No passwords ever touch our servers.
+  broker.camphawk.app) that runs the one-time rec.gov sign-in on the mini-PC on the
+  user's behalf. **Primary path:** the user types their rec.gov email + password into
+  *our own credential form* on `/connect`; the broker receives them over the encrypted
+  socket, drives the rec.gov login **modal** (`openLoginModalAndFill`), and on a
+  confirmed login persists them encrypted via `credstore.mjs` (see the saved-login
+  auto-relogin note above). **Fallback path:** if the form login can't complete
+  (CAPTCHA/2FA), it still streams the live rec.gov page via CDP so the user can finish
+  the sign-in by hand. Passwords are stored **encrypted on the mini-PC only** and never
+  reach CampHawk's cloud. (Older docs said "no passwords ever touch our servers" — still
+  true of *our servers*, but the mini-PC now stores them locally by design.)
 - `recgov.mjs` — the actual add-to-cart, using **real Playwright mouse clicks**.
+- `recgov-login.mjs` — shared rec.gov login helpers: `openLoginModalAndFill` (opens the
+  header modal, fills, submits) and `attemptLoginWithCreds` (used by the auto-relogin).
+- `credstore.mjs` — encrypted local credential store (DPAPI / AES-256-GCM fallback);
+  save/load/has/delete + the consecutive-relogin-fail counter. Local-only, git-ignored.
 - `session.mjs` — reliable login detection.
 - Enrollment/connection state: `users.autocart_enabled` + `users.autocart_connected`.
   The Watches toggle shows "paused — reconnect" when enabled but not connected.
 
 ### Hard-won gotchas (these cost real debugging time)
 
+- **rec.gov has no `/sign-in` page — login is a MODAL.** Navigating straight to a
+  sign-in URL 404s ("Please Bear With Us"). The only way in is to load the homepage
+  (`https://www.recreation.gov/`) and open the header **"Log In"** dialog, then fill the
+  `[role=dialog]` form. Both `broker.mjs` (form login) and `recgov-login.mjs`
+  (`openLoginModalAndFill` / `attemptLoginWithCreds`, used by the auto-relogin) do this;
+  don't reintroduce a `/sign-in` goto.
 - **Must run HEADED — *everywhere* that touches rec.gov, not just the cart.** rec.gov
   has an anti-bot gate (a `gate_a` token). Headless Chromium gets flagged
   (`{ok:false, error:"abnormal activity"}`); a real headed browser on the residential
@@ -852,6 +870,15 @@ The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 >   not — a `sk_test_` key in Production accepts checkouts and takes no money.
 > - The client masks failures: `r.ok ? await r.json() : { active: false }` renders a
 >   500 identically to a genuine non-subscriber. Same shape as the `sync_log` trap.
+>
+> **Beta testers must be gated OUT of Stripe checkout (`users.is_beta`).** Beta users
+> get complimentary full access (`hasActiveSubscription` returns true for them), so a
+> stray subscribe CTA that reaches `/api/stripe/checkout` will happily create a real
+> paid subscription and charge them. `/api/stripe/checkout` now short-circuits with
+> `400 beta_access` when `is_beta` is true — do **not** remove that guard. This bit
+> melinda.flores0501 (charged despite being a beta tester, 2026-07-23); the API gate is
+> the fix. (The subscribe CTA is still shown to beta users in the UI — hiding it there
+> too is an open nicety, but the API gate is what prevents the charge.)
 > - **Direction matters — dev keys in the v0 *preview* are fine and in fact required.**
 >   v0's preview crash-loops without Clerk keys (`<ClerkProvider>` and `clerkMiddleware`
 >   both throw), so its env needs a matched dev-instance `pk_test_`/`sk_test_` pair —
