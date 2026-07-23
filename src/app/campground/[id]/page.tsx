@@ -231,6 +231,12 @@ function CancellationOdds({ campgroundId }: { campgroundId: string }) {
     return () => { live = false; };
   }, [campgroundId]);
 
+  // Feature E likelihood ladder is paused for now — with limited history the numbers
+  // skew to discouraging readings. Flip to true to restore (boolean-typed so the code
+  // below stays reachable for TypeScript/lint). Restore all three % surfaces together.
+  const SHOW_LIKELIHOOD: boolean = false;
+  if (!SHOW_LIKELIHOOD) return null;
+
   if (!buckets) return null; // still loading — no flash
   const hasAny = buckets.some((b) => b.samples > 0);
   if (!hasAny) return null; // no history for this site → don't show the card at all

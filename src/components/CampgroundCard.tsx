@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { MapPin, Tent, Car, Home, Dog, Accessibility, BookmarkPlus, BookmarkCheck, Zap, TrendingUp } from 'lucide-react';
+import { MapPin, Tent, Car, Home, Dog, Accessibility, BookmarkPlus, BookmarkCheck, Zap } from 'lucide-react';
 import type { Campground } from '@/lib/types';
 import WatchButton from './WatchButton';
 
@@ -172,28 +172,9 @@ export default function CampgroundCard({
           ))}
         </div>
 
-        {/* Cancellation-likelihood badge (feature E) — shown only when enough history
-            has accrued (search attaches `likelihood` only then). Positive framing. */}
-        {campground.likelihood && (() => {
-          const r = campground.likelihood.rate;
-          const { text, cls } =
-            r >= 0.25
-              ? { text: 'Frequent openings', cls: 'text-emerald-700 bg-emerald-50 border-emerald-200' }
-              : r >= 0.1
-                ? { text: 'Opens up sometimes', cls: 'text-green-700 bg-green-50 border-green-200' }
-                : { text: 'Rarely opens up', cls: 'text-gray-600 bg-gray-50 border-gray-200' };
-          return (
-            <div className="mt-2">
-              <span
-                title={`Had a bookable opening on ~${Math.round(r * 100)}% of recent checks ${campground.likelihood.label} (${campground.likelihood.samples} checks)`}
-                className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${cls}`}
-              >
-                <TrendingUp size={11} />
-                {text}
-              </span>
-            </div>
-          );
-        })()}
+        {/* Cancellation-likelihood badge (feature E) is hidden for now — with limited
+            history it skews to discouraging "rarely opens up" readings. Restore when
+            more data has accrued. */}
 
         {/* Availability badge */}
         {searchDates && (
