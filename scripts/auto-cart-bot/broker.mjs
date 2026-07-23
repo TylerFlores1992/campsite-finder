@@ -118,7 +118,10 @@ async function startSession(userId, ws, sendJson) {
     ...(CHANNEL ? { channel: CHANNEL } : {}),
   });
   const page = ctx.pages()[0] || (await ctx.newPage());
-  await page.goto('https://www.recreation.gov/sign-in').catch(() => {});
+  // rec.gov has NO /sign-in page (it 404s "Please Bear With Us") — login is a modal
+  // opened from the header "Sign Up / Log In". Land on the homepage, which has that
+  // button, so both the auto-fill and the streamed fallback work.
+  await page.goto('https://www.recreation.gov/').catch(() => {});
 
   const client = await ctx.newCDPSession(page);
   let dims = { w: 1000, h: 760 };
@@ -183,6 +186,13 @@ async function startSession(userId, ws, sendJson) {
   const doLogin = async (email, password) => {
     if (done || closed || !email || !password) return;
     try {
+      // Open the login modal from the header "Sign Up / Log In" (there's no form on
+      // the page itself). Try button role, then link role, then a text match.
+      let opener = page.getByRole('button', { name: /log ?in/i }).first();
+      if (!(await opener.isVisible().catch(() => false))) opener = page.getByRole('link', { name: /log ?in/i }).first();
+      if (!(await opener.isVisible().catch(() => false))) opener = page.locator('button:has-text("Log In"), a:has-text("Log In")').first();
+      if (await opener.isVisible().catch(() => false)) { await opener.click().catch(() => {}); await page.waitForTimeout(1500); }
+
       const em = page.locator(EMAIL_SEL).first();
       await em.waitFor({ state: 'visible', timeout: 8000 });
       await em.fill(email);
@@ -195,9 +205,11 @@ async function startSession(userId, ws, sendJson) {
         await pw.waitFor({ state: 'visible', timeout: 8000 });
       }
       await pw.fill(password);
-      const btn = page.getByRole('button', { name: /log ?in|sign ?in/i }).first();
-      if (await btn.isVisible().catch(() => false)) await btn.click().catch(() => {});
-      else await page.keyboard.press('Enter').catch(() => {});
+      // Submit from INSIDE the modal/form (not the header "Log In", which would just
+      // toggle the modal); fall back to Enter in the password field.
+      const submit = page.locator('[role="dialog"] button:has-text("Log In"), [role="dialog"] button:has-text("Sign In"), form button[type="submit"]').first();
+      if (await submit.isVisible().catch(() => false)) await submit.click().catch(() => {});
+      else await pw.press('Enter').catch(() => {});
     } catch {
       sendJson({ t: 'manual', message: 'Please finish signing in in the window below.' });
       return;
