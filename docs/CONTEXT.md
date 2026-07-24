@@ -284,11 +284,23 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > > with a half-open probe that closes it on the next success. Empty during cooldown is
 > > the same result the storm already produced, so detection loses nothing; the cycle
 > > stays fast and we stop feeding the ban. Per-process state, so it only trips in the
-> > throttled Fly worker, never Vercel search on its own IP. **Still open in issue #14:**
-> > shorten the rec.gov request timeout (still 10s), and key the watchdog off a recent
-> > *successful external fetch* rather than just the heartbeat (so the cascade — fresh
-> > heartbeat, all detects timing out — actually trips the self-heal). The breaker
-> > blunts the cascade but a hard 10s-timeout storm can still outpace a 60s cooldown.
+> > throttled Fly worker, never Vercel search on its own IP.
+> >
+> > **The last two issue-#14 items SHIPPED 2026-07-24 — the cascade is now bounded and
+> > self-healing:** (1) the rec.gov request timeout is no longer a hardcoded 10s — it's
+> > `RECGOV_TIMEOUT_MS` (default **5s**), so a hung socket lives half as long and the
+> > breaker (which counts timeouts) opens far sooner, keeping the socket pool from
+> > starving. Env-tunable so it can be relaxed if legit responses ever need longer.
+> > (2) The self-heal watchdog now has a **second trip keyed off external egress**, not
+> > just the heartbeat: `markExternalFetchOk()` (`worker/liveness.ts`) is stamped
+> > whenever ANY detection-canary source succeeds, and the poller reboots the VM if no
+> > external fetch has landed for `WATCHDOG_EXTERNAL_STALE_MS` (default **6 min**)
+> > **even while the heartbeat is fresh** — exactly the cascade's signature. Because it
+> > stays fresh as long as *one* source is reachable, a rec.gov-only throttle does NOT
+> > trip it (a reboot wouldn't clear an IP throttle anyway); only an all-sources-down
+> > stretch does. The worker's `/health` now 503s on this too (reports
+> > `externalFetchAgeMs`), so the Fly check + uptime monitor see the cascade the fresh
+> > heartbeat used to hide.
 >
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
@@ -814,7 +826,11 @@ record throttle, 1h), `OBSERVATION_RETENTION_DAYS` (90), `PROBE_INTERVAL_MS`
 (roster cadence, 1h), `PROBE_LEAD_DAYS` (`14,45`), `PROBE_NIGHTS` (2).
 Worker resilience tunables (on the **Fly worker**, all non-secret with in-code
 defaults): `WATCHDOG_STALE_MS` (self-heal `process.exit(1)` when no heartbeat lands
-for this long, 4 min); rec.gov throttle breaker `RECGOV_BREAKER_TRIP` (consecutive
+for this long, 4 min); `WATCHDOG_EXTERNAL_STALE_MS` (second self-heal trip — reboot
+when no external provider fetch has succeeded for this long even while the heartbeat is
+fresh, i.e. the timeout cascade; 6 min); `RECGOV_TIMEOUT_MS` (per-request rec.gov fetch
+timeout, 5s — shortened from 10s so a throttle storm can't starve the socket pool);
+rec.gov throttle breaker `RECGOV_BREAKER_TRIP` (consecutive
 429/timeout failures that OPEN the breaker, 3) and `RECGOV_BREAKER_COOLDOWN_MS`
 (short-circuit-to-empty window before a half-open probe, 60s); `RECGOV_CONCURRENCY`
 (per-provider fanout bound within a phase — note the six per-source phases now run
