@@ -23,14 +23,28 @@
 // above only proves Supabase egress works. In the cascade, rec.gov degrades to slow
 // timeouts that starve the socket pool so EVERY provider fetch times out, yet the
 // Supabase heartbeat write still succeeds — so `msSinceAlive()` stays fresh and the
-// heartbeat watchdog never fires while alerting is silently dead. `markExternalFetchOk`
-// is called whenever ANY provider fetch succeeds (via the detection canary, which
-// probes all sources every ~2 min). It stays fresh as long as even one source is
-// reachable — so a rec.gov-only throttle does NOT trip it (a reboot wouldn't clear an
-// IP throttle anyway), but the all-sources-down cascade/wedge does.
+// heartbeat watchdog never fires while alerting is silently dead. An external outcome
+// is recorded whenever a provider fetch resolves (via the detection canary, which
+// probes all sources every ~2 min). It stays healthy as long as sources are reachable —
+// so a rec.gov-only throttle does NOT trip it (a reboot wouldn't clear an IP throttle
+// anyway), but the all-sources-down cascade/wedge does.
+//
+// TWO external signals, because "zero successes for X min" alone misses a FLAPPING
+// wedge — observed 2026-07-24, when the sjc machine's egress degraded so ~all detects
+// timed out, but an occasional source succeeding kept resetting the zero-success timer,
+// so the watchdog never fired and a human had to restart:
+//   (a) staleness — `msSinceExternalFetchOk()`: catches a hard wedge / the canary
+//       stopping entirely (no successes at all for a long stretch).
+//   (b) failure-rate — `externalFetchWedged()`: over a rolling window, if there were
+//       enough attempts and MOST failed, the machine is wedged even though the odd
+//       success keeps (a) from tripping. This is what catches the flapping case.
 
 let lastAliveAt = Date.now();
 let lastExternalOkAt = Date.now();
+
+/** Rolling record of recent external fetch outcomes (detection-canary probes). */
+const externalOutcomes: Array<{ t: number; ok: boolean }> = [];
+const OUTCOMES_CAP = 200; // ~5 sources × plenty of rounds; bounded regardless of window
 
 /** Record that the poller just successfully wrote a heartbeat to the DB. */
 export function markAlive(): void {
@@ -42,12 +56,36 @@ export function msSinceAlive(): number {
   return Date.now() - lastAliveAt;
 }
 
-/** Record that some external provider fetch just succeeded (working egress). */
-export function markExternalFetchOk(): void {
-  lastExternalOkAt = Date.now();
+/** Record the outcome of one external provider fetch (detection-canary probe). */
+export function markExternalFetchResult(ok: boolean): void {
+  const now = Date.now();
+  if (ok) lastExternalOkAt = now;
+  externalOutcomes.push({ t: now, ok });
+  if (externalOutcomes.length > OUTCOMES_CAP) externalOutcomes.shift();
 }
 
 /** Milliseconds since the last successful external provider fetch. */
 export function msSinceExternalFetchOk(): number {
   return Date.now() - lastExternalOkAt;
+}
+
+/** True when, over the last `windowMs`, there were at least `minAttempts` external
+ *  fetches and the failure ratio was >= `maxFailRatio` — i.e. egress is mostly dead
+ *  even if the occasional success keeps `msSinceExternalFetchOk` from going stale.
+ *  Returns false until enough attempts accrue, so it can't trip on a quiet window. */
+export function externalFetchWedged(
+  windowMs: number,
+  minAttempts: number,
+  maxFailRatio: number
+): boolean {
+  const cutoff = Date.now() - windowMs;
+  let attempts = 0;
+  let failures = 0;
+  for (const o of externalOutcomes) {
+    if (o.t < cutoff) continue;
+    attempts++;
+    if (!o.ok) failures++;
+  }
+  if (attempts < minAttempts) return false;
+  return failures / attempts >= maxFailRatio;
 }
