@@ -516,6 +516,12 @@ source path pass the canary:
    Cheap (no send), so it runs every `CANARY_DETECT_INTERVAL_MS` (120s).
 2. **delivery:email / delivery:sms** — Resend/Twilio actually **accepted** a synthetic
    send to `CANARY_EMAIL` / `CANARY_PHONE` (proves the last mile, not just detection).
+3. **delivery:push** — the FCM service account still mints an access token
+   (`verifyPushCredential` in `src/lib/notifications/push.ts`). No synthetic send (there's
+   no canary device), but this catches the push last mile failing silently if
+   `FCM_SERVICE_ACCOUNT` is removed/malformed or the key is revoked. Skipped (warn, not
+   page) until FCM is configured, like the other two. Also listed in the `/api/health/status`
+   delivery loop, so it pages the same way.
 
 > **The SMS delivery canary is the highest-value one, not disposable.** SMS is both
 > the primary channel users act on and the one that fails *silently* (A2P suspension,
@@ -815,6 +821,13 @@ Supabase (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`), Clerk
 Resend (`RESEND_API_KEY`, `EMAIL_FROM`), Twilio (`TWILIO_*`), Mapbox
 (`NEXT_PUBLIC_MAPBOX_TOKEN`), RIDB (`RIDB_API_KEY`), auto-cart
 (`AUTOCART_TOKEN`, `BROKER_WS_URL`), `NEXT_PUBLIC_APP_URL`, `SYNC_SECRET`.
+Native push (feature: mobile app — on **both** the Fly worker AND Vercel):
+`FCM_SERVICE_ACCOUNT` — the full Firebase service-account JSON (Project Settings →
+Service accounts → Generate new private key) as a single env string. The worker is the
+main push dispatcher (`dispatchPush` in `src/lib/notifications/index.ts` via FCM HTTP
+v1); Vercel also needs it for the webhook push path. Unset = push no-ops (logs, like an
+unconfigured Twilio). Device tokens live in `push_tokens` (migration 023), registered
+via `POST /api/user/push-token`. NOT `NEXT_PUBLIC` — it's a server secret.
 Alert-health canary (on the **Fly worker**): `CANARY_EMAIL` / `CANARY_PHONE` —
 the dedicated sink the delivery canary sends synthetic alerts to (unset = that
 leg records "skipped", a warn not a page); `CANARY_DELIVERY_INTERVAL_MS` and

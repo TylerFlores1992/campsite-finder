@@ -44,6 +44,14 @@ all gated behind a 20-sample **honesty threshold** (numbers hidden until honest)
   verification or unset `HTTPS_PROXY`.
 - **New public `/api/*` route 404s** until added to `isPublicRoute` in
   `src/middleware.ts` (Clerk's `auth.protect()` returns 404, not 401).
+- **NEVER call a request-time API (`headers()`/`cookies()`/`connection()`) in the ROOT
+  layout.** This build runs **Cache Components** (dynamicIO) — a request-time API in the
+  root layout without a Suspense boundary **throws at request time and 500s every page**,
+  while `/api/*` (no root layout) stays up. It cost a full prod outage 2026-07-24 (the
+  native-app UA detection was done this way; moved to a client `useSyncExternalStore` in
+  `src/lib/native/context.tsx`). Corollary: **`next build` passing is NOT enough** for
+  layout/rendering changes — dynamic segments aren't executed at build, so the throw only
+  surfaces at runtime. Smoke-test a real page after deploying (`curl -sI camphawk.app/`).
 
 ## Open / next session
 - **Verify Feature E is accruing** (`scripts/likelihood-readout.mts`) and that the worker
