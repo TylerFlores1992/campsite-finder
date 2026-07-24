@@ -1,6 +1,7 @@
 import { query, mutate } from '@/lib/db/client';
 import { sendEmail } from './email';
 import { sendSms } from './sms';
+import { sendPush } from './push';
 import { actionUrlFor, mintBookingToken, bookLink, manageUrlFor } from './actions';
 import type { CampflareWebhookPayload } from '@/lib/campflare/types';
 import { USEDIRECT_PROVIDERS } from '@/lib/sources/reservecalifornia/providers';
@@ -126,9 +127,10 @@ export async function dispatchNotifications(payload: NotificationPayload): Promi
 
   const links = await mintActionLinks(payload);
 
-  const [emailResult, smsResult] = await Promise.allSettled([
+  const [emailResult, smsResult, pushResult] = await Promise.allSettled([
     dispatchEmail(payload, links),
     dispatchSms(payload),
+    dispatchPush(payload),
   ]);
 
   if (emailResult.status === 'rejected') {
@@ -136,6 +138,9 @@ export async function dispatchNotifications(payload: NotificationPayload): Promi
   }
   if (smsResult.status === 'rejected') {
     console.error('[notifications] SMS failed:', smsResult.reason);
+  }
+  if (pushResult.status === 'rejected') {
+    console.error('[notifications] Push failed:', pushResult.reason);
   }
 }
 
@@ -219,6 +224,61 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
     await logNotification(payload, 'sms', 'sent');
   } catch (err) {
     await logNotification(payload, 'sms', 'failed', (err as Error).message);
+  }
+}
+
+/** Fetch a user's registered push tokens (native app devices). */
+async function getUserPushTokens(userId: string): Promise<string[]> {
+  const rows = await query<{ token: string }>(
+    'SELECT token FROM push_tokens WHERE user_id = $1',
+    [userId]
+  );
+  return rows.map((r) => r.token);
+}
+
+async function dispatchPush(payload: NotificationPayload): Promise<void> {
+  const tokens = await getUserPushTokens(payload.userId);
+  if (tokens.length === 0) return; // no app installs for this user
+
+  const name = payload.campgroundName.replace(/\s+(campground|cg)\.?$/i, '');
+  const site = payload.campsiteName ? ` — Site ${payload.campsiteName}` : '';
+
+  let title: string;
+  let body: string;
+  if (payload.kind === 'carted') {
+    title = `✅ In your cart: ${name}`;
+    body = `${name}${site} is in your cart — check out now (held ~15 min).`;
+  } else if (payload.kind === 'coming_soon') {
+    title = `⏳ Opening soon: ${name}`;
+    body = `${name}${site} was just cancelled — we'll alert you when it's bookable.`;
+  } else {
+    const dates = payload.availableDates.slice(0, 3).join(', ');
+    const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3}` : '';
+    title = `⛺ Available: ${name}`;
+    body = `${name}${site} open ${dates}${more}. Tap to book.`;
+  }
+
+  // Deep-link the app to the watch/campground; strip the extension-only #camphawk hint.
+  const data: Record<string, string> = {
+    watchId: payload.watchId,
+    campgroundId: payload.campgroundId,
+    kind: payload.kind ?? 'available',
+    url: payload.bookingUrl.split('#')[0],
+  };
+
+  try {
+    const result = await sendPush({ tokens, title, body, data });
+    await logNotification(payload, 'push', 'sent');
+    // Prune tokens FCM reported as permanently dead, so we stop delivering to them.
+    if (result.deadTokens.length > 0) {
+      await mutate(
+        'DELETE FROM push_tokens WHERE token = ANY($1)',
+        [result.deadTokens]
+      ).catch((err) => console.error('[push] failed to prune dead tokens:', err));
+    }
+  } catch (err) {
+    await logNotification(payload, 'push', 'failed', (err as Error).message);
+    throw err;
   }
 }
 
