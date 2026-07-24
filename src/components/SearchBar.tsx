@@ -405,14 +405,14 @@ export default function SearchBar({ onSearch, onTonight, onThisWeekend, quickBus
       {/* Dates — the range picker plus the Tonight / This weekend quick-trip shortcuts
           (auto-locate + search), which live here by the dates rather than as a hero
           centerpiece. */}
-      <div className="flex flex-col gap-1.5">
+      <div className="flex items-end gap-2">
         <DateRangePicker
           startDate={startDate}
           endDate={endDate}
           onChange={(s, e) => { setStartDate(s); setEndDate(e); }}
         />
         {(onTonight || onThisWeekend) && (
-          <div className="flex gap-1.5">
+          <div className="flex flex-col gap-1.5">
             {onTonight && (
               <button
                 type="button"

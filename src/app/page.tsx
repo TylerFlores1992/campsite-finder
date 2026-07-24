@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { Loader2, Map as MapIcon, List, AlertCircle, Bell, Heart } from 'lucide-react';
+import { Loader2, Map as MapIcon, List, AlertCircle, Bell, Heart, CreditCard } from 'lucide-react';
 import { useUser, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 import SearchBar from '@/components/SearchBar';
 import CampgroundCard from '@/components/CampgroundCard';
@@ -468,15 +468,17 @@ export default function HomePage() {
                       Admin
                     </a>
                   )}
-                  {isSubscribed && (
-                    <button
-                      onClick={openBillingPortal}
-                      className="hidden sm:block text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
-                    >
-                      Manage subscription
-                    </button>
-                  )}
-                  <UserButton />
+                  <UserButton>
+                    {isSubscribed && (
+                      <UserButton.MenuItems>
+                        <UserButton.Action
+                          label="Manage subscription"
+                          labelIcon={<CreditCard size={14} />}
+                          onClick={openBillingPortal}
+                        />
+                      </UserButton.MenuItems>
+                    )}
+                  </UserButton>
                 </div>
               ) : (
                 <div className="flex items-center gap-1.5 sm:gap-2">
