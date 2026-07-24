@@ -59,6 +59,15 @@ function isoToDate(iso: string): string {
 // affecting Vercel search on its own IP.
 const RECGOV_BREAKER_TRIP = Number(process.env.RECGOV_BREAKER_TRIP ?? 3);
 const RECGOV_BREAKER_COOLDOWN_MS = Number(process.env.RECGOV_BREAKER_COOLDOWN_MS ?? 60_000);
+// Per-request timeout. Shortened from the original 10s (issue #14): during a throttle
+// storm a hung rec.gov socket holds a connection for the whole timeout, and enough of
+// them starve the worker's socket pool / event loop so EVERY other source (RA, RC,
+// GTC, TN/SC) starts timing out too — the "timeout cascade". A tighter bound caps how
+// long each stall lives, so the breaker (which trips after RECGOV_BREAKER_TRIP
+// throttles, counting timeouts) opens far sooner and the pool never starves. Env-
+// tunable so it can be relaxed on the Fly worker without a code change if legitimate
+// responses ever need longer.
+const RECGOV_TIMEOUT_MS = Number(process.env.RECGOV_TIMEOUT_MS ?? 5000);
 let recgovConsecutiveThrottles = 0;
 let recgovBreakerOpenUntil = 0;
 
@@ -110,7 +119,7 @@ export async function getAvailabilityFromRecGov(
     const response = await axios.get(
       `${BASE}/${campgroundId}/month?start_date=${encodeURIComponent(startDate)}`,
       {
-        timeout: 10000,
+        timeout: RECGOV_TIMEOUT_MS,
         headers: {
           // mimic the browser — this is an unofficial API
           'User-Agent': 'Mozilla/5.0 (compatible; CampsiteFinder/1.0)',

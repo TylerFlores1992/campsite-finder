@@ -13,7 +13,7 @@ import {
   hasGoingToCampAvailabilityInRange,
   isGoingToCampCampgroundId,
 } from '../src/lib/availability/goingtocamp';
-import { msSinceAlive } from './liveness';
+import { msSinceAlive, msSinceExternalFetchOk } from './liveness';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const MAX_ITEMS = 60;
@@ -22,6 +22,10 @@ const MAX_ITEMS = 60;
 // monitor all key off it. Matches the poller's watchdog window (worker/liveness.ts);
 // the in-process watchdog is what actually reboots, this just exposes the state.
 const HEALTH_STALE_MS = Number(process.env.WATCHDOG_STALE_MS ?? 4 * 60 * 1000);
+// Also unhealthy once no external provider fetch has succeeded for this long (the
+// timeout cascade — heartbeat fresh but all egress dead). Matches the poller's second
+// watchdog trip (WATCHDOG_EXTERNAL_STALE_MS in worker/poller.ts).
+const HEALTH_EXTERNAL_STALE_MS = Number(process.env.WATCHDOG_EXTERNAL_STALE_MS ?? 6 * 60 * 1000);
 
 /**
  * Short-lived cache. The Camis WAF challenges bursty traffic, and a search page
@@ -99,8 +103,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // unconditional {ok:true} hid. The poller's own watchdog is what reboots.
   if (req.method === 'GET' && url.pathname === '/health') {
     const stale = msSinceAlive();
-    const ok = stale < HEALTH_STALE_MS;
-    return json(res, ok ? 200 : 503, { ok, heartbeatAgeMs: stale });
+    const extStale = msSinceExternalFetchOk();
+    const ok = stale < HEALTH_STALE_MS && extStale < HEALTH_EXTERNAL_STALE_MS;
+    return json(res, ok ? 200 : 503, { ok, heartbeatAgeMs: stale, externalFetchAgeMs: extStale });
   }
 
   if (url.pathname !== '/gtc/availability') return json(res, 404, { error: 'not found' });

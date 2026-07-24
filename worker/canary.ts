@@ -20,6 +20,7 @@ import { GOINGTOCAMP_PROVIDERS } from '../src/lib/sources/goingtocamp/providers'
 import { TNSC_PROVIDERS } from '../src/lib/sources/tnsc/providers';
 import { sendEmail } from '../src/lib/notifications/email';
 import { sendSms } from '../src/lib/notifications/sms';
+import { markExternalFetchOk } from './liveness';
 
 const PROBE_TIMEOUT_MS = 25_000;
 
@@ -59,6 +60,11 @@ async function probe(key: string, run: () => Promise<string>): Promise<void> {
   const t0 = Date.now();
   try {
     const detail = await withTimeout(run(), key);
+    // A detect probe that returns is proof of working provider egress — feed the
+    // external-fetch liveness signal so the cascade watchdog stays satisfied as long
+    // as ANY source is reachable (see worker/liveness.ts). Delivery probes (email/sms)
+    // are excluded: they run daily, too rare to be a liveness signal.
+    if (key.startsWith('detect:')) markExternalFetchOk();
     await record(key, true, Date.now() - t0, detail);
   } catch (err) {
     await record(key, false, Date.now() - t0, (err as Error).message);

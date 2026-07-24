@@ -46,7 +46,7 @@ import { dispatchNotifications, type NotificationPayload } from '../src/lib/noti
 import { bookingLink } from '../src/lib/booking-url';
 import { runDetectionCanary, runDeliveryCanary } from './canary';
 import { findQualifyingRun, flexCandidateStays, isFlexible, type FlexDays, type FlexSpec } from '../src/lib/availability/flex';
-import { markAlive, msSinceAlive } from './liveness';
+import { markAlive, msSinceAlive, msSinceExternalFetchOk } from './liveness';
 
 /** The flexible-date spec carried by a watch row (fixed whole-stay when nights null). */
 function flexOf(w: { flex_nights: number | null; flex_days: string | null }): FlexSpec {
@@ -102,6 +102,15 @@ const CANARY_DELIVERY_INTERVAL_MS = Number(process.env.CANARY_DELIVERY_INTERVAL_
 // before a human is paged. Checked on WATCHDOG_CHECK_INTERVAL_MS.
 const WATCHDOG_STALE_MS = Number(process.env.WATCHDOG_STALE_MS ?? 4 * 60 * 1000);
 const WATCHDOG_CHECK_INTERVAL_MS = Number(process.env.WATCHDOG_CHECK_INTERVAL_MS ?? 30_000);
+// Second watchdog trip — the "timeout cascade" (issue #14). The heartbeat watchdog
+// above is BLIND to it: rec.gov slow-timeouts starve the socket pool so every provider
+// fetch fails, but the Supabase heartbeat write still lands, keeping msSinceAlive()
+// fresh. So we also reboot when NO external provider fetch has succeeded for this long
+// (fed by the detection canary across all sources — see worker/liveness.ts). Set above
+// the 2-min detect-canary interval × a few rounds so a transient blip or a rec.gov-only
+// throttle (other sources keep it fresh) never trips it — only an all-sources-down
+// stretch does.
+const WATCHDOG_EXTERNAL_STALE_MS = Number(process.env.WATCHDOG_EXTERNAL_STALE_MS ?? 6 * 60 * 1000);
 // How fresh the mini-PC bot's heartbeat must be for us to treat it as online. The
 // bot polls the roster every ~2s, so anything older than this means it's down (box
 // off, process crashed, network cut). When it's stale we do NOT route rec.gov
@@ -1055,13 +1064,25 @@ async function main() {
   // (a wedged-but-"started" machine; see WATCHDOG_STALE_MS + worker/liveness.ts).
   // markAlive() starts the clock at boot, so the first cycle has WATCHDOG_STALE_MS
   // of grace before this can fire.
-  console.log(`[poller] watchdog — reboot if no heartbeat lands for ${(WATCHDOG_STALE_MS / 1000).toFixed(0)}s`);
+  console.log(
+    `[poller] watchdog — reboot if no heartbeat lands for ${(WATCHDOG_STALE_MS / 1000).toFixed(0)}s ` +
+      `or no external fetch succeeds for ${(WATCHDOG_EXTERNAL_STALE_MS / 1000).toFixed(0)}s`
+  );
   setInterval(() => {
     const stale = msSinceAlive();
     if (stale > WATCHDOG_STALE_MS) {
       console.error(
         `[poller] WATCHDOG: no successful heartbeat in ${(stale / 1000).toFixed(0)}s — ` +
           `machine egress is wedged; exiting so Fly reboots the VM to restore networking.`
+      );
+      process.exit(1);
+    }
+    // Cascade: heartbeat fresh (Supabase reachable) but all provider egress dead.
+    const extStale = msSinceExternalFetchOk();
+    if (extStale > WATCHDOG_EXTERNAL_STALE_MS) {
+      console.error(
+        `[poller] WATCHDOG: no successful external fetch in ${(extStale / 1000).toFixed(0)}s ` +
+          `(heartbeat still fresh) — provider egress cascade; exiting so Fly reboots the VM.`
       );
       process.exit(1);
     }
