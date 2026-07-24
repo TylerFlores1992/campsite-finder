@@ -46,3 +46,8 @@ scripts/apply-migration-004.mjs
 
 # clerk configuration (can include secrets)
 /.clerk/
+
+# capacitor native projects (generated locally with `npx cap add ios|android`;
+# built in Xcode / Android Studio — see docs/SETUP.md)
+/ios/
+/android/

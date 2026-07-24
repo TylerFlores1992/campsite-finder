@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Bell, Loader2, Check } from 'lucide-react';
 import { useUser } from '@clerk/nextjs';
+import { useIsNativeApp } from '@/lib/native/context';
 
 interface WatchButtonProps {
   campgroundId: string;
@@ -16,6 +17,7 @@ interface WatchButtonProps {
 
 export default function WatchButton({ campgroundId, campgroundName, startDate, endDate, flexNights, flexDays, siteType }: WatchButtonProps) {
   const { isSignedIn } = useUser();
+  const isNativeApp = useIsNativeApp();
   const [state, setState] = useState<'idle' | 'loading' | 'watching' | 'subscribe' | 'limit'>('idle');
 
   async function createWatch() {
@@ -65,6 +67,15 @@ export default function WatchButton({ campgroundId, campgroundName, startDate, e
   }
 
   if (state === 'subscribe') {
+    // In the native app we can't sell the subscription (App/Play IAP rules) — point to
+    // the web instead of showing Stripe checkout buttons.
+    if (isNativeApp) {
+      return (
+        <span className="text-xs text-gray-500" onClick={(e) => e.stopPropagation()}>
+          Subscribe at camphawk.app to set alerts.
+        </span>
+      );
+    }
     return (
       <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
         <span className="text-xs text-gray-500">Subscribe:</span>
