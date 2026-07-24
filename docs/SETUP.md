@@ -119,6 +119,48 @@ it with `NODE_USE_ENV_PROXY=1` from a web session (see the session-environment s
 With SC shipped, there are **no cheap registry adds left** — every remaining state needs
 a new adapter. See `docs/CONTEXT.md` before going hunting.
 
+## Building the mobile app (Capacitor)
+
+CampHawk ships to the App Store / Play Store as a **thin native shell** around the live
+site, via Capacitor. `capacitor.config.ts` sets `server.url = https://camphawk.app`, so
+the webview loads production — Clerk auth, Stripe, and SSR all work unchanged, and a
+`git push` deploy reaches the app instantly with **no store release**. The only native
+surfaces are **push** (APNs/FCM) and the bridge in `src/components/NativeBridge.tsx`.
+
+**Notifications.** Push is a THIRD alert channel next to email/SMS. The worker's
+`dispatchNotifications` already fans out to it (`dispatchPush` in
+`src/lib/notifications/index.ts`); it delivers via **FCM HTTP v1** (`src/lib/notifications/push.ts`),
+which relays to APNs for iOS, so it's one integration + one credential. Set
+**`FCM_SERVICE_ACCOUNT`** (the full service-account JSON as a single env string) on
+**both Vercel AND the Fly worker** — the worker is what dispatches live alerts, so a
+missing value there means push silently never fires (the usual stale-worker trap). Unset
+= no-op (logs, like an unconfigured Twilio). Apply migration `023_push_tokens.sql` to
+Supabase first (by hand, like 020/021). Devices register their token via
+`POST /api/user/push-token` (Clerk-authed; the bridge calls it on sign-in).
+
+**The native projects are NOT committed** (`ios/`, `android/` are git-ignored) — they're
+generated on a machine with the platform tooling:
+
+```
+npx cap add ios          # needs macOS + Xcode
+npx cap add android      # needs Android Studio
+npx cap sync             # or: npm run cap:sync — copies config + plugins into the native projects
+npm run cap:ios          # opens Xcode   (build / archive / TestFlight there)
+npm run cap:android      # opens Android Studio (build signed AAB there)
+```
+
+After that: add the **APNs key** (iOS) / **google-services.json** (Android) to Firebase,
+enable Push Notifications capability in Xcode, and archive → TestFlight / Play internal
+testing. `server.url` means you rarely rebuild the binary — only native/plugin/icon
+changes need a new store build.
+
+> **Store-billing rule (why the app never sells the subscription).** Apple/Google
+> require digital subscriptions to go through their in-app purchase (15–30% cut). We
+> keep **Stripe on the web only**: the app is free, search works for everyone, and a
+> non-subscriber sees "manage your plan at camphawk.app" — never an in-app price or buy
+> button. Phase 3 (not yet built) adds a `native` flag so the webview suppresses the
+> Stripe/pricing UI; keep purchase language out of the binary to pass review.
+
 ## Repo layout (orientation)
 
 ```

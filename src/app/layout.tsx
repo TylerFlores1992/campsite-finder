@@ -3,6 +3,7 @@ import { Sora, Inter, Geist_Mono, Fraunces } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import NativeBridge from "@/components/NativeBridge";
 import "./globals.css";
 
 const sora = Sora({
@@ -68,6 +69,7 @@ export default function RootLayout({
       >
         <body className="min-h-full flex flex-col overflow-x-clip">
           {children}
+          <NativeBridge />
           <Analytics />
           <SpeedInsights />
         </body>
