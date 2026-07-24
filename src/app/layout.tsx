@@ -3,9 +3,8 @@ import { Sora, Inter, Geist_Mono, Fraunces } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
-import { headers } from "next/headers";
 import NativeBridge from "@/components/NativeBridge";
-import { NativeAppProvider, isNativeUserAgent } from "@/lib/native/context";
+import { NativeAppProvider } from "@/lib/native/context";
 import "./globals.css";
 
 const sora = Sora({
@@ -58,20 +57,15 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // Detect the native shell from the request User-Agent so pricing UI is suppressed
-  // in the very first server render (no flash of Stripe buttons before hydration) —
-  // which matters because that UI must never appear in the store build (IAP rules).
-  // Reading headers() here opts the tree into dynamic rendering; that's required for
-  // flash-free detection on the pricing pages (/ and /campground/[id]) and only costs
-  // per-request rendering of a few trivial static pages (/privacy, /terms). See
-  // NativeAppProvider + the store-billing note in docs/SETUP.md.
-  const isNativeApp = isNativeUserAgent((await headers()).get("user-agent"));
-
+  // NOTE: keep this layout NON-async / free of request-time APIs (headers/cookies).
+  // Under this Next build's Cache Components model, a dynamic API in the root layout
+  // without a Suspense boundary throws at request time and 500s every page. Native-app
+  // detection is done client-side in NativeAppProvider instead.
   return (
     <ClerkProvider>
       <html
@@ -79,7 +73,7 @@ export default async function RootLayout({
         className={`${sora.variable} ${inter.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased overflow-x-clip`}
       >
         <body className="min-h-full flex flex-col overflow-x-clip">
-          <NativeAppProvider isNativeApp={isNativeApp}>
+          <NativeAppProvider>
             {children}
             <NativeBridge />
           </NativeAppProvider>
