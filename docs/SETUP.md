@@ -203,6 +203,12 @@ production backend safe (established 2026-07-21):
   gated on `searchState` in `src/app/page.tsx`. If the whole page gets `md:h-screen`
   again, the landing gets the "ugly nested scrollbar" back. `Logo` is also fluid
   (`clamp()`), so it shrinks on phones — don't hard-code a big fixed size in the header.
+  (3) **"Manage subscription" lives ONLY inside the Clerk `UserButton` dropdown**
+  (a custom `<UserButton.Action>` in `src/app/page.tsx`, subscribers-only, calling
+  `openBillingPortal` → `/api/stripe/portal`). It used to be a standalone header button;
+  a v0 regen that rewrites the `UserButton` back to a bare `<UserButton />` silently
+  removes a subscriber's only path to the Stripe billing portal (i.e. no way to
+  cancel/update payment) — keep the `MenuItems`/`Action` children.
 - **v0's preview needs Clerk keys or it crash-loops.** The whole app is wrapped in
   `<ClerkProvider>` and `clerkMiddleware()` runs on every request, and **both throw
   without keys** — the publishable key alone stops the provider crash but the
