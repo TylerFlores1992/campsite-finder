@@ -46,7 +46,7 @@ import { dispatchNotifications, type NotificationPayload } from '../src/lib/noti
 import { bookingLink } from '../src/lib/booking-url';
 import { runDetectionCanary, runDeliveryCanary } from './canary';
 import { findQualifyingRun, flexCandidateStays, isFlexible, type FlexDays, type FlexSpec } from '../src/lib/availability/flex';
-import { markAlive, msSinceAlive, msSinceExternalFetchOk } from './liveness';
+import { markAlive, msSinceAlive, msSinceExternalFetchOk, externalFetchWedged } from './liveness';
 
 /** The flexible-date spec carried by a watch row (fixed whole-stay when nights null). */
 function flexOf(w: { flex_nights: number | null; flex_days: string | null }): FlexSpec {
@@ -111,6 +111,15 @@ const WATCHDOG_CHECK_INTERVAL_MS = Number(process.env.WATCHDOG_CHECK_INTERVAL_MS
 // throttle (other sources keep it fresh) never trips it — only an all-sources-down
 // stretch does.
 const WATCHDOG_EXTERNAL_STALE_MS = Number(process.env.WATCHDOG_EXTERNAL_STALE_MS ?? 6 * 60 * 1000);
+// Failure-rate trip for the FLAPPING wedge (observed 2026-07-24): egress mostly dead,
+// but the odd source succeeding keeps the staleness timer above from ever going stale,
+// so the machine never self-heals. Reboot when, over WATCHDOG_EXTERNAL_WINDOW_MS, there
+// were >= MIN_ATTEMPTS detect probes and at least MAX_FAIL_RATIO of them failed. Bar set
+// high (default 80% of >=6 attempts over 5 min) so a couple of genuinely-down providers
+// (rec.gov throttle + one flaky source) never trips it — only a worker-wide wedge does.
+const WATCHDOG_EXTERNAL_WINDOW_MS = Number(process.env.WATCHDOG_EXTERNAL_WINDOW_MS ?? 5 * 60 * 1000);
+const WATCHDOG_EXTERNAL_MIN_ATTEMPTS = Number(process.env.WATCHDOG_EXTERNAL_MIN_ATTEMPTS ?? 6);
+const WATCHDOG_EXTERNAL_MAX_FAIL_RATIO = Number(process.env.WATCHDOG_EXTERNAL_MAX_FAIL_RATIO ?? 0.8);
 // How fresh the mini-PC bot's heartbeat must be for us to treat it as online. The
 // bot polls the roster every ~2s, so anything older than this means it's down (box
 // off, process crashed, network cut). When it's stale we do NOT route rec.gov
@@ -1077,12 +1086,30 @@ async function main() {
       );
       process.exit(1);
     }
-    // Cascade: heartbeat fresh (Supabase reachable) but all provider egress dead.
+    // Cascade (hard): heartbeat fresh (Supabase reachable) but NO external fetch has
+    // succeeded for a long stretch.
     const extStale = msSinceExternalFetchOk();
     if (extStale > WATCHDOG_EXTERNAL_STALE_MS) {
       console.error(
         `[poller] WATCHDOG: no successful external fetch in ${(extStale / 1000).toFixed(0)}s ` +
           `(heartbeat still fresh) — provider egress cascade; exiting so Fly reboots the VM.`
+      );
+      process.exit(1);
+    }
+    // Cascade (flapping): egress mostly dead over the window, even though the odd
+    // success keeps the staleness timer above fresh. This is what a human had to catch
+    // manually on 2026-07-24.
+    if (
+      externalFetchWedged(
+        WATCHDOG_EXTERNAL_WINDOW_MS,
+        WATCHDOG_EXTERNAL_MIN_ATTEMPTS,
+        WATCHDOG_EXTERNAL_MAX_FAIL_RATIO
+      )
+    ) {
+      console.error(
+        `[poller] WATCHDOG: external fetch failure ratio >= ${WATCHDOG_EXTERNAL_MAX_FAIL_RATIO} over ` +
+          `${(WATCHDOG_EXTERNAL_WINDOW_MS / 1000).toFixed(0)}s (heartbeat still fresh) — flapping ` +
+          `egress wedge; exiting so Fly reboots the VM.`
       );
       process.exit(1);
     }

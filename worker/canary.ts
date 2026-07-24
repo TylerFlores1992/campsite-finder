@@ -21,7 +21,7 @@ import { TNSC_PROVIDERS } from '../src/lib/sources/tnsc/providers';
 import { sendEmail } from '../src/lib/notifications/email';
 import { sendSms } from '../src/lib/notifications/sms';
 import { isPushConfigured, verifyPushCredential } from '../src/lib/notifications/push';
-import { markExternalFetchOk } from './liveness';
+import { markExternalFetchResult } from './liveness';
 
 const PROBE_TIMEOUT_MS = 25_000;
 
@@ -61,13 +61,14 @@ async function probe(key: string, run: () => Promise<string>): Promise<void> {
   const t0 = Date.now();
   try {
     const detail = await withTimeout(run(), key);
-    // A detect probe that returns is proof of working provider egress — feed the
-    // external-fetch liveness signal so the cascade watchdog stays satisfied as long
-    // as ANY source is reachable (see worker/liveness.ts). Delivery probes (email/sms)
-    // are excluded: they run daily, too rare to be a liveness signal.
-    if (key.startsWith('detect:')) markExternalFetchOk();
+    // Record the outcome for the external-egress liveness signals (see worker/liveness.ts):
+    // a success keeps the staleness timer fresh, and every detect outcome feeds the
+    // rolling failure-rate that catches a flapping wedge. Only detect probes count —
+    // delivery probes (email/sms) run daily, too rare to be a liveness signal.
+    if (key.startsWith('detect:')) markExternalFetchResult(true);
     await record(key, true, Date.now() - t0, detail);
   } catch (err) {
+    if (key.startsWith('detect:')) markExternalFetchResult(false);
     await record(key, false, Date.now() - t0, (err as Error).message);
     console.warn(`[canary] ${key} FAILED: ${(err as Error).message}`);
   }

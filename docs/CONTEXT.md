@@ -301,6 +301,18 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > > stretch does. The worker's `/health` now 503s on this too (reports
 > > `externalFetchAgeMs`), so the Fly check + uptime monitor see the cascade the fresh
 > > heartbeat used to hide.
+> >
+> > **The FLAPPING wedge (observed 2026-07-24) needed a second trip.** A recurrence in
+> > `sjc` degraded egress so ~all detects timed out at 25s, but the *occasional* source
+> > succeeding kept `msSinceExternalFetchOk` under the 6-min staleness bar, so the
+> > staleness watchdog above never fired — a human had to `flyctl machine restart`. Fix:
+> > a **failure-rate** trip alongside staleness. Every detect-canary outcome (pass AND
+> > fail) is now recorded (`markExternalFetchResult`), and the watchdog also reboots when,
+> > over `WATCHDOG_EXTERNAL_WINDOW_MS` (5 min), there were ≥ `WATCHDOG_EXTERNAL_MIN_ATTEMPTS`
+> > (6) probes and ≥ `WATCHDOG_EXTERNAL_MAX_FAIL_RATIO` (0.8) of them failed
+> > (`externalFetchWedged` in `worker/liveness.ts`). The 80%-of-≥6 bar clears a rec.gov
+> > throttle + one flaky source (≤40% fail) but trips on a worker-wide wedge — now
+> > automatic, no human restart.
 >
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
