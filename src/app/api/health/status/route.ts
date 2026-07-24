@@ -80,7 +80,7 @@ export async function GET() {
     }
 
     // Delivery canaries — 'skipped' (unconfigured) is a warn, not a page.
-    for (const key of ['delivery:email', 'delivery:sms']) {
+    for (const key of ['delivery:email', 'delivery:sms', 'delivery:push']) {
       const r = byKey.get(key);
       if (!r) {
         checks.push({ name: key, level: 'warn', detail: 'no canary run yet' });

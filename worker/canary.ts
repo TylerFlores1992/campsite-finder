@@ -20,6 +20,7 @@ import { GOINGTOCAMP_PROVIDERS } from '../src/lib/sources/goingtocamp/providers'
 import { TNSC_PROVIDERS } from '../src/lib/sources/tnsc/providers';
 import { sendEmail } from '../src/lib/notifications/email';
 import { sendSms } from '../src/lib/notifications/sms';
+import { isPushConfigured, verifyPushCredential } from '../src/lib/notifications/push';
 import { markExternalFetchOk } from './liveness';
 
 const PROBE_TIMEOUT_MS = 25_000;
@@ -186,5 +187,15 @@ export async function runDeliveryCanary(): Promise<void> {
     });
   } else {
     await record('delivery:sms', false, 0, 'skipped: CANARY_PHONE not set');
+  }
+
+  // Push credential: no synthetic send (there's no canary device), but verify the FCM
+  // service account can still mint an access token — the last mile that fails silently
+  // if FCM_SERVICE_ACCOUNT is removed/malformed or the key is revoked. Skipped (and
+  // recorded as such) until FCM is configured, like email/sms above.
+  if (isPushConfigured()) {
+    await probe('delivery:push', async () => verifyPushCredential());
+  } else {
+    await record('delivery:push', false, 0, 'skipped: FCM_SERVICE_ACCOUNT not set');
   }
 }

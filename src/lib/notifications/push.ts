@@ -46,12 +46,8 @@ function loadServiceAccount(): ServiceAccount | null {
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
-async function getAccessToken(sa: ServiceAccount): Promise<string> {
-  // Reuse until 60s before expiry.
-  if (cachedToken && cachedToken.expiresAt - 60_000 > timeNow()) {
-    return cachedToken.value;
-  }
-
+/** Do the OAuth2 JWT-bearer exchange for a Firebase messaging access token. */
+async function exchangeToken(sa: ServiceAccount): Promise<{ token: string; expiresIn: number }> {
   const iat = Math.floor(timeNow() / 1000);
   const assertion = jwt.sign(
     {
@@ -78,11 +74,34 @@ async function getAccessToken(sa: ServiceAccount): Promise<string> {
     throw new Error(`FCM token exchange failed ${res.status}: ${await res.text().catch(() => '')}`);
   }
   const json = (await res.json()) as { access_token: string; expires_in: number };
-  cachedToken = {
-    value: json.access_token,
-    expiresAt: timeNow() + json.expires_in * 1000,
-  };
-  return json.access_token;
+  return { token: json.access_token, expiresIn: json.expires_in };
+}
+
+async function getAccessToken(sa: ServiceAccount): Promise<string> {
+  // Reuse until 60s before expiry.
+  if (cachedToken && cachedToken.expiresAt - 60_000 > timeNow()) {
+    return cachedToken.value;
+  }
+  const { token, expiresIn } = await exchangeToken(sa);
+  cachedToken = { value: token, expiresAt: timeNow() + expiresIn * 1000 };
+  return token;
+}
+
+/** Whether FCM is configured at all (a valid service-account JSON is present). */
+export function isPushConfigured(): boolean {
+  return loadServiceAccount() !== null;
+}
+
+/** Canary check: prove the FCM credential is live by minting a fresh access token
+ *  (bypasses the cache, so it actually exercises the OAuth exchange each call). This is
+ *  push's "last mile" — the thing that breaks silently if FCM_SERVICE_ACCOUNT is
+ *  removed, malformed, or the service-account key is revoked. Throws on any failure.
+ *  Returns a short detail string on success. */
+export async function verifyPushCredential(): Promise<string> {
+  const sa = loadServiceAccount();
+  if (!sa) throw new Error('FCM_SERVICE_ACCOUNT not configured');
+  await exchangeToken(sa);
+  return `FCM credential valid — access token minted for project ${sa.project_id}`;
 }
 
 // Isolated so the (rare) test/no-clock environments don't blow up on Date usage.
