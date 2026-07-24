@@ -12,6 +12,11 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'app.camphawk.mobile',
   appName: 'CampHawk',
+  // Tag the webview's User-Agent so both the server (header) and client can detect the
+  // native app and suppress the in-app subscribe/pricing UI — App/Play store billing
+  // rules forbid selling a digital subscription outside their IAP. See NativeProvider
+  // + the store-billing note in docs/SETUP.md.
+  appendUserAgent: 'CampHawkApp',
   // `webDir` is required by the CLI even in server.url mode; this minimal folder is
   // the fallback shell shown only if the remote URL is unreachable at launch.
   webDir: 'native/shell',

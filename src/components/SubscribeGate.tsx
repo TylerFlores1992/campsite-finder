@@ -10,6 +10,7 @@ import {
   Check,
 } from 'lucide-react';
 import { SignInButton, SignUpButton } from '@clerk/nextjs';
+import { useIsNativeApp } from '@/lib/native/context';
 
 /** Marketing panel + subscribe surfaces. One consistent pitch for every
  *  non-paying audience — the CTA is the only thing that changes:
@@ -83,8 +84,22 @@ const INCLUDED = [
   'recreation.gov Auto-cart',
 ];
 
+/** In the native app we can't sell the subscription (App/Play IAP rules), so the
+ *  Stripe checkout buttons are replaced by a pointer to the web. Kept intentionally
+ *  free of a price and of any in-app purchase affordance. */
+function WebManageNote({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
+  return (
+    <p className={`text-gray-600 ${size === 'lg' ? 'text-sm' : 'text-xs'}`}>
+      Manage your subscription at{' '}
+      <span className="font-semibold text-green-700">camphawk.app</span> in your browser.
+    </p>
+  );
+}
+
 function PricingButtons({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
+  const isNativeApp = useIsNativeApp();
   const { loading, subscribe } = useCheckout();
+  if (isNativeApp) return <WebManageNote size={size} />;
   const base =
     size === 'lg'
       ? 'flex-1 px-5 py-3.5 rounded-2xl font-display font-semibold shadow-md transition-all hover:-translate-y-0.5 flex items-center justify-center gap-2 disabled:opacity-60 disabled:hover:translate-y-0'
@@ -126,6 +141,7 @@ function PricingButtons({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
 /** Full marketing panel — rendered where the landing hero normally goes, so the
  *  header (with the working search bar) stays right above it. */
 export default function SubscribeGate({ returning = false, signedOut = false }: SubscribeGateProps) {
+  const isNativeApp = useIsNativeApp();
   const headline = signedOut
     ? 'Get notified the instant a campsite opens up'
     : returning
@@ -181,7 +197,9 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
             </SignInButton>
           </div>
           <p className="mt-2.5 text-xs text-gray-500">
-            7-day free trial · then $2.50/mo or $20/yr · cancel anytime
+            {isNativeApp
+              ? 'Start free · manage your plan at camphawk.app · cancel anytime'
+              : '7-day free trial · then $2.50/mo or $20/yr · cancel anytime'}
           </p>
         </div>
       )}
@@ -217,7 +235,7 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
           <p className="font-serif text-xl font-semibold text-green-800">
             {returning ? 'Pick up where you left off' : 'Start your 7-day free trial'}
           </p>
-          {!returning && (
+          {!returning && !isNativeApp && (
             <p className="mt-1 text-sm text-gray-500">
               Then just <span className="font-semibold text-green-700">$2.50/mo</span> or{' '}
               <span className="font-semibold text-green-700">$20/yr</span>.

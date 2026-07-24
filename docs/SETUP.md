@@ -158,8 +158,15 @@ changes need a new store build.
 > require digital subscriptions to go through their in-app purchase (15–30% cut). We
 > keep **Stripe on the web only**: the app is free, search works for everyone, and a
 > non-subscriber sees "manage your plan at camphawk.app" — never an in-app price or buy
-> button. Phase 3 (not yet built) adds a `native` flag so the webview suppresses the
-> Stripe/pricing UI; keep purchase language out of the binary to pass review.
+> button. This is enforced by a **native flag** — Capacitor appends `CampHawkApp` to
+> the webview User-Agent (`capacitor.config.ts`), the root layout reads it server-side
+> and provides it via `NativeAppProvider` (`src/lib/native/context.tsx`), and the
+> pricing surfaces (`SubscribeGate`/`SubscribeBanner`'s `PricingButtons`, `WatchButton`'s
+> subscribe state) render "manage at camphawk.app" instead of Stripe checkout when
+> `useIsNativeApp()` is true. Detection is server-side so there's no flash of purchase
+> UI before hydration. To sanity-check the web path is unaffected, load any page with a
+> normal browser UA (no `CampHawkApp`) and the $2.50/mo · $20/yr buttons appear as
+> before.
 
 ## Repo layout (orientation)
 
