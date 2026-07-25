@@ -1,0 +1,72 @@
+# Codemagic CI config — builds the iOS app on a cloud Mac and ships it to TestFlight.
+#
+# Why this exists: CampHawk has no committed native project (ios/ is git-ignored — see
+# capacitor.config.ts / docs/SETUP.md). This workflow regenerates ios/ from scratch on
+# a Codemagic macOS runner with `npx cap add ios`, brands it, signs it with an
+# App Store Connect API key, and uploads to TestFlight — no local Mac required.
+#
+# Prereqs configured in the Codemagic UI (NOT in this file):
+#   - App Store Connect integration named "CampHawk ASC" (Team → Integrations →
+#     App Store Connect: upload the .p8 API key + Key ID + Issuer ID).
+#   - The bundle id app.camphawk.mobile registered on developer.apple.com and an app
+#     record created in App Store Connect (see docs/SETUP.md → mobile app).
+#
+# The app is a thin shell around https://camphawk.app, so the build ships no web bundle;
+# it only needs the native container + push entitlement. See docs/SETUP.md.
+
+workflows:
+  ios-testflight:
+    name: iOS · TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: CampHawk ASC
+    environment:
+      ios_signing:
+        # Codemagic fetches (or creates) an App Store distribution profile for this
+        # bundle id automatically, using the App Store Connect integration above.
+        distribution_type: app_store
+        bundle_identifier: app.camphawk.mobile
+      vars:
+        BUNDLE_ID: "app.camphawk.mobile"
+        XCODE_WORKSPACE: "App.xcworkspace"   # Capacitor names the iOS workspace "App"
+        XCODE_SCHEME: "App"
+      node: 20
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install JS dependencies
+        script: npm ci
+      - name: Generate the iOS native project
+        # ios/ is not committed, so create it fresh. `|| true` keeps re-runs idempotent
+        # if a cached checkout already has it.
+        script: npx cap add ios || npx cap sync ios
+      - name: Brand icons + splash
+        script: npm run cap:assets
+      - name: Capacitor sync (copy config + plugins into ios/)
+        script: npx cap sync ios
+      - name: Set up code signing
+        script: xcode-project use-profiles
+      - name: Increment build number
+        # TestFlight rejects duplicate build numbers. PROJECT_BUILD_NUMBER is Codemagic's
+        # monotonically-increasing per-workflow counter, so each run gets a fresh number.
+        script: |
+          cd ios/App
+          agvtool new-version -all "${PROJECT_BUILD_NUMBER:-1}" || true
+      - name: Build the IPA
+        script: |
+          cd ios/App
+          xcode-project build-ipa \
+            --workspace "$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - ios/App/build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        # Add beta_groups here once you create an internal testing group in App Store
+        # Connect, e.g.:
+        # beta_groups:
+        #   - CampHawk Internal
