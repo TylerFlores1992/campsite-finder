@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "cap:sync": "cap sync",
+    "cap:assets": "npx --yes @capacitor/assets generate --assetPath assets",
     "cap:ios": "cap open ios",
     "cap:android": "cap open android"
   },

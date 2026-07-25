@@ -147,10 +147,18 @@ generated on a machine with the platform tooling:
 ```
 npx cap add ios          # needs macOS + Xcode
 npx cap add android      # needs Android Studio
+npm run cap:assets       # brand the icons + splash from assets/ (see below) — after cap add
 npx cap sync             # or: npm run cap:sync — copies config + plugins into the native projects
 npm run cap:ios          # opens Xcode   (build / archive / TestFlight there)
 npm run cap:android      # opens Android Studio (build signed AAB there)
 ```
+
+**Branded icons + splash are committed** as source images in `assets/` (the hawk badge
+on cream — `icon-only.png`, `icon-foreground.png`/`icon-background.png` for Android
+adaptive, `splash.png`, `splash-dark.png`; see `assets/README.md`). `npm run cap:assets`
+(= `npx @capacitor/assets generate --assetPath assets`) expands them into every
+per-platform size inside `ios/`/`android/`. Run it **after `cap add`** and re-run whenever
+the `assets/` sources change — otherwise you ship Capacitor's default placeholder icon.
 
 After that: add the **APNs key** (iOS) / **google-services.json** (Android) to Firebase,
 enable Push Notifications capability in Xcode, and archive → TestFlight / Play internal
