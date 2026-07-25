@@ -18,9 +18,11 @@ A alert-health canary · B verified deep-links · C flexible dates · D smarter 
 "This site had an opening on ~X% of recent checks for a stay this far out." Four parts,
 all gated behind a 20-sample **honesty threshold** (numbers hidden until honest):
 - **Recorder + probe roster** in `worker/poller.ts` → `availability_observations`
-  (migration 020) + `probe_targets` (021). Roster = 270 active (150 rec.gov + 120
-  ReserveCalifornia). Seed/broaden with `scripts/seed-probe-targets.ts --source=<src>`
-  (`NODE_USE_ENV_PROXY=1` for UseDirect sources).
+  (migration 020) + `probe_targets` (021). Roster = 502 active (150 rec.gov + 120
+  ReserveCalifornia + ~207 across 9 other UseDirect states + 25 GoingToCamp; seeded
+  2026-07-25). Seed/broaden with `scripts/seed-probe-targets.ts --source=<src>`
+  (`NODE_USE_ENV_PROXY=1` for UseDirect **and GoingToCamp** sources — both route
+  through the agent proxy; the seed's `isOpenInRange` now supports all three families).
 - **Aggregation** `src/lib/likelihood.ts` (`getOpeningRate`, `campgroundBuckets`,
   `getHeadlines`). **Readout/sanity-check:** `scripts/likelihood-readout.mts`.
 - **UI:** card badge, detail-page ladder (`/api/likelihood`), per-watch odds in the
@@ -55,6 +57,9 @@ all gated behind a 20-sample **honesty threshold** (numbers hidden until honest)
 
 ## Open / next session
 - **Verify Feature E is accruing** (`scripts/likelihood-readout.mts`) and that the worker
-  picked up the RC roster targets; confirm numbers look sane once buckets cross the gate.
-- Roster could broaden to other UseDirect states / GoingToCamp (GTC needs a datacenter-
-  reachable checker added to the seed's `isOpenInRange`).
+  picked up the newly-seeded state + GoingToCamp roster targets; confirm numbers look sane
+  once buckets cross the gate. NB: Feature E's UI is currently **paused** (`SHOW_LIKELIHOOD
+  = false` in the detail page's `CancellationOdds`), so accrual is silent until re-enabled.
+- Roster broadened 2026-07-25 to all 9 other UseDirect states + GoingToCamp (seed's
+  `isOpenInRange` now supports GTC via the direct Camis checker, reachable through the
+  agent proxy / Fly). Could broaden further (more per state, or GTC provinces) if wanted.

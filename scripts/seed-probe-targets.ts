@@ -11,9 +11,10 @@
  * Defaults to rec.gov (source='ridb'); pass --source to scan another catalog. The
  * poller's probe path is already source-agnostic, so any source landed in
  * probe_targets is probed automatically — this seed just needs an availability
- * checker that's reachable from where it runs. Supported here: rec.gov ('ridb') and
- * any UseDirect source (reservecalifornia, ohiostateparks, …). UseDirect routes
- * through the agent proxy, so run those with NODE_USE_ENV_PROXY=1.
+ * checker that's reachable from where it runs. Supported here: rec.gov ('ridb'),
+ * any UseDirect source (reservecalifornia, ohiostateparks, …), and GoingToCamp
+ * ('goingtocamp'). UseDirect and GoingToCamp route through the agent proxy, so run
+ * those with NODE_USE_ENV_PROXY=1.
  *
  * Run (from a machine that can reach the source + Supabase; from a web session add
  * NODE_USE_ENV_PROXY=1):
@@ -35,7 +36,9 @@ try {
 import { query, mutate, sqlit } from '../src/lib/db/client';
 import { hasAvailabilityInRange } from '../src/lib/availability/recgov';
 import { hasRCAvailabilityInRange } from '../src/lib/availability/reservecalifornia';
+import { hasGoingToCampAvailabilityInRange } from '../src/lib/availability/goingtocamp';
 import { isUseDirectSource } from '../src/lib/sources/reservecalifornia/providers';
+import { isGoingToCampSource } from '../src/lib/sources/goingtocamp/providers';
 
 function arg(name: string, def?: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -53,6 +56,12 @@ const CONCURRENCY = 3;
 function isOpenInRange(id: string, arrival: string, end: string, nights: number): Promise<boolean> {
   if (SOURCE === 'ridb') return hasAvailabilityInRange(id, arrival, end, nights);
   if (isUseDirectSource(SOURCE)) return hasRCAvailabilityInRange(id, arrival, end, nights);
+  // GoingToCamp queries Camis directly. Camis' WAF 403s Vercel IPs but NOT the agent
+  // proxy or Fly, so this reaches it fine from a web session (NODE_USE_ENV_PROXY=1) or
+  // the worker — the two places the seed actually runs. (The worker's probe path uses
+  // the same direct checker.) A transport/WAF error throws → counted as an error, not
+  // as demand, so we never seed a target we couldn't actually read.
+  if (isGoingToCampSource(SOURCE)) return hasGoingToCampAvailabilityInRange(id, arrival, end, nights);
   throw new Error(`--source=${SOURCE} not supported by this seed yet (add a checker in isOpenInRange)`);
 }
 
