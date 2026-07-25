@@ -125,8 +125,10 @@ a new adapter. See `docs/CONTEXT.md` before going hunting.
 CampHawk ships to the App Store / Play Store as a **thin native shell** around the live
 site, via Capacitor. `capacitor.config.ts` sets `server.url = https://camphawk.app`, so
 the webview loads production — Clerk auth, Stripe, and SSR all work unchanged, and a
-`git push` deploy reaches the app instantly with **no store release**. The only native
-surfaces are **push** (APNs/FCM) and the bridge in `src/components/NativeBridge.tsx`.
+`git push` deploy reaches the app instantly with **no store release**. The native
+surfaces are **push** (APNs/FCM) and the bridge in `src/components/NativeBridge.tsx`,
+plus **status-bar / safe-area** handling (`@capacitor/status-bar`) so the webview clears
+the notch (see the edge-to-edge gotcha below).
 
 **Notifications.** Push is a THIRD alert channel next to email/SMS. The worker's
 `dispatchNotifications` already fans out to it (`dispatchPush` in
@@ -154,6 +156,43 @@ After that: add the **APNs key** (iOS) / **google-services.json** (Android) to F
 enable Push Notifications capability in Xcode, and archive → TestFlight / Play internal
 testing. `server.url` means you rarely rebuild the binary — only native/plugin/icon
 changes need a new store build.
+
+> **Real-world first-build gotchas (learned shipping the Android build 2026-07-25).**
+> - **Build machine needs Node + git. On Windows PowerShell, `npm`/`npx` may be blocked**
+>   by the execution policy (`npm.ps1 cannot be loaded … running scripts is disabled`).
+>   Fix once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (or call `npm.cmd` /
+>   `npx.cmd`). Reopen the terminal after installing Node so PATH refreshes.
+> - **`google-services.json` goes in `android/app/`** (not the repo root). Capacitor's
+>   generated `android/app/build.gradle` already **conditionally applies** the
+>   `com.google.gms.google-services` plugin when that file is present, so `npx cap sync`
+>   + rebuild is usually enough — no manual Gradle edits. If a sync errors with "Plugin
+>   com.google.gms.google-services not found", add
+>   `classpath 'com.google.gms:google-services:4.4.2'` to the **project** `build.gradle`
+>   buildscript deps.
+> - **`npx cap sync` does NOT rebuild the app** — it only copies web assets + native
+>   config into `android/`. Native changes (a new plugin, `capacitor.config`) take effect
+>   only after **▶ Run** in Android Studio rebuilds + reinstalls. **WEB changes** (under
+>   `src/`) reach the app on a **reload** (it loads the live site) — no rebuild. A
+>   terminal `cap sync` alone looks like "nothing changed" until you Run.
+> - **Edge-to-edge / the notch.** Android 15+ (API 35+) forces edge-to-edge, so the
+>   webview draws behind the status bar and the site header lands in the non-tappable
+>   strip. Fixed on the **WEB side** with CSS safe-area insets: `viewportFit: 'cover'` in
+>   `layout.tsx` + `padding-top: calc(env(safe-area-inset-top) + …)` on the header
+>   (`page.tsx`). `@capacitor/status-bar` (`overlaysWebView:false`, dark icons) is also
+>   set but can't override edge-to-edge on its own — the CSS insets are the real fix.
+> - **Google/social OAuth sign-in fails in the webview** — Google blocks OAuth in
+>   embedded webviews (it bounces to the system browser and errors with a Clerk
+>   `authorization_invalid`). **Email/password sign-in works.** Proper fix (later): route
+>   social sign-in through the system browser (Clerk + `@capacitor/browser`).
+> - **Play Console device verification can't be done on an emulator** — it needs hardware
+>   attestation (the Play Console app just white-screens on an emulator). Use a real
+>   Android device (borrow one for 2 min). Identity (ID) verification is separate and
+>   gates publishing, not local testing.
+> - **`next build` won't complete in a keyless dev sandbox** — `api/stripe/checkout`
+>   inits `new Stripe(process.env.STRIPE_SECRET_KEY!.trim())` at module load, so a build
+>   without Stripe env throws "Failed to collect page data" for that route. `tsc --noEmit`
+>   still validates; Vercel has the key. Verify web changes with typecheck + a real page
+>   after deploy, not a full local `next build`.
 
 > **Store-billing rule (why the app never sells the subscription).** Apple/Google
 > require digital subscriptions to go through their in-app purchase (15–30% cut). We

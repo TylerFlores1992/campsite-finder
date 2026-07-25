@@ -685,7 +685,7 @@ the page doesn't honor.
 > is where SMS links get tapped. So for rec.gov the realistic ceiling is "lands on
 > the right site, dates not filled in." That's the provider's limit, not a bug.
 
-### Native mobile app (Capacitor + FCM push — backend SHIPPED 2026-07-24)
+### Native mobile app (Capacitor + FCM push — backend SHIPPED 2026-07-24; Android app builds + runs on the emulator 2026-07-25)
 
 The iOS/Android app is a **thin Capacitor shell** around the live site
 (`capacitor.config.ts`, `server.url = https://camphawk.app`): the webview loads
@@ -718,14 +718,28 @@ steps (Firebase project `campapp-39c4b`).
   > layout, and `next build` stayed green because dynamic segments don't run at build).
   > **Never call `headers()`/`cookies()`/`connection()` in the root layout here.** The
   > only cost of client detection is a first-render flash of pricing UI *inside the
-  > native app* (which doesn't exist yet); web users are never native, so nothing flips.
-- **Remaining to ship the app** (all off-machine, needs Xcode/Android Studio + paid
-  accounts): register the Firebase iOS/Android apps → download `GoogleService-Info.plist`
-  / `google-services.json`; set `FCM_SERVICE_ACCOUNT` on **both Vercel and the Fly
-  worker** (worker is the main dispatcher — a missing value there = push silently never
-  fires); Apple ($99, + APNs `.p8` uploaded to Firebase) and Google Play ($25); then
-  `npx cap add ios/android`, drop in the config files, build → TestFlight / Play internal
-  testing. Android needs none of the Apple pieces — fastest first test.
+  > native app*; web users are never native, so nothing flips.
+- **Native UI / webview gotchas (from the first Android build, 2026-07-25):**
+  - **Edge-to-edge (Android 15+/API 35+):** the webview draws behind the status bar/notch,
+    so the header would land in the non-tappable strip. Fixed on the **web** side with CSS
+    safe-area insets — `viewportFit:'cover'` (`layout.tsx`) + `padding-top: calc(env(safe-area-inset-top)+…)`
+    on `<header>` (`page.tsx`). `@capacitor/status-bar` (`overlaysWebView:false`, dark
+    icons) is set too but can't override edge-to-edge alone — the CSS insets are the real
+    fix. **NATIVE changes** (config/plugins) need `cap sync` + a rebuild; **WEB changes**
+    reach the app on a reload.
+  - **Social OAuth (Google) sign-in does NOT work in the webview** — Google blocks OAuth
+    in embedded webviews; it bounces to the system browser and errors with a Clerk
+    `authorization_invalid`. **Email/password sign-in works.** Proper fix later: route
+    social sign-in through the system browser (Clerk + `@capacitor/browser`).
+- **Remaining to ship the app:** DONE so far — Firebase project + both apps registered,
+  `FCM_SERVICE_ACCOUNT` deployed on Vercel + Fly worker, migration 023 applied, and the
+  **Android app builds and runs** (native shell, store-billing flag, email sign-in, and
+  the notification-permission + token-register flow all verified on the emulator). LEFT:
+  confirm a device token actually lands in `push_tokens` + a real test push arrives
+  (needs backend creds in-session); **Google Play** identity verification (ID upload,
+  processing) + **device verification (needs a real Android device — emulator fails Play
+  Integrity)**; then the **iOS** track (Apple $99 + APNs `.p8` → Firebase, `npx cap add ios`,
+  TestFlight).
 
 ### Verifying a source actually alerts
 
