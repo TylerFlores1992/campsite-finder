@@ -15,7 +15,7 @@ export default function SmsOptInDemoPage() {
       <h1 className="text-xl font-bold text-gray-800 mb-1">Text Alert Opt-In (optional)</h1>
       <p className="text-sm text-gray-500 mb-4">
         This is the optional SMS opt-in form shown to signed-in users inside their account
-        settings (Watches panel) at camphawk.app. It is <strong>not</strong> part of sign-up,
+        settings (Watches panel) at camphawk.app. It is{' '}<strong>not</strong>{' '}part of sign-up,
         subscription, or checkout — those flows never ask for a phone number or SMS consent.
         Text alerts are a separate, voluntary add-on: a user must deliberately type their number
         and tick the unchecked consent box here before any text is sent. Users can skip this

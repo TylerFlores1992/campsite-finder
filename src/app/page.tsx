@@ -590,7 +590,7 @@ export default function HomePage() {
 
             {watchCount === 0 && (
               <p className="text-sm text-gray-600 max-w-sm [text-shadow:_0_1px_6px_rgb(255_255_255_/_0.8)]">
-                No watches yet — search a booked campground and tap <strong>Watch</strong> to get
+                No watches yet — search a booked campground and tap{' '}<strong>Watch</strong>{' '}to get
                 cancellation alerts.
               </p>
             )}

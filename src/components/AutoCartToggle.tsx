@@ -134,8 +134,8 @@ export default function AutoCartToggle() {
             <div className="mt-4 rounded-xl bg-green-50 border border-green-100 px-3.5 py-3">
               <p className="text-sm text-green-900 font-medium">One-time setup</p>
               <p className="mt-1 text-sm text-green-800 leading-relaxed">
-                You&apos;ll sign into <strong>recreation.gov once</strong> so it can add sites to
-                your cart. Your login is saved, <strong>encrypted, on your own CampHawk server</strong>{' '}
+                You&apos;ll sign into{' '}<strong>recreation.gov once</strong>{' '}so it can add sites to
+                your cart. Your login is saved,{' '}<strong>encrypted, on your own CampHawk server</strong>{' '}
                 so auto-cart stays connected — never uploaded to CampHawk&apos;s cloud.
               </p>
             </div>

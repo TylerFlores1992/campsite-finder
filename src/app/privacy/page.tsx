@@ -32,13 +32,13 @@ export default function PrivacyPage() {
           <p>
             Text alerts are strictly opt-in: you receive them only if you enter your mobile
             number in your account settings. Message frequency varies with campsite availability —
-            typically at most one message per campground watch. <strong>Message and data rates may
-            apply.</strong> Reply <strong>STOP</strong> to any message to opt out, or remove your
-            number in account settings at any time. Reply <strong>HELP</strong> for help.
+            typically at most one message per campground watch.{' '}<strong>Message and data rates may
+            apply.</strong>{' '}Reply{' '}<strong>STOP</strong>{' '}to any message to opt out, or remove your
+            number in account settings at any time. Reply{' '}<strong>HELP</strong>{' '}for help.
           </p>
           <p className="mt-2">
             <strong>No mobile information will be shared with third parties or affiliates for
-            marketing or promotional purposes.</strong> Mobile numbers and text-messaging
+            marketing or promotional purposes.</strong>{' '}Mobile numbers and text-messaging
             originator opt-in data and consent are not shared with any third parties, except for
             our SMS delivery provider (Twilio) solely to send the messages you requested.
           </p>

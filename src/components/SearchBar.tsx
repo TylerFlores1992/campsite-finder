@@ -503,13 +503,13 @@ export default function SearchBar({ onSearch, onTonight, onThisWeekend, quickBus
                 <p className="font-semibold text-gray-800 mb-1 pr-4">Any stay that fits your window</p>
                 <p className="mb-2">
                   Instead of one exact check-in/out, you give a wider date range and the number of
-                  nights you want. We&apos;ll alert you when <em>any</em> stay that long opens up
+                  nights you want. We&apos;ll alert you when{' '}<em>any</em>{' '}stay that long opens up
                   anywhere inside that window — great for &ldquo;any weekend this summer&rdquo; trips.
                 </p>
                 <ol className="list-decimal list-inside space-y-0.5">
                   <li>Set the date range to the whole span you could travel.</li>
-                  <li>Pick how many nights you want in the <strong>nights</strong> dropdown.</li>
-                  <li>Optionally check <strong>Weekends only</strong> to match Fri/Sat nights.</li>
+                  <li>Pick how many nights you want in the{' '}<strong>nights</strong>{' '}dropdown.</li>
+                  <li>Optionally check{' '}<strong>Weekends only</strong>{' '}to match Fri/Sat nights.</li>
                 </ol>
               </div>
             )}

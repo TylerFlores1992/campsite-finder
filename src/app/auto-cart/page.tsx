@@ -38,7 +38,7 @@ export default function AutoCartHelpPage() {
           </h1>
           <p className="mt-2 text-gray-600 leading-relaxed">
             When a campsite you&apos;re watching opens up, auto-cart adds it to your{' '}
-            <strong>recreation.gov</strong> cart automatically — so instead of racing to book
+            <strong>recreation.gov</strong>{' '}cart automatically — so instead of racing to book
             before someone else grabs it, it&apos;s already waiting in your cart and you just
             check out (from your phone, anywhere).
           </p>
@@ -47,8 +47,8 @@ export default function AutoCartHelpPage() {
         <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
           <h2 className="font-display font-semibold text-gray-800 mb-3">What you need first</h2>
           <ul className="space-y-2 text-sm text-gray-600">
-            <li>✅ A <strong>CampHawk account</strong> with at least one watch set up.</li>
-            <li>✅ A <strong>recreation.gov account</strong> (the site you actually book on).</li>
+            <li>✅ A{' '}<strong>CampHawk account</strong>{' '}with at least one watch set up.</li>
+            <li>✅ A{' '}<strong>recreation.gov account</strong> (the site you actually book on).</li>
             <li>✅ That&apos;s it — turn on the toggle and do a one-time sign-in (below).</li>
           </ul>
         </section>
@@ -57,23 +57,23 @@ export default function AutoCartHelpPage() {
           <h2 className="font-display font-semibold text-gray-800 mb-4">Set it up (one time)</h2>
           <ol className="space-y-5">
             <Step n={1} title="Set your watches">
-              Search for a campground, pick your dates, and tap <strong>Notify me</strong> on any
+              Search for a campground, pick your dates, and tap{' '}<strong>Notify me</strong>{' '}on any
               booked site. Auto-cart only acts on sites you&apos;re watching.
             </Step>
             <Step n={2} title="Turn on Auto-cart">
-              Open the <strong>Watches</strong> panel (the bell, top-right) and flip{' '}
-              <strong>&ldquo;Auto-cart openings&rdquo;</strong> on. That enrolls you with the bot.
+              Open the{' '}<strong>Watches</strong>{' '}panel (the bell, top-right) and flip{' '}
+              <strong>&ldquo;Auto-cart openings&rdquo;</strong>{' '}on. That enrolls you with the bot.
             </Step>
             <Step n={3} title="Sign in to recreation.gov once">
               You enter your recreation.gov email and password once. They&apos;re saved,{' '}
-              <strong>encrypted, on your own CampHawk server</strong> so auto-cart stays connected —
+              <strong>encrypted, on your own CampHawk server</strong>{' '}so auto-cart stays connected —
               and re-connects on its own if the session drops.{' '}
               <strong>Never uploaded to CampHawk&apos;s cloud.</strong>
             </Step>
             <Step n={4} title="You're done">
               From now on, when a watched site opens, it&apos;s added to your cart within seconds.
               You get your normal CampHawk alert — open recreation.gov on your phone, and it&apos;s
-              already in your cart. Just <strong>check out</strong>.
+              already in your cart. Just{' '}<strong>check out</strong>.
             </Step>
           </ol>
         </section>
@@ -82,7 +82,7 @@ export default function AutoCartHelpPage() {
           <h2 className="font-display font-semibold text-gray-800 mb-3">Good to know</h2>
           <ul className="space-y-2 text-sm text-gray-600">
             <li>
-              <strong>Finish on your phone.</strong> The cart is tied to your recreation.gov
+              <strong>Finish on your phone.</strong>{' '}The cart is tied to your recreation.gov
               account, so it shows up wherever you&apos;re logged in.
             </li>
             <li>
@@ -91,15 +91,15 @@ export default function AutoCartHelpPage() {
               includes a direct booking link: tap it on your phone and finish there.
             </li>
             <li>
-              <strong>One grab per site.</strong> Once a specific site is carted for you, it
+              <strong>One grab per site.</strong>{' '}Once a specific site is carted for you, it
               won&apos;t be re-added — but a different site opening in the same campground still will.
             </li>
             <li>
-              <strong>Cancellations move fast.</strong> Getting it into your cart buys you time,
+              <strong>Cancellations move fast.</strong>{' '}Getting it into your cart buys you time,
               but recreation.gov only holds a cart for ~15 minutes — check out promptly.
             </li>
             <li>
-              This automates <em>your own</em> account for personal use. Keep your watches current
+              This automates{' '}<em>your own</em>{' '}account for personal use. Keep your watches current
               so it knows what to grab.
             </li>
           </ul>

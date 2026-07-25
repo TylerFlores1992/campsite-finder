@@ -239,7 +239,7 @@ export default function ConnectPage() {
                 className="mt-0.5 h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
               />
               <span>
-                <strong>Save my login to keep auto-cart connected (required).</strong> It&apos;s
+                <strong>Save my login to keep auto-cart connected (required).</strong>{' '}It&apos;s
                 stored, encrypted, on your own CampHawk server so the bot can re-connect on its own
                 if the session drops. Never uploaded to CampHawk&apos;s cloud.
               </span>
