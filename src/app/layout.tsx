@@ -55,6 +55,10 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Required for CSS env(safe-area-inset-*) to be non-zero — lets the native app's
+  // header clear the status bar / notch under Android 15+ edge-to-edge (see the
+  // safe-area padding on <header> in page.tsx). No effect in normal browsers.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
