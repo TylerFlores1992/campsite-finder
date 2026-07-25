@@ -19,6 +19,7 @@
     "@capacitor/core": "^7.6.8",
     "@capacitor/ios": "^7.6.8",
     "@capacitor/push-notifications": "^7.0.7",
+    "@capacitor/status-bar": "^7.0.6",
     "@clerk/nextjs": "^7.5.11",
     "@sentry/nextjs": "^10.65.0",
     "@stripe/stripe-js": "^9.8.0",

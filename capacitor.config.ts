@@ -30,6 +30,17 @@ const config: CapacitorConfig = {
     // Let taps on rec.gov / Stripe links leave the webview into Safari.
     limitsNavigationsToAppBoundDomains: false,
   },
+  plugins: {
+    // Don't let the webview draw under the status bar / notch — otherwise the site's
+    // header (Sign in / Sign up) renders in the non-tappable status-bar region. This
+    // reserves that space so content starts below it. Reinforced at runtime in
+    // NativeBridge.tsx. backgroundColor is the app's cream (#faf7f2), dark icons on it.
+    StatusBar: {
+      overlaysWebView: false,
+      style: 'DARK',
+      backgroundColor: '#faf7f2',
+    },
+  },
 };
 
 export default config;
