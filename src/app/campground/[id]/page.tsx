@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import type { Campground, Campsite, CampgroundAvailability } from '@/lib/types';
 import { bookingLink } from '@/lib/booking-url';
+import Logo from '@/components/Logo';
 
 const CampgroundMap = dynamic(() => import('@/components/Map'), { ssr: false });
 
@@ -86,10 +87,14 @@ function AvailabilityCalendar({
   }
   const availDays = new Set(dateToOpenSites.keys());
 
-  // rec.gov is the only source with a verified per-site deep link, so it's the
-  // only one where listing individual sites gives distinct links. For everyone
-  // else the day is a single link to the provider's park/reservations page.
-  const hasPerSiteLinks = source === 'ridb';
+  // rec.gov has a verified per-site deep link, so its sites get distinct links.
+  // UseDirect (ReserveCalifornia + the other *stateparks* portals) returns per-site
+  // availability too but only a park-level booking link — we can still list the
+  // specific open sites for a tapped day, they just share the park link. Everyone
+  // else (no per-site data) stays a single link to the provider's page.
+  const perSiteLinks = source === 'ridb';
+  const isUseDirect = source === 'reservecalifornia' || !!source?.endsWith('stateparks');
+  const showSitePicker = perSiteLinks || isUseDirect;
   const selectedSites = selectedDate ? dateToOpenSites.get(selectedDate) ?? [] : [];
 
   // Build calendar grid
@@ -133,8 +138,8 @@ function AvailabilityCalendar({
 
           if (!clickable) return <div key={dateStr} className={cls}>{day}</div>;
 
-          // rec.gov: multiple sites can be open — reveal the list so the user picks.
-          if (hasPerSiteLinks) {
+          // rec.gov + UseDirect: multiple sites can be open — reveal the list so the user picks.
+          if (showSitePicker) {
             return (
               <button
                 key={dateStr}
@@ -164,8 +169,8 @@ function AvailabilityCalendar({
         })}
       </div>
 
-      {/* Open-site picker for the tapped rec.gov day */}
-      {hasPerSiteLinks && selectedDate && (
+      {/* Open-site picker for the tapped day (rec.gov + UseDirect) */}
+      {showSitePicker && selectedDate && (
         <div className="mt-3 rounded-xl border border-green-200 bg-green-50/60 p-3">
           <div className="text-xs font-medium text-gray-700 mb-2">
             {selectedSites.length} open site{selectedSites.length !== 1 ? 's' : ''} on {selectedDate}
@@ -175,7 +180,9 @@ function AvailabilityCalendar({
             {selectedSites.map((cs) => (
               <a
                 key={cs.campsiteId}
-                href={bookingLink({ source, reservationsUrl, date: selectedDate, campsiteId: cs.campsiteId })!}
+                href={(perSiteLinks
+                  ? bookingLink({ source, reservationsUrl, date: selectedDate, campsiteId: cs.campsiteId })
+                  : bookingLink({ source, reservationsUrl, campgroundId, date: selectedDate }))!}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center justify-between gap-2 rounded-lg bg-white border border-gray-100 px-3 py-2 text-xs hover:border-green-300 hover:bg-green-50 transition-colors"
@@ -197,7 +204,7 @@ function AvailabilityCalendar({
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-red-50 inline-block" /> Unavailable</span>
         {reservationsUrl && availDays.size > 0 && (
           <span className="text-green-700">
-            {hasPerSiteLinks ? 'Tap an available day to choose an open site →' : 'Tap an available day to see open sites & book →'}
+            {showSitePicker ? 'Tap an available day to choose an open site →' : 'Tap an available day to see open sites & book →'}
           </span>
         )}
       </div>
@@ -336,15 +343,24 @@ export default function CampgroundDetailPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Back nav */}
+      {/* Header: back nav + CampHawk logo (consistent with the rest of the site) */}
       <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-4 py-3">
-        <button
-          onClick={() => router.back()}
-          className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-green-700 transition-colors"
-        >
-          <ArrowLeft size={16} />
-          Back to results
-        </button>
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
+          <button
+            onClick={() => router.back()}
+            className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-green-700 transition-colors"
+          >
+            <ArrowLeft size={16} />
+            Back to results
+          </button>
+          <button
+            onClick={() => router.push('/')}
+            aria-label="CampHawk home"
+            className="shrink-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-green-400"
+          >
+            <Logo markSize={34} />
+          </button>
+        </div>
       </div>
 
       <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
