@@ -30,9 +30,15 @@ optionally weekends" (see "Flexible dates" under the core flow).
   `campsite-finder-worker`). It also serves one HTTP endpoint
   (`worker/http-server.ts`) that the website calls for GoingToCamp availability,
   because Vercel's IPs are WAF-blocked from that source.
-- **Resend** (email) + **Twilio** (SMS, A2P-approved) — alerts.
+- **Resend** (email) + **Twilio** (SMS, A2P-approved) + **FCM** (native push, HTTP v1;
+  relays to APNs for iOS) — the three alert channels.
 - **Mapbox** — geocoding + maps.
 - A **mini PC** (Windows, always-on, residential IP) — hosts the auto-cart bot.
+- **Capacitor** — the iOS/Android app is a thin native shell around the live site
+  (`server.url = camphawk.app`), so the whole Next stack runs unchanged and web deploys
+  reach the app instantly. Only push + the store-billing flag are native. Firebase
+  project `campapp-39c4b`. See "Native mobile app" below and `docs/SETUP.md` for the
+  build; `ios/`/`android/` are generated locally and git-ignored.
 
 ## Reservation sources (how availability is checked)
 
@@ -466,7 +472,10 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 3. **Poller** (`worker/poller.ts`, on Fly, ~15s) — checks every active watch. On an
    opening it dispatches notifications. Branches by source; uses an atomic claim on
    `notification_sent_at` (1-hour re-notify window) so it never double-alerts.
-4. **Notifications** (`src/lib/notifications/`) — email (Resend) + SMS (Twilio).
+4. **Notifications** (`src/lib/notifications/`) — email (Resend) + SMS (Twilio) + native
+   push (FCM). `dispatchNotifications` fans out to all three via `Promise.allSettled`;
+   push goes to a user's registered devices (`push_tokens`, migration 023) and no-ops
+   when `FCM_SERVICE_ACCOUNT` is unset. See "Native mobile app" below.
 
 ### Flexible dates (feature C — SHIPPED 2026-07-22)
 
@@ -676,6 +685,48 @@ the page doesn't honor.
 > is where SMS links get tapped. So for rec.gov the realistic ceiling is "lands on
 > the right site, dates not filled in." That's the provider's limit, not a bug.
 
+### Native mobile app (Capacitor + FCM push — backend SHIPPED 2026-07-24)
+
+The iOS/Android app is a **thin Capacitor shell** around the live site
+(`capacitor.config.ts`, `server.url = https://camphawk.app`): the webview loads
+production, so Clerk/Stripe/SSR run unchanged and a web deploy reaches the app instantly
+with no store release. Only two things are actually native — **push** and the
+**store-billing flag**. The native projects (`ios/`, `android/`) are generated locally
+with `npx cap add` and are git-ignored; see `docs/SETUP.md` for the build + account
+steps (Firebase project `campapp-39c4b`).
+
+- **Push is a third alert channel** next to email/SMS, dispatched by the SAME
+  `dispatchNotifications` (`src/lib/notifications/index.ts`) — no poller call sites
+  changed. `src/lib/notifications/push.ts` sends via **FCM HTTP v1** (one integration
+  for both platforms; FCM relays to APNs for iOS), minting an OAuth2 token from the
+  service account with `jsonwebtoken` and caching it. Device tokens live in `push_tokens`
+  (migration 023), registered by the app via `POST /api/user/push-token` (Clerk-authed;
+  the webview carries the session cookie). Dead tokens are pruned on send. **No-ops when
+  `FCM_SERVICE_ACCOUNT` is unset** (mirrors Twilio), so it's safe everywhere. The app-side
+  bridge is `src/components/NativeBridge.tsx` (no-op on web; requests permission,
+  registers the token, deep-links on notification tap). A `delivery:push` canary guards
+  the credential (see feature A).
+- **Store-billing: Stripe stays web-only** (Apple/Google forbid selling a digital sub
+  outside their IAP). The app shows no price/buy button — a non-subscriber sees "manage
+  at camphawk.app". Enforced by a native flag: Capacitor appends `CampHawkApp` to the
+  webview UA, and `NativeAppProvider` (`src/lib/native/context.tsx`) reads it
+  **client-side** (`useSyncExternalStore`) and gates `PricingButtons`/`WatchButton`.
+  > **The flag is read CLIENT-side, and MUST stay that way.** The first version read the
+  > UA in the root layout via `await headers()` for a flash-free server render — which
+  > under this build's **Cache Components** model threw at request time and **500'd every
+  > page in production** (2026-07-24 outage; `/api/*` stayed up because it has no root
+  > layout, and `next build` stayed green because dynamic segments don't run at build).
+  > **Never call `headers()`/`cookies()`/`connection()` in the root layout here.** The
+  > only cost of client detection is a first-render flash of pricing UI *inside the
+  > native app* (which doesn't exist yet); web users are never native, so nothing flips.
+- **Remaining to ship the app** (all off-machine, needs Xcode/Android Studio + paid
+  accounts): register the Firebase iOS/Android apps → download `GoogleService-Info.plist`
+  / `google-services.json`; set `FCM_SERVICE_ACCOUNT` on **both Vercel and the Fly
+  worker** (worker is the main dispatcher — a missing value there = push silently never
+  fires); Apple ($99, + APNs `.p8` uploaded to Firebase) and Google Play ($25); then
+  `npx cap add ios/android`, drop in the config files, build → TestFlight / Play internal
+  testing. Android needs none of the Apple pieces — fastest first test.
+
 ### Verifying a source actually alerts
 
 "The code path matches the working one" is not verification — the registry-staleness
@@ -853,7 +904,11 @@ Worker resilience tunables (on the **Fly worker**, all non-secret with in-code
 defaults): `WATCHDOG_STALE_MS` (self-heal `process.exit(1)` when no heartbeat lands
 for this long, 4 min); `WATCHDOG_EXTERNAL_STALE_MS` (second self-heal trip — reboot
 when no external provider fetch has succeeded for this long even while the heartbeat is
-fresh, i.e. the timeout cascade; 6 min); `RECGOV_TIMEOUT_MS` (per-request rec.gov fetch
+fresh, i.e. the timeout cascade; 6 min); the **failure-rate** trip that catches a
+FLAPPING wedge — `WATCHDOG_EXTERNAL_WINDOW_MS` (rolling window, 5 min),
+`WATCHDOG_EXTERNAL_MIN_ATTEMPTS` (min detect probes before it can trip, 6) and
+`WATCHDOG_EXTERNAL_MAX_FAIL_RATIO` (reboot when this fraction of probes in the window
+failed, 0.8); `RECGOV_TIMEOUT_MS` (per-request rec.gov fetch
 timeout, 5s — shortened from 10s so a throttle storm can't starve the socket pool);
 rec.gov throttle breaker `RECGOV_BREAKER_TRIP` (consecutive
 429/timeout failures that OPEN the breaker, 3) and `RECGOV_BREAKER_COOLDOWN_MS`

@@ -75,6 +75,7 @@ run elsewhere (see Deploy).
 | **Website** (Next.js) | Vercel | **Auto-deploys on every `git push` to `master`.** Usually nothing else to do — but note (observed 2026-07-20) a master merge can build a new Production deployment that **does not re-alias `camphawk.app` to it**, so a new route keeps 404ing while `vercel ls` shows the build `Ready`. If that happens, force it with `vercel --prod` from the repo root (or promote the deployment); worth checking the project's Git auto-alias setting. Also: **a new `SYNC_SECRET`-protected `/api/*` route 404s until it's added to `isPublicRoute` in `src/middleware.ts`** (Clerk's `auth.protect()` returns 404, not 401 — see `docs/CONTEXT.md`). |
 | **Alert worker** (`worker/poller.ts`) | Fly.io app `campsite-finder-worker` | `flyctl deploy --config worker/fly.toml --dockerfile worker/Dockerfile --remote-only` (needs Fly login, and run it from the repo root — the build context is the whole repo). **The deploy leaves the poller stopped; you must `flyctl machine start <primary-id>` afterward, or alerting stays dead silently — see `docs/CONTEXT.md`.** Only needed when you change `worker/` or `src/lib` it uses — **including adding a ReserveAmerica contract, GoingToCamp tenant, or TN/SC provider**, since the worker imports those registries and a stale worker silently never alerts for the new state. **From a Claude-web session `flyctl deploy` can't build** (both Fly remote builders fail from the sandbox) — use the build-locally-and-deploy-the-image workaround in the web-session gotchas below; that's how the flexible-dates worker change shipped 2026-07-22. Serves `POST /gtc/availability` for the website's search page, and calls **out** to Vercel's `/api/tnsc-availability` for TN openings (needs `TNSC_AVAILABILITY_URL` set — see the proxy note below). |
 | **Auto-cart bot** (`scripts/auto-cart-bot/`) | The mini PC only | `git push`, then run `mini-pc/update.bat` on the mini PC (via RustDesk). It can't run anywhere else — it drives a real logged-in recreation.gov browser. |
+| **Mobile app** (Capacitor) | App Store / Play Store | Thin native shell around the live site — most changes ship via the normal web deploy (the app loads `camphawk.app`); you only rebuild the binary for native/plugin/icon changes. Needs a Mac (iOS) / Android Studio + paid dev accounts. See **"Building the mobile app"** below. Push needs `FCM_SERVICE_ACCOUNT` on **both Vercel and the Fly worker**. |
 
 ## Catalog syncs (which campgrounds exist)
 
@@ -159,14 +160,19 @@ changes need a new store build.
 > keep **Stripe on the web only**: the app is free, search works for everyone, and a
 > non-subscriber sees "manage your plan at camphawk.app" — never an in-app price or buy
 > button. This is enforced by a **native flag** — Capacitor appends `CampHawkApp` to
-> the webview User-Agent (`capacitor.config.ts`), the root layout reads it server-side
-> and provides it via `NativeAppProvider` (`src/lib/native/context.tsx`), and the
-> pricing surfaces (`SubscribeGate`/`SubscribeBanner`'s `PricingButtons`, `WatchButton`'s
-> subscribe state) render "manage at camphawk.app" instead of Stripe checkout when
-> `useIsNativeApp()` is true. Detection is server-side so there's no flash of purchase
-> UI before hydration. To sanity-check the web path is unaffected, load any page with a
-> normal browser UA (no `CampHawkApp`) and the $2.50/mo · $20/yr buttons appear as
-> before.
+> the webview User-Agent (`capacitor.config.ts`), and `NativeAppProvider`
+> (`src/lib/native/context.tsx`) reads it **client-side** (`useSyncExternalStore` over
+> `navigator.userAgent`) and provides it via context; the pricing surfaces
+> (`SubscribeGate`/`SubscribeBanner`'s `PricingButtons`, `WatchButton`'s subscribe state)
+> render "manage at camphawk.app" instead of Stripe checkout when `useIsNativeApp()` is
+> true. **Detection is CLIENT-side on purpose** — an earlier version read the UA in the
+> root layout via `await headers()`, which under this build's Cache Components model
+> 500'd every page at runtime (see the root-layout gotcha in `CLAUDE.md`/`CONTEXT.md`).
+> The tradeoff is a first-render flash of pricing UI *inside the native app only* — web
+> users are never native, so nothing flips for them; when the app ships, gate the
+> pricing components on a mounted+native check rather than reintroducing a dynamic root
+> layout. To sanity-check the web path is unaffected, load any page with a normal browser
+> UA (no `CampHawkApp`) and the $2.50/mo · $20/yr buttons appear as before.
 
 ## Repo layout (orientation)
 
@@ -178,13 +184,18 @@ src/lib/            Core logic
                     reserveamerica, goingtocamp [+ goingtocamp-remote: asks the worker])
   sources/          catalog sync per platform (ridb, reservecalifornia [+UseDirect states],
                     reserveamerica, goingtocamp)
-  notifications/    email + SMS dispatch
+  notifications/    email + SMS + push dispatch (push.ts = FCM HTTP v1)
+  native/           context.tsx  client-side native-app detection (useIsNativeApp)
   booking-url.ts    the one place that builds a booking link (site/date deep links);
                     records what each provider actually honors — see docs/CONTEXT.md
   db/               Supabase client + migrations/
 src/components/     UI (SearchBar, map, WatchesPanel, AutoCartToggle, SubscribeGate, …)
+                    NativeBridge.tsx  Capacitor push bridge (no-op on web)
 worker/             Fly.io cancellation poller (poller.ts)
                     http-server.ts  POST /gtc/availability, for the Vercel search page
+                    liveness.ts     self-heal watchdog signals (heartbeat + egress)
+capacitor.config.ts  native app shell config; native/shell/ offline fallback page
+                    (ios/, android/ generated by `npx cap add`, git-ignored)
 extension/          Optional Chrome extension ("CampHawk Quick Cart") that reads the
                     #camphawk / #camphawk-rc fragments in alert links to autofill dates
                     and add to cart, in the user's own browser. Desktop only —
