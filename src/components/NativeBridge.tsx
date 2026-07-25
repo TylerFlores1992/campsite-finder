@@ -27,6 +27,19 @@ export default function NativeBridge() {
       const { PushNotifications } = await import('@capacitor/push-notifications');
       const { App } = await import('@capacitor/app');
 
+      // Keep the webview out from under the status bar / notch, so the site header
+      // (Sign in / Sign up) isn't rendered in the non-tappable status-bar strip. Also
+      // set at launch via capacitor.config.ts; this reinforces it at runtime. Guarded —
+      // setBackgroundColor is Android-only and throws on iOS.
+      try {
+        const { StatusBar, Style } = await import('@capacitor/status-bar');
+        await StatusBar.setOverlaysWebView({ overlay: false });
+        await StatusBar.setStyle({ style: Style.Dark });
+        if (platform === 'android') await StatusBar.setBackgroundColor({ color: '#faf7f2' });
+      } catch (err) {
+        console.warn('[native] status bar config failed', err);
+      }
+
       // Register the token only for a signed-in user — an anonymous device has no
       // account to attach to. Re-runs on sign-in via the effect dependency.
       if (isSignedIn) {
