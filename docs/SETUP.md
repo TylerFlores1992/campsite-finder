@@ -94,9 +94,12 @@ these by hand — but here's how each source refreshes:
 **Feature-E probe roster (not a catalog sync).** `scripts/seed-probe-targets.ts`
 populates `probe_targets` — the high-demand campgrounds the worker probes hourly for
 the cancellation-likelihood signal. It's a **one-time-ish demand scan** (keeps sites
-booked solid on a peak weekend), rec.gov-only for now, run by hand:
-`NODE_USE_ENV_PROXY=1 npx tsx scripts/seed-probe-targets.ts` (add `--dry` to preview).
-Migrations `020_availability_history` + `021_probe_targets` must be applied first.
+booked solid on a peak weekend), run by hand per source:
+`NODE_USE_ENV_PROXY=1 npx tsx scripts/seed-probe-targets.ts --source=<src>` (add `--dry`
+to preview). As of 2026-07-25 the roster is **502 active** across rec.gov, all 10
+UseDirect states, and GoingToCamp (the seed's `isOpenInRange` supports all three; drop
+`--source` to default to rec.gov). It's data-only — the worker reads `probe_targets`
+live, so no redeploy. Migrations `020_availability_history` + `021_probe_targets` first.
 Sanity-check the resulting signal with `scripts/likelihood-readout.mts`. See
 "Cancellation-likelihood (feature E)" in `docs/CONTEXT.md`.
 

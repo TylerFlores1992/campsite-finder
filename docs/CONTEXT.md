@@ -584,11 +584,14 @@ shown once it's **honest**:
    Saturday → weekend demand) for a 2-night stay, writing the same rows. "High demand"
    is set by `scripts/seed-probe-targets.ts`, which demand-scans a broad sample and
    keeps the ones **booked solid** on a peak weekend (a site that's always open has no
-   cancellation signal). Seeded for **rec.gov (150) + ReserveCalifornia (120)** so far
-   — CA state parks are the highest-demand, highest-cancellation sites (the scan found
-   ~75% booked solid). The poller's probe path is source-agnostic, so broadening is
-   pure seeding: `seed-probe-targets.ts --source=<source>` (rec.gov is datacenter-clean;
-   UseDirect routes through the agent proxy, so add `NODE_USE_ENV_PROXY=1`).
+   cancellation signal). Seeded (2026-07-25) to **502 active**: rec.gov (150) +
+   ReserveCalifornia (120) + ~207 across the 9 other UseDirect states (OH, MN, IL, VA,
+   FL, MO, WY, NV, AZ; ~25 each) + GoingToCamp (25). The poller's probe path is
+   source-agnostic, so broadening is pure seeding:
+   `seed-probe-targets.ts --source=<source>` (rec.gov is datacenter-clean; **UseDirect
+   AND GoingToCamp** route through the agent proxy, so add `NODE_USE_ENV_PROXY=1` —
+   the seed's `isOpenInRange` now dispatches all three families, GTC via the direct
+   Camis checker, which the agent proxy / Fly can reach even though Vercel IPs can't).
 3. **Aggregation** (`src/lib/likelihood.ts`, server-only) — reads the time series into
    an opening rate, **always bucketed on `lead_days`** (`LEAD_BUCKETS`: a site 3 days
    out vs 45 days out is a different game — never blend them) over a trailing window,
@@ -611,14 +614,15 @@ shown once it's **honest**:
 > **Sanity-check with the readout, not by eyeballing prod.**
 > `NODE_USE_ENV_PROXY=1 npx tsx scripts/likelihood-readout.mts` prints corpus size,
 > accrual/hr, `lead_days`/nights/source spread, and per-bucket + per-campground rates.
-> Healthy launch-day signature: ~300 rows/hr (150 targets × 2 leads), leads clustering
-> at **17** (14→next Sat) and **45**, nights=2, ~9% overall open rate (believable for a
-> booked-solid roster; 0% would mean the demand scan picked sites that never open).
+> Healthy signature: ~1,000 rows/hr (502 targets × 2 leads), leads clustering at **17**
+> (14→next Sat) and **45**, nights=2, low-but-nonzero overall open rate (believable for
+> a booked-solid roster; 0% would mean the demand scan picked sites that never open).
 
-> **Remaining to broaden (not blockers):** roster covers rec.gov + ReserveCalifornia;
-> other UseDirect states and GoingToCamp could be seeded next (GoingToCamp would need a
-> reachable checker in the seed's `isOpenInRange`, since Camis blocks datacenter IPs).
-> The signal still needs a few weeks of history before the longer-lead buckets are dense.
+> **Broadened 2026-07-25:** roster now spans rec.gov + all 10 UseDirect states +
+> GoingToCamp (the GTC checker was the one thing the seed lacked; added via the direct
+> Camis checker, reachable from the agent proxy / Fly). Could broaden *further* — more
+> targets per state, or GTC provinces — but coverage is national now. The signal still
+> needs a few weeks of history before the longer-lead buckets are dense.
 
 > **⏸ THE DISPLAY IS PAUSED (2026-07-23) — data collection is NOT.** All three UI
 > surfaces (Watches-panel per-watch "% chance for your dates", `CampgroundCard` badge,
@@ -663,6 +667,15 @@ link never gets more specific in one place than the other. **Only add a paramete
 you have watched take effect** — a link that looks dated but silently lands on a
 generic page is worse than an honest generic one, because the alert promises dates
 the page doesn't honor.
+
+> **The availability calendar is `src/components/AvailabilityCalendar.tsx`** (extracted
+> from the detail page 2026-07-25 so it can be unit-tested / screenshotted — see the
+> `avail-usedirect` preset in `scripts/screenshot-component.mts`). Tapping an open day
+> reveals the **per-site picker for rec.gov AND UseDirect** (both return per-site
+> availability; the gate is `source === 'ridb' || reservecalifornia || *stateparks`).
+> rec.gov sites get their verified per-site deep link; UseDirect sites are listed by
+> name but share the one park/facility link (RC has no per-unit deep link) — honest
+> about what each provider allows, per the table below.
 
 - **Recreation.gov — site yes, date NO. Measured 2026-07-19; don't re-probe.**
   `/camping/campsites/<campsiteId>` is a real per-site page (rec.gov links to it
@@ -731,15 +744,24 @@ steps (Firebase project `campapp-39c4b`).
     in embedded webviews; it bounces to the system browser and errors with a Clerk
     `authorization_invalid`. **Email/password sign-in works.** Proper fix later: route
     social sign-in through the system browser (Clerk + `@capacitor/browser`).
+- **Branded icons + splash (added 2026-07-25):** source images live in `assets/`
+  (`icon-only.png` opaque/no-alpha for iOS, `icon-foreground.png`/`icon-background.png`
+  for Android adaptive, `splash.png`/`splash-dark.png`), generated from the hawk badge.
+  `npm run cap:assets` (= `@capacitor/assets generate --assetPath assets`) expands them
+  into `ios/`/`android/` **after `cap add`**. The already-shipped Android build predates
+  this, so it still carries Capacitor's placeholder icon — a rebuild with `cap:assets`
+  picks up the real one. See `assets/README.md` + `docs/SETUP.md`.
 - **Remaining to ship the app:** DONE so far — Firebase project + both apps registered,
-  `FCM_SERVICE_ACCOUNT` deployed on Vercel + Fly worker, migration 023 applied, and the
+  `FCM_SERVICE_ACCOUNT` deployed on Vercel + Fly worker, migration 023 applied, the
   **Android app builds and runs** (native shell, store-billing flag, email sign-in, and
-  the notification-permission + token-register flow all verified on the emulator). LEFT:
-  confirm a device token actually lands in `push_tokens` + a real test push arrives
-  (needs backend creds in-session); **Google Play** identity verification (ID upload,
-  processing) + **device verification (needs a real Android device — emulator fails Play
-  Integrity)**; then the **iOS** track (Apple $99 + APNs `.p8` → Firebase, `npx cap add ios`,
-  TestFlight).
+  the notification-permission + token-register flow all verified on the emulator), **a
+  real device token has landed in `push_tokens`** (1 android row as of 2026-07-25 — the
+  register flow works end-to-end), and branded icon/splash sources exist (above). LEFT:
+  a real test push actually arriving (needs backend creds in-session); rebuild Android
+  with `cap:assets` so it ships the branded icon; **Google Play** identity verification
+  (ID upload, processing) + **device verification (needs a real Android device — emulator
+  fails Play Integrity)**; then the **iOS** track (Apple $99 + APNs `.p8` → Firebase,
+  `npx cap add ios`, `npm run cap:assets`, TestFlight).
 
 ### Verifying a source actually alerts
 
@@ -847,8 +869,16 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
   Management "allow the computer to turn off this device" OFF, sleep = Never, or wire
   to ethernet.
 - `broker.mjs` — a websocket server (exposed via a Cloudflare tunnel at
-  broker.camphawk.app) that lets a user do the one-time rec.gov sign-in remotely from
-  any device (streams the login page via CDP). No passwords ever touch our servers.
+  broker.camphawk.app) that types the user's rec.gov credentials into the mini-PC's
+  browser and can stream the live login page via CDP. No passwords ever touch our servers.
+  > **`/connect` UX (reworked 2026-07-25):** the primary flow is the credential **form**
+  > (native inputs → broker types them in). The live streamed window was clunky on
+  > mobile, so it's now reserved for the one case the form can't clear on its own — a
+  > **CAPTCHA/2FA challenge**, which the broker signals with a `manual` message. Ordinary
+  > failures (wrong password, or the broker never answering) show a "check your
+  > credentials and try again" message instead of dropping the user into the stream; the
+  > old always-available "use the window instead" opt-in was removed. The broker's
+  > streaming capability is unchanged — only the web client's use of it narrowed.
 - `recgov.mjs` — the actual add-to-cart, using **real Playwright mouse clicks**.
 - `session.mjs` — reliable login detection.
 - Enrollment/connection state: `users.autocart_enabled` + `users.autocart_connected`.
@@ -976,7 +1006,10 @@ The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 
 ## Deploy targets
 
-See `docs/SETUP.md`. Short version: website auto-deploys on `git push`; the Fly worker
-deploys via `flyctl` **and must then be started by hand** (see the autostop note
-above — the deploy leaves it stopped and alerting silently dead); the mini-PC bot
-updates via `git push` + `update.bat` on the box.
+See `docs/SETUP.md`. Short version: website auto-deploys on `git push` to `master` and
+`camphawk.app` auto-re-aliases to it (`autoAssignCustomDomains` on; **`vercel.json`
+disables deploys for `claude/*` branches** so an agent branch pushing the same SHA can't
+shadow the master Production build and strand the domain — root-caused 2026-07-25, see
+SETUP.md); the Fly worker deploys via `flyctl` **and must then be started by hand** (see
+the autostop note above — the deploy leaves it stopped and alerting silently dead); the
+mini-PC bot updates via `git push` + `update.bat` on the box.
