@@ -88,6 +88,41 @@ const PRESETS: Record<string, Preset> = {
       export const node = <ManageWatch token="demo" />;`,
     frame: 'max-w-lg w-full mx-auto',
   },
+  'avail-usedirect': {
+    label: 'AvailabilityCalendar (ReserveCalifornia — open-site dropdown)',
+    // Mocks a UseDirect availability response with several sites open on a near day,
+    // then auto-taps that day so the shot captures the open-site picker (the thing the
+    // rec.gov→UseDirect dropdown change added). Sites share the park link by design.
+    entry: `import AvailabilityCalendar from '@/components/AvailabilityCalendar';
+      const now = new Date();
+      const month = now.toISOString().slice(0, 7);
+      const iso = (d) => d.toISOString().slice(0, 10);
+      const day = (n) => { const d = new Date(now); d.setDate(now.getDate() + n); return iso(d); };
+      const mk = (id, name, loop, type, dates) => ({ campsiteId: id, campsiteName: name, campsiteType: type, loop, availability: dates.map((dt) => ({ date: dt, status: 'available', minStay: null })) });
+      const campsites = [
+        mk('72101', 'Oceanfront 12', 'Sea Breeze Loop', 'RV', [day(3), day(4)]),
+        mk('72102', 'Oceanfront 14', 'Sea Breeze Loop', 'TENT', [day(3), day(5)]),
+        mk('72103', 'Redwood 07', 'Canopy Loop', 'TENT', [day(3), day(10)]),
+        mk('72104', 'Redwood 22', 'Canopy Loop', 'RV', [day(4), day(11)]),
+        mk('72105', 'Meadow 03', null, 'TENT', [day(3)]),
+      ];
+      if (typeof window !== 'undefined') {
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({ campgroundId: 'rc-783', month, campsites, availableCount: campsites.length }) });
+      }
+      function Harness() {
+        React.useEffect(() => {
+          const t = setTimeout(() => {
+            const btns = Array.from(document.querySelectorAll('button[data-avail-day]'));
+            const target = btns.find((b) => b.getAttribute('data-avail-day') === day(3)) || btns[0];
+            if (target) target.click();
+          }, 500);
+          return () => clearTimeout(t);
+        }, []);
+        return <AvailabilityCalendar campgroundId="rc-783" month={month} source="reservecalifornia" reservationsUrl="https://www.reservecalifornia.com/park/622" providerName="ReserveCalifornia" />;
+      }
+      export const node = <Harness />;`,
+    frame: 'max-w-md w-full mx-auto',
+  },
 };
 
 function parseArgs() {
