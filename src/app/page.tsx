@@ -414,7 +414,14 @@ export default function HomePage() {
         />
       )}
       {/* Header */}
-      <header className={`${showLandingBg ? 'bg-transparent border-transparent' : 'bg-background/90 border-gray-200'} backdrop-blur px-3 sm:px-4 py-3 z-10 border-b`}>
+      <header
+        // Pad the top by the device safe-area inset so the header clears the status
+        // bar / notch in the native app (Android 15+ draws edge-to-edge). Adds the
+        // original py-3 top spacing on top of the inset; on the web the inset is 0, so
+        // this is a no-op. The header background fills the inset strip.
+        style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)' }}
+        className={`${showLandingBg ? 'bg-transparent border-transparent' : 'bg-background/90 border-gray-200'} backdrop-blur px-3 sm:px-4 py-3 z-10 border-b`}
+      >
         <div className="max-w-screen-2xl mx-auto space-y-3">
           {/* Top row: brand + actions (wraps cleanly on mobile) */}
           <div className="flex items-center justify-between gap-2">
