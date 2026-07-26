@@ -44,6 +44,13 @@ workflows:
         script: npm run cap:assets
       - name: Capacitor sync (copy config + plugins into ios/)
         script: npx cap sync ios
+      - name: Declare export compliance
+        # The app uses only standard HTTPS/TLS (camphawk.app, Clerk, Stripe) — exempt
+        # encryption. Declaring this up front lets TestFlight accept the build without
+        # the manual "missing compliance" prompt on every upload.
+        script: |
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" ios/App/App/Info.plist \
+            || /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" ios/App/App/Info.plist
       - name: Set up code signing
         # This app is brand-new, so no distribution certificate or provisioning profile
         # exists yet. Passing the private key (CERTIFICATE_PRIVATE_KEY, from the
