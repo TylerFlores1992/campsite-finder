@@ -215,6 +215,14 @@ const PROBE_LEAD_DAYS = (process.env.PROBE_LEAD_DAYS ?? '14,45')
   .split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
 const PROBE_NIGHTS = Number(process.env.PROBE_NIGHTS ?? 2); // a weekend-length stay
 const PROBE_CONCURRENCY = 3;
+// Spread the roster's probes evenly across a fraction of the interval instead of
+// bursting them all at once — a single hourly burst of ~300 rec.gov availability calls
+// from one datacenter IP was tripping rec.gov's per-IP rate limit (429 storm → timeout
+// cascade). Paced dispatch keeps the average rate low (~a few/min per source) while
+// still finishing well within the interval. Capped so a short interval can't push the
+// run past the next tick (the probeRunning guard also prevents overlap).
+const PROBE_SPREAD_FRACTION = Number(process.env.PROBE_SPREAD_FRACTION ?? 0.6);
+const PROBE_SPREAD_MAX_MS = Number(process.env.PROBE_SPREAD_MAX_MS ?? 45 * 60 * 1000);
 let probeRunning = false;
 
 /** The [start, checkout) of a PROBE_NIGHTS stay arriving the next Saturday on or
@@ -252,30 +260,39 @@ async function probeRosterIfDue(): Promise<void> {
     if (targets.length === 0) return;
     const todayISO = new Date().toISOString().slice(0, 10);
     const windows = PROBE_LEAD_DAYS.map((lead) => probeArrival(lead));
+
+    // Flatten to independent (target, window) probes and shuffle, so one source's
+    // targets (e.g. rec.gov's 150) don't fire back-to-back — the paced runner then
+    // spreads them across the interval, keeping every source under its rate limit.
+    type ProbeTask = { t: { campground_id: string; source: string }; w: { start: string; end: string } };
+    const tasks: ProbeTask[] = [];
+    for (const t of targets) for (const w of windows) tasks.push({ t, w });
+    for (let i = tasks.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [tasks[i], tasks[j]] = [tasks[j], tasks[i]];
+    }
+
     const rows: ObsRow[] = [];
-    await pMap(
-      targets,
-      async (t) => {
-        for (const w of windows) {
-          try {
-            const open = await probeWholeStayOpen(t.source, t.campground_id, w.start, w.end, PROBE_NIGHTS);
-            rows.push({
-              campgroundId: t.campground_id,
-              source: t.source,
-              arrivalDate: w.start,
-              nights: PROBE_NIGHTS,
-              leadDays: daysBetween(todayISO, w.start),
-              hadOpening: open,
-            });
-          } catch {
-            // transport/WAF error for this window → no row, rather than a false 'booked'
-          }
-        }
-      },
-      PROBE_CONCURRENCY
-    );
+    const spreadMs = Math.min(PROBE_INTERVAL_MS * PROBE_SPREAD_FRACTION, PROBE_SPREAD_MAX_MS);
+    await pacedForEach(tasks, spreadMs, PROBE_CONCURRENCY, async ({ t, w }) => {
+      try {
+        const open = await probeWholeStayOpen(t.source, t.campground_id, w.start, w.end, PROBE_NIGHTS);
+        rows.push({
+          campgroundId: t.campground_id,
+          source: t.source,
+          arrivalDate: w.start,
+          nights: PROBE_NIGHTS,
+          leadDays: daysBetween(todayISO, w.start),
+          hadOpening: open,
+        });
+      } catch {
+        // transport/WAF error for this window → no row, rather than a false 'booked'
+      }
+    });
     await insertObservationRows(rows);
-    console.log(`[poller] probe roster — ${targets.length} targets × ${windows.length} windows → ${rows.length} observations`);
+    console.log(
+      `[poller] probe roster — ${targets.length} targets × ${windows.length} windows over ${(spreadMs / 60000).toFixed(0)}m → ${rows.length} observations`
+    );
   } catch (err) {
     console.error('[poller] probe roster failed (non-fatal):', (err as Error).message);
   } finally {
@@ -405,6 +422,41 @@ async function pMap<T, R>(items: T[], fn: (item: T) => Promise<R>, limit: number
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, workerLoop));
   return results;
+}
+
+/** Run `fn` over `tasks` at a steady, jittered rate so the whole set is spread across
+ *  ~`spreadMs` rather than bursting — with never more than `limit` in flight. This is
+ *  what keeps the probe roster under rec.gov's per-IP rate limit. Best-effort: a task
+ *  that throws is swallowed (the caller already try/catches per probe). Resolves once
+ *  every task has settled. Uses timers/Math.random — fine in the Node worker runtime. */
+function pacedForEach<T>(tasks: T[], spreadMs: number, limit: number, fn: (t: T) => Promise<void>): Promise<void> {
+  return new Promise((resolve) => {
+    if (tasks.length === 0) return resolve();
+    const gap = Math.max(1, spreadMs / tasks.length); // average ms between dispatches
+    let idx = 0;
+    let active = 0;
+    let done = 0;
+    const settle = () => {
+      active--;
+      done++;
+      if (done === tasks.length) resolve();
+    };
+    const dispatch = () => {
+      const t = tasks[idx++];
+      active++;
+      Promise.resolve(fn(t)).catch(() => {}).finally(settle);
+    };
+    const scheduleNext = () => {
+      if (idx >= tasks.length) return; // all dispatched; in-flight ones resolve via settle
+      const jittered = gap * (0.5 + Math.random()); // ±50% so ticks don't align
+      setTimeout(() => {
+        if (active < limit) dispatch(); // else: idx unchanged, retry on the next tick
+        scheduleNext();
+      }, jittered);
+    };
+    dispatch(); // first goes immediately
+    scheduleNext();
+  });
 }
 
 async function loadWatches(): Promise<WatchRow[]> {
