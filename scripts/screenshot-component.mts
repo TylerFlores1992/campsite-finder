@@ -88,6 +88,88 @@ const PRESETS: Record<string, Preset> = {
       export const node = <ManageWatch token="demo" />;`,
     frame: 'max-w-lg w-full mx-auto',
   },
+  'ch-primitives': {
+    label: 'Redesign primitives (Button / Chip / Tag / Card / Collapsible)',
+    // Every variant of every phase-2 primitive on one sheet, on the ch-paper
+    // ground so the surfaces read correctly. Collapsible is rendered both open
+    // and closed since the transition is the thing worth eyeballing.
+    entry: `import Button from '@/components/ui/Button';
+      import Chip from '@/components/ui/Chip';
+      import Tag from '@/components/ui/Tag';
+      import Card from '@/components/ui/Card';
+      import Collapsible from '@/components/ui/Collapsible';
+      const H = ({ children }) => <div className="text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted mb-2 mt-5 first:mt-0">{children}</div>;
+      function Sheet() {
+        const [sel, setSel] = React.useState(['Tent']);
+        const flip = (v) => setSel((s) => s.includes(v) ? s.filter((x) => x !== v) : [...s, v]);
+        return (
+          <div className="bg-ch-paper p-6 rounded-ch-card font-ch-body text-ch-ink">
+            <H>Button — primary / quiet / cart / warn</H>
+            <div className="flex flex-wrap gap-2 items-center">
+              <Button variant="primary">Start watching</Button>
+              <Button variant="quiet">See full calendar</Button>
+              <Button variant="cart">Check out on Recreation.gov</Button>
+              <Button variant="warn">Reconnect Recreation.gov</Button>
+              <Button variant="primary" disabled>Disabled</Button>
+            </div>
+            <H>Button — sizes</H>
+            <div className="flex flex-wrap gap-2 items-center">
+              <Button size="sm">Small</Button><Button size="md">Medium</Button><Button size="lg">Large</Button>
+            </div>
+            <H>Chip — toggles</H>
+            <div className="flex flex-wrap gap-1.5">
+              {['Tent','RV','Cabin','Group','Hookups','Pets OK','Water nearby'].map((t) => (
+                <Chip key={t} selected={sel.includes(t)} onClick={() => flip(t)}>{t}</Chip>
+              ))}
+            </div>
+            <H>Tag — status and source</H>
+            <div className="flex flex-wrap gap-1.5 items-center">
+              <Tag kind="open">Site open</Tag>
+              <Tag kind="watch">Watching</Tag>
+              <Tag kind="cart">In your cart</Tag>
+              <Tag kind="paused">Paused</Tag>
+              <Tag kind="alert">Action needed</Tag>
+              <Tag kind="src">Recreation.gov</Tag>
+              <Tag kind="src">Washington · GoingToCamp</Tag>
+            </div>
+            <H>Card — default / hit / warn / paused</H>
+            <div className="grid grid-cols-2 gap-3">
+              {[['default','Watching'],['hit','Site open'],['warn','Action needed'],['paused','Paused']].map(([st, lab]) => (
+                <Card key={st} state={st}>
+                  <div data-card-dim>
+                    <div className="mb-2 flex gap-1.5">
+                      <Tag kind={st === 'hit' ? 'open' : st === 'warn' ? 'alert' : st === 'paused' ? 'paused' : 'watch'}>{lab}</Tag>
+                      <Tag kind="src">Recreation.gov</Tag>
+                    </div>
+                    <div className="font-ch-display text-ch-park font-bold tracking-[-.02em]">Kirk Creek Campground</div>
+                    <div className="text-ch-meta text-ch-muted mt-0.5">Los Padres NF · Big Sur, CA</div>
+                    <div className="text-ch-body font-bold text-ch-ink-2 mt-2.5">Fri Aug 14 – Sun Aug 16, 2026</div>
+                  </div>
+                  <div className="mt-3 pt-2.5 border-t border-ch-line flex gap-1.5">
+                    <Button variant="quiet" size="sm" className="flex-1">Calendar</Button>
+                    <Button variant="quiet" size="sm" className="flex-1">{st === 'paused' ? 'Resume' : 'Pause'}</Button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+            <H>Collapsible — closed and open</H>
+            <div className="grid gap-3">
+              <Collapsible label="Filters" summary="all sites">
+                <div className="text-ch-body text-ch-ink-2">Nothing selected means every site counts.</div>
+              </Collapsible>
+              <Collapsible label="Alert history" summary="3 this month" defaultOpen>
+                <div className="text-ch-body text-ch-ink-2">
+                  Kirk Creek · Site 22 — today 6:42 AM<br />
+                  Pfeiffer Big Sur · Site 118 — Aug 9, 11:20 PM
+                </div>
+              </Collapsible>
+            </div>
+          </div>
+        );
+      }
+      export const node = <Sheet />;`,
+    frame: 'max-w-2xl w-full mx-auto',
+  },
   'avail-usedirect': {
     label: 'AvailabilityCalendar (ReserveCalifornia — open-site dropdown)',
     // Mocks a UseDirect availability response with several sites open on a near day,
