@@ -751,17 +751,21 @@ steps (Firebase project `campapp-39c4b`).
   into `ios/`/`android/` **after `cap add`**. The already-shipped Android build predates
   this, so it still carries Capacitor's placeholder icon — a rebuild with `cap:assets`
   picks up the real one. See `assets/README.md` + `docs/SETUP.md`.
-- **Remaining to ship the app:** DONE so far — Firebase project + both apps registered,
-  `FCM_SERVICE_ACCOUNT` deployed on Vercel + Fly worker, migration 023 applied, the
-  **Android app builds and runs** (native shell, store-billing flag, email sign-in, and
-  the notification-permission + token-register flow all verified on the emulator), **a
-  real device token has landed in `push_tokens`** (1 android row as of 2026-07-25 — the
-  register flow works end-to-end), and branded icon/splash sources exist (above). LEFT:
-  a real test push actually arriving (needs backend creds in-session); rebuild Android
-  with `cap:assets` so it ships the branded icon; **Google Play** identity verification
-  (ID upload, processing) + **device verification (needs a real Android device — emulator
-  fails Play Integrity)**; then the **iOS** track (Apple $99 + APNs `.p8` → Firebase,
-  `npx cap add ios`, `npm run cap:assets`, TestFlight).
+- **iOS: SHIPPED to TestFlight and push works end-to-end (2026-07-26), with NO Mac.**
+  Built via **Codemagic** cloud CI (`codemagic.yaml`; full setup + gotchas in
+  `docs/SETUP.md` → "iOS builds with NO Mac"). Verified on a real iPhone: app loads,
+  email/password sign-in, search, and a **real push notification delivered** (fired via
+  `scripts/e2e-gtc-alert.mts` → Fly worker → FCM → APNs). The push fix required switching
+  the native bridge to `@capacitor-firebase/messaging` (FCM token, not APNs token) and
+  uploading the APNs auth key to Firebase's **Production** slot (the Development-only trap;
+  see SETUP.md). Apple Developer enrolled, App Store Connect app + API key done.
+- **Android: still emulator-only** — the shipped emulator build predates the push-plugin
+  switch, so it **needs a rebuild** with `@capacitor-firebase/messaging` (+ `cap:assets`
+  for the branded icon). Register flow worked on the old plugin (1 token landed 2026-07-25).
+- **LEFT:** rebuild Android with the new plugin; **Google Play** identity verification (ID
+  upload) + **device verification (needs a real Android device — emulator fails Play
+  Integrity)**; iOS public App Store submission (screenshots/metadata) when ready — the
+  TestFlight track itself is done.
 
 ### Verifying a source actually alerts
 

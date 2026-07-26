@@ -205,6 +205,57 @@ changes need a new store build.
 >   still validates; Vercel has the key. Verify web changes with typecheck + a real page
 >   after deploy, not a full local `next build`.
 
+### iOS builds with NO Mac — Codemagic cloud CI (SHIPPED 2026-07-26)
+
+The iOS app is built + shipped to TestFlight from **Codemagic** (macOS cloud runners),
+so **no Mac is needed**. Config is `codemagic.yaml` (workflow `ios-testflight`); it
+regenerates the git-ignored `ios/` each build (`npx cap add ios`), brands assets, signs,
+and uploads. Set up in the Codemagic UI: an **App Store Connect API integration** named
+`CampHawk ASC` (the `.p8` + Key ID + Issuer ID), plus these **secure env vars** in the
+`ios_signing` group:
+- **`CERTIFICATE_PRIVATE_KEY`** — a distribution-cert private key (PEM). `fetch-signing-files
+  --create` mints the signing cert *from this key* on first build and reuses it after;
+  without a private key it can't save a cert and the build fails "requires a provisioning
+  profile" even though a profile got created. Generate once (`openssl genrsa 2048`), keep it.
+- **`GOOGLE_SERVICE_INFO_PLIST_B64`** — base64 of `GoogleService-Info.plist` (from Firebase
+  → iOS app). Decoded + registered with the App target so `@capacitor-firebase/app` can
+  auto-init Firebase for push. Build skips this cleanly (no push) if the var is unset.
+
+Hard-won gotchas from the first end-to-end run (all cost real time):
+- **`missingCompliance`** post-processing failure = the export-compliance question. Fixed
+  in-config by writing `ITSAppUsesNonExemptEncryption=false` into the Info.plist (the app
+  is HTTPS-only / exempt), so TestFlight accepts every build with no manual prompt.
+- **Push entitlement** must be re-applied each build (ios/ is regenerated): the config
+  writes `App.entitlements` (`aps-environment=production`) and points
+  `CODE_SIGN_ENTITLEMENTS` at it via the `xcodeproj` gem. Requires Push enabled on the
+  App ID (or signing fails).
+- **iOS push needs an FCM token, not an APNs token.** `@capacitor/push-notifications`
+  returns a raw **APNs** token on iOS, which the FCM-based backend can't address — so iOS
+  push silently never delivered. Fixed by switching the native bridge to
+  **`@capacitor-firebase/messaging`** (+ `@capacitor-firebase/app` for auto
+  `FirebaseApp.configure()`), which yields a real **FCM** token on both platforms.
+  `firebase` is a direct dep so the plugin's web layer resolves at `next build` (lazy
+  chunk, never runs in the native-only flow). **Android needs a rebuild** to pick up the
+  new plugin (same FCM under the hood, so it keeps working).
+- **THE APNs-key trap that ate an hour (2026-07-26).** Firebase → Cloud Messaging →
+  Apple app config has **two APNs-auth-key slots: Development AND Production**. A key
+  uploaded to Development only leaves Production empty — and **TestFlight builds use the
+  PRODUCTION APNs environment**, so FCM returns `sent`, APNs has no prod key to auth with,
+  and the message is **silently dropped with the token never pruned** (looks exactly like
+  a code bug). The `.p8` auth key is the *same file* for both — upload it to **both**
+  slots. Signature to recognize: email/SMS deliver, push `status=sent`, token stays in
+  `push_tokens`, nothing on device even with notifications allowed + phone locked.
+- **Verifying push without a Mac/device console:** the FCM token lands in `push_tokens`
+  (`platform='ios'`); fire `scripts/e2e-gtc-alert.mts` (needs `NODE_USE_ENV_PROXY=1` + a
+  blank `.env.local` in a web session, since it reads that file) to make the Fly worker
+  dispatch a real push+email+SMS to your account. `status=sent` + no prune + no device
+  delivery ⇒ the APNs-key trap above, not the code.
+- **Native-app UX fixes shipped alongside:** social sign-in (Google) is **hidden in the
+  native app** (email/pw only) — it can't complete in a webview and would trigger Apple's
+  Sign in with Apple requirement (`AuthPanel` + `.native-hide-social` in globals.css);
+  and iOS input-focus zoom is killed by forcing form controls to 16px on small screens
+  (globals.css). Both are web changes, so they reach the app on reload.
+
 > **Store-billing rule (why the app never sells the subscription).** Apple/Google
 > require digital subscriptions to go through their in-app purchase (15–30% cut). We
 > keep **Stripe on the web only**: the app is free, search works for everyone, and a
