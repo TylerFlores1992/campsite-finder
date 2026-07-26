@@ -170,6 +170,42 @@ const PRESETS: Record<string, Preset> = {
       export const node = <Sheet />;`,
     frame: 'max-w-2xl w-full mx-auto',
   },
+  'ch-controls': {
+    label: 'Redesign shared controls (DatePicker / NightsPicker / FilterPanel)',
+    // DatePicker is shown mid-selection with the check-in in the PREVIOUS month —
+    // the case the old {y,m,a,b} model could not represent at all. FilterPanel is
+    // shown with RV active so the conditional rig-length row is visible.
+    entry: `import DatePicker from '@/components/ui/DatePicker';
+      import NightsPicker from '@/components/ui/NightsPicker';
+      import FilterPanel, { EMPTY_FILTERS } from '@/components/ui/FilterPanel';
+      const H = ({ children }) => <div className="text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted mb-2 mt-5 first:mt-0">{children}</div>;
+      function Sheet() {
+        const [range, setRange] = React.useState({ start: '2026-08-29', end: '2026-09-01' });
+        const [nights, setNights] = React.useState(2);
+        const [weekend, setWeekend] = React.useState(true);
+        const [filters, setFilters] = React.useState({ ...EMPTY_FILTERS, siteType: 'rv', rvLength: 32, pets: true });
+        return (
+          <div className="bg-ch-paper p-6 rounded-ch-card font-ch-body text-ch-ink">
+            <H>DatePicker — Aug 29 → Sep 1, viewed from August (runs out)</H>
+            <DatePicker value={range} onChange={setRange} label="Trip dates"
+              minDate="2026-07-01" defaultMonth="2026-08-01" open onOpenChange={() => {}} />
+            <H>…the same range, viewed from September (carries in)</H>
+            <DatePicker value={range} onChange={setRange} label="Trip dates"
+              minDate="2026-07-01" defaultMonth="2026-09-01" open onOpenChange={() => {}} />
+            <H>DatePicker — collapsed, with a flexible-window meta line</H>
+            <DatePicker value={{ start: '2026-10-01', end: '2026-10-31' }} onChange={() => {}}
+              label="Watch window" meta="any 2-night weekend in this window" minDate="2026-07-01" />
+            <H>NightsPicker — flexible stay, weekends only</H>
+            <NightsPicker nights={nights} onNightsChange={setNights}
+              weekendsOnly={weekend} onWeekendsOnlyChange={setWeekend} />
+            <H>FilterPanel — open, RV selected (rig length revealed)</H>
+            <FilterPanel value={filters} onChange={setFilters} defaultOpen />
+          </div>
+        );
+      }
+      export const node = <Sheet />;`,
+    frame: 'max-w-md w-full mx-auto',
+  },
   'avail-usedirect': {
     label: 'AvailabilityCalendar (ReserveCalifornia — open-site dropdown)',
     // Mocks a UseDirect availability response with several sites open on a near day,
