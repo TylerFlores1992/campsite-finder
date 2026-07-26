@@ -1,0 +1,75 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { currentUser } from '@clerk/nextjs/server';
+import { query, mutate } from '@/lib/db/client';
+import { COST_CATEGORIES, type CostItem } from '@/lib/costs';
+
+export const dynamic = 'force-dynamic';
+
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS ?? 'tylerflores1992@gmail.com')
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+// 404 (not 403) for non-admins so the endpoint's existence isn't revealed.
+async function requireAdmin(): Promise<boolean> {
+  const user = await currentUser();
+  const email = user?.emailAddresses?.[0]?.emailAddress?.toLowerCase();
+  return !!email && ADMIN_EMAILS.includes(email);
+}
+
+const notFound = () => NextResponse.json({ error: 'not found' }, { status: 404 });
+
+async function listItems(): Promise<CostItem[]> {
+  return query<CostItem>(
+    `SELECT id, label, category, monthly_cents, notes, sort_order
+       FROM cost_items ORDER BY sort_order, label`
+  );
+}
+
+export async function GET() {
+  if (!(await requireAdmin())) return notFound();
+  return NextResponse.json({ items: await listItems() });
+}
+
+// Create (no id) or update (with id) a single line item.
+export async function POST(req: NextRequest) {
+  if (!(await requireAdmin())) return notFound();
+  const body = await req.json().catch(() => ({}));
+
+  const label = typeof body.label === 'string' ? body.label.trim() : '';
+  if (!label) return NextResponse.json({ error: 'label required' }, { status: 400 });
+
+  const category = COST_CATEGORIES.includes(body.category) ? body.category : 'other';
+  const cents = Math.max(0, Math.round(Number(body.monthly_cents) || 0));
+  const notes = typeof body.notes === 'string' ? body.notes.trim() : null;
+  const sortOrder = Math.round(Number(body.sort_order) || 0);
+
+  if (body.id) {
+    const [row] = await mutate<CostItem>(
+      `UPDATE cost_items
+          SET label = $1, category = $2, monthly_cents = $3, notes = $4,
+              sort_order = $5, updated_at = NOW()
+        WHERE id = $6
+        RETURNING id, label, category, monthly_cents, notes, sort_order`,
+      [label, category, cents, notes, sortOrder, body.id]
+    );
+    if (!row) return NextResponse.json({ error: 'not found' }, { status: 404 });
+    return NextResponse.json({ item: row });
+  }
+
+  const [row] = await mutate<CostItem>(
+    `INSERT INTO cost_items (label, category, monthly_cents, notes, sort_order)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, label, category, monthly_cents, notes, sort_order`,
+    [label, category, cents, notes, sortOrder]
+  );
+  return NextResponse.json({ item: row });
+}
+
+export async function DELETE(req: NextRequest) {
+  if (!(await requireAdmin())) return notFound();
+  const { id } = await req.json().catch(() => ({}));
+  if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+  await mutate(`DELETE FROM cost_items WHERE id = $1`, [id]);
+  return NextResponse.json({ ok: true });
+}
