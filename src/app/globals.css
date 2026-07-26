@@ -127,6 +127,10 @@
   /* red = action needed. never "unavailable". */
   --color-ch-alert: #B4462F;
   --color-ch-alert-soft: #FBEAE5;
+  /* Extension, not in camphawk-tokens.css: green and blue each ship a -deep for the
+     pressed/shadow state but red doesn't, so the warn button had nowhere to point.
+     Value taken from the mockup's own `.ck-btn[data-warn]` shadow. */
+  --color-ch-alert-deep: #8C3524;
 
   /* type scale */
   --text-ch-hero: 34px;
