@@ -70,6 +70,103 @@
   --font-serif: var(--font-fraunces);
 }
 
+/* ===========================================================================
+ * REDESIGN TOKENS — phase 1 of the presentation-layer rewrite.
+ *
+ * This is the `ch-*` namespace from camphawk-tokens.css, registered as Tailwind
+ * theme keys so the redesigned components can use `bg-ch-green`, `text-ch-muted`,
+ * `rounded-ch-card`, `font-ch-display`, and so on.
+ *
+ * WHY A SEPARATE NAMESPACE INSTEAD OF EDITING THE SCALES ABOVE:
+ * the green/amber/blue/gray scales above are *overwrites* of stock Tailwind, so
+ * every `bg-green-600` in all ~25 existing components resolves through them.
+ * Repointing those at the new palette would restyle the entire live app in one
+ * commit with no reviewable boundary. Registering `ch-*` alongside them is purely
+ * additive — it generates new utilities and changes no existing rendering, which
+ * is what lets the old and new UIs coexist while /v2 is built.
+ *
+ * The scales above get deleted in the phase 6 cleanup, once nothing references
+ * them. Until then BOTH palettes are live and that is intentional.
+ *
+ * COLOR RULES (from the tokens file — these are why the UI reads clearly):
+ *   1. Green means a site is available, or an action that gets you one.
+ *      Nothing decorative is green.
+ *   2. Ochre means "your request" — watching, trial, quota. Never availability.
+ *   3. Blue means the Recreation.gov handoff — auto-cart, checkout.
+ *   4. Red means the user must act. NEVER "no sites open," which is a normal
+ *      state, not an error.
+ *   5. Fully-booked days are neutral gray, never red.
+ * =========================================================================== */
+@theme {
+  /* surfaces */
+  --color-ch-paper: #F5F7F2;
+  --color-ch-card: #FFFFFF;
+  --color-ch-line: #DDE3D8;
+  --color-ch-shell: #E7EBE3;
+
+  /* text */
+  --color-ch-ink: #16291F;
+  --color-ch-ink-2: #3A5344;
+  --color-ch-muted: #7C8E80;
+  --color-ch-faint: #A9B5AA;
+
+  /* green = AVAILABLE. reserve it. */
+  --color-ch-green: #1E7A4C;
+  --color-ch-green-deep: #16603B;
+  --color-ch-green-soft: #E4F1E8;
+
+  /* ochre = "you asked for this" */
+  --color-ch-ochre: #D9932B;
+  --color-ch-ochre-soft: #FBF0DC;
+  --color-ch-ochre-ink: #90621A;
+
+  /* blue = auto-cart / Recreation.gov handoff */
+  --color-ch-blue: #2C4A8A;
+  --color-ch-blue-deep: #1E3566;
+
+  /* red = action needed. never "unavailable". */
+  --color-ch-alert: #B4462F;
+  --color-ch-alert-soft: #FBEAE5;
+
+  /* type scale */
+  --text-ch-hero: 34px;
+  --text-ch-title: 26px;
+  --text-ch-h: 17px;
+  --text-ch-park: 17px;
+  --text-ch-body: 13.5px;
+  --text-ch-meta: 12px;
+  --text-ch-label: 11px;
+  --text-ch-fine: 11px;
+
+  /* shape */
+  --radius-ch-card: 15px;
+  --radius-ch-input: 12px;
+  --radius-ch-btn: 13px;
+  --radius-ch-chip: 999px;
+  --radius-ch-tag: 5px;
+
+  /* elevation */
+  --shadow-ch-card: 0 1px 2px rgba(22, 41, 31, 0.04);
+  --shadow-ch-pop: 0 3px 14px -8px rgba(22, 41, 31, 0.2);
+}
+
+/* Font families resolve through the next/font variables set on <html> in
+   layout.tsx, so they need `inline` to avoid being frozen at definition time. */
+@theme inline {
+  --font-ch-display: var(--font-bitter), Georgia, "Times New Roman", serif;
+  --font-ch-body: var(--font-nunito-sans), -apple-system, system-ui, sans-serif;
+}
+
+/* Layout constants stay plain custom properties rather than Tailwind keys —
+   they're consumed by container widths and media queries, not utilities. */
+:root {
+  --ch-max: 1120px;      /* desktop content width */
+  --ch-rail: 316px;      /* sidebar width */
+  --ch-breakpoint: 940px; /* below this, single column */
+  --ch-header: 131px;    /* mobile header art at rest */
+  --ch-header-min: 46px; /* mobile header collapsed on scroll */
+}
+
 /* The app is designed light-only — no dark-mode variable flip, otherwise
    inputs on white backgrounds inherit near-white text under system dark mode. */
 
