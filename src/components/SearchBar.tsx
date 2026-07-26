@@ -114,6 +114,24 @@ export default function SearchBar({ onSearch, onTonight, onThisWeekend, quickBus
     return null;
   }
 
+  // Device geolocation via @capacitor/geolocation. On the web this wraps the browser
+  // Geolocation API (same behavior as before); in the native app it uses the native
+  // plugin — plain `navigator.geolocation` HANGS in the iOS WKWebView (no HTML5
+  // geolocation there, and no error either), which is why the app's "use my location"
+  // button just spun forever. Returns null on denial/error so callers fall back to IP.
+  async function deviceCoords(): Promise<{ lat: number; lng: number } | null> {
+    try {
+      const { Geolocation } = await import('@capacitor/geolocation');
+      // On native this triggers the OS permission prompt; on web requestPermissions may
+      // be unimplemented, so ignore its failure and still attempt the read.
+      await Geolocation.requestPermissions().catch(() => {});
+      const pos = await Geolocation.getCurrentPosition({ timeout: 10000, enableHighAccuracy: false });
+      return { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    } catch {
+      return null;
+    }
+  }
+
   // Dates + flexible-date payload shared by every search entry point.
   function dateParams() {
     return {
@@ -196,35 +214,19 @@ export default function SearchBar({ onSearch, onTonight, onThisWeekend, quickBus
     setShowSuggestions(false);
   }
 
-  function useCurrentLocation() {
+  async function useCurrentLocation() {
     setLocating(true);
     setShowSuggestions(false);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocating(false);
-        setLocation('Current location');
-        setPickedCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        onSearch({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          radiusMiles,
-          ...dateParams(),
-        });
-      },
-      async () => {
-        // Location off / denied — fall back to coarse IP location before giving up.
-        const ip = await ipLocation();
-        setLocating(false);
-        if (ip) {
-          setLocation('Current location');
-          setPickedCoords({ lat: ip.lat, lng: ip.lng });
-          onSearch({ lat: ip.lat, lng: ip.lng, radiusMiles, ...dateParams() });
-        } else {
-          alert('Could not get your location. Try entering a city or address instead.');
-        }
-      },
-      { timeout: 10000 }
-    );
+    // Try device GPS first (native plugin / browser API), then fall back to coarse IP.
+    const coords = (await deviceCoords()) ?? (await ipLocation());
+    setLocating(false);
+    if (coords) {
+      setLocation('Current location');
+      setPickedCoords(coords);
+      onSearch({ lat: coords.lat, lng: coords.lng, radiusMiles, ...dateParams() });
+    } else {
+      alert('Could not get your location. Try entering a city or address instead.');
+    }
   }
 
   async function geocodeAndSearch() {
@@ -292,18 +294,11 @@ export default function SearchBar({ onSearch, onTonight, onThisWeekend, quickBus
         focusCampgroundId: focusCampgroundId ?? undefined,
       });
     } else if (location === 'Current location') {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          onSearch({ lat: pos.coords.latitude, lng: pos.coords.longitude, radiusMiles, ...dateParams() });
-        },
-        async () => {
-          // Location off / denied — fall back to coarse IP location before giving up.
-          const ip = await ipLocation();
-          if (ip) onSearch({ lat: ip.lat, lng: ip.lng, radiusMiles, ...dateParams() });
-          else alert('Could not get your location. Try entering a city or address instead.');
-        },
-        { timeout: 8000, maximumAge: 300_000 }
-      );
+      void (async () => {
+        const coords = (await deviceCoords()) ?? (await ipLocation());
+        if (coords) onSearch({ lat: coords.lat, lng: coords.lng, radiusMiles, ...dateParams() });
+        else alert('Could not get your location. Try entering a city or address instead.');
+      })();
     } else {
       geocodeAndSearch();
     }
