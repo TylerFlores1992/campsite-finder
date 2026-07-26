@@ -742,8 +742,22 @@ steps (Firebase project `campapp-39c4b`).
     reach the app on a reload.
   - **Social OAuth (Google) sign-in does NOT work in the webview** — Google blocks OAuth
     in embedded webviews; it bounces to the system browser and errors with a Clerk
-    `authorization_invalid`. **Email/password sign-in works.** Proper fix later: route
-    social sign-in through the system browser (Clerk + `@capacitor/browser`).
+    `authorization_invalid`. **FIXED 2026-07-26 by HIDING social sign-in in the native
+    app** (email/password only): `AuthPanel` (`src/components/AuthPanel.tsx`) wraps Clerk's
+    `<SignIn>`/`<SignUp>` and applies `.native-hide-social` (globals.css, targets Clerk's
+    `cl-*` classes) when `useIsNativeApp()`. Web keeps every method. Bonus: this also avoids
+    Apple's rule that offering *any* third-party login forces adding Sign in with Apple.
+    (A future full-OAuth-through-system-browser is possible but unneeded now.)
+  - **"Use my location" HUNG in the iOS webview (fixed 2026-07-26).** `navigator.geolocation`
+    never resolves in WKWebView (no HTML5 geolocation, and no error either) — the button
+    spun forever. Both call sites in `SearchBar.tsx` now go through **`@capacitor/geolocation`**
+    (`deviceCoords()`): native plugin on iOS/Android, browser API on web (unchanged there),
+    IP fallback on denial. iOS needs the **`NSLocationWhenInUseUsageDescription`** Info.plist
+    key (added in CI — `codemagic.yaml`) or iOS silently denies; Android perms come from the
+    plugin's manifest merge. NATIVE dep, so it needs a rebuild to reach the app.
+  - **iOS input-focus zoom (fixed 2026-07-26):** tapping a search field with font-size < 16px
+    made iOS zoom in and never zoom back (results view stuck magnified). globals.css forces
+    form controls to 16px on ≤640px screens; desktop keeps the smaller sizes. Web-side fix.
 - **Branded icons + splash (added 2026-07-25):** source images live in `assets/`
   (`icon-only.png` opaque/no-alpha for iOS, `icon-foreground.png`/`icon-background.png`
   for Android adaptive, `splash.png`/`splash-dark.png`), generated from the hawk badge.
@@ -919,6 +933,24 @@ automatically, and only ever tell them "it's in your cart" when it **verifiably*
 - rec.gov enforces booking rules (e.g. weekend minimum stay: Fri+Sat together). A
   rule violation returns 400 — the bot correctly falls back to a normal alert.
 
+## Admin dashboard (`/admin`) + cost tracking
+
+Owner-only (`ADMIN_EMAILS`, 404 for everyone else). **Redesigned into tabs 2026-07-26:**
+`src/app/admin/page.tsx` is a server component that fetches everything (users, subs, MRR
+via Stripe, watches, alerts, worker heartbeat, canary, sync_log, cost items, usage) and
+hands it to a client shell `src/components/admin/AdminTabs.tsx` — tabs **Overview · Users &
+Revenue · Engagement · System Health · Costs**.
+
+**Cost tracking (Costs tab):** two kinds of cost, summarized against MRR for a monthly net.
+- **Fixed line items** — editable, DB-backed in `cost_items` (**migration 024**), maintained
+  by hand since these providers (Vercel/Fly/Supabase/Clerk/Twilio number/…) have no simple
+  billing API. CRUD via `/api/admin/costs` (admin-gated); UI is
+  `src/components/admin/CostsPanel.tsx` (inline auto-save). Seeded with the known providers
+  at $0 for the operator to fill in.
+- **Usage costs** — computed live from `notifications` (SMS/email/push sent this month) ×
+  per-unit rates in `src/lib/costs.ts` (`USAGE_RATES`, env-overridable). SMS is the only
+  real variable cost; email/push default to $0 (plan/free).
+
 ## Environment variables (names only — values in `.env.local` / Vercel / Fly)
 
 GoingToCamp search (`GTC_AVAILABILITY_URL` on Vercel → the Fly worker endpoint;
@@ -970,6 +1002,10 @@ keepalive cadence itself is `KEEPALIVE_MS` (default 30m), set in the mini-PC's o
 `.env`, not on Fly.
 The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 `BROKER_PORT`, `POLL_MS`).
+Admin cost tracking (optional, non-secret, on Vercel — in-code defaults, override only to
+tune): `COST_PER_SMS_USD` (default 0.0115), `COST_PER_EMAIL_USD` (0), `COST_PER_PUSH_USD`
+(0) — the per-unit usage rates the Costs tab multiplies against this-month send counts.
+Fixed monthly costs are NOT env vars — they live in the editable `cost_items` table.
 
 > **`NEXT_PUBLIC_*` vars are inlined at BUILD time, so a bad value lies dormant
 > until someone triggers a build — and then looks like that day's code broke it.**

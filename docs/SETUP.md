@@ -144,6 +144,12 @@ missing value there means push silently never fires (the usual stale-worker trap
 Supabase first (by hand, like 020/021). Devices register their token via
 `POST /api/user/push-token` (Clerk-authed; the bridge calls it on sign-in).
 
+> **Admin cost tracking needs migration `024_cost_items.sql`** (applied by hand, like the
+> others; already applied to prod 2026-07-26). It backs the editable "Fixed monthly costs"
+> table in the admin **Costs** tab (`/admin`). The per-unit usage rates are non-secret env
+> vars (`COST_PER_SMS_USD` etc.) with in-code defaults — see `docs/CONTEXT.md`. Nothing to
+> deploy beyond a `master` push; no worker or secret involved.
+
 **The native projects are NOT committed** (`ios/`, `android/` are git-ignored) — they're
 generated on a machine with the platform tooling:
 
@@ -250,11 +256,17 @@ Hard-won gotchas from the first end-to-end run (all cost real time):
   blank `.env.local` in a web session, since it reads that file) to make the Fly worker
   dispatch a real push+email+SMS to your account. `status=sent` + no prune + no device
   delivery ⇒ the APNs-key trap above, not the code.
-- **Native-app UX fixes shipped alongside:** social sign-in (Google) is **hidden in the
-  native app** (email/pw only) — it can't complete in a webview and would trigger Apple's
-  Sign in with Apple requirement (`AuthPanel` + `.native-hide-social` in globals.css);
-  and iOS input-focus zoom is killed by forcing form controls to 16px on small screens
-  (globals.css). Both are web changes, so they reach the app on reload.
+- **Geolocation ("use my location") is a NATIVE dep, needs a rebuild.** `navigator.geolocation`
+  hangs in the iOS WKWebView, so `SearchBar.tsx` routes through **`@capacitor/geolocation`**
+  (`deviceCoords()`; native on device, browser API on web, IP fallback). CI adds the
+  **`NSLocationWhenInUseUsageDescription`** Info.plist key ("Add location usage description"
+  step) or iOS silently denies; Android perms come from the plugin. Like the push plugins,
+  **Android also needs a rebuild** to pick this up.
+- **Native-app UX fixes that are WEB-only (reach the app on reload):** social sign-in
+  (Google) is **hidden in the native app** (email/pw only) — it can't complete in a webview
+  and would trigger Apple's Sign in with Apple requirement (`AuthPanel` +
+  `.native-hide-social` in globals.css); and iOS input-focus zoom is killed by forcing form
+  controls to 16px on small screens (globals.css).
 
 > **Store-billing rule (why the app never sells the subscription).** Apple/Google
 > require digital subscriptions to go through their in-app purchase (15–30% cut). We
