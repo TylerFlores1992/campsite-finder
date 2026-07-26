@@ -1,0 +1,144 @@
+# Codemagic CI config — builds the iOS app on a cloud Mac and ships it to TestFlight.
+#
+# Why this exists: CampHawk has no committed native project (ios/ is git-ignored — see
+# capacitor.config.ts / docs/SETUP.md). This workflow regenerates ios/ from scratch on
+# a Codemagic macOS runner with `npx cap add ios`, brands it, signs it with an
+# App Store Connect API key, and uploads to TestFlight — no local Mac required.
+#
+# Prereqs configured in the Codemagic UI (NOT in this file):
+#   - App Store Connect integration named "CampHawk ASC" (Team → Integrations →
+#     App Store Connect: upload the .p8 API key + Key ID + Issuer ID).
+#   - The bundle id app.camphawk.mobile registered on developer.apple.com and an app
+#     record created in App Store Connect (see docs/SETUP.md → mobile app).
+#
+# The app is a thin shell around https://camphawk.app, so the build ships no web bundle;
+# it only needs the native container + push entitlement. See docs/SETUP.md.
+
+workflows:
+  ios-testflight:
+    name: iOS · TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: CampHawk ASC
+    environment:
+      groups:
+        # Supplies CERTIFICATE_PRIVATE_KEY (secure) — the distribution-certificate
+        # private key. fetch-signing-files reads it to create/reuse the signing cert.
+        - ios_signing
+      vars:
+        BUNDLE_ID: "app.camphawk.mobile"
+        XCODE_WORKSPACE: "App.xcworkspace"   # Capacitor names the iOS workspace "App"
+        XCODE_SCHEME: "App"
+      node: 20
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install JS dependencies
+        script: npm ci
+      - name: Generate the iOS native project
+        # ios/ is not committed, so create it fresh. `|| true` keeps re-runs idempotent
+        # if a cached checkout already has it.
+        script: npx cap add ios || npx cap sync ios
+      - name: Brand icons + splash
+        script: npm run cap:assets
+      - name: Capacitor sync (copy config + plugins into ios/)
+        script: npx cap sync ios
+      - name: Declare export compliance
+        # The app uses only standard HTTPS/TLS (camphawk.app, Clerk, Stripe) — exempt
+        # encryption. Declaring this up front lets TestFlight accept the build without
+        # the manual "missing compliance" prompt on every upload.
+        script: |
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" ios/App/App/Info.plist \
+            || /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" ios/App/App/Info.plist
+      - name: Enable Push Notifications capability
+        # ios/ is regenerated each build, so the aps-environment entitlement must be
+        # re-applied here. Write the entitlements file and point the App target's
+        # CODE_SIGN_ENTITLEMENTS at it via the xcodeproj gem (ships with CocoaPods).
+        # 'production' is correct for App Store / TestFlight distribution builds. The
+        # App Store provisioning profile already carries push because the App ID has the
+        # Push Notifications capability enabled. Paired with the Firebase config step
+        # below (FCM token) this is what makes iOS push deliver; see docs/SETUP.md.
+        script: |
+          cat > ios/App/App/App.entitlements <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>aps-environment</key>
+            <string>production</string>
+          </dict>
+          </plist>
+          EOF
+          ruby -e '
+            require "xcodeproj"
+            project = Xcodeproj::Project.open("ios/App/App.xcodeproj")
+            target = project.targets.find { |t| t.name == "App" }
+            raise "App target not found" unless target
+            target.build_configurations.each do |c|
+              c.build_settings["CODE_SIGN_ENTITLEMENTS"] = "App/App.entitlements"
+            end
+            project.save
+          '
+      - name: Configure Firebase (iOS FCM token)
+        # @capacitor-firebase/app auto-runs FirebaseApp.configure() at launch, but only
+        # if GoogleService-Info.plist is bundled. ios/ is regenerated each build, so decode
+        # the plist from the GOOGLE_SERVICE_INFO_PLIST_B64 secure var (base64 of the file
+        # downloaded from Firebase → Project settings → iOS app) and register it with the
+        # App target's resources. Skips (build still succeeds, iOS push just stays off) if
+        # the var is unset, so the pipeline never hard-fails on a missing secret.
+        script: |
+          if [ -z "$GOOGLE_SERVICE_INFO_PLIST_B64" ]; then
+            echo "GOOGLE_SERVICE_INFO_PLIST_B64 not set — skipping Firebase config (iOS push disabled)"
+            exit 0
+          fi
+          echo "$GOOGLE_SERVICE_INFO_PLIST_B64" | base64 --decode > ios/App/App/GoogleService-Info.plist
+          ruby -e '
+            require "xcodeproj"
+            project = Xcodeproj::Project.open("ios/App/App.xcodeproj")
+            target = project.targets.find { |t| t.name == "App" }
+            raise "App target not found" unless target
+            group = project.main_group["App"] || project.main_group.new_group("App", "App")
+            unless project.files.any? { |f| f.path && f.path.end_with?("GoogleService-Info.plist") }
+              ref = group.new_reference("GoogleService-Info.plist")
+              target.resources_build_phase.add_file_reference(ref)
+            end
+            project.save
+          '
+      - name: Set up code signing
+        # This app is brand-new, so no distribution certificate or provisioning profile
+        # exists yet. Passing the private key (CERTIFICATE_PRIVATE_KEY, from the
+        # ios_signing group) lets --create mint the signing certificate from it on the
+        # first run; later builds match that same key and reuse the cert (no cert-limit
+        # exhaustion). The profile is created/reused the same way.
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --certificate-key "$CERTIFICATE_PRIVATE_KEY" \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Increment build number
+        # TestFlight rejects duplicate build numbers. PROJECT_BUILD_NUMBER is Codemagic's
+        # monotonically-increasing per-workflow counter, so each run gets a fresh number.
+        script: |
+          cd ios/App
+          agvtool new-version -all "${PROJECT_BUILD_NUMBER:-1}" || true
+      - name: Build the IPA
+        script: |
+          cd ios/App
+          xcode-project build-ipa \
+            --workspace "$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - ios/App/build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        # Add beta_groups here once you create an internal testing group in App Store
+        # Connect, e.g.:
+        # beta_groups:
+        #   - CampHawk Internal
