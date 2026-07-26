@@ -4,8 +4,9 @@ import Link from 'next/link';
 import Stripe from 'stripe';
 import Logo from '@/components/Logo';
 import AdminAutoRefresh from '@/components/AdminAutoRefresh';
-import BetaTesters from '@/components/BetaTesters';
+import AdminTabs, { type AdminData } from '@/components/admin/AdminTabs';
 import { query, queryOne } from '@/lib/db/client';
+import type { CostItem, UsageCounts } from '@/lib/costs';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
@@ -60,7 +61,7 @@ export default async function AdminPage() {
   // 404 (not 403) for non-admins so the page's existence isn't revealed.
   if (!email || !ADMIN_EMAILS.includes(email)) notFound();
 
-  const [usersAgg, signupRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows] =
+  const [usersAgg, signupRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows, costItems, usageRows] =
     await Promise.all([
       safe(
         queryOne<{ total: number; new_7d: number; new_30d: number }>(
@@ -143,6 +144,21 @@ export default async function AdminPage() {
         ),
         []
       ),
+      safe(
+        query<CostItem>(
+          `SELECT id, label, category, monthly_cents, notes, sort_order
+             FROM cost_items ORDER BY sort_order, label`
+        ),
+        []
+      ),
+      safe(
+        query<{ channel: string; n: number }>(
+          `SELECT channel, count(*)::int n FROM notifications
+            WHERE status = 'sent' AND created_at >= date_trunc('month', now())
+            GROUP BY channel`
+        ),
+        []
+      ),
     ]);
 
   const mrr = await computeMrr().catch(() => null);
@@ -170,6 +186,36 @@ export default async function AdminPage() {
   }
   const maxDay = Math.max(1, ...days.map((d) => d.n));
 
+  // Usage this month, keyed by channel, for the Costs tab.
+  const usageByChannel = Object.fromEntries(usageRows.map((r) => [r.channel, r.n]));
+  const usage: UsageCounts = {
+    sms: usageByChannel['sms'] ?? 0,
+    email: usageByChannel['email'] ?? 0,
+    push: usageByChannel['push'] ?? 0,
+  };
+  const monthLabel = new Date().toLocaleString('en-US', { month: 'short', year: 'numeric' });
+
+  const data: AdminData = {
+    clerkTotal,
+    usersAgg,
+    activeSub,
+    subMap,
+    watchAgg,
+    alertAgg,
+    cgRows,
+    cgTotal,
+    days,
+    maxDay,
+    mrr,
+    beat,
+    workerHealthy,
+    canaryRows,
+    syncRows,
+    costItems: costItems as CostItem[],
+    usage,
+    monthLabel,
+  };
+
   return (
     <div className="min-h-screen bg-[#F3EFE0]">
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
@@ -185,257 +231,13 @@ export default async function AdminPage() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-8 space-y-8">
-        {/* KPI row */}
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Kpi
-            label="Users"
-            value={clerkTotal ?? usersAgg.total}
-            sub={`${usersAgg.total} active in app · +${usersAgg.new_7d} this week`}
-          />
-          <Kpi label="Active subscribers" value={activeSub.n} sub={`${subMap['trialing'] ?? 0} on trial`} accent="green" />
-          <Kpi label="Active watches" value={watchAgg.active} sub={`${watchAgg.watchers} watchers`} />
-          <Kpi label="Alerts sent" value={alertAgg.sent} sub={`+${alertAgg.sent_7d} this week`} accent="amber" />
-        </section>
-
-        {/* Signups chart + subscriptions */}
-        <section className="grid md:grid-cols-3 gap-4">
-          <div className="md:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <div className="flex items-baseline justify-between mb-4">
-              <h2 className="font-display font-semibold text-gray-800">New users · last 30 days</h2>
-              <span className="text-sm text-gray-500">{usersAgg.new_30d} total</span>
-            </div>
-            <div className="flex items-end gap-[3px] h-28">
-              {days.map((d) => (
-                <div key={d.day} className="flex-1 group relative flex items-end">
-                  <div
-                    className="w-full rounded-t bg-green-500/80 group-hover:bg-green-600 transition-colors"
-                    style={{ height: `${Math.max(2, (d.n / maxDay) * 100)}%` }}
-                    title={`${d.day}: ${d.n}`}
-                  />
-                </div>
-              ))}
-            </div>
-            <div className="flex justify-between mt-2 text-[11px] text-gray-400">
-              <span>{days[0]?.day.slice(5)}</span>
-              <span>{days[days.length - 1]?.day.slice(5)}</span>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <h2 className="font-display font-semibold text-gray-800">Subscriptions</h2>
-            <p className="mt-1 font-display text-3xl font-extrabold text-green-700">
-              {mrr ? `$${mrr.monthly.toFixed(2)}` : '—'}
-              <span className="text-sm font-normal text-gray-400"> /mo MRR</span>
-            </p>
-            <p className="text-xs text-gray-400 mb-4">
-              {mrr ? `${mrr.activeCount} paying · normalized monthly` : 'Stripe unavailable'}
-            </p>
-            <ul className="space-y-2.5 text-sm">
-              <StatusRow label="Active" value={subMap['active'] ?? 0} color="bg-green-500" />
-              <StatusRow label="Trialing" value={subMap['trialing'] ?? 0} color="bg-blue-500" />
-              <StatusRow label="Past due" value={subMap['past_due'] ?? 0} color="bg-amber-500" />
-              <StatusRow label="Canceled" value={subMap['canceled'] ?? 0} color="bg-gray-400" />
-            </ul>
-            <a
-              href="https://dashboard.stripe.com/subscriptions"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-4 inline-block text-xs font-medium text-green-700 hover:text-green-800"
-            >
-              Revenue &amp; cash flow in Stripe →
-            </a>
-          </div>
-        </section>
-
-        {/* Engagement + system health */}
-        <section className="grid md:grid-cols-2 gap-4">
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <h2 className="font-display font-semibold text-gray-800 mb-4">Content &amp; engagement</h2>
-            <dl className="grid grid-cols-2 gap-4 text-sm">
-              <Metric label="Campgrounds synced" value={cgTotal.toLocaleString()} />
-              <Metric label="Total watches" value={watchAgg.total.toLocaleString()} />
-              <Metric label="Alerts (all time)" value={alertAgg.sent.toLocaleString()} />
-              <Metric label="Failed alerts" value={alertAgg.failed.toLocaleString()} />
-            </dl>
-            {cgRows.length > 0 && (
-              <p className="mt-4 text-xs text-gray-400">
-                {cgRows.map((r) => `${r.n.toLocaleString()} ${r.source}`).join(' · ')}
-              </p>
-            )}
-          </div>
-
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <h2 className="font-display font-semibold text-gray-800 mb-4">System health</h2>
-            <div className="flex items-center gap-2 text-sm">
-              <span className={`h-2.5 w-2.5 rounded-full ${workerHealthy ? 'bg-green-500' : 'bg-red-500'}`} />
-              <span className="font-medium text-gray-700">Poller worker</span>
-              <span className="text-gray-500">
-                {beat
-                  ? workerHealthy
-                    ? `healthy · last beat ${beat.age_s}s ago · ${beat.watches_checked} watches/cycle`
-                    : `STALE · last beat ${Math.round(beat.age_s / 60)} min ago`
-                  : 'no heartbeat recorded'}
-              </span>
-            </div>
-            <div className="mt-4 space-y-1.5 text-sm">
-              <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Alert canary</p>
-              {canaryRows.length === 0 && <p className="text-gray-400 text-xs">No canary runs recorded.</p>}
-              {canaryRows.map((c) => {
-                const skipped = (c.detail ?? '').startsWith('skipped');
-                // Detection runs ~2 min, delivery ~6 h — flag a run that's gone quiet.
-                const staleS = c.key.startsWith('delivery:') ? 7 * 3600 : 600;
-                const stale = c.age_s != null && c.age_s > staleS;
-                const color =
-                  skipped || (!c.ok && c.consecutive_failures < 2)
-                    ? 'bg-amber-500'
-                    : c.ok && !stale
-                      ? 'bg-green-500'
-                      : 'bg-red-500';
-                const ageLabel =
-                  c.age_s == null ? 'never' : c.age_s < 90 ? `${c.age_s}s` : `${Math.round(c.age_s / 60)}m`;
-                return (
-                  <div key={c.key} className="flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-2 text-gray-600">
-                      <span className={`h-2 w-2 rounded-full ${color}`} />
-                      {c.key}
-                    </span>
-                    <span className="text-gray-500 truncate max-w-[60%]" title={c.detail ?? undefined}>
-                      {ageLabel}
-                      {c.consecutive_failures > 0 ? ` · ${c.consecutive_failures}✗` : ''}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-4 space-y-1.5 text-sm">
-              <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Last sync</p>
-              {syncRows.length === 0 && <p className="text-gray-400 text-xs">No sync runs recorded.</p>}
-              {syncRows.map((s) => {
-                // A sync writes `error` if ANY single facility had a problem, so
-                // treating non-null error as failure marked ~20 of 33 sources red
-                // while every one of them had actually synced. What matters is
-                // whether anything landed: 0 synced is a real failure, >0 with
-                // errors is a partial (skipped day-use parks, UseDirect grid
-                // 403s), and those must still show their date and count.
-                const synced = s.facilities_synced ?? 0;
-                const errCount = s.metadata?.totalErrors ?? null;
-                const stamp = s.finished_at ? new Date(s.finished_at).toLocaleString() : null;
-
-                if (!stamp) {
-                  return (
-                    <div key={s.source} className="flex items-center justify-between">
-                      <span className="text-gray-600">{s.source}</span>
-                      <span className="text-gray-500">in progress</span>
-                    </div>
-                  );
-                }
-
-                const failed = synced === 0;
-                const partial = !failed && !!s.error;
-                return (
-                  <div key={s.source} className="flex items-center justify-between">
-                    <span className="text-gray-600">{s.source}</span>
-                    <span
-                      className={failed ? 'text-red-600' : partial ? 'text-amber-600' : 'text-gray-500'}
-                      title={s.error ?? undefined}
-                    >
-                      {/* "warnings", not "skipped": for RA/GoingToCamp these are
-                          parks skipped for missing coords, but for UseDirect they
-                          are unit-catalog 403s on campgrounds that DID sync. */}
-                      {failed
-                        ? `failed · ${stamp}`
-                        : `${stamp} · ${synced}${partial ? ` · ${errCount ?? 'some'} warnings` : ''}`}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        {/* Beta testers */}
-        <section>
-          <BetaTesters />
-        </section>
-
-        {/* Quick links */}
-        <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <h2 className="font-display font-semibold text-gray-800 mb-4">Open the deep dashboards</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            <QuickLink href="https://console.twilio.com" label="Twilio" desc="SMS · delivery · A2P" />
-            <QuickLink href="https://dashboard.stripe.com" label="Stripe" desc="Revenue · MRR · payouts" />
-            <QuickLink href="https://supabase.com/dashboard" label="Supabase" desc="Database · SQL" />
-            <QuickLink href="https://fly.io/apps/campsite-finder-worker" label="Fly.io" desc="Poller worker · logs" />
-            <QuickLink href="https://resend.com/emails" label="Resend" desc="Email delivery" />
-            <QuickLink href="https://dashboard.clerk.com" label="Clerk" desc="User accounts" />
-            <QuickLink href="https://camphawk.sentry.io/issues" label="Sentry" desc="Errors · crashes" />
-            <QuickLink href="https://vercel.com/dashboard" label="Vercel" desc="Deploys · Web Vitals" />
-            <QuickLink href="https://dash.cloudflare.com" label="Cloudflare" desc="DNS · broker tunnel" />
-            <QuickLink href="https://github.com/TylerFlores1992/campsite-finder" label="GitHub" desc="Code · deploys" />
-            <QuickLink href="https://account.mapbox.com" label="Mapbox" desc="Maps · usage" />
-            <QuickLink href="https://ridb.recreation.gov/profile" label="RIDB" desc="Recreation.gov API" />
-          </div>
-        </section>
-
-        <p className="text-center text-xs text-gray-400">
-          Live figures from the CampHawk database · refresh to update
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        <AdminTabs data={data} />
+        <p className="text-center text-xs text-gray-400 mt-8">
+          Live figures from the CampHawk database · auto-refreshes
         </p>
       </main>
     </div>
   );
 }
 
-function Kpi({
-  label,
-  value,
-  sub,
-  accent,
-}: {
-  label: string;
-  value: number;
-  sub?: string;
-  accent?: 'green' | 'amber';
-}) {
-  const color = accent === 'green' ? 'text-green-700' : accent === 'amber' ? 'text-amber-600' : 'text-gray-900';
-  return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-      <p className="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</p>
-      <p className={`mt-1 font-display text-3xl font-extrabold ${color}`}>{value.toLocaleString()}</p>
-      {sub && <p className="mt-0.5 text-xs text-gray-500">{sub}</p>}
-    </div>
-  );
-}
-
-function StatusRow({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <li className="flex items-center gap-2">
-      <span className={`h-2.5 w-2.5 rounded-full ${color}`} />
-      <span className="text-gray-600 flex-1">{label}</span>
-      <span className="font-semibold text-gray-900">{value.toLocaleString()}</span>
-    </li>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-xs text-gray-400">{label}</dt>
-      <dd className="font-display text-xl font-bold text-gray-900">{value}</dd>
-    </div>
-  );
-}
-
-function QuickLink({ href, label, desc }: { href: string; label: string; desc: string }) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="rounded-xl border border-gray-200 p-3 hover:border-green-400 hover:bg-green-50/40 transition-colors"
-    >
-      <p className="font-display font-semibold text-gray-800 text-sm">{label}</p>
-      <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
-    </a>
-  );
-}
