@@ -20,6 +20,7 @@
     "@capacitor/app": "^7.1.2",
     "@capacitor/cli": "^7.6.8",
     "@capacitor/core": "^7.6.8",
+    "@capacitor/geolocation": "^7.1.8",
     "@capacitor/ios": "^7.6.8",
     "@capacitor/status-bar": "^7.0.6",
     "@clerk/nextjs": "^7.5.11",
