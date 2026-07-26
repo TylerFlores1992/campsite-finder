@@ -51,6 +51,14 @@ workflows:
         script: |
           /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" ios/App/App/Info.plist \
             || /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" ios/App/App/Info.plist
+      - name: Add location usage description
+        # The "use my location" button needs @capacitor/geolocation on iOS (WKWebView has
+        # no HTML5 geolocation), and iOS requires this Info.plist key or it silently denies
+        # the permission. ios/ is regenerated each build, so re-add it here.
+        script: |
+          DESC="CampHawk uses your location to find campgrounds near you."
+          /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string $DESC" ios/App/App/Info.plist \
+            || /usr/libexec/PlistBuddy -c "Set :NSLocationWhenInUseUsageDescription $DESC" ios/App/App/Info.plist
       - name: Enable Push Notifications capability
         # ios/ is regenerated each build, so the aps-environment entitlement must be
         # re-applied here. Write the entitlements file and point the App target's
