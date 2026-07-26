@@ -51,6 +51,36 @@ workflows:
         script: |
           /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" ios/App/App/Info.plist \
             || /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" ios/App/App/Info.plist
+      - name: Enable Push Notifications capability
+        # ios/ is regenerated each build, so the aps-environment entitlement must be
+        # re-applied here. Write the entitlements file and point the App target's
+        # CODE_SIGN_ENTITLEMENTS at it via the xcodeproj gem (ships with CocoaPods).
+        # 'production' is correct for App Store / TestFlight distribution builds. The
+        # App Store provisioning profile already carries push because the App ID has the
+        # Push Notifications capability enabled. NOTE: iOS push won't actually deliver
+        # until the app obtains an FCM token (Firebase iOS SDK) — this is the entitlement
+        # groundwork only; see docs/SETUP.md.
+        script: |
+          cat > ios/App/App/App.entitlements <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>aps-environment</key>
+            <string>production</string>
+          </dict>
+          </plist>
+          EOF
+          ruby -e '
+            require "xcodeproj"
+            project = Xcodeproj::Project.open("ios/App/App.xcodeproj")
+            target = project.targets.find { |t| t.name == "App" }
+            raise "App target not found" unless target
+            target.build_configurations.each do |c|
+              c.build_settings["CODE_SIGN_ENTITLEMENTS"] = "App/App.entitlements"
+            end
+            project.save
+          '
       - name: Set up code signing
         # This app is brand-new, so no distribution certificate or provisioning profile
         # exists yet. Passing the private key (CERTIFICATE_PRIVATE_KEY, from the
