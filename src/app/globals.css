@@ -102,6 +102,19 @@ textarea {
   }
 }
 
+/* Inside the native app, hide third-party social sign-in (Google): it can't complete
+   in an embedded webview (Google blocks OAuth there), and offering any social login
+   would also trigger Apple's "must add Sign in with Apple" requirement. Email/password
+   only in-app; the web keeps Google. Targets Clerk's stable cl-* class hooks. The class
+   is applied by AuthPanel only when useIsNativeApp() is true. */
+.native-hide-social .cl-socialButtons,
+.native-hide-social .cl-socialButtonsRoot,
+.native-hide-social .cl-socialButtonsBlockButton,
+.native-hide-social .cl-socialButtonsIconButton,
+.native-hide-social .cl-dividerRow {
+  display: none !important;
+}
+
 /* accessible focus without harsh default outlines */
 :focus-visible {
   outline: 2px solid #5E8C6B;
