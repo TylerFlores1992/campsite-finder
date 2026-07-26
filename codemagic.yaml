@@ -22,6 +22,10 @@ workflows:
     integrations:
       app_store_connect: CampHawk ASC
     environment:
+      groups:
+        # Supplies CERTIFICATE_PRIVATE_KEY (secure) — the distribution-certificate
+        # private key. fetch-signing-files reads it to create/reuse the signing cert.
+        - ios_signing
       vars:
         BUNDLE_ID: "app.camphawk.mobile"
         XCODE_WORKSPACE: "App.xcworkspace"   # Capacitor names the iOS workspace "App"
@@ -42,12 +46,15 @@ workflows:
         script: npx cap sync ios
       - name: Set up code signing
         # This app is brand-new, so no distribution certificate or provisioning profile
-        # exists yet. `--create` mints both via the App Store Connect API key (the
-        # "CampHawk ASC" integration) on first run, then reuses them on later builds.
+        # exists yet. Passing the private key (CERTIFICATE_PRIVATE_KEY, from the
+        # ios_signing group) lets --create mint the signing certificate from it on the
+        # first run; later builds match that same key and reuse the cert (no cert-limit
+        # exhaustion). The profile is created/reused the same way.
         script: |
           keychain initialize
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
+            --certificate-key "$CERTIFICATE_PRIVATE_KEY" \
             --create
           keychain add-certificates
           xcode-project use-profiles
