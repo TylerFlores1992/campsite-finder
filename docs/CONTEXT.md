@@ -592,6 +592,16 @@ shown once it's **honest**:
    AND GoingToCamp** route through the agent proxy, so add `NODE_USE_ENV_PROXY=1` —
    the seed's `isOpenInRange` now dispatches all three families, GTC via the direct
    Camis checker, which the agent proxy / Fly can reach even though Vercel IPs can't).
+   > **The roster is PACED, not bursted (fixed 2026-07-26).** Firing all ~300 rec.gov
+   > probes (150 targets × 2 leads) at once each hour from the single Fly IP tripped
+   > rec.gov's **per-IP rate limit** → a `429` storm that starved the socket pool and
+   > cascaded to GTC/RA timeouts (a real "down" incident; the breaker bounded it but
+   > didn't prevent it). `probeRosterIfDue` now flattens targets×windows, **shuffles**
+   > (so one source doesn't run back-to-back), and dispatches through `pacedForEach` at a
+   > steady jittered rate spread over `PROBE_SPREAD_FRACTION` of the interval — a few
+   > requests/min per source. Symptom that means "throttled again, widen the spread":
+   > `429`/`timeout` on rec.gov + detect canaries timing out while the heartbeat stays
+   > fresh (only the direct-from-Fly sources; RC/TNSC via the Vercel proxy stay green).
 3. **Aggregation** (`src/lib/likelihood.ts`, server-only) — reads the time series into
    an opening rate, **always bucketed on `lead_days`** (`LEAD_BUCKETS`: a site 3 days
    out vs 45 days out is a different game — never blend them) over a trailing window,
@@ -979,7 +989,10 @@ leg records "skipped", a warn not a page); `CANARY_DELIVERY_INTERVAL_MS` and
 Cancellation-likelihood (feature E, on the **Fly worker**, all non-secret with
 in-code defaults — override only to tune): `OBSERVATION_INTERVAL_MS` (per-window
 record throttle, 1h), `OBSERVATION_RETENTION_DAYS` (90), `PROBE_INTERVAL_MS`
-(roster cadence, 1h), `PROBE_LEAD_DAYS` (`14,45`), `PROBE_NIGHTS` (2).
+(roster cadence, 1h), `PROBE_LEAD_DAYS` (`14,45`), `PROBE_NIGHTS` (2),
+`PROBE_SPREAD_FRACTION` (0.6) and `PROBE_SPREAD_MAX_MS` (45m) — the roster no longer
+bursts; probes are shuffled and **paced** (`pacedForEach`) evenly across
+`min(interval×fraction, max)` so no source is hit faster than a few requests/min.
 Worker resilience tunables (on the **Fly worker**, all non-secret with in-code
 defaults): `WATCHDOG_STALE_MS` (self-heal `process.exit(1)` when no heartbeat lands
 for this long, 4 min); `WATCHDOG_EXTERNAL_STALE_MS` (second self-heal trip — reboot
