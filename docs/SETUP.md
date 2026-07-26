@@ -144,6 +144,12 @@ missing value there means push silently never fires (the usual stale-worker trap
 Supabase first (by hand, like 020/021). Devices register their token via
 `POST /api/user/push-token` (Clerk-authed; the bridge calls it on sign-in).
 
+> **Migrations are applied by hand** (020/021/023, and **`024_cost_items`** for the admin
+> Costs tab). In a web session you can apply one directly:
+> `sb.rpc('exec_dml', { query_text: <sql>, with_result: false })` with the service role —
+> `exec_dml` runs DDL, so no Supabase SQL-editor round-trip needed. (PostgREST `.from()`
+> won't see a brand-new table until its schema cache reloads; read back via `exec_select`.)
+
 > **Admin cost tracking needs migration `024_cost_items.sql`** (applied by hand, like the
 > others; already applied to prod 2026-07-26). It backs the editable "Fixed monthly costs"
 > table in the admin **Costs** tab (`/admin`). The per-unit usage rates are non-secret env
