@@ -90,6 +90,18 @@ textarea {
   color: #2B2B2B;
 }
 
+/* iOS (Safari and the Capacitor webview) zooms into any focused form control whose
+   font-size is under 16px and never zooms back out — the page looks stuck magnified
+   after tapping a search field. Force 16px on small screens so focus never zooms;
+   desktop keeps the smaller Tailwind text sizes. */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 /* accessible focus without harsh default outlines */
 :focus-visible {
   outline: 2px solid #5E8C6B;
