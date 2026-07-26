@@ -22,11 +22,6 @@ workflows:
     integrations:
       app_store_connect: CampHawk ASC
     environment:
-      ios_signing:
-        # Codemagic fetches (or creates) an App Store distribution profile for this
-        # bundle id automatically, using the App Store Connect integration above.
-        distribution_type: app_store
-        bundle_identifier: app.camphawk.mobile
       vars:
         BUNDLE_ID: "app.camphawk.mobile"
         XCODE_WORKSPACE: "App.xcworkspace"   # Capacitor names the iOS workspace "App"
@@ -46,7 +41,16 @@ workflows:
       - name: Capacitor sync (copy config + plugins into ios/)
         script: npx cap sync ios
       - name: Set up code signing
-        script: xcode-project use-profiles
+        # This app is brand-new, so no distribution certificate or provisioning profile
+        # exists yet. `--create` mints both via the App Store Connect API key (the
+        # "CampHawk ASC" integration) on first run, then reuses them on later builds.
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
       - name: Increment build number
         # TestFlight rejects duplicate build numbers. PROJECT_BUILD_NUMBER is Codemagic's
         # monotonically-increasing per-workflow counter, so each run gets a fresh number.
