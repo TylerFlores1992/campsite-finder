@@ -16,6 +16,7 @@ export default function BetaTesters() {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [filter, setFilter] = useState<'all' | 'active' | 'invited'>('all');
 
   async function load() {
     try {
@@ -66,6 +67,15 @@ export default function BetaTesters() {
     }
   }
 
+  const activeCount = testers.filter((t) => t.signed_up).length;
+  const invitedCount = testers.length - activeCount;
+  const filtered =
+    filter === 'active'
+      ? testers.filter((t) => t.signed_up)
+      : filter === 'invited'
+        ? testers.filter((t) => !t.signed_up)
+        : testers;
+
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
       <div className="flex items-baseline justify-between mb-4">
@@ -92,15 +102,37 @@ export default function BetaTesters() {
       </form>
       {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
 
+      {!loading && testers.length > 0 && (
+        <div className="inline-flex rounded-lg border border-gray-200 p-0.5 mb-4 text-xs font-medium">
+          {([
+            ['all', 'All', testers.length],
+            ['active', 'Active', activeCount],
+            ['invited', 'Invited', invitedCount],
+          ] as const).map(([key, label, count]) => (
+            <button
+              key={key}
+              onClick={() => setFilter(key)}
+              className={`px-3 py-1.5 rounded-md transition-colors ${
+                filter === key ? 'bg-green-600 text-white' : 'text-gray-500 hover:text-gray-800'
+              }`}
+            >
+              {label} <span className={filter === key ? 'text-green-100' : 'text-gray-400'}>{count}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center gap-2 text-gray-400 text-sm py-4">
           <Loader2 size={16} className="animate-spin" /> Loading…
         </div>
       ) : testers.length === 0 ? (
         <p className="text-sm text-gray-400 py-2">No beta testers yet. Add an email above.</p>
+      ) : filtered.length === 0 ? (
+        <p className="text-sm text-gray-400 py-2">No {filter} testers.</p>
       ) : (
         <ul className="divide-y divide-gray-100">
-          {testers.map((t) => (
+          {filtered.map((t) => (
             <li key={t.email} className="flex items-center gap-3 py-2.5">
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-800 truncate">{t.email}</p>
