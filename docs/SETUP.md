@@ -108,7 +108,9 @@ Adding a state to an **existing** platform is usually a one-line registry entry 
 (`src/lib/sources/reservecalifornia/providers.ts`), `GOINGTOCAMP_PROVIDERS`
 (`src/lib/sources/goingtocamp/providers.ts`), or `TNSC_PROVIDERS`
 (`src/lib/sources/tnsc/providers.ts`) — plus a sync run and the coverage copy
-(`src/app/layout.tsx` metadata, SubscribeGate). **South Carolina shipped 2026-07-22**
+(the `COVERAGE` constants in `src/lib/coverage.ts` — derive them with
+`npx tsx scripts/coverage-readout.mts`, never by hand; the marketing home and the
+signed-out footer both read from there). **South Carolina shipped 2026-07-22**
 (the last cheap-ish add): it reused TN's ColdFusion backend + Vercel proxy but needed
 its own `html-grid` catalog/availability branch in `client.ts` (slug-keyed, curated
 coords) — see the SC recon note in `docs/CONTEXT.md`. Every remaining state needs a
@@ -263,7 +265,8 @@ Hard-won gotchas from the first end-to-end run (all cost real time):
   dispatch a real push+email+SMS to your account. `status=sent` + no prune + no device
   delivery ⇒ the APNs-key trap above, not the code.
 - **Geolocation ("use my location") is a NATIVE dep, needs a rebuild.** `navigator.geolocation`
-  hangs in the iOS WKWebView, so `SearchBar.tsx` routes through **`@capacitor/geolocation`**
+  hangs in the iOS WKWebView, so `src/components/v2/geo.ts` routes through
+  **`@capacitor/geolocation`**
   (`deviceCoords()`; native on device, browser API on web, IP fallback). CI adds the
   **`NSLocationWhenInUseUsageDescription`** Info.plist key ("Add location usage description"
   step) or iOS silently denies; Android perms come from the plugin. Like the push plugins,
@@ -282,9 +285,9 @@ Hard-won gotchas from the first end-to-end run (all cost real time):
 > the webview User-Agent (`capacitor.config.ts`), and `NativeAppProvider`
 > (`src/lib/native/context.tsx`) reads it **client-side** (`useSyncExternalStore` over
 > `navigator.userAgent`) and provides it via context; the pricing surfaces
-> (`SubscribeGate`/`SubscribeBanner`'s `PricingButtons`, `WatchButton`'s subscribe state)
-> render "manage at camphawk.app" instead of Stripe checkout when `useIsNativeApp()` is
-> true. **Detection is CLIENT-side on purpose** — an earlier version read the UA in the
+> (`src/components/v2/Pricing.tsx` and `src/components/v2/WatchCta.tsx` — the only two
+> that exist since the 2026-07-27 rewrite) render "manage at camphawk.app" instead of
+> Stripe checkout when `useIsNativeApp()` is true. **Detection is CLIENT-side on purpose** — an earlier version read the UA in the
 > root layout via `await headers()`, which under this build's Cache Components model
 > 500'd every page at runtime (see the root-layout gotcha in `CLAUDE.md`/`CONTEXT.md`).
 > The tradeoff is a first-render flash of pricing UI *inside the native app only* — web
@@ -308,7 +311,13 @@ src/lib/            Core logic
   booking-url.ts    the one place that builds a booking link (site/date deep links);
                     records what each provider actually honors — see docs/CONTEXT.md
   db/               Supabase client + migrations/
-src/components/     UI (SearchBar, map, WatchesPanel, AutoCartToggle, SubscribeGate, …)
+src/app/(app)/      the app itself — a route group supplying nav/backdrop/footer
+                    without a path segment: / /search /watches /new /settings
+                    /campground/[id] /manage/[token].  See docs/CONTEXT.md.
+src/components/ui/  design primitives (Button, Chip, Tag, Card, DatePicker, …)
+src/components/v2/  the screens (Explore, WatchesList, NewWatch, Settings, …)
+src/components/     what's left of the pre-rewrite UI: Logo, AuthPanel, SmsOptIn,
+                    BetaTesters, AdminAutoRefresh
                     NativeBridge.tsx  Capacitor push bridge (no-op on web)
 worker/             Fly.io cancellation poller (poller.ts)
                     http-server.ts  POST /gtc/availability, for the Vercel search page
@@ -348,13 +357,38 @@ the full Next app pulls in Clerk's dev-browser redirect — isolation sidesteps 
 alignment before shipping.
 
 ```
-npx tsx scripts/screenshot-component.mts search-bar --out=/tmp/x.png --width=1400 --height=420
+npx tsx scripts/screenshot-component.mts ch-home --out=/tmp/x.png --width=1280 --height=1400
 ```
 
 Add a preset to the `PRESETS` map for a component that needs realistic props; or pass
-a `.tsx` path (default export, no props) ad-hoc. Needs `playwright-core` (a
-devDependency) + the image's `/opt/pw-browsers` Chromium. **Scope: presentational
-components only** — not real data, auth, or full-page composition.
+a `.tsx` path (default export, no props) ad-hoc. `npx tsx scripts/screenshot-component.mts`
+with no argument lists them. Needs `playwright-core` (a devDependency) + the image's
+`/opt/pw-browsers` Chromium. **Scope: presentational components only** — not real data,
+auth, or full-page composition.
+
+Two things worth knowing before you fight it:
+
+- **Signed-in UI needs `window.__CH_SIGNED_IN = true`** in the preset's entry code.
+  The Clerk stub (`scripts/harness/clerk-stub.tsx`) defaults to SIGNED OUT, so hearts,
+  settings and the account menu render as nothing until you flip it. Stub `fetch` in
+  the same block to feed the component data.
+- **A blank PNG is usually a thrown hook, not a layout bug.** `useRouter()` and Clerk
+  hooks throw outside a Next app; both are aliased to stubs in `scripts/harness/`, and
+  the harness logs `pageerror`/console output so a throw can't masquerade as an empty
+  page. If you add a component that imports something else Next-only, alias it there too.
+
+## Checking the SEO surfaces
+
+```
+NODE_USE_ENV_PROXY=1 npx tsx scripts/seo-check.mts
+```
+
+Guards three things that regress silently and break no test: the campground page
+reverting to client-rendered (a human sees it load fine; a crawler gets a skeleton),
+titles or descriptions colliding across the 8,013 pages, and structured data claiming
+values the catalog can't support. It renders the real component through
+`renderToStaticMarkup` and sweeps every row's metadata. Run it after touching
+`lib/seo.ts`, `lib/jsonld.ts`, `richText.tsx` or the campground page.
 
 ## Front-end changes via v0
 
@@ -477,6 +511,23 @@ vars, and a setup-script field.
   copy) and nothing else. (3) set `ENABLE_OPS_TOOLS=1` so the hook
   installs flyctl + the Supabase CLI. The Supabase CLI comes from npm and installs
   fine; **flyctl does NOT** — see the next bullet.
+- **To render or screenshot a real PAGE (not just a component), you need Clerk keys.**
+  The root layout wraps everything in `ClerkProvider`, so without
+  `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` + `CLERK_SECRET_KEY` every page 500s with
+  "Missing publishableKey" — `next build` still succeeds, which makes this easy to
+  misdiagnose as a code fault. Two things learned the hard way (2026-07-27):
+  - **A dummy key does not work.** A syntactically valid `pk_test_<base64>` is still
+    rejected; Clerk validates it for real. Use the actual **dev-instance** keys.
+  - **`NEXT_PUBLIC_*` is inlined at BUILD time.** Setting it in the environment and
+    running `next start` changes nothing — the old value is already baked into the
+    bundle. You must **rebuild** after adding it.
+
+  With real keys in the env, `npm run build && npx next start` + `curl localhost:3000`
+  gives full-page HTML, which is the only way from a web session to verify
+  signed-in flows (watches, settings, auto-cart, checkout). Without them, the
+  component harness above is the ceiling — it renders screens in isolation with a
+  Clerk stub, but never the composed page or real data.
+
 - **Three web-session gotchas that cost real time (2026-07-22, shipping SC end-to-end).**
   Even with **Full** network, `ENABLE_OPS_TOOLS=1`, and `FLY_API_TOKEN` all set, the
   out-of-the-box path still fails at three spots. All have workarounds that DO work

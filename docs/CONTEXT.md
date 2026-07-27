@@ -17,6 +17,13 @@ optionally weekends" (see "Flexible dates" under the core flow).
 > site-specific mute, dead-man's switch), and E (cancellation-likelihood signal) are
 > all live. See "Cancellation-likelihood (feature E)" under the core flow for how E
 > works and what's left to broaden.
+>
+> **FRONT-END REWRITE SHIPPED 2026-07-27.** The whole UI was rebuilt on a new
+> design system and swapped over the live routes; the old pages and components are
+> deleted. See "The front end" below for the route map and what changed. If you are
+> reading old commentary elsewhere in this file that mentions `SearchBar`,
+> `WatchesPanel`, `SubscribeGate`, `CampgroundCard` or `/v2`, it predates the swap —
+> those files are gone.
 
 ## Stack
 
@@ -464,6 +471,92 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > benign causes: UseDirect grid 403s (above), and parks skipped for missing coords in
 > ReserveAmerica/GoingToCamp. `metadata.totalErrors` carries the count.
 
+## The front end
+
+Rewritten and swapped over the live routes on 2026-07-27. Presentation only — no
+data layer, API contract or bot logic changed in the rewrite.
+
+### Route map
+
+Everything under `src/app/(app)/` is a **route group**: it supplies the shared
+chrome (nav, brand backdrop, footer) without adding a path segment.
+
+| Route | File | Notes |
+| --- | --- | --- |
+| `/` | `(app)/page.tsx` | Marketing home. **Server-rendered** — carries the site `<h1>`, indexable. Only the pricing controls are client-side. |
+| `/search` | `(app)/search/page.tsx` | Explore: location + dates + filters + map. The free funnel. |
+| `/watches` | `(app)/watches/` | Watch list, quota, outage banner, alert history. |
+| `/new` | `(app)/new/` | The only place a watch is created. |
+| `/settings` | `(app)/settings/` | Alerts (SMS), auto-cart, subscription, account, admin link. |
+| `/campground/<id>` | `(app)/campground/[id]/` | **Server-rendered** detail + per-page metadata + JSON-LD. |
+| `/manage/<token>` | `(app)/manage/[token]/` | Token-authorised per-watch manage. `manageLink()` has always emitted this path, so links already in the wild land here. |
+| `/camping`, `/camping/<state>` | `app/camping/` | SEO landing pages. **Outside** the group — own breadcrumb chrome. |
+
+Outside the group and deliberately without app chrome: `/terms`, `/privacy`,
+`/connect`, `/admin`, `/sign-in`, `/sign-up`, `/w/<token>`, `/b/<token>`,
+`/auto-cart`, `/sms-opt-in`.
+
+### Design system
+
+`--ch-*` tokens in `src/app/globals.css`, in a second `@theme` block that is purely
+ADDITIVE — it was written that way so the rewrite could run beside the old UI
+without touching it. Fonts are Bitter (display) + Nunito Sans (body). Primitives
+live in `src/components/ui/`, screens in `src/components/v2/`.
+
+> **The stock Tailwind colour scales are still overridden** in `globals.css`
+> (`--color-green-*`, `--color-gray-*`, …) to CampHawk's palette. ~22 files outside
+> the app shell — sign-in, terms, privacy, the token action pages — still use
+> `bg-green-600` and friends, so deleting the overrides would silently repaint all
+> of them in stock Tailwind. Convert those files first.
+
+### Things that will bite you
+
+- **A route not in `isPublicRoute` (`src/middleware.ts`) 404s**, because Clerk's
+  `auth.protect()` returns 404 rather than 401. `/search`, `/watches`, `/settings`
+  and `/new` are all listed. `/new` is listed **deliberately**: the New watch screen
+  handles its own 401 with a message that keeps the campground, dates and filters
+  already entered, and letting middleware intercept would throw that away.
+- **`robots` is set per page, not in the layout.** The layout carried a `noindex`
+  during the dark launch and removing it is what made the campground SEO work count.
+  `/` and `/search` are indexable; `/watches`, `/settings`, `/new` are not; and
+  `/manage/<token>` is `noindex, nocache` because **the URL contains the token that
+  authorises managing the watch** — a token in the index is a token anyone can use.
+- **Watch creation is gated in exactly one component**, `v2/WatchCta.tsx`, backed by
+  `v2/useSubscription.ts`. A failed status lookup is tracked as `unknown` and stays
+  neutral rather than telling a paying subscriber to subscribe. Same rule in
+  `v2/Pricing.tsx`. Both render no price in the native app.
+- **Provider descriptions are HTML** — 4,469 of the 8,013 catalog rows. Render them
+  through `v2/richText.tsx`, which parses to blocks and emits text. Never
+  `dangerouslySetInnerHTML`: it is untrusted third-party markup.
+- **Campground `photos` is `[]` on every row.** The photo strip, `og:image` and
+  JSON-LD `image` therefore never render. That's an ingest bug, not a UI one.
+
+## SEO
+
+Added 2026-07-27, and mostly inert until the route swap lifted the layout `noindex`.
+
+- **Campground pages are server-rendered** with `generateMetadata` per campground.
+  Before this they were client components fetching in `useEffect`, so a crawler got a
+  loading skeleton and all 8,013 shared the root layout's title.
+- **`src/lib/seo.ts`** builds titles, descriptions and canonicals. Titles shorten by
+  dropping PARTS (place, then qualifier) rather than clamping the end — a plain clamp
+  truncated long names into *identical* strings, reintroducing the duplication the
+  file exists to fix.
+- **`src/lib/jsonld.ts`** — `Campground`, `BreadcrumbList`, `Organization`. Every
+  field is omitted when absent, and there is deliberately no `aggregateRating` or
+  `priceRange`: we have neither and inventing them earns a manual action. No
+  `FAQPage` either — Google restricted those rich results to government and health
+  sites in 2023.
+- **`/camping/<state>`** landing pages (47 states, min 5 campgrounds each — below
+  that a page is a doorway page, which is a penalty). They also give the 7,000
+  campground pages an internal-linking parent; the only link into `/camping` is in
+  the signed-out footer, so don't delete it.
+- **Sitemap** is dynamic (~7,387 URLs) and degrades to the three static pages if the
+  DB query fails, because a sitemap that 500s teaches Google to stop asking.
+- **`npx tsx scripts/seo-check.mts`** (needs `NODE_USE_ENV_PROXY=1`) guards the three
+  failure modes that break nothing visible: the page silently reverting to
+  client-rendered, titles colliding, and structured data claiming things we don't have.
+
 ## The core flow
 
 1. **Search** (`src/app/api/search`) — radius + dates + filters; branches on `source`
@@ -519,9 +612,10 @@ section):
 > just shortens the required run to "any N consecutive nights in the window" (the
 > grid-source `hasXInRange` checks already express exactly that); it does **not**
 > apply the weekend constraint in the annotation, since search is discovery and the
-> watch is what enforces the precise spec. UI is a "Flexible dates" checkbox in
-> `SearchBar` (nights + weekends), threaded through `page` → `CampgroundCard` →
-> `WatchButton` so a watch created from flexible results inherits the spec.
+> watch is what enforces the precise spec. UI is the **Flexible** chip on `/search`,
+> which reveals `ui/NightsPicker` (how many consecutive nights) alongside the date
+> range (the window to hunt inside) — the same two controls the New watch screen
+> mounts, so a watch created from flexible results inherits the spec.
 
 ### Alert-health canary (feature A — SHIPPED, monitoring)
 
@@ -610,7 +704,7 @@ shown once it's **honest**:
    `getHeadlines(ids)` (one batched query for a whole search page → each campground's
    best-sampled `enough` bucket, absent when none qualify).
 4. **UI** — search attaches a `likelihood` headline to each result (best-effort, never
-   fails a search); `CampgroundCard` shows a positive-framed pill ("Frequent openings"
+   fails a search); the result card shows a positive-framed pill ("Frequent openings"
    / "Opens up sometimes" / "Rarely opens up") with a precise-% tooltip. The detail
    page's "How often it opens up" card (`/api/likelihood`, public) renders the per-lead
    ladder, a "still learning" note while buckets are thin, and **hides entirely** for a
@@ -635,7 +729,7 @@ shown once it's **honest**:
 > needs a few weeks of history before the longer-lead buckets are dense.
 
 > **⏸ THE DISPLAY IS PAUSED (2026-07-23) — data collection is NOT.** All three UI
-> surfaces (Watches-panel per-watch "% chance for your dates", `CampgroundCard` badge,
+> surfaces (per-watch "% chance for your dates" on the watch card, result-card badge,
 > and the detail-page "How often it opens up" ladder) are hidden for now: with limited
 > history too many read a discouraging **0% / "rarely opens up"**, which lands as "no
 > hope" rather than "not enough data yet". The recorder/aggregation/APIs are untouched
@@ -733,7 +827,7 @@ steps (Firebase project `campapp-39c4b`).
   outside their IAP). The app shows no price/buy button — a non-subscriber sees "manage
   at camphawk.app". Enforced by a native flag: Capacitor appends `CampHawkApp` to the
   webview UA, and `NativeAppProvider` (`src/lib/native/context.tsx`) reads it
-  **client-side** (`useSyncExternalStore`) and gates `PricingButtons`/`WatchButton`.
+  **client-side** (`useSyncExternalStore`) and gates `v2/Pricing.tsx` / `v2/WatchCta.tsx`.
   > **The flag is read CLIENT-side, and MUST stay that way.** The first version read the
   > UA in the root layout via `await headers()` for a flash-free server render — which
   > under this build's **Cache Components** model threw at request time and **500'd every
@@ -760,7 +854,8 @@ steps (Firebase project `campapp-39c4b`).
     (A future full-OAuth-through-system-browser is possible but unneeded now.)
   - **"Use my location" HUNG in the iOS webview (fixed 2026-07-26).** `navigator.geolocation`
     never resolves in WKWebView (no HTML5 geolocation, and no error either) — the button
-    spun forever. Both call sites in `SearchBar.tsx` now go through **`@capacitor/geolocation`**
+    spun forever. Location lookups now go through **`@capacitor/geolocation`**
+    (wrapped in `src/components/v2/geo.ts`)
     (`deviceCoords()`): native plugin on iOS/Android, browser API on web (unchanged there),
     IP fallback on denial. iOS needs the **`NSLocationWhenInUseUsageDescription`** Info.plist
     key (added in CI — `codemagic.yaml`) or iOS silently denies; Android perms come from the
@@ -984,11 +1079,30 @@ copy and must agree:
 
 ## Admin dashboard (`/admin`) + cost tracking
 
-Owner-only (`ADMIN_EMAILS`, 404 for everyone else). **Redesigned into tabs 2026-07-26:**
-`src/app/admin/page.tsx` is a server component that fetches everything (users, subs, MRR
-via Stripe, watches, alerts, worker heartbeat, canary, sync_log, cost items, usage) and
-hands it to a client shell `src/components/admin/AdminTabs.tsx` — tabs **Overview · Users &
-Revenue · Engagement · System Health · Costs**.
+Owner-only, 404 for everyone else. **Redesigned into tabs 2026-07-26, rebuilt on the
+ch-* system 2026-07-27.** `src/app/admin/page.tsx` is a server component that fetches
+everything (users, subs, MRR via Stripe, watches, alerts, worker heartbeat, canary,
+sync_log, cost items, usage) and hands it to a client shell
+`src/components/admin/AdminTabs.tsx` — tabs **Overview · Users & Revenue · Engagement ·
+System Health · Costs**.
+
+**Who counts as an admin lives in one place: `src/lib/admin.ts`.** It was copy-pasted
+into four (the page, `/api/admin/beta`, `/api/admin/costs`, and a hardcoded email in the
+old homepage's client code), and one had already drifted — the homepage ignored
+`ADMIN_EMAILS` entirely, so a second admin would have got the page but not the link to
+it. The module imports `server-only`, so a client component importing it is a build
+error rather than a silent leak of the roster into the JS bundle. Client components get
+a boolean, never the list. **None of this is the boundary by itself** — `/admin` calls
+`notFound()` (404, not 403, so the page's existence isn't revealed) and both API routes
+reject before touching data. Hiding a link only tidies the UI.
+
+**A status banner sits above the tabs**, derived from the same worker/canary/sync data
+System Health shows. It exists because "is anything broken right now" is the question
+the page is opened for, and it used to be behind a tab. It names the failing thing
+rather than counting problems, and it **aggregates sync warnings** — they are many (one
+per state per provider) and a partial sync is routine, so listing them produced a banner
+naming fifteen sources every morning. Canaries are still named individually; they're few
+and each is distinct.
 
 **Cost tracking (Costs tab):** two kinds of cost, summarized against MRR for a monthly net.
 - **Fixed line items** — editable, DB-backed in `cost_items` (**migration 024**), maintained
