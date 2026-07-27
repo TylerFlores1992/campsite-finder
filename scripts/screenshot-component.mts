@@ -333,6 +333,53 @@ const PRESETS: Record<string, Preset> = {
       );`,
     frame: 'w-full',
   },
+  'v2-new-watch': {
+    label: 'v2 New watch (flexible + auto-cart trust panel)',
+    // Pre-selects a rec.gov campground so auto-cart and the trust panel render,
+    // then flips to Flexible and opens the saved-login disclosure — the block
+    // that had to be rewritten because the mockup's copy was factually wrong.
+    entry: `import NewWatch from '@/components/v2/NewWatch';
+      import TrustPanel from '@/components/v2/TrustPanel';
+      if (typeof window !== 'undefined') {
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/api/suggest')) return { ok: true, json: async () => ({ campgrounds: [] }) };
+          return { ok: true, status: 200, json: async () => ({ campground: {
+            id: '233116', source: 'ridb', name: 'Kirk Creek Campground', description: null,
+            latitude: 36, longitude: -121, address: { city: 'Big Sur', state: 'CA' },
+            amenities: [], activities: [], environmentTags: [], siteTypes: ['tent'],
+            reservable: true, reservationsUrl: null, phone: null, email: null,
+            adaAccessible: false, petsAllowed: true, photos: [], lastSyncedAt: null,
+          }, campsites: [] }) };
+        };
+      }
+      function Harness() {
+        React.useEffect(() => {
+          const t = setTimeout(() => {
+            const flex = Array.from(document.querySelectorAll('button'))
+              .find((b) => b.textContent.trim() === 'Flexible');
+            if (flex) flex.click();
+            const saved = Array.from(document.querySelectorAll('button[aria-expanded]'))
+              .find((b) => b.textContent.includes('Keep me signed in'));
+            if (saved) saved.click();
+          }, 600);
+          return () => clearTimeout(t);
+        }, []);
+        return (
+          <>
+            <NewWatch initialCampgroundId="233116" initialStart="2026-10-01" initialEnd="2026-10-31" />
+            <div className="mt-6">
+              <div className="text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted mb-2">
+                Trust panel with saved-login enabled (rewritten copy)
+              </div>
+              <TrustPanel savedLogin />
+            </div>
+          </>
+        );
+      }
+      export const node = <div className="bg-ch-paper font-ch-body text-ch-ink p-6"><Harness /></div>;`,
+    frame: 'w-full',
+  },
   'ch-logo': {
     label: 'HawkGlyph vs the full badge at small sizes',
     // The point of the glyph is that it survives favicon size. Shown against the
@@ -496,7 +543,12 @@ async function main() {
     write: false,
     jsx: 'automatic',
     absWorkingDir: ROOT,
-    alias: { '@': join(ROOT, 'src') },
+    alias: {
+      '@': join(ROOT, 'src'),
+      // Components outside a Next app have no AppRouterContext; the real
+      // useRouter() throws and the screenshot comes out blank.
+      'next/navigation': join(ROOT, 'scripts/harness/next-navigation-stub.ts'),
+    },
     define: { 'process.env.NODE_ENV': '"production"' },
     banner: { js: 'window.process = window.process || { env: {} };' },
     logLevel: 'silent',
@@ -531,6 +583,8 @@ async function main() {
   });
   try {
     const page = await browser.newPage({ viewport: { width, height } });
+    page.on('pageerror', (e) => console.error('[shot] page error:', e.message));
+    page.on('console', (m) => { if (m.type() === 'error') console.error('[shot] console:', m.text().slice(0, 300)); });
     await page.goto(`http://localhost:${port}/`, { waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.waitForTimeout(wait);
     await page.screenshot({ path: out });
