@@ -217,24 +217,28 @@ export default async function AdminPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F3EFE0]">
-      <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+    <div className="min-h-dvh bg-ch-paper font-ch-body text-ch-ink">
+      <header className="flex items-center justify-between border-b border-ch-line bg-ch-card px-4 py-3">
         <div className="flex items-center gap-3">
-          <Link href="/"><Logo markSize={30} /></Link>
-          <span className="text-xs font-semibold uppercase tracking-wide text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+          <Link href="/">
+            <Logo markSize={30} />
+          </Link>
+          <span className="rounded-ch-chip border border-[#E7C98C] bg-ch-ochre-soft px-2.5 py-0.5 text-ch-label font-bold uppercase tracking-[.1em] text-ch-ochre-ink">
             Admin
           </span>
         </div>
         <div className="flex items-center gap-4">
           <AdminAutoRefresh intervalMs={30000} />
-          <Link href="/" className="text-sm text-gray-500 hover:text-green-700">← Back to site</Link>
+          <Link href="/" className="text-ch-body font-bold text-ch-muted hover:text-ch-green-deep">
+            ← Back to site
+          </Link>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      <main className="mx-auto max-w-6xl px-4 py-6">
         <AdminTabs data={data} />
-        <p className="text-center text-xs text-gray-400 mt-8">
-          Live figures from the CampHawk database · auto-refreshes
+        <p className="mt-8 text-center text-ch-fine text-ch-muted">
+          Live figures from the CampHawk database · auto-refreshes every 30s
         </p>
       </main>
     </div>

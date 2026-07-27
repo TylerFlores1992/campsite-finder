@@ -1,9 +1,28 @@
 'use client';
 
 import { useState } from 'react';
+import { AlertTriangle, CheckCircle2, ExternalLink } from 'lucide-react';
 import BetaTesters from '@/components/BetaTesters';
 import CostsPanel from '@/components/admin/CostsPanel';
 import type { CostItem, UsageCounts } from '@/lib/costs';
+
+/**
+ * Admin dashboard, in the redesign's ch-* system.
+ *
+ * NOTHING WAS REMOVED. Every figure the old page showed is still here — a
+ * restyle that quietly drops metrics is just a smaller dashboard.
+ *
+ * The one structural addition is the STATUS BANNER. Previously you had to open
+ * the System Health tab to find out the poller had stopped, which is exactly
+ * backwards: "is anything broken right now" is the question this page exists to
+ * answer, and it was a click away from the answer. The banner derives its state
+ * from the same worker/canary/sync data that tab shows, names the specific
+ * problem rather than counting problems, and jumps to the detail.
+ *
+ * Colour is used sparingly and consistently: green healthy, ochre
+ * degraded-but-working, red broken. That's the ch-* Tag vocabulary the rest of
+ * the app already uses, so the dashboard reads the way the product does.
+ */
 
 type Beat = { beat_at: string; watches_checked: number; age_s: number } | null;
 type CanaryRow = { key: string; ok: boolean; age_s: number | null; consecutive_failures: number; detail: string | null };
@@ -39,23 +58,128 @@ export interface AdminData {
 const TABS = ['Overview', 'Users & Revenue', 'Engagement', 'System Health', 'Costs'] as const;
 type Tab = (typeof TABS)[number];
 
+type Level = 'ok' | 'warn' | 'fail';
+
+/** A canary's state, using the same thresholds the previous panel used. */
+function canaryLevel(c: CanaryRow): Level {
+  const skipped = (c.detail ?? '').startsWith('skipped');
+  // Delivery canaries run hourly; detection canaries every 10 minutes.
+  const staleAfter = c.key.startsWith('delivery:') ? 7 * 3600 : 600;
+  const stale = c.age_s != null && c.age_s > staleAfter;
+  if (skipped) return 'warn';
+  // One failure is a blip; two in a row is a problem.
+  if (!c.ok && c.consecutive_failures < 2) return 'warn';
+  if (c.ok && !stale) return 'ok';
+  return 'fail';
+}
+
+function syncLevel(s: SyncRow): Level {
+  if (!s.finished_at) return 'warn'; // in progress
+  if ((s.facilities_synced ?? 0) === 0) return 'fail';
+  return s.error ? 'warn' : 'ok';
+}
+
+/**
+ * One sentence answering "is anything broken?".
+ *
+ * Names the failing thing rather than reporting "1 issue" — a count still needs
+ * a click to be useful, and not needing one is the point.
+ */
+function overallStatus(data: AdminData): { level: Level; headline: string; detail: string } {
+  const problems: string[] = [];
+  const warnings: string[] = [];
+
+  if (!data.workerHealthy) {
+    problems.push(
+      data.beat
+        ? `the poller last checked in ${Math.round(data.beat.age_s / 60)} min ago`
+        : 'the poller has never checked in'
+    );
+  }
+  for (const c of data.canaryRows) {
+    const lvl = canaryLevel(c);
+    if (lvl === 'fail') problems.push(`${c.key} is failing`);
+    else if (lvl === 'warn') warnings.push(c.key);
+  }
+  for (const s of data.syncRows) {
+    const lvl = syncLevel(s);
+    if (lvl === 'fail') problems.push(`the ${s.source} sync returned nothing`);
+    else if (lvl === 'warn' && s.error) warnings.push(`${s.source} sync`);
+  }
+
+  if (problems.length) {
+    return {
+      level: 'fail',
+      headline:
+        problems.length === 1 ? 'Something needs attention' : `${problems.length} things need attention`,
+      detail: `${problems.join('; ')}.`,
+    };
+  }
+  if (warnings.length) {
+    return {
+      level: 'warn',
+      headline: 'Running, with warnings',
+      detail: `Watch: ${warnings.join(', ')}. Alerts are still going out.`,
+    };
+  }
+  return {
+    level: 'ok',
+    headline: 'All systems normal',
+    detail: data.beat
+      ? `Poller checked in ${data.beat.age_s}s ago, ${data.beat.watches_checked} watches per cycle.`
+      : 'Every check is reporting healthy.',
+  };
+}
+
+const LEVEL_STYLE: Record<Level, { box: string; text: string }> = {
+  ok: { box: 'border-[#BFDDC9] bg-ch-green-soft', text: 'text-ch-green-deep' },
+  warn: { box: 'border-[#E7C98C] bg-ch-ochre-soft', text: 'text-ch-ochre-ink' },
+  fail: { box: 'border-[#E7BFB4] bg-ch-alert-soft', text: 'text-ch-alert-deep' },
+};
+
 export default function AdminTabs({ data }: { data: AdminData }) {
   const [tab, setTab] = useState<Tab>('Overview');
   const mrrCents = data.mrr ? Math.round(data.mrr.monthly * 100) : null;
+  const status = overallStatus(data);
+  const style = LEVEL_STYLE[status.level];
 
   return (
-    <div>
-      {/* Tab bar */}
-      <div className="border-b border-gray-200 mb-6 overflow-x-auto">
-        <nav className="flex gap-1 min-w-max">
+    <div className="font-ch-body text-ch-ink">
+      {/* Status above the tabs — it's true regardless of which tab you're on,
+          and it's the reason most visits to this page happen. */}
+      <div className={`mb-5 flex items-start gap-3 rounded-ch-card border p-4 ${style.box}`}>
+        {status.level === 'ok' ? (
+          <CheckCircle2 aria-hidden="true" className={`mt-0.5 size-5 shrink-0 ${style.text}`} />
+        ) : (
+          <AlertTriangle aria-hidden="true" className={`mt-0.5 size-5 shrink-0 ${style.text}`} />
+        )}
+        <div className="min-w-0">
+          <p className={`font-ch-display text-ch-h font-bold ${style.text}`}>{status.headline}</p>
+          <p className={`mt-0.5 text-ch-meta leading-normal opacity-90 ${style.text}`}>
+            {status.detail}
+          </p>
+          {status.level !== 'ok' && tab !== 'System Health' && (
+            <button
+              onClick={() => setTab('System Health')}
+              className={`mt-1.5 cursor-pointer text-ch-meta font-bold underline underline-offset-2 ${style.text}`}
+            >
+              Open System Health
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="mb-5 overflow-x-auto border-b border-ch-line">
+        <nav className="flex min-w-max gap-1">
           {TABS.map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
+              aria-current={tab === t ? 'page' : undefined}
+              className={`-mb-px cursor-pointer border-b-2 px-4 py-2.5 text-ch-body font-bold whitespace-nowrap transition-colors ${
                 tab === t
-                  ? 'border-green-600 text-green-700'
-                  : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300'
+                  ? 'border-ch-green text-ch-green-deep'
+                  : 'border-transparent text-ch-muted hover:border-ch-line hover:text-ch-ink-2'
               }`}
             >
               {t}
@@ -83,17 +207,40 @@ export default function AdminTabs({ data }: { data: AdminData }) {
 /* ---------------------------------------------------------------- Overview */
 
 function OverviewPanel({ data }: { data: AdminData }) {
-  const { clerkTotal, usersAgg, activeSub, subMap, watchAgg, alertAgg } = data;
+  const { clerkTotal, usersAgg, activeSub, subMap, watchAgg, alertAgg, mrr } = data;
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Kpi label="Users" value={clerkTotal ?? usersAgg.total} sub={`${usersAgg.total} in app · +${usersAgg.new_7d} this week`} />
-        <Kpi label="Active subscribers" value={activeSub.n} sub={`${subMap['trialing'] ?? 0} on trial`} accent="green" />
-        <Kpi label="Active watches" value={watchAgg.active} sub={`${watchAgg.watchers} watchers`} />
-        <Kpi label="Alerts sent" value={alertAgg.sent} sub={`+${alertAgg.sent_7d} this week`} accent="amber" />
+    <div className="space-y-4">
+      {/* MRR promoted into the headline row. It was on a second tab, and "how
+          much are we making" belongs beside "how many users are there". */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <Kpi
+          label="MRR"
+          value={mrr ? `$${mrr.monthly.toFixed(2)}` : '—'}
+          sub={mrr ? `${mrr.activeCount} paying` : 'Stripe unavailable'}
+          accent="green"
+        />
+        <Kpi
+          label="Users"
+          value={(clerkTotal ?? usersAgg.total).toLocaleString()}
+          sub={`+${usersAgg.new_7d} this week`}
+        />
+        <Kpi
+          label="Subscribers"
+          value={activeSub.n.toLocaleString()}
+          sub={`${subMap['trialing'] ?? 0} on trial`}
+        />
+        <Kpi
+          label="Active watches"
+          value={watchAgg.active.toLocaleString()}
+          sub={`${watchAgg.watchers} watchers`}
+        />
+        <Kpi
+          label="Alerts sent"
+          value={alertAgg.sent.toLocaleString()}
+          sub={`+${alertAgg.sent_7d} this week`}
+        />
       </div>
       <SignupsChart data={data} />
-      <WorkerStrip data={data} />
       <QuickLinks />
     </div>
   );
@@ -104,37 +251,39 @@ function OverviewPanel({ data }: { data: AdminData }) {
 function UsersRevenuePanel({ data }: { data: AdminData }) {
   const { mrr, subMap, usersAgg } = data;
   return (
-    <div className="space-y-6">
-      <div className="grid md:grid-cols-3 gap-4">
+    <div className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-3">
         <div className="md:col-span-2">
           <SignupsChart data={data} />
         </div>
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <h2 className="font-display font-semibold text-gray-800">Subscriptions</h2>
-          <p className="mt-1 font-display text-3xl font-extrabold text-green-700">
+        <Panel title="Subscriptions">
+          <p className="font-ch-display text-[28px] font-extrabold text-ch-green-deep">
             {mrr ? `$${mrr.monthly.toFixed(2)}` : '—'}
-            <span className="text-sm font-normal text-gray-400"> /mo MRR</span>
+            <span className="text-ch-body font-normal text-ch-muted"> /mo</span>
           </p>
-          <p className="text-xs text-gray-400 mb-4">
-            {mrr ? `${mrr.activeCount} paying · normalized monthly` : 'Stripe unavailable'}
+          <p className="mb-4 text-ch-fine text-ch-muted">
+            {mrr ? `${mrr.activeCount} paying · normalised monthly` : 'Stripe unavailable'}
           </p>
-          <ul className="space-y-2.5 text-sm">
-            <StatusRow label="Active" value={subMap['active'] ?? 0} color="bg-green-500" />
-            <StatusRow label="Trialing" value={subMap['trialing'] ?? 0} color="bg-blue-500" />
-            <StatusRow label="Past due" value={subMap['past_due'] ?? 0} color="bg-amber-500" />
-            <StatusRow label="Canceled" value={subMap['canceled'] ?? 0} color="bg-gray-400" />
+          <ul>
+            <StatusRow label="Active" value={subMap['active'] ?? 0} dot="bg-ch-green" />
+            <StatusRow label="Trialing" value={subMap['trialing'] ?? 0} dot="bg-ch-blue" />
+            <StatusRow label="Past due" value={subMap['past_due'] ?? 0} dot="bg-ch-ochre" />
+            <StatusRow label="Canceled" value={subMap['canceled'] ?? 0} dot="bg-ch-faint" />
           </ul>
           <a
             href="https://dashboard.stripe.com/subscriptions"
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-4 inline-block text-xs font-medium text-green-700 hover:text-green-800"
+            className="mt-4 inline-flex items-center gap-1 text-ch-meta font-bold text-ch-green hover:text-ch-green-deep"
           >
-            Revenue &amp; cash flow in Stripe →
+            Revenue &amp; cash flow in Stripe
+            <ExternalLink aria-hidden="true" className="size-3" />
           </a>
-        </div>
+        </Panel>
       </div>
-      <p className="text-xs text-gray-400">{usersAgg.new_30d} new users in the last 30 days.</p>
+      <p className="text-ch-fine text-ch-muted">
+        {`${usersAgg.new_30d.toLocaleString()} new users in the last 30 days.`}
+      </p>
       <BetaTesters />
     </div>
   );
@@ -144,26 +293,36 @@ function UsersRevenuePanel({ data }: { data: AdminData }) {
 
 function EngagementPanel({ data }: { data: AdminData }) {
   const { cgTotal, watchAgg, alertAgg, cgRows } = data;
+  const failRate = alertAgg.sent > 0 ? (alertAgg.failed / alertAgg.sent) * 100 : 0;
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-      <h2 className="font-display font-semibold text-gray-800 mb-4">Content &amp; engagement</h2>
-      <dl className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-        <Metric label="Campgrounds synced" value={cgTotal.toLocaleString()} />
-        <Metric label="Total watches" value={watchAgg.total.toLocaleString()} />
-        <Metric label="Alerts (all time)" value={alertAgg.sent.toLocaleString()} />
-        <Metric label="Failed alerts" value={alertAgg.failed.toLocaleString()} />
-      </dl>
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Kpi label="Campgrounds synced" value={cgTotal.toLocaleString()} />
+        <Kpi label="Watches created" value={watchAgg.total.toLocaleString()} sub="all time" />
+        <Kpi label="Alerts sent" value={alertAgg.sent.toLocaleString()} sub="all time" />
+        {/* A raw failure count means nothing without the denominator — 40 out of
+            80 and 40 out of 40,000 are very different mornings. */}
+        <Kpi
+          label="Failed alerts"
+          value={alertAgg.failed.toLocaleString()}
+          sub={alertAgg.sent > 0 ? `${failRate.toFixed(1)}% of sends` : 'no sends yet'}
+          accent={failRate > 2 ? 'alert' : undefined}
+        />
+      </div>
       {cgRows.length > 0 && (
-        <div className="mt-5">
-          <p className="text-xs font-medium uppercase tracking-wide text-gray-400 mb-2">Campgrounds by source</p>
-          <div className="flex flex-wrap gap-2">
+        <Panel title="Campgrounds by source">
+          <div className="flex flex-wrap gap-1.5">
             {cgRows.map((r) => (
-              <span key={r.source} className="text-xs bg-gray-50 border border-gray-200 rounded-full px-3 py-1 text-gray-600">
-                {r.source} · <span className="font-semibold text-gray-800">{r.n.toLocaleString()}</span>
+              <span
+                key={r.source}
+                className="rounded-ch-chip border border-ch-line px-3 py-1.5 text-ch-meta text-ch-ink-2"
+              >
+                {`${r.source} · `}
+                <span className="font-bold text-ch-ink">{r.n.toLocaleString()}</span>
               </span>
             ))}
           </div>
-        </div>
+        </Panel>
       )}
     </div>
   );
@@ -174,108 +333,127 @@ function EngagementPanel({ data }: { data: AdminData }) {
 function SystemHealthPanel({ data }: { data: AdminData }) {
   const { beat, workerHealthy, canaryRows, syncRows } = data;
   return (
-    <div className="grid md:grid-cols-2 gap-4">
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <h2 className="font-display font-semibold text-gray-800 mb-4">Worker &amp; canary</h2>
-        <div className="flex items-center gap-2 text-sm">
-          <span className={`h-2.5 w-2.5 rounded-full ${workerHealthy ? 'bg-green-500' : 'bg-red-500'}`} />
-          <span className="font-medium text-gray-700">Poller worker</span>
-          <span className="text-gray-500">
-            {beat
-              ? workerHealthy
-                ? `healthy · last beat ${beat.age_s}s ago · ${beat.watches_checked} watches/cycle`
-                : `STALE · last beat ${Math.round(beat.age_s / 60)} min ago`
-              : 'no heartbeat recorded'}
+    <div className="grid gap-4 md:grid-cols-2">
+      <Panel title="Poller worker">
+        <div className="flex items-center gap-2">
+          <span className={`size-2.5 rounded-full ${workerHealthy ? 'bg-ch-green' : 'bg-ch-alert'}`} />
+          <span className="text-ch-body font-bold">
+            {workerHealthy ? 'Healthy' : beat ? 'Stale' : 'No heartbeat'}
           </span>
         </div>
-        <div className="mt-4 space-y-1.5 text-sm">
-          <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Alert canary</p>
-          {canaryRows.length === 0 && <p className="text-gray-400 text-xs">No canary runs recorded.</p>}
+        <p className="mt-1 text-ch-meta leading-normal text-ch-muted">
+          {beat
+            ? workerHealthy
+              ? `Last beat ${beat.age_s}s ago · ${beat.watches_checked} watches per cycle`
+              : `Last beat ${Math.round(beat.age_s / 60)} minutes ago — alerts are not going out`
+            : 'The worker has never recorded a heartbeat.'}
+        </p>
+
+        <h3 className="mt-4 mb-1.5 text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+          Alert canary
+        </h3>
+        {canaryRows.length === 0 && (
+          <p className="text-ch-fine text-ch-muted">No canary runs recorded.</p>
+        )}
+        <ul>
           {canaryRows.map((c) => {
-            const skipped = (c.detail ?? '').startsWith('skipped');
-            const staleS = c.key.startsWith('delivery:') ? 7 * 3600 : 600;
-            const stale = c.age_s != null && c.age_s > staleS;
-            const color =
-              skipped || (!c.ok && c.consecutive_failures < 2)
-                ? 'bg-amber-500'
-                : c.ok && !stale
-                  ? 'bg-green-500'
-                  : 'bg-red-500';
-            const ageLabel = c.age_s == null ? 'never' : c.age_s < 90 ? `${c.age_s}s` : `${Math.round(c.age_s / 60)}m`;
+            const lvl = canaryLevel(c);
+            const dot = lvl === 'ok' ? 'bg-ch-green' : lvl === 'warn' ? 'bg-ch-ochre' : 'bg-ch-alert';
+            const age =
+              c.age_s == null ? 'never' : c.age_s < 90 ? `${c.age_s}s` : `${Math.round(c.age_s / 60)}m`;
             return (
-              <div key={c.key} className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2 text-gray-600">
-                  <span className={`h-2 w-2 rounded-full ${color}`} />
-                  {c.key}
+              <li
+                key={c.key}
+                className="flex items-center justify-between gap-2 border-b border-ch-line py-1.5 last:border-b-0"
+              >
+                <span className="flex min-w-0 items-center gap-2 text-ch-meta text-ch-ink-2">
+                  <span className={`size-2 shrink-0 rounded-full ${dot}`} />
+                  <span className="truncate">{c.key}</span>
                 </span>
-                <span className="text-gray-500 truncate max-w-[60%]" title={c.detail ?? undefined}>
-                  {ageLabel}
-                  {c.consecutive_failures > 0 ? ` · ${c.consecutive_failures}✗` : ''}
+                <span className="shrink-0 text-ch-meta text-ch-muted" title={c.detail ?? undefined}>
+                  {age}
+                  {c.consecutive_failures > 0 ? ` · ${c.consecutive_failures} fails` : ''}
                 </span>
-              </div>
+              </li>
             );
           })}
-        </div>
-      </div>
+        </ul>
+      </Panel>
 
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <h2 className="font-display font-semibold text-gray-800 mb-4">Catalog sync</h2>
-        <div className="space-y-1.5 text-sm">
-          {syncRows.length === 0 && <p className="text-gray-400 text-xs">No sync runs recorded.</p>}
+      <Panel title="Catalog sync">
+        {syncRows.length === 0 && (
+          <p className="text-ch-fine text-ch-muted">No sync runs recorded.</p>
+        )}
+        <ul>
           {syncRows.map((s) => {
+            const lvl = syncLevel(s);
+            const dot = lvl === 'ok' ? 'bg-ch-green' : lvl === 'warn' ? 'bg-ch-ochre' : 'bg-ch-alert';
             const synced = s.facilities_synced ?? 0;
             const errCount = s.metadata?.totalErrors ?? null;
             const stamp = s.finished_at ? new Date(s.finished_at).toLocaleString() : null;
-            if (!stamp) {
-              return (
-                <div key={s.source} className="flex items-center justify-between">
-                  <span className="text-gray-600">{s.source}</span>
-                  <span className="text-gray-500">in progress</span>
-                </div>
-              );
-            }
-            const failed = synced === 0;
-            const partial = !failed && !!s.error;
             return (
-              <div key={s.source} className="flex items-center justify-between">
-                <span className="text-gray-600">{s.source}</span>
-                <span
-                  className={failed ? 'text-red-600' : partial ? 'text-amber-600' : 'text-gray-500'}
-                  title={s.error ?? undefined}
-                >
-                  {failed ? `failed · ${stamp}` : `${stamp} · ${synced}${partial ? ` · ${errCount ?? 'some'} warnings` : ''}`}
+              <li
+                key={s.source}
+                className="flex items-center justify-between gap-2 border-b border-ch-line py-1.5 last:border-b-0"
+              >
+                <span className="flex min-w-0 items-center gap-2 text-ch-meta text-ch-ink-2">
+                  <span className={`size-2 shrink-0 rounded-full ${dot}`} />
+                  <span className="truncate">{s.source}</span>
                 </span>
-              </div>
+                <span className="shrink-0 text-ch-meta text-ch-muted" title={s.error ?? undefined}>
+                  {!stamp
+                    ? 'in progress'
+                    : lvl === 'fail'
+                      ? `failed · ${stamp}`
+                      : `${synced.toLocaleString()} rows · ${stamp}${
+                          lvl === 'warn' ? ` · ${errCount ?? 'some'} warnings` : ''
+                        }`}
+                </span>
+              </li>
             );
           })}
-        </div>
-      </div>
+        </ul>
+      </Panel>
     </div>
   );
 }
 
 /* ------------------------------------------------------ shared components */
 
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-card">
+      <h2 className="mb-3 font-ch-display text-ch-h font-bold">{title}</h2>
+      {children}
+    </div>
+  );
+}
+
 function SignupsChart({ data }: { data: AdminData }) {
   const { days, maxDay, usersAgg } = data;
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-      <div className="flex items-baseline justify-between mb-4">
-        <h2 className="font-display font-semibold text-gray-800">New users · last 30 days</h2>
-        <span className="text-sm text-gray-500">{usersAgg.new_30d} total</span>
+    <div className="rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-card">
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="font-ch-display text-ch-h font-bold">New users · last 30 days</h2>
+        <span className="text-ch-meta text-ch-muted">{usersAgg.new_30d} total</span>
       </div>
-      <div className="flex items-end gap-[3px] h-28">
+      <div className="flex h-28 items-end gap-[3px]">
         {days.map((d) => (
-          <div key={d.day} className="flex-1 group relative flex items-end">
+          // h-full matters: with only `items-end` the column is content-sized,
+          // so the bar's percentage height resolved against `auto` and every bar
+          // computed to zero. The chart has been rendering blank.
+          <div key={d.day} className="group relative flex h-full flex-1 items-end">
             <div
-              className="w-full rounded-t bg-green-500/80 group-hover:bg-green-600 transition-colors"
+              // Solid token, no /alpha modifier: the opacity form rendered the
+              // bars invisible, which made an empty chart look like no signups.
+              className="w-full rounded-t bg-ch-green transition-colors group-hover:bg-ch-green-deep"
               style={{ height: `${Math.max(2, (d.n / maxDay) * 100)}%` }}
               title={`${d.day}: ${d.n}`}
             />
           </div>
         ))}
       </div>
-      <div className="flex justify-between mt-2 text-[11px] text-gray-400">
+      <div className="mt-2 flex justify-between text-ch-fine text-ch-muted">
         <span>{days[0]?.day.slice(5)}</span>
         <span>{days[days.length - 1]?.day.slice(5)}</span>
       </div>
@@ -283,86 +461,102 @@ function SignupsChart({ data }: { data: AdminData }) {
   );
 }
 
-function WorkerStrip({ data }: { data: AdminData }) {
-  const { workerHealthy, beat } = data;
-  return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-center gap-2 text-sm">
-      <span className={`h-2.5 w-2.5 rounded-full ${workerHealthy ? 'bg-green-500' : 'bg-red-500'}`} />
-      <span className="font-medium text-gray-700">Poller worker</span>
-      <span className="text-gray-500">
-        {beat
-          ? workerHealthy
-            ? `healthy · last beat ${beat.age_s}s ago`
-            : `STALE · ${Math.round(beat.age_s / 60)} min`
-          : 'no heartbeat'}
-      </span>
-      <span className="text-gray-300">— see System Health for details</span>
-    </div>
-  );
-}
-
 function QuickLinks() {
-  const links = [
-    ['https://console.twilio.com', 'Twilio', 'SMS · delivery · A2P'],
-    ['https://dashboard.stripe.com', 'Stripe', 'Revenue · MRR · payouts'],
-    ['https://supabase.com/dashboard', 'Supabase', 'Database · SQL'],
-    ['https://fly.io/apps/campsite-finder-worker', 'Fly.io', 'Poller worker · logs'],
-    ['https://resend.com/emails', 'Resend', 'Email delivery'],
-    ['https://dashboard.clerk.com', 'Clerk', 'User accounts'],
-    ['https://camphawk.sentry.io/issues', 'Sentry', 'Errors · crashes'],
-    ['https://vercel.com/dashboard', 'Vercel', 'Deploys · Web Vitals'],
-    ['https://dash.cloudflare.com', 'Cloudflare', 'DNS · broker tunnel'],
-    ['https://github.com/TylerFlores1992/campsite-finder', 'GitHub', 'Code · deploys'],
-    ['https://account.mapbox.com', 'Mapbox', 'Maps · usage'],
-    ['https://ridb.recreation.gov/profile', 'RIDB', 'Recreation.gov API'],
+  // Grouped, because twelve equal tiles is a wall you have to read every time.
+  // Money first (opened most), then the things you open at 2am, then the rest.
+  const groups: Array<[string, Array<[string, string, string]>]> = [
+    [
+      'Money',
+      [
+        ['https://dashboard.stripe.com', 'Stripe', 'Revenue · MRR · payouts'],
+        ['https://console.twilio.com', 'Twilio', 'SMS · delivery · A2P'],
+      ],
+    ],
+    [
+      'When something breaks',
+      [
+        ['https://fly.io/apps/campsite-finder-worker', 'Fly.io', 'Poller worker · logs'],
+        ['https://camphawk.sentry.io/issues', 'Sentry', 'Errors · crashes'],
+        ['https://supabase.com/dashboard', 'Supabase', 'Database · SQL'],
+        ['https://vercel.com/dashboard', 'Vercel', 'Deploys · Web Vitals'],
+      ],
+    ],
+    [
+      'Everything else',
+      [
+        ['https://dashboard.clerk.com', 'Clerk', 'User accounts'],
+        ['https://resend.com/emails', 'Resend', 'Email delivery'],
+        ['https://dash.cloudflare.com', 'Cloudflare', 'DNS · broker tunnel'],
+        ['https://search.google.com/search-console', 'Search Console', 'Indexing · queries'],
+        ['https://account.mapbox.com', 'Mapbox', 'Maps · usage'],
+        ['https://ridb.recreation.gov/profile', 'RIDB', 'Recreation.gov API'],
+        ['https://github.com/TylerFlores1992/campsite-finder', 'GitHub', 'Code · deploys'],
+      ],
+    ],
   ];
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-      <h2 className="font-display font-semibold text-gray-800 mb-4">Open the deep dashboards</h2>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {links.map(([href, label, desc]) => (
-          <a
-            key={label}
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-xl border border-gray-200 p-3 hover:border-green-400 hover:bg-green-50/40 transition-colors"
-          >
-            <p className="font-display font-semibold text-gray-800 text-sm">{label}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
-          </a>
+    <div className="rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-card">
+      <h2 className="mb-3 font-ch-display text-ch-h font-bold">Open the deep dashboards</h2>
+      <div className="space-y-4">
+        {groups.map(([heading, links]) => (
+          <div key={heading}>
+            <h3 className="mb-2 text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+              {heading}
+            </h3>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+              {links.map(([href, label, desc]) => (
+                <a
+                  key={label}
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-ch-input border border-ch-line p-2.5 transition-colors hover:border-ch-green hover:bg-ch-green-soft"
+                >
+                  <p className="flex items-center gap-1 text-ch-body font-bold text-ch-ink">
+                    {label}
+                    <ExternalLink aria-hidden="true" className="size-3 text-ch-muted" />
+                  </p>
+                  <p className="mt-0.5 text-ch-fine text-ch-muted">{desc}</p>
+                </a>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
     </div>
   );
 }
 
-function Kpi({ label, value, sub, accent }: { label: string; value: number; sub?: string; accent?: 'green' | 'amber' }) {
-  const color = accent === 'green' ? 'text-green-700' : accent === 'amber' ? 'text-amber-600' : 'text-gray-900';
+function Kpi({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  accent?: 'green' | 'alert';
+}) {
+  const color =
+    accent === 'green' ? 'text-ch-green-deep' : accent === 'alert' ? 'text-ch-alert' : 'text-ch-ink';
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-      <p className="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</p>
-      <p className={`mt-1 font-display text-3xl font-extrabold ${color}`}>{value.toLocaleString()}</p>
-      {sub && <p className="mt-0.5 text-xs text-gray-500">{sub}</p>}
+    <div className="rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-card">
+      <p className="text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">{label}</p>
+      <p className={`mt-1 font-ch-display text-[26px] leading-none font-extrabold ${color}`}>
+        {value}
+      </p>
+      {sub && <p className="mt-1.5 text-ch-fine text-ch-muted">{sub}</p>}
     </div>
   );
 }
 
-function StatusRow({ label, value, color }: { label: string; value: number; color: string }) {
+function StatusRow({ label, value, dot }: { label: string; value: number; dot: string }) {
   return (
-    <li className="flex items-center gap-2">
-      <span className={`h-2.5 w-2.5 rounded-full ${color}`} />
-      <span className="text-gray-600 flex-1">{label}</span>
-      <span className="font-semibold text-gray-900">{value.toLocaleString()}</span>
+    <li className="flex items-center gap-2 border-b border-ch-line py-1.5 last:border-b-0">
+      <span className={`size-2.5 rounded-full ${dot}`} />
+      <span className="flex-1 text-ch-body text-ch-ink-2">{label}</span>
+      <span className="text-ch-body font-bold text-ch-ink">{value.toLocaleString()}</span>
     </li>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-xs text-gray-400">{label}</dt>
-      <dd className="font-display text-xl font-bold text-gray-900">{value}</dd>
-    </div>
   );
 }

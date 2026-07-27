@@ -110,6 +110,56 @@ const PRESETS: Record<string, Preset> = {
       export const node = <Explore />;`,
     frame: 'w-full',
   },
+  'ch-admin': {
+    label: 'Admin dashboard (redesign) — healthy state',
+    entry: `import AdminTabs from '@/components/admin/AdminTabs';
+      const days = Array.from({length: 30}, (_, i) => ({ day: '2026-07-' + String(i+1).padStart(2,'0'), n: [2,5,1,8,4,3,9,6,2,7,11,4,3,5,8,2,6,9,4,7,3,5,12,6,4,8,2,9,5,7][i] }));
+      const data = {
+        clerkTotal: 1284, usersAgg: { total: 1240, new_7d: 38, new_30d: 152 },
+        activeSub: { n: 96 }, subMap: { active: 96, trialing: 14, past_due: 2, canceled: 31 },
+        watchAgg: { active: 213, total: 908, watchers: 74 },
+        alertAgg: { sent: 4820, sent_7d: 311, failed: 22 },
+        cgRows: [{source:'ridb',n:4102},{source:'reservecalifornia',n:1280},{source:'reserveamerica',n:1642},{source:'goingtocamp',n:589},{source:'tnsc',n:400}],
+        cgTotal: 8013, days, maxDay: 12,
+        mrr: { monthly: 241.5, activeCount: 96 },
+        beat: { beat_at: '', watches_checked: 213, age_s: 12 }, workerHealthy: true,
+        canaryRows: [
+          { key: 'detect:ridb', ok: true, age_s: 45, consecutive_failures: 0, detail: null },
+          { key: 'detect:reservecalifornia', ok: true, age_s: 60, consecutive_failures: 0, detail: null },
+          { key: 'delivery:sms', ok: true, age_s: 1800, consecutive_failures: 0, detail: null },
+        ],
+        syncRows: [
+          { source: 'ridb', finished_at: '2026-07-27T02:00:00Z', facilities_synced: 4102, error: null, metadata: null },
+          { source: 'reservecalifornia', finished_at: '2026-07-27T03:00:00Z', facilities_synced: 1280, error: null, metadata: null },
+        ],
+        costItems: [], usage: { sms: 311, email: 4200, push: 900 }, monthLabel: 'Jul 2026',
+      };
+      export const node = <AdminTabs data={data} />;`,
+    frame: 'w-full',
+  },
+  'ch-admin-broken': {
+    label: 'Admin dashboard (redesign) — worker down',
+    entry: `import AdminTabs from '@/components/admin/AdminTabs';
+      const days = Array.from({length: 30}, (_, i) => ({ day: '2026-07-' + String(i+1).padStart(2,'0'), n: 3 }));
+      const data = {
+        clerkTotal: 1284, usersAgg: { total: 1240, new_7d: 38, new_30d: 152 },
+        activeSub: { n: 96 }, subMap: { active: 96, trialing: 14, past_due: 2, canceled: 31 },
+        watchAgg: { active: 213, total: 908, watchers: 74 },
+        alertAgg: { sent: 4820, sent_7d: 311, failed: 22 },
+        cgRows: [], cgTotal: 8013, days, maxDay: 3,
+        mrr: { monthly: 241.5, activeCount: 96 },
+        beat: { beat_at: '', watches_checked: 213, age_s: 2400 }, workerHealthy: false,
+        canaryRows: [
+          { key: 'detect:ridb', ok: false, age_s: 3000, consecutive_failures: 5, detail: 'timeout' },
+        ],
+        syncRows: [
+          { source: 'goingtocamp', finished_at: '2026-07-27T02:00:00Z', facilities_synced: 0, error: 'WAF block', metadata: null },
+        ],
+        costItems: [], usage: { sms: 0, email: 0, push: 0 }, monthLabel: 'Jul 2026',
+      };
+      export const node = <AdminTabs data={data} />;`,
+    frame: 'w-full',
+  },
   'ch-about': {
     label: 'Campground About panel — real rec.gov HTML description',
     // Verbatim description text from the catalog, tags and all. If richText
