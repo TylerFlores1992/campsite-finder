@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { SignInButton, SignUpButton } from '@clerk/nextjs';
 import { useIsNativeApp } from '@/lib/native/context';
+import Link from 'next/link';
 import { COVERAGE, campgroundsRounded } from '@/lib/coverage';
 
 /** Marketing panel + subscribe surfaces. One consistent pitch for every
@@ -277,7 +278,7 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
           is exactly what a crawler sees. */}
       <p className="text-xs text-gray-500 [text-shadow:_0_1px_6px_rgb(250_247_242_/_0.9)]">
         © {new Date().getFullYear()} CampHawk ·{' '}
-        <a href="/camping" className="underline underline-offset-2 hover:text-green-800">Browse campgrounds by state</a> ·{' '}
+        <Link href="/camping" className="underline underline-offset-2 hover:text-green-800">Browse campgrounds by state</Link> ·{' '}
         <a href="/terms" className="underline underline-offset-2 hover:text-green-800">Terms</a> ·{' '}
         <a href="/privacy" className="underline underline-offset-2 hover:text-green-800">Privacy</a>
       </p>
