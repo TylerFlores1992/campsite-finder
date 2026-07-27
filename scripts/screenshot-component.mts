@@ -307,9 +307,13 @@ const PRESETS: Record<string, Preset> = {
           campground_source: 'goingtocamp', start_date: '2026-10-01', end_date: '2026-10-31',
           flex_nights: 2, flex_days: 'weekend', site_type: 'rv', auto_cart: false, active: true,
           notification_sent_at: null, muted_site_ids: ['A14'], manage_url: '/manage/demo' },
+        { id: 'w5', campground_id: '234059', campground_name: 'Upper Pines',
+          campground_source: 'ridb', start_date: '2026-09-18', end_date: '2026-09-20',
+          flex_nights: null, flex_days: null, site_type: 'tent', auto_cart: true, active: true,
+          notification_sent_at: null, manage_url: '/manage/demo' },
         { id: 'w4', campground_id: '232447', campground_name: 'Bridalveil Creek',
           campground_source: 'ridb', start_date: '2026-11-06', end_date: '2026-11-08',
-          flex_nights: null, flex_days: null, site_type: null, auto_cart: false, active: false,
+          flex_nights: null, flex_days: null, site_type: null, auto_cart: true, active: false,
           notification_sent_at: null, manage_url: '/manage/demo' },
       ];
       if (typeof window !== 'undefined') {
@@ -320,6 +324,20 @@ const PRESETS: Record<string, Preset> = {
               { name: 'detect:ridb', ok: true, ageSeconds: 40 },
               { name: 'detect:reservecalifornia', ok: false, ageSeconds: 2400 },
               { name: 'detect:goingtocamp', ok: true, ageSeconds: 55 },
+            ] }) };
+          }
+          if (u.includes('/api/user/autocart')) {
+            return { ok: true, status: 200, json: async () => ({
+              enabled: true, connected: true, sessionFresh: false, sessionExpired: true }) };
+          }
+          if (u.includes('/api/watches/alerts')) {
+            return { ok: true, status: 200, json: async () => ({ alerts: [
+              { id: 'n1', createdAt: '2026-07-26T13:42:00Z', channel: 'sms', status: 'sent',
+                campgroundName: 'Kirk Creek Campground', siteName: 'Site 22' },
+              { id: 'n2', createdAt: '2026-07-26T13:42:00Z', channel: 'push', status: 'sent',
+                campgroundName: 'Kirk Creek Campground', siteName: 'Site 22' },
+              { id: 'n3', createdAt: '2026-07-24T04:11:00Z', channel: 'sms', status: 'failed',
+                campgroundName: 'Pfeiffer Big Sur', siteName: 'Site 118' },
             ] }) };
           }
           return { ok: true, status: 200, json: async () => ({ watches: WATCHES }) };

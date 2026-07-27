@@ -22,17 +22,27 @@ function buildDateRanges(startDate: string, endDate: string, minNights: number):
   return ranges.length > 0 ? ranges : [{ starting_date: startDate, nights: minNights }];
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const userId = await requireAuth();
 
+  // Paused watches (active = false) are HIDDEN by default so the existing
+  // watches panel keeps behaving exactly as it does today — it renders every row
+  // it receives as if it were running, and its quota count would jump.
+  //
+  // `?includeInactive=1` opts in. Without it a paused watch is invisible in the
+  // app and only reachable through a magic link from an old alert, which is how
+  // "pause" ended up meaning "disappear".
+  const includeInactive = request.nextUrl.searchParams.get('includeInactive') === '1';
+
   const rows = await query<Record<string, unknown>>(
-    `SELECT w.*, c.name AS campground_name
+    `SELECT w.*, c.name AS campground_name, c.source AS campground_source
      FROM watches w
      JOIN campgrounds c ON c.id = w.campground_id
-     WHERE w.user_id = $1 AND w.active = true
+     WHERE w.user_id = $1
+       AND ($2::boolean OR w.active = true)
        AND w.end_date > CURRENT_DATE
-     ORDER BY w.created_at DESC`,
-    [userId]
+     ORDER BY w.active DESC, w.created_at DESC`,
+    [userId, includeInactive]
   );
 
   // Per-watch cancellation likelihood (feature E): "how often has this site had an

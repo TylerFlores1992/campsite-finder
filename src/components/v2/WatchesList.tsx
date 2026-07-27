@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/Button";
+import Collapsible from "@/components/ui/Collapsible";
 import WatchCard, { type WatchCardWatch } from "./WatchCard";
 import { providerLabel } from "./providers";
 
@@ -33,10 +34,14 @@ export default function WatchesList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stalledSources, setStalledSources] = useState<ReadonlySet<string>>(new Set());
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/watches")
+    // includeInactive: paused watches are hidden by default so the old panel
+    // keeps its behaviour. The redesign wants them — a paused watch you can't
+    // see is a watch you can't resume.
+    fetch("/api/watches?includeInactive=1")
       .then(async (r) => {
         if (r.status === 401 || r.status === 403 || r.status === 404) {
           if (!cancelled) setSignedOut(true);
@@ -53,6 +58,23 @@ export default function WatchesList() {
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Auto-cart session freshness. The poller already falls back to normal alerts
+  // on a stale session; this is what lets a card say so before a site is missed.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/user/autocart")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { sessionExpired?: boolean } | null) => {
+        if (!cancelled && j) setSessionExpired(Boolean(j.sessionExpired));
+      })
+      .catch(() => {
+        /* non-fatal — the card just stays in its resting state */
       });
     return () => {
       cancelled = true;
@@ -131,7 +153,7 @@ export default function WatchesList() {
       <div className="mb-3.5 flex items-center gap-2.5 rounded-[13px] border border-ch-line bg-ch-card px-3.5 py-3">
         <div className="flex-1">
           <p className="text-ch-body font-bold">
-            {watches.length} of {WATCH_LIMIT} watches running
+            {watches.filter((w) => w.active !== false).length} of {WATCH_LIMIT} watches running
           </p>
           <p className="mt-0.5 text-ch-fine text-ch-muted">
             We check every 15 seconds, around the clock.
@@ -144,9 +166,16 @@ export default function WatchesList() {
 
       <div className="grid gap-3 sm:grid-cols-2">
         {watches.map((w) => (
-          <WatchCard key={w.id} watch={w} stalledSources={stalledSources} />
+          <WatchCard
+            key={w.id}
+            watch={w}
+            stalledSources={stalledSources}
+            sessionExpired={sessionExpired}
+          />
         ))}
       </div>
+
+      <AlertHistory />
     </>
   );
 }
@@ -221,6 +250,86 @@ function FirstRun() {
       <p className="mt-2 text-center text-ch-fine text-ch-muted">
         Most people start with the trip they already missed out on.
       </p>
+    </div>
+  );
+}
+
+/**
+ * Alert history — what we sent, and when.
+ *
+ * NO "BOOKED" / "MISSED" PILLS. The handoff mockup showed an outcome per alert,
+ * but checkout happens on the provider's site and we never see it, so those
+ * would have been invented. What IS true and worth showing: the channel and the
+ * time, plus a failed send, which is exactly what a user wants when they think
+ * we went quiet on them.
+ */
+function AlertHistory() {
+  const [alerts, setAlerts] = useState<
+    Array<{
+      id: string;
+      createdAt: string;
+      channel: string;
+      status: string;
+      campgroundName: string | null;
+      siteName: string | null;
+    }> | null
+  >(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/watches/alerts")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!cancelled && j) setAlerts(j.alerts ?? []);
+      })
+      .catch(() => {
+        /* history is a nice-to-have; never break the page for it */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!alerts || alerts.length === 0) return null;
+
+  const fmt = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  };
+
+  return (
+    <div className="mt-4">
+      <Collapsible label="Alert history" summary={`${alerts.length} recent`}>
+        <ul>
+          {alerts.map((a) => (
+            <li
+              key={a.id}
+              className="flex items-center gap-2.5 border-b border-ch-line py-2.5 last:border-b-0"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-ch-body font-bold">
+                  {a.campgroundName ?? "A watched campground"}
+                  {a.siteName ? ` · ${a.siteName}` : ""}
+                </p>
+                <p className="mt-0.5 text-ch-fine text-ch-muted">
+                  {fmt(a.createdAt)} · {a.channel}
+                  {a.status !== "sent" ? ` · ${a.status}` : ""}
+                </p>
+              </div>
+              {a.status !== "sent" && (
+                <span className="shrink-0 rounded-ch-chip bg-ch-alert-soft px-2 py-1 text-ch-fine font-bold text-ch-alert">
+                  not delivered
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      </Collapsible>
     </div>
   );
 }

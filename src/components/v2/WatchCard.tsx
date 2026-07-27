@@ -112,7 +112,16 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
       <div data-card-dim className="flex-1">
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           {state === "hit" && <Tag kind="open">Site open</Tag>}
-          {state === "hit" && watch.auto_cart && <Tag kind="cart">In your cart</Tag>}
+          {/* Only claim the cart when auto-cart could actually have run. With a
+              stale session the poller falls back to a plain alert and nothing is
+              carted — telling the user it's waiting for them would send them to
+              an empty cart while the site goes to someone else. */}
+          {state === "hit" && watch.auto_cart && !sessionExpired && (
+            <Tag kind="cart">In your cart</Tag>
+          )}
+          {state === "hit" && watch.auto_cart && sessionExpired && (
+            <Tag kind="alert">Not carted — sign-in expired</Tag>
+          )}
           {state === "watching" && <Tag kind="watch">Watching</Tag>}
           {state === "paused" && <Tag kind="paused">Paused</Tag>}
           {state === "authexpired" && <Tag kind="alert">Action needed</Tag>}
