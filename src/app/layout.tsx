@@ -44,14 +44,21 @@ const fraunces = Fraunces({
 // body) needs. Sora/Fraunces/Geist Mono get removed in the phase 6 cleanup once
 // the old components are gone; removing them now WOULD change the live site.
 // ---------------------------------------------------------------------------
+// preload:false until /v2 becomes the default UI. next/font preloads by default,
+// which would make every LIVE page fetch two fonts nothing on it uses — a real
+// bandwidth cost on production for a dark-launched subtree. /v2 still gets them;
+// they load on demand there instead of being preloaded everywhere. Flip both to
+// preload (drop the flag) as part of the final route swap.
 const bitter = Bitter({
   variable: "--font-bitter",
   subsets: ["latin"],
+  preload: false,
 });
 
 const nunitoSans = Nunito_Sans({
   variable: "--font-nunito-sans",
   subsets: ["latin"],
+  preload: false,
 });
 
 export const metadata: Metadata = {
