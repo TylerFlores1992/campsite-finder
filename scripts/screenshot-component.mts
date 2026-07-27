@@ -230,6 +230,63 @@ const PRESETS: Record<string, Preset> = {
       export const node = <div className="bg-ch-paper font-ch-body text-ch-ink"><Harness /></div>;`,
     frame: 'w-full',
   },
+  'v2-detail': {
+    label: 'v2 Campground detail (calendar + open sites + about)',
+    // Mocks both endpoints the page calls and auto-taps an open day so the shot
+    // captures the per-site list rather than the "Pick a day" resting state.
+    entry: `import CampgroundDetail from '@/components/v2/CampgroundDetail';
+      const now = new Date();
+      const month = now.toISOString().slice(0, 7);
+      const d = (n) => month + '-' + String(n).padStart(2, '0');
+      const OPEN_DAYS = [3, 4, 9, 14, 15, 21, 22, 23, 28];
+      const site = (id, name, loop, type, days) => ({
+        campsiteId: id, campsiteName: name, campsiteType: type, loop,
+        availability: days.map((n) => ({ date: d(n), status: 'available', minStay: null })),
+      });
+      const CAMPSITES = [
+        site('A22', 'Site 22', 'Ocean Loop', 'TENT', [3, 14, 15, 22]),
+        site('A14', 'Site 14', 'Ocean Loop', 'RV', [3, 4, 14, 21]),
+        site('B07', 'Site 7', 'Creek Loop', 'RV', [9, 14, 23, 28]),
+        site('C31', 'Site 31', 'Ridge Loop', 'TENT', [4, 15, 22]),
+      ];
+      if (typeof window !== 'undefined') {
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/availability')) {
+            return { ok: true, status: 200, json: async () => ({
+              campgroundId: '233116', month, campsites: CAMPSITES, availableCount: CAMPSITES.length }) };
+          }
+          return { ok: true, status: 200, json: async () => ({ campground: {
+            id: '233116', source: 'ridb', name: 'Kirk Creek Campground',
+            description: 'Perched on a bluff above the Pacific in Los Padres National Forest, every site here looks west over the water. No hookups; vault toilets and drinking water on site.',
+            latitude: 35.99, longitude: -121.49,
+            address: { city: 'Big Sur', state: 'CA' },
+            amenities: ['drinking water', 'toilets', 'fire rings', 'picnic tables'],
+            activities: [], environmentTags: ['ocean'], siteTypes: ['tent', 'rv'],
+            reservable: true, reservationsUrl: null, phone: '(805) 434-1996', email: null,
+            adaAccessible: false, petsAllowed: true,
+            photos: [
+              { url: 'https://placehold.co/600x400/24382A/E4F1E8?text=Bluff', title: 'Bluff' },
+              { url: 'https://placehold.co/300x300/3B5A43/E4F1E8?text=Site+22' },
+              { url: 'https://placehold.co/300x300/5E8C6B/16291F?text=Loop+A' },
+            ],
+            lastSyncedAt: null,
+          }, campsites: [] }) };
+        };
+      }
+      function Harness() {
+        React.useEffect(() => {
+          const t = setTimeout(() => {
+            const btn = document.querySelector('button[data-avail-day="' + d(14) + '"]');
+            if (btn) btn.click();
+          }, 700);
+          return () => clearTimeout(t);
+        }, []);
+        return <CampgroundDetail campgroundId="233116" />;
+      }
+      export const node = <div className="bg-ch-paper font-ch-body text-ch-ink"><Harness /></div>;`,
+    frame: 'w-full',
+  },
   'ch-logo': {
     label: 'HawkGlyph vs the full badge at small sizes',
     // The point of the glyph is that it survives favicon size. Shown against the
