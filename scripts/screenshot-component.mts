@@ -287,6 +287,52 @@ const PRESETS: Record<string, Preset> = {
       export const node = <div className="bg-ch-paper font-ch-body text-ch-ink"><Harness /></div>;`,
     frame: 'w-full',
   },
+  'v2-watches': {
+    label: 'v2 Watches (quota, outage banner, all card states)',
+    // Mocks /api/watches and /api/health/status. ReserveCalifornia is reported
+    // down so the outage banner and the "checks paused" card both appear.
+    entry: `import WatchesList from '@/components/v2/WatchesList';
+      const hourAgo = new Date(Date.now() - 12 * 60 * 1000).toISOString();
+      const WATCHES = [
+        { id: 'w1', campground_id: '233116', campground_name: 'Kirk Creek Campground',
+          campground_source: 'ridb', start_date: '2026-08-14', end_date: '2026-08-16',
+          flex_nights: null, flex_days: null, site_type: null, auto_cart: true, active: true,
+          notification_sent_at: hourAgo, manage_url: '/manage/demo',
+          likelihood: { rate: 0.34, samples: 91 } },
+        { id: 'w2', campground_id: 'rc-783', campground_name: 'Pfeiffer Big Sur',
+          campground_source: 'reservecalifornia', start_date: '2026-09-04', end_date: '2026-09-07',
+          flex_nights: null, flex_days: null, site_type: null, auto_cart: false, active: true,
+          notification_sent_at: null, manage_url: '/manage/demo' },
+        { id: 'w3', campground_id: 'gtc-WA--2147483647', campground_name: 'Cape Disappointment',
+          campground_source: 'goingtocamp', start_date: '2026-10-01', end_date: '2026-10-31',
+          flex_nights: 2, flex_days: 'weekend', site_type: 'rv', auto_cart: false, active: true,
+          notification_sent_at: null, muted_site_ids: ['A14'], manage_url: '/manage/demo' },
+        { id: 'w4', campground_id: '232447', campground_name: 'Bridalveil Creek',
+          campground_source: 'ridb', start_date: '2026-11-06', end_date: '2026-11-08',
+          flex_nights: null, flex_days: null, site_type: null, auto_cart: false, active: false,
+          notification_sent_at: null, manage_url: '/manage/demo' },
+      ];
+      if (typeof window !== 'undefined') {
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/api/health/status')) {
+            return { ok: true, status: 200, json: async () => ({ checks: [
+              { name: 'detect:ridb', ok: true, ageSeconds: 40 },
+              { name: 'detect:reservecalifornia', ok: false, ageSeconds: 2400 },
+              { name: 'detect:goingtocamp', ok: true, ageSeconds: 55 },
+            ] }) };
+          }
+          return { ok: true, status: 200, json: async () => ({ watches: WATCHES }) };
+        };
+      }
+      export const node = (
+        <div className="bg-ch-paper font-ch-body text-ch-ink p-6">
+          <h1 className="mb-4 font-ch-display text-ch-title font-extrabold tracking-[-.03em]">Your watches</h1>
+          <WatchesList />
+        </div>
+      );`,
+    frame: 'w-full',
+  },
   'ch-logo': {
     label: 'HawkGlyph vs the full badge at small sizes',
     // The point of the glyph is that it survives favicon size. Shown against the
