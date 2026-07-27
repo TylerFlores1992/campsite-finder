@@ -545,7 +545,10 @@ export default function Explore() {
                   ],
                   [
                     "Say when",
-                    "Exact dates, or one tap for tonight or this weekend. Not fussy about dates? Pick Flexible and we'll find any 2 nights that work.",
+                    // Don't name a night count here — Flexible asks for one. The
+                    // old copy said "any 2 nights", which is just the default and
+                    // made the feature sound fixed at two.
+                    "Exact dates, or one tap for tonight or this weekend. Flexible is the useful one: say how many nights you need and give us a date range to hunt inside, and we'll take any stretch that long.",
                   ],
                   [
                     "Search",

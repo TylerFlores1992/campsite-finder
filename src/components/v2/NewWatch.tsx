@@ -462,7 +462,12 @@ export default function NewWatch({
             <ol className="mt-3">
               {[
                 ["Pick the campground", "Search by name above. Your favorites show up when you tap the box."],
-                ["Choose your nights", "Exact dates, or Flexible — \u201cany 2 nights in September\u201d catches far more cancellations than one fixed weekend."],
+                [
+                  "Choose your nights",
+                  // Flexible = how many nights + the window to search. Naming a
+                  // number here read as though two was the only option.
+                  "Exact dates, or Flexible: set how many nights you want and the date range to look in. Three nights anywhere in September gives us far more chances to catch a cancellation than one fixed weekend.",
+                ],
                 ["Start watching", "Then close the app. We'll find you when something opens."],
               ].map(([title, sub], i) => (
                 <li
