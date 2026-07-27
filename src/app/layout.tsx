@@ -4,6 +4,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import NativeBridge from "@/components/NativeBridge";
+import NativeOffline from "@/components/NativeOffline";
 import { NativeAppProvider } from "@/lib/native/context";
 import { jsonLdScript, organizationJsonLd } from "@/lib/jsonld";
 import "./globals.css";
@@ -116,6 +117,7 @@ export default function RootLayout({
           <NativeAppProvider>
             {children}
             <NativeBridge />
+            <NativeOffline />
           </NativeAppProvider>
           <Analytics />
           <SpeedInsights />

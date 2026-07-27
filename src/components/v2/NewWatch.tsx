@@ -209,6 +209,11 @@ export default function NewWatch({
         const j = (await r.json().catch(() => null)) as { message?: string; error?: string } | null;
         throw new Error(j?.message ?? j?.error ?? `Couldn't create the watch (${r.status})`);
       }
+      // The native shell asks for notification permission off the back of this,
+      // rather than on first load when the user has nothing to be notified about
+      // and no reason to say yes (see NativeBridge). No-op on the web — nothing
+      // listens there.
+      window.dispatchEvent(new CustomEvent("camphawk:watch-created"));
       router.push("/watches");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't create the watch");

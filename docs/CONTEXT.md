@@ -882,6 +882,25 @@ steps (Firebase project `campapp-39c4b`).
   - **Same-origin `target="_blank"` is taken over too.** A webview has no tabs, so `_blank`
     opens an empty popup or nothing at all; the Terms/Privacy links in the SMS consent
     block are written that way and are consent copy the user must be able to read.
+- **Push permission is asked LATE, on purpose (2026-07-27).** It used to prompt on the
+  first signed-in load — the worst moment, because the user has no watches and no idea
+  what we'd notify them about, so the honest answer is no. On iOS that answer is
+  effectively **permanent** (the system dialog is one-shot), and push is the product.
+  Now: if permission is already granted we just register the token; if it's still
+  `prompt` we ask either when a watch is created (`NewWatch` dispatches the
+  `camphawk:watch-created` window event, a no-op on web) or on load if the user already
+  has watches. The `/api/watches` check runs at most once per install — after either
+  answer the state is no longer `prompt`.
+- **Offline has two paths, and they're different problems (2026-07-27).**
+  - **Cold start, no network:** `server.errorPath: 'index.html'` serves the bundled
+    `native/shell/index.html` instead of Chrome's dinosaur / a bare WebKit error string.
+    That page must stay **fully self-contained** — no font, image or stylesheet fetch —
+    since it renders precisely when fetches fail.
+  - **Connection drops after the site has loaded:** `NativeOffline.tsx`, a bottom banner
+    mounted in the root layout. Deliberately **not** a takeover: whatever the user had
+    on screen still works, and blanking it to announce the network destroys the only
+    thing that still functions. Both surfaces say the same reassuring, true thing —
+    watching runs on our servers, so nothing was missed.
 - **Native UI / webview gotchas (from the first Android build, 2026-07-25):**
   - **Edge-to-edge (Android 15+/API 35+):** the webview draws behind the status bar/notch,
     so the header would land in the non-tappable strip. Fixed on the **web** side with CSS

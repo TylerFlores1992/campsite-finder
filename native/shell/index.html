@@ -5,20 +5,47 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>CampHawk</title>
     <style>
-      html, body { margin: 0; height: 100%; background: #0b3d2e; color: #f5f5f4;
-        font-family: -apple-system, system-ui, sans-serif; }
+      /* Deliberately self-contained and tiny. This is the one screen that renders
+         when the network is gone, so it must not reference a font, an image or a
+         stylesheet — every one of those would fail here, which is the whole point
+         of the page. The colours are the --ch-* cream and green, hard-coded for
+         the same reason. */
+      :root { color-scheme: light; }
+      html, body { margin: 0; height: 100%; background: #faf7f2; color: #14211b;
+        font-family: ui-sans-serif, -apple-system, system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased; }
       .wrap { height: 100%; display: flex; flex-direction: column; align-items: center;
-        justify-content: center; text-align: center; padding: 24px; }
-      h1 { font-size: 22px; margin: 0 0 8px; }
-      p { opacity: .8; margin: 0; }
+        justify-content: center; text-align: center;
+        padding: max(24px, env(safe-area-inset-top)) 28px max(24px, env(safe-area-inset-bottom)); }
+      .mark { font-size: 40px; line-height: 1; margin-bottom: 14px; }
+      h1 { font-size: 21px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 8px; }
+      p { margin: 0; max-width: 34ch; font-size: 14.5px; line-height: 1.5; color: #4a5a52; }
+      button { margin-top: 22px; padding: 12px 26px; font: inherit; font-weight: 700;
+        font-size: 15px; color: #fff; background: #1f6f4a; border: 0; border-radius: 12px;
+        -webkit-tap-highlight-color: transparent; }
+      button:active { background: #145236; }
+      .note { margin-top: 16px; font-size: 12.5px; color: #7b8a83; }
     </style>
   </head>
   <body>
-    <!-- Fallback shell: shown only if camphawk.app can't be reached at launch.
-         In normal operation Capacitor loads the live site (server.url). -->
+    <!-- Shown only when camphawk.app can't be reached AT LAUNCH. In normal operation
+         Capacitor loads the live site (server.url); a connection that drops after
+         the site has loaded is handled in-app by NativeOffline.tsx, which keeps the
+         page the user was on rather than replacing it with this. -->
     <div class="wrap">
-      <h1>⛺ CampHawk</h1>
-      <p>Couldn't reach camphawk.app — check your connection and reopen the app.</p>
+      <div class="mark" aria-hidden="true">⛺</div>
+      <h1>Can't reach CampHawk</h1>
+      <!-- Says what is and isn't affected. Someone opening an alerts app on a bad
+           connection is really asking "did I just miss a cancellation?" — and the
+           answer is no, because the watching runs on our servers, not the phone.
+           The old copy ("check your connection and reopen the app") answered
+           neither that question nor "what do I do now". -->
+      <p>
+        You'll need a connection to search or manage watches. Your watches are still
+        running on our end, and alerts will reach you the moment you're back online.
+      </p>
+      <button type="button" onclick="location.reload()">Try again</button>
+      <p class="note">Everything also works at camphawk.app.</p>
     </div>
   </body>
 </html>

@@ -184,17 +184,60 @@ export default function NativeBridge() {
       // Register the token only for a signed-in user — an anonymous device has no
       // account to attach to. Re-runs on sign-in via the effect dependency.
       if (isSignedIn) {
-        const perm = await FirebaseMessaging.checkPermissions();
-        let granted = perm.receive === 'granted';
-        if (perm.receive === 'prompt' || perm.receive === 'prompt-with-rationale') {
-          granted = (await FirebaseMessaging.requestPermissions()).receive === 'granted';
-        }
-        if (granted) {
+        const registerToken = async () => {
           try {
             const { token } = await FirebaseMessaging.getToken();
             if (token) await saveToken(token);
           } catch (err) {
             console.error('[native] getToken failed', err);
+          }
+        };
+
+        const perm = await FirebaseMessaging.checkPermissions();
+
+        if (perm.receive === 'granted') {
+          await registerToken();
+        } else if (perm.receive === 'prompt' || perm.receive === 'prompt-with-rationale') {
+          // ------------------------------------------------ WHEN we ask matters
+          //
+          // This used to prompt on the first signed-in load. That's the worst
+          // possible moment: the user has just arrived, has no watches, and has no
+          // idea what we'd notify them about — so the honest answer to "CampHawk
+          // would like to send you notifications" is no. On iOS that answer is
+          // effectively PERMANENT (the system dialog is one-shot; afterwards it's
+          // a trip to Settings), and push is the product. A denied prompt costs us
+          // the alert channel for the life of the install.
+          //
+          // So we ask at the moment the value is self-evident: the user has a
+          // watch, and a notification is the thing that watch exists to deliver.
+          const ask = async () => {
+            const res = await FirebaseMessaging.requestPermissions();
+            if (res.receive === 'granted') await registerToken();
+          };
+
+          // The moment of maximum context: they just created one. NewWatch fires
+          // this after a successful save.
+          const onWatchCreated = () => void ask();
+          window.addEventListener('camphawk:watch-created', onWatchCreated);
+          cleanups.push(() =>
+            window.removeEventListener('camphawk:watch-created', onWatchCreated)
+          );
+
+          // And for someone who already had watches before this shipped, or who
+          // created one on the web: ask on load, because the context is just as
+          // real — they're waiting on an alert right now. Gated on actually having
+          // one, so a browsing visitor is never prompted.
+          //
+          // This fetch runs at most once per install: after either answer the
+          // permission is no longer 'prompt' and this branch is never reached again.
+          try {
+            const res = await fetch('/api/watches');
+            if (res.ok) {
+              const data = (await res.json()) as { watches?: unknown[] };
+              if (Array.isArray(data.watches) && data.watches.length > 0) await ask();
+            }
+          } catch {
+            /* offline or a hiccup — we'll ask on the next watch they create */
           }
         }
       }

@@ -32,6 +32,13 @@ const config: CapacitorConfig = {
     // what a reviewer's screenshot would catch. Not landing on that page removes
     // the frame entirely. Push deep-links stay relative, so they still work.
     url: 'https://camphawk.app/search',
+    // Serve the bundled shell instead of the platform's own error page when the
+    // site can't be loaded. Without this, a cold start with no signal gives the
+    // user Chrome's dinosaur or a bare WebKit error string — no branding, and it
+    // reads as "the app crashed" rather than "you're offline". See
+    // native/shell/index.html. A drop AFTER the site has loaded is handled in-app
+    // by NativeOffline.tsx, which keeps the current page instead of replacing it.
+    errorPath: 'index.html',
     // Only allow navigation within our own origins; external booking links
     // (recreation.gov, the Stripe portal) open in the system browser via the bridge.
     allowNavigation: ['camphawk.app', '*.camphawk.app', '*.clerk.accounts.dev', 'accounts.camphawk.app'],
