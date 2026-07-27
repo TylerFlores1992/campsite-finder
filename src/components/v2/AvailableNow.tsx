@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useAuth } from "@clerk/nextjs";
 import Button, { buttonClasses } from "@/components/ui/Button";
 import Chip from "@/components/ui/Chip";
 import DatePicker, { type DateRange } from "@/components/ui/DatePicker";
@@ -46,6 +47,12 @@ interface Suggestion {
 }
 
 export default function AvailableNow() {
+  // Read client-side via Clerk rather than from the server. The root layout must
+  // stay free of request-time APIs under Cache Components — reading auth there
+  // is what 500'd every page in July.
+  const { isLoaded, isSignedIn } = useAuth();
+  const guest = isLoaded && !isSignedIn;
+
   const [place, setPlace] = useState("");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -138,10 +145,34 @@ export default function AvailableNow() {
     }
   }, [coords, radius, range, when, flexNights, filters]);
 
-  const openCount = results?.filter((c) => c.hasAvailability === true).length ?? 0;
+  // Must agree with ResultCard: with no dates the API never checked availability,
+  // so claiming "N with openings" in the heading while every card stays silent
+  // about it is the same wrong answer twice, phrased two different ways.
+  const datesChosen = Boolean(range.start && range.end);
+  const openCount = datesChosen
+    ? (results?.filter((c) => c.hasAvailability === true).length ?? 0)
+    : 0;
 
   return (
     <div className="mx-auto max-w-[var(--ch-max)] px-5 py-6">
+      {/* Guests get context, not a paywall. Search really is free, and saying so
+          plainly converts better than hiding results behind a wall. */}
+      {guest && (
+        <div className="mb-4 rounded-[13px] border border-[#C6D3EC] bg-[#EEF2FA] px-3.5 py-3">
+          <p className="text-ch-body font-bold">You&apos;re searching as a guest</p>
+          <p className="mt-1 text-ch-meta leading-normal text-ch-ink-2">
+            Live availability is free and always will be. An account is only needed to watch a
+            campground that&apos;s already booked.
+          </p>
+          <Link
+            href="/v2/watches"
+            className="mt-1.5 inline-block text-ch-body font-bold text-ch-green hover:text-ch-green-deep"
+          >
+            See what a watch does
+          </Link>
+        </div>
+      )}
+
       <div className="grid items-start gap-5 lg:grid-cols-[var(--ch-rail)_minmax(0,1fr)]">
         {/* ---------------- search rail ---------------- */}
         <form
@@ -313,8 +344,13 @@ export default function AvailableNow() {
                     The good spots are booked, not gone. Set a watch and we&apos;ll alert you within
                     seconds of a cancellation.
                   </p>
-                  <Link href="/v2/new" className={buttonClasses({ className: "px-5" })}>
-                    Create a watch
+                  {/* A guest can't create a watch, so send them where the next
+                      step actually is instead of into a 402 they can't read. */}
+                  <Link
+                    href={guest ? "/sign-up" : "/v2/new"}
+                    className={buttonClasses({ className: "px-5" })}
+                  >
+                    {guest ? "Start 7-day free trial" : "Create a watch"}
                   </Link>
                 </div>
               )}

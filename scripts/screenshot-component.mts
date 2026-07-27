@@ -380,6 +380,62 @@ const PRESETS: Record<string, Preset> = {
       export const node = <div className="bg-ch-paper font-ch-body text-ch-ink p-6"><Harness /></div>;`,
     frame: 'w-full',
   },
+  'v2-mobile': {
+    label: 'v2 phone — bottom tab bar, guest banner, results',
+    // Renders the real shell chrome at phone width: top brand bar, the fixed
+    // bottom tab bar, and the signed-out guest banner (the Clerk stub defaults
+    // to signed out). Search is driven so results are on screen behind the bar.
+    entry: `import V2Nav from '@/components/v2/V2Nav';
+      import AvailableNow from '@/components/v2/AvailableNow';
+      const mk = (id, name, city, state, source, dist, avail) => ({
+        id, source, name, description: null, latitude: 36, longitude: -121.5,
+        address: { city, state }, amenities: [], activities: [], environmentTags: [],
+        siteTypes: ['tent'], reservable: true, reservationsUrl: null, phone: null, email: null,
+        adaAccessible: false, petsAllowed: true, photos: [], lastSyncedAt: null,
+        distanceMiles: dist, hasAvailability: avail,
+      });
+      const CAMPGROUNDS = [
+        mk('233116', 'Kirk Creek Campground', 'Big Sur', 'CA', 'ridb', 4, true),
+        mk('rc-783', 'Limekiln State Park', 'Big Sur', 'CA', 'reservecalifornia', 11, false),
+      ];
+      if (typeof window !== 'undefined') {
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/api/suggest')) {
+            return { ok: true, json: async () => ({ campgrounds: [
+              { id: 'x', name: 'Big Sur', city: 'Big Sur', state: 'CA', latitude: 36.27, longitude: -121.81 },
+            ] }) };
+          }
+          return { ok: true, json: async () => ({ campgrounds: CAMPGROUNDS, total: 2 }) };
+        };
+      }
+      function Harness() {
+        React.useEffect(() => {
+          const setValue = (el, v) => {
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            setter.call(el, v);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+          };
+          const t1 = setTimeout(() => { const i = document.getElementById('v2-where'); if (i) setValue(i, 'Big Sur'); }, 200);
+          const t2 = setTimeout(() => { const s = document.querySelector('ul li button'); if (s) s.click(); }, 700);
+          const t3 = setTimeout(() => {
+            const b = Array.from(document.querySelectorAll('button')).find((x) => x.textContent.trim() === 'Search');
+            if (b) b.click();
+          }, 1000);
+          return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+        }, []);
+        return (
+          <div className="flex min-h-full flex-col bg-ch-paper font-ch-body text-ch-ink">
+            <V2Nav />
+            <main className="flex-1 pb-16">
+              <AvailableNow />
+            </main>
+          </div>
+        );
+      }
+      export const node = <Harness />;`,
+    frame: 'w-full',
+  },
   'ch-logo': {
     label: 'HawkGlyph vs the full badge at small sizes',
     // The point of the glyph is that it survives favicon size. Shown against the
@@ -548,6 +604,8 @@ async function main() {
       // Components outside a Next app have no AppRouterContext; the real
       // useRouter() throws and the screenshot comes out blank.
       'next/navigation': join(ROOT, 'scripts/harness/next-navigation-stub.ts'),
+      // Same problem: the real Clerk hooks need a provider that isn't here.
+      '@clerk/nextjs': join(ROOT, 'scripts/harness/clerk-stub.tsx'),
     },
     define: { 'process.env.NODE_ENV': '"production"' },
     banner: { js: 'window.process = window.process || { env: {} };' },
