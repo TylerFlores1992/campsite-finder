@@ -8,6 +8,7 @@ import { useIsNativeApp } from "@/lib/native/context";
 import { useSubscription } from "./useSubscription";
 import SmsAlerts from "./SmsAlerts";
 import AutoCartSettings from "./AutoCartSettings";
+import { SubscribeLink, subscribeSentence } from "./nativeSubscribe";
 
 /**
  * Settings — where alerts get set up.
@@ -148,9 +149,18 @@ export default function Settings() {
 
       {isNative && (
         <Section title="Subscription">
-          <p className="text-ch-body text-ch-muted">
-            Manage your plan at camphawk.app.
-          </p>
+          {subscribed ? (
+            <p className="text-ch-body text-ch-muted">
+              Your subscription is active. Watching, alerts and auto-cart are all switched on.
+            </p>
+          ) : (
+            <>
+              <p className="text-ch-body text-ch-muted">{subscribeSentence()}</p>
+              {/* Never offered to someone already paying — a "Subscribe" prompt on a
+                  live subscription reads as a billing failure. */}
+              <SubscribeLink className="mt-2 text-ch-body text-ch-green" />
+            </>
+          )}
         </Section>
       )}
 

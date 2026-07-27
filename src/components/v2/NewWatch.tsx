@@ -13,6 +13,7 @@ import { useFavorites } from "./useFavorites";
 import { providerLabel, supportsAutoCart } from "./providers";
 import { addDays, formatRange, nightsBetween, todayISO } from "@/components/ui/date";
 import { useIsNativeApp } from "@/lib/native/context";
+import { NATIVE_LINKOUT, SUBSCRIBE_HREF } from "./nativeSubscribe";
 import type { Campground } from "@/lib/types";
 
 /**
@@ -514,7 +515,17 @@ export default function NewWatch({
         {needsSubscription && (
           <p className="mt-2.5 text-ch-fine leading-normal text-ch-ochre-ink">
             {isNative ? (
-              "Watches need a subscription. Manage your plan at camphawk.app, then come back and press Start watching — nothing you've entered is lost."
+              NATIVE_LINKOUT ? (
+                <>
+                  Watches need a subscription.{" "}
+                  <a href={SUBSCRIBE_HREF} data-native-external="true" className="font-bold underline">
+                    Subscribe at camphawk.app
+                  </a>
+                  , then come back and press Start watching — nothing you&apos;ve entered is lost.
+                </>
+              ) : (
+                "Watches need a subscription. Manage your plan at camphawk.app, then come back and press Start watching — nothing you've entered is lost."
+              )
             ) : (
               <>
                 Watches need a subscription — $2.50/mo or $20/yr after a 7-day free trial.{" "}

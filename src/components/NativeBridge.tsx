@@ -153,6 +153,17 @@ export default function NativeBridge() {
         // are a different host but ARE part of signing in, so they stay too
         // (they're in allowNavigation for exactly that reason); sending auth to the
         // system browser would strand the session outside the app.
+        // OPT-OUT: a link explicitly marked as external goes to the system browser
+        // even if it points at camphawk.app. The subscribe link does this — followed
+        // in-app it would just navigate the shell to our own marketing page, which
+        // renders the native variant with no price and nothing to buy. See
+        // v2/nativeSubscribe.tsx.
+        if (anchor.getAttribute('data-native-external') === 'true') {
+          e.preventDefault();
+          void Browser.open({ url: url.href }).catch(() => window.location.assign(url.href));
+          return;
+        }
+
         // Same origin stays in the webview — but a target="_blank" one has to be
         // taken over. A webview has no tabs, so `_blank` opens an empty popup or
         // silently does nothing; the Terms and Privacy links in the SMS consent

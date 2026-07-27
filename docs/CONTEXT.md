@@ -863,6 +863,23 @@ steps (Firebase project `campapp-39c4b`).
   the button. Any new copy naming a figure goes inside a `useIsNativeApp()` check. Audit
   with `grep -rn '\$[0-9]\|/api/stripe' src/components/ 'src/app/(app)/'` and confirm each
   hit is behind a native branch.
+- **Steering out to camphawk.app is BUILT BUT OFF** — `NATIVE_LINKOUT = false` in
+  `src/components/v2/nativeSubscribe.tsx` is the single switch (2026-07-27). Both stores
+  were forced to drop anti-steering, **in the US only**: Apple guideline 3.1.1 (updated
+  May 2025 for the *Epic v. Apple* contempt ruling — no entitlement needed on the US
+  storefront) and Google Play (Ninth Circuit upheld the *Epic v. Google* injunction
+  Sept 2025; terms run to Nov 2027). **Outside the US the ban still stands, and shipping
+  this UI to a non-US storefront is a review failure that can reportedly cost the
+  entitlement.** Device locale is NOT a storefront check. Flip the switch only once app
+  availability is restricted to the United States in App Store Connect and Play Console.
+  Wired into all five non-subscriber surfaces (`PricingSection`, `WatchCta`, `Explore`,
+  `Settings`, `NewWatch`), never shown to an active subscriber. Because the switch lives
+  in web code and the app is a webview, turning it off is a push to master, **not an app
+  release** — which matters while the law is still moving.
+  - The link carries **`data-native-external="true"`**, which `NativeBridge` honours by
+    forcing the system browser. Without it the tap would navigate the shell to our own
+    marketing page, which renders the native variant with nothing to buy. `?from=app`
+    makes the funnel measurable.
 - **A UA-marker check is only as current as the installed binary.** `appendUserAgent` is
   compiled into the app, so a build made before that config shipped detects as *web* and
   every gate above silently fails. Diagnostic: if the app shows the **buy buttons**, not

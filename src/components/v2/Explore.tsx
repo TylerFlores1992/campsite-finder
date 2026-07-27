@@ -10,6 +10,7 @@ import FilterPanel, { EMPTY_FILTERS, type FilterValue } from "@/components/ui/Fi
 import NightsPicker from "@/components/ui/NightsPicker";
 import ResultCard from "./ResultCard";
 import { useFavorites } from "./useFavorites";
+import { SubscribeLink, subscribeSentence } from "./nativeSubscribe";
 import { useSubscription } from "./useSubscription";
 import { useIsNativeApp } from "@/lib/native/context";
 import { campgroundsRounded } from "@/lib/coverage";
@@ -153,7 +154,8 @@ function ExploreAccountCta() {
   if (isNative) {
     return (
       <p className="mt-3 text-ch-fine leading-normal text-ch-green-deep/80">
-        Watching booked campgrounds needs a subscription. Manage your plan at camphawk.app.
+        Watching booked campgrounds needs a subscription. {subscribeSentence()}{" "}
+        <SubscribeLink className="text-ch-green-deep" />
       </p>
     );
   }

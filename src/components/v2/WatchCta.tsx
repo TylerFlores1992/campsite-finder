@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { NATIVE_LINKOUT, SUBSCRIBE_HREF } from "./nativeSubscribe";
 import { useIsNativeApp } from "@/lib/native/context";
 import { buttonClasses, type ButtonVariant } from "@/components/ui/Button";
 import { useSubscription } from "./useSubscription";
@@ -80,7 +81,17 @@ export default function WatchCta({
     );
   }
 
+  // THE HIGHEST-INTENT MOMENT IN THE APP: they just tried to watch something
+  // specific. When steering is switched on this becomes a real tap; until then it
+  // stays the inert label it has always been.
   if (isNative) {
+    if (NATIVE_LINKOUT) {
+      return (
+        <a href={SUBSCRIBE_HREF} data-native-external="true" className={cls}>
+          Subscribe to watch
+        </a>
+      );
+    }
     return (
       <span className={`${cls} pointer-events-none opacity-90`}>Manage your plan at camphawk.app</span>
     );

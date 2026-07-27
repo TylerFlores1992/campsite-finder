@@ -1,6 +1,8 @@
 "use client";
 
 import Pricing from "./Pricing";
+import { SubscribeLink, subscribeSentence } from "./nativeSubscribe";
+import { useSubscription } from "./useSubscription";
 import { useIsNativeApp } from "@/lib/native/context";
 
 /**
@@ -27,6 +29,7 @@ import { useIsNativeApp } from "@/lib/native/context";
  */
 export default function PricingSection() {
   const isNative = useIsNativeApp();
+  const { subscribed } = useSubscription();
 
   // In the app: what the subscription includes, no figure and no route to buy.
   // Still worth a block — someone who subscribed on the web needs to know the app
@@ -43,9 +46,13 @@ export default function PricingSection() {
           auto-cart on Recreation.gov. Live search keeps working either way.
         </p>
         <p className="mt-2 max-w-[58ch] text-ch-meta leading-normal text-ch-green-deep">
-          Subscriptions are managed at camphawk.app. Once yours is active, everything works
-          here.
+          {subscribeSentence()} Once yours is active, everything works here.
         </p>
+        {/* Renders nothing while NATIVE_LINKOUT is off. See nativeSubscribe.tsx —
+            steering out is US-storefront-only, so it stays dark until app
+            availability is restricted to the US. Never shown to a subscriber:
+            prompting someone who already pays reads as a billing failure. */}
+        {!subscribed && <SubscribeLink className="mt-3 text-ch-body text-ch-green-deep" />}
       </div>
     );
   }
