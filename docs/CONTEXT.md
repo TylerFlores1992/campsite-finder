@@ -839,6 +839,20 @@ steps (Firebase project `campapp-39c4b`).
   > **Never call `headers()`/`cookies()`/`connection()` in the root layout here.** The
   > only cost of client detection is a first-render flash of pricing UI *inside the
   > native app*; web users are never native, so nothing flips.
+  >
+  > **That flash is why the app opens on `/search`, not `/`** (`server.url =
+  > https://camphawk.app/search`, 2026-07-27). `/` is the only page carrying Stripe
+  > checkout, so it's the only page where the flash renders prices — one frame, but a
+  > reviewer's screenshot is exactly one frame. Not landing there removes it without
+  > delaying pricing for real web visitors, which is what a mounted-gate would cost.
+  > `V2Nav`'s wordmark points at `/search` in native for the same reason (it was the
+  > last route back onto `/`). Push deep-links are relative, so they're unaffected.
+- **Every price/checkout surface must be gated, not just the entry points.** `WatchCta`
+  gates the routes *into* watch creation, but the "needs a subscription" message on
+  `/new` is driven by the **server's answer to a submit**, so it renders however the user
+  reached the page — it shipped a price and a Stripe link into the app until 2026-07-27.
+  When adding any new copy that names a price, gate it on `useIsNativeApp()` and check
+  with `grep -rn '\$[0-9]\|/api/stripe' src/components/`.
 - **Native UI / webview gotchas (from the first Android build, 2026-07-25):**
   - **Edge-to-edge (Android 15+/API 35+):** the webview draws behind the status bar/notch,
     so the header would land in the non-tappable strip. Fixed on the **web** side with CSS

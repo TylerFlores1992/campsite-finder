@@ -21,7 +21,17 @@ const config: CapacitorConfig = {
   // the fallback shell shown only if the remote URL is unreachable at launch.
   webDir: 'native/shell',
   server: {
-    url: 'https://camphawk.app',
+    // OPENS ON EXPLORE, NOT THE MARKETING PAGE. Two reasons, and the second is the
+    // one that would fail review. `/` is a funnel for people who haven't heard of
+    // us — someone who has already installed the app is past it, and Explore is the
+    // product. And `/` is the only page carrying Stripe checkout: native detection
+    // is client-side by necessity (reading headers() in the root layout took the
+    // site down on 2026-07-24 — see src/lib/native/context.tsx), so the server
+    // renders the pricing block and hydration then replaces it. That single frame
+    // of prices is exactly what App Store / Play billing rules forbid, and it's
+    // what a reviewer's screenshot would catch. Not landing on that page removes
+    // the frame entirely. Push deep-links stay relative, so they still work.
+    url: 'https://camphawk.app/search',
     // Only allow navigation within our own origins; external booking links
     // (recreation.gov, the Stripe portal) open in the system browser via the bridge.
     allowNavigation: ['camphawk.app', '*.camphawk.app', '*.clerk.accounts.dev', 'accounts.camphawk.app'],

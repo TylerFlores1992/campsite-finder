@@ -185,6 +185,7 @@ function AccountControl({ compact = false }: { compact?: boolean }) {
 
 export default function V2Nav() {
   const pathname = usePathname();
+  const isNative = useIsNativeApp();
   const [collapsed, setCollapsed] = useState(false);
   const isActive = (href: string) =>
     // /v2 is the marketing home, so it must match exactly — otherwise it would
@@ -276,8 +277,13 @@ export default function V2Nav() {
       {/* ---------------- desktop: inline top row ---------------- */}
       <header className="sticky top-0 z-20 hidden border-b border-ch-line bg-ch-card/95 backdrop-blur sm:block">
         <div className="mx-auto flex max-w-[var(--ch-max)] items-center gap-6 px-5">
+          {/* The wordmark is the last route back onto `/`, which is the only page
+              carrying Stripe checkout. This header is desktop-only, so in practice
+              it's a tablet in the native app — but that's still a tablet showing
+              prices. Native goes home to Explore instead, which is where the app
+              launches anyway. */}
           <Link
-            href="/"
+            href={isNative ? "/search" : "/"}
             className="flex shrink-0 items-center gap-2 py-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green"
           >
             <BrandMark size={28} />

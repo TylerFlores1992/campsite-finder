@@ -128,12 +128,18 @@ a new adapter. See `docs/CONTEXT.md` before going hunting.
 ## Building the mobile app (Capacitor)
 
 CampHawk ships to the App Store / Play Store as a **thin native shell** around the live
-site, via Capacitor. `capacitor.config.ts` sets `server.url = https://camphawk.app`, so
-the webview loads production — Clerk auth, Stripe, and SSR all work unchanged, and a
+site, via Capacitor. `capacitor.config.ts` sets `server.url =
+https://camphawk.app/search`, so the webview loads production — Clerk auth, Stripe, and SSR all work unchanged, and a
 `git push` deploy reaches the app instantly with **no store release**. The native
 surfaces are **push** (APNs/FCM) and the bridge in `src/components/NativeBridge.tsx`,
 plus **status-bar / safe-area** handling (`@capacitor/status-bar`) so the webview clears
 the notch (see the edge-to-edge gotcha below).
+
+**It opens on `/search` (Explore), not `/`.** `/` is a funnel for people who haven't
+installed the app yet, and it's the only page carrying Stripe checkout — which native
+detection suppresses *client-side*, so it renders for one frame before hydration
+replaces it. Store review takes screenshots. Don't point `server.url` back at the root.
+Details in `docs/CONTEXT.md` → store-billing.
 
 **Notifications.** Push is a THIRD alert channel next to email/SMS. The worker's
 `dispatchNotifications` already fans out to it (`dispatchPush` in
