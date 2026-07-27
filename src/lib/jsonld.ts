@@ -1,7 +1,7 @@
 import type { Campground } from '@/lib/types';
 import { describePlain } from '@/components/v2/richText';
-import { normalizeStateCode } from '@/lib/coverage';
-import { campgroundUrl, SITE_NAME, SITE_URL } from '@/lib/seo';
+import { normalizeStateCode, stateName, stateSlug } from '@/lib/coverage';
+import { campgroundUrl, SITE_NAME, SITE_URL, stateUrl } from '@/lib/seo';
 
 /**
  * Structured data (JSON-LD).
@@ -111,19 +111,37 @@ export function campgroundJsonLd(c: Campground) {
 }
 
 /**
- * Breadcrumbs. Two levels today — Home › Campground.
+ * Breadcrumbs: Home › Camping by state › {State} › {Campground}.
  *
- * State landing pages would slot in as the middle item, but they don't exist
- * yet and a breadcrumb pointing at a 404 is worse than a short breadcrumb.
+ * The state rung only appears when that page actually exists — a state has to
+ * clear MIN_CAMPGROUNDS_FOR_STATE_PAGE, and three don't. A breadcrumb pointing
+ * at a 404 is worse than a short breadcrumb, so unresolvable states fall back
+ * to Home › Campground. Positions are renumbered accordingly; a BreadcrumbList
+ * with a gap in its positions is invalid.
  */
-export function campgroundBreadcrumbJsonLd(c: Campground) {
+export function campgroundBreadcrumbJsonLd(c: Campground, hasStatePage = true) {
+  const code = normalizeStateCode(c.address?.state);
+  const name = stateName(code);
+  const slug = code ? stateSlug(code) : null;
+
+  const items: Array<{ name: string; item: string }> = [
+    { name: SITE_NAME, item: SITE_URL },
+    { name: 'Camping by state', item: `${SITE_URL}/camping` },
+  ];
+  if (hasStatePage && name && slug) {
+    items.push({ name: `${name} Campgrounds`, item: stateUrl(slug) });
+  }
+  items.push({ name: c.name, item: campgroundUrl(c.id) });
+
   return {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
-    itemListElement: [
-      { '@type': 'ListItem', position: 1, name: SITE_NAME, item: SITE_URL },
-      { '@type': 'ListItem', position: 2, name: c.name, item: campgroundUrl(c.id) },
-    ],
+    itemListElement: items.map((it, i) => ({
+      '@type': 'ListItem',
+      position: i + 1,
+      name: it.name,
+      item: it.item,
+    })),
   };
 }
 

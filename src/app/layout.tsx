@@ -62,11 +62,32 @@ const nunitoSans = Nunito_Sans({
   preload: false,
 });
 
+/**
+ * Site-wide metadata defaults. Pages override title/description; this is what a
+ * page without its own gets, and it is what the homepage ships.
+ *
+ * THE DESCRIPTION USED TO LIST 34 STATES BY NAME. That is keyword stuffing, and
+ * it was working against us three ways: Google truncates the description around
+ * 160 characters so most of it was never displayed, a comma-separated state
+ * dump is a pattern spam classifiers were built to catch, and the sentence a
+ * human actually saw in the results was a list of place names rather than a
+ * reason to click. The states are covered properly now by /camping/<state>
+ * landing pages, which is where per-state intent belongs — one page per state,
+ * each with the campgrounds in it, instead of 34 names crammed into one tag.
+ *
+ * NO `keywords` FIELD. Google stopped using the keywords meta tag in 2009 and
+ * has said so publicly; adding one would be pure cargo cult.
+ *
+ * The TITLE names the category ("campsite availability", "cancellation alerts")
+ * because a search result has to tell a stranger what the site is. The OG title
+ * keeps the benefit line — social is a curiosity medium, not a keyword one, and
+ * the two are optimised for different readers.
+ */
 export const metadata: Metadata = {
   metadataBase: new URL("https://camphawk.app"),
-  title: "CampHawk — Get notified the instant a campsite opens up",
+  title: "CampHawk — Campsite availability and cancellation alerts",
   description:
-    "Search real-time campsite availability across US public lands and state parks in California, Texas, Arizona, Florida, New York, Oregon, Utah, North Carolina, Minnesota, Missouri, Kentucky, Iowa, Indiana, Georgia, Nebraska, Pennsylvania, New Hampshire, Montana, Rhode Island, New Mexico, Nevada, Ohio, Wyoming, Illinois, Virginia, Alaska, Connecticut, Delaware, Washington, Michigan, Wisconsin, Mississippi, Tennessee & South Carolina. Watch booked campgrounds and get alerted within seconds of a cancellation.",
+    "Live campsite availability at 8,000+ campgrounds nationwide. See what's open tonight, and get alerted within seconds when a booked site is cancelled.",
   openGraph: {
     title: "CampHawk — Get notified the instant a campsite opens up",
     description:

@@ -15,6 +15,9 @@ const isPublicRoute = createRouteMatcher([
   '/v2',
   '/v2/(.*)',
   '/campground/(.*)',
+  // State landing pages — public by definition, they exist for search traffic.
+  '/camping',
+  '/camping/(.*)',
   '/w/(.*)',
   '/b/(.*)',
   '/manage/(.*)',

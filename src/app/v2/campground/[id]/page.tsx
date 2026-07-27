@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import CampgroundDetail from "@/components/v2/CampgroundDetail";
 import { ridbSource } from "@/lib/sources/ridb";
+import { normalizeStateCode, stateName, stateSlug } from "@/lib/coverage";
+import { qualifyingStateCodes } from "@/lib/stateCampgrounds";
 import {
   campgroundDescription,
   campgroundTitle,
@@ -115,6 +117,28 @@ export default async function V2CampgroundPage({
   const backTo = from === "watches" ? "/v2/watches" : back ? `/v2?${stripLeading(back)}` : "/v2";
   const backLabel = from === "watches" ? "Back to watches" : "Back to search";
 
+  // Does this campground's state have a landing page? Three states don't clear
+  // the minimum, and a breadcrumb rung pointing at a 404 is worse than no rung.
+  const code = normalizeStateCode(campground.address?.state);
+  const qualifying = await qualifyingStateCodes();
+  const hasStatePage = Boolean(code && (qualifying?.has(code) ?? false));
+  const sName = stateName(code);
+  const sSlug = code ? stateSlug(code) : null;
+
+  // Arrived from a search or a watch -> the contextual back link is what they
+  // want. Arrived cold from Google -> they have no "back", so give them the
+  // hierarchy instead. This also keeps the visible trail honest against the
+  // BreadcrumbList markup below, which Google expects to correspond.
+  const arrivedCold = !from && !back;
+  const breadcrumb =
+    arrivedCold && hasStatePage && sName && sSlug
+      ? [
+          { name: SITE_NAME, href: "/" },
+          { name: "Camping by state", href: "/camping" },
+          { name: sName, href: `/camping/${sSlug}` },
+        ]
+      : undefined;
+
   return (
     <>
       {/* Structured data. Rendered in the page rather than via generateMetadata
@@ -127,7 +151,7 @@ export default async function V2CampgroundPage({
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
-          __html: jsonLdScript(campgroundBreadcrumbJsonLd(campground)),
+          __html: jsonLdScript(campgroundBreadcrumbJsonLd(campground, hasStatePage)),
         }}
       />
       <CampgroundDetail
@@ -137,6 +161,7 @@ export default async function V2CampgroundPage({
         endDate={end}
         backHref={backTo}
         backLabel={backLabel}
+        breadcrumb={breadcrumb}
       />
     </>
   );

@@ -1,0 +1,182 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { slugToStateCode, stateName, stateSlug } from "@/lib/coverage";
+import { campgroundsInState, groupByCity, statesWithPages } from "@/lib/stateCampgrounds";
+import { SITE_NAME, SITE_URL, stateDescription, stateTitle, stateUrl } from "@/lib/seo";
+import { jsonLdScript } from "@/lib/jsonld";
+import { providerLabel } from "@/components/v2/providers";
+
+/**
+ * State landing page — /camping/oregon.
+ *
+ * WHY THIS ROUTE, NOT /v2/camping. Everything else in the redesign is
+ * dark-launched behind /v2 and noindex, because it REPLACES a live page and
+ * shipping both would show users two designs. A state page replaces nothing —
+ * it's new — so there's no such conflict, and putting it behind noindex would
+ * mean building the one thing whose entire purpose is search traffic and then
+ * hiding it from search. It links out to /campground/<id>, the live route,
+ * which the redesign takes over at the swap.
+ *
+ * NOT A DOORWAY PAGE, and the distinction matters because that's a penalty.
+ * A doorway is a thin page whose only content is a keyword and a link onward.
+ * This one lists every bookable campground in the state, grouped by town, each
+ * a real destination with its own content — the page is genuinely the answer to
+ * "what can I camp at in Oregon". The MIN_CAMPGROUNDS threshold is there so we
+ * never generate the thin version.
+ *
+ * Statically generated: the state list only changes on a catalog sync, and a
+ * prerendered page is the fastest thing a crawler can be handed.
+ */
+
+export const revalidate = 86400;
+export const dynamicParams = false; // an unknown slug is a 404, not a build
+
+export async function generateStaticParams() {
+  const states = await statesWithPages();
+  return states
+    .map(({ code }) => stateSlug(code))
+    .filter((slug): slug is string => slug !== null)
+    .map((state) => ({ state }));
+}
+
+async function load(slug: string) {
+  const code = slugToStateCode(slug);
+  if (!code) return null;
+  const name = stateName(code);
+  if (!name) return null;
+  const campgrounds = await campgroundsInState(code);
+  if (!campgrounds) return null;
+  return { code, name, campgrounds };
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ state: string }>;
+}): Promise<Metadata> {
+  const { state } = await params;
+  const data = await load(state);
+  if (!data) return { title: `Not found | ${SITE_NAME}` };
+
+  const title = stateTitle(data.name, data.campgrounds.length);
+  const description = stateDescription(data.name, data.campgrounds.length);
+  return {
+    title,
+    description,
+    alternates: { canonical: stateUrl(state) },
+    openGraph: { title, description, url: stateUrl(state), type: "website" },
+    twitter: { card: "summary", title, description },
+  };
+}
+
+export default async function StateCampingPage({
+  params,
+}: {
+  params: Promise<{ state: string }>;
+}) {
+  const { state } = await params;
+  const data = await load(state);
+  if (!data) notFound();
+
+  const { name, campgrounds } = data;
+  const groups = groupByCity(campgrounds);
+  const towns = groups.filter((g) => g.city).length;
+  const providers = [...new Set(campgrounds.map((c) => c.source))];
+
+  const breadcrumb = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: SITE_NAME, item: SITE_URL },
+      { "@type": "ListItem", position: 2, name: `${name} Campgrounds`, item: stateUrl(state) },
+    ],
+  };
+
+  // CollectionPage, not ItemList of 875 entries. The list is already in the
+  // markup as links; repeating it as structured data would double the page
+  // weight to tell Google something it can already see.
+  const collection = {
+    "@context": "https://schema.org",
+    "@type": "CollectionPage",
+    name: `${name} Campgrounds`,
+    url: stateUrl(state),
+    description: stateDescription(name, campgrounds.length),
+    isPartOf: { "@id": `${SITE_URL}#organization` },
+  };
+
+  return (
+    <div className="font-ch-body text-ch-ink">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(collection) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(breadcrumb) }}
+      />
+
+      <div className="mx-auto max-w-[var(--ch-max)] px-5 py-8">
+        <nav aria-label="Breadcrumb" className="mb-4 text-ch-fine text-ch-muted">
+          <Link className="font-bold text-ch-green hover:text-ch-green-deep" href="/">
+            {SITE_NAME}
+          </Link>
+          <span className="mx-1.5">›</span>
+          <Link className="font-bold text-ch-green hover:text-ch-green-deep" href="/camping">
+            Camping by state
+          </Link>
+          <span className="mx-1.5">›</span>
+          <span>{name}</span>
+        </nav>
+
+        <h1 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em]">
+          Campgrounds in {name}
+        </h1>
+        <p className="mt-2 max-w-[70ch] text-ch-body leading-relaxed text-ch-ink-2">
+          {/* Interpolations are joined INSIDE the strings. JSX strips whitespace
+              between an expression and the next line, which rendered this as
+              "across Oregon , in 93 towns ." */}
+          {`We track live availability at ${campgrounds.length.toLocaleString()} bookable campgrounds across ${name}`}
+          {towns > 0 ? `, in ${towns.toLocaleString()} towns` : ""}
+          {". Every one is checked around the clock, so when a booked site is cancelled you hear about it in seconds rather than finding out weeks later that it was free for an hour."}
+        </p>
+        <p className="mt-2 max-w-[70ch] text-ch-meta text-ch-muted">
+          {`Booking goes through ${providers
+            .map((p) => providerLabel(p, ""))
+            .join(providers.length === 2 ? " and " : ", ")}. Searching is free.`}
+        </p>
+
+        <div className="mt-6 flex flex-wrap gap-2">
+          <Link
+            href="/"
+            className="rounded-ch-chip bg-ch-green px-4 py-2 text-ch-body font-bold text-white hover:bg-ch-green-deep"
+          >
+            Search {name} by date
+          </Link>
+        </div>
+
+        <div className="mt-8 space-y-7">
+          {groups.map((g) => (
+            <section key={g.city ?? "__none"}>
+              <h2 className="font-ch-display text-ch-h font-bold">
+                {g.city ? `${g.city}, ${data.code}` : `Elsewhere in ${name}`}
+              </h2>
+              <ul className="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
+                {g.campgrounds.map((c) => (
+                  <li key={c.id} className="border-b border-ch-line py-1.5">
+                    <Link
+                      className="text-ch-body text-ch-ink-2 hover:text-ch-green hover:underline"
+                      href={`/campground/${encodeURIComponent(c.id)}`}
+                    >
+                      {c.name}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

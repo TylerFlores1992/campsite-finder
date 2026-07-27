@@ -1,5 +1,7 @@
 import type { MetadataRoute } from 'next';
 import { query } from '@/lib/db/client';
+import { stateSlug } from '@/lib/coverage';
+import { statesWithPages } from '@/lib/stateCampgrounds';
 
 /**
  * Sitemap, now including every campground.
@@ -51,6 +53,23 @@ async function campgroundEntries(): Promise<MetadataRoute.Sitemap> {
   }));
 }
 
+/** State landing pages. Higher priority than a single campground: they're the
+ *  hubs, and they're what carries crawl depth down to the 7,000 leaves. */
+async function stateEntries(): Promise<MetadataRoute.Sitemap> {
+  const states = await statesWithPages();
+  return [
+    { url: `${BASE}/camping`, changeFrequency: 'weekly' as const, priority: 0.8 },
+    ...states
+      .map(({ code }) => stateSlug(code))
+      .filter((slug): slug is string => slug !== null)
+      .map((slug) => ({
+        url: `${BASE}/camping/${slug}`,
+        changeFrequency: 'weekly' as const,
+        priority: 0.8,
+      })),
+  ];
+}
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticPages: MetadataRoute.Sitemap = [
     { url: BASE, changeFrequency: 'daily', priority: 1 },
@@ -59,7 +78,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   try {
-    return [...staticPages, ...(await campgroundEntries())];
+    return [...staticPages, ...(await stateEntries()), ...(await campgroundEntries())];
   } catch (err) {
     console.error('[sitemap] campground query failed, serving static only:', err);
     return staticPages;

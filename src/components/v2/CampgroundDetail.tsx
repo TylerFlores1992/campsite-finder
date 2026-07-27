@@ -34,6 +34,10 @@ export interface CampgroundDetailProps {
       came from. Defaults to a bare Explore. */
   backHref?: string;
   backLabel?: string;
+  /** Shown INSTEAD of the back link when the visitor arrived cold (from search,
+      not from an in-app search or watch). Someone landing from Google has no
+      "back" to go to — they need to know where they are. */
+  breadcrumb?: Array<{ name: string; href: string }>;
 }
 
 export default function CampgroundDetail({
@@ -43,6 +47,7 @@ export default function CampgroundDetail({
   endDate,
   backHref = "/v2",
   backLabel = "Back to search",
+  breadcrumb,
 }: CampgroundDetailProps) {
   const [campground, setCampground] = useState<Campground | null>(initialCampground ?? null);
   const [loading, setLoading] = useState(!initialCampground);
@@ -102,13 +107,27 @@ export default function CampgroundDetail({
 
   return (
     <div className="mx-auto max-w-[var(--ch-max)] px-5 py-5">
-      <Link
-        href={backHref}
-        className="inline-flex items-center gap-1 pb-3 text-[13px] font-bold text-ch-green hover:text-ch-green-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green"
-      >
-        <ChevronLeft aria-hidden="true" className="size-3.5" />
-        {backLabel}
-      </Link>
+      {breadcrumb ? (
+        <nav aria-label="Breadcrumb" className="pb-3 text-ch-fine text-ch-muted">
+          {breadcrumb.map((b) => (
+            <span key={b.href}>
+              <Link className="font-bold text-ch-green hover:text-ch-green-deep" href={b.href}>
+                {b.name}
+              </Link>
+              <span className="mx-1.5">›</span>
+            </span>
+          ))}
+          <span>{name}</span>
+        </nav>
+      ) : (
+        <Link
+          href={backHref}
+          className="inline-flex items-center gap-1 pb-3 text-[13px] font-bold text-ch-green hover:text-ch-green-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green"
+        >
+          <ChevronLeft aria-hidden="true" className="size-3.5" />
+          {backLabel}
+        </Link>
+      )}
 
       <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
         <div>

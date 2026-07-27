@@ -54,6 +54,18 @@ await build({
       const { query } = require('@/lib/db/client');
       const { campgroundTitle, campgroundDescription } = require('@/lib/seo');
       const { campgroundJsonLd, campgroundBreadcrumbJsonLd, jsonLdScript } = require('@/lib/jsonld');
+      const { statesWithPages, MIN_CAMPGROUNDS_FOR_STATE_PAGE } = require('@/lib/stateCampgrounds');
+      const { stateSlug, stateName, slugToStateCode } = require('@/lib/coverage');
+      const { stateTitle, stateDescription } = require('@/lib/seo');
+      module.exports.states = async () => {
+        const states = await statesWithPages();
+        return { min: MIN_CAMPGROUNDS_FOR_STATE_PAGE, rows: states.map(({ code, count }) => ({
+          code, count, slug: stateSlug(code), name: stateName(code),
+          roundTrips: slugToStateCode(stateSlug(code)) === code,
+          title: stateTitle(stateName(code), count),
+          desc: stateDescription(stateName(code), count),
+        })) };
+      };
       module.exports.ssr = async (id) => {
         const cg = await ridbSource.getDetail(id);
         if (!cg) return null;
@@ -100,7 +112,7 @@ await build({
   loader: { '.css': 'empty' },
 });
 
-const { ssr, sweep } = await import(OUT);
+const { ssr, sweep, states } = await import(OUT);
 
 console.log('\nServer-rendered HTML');
 for (const id of SSR_SAMPLE) {
@@ -179,6 +191,23 @@ check('no unescaped < in any payload', unescaped === 0, `${unescaped} rows`);
 check('every row has geo', noGeo === 0, `${noGeo} without`);
 check('addressRegion is always a 2-letter code', badRegion === 0, `${badRegion} odd`);
 check('every payload is valid JSON', unparseable === 0, `${unparseable} broken`);
+
+console.log('\nState landing pages');
+{
+  const { min, rows } = await states();
+  console.log(`  ${rows.length} states qualify (>= ${min} campgrounds), ` +
+    `${rows.reduce((a: number, r: any) => a + r.count, 0).toLocaleString()} campgrounds linked`);
+  check('every slug round-trips back to its code', rows.every((r: any) => r.roundTrips),
+    rows.filter((r: any) => !r.roundTrips).map((r: any) => r.code).join(' '));
+  check('no state is below the threshold', rows.every((r: any) => r.count >= min));
+  check('titles are unique', new Set(rows.map((r: any) => r.title)).size === rows.length);
+  check('descriptions are unique', new Set(rows.map((r: any) => r.desc)).size === rows.length);
+  check('no description over 160 chars', rows.every((r: any) => r.desc.length <= 160),
+    `longest ${Math.max(...rows.map((r: any) => r.desc.length))}`);
+  const eg = rows[0];
+  console.log(`  e.g. /camping/${eg.slug} — ${eg.count.toLocaleString()} campgrounds`);
+  console.log(`       ${eg.title}`);
+}
 
 rmSync(OUTDIR, { recursive: true, force: true });
 console.log(failures ? `\n${failures} check(s) FAILED\n` : '\nAll checks passed\n');

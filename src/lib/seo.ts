@@ -129,3 +129,27 @@ export function campgroundDescription(c: Campground): string {
 export function campgroundUrl(id: string): string {
   return `${SITE_URL}/campground/${encodeURIComponent(id)}`;
 }
+
+/**
+ * State landing pages.
+ *
+ * "Campgrounds in Oregon" is the mid-tail between a campground name and
+ * "camping", and it's a query we can genuinely answer — we know every bookable
+ * campground in the state and whether each one is open tonight. These pages
+ * also give the campground pages an internal-linking parent, which is how link
+ * equity reaches 7,000 leaf pages that nothing else points at.
+ */
+export function stateUrl(slug: string): string {
+  return `${SITE_URL}/camping/${slug}`;
+}
+
+export function stateTitle(name: string, count: number): string {
+  return `${name} Campgrounds — ${count.toLocaleString()} with live availability | ${SITE_NAME}`;
+}
+
+export function stateDescription(name: string, count: number): string {
+  return clamp(
+    `Live campsite availability for ${count.toLocaleString()} campgrounds across ${name}. ` +
+      `See what's open tonight, and get alerted the second a booked site is cancelled.`
+  );
+}
