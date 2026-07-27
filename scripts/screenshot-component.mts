@@ -170,6 +170,66 @@ const PRESETS: Record<string, Preset> = {
       export const node = <Sheet />;`,
     frame: 'max-w-2xl w-full mx-auto',
   },
+  'v2-available': {
+    label: 'v2 Available now (search rail + results)',
+    // Drives the REAL flow rather than faking state: types a place, picks the
+    // suggestion, submits, and lets the component call the mocked endpoints. That
+    // exercises the debounce, the request guard and the result mapping.
+    entry: `import AvailableNow from '@/components/v2/AvailableNow';
+      const mk = (id, name, city, state, source, dist, avail, extra = {}) => ({
+        id, source, name, description: null, latitude: 36, longitude: -121.5,
+        address: { city, state }, amenities: [], activities: [], environmentTags: [],
+        siteTypes: ['tent'], reservable: true, reservationsUrl: null, phone: null, email: null,
+        adaAccessible: false, petsAllowed: true, photos: [], lastSyncedAt: null,
+        distanceMiles: dist, hasAvailability: avail, ...extra,
+      });
+      const CAMPGROUNDS = [
+        mk('233116', 'Kirk Creek Campground', 'Big Sur', 'CA', 'ridb', 4, true,
+           { likelihood: { rate: 0.34, label: '3–6 weeks out', samples: 91 } }),
+        mk('rc-783', 'Limekiln State Park', 'Big Sur', 'CA', 'reservecalifornia', 11, true),
+        mk('gtc-WA--2147483647', 'Cape Disappointment', 'Ilwaco', 'WA', 'goingtocamp', 18, false),
+        mk('tnsc-SC-aiken', 'Aiken State Park', 'Windsor', 'SC', 'tnsc', 23, false),
+        mk('232447', 'Ponderosa Campground', 'Big Sur', 'CA', 'ridb', 27, undefined),
+        mk('ra-NY-12', 'Allegany State Park', 'Salamanca', 'NY', 'reserveamerica', 31, false),
+      ];
+      if (typeof window !== 'undefined') {
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/api/suggest')) {
+            return { ok: true, json: async () => ({ campgrounds: [
+              { id: 'x', name: 'Big Sur', city: 'Big Sur', state: 'CA', latitude: 36.27, longitude: -121.81 },
+            ] }) };
+          }
+          return { ok: true, json: async () => ({ campgrounds: CAMPGROUNDS, total: CAMPGROUNDS.length }) };
+        };
+      }
+      function Harness() {
+        React.useEffect(() => {
+          const setValue = (el, v) => {
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            setter.call(el, v);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+          };
+          const t1 = setTimeout(() => {
+            const input = document.getElementById('v2-where');
+            if (input) setValue(input, 'Big Sur');
+          }, 200);
+          const t2 = setTimeout(() => {
+            const sug = document.querySelector('ul li button');
+            if (sug) sug.click();
+          }, 700);
+          const t3 = setTimeout(() => {
+            const btn = Array.from(document.querySelectorAll('button'))
+              .find((b) => b.textContent.trim() === 'Search');
+            if (btn) btn.click();
+          }, 1000);
+          return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+        }, []);
+        return <AvailableNow />;
+      }
+      export const node = <div className="bg-ch-paper font-ch-body text-ch-ink"><Harness /></div>;`,
+    frame: 'w-full',
+  },
   'ch-logo': {
     label: 'HawkGlyph vs the full badge at small sizes',
     // The point of the glyph is that it survives favicon size. Shown against the

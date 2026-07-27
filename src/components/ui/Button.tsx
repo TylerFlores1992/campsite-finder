@@ -46,6 +46,41 @@ const SIZE: Record<ButtonSize, string> = {
   lg: "px-3 py-[19px] text-[17px]",
 };
 
+/**
+ * The button's classes, without the element.
+ *
+ * Exported so a navigation control can look like a button without being one.
+ * A link that navigates must stay an <a> — middle-click, open-in-new-tab and
+ * crawlability all depend on it — and nesting an <a> inside a <button> is
+ * invalid HTML. This is the seam that keeps the two in sync instead of letting
+ * a hand-copied class string drift, which is how the current UI got here.
+ */
+export function buttonClasses({
+  variant = "primary",
+  size = "md",
+  fullWidth = false,
+  className,
+}: {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  fullWidth?: boolean;
+  className?: string;
+} = {}): string {
+  return cx(
+    "inline-flex items-center justify-center rounded-ch-btn font-ch-body font-bold",
+    "cursor-pointer transition-colors",
+    // The global :focus-visible outline is the OLD palette's green; a class
+    // selector outranks it so the primitives stay on the ch-* system.
+    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green",
+    "disabled:cursor-not-allowed disabled:opacity-55 disabled:shadow-none disabled:active:translate-y-0",
+    "motion-reduce:transition-none motion-reduce:active:translate-y-0",
+    VARIANT[variant],
+    SIZE[size],
+    fullWidth && "w-full",
+    className,
+  );
+}
+
 export default function Button({
   variant = "primary",
   size = "md",
@@ -57,19 +92,7 @@ export default function Button({
   return (
     <button
       type={type}
-      className={cx(
-        "inline-flex items-center justify-center rounded-ch-btn font-ch-body font-bold",
-        "cursor-pointer transition-colors",
-        // The global :focus-visible outline is the OLD palette's green; a class
-        // selector outranks it so the primitives stay on the ch-* system.
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green",
-        "disabled:cursor-not-allowed disabled:opacity-55 disabled:shadow-none disabled:active:translate-y-0",
-        "motion-reduce:transition-none motion-reduce:active:translate-y-0",
-        VARIANT[variant],
-        SIZE[size],
-        fullWidth && "w-full",
-        className,
-      )}
+      className={buttonClasses({ variant, size, fullWidth, className })}
       {...rest}
     />
   );
