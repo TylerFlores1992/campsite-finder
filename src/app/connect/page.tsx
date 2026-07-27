@@ -5,8 +5,9 @@ import { Loader2, CheckCircle2, ShieldCheck, AlertTriangle } from 'lucide-react'
 
 // Remote one-time recreation.gov sign-in. Primary path: the user enters their
 // rec.gov email/password into a normal form here; the credentials are sent over the
-// encrypted WebSocket to their own CampHawk mini-PC, which types them into rec.gov
-// once and never stores them. That form handles the vast majority of logins on its own.
+// encrypted WebSocket to the private mini-PC that runs the browser session, which
+// types them into rec.gov and saves them there (encrypted) so it can sign back in
+// by itself when the session drops — saving is required, see the checkbox below. That form handles the vast majority of logins on its own.
 // The live streamed rec.gov window is reserved for the one case the form genuinely
 // can't clear: rec.gov throwing a CAPTCHA / 2FA challenge, which the broker signals with
 // a 'manual' message so the user can finish that step by hand. Ordinary failures (wrong
@@ -160,10 +161,18 @@ export default function ConnectPage() {
           <ShieldCheck size={22} className="text-green-600" />
           <h1 className="font-display text-xl font-bold">Connect recreation.gov</h1>
         </div>
+        {/* WORDING MATCHED TO TrustPanel. This page used to say the credentials
+            go to "your own CampHawk server", which reads as a machine the USER
+            owns; the trust panel says "a private machine we run". Only one can be
+            true, and a sceptical user reading both pages will spot the gap on the
+            exact screen where they're deciding whether to hand over a password.
+            Both now say the same thing: a private machine we run, separate from
+            the web servers and the database. */}
         <p className="mt-1 text-sm text-gray-500">
           Sign in so CampHawk can add openings to your cart. Your recreation.gov email and password
-          are sent over an encrypted connection to your own CampHawk server and saved there,
-          encrypted, so auto-cart stays connected — <strong>never uploaded to CampHawk&apos;s cloud</strong>.
+          are sent over an encrypted connection to a private machine we run — the one that keeps
+          your session open — and saved there, encrypted, so auto-cart can sign back in on its own.{' '}
+          <strong>They never reach CampHawk&apos;s web servers or database.</strong>
         </p>
 
         {status === 'idle' && (
@@ -245,8 +254,9 @@ export default function ConnectPage() {
               />
               <span>
                 <strong>Save my login to keep auto-cart connected (required).</strong>{' '}It&apos;s
-                stored, encrypted, on your own CampHawk server so the bot can re-connect on its own
-                if the session drops. Never uploaded to CampHawk&apos;s cloud.
+                stored, encrypted, on the private machine that holds your session, so it can sign
+                back in on its own when the session drops. It never reaches CampHawk&apos;s web
+                servers or database.
               </span>
             </label>
             <button
@@ -262,7 +272,8 @@ export default function ConnectPage() {
               </p>
             )}
             <p className="text-center text-[11px] text-gray-400">
-              Saved encrypted on your own CampHawk server — never uploaded to CampHawk&apos;s cloud.
+              Saved encrypted on the private machine that runs your session — never on CampHawk&apos;s
+              web servers or database.
             </p>
           </form>
         )}
