@@ -12,6 +12,7 @@ import FavoriteHeart from "./FavoriteHeart";
 import { useFavorites } from "./useFavorites";
 import { providerLabel, supportsAutoCart } from "./providers";
 import { addDays, formatRange, nightsBetween, todayISO } from "@/components/ui/date";
+import { useIsNativeApp } from "@/lib/native/context";
 import type { Campground } from "@/lib/types";
 
 /**
@@ -57,6 +58,7 @@ export default function NewWatch({
   initialEnd,
 }: NewWatchProps) {
   const router = useRouter();
+  const isNative = useIsNativeApp();
 
   const [campgroundId, setCampgroundId] = useState<string | null>(initialCampgroundId ?? null);
   const [campgroundName, setCampgroundName] = useState("");
@@ -499,12 +501,23 @@ export default function NewWatch({
           </Button>
         </div>
 
+        {/* THE ONE PLACE A PRICE COULD STILL REACH THE NATIVE APP. WatchCta gates
+            the entry points, but this message is driven by the server's answer to
+            a submit, so it renders on /new however the user got there — and a
+            price plus a link into Stripe checkout is exactly what Apple and
+            Google forbid. Native gets the same fact without either. */}
         {needsSubscription && (
           <p className="mt-2.5 text-ch-fine leading-normal text-ch-ochre-ink">
-            Watches need a subscription — $2.50/mo or $20/yr after a 7-day free trial.{" "}
-            <a className="font-bold underline" href="/">
-              Start the trial
-            </a>
+            {isNative ? (
+              "Watches need a subscription. Manage your plan at camphawk.app, then come back and press Start watching — nothing you've entered is lost."
+            ) : (
+              <>
+                Watches need a subscription — $2.50/mo or $20/yr after a 7-day free trial.{" "}
+                <a className="font-bold underline" href="/">
+                  Start the trial
+                </a>
+              </>
+            )}
           </p>
         )}
         {signedOut && (
