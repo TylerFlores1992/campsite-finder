@@ -170,6 +170,43 @@ const PRESETS: Record<string, Preset> = {
       export const node = <Sheet />;`,
     frame: 'max-w-2xl w-full mx-auto',
   },
+  'ch-logo': {
+    label: 'HawkGlyph vs the full badge at small sizes',
+    // The point of the glyph is that it survives favicon size. Shown against the
+    // existing HawkMark at the same sizes so the difference is judgeable.
+    entry: `import HawkGlyph from '@/components/ui/HawkGlyph';
+      import { HawkMark } from '@/components/Logo';
+      const SIZES = [64, 48, 32, 24, 16];
+      const Row = ({ title, render }) => (
+        <div className="mb-5">
+          <div className="text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted mb-2">{title}</div>
+          <div className="flex items-end gap-4">
+            {SIZES.map((s) => (
+              <div key={s} className="text-center">
+                <div className="flex items-end justify-center" style={{ height: 64 }}>{render(s)}</div>
+                <div className="text-[10px] text-ch-muted mt-1">{s}px</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+      export const node = (
+        <div className="bg-ch-paper p-6 rounded-ch-card font-ch-body text-ch-ink">
+          <Row title="Existing badge (HawkMark) — dissolves below ~40px"
+               render={(s) => <HawkMark size={s} />} />
+          <Row title="New HawkGlyph — badge variant (app icon)"
+               render={(s) => <HawkGlyph size={s} variant="badge" />} />
+          <Row title="New HawkGlyph — bare silhouette, inherits colour"
+               render={(s) => <HawkGlyph size={s} className="text-ch-green" />} />
+          <div className="flex items-center gap-2 border-t border-ch-line pt-4">
+            <HawkGlyph size={22} className="text-ch-green" />
+            <span className="font-ch-display text-[19px] font-extrabold tracking-[-.025em]">CampHawk</span>
+            <span className="text-ch-fine text-ch-muted ml-2">← in-header lockup at 22px</span>
+          </div>
+        </div>
+      );`,
+    frame: 'max-w-lg w-full mx-auto',
+  },
   'ch-controls': {
     label: 'Redesign shared controls (DatePicker / NightsPicker / FilterPanel)',
     // DatePicker is shown mid-selection with the check-in in the PREVIOUS month —
