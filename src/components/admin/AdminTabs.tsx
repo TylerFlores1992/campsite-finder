@@ -87,7 +87,12 @@ function syncLevel(s: SyncRow): Level {
  */
 function overallStatus(data: AdminData): { level: Level; headline: string; detail: string } {
   const problems: string[] = [];
-  const warnings: string[] = [];
+  // Canaries are few and each names a distinct failure, so they're listed.
+  const canaryWarnings: string[] = [];
+  // Syncs are MANY — one per state per provider — and a partial sync is routine.
+  // Listing them produced a banner naming fifteen sources, which is a wall of
+  // text that says less than a count does. They're aggregated.
+  let syncWarnings = 0;
 
   if (!data.workerHealthy) {
     problems.push(
@@ -99,12 +104,12 @@ function overallStatus(data: AdminData): { level: Level; headline: string; detai
   for (const c of data.canaryRows) {
     const lvl = canaryLevel(c);
     if (lvl === 'fail') problems.push(`${c.key} is failing`);
-    else if (lvl === 'warn') warnings.push(c.key);
+    else if (lvl === 'warn') canaryWarnings.push(c.key);
   }
-  for (const s of data.syncRows) {
-    const lvl = syncLevel(s);
-    if (lvl === 'fail') problems.push(`the ${s.source} sync returned nothing`);
-    else if (lvl === 'warn' && s.error) warnings.push(`${s.source} sync`);
+  for (const sy of data.syncRows) {
+    const lvl = syncLevel(sy);
+    if (lvl === 'fail') problems.push(`the ${sy.source} sync returned nothing`);
+    else if (lvl === 'warn' && sy.error) syncWarnings++;
   }
 
   if (problems.length) {
@@ -112,16 +117,30 @@ function overallStatus(data: AdminData): { level: Level; headline: string; detai
       level: 'fail',
       headline:
         problems.length === 1 ? 'Something needs attention' : `${problems.length} things need attention`,
-      detail: `${problems.join('; ')}.`,
+      // Even the failure list gets capped. Ten named failures is a wall too.
+      detail: `${summarise(problems, 3)}.`,
     };
   }
-  if (warnings.length) {
+
+  const parts: string[] = [];
+  if (canaryWarnings.length) parts.push(summarise(canaryWarnings, 3));
+  if (syncWarnings) {
+    parts.push(
+      `${syncWarnings} catalog ${syncWarnings === 1 ? 'sync' : 'syncs'} finished with warnings`
+    );
+  }
+
+  if (parts.length) {
     return {
       level: 'warn',
       headline: 'Running, with warnings',
-      detail: `Watch: ${warnings.join(', ')}. Alerts are still going out.`,
+      // A partial sync means rows landed and some records errored — normal for
+      // the per-state providers, and not something to act on at a glance. Say
+      // that, so the banner doesn't read as an outage every single day.
+      detail: `${parts.join('; ')}. Nothing is down and alerts are going out — open System Health for the detail.`,
     };
   }
+
   return {
     level: 'ok',
     headline: 'All systems normal',
@@ -129,6 +148,16 @@ function overallStatus(data: AdminData): { level: Level; headline: string; detai
       ? `Poller checked in ${data.beat.age_s}s ago, ${data.beat.watches_checked} watches per cycle.`
       : 'Every check is reporting healthy.',
   };
+}
+
+/** "a, b and 4 more" — a banner has to stay one readable sentence. */
+function summarise(items: string[], max: number): string {
+  if (items.length <= max) {
+    return items.length > 1
+      ? `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`
+      : (items[0] ?? '');
+  }
+  return `${items.slice(0, max).join(', ')} and ${items.length - max} more`;
 }
 
 const LEVEL_STYLE: Record<Level, { box: string; text: string }> = {

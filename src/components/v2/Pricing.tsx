@@ -112,8 +112,8 @@ export default function Pricing() {
         {unknown
           ? "We couldn't check your current plan just now."
           : everSubscribed
-            ? "Cancel any time."
-            : "Free for 7 days · cancel any time before you're charged."}
+            ? "Cancel any time. Launch pricing — your rate is locked in while you stay subscribed."
+            : "Free for 7 days · cancel any time before you're charged. Launch pricing — your rate is locked in while you stay subscribed."}
       </p>
     </div>
   );

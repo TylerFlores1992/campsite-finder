@@ -241,6 +241,29 @@ const PRESETS: Record<string, Preset> = {
       export const node = <ManageWatch token="demo" />;`,
     frame: 'w-full',
   },
+  'ch-manage-sites': {
+    label: 'Manage watch — full campsite mute list (open)',
+    entry: `import ManageWatch from '@/components/v2/ManageWatch';
+      if (typeof window !== 'undefined') {
+        const LOOPS = ['Ocean Loop','Creek Loop','Ridge Loop'];
+        const campsites = [];
+        for (let i = 1; i <= 34; i++) campsites.push({ campsiteId: 'S'+i, campsiteName: 'Site ' + String(i).padStart(2,'0'), loop: LOOPS[i % 3] });
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/availability')) return { ok: true, status: 200, json: async () => ({ campsites }) };
+          return { ok: true, status: 200, json: async () => ({
+            watch: { id: 'w1', campground_id: '233116', campground_name: 'Kirk Creek Campground', source: 'ridb', reservations_url: null, start_date: '2026-09-04', end_date: '2026-09-07', min_nights: 2, flex_nights: null, flex_days: null, site_type: null, active: true, auto_cart: true, muted_site_ids: ['S7'] },
+            alerts: [], sites: [ { id: 'S7', name: 'Site 07', muted: true } ],
+          }) };
+        };
+        setTimeout(() => {
+          const b = [...document.querySelectorAll('button')].find((x) => /Mute individual/.test(x.textContent || ''));
+          b?.click();
+        }, 400);
+      }
+      export const node = <ManageWatch token="demo" />;`,
+    frame: 'w-full',
+  },
   'ch-favorites': {
     label: 'New watch — favourites picker + hearts (signed in)',
     // Signed-in, with a stubbed favourites list, and the search box focused so

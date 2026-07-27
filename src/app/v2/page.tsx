@@ -143,12 +143,27 @@ export default function V2HomePage() {
       {/* -------------------------------------------------------- pricing */}
       <section className="mx-auto max-w-[var(--ch-max)] px-5 py-6">
         <div className="rounded-ch-card border border-[#BFDDC9] bg-ch-green-soft p-5 sm:p-6">
-          <h2 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em] text-ch-green-deep">
-            Searching is free. Watching is $2.50 a month.
+          {/* LAUNCH PRICING IS A PROMISE ABOUT THE FUTURE, so it says "while
+              we're new" rather than putting a countdown on it. Manufactured
+              urgency — a deadline that never arrives, or a "was" price that was
+              never charged — is the thing that makes pricing copy untrustworthy,
+              and this is the screen where trust converts. If the price does go
+              up, this line is already true; if it never does, nobody was lied
+              to. */}
+          <span className="inline-block rounded-ch-chip bg-white px-3 py-1 text-ch-label font-bold tracking-[.1em] text-ch-green-deep uppercase">
+            Launch pricing
+          </span>
+          <h2 className="mt-2.5 font-ch-display text-ch-title font-extrabold tracking-[-.03em] text-ch-green-deep">
+            Searching is free. Watching is $2.50 a month, or $20 a year.
           </h2>
           <p className="mt-2 max-w-[58ch] text-ch-body leading-relaxed text-ch-green-deep">
             One subscription covers up to 10 watches at once, text and email alerts, and auto-cart
             on Recreation.gov. Cancel any time — and live search keeps working either way.
+          </p>
+          <p className="mt-2 max-w-[58ch] text-ch-meta leading-normal text-ch-green-deep">
+            This is introductory pricing while we&apos;re new, and it will go up as we add
+            campgrounds and states. Subscribe now and you keep the rate you signed up at for as
+            long as your subscription runs.
           </p>
           <div className="mt-4">
             <Pricing />

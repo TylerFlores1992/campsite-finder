@@ -24,10 +24,18 @@ import { formatRange, nightsBetween, type ISODate } from "@/components/ui/date";
  * what lets a tapped SMS link work with no login, and every op is scoped server
  * side to the token's own watch.
  *
- * The old page's campsite-mute list is deliberately NOT rebuilt from the
- * availability endpoint here. That fetch enumerates every site in the
- * campground on load, and the useful subset — sites you've actually been
- * alerted about — is what /api/manage already returns.
+ * MUTING ANY CAMPSITE, not just ones you've been alerted about. An earlier
+ * version of this screen only listed sites from the alert history, on the theory
+ * that those were the useful subset. That's backwards for the case that
+ * actually matters: you know the site by the road is noisy BEFORE it opens, and
+ * waiting to be alerted about it first means being woken up by exactly the site
+ * you wanted to avoid. The full inventory is loaded from the availability
+ * endpoint (same call the old page made), with the alerted sites merged in and
+ * shown first — and a filter, since a big campground runs to hundreds of sites.
+ *
+ * Best-effort: providers other than rec.gov / ReserveCalifornia may not
+ * enumerate. When the list comes back empty we fall back to the alerted sites,
+ * so the screen degrades to what it did before rather than to nothing.
  */
 
 interface Watch {
@@ -60,16 +68,78 @@ interface Site {
   muted: boolean;
 }
 
+/** A row in the mute list: every site we can enumerate, plus the alerted ones. */
+interface SiteRow {
+  id: string;
+  name: string | null;
+  loop: string | null;
+  /** True when this site has actually alerted — those sort first. */
+  alerted: boolean;
+}
+
 export default function ManageWatch({ token }: { token: string }) {
   const [watch, setWatch] = useState<Watch | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [sites, setSites] = useState<Site[]>([]);
+  // Alerted sites aren't held in state: they're only ever the seed for the full
+  // inventory below, and keeping a second list around invites the two drifting.
+  const [allSites, setAllSites] = useState<SiteRow[] | null>(null);
+  const [siteFilter, setSiteFilter] = useState("");
   const [muted, setMuted] = useState<ReadonlySet<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
+
+  /**
+   * The campground's full campsite inventory, so a site can be muted before it
+   * ever alerts. Same endpoint the old manage page used.
+   */
+  const loadAllSites = useCallback(async (w: Watch, alerted: Site[]) => {
+    const seed: SiteRow[] = alerted.map((s) => ({
+      id: s.id,
+      name: s.name,
+      loop: null,
+      alerted: true,
+    }));
+    try {
+      const month = w.start_date.slice(0, 10).slice(0, 7);
+      const r = await fetch(
+        `/api/campgrounds/${encodeURIComponent(w.campground_id)}/availability?month=${month}`,
+      );
+      if (!r.ok) {
+        setAllSites(seed);
+        return;
+      }
+      const a = (await r.json()) as {
+        campsites?: Array<{ campsiteId: string; campsiteName: string | null; loop: string | null }>;
+      };
+      const alertedIds = new Set(seed.map((s) => s.id));
+      const rows: SiteRow[] = (a.campsites ?? []).map((cs) => ({
+        id: cs.campsiteId,
+        name: cs.campsiteName,
+        loop: cs.loop,
+        alerted: alertedIds.has(cs.campsiteId),
+      }));
+      if (rows.length === 0) {
+        setAllSites(seed);
+        return;
+      }
+      // Anything alerted or muted that isn't in this month's inventory still
+      // needs a row — otherwise a muted site becomes impossible to unmute.
+      const ids = new Set(rows.map((r2) => r2.id));
+      for (const s of seed) if (!ids.has(s.id)) rows.push(s);
+      rows.sort(
+        (x, y) =>
+          Number(y.alerted) - Number(x.alerted) ||
+          (x.loop ?? "").localeCompare(y.loop ?? "") ||
+          (x.name ?? x.id).localeCompare(y.name ?? y.id, undefined, { numeric: true }),
+      );
+      setAllSites(rows);
+    } catch {
+      setAllSites(seed);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -85,14 +155,14 @@ export default function ManageWatch({ token }: { token: string }) {
       const d = (await r.json()) as { watch: Watch; alerts: Alert[]; sites: Site[] };
       setWatch(d.watch);
       setAlerts(d.alerts ?? []);
-      setSites(d.sites ?? []);
       setMuted(new Set(d.watch.muted_site_ids ?? []));
+      void loadAllSites(d.watch, d.sites ?? []);
     } catch {
       setError("Could not load this watch.");
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, loadAllSites]);
 
   useEffect(() => {
     void load();
@@ -172,6 +242,17 @@ export default function ManageWatch({ token }: { token: string }) {
 
   if (!watch) return null;
 
+  // Muted sites always stay visible regardless of the filter — a muted site you
+  // can't find is a muted site you can't unmute.
+  const q = siteFilter.trim().toLowerCase();
+  const visibleSites = (allSites ?? []).filter(
+    (s) =>
+      !q ||
+      muted.has(s.id) ||
+      (s.name ?? s.id).toLowerCase().includes(q) ||
+      (s.loop ?? "").toLowerCase().includes(q),
+  );
+
   const start = watch.start_date.slice(0, 10) as ISODate;
   const end = watch.end_date.slice(0, 10) as ISODate;
   const flex = watch.flex_nights != null;
@@ -247,39 +328,77 @@ export default function ManageWatch({ token }: { token: string }) {
         </p>
       )}
 
-      {sites.length > 0 && (
+      {(allSites === null || allSites.length > 0 || muted.size > 0) && (
         <div className="mt-4">
           <Collapsible
-            label="Sites you've been alerted about"
-            summary={muted.size ? `${muted.size} muted` : `${sites.length}`}
+            label="Mute individual campsites"
+            summary={muted.size ? `${muted.size} muted` : allSites ? `${allSites.length}` : "…"}
           >
             <p className="pb-2 text-ch-fine leading-normal text-ch-muted">
-              Mute a site to stop hearing about it — the site by the road, the one you
-              already tried. The watch keeps running for everything else.
+              Mute a site to stop hearing about it — the one by the road, the one with no shade,
+              the one you already tried. The watch keeps running for every other site.
             </p>
-            <ul>
-              {sites.map((s) => {
-                const isMuted = muted.has(s.id);
-                return (
-                  <li
-                    key={s.id}
-                    className="flex items-center gap-2.5 border-b border-ch-line py-2.5 last:border-b-0"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-ch-body font-bold">
-                      {s.name ?? s.id}
-                    </span>
-                    <Button
-                      variant="quiet"
-                      size="sm"
-                      disabled={busy === (isMuted ? "unmute" : "mute") + s.id}
-                      onClick={() => void act(isMuted ? "unmute" : "mute", s.id)}
-                    >
-                      {isMuted ? "Unmute" : "Mute"}
-                    </Button>
-                  </li>
-                );
-              })}
-            </ul>
+
+            {allSites === null ? (
+              <div className="h-16 animate-pulse rounded-ch-input bg-ch-shell motion-reduce:animate-none" />
+            ) : allSites.length === 0 ? (
+              <p className="text-ch-fine text-ch-muted">
+                We can&apos;t list this campground&apos;s individual sites, so there&apos;s nothing
+                to mute yet. Sites you get alerted about will appear here.
+              </p>
+            ) : (
+              <>
+                {/* A big campground runs to hundreds of sites, and scrolling a
+                    list that long to find "B14" is worse than not having it. */}
+                {allSites.length > 12 && (
+                  <input
+                    type="search"
+                    value={siteFilter}
+                    onChange={(e) => setSiteFilter(e.target.value)}
+                    placeholder={`Filter ${allSites.length} sites — try a name or loop`}
+                    aria-label="Filter campsites"
+                    className="mb-2 w-full rounded-ch-input border border-ch-line bg-ch-card px-3 py-2 text-ch-body text-ch-ink placeholder:text-ch-faint focus-visible:border-ch-green focus-visible:outline-none"
+                  />
+                )}
+                <ul className="max-h-[320px] overflow-y-auto">
+                  {visibleSites.map((s) => {
+                    const isMuted = muted.has(s.id);
+                    return (
+                      <li
+                        key={s.id}
+                        className="flex items-center gap-2.5 border-b border-ch-line py-2 last:border-b-0"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-ch-body font-bold">
+                            {s.name ?? s.id}
+                          </span>
+                          {(s.loop || s.alerted) && (
+                            <span className="mt-0.5 block text-ch-fine text-ch-muted">
+                              {[s.loop, s.alerted ? "alerted before" : null]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </span>
+                          )}
+                        </span>
+                        <Button
+                          variant={isMuted ? "warn" : "quiet"}
+                          size="sm"
+                          disabled={busy === (isMuted ? "unmute" : "mute") + s.id}
+                          onClick={() => void act(isMuted ? "unmute" : "mute", s.id)}
+                        >
+                          {isMuted ? "Muted" : "Mute"}
+                        </Button>
+                      </li>
+                    );
+                  })}
+                  {visibleSites.length === 0 && (
+                    <li className="py-3 text-ch-fine text-ch-muted">
+                      {`No site matches "${siteFilter}".`}
+                    </li>
+                  )}
+                </ul>
+              </>
+            )}
           </Collapsible>
         </div>
       )}
