@@ -22,6 +22,18 @@ export function SignedIn() {
 export function SignedOut({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
-export function UserButton() {
+export function UserButton({ children }: { children?: ReactNode }) {
+  return <span data-clerk-userbutton>{children}</span>;
+}
+UserButton.MenuItems = function MenuItems({ children }: { children?: ReactNode }) {
+  return <>{children}</>;
+};
+UserButton.Action = function Action(_: { label?: string; labelIcon?: ReactNode; onClick?: () => void }) {
   return null;
+};
+export function SignInButton({ children }: { children?: ReactNode; mode?: string }) {
+  return <>{children}</>;
+}
+export function SignUpButton({ children }: { children?: ReactNode; mode?: string }) {
+  return <>{children}</>;
 }

@@ -10,6 +10,8 @@ import FilterPanel, { EMPTY_FILTERS, type FilterValue } from "@/components/ui/Fi
 import NightsPicker from "@/components/ui/NightsPicker";
 import ResultCard from "./ResultCard";
 import { addDays, todayISO, type ISODate } from "@/components/ui/date";
+import { deviceCoords, hitLabel, ipCoords, searchLocations, type LocationHit } from "./geo";
+import { LocateFixed, MapPin, Tent } from "lucide-react";
 import type { Campground } from "@/lib/types";
 
 /**
@@ -37,15 +39,6 @@ function thisWeekend(): DateRange {
   return { start, end: addDays(start, 2) };
 }
 
-interface Suggestion {
-  id: string;
-  name: string;
-  city: string | null;
-  state: string | null;
-  latitude: number;
-  longitude: number;
-}
-
 export default function AvailableNow() {
   // Read client-side via Clerk rather than from the server. The root layout must
   // stay free of request-time APIs under Cache Components — reading auth there
@@ -55,7 +48,8 @@ export default function AvailableNow() {
 
   const [place, setPlace] = useState("");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [suggestions, setSuggestions] = useState<LocationHit[]>([]);
+  const [locating, setLocating] = useState(false);
   const [radius, setRadius] = useState(50);
 
   const [when, setWhen] = useState<WhenPreset>("exact");
@@ -77,18 +71,37 @@ export default function AvailableNow() {
       setSuggestions([]);
       return;
     }
+    const ac = new AbortController();
     const t = setTimeout(async () => {
       try {
-        const r = await fetch(`/api/suggest?q=${encodeURIComponent(place.trim())}`);
-        if (!r.ok) return;
-        const j = (await r.json()) as { campgrounds: Suggestion[] };
-        setSuggestions(j.campgrounds ?? []);
+        setSuggestions(await searchLocations(place, ac.signal));
       } catch {
         /* suggestions are a convenience; failing quietly is correct */
       }
     }, 200);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      ac.abort();
+    };
   }, [place, coords]);
+
+  /** "Use my location" — device position, IP as a coarse fallback. */
+  const useMyLocation = useCallback(async () => {
+    setLocating(true);
+    setError(null);
+    try {
+      const found = (await deviceCoords()) ?? (await ipCoords());
+      if (!found) {
+        setError("We couldn't get your location. Type a place instead.");
+        return;
+      }
+      setCoords(found);
+      setPlace("My location");
+      setSuggestions([]);
+    } finally {
+      setLocating(false);
+    }
+  }, []);
 
   const choosePreset = (p: WhenPreset) => {
     setWhen(p);
@@ -176,7 +189,7 @@ export default function AvailableNow() {
       <div className="grid items-start gap-5 lg:grid-cols-[var(--ch-rail)_minmax(0,1fr)]">
         {/* ---------------- search rail ---------------- */}
         <form
-          className="rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-pop"
+          className="min-w-0 rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-pop"
           onSubmit={(e) => {
             e.preventDefault();
             void search();
@@ -185,35 +198,67 @@ export default function AvailableNow() {
           <label htmlFor="v2-where" className="mb-2 block text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
             Where
           </label>
-          <input
-            id="v2-where"
-            value={place}
-            onChange={(e) => {
-              setPlace(e.target.value);
-              setCoords(null); // typing invalidates the previously chosen point
-            }}
-            placeholder="City, park, or ZIP"
-            autoComplete="off"
-            className="w-full rounded-ch-input border border-ch-line bg-ch-card px-3.5 py-3 font-ch-display text-[14px] font-semibold text-ch-ink placeholder:text-ch-faint focus-visible:border-ch-green focus-visible:outline-none"
-          />
+          <div className="relative">
+            <input
+              id="v2-where"
+              value={place}
+              onChange={(e) => {
+                setPlace(e.target.value);
+                setCoords(null); // typing invalidates the previously chosen point
+              }}
+              placeholder="City, park, or ZIP"
+              autoComplete="off"
+              className="w-full rounded-ch-input border border-ch-line bg-ch-card py-3 pl-3.5 pr-11 font-ch-display text-[14px] font-semibold text-ch-ink placeholder:text-ch-faint focus-visible:border-ch-green focus-visible:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => void useMyLocation()}
+              disabled={locating}
+              title="Use my location"
+              aria-label="Use my location"
+              className="absolute inset-y-0 right-0 grid w-11 cursor-pointer place-items-center rounded-r-ch-input text-ch-muted hover:text-ch-green disabled:cursor-wait focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
+            >
+              <LocateFixed
+                aria-hidden="true"
+                className={locating ? "size-4 animate-pulse motion-reduce:animate-none" : "size-4"}
+              />
+            </button>
+          </div>
           {suggestions.length > 0 && (
             <ul className="mt-1 overflow-hidden rounded-ch-input border border-ch-line">
-              {suggestions.map((s) => (
-                <li key={s.id}>
+              {suggestions.map((hit) => (
+                <li key={`${hit.kind}-${hit.id}`}>
                   <button
                     type="button"
                     onClick={() => {
-                      // Suggestions match on name OR city, so the two are often
-                      // the same word ("Big Sur, Big Sur"). Only append the city
-                      // when it adds something.
-                      setPlace(s.city && s.city !== s.name ? `${s.name}, ${s.city}` : s.name);
-                      setCoords({ lat: s.latitude, lng: s.longitude });
+                      setPlace(hitLabel(hit));
+                      setCoords({ lat: hit.lat, lng: hit.lng });
                       setSuggestions([]);
                     }}
-                    className="w-full cursor-pointer border-b border-ch-line bg-ch-card px-3 py-2 text-left text-ch-body last:border-b-0 hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
+                    className="flex w-full cursor-pointer items-center gap-2.5 border-b border-ch-line bg-ch-card px-3 py-2 text-left text-ch-body last:border-b-0 hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
                   >
-                    <span className="font-semibold">{s.name}</span>
-                    {s.city && <span className="text-ch-muted"> · {s.city}{s.state ? `, ${s.state}` : ""}</span>}
+                    {/* The icon says which KIND of result this is — a campground
+                        you can watch, or a town to search around. Without it the
+                        two are indistinguishable in one flat list. */}
+                    {hit.kind === "campground" ? (
+                      <Tent aria-hidden="true" className="size-3.5 shrink-0 text-ch-green" />
+                    ) : (
+                      <MapPin aria-hidden="true" className="size-3.5 shrink-0 text-ch-muted" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="font-semibold">{hit.name}</span>
+                      {hit.kind === "campground" && hit.city && hit.city !== hit.name && (
+                        <span className="text-ch-muted">
+                          {" "}
+                          · {hit.city}
+                          {hit.state ? `, ${hit.state}` : ""}
+                        </span>
+                      )}
+                      {hit.kind === "place" && hit.name.includes(",") && null}
+                    </span>
+                    <span className="shrink-0 text-ch-fine text-ch-faint">
+                      {hit.kind === "campground" ? "campground" : "place"}
+                    </span>
                   </button>
                 </li>
               ))}
@@ -292,7 +337,7 @@ export default function AvailableNow() {
         </form>
 
         {/* ---------------- results ---------------- */}
-        <section aria-live="polite" aria-busy={loading}>
+        <section className="min-w-0" aria-live="polite" aria-busy={loading}>
           {results === null && !loading && (
             <div className="rounded-ch-card border border-dashed border-ch-line bg-white/60 p-8 text-center">
               <h2 className="font-ch-display text-[15px] font-bold">Where are you headed?</h2>

@@ -419,9 +419,15 @@ const PRESETS: Record<string, Preset> = {
       if (typeof window !== 'undefined') {
         window.fetch = async (url) => {
           const u = String(url);
+          if (u.includes('api.mapbox.com')) {
+            return { ok: true, json: async () => ({ features: [
+              { id: 'p1', place_name: 'Big Sur, California, United States', center: [-121.81, 36.27] },
+              { id: 'p2', place_name: 'Big Sur Station, California, United States', center: [-121.78, 36.25] },
+            ] }) };
+          }
           if (u.includes('/api/suggest')) {
             return { ok: true, json: async () => ({ campgrounds: [
-              { id: 'x', name: 'Big Sur', city: 'Big Sur', state: 'CA', latitude: 36.27, longitude: -121.81 },
+              { id: 'c1', name: 'Big Sur Campground', city: 'Big Sur', state: 'CA', latitude: 36.24, longitude: -121.78 },
             ] }) };
           }
           return { ok: true, json: async () => ({ campgrounds: CAMPGROUNDS, total: 2 }) };
@@ -435,12 +441,7 @@ const PRESETS: Record<string, Preset> = {
             el.dispatchEvent(new Event('input', { bubbles: true }));
           };
           const t1 = setTimeout(() => { const i = document.getElementById('v2-where'); if (i) setValue(i, 'Big Sur'); }, 200);
-          const t2 = setTimeout(() => { const s = document.querySelector('ul li button'); if (s) s.click(); }, 700);
-          const t3 = setTimeout(() => {
-            const b = Array.from(document.querySelectorAll('button')).find((x) => x.textContent.trim() === 'Search');
-            if (b) b.click();
-          }, 1000);
-          return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+          return () => { clearTimeout(t1); };
         }, []);
         return (
           <div className="flex min-h-full flex-col bg-ch-paper font-ch-body text-ch-ink">
