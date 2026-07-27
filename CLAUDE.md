@@ -85,23 +85,40 @@ all gated behind a 20-sample **honesty threshold** (numbers hidden until honest)
   surfaces at runtime. Smoke-test a real page after deploying (`curl -sI camphawk.app/`).
 
 ## Open / next session
-**Both "do these first" items are DONE (2026-07-27):** the admin link moved to the
-account menu, and the stock Tailwind overrides are deleted (see the two bullets in the
-rewrite section above). Neither was verified signed-in from the sandbox — **check the
-admin menu item appears for the owner, and eyeball the 13 repainted pages**
-(sign-in/sign-up/terms/privacy/sms-opt-in/auto-cart/`/w/<token>`/error/not-found).
 
-**Also unverified from this sandbox — click through signed in:** watch creation
-end-to-end, Stripe checkout from the new `Pricing`, the settings writes (phone save,
-auto-cart toggle), and the campsite mute list on `/manage/<token>`. Revert of the whole
-swap is `git revert a029c27` if something is badly wrong.
+### DO THIS THE MOMENT THE APP IS LIVE
+**Turn on store link-out:** set `NATIVE_LINKOUT = true` in
+`src/components/v2/nativeSubscribe.tsx`. It sends non-subscribers in the app to
+camphawk.app to subscribe, and it is built and wired into all five surfaces — just dark.
 
-**Known, not urgent:**
+**Precondition, non-negotiable:** app availability must first be restricted to the
+**United States** in App Store Connect **and** Play Console. Both stores' anti-steering
+carve-outs (Apple 3.1.1 post-*Epic* contempt ruling; Play post-Ninth-Circuit) are
+**US-storefront only**, and showing this UI to a non-US storefront is a review failure
+that can reportedly cost the entitlement. Device locale is NOT a storefront check.
+Full reasoning in `docs/CONTEXT.md` → store-billing, and in the file's own header.
+
+### Mobile app — everything below needs `npm install && npx cap sync` + a REBUILD
+Shipped 2026-07-27, all native-side, so **a web deploy does not deliver them**:
+launch URL now `/search` (not `/`, the only page with checkout) · Android back button
+(default was *exit the app from any screen*) · external links → system browser
+(`@capacitor/browser`, newly added) · push permission asked after a watch exists, not on
+first load · offline handling (`errorPath` shell + in-app banner).
+The **pricing fixes are already live** in installed apps — those were web-side.
+
+### Still unverified from the sandbox — click through signed in
+Watch creation end-to-end, Stripe checkout, the settings writes (phone save, auto-cart
+toggle), the campsite mute list on `/manage/<token>`, and the admin menu item for the
+owner. Revert of the whole swap is `git revert a029c27` if something is badly wrong.
+
+### Known, not urgent
 - **`campgrounds.photos` is `[]` on all 8,013 rows** — dead photo strip, no `og:image`,
   no JSON-LD `image`. Ingest bug; `image` is a strong signal for place entities.
 - **Feature E has data** (81k observations, 510 campgrounds) but the probe roster
-  clusters at 14–20 and 45–51 days out, so the **4–7 day bucket is empty** — the window
+  clusters at 14-20 and 45-51 days out, so the **4-7 day bucket is empty** - the window
   a "tonight/this weekend" searcher cares about. Broaden the roster's lead spread before
   turning `SHOW_LIKELIHOOD` on, or the ladder ships with holes.
-- **Search Console**: submitted, ~7,387 URLs. Expect "Discovered — currently not
+- **Costs tab**: six providers (Fly, Supabase, Clerk, Twilio, Mapbox, Mini PC) sit at
+  $0.00 and almost certainly aren't free, so net margin currently flatters.
+- **Search Console**: submitted, ~7,387 URLs. Expect "Discovered - currently not
   indexed" for weeks; that's the normal queue, not a fault.
