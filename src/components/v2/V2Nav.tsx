@@ -3,7 +3,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { CreditCard, Settings as SettingsIcon, ShieldCheck } from "lucide-react";
+import {
+  CreditCard,
+  Settings as SettingsIcon,
+  ShieldCheck,
+} from "lucide-react";
 import { useUser, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import { useIsNativeApp } from "@/lib/native/context";
 import { buttonClasses } from "@/components/ui/Button";
@@ -93,40 +97,55 @@ function AccountControl({ compact = false }: { compact?: boolean }) {
 
   if (isSignedIn) {
     return (
-      <UserButton appearance={{ elements: { avatarBox: "w-8 h-8" } }}>
-        <UserButton.MenuItems>
-          {/* Settings lives here rather than as a fourth tab: it's visited once
+      <>
+        {/* Admin sits IN the header, beside the avatar, rather than inside the
+            account menu. It's the one destination the owner opens constantly
+            and nobody else can see at all, so a click to open a menu first is
+            pure friction for the only person who uses it. Icon-only: it's a
+            personal shortcut, not something that needs explaining, and a label
+            would push the nav around on phones.
+            Only drawn for an admin, and only ever a link — /admin 404s for
+            anyone else, so this grants nothing. */}
+        {isAdmin && (
+          <Link
+            href="/admin"
+            aria-label="Admin dashboard"
+            title="Admin"
+            className={cx(
+              "grid size-8 shrink-0 place-items-center rounded-full transition-colors",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green",
+              compact
+                ? "bg-white/90 text-ch-ink-2 shadow-ch-card backdrop-blur hover:bg-white"
+                : "text-ch-muted hover:bg-ch-green-soft hover:text-ch-green-deep",
+            )}
+          >
+            <ShieldCheck aria-hidden="true" className="size-4" />
+          </Link>
+        )}
+        <UserButton appearance={{ elements: { avatarBox: "w-8 h-8" } }}>
+          <UserButton.MenuItems>
+            {/* Settings lives here rather than as a fourth tab: it's visited once
               at setup and rarely after, and the account menu is where people
               already look for it. */}
-          <UserButton.Action
-            label="Alerts & settings"
-            labelIcon={<SettingsIcon size={14} />}
-            onClick={() => router.push("/settings")}
-          />
-          {/* The ONLY route a subscriber has to the Stripe billing portal — i.e.
+            <UserButton.Action
+              label="Alerts & settings"
+              labelIcon={<SettingsIcon size={14} />}
+              onClick={() => router.push("/settings")}
+            />
+            {/* The ONLY route a subscriber has to the Stripe billing portal — i.e.
               the only way to cancel or update payment. Hidden in the native app,
               where surfacing billing would breach the store rules that keep
               Stripe on the web. */}
-          {!isNative && (
-            <UserButton.Action
-              label="Manage subscription"
-              labelIcon={<CreditCard size={14} />}
-              onClick={openBillingPortal}
-            />
-          )}
-          {/* Admin. Moved here from /settings 2026-07-27 — it's an account-level
-              destination, so it belongs beside the other two rather than as a
-              section of a page every user sees. Only drawn for an admin, and
-              only ever a link: /admin 404s for anyone else. */}
-          {isAdmin && (
-            <UserButton.Action
-              label="Admin"
-              labelIcon={<ShieldCheck size={14} />}
-              onClick={() => router.push("/admin")}
-            />
-          )}
-        </UserButton.MenuItems>
-      </UserButton>
+            {!isNative && (
+              <UserButton.Action
+                label="Manage subscription"
+                labelIcon={<CreditCard size={14} />}
+                onClick={openBillingPortal}
+              />
+            )}
+          </UserButton.MenuItems>
+        </UserButton>
+      </>
     );
   }
 
@@ -150,7 +169,12 @@ function AccountControl({ compact = false }: { compact?: boolean }) {
           by Tailwind's source order, not the order written — `hidden` lost. */}
       <span className="hidden sm:contents">
         <SignUpButton mode="redirect">
-          <button className={buttonClasses({ size: "sm", className: "whitespace-nowrap" })}>
+          <button
+            className={buttonClasses({
+              size: "sm",
+              className: "whitespace-nowrap",
+            })}
+          >
             Sign up
           </button>
         </SignUpButton>
@@ -208,7 +232,9 @@ export default function V2Nav() {
             alt="CampHawk — find your next adventure"
             className={cx(
               "size-full",
-              collapsed ? "object-cover object-bottom" : "object-contain object-center",
+              collapsed
+                ? "object-cover object-bottom"
+                : "object-contain object-center",
             )}
           />
           <div className="absolute right-3 top-3 flex items-center gap-2">

@@ -202,6 +202,18 @@ const PRESETS: Record<string, Preset> = {
       export const node = <div className="font-ch-body text-ch-ink"><TrustPanel /></div>;`,
     frame: 'max-w-md w-full mx-auto',
   },
+  'ch-nav-admin': {
+    label: 'Nav — admin shortcut beside the avatar (owner only)',
+    entry: `import V2Nav from '@/components/v2/V2Nav';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        window.fetch = async (url) => String(url).includes('/api/admin/status')
+          ? { ok: true, json: async () => ({ isAdmin: true }) }
+          : { ok: true, json: async () => ({}) };
+      }
+      export const node = <V2Nav />;`,
+    frame: 'w-full',
+  },
   'ch-home': {
     label: 'Marketing home (redesign) — signed out',
     entry: `import Home from '@/app/v2/page';
