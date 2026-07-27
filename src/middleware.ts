@@ -9,7 +9,7 @@ const isPublicRoute = createRouteMatcher([
   '/auto-cart',
   '/robots.txt',
   '/sitemap.xml',
-  // Redesign, dark-launched. Public for the same reason '/' is: Available now is
+  // Redesign, dark-launched. Public for the same reason '/' is: Explore is
   // the free funnel and must work signed-out. Clerk's auth.protect() 404s rather
   // than 401s, so an unlisted route here looks like a missing page, not a login.
   '/v2',

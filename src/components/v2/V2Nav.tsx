@@ -16,7 +16,7 @@ import BrandMark from "./BrandMark";
  * PHONES FOLLOW THE MOCKUP: header art that collapses on scroll, then a
  * full-width row of three equal tabs. The earlier build tried to fit the three
  * labels into the header line, which is what broke — as their own row each tab
- * gets a third of the width and "Available now" fits comfortably, so nothing has
+ * gets a third of the width and "Explore" fits comfortably, so nothing has
  * to be abbreviated or hidden.
  *
  * Desktop keeps the inline top row; there's ample width and no art to collapse.
@@ -28,7 +28,7 @@ import BrandMark from "./BrandMark";
 const LINKS = [
   { href: "/v2/watches", label: "Watches" },
   { href: "/v2/new", label: "New watch" },
-  { href: "/v2", label: "Available now" },
+  { href: "/v2", label: "Explore" },
 ] as const;
 
 /** Scroll past this and the header art shrinks to its wordmark strip. */
@@ -170,7 +170,7 @@ export default function V2Nav() {
                 aria-current={active ? "page" : undefined}
                 className={cx(
                   // nowrap + a smaller step under 360px: at 320 each tab gets
-                  // ~106px and "Available now" wraps to two lines at 12.5px,
+                  // ~106px and "Explore" wraps to two lines at 12.5px,
                   // which makes the row two rows and undoes the point of it.
                   "flex-1 border-b-[2.5px] px-1 pt-3 pb-2.5 text-center font-bold whitespace-nowrap",
                   "text-[11.5px] min-[360px]:text-[12.5px]",

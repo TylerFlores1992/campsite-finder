@@ -24,7 +24,7 @@ import {
 
 /**
  * Shared control: DatePicker — collapsed bar that opens a month grid.
- * One instance on Available now, one on New watch.
+ * One instance on Explore, one on New watch.
  *
  * CROSS-MONTH RANGES WORK, IN A SINGLE-MONTH VIEW. The range is two ISO dates
  * (see ./date.ts), so paging the calendar never touches the selection — the old

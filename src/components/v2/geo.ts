@@ -1,7 +1,7 @@
 /**
  * Location helpers for the redesign's search surfaces.
  *
- * Extracted so Available now and any future search share one implementation —
+ * Extracted so Explore and any future search share one implementation —
  * the current UI has this logic inline in SearchBar, which is exactly the kind
  * of thing that drifts once a second caller appears.
  */

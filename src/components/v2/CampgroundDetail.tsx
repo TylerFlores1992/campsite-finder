@@ -6,6 +6,7 @@ import { ChevronLeft } from "lucide-react";
 import Tag from "@/components/ui/Tag";
 import { buttonClasses } from "@/components/ui/Button";
 import AvailabilityGrid from "./AvailabilityGrid";
+import WatchCta from "./WatchCta";
 import { providerLabel, supportsAutoCart } from "./providers";
 import type { Campground } from "@/lib/types";
 
@@ -101,12 +102,17 @@ export default function CampgroundDetail({
           <h1 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em]">{name}</h1>
           {place && <p className="mt-1 text-ch-meta text-ch-muted">{place}</p>}
         </div>
-        <Link
-          href={{ pathname: "/v2/new", query: { campground: campgroundId } }}
-          className={buttonClasses({ className: "px-5" })}
-        >
-          Watch this campground
-        </Link>
+        {/* Same gate as the result cards — one component so a non-subscriber
+            can't reach the New watch screen from here while being stopped
+            everywhere else. */}
+        <WatchCta
+          campgroundId={campgroundId}
+          startDate={startDate}
+          endDate={endDate}
+          fullWidth={false}
+          className="px-5"
+          label="Watch this campground"
+        />
       </div>
 
       {/* Photo URLs come from the provider catalogs and DO rot — a dead one used

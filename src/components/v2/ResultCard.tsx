@@ -3,6 +3,8 @@ import Card from "@/components/ui/Card";
 import Tag from "@/components/ui/Tag";
 import { buttonClasses } from "@/components/ui/Button";
 import { providerLabel, supportsAutoCart } from "./providers";
+import { SHOW_LIKELIHOOD } from "./likelihood";
+import WatchCta from "./WatchCta";
 import type { Campground } from "@/lib/types";
 
 /**
@@ -67,9 +69,10 @@ export default function ResultCard({ campground, startDate, endDate }: ResultCar
           {[place, distance].filter(Boolean).join(" · ")}
         </p>
 
-        {/* Feature E headline. Absent unless enough history has accrued for the
-            number to be honest, so there's nothing to hide when it's missing. */}
-        {campground.likelihood && (
+        {/* Feature E headline, OFF until there's enough history to be worth
+            showing. The API still returns it and the markup is one flag away —
+            flip SHOW_LIKELIHOOD in ./likelihood.ts when the data is ready. */}
+        {SHOW_LIKELIHOOD && campground.likelihood && (
           <p className="mt-2 text-ch-fine text-ch-muted">
             Opens up on {Math.round(campground.likelihood.rate * 100)}% of checks{" "}
             {campground.likelihood.label}
@@ -77,13 +80,25 @@ export default function ResultCard({ campground, startDate, endDate }: ResultCar
         )}
       </div>
 
-      <div className="mt-3 border-t border-ch-line pt-3">
+      <div className="mt-3 grid gap-1.5 border-t border-ch-line pt-3">
         {/* A link, not a button — it navigates, so middle-click and
             open-in-new-tab have to work. buttonClasses keeps it visually
             identical to a real Button without duplicating the variant map. */}
         <Link href={href} className={buttonClasses({ variant: open ? "primary" : "quiet", fullWidth: true })}>
           {open ? "See what's open" : "See full calendar"}
         </Link>
+        {/* Booked is the moment the product exists for — offer the watch right
+            here rather than making the user find the New watch screen. Gated
+            identically everywhere by WatchCta. */}
+        {!open && (
+          <WatchCta
+            campgroundId={id}
+            startDate={startDate}
+            endDate={endDate}
+            variant="primary"
+            label="Start a watch"
+          />
+        )}
       </div>
     </Card>
   );

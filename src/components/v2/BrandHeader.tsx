@@ -1,5 +1,5 @@
 /**
- * Page hero for Available now.
+ * Page hero for Explore.
  *
  * TEXT ONLY, ON THE BACKDROP. This used to stretch app-header.jpg across a
  * full-bleed band, which was wrong twice over:

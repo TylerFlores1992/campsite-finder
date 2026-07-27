@@ -6,7 +6,7 @@ import Collapsible from "./Collapsible";
 import { cx } from "./cx";
 
 /**
- * Shared control: FilterPanel — one instance on Available now, one on New watch.
+ * Shared control: FilterPanel — one instance on Explore, one on New watch.
  *
  * SHAPE MIRRORS THE LEGACY FilterState ON PURPOSE (src/components/Filters.tsx)
  * so wiring this into the real search is a swap, not a translation layer.

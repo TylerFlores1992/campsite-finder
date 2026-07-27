@@ -20,7 +20,7 @@ import type { Campground } from "@/lib/types";
  * Result cards deep-link in with ?campground=, so arriving from a search still
  * skips straight past this step.
  *
- * Mounts the SAME DatePicker / NightsPicker / FilterPanel as Available now.
+ * Mounts the SAME DatePicker / NightsPicker / FilterPanel as Explore.
  * Build once, import twice — two drifting copies is how the current UI got here.
  */
 

@@ -16,7 +16,7 @@ import { LocateFixed, MapPin, Tent } from "lucide-react";
 import type { Campground } from "@/lib/types";
 
 /**
- * Available now — location + dates + filters, then live results.
+ * Explore — location + dates + filters, then live results.
  *
  * Talks to the EXISTING /api/search with the existing params. No data-layer
  * change: this is the same query the current UI issues, wearing the new controls.
@@ -48,7 +48,7 @@ function thisWeekend(): DateRange {
   return { start, end: addDays(start, 2) };
 }
 
-export default function AvailableNow() {
+export default function Explore() {
   // Read client-side via Clerk rather than from the server. The root layout must
   // stay free of request-time APIs under Cache Components — reading auth there
   // is what 500'd every page in July.
@@ -99,7 +99,7 @@ export default function AvailableNow() {
   }, [place, coords]);
 
   /** "Use my location" — device position, IP as a coarse fallback. */
-  const useMyLocation = useCallback(async () => {
+  const locateMe = useCallback(async () => {
     setLocating(true);
     setError(null);
     try {
@@ -127,17 +127,33 @@ export default function AvailableNow() {
   };
 
   const search = useCallback(async () => {
-    if (!coords) {
-      setError("Pick a place to search around.");
-      return;
-    }
     const id = ++requestId.current;
     setLoading(true);
     setError(null);
 
+    // Searching with nothing entered means "near me" — asking the user to type a
+    // place they're already standing in is a pointless gate. Device position
+    // first, IP as a coarse fallback; only if BOTH fail do we ask for input.
+    let origin = coords;
+    if (!origin) {
+      setLocating(true);
+      try {
+        origin = (await deviceCoords()) ?? (await ipCoords());
+      } finally {
+        setLocating(false);
+      }
+      if (!origin) {
+        setLoading(false);
+        setError("Type a place to search around — we couldn't get your location.");
+        return;
+      }
+      setCoords(origin);
+      if (!place.trim()) setPlace("Near me");
+    }
+
     const qs = new URLSearchParams({
-      lat: String(coords.lat),
-      lng: String(coords.lng),
+      lat: String(origin.lat),
+      lng: String(origin.lng),
       radius: String(radius),
     });
     if (range.start) qs.set("startDate", range.start);
@@ -163,7 +179,7 @@ export default function AvailableNow() {
       // same as the current UI does.
       const rows = filters.pets ? j.campgrounds.filter((c) => c.petsAllowed) : j.campgrounds;
       setResults(rows);
-      setSearchedAt(coords);
+      setSearchedAt(origin);
       setSelectedId(null);
     } catch (e) {
       if (id !== requestId.current) return;
@@ -171,11 +187,20 @@ export default function AvailableNow() {
     } finally {
       if (id === requestId.current) setLoading(false);
     }
-  }, [coords, radius, range, when, flexNights, filters]);
+  }, [coords, place, radius, range, when, flexNights, filters]);
 
   // Must agree with ResultCard: with no dates the API never checked availability,
   // so claiming "N with openings" in the heading while every card stays silent
   // about it is the same wrong answer twice, phrased two different ways.
+  // Selected-first ordering for the map hoist. Stable otherwise, so the list
+  // doesn't reshuffle for any other reason.
+  const orderedResults = (() => {
+    if (!results || !selectedId) return results;
+    const picked = results.find((c) => c.id === selectedId);
+    if (!picked) return results;
+    return [picked, ...results.filter((c) => c.id !== selectedId)];
+  })();
+
   const datesChosen = Boolean(range.start && range.end);
   const openCount = datesChosen
     ? (results?.filter((c) => c.hasAvailability === true).length ?? 0)
@@ -227,7 +252,7 @@ export default function AvailableNow() {
             />
             <button
               type="button"
-              onClick={() => void useMyLocation()}
+              onClick={() => void locateMe()}
               disabled={locating}
               title="Use my location"
               aria-label="Use my location"
@@ -383,14 +408,11 @@ export default function AvailableNow() {
                   center={searchedAt}
                   radiusMiles={radius}
                   selectedId={selectedId}
-                  onSelect={(id) => {
-                    setSelectedId(id);
-                    // Bring the card into view — tapping a pin should answer
-                    // "what is this?", and the card is where the answer lives.
-                    document
-                      .getElementById(`result-${id}`)
-                      ?.scrollIntoView({ behavior: "smooth", block: "center" });
-                  }}
+                  // Selecting a pin moves that campground to the FRONT of the
+                  // list rather than scrolling the page down to it. Scrolling
+                  // pushed the map off-screen, so the next pin you wanted was
+                  // gone; hoisting keeps the map and the answer together.
+                  onSelect={setSelectedId}
                   datesChosen={datesChosen}
                   className="mb-3 h-[300px] sm:h-[360px]"
                 />
@@ -398,7 +420,7 @@ export default function AvailableNow() {
 
               {results.length > 0 ? (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  {results.map((c) => (
+                  {orderedResults!.map((c) => (
                     <div
                       key={c.id}
                       id={`result-${c.id}`}

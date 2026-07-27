@@ -5,6 +5,7 @@ import Link from "next/link";
 import { buttonClasses } from "@/components/ui/Button";
 import Collapsible from "@/components/ui/Collapsible";
 import WatchCard, { type WatchCardWatch } from "./WatchCard";
+import WatchCta from "./WatchCta";
 import { providerLabel } from "./providers";
 
 /**
@@ -168,9 +169,7 @@ export default function WatchesList() {
             We check every 15 seconds, around the clock.
           </p>
         </div>
-        <Link href="/v2/new" className={buttonClasses({ size: "sm", className: "shrink-0" })}>
-          New watch
-        </Link>
+        <WatchCta fullWidth={false} className="shrink-0 text-ch-fine" label="New watch" />
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -222,7 +221,7 @@ function AccountWall() {
           Sign in
         </a>
         <Link href="/v2" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
-          Keep searching without an account
+          Keep exploring without an account
         </Link>
       </div>
     </div>
@@ -253,9 +252,7 @@ function FirstRun() {
           </li>
         ))}
       </ol>
-      <Link href="/v2/new" className={buttonClasses({ fullWidth: true, className: "mt-4" })}>
-        Create your first watch
-      </Link>
+      <WatchCta className="mt-4" label="Create your first watch" />
       <p className="mt-2 text-center text-ch-fine text-ch-muted">
         Most people start with the trip they already missed out on.
       </p>

@@ -4,6 +4,7 @@ import Card from "@/components/ui/Card";
 import Tag from "@/components/ui/Tag";
 import Button, { buttonClasses } from "@/components/ui/Button";
 import { providerLabel, supportsAutoCart } from "./providers";
+import { SHOW_LIKELIHOOD } from "./likelihood";
 import { formatRange, nightsBetween, type ISODate } from "@/components/ui/date";
 
 /**
@@ -137,11 +138,9 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
         </p>
         <p className="mt-0.5 text-ch-meta text-ch-muted">{spec}</p>
 
-        {/* Only ever shown when the number is both honest and useful. A rounded
-            0% reads as "this never opens", which is exactly the discouraging
-            misread that got feature E's UI paused — thin history looks like bad
-            news rather than no news. */}
-        {watch.likelihood && Math.round(watch.likelihood.rate * 100) >= 1 && (
+        {/* OFF until the history is deep enough to be worth showing. See
+            ./likelihood.ts — one flag turns every percentage back on. */}
+        {SHOW_LIKELIHOOD && watch.likelihood && (
           <p className="mt-1.5 text-ch-fine text-ch-muted">
             Opens up on {Math.round(watch.likelihood.rate * 100)}% of checks for dates this far out
           </p>
