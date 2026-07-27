@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Bell, Clock, MapPin, ShoppingCart, Zap } from "lucide-react";
 import { buttonClasses } from "@/components/ui/Button";
-import Pricing from "@/components/v2/Pricing";
+import PricingSection from "@/components/v2/PricingSection";
 import { COVERAGE, campgroundsRounded } from "@/lib/coverage";
 import { SITE_NAME, SITE_URL } from "@/lib/seo";
 
@@ -141,34 +141,12 @@ export default function V2HomePage() {
       </section>
 
       {/* -------------------------------------------------------- pricing */}
+      {/* The whole block, copy included, lives in a client component so the
+          native app gets a version with no price and no route to checkout. It
+          used to be inline here with only <Pricing/>'s buttons gated, which left
+          the app showing the price anyway. See PricingSection. */}
       <section className="mx-auto max-w-[var(--ch-max)] px-5 py-6">
-        <div className="rounded-ch-card border border-[#BFDDC9] bg-ch-green-soft p-5 sm:p-6">
-          {/* LAUNCH PRICING IS A PROMISE ABOUT THE FUTURE, so it says "while
-              we're new" rather than putting a countdown on it. Manufactured
-              urgency — a deadline that never arrives, or a "was" price that was
-              never charged — is the thing that makes pricing copy untrustworthy,
-              and this is the screen where trust converts. If the price does go
-              up, this line is already true; if it never does, nobody was lied
-              to. */}
-          <span className="inline-block rounded-ch-chip bg-white px-3 py-1 text-ch-label font-bold tracking-[.1em] text-ch-green-deep uppercase">
-            Launch pricing
-          </span>
-          <h2 className="mt-2.5 font-ch-display text-ch-title font-extrabold tracking-[-.03em] text-ch-green-deep">
-            Searching is free. Watching is $2.50 a month, or $20 a year.
-          </h2>
-          <p className="mt-2 max-w-[58ch] text-ch-body leading-relaxed text-ch-green-deep">
-            One subscription covers up to 10 watches at once, text and email alerts, and auto-cart
-            on Recreation.gov. Cancel any time — and live search keeps working either way.
-          </p>
-          <p className="mt-2 max-w-[58ch] text-ch-meta leading-normal text-ch-green-deep">
-            This is introductory pricing while we&apos;re new, and it will go up as we add
-            campgrounds and states. Subscribe now and you keep the rate you signed up at for as
-            long as your subscription runs.
-          </p>
-          <div className="mt-4">
-            <Pricing />
-          </div>
-        </div>
+        <PricingSection />
       </section>
 
       {/* ------------------------------------------------- honest limits */}

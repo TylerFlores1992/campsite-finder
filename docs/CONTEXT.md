@@ -847,12 +847,27 @@ steps (Firebase project `campapp-39c4b`).
   > delaying pricing for real web visitors, which is what a mounted-gate would cost.
   > `V2Nav`'s wordmark points at `/search` in native for the same reason (it was the
   > last route back onto `/`). Push deep-links are relative, so they're unaffected.
-- **Every price/checkout surface must be gated, not just the entry points.** `WatchCta`
-  gates the routes *into* watch creation, but the "needs a subscription" message on
-  `/new` is driven by the **server's answer to a submit**, so it renders however the user
-  reached the page — it shipped a price and a Stripe link into the app until 2026-07-27.
-  When adding any new copy that names a price, gate it on `useIsNativeApp()` and check
-  with `grep -rn '\$[0-9]\|/api/stripe' src/components/`.
+- **GATING THE CHECKOUT CONTROL IS NOT GATING THE PRICE.** Two real leaks, both found
+  2026-07-27 after the app was seen showing prices:
+  - **`/` (the marketing home).** `v2/Pricing.tsx` gated *itself* and swapped its buy
+    buttons for "manage at camphawk.app" — but the buttons were the only gated part. The
+    `$2.50 a month, or $20 a year` headline, the LAUNCH PRICING chip and the "keep the
+    rate you signed up at" line sat in the **server component around it**, ungated, so
+    the app rendered a complete pricing panel with the buttons quietly missing from the
+    bottom. Fixed by moving the whole block into **`v2/PricingSection.tsx`**, a client
+    component that gates the copy *and* the buttons. `/` stays statically rendered.
+  - **`/new`.** The "needs a subscription" message is driven by the **server's answer to
+    a submit**, so it renders however the user reached the page — `WatchCta` gating the
+    entry points didn't cover it.
+  What store review objects to is the **price and the steer to an outside purchase**, not
+  the button. Any new copy naming a figure goes inside a `useIsNativeApp()` check. Audit
+  with `grep -rn '\$[0-9]\|/api/stripe' src/components/ 'src/app/(app)/'` and confirm each
+  hit is behind a native branch.
+- **A UA-marker check is only as current as the installed binary.** `appendUserAgent` is
+  compiled into the app, so a build made before that config shipped detects as *web* and
+  every gate above silently fails. Diagnostic: if the app shows the **buy buttons**, not
+  just the price, the UA marker is missing and the binary needs rebuilding — gating
+  changes on the web won't reach it.
 - **Native UI / webview gotchas (from the first Android build, 2026-07-25):**
   - **Edge-to-edge (Android 15+/API 35+):** the webview draws behind the status bar/notch,
     so the header would land in the non-tappable strip. Fixed on the **web** side with CSS
