@@ -8,6 +8,8 @@ import DatePicker, { type DateRange } from "@/components/ui/DatePicker";
 import FilterPanel, { EMPTY_FILTERS, type FilterValue } from "@/components/ui/FilterPanel";
 import NightsPicker from "@/components/ui/NightsPicker";
 import TrustPanel from "./TrustPanel";
+import FavoriteHeart from "./FavoriteHeart";
+import { useFavorites } from "./useFavorites";
 import { providerLabel, supportsAutoCart } from "./providers";
 import { addDays, formatRange, nightsBetween, todayISO } from "@/components/ui/date";
 import type { Campground } from "@/lib/types";
@@ -31,6 +33,17 @@ interface Suggestion {
   state: string | null;
 }
 
+/** Does a favourite still match what's been typed? Name, town and state all
+    count — "Yosemite", "Groveland" and "CA" are all reasonable ways to reach
+    the same saved campground. */
+function matchesQuery(f: Suggestion, q: string): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  return [f.name, f.city, f.state]
+    .filter(Boolean)
+    .some((v) => v!.toLowerCase().includes(needle));
+}
+
 export interface NewWatchProps {
   /** Pre-selected campground id, from a result card or detail page. */
   initialCampgroundId?: string;
@@ -50,6 +63,10 @@ export default function NewWatch({
   const [campgroundSource, setCampgroundSource] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  // Favourites surface on focus and narrow as you type — see the picker below.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [favoriteRows, setFavoriteRows] = useState<Suggestion[]>([]);
+  const favorites = useFavorites();
 
   const [mode, setMode] = useState<"exact" | "flexible">("exact");
   const [range, setRange] = useState<DateRange>({
@@ -85,6 +102,26 @@ export default function NewWatch({
     };
   }, [campgroundId]);
 
+  // Favourite campgrounds, with names — the bare id list the heart uses can't
+  // populate a picker. details=1 is subscriber-gated, which is fine: this screen
+  // is already behind the same gate. A 403 just means no shortcut list.
+  useEffect(() => {
+    if (!favorites.canFavorite) return;
+    let cancelled = false;
+    fetch("/api/favorites?details=1")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { favorites?: Suggestion[] } | null) => {
+        if (cancelled || !j) return;
+        setFavoriteRows(j.favorites ?? []);
+      })
+      .catch(() => {
+        /* the search box still works without the shortcut */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [favorites.canFavorite]);
+
   useEffect(() => {
     if (q.trim().length < 2 || campgroundId) {
       setSuggestions([]);
@@ -102,6 +139,23 @@ export default function NewWatch({
     }, 200);
     return () => clearTimeout(t);
   }, [q, campgroundId]);
+
+  const pick = useCallback((s: Suggestion) => {
+    setCampgroundId(s.id);
+    setCampgroundName(s.name);
+    setQ(s.name);
+    setSuggestions([]);
+    setPickerOpen(false);
+  }, []);
+
+  // Favourites shown in the picker: everything while the box is empty, then
+  // narrowing as the query stops matching, until they drop away entirely and
+  // only live search hits remain. Once a campground is chosen there's nothing
+  // left to pick, so the list closes.
+  const favoriteIds = favorites.ids;
+  const visibleFavorites = campgroundId
+    ? []
+    : favoriteRows.filter((f) => favoriteIds.has(f.id) && matchesQuery(f, q));
 
   const submit = useCallback(async () => {
     if (!campgroundId) {
@@ -172,44 +226,103 @@ export default function NewWatch({
         <label htmlFor="nw-cg" className="mb-2 block text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
           Which campground
         </label>
-        <input
-          id="nw-cg"
-          value={q}
-          onChange={(e) => {
-            setQ(e.target.value);
-            setCampgroundId(null);
-            setCampgroundSource(null);
-          }}
-          placeholder="Search a campground by name"
-          autoComplete="off"
-          className="w-full rounded-ch-input border border-ch-line bg-ch-card px-3.5 py-3 font-ch-display text-[14.5px] font-semibold text-ch-ink placeholder:text-ch-faint focus-visible:border-ch-green focus-visible:outline-none"
-        />
-        {suggestions.length > 0 && (
-          <ul className="mt-1 overflow-hidden rounded-ch-input border border-ch-line">
-            {suggestions.map((s) => (
-              <li key={s.id}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCampgroundId(s.id);
-                    setCampgroundName(s.name);
-                    setQ(s.name);
-                    setSuggestions([]);
-                  }}
-                  className="w-full cursor-pointer border-b border-ch-line bg-ch-card px-3 py-2 text-left text-ch-body last:border-b-0 hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
-                >
-                  <span className="font-semibold">{s.name}</span>
-                  {s.city && (
-                    <span className="text-ch-muted">
-                      {" "}
-                      · {s.city}
-                      {s.state ? `, ${s.state}` : ""}
-                    </span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
+        <div className="relative">
+          <input
+            id="nw-cg"
+            value={q}
+            onFocus={() => setPickerOpen(true)}
+            // Closing on blur has to outlast the mousedown that picked a row,
+            // or the list disappears before the click lands. A frame is enough.
+            onBlur={() => setTimeout(() => setPickerOpen(false), 120)}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setPickerOpen(true);
+              setCampgroundId(null);
+              setCampgroundSource(null);
+            }}
+            placeholder="Search a campground by name"
+            autoComplete="off"
+            className={`w-full rounded-ch-input border border-ch-line bg-ch-card py-3 pl-3.5 font-ch-display text-[14.5px] font-semibold text-ch-ink placeholder:text-ch-faint focus-visible:border-ch-green focus-visible:outline-none ${
+              campgroundId && favorites.canFavorite ? "pr-11" : "pr-3.5"
+            }`}
+          />
+          {/* Heart on the chosen campground. Favouriting from here is what makes
+              the shortcut list above self-serving: watch it once, and next time
+              it's one click from an empty search box. */}
+          {campgroundId && favorites.canFavorite && (
+            <FavoriteHeart
+              favorite={favorites.isFavorite(campgroundId)}
+              onToggle={() => void favorites.toggle(campgroundId)}
+              campgroundName={campgroundName || undefined}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2"
+            />
+          )}
+        </div>
+
+        {pickerOpen && (visibleFavorites.length > 0 || suggestions.length > 0) && (
+          <div className="mt-1 overflow-hidden rounded-ch-input border border-ch-line">
+            {visibleFavorites.length > 0 && (
+              <>
+                <p className="border-b border-ch-line bg-ch-green-soft px-3 py-1.5 text-ch-label font-bold uppercase tracking-[.1em] text-ch-green-deep">
+                  Your favorites
+                </p>
+                <ul>
+                  {visibleFavorites.map((f) => (
+                    <li key={`fav-${f.id}`} className="flex items-center border-b border-ch-line last:border-b-0">
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => pick(f)}
+                        className="min-w-0 flex-1 cursor-pointer bg-ch-card px-3 py-2 text-left text-ch-body hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
+                      >
+                        <span className="font-semibold">{f.name}</span>
+                        {f.city && (
+                          <span className="text-ch-muted">
+                            {" "}
+                            · {f.city}
+                            {f.state ? `, ${f.state}` : ""}
+                          </span>
+                        )}
+                      </button>
+                      <FavoriteHeart
+                        favorite={favorites.isFavorite(f.id)}
+                        onToggle={() => void favorites.toggle(f.id)}
+                        campgroundName={f.name}
+                        className="mr-1.5 bg-ch-card"
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {/* Search hits, minus anything already listed as a favourite — the
+                same campground twice in one dropdown reads as a bug. */}
+            {suggestions.filter((s) => !favoriteIds.has(s.id)).length > 0 && (
+              <ul>
+                {suggestions
+                  .filter((s) => !favoriteIds.has(s.id))
+                  .map((s) => (
+                    <li key={s.id}>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => pick(s)}
+                        className="w-full cursor-pointer border-b border-ch-line bg-ch-card px-3 py-2 text-left text-ch-body last:border-b-0 hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
+                      >
+                        <span className="font-semibold">{s.name}</span>
+                        {s.city && (
+                          <span className="text-ch-muted">
+                            {" "}
+                            · {s.city}
+                            {s.state ? `, ${s.state}` : ""}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            )}
+          </div>
         )}
 
         <fieldset className="mt-5">

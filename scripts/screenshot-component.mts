@@ -88,6 +88,33 @@ const PRESETS: Record<string, Preset> = {
       export const node = <ManageWatch token="demo" />;`,
     frame: 'max-w-lg w-full mx-auto',
   },
+  'ch-favorites': {
+    label: 'New watch — favourites picker + hearts (signed in)',
+    // Signed-in, with a stubbed favourites list, and the search box focused so
+    // the picker is open. This is the whole interaction in one frame: saved
+    // campgrounds on focus, hearts filled, live hits below.
+    entry: `import NewWatch from '@/components/v2/NewWatch';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        const FAVS = [
+          { id: '1', name: 'Kirk Creek Campground', city: 'Big Sur', state: 'CA' },
+          { id: '2', name: 'Wrights Beach', city: 'Bodega Bay', state: 'CA' },
+          { id: '3', name: 'Point Reyes Hike-In', city: 'Point Reyes', state: 'CA' },
+        ];
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/api/favorites?details=1')) return { ok: true, status: 200, json: async () => ({ favorites: FAVS }) };
+          if (u.includes('/api/favorites')) return { ok: true, status: 200, json: async () => ({ favorites: FAVS.map((f) => f.id) }) };
+          if (u.includes('/api/suggest')) return { ok: true, status: 200, json: async () => ({ campgrounds: [
+            { id: '9', name: 'Kirkwood Lake', city: 'Kyburz', state: 'CA' },
+          ] }) };
+          return { ok: true, status: 200, json: async () => ({}) };
+        };
+        setTimeout(() => document.getElementById('nw-cg')?.focus(), 400);
+      }
+      export const node = <NewWatch />;`,
+    frame: 'max-w-2xl w-full mx-auto',
+  },
   'ch-primitives': {
     label: 'Redesign primitives (Button / Chip / Tag / Card / Collapsible)',
     // Every variant of every phase-2 primitive on one sheet, on the ch-paper

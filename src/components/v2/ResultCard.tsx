@@ -5,6 +5,7 @@ import { buttonClasses } from "@/components/ui/Button";
 import { providerLabel, supportsAutoCart } from "./providers";
 import { SHOW_LIKELIHOOD } from "./likelihood";
 import WatchCta from "./WatchCta";
+import FavoriteHeart from "./FavoriteHeart";
 import type { Campground } from "@/lib/types";
 
 /**
@@ -25,9 +26,20 @@ export interface ResultCardProps {
   /** Active search dates, forwarded so the detail page opens on the right month. */
   startDate?: string;
   endDate?: string;
+  /** Favourites are owned by the page, so one store backs every heart on it.
+      Omit onToggleFavorite (signed out) and no heart renders at all — better
+      than one that answers a click with a sign-in wall. */
+  favorite?: boolean;
+  onToggleFavorite?: () => void;
 }
 
-export default function ResultCard({ campground, startDate, endDate }: ResultCardProps) {
+export default function ResultCard({
+  campground,
+  startDate,
+  endDate,
+  favorite = false,
+  onToggleFavorite,
+}: ResultCardProps) {
   const { id, name, address, source, distanceMiles, hasAvailability } = campground;
 
   // With no dates, /api/search never checks availability — so every card would
@@ -62,9 +74,19 @@ export default function ResultCard({ campground, startDate, endDate }: ResultCar
           <Tag kind="src">{providerLabel(source, id)}</Tag>
         </div>
 
-        <h3 className="font-ch-display text-ch-park font-bold leading-tight tracking-[-.02em]">
-          {name}
-        </h3>
+        <div className="flex items-start gap-2">
+          <h3 className="min-w-0 flex-1 font-ch-display text-ch-park font-bold leading-tight tracking-[-.02em]">
+            {name}
+          </h3>
+          {onToggleFavorite && (
+            <FavoriteHeart
+              favorite={favorite}
+              onToggle={onToggleFavorite}
+              campgroundName={name}
+              className="-mr-1.5 -mt-1"
+            />
+          )}
+        </div>
         <p className="mt-0.5 text-ch-meta text-ch-muted">
           {[place, distance].filter(Boolean).join(" · ")}
         </p>

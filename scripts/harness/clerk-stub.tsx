@@ -3,15 +3,23 @@
  *
  * Components render outside ClerkProvider here, where the real hooks throw.
  * Defaults to SIGNED OUT because that's the state with extra UI to inspect —
- * guest banners, account walls — and a signed-in shot is the subset.
+ * guest banners, account walls — and a signed-in shot is the subset. Set
+ * `window.__CH_SIGNED_IN = true` in a preset entry to flip it, which is what
+ * signed-in-only UI (favourite hearts) needs to render at all.
  */
 import type { ReactNode } from "react";
 
+function signedIn(): boolean {
+  return typeof window !== "undefined" && Boolean((window as unknown as Record<string, unknown>).__CH_SIGNED_IN);
+}
+
 export function useAuth() {
-  return { isLoaded: true, isSignedIn: false, userId: null, signOut: async () => {} };
+  const on = signedIn();
+  return { isLoaded: true, isSignedIn: on, userId: on ? "user_demo" : null, signOut: async () => {} };
 }
 export function useUser() {
-  return { isLoaded: true, isSignedIn: false, user: null };
+  const on = signedIn();
+  return { isLoaded: true, isSignedIn: on, user: on ? { id: "user_demo" } : null };
 }
 export function ClerkProvider({ children }: { children: ReactNode }) {
   return <>{children}</>;

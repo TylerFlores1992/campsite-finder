@@ -13,9 +13,10 @@ import type { Campground } from "@/lib/types";
  * is deliberate.
  *
  * PINS ENCODE AVAILABILITY, which is the only question the map is being asked.
- * Green = sites open, neutral = booked (never red — booked is the normal state,
- * and a map bleeding red would read as an error). Unknown stays neutral too,
- * because we genuinely don't know.
+ * Green = sites open, neutral = booked. Unknown stays neutral too, because we
+ * genuinely don't know. Red is NOT an availability colour here — it marks the
+ * one pin you just clicked, and exactly one pin can hold it at a time, so a
+ * selection can never be mistaken for a field of errors.
  */
 export interface ResultsMapProps {
   campgrounds: Campground[];
@@ -30,6 +31,8 @@ export interface ResultsMapProps {
 
 const GREEN = "#1E7A4C";
 const NEUTRAL = "#8CA091";
+/** Selection only — see the note above. */
+const SELECTED = "#B4462F"; // --color-ch-alert
 
 export default function ResultsMap({
   campgrounds,
@@ -127,7 +130,9 @@ export default function ResultsMap({
         existing.set(cg.id, marker);
       }
       const el = marker.getElement();
-      el.style.background = open ? GREEN : NEUTRAL;
+      // Selection wins over the availability colour: the user asked "which one
+      // is this?", and answering that is worth one pin's worth of green.
+      el.style.background = selected ? SELECTED : open ? GREEN : NEUTRAL;
       el.style.transform = selected ? "rotate(-45deg) scale(1.25)" : "rotate(-45deg)";
       el.style.zIndex = selected ? "2" : "1";
     }
@@ -160,16 +165,24 @@ export default function ResultsMap({
     <div className={`relative overflow-hidden rounded-ch-card border border-ch-line ${className ?? ""}`}>
       <div ref={containerRef} className="size-full" />
 
-      {datesChosen && (
+      {(datesChosen || selectedId) && (
         <div className="pointer-events-none absolute bottom-2 left-2 flex gap-3 rounded-[9px] bg-white/92 px-2.5 py-1.5 text-ch-fine font-bold text-ch-muted backdrop-blur">
-          <span>
+          {datesChosen && (
+          <><span>
             <i className="mr-1.5 inline-block size-2.5 rounded-full align-[-1px]" style={{ background: GREEN }} />
             Sites open
           </span>
           <span>
             <i className="mr-1.5 inline-block size-2.5 rounded-full align-[-1px]" style={{ background: NEUTRAL }} />
             Booked
-          </span>
+          </span></>
+          )}
+          {selectedId && (
+            <span>
+              <i className="mr-1.5 inline-block size-2.5 rounded-full align-[-1px]" style={{ background: SELECTED }} />
+              Showing first
+            </span>
+          )}
         </div>
       )}
 

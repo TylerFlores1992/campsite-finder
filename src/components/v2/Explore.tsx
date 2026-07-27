@@ -9,6 +9,7 @@ import DatePicker, { type DateRange } from "@/components/ui/DatePicker";
 import FilterPanel, { EMPTY_FILTERS, type FilterValue } from "@/components/ui/FilterPanel";
 import NightsPicker from "@/components/ui/NightsPicker";
 import ResultCard from "./ResultCard";
+import { useFavorites } from "./useFavorites";
 import dynamic from "next/dynamic";
 import { addDays, todayISO, type ISODate } from "@/components/ui/date";
 import { deviceCoords, hitLabel, ipCoords, searchLocations, type LocationHit } from "./geo";
@@ -54,6 +55,8 @@ export default function Explore() {
   // is what 500'd every page in July.
   const { isLoaded, isSignedIn } = useAuth();
   const guest = isLoaded && !isSignedIn;
+  // One store for every heart on the page — see ./useFavorites.
+  const favorites = useFavorites();
 
   const [place, setPlace] = useState("");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -426,7 +429,9 @@ export default function Explore() {
                       id={`result-${c.id}`}
                       className={
                         selectedId === c.id
-                          ? "rounded-ch-card ring-2 ring-ch-green ring-offset-2 ring-offset-ch-paper"
+                          // Matches the selected pin, so "the red one on the map" and "the
+                          // one at the top of the list" are visibly the same campground.
+                          ? "rounded-ch-card ring-2 ring-ch-alert ring-offset-2 ring-offset-ch-paper"
                           : undefined
                       }
                     >
@@ -434,6 +439,10 @@ export default function Explore() {
                         campground={c}
                         startDate={range.start ?? undefined}
                         endDate={range.end ?? undefined}
+                        favorite={favorites.isFavorite(c.id)}
+                        onToggleFavorite={
+                          favorites.canFavorite ? () => void favorites.toggle(c.id) : undefined
+                        }
                       />
                     </div>
                   ))}
