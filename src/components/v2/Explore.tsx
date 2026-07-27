@@ -412,7 +412,7 @@ export default function Explore() {
             campground that&apos;s already booked.
           </p>
           <Link
-            href="/v2/watches"
+            href="/watches"
             className="mt-1.5 inline-block text-ch-body font-bold text-ch-green hover:text-ch-green-deep"
           >
             See what a watch does
@@ -716,7 +716,7 @@ export default function Explore() {
                   {/* A guest can't create a watch, so send them where the next
                       step actually is instead of into a 402 they can't read. */}
                   <Link
-                    href={guest ? "/sign-up" : "/v2/new"}
+                    href={guest ? "/sign-up" : "/new"}
                     className={buttonClasses({ className: "px-5" })}
                   >
                     {guest ? "Start 7-day free trial" : "Create a watch"}

@@ -207,7 +207,7 @@ export default function NewWatch({
         const j = (await r.json().catch(() => null)) as { message?: string; error?: string } | null;
         throw new Error(j?.message ?? j?.error ?? `Couldn't create the watch (${r.status})`);
       }
-      router.push("/v2/watches");
+      router.push("/watches");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't create the watch");
     } finally {

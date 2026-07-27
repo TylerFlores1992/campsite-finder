@@ -3,6 +3,7 @@ import WatchesList from "@/components/v2/WatchesList";
 
 export const metadata: Metadata = {
   title: "Your watches — CampHawk",
+  // Private to the account — nothing here is meaningful to a search engine.
   robots: { index: false, follow: false },
 };
 

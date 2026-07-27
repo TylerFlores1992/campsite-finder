@@ -218,7 +218,7 @@ export default function ManageWatch({ token }: { token: string }) {
         <p className="mt-1.5 text-ch-body text-ch-muted">
           We&apos;ve stopped checking, and you won&apos;t get any more alerts for it.
         </p>
-        <Link href="/v2/watches" className={buttonClasses({ className: "mt-4" })}>
+        <Link href="/watches" className={buttonClasses({ className: "mt-4" })}>
           Back to watches
         </Link>
       </div>
@@ -231,7 +231,7 @@ export default function ManageWatch({ token }: { token: string }) {
         <h1 className="font-ch-display text-ch-h font-bold">Can&apos;t open this watch</h1>
         <p className="mt-1.5 text-ch-body text-ch-muted">{error}</p>
         <Link
-          href="/v2/watches"
+          href="/watches"
           className={buttonClasses({ variant: "quiet", className: "mt-4" })}
         >
           Back to watches
@@ -265,7 +265,7 @@ export default function ManageWatch({ token }: { token: string }) {
   return (
     <div className="mx-auto max-w-[46rem] px-5 py-5">
       <Link
-        href="/v2/watches"
+        href="/watches"
         className="inline-flex items-center gap-1 pb-3 text-[13px] font-bold text-ch-green hover:text-ch-green-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green"
       >
         <ChevronLeft aria-hidden="true" className="size-3.5" />
@@ -296,7 +296,7 @@ export default function ManageWatch({ token }: { token: string }) {
 
         <div className="mt-4 flex flex-wrap gap-1.5 border-t border-ch-line pt-3">
           <Link
-            href={`/v2/campground/${encodeURIComponent(watch.campground_id)}?from=watches`}
+            href={`/campground/${encodeURIComponent(watch.campground_id)}?from=watches`}
             className={buttonClasses({ variant: "quiet", size: "sm" })}
           >
             Calendar

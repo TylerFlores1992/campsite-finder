@@ -26,9 +26,9 @@ import BrandMark from "./BrandMark";
  * campground" with nothing chosen.
  */
 const LINKS = [
-  { href: "/v2/watches", label: "Watches" },
-  { href: "/v2/new", label: "New watch" },
-  { href: "/v2/search", label: "Explore" },
+  { href: "/watches", label: "Watches" },
+  { href: "/new", label: "New watch" },
+  { href: "/search", label: "Explore" },
 ] as const;
 
 /** Scroll past this and the header art shrinks to its wordmark strip. */
@@ -64,7 +64,7 @@ function AccountControl({ compact = false }: { compact?: boolean }) {
           <UserButton.Action
             label="Alerts & settings"
             labelIcon={<SettingsIcon size={14} />}
-            onClick={() => router.push("/v2/settings")}
+            onClick={() => router.push("/settings")}
           />
           {/* The ONLY route a subscriber has to the Stripe billing portal — i.e.
               the only way to cancel or update payment. Hidden in the native app,
@@ -117,7 +117,7 @@ export default function V2Nav() {
   const isActive = (href: string) =>
     // /v2 is the marketing home, so it must match exactly — otherwise it would
     // light up as "active" on every page in the subtree.
-    href === "/v2" ? pathname === "/v2" : pathname.startsWith(href);
+    href === "/" ? pathname === "/" : pathname.startsWith(href);
 
   // Passive listener + a state change only on the transition, so scrolling
   // doesn't re-render on every frame.
@@ -203,7 +203,7 @@ export default function V2Nav() {
       <header className="sticky top-0 z-20 hidden border-b border-ch-line bg-ch-card/95 backdrop-blur sm:block">
         <div className="mx-auto flex max-w-[var(--ch-max)] items-center gap-6 px-5">
           <Link
-            href="/v2"
+            href="/"
             className="flex shrink-0 items-center gap-2 py-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green"
           >
             <BrandMark size={28} />

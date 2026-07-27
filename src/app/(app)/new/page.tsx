@@ -3,6 +3,7 @@ import NewWatch from "@/components/v2/NewWatch";
 
 export const metadata: Metadata = {
   title: "New watch — CampHawk",
+  // A form, behind a subscription. Nothing to index.
   robots: { index: false, follow: false },
 };
 

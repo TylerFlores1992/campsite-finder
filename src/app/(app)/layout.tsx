@@ -1,26 +1,21 @@
-import type { Metadata } from "next";
 import V2Nav from "@/components/v2/V2Nav";
 import BrandBackdrop from "@/components/v2/BrandBackdrop";
 
 /**
- * /v2 — the redesigned UI, dark-launched.
+ * Chrome for the app itself — nav, backdrop, footer.
  *
- * Nothing in the live app links here. The old routes are untouched, so users see
- * no change until the final swap moves these over the top of them. That swap is
- * one small, revertible commit; until then both UIs run side by side on master,
- * which is what the additive ch-* token layer was built to allow.
+ * A ROUTE GROUP, so it wraps /, /search, /watches, /new, /settings,
+ * /campground/<id> and /manage/<token> without adding a path segment. The pages
+ * that shouldn't carry app chrome stay outside it: /terms, /privacy, /connect,
+ * the Clerk routes, /admin and the token action pages.
  *
- * NOT indexed while it's a work in progress — two copies of the same content in
- * the index would compete with the real pages for ranking.
+ * The noindex that used to live here is GONE. It was what kept the dark launch
+ * out of Google; removing it is what makes the server-rendered campground
+ * pages, their per-page metadata and the JSON-LD actually count. If this file
+ * ever regains a robots block, all of that silently stops working.
  */
-export const metadata: Metadata = {
-  robots: { index: false, follow: false },
-};
-
-export default function V2Layout({ children }: { children: React.ReactNode }) {
+export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    // font-ch-body scopes the redesign typography to this subtree, so the live
-    // app keeps Inter/Sora while /v2 renders in Nunito Sans + Bitter.
     // No background colour here: BrandBackdrop is a fixed layer behind the page,
     // and an opaque wrapper paints straight over it — the artwork only showed in
     // the strip below the footer on short pages. The backdrop supplies the ground.

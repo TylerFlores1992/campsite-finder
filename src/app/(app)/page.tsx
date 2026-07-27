@@ -4,7 +4,7 @@ import { Bell, Clock, MapPin, ShoppingCart, Zap } from "lucide-react";
 import { buttonClasses } from "@/components/ui/Button";
 import Pricing from "@/components/v2/Pricing";
 import { COVERAGE, campgroundsRounded } from "@/lib/coverage";
-import { SITE_NAME } from "@/lib/seo";
+import { SITE_NAME, SITE_URL } from "@/lib/seo";
 
 /**
  * The marketing home — what `/` becomes at the route swap.
@@ -14,7 +14,7 @@ import { SITE_NAME } from "@/lib/seo";
  * live `/` does two jobs at once — it sells the product and it searches. Folding
  * both into Explore would have handed the search screen a sales pitch that
  * subscribers see forever, or dropped the pitch entirely and taken the funnel
- * with it. So they split: this sells, /v2/search searches, and the hero sends
+ * with it. So they split: this sells, /search searches, and the hero sends
  * people to the second one in one tap.
  *
  * SERVER-RENDERED, ON PURPOSE. This is the page Google indexes first and the
@@ -36,7 +36,7 @@ const description =
 export const metadata: Metadata = {
   title,
   description,
-  robots: { index: false, follow: false }, // dark-launched; lifts at the swap
+  alternates: { canonical: SITE_URL },
 };
 
 const FEATURES = [
@@ -75,11 +75,11 @@ export default function V2HomePage() {
         </p>
 
         <div className="mt-6 flex flex-wrap gap-2">
-          <Link href="/v2/search" className={buttonClasses({ size: "lg", className: "px-6" })}>
+          <Link href="/search" className={buttonClasses({ size: "lg", className: "px-6" })}>
             Search campgrounds free
           </Link>
           <Link
-            href="/v2/watches"
+            href="/watches"
             className={buttonClasses({ variant: "quiet", size: "lg", className: "px-6" })}
           >
             See what a watch does
@@ -201,7 +201,7 @@ export default function V2HomePage() {
       {/* ---------------------------------------------------------- close */}
       <section className="mx-auto max-w-[var(--ch-max)] px-5 pt-2 pb-10">
         <div className="flex flex-wrap items-center gap-3">
-          <Link href="/v2/search" className={buttonClasses({ size: "lg", className: "px-6" })}>
+          <Link href="/search" className={buttonClasses({ size: "lg", className: "px-6" })}>
             <Bell aria-hidden="true" className="size-4" />
             Find a campsite
           </Link>

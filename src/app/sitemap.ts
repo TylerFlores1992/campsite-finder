@@ -30,10 +30,10 @@ export const revalidate = 86400; // once a day; the catalog moves slowly
 const BASE = 'https://camphawk.app';
 
 /**
- * Campground URLs point at /campground/<id> — the LIVE route, not /v2. The
- * redesign is dark-launched and noindex; it takes over this exact path at the
- * route swap, so these URLs are correct before and after and nothing has to be
- * resubmitted. See lib/seo.ts, which builds the same canonical.
+ * Campground URLs point at /campground/<id>, which is now the redesigned,
+ * server-rendered page. They were written this way before the swap precisely so
+ * nothing would need resubmitting when it happened. See lib/seo.ts, which
+ * builds the same canonical.
  */
 async function campgroundEntries(): Promise<MetadataRoute.Sitemap> {
   const rows = await query<{ id: string; last_synced_at: string | null }>(
@@ -73,6 +73,7 @@ async function stateEntries(): Promise<MetadataRoute.Sitemap> {
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticPages: MetadataRoute.Sitemap = [
     { url: BASE, changeFrequency: 'daily', priority: 1 },
+    { url: `${BASE}/search`, changeFrequency: 'daily', priority: 0.9 },
     { url: `${BASE}/terms`, changeFrequency: 'yearly', priority: 0.3 },
     { url: `${BASE}/privacy`, changeFrequency: 'yearly', priority: 0.3 },
   ];

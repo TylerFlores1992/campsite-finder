@@ -66,7 +66,7 @@ export default function WatchCta({
     return (
       <Link
         href={{
-          pathname: "/v2/new",
+          pathname: "/new",
           query: {
             ...(campgroundId ? { campground: campgroundId } : {}),
             ...(startDate ? { start: startDate } : {}),

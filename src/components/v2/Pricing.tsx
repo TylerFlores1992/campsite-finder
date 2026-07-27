@@ -62,10 +62,10 @@ export default function Pricing() {
   if (subscribed) {
     return (
       <div className="flex flex-wrap gap-2">
-        <a href="/v2/search" className={buttonClasses({ className: "px-5" })}>
+        <a href="/search" className={buttonClasses({ className: "px-5" })}>
           Start searching
         </a>
-        <a href="/v2/new" className={buttonClasses({ variant: "quiet", className: "px-5" })}>
+        <a href="/new" className={buttonClasses({ variant: "quiet", className: "px-5" })}>
           Create a watch
         </a>
       </div>

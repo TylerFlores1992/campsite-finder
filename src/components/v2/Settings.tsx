@@ -23,7 +23,7 @@ import AutoCartSettings from "./AutoCartSettings";
  * section talks to an endpoint that already existed.
  */
 export interface SettingsProps {
-  /** Decided on the server — see the note in app/v2/settings/page.tsx. This is
+  /** Decided on the server — see the note in app/settings/page.tsx. This is
       a boolean, never the allowlist, and it only draws a link: /admin does its
       own server-side check and 404s anyone else. */
   isAdmin?: boolean;
@@ -61,7 +61,7 @@ export default function Settings({ isAdmin = false }: SettingsProps) {
           <a href="/sign-in" className={buttonClasses({ fullWidth: true })}>
             Sign in
           </a>
-          <Link href="/v2/search" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
+          <Link href="/search" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
             Back to Explore
           </Link>
         </div>

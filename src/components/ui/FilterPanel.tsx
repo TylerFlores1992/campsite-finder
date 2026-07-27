@@ -8,7 +8,7 @@ import { cx } from "./cx";
 /**
  * Shared control: FilterPanel — one instance on Explore, one on New watch.
  *
- * SHAPE MIRRORS THE LEGACY FilterState ON PURPOSE (src/components/Filters.tsx)
+ * SHAPE MIRRORS THE FilterState THE SEARCH API EXPECTS
  * so wiring this into the real search is a swap, not a translation layer.
  *
  * TAXONOMY IS WHAT THE BACKEND ACTUALLY SUPPORTS, which differs from the handoff

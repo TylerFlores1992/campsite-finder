@@ -59,7 +59,7 @@ export default function ResultCard({
     typeof distanceMiles === "number" ? `${Math.round(distanceMiles)} mi away` : null;
 
   const href = {
-    pathname: `/v2/campground/${encodeURIComponent(id)}`,
+    pathname: `/campground/${encodeURIComponent(id)}`,
     query: {
       ...(startDate ? { start: startDate } : {}),
       ...(endDate ? { end: endDate } : {}),

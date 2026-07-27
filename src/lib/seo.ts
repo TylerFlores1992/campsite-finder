@@ -121,7 +121,7 @@ export function campgroundDescription(c: Campground): string {
 /**
  * The canonical URL for a campground.
  *
- * /campground/<id> — NOT /v2/campground/<id>. The redesign is dark-launched at
+ * /campground/<id> — NOT /campground/<id>. The redesign is dark-launched at
  * /v2 and noindex; when it swaps over the live routes the content lands here,
  * on this URL. Pointing the canonical at the final address now means the swap
  * doesn't move a single indexed page.

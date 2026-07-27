@@ -4,8 +4,10 @@ import BrandHeader from "@/components/v2/BrandHeader";
 import { COVERAGE, campgroundsRounded } from "@/lib/coverage";
 
 export const metadata: Metadata = {
-  title: "Explore — CampHawk",
-  robots: { index: false, follow: false },
+  title: "Search campgrounds by date — live availability | CampHawk",
+  description:
+    "Search real-time campsite availability near any city or park. See what's open tonight, this weekend, or any nights that suit you. Free, no account needed.",
+  alternates: { canonical: "https://camphawk.app/search" },
 };
 
 /**

@@ -14,7 +14,7 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
         {n}
       </span>
       <div>
-        <p className="font-display font-semibold text-gray-900">{title}</p>
+        <p className="font-ch-display font-semibold text-gray-900">{title}</p>
         <div className="mt-1 text-sm text-gray-600 leading-relaxed">{children}</div>
       </div>
     </li>
@@ -33,7 +33,7 @@ export default function AutoCartHelpPage() {
 
       <main className="max-w-2xl mx-auto px-4 py-8 space-y-8">
         <div>
-          <h1 className="font-display text-3xl font-extrabold text-green-800">
+          <h1 className="font-ch-display text-3xl font-extrabold text-green-800">
             ⚡ Auto-cart — how it works
           </h1>
           <p className="mt-2 text-gray-600 leading-relaxed">
@@ -45,7 +45,7 @@ export default function AutoCartHelpPage() {
         </div>
 
         <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <h2 className="font-display font-semibold text-gray-800 mb-3">What you need first</h2>
+          <h2 className="font-ch-display font-semibold text-gray-800 mb-3">What you need first</h2>
           <ul className="space-y-2 text-sm text-gray-600">
             <li>✅ A{' '}<strong>CampHawk account</strong>{' '}with at least one watch set up.</li>
             <li>✅ A{' '}<strong>recreation.gov account</strong> (the site you actually book on).</li>
@@ -54,7 +54,7 @@ export default function AutoCartHelpPage() {
         </section>
 
         <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <h2 className="font-display font-semibold text-gray-800 mb-4">Set it up (one time)</h2>
+          <h2 className="font-ch-display font-semibold text-gray-800 mb-4">Set it up (one time)</h2>
           <ol className="space-y-5">
             <Step n={1} title="Set your watches">
               Search for a campground, pick your dates, and tap{' '}<strong>Notify me</strong>{' '}on any
@@ -79,7 +79,7 @@ export default function AutoCartHelpPage() {
         </section>
 
         <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <h2 className="font-display font-semibold text-gray-800 mb-3">Good to know</h2>
+          <h2 className="font-ch-display font-semibold text-gray-800 mb-3">Good to know</h2>
           <ul className="space-y-2 text-sm text-gray-600">
             <li>
               <strong>Finish on your phone.</strong>{' '}The cart is tied to your recreation.gov
@@ -108,7 +108,7 @@ export default function AutoCartHelpPage() {
         <div className="text-center">
           <Link
             href="/"
-            className="inline-block px-6 py-3 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-display font-semibold shadow-md transition-colors"
+            className="inline-block px-6 py-3 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-ch-display font-semibold shadow-md transition-colors"
           >
             Go set up a watch →
           </Link>

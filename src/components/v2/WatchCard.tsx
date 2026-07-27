@@ -183,14 +183,14 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
           // from=watches so the detail page's back link says "Back to watches"
           // and returns there — landing on Explore is disorienting when you
           // never came from a search.
-          href={`/v2/campground/${encodeURIComponent(watch.campground_id)}?from=watches`}
+          href={`/campground/${encodeURIComponent(watch.campground_id)}?from=watches`}
           className={buttonClasses({ variant: "quiet", size: "sm", className: "flex-1" })}
         >
           Calendar
         </a>
         {watch.manage_token ? (
           <Link
-            href={`/v2/manage/${watch.manage_token}`}
+            href={`/manage/${watch.manage_token}`}
             className={buttonClasses({ variant: "quiet", size: "sm", className: "flex-1" })}
           >
             Manage

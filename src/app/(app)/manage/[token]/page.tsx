@@ -1,8 +1,13 @@
 import type { Metadata } from "next";
 import ManageWatch from "@/components/v2/ManageWatch";
 
+/**
+ * NEVER INDEXED, and this is the one place it genuinely matters: the URL
+ * contains the magic-link token that authorises managing the watch. A token in
+ * the index is a token anyone can use.
+ */
 export const metadata: Metadata = {
-  robots: { index: false, follow: false },
+  robots: { index: false, follow: false, nocache: true },
 };
 
 /**

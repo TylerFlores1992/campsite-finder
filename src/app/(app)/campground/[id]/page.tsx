@@ -87,8 +87,8 @@ export async function generateMetadata({
       description,
       ...(photo ? { images: [photo] } : {}),
     },
-    // robots is inherited from the /v2 layout, which is noindex while the
-    // redesign is dark-launched. Everything above goes live when that flips.
+    // Indexable. The layout no longer carries a robots block — removing it is
+    // what makes this page, its per-campground metadata and its JSON-LD count.
   };
 }
 
@@ -115,7 +115,7 @@ export default async function V2CampgroundPage({
   // anyone can edit, and a raw pass-through would turn this link into an open
   // redirect. Only the query survives, always onto /v2.
   const backTo =
-    from === "watches" ? "/v2/watches" : back ? `/v2/search?${stripLeading(back)}` : "/v2/search";
+    from === "watches" ? "/watches" : back ? `/search?${stripLeading(back)}` : "/search";
   const backLabel = from === "watches" ? "Back to watches" : "Back to search";
 
   // Does this campground's state have a landing page? Three states don't clear

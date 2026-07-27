@@ -9,11 +9,18 @@ const isPublicRoute = createRouteMatcher([
   '/auto-cart',
   '/robots.txt',
   '/sitemap.xml',
-  // Redesign, dark-launched. Public for the same reason '/' is: Explore is
-  // the free funnel and must work signed-out. Clerk's auth.protect() 404s rather
-  // than 401s, so an unlisted route here looks like a missing page, not a login.
-  '/v2',
-  '/v2/(.*)',
+  // The app's free surface. Search is the funnel and must work signed-out;
+  // /watches and /settings render their own account wall rather than 404ing,
+  // which is what Clerk's auth.protect() would do (404, not 401).
+  //
+  // /new is listed too, deliberately. Clerk's auth.protect() would bounce a
+  // signed-out visitor before the page rendered, and the New watch screen
+  // handles its own 401 with a message that KEEPS the campground, dates and
+  // filters already entered. Letting middleware intercept would throw that away.
+  '/search',
+  '/watches',
+  '/settings',
+  '/new',
   '/campground/(.*)',
   // State landing pages — public by definition, they exist for search traffic.
   '/camping',

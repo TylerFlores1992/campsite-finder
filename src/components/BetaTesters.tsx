@@ -79,7 +79,7 @@ export default function BetaTesters() {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
       <div className="flex items-baseline justify-between mb-4">
-        <h2 className="font-display font-semibold text-gray-800">Beta testers</h2>
+        <h2 className="font-ch-display font-semibold text-gray-800">Beta testers</h2>
         <span className="text-sm text-gray-500">{testers.length} on the list</span>
       </div>
 

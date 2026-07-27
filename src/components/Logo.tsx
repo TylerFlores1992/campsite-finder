@@ -95,7 +95,7 @@ export default function Logo({ markSize = 34, mono = false, className }: LogoPro
         draggable={false}
       />
       <span
-        className="font-serif font-semibold tracking-tight leading-none"
+        className="font-ch-display font-semibold tracking-tight leading-none"
       >
         <span className={mono ? '' : 'text-green-800'}>Camp</span>
         <span className={mono ? '' : 'text-[#4a3423]'}>Hawk</span>

@@ -6,11 +6,8 @@ import type { Campground } from "@/lib/types";
 /**
  * Map of search results.
  *
- * A SEPARATE COMPONENT FROM src/components/Map.tsx rather than a restyle of it.
- * That one is rendered by the live UI, and repainting its markers in the ch-*
- * palette would change what current users see — the whole point of the dark
- * launch. It dies with the old UI at the route swap; until then the duplication
- * is deliberate.
+ * Built fresh rather than restyling the old Map component, which existed only
+ * so the dark launch couldn't change what live users saw. That one is gone now.
  *
  * PINS ENCODE AVAILABILITY, which is the only question the map is being asked.
  * Green = sites open, neutral = booked. Unknown stays neutral too, because we

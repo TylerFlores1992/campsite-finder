@@ -189,7 +189,7 @@ export default function WatchesList() {
             number and we&apos;ll send both.
           </p>
           <Link
-            href="/v2/settings"
+            href="/settings"
             className="mt-1.5 inline-block text-ch-body font-bold text-ch-green hover:text-ch-green-deep"
           >
             Turn on text alerts
@@ -257,7 +257,7 @@ function AccountWall() {
         <a href="/sign-in" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
           Sign in
         </a>
-        <Link href="/v2/search" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
+        <Link href="/search" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
           Keep exploring without an account
         </Link>
       </div>

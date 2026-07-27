@@ -45,7 +45,7 @@ export default function CampgroundDetail({
   initialCampground,
   startDate,
   endDate,
-  backHref = "/v2/search",
+  backHref = "/search",
   backLabel = "Back to search",
   breadcrumb,
 }: CampgroundDetailProps) {

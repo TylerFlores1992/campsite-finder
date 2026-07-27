@@ -4,6 +4,7 @@ import { currentUserIsAdmin } from "@/lib/admin";
 
 export const metadata: Metadata = {
   title: "Settings — CampHawk",
+  // Private to the account.
   robots: { index: false, follow: false },
 };
 
