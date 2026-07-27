@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import AvailableNow from "@/components/v2/AvailableNow";
+import BrandHeader from "@/components/v2/BrandHeader";
 import { COVERAGE, campgroundsRounded } from "@/lib/coverage";
 
 export const metadata: Metadata = {
@@ -20,18 +21,10 @@ export const metadata: Metadata = {
 export default function V2AvailableNowPage() {
   return (
     <>
-      <section className="border-b border-ch-line bg-[#24382A]">
-        <div className="mx-auto max-w-[var(--ch-max)] px-5 py-12">
-          <h1 className="max-w-[18ch] font-ch-display text-[clamp(26px,5vw,var(--text-ch-hero))] font-extrabold leading-[1.08] tracking-[-.035em] text-white">
-            Find a campsite that&apos;s open tonight
-          </h1>
-          <p className="mt-3 max-w-[52ch] text-[14.5px] text-white/90">
-            Live availability across {campgroundsRounded()} campgrounds — every Recreation.gov
-            site in all {COVERAGE.states} states, plus state parks in {COVERAGE.stateParkStates}.
-            Free, no account needed.
-          </p>
-        </div>
-      </section>
+      <BrandHeader
+        title="Find a campsite that's open tonight"
+        subtitle={`Live availability across ${campgroundsRounded()} campgrounds — every Recreation.gov site in all ${COVERAGE.states} states, plus state parks in ${COVERAGE.stateParkStates}. Free, no account needed.`}
+      />
 
       <AvailableNow />
     </>

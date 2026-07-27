@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import V2Nav from "@/components/v2/V2Nav";
+import BrandBackdrop from "@/components/v2/BrandBackdrop";
 
 /**
  * /v2 — the redesigned UI, dark-launched.
@@ -21,6 +22,7 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
     // font-ch-body scopes the redesign typography to this subtree, so the live
     // app keeps Inter/Sora while /v2 renders in Nunito Sans + Bitter.
     <div className="flex min-h-full flex-col bg-ch-paper font-ch-body text-ch-ink">
+      <BrandBackdrop />
       <V2Nav />
       <main className="flex-1">{children}</main>
       {/* Clears the fixed phone tab bar so the footer and the last card aren't
