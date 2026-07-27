@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { currentUser } from '@clerk/nextjs/server';
 import { query, mutate } from '@/lib/db/client';
-import { COST_CATEGORIES, type CostItem } from '@/lib/costs';
+import { BILLING_PERIODS, COST_CATEGORIES, type CostItem } from '@/lib/costs';
 import { isAdminEmail } from '@/lib/admin';
 
 export const dynamic = 'force-dynamic';
@@ -18,7 +18,7 @@ const notFound = () => NextResponse.json({ error: 'not found' }, { status: 404 }
 
 async function listItems(): Promise<CostItem[]> {
   return query<CostItem>(
-    `SELECT id, label, category, monthly_cents, notes, sort_order
+    `SELECT id, label, category, amount_cents, billing_period, notes, sort_order
        FROM cost_items ORDER BY sort_order, label`
   );
 }
@@ -37,28 +37,30 @@ export async function POST(req: NextRequest) {
   if (!label) return NextResponse.json({ error: 'label required' }, { status: 400 });
 
   const category = COST_CATEGORIES.includes(body.category) ? body.category : 'other';
-  const cents = Math.max(0, Math.round(Number(body.monthly_cents) || 0));
+  // amount_cents is the billed amount, NOT a monthly figure — see lib/costs.ts.
+  const cents = Math.max(0, Math.round(Number(body.amount_cents) || 0));
+  const period = BILLING_PERIODS.includes(body.billing_period) ? body.billing_period : 'monthly';
   const notes = typeof body.notes === 'string' ? body.notes.trim() : null;
   const sortOrder = Math.round(Number(body.sort_order) || 0);
 
   if (body.id) {
     const [row] = await mutate<CostItem>(
       `UPDATE cost_items
-          SET label = $1, category = $2, monthly_cents = $3, notes = $4,
-              sort_order = $5, updated_at = NOW()
-        WHERE id = $6
-        RETURNING id, label, category, monthly_cents, notes, sort_order`,
-      [label, category, cents, notes, sortOrder, body.id]
+          SET label = $1, category = $2, amount_cents = $3, billing_period = $4,
+              notes = $5, sort_order = $6, updated_at = NOW()
+        WHERE id = $7
+        RETURNING id, label, category, amount_cents, billing_period, notes, sort_order`,
+      [label, category, cents, period, notes, sortOrder, body.id]
     );
     if (!row) return NextResponse.json({ error: 'not found' }, { status: 404 });
     return NextResponse.json({ item: row });
   }
 
   const [row] = await mutate<CostItem>(
-    `INSERT INTO cost_items (label, category, monthly_cents, notes, sort_order)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, label, category, monthly_cents, notes, sort_order`,
-    [label, category, cents, notes, sortOrder]
+    `INSERT INTO cost_items (label, category, amount_cents, billing_period, notes, sort_order)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, label, category, amount_cents, billing_period, notes, sort_order`,
+    [label, category, cents, period, notes, sortOrder]
   );
   return NextResponse.json({ item: row });
 }

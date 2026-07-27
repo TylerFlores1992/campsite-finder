@@ -110,6 +110,31 @@ const PRESETS: Record<string, Preset> = {
       export const node = <Explore />;`,
     frame: 'w-full',
   },
+  'ch-costs': {
+    label: 'Admin Costs tab — edit/remove + yearly line items',
+    entry: `import CostsPanel from '@/components/admin/CostsPanel';
+      const items = [
+        { id: '1', label: 'Vercel', category: 'hosting', amount_cents: 2000, billing_period: 'monthly', notes: 'Website hosting / deploys', sort_order: 10 },
+        { id: '2', label: 'Fly.io worker', category: 'hosting', amount_cents: 574, billing_period: 'monthly', notes: 'Always-on poller', sort_order: 20 },
+        { id: '3', label: 'Domain (camphawk.app)', category: 'other', amount_cents: 1800, billing_period: 'yearly', notes: 'Renews annually', sort_order: 30 },
+        { id: '4', label: 'Twilio number', category: 'comms', amount_cents: 115, billing_period: 'monthly', notes: 'A2P phone number', sort_order: 40 },
+      ];
+      export const node = <div className="font-ch-body text-ch-ink"><CostsPanel initialItems={items} usage={{ sms: 311, email: 4200, push: 900 }} mrrCents={24150} monthLabel="Jul 2026" /></div>;`,
+    frame: 'w-full',
+  },
+  'ch-costs-edit': {
+    label: 'Admin Costs tab — a row in edit mode',
+    entry: `import CostsPanel from '@/components/admin/CostsPanel';
+      const items = [
+        { id: '1', label: 'Vercel', category: 'hosting', amount_cents: 2000, billing_period: 'monthly', notes: 'Website hosting / deploys', sort_order: 10 },
+        { id: '3', label: 'Domain (camphawk.app)', category: 'other', amount_cents: 1800, billing_period: 'yearly', notes: 'Renews annually', sort_order: 30 },
+      ];
+      if (typeof window !== 'undefined') {
+        setTimeout(() => document.querySelector('[aria-label^="Edit Domain"]')?.click(), 350);
+      }
+      export const node = <div className="font-ch-body text-ch-ink"><CostsPanel initialItems={items} usage={{ sms: 0, email: 0, push: 0 }} mrrCents={24150} monthLabel="Jul 2026" /></div>;`,
+    frame: 'w-full',
+  },
   'ch-admin': {
     label: 'Admin dashboard (redesign) — healthy state',
     entry: `import AdminTabs from '@/components/admin/AdminTabs';

@@ -10,13 +10,42 @@ export type CostCategory = 'hosting' | 'data' | 'auth' | 'comms' | 'other';
 
 export const COST_CATEGORIES: CostCategory[] = ['hosting', 'data', 'auth', 'comms', 'other'];
 
+export type BillingPeriod = 'monthly' | 'yearly';
+
+export const BILLING_PERIODS: BillingPeriod[] = ['monthly', 'yearly'];
+
 export interface CostItem {
   id: string;
   label: string;
   category: string;
-  monthly_cents: number;
+  /**
+   * The amount ON THE INVOICE, in cents — not normalised to a month. A yearly
+   * plan stores the yearly figure, so it can be checked against the bill.
+   * Divide with monthlyCents() for anything that sums or compares costs.
+   */
+  amount_cents: number;
+  billing_period: BillingPeriod;
   notes: string | null;
   sort_order: number;
+}
+
+/**
+ * A line item's cost per month.
+ *
+ * Everything that totals or compares costs MUST go through this. The column
+ * holds the billed amount, so summing it raw would count a $20/year domain as
+ * $20/month and overstate costs by 12x — silently, in the one figure (net
+ * margin) you'd act on.
+ */
+export function monthlyCents(item: Pick<CostItem, 'amount_cents' | 'billing_period'>): number {
+  const amount = item.amount_cents || 0;
+  return item.billing_period === 'yearly' ? Math.round(amount / 12) : amount;
+}
+
+/** Annualised, for the yearly view. */
+export function yearlyCents(item: Pick<CostItem, 'amount_cents' | 'billing_period'>): number {
+  const amount = item.amount_cents || 0;
+  return item.billing_period === 'yearly' ? amount : amount * 12;
 }
 
 // Per-unit usage rates in USD. Env-overridable so they can be tuned without a deploy.
@@ -54,8 +83,9 @@ export function usageTotalCents(counts: UsageCounts): number {
   return usageLines(counts).reduce((s, l) => s + l.costCents, 0);
 }
 
+/** Fixed costs per month, with yearly items divided down. */
 export function fixedTotalCents(items: CostItem[]): number {
-  return items.reduce((s, i) => s + (i.monthly_cents || 0), 0);
+  return items.reduce((s, i) => s + monthlyCents(i), 0);
 }
 
 /** Format a cent amount as USD, e.g. 1234 -> "$12.34", -4583 -> "-$45.83". */

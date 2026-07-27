@@ -1,13 +1,16 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Trash2, Check, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Pencil, Loader2 } from 'lucide-react';
 import {
+  BILLING_PERIODS,
   COST_CATEGORIES,
+  monthlyCents,
   fixedTotalCents,
   fmtUSD,
   usageLines,
   usageTotalCents,
+  type BillingPeriod,
   type CostItem,
   type UsageCounts,
 } from '@/lib/costs';
@@ -27,9 +30,15 @@ export default function CostsPanel({
 }) {
   const [items, setItems] = useState<CostItem[]>(initialItems);
   const [savingId, setSavingId] = useState<string | null>(null);
-  const [savedId, setSavedId] = useState<string | null>(null);
+  // One row at a time is editable. The previous version made every field an
+  // always-live input that auto-saved on blur, which meant a stray click could
+  // change a figure with no way to back out, and the delete button only appeared
+  // on :hover — invisible on a touch screen.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   const fixedCents = fixedTotalCents(items);
+  const yearlyItemCount = items.filter((i) => i.billing_period === 'yearly').length;
   const usageCents = usageTotalCents(usage);
   const totalCents = fixedCents + usageCents;
   const netCents = mrrCents == null ? null : mrrCents - totalCents;
@@ -47,8 +56,9 @@ export default function CostsPanel({
         body: JSON.stringify(row),
       });
       if (res.ok) {
-        setSavedId(row.id);
-        setTimeout(() => setSavedId((s) => (s === row.id ? null : s)), 1500);
+        const { item } = await res.json();
+        if (item) patchLocal(row.id, item);
+        setEditingId((cur) => (cur === row.id ? null : cur));
       }
     } finally {
       setSavingId((s) => (s === row.id ? null : s));
@@ -59,11 +69,18 @@ export default function CostsPanel({
     const res = await fetch('/api/admin/costs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label: 'New cost', category: 'other', monthly_cents: 0, sort_order: 999 }),
+      body: JSON.stringify({
+        label: 'New cost',
+        category: 'other',
+        amount_cents: 0,
+        billing_period: 'monthly',
+        sort_order: 999,
+      }),
     });
     if (res.ok) {
       const { item } = await res.json();
       setItems((prev) => [...prev, item]);
+      setEditingId(item.id);
     }
   }
 
@@ -91,101 +108,106 @@ export default function CostsPanel({
         />
       </div>
 
-      {/* Fixed line items — editable */}
+      {/* Fixed line items — read-only rows with explicit Edit / Remove */}
       <div className="rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-card">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-ch-display text-ch-h font-bold text-ch-ink">Fixed monthly costs</h3>
+        <div className="mb-1 flex items-center justify-between">
+          <h3 className="font-ch-display text-ch-h font-bold text-ch-ink">Fixed costs</h3>
           <button
             onClick={addRow}
-            className="inline-flex items-center gap-1.5 text-ch-body font-bold text-ch-green hover:text-ch-green-deep"
+            className="inline-flex cursor-pointer items-center gap-1.5 text-ch-body font-bold text-ch-green hover:text-ch-green-deep"
           >
             <Plus size={16} /> Add cost
           </button>
         </div>
+        <p className="mb-3 text-ch-fine text-ch-muted">
+          Enter the amount you&apos;re actually billed. Yearly plans are divided by 12 for the
+          monthly total, so what you type here matches the invoice.
+        </p>
 
         <div className="overflow-x-auto">
           <table className="w-full text-ch-body">
             <thead>
-              <tr className="text-left text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
-                <th className="pb-2 font-medium">Item</th>
-                <th className="pb-2 font-medium">Category</th>
-                <th className="pb-2 font-medium">Notes</th>
-                <th className="pb-2 font-medium text-right">$/month</th>
+              <tr className="text-left text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+                <th className="pb-2">Item</th>
+                <th className="pb-2">Category</th>
+                <th className="pb-2">Notes</th>
+                <th className="pb-2 text-right">Billed</th>
+                <th className="pb-2 text-right">Per month</th>
                 <th className="pb-2" />
               </tr>
             </thead>
             <tbody className="divide-y divide-ch-line">
-              {items.map((it) => (
-                <tr key={it.id} className="group">
-                  <td className="py-2 pr-3">
-                    <input
-                      value={it.label}
-                      onChange={(e) => patchLocal(it.id, { label: e.target.value })}
-                      onBlur={() => saveRow(it)}
-                      className="w-full min-w-[8rem] rounded-md border border-transparent hover:border-ch-line focus:border-ch-green focus:outline-none px-2 py-1 font-bold text-ch-ink"
-                    />
-                  </td>
-                  <td className="py-2 pr-3">
-                    <select
-                      value={it.category}
-                      onChange={(e) => {
-                        patchLocal(it.id, { category: e.target.value });
-                        saveRow({ ...it, category: e.target.value });
-                      }}
-                      className="rounded-md border border-ch-line focus:border-ch-green focus:outline-none px-2 py-1 text-ch-ink-2 bg-ch-card capitalize rounded-ch-input"
-                    >
-                      {COST_CATEGORIES.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="py-2 pr-3">
-                    <input
-                      value={it.notes ?? ''}
-                      onChange={(e) => patchLocal(it.id, { notes: e.target.value })}
-                      onBlur={() => saveRow(it)}
-                      placeholder="—"
-                      className="w-full min-w-[8rem] rounded-md border border-transparent hover:border-ch-line focus:border-ch-green focus:outline-none px-2 py-1 text-ch-muted"
-                    />
-                  </td>
-                  <td className="py-2 pr-2 text-right">
-                    <div className="inline-flex items-center gap-1">
-                      <span className="text-ch-muted">$</span>
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={(it.monthly_cents / 100).toString()}
-                        onChange={(e) =>
-                          patchLocal(it.id, { monthly_cents: Math.max(0, Math.round(Number(e.target.value) * 100)) })
-                        }
-                        onBlur={() => saveRow(it)}
-                        className="w-20 rounded-md border border-ch-line focus:border-ch-green focus:outline-none px-2 py-1 text-right text-ch-ink"
-                      />
-                    </div>
-                  </td>
-                  <td className="py-2 pl-1 w-10 text-right">
-                    {savingId === it.id ? (
-                      <Loader2 size={15} className="animate-spin text-ch-faint inline" />
-                    ) : savedId === it.id ? (
-                      <Check size={15} className="text-ch-green inline" />
-                    ) : (
-                      <button
-                        onClick={() => deleteRow(it.id)}
-                        className="text-ch-faint hover:text-ch-alert opacity-0 group-hover:opacity-100 transition"
-                        title="Delete"
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {items.map((it) =>
+                editingId === it.id ? (
+                  <EditRow
+                    key={it.id}
+                    item={it}
+                    saving={savingId === it.id}
+                    onCancel={() => setEditingId(null)}
+                    onSave={(patch: Partial<CostItem>) => void saveRow({ ...it, ...patch })}
+                  />
+                ) : (
+                  <tr key={it.id}>
+                    <td className="py-2 pr-3 font-bold text-ch-ink">{it.label}</td>
+                    <td className="py-2 pr-3 text-ch-ink-2 capitalize">{it.category}</td>
+                    <td className="py-2 pr-3 text-ch-muted">{it.notes || '—'}</td>
+                    <td className="py-2 pr-3 text-right whitespace-nowrap text-ch-ink-2">
+                      {fmtUSD(it.amount_cents)}
+                      <span className="text-ch-muted">
+                        {it.billing_period === 'yearly' ? ' / yr' : ' / mo'}
+                      </span>
+                    </td>
+                    {/* The derived figure, shown next to the billed one rather
+                        than instead of it — the point of the yearly option is
+                        being able to check a number against an invoice AND
+                        still see what it costs per month. */}
+                    <td className="py-2 pr-2 text-right font-bold whitespace-nowrap text-ch-ink">
+                      {fmtUSD(monthlyCents(it))}
+                    </td>
+                    <td className="w-[7.5rem] py-2 text-right">
+                      {confirmId === it.id ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <button
+                            onClick={() => void deleteRow(it.id)}
+                            className="cursor-pointer text-ch-fine font-bold text-ch-alert hover:underline"
+                          >
+                            Remove
+                          </button>
+                          <button
+                            onClick={() => setConfirmId(null)}
+                            className="cursor-pointer text-ch-fine text-ch-muted hover:underline"
+                          >
+                            Cancel
+                          </button>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5">
+                          <button
+                            onClick={() => {
+                              setConfirmId(null);
+                              setEditingId(it.id);
+                            }}
+                            aria-label={`Edit ${it.label}`}
+                            className="cursor-pointer rounded-ch-input p-1.5 text-ch-muted hover:bg-ch-green-soft hover:text-ch-green-deep"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            onClick={() => setConfirmId(it.id)}
+                            aria-label={`Remove ${it.label}`}
+                            className="cursor-pointer rounded-ch-input p-1.5 text-ch-muted hover:bg-ch-alert-soft hover:text-ch-alert"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              )}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="py-6 text-center text-ch-muted">
+                  <td colSpan={6} className="py-6 text-center text-ch-muted">
                     No cost items yet — add one.
                   </td>
                 </tr>
@@ -193,12 +215,23 @@ export default function CostsPanel({
             </tbody>
             <tfoot>
               <tr className="border-t border-ch-line">
-                <td colSpan={3} className="pt-3 font-bold text-ch-muted">
+                <td colSpan={4} className="pt-3 font-bold text-ch-muted">
                   Fixed subtotal
                 </td>
-                <td className="pt-3 text-right font-ch-display font-extrabold text-ch-ink">{fmtUSD(fixedCents)}</td>
+                <td className="pt-3 text-right font-ch-display font-extrabold text-ch-ink">
+                  {fmtUSD(fixedCents)}
+                </td>
                 <td />
               </tr>
+              {yearlyItemCount > 0 && (
+                <tr>
+                  <td colSpan={6} className="pt-1.5 text-ch-fine text-ch-muted">
+                    {`Includes ${yearlyItemCount} yearly ${
+                      yearlyItemCount === 1 ? 'item' : 'items'
+                    } divided by 12. Fixed costs are ${fmtUSD(fixedCents * 12)} a year.`}
+                  </td>
+                </tr>
+              )}
             </tfoot>
           </table>
         </div>
@@ -270,5 +303,133 @@ function SummaryCard({
       <p className={`mt-1 font-ch-display text-[24px] font-extrabold ${color}`}>{value}</p>
       {sub && <p className="mt-0.5 text-ch-fine text-ch-muted">{sub}</p>}
     </div>
+  );
+}
+
+
+/**
+ * One row, in edit mode.
+ *
+ * Local draft state, committed on Save — so an accidental keystroke or a change
+ * of mind costs nothing. The old panel wrote every keystroke's blur straight to
+ * the database with no way back.
+ */
+function EditRow({
+  item,
+  saving,
+  onSave,
+  onCancel,
+}: {
+  item: CostItem;
+  saving: boolean;
+  onSave: (patch: Partial<CostItem>) => void;
+  onCancel: () => void;
+}) {
+  const [label, setLabel] = useState(item.label);
+  const [category, setCategory] = useState(item.category);
+  const [notes, setNotes] = useState(item.notes ?? '');
+  const [period, setPeriod] = useState<BillingPeriod>(item.billing_period);
+  const [dollars, setDollars] = useState((item.amount_cents / 100).toString());
+
+  const cents = Math.max(0, Math.round(Number(dollars) * 100) || 0);
+  const perMonth = monthlyCents({ amount_cents: cents, billing_period: period });
+  // NO WIDTH IN HERE. Two width utilities on one element resolve by the order
+  // Tailwind emits them, not the order they're written — putting `w-full` in the
+  // shared string and `w-16` on the element is a coin flip, and it lost.
+  const field =
+    'rounded-ch-input border border-ch-line bg-ch-card px-2 py-1 text-ch-body text-ch-ink focus:border-ch-green focus:outline-none';
+
+  return (
+    <tr className="bg-ch-green-soft/40">
+      <td className="py-2 pr-3">
+        <input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          aria-label="Item name"
+          autoFocus
+          className={`${field} w-full min-w-0`}
+        />
+      </td>
+      <td className="py-2 pr-3">
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          aria-label="Category"
+          className={`${field} w-full capitalize`}
+        >
+          {COST_CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td className="py-2 pr-3">
+        <input
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="—"
+          aria-label="Notes"
+          className={`${field} w-full min-w-0`}
+        />
+      </td>
+      <td className="py-2 pr-3">
+        <div className="flex items-center justify-end gap-1">
+          <span className="text-ch-muted">$</span>
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={dollars}
+            onChange={(e) => setDollars(e.target.value)}
+            aria-label="Amount billed"
+            className={`${field} w-[4.5rem] text-right`}
+          />
+          <select
+            value={period}
+            onChange={(e) => setPeriod(e.target.value as BillingPeriod)}
+            aria-label="Billing period"
+            className={`${field} w-[4.75rem] shrink-0`}
+          >
+            {BILLING_PERIODS.map((p) => (
+              <option key={p} value={p}>
+                {p === 'yearly' ? '/ yr' : '/ mo'}
+              </option>
+            ))}
+          </select>
+        </div>
+      </td>
+      {/* Live, so you can see what a yearly figure works out to before saving. */}
+      <td className="py-2 pr-2 text-right font-bold whitespace-nowrap text-ch-ink">
+        {fmtUSD(perMonth)}
+      </td>
+      <td className="w-[7.5rem] py-2 text-right">
+        {/* Wraps rather than clipping: at a narrow width Cancel drops under Save
+            instead of disappearing off the edge of the card. */}
+        <span className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1">
+          <button
+            onClick={() =>
+              onSave({
+                label: label.trim() || item.label,
+                category,
+                notes: notes.trim() || null,
+                amount_cents: cents,
+                billing_period: period,
+              })
+            }
+            disabled={saving}
+            className="cursor-pointer rounded-ch-input bg-ch-green px-2.5 py-1 text-ch-fine font-bold text-white hover:bg-ch-green-deep disabled:opacity-60"
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : 'Save'}
+          </button>
+          <button
+            onClick={onCancel}
+            className="cursor-pointer text-ch-fine text-ch-muted hover:underline"
+          >
+            Cancel
+          </button>
+        </span>
+      </td>
+    </tr>
   );
 }

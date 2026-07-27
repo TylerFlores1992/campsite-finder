@@ -511,22 +511,26 @@ vars, and a setup-script field.
   copy) and nothing else. (3) set `ENABLE_OPS_TOOLS=1` so the hook
   installs flyctl + the Supabase CLI. The Supabase CLI comes from npm and installs
   fine; **flyctl does NOT** — see the next bullet.
-- **To render or screenshot a real PAGE (not just a component), you need Clerk keys.**
-  The root layout wraps everything in `ClerkProvider`, so without
-  `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` + `CLERK_SECRET_KEY` every page 500s with
-  "Missing publishableKey" — `next build` still succeeds, which makes this easy to
-  misdiagnose as a code fault. Two things learned the hard way (2026-07-27):
+- **Rendering a real PAGE (not just a component) needs Clerk keys — the CampHawk
+  environment now has them (added 2026-07-27).** `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
+  and `CLERK_SECRET_KEY` are set there, so `npm run build && npx next start` serves
+  the whole app and `curl localhost:3000/<route>` returns real HTML. That is the way
+  to check a full page from a web session; the component harness above is the
+  fallback, not the ceiling.
+
+  **What keys still do NOT give you: a signed-in session.** `/watches` and
+  `/settings` render their signed-out shells. Watch creation, Stripe checkout, the
+  phone save and the auto-cart toggle can't be exercised here — those need a human
+  clicking through the deploy.
+
+  In any environment WITHOUT the keys, every page 500s with "Missing publishableKey"
+  while `next build` still succeeds, which makes it easy to misdiagnose as a code
+  fault. Two things learned the hard way when that happened (2026-07-27):
   - **A dummy key does not work.** A syntactically valid `pk_test_<base64>` is still
     rejected; Clerk validates it for real. Use the actual **dev-instance** keys.
   - **`NEXT_PUBLIC_*` is inlined at BUILD time.** Setting it in the environment and
     running `next start` changes nothing — the old value is already baked into the
     bundle. You must **rebuild** after adding it.
-
-  With real keys in the env, `npm run build && npx next start` + `curl localhost:3000`
-  gives full-page HTML, which is the only way from a web session to verify
-  signed-in flows (watches, settings, auto-cart, checkout). Without them, the
-  component harness above is the ceiling — it renders screens in isolation with a
-  Clerk stub, but never the composed page or real data.
 
 - **Three web-session gotchas that cost real time (2026-07-22, shipping SC end-to-end).**
   Even with **Full** network, `ENABLE_OPS_TOOLS=1`, and `FLY_API_TOKEN` all set, the
