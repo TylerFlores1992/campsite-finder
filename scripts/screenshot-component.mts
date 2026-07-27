@@ -88,6 +88,36 @@ const PRESETS: Record<string, Preset> = {
       export const node = <ManageWatch token="demo" />;`,
     frame: 'max-w-lg w-full mx-auto',
   },
+  'ch-about': {
+    label: 'Campground About panel — real rec.gov HTML description',
+    // Verbatim description text from the catalog, tags and all. If richText
+    // regresses, the tags show up in this shot.
+    entry: `import { RichDescription } from '@/components/v2/richText';
+      const RAW = "<h2>Overview</h2> Silver Lake Campground is nestled between Silver Lake and the dramatic scenery of the Ansel Adams Wilderness.<h2>Recreation</h2> Rush Creek and 97-acre Silver Lake offer peaceful places for anglers. <br/><br/> The area's majestic scenery &amp; challenging trails are an obvious draw.<h2>Facilities</h2> The facility provides drinking water, flush toilets, picnic tables and bear-proof lockers. <br/><br/> A small store is within walking distance. <a href='http://www.nps.gov/yose/index.htm' rel='nofollow'>Yosemite National Park</a>";
+      export const node = (
+        <section className="rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-card font-ch-body text-ch-ink">
+          <h2 className="font-ch-display text-ch-h font-bold">About</h2>
+          <RichDescription text={RAW} className="mt-2 max-w-[70ch]" />
+        </section>
+      );`,
+    frame: 'max-w-2xl w-full mx-auto',
+  },
+  'ch-manage': {
+    label: 'Manage watch (redesign)',
+    entry: `import ManageWatch from '@/components/v2/ManageWatch';
+      if (typeof window !== 'undefined') {
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({
+          watch: { id: 'w1', campground_id: '233116', campground_name: 'Kirk Creek Campground', source: 'ridb', reservations_url: null, start_date: '2026-09-04', end_date: '2026-09-07', min_nights: 2, flex_nights: null, flex_days: null, site_type: null, active: true, auto_cart: true, muted_site_ids: ['A14'] },
+          alerts: [
+            { created_at: '2026-08-20T15:00:00Z', channel: 'sms', status: 'sent', site_name: 'Site A12' },
+            { created_at: '2026-08-18T09:00:00Z', channel: 'email', status: 'sent', site_name: 'Site A14' },
+          ],
+          sites: [ { id: 'A12', name: 'Site A12', muted: false }, { id: 'A14', name: 'Site A14', muted: true } ],
+        }) });
+      }
+      export const node = <ManageWatch token="demo" />;`,
+    frame: 'w-full',
+  },
   'ch-favorites': {
     label: 'New watch — favourites picker + hearts (signed in)',
     // Signed-in, with a stubbed favourites list, and the search box focused so

@@ -36,6 +36,13 @@ export async function manageUrlFor(watchId: string): Promise<string | null> {
   return t ? manageLink(t) : null;
 }
 
+/** The bare manage token. The redesign builds its own in-app path from this
+ *  rather than following manage_url, which points at the old /manage page —
+ *  a Manage button that drops you into the previous design is a dead end. */
+export async function manageTokenFor(watchId: string): Promise<string | null> {
+  return mintActionToken(watchId, 'manage');
+}
+
 /** Resolve a live `manage` token to its watch id (or null if invalid/expired). */
 export async function resolveManageToken(token: string): Promise<string | null> {
   const [row] = await query<{ watch_id: string }>(

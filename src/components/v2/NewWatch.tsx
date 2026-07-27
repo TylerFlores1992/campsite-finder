@@ -81,6 +81,7 @@ export default function NewWatch({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsSubscription, setNeedsSubscription] = useState(false);
+  const [signedOut, setSignedOut] = useState(false);
 
   // Resolve a pre-selected campground so the summary can name it.
   useEffect(() => {
@@ -169,6 +170,7 @@ export default function NewWatch({
     setSaving(true);
     setError(null);
     setNeedsSubscription(false);
+    setSignedOut(false);
 
     try {
       const r = await fetch("/api/watches", {
@@ -190,7 +192,11 @@ export default function NewWatch({
         return;
       }
       if (r.status === 401) {
-        window.location.href = "/sign-in";
+        // NOT a redirect. Hard-navigating to /sign-in threw away the campground,
+        // the dates and every filter the user had just set, and they came back
+        // to an empty form with no idea what happened. Say what's wrong and let
+        // them sign in from here — the form is still sitting there afterwards.
+        setSignedOut(true);
         return;
       }
       if (r.status === 409) {
@@ -455,6 +461,15 @@ export default function NewWatch({
             <a className="font-bold underline" href="/">
               Start the trial
             </a>
+          </p>
+        )}
+        {signedOut && (
+          <p role="alert" className="mt-2.5 text-ch-fine leading-normal text-ch-alert">
+            Your session expired before we could save this.{" "}
+            <a className="font-bold underline" href="/sign-in">
+              Sign in
+            </a>{" "}
+            and press Start watching again — nothing you&apos;ve entered is lost.
           </p>
         )}
         {error && (

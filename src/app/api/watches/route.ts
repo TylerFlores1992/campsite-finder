@@ -3,7 +3,7 @@ import { query, queryOne, mutate } from '@/lib/db/client';
 import { requireAuth, syncUser, hasActiveSubscription } from '@/lib/auth';
 import { createAlert, cancelAlert } from '@/lib/campflare/client';
 import { getOpeningRate } from '@/lib/likelihood';
-import { manageUrlFor } from '@/lib/notifications/actions';
+import { manageTokenFor, manageLink } from '@/lib/notifications/actions';
 import type { CampflareDateRange } from '@/lib/campflare/types';
 
 const DAY_MS = 86_400_000;
@@ -64,8 +64,15 @@ export async function GET(request: NextRequest) {
       }
       // Stable per-watch manage-page link for the panel's Manage button. Best-effort:
       // a mint hiccup just omits the button rather than breaking the list.
+      // manage_token is the same token, unwrapped, so the redesign can route to
+      // its own manage screen instead of the old page manage_url points at.
+      // Both are returned: manage_url is what the existing panel reads.
       try {
-        w.manage_url = await manageUrlFor(w.id as string);
+        const t = await manageTokenFor(w.id as string);
+        if (t) {
+          w.manage_token = t;
+          w.manage_url = manageLink(t);
+        }
       } catch {
         /* non-fatal */
       }

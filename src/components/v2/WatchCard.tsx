@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Tag from "@/components/ui/Tag";
 import Button, { buttonClasses } from "@/components/ui/Button";
@@ -44,6 +45,9 @@ export interface WatchCardWatch {
   muted_site_ids?: string[] | null;
   notification_sent_at?: string | null;
   manage_url?: string;
+  /** Bare manage token. manage_url points at the OLD /manage page; the redesign
+      routes to its own screen so Manage doesn't leave the new UI. */
+  manage_token?: string;
   likelihood?: { rate: number; samples: number };
 }
 
@@ -171,18 +175,21 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
 
       <div className="mt-3 flex gap-1.5 border-t border-ch-line pt-2.5">
         <a
-          href={`/v2/campground/${encodeURIComponent(watch.campground_id)}`}
+          // from=watches so the detail page's back link says "Back to watches"
+          // and returns there — landing on Explore is disorienting when you
+          // never came from a search.
+          href={`/v2/campground/${encodeURIComponent(watch.campground_id)}?from=watches`}
           className={buttonClasses({ variant: "quiet", size: "sm", className: "flex-1" })}
         >
           Calendar
         </a>
-        {watch.manage_url ? (
-          <a
-            href={watch.manage_url}
+        {watch.manage_token ? (
+          <Link
+            href={`/v2/manage/${watch.manage_token}`}
             className={buttonClasses({ variant: "quiet", size: "sm", className: "flex-1" })}
           >
             Manage
-          </a>
+          </Link>
         ) : (
           <Button variant="quiet" size="sm" className="flex-1" disabled>
             Manage

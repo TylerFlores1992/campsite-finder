@@ -1,3 +1,7 @@
+"use client";
+
+import { useIsNativeApp } from "@/lib/native/context";
+
 /**
  * Full-page background artwork.
  *
@@ -14,6 +18,13 @@
  *     just noise behind content.
  *
  * Cards are opaque, so only page-level text ever sits directly on this.
+ *
+ * OFF ON PHONES AND IN THE NATIVE APP. At desktop widths the art has room to be
+ * scenery; at 390px the same image sits right behind the controls and the screen
+ * reads as congested. Two separate switches because they answer different
+ * questions: the `sm:` breakpoint handles a narrow browser window, and the
+ * native check handles a tablet running the app, which is wide but should still
+ * look like an app rather than a website.
  */
 
 /** Set false to fall back to the flat ch-paper ground. */
@@ -37,6 +48,7 @@ const PAPER = "245, 247, 242"; // --ch-paper
 
 export default function BrandBackdrop() {
   const art = ART[VARIANT];
+  const isNative = useIsNativeApp();
 
   return (
     // The paper ground lives HERE, not on the layout wrapper. An opaque wrapper
@@ -45,8 +57,9 @@ export default function BrandBackdrop() {
     // means the layout can stay transparent and the page still has a ground even
     // with the art switched off.
     <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10 bg-ch-paper">
-      {!HAS_BRAND_ART ? null : (
-        <>
+      {!HAS_BRAND_ART || isNative ? null : (
+        // hidden below sm — the paper ground above is all a phone gets.
+        <div className="hidden sm:block">
       <div
         className="absolute inset-0 bg-cover bg-no-repeat"
         style={{ backgroundImage: `url('${art.url}')`, backgroundPosition: art.position }}
@@ -64,7 +77,7 @@ export default function BrandBackdrop() {
           background: `linear-gradient(to bottom, rgba(${PAPER},0), rgba(${PAPER},.95))`,
         }}
       />
-        </>
+        </div>
       )}
     </div>
   );

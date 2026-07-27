@@ -7,6 +7,7 @@ import Tag from "@/components/ui/Tag";
 import { buttonClasses } from "@/components/ui/Button";
 import AvailabilityGrid from "./AvailabilityGrid";
 import WatchCta from "./WatchCta";
+import { RichDescription } from "./richText";
 import { providerLabel, supportsAutoCart } from "./providers";
 import type { Campground } from "@/lib/types";
 
@@ -23,12 +24,19 @@ export interface CampgroundDetailProps {
   /** Dates carried from the search, so the calendar opens where the user was. */
   startDate?: string;
   endDate?: string;
+  /** Where "back" goes. Built by the page from ?from/?back — a search restored
+      with its parameters intact, or the watches list if that's where the user
+      came from. Defaults to a bare Explore. */
+  backHref?: string;
+  backLabel?: string;
 }
 
 export default function CampgroundDetail({
   campgroundId,
   startDate,
   endDate,
+  backHref = "/v2",
+  backLabel = "Back to search",
 }: CampgroundDetailProps) {
   const [campground, setCampground] = useState<Campground | null>(null);
   const [loading, setLoading] = useState(true);
@@ -71,8 +79,8 @@ export default function CampgroundDetail({
       <div className="mx-auto max-w-[var(--ch-max)] px-5 py-10">
         <h1 className="font-ch-display text-ch-title font-extrabold">Not found</h1>
         <p className="mt-2 text-ch-body text-ch-muted">{error}</p>
-        <Link href="/v2" className={buttonClasses({ variant: "quiet", className: "mt-4" })}>
-          Back to search
+        <Link href={backHref} className={buttonClasses({ variant: "quiet", className: "mt-4" })}>
+          {backLabel}
         </Link>
       </div>
     );
@@ -86,11 +94,11 @@ export default function CampgroundDetail({
   return (
     <div className="mx-auto max-w-[var(--ch-max)] px-5 py-5">
       <Link
-        href="/v2"
+        href={backHref}
         className="inline-flex items-center gap-1 pb-3 text-[13px] font-bold text-ch-green hover:text-ch-green-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green"
       >
         <ChevronLeft aria-hidden="true" className="size-3.5" />
-        Back to search
+        {backLabel}
       </Link>
 
       <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
@@ -140,11 +148,9 @@ export default function CampgroundDetail({
       {(description || amenities?.length > 0 || phone) && (
         <section className="mt-5 rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-card">
           <h2 className="font-ch-display text-ch-h font-bold">About</h2>
-          {description && (
-            <p className="mt-2 max-w-[70ch] text-ch-body leading-relaxed text-ch-ink-2">
-              {description}
-            </p>
-          )}
+          {/* Provider descriptions are HTML — see ./richText. Printing the raw
+              string put literal <h2> and <br/> tags on the page. */}
+          <RichDescription text={description} className="mt-2 max-w-[70ch]" />
           {amenities?.length > 0 && (
             <>
               <h3 className="mt-4 text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">

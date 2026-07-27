@@ -24,11 +24,15 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
     // No background colour here: BrandBackdrop is a fixed layer behind the page,
     // and an opaque wrapper paints straight over it — the artwork only showed in
     // the strip below the footer on short pages. The backdrop supplies the ground.
-    <div className="flex min-h-full flex-col font-ch-body text-ch-ink">
+    // min-h-dvh, NOT min-h-full: percentage heights need every ancestor to have
+    // one, and html/body don't, so min-h-full collapsed to the content height and
+    // left the footer parked mid-screen on short pages. dvh also tracks mobile
+    // browser chrome, which vh does not.
+    <div className="flex min-h-dvh flex-col font-ch-body text-ch-ink">
       <BrandBackdrop />
       <V2Nav />
       <main className="flex-1">{children}</main>
-      <footer className="mt-10 border-t border-ch-line bg-[#EEF1EB]">
+      <footer className="mt-auto border-t border-ch-line bg-[#EEF1EB]">
         <div className="mx-auto flex max-w-[var(--ch-max)] flex-wrap items-center justify-between gap-4 px-5 py-5 text-ch-fine text-ch-muted">
           <span>© 2026 CampHawk</span>
           <span className="flex gap-4">

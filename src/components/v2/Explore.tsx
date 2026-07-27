@@ -49,6 +49,81 @@ function thisWeekend(): DateRange {
   return { start, end: addDays(start, 2) };
 }
 
+
+/**
+ * The search, as a query string.
+ *
+ * This exists so leaving Explore isn't destructive. Drilling into a campground
+ * used to mean retyping the place, the dates and every filter to get back to
+ * the same twelve results — the detail page's "Back to search" landed on an
+ * empty form. Now the state round-trips through the URL: the detail link
+ * carries it, the back link hands it straight back, and as a side effect a
+ * search becomes a shareable link.
+ *
+ * Only what changes the RESULTS is encoded. `selectedId` is deliberately left
+ * out: which pin was clicked is a view detail, not part of the search.
+ */
+interface SearchState {
+  place: string;
+  coords: { lat: number; lng: number } | null;
+  radius: number;
+  when: WhenPreset;
+  range: DateRange;
+  flexNights: number;
+  weekendsOnly: boolean;
+  filters: FilterValue;
+}
+
+function encodeSearch(s: SearchState): string {
+  const q = new URLSearchParams();
+  if (s.coords) {
+    // 5dp is ~1m. More is noise in a URL a user might read or send.
+    q.set("lat", s.coords.lat.toFixed(5));
+    q.set("lng", s.coords.lng.toFixed(5));
+  }
+  if (s.place) q.set("place", s.place);
+  q.set("radius", String(s.radius));
+  if (s.when !== "exact") q.set("when", s.when);
+  if (s.range.start) q.set("start", s.range.start);
+  if (s.range.end) q.set("end", s.range.end);
+  if (s.when === "flexible") q.set("nights", String(s.flexNights));
+  if (s.weekendsOnly) q.set("weekends", "1");
+  if (s.filters.siteType) q.set("type", s.filters.siteType);
+  if (s.filters.rvLength) q.set("rv", String(s.filters.rvLength));
+  for (const k of ["electric", "water", "showers", "pets"] as const) {
+    if (s.filters[k]) q.set(k, "1");
+  }
+  return q.toString();
+}
+
+function decodeSearch(q: URLSearchParams): Partial<SearchState> {
+  const lat = Number(q.get("lat"));
+  const lng = Number(q.get("lng"));
+  const radius = Number(q.get("radius"));
+  const nights = Number(q.get("nights"));
+  const rv = Number(q.get("rv"));
+  const when = q.get("when");
+  const type = q.get("type");
+  return {
+    coords: Number.isFinite(lat) && Number.isFinite(lng) && q.has("lat") ? { lat, lng } : null,
+    place: q.get("place") ?? "",
+    radius: RADII.includes(radius) ? radius : 50,
+    when: when === "tonight" || when === "weekend" || when === "flexible" ? when : "exact",
+    range: { start: (q.get("start") as ISODate | null) ?? null, end: (q.get("end") as ISODate | null) ?? null },
+    flexNights: Number.isFinite(nights) && nights > 0 ? nights : 2,
+    weekendsOnly: q.get("weekends") === "1",
+    filters: {
+      ...EMPTY_FILTERS,
+      siteType: type === "tent" || type === "rv" || type === "cabin" || type === "group" ? type : null,
+      rvLength: Number.isFinite(rv) && rv > 0 ? rv : null,
+      electric: q.get("electric") === "1",
+      water: q.get("water") === "1",
+      showers: q.get("showers") === "1",
+      pets: q.get("pets") === "1",
+    },
+  };
+}
+
 export default function Explore() {
   // Read client-side via Clerk rather than from the server. The root layout must
   // stay free of request-time APIs under Cache Components — reading auth there
@@ -81,6 +156,32 @@ export default function Explore() {
 
   // Guards against a slow earlier search overwriting a newer one.
   const requestId = useRef(0);
+  // Set once the URL has been read, so the first render can't overwrite a
+  // restored search with the empty defaults.
+  const hydrated = useRef(false);
+  // Set when the restored state should fire a search as soon as it's applied.
+  const [restoring, setRestoring] = useState(false);
+
+  // Restore a search from the URL. This runs before anything else touches the
+  // form so a returning user sees their results, not a blank page.
+  useEffect(() => {
+    if (hydrated.current) return;
+    hydrated.current = true;
+    const q = new URLSearchParams(window.location.search);
+    if (![...q.keys()].length) return;
+    const d = decodeSearch(q);
+    if (d.place !== undefined) setPlace(d.place);
+    if (d.coords) setCoords(d.coords);
+    if (d.radius) setRadius(d.radius);
+    if (d.when) setWhen(d.when);
+    if (d.range) setRange(d.range);
+    if (d.flexNights) setFlexNights(d.flexNights);
+    if (d.weekendsOnly !== undefined) setWeekendsOnly(d.weekendsOnly);
+    if (d.filters) setFilters(d.filters);
+    // Only auto-run with an origin. Without one the search would fall back to
+    // geolocation and quietly answer a different question than the link asked.
+    if (d.coords) setRestoring(true);
+  }, []);
 
   useEffect(() => {
     if (place.trim().length < 2 || coords) {
@@ -184,13 +285,37 @@ export default function Explore() {
       setResults(rows);
       setSearchedAt(origin);
       setSelectedId(null);
+      // Reflect the search in the address bar. replaceState, not push: each
+      // search is a refinement of the same screen, and pushing would make Back
+      // walk through every radius the user tried instead of leaving the page.
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}?${encodeSearch({
+          place,
+          coords: origin,
+          radius,
+          when,
+          range,
+          flexNights,
+          weekendsOnly,
+          filters,
+        })}`,
+      );
     } catch (e) {
       if (id !== requestId.current) return;
       setError(e instanceof Error ? e.message : "Search failed");
     } finally {
       if (id === requestId.current) setLoading(false);
     }
-  }, [coords, place, radius, range, when, flexNights, filters]);
+  }, [coords, place, radius, range, when, flexNights, weekendsOnly, filters]);
+
+  // Fire the restored search once the state from the URL has actually landed.
+  useEffect(() => {
+    if (!restoring || !coords) return;
+    setRestoring(false);
+    void search();
+  }, [restoring, coords, search]);
 
   // Must agree with ResultCard: with no dates the API never checked availability,
   // so claiming "N with openings" in the heading while every card stays silent
@@ -203,6 +328,19 @@ export default function Explore() {
     if (!picked) return results;
     return [picked, ...results.filter((c) => c.id !== selectedId)];
   })();
+
+  // The query string for the CURRENT form. Handed to every result card so the
+  // detail page can send the user back to exactly this search.
+  const searchQuery = encodeSearch({
+    place,
+    coords,
+    radius,
+    when,
+    range,
+    flexNights,
+    weekendsOnly,
+    filters,
+  });
 
   const datesChosen = Boolean(range.start && range.end);
   const openCount = datesChosen
@@ -439,6 +577,7 @@ export default function Explore() {
                         campground={c}
                         startDate={range.start ?? undefined}
                         endDate={range.end ?? undefined}
+                        backTo={searchQuery}
                         favorite={favorites.isFavorite(c.id)}
                         onToggleFavorite={
                           favorites.canFavorite ? () => void favorites.toggle(c.id) : undefined

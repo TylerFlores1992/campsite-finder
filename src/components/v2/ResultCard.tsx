@@ -29,6 +29,9 @@ export interface ResultCardProps {
   /** Favourites are owned by the page, so one store backs every heart on it.
       Omit onToggleFavorite (signed out) and no heart renders at all — better
       than one that answers a click with a sign-in wall. */
+  /** The Explore search, encoded. Round-tripped through the detail page so its
+      back link restores the search instead of resetting it. */
+  backTo?: string;
   favorite?: boolean;
   onToggleFavorite?: () => void;
 }
@@ -37,6 +40,7 @@ export default function ResultCard({
   campground,
   startDate,
   endDate,
+  backTo,
   favorite = false,
   onToggleFavorite,
 }: ResultCardProps) {
@@ -56,7 +60,11 @@ export default function ResultCard({
 
   const href = {
     pathname: `/v2/campground/${encodeURIComponent(id)}`,
-    query: { ...(startDate ? { start: startDate } : {}), ...(endDate ? { end: endDate } : {}) },
+    query: {
+      ...(startDate ? { start: startDate } : {}),
+      ...(endDate ? { end: endDate } : {}),
+      ...(backTo ? { back: backTo } : {}),
+    },
   };
 
   return (
