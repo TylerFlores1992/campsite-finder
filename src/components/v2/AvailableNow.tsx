@@ -9,6 +9,7 @@ import DatePicker, { type DateRange } from "@/components/ui/DatePicker";
 import FilterPanel, { EMPTY_FILTERS, type FilterValue } from "@/components/ui/FilterPanel";
 import NightsPicker from "@/components/ui/NightsPicker";
 import ResultCard from "./ResultCard";
+import dynamic from "next/dynamic";
 import { addDays, todayISO, type ISODate } from "@/components/ui/date";
 import { deviceCoords, hitLabel, ipCoords, searchLocations, type LocationHit } from "./geo";
 import { LocateFixed, MapPin, Tent } from "lucide-react";
@@ -24,6 +25,14 @@ import type { Campground } from "@/lib/types";
  * reimplemented — New watch mounts the same two. That single-source rule is the
  * whole point of phase 3, and the reason the current UI drifted.
  */
+
+// mapbox-gl touches `window` at import time, so the map is client-only.
+const ResultsMap = dynamic(() => import("./ResultsMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="h-[300px] animate-pulse rounded-ch-card border border-ch-line bg-ch-card motion-reduce:animate-none sm:h-[360px]" />
+  ),
+});
 
 const RADII = [10, 25, 50, 100, 200];
 
@@ -50,6 +59,10 @@ export default function AvailableNow() {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [suggestions, setSuggestions] = useState<LocationHit[]>([]);
   const [locating, setLocating] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Origin used for the CURRENT results, so panning the form does not move the
+  // map out from under pins that belong to the previous search.
+  const [searchedAt, setSearchedAt] = useState<{ lat: number; lng: number } | null>(null);
   const [radius, setRadius] = useState(50);
 
   const [when, setWhen] = useState<WhenPreset>("exact");
@@ -150,6 +163,8 @@ export default function AvailableNow() {
       // same as the current UI does.
       const rows = filters.pets ? j.campgrounds.filter((c) => c.petsAllowed) : j.campgrounds;
       setResults(rows);
+      setSearchedAt(coords);
+      setSelectedId(null);
     } catch (e) {
       if (id !== requestId.current) return;
       setError(e instanceof Error ? e.message : "Search failed");
@@ -362,15 +377,43 @@ export default function AvailableNow() {
                 </p>
               </div>
 
+              {results.length > 0 && searchedAt && (
+                <ResultsMap
+                  campgrounds={results}
+                  center={searchedAt}
+                  radiusMiles={radius}
+                  selectedId={selectedId}
+                  onSelect={(id) => {
+                    setSelectedId(id);
+                    // Bring the card into view — tapping a pin should answer
+                    // "what is this?", and the card is where the answer lives.
+                    document
+                      .getElementById(`result-${id}`)
+                      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  }}
+                  datesChosen={datesChosen}
+                  className="mb-3 h-[300px] sm:h-[360px]"
+                />
+              )}
+
               {results.length > 0 ? (
                 <div className="grid gap-3 sm:grid-cols-2">
                   {results.map((c) => (
-                    <ResultCard
+                    <div
                       key={c.id}
-                      campground={c}
-                      startDate={range.start ?? undefined}
-                      endDate={range.end ?? undefined}
-                    />
+                      id={`result-${c.id}`}
+                      className={
+                        selectedId === c.id
+                          ? "rounded-ch-card ring-2 ring-ch-green ring-offset-2 ring-offset-ch-paper"
+                          : undefined
+                      }
+                    >
+                      <ResultCard
+                        campground={c}
+                        startDate={range.start ?? undefined}
+                        endDate={range.end ?? undefined}
+                      />
+                    </div>
                   ))}
                 </div>
               ) : (

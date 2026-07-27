@@ -31,7 +31,7 @@ const LINKS = [
   { href: "/v2", label: "Available now" },
 ] as const;
 
-/** Scroll past this and the header art shrinks to a slim strip. */
+/** Scroll past this and the header art shrinks to its wordmark strip. */
 const COLLAPSE_AT = 28;
 
 async function openBillingPortal() {
@@ -122,8 +122,12 @@ export default function V2Nav() {
 
   return (
     <>
-      {/* ---------------- phone: collapsing art + tab row ---------------- */}
-      <div className="sm:hidden">
+      {/* ---------------- phone: collapsing art + tab row ----------------
+          The band and the tabs pin TOGETHER. Scrolling shrinks the art down to
+          the strip carrying the wordmark and tagline rather than hiding it, so
+          the brand and the three destinations stay on screen the whole way down
+          the page and everything else scrolls under them. */}
+      <div className="sticky top-0 z-30 sm:hidden">
         <div
           className="relative overflow-hidden bg-[#24382A] transition-[height] duration-[260ms] ease-out motion-reduce:transition-none"
           style={{
@@ -131,19 +135,21 @@ export default function V2Nav() {
             paddingTop: "env(safe-area-inset-top)",
           }}
         >
-          {/* CONTAIN, not cover, while expanded. The artwork has the wordmark
-              baked into its left edge and the tagline into its right, so any
-              horizontal crop clips one of them — at 326px it rendered as
-              "ampHawk". Contain letterboxes against the same green instead, so
-              the lockup survives every width. Collapsed is a 46px sliver where
-              no text is expected, so cover is right there. */}
+          {/* EXPANDED: contain. The artwork carries the wordmark on its left
+              edge and the tagline on its right, so any horizontal crop clips one
+              — it rendered as "ampHawk" before. Contain letterboxes against the
+              same green instead, so the lockup survives every width.
+
+              COLLAPSED: cover, anchored to the BOTTOM. That's the strip the
+              wordmark and tagline sit in, so shrinking the band keeps the brand
+              on screen instead of leaving a meaningless sliver of sky. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/brand/app-header.jpg"
-            alt=""
+            alt="CampHawk — find your next adventure"
             className={cx(
               "size-full",
-              collapsed ? "object-cover object-center" : "object-contain object-center",
+              collapsed ? "object-cover object-bottom" : "object-contain object-center",
             )}
           />
           <div className="absolute right-3 top-3 flex items-center gap-2">
@@ -153,7 +159,7 @@ export default function V2Nav() {
 
         <nav
           aria-label="Main"
-          className="sticky top-0 z-20 flex border-b border-ch-line bg-ch-card"
+          className="flex border-b border-ch-line bg-ch-card"
         >
           {LINKS.map(({ href, label }) => {
             const active = isActive(href);

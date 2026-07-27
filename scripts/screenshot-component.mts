@@ -398,6 +398,19 @@ const PRESETS: Record<string, Preset> = {
       export const node = <div className="bg-ch-paper font-ch-body text-ch-ink p-6"><Harness /></div>;`,
     frame: 'w-full',
   },
+  'v2-desktop-hero': {
+    label: 'v2 desktop hero (art + overlaid headline)',
+    entry: `import BrandHeader from '@/components/v2/BrandHeader';
+      export const node = (
+        <div className="bg-ch-paper font-ch-body text-ch-ink">
+          <BrandHeader
+            title="Find a campsite that's open tonight"
+            subtitle="Live availability across 8,000+ campgrounds — every Recreation.gov site in all 50 states, plus state parks in 34. Free, no account needed."
+          />
+        </div>
+      );`,
+    frame: 'w-full',
+  },
   'v2-mobile': {
     label: 'v2 phone — bottom tab bar, guest banner, results',
     // Renders the real shell chrome at phone width: top brand bar, the fixed
