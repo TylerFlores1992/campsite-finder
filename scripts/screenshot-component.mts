@@ -644,7 +644,24 @@ async function main() {
   writeFileSync(join(work, 'page.html'), html);
 
   // 4. Serve on a bare localhost port (no proxy, no TLS → nothing to reset).
-  const server = http.createServer((_, res) => { res.setHeader('content-type', 'text/html'); res.end(html); });
+  // Serve /brand/* from public/ so real artwork appears in shots instead of a
+  // broken image — the harness otherwise only knows how to return the page.
+  const server = http.createServer((req, res) => {
+    const url = (req.url ?? '/').split('?')[0];
+    if (url.startsWith('/brand/')) {
+      try {
+        const buf = readFileSync(join(ROOT, 'public', url));
+        const ext = url.split('.').pop();
+        res.setHeader('content-type', ext === 'png' ? 'image/png' : 'image/jpeg');
+        res.end(buf);
+        return;
+      } catch {
+        res.statusCode = 404; res.end('not found'); return;
+      }
+    }
+    res.setHeader('content-type', 'text/html');
+    res.end(html);
+  });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as { port: number }).port;
 

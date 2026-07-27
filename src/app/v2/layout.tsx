@@ -25,9 +25,7 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
       <BrandBackdrop />
       <V2Nav />
       <main className="flex-1">{children}</main>
-      {/* Clears the fixed phone tab bar so the footer and the last card aren't
-          trapped underneath it. Desktop has no bar, hence sm:pb-0. */}
-      <footer className="mt-10 border-t border-ch-line bg-[#EEF1EB] pb-16 sm:pb-0">
+      <footer className="mt-10 border-t border-ch-line bg-[#EEF1EB]">
         <div className="mx-auto flex max-w-[var(--ch-max)] flex-wrap items-center justify-between gap-4 px-5 py-5 text-ch-fine text-ch-muted">
           <span>© 2026 CampHawk</span>
           <span className="flex gap-4">

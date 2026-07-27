@@ -1,8 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, CreditCard, PlusCircle, Search } from "lucide-react";
+import { CreditCard } from "lucide-react";
 import { useUser, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import { useIsNativeApp } from "@/lib/native/context";
 import { buttonClasses } from "@/components/ui/Button";
@@ -12,23 +13,26 @@ import BrandMark from "./BrandMark";
 /**
  * Navigation for the redesign's three destinations, plus the account area.
  *
- * Desktop gets a top row; phones get a bottom tab bar, because the top of a
- * phone is the hardest place to reach and these are the app's primary moves.
+ * PHONES FOLLOW THE MOCKUP: header art that collapses on scroll, then a
+ * full-width row of three equal tabs. The earlier build tried to fit the three
+ * labels into the header line, which is what broke — as their own row each tab
+ * gets a third of the width and "Available now" fits comfortably, so nothing has
+ * to be abbreviated or hidden.
  *
- * The three labels never shared a line on a phone header — that's what the
- * bottom bar solves. The header keeps only the brand and the account control,
- * both of which fit at any width, and the tab labels are single words so they
- * can't wrap at 320px either.
+ * Desktop keeps the inline top row; there's ample width and no art to collapse.
  *
- * Campground detail is deliberately not a fourth item: it's a drill-in with a
- * back link, and promoting it would imply you can browse to "a campground" with
- * nothing chosen.
+ * Campground detail is deliberately not a fourth destination: it's a drill-in
+ * with a back link, and promoting it would imply you can browse to "a
+ * campground" with nothing chosen.
  */
 const LINKS = [
-  { href: "/v2/watches", label: "Watches", short: "Watches", Icon: Bell },
-  { href: "/v2/new", label: "New watch", short: "New", Icon: PlusCircle },
-  { href: "/v2", label: "Available now", short: "Search", Icon: Search },
+  { href: "/v2/watches", label: "Watches" },
+  { href: "/v2/new", label: "New watch" },
+  { href: "/v2", label: "Available now" },
 ] as const;
+
+/** Scroll past this and the header art shrinks to a slim strip. */
+const COLLAPSE_AT = 28;
 
 async function openBillingPortal() {
   try {
@@ -40,35 +44,158 @@ async function openBillingPortal() {
   }
 }
 
-export default function V2Nav() {
-  const pathname = usePathname();
+function AccountControl({ compact = false }: { compact?: boolean }) {
   const isNative = useIsNativeApp();
   // useUser + conditional render is the codebase convention; this Clerk version
   // exports no <SignedIn>/<SignedOut>.
   const { isLoaded, isSignedIn } = useUser();
-  const isActive = (href: string) =>
-    href === "/v2" ? pathname === "/v2" : pathname.startsWith(href);
+
+  // Reserve the space so the header doesn't jump once auth resolves.
+  if (!isLoaded) return <span aria-hidden="true" className="size-8" />;
+
+  if (isSignedIn) {
+    return (
+      <UserButton appearance={{ elements: { avatarBox: "w-8 h-8" } }}>
+        {/* The ONLY route a subscriber has to the Stripe billing portal — i.e.
+            the only way to cancel or update payment. Hidden in the native app,
+            where surfacing billing would breach the store rules that keep
+            Stripe on the web. */}
+        {!isNative && (
+          <UserButton.MenuItems>
+            <UserButton.Action
+              label="Manage subscription"
+              labelIcon={<CreditCard size={14} />}
+              onClick={openBillingPortal}
+            />
+          </UserButton.MenuItems>
+        )}
+      </UserButton>
+    );
+  }
 
   return (
     <>
-      <header className="sticky top-0 z-20 border-b border-ch-line bg-ch-card/95 backdrop-blur">
-        <div
-          className="mx-auto flex max-w-[var(--ch-max)] items-center gap-4 px-4 sm:gap-6 sm:px-5"
-          // Clears the notch in the native webview under Android 15+ edge-to-edge.
-          style={{ paddingTop: "env(safe-area-inset-top)" }}
+      <SignInButton mode="redirect">
+        <button
+          className={cx(
+            "cursor-pointer rounded-[9px] px-2.5 py-1.5 text-[13px] font-bold whitespace-nowrap",
+            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green",
+            compact
+              ? "bg-white/90 text-ch-ink-2 shadow-ch-card backdrop-blur hover:bg-white"
+              : "text-ch-ink-2 hover:bg-ch-green-soft",
+          )}
         >
+          Sign in
+        </button>
+      </SignInButton>
+      {/* Wrapped rather than adding `hidden` to the button: the button already
+          carries `inline-flex`, and two display utilities on one element resolve
+          by Tailwind's source order, not the order written — `hidden` lost. */}
+      <span className="hidden sm:contents">
+        <SignUpButton mode="redirect">
+          <button className={buttonClasses({ size: "sm", className: "whitespace-nowrap" })}>
+            Sign up
+          </button>
+        </SignUpButton>
+      </span>
+    </>
+  );
+}
+
+export default function V2Nav() {
+  const pathname = usePathname();
+  const [collapsed, setCollapsed] = useState(false);
+  const isActive = (href: string) =>
+    href === "/v2" ? pathname === "/v2" : pathname.startsWith(href);
+
+  // Passive listener + a state change only on the transition, so scrolling
+  // doesn't re-render on every frame.
+  useEffect(() => {
+    const onScroll = () => {
+      const past = window.scrollY > COLLAPSE_AT;
+      setCollapsed((prev) => (prev === past ? prev : past));
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  return (
+    <>
+      {/* ---------------- phone: collapsing art + tab row ---------------- */}
+      <div className="sm:hidden">
+        <div
+          className="relative overflow-hidden bg-[#24382A] transition-[height] duration-[260ms] ease-out motion-reduce:transition-none"
+          style={{
+            height: collapsed ? "var(--ch-header-min)" : "var(--ch-header)",
+            paddingTop: "env(safe-area-inset-top)",
+          }}
+        >
+          {/* CONTAIN, not cover, while expanded. The artwork has the wordmark
+              baked into its left edge and the tagline into its right, so any
+              horizontal crop clips one of them — at 326px it rendered as
+              "ampHawk". Contain letterboxes against the same green instead, so
+              the lockup survives every width. Collapsed is a 46px sliver where
+              no text is expected, so cover is right there. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/app-header.jpg"
+            alt=""
+            className={cx(
+              "size-full",
+              collapsed ? "object-cover object-center" : "object-contain object-center",
+            )}
+          />
+          <div className="absolute right-3 top-3 flex items-center gap-2">
+            <AccountControl compact />
+          </div>
+        </div>
+
+        <nav
+          aria-label="Main"
+          className="sticky top-0 z-20 flex border-b border-ch-line bg-ch-card"
+        >
+          {LINKS.map(({ href, label }) => {
+            const active = isActive(href);
+            return (
+              <Link
+                key={href}
+                href={href}
+                aria-current={active ? "page" : undefined}
+                className={cx(
+                  // nowrap + a smaller step under 360px: at 320 each tab gets
+                  // ~106px and "Available now" wraps to two lines at 12.5px,
+                  // which makes the row two rows and undoes the point of it.
+                  "flex-1 border-b-[2.5px] px-1 pt-3 pb-2.5 text-center font-bold whitespace-nowrap",
+                  "text-[11.5px] min-[360px]:text-[12.5px]",
+                  "-mb-px transition-colors motion-reduce:transition-none",
+                  "focus-visible:outline-2 focus-visible:-outline-offset-[3px] focus-visible:outline-ch-green",
+                  active
+                    ? "border-ch-green text-ch-green"
+                    : "border-transparent text-ch-muted",
+                )}
+              >
+                {label}
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* ---------------- desktop: inline top row ---------------- */}
+      <header className="sticky top-0 z-20 hidden border-b border-ch-line bg-ch-card/95 backdrop-blur sm:block">
+        <div className="mx-auto flex max-w-[var(--ch-max)] items-center gap-6 px-5">
           <Link
             href="/v2"
             className="flex shrink-0 items-center gap-2 py-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green"
           >
-            <BrandMark size={26} />
-            <span className="font-ch-display text-[18px] font-extrabold whitespace-nowrap tracking-[-.025em] sm:text-[19px]">
+            <BrandMark size={28} />
+            <span className="font-ch-display text-[19px] font-extrabold whitespace-nowrap tracking-[-.025em]">
               CampHawk
             </span>
           </Link>
 
-          {/* Desktop nav. Hidden on phones, where the bottom bar takes over. */}
-          <nav aria-label="Main" className="hidden flex-1 gap-1 sm:flex">
+          <nav aria-label="Main" className="flex flex-1 gap-1">
             {LINKS.map(({ href, label }) => {
               const active = isActive(href);
               return (
@@ -91,84 +218,11 @@ export default function V2Nav() {
             })}
           </nav>
 
-          {/* Account. Pushed right on phones, where there's no nav between. */}
-          <div className="ml-auto flex shrink-0 items-center gap-2 sm:ml-0">
-            {!isLoaded ? (
-              // Reserve the space so the header doesn't jump once auth resolves.
-              <span aria-hidden="true" className="size-8" />
-            ) : isSignedIn ? (
-              <UserButton appearance={{ elements: { avatarBox: "w-8 h-8" } }}>
-                {/* The ONLY route a subscriber has to the Stripe billing portal —
-                    i.e. the only way to cancel or update payment. Hidden in the
-                    native app, where surfacing billing would breach the store
-                    rules that keep Stripe on the web. */}
-                {!isNative && (
-                  <UserButton.MenuItems>
-                    <UserButton.Action
-                      label="Manage subscription"
-                      labelIcon={<CreditCard size={14} />}
-                      onClick={openBillingPortal}
-                    />
-                  </UserButton.MenuItems>
-                )}
-              </UserButton>
-            ) : (
-              <>
-                {/* Phones get ONE control. Two auth buttons plus the wordmark
-                    don't share a 320px line, and the brand is not the thing that
-                    should give way — sign-up is one tap from the sign-in page and
-                    is also the guest banner's CTA. */}
-                <SignInButton mode="redirect">
-                  <button className="cursor-pointer rounded-[9px] px-2.5 py-2 text-[13px] font-bold whitespace-nowrap text-ch-ink-2 hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green">
-                    Sign in
-                  </button>
-                </SignInButton>
-                {/* Wrapped rather than adding `hidden` to the button: the button
-                    already carries `inline-flex`, and two display utilities on one
-                    element are resolved by Tailwind's source order, not by the
-                    order they're written in — so `hidden` silently lost. */}
-                <span className="hidden sm:contents">
-                  <SignUpButton mode="redirect">
-                    <button className={buttonClasses({ size: "sm", className: "whitespace-nowrap" })}>
-                      Sign up
-                    </button>
-                  </SignUpButton>
-                </span>
-              </>
-            )}
+          <div className="flex shrink-0 items-center gap-2">
+            <AccountControl />
           </div>
         </div>
       </header>
-
-      {/* Phone tab bar. Fixed to the bottom, above the home indicator. */}
-      <nav
-        aria-label="Main"
-        className="fixed inset-x-0 bottom-0 z-30 border-t border-ch-line bg-ch-card/98 backdrop-blur sm:hidden"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-      >
-        <div className="flex">
-          {LINKS.map(({ href, label, short, Icon }) => {
-            const active = isActive(href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                aria-label={label}
-                aria-current={active ? "page" : undefined}
-                className={cx(
-                  "flex flex-1 flex-col items-center gap-0.5 px-1 pt-2 pb-1.5",
-                  "text-[11px] font-bold whitespace-nowrap transition-colors motion-reduce:transition-none",
-                  "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green",
-                  active ? "text-ch-green" : "text-ch-muted",
-                )}
-              >
-                <Icon aria-hidden="true" className="size-5" strokeWidth={active ? 2.4 : 2} />
-                {short}
-              </Link>
-            );
-          })}
-        </div>
-      </nav>
     </>
   );
 }

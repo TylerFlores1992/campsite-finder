@@ -1,18 +1,22 @@
 # Brand artwork
 
-Drop the three supplied images here with these exact names. Each has a working
-fallback until then, so the app is never broken by a missing file.
-
-| File | Used for | Wire-up |
+| File | Status | Used for |
 |---|---|---|
-| `hero-bg.png` | Page background (pale hawk-over-valley scene) | set `HAS_BRAND_ART = true` in `src/components/v2/BrandBackdrop.tsx` |
-| `logo-badge.png` | Logo mark in the header (framed hawk badge, transparent) | set `HAS_BRAND_ART = true` in `src/components/v2/BrandMark.tsx` |
-| `app-header.png` | Wide header art on Available now (hawk + "CampHawk / Find your next adventure") | set `HAS_BRAND_ART = true` in `src/components/v2/BrandHeader.tsx` |
+| `app-header.jpg` | **present** | Phone header band + desktop hero on Available now |
+| `logo-badge.png` | **present** | Logo mark in the desktop header (transparent, tRNS) |
+| `hero-bg.png` | **MISSING** | Full-page background (the pale hawk-over-valley scene) |
+
+The header and logo were recovered from the base64 embedded in the supplied
+mobile HTML. The background was not in that file — drop it here as
+`hero-bg.png`, then set `HAS_BRAND_ART = true` in
+`src/components/v2/BrandBackdrop.tsx`. Until then the app uses its flat
+ch-paper ground, which is a deliberate design rather than a broken one.
 
 Notes:
-- Prefer `.webp` for the two large ones if you can export it — the handoff brief
-  asks for webp, and `hero-bg.png` is full-bleed so its weight is on every page.
-  If you do, change the extension in the component alongside the flag.
-- `logo-badge.png` needs a transparent background; it sits on white chrome.
-- `app-header.png` is cropped with `object-cover`, so the hawk should sit in the
-  middle third horizontally or it will be trimmed on narrow screens.
+- `app-header.jpg` carries the wordmark on its left edge and the tagline on its
+  right, so it is rendered with `object-contain` while expanded — any horizontal
+  crop clips one of them ("ampHawk" at narrow widths). Keep that in mind if the
+  image is ever re-exported: moving the text inward would allow `object-cover`
+  and a tighter band.
+- A `.webp` export of the two large files would be worth doing; the handoff
+  brief asks for it and `hero-bg` in particular sits on every page.

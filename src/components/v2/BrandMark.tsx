@@ -11,7 +11,7 @@
 import HawkGlyph from "@/components/ui/HawkGlyph";
 
 /** Set to true once public/brand/logo-badge.png is committed. */
-export const HAS_BRAND_ART = false;
+export const HAS_BRAND_ART = true;
 
 export default function BrandMark({ size = 26 }: { size?: number }) {
   if (!HAS_BRAND_ART) {

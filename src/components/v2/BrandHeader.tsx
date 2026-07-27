@@ -11,8 +11,8 @@
  * so the page reads correctly before the asset lands.
  */
 
-/** Set to true once public/brand/app-header.png is committed. */
-export const HAS_BRAND_ART = false;
+/** Set to true once public/brand/app-header.jpg is committed. */
+export const HAS_BRAND_ART = true;
 
 export interface BrandHeaderProps {
   /** The page heading. Visible in the fallback, sr-only over the artwork. */
@@ -35,13 +35,13 @@ export default function BrandHeader({ title, subtitle }: BrandHeaderProps) {
   }
 
   return (
-    <section className="border-b border-ch-line bg-[#24382A]">
+    <section className="hidden border-b border-ch-line bg-[#24382A] sm:block">
       {/* Shorter on phones so the art doesn't eat the fold before the search
           rail. object-cover with a centred focal point keeps the hawk in frame. */}
       <div className="relative h-[132px] w-full overflow-hidden sm:h-[190px]">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/brand/app-header.png"
+          src="/brand/app-header.jpg"
           alt=""
           className="size-full object-cover object-center"
         />
