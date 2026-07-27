@@ -80,6 +80,107 @@ export default function NativeBridge() {
       );
       cleanups.push(() => tapHandle.remove());
 
+      // ---------------------------------------------------------- back button
+      //
+      // ANDROID ONLY — iOS has no hardware back. Without a listener, Capacitor's
+      // default is to EXIT THE APP on any back press, from any screen. In a webview
+      // app that reads as a crash: a user two taps deep into a campground presses
+      // back expecting the search they came from and the app disappears. It's the
+      // most common complaint about shells like this one, and it would land in the
+      // first week of Play reviews.
+      //
+      // `canGoBack` comes from Capacitor's own webview history, which is what we
+      // want — it's true for in-app navigation and false on a cold start.
+      if (platform === 'android') {
+        const { App } = await import('@capacitor/app');
+        const backHandle = await App.addListener('backButton', ({ canGoBack }) => {
+          if (canGoBack) {
+            window.history.back();
+            return;
+          }
+          // Nowhere to go back TO. If they're somewhere other than the app's home,
+          // send them home rather than closing — reaching a dead end shouldn't cost
+          // them the session. Only a back press ON home exits, which is the
+          // behaviour Android users expect.
+          if (window.location.pathname !== '/search') {
+            window.location.assign('/search');
+            return;
+          }
+          void App.exitApp();
+        });
+        cleanups.push(() => backHandle.remove());
+      }
+
+      // ------------------------------------------------------- external links
+      //
+      // Booking links (recreation.gov, ReserveCalifornia, …) and anything else
+      // off-origin must leave the webview. Two reasons, and the second is the one
+      // that fails review:
+      //
+      //   1. A booking flow opened INSIDE the shell traps the user — our chrome is
+      //      gone, the provider's site has no way back to us, and on Android the
+      //      back button is the only escape. The whole point of an alert is that
+      //      they finish the booking, so this is the conversion path.
+      //   2. A checkout or account URL rendered inside the app looks like in-app
+      //      purchasing to a reviewer. Handing it to the system browser makes it
+      //      unambiguously the user's browser, not our app.
+      //
+      // Capacitor's `allowNavigation` already limits which hosts the webview will
+      // load, but that produces a blocked navigation, not a good one. This turns it
+      // into an intentional handoff.
+      //
+      // Delegated from the document so it covers links rendered at any time,
+      // including ones React hasn't mounted yet. Capture phase, so it runs before
+      // anything that might stop propagation.
+      const { Browser } = await import('@capacitor/browser');
+      const onClick = (e: MouseEvent) => {
+        // Let modified clicks and non-primary buttons alone — they have their own
+        // platform meaning, and overriding them is how you break long-press.
+        if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+        const anchor = (e.target as HTMLElement | null)?.closest?.('a');
+        if (!anchor) return;
+        const href = anchor.getAttribute('href');
+        if (!href) return;
+
+        let url: URL;
+        try {
+          url = new URL(href, window.location.href);
+        } catch {
+          return; // mailto:, tel:, a malformed href — leave it to the platform
+        }
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+        // Same origin stays in the webview — that's the app. Clerk's hosted pages
+        // are a different host but ARE part of signing in, so they stay too
+        // (they're in allowNavigation for exactly that reason); sending auth to the
+        // system browser would strand the session outside the app.
+        // Same origin stays in the webview — but a target="_blank" one has to be
+        // taken over. A webview has no tabs, so `_blank` opens an empty popup or
+        // silently does nothing; the Terms and Privacy links in the SMS consent
+        // block are both written that way, and they're consent copy the user has to
+        // be able to actually read. Navigate in place and let the back button
+        // (above) return them.
+        if (url.hostname === window.location.hostname) {
+          if (anchor.getAttribute('target') === '_blank') {
+            e.preventDefault();
+            window.location.assign(url.href);
+          }
+          return;
+        }
+        if (url.hostname.endsWith('camphawk.app') || url.hostname.endsWith('clerk.accounts.dev')) {
+          return;
+        }
+
+        e.preventDefault();
+        void Browser.open({ url: url.href }).catch((err) => {
+          console.error('[native] external open failed', err);
+          // Falling back to a normal navigation is better than a dead tap — the
+          // worst case is the old in-webview behaviour, which is where we started.
+          window.location.assign(url.href);
+        });
+      };
+      document.addEventListener('click', onClick, true);
+      cleanups.push(() => document.removeEventListener('click', onClick, true));
+
       // Register the token only for a signed-in user — an anonymous device has no
       // account to attach to. Re-runs on sign-in via the effect dependency.
       if (isSignedIn) {

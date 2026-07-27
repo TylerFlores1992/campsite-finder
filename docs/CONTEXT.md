@@ -868,6 +868,20 @@ steps (Firebase project `campapp-39c4b`).
   every gate above silently fails. Diagnostic: if the app shows the **buy buttons**, not
   just the price, the UA marker is missing and the binary needs rebuilding — gating
   changes on the web won't reach it.
+- **Back button + external links (`NativeBridge.tsx`, added 2026-07-27):**
+  - **Android back.** Capacitor's default with no `backButton` listener is to **exit the
+    app on any back press, from any screen** — two taps into a campground, back closes
+    the app. Now: go back if there's history; else return to `/search`; only a back press
+    on `/search` exits. iOS has no hardware back, so it's Android-gated.
+  - **Off-origin links go to the system browser** via `@capacitor/browser`, delegated from
+    a capture-phase document listener so it catches links mounted at any time. Booking
+    links opened *inside* the shell trap the user with no way back — and that's the
+    conversion path the whole product exists to complete. A checkout URL rendered in-app
+    also reads as in-app purchasing to a reviewer. **camphawk.app and Clerk hosts are
+    excluded** — sending auth to the system browser would strand the session outside the app.
+  - **Same-origin `target="_blank"` is taken over too.** A webview has no tabs, so `_blank`
+    opens an empty popup or nothing at all; the Terms/Privacy links in the SMS consent
+    block are written that way and are consent copy the user must be able to read.
 - **Native UI / webview gotchas (from the first Android build, 2026-07-25):**
   - **Edge-to-edge (Android 15+/API 35+):** the webview draws behind the status bar/notch,
     so the header would land in the non-tappable strip. Fixed on the **web** side with CSS
