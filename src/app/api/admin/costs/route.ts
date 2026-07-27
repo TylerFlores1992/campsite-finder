@@ -2,19 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { currentUser } from '@clerk/nextjs/server';
 import { query, mutate } from '@/lib/db/client';
 import { COST_CATEGORIES, type CostItem } from '@/lib/costs';
+import { isAdminEmail } from '@/lib/admin';
 
 export const dynamic = 'force-dynamic';
 
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS ?? 'tylerflores1992@gmail.com')
-  .split(',')
-  .map((e) => e.trim().toLowerCase())
-  .filter(Boolean);
 
 // 404 (not 403) for non-admins so the endpoint's existence isn't revealed.
 async function requireAdmin(): Promise<boolean> {
   const user = await currentUser();
   const email = user?.emailAddresses?.[0]?.emailAddress?.toLowerCase();
-  return !!email && ADMIN_EMAILS.includes(email);
+  return isAdminEmail(email);
 }
 
 const notFound = () => NextResponse.json({ error: 'not found' }, { status: 404 });

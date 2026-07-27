@@ -1,4 +1,5 @@
-import { currentUser, clerkClient } from '@clerk/nextjs/server';
+import { clerkClient } from '@clerk/nextjs/server';
+import { currentUserIsAdmin } from '@/lib/admin';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import Stripe from 'stripe';
@@ -14,11 +15,6 @@ export const metadata = {
   robots: { index: false, follow: false },
 };
 
-// Owner-only. Override/extend via ADMIN_EMAILS (comma-separated) in env.
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS ?? 'tylerflores1992@gmail.com')
-  .split(',')
-  .map((e) => e.trim().toLowerCase())
-  .filter(Boolean);
 
 async function safe<T>(p: Promise<T | null>, fallback: T): Promise<T> {
   try {
@@ -56,10 +52,9 @@ async function computeMrr(): Promise<{ monthly: number; activeCount: number } | 
 }
 
 export default async function AdminPage() {
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress?.toLowerCase();
   // 404 (not 403) for non-admins so the page's existence isn't revealed.
-  if (!email || !ADMIN_EMAILS.includes(email)) notFound();
+  // Allowlist lives in lib/admin — see the note there about the four copies.
+  if (!(await currentUserIsAdmin())) notFound();
 
   const [usersAgg, signupRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows, costItems, usageRows] =
     await Promise.all([
