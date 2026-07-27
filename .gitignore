@@ -51,3 +51,4 @@ scripts/apply-migration-004.mjs
 # built in Xcode / Android Studio — see docs/SETUP.md)
 /ios/
 /android/
+.seo-check/

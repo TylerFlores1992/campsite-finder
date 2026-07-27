@@ -21,6 +21,11 @@ import type { Campground } from "@/lib/types";
  */
 export interface CampgroundDetailProps {
   campgroundId: string;
+  /** Loaded on the server so the HTML a crawler receives is complete. When this
+      is present there is no client fetch and no loading skeleton — the page is
+      already rendered. Optional so the component still works standalone (the
+      screenshot harness mounts it that way). */
+  initialCampground?: Campground;
   /** Dates carried from the search, so the calendar opens where the user was. */
   startDate?: string;
   endDate?: string;
@@ -33,17 +38,21 @@ export interface CampgroundDetailProps {
 
 export default function CampgroundDetail({
   campgroundId,
+  initialCampground,
   startDate,
   endDate,
   backHref = "/v2",
   backLabel = "Back to search",
 }: CampgroundDetailProps) {
-  const [campground, setCampground] = useState<Campground | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [campground, setCampground] = useState<Campground | null>(initialCampground ?? null);
+  const [loading, setLoading] = useState(!initialCampground);
   const [error, setError] = useState<string | null>(null);
   const [brokenPhotos, setBrokenPhotos] = useState<ReadonlySet<string>>(new Set());
 
   useEffect(() => {
+    // Already have it from the server — refetching would throw away the
+    // server-rendered content and flash a skeleton over it.
+    if (initialCampground) return;
     let cancelled = false;
     fetch(`/api/campgrounds/${encodeURIComponent(campgroundId)}`)
       .then((r) => {
@@ -63,7 +72,7 @@ export default function CampgroundDetail({
     return () => {
       cancelled = true;
     };
-  }, [campgroundId]);
+  }, [campgroundId, initialCampground]);
 
   if (loading) {
     return (
