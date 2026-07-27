@@ -1,22 +1,36 @@
 # Brand artwork
 
-| File | Status | Used for |
-|---|---|---|
-| `app-header.jpg` | **present** | Phone header band + desktop hero on Available now |
-| `logo-badge.png` | **present** | Logo mark in the desktop header (transparent, tRNS) |
-| `hero-bg.png` | **MISSING** | Full-page background (the pale hawk-over-valley scene) |
+Web-ready assets, all committed:
 
-The header and logo were recovered from the base64 embedded in the supplied
-mobile HTML. The background was not in that file — drop it here as
-`hero-bg.png`, then set `HAS_BRAND_ART = true` in
-`src/components/v2/BrandBackdrop.tsx`. Until then the app uses its flat
-ch-paper ground, which is a deliberate design rather than a broken one.
+| File | Size | Used for |
+|---|---|---|
+| `app-header.jpg` | 43 KB | Phone header band + desktop hero |
+| `logo-badge.png` | 10 KB | Logo mark in the desktop header (transparent) |
+| `hero-bg.webp` | 27 KB | Page backdrop — pale camp scene (**active**) |
+| `hero-bg-alt.webp` | 61 KB | Page backdrop — valley scene (alternative) |
+
+Originals live in `assets/brand-src/` and are NOT served. They were 632 KB and
+1.8 MB; converting to webp cut them by ~96%, which matters because the backdrop
+loads on every page. Regenerate with sharp:
+
+```js
+// pale camp scene — the source has white letterbox bars, so trim first
+sharp('assets/brand-src/hero-bg-camp.png')
+  .trim({ threshold: 6 }).resize({ width: 1600 }).webp({ quality: 72 })
+  .toFile('public/brand/hero-bg.webp');
+
+sharp('assets/brand-src/hero-bg-valley.png')
+  .resize({ width: 1920, withoutEnlargement: true }).webp({ quality: 72 })
+  .toFile('public/brand/hero-bg-alt.webp');
+```
+
+Switch backdrops with `VARIANT` in `src/components/v2/BrandBackdrop.tsx`.
 
 Notes:
 - `app-header.jpg` carries the wordmark on its left edge and the tagline on its
-  right, so it is rendered with `object-contain` while expanded — any horizontal
-  crop clips one of them ("ampHawk" at narrow widths). Keep that in mind if the
-  image is ever re-exported: moving the text inward would allow `object-cover`
-  and a tighter band.
-- A `.webp` export of the two large files would be worth doing; the handoff
-  brief asks for it and `hero-bg` in particular sits on every page.
+  right. The phone band uses object-contain so neither is clipped; the desktop
+  hero crops to object-top, which removes the baked-in lockup deliberately (the
+  desktop nav already shows the wordmark) and leaves clean scenery for the
+  overlaid headline.
+- The backdrop's scrim was tuned against real cards. 78% looked flat — 45% plus
+  a local top wash keeps the art visible while page headings stay readable.

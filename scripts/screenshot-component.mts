@@ -398,6 +398,44 @@ const PRESETS: Record<string, Preset> = {
       export const node = <div className="bg-ch-paper font-ch-body text-ch-ink p-6"><Harness /></div>;`,
     frame: 'w-full',
   },
+  'v2-backdrop': {
+    label: 'Page backdrop under real content',
+    // Uses the REAL BrandBackdrop so what's shot is what ships.
+    entry: `import BrandBackdrop from '@/components/v2/BrandBackdrop';
+      import Card from '@/components/ui/Card';
+      import Tag from '@/components/ui/Tag';
+      import Button from '@/components/ui/Button';
+      export const node = (
+        <div className="relative min-h-[900px] font-ch-body text-ch-ink">
+          <BrandBackdrop />
+          <div className="mx-auto max-w-[1120px] px-5 py-8">
+            <h1 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em]">4 campgrounds with openings</h1>
+            <p className="mt-1 mb-5 text-ch-meta text-ch-muted">within 50 mi of Big Sur, CA</p>
+            <div className="grid grid-cols-2 gap-3">
+              {[['Kirk Creek Campground','Recreation.gov',true],
+                ['Limekiln State Park','ReserveCalifornia',true],
+                ['Cape Disappointment','Washington State Parks',false],
+                ['Ponderosa Campground','Recreation.gov',false]].map(([n, src, open]) => (
+                <Card key={n} state={open ? 'hit' : 'default'}>
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {open ? <Tag kind="open">Sites open</Tag> : <Tag kind="paused">Booked — watch it</Tag>}
+                    <Tag kind="src">{src}</Tag>
+                  </div>
+                  <div className="font-ch-display text-ch-park font-bold tracking-[-.02em]">{n}</div>
+                  <div className="mt-0.5 text-ch-meta text-ch-muted">Big Sur, CA · 4 mi away</div>
+                  <div className="mt-3 border-t border-ch-line pt-3">
+                    <Button variant={open ? 'primary' : 'quiet'} fullWidth>
+                      {open ? "See what's open" : 'See full calendar'}
+                    </Button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </div>
+      );`,
+    frame: 'w-full',
+  },
   'v2-desktop-hero': {
     label: 'v2 desktop hero (art + overlaid headline)',
     entry: `import BrandHeader from '@/components/v2/BrandHeader';
@@ -587,6 +625,7 @@ function parseArgs() {
   };
   return {
     spec,
+    query: get('query', ''),
     out: get('out', join(ROOT, 'screenshot.png')),
     width: Number(get('width', '1440')),
     height: Number(get('height', '900')),
@@ -611,7 +650,7 @@ function resolveEntry(spec: string | undefined): { entry: string; frame: string;
 }
 
 async function main() {
-  const { spec, out, width, height, wait } = parseArgs();
+  const { spec, out, width, height, wait, query } = parseArgs();
   const { entry, frame, label } = resolveEntry(spec);
   const work = mkdtempSync(join(tmpdir(), 'shot-'));
   console.log(`[shot] ${label} → ${out}`);
@@ -692,7 +731,7 @@ async function main() {
     const page = await browser.newPage({ viewport: { width, height } });
     page.on('pageerror', (e) => console.error('[shot] page error:', e.message));
     page.on('console', (m) => { if (m.type() === 'error') console.error('[shot] console:', m.text().slice(0, 300)); });
-    await page.goto(`http://localhost:${port}/`, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.goto(`http://localhost:${port}/${query ? '?' + query : ''}`, { waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.waitForTimeout(wait);
     await page.screenshot({ path: out });
     console.log(`[shot] saved ${out}`);
