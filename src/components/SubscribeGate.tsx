@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { SignInButton, SignUpButton } from '@clerk/nextjs';
 import { useIsNativeApp } from '@/lib/native/context';
+import { COVERAGE, campgroundsRounded } from '@/lib/coverage';
 
 /** Marketing panel + subscribe surfaces. One consistent pitch for every
  *  non-paying audience — the CTA is the only thing that changes:
@@ -73,7 +74,13 @@ const FEATURE_CARDS = [
   {
     icon: Globe2,
     title: 'Federal + state park coverage',
-    body: 'Recreation.gov campgrounds nationwide — national parks, forests, and lakes — plus state parks in 29 states — including California, Texas, Arizona, Florida, New York, Oregon, Utah, Nevada, Ohio, Virginia, Illinois, Wyoming, Pennsylvania, Tennessee, South Carolina, and more, with additional states rolling out. 5,500+ campgrounds and counting.',
+    // Numbers come from the derived COVERAGE constants, not from memory. This
+    // said "29 states" and "5,500+ campgrounds" — both understated the product
+    // and had drifted from the catalog (it's 34 and 8,013). The state list that
+    // used to follow is gone: it was the same keyword stuffing as the old meta
+    // description, and /camping now answers per-state intent with a real page
+    // each instead of fifteen names in one sentence.
+    body: `Recreation.gov campgrounds nationwide — national parks, forests, and lakes — plus state parks in ${COVERAGE.stateParkStates} states. ${campgroundsRounded()} campgrounds and counting.`,
     badge: null as string | null,
   },
 ];
@@ -262,8 +269,15 @@ export default function SubscribeGate({ returning = false, signedOut = false }: 
         </div>
       )}
 
+      {/* "Browse by state" is here for a reason beyond navigation: it is the ONLY
+          link on the live site into /camping, and without it the 47 state pages
+          and everything they link to are orphans. Search Console reported
+          "Referring page: None detected" — a sitemap tells Google a page exists,
+          a link tells it the page matters. This is the signed-out render, which
+          is exactly what a crawler sees. */}
       <p className="text-xs text-gray-500 [text-shadow:_0_1px_6px_rgb(250_247_242_/_0.9)]">
         © {new Date().getFullYear()} CampHawk ·{' '}
+        <a href="/camping" className="underline underline-offset-2 hover:text-green-800">Browse campgrounds by state</a> ·{' '}
         <a href="/terms" className="underline underline-offset-2 hover:text-green-800">Terms</a> ·{' '}
         <a href="/privacy" className="underline underline-offset-2 hover:text-green-800">Privacy</a>
       </p>
