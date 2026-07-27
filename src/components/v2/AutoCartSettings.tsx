@@ -20,9 +20,12 @@ import Tag from "@/components/ui/Tag";
  *   not connected      -> the sign-in hasn't been done; offer it
  *   connected, off     -> signed in but the switch is off
  *   connected, on      -> working; say when the session was last verified
- *   session expired    -> on and connected, but the stored session went stale.
- *                         The poller silently falls back to a plain alert here,
- *                         so saying so BEFORE a site is missed is the point.
+ *   session stale      -> on and connected, but the machine hasn't confirmed the
+ *                         session within AUTOCART_SESSION_STALE_MS (45 min). The
+ *                         poller falls back to a plain alert, silently — saying so
+ *                         BEFORE a site is missed is the point. It is NOT an
+ *                         expired login: the saved credentials mean the bot signs
+ *                         back in itself, so this reads as "reconnecting".
  *
  * The /connect flow itself is untouched — it's a WebSocket bridge to the user's
  * own bot machine and has nothing to do with presentation. This links to it.
@@ -35,8 +38,26 @@ interface AutoCartState {
   sessionExpired: boolean;
 }
 
+/**
+ * Relative, not a date. The freshness window is 45 minutes, so a live session is
+ * always "today" and a date tells the reader nothing.
+ */
+function agoLabel(iso: string | null): string | null {
+  if (!iso) return null;
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hrs = Math.round(mins / 60);
+  return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
+}
+
 export default function AutoCartSettings() {
   const [state, setState] = useState<AutoCartState | null>(null);
+  // Computed when the data lands, not during render — Date.now() in a render
+  // body is an impure call and React (correctly) rejects it.
+  const [verified, setVerified] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +67,9 @@ export default function AutoCartSettings() {
     fetch("/api/user/autocart")
       .then((r) => (r.ok ? r.json() : null))
       .then((j: AutoCartState | null) => {
-        if (!cancelled && j) setState(j);
+        if (cancelled || !j) return;
+        setState(j);
+        setVerified(agoLabel(j.verifiedAt));
       })
       .catch(() => {
         /* falls through to the "couldn't load" state below */
@@ -95,18 +118,11 @@ export default function AutoCartSettings() {
     );
   }
 
-  const verified = state.verifiedAt
-    ? new Date(state.verifiedAt).toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-      })
-    : null;
-
   return (
     <div>
       <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
         {state.sessionExpired ? (
-          <Tag kind="alert">Action needed</Tag>
+          <Tag kind="paused">Reconnecting</Tag>
         ) : state.enabled && state.connected ? (
           <Tag kind="cart">On</Tag>
         ) : state.connected ? (
@@ -119,21 +135,29 @@ export default function AutoCartSettings() {
 
       <p className="max-w-[62ch] text-ch-body leading-relaxed text-ch-ink-2">
         When a site opens up on Recreation.gov we can put it in your cart automatically, so it&apos;s
-        held while you get to your phone. It needs a one-time sign-in to your Recreation.gov account,
-        which happens on your own machine — we never store the password.
+        held while you get to your phone. It signs in to your Recreation.gov account on a private
+        machine we run, and saves that login there — encrypted, never on our web servers — so it can
+        sign back in on its own whenever the session drops.
       </p>
 
+      {/* NOT "your sign-in expired". The stale flag means the machine holding
+          your session hasn't checked in for 45 minutes; the saved login means it
+          signs back in by itself. Telling someone to redo a sign-in that is
+          already repairing itself sends them on an errand for nothing. The
+          manual link stays as a fallback for the case it doesn't recover. */}
       {state.sessionExpired && (
-        <div className="mt-3 rounded-ch-input border border-[#E7BFB4] bg-ch-alert-soft px-3.5 py-3">
-          <p className="text-ch-body font-bold text-ch-alert-deep">
-            Your Recreation.gov sign-in expired
+        <div className="mt-3 rounded-ch-input border border-[#E7C98C] bg-ch-ochre-soft px-3.5 py-3">
+          <p className="text-ch-body font-bold text-ch-ochre-ink">
+            Auto-cart is reconnecting
           </p>
-          <p className="mt-1 text-ch-fine leading-normal text-ch-alert-deep">
-            We&apos;re still watching and will still alert you — we just can&apos;t hold the site
-            while you get to your phone. Signing in again takes a minute.
+          <p className="mt-1 text-ch-fine leading-normal text-ch-ochre-ink">
+            The machine holding your Recreation.gov session hasn&apos;t checked in for a few
+            minutes, so we can&apos;t hold a site for you right now. Your login is saved, so it
+            signs back in on its own — and your watches keep alerting you the whole time. If this
+            is still here in an hour, signing in again will fix it.
           </p>
-          <a href="/connect" className={buttonClasses({ variant: "warn", className: "mt-2.5" })}>
-            Reconnect Recreation.gov
+          <a href="/connect" className={buttonClasses({ variant: "quiet", size: "sm", className: "mt-2.5" })}>
+            Sign in to Recreation.gov again
           </a>
         </div>
       )}
@@ -152,7 +176,7 @@ export default function AutoCartSettings() {
             </p>
             <p className="mt-0.5 text-ch-fine text-ch-muted">
               {verified
-                ? `Recreation.gov sign-in last verified ${verified}.`
+                ? `Session confirmed ${verified}.`
                 : "Recreation.gov sign-in complete."}
             </p>
           </div>

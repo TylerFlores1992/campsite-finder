@@ -13,7 +13,9 @@ import { formatRange, nightsBetween, type ISODate } from "@/components/ui/date";
  *
  * STATES, and what each is actually derived from — none are invented:
  *   hit         alerted within the poller's 1h re-notify window
- *   authexpired auto-cart is on but the rec.gov session went stale
+ *   authexpired auto-cart is on but the bot's rec.gov session went stale — it
+ *               self-heals from the saved login, so this is "reconnecting", not
+ *               "you must act"
  *   stalled     this watch's provider is failing its detection canary
  *   paused      active = false
  *   watching    the resting state
@@ -125,11 +127,11 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
             <Tag kind="cart">In your cart</Tag>
           )}
           {state === "hit" && watch.auto_cart && sessionExpired && (
-            <Tag kind="alert">Not carted — sign-in expired</Tag>
+            <Tag kind="paused">Not carted — reconnecting</Tag>
           )}
           {state === "watching" && <Tag kind="watch">Watching</Tag>}
           {state === "paused" && <Tag kind="paused">Paused</Tag>}
-          {state === "authexpired" && <Tag kind="alert">Action needed</Tag>}
+          {state === "authexpired" && <Tag kind="paused">Auto-cart reconnecting</Tag>}
           {state === "stalled" && <Tag kind="paused">Checks paused</Tag>}
           {source && <Tag kind="src">{providerLabel(source, watch.campground_id)}</Tag>}
         </div>
@@ -153,13 +155,16 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
 
       {state === "authexpired" && (
         <div className="mt-3 border-t border-ch-line pt-3">
+          {/* The session going stale means the machine hasn't checked in, not
+              that a login aged out — and the saved login means it recovers on its
+              own. See AutoCartSettings for the full note. */}
           <p className="mb-2.5 text-ch-meta leading-normal text-ch-ink-2">
-            Your Recreation.gov sign-in expired, so auto-cart is off for this watch. We&apos;re still
-            checking and will still alert you — we just can&apos;t hold the site while you get to
-            your phone.
+            Auto-cart can&apos;t hold a site for you right now — the machine holding your
+            Recreation.gov session is reconnecting. It signs back in by itself, and we&apos;re still
+            checking and still alerting you meanwhile.
           </p>
-          <a href="/connect" className={buttonClasses({ variant: "warn", fullWidth: true })}>
-            Reconnect Recreation.gov
+          <a href="/connect" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
+            Sign in again if this sticks
           </a>
         </div>
       )}

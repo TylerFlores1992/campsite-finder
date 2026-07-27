@@ -6,29 +6,35 @@ import { cx } from "@/components/ui/cx";
 /**
  * What auto-cart can and can't do with a Recreation.gov account.
  *
- * REWRITTEN FROM THE MOCKUP, WHICH WAS FACTUALLY WRONG. Its copy read "we hold
- * an encrypted session token, not your password" — true for the default, and
- * FALSE for anyone who enabled the saved-login option, where the bot stores real
- * credentials (DPAPI-encrypted, on the operator's machine) so it can re-login
- * when the session dies.
+ * SAVED LOGIN IS NOT OPTIONAL, so this no longer pretends it might be. The
+ * /connect form disables its submit button unless "Save my login" is checked
+ * and labels it "(required)" — every auto-cart user has credentials stored.
+ * An earlier version of this panel only revealed that behind a `savedLogin`
+ * prop, and NewWatch never passed it, so the one block that admitted we store a
+ * password never rendered while the block above it told everyone "that's a
+ * session, not your password". That was a false privacy claim shown to every
+ * user who turned auto-cart on. The disclosure is now unconditional.
  *
- * Rather than soften that into something vague enough to cover both, the panel
- * splits. The green block describes the default session and stays true for
- * everyone. The ochre block appears only for the opt-in that actually stores a
- * password — ochre because it's the "you asked for this" colour, and this is the
- * one place in the product where the user takes on real risk.
+ * SESSIONS DO NOT "EXPIRE EVERY FEW WEEKS" EITHER. autocart_verified_at is a
+ * 45-minute freshness window (AUTOCART_SESSION_STALE_MS) stamped by a bot
+ * keepalive that runs about every 30 minutes. When it goes stale it means the
+ * machine holding the session hasn't checked in — not that a login aged out —
+ * and because the password is stored, the bot signs back in by itself. The copy
+ * now describes that, because telling someone their sign-in expired sends them
+ * to redo a thing that is already fixing itself.
  *
- * The risk line at the bottom will cost some opt-ins. It stays. This is the most
+ * The risk lines will cost some opt-ins. They stay. This is the most
  * screenshot-able screen in the product for a sceptical user, and the honest
  * version is the one that survives being screenshotted.
  */
 export interface TrustPanelProps {
-  /** Whether the account has saved-login enabled; reveals the second block. */
-  savedLogin?: boolean;
   className?: string;
 }
 
-export default function TrustPanel({ savedLogin = false, className }: TrustPanelProps) {
+/* The `savedLogin` prop is gone. It gated the password disclosure, and saved
+   login is required for auto-cart — there is no state in which the disclosure
+   shouldn't show, so a prop that could hide it was a footgun. */
+export default function TrustPanel({ className }: TrustPanelProps) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -38,8 +44,8 @@ export default function TrustPanel({ savedLogin = false, className }: TrustPanel
         <ul className="mt-1.5">
           {[
             <>
-              We stay signed in to your account in a browser on a private machine we run — not on
-              our web servers. That&apos;s a <strong className="font-extrabold text-ch-ink">session</strong>, not your password.
+              We stay signed in to your account in a browser on a private machine we run — never on
+              our web servers, and never in our cloud database.
             </>,
             <>
               The only thing we do with it is{" "}
@@ -60,13 +66,15 @@ export default function TrustPanel({ savedLogin = false, className }: TrustPanel
           ))}
         </ul>
         <p className="mt-1.5 border-t border-ch-line pt-1.5 text-ch-fine leading-normal text-ch-muted">
-          Sessions expire every few weeks. We&apos;ll tell you when yours needs renewing, and
-          auto-cart pauses until it does.
+          Recreation.gov sessions drop from time to time. Because your login is saved, the machine
+          signs back in on its own — you don&apos;t have to do anything. Auto-cart pauses for those
+          few minutes, and your watches keep alerting you normally throughout.
         </p>
       </div>
 
-      {savedLogin && (
-        <div className="mt-2.5 rounded-ch-input border border-[#E7C98C] bg-ch-ochre-soft p-3.5">
+      {/* Unconditional: auto-cart cannot be enabled without saving the login,
+          so there is no version of this screen where it doesn't apply. */}
+      <div className="mt-2.5 rounded-ch-input border border-[#E7C98C] bg-ch-ochre-soft p-3.5">
           <button
             type="button"
             aria-expanded={open}
@@ -75,10 +83,10 @@ export default function TrustPanel({ savedLogin = false, className }: TrustPanel
           >
             <span className="flex-1">
               <span className="block text-ch-body font-bold text-ch-ochre-ink">
-                You have &ldquo;Keep me signed in&rdquo; on
+                Auto-cart saves your Recreation.gov login
               </span>
               <span className="mt-0.5 block text-ch-fine text-[#A07B33]">
-                That stores more than a session — tap to see exactly what.
+                It has to, so it can sign back in for you — tap to see exactly what that means.
               </span>
             </span>
             <span aria-hidden="true" className="text-[11px] text-ch-ochre-ink">
@@ -95,14 +103,16 @@ export default function TrustPanel({ savedLogin = false, className }: TrustPanel
                   private machine. It never reaches CampHawk&apos;s servers or database.
                 </>,
                 <>
-                  We use it for exactly one thing: signing you back in when the session expires, so
+                  We use it for exactly one thing: signing you back in when the session drops, so
                   auto-cart doesn&apos;t quietly stop working.
                 </>,
                 <>
                   After two failed sign-ins we delete it and ask you to reconnect, so a changed
                   password can&apos;t lock your account.
                 </>,
-                <>Turning it off deletes the stored password immediately.</>,
+                <>
+                  Turning auto-cart off, or disconnecting, deletes the stored password immediately.
+                </>,
               ].map((line, i) => (
                 <li
                   key={i}
@@ -114,15 +124,19 @@ export default function TrustPanel({ savedLogin = false, className }: TrustPanel
                   <span>{line}</span>
                 </li>
               ))}
+              {/* The old version of this line offered "turn this off and we'll
+                  ask you to reconnect every few weeks instead" — an option that
+                  does not exist. /connect requires the saved login. The real
+                  choice is auto-cart or no auto-cart, so that's what it says. */}
               <li className="mt-1.5 border-t border-[#E7C98C] pt-1.5 text-ch-fine leading-normal text-ch-ochre-ink">
                 A saved password is more than a session — it&apos;s a reusable key to your
-                Recreation.gov account. If you&apos;d rather not, turn this off and we&apos;ll ask
-                you to reconnect every few weeks instead.
+                Recreation.gov account. Auto-cart can&apos;t work without it. If you&apos;d rather
+                not, leave auto-cart off: your watches still find the opening and still alert you in
+                seconds, you just add the site to the cart yourself.
               </li>
             </ul>
           )}
-        </div>
-      )}
+      </div>
     </div>
   );
 }

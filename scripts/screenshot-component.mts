@@ -192,6 +192,13 @@ const PRESETS: Record<string, Preset> = {
       export const node = <Settings />;`,
     frame: 'max-w-2xl w-full mx-auto',
   },
+  'ch-trust': {
+    label: 'TrustPanel — auto-cart disclosure (expanded)',
+    entry: `import TrustPanel from '@/components/v2/TrustPanel';
+      if (typeof window !== 'undefined') setTimeout(() => document.querySelector('[aria-expanded]')?.click(), 300);
+      export const node = <div className="font-ch-body text-ch-ink"><TrustPanel /></div>;`,
+    frame: 'max-w-md w-full mx-auto',
+  },
   'ch-about': {
     label: 'Campground About panel — real rec.gov HTML description',
     // Verbatim description text from the catalog, tags and all. If richText
