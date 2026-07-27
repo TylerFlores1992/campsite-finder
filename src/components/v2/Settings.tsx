@@ -54,7 +54,7 @@ export default function Settings() {
           <a href="/sign-in" className={buttonClasses({ fullWidth: true })}>
             Sign in
           </a>
-          <Link href="/v2" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
+          <Link href="/v2/search" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
             Back to Explore
           </Link>
         </div>

@@ -257,7 +257,7 @@ function AccountWall() {
         <a href="/sign-in" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
           Sign in
         </a>
-        <Link href="/v2" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
+        <Link href="/v2/search" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
           Keep exploring without an account
         </Link>
       </div>

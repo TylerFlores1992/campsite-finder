@@ -199,6 +199,12 @@ const PRESETS: Record<string, Preset> = {
       export const node = <div className="font-ch-body text-ch-ink"><TrustPanel /></div>;`,
     frame: 'max-w-md w-full mx-auto',
   },
+  'ch-home': {
+    label: 'Marketing home (redesign) — signed out',
+    entry: `import Home from '@/app/v2/page';
+      export const node = <div className="font-ch-body text-ch-ink"><Home /></div>;`,
+    frame: 'w-full',
+  },
   'ch-about': {
     label: 'Campground About panel — real rec.gov HTML description',
     // Verbatim description text from the catalog, tags and all. If richText

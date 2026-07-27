@@ -28,7 +28,7 @@ import BrandMark from "./BrandMark";
 const LINKS = [
   { href: "/v2/watches", label: "Watches" },
   { href: "/v2/new", label: "New watch" },
-  { href: "/v2", label: "Explore" },
+  { href: "/v2/search", label: "Explore" },
 ] as const;
 
 /** Scroll past this and the header art shrinks to its wordmark strip. */
@@ -115,6 +115,8 @@ export default function V2Nav() {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const isActive = (href: string) =>
+    // /v2 is the marketing home, so it must match exactly — otherwise it would
+    // light up as "active" on every page in the subtree.
     href === "/v2" ? pathname === "/v2" : pathname.startsWith(href);
 
   // Passive listener + a state change only on the transition, so scrolling

@@ -147,8 +147,10 @@ export default async function StateCampingPage({
         </p>
 
         <div className="mt-6 flex flex-wrap gap-2">
+          {/* Straight to the search screen, not the marketing home — someone on
+              a state page has already decided they want to look. */}
           <Link
-            href="/"
+            href="/search"
             className="rounded-ch-chip bg-ch-green px-4 py-2 text-ch-body font-bold text-white hover:bg-ch-green-deep"
           >
             Search {name} by date

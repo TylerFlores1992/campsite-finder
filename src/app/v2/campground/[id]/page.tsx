@@ -114,7 +114,8 @@ export default async function V2CampgroundPage({
   // The href is REBUILT here rather than used verbatim: `back` arrives in a URL
   // anyone can edit, and a raw pass-through would turn this link into an open
   // redirect. Only the query survives, always onto /v2.
-  const backTo = from === "watches" ? "/v2/watches" : back ? `/v2?${stripLeading(back)}` : "/v2";
+  const backTo =
+    from === "watches" ? "/v2/watches" : back ? `/v2/search?${stripLeading(back)}` : "/v2/search";
   const backLabel = from === "watches" ? "Back to watches" : "Back to search";
 
   // Does this campground's state have a landing page? Three states don't clear
