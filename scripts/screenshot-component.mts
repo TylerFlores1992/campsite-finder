@@ -437,14 +437,35 @@ const PRESETS: Record<string, Preset> = {
     frame: 'w-full',
   },
   'v2-desktop-hero': {
-    label: 'v2 desktop hero (art + overlaid headline)',
-    entry: `import BrandHeader from '@/components/v2/BrandHeader';
+    label: 'v2 desktop hero (text over the page backdrop)',
+    entry: `import BrandBackdrop from '@/components/v2/BrandBackdrop';
+      import BrandHeader from '@/components/v2/BrandHeader';
+      import Button from '@/components/ui/Button';
+      import Chip from '@/components/ui/Chip';
       export const node = (
-        <div className="bg-ch-paper font-ch-body text-ch-ink">
+        <div className="relative min-h-[700px] font-ch-body text-ch-ink">
+          <BrandBackdrop />
           <BrandHeader
             title="Find a campsite that's open tonight"
             subtitle="Live availability across 8,000+ campgrounds — every Recreation.gov site in all 50 states, plus state parks in 34. Free, no account needed."
           />
+          <div className="mx-auto max-w-[1120px] px-5 py-6">
+            <div className="grid gap-5 lg:grid-cols-[316px_minmax(0,1fr)]">
+              <div className="rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-pop">
+                <div className="mb-2 text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">Where</div>
+                <div className="rounded-ch-input border border-ch-line px-3.5 py-3 font-ch-display text-[14px] font-semibold text-ch-faint">City, park, or ZIP</div>
+                <div className="mt-4 mb-2 text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">Within</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {[10,25,50,100].map((r) => <Chip key={r} size="sm" selected={r===50}>{r} mi</Chip>)}
+                </div>
+                <div className="mt-4"><Button fullWidth>Search</Button></div>
+              </div>
+              <div className="rounded-ch-card border border-dashed border-ch-line bg-white/60 p-8 text-center">
+                <div className="font-ch-display text-[15px] font-bold">Where are you headed?</div>
+                <div className="mt-1.5 text-ch-body text-ch-muted">Search a city or park to see what's open right now.</div>
+              </div>
+            </div>
+          </div>
         </div>
       );`,
     frame: 'w-full',

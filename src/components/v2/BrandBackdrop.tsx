@@ -36,11 +36,17 @@ const ART = {
 const PAPER = "245, 247, 242"; // --ch-paper
 
 export default function BrandBackdrop() {
-  if (!HAS_BRAND_ART) return null;
   const art = ART[VARIANT];
 
   return (
-    <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10">
+    // The paper ground lives HERE, not on the layout wrapper. An opaque wrapper
+    // painted straight over this fixed layer, so the artwork only appeared in
+    // the strip below the footer on short pages. Rendering the base colour here
+    // means the layout can stay transparent and the page still has a ground even
+    // with the art switched off.
+    <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10 bg-ch-paper">
+      {!HAS_BRAND_ART ? null : (
+        <>
       <div
         className="absolute inset-0 bg-cover bg-no-repeat"
         style={{ backgroundImage: `url('${art.url}')`, backgroundPosition: art.position }}
@@ -58,6 +64,8 @@ export default function BrandBackdrop() {
           background: `linear-gradient(to bottom, rgba(${PAPER},0), rgba(${PAPER},.95))`,
         }}
       />
+        </>
+      )}
     </div>
   );
 }

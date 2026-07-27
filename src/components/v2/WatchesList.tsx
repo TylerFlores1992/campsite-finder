@@ -24,7 +24,11 @@ const WATCH_LIMIT = 10;
 
 interface HealthCheck {
   name: string;
-  ok: boolean;
+  /** 'ok' | 'warn' | 'fail'. NOT a boolean — an earlier version read `c.ok`,
+      which is undefined on every row, so !c.ok was true and EVERY provider
+      rendered as down. */
+  level: "ok" | "warn" | "fail";
+  detail?: string;
   ageSeconds?: number | null;
 }
 
@@ -91,7 +95,12 @@ export default function WatchesList() {
         if (cancelled || !j?.checks) return;
         const down = new Set<string>();
         for (const c of j.checks) {
-          if (c.name?.startsWith("detect:") && !c.ok) down.add(c.name.slice("detect:".length));
+          // Only a hard 'fail' means the provider is down. 'warn' covers things
+          // like "no canary run yet" or a stale-but-recent check, which is not
+          // something to alarm a user about mid-search.
+          if (c.name?.startsWith("detect:") && c.level === "fail") {
+            down.add(c.name.slice("detect:".length));
+          }
         }
         setStalledSources(down);
       })
@@ -140,12 +149,12 @@ export default function WatchesList() {
       {stalledCount > 0 && stalledName?.campground_source && (
         <div className="mb-3.5 rounded-[13px] border border-[#E7C98C] bg-ch-ochre-soft px-3.5 py-3">
           <p className="text-ch-body font-bold">
-            {providerLabel(stalledName.campground_source, stalledName.campground_id)} isn&apos;t
-            responding
+            {providerLabel(stalledName.campground_source, stalledName.campground_id)}
+            {" isn't responding"}
           </p>
           <p className="mt-1 text-ch-meta leading-normal text-ch-ink-2">
-            {stalledCount} {stalledCount === 1 ? "watch is" : "watches are"} affected. We&apos;re
-            retrying automatically. Your other watches are unaffected.
+            {stalledCount === 1 ? "1 watch is" : `${stalledCount} watches are`}
+            {" affected. We're retrying automatically. Your other watches are unaffected."}
           </p>
         </div>
       )}

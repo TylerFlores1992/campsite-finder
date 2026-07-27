@@ -21,7 +21,10 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
   return (
     // font-ch-body scopes the redesign typography to this subtree, so the live
     // app keeps Inter/Sora while /v2 renders in Nunito Sans + Bitter.
-    <div className="flex min-h-full flex-col bg-ch-paper font-ch-body text-ch-ink">
+    // No background colour here: BrandBackdrop is a fixed layer behind the page,
+    // and an opaque wrapper paints straight over it — the artwork only showed in
+    // the strip below the footer on short pages. The backdrop supplies the ground.
+    <div className="flex min-h-full flex-col font-ch-body text-ch-ink">
       <BrandBackdrop />
       <V2Nav />
       <main className="flex-1">{children}</main>

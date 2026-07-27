@@ -137,7 +137,11 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
         </p>
         <p className="mt-0.5 text-ch-meta text-ch-muted">{spec}</p>
 
-        {watch.likelihood && (
+        {/* Only ever shown when the number is both honest and useful. A rounded
+            0% reads as "this never opens", which is exactly the discouraging
+            misread that got feature E's UI paused — thin history looks like bad
+            news rather than no news. */}
+        {watch.likelihood && Math.round(watch.likelihood.rate * 100) >= 1 && (
           <p className="mt-1.5 text-ch-fine text-ch-muted">
             Opens up on {Math.round(watch.likelihood.rate * 100)}% of checks for dates this far out
           </p>
@@ -160,8 +164,8 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
       {state === "stalled" && (
         <div className="mt-3 border-t border-ch-line pt-3">
           <p className="text-ch-fine text-ch-muted">
-            {source ? providerLabel(source, watch.campground_id) : "This provider"} isn&apos;t
-            responding. We&apos;re retrying — your other watches are unaffected.
+            {source ? providerLabel(source, watch.campground_id) : "This provider"}
+            {" isn't responding. We're retrying — your other watches are unaffected."}
           </p>
         </div>
       )}
