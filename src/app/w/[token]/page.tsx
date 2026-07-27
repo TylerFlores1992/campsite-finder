@@ -21,25 +21,25 @@ export default async function WatchActionPage({ params }: { params: Promise<{ to
           : null;
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <div className="max-w-md w-full bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-center">
+    <main className="min-h-screen flex items-center justify-center bg-ch-paper px-4">
+      <div className="max-w-md w-full bg-white rounded-2xl border border-ch-line shadow-sm p-8 text-center">
         <div className="text-3xl mb-3">{result.ok ? '✅' : '⚠️'}</div>
-        <h1 className="text-lg font-semibold text-gray-800 mb-2">
+        <h1 className="text-lg font-semibold text-ch-ink mb-2">
           {result.ok ? 'Done' : 'Hmm'}
         </h1>
-        <p className="text-gray-600">{result.message}</p>
+        <p className="text-ch-ink-2">{result.message}</p>
 
         {result.ok && result.inverseUrl && inverseLabel && (
           <a
             href={result.inverseUrl}
-            className="inline-block mt-6 px-5 py-2.5 rounded-lg bg-green-600 text-white font-medium hover:bg-green-700"
+            className="inline-block mt-6 px-5 py-2.5 rounded-lg bg-ch-green text-white font-medium hover:bg-ch-green-deep"
           >
             {inverseLabel}
           </a>
         )}
 
         <div className="mt-6">
-          <Link href="/" className="text-sm text-gray-400 hover:text-gray-600">Back to CampHawk</Link>
+          <Link href="/" className="text-sm text-ch-muted hover:text-ch-ink-2">Back to CampHawk</Link>
         </div>
       </div>
     </main>

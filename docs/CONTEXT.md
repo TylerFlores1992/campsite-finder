@@ -503,11 +503,14 @@ ADDITIVE — it was written that way so the rewrite could run beside the old UI
 without touching it. Fonts are Bitter (display) + Nunito Sans (body). Primitives
 live in `src/components/ui/`, screens in `src/components/v2/`.
 
-> **The stock Tailwind colour scales are still overridden** in `globals.css`
-> (`--color-green-*`, `--color-gray-*`, …) to CampHawk's palette. ~22 files outside
-> the app shell — sign-in, terms, privacy, the token action pages — still use
-> `bg-green-600` and friends, so deleting the overrides would silently repaint all
-> of them in stock Tailwind. Convert those files first.
+> **The stock Tailwind colour overrides are GONE (2026-07-27).** `globals.css` used
+> to redefine `--color-green-*` / `--color-gray-*` / `--color-amber-*` /
+> `--color-blue-*` so the pre-rewrite UI picked up the brand palette. The 13 files
+> still on those scales (sign-in, sign-up, terms, privacy, sms-opt-in, auto-cart,
+> `/w/<token>`, error, not-found, `Logo`, `SmsOptIn`, `BetaTesters`,
+> `AdminAutoRefresh`) were converted to `ch-*` tokens and the overrides deleted, so
+> `--ch-*` is now the only palette. **Consequence: a new `bg-green-600` resolves to
+> STOCK Tailwind green, not CampHawk green** — use a `ch-*` token.
 
 ### Things that will bite you
 

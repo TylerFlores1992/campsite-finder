@@ -74,15 +74,15 @@ export default function SmsOptIn({ demo = false, compact = false, initialPhone =
   // Compact + already signed up → one-line status with a turn-off button.
   if (compact && saved) {
     return (
-      <div className="flex items-center justify-between gap-2 rounded-lg bg-green-50 border border-green-100 px-3 py-2">
-        <span className="flex items-center gap-1.5 min-w-0 text-xs text-green-800">
-          <MessageSquare size={13} className="text-green-600 shrink-0" />
+      <div className="flex items-center justify-between gap-2 rounded-lg bg-ch-green-soft border border-ch-green-soft px-3 py-2">
+        <span className="flex items-center gap-1.5 min-w-0 text-xs text-ch-green-deep">
+          <MessageSquare size={13} className="text-ch-green shrink-0" />
           <span className="truncate">Text alerts on · {phone}</span>
         </span>
         <button
           onClick={turnOff}
           disabled={saving}
-          className="shrink-0 text-xs font-medium text-gray-500 hover:text-red-600 disabled:opacity-50"
+          className="shrink-0 text-xs font-medium text-ch-muted hover:text-red-600 disabled:opacity-50"
         >
           {saving ? <Loader2 size={12} className="animate-spin" /> : 'Turn off'}
         </button>
@@ -95,7 +95,7 @@ export default function SmsOptIn({ demo = false, compact = false, initialPhone =
     return (
       <button
         onClick={() => setExpanded(true)}
-        className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-green-200 bg-green-50 text-green-700 text-xs font-medium px-3 py-2 hover:bg-green-100 transition-colors"
+        className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-ch-green-soft bg-ch-green-soft text-ch-green-deep text-xs font-medium px-3 py-2 hover:bg-ch-green/15 transition-colors"
       >
         <MessageSquare size={13} />
         Add text alerts (optional)
@@ -105,21 +105,21 @@ export default function SmsOptIn({ demo = false, compact = false, initialPhone =
 
   return (
     <div className="space-y-2.5">
-      <p className="text-[11px] leading-snug text-gray-600 bg-green-50 border border-green-100 rounded-lg px-2.5 py-2">
+      <p className="text-[11px] leading-snug text-ch-ink-2 bg-ch-green-soft border border-ch-green-soft rounded-lg px-2.5 py-2">
         <strong>Text alerts are optional.</strong>{' '}CampHawk works fully with email alerts alone —
         you never need to give a phone number to create an account, subscribe, or use any feature.
         Adding your number and checking the box below is entirely voluntary, and you can skip it.
       </p>
 
       <div className="flex items-center justify-between">
-        <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
-          <MessageSquare size={12} className="text-green-600" />
+        <label className="flex items-center gap-1.5 text-xs font-medium text-ch-ink-2">
+          <MessageSquare size={12} className="text-ch-green" />
           Text alerts (optional)
         </label>
         {compact && expanded && (
           <button
             onClick={() => setExpanded(false)}
-            className="text-xs text-gray-400 hover:text-gray-600"
+            className="text-xs text-ch-muted hover:text-ch-ink-2"
           >
             Cancel
           </button>
@@ -134,10 +134,10 @@ export default function SmsOptIn({ demo = false, compact = false, initialPhone =
           setPhone(e.target.value);
           setSaved(false);
         }}
-        className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
+        className="w-full px-3 py-1.5 text-sm border border-ch-line rounded-lg focus:outline-none focus:ring-2 focus:ring-ch-green"
       />
 
-      <label className="flex items-start gap-2 text-xs text-gray-600 leading-snug cursor-pointer">
+      <label className="flex items-start gap-2 text-xs text-ch-ink-2 leading-snug cursor-pointer">
         <input
           type="checkbox"
           checked={consented}
@@ -145,7 +145,7 @@ export default function SmsOptIn({ demo = false, compact = false, initialPhone =
             setConsented(e.target.checked);
             setSaved(false);
           }}
-          className="mt-0.5 accent-green-600"
+          className="mt-0.5 accent-ch-green"
         />
         <span>
           Yes, I&apos;d like to receive automated text messages from CampHawk when campgrounds
@@ -153,7 +153,7 @@ export default function SmsOptIn({ demo = false, compact = false, initialPhone =
         </span>
       </label>
 
-      <p className="text-[11px] text-gray-400 leading-snug">
+      <p className="text-[11px] text-ch-muted leading-snug">
         <strong>Message frequency</strong>{' '}varies with campsite availability (typically at most one
         per watch).{' '}<strong>Message and data rates may apply.</strong>{' '}Reply{' '}<strong>HELP</strong>{' '}
         for help or{' '}<strong>STOP</strong>{' '}to cancel any time.{' '}
@@ -165,7 +165,7 @@ export default function SmsOptIn({ demo = false, compact = false, initialPhone =
       <button
         onClick={save}
         disabled={saving || saved || !consented || !phone}
-        className="w-full px-3 py-1.5 text-sm rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5"
+        className="w-full px-3 py-1.5 text-sm rounded-lg bg-ch-green text-white hover:bg-ch-green-deep disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5"
       >
         {saving ? (
           <Loader2 size={13} className="animate-spin" />

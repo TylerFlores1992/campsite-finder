@@ -21,10 +21,10 @@ export default function Error({
     <div className="min-h-screen flex flex-col items-center justify-center gap-6 bg-[#F3EFE0] px-4 text-center">
       <Logo markSize={40} />
       <div>
-        <p className="font-ch-display text-3xl font-extrabold text-green-800">
+        <p className="font-ch-display text-3xl font-extrabold text-ch-green-deep">
           Something went wrong
         </p>
-        <p className="mt-2 text-gray-600 max-w-sm">
+        <p className="mt-2 text-ch-ink-2 max-w-sm">
           We hit an unexpected error. Try again — if it keeps happening, please
           reach out.
         </p>
@@ -32,13 +32,13 @@ export default function Error({
       <div className="flex gap-3">
         <button
           onClick={reset}
-          className="px-6 py-3 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-ch-display font-semibold shadow-md transition-colors"
+          className="px-6 py-3 rounded-2xl bg-ch-green hover:bg-ch-green-deep text-white font-ch-display font-semibold shadow-md transition-colors"
         >
           Try again
         </button>
         <a
           href="/"
-          className="px-6 py-3 rounded-2xl bg-white border border-gray-200 text-gray-700 font-ch-display font-semibold hover:bg-gray-50 transition-colors"
+          className="px-6 py-3 rounded-2xl bg-white border border-ch-line text-ch-ink-2 font-ch-display font-semibold hover:bg-ch-paper transition-colors"
         >
           Home
         </a>

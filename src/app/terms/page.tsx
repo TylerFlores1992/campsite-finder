@@ -4,10 +4,10 @@ export const metadata = { title: 'Terms of Service — CampHawk' };
 
 export default function TermsPage() {
   return (
-    <div className="max-w-2xl mx-auto px-4 py-10 text-gray-800">
+    <div className="max-w-2xl mx-auto px-4 py-10 text-ch-ink">
       <a href="/" className="inline-block mb-6"><Logo markSize={30} /></a>
       <h1 className="text-2xl font-bold mb-1">CampHawk Terms of Service</h1>
-      <p className="text-sm text-gray-500 mb-8">Last updated: July 7, 2026</p>
+      <p className="text-sm text-ch-muted mb-8">Last updated: July 7, 2026</p>
 
       <div className="space-y-6 text-sm leading-relaxed">
         <section>
@@ -40,7 +40,7 @@ export default function TermsPage() {
             You opt in only by deliberately entering your number and checking the consent box in
             your account settings. Message frequency varies with campsite availability. Message and
             data rates may apply. Reply STOP to opt out or HELP for help. See our{' '}
-            <a href="/privacy" className="text-green-700 underline">Privacy Policy</a>{' '}for how
+            <a href="/privacy" className="text-ch-green-deep underline">Privacy Policy</a>{' '}for how
             your number is handled.
           </p>
         </section>
@@ -66,7 +66,7 @@ export default function TermsPage() {
           <h2 className="font-semibold text-base mb-2">Contact</h2>
           <p>
             Questions:{' '}
-            <a href="mailto:alerts@camphawk.app" className="text-green-700 underline">
+            <a href="mailto:alerts@camphawk.app" className="text-ch-green-deep underline">
               alerts@camphawk.app
             </a>
           </p>

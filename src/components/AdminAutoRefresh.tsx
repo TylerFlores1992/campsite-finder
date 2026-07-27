@@ -30,7 +30,7 @@ export default function AdminAutoRefresh({ intervalMs = 30000 }: { intervalMs?: 
   return (
     <button
       onClick={refresh}
-      className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-green-700 transition-colors"
+      className="flex items-center gap-1.5 text-xs text-ch-muted hover:text-ch-green-deep transition-colors"
       title="Refresh now"
     >
       <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />

@@ -23,8 +23,12 @@ The old pages and 14 orphaned components are **deleted**; `/v2` no longer exists
 - **`robots` is per page, not in the layout.** `/` and `/search` index; `/watches`,
   `/settings`, `/new` don't; `/manage/<token>` is `noindex, nocache` — the URL contains
   the token that authorises the watch.
-- **Stock Tailwind colour overrides are still in `globals.css`** and ~22 files outside
-  the app shell still use them. Deleting them repaints sign-in/terms/privacy/token pages.
+- **The stock Tailwind colour overrides are DELETED (2026-07-27).** The last 13 files
+  on `bg-green-600`/`text-gray-*` were converted, so `--ch-*` is the only palette —
+  a new `bg-green-600` now renders STOCK Tailwind green. Use a `ch-*` token.
+- **The admin link lives in the account menu** (`V2Nav`), not `/settings`. `V2Nav` is a
+  client component, so it gets the boolean from `GET /api/admin/status` (Clerk-authed,
+  `lib/admin` stays `server-only`) — never a client-side email check.
 
 ## SEO (added 2026-07-27, live since the swap lifted the layout `noindex`)
 Server-rendered campground pages + per-page metadata (`lib/seo.ts`), JSON-LD
@@ -81,18 +85,13 @@ all gated behind a 20-sample **honesty threshold** (numbers hidden until honest)
   surfaces at runtime. Smoke-test a real page after deploying (`curl -sI camphawk.app/`).
 
 ## Open / next session
-**Do these first** (Clerk keys will be in the env, so signed-in flows are testable):
-1. **Move the admin link out of `/settings` into the profile dropdown** (`V2Nav.tsx`,
-   alongside "Alerts & settings" and "Manage subscription"). The `isAdmin` boolean is
-   resolved server-side in `app/(app)/settings/page.tsx` today; the nav is a client
-   component, so it will need the same boolean from somewhere server-side — do NOT
-   reintroduce a client-side email check (`lib/admin.ts` explains why).
-2. **Delete the stock Tailwind colour overrides** from `globals.css`. Convert the ~22
-   files still using `bg-green-600`/`text-gray-*` first — sign-in, sign-up, terms,
-   privacy, sms-opt-in, auto-cart, `/w/<token>`, `/b/<token>`, error/not-found.
-   `grep -rlE "(bg|text|border)-(green|gray|red)-[0-9]" src/` finds them.
+**Both "do these first" items are DONE (2026-07-27):** the admin link moved to the
+account menu, and the stock Tailwind overrides are deleted (see the two bullets in the
+rewrite section above). Neither was verified signed-in from the sandbox — **check the
+admin menu item appears for the owner, and eyeball the 13 repainted pages**
+(sign-in/sign-up/terms/privacy/sms-opt-in/auto-cart/`/w/<token>`/error/not-found).
 
-**Then, unverified from this sandbox — click through signed in:** watch creation
+**Also unverified from this sandbox — click through signed in:** watch creation
 end-to-end, Stripe checkout from the new `Pricing`, the settings writes (phone save,
 auto-cart toggle), and the campsite mute list on `/manage/<token>`. Revert of the whole
 swap is `git revert a029c27` if something is badly wrong.

@@ -6,59 +6,18 @@
 }
 
 /*
- * CampHawk brand tokens.
- * The green/amber/blue/gray scales are REDEFINED so every existing
- * Tailwind class site-wide picks up the outdoorsy palette:
- *   green → deep forest · amber → sunset ember · blue → lake sky
- *   gray → warm stone neutrals
+ * The stock Tailwind green/amber/blue/gray scales USED TO BE REDEFINED here, so
+ * that every `bg-green-600` in the pre-rewrite UI picked up CampHawk's palette.
+ * They are GONE (2026-07-27): the rewrite moved the app onto the `--ch-*`
+ * namespace below, and the last files still on the stock scales — sign-in,
+ * sign-up, terms, privacy, sms-opt-in, auto-cart, /w/<token>, error, not-found,
+ * Logo, SmsOptIn, BetaTesters, AdminAutoRefresh — were converted to `ch-*` in
+ * the same commit. Nothing references the stock scales now
+ * (`grep -rE "(bg|text|border)-(green|gray|amber|blue)-[0-9]" src/`), so any
+ * future use of one resolves to STOCK Tailwind, not the brand palette. Reach
+ * for a `--color-ch-*` token instead.
  */
 @theme {
-  /* forest greens */
-  --color-green-50: #EEF3EE;
-  --color-green-100: #DCE8DD;
-  --color-green-200: #BAD1BE;
-  --color-green-300: #8FB197;
-  --color-green-400: #5E8C6B;
-  --color-green-500: #3E6B4E;
-  --color-green-600: #2C5741;
-  --color-green-700: #1F3D2E;
-  --color-green-800: #182F24;
-  --color-green-900: #12241B;
-
-  /* sunset ember */
-  --color-amber-50: #FBF0E3;
-  --color-amber-100: #F8E3CC;
-  --color-amber-200: #F1CBA1;
-  --color-amber-300: #EFAF6C;
-  --color-amber-400: #EB9950;
-  --color-amber-500: #E8873A;
-  --color-amber-600: #D5732A;
-  --color-amber-700: #B45E1F;
-  --color-amber-800: #8F4A18;
-  --color-amber-900: #703A13;
-
-  /* lake / sky */
-  --color-blue-50: #EDF3F6;
-  --color-blue-100: #DCE9EF;
-  --color-blue-200: #B9D2DD;
-  --color-blue-300: #8FB4C4;
-  --color-blue-400: #6E9DB1;
-  --color-blue-500: #5B8FA8;
-  --color-blue-600: #4A7B92;
-  --color-blue-700: #3C637A;
-
-  /* warm stone neutrals */
-  --color-gray-50: #F6F2EB;
-  --color-gray-100: #EFE9DF;
-  --color-gray-200: #E3DBCE;
-  --color-gray-300: #CFC6B6;
-  --color-gray-400: #9A9284;
-  --color-gray-500: #756E62;
-  --color-gray-600: #57524A;
-  --color-gray-700: #423E38;
-  --color-gray-800: #33302B;
-  --color-gray-900: #2B2B2B;
-
   --font-display: var(--font-sora);
 }
 
@@ -71,22 +30,14 @@
 }
 
 /* ===========================================================================
- * REDESIGN TOKENS — phase 1 of the presentation-layer rewrite.
+ * DESIGN TOKENS — the only palette. (Was "phase 1"; the stock-scale overwrites
+ * it ran beside were deleted in the phase 6 cleanup, 2026-07-27.)
  *
  * This is the `ch-*` namespace from camphawk-tokens.css, registered as Tailwind
- * theme keys so the redesigned components can use `bg-ch-green`, `text-ch-muted`,
- * `rounded-ch-card`, `font-ch-display`, and so on.
- *
- * WHY A SEPARATE NAMESPACE INSTEAD OF EDITING THE SCALES ABOVE:
- * the green/amber/blue/gray scales above are *overwrites* of stock Tailwind, so
- * every `bg-green-600` in all ~25 existing components resolves through them.
- * Repointing those at the new palette would restyle the entire live app in one
- * commit with no reviewable boundary. Registering `ch-*` alongside them is purely
- * additive — it generates new utilities and changes no existing rendering, which
- * is what lets the old and new UIs coexist while /v2 is built.
- *
- * The scales above get deleted in the phase 6 cleanup, once nothing references
- * them. Until then BOTH palettes are live and that is intentional.
+ * theme keys so components use `bg-ch-green`, `text-ch-muted`, `rounded-ch-card`,
+ * `font-ch-display`, and so on. It was introduced as a separate namespace rather
+ * than by repointing the stock scales, so the rewrite could land beside the old
+ * UI without restyling the live app in one unreviewable commit.
  *
  * COLOR RULES (from the tokens file — these are why the UI reads clearly):
  *   1. Green means a site is available, or an action that gets you one.

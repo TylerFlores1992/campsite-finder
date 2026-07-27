@@ -10,12 +10,12 @@ export const metadata = {
 function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
   return (
     <li className="flex gap-3">
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-green-600 text-white text-sm font-semibold">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ch-green text-white text-sm font-semibold">
         {n}
       </span>
       <div>
-        <p className="font-ch-display font-semibold text-gray-900">{title}</p>
-        <div className="mt-1 text-sm text-gray-600 leading-relaxed">{children}</div>
+        <p className="font-ch-display font-semibold text-ch-ink">{title}</p>
+        <div className="mt-1 text-sm text-ch-ink-2 leading-relaxed">{children}</div>
       </div>
     </li>
   );
@@ -24,19 +24,19 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 export default function AutoCartHelpPage() {
   return (
     <div className="min-h-screen bg-[#F3EFE0]">
-      <header className="bg-white border-b border-gray-200 px-4 py-3">
+      <header className="bg-white border-b border-ch-line px-4 py-3">
         <div className="max-w-2xl mx-auto flex items-center justify-between">
           <Link href="/"><Logo markSize={30} /></Link>
-          <Link href="/" className="text-sm text-gray-500 hover:text-green-700">← Back</Link>
+          <Link href="/" className="text-sm text-ch-muted hover:text-ch-green-deep">← Back</Link>
         </div>
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-8 space-y-8">
         <div>
-          <h1 className="font-ch-display text-3xl font-extrabold text-green-800">
+          <h1 className="font-ch-display text-3xl font-extrabold text-ch-green-deep">
             ⚡ Auto-cart — how it works
           </h1>
-          <p className="mt-2 text-gray-600 leading-relaxed">
+          <p className="mt-2 text-ch-ink-2 leading-relaxed">
             When a campsite you&apos;re watching opens up, auto-cart adds it to your{' '}
             <strong>recreation.gov</strong>{' '}cart automatically — so instead of racing to book
             before someone else grabs it, it&apos;s already waiting in your cart and you just
@@ -44,17 +44,17 @@ export default function AutoCartHelpPage() {
           </p>
         </div>
 
-        <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <h2 className="font-ch-display font-semibold text-gray-800 mb-3">What you need first</h2>
-          <ul className="space-y-2 text-sm text-gray-600">
+        <section className="bg-white rounded-2xl border border-ch-line shadow-sm p-5">
+          <h2 className="font-ch-display font-semibold text-ch-ink mb-3">What you need first</h2>
+          <ul className="space-y-2 text-sm text-ch-ink-2">
             <li>✅ A{' '}<strong>CampHawk account</strong>{' '}with at least one watch set up.</li>
             <li>✅ A{' '}<strong>recreation.gov account</strong> (the site you actually book on).</li>
             <li>✅ That&apos;s it — turn on the toggle and do a one-time sign-in (below).</li>
           </ul>
         </section>
 
-        <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <h2 className="font-ch-display font-semibold text-gray-800 mb-4">Set it up (one time)</h2>
+        <section className="bg-white rounded-2xl border border-ch-line shadow-sm p-5">
+          <h2 className="font-ch-display font-semibold text-ch-ink mb-4">Set it up (one time)</h2>
           <ol className="space-y-5">
             <Step n={1} title="Set your watches">
               Search for a campground, pick your dates, and tap{' '}<strong>Notify me</strong>{' '}on any
@@ -78,9 +78,9 @@ export default function AutoCartHelpPage() {
           </ol>
         </section>
 
-        <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <h2 className="font-ch-display font-semibold text-gray-800 mb-3">Good to know</h2>
-          <ul className="space-y-2 text-sm text-gray-600">
+        <section className="bg-white rounded-2xl border border-ch-line shadow-sm p-5">
+          <h2 className="font-ch-display font-semibold text-ch-ink mb-3">Good to know</h2>
+          <ul className="space-y-2 text-sm text-ch-ink-2">
             <li>
               <strong>Finish on your phone.</strong>{' '}The cart is tied to your recreation.gov
               account, so it shows up wherever you&apos;re logged in.
@@ -108,7 +108,7 @@ export default function AutoCartHelpPage() {
         <div className="text-center">
           <Link
             href="/"
-            className="inline-block px-6 py-3 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-ch-display font-semibold shadow-md transition-colors"
+            className="inline-block px-6 py-3 rounded-2xl bg-ch-green hover:bg-ch-green-deep text-white font-ch-display font-semibold shadow-md transition-colors"
           >
             Go set up a watch →
           </Link>

@@ -4,10 +4,10 @@ export const metadata = { title: 'Privacy Policy — CampHawk' };
 
 export default function PrivacyPage() {
   return (
-    <div className="max-w-2xl mx-auto px-4 py-10 text-gray-800">
+    <div className="max-w-2xl mx-auto px-4 py-10 text-ch-ink">
       <a href="/" className="inline-block mb-6"><Logo markSize={30} /></a>
       <h1 className="text-2xl font-bold mb-1">CampHawk Privacy Policy</h1>
-      <p className="text-sm text-gray-500 mb-8">Last updated: July 7, 2026</p>
+      <p className="text-sm text-ch-muted mb-8">Last updated: July 7, 2026</p>
 
       <div className="space-y-6 text-sm leading-relaxed">
         <section>
@@ -58,7 +58,7 @@ export default function PrivacyPage() {
           <p>
             You can remove your phone number or delete watches at any time in the app. To delete
             your account and data entirely, email{' '}
-            <a href="mailto:alerts@camphawk.app" className="text-green-700 underline">
+            <a href="mailto:alerts@camphawk.app" className="text-ch-green-deep underline">
               alerts@camphawk.app
             </a>.
           </p>
@@ -68,7 +68,7 @@ export default function PrivacyPage() {
           <h2 className="font-semibold text-base mb-2">Contact</h2>
           <p>
             Questions:{' '}
-            <a href="mailto:alerts@camphawk.app" className="text-green-700 underline">
+            <a href="mailto:alerts@camphawk.app" className="text-ch-green-deep underline">
               alerts@camphawk.app
             </a>
           </p>

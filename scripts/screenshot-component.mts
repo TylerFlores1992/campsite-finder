@@ -176,22 +176,9 @@ const PRESETS: Record<string, Preset> = {
       export const node = <Settings />;`,
     frame: 'max-w-2xl w-full mx-auto',
   },
-  'ch-settings-admin': {
-    label: 'Settings — admin section (owner only)',
-    entry: `import Settings from '@/components/v2/Settings';
-      if (typeof window !== 'undefined') {
-        window.__CH_SIGNED_IN = true;
-        window.fetch = async (url) => {
-          const u = String(url);
-          if (u.includes('/api/user/phone')) return { ok: true, json: async () => ({ phone: '(555) 123-4567' }) };
-          if (u.includes('/api/user/autocart')) return { ok: true, json: async () => ({ enabled: true, connected: true, verifiedAt: new Date().toISOString(), sessionFresh: true, sessionExpired: false }) };
-          if (u.includes('/api/subscription/status')) return { ok: true, json: async () => ({ active: true, everSubscribed: true }) };
-          return { ok: true, json: async () => ({}) };
-        };
-      }
-      export const node = <Settings isAdmin />;`,
-    frame: 'max-w-2xl w-full mx-auto',
-  },
+  // 'ch-settings-admin' is GONE: the admin link moved out of Settings and into
+  // the account menu (V2Nav), which lives inside Clerk's UserButton dropdown and
+  // so can't be rendered by this harness (the Clerk stub has no popover).
   'ch-settings-on': {
     label: 'Settings — texts on, auto-cart session expired',
     entry: `import Settings from '@/components/v2/Settings';
