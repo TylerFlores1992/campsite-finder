@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { CreditCard, Settings as SettingsIcon } from "lucide-react";
+import { CreditCard, Settings as SettingsIcon, ShieldCheck } from "lucide-react";
 import { useUser, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import { useIsNativeApp } from "@/lib/native/context";
 import { buttonClasses } from "@/components/ui/Button";
@@ -44,12 +44,49 @@ async function openBillingPortal() {
   }
 }
 
+/**
+ * Whether the signed-in user is an admin, resolved on the SERVER.
+ *
+ * The nav is a client component, so it cannot import `lib/admin` — that module
+ * is `server-only` precisely so the allowlist can't reach the JS bundle, and
+ * the tempting shortcut (comparing `user.emailAddresses[0]` to a literal) is
+ * the copy-paste bug documented in `lib/admin.ts`. So the boolean is fetched
+ * from `/api/admin/status`, which does the real check.
+ *
+ * Fetched only when signed in (the route is Clerk-protected and 404s otherwise),
+ * once per mount, and any failure just leaves the link undrawn — /admin enforces
+ * access itself, so a missing link costs an admin one typed URL and a wrongly
+ * drawn one grants nothing.
+ */
+function useIsAdmin(enabled: boolean): boolean {
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    fetch("/api/admin/status")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled) setIsAdmin(Boolean(data?.isAdmin));
+      })
+      .catch(() => {
+        /* leave the link undrawn */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
+
+  return isAdmin;
+}
+
 function AccountControl({ compact = false }: { compact?: boolean }) {
   const isNative = useIsNativeApp();
   const router = useRouter();
   // useUser + conditional render is the codebase convention; this Clerk version
   // exports no <SignedIn>/<SignedOut>.
   const { isLoaded, isSignedIn } = useUser();
+  const isAdmin = useIsAdmin(Boolean(isLoaded && isSignedIn));
 
   // Reserve the space so the header doesn't jump once auth resolves.
   if (!isLoaded) return <span aria-hidden="true" className="size-8" />;
@@ -75,6 +112,17 @@ function AccountControl({ compact = false }: { compact?: boolean }) {
               label="Manage subscription"
               labelIcon={<CreditCard size={14} />}
               onClick={openBillingPortal}
+            />
+          )}
+          {/* Admin. Moved here from /settings 2026-07-27 — it's an account-level
+              destination, so it belongs beside the other two rather than as a
+              section of a page every user sees. Only drawn for an admin, and
+              only ever a link: /admin 404s for anyone else. */}
+          {isAdmin && (
+            <UserButton.Action
+              label="Admin"
+              labelIcon={<ShieldCheck size={14} />}
+              onClick={() => router.push("/admin")}
             />
           )}
         </UserButton.MenuItems>

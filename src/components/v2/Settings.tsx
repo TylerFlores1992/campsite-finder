@@ -22,14 +22,7 @@ import AutoCartSettings from "./AutoCartSettings";
  * how we reach you first, then auto-cart, then billing, then the account. Every
  * section talks to an endpoint that already existed.
  */
-export interface SettingsProps {
-  /** Decided on the server — see the note in app/settings/page.tsx. This is
-      a boolean, never the allowlist, and it only draws a link: /admin does its
-      own server-side check and 404s anyone else. */
-  isAdmin?: boolean;
-}
-
-export default function Settings({ isAdmin = false }: SettingsProps) {
+export default function Settings() {
   const { isLoaded, isSignedIn, user } = useUser();
   const isNative = useIsNativeApp();
   const { subscribed, everSubscribed, loaded: subLoaded, unknown } = useSubscription();
@@ -168,25 +161,8 @@ export default function Settings({ isAdmin = false }: SettingsProps) {
           right of the page.
         </p>
       </Section>
-
-      {/* Only drawn for an admin, and only ever a link. Nothing here grants
-          access — /admin checks the allowlist itself and 404s (not 403s, so the
-          page's existence isn't revealed to anyone else). */}
-      {isAdmin && (
-        <Section title="Admin">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-ch-body font-bold">Ops dashboard</p>
-              <p className="mt-0.5 max-w-[52ch] text-ch-fine leading-normal text-ch-muted">
-                Users, revenue, worker health, catalog syncs and running costs.
-              </p>
-            </div>
-            <a href="/admin" className={buttonClasses({ variant: "quiet", size: "sm" })}>
-              Open admin
-            </a>
-          </div>
-        </Section>
-      )}
+      {/* The admin link used to live here. It moved into the account menu
+          (V2Nav) — it's an account-level destination, not a setting. */}
     </div>
   );
 }
