@@ -160,6 +160,38 @@ const PRESETS: Record<string, Preset> = {
       export const node = <AdminTabs data={data} />;`,
     frame: 'w-full',
   },
+  'ch-settings': {
+    label: 'Settings — no phone yet, auto-cart not set up',
+    entry: `import Settings from '@/components/v2/Settings';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/api/user/phone')) return { ok: true, json: async () => ({ phone: null }) };
+          if (u.includes('/api/user/autocart')) return { ok: true, json: async () => ({ enabled: false, connected: false, verifiedAt: null, sessionFresh: false, sessionExpired: false }) };
+          if (u.includes('/api/subscription/status')) return { ok: true, json: async () => ({ active: true, everSubscribed: true }) };
+          return { ok: true, json: async () => ({}) };
+        };
+      }
+      export const node = <Settings />;`,
+    frame: 'max-w-2xl w-full mx-auto',
+  },
+  'ch-settings-on': {
+    label: 'Settings — texts on, auto-cart session expired',
+    entry: `import Settings from '@/components/v2/Settings';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/api/user/phone')) return { ok: true, json: async () => ({ phone: '(555) 123-4567' }) };
+          if (u.includes('/api/user/autocart')) return { ok: true, json: async () => ({ enabled: true, connected: true, verifiedAt: '2026-07-10T10:00:00Z', sessionFresh: false, sessionExpired: true }) };
+          if (u.includes('/api/subscription/status')) return { ok: true, json: async () => ({ active: true, everSubscribed: true }) };
+          return { ok: true, json: async () => ({}) };
+        };
+      }
+      export const node = <Settings />;`,
+    frame: 'max-w-2xl w-full mx-auto',
+  },
   'ch-about': {
     label: 'Campground About panel — real rec.gov HTML description',
     // Verbatim description text from the catalog, tags and all. If richText

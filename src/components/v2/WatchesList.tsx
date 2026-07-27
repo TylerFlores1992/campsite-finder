@@ -40,6 +40,8 @@ export default function WatchesList() {
   const [error, setError] = useState<string | null>(null);
   const [stalledSources, setStalledSources] = useState<ReadonlySet<string>>(new Set());
   const [sessionExpired, setSessionExpired] = useState(false);
+  // null = not looked up yet; '' or null phone = no number saved.
+  const [phone, setPhone] = useState<string | null | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,6 +82,25 @@ export default function WatchesList() {
       })
       .catch(() => {
         /* non-fatal — the card just stays in its resting state */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Has a phone number been saved? A subscriber with watches and no number
+  // gets email only and usually doesn't realise — text is the channel that
+  // actually wakes someone up at 6am when a site frees up.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/user/phone")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { phone?: string | null } | null) => {
+        if (!cancelled && j) setPhone(j.phone ?? null);
+      })
+      .catch(() => {
+        // Unknown stays unknown — we don't nag someone whose number we failed
+        // to read, because they may well have one.
       });
     return () => {
       cancelled = true;
@@ -157,6 +178,22 @@ export default function WatchesList() {
             {stalledCount === 1 ? "1 watch is" : `${stalledCount} watches are`}
             {" affected. We're retrying automatically. Your other watches are unaffected."}
           </p>
+        </div>
+      )}
+
+      {phone === null && (
+        <div className="mb-3.5 rounded-[13px] border border-[#E7C98C] bg-ch-ochre-soft px-3.5 py-3">
+          <p className="text-ch-body font-bold">You&apos;re only getting email alerts</p>
+          <p className="mt-1 text-ch-meta leading-normal text-ch-ink-2">
+            Openings often last minutes. A text is what actually reaches you in time — add your
+            number and we&apos;ll send both.
+          </p>
+          <Link
+            href="/v2/settings"
+            className="mt-1.5 inline-block text-ch-body font-bold text-ch-green hover:text-ch-green-deep"
+          >
+            Turn on text alerts
+          </Link>
         </div>
       )}
 

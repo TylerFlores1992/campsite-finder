@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { CreditCard } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { CreditCard, Settings as SettingsIcon } from "lucide-react";
 import { useUser, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import { useIsNativeApp } from "@/lib/native/context";
 import { buttonClasses } from "@/components/ui/Button";
@@ -46,6 +46,7 @@ async function openBillingPortal() {
 
 function AccountControl({ compact = false }: { compact?: boolean }) {
   const isNative = useIsNativeApp();
+  const router = useRouter();
   // useUser + conditional render is the codebase convention; this Clerk version
   // exports no <SignedIn>/<SignedOut>.
   const { isLoaded, isSignedIn } = useUser();
@@ -56,19 +57,27 @@ function AccountControl({ compact = false }: { compact?: boolean }) {
   if (isSignedIn) {
     return (
       <UserButton appearance={{ elements: { avatarBox: "w-8 h-8" } }}>
-        {/* The ONLY route a subscriber has to the Stripe billing portal — i.e.
-            the only way to cancel or update payment. Hidden in the native app,
-            where surfacing billing would breach the store rules that keep
-            Stripe on the web. */}
-        {!isNative && (
-          <UserButton.MenuItems>
+        <UserButton.MenuItems>
+          {/* Settings lives here rather than as a fourth tab: it's visited once
+              at setup and rarely after, and the account menu is where people
+              already look for it. */}
+          <UserButton.Action
+            label="Alerts & settings"
+            labelIcon={<SettingsIcon size={14} />}
+            onClick={() => router.push("/v2/settings")}
+          />
+          {/* The ONLY route a subscriber has to the Stripe billing portal — i.e.
+              the only way to cancel or update payment. Hidden in the native app,
+              where surfacing billing would breach the store rules that keep
+              Stripe on the web. */}
+          {!isNative && (
             <UserButton.Action
               label="Manage subscription"
               labelIcon={<CreditCard size={14} />}
               onClick={openBillingPortal}
             />
-          </UserButton.MenuItems>
-        )}
+          )}
+        </UserButton.MenuItems>
       </UserButton>
     );
   }
