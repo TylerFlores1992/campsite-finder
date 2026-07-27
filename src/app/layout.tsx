@@ -5,6 +5,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import NativeBridge from "@/components/NativeBridge";
 import { NativeAppProvider } from "@/lib/native/context";
+import { jsonLdScript, organizationJsonLd } from "@/lib/jsonld";
 import "./globals.css";
 
 const sora = Sora({
@@ -109,6 +110,15 @@ export default function RootLayout({
         className={`${sora.variable} ${inter.variable} ${geistMono.variable} ${fraunces.variable} ${bitter.variable} ${nunitoSans.variable} h-full antialiased overflow-x-clip`}
       >
         <body className="min-h-full flex flex-col overflow-x-clip">
+          {/* Site identity for search engines. A static object built from
+              constants — NO request-time API, no data fetch, nothing async.
+              That matters here specifically: a request-time API in this ROOT
+              layout throws under Cache Components and 500s every page, which
+              is what took the site down in July. See lib/jsonld.ts. */}
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: jsonLdScript(organizationJsonLd()) }}
+          />
           <NativeAppProvider>
             {children}
             <NativeBridge />

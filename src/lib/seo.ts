@@ -1,5 +1,6 @@
 import type { Campground } from '@/lib/types';
 import { describePlain } from '@/components/v2/richText';
+import { normalizeStateCode } from '@/lib/coverage';
 
 /**
  * Per-campground SEO copy.
@@ -32,8 +33,21 @@ function clamp(s: string, max = DESC_MAX): string {
   return `${cut.slice(0, lastSpace > max * 0.6 ? lastSpace : cut.length)}…`;
 }
 
+/**
+ * "Big Sur, CA".
+ *
+ * The state is NORMALISED. `address->>'state'` holds a mix — 190 rows say
+ * "Virginia", 167 "Florida", plus "OREGON" and a stray " IL" — so raw values
+ * would give one page "St. Johns, AZ" and its neighbour "Somewhere, Arizona".
+ * Inconsistent place strings across 8,013 titles look automated, which is the
+ * impression we least want to give. normalizeStateCode already exists for the
+ * coverage copy; it returns null for DC and territories, so the trimmed raw
+ * value is the fallback rather than dropping the region entirely.
+ */
 export function campgroundPlace(c: Campground): string {
-  return [c.address?.city, c.address?.state].filter(Boolean).join(', ');
+  const raw = c.address?.state?.trim();
+  const state = raw ? (normalizeStateCode(raw) ?? raw) : null;
+  return [c.address?.city, state].filter(Boolean).join(', ');
 }
 
 /**

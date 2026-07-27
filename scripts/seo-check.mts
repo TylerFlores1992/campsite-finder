@@ -2,7 +2,7 @@
 /**
  * SEO regression check for campground pages.
  *
- * Two things silently regress and neither breaks a build or a test:
+ * Three things silently regress and none breaks a build or a test:
  *
  *   1. The page stops server-rendering. Turn CampgroundDetail back into a
  *      fetch-on-mount client component and everything still *works* — a human
@@ -12,9 +12,15 @@
  *      Google and the pages drop out, which is exactly what "every page inherits
  *      the root layout's metadata" did.
  *
+  *   3. Structured data starts claiming things we don't have. A stray
+ *      aggregateRating or priceRange is invisible on the page and is exactly
+ *      what earns a structured-data manual action — and an unescaped "<" in a
+ *      third-party campground name breaks out of its own script tag.
+ *
  * So this renders the real component with a real row through
- * renderToStaticMarkup and asserts the content is in the markup, then sweeps
- * every campground's generated metadata for duplicates and leaks.
+ * renderToStaticMarkup, asserts the content is in the markup, then sweeps every
+ * campground's generated metadata and JSON-LD for duplicates, leaks and claims
+ * the catalog can't support.
  *
  * Needs DB access: NODE_USE_ENV_PROXY=1 npx tsx scripts/seo-check.mts
  */
@@ -47,20 +53,33 @@ await build({
       const { ridbSource } = require('@/lib/sources/ridb');
       const { query } = require('@/lib/db/client');
       const { campgroundTitle, campgroundDescription } = require('@/lib/seo');
+      const { campgroundJsonLd, campgroundBreadcrumbJsonLd, jsonLdScript } = require('@/lib/jsonld');
       module.exports.ssr = async (id) => {
         const cg = await ridbSource.getDetail(id);
         if (!cg) return null;
         const html = renderToStaticMarkup(
           React.createElement(CampgroundDetail, { campgroundId: id, initialCampground: cg })
         );
-        return { html, cg };
+        return {
+          html, cg,
+          ld: campgroundJsonLd(cg),
+          crumbs: campgroundBreadcrumbJsonLd(cg),
+          ldScript: jsonLdScript(campgroundJsonLd(cg)),
+        };
       };
       module.exports.sweep = async () => {
-        const rows = await query('SELECT id, name, description, address, site_types FROM campgrounds');
+        const rows = await query(\`SELECT id, name, description, address, site_types, amenities,
+          phone, email, pets_allowed, reservations_url,
+          ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude
+          FROM campgrounds\`);
         return rows.map((r) => {
           const cg = { id: r.id, name: r.name, description: r.description,
-                       address: r.address ?? {}, siteTypes: r.site_types ?? [] };
-          return { id: r.id, title: campgroundTitle(cg), desc: campgroundDescription(cg) };
+                       address: r.address ?? {}, siteTypes: r.site_types ?? [],
+                       amenities: r.amenities ?? [], phone: r.phone, email: r.email,
+                       petsAllowed: r.pets_allowed, reservationsUrl: r.reservations_url,
+                       latitude: r.latitude, longitude: r.longitude, photos: [] };
+          return { id: r.id, title: campgroundTitle(cg), desc: campgroundDescription(cg),
+                   ld: campgroundJsonLd(cg), script: jsonLdScript(campgroundJsonLd(cg)) };
         });
       };
     `,
@@ -98,6 +117,23 @@ for (const id of SSR_SAMPLE) {
   check('substantial content', text.length > 200, `${text.length} chars`);
 }
 
+console.log('\nStructured data');
+{
+  const r = await ssr(SSR_SAMPLE[0]);
+  if (r) {
+    check('Campground @type', r.ld['@type'] === 'Campground');
+    check('has geo coordinates', typeof r.ld.geo?.latitude === 'number');
+    check('address has a country', r.ld.address?.addressCountry === 'US');
+    check('breadcrumb has 2+ levels', r.crumbs.itemListElement.length >= 2);
+    check('script payload has no raw <', !r.ldScript.includes('<'));
+    check('script payload parses back', (() => {
+      try { return JSON.parse(r.ldScript.replace(/\\u003c/g, '<'))['@type'] === 'Campground'; }
+      catch { return false; }
+    })());
+    console.log(`  fields emitted: ${Object.keys(r.ld).join(', ')}`);
+  }
+}
+
 console.log('\nMetadata across the catalog');
 const all = await sweep();
 const titles = new Map<string, string[]>();
@@ -120,6 +156,29 @@ check('descriptions are near-unique', descs.size / all.length > 0.95,
   `${descs.size} unique`);
 check('no HTML or entities in metadata', leaks === 0, `${leaks} leaking`);
 check('no empty descriptions', emptyDesc === 0, `${emptyDesc} under 50 chars`);
+
+// Structured data must never carry a value we don't have, and must never break
+// out of its own script tag.
+let fabricated = 0;
+let unescaped = 0;
+let noGeo = 0;
+let badRegion = 0;
+let unparseable = 0;
+const REGION_OK = /^[A-Z]{2}$/;
+for (const r of all) {
+  const ld = r.ld as Record<string, unknown>;
+  if ('aggregateRating' in ld || 'priceRange' in ld || 'review' in ld) fabricated++;
+  if (r.script.includes('<')) unescaped++;
+  if (!ld.geo) noGeo++;
+  const region = (ld.address as Record<string, string> | undefined)?.addressRegion;
+  if (region && !REGION_OK.test(region)) badRegion++;
+  try { JSON.parse(r.script.replace(/\\u003c/g, '<')); } catch { unparseable++; }
+}
+check('no fabricated ratings or prices', fabricated === 0, `${fabricated} rows`);
+check('no unescaped < in any payload', unescaped === 0, `${unescaped} rows`);
+check('every row has geo', noGeo === 0, `${noGeo} without`);
+check('addressRegion is always a 2-letter code', badRegion === 0, `${badRegion} odd`);
+check('every payload is valid JSON', unparseable === 0, `${unparseable} broken`);
 
 rmSync(OUTDIR, { recursive: true, force: true });
 console.log(failures ? `\n${failures} check(s) FAILED\n` : '\nAll checks passed\n');

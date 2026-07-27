@@ -8,6 +8,11 @@ import {
   campgroundUrl,
   SITE_NAME,
 } from "@/lib/seo";
+import {
+  campgroundBreadcrumbJsonLd,
+  campgroundJsonLd,
+  jsonLdScript,
+} from "@/lib/jsonld";
 
 /**
  * Campground detail. A drill-in from a search result or a watch — deliberately
@@ -111,14 +116,29 @@ export default async function V2CampgroundPage({
   const backLabel = from === "watches" ? "Back to watches" : "Back to search";
 
   return (
-    <CampgroundDetail
-      campgroundId={id}
-      initialCampground={campground}
-      startDate={start}
-      endDate={end}
-      backHref={backTo}
-      backLabel={backLabel}
-    />
+    <>
+      {/* Structured data. Rendered in the page rather than via generateMetadata
+          because Metadata has no field for it — see lib/jsonld.ts for why the
+          `<` escaping matters and why several obvious properties are absent. */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(campgroundJsonLd(campground)) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: jsonLdScript(campgroundBreadcrumbJsonLd(campground)),
+        }}
+      />
+      <CampgroundDetail
+        campgroundId={id}
+        initialCampground={campground}
+        startDate={start}
+        endDate={end}
+        backHref={backTo}
+        backLabel={backLabel}
+      />
+    </>
   );
 }
 
