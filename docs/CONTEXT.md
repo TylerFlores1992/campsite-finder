@@ -813,6 +813,45 @@ Goal: when a watched rec.gov site opens for an enrolled user, add it to their ca
 automatically, and only ever tell them "it's in your cart" when it **verifiably** is
 (no false hope).
 
+### Where the rec.gov credentials live — and how to describe it
+
+**Facts, so the copy stops drifting:**
+
+- **Saving the login is REQUIRED, not optional.** `/connect` disables its submit
+  button unless "Save my login" is ticked, and labels it `(required)`. There is no
+  session-only mode; every auto-cart user has credentials stored.
+- They are stored **encrypted on the mini PC we run** — the always-on Windows box
+  that holds the logged-in browser. They never reach Vercel or Supabase.
+- Because they're saved, **the bot signs back in by itself** when a session drops.
+  A dropped session is a few minutes of paused carting, not an errand for the user.
+- `autocart_verified_at` going stale is a **bot-liveness signal, not a login
+  lifetime** — `AUTOCART_SESSION_STALE_MS` is 45 minutes (see the fail-open note
+  below). "Your sign-in expired" is the wrong thing to tell a user; the true
+  framing is "reconnecting", and the manual `/connect` link is a fallback for when
+  it doesn't recover.
+
+**One phrasing, everywhere.** Say *"a private machine we run"* and *"never reaches
+CampHawk's web servers or database"*. Do **not** say "your own CampHawk server"
+(implies the user owns the hardware) or "never uploaded to CampHawk's cloud"
+("cloud" sounds reassuring while committing to nothing). Four surfaces carry this
+copy and must agree:
+
+| File | Surface |
+| --- | --- |
+| `src/app/connect/page.tsx` | the sign-in screen itself |
+| `src/components/v2/TrustPanel.tsx` | shown when auto-cart is toggled on in New watch |
+| `src/components/AutoCartToggle.tsx` | old-UI toggle |
+| `src/app/auto-cart/page.tsx` | **public** marketing page |
+
+> **This drifted once already (fixed 2026-07-27).** `/connect` said "your own
+> CampHawk server" while `TrustPanel` said "a private machine we run" — a
+> contradiction sitting on the exact screen where someone decides whether to hand
+> over a password. Worse, `TrustPanel`'s password disclosure was gated behind a
+> `savedLogin` prop that `NewWatch` never passed, so the honest block never
+> rendered while the block above it told everyone "that's a session, not your
+> password". The prop is gone and the disclosure is unconditional. If you edit one
+> of the four files above, edit all four.
+
 ### Design: cart-outcome-gated alerts
 
 - The poller runs auto-cart-eligible rec.gov watches on a **tighter lane** and, on an
