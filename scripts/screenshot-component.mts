@@ -205,6 +205,12 @@ const PRESETS: Record<string, Preset> = {
       export const node = <div className="font-ch-body text-ch-ink"><Home /></div>;`,
     frame: 'w-full',
   },
+  'ch-connect': {
+    label: 'Recreation.gov connect (restyled) — credential form',
+    entry: `import Connect from '@/app/connect/page';
+      export const node = <Connect />;`,
+    frame: 'w-full',
+  },
   'ch-about': {
     label: 'Campground About panel — real rec.gov HTML description',
     // Verbatim description text from the catalog, tags and all. If richText

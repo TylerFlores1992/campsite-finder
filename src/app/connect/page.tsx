@@ -155,11 +155,11 @@ export default function ConnectPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 px-4 py-8">
+    <div className="min-h-dvh bg-ch-paper px-4 py-8 font-ch-body text-ch-ink">
       <div className="mx-auto max-w-3xl">
-        <div className="flex items-center gap-2 text-gray-900">
-          <ShieldCheck size={22} className="text-green-600" />
-          <h1 className="font-display text-xl font-bold">Connect recreation.gov</h1>
+        <div className="flex items-center gap-2 text-ch-ink">
+          <ShieldCheck size={22} className="text-ch-green" />
+          <h1 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em]">Connect recreation.gov</h1>
         </div>
         {/* WORDING MATCHED TO TrustPanel. This page used to say the credentials
             go to "your own CampHawk server", which reads as a machine the USER
@@ -168,7 +168,7 @@ export default function ConnectPage() {
             exact screen where they're deciding whether to hand over a password.
             Both now say the same thing: a private machine we run, separate from
             the web servers and the database. */}
-        <p className="mt-1 text-sm text-gray-500">
+        <p className="mt-1 text-ch-body text-ch-muted">
           Sign in so CampHawk can add openings to your cart. Your recreation.gov email and password
           are sent over an encrypted connection to a private machine we run — the one that keeps
           your session open — and saved there, encrypted, so auto-cart can sign back in on its own.{' '}
@@ -176,14 +176,14 @@ export default function ConnectPage() {
         </p>
 
         {status === 'idle' && (
-          <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 text-center">
-            <p className="text-sm text-gray-600">
+          <div className="mt-6 rounded-ch-card border border-ch-line bg-ch-card shadow-ch-card p-6 text-center">
+            <p className="text-ch-body text-ch-ink-2">
               Click below to start a secure sign-in. You&apos;ll enter your recreation.gov email and
               password, and this page closes itself automatically once you&apos;re in.
             </p>
             <button
               onClick={start}
-              className="mt-4 rounded-xl bg-green-600 px-5 py-2.5 font-display text-sm font-semibold text-white hover:bg-green-700"
+              className="mt-4 rounded-ch-btn bg-ch-green px-5 py-2.5 text-ch-body font-bold text-white hover:bg-ch-green-deep"
             >
               Start secure sign-in
             </button>
@@ -191,7 +191,7 @@ export default function ConnectPage() {
         )}
 
         {status === 'connecting' && (
-          <div className="mt-6 flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white p-10 text-gray-500">
+          <div className="mt-6 flex items-center justify-center gap-2 rounded-ch-card border border-ch-line bg-ch-card shadow-ch-card p-10 text-ch-muted">
             <Loader2 size={18} className="animate-spin" /> Opening a secure recreation.gov window…
           </div>
         )}
@@ -217,9 +217,9 @@ export default function ConnectPage() {
                 setError('Automatic sign-in didn’t respond in time. Please double-check your recreation.gov email and password, then try again.');
               }, 40000);
             }}
-            className="mt-6 space-y-3 rounded-2xl border border-gray-200 bg-white p-5"
+            className="mt-6 space-y-3 rounded-ch-card border border-ch-line bg-ch-card shadow-ch-card p-5"
           >
-            <label className="block text-sm font-medium text-gray-700">
+            <label className="block text-sm font-medium text-ch-ink-2">
               recreation.gov email
               <input
                 type="email"
@@ -229,10 +229,10 @@ export default function ConnectPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={submitting}
-                className="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-60"
+                className="mt-1 w-full rounded-ch-input border border-ch-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ch-green disabled:opacity-60"
               />
             </label>
-            <label className="block text-sm font-medium text-gray-700">
+            <label className="block text-sm font-medium text-ch-ink-2">
               recreation.gov password
               <input
                 type="password"
@@ -241,16 +241,16 @@ export default function ConnectPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={submitting}
-                className="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-60"
+                className="mt-1 w-full rounded-ch-input border border-ch-line px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ch-green disabled:opacity-60"
               />
             </label>
-            <label className="flex items-start gap-2 text-xs text-gray-600">
+            <label className="flex items-start gap-2 text-ch-meta text-ch-ink-2">
               <input
                 type="checkbox"
                 checked={remember}
                 onChange={(e) => setRemember(e.target.checked)}
                 disabled={submitting}
-                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                className="mt-0.5 h-4 w-4 rounded border-ch-line accent-[#1E7A4C] focus:ring-ch-green"
               />
               <span>
                 <strong>Save my login to keep auto-cart connected (required).</strong>{' '}It&apos;s
@@ -262,16 +262,16 @@ export default function ConnectPage() {
             <button
               type="submit"
               disabled={submitting || !email || !password || !remember}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 px-5 py-2.5 font-display text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-ch-btn bg-ch-green px-5 py-2.5 text-ch-body font-bold text-white hover:bg-ch-green-deep disabled:opacity-50"
             >
               {submitting ? <><Loader2 size={15} className="animate-spin" /> Signing you in…</> : 'Sign in'}
             </button>
             {!remember && (
-              <p className="text-center text-[11px] text-amber-700">
+              <p className="text-center text-ch-fine text-ch-ochre-ink">
                 Auto-cart needs your saved login to stay connected — check the box above to continue.
               </p>
             )}
-            <p className="text-center text-[11px] text-gray-400">
+            <p className="text-center text-ch-fine text-ch-muted">
               Saved encrypted on the private machine that runs your session — never on CampHawk&apos;s
               web servers or database.
             </p>
@@ -283,13 +283,13 @@ export default function ConnectPage() {
             only shown once we switch to 'stream' mode. */}
         {(status === 'live' || status === 'connecting') && (
           <div className={status === 'live' && mode === 'stream' ? 'mt-6' : 'hidden'}>
-            {note && <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{note}</p>}
-            <p className="mb-2 text-xs text-gray-400">Tap the window and type as usual — the keyboard opens when you tap a field. Sign in and it finishes on its own.</p>
+            {note && <p className="mb-2 rounded-ch-input bg-ch-ochre-soft px-3 py-2 text-xs text-ch-ochre-ink">{note}</p>}
+            <p className="mb-2 text-ch-fine text-ch-muted">Tap the window and type as usual — the keyboard opens when you tap a field. Sign in and it finishes on its own.</p>
             <div className="relative">
               {/* Canvas only DISPLAYS the stream — it can't hold a mobile keyboard. */}
               <canvas
                 ref={canvasRef}
-                className="pointer-events-none w-full rounded-xl border border-gray-300 bg-white shadow-sm"
+                className="pointer-events-none w-full rounded-ch-input border border-ch-line bg-white shadow-sm"
               />
               {/* A transparent, full-size text input overlaid on the stream. It IS the
                   tap target, so focus — and the phone's on-screen keyboard — never leaves
@@ -313,33 +313,33 @@ export default function ConnectPage() {
                 onKeyDown={onKeyDown}
                 onInput={onTextInput}
                 onContextMenu={(e) => e.preventDefault()}
-                className="absolute inset-0 h-full w-full cursor-crosshair touch-none rounded-xl bg-transparent text-transparent caret-transparent opacity-0 outline-none"
+                className="absolute inset-0 h-full w-full cursor-crosshair touch-none rounded-ch-input bg-transparent text-transparent caret-transparent opacity-0 outline-none"
               />
             </div>
           </div>
         )}
 
         {status === 'done' && (
-          <div className="mt-6 rounded-2xl border border-green-200 bg-green-50 p-8 text-center">
-            <CheckCircle2 size={32} className="mx-auto text-green-600" />
-            <h2 className="mt-2 font-display text-lg font-bold text-green-900">You&apos;re connected!</h2>
-            <p className="mt-1 text-sm text-green-800">
+          <div className="mt-6 rounded-ch-card border border-[#BFDDC9] bg-ch-green-soft p-8 text-center">
+            <CheckCircle2 size={32} className="mx-auto text-ch-green" />
+            <h2 className="mt-2 font-ch-display text-lg font-bold text-ch-green-deep">You&apos;re connected!</h2>
+            <p className="mt-1 text-sm text-ch-green-deep">
               Auto-cart is now active. When a site you&apos;re watching opens, it&apos;s added to your
               recreation.gov cart automatically — just finish checkout on your phone.
             </p>
-            <a href="/" className="mt-4 inline-block rounded-xl bg-green-600 px-5 py-2.5 font-display text-sm font-semibold text-white hover:bg-green-700">
+            <a href="/" className="mt-4 inline-block rounded-ch-btn bg-ch-green px-5 py-2.5 text-ch-body font-bold text-white hover:bg-ch-green-deep">
               Done
             </a>
           </div>
         )}
 
         {status === 'error' && (
-          <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center">
-            <AlertTriangle size={26} className="mx-auto text-amber-500" />
-            <p className="mt-2 text-sm text-amber-900">{error || 'Something went wrong.'}</p>
+          <div className="mt-6 rounded-ch-card border border-[#E7C98C] bg-ch-ochre-soft p-6 text-center">
+            <AlertTriangle size={26} className="mx-auto text-ch-ochre" />
+            <p className="mt-2 text-sm text-ch-ochre-ink">{error || 'Something went wrong.'}</p>
             <button
               onClick={start}
-              className="mt-4 rounded-xl bg-gray-900 px-5 py-2.5 font-display text-sm font-semibold text-white hover:bg-gray-800"
+              className="mt-4 rounded-ch-input bg-ch-ink px-5 py-2.5 font-ch-display text-sm font-semibold text-white hover:bg-ch-ink-2"
             >
               Try again
             </button>
