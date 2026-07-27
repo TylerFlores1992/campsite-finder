@@ -426,28 +426,67 @@ export default function NewWatch({
         <h2 className="font-ch-display text-[13.5px] font-bold text-ch-green-deep">
           What we&apos;ll do
         </h2>
-        <p className="mt-2 text-ch-body leading-relaxed text-ch-green-deep">
-          {campgroundId ? (
-            <>
-              Watch <strong className="font-extrabold">{campgroundName || "this campground"}</strong>{" "}
-              for{" "}
-              {mode === "flexible" ? (
-                <>
-                  any <strong className="font-extrabold">{flexNights}-night</strong>
-                  {weekendsOnly ? " weekend" : ""} opening
-                </>
-              ) : (
-                <strong className="font-extrabold">{formatRange(range.start, range.end) ?? "your dates"}</strong>
-              )}
-              {mode === "flexible" && range.start && (
-                <> between <strong className="font-extrabold">{formatRange(range.start, range.end)}</strong></>
-              )}
-              , checking every 15 seconds.
-            </>
-          ) : (
-            "Pick a campground and we'll tell you the second it opens."
-          )}
-        </p>
+        {/* TWO JOBS, and they're different jobs.
+            Once a campground is chosen this panel is a RECEIPT — it reads back
+            exactly what's about to be created, so nobody sets up a watch on the
+            wrong dates. Before that it was a single line that assumed the reader
+            already knew what a watch was, which is precisely the person who
+            doesn't. Empty state now explains the feature and the three steps;
+            it's replaced by the summary the moment there's something to confirm. */}
+        {campgroundId ? (
+          <p className="mt-2 text-ch-body leading-relaxed text-ch-green-deep">
+            Watch <strong className="font-extrabold">{campgroundName || "this campground"}</strong>{" "}
+            for{" "}
+            {mode === "flexible" ? (
+              <>
+                any <strong className="font-extrabold">{flexNights}-night</strong>
+                {weekendsOnly ? " weekend" : ""} opening
+              </>
+            ) : (
+              <strong className="font-extrabold">{formatRange(range.start, range.end) ?? "your dates"}</strong>
+            )}
+            {mode === "flexible" && range.start && (
+              <> between <strong className="font-extrabold">{formatRange(range.start, range.end)}</strong></>
+            )}
+            , checking every 15 seconds. We&apos;ll text, email and push you the moment a site frees
+            up — you don&apos;t need to keep this open.
+          </p>
+        ) : (
+          <>
+            <p className="mt-2 text-ch-body leading-relaxed text-ch-green-deep">
+              A watch is a robot that refreshes a booked campground for you. We check it{" "}
+              <strong className="font-extrabold">every 15 seconds, around the clock</strong>, and the
+              instant someone cancels we text, email and push you — so you get the site instead of
+              the next person hitting refresh.
+            </p>
+            <ol className="mt-3">
+              {[
+                ["Pick the campground", "Search by name above. Your favorites show up when you tap the box."],
+                ["Choose your nights", "Exact dates, or Flexible — \u201cany 2 nights in September\u201d catches far more cancellations than one fixed weekend."],
+                ["Start watching", "Then close the app. We'll find you when something opens."],
+              ].map(([title, sub], i) => (
+                <li
+                  key={title}
+                  className="flex gap-2.5 border-b border-[#BFDDC9] py-2.5 last:border-b-0"
+                >
+                  <span className="grid size-5 shrink-0 place-items-center rounded-full bg-white text-[11px] font-extrabold text-ch-green-deep">
+                    {i + 1}
+                  </span>
+                  <span>
+                    <span className="block text-ch-meta font-bold text-ch-green-deep">{title}</span>
+                    <span className="mt-0.5 block text-ch-fine leading-normal text-ch-green-deep/80">
+                      {sub}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+            <p className="mt-3 text-ch-fine leading-normal text-ch-green-deep/80">
+              On Recreation.gov we can go one better and drop the site straight into your cart, so
+              it&apos;s held while you get to your phone.
+            </p>
+          </>
+        )}
 
         <div className="mt-4">
           <Button type="submit" fullWidth disabled={saving || flexTooLong} onClick={() => void submit()}>

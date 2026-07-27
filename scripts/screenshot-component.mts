@@ -88,6 +88,28 @@ const PRESETS: Record<string, Preset> = {
       export const node = <ManageWatch token="demo" />;`,
     frame: 'max-w-lg w-full mx-auto',
   },
+  'ch-onboarding-newwatch': {
+    label: 'New watch — first-run explainer (no campground chosen)',
+    entry: `import NewWatch from '@/components/v2/NewWatch';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({ favorites: [] }) });
+      }
+      export const node = <NewWatch />;`,
+    frame: 'max-w-4xl w-full mx-auto',
+  },
+  'ch-onboarding-explore': {
+    label: 'Explore — first-run explainer (no search yet)',
+    // ResultsMap is dynamically imported and pulls mapbox-gl's CSS, which the
+    // harness has no output path for. The first-run state never mounts the map,
+    // so stubbing the module out is lossless for this shot.
+    entry: `import Explore from '@/components/v2/Explore';
+      if (typeof window !== 'undefined') {
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) });
+      }
+      export const node = <Explore />;`,
+    frame: 'w-full',
+  },
   'ch-about': {
     label: 'Campground About panel — real rec.gov HTML description',
     // Verbatim description text from the catalog, tags and all. If richText
@@ -755,6 +777,7 @@ async function main() {
       'next/navigation': join(ROOT, 'scripts/harness/next-navigation-stub.ts'),
       // Same problem: the real Clerk hooks need a provider that isn't here.
       '@clerk/nextjs': join(ROOT, 'scripts/harness/clerk-stub.tsx'),
+    'mapbox-gl/dist/mapbox-gl.css': join(ROOT, 'scripts/harness/empty.js'),
     },
     define: { 'process.env.NODE_ENV': '"production"' },
     banner: { js: 'window.process = window.process || { env: {} };' },

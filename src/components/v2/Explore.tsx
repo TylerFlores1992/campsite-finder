@@ -10,6 +10,7 @@ import FilterPanel, { EMPTY_FILTERS, type FilterValue } from "@/components/ui/Fi
 import NightsPicker from "@/components/ui/NightsPicker";
 import ResultCard from "./ResultCard";
 import { useFavorites } from "./useFavorites";
+import { campgroundsRounded } from "@/lib/coverage";
 import dynamic from "next/dynamic";
 import { addDays, todayISO, type ISODate } from "@/components/ui/date";
 import { deviceCoords, hitLabel, ipCoords, searchLocations, type LocationHit } from "./geo";
@@ -520,10 +521,62 @@ export default function Explore() {
         {/* ---------------- results ---------------- */}
         <section className="min-w-0" aria-live="polite" aria-busy={loading}>
           {results === null && !loading && (
-            <div className="rounded-ch-card border border-dashed border-ch-line bg-white/60 p-8 text-center">
-              <h2 className="font-ch-display text-[15px] font-bold">Where are you headed?</h2>
-              <p className="mx-auto mt-1.5 max-w-[40ch] text-ch-body text-ch-muted">
-                Search a city or park to see what&apos;s open right now. No account needed.
+            /* FIRST-RUN EXPLAINER, not a placeholder.
+               This is the first thing a new visitor sees, and "Where are you
+               headed?" assumed they already knew what this screen was for and
+               what to do with it. It now says what Explore does, walks the three
+               controls in the order they're laid out, and answers the question
+               that actually stops people: "everything's booked, now what?" —
+               which is the whole product. It disappears the moment there are
+               results, so it costs a returning user nothing. */
+            <div className="rounded-ch-card border border-dashed border-ch-line bg-white/60 p-6 sm:p-8">
+              <h2 className="font-ch-display text-ch-h font-bold">
+                Find a campsite that&apos;s actually open
+              </h2>
+              <p className="mt-1.5 max-w-[52ch] text-ch-body leading-relaxed text-ch-muted">
+                {`Explore checks live availability at ${campgroundsRounded()} campgrounds — national forests, state parks, and everything in between — and shows you what's bookable right now.`}
+              </p>
+
+              <ol className="mt-4 max-w-[52ch]">
+                {[
+                  [
+                    "Say where",
+                    "A city, park or ZIP in the box on the left — or tap the crosshair to use your location. Leave it empty and we'll search near you.",
+                  ],
+                  [
+                    "Say when",
+                    "Exact dates, or one tap for tonight or this weekend. Not fussy about dates? Pick Flexible and we'll find any 2 nights that work.",
+                  ],
+                  [
+                    "Search",
+                    "Green means sites are open right now. Tap any result for its full calendar, or the map to see where they are.",
+                  ],
+                ].map(([title, sub], i) => (
+                  <li key={title} className="flex gap-3 border-b border-ch-line py-3 last:border-b-0">
+                    <span className="grid size-6 shrink-0 place-items-center rounded-full bg-ch-green-soft text-[12px] font-extrabold text-ch-green-deep">
+                      {i + 1}
+                    </span>
+                    <span>
+                      <span className="block text-ch-body font-bold">{title}</span>
+                      <span className="mt-0.5 block text-ch-fine leading-normal text-ch-muted">
+                        {sub}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+
+              <p className="mt-4 max-w-[52ch] text-ch-fine leading-normal text-ch-muted">
+                <strong className="font-bold text-ch-ink-2">Everything booked?</strong> That&apos;s
+                what we&apos;re for. Start a watch on a full campground and we&apos;ll check it every
+                15 seconds and text you the moment someone cancels.
+              </p>
+              <p className="mt-3 text-ch-fine text-ch-muted">
+                Searching is free and needs no account.{" "}
+                <Link className="font-bold text-ch-green hover:text-ch-green-deep" href="/camping">
+                  Or browse campgrounds by state
+                </Link>
+                .
               </p>
             </div>
           )}

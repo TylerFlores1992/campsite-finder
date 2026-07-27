@@ -159,6 +159,12 @@ export function organizationJsonLd() {
     '@type': 'Organization',
     '@id': `${SITE_URL}#organization`,
     name: SITE_NAME,
+    // "camp hawk" as two words currently returns a county park in Kansas and
+    // several campgrounds actually named Hawk — Google reads the spaced form as
+    // a different entity from the brand. alternateName is the standard way to
+    // say "these are the same thing". It is a nudge, not a fix: brand queries
+    // are won mostly by people clicking us for that search over time.
+    alternateName: ['Camp Hawk', 'camphawk.app'],
     url: SITE_URL,
     logo: `${SITE_URL}/logo-full.png`,
     description:
