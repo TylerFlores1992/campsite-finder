@@ -15,10 +15,12 @@ export default async function V2NewWatchPage({
 
   return (
     <div className="mx-auto max-w-[var(--ch-max)] px-5 py-6">
-      <h1 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em]">New watch</h1>
-      <p className="mt-1 mb-4 text-ch-meta text-ch-muted">
-        We check every 15 seconds and tell you the second it opens.
-      </p>
+      {/* No subtitle. The "What we'll do" panel below already explains the
+          15-second checking in full, and saying it twice on one screen made the
+          heading area noisy for no gain. */}
+      <h1 className="mb-4 font-ch-display text-ch-title font-extrabold tracking-[-.03em]">
+        New watch
+      </h1>
       <NewWatch initialCampgroundId={campground} initialStart={start} initialEnd={end} />
     </div>
   );

@@ -10,6 +10,8 @@ import FilterPanel, { EMPTY_FILTERS, type FilterValue } from "@/components/ui/Fi
 import NightsPicker from "@/components/ui/NightsPicker";
 import ResultCard from "./ResultCard";
 import { useFavorites } from "./useFavorites";
+import { useSubscription } from "./useSubscription";
+import { useIsNativeApp } from "@/lib/native/context";
 import { campgroundsRounded } from "@/lib/coverage";
 import dynamic from "next/dynamic";
 import { addDays, todayISO, type ISODate } from "@/components/ui/date";
@@ -123,6 +125,56 @@ function decodeSearch(q: URLSearchParams): Partial<SearchState> {
       pets: q.get("pets") === "1",
     },
   };
+}
+
+
+/**
+ * The closing line of the Explore first-run box, matched to who's reading it.
+ *
+ * It used to end with "Or browse campgrounds by state", which sent someone who
+ * had just been told about watches sideways into a directory. The last thing on
+ * a first-run panel should be the next step FOR THIS READER, and that differs:
+ *
+ *   signed out    -> the trial is the unlock, so say what it unlocks
+ *   signed in, no sub -> already has an account; don't offer a trial they may
+ *                    have used, and don't re-explain signing up
+ *   subscribed    -> nothing. They have everything; a sales line here is noise.
+ *   still loading / unknown -> nothing, rather than flashing the wrong pitch at
+ *                    a paying subscriber. Same rule WatchCta follows.
+ */
+function ExploreAccountCta() {
+  const { loaded, signedIn, subscribed, everSubscribed, unknown } = useSubscription();
+  const isNative = useIsNativeApp();
+
+  if (!loaded || unknown || subscribed) return null;
+
+  // In the native app we never render a checkout route — Apple and Google
+  // require digital subscriptions to go through in-app purchase.
+  if (isNative) {
+    return (
+      <p className="mt-3 text-ch-fine leading-normal text-ch-green-deep/80">
+        Watching booked campgrounds needs a subscription. Manage your plan at camphawk.app.
+      </p>
+    );
+  }
+
+  return (
+    <p className="mt-3 text-ch-fine leading-normal text-ch-green-deep/80">
+      {signedIn
+        ? "Watches, text alerts and auto-cart come with a subscription. "
+        : "Searching is free and needs no account. Watches, text alerts and auto-cart need one. "}
+      <a
+        className="font-bold text-ch-green-deep underline underline-offset-2"
+        href={signedIn ? "/" : "/sign-up"}
+      >
+        {signedIn
+          ? everSubscribed
+            ? "Resubscribe"
+            : "Start your free trial"
+          : "Start a 7-day free trial"}
+      </a>
+    </p>
+  );
 }
 
 export default function Explore() {
@@ -529,11 +581,11 @@ export default function Explore() {
                that actually stops people: "everything's booked, now what?" —
                which is the whole product. It disappears the moment there are
                results, so it costs a returning user nothing. */
-            <div className="rounded-ch-card border border-dashed border-ch-line bg-white/60 p-6 sm:p-8">
-              <h2 className="font-ch-display text-ch-h font-bold">
+            <div className="rounded-ch-card border border-[#BFDDC9] bg-ch-green-soft p-5 sm:p-6">
+              <h2 className="font-ch-display text-ch-h font-bold text-ch-green-deep">
                 Find a campsite that&apos;s actually open
               </h2>
-              <p className="mt-1.5 max-w-[52ch] text-ch-body leading-relaxed text-ch-muted">
+              <p className="mt-1.5 max-w-[52ch] text-ch-body leading-relaxed text-ch-green-deep">
                 {`Explore checks live availability at ${campgroundsRounded()} campgrounds — national forests, state parks, and everything in between — and shows you what's bookable right now.`}
               </p>
 
@@ -555,13 +607,16 @@ export default function Explore() {
                     "Green means sites are open right now. Tap any result for its full calendar, or the map to see where they are.",
                   ],
                 ].map(([title, sub], i) => (
-                  <li key={title} className="flex gap-3 border-b border-ch-line py-3 last:border-b-0">
-                    <span className="grid size-6 shrink-0 place-items-center rounded-full bg-ch-green-soft text-[12px] font-extrabold text-ch-green-deep">
+                  <li
+                    key={title}
+                    className="flex gap-2.5 border-b border-[#BFDDC9] py-2.5 last:border-b-0"
+                  >
+                    <span className="grid size-5 shrink-0 place-items-center rounded-full bg-white text-[11px] font-extrabold text-ch-green-deep">
                       {i + 1}
                     </span>
                     <span>
-                      <span className="block text-ch-body font-bold">{title}</span>
-                      <span className="mt-0.5 block text-ch-fine leading-normal text-ch-muted">
+                      <span className="block text-ch-meta font-bold text-ch-green-deep">{title}</span>
+                      <span className="mt-0.5 block text-ch-fine leading-normal text-ch-green-deep/80">
                         {sub}
                       </span>
                     </span>
@@ -569,18 +624,18 @@ export default function Explore() {
                 ))}
               </ol>
 
-              <p className="mt-4 max-w-[52ch] text-ch-fine leading-normal text-ch-muted">
-                <strong className="font-bold text-ch-ink-2">Everything booked?</strong> That&apos;s
-                what we&apos;re for. Start a watch on a full campground and we&apos;ll check it every
-                15 seconds and text you the moment someone cancels.
-              </p>
-              <p className="mt-3 text-ch-fine text-ch-muted">
-                Searching is free and needs no account.{" "}
-                <Link className="font-bold text-ch-green hover:text-ch-green-deep" href="/camping">
-                  Or browse campgrounds by state
-                </Link>
-                .
-              </p>
+              {/* Its own block rather than an inline <strong> mid-paragraph.
+                  The question is the hook for the paid feature and deserves to
+                  be scannable, and running it inline left "Everything booked?"
+                  and the sentence after it reading as one word at some widths. */}
+              <div className="mt-4 border-t border-[#BFDDC9] pt-3">
+                <p className="text-ch-meta font-bold text-ch-green-deep">Everything booked?</p>
+                <p className="mt-1 max-w-[52ch] text-ch-fine leading-normal text-ch-green-deep/80">
+                  That&apos;s what we&apos;re for. Start a watch on a full campground and
+                  we&apos;ll check it every 15 seconds and text you the moment someone cancels.
+                </p>
+                <ExploreAccountCta />
+              </div>
             </div>
           )}
 
