@@ -114,7 +114,7 @@ leaves search fully usable — the user types a place name instead.
 | Field | Value |
 | --- | --- |
 | Privacy Policy URL | `https://camphawk.app/privacy` |
-| Support URL | `https://camphawk.app` (a dedicated support page would be better) |
+| Support URL | `https://camphawk.app/support` |
 | Contact email | `alerts@camphawk.app` (already on /privacy and /terms) |
 | Category | Travel (secondary: Navigation) |
 | Age rating | 4+ — every questionnaire item is "None" |

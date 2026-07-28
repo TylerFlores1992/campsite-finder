@@ -31,6 +31,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="mx-auto flex max-w-[var(--ch-max)] flex-wrap items-center justify-between gap-4 px-5 py-5 text-ch-fine text-ch-muted">
           <span>© 2026 CampHawk</span>
           <span className="flex gap-4">
+            <a className="hover:text-ch-ink-2" href="/support">Support</a>
             <a className="hover:text-ch-ink-2" href="/terms">Terms</a>
             <a className="hover:text-ch-ink-2" href="/privacy">Privacy</a>
           </span>

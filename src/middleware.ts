@@ -4,6 +4,8 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 const isPublicRoute = createRouteMatcher([
   '/',
   '/privacy',
+  // The App Store's required Support URL. A reviewer opens it signed out.
+  '/support',
   '/terms',
   '/sms-opt-in',
   '/auto-cart',
