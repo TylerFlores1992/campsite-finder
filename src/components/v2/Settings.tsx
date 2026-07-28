@@ -9,6 +9,7 @@ import { useSubscription } from "./useSubscription";
 import SmsAlerts from "./SmsAlerts";
 import AutoCartSettings from "./AutoCartSettings";
 import { SubscribeLink, subscribeSentence } from "./nativeSubscribe";
+import DeleteAccount from "./DeleteAccount";
 
 /**
  * Settings — where alerts get set up.
@@ -170,6 +171,13 @@ export default function Settings() {
           Your email address, password and sign-in methods live in your account menu, in the top
           right of the page.
         </p>
+      </Section>
+
+      {/* Its own section, at the bottom, with a plain title. Apple 5.1.1(v) wants
+          deletion genuinely reachable from inside the app, and a reviewer should
+          not have to hunt for it — so it is not tucked inside "Account" above. */}
+      <Section title="Delete account">
+        <DeleteAccount />
       </Section>
       {/* The admin link used to live here. It moved into the account menu
           (V2Nav) — it's an account-level destination, not a setting. */}

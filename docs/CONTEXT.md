@@ -1034,6 +1034,39 @@ Two traps it documents, because the first run hit both:
   poller claims that timestamp *before* dispatching, so an immediate read races the
   send and reports a false failure. Wait ~12s.
 
+## Account deletion (added 2026-07-28)
+
+`/settings` → **Delete account** (`v2/DeleteAccount.tsx`) → `POST /api/user/delete`.
+Built because **Apple guideline 5.1.1(v)** requires an app offering account creation
+to offer deletion from inside the app, and there was no deletion path at all — a
+certain App Store rejection. Clerk-authed, so it is deliberately NOT in
+`isPublicRoute`.
+
+> **THE ORDER IS LOAD-BEARING, and getting it wrong bills a deleted customer.**
+> Cancel Stripe → delete the Clerk user → delete our row. Every user-owned table is
+> `ON DELETE CASCADE` from `users`, so deleting that row takes `subscriptions` with
+> it — **and the `stripe_subscription_id` along with it.** Delete first and the
+> subscription keeps charging someone whose account no longer exists, with no record
+> left to find it by. That was the live state of things before this route existed:
+> the `user.deleted` webhook has always removed the data and has **never** touched
+> billing, so enabling Clerk's built-in "delete account" toggle alone would have
+> shipped exactly that bug.
+>
+> If Stripe fails, the route aborts and deletes **nothing** — a user who keeps their
+> account is recoverable; a deleted account still being charged is not.
+
+- **Cancellation is IMMEDIATE** (`subscriptions.cancel`), not at period end, and the
+  remainder of the paid period is **not refunded**. Cancel-at-period-end would leave
+  a live subscription attached to a user who no longer exists. The UI states this in
+  bold *before* the button is pressed — that sentence is not decoration, it's what
+  stops a chargeback and it's what a reviewer looks for.
+- **The row is deleted directly as well as by the webhook.** Both are idempotent.
+  Waiting on Svix delivery would mean the data is still there if someone checks
+  immediately after deleting, which is exactly what a reviewer does.
+- **Two-step confirm, not a typed confirmation.** Apple wants deletion genuinely
+  reachable; a "type DELETE to continue" gate reads as obstruction. It is also its
+  own `/settings` section rather than buried inside "Account", so a reviewer finds it.
+
 ## Auto-cart (rec.gov only) — the interesting part
 
 Goal: when a watched rec.gov site opens for an enrolled user, add it to their cart

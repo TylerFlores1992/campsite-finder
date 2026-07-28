@@ -21,6 +21,11 @@ export function useUser() {
   const on = signedIn();
   return { isLoaded: true, isSignedIn: on, user: on ? { id: "user_demo" } : null };
 }
+/** No-op signOut, so screens that end in one (Delete account) can be rendered.
+ *  It must not navigate — the harness page IS the component under inspection. */
+export function useClerk() {
+  return { signOut: async () => {}, openUserProfile: () => {} };
+}
 export function ClerkProvider({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
