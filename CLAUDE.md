@@ -113,9 +113,14 @@ owner. Revert of the whole swap is `git revert a029c27` if something is badly wr
 
 ### Known, not urgent
 - **`campgrounds.photos`: RIDB ingest FIXED 2026-07-27, backfill NOT YET RUN.** Cause:
-  RIDB serves media from a separate `/facilities/<id>/media` endpoint, which the sync
-  never called, so `facility.MEDIA` was always undefined and all 4,469 RIDB rows stored
-  `[]`. `syncFacility` now fetches it (non-fatal on failure). **To fill the existing
+  TWO bugs, both silent. (1) RIDB serves media from a separate
+  `/facilities/<id>/media` endpoint, which the sync never called, so `facility.MEDIA`
+  was always undefined. (2) The filter demanded `MediaType === 'Photo'`; RIDB labels
+  them **`'Image'`**, so even once fetched, every record was discarded — a filter
+  yields `[]`, never an error, so nothing alarmed. `syncFacility` now fetches media
+  (non-fatal on failure) and `mediaToPhotos` (one helper, three callers) matches
+  case-insensitively. Roughly 40% of facilities genuinely have no media in RIDB, so
+  a complete backfill fills ~60% of rows, not all of them. **To fill the existing
   rows:** **Admin -> System Health -> Campground photos -> Run backfill** (works from a
   phone; runs on Vercel, where `RIDB_API_KEY` lives, in cursor-paged batches driven by
   the browser). CLI equivalent: `RIDB_API_KEY=... npx tsx scripts/backfill-ridb-photos.ts`.

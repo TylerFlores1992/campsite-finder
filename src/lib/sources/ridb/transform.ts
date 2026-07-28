@@ -11,9 +11,10 @@ import type { RIDBFacility, RIDBCampsite, RIDBMedia } from './client';
  * DELIBERATELY TOLERANT ABOUT MediaType. The original filter demanded exactly
  * `'Photo'` — and a first backfill run processed 1,880 facilities for 0 photos and
  * 0 ERRORS, which is the signature of a filter that matches nothing rather than a
- * fetch that fails. `'Image'` is the likely label (confirm with the admin probe,
- * `GET /api/admin/backfill-photos?probe=1`, which reports the MediaType values
- * actually returned).
+ * fetch that fails. Confirmed against the live API (`?probe=1`): RIDB labels every
+ * one of these `'Image'`, and `'Photo'` does not occur. The envelope was fine all
+ * along — records arrive under `RECDATA` with `URL`, `Title` and `IsPrimary` exactly
+ * as the type says.
  *
  * The point of the tolerance is not to dodge that question, it's that an exact
  * string match on a vocabulary we don't control fails SILENTLY: a filter yields an
