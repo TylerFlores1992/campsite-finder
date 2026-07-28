@@ -32,7 +32,12 @@ export default function SmsAlerts({ demo = false }: { demo?: boolean } = {}) {
   const [phone, setPhone] = useState("");
   const [savedPhone, setSavedPhone] = useState<string | null>(null);
   const [consented, setConsented] = useState(false);
-  const [loading, setLoading] = useState(true);
+  // `!demo` matters: the effect that clears this runs only on the client, so with
+  // `true` the server-rendered HTML of the public /sms-opt-in page would be a grey
+  // skeleton and the form would appear only after hydration. That page exists to be
+  // READ by carrier reviewers — some of whom fetch it rather than browse it — so the
+  // consent script has to be in the markup, not painted in a moment later.
+  const [loading, setLoading] = useState(!demo);
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,10 +45,7 @@ export default function SmsAlerts({ demo = false }: { demo?: boolean } = {}) {
   useEffect(() => {
     // Public page: no session, so /api/user/phone would 404 through Clerk. Skip
     // straight to the loaded, empty state a new user sees.
-    if (demo) {
-      setLoading(false);
-      return;
-    }
+    if (demo) return; // nothing to load; `loading` already starts false
     let cancelled = false;
     fetch("/api/user/phone")
       .then((r) => (r.ok ? r.json() : null))
