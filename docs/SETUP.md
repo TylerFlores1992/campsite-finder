@@ -165,14 +165,18 @@ missing value there means push silently never fires (the usual stale-worker trap
 Supabase first (by hand, like 020/021). Devices register their token via
 `POST /api/user/push-token` (Clerk-authed; the bridge calls it on sign-in).
 
-> **Migrations are applied by hand** (020/021/023, and **`024_cost_items`** for the admin
-> Costs tab). In a web session you can apply one directly:
+> **Migrations are applied by hand** (020/021/023, and **`024_cost_items` +
+> `025_cost_items_billing_period`** for the admin Costs tab; 025 applied to prod
+> 2026-07-27). In a web session you can apply one directly:
 > `sb.rpc('exec_dml', { query_text: <sql>, with_result: false })` with the service role —
 > `exec_dml` runs DDL, so no Supabase SQL-editor round-trip needed. (PostgREST `.from()`
 > won't see a brand-new table until its schema cache reloads; read back via `exec_select`.)
 
-> **Admin cost tracking needs migration `024_cost_items.sql`** (applied by hand, like the
-> others; already applied to prod 2026-07-26). It backs the editable "Fixed monthly costs"
+> **Admin cost tracking needs migrations `024_cost_items.sql` and
+> `025_cost_items_billing_period.sql`** (applied by hand, like the others; 024 to prod
+> 2026-07-26, 025 on 2026-07-27). 025 **renames `monthly_cents` to `amount_cents`** and
+> adds `billing_period`, so a yearly plan is stored as the invoiced figure and the
+> monthly view is derived — see `docs/CONTEXT.md` for why one column, not two. It backs the editable "Fixed monthly costs"
 > table in the admin **Costs** tab (`/admin`). The per-unit usage rates are non-secret env
 > vars (`COST_PER_SMS_USD` etc.) with in-code defaults — see `docs/CONTEXT.md`. Nothing to
 > deploy beyond a `master` push; no worker or secret involved.
@@ -181,8 +185,8 @@ Supabase first (by hand, like 020/021). Devices register their token via
 generated on a machine with the platform tooling:
 
 ```
-npx cap add ios          # needs macOS + Xcode
-npx cap add android      # needs Android Studio
+npx cap add ios          # needs macOS + Xcode      (or use the Codemagic workflow)
+npx cap add android      # needs Android Studio     (or use the Codemagic workflow)
 npm run cap:assets       # brand the icons + splash from assets/ (see below) — after cap add
 npx cap sync             # or: npm run cap:sync — copies config + plugins into the native projects
 npm run cap:ios          # opens Xcode   (build / archive / TestFlight there)
@@ -198,8 +202,13 @@ the `assets/` sources change — otherwise you ship Capacitor's default placehol
 
 After that: add the **APNs key** (iOS) / **google-services.json** (Android) to Firebase,
 enable Push Notifications capability in Xcode, and archive → TestFlight / Play internal
-testing. `server.url` means you rarely rebuild the binary — only native/plugin/icon
-changes need a new store build.
+testing. **Both of those steps are automated in the Codemagic workflows below**, which is
+the path to prefer — the local route above is only needed for interactive debugging.
+
+`server.url` means you rarely rebuild the binary — only native/plugin/icon changes need a
+new store build. **What that excludes is easy to get wrong:** anything in
+`capacitor.config.ts` (the launch URL, `errorPath`) and any new plugin is compiled in, so
+it reaches users **only** on a rebuild, however many times you deploy the website.
 
 > **Real-world first-build gotchas (learned shipping the Android build 2026-07-25).**
 > - **Build machine needs Node + git. On Windows PowerShell, `npm`/`npx` may be blocked**
@@ -226,17 +235,26 @@ changes need a new store build.
 >   set but can't override edge-to-edge on its own — the CSS insets are the real fix.
 > - **Google/social OAuth sign-in fails in the webview** — Google blocks OAuth in
 >   embedded webviews (it bounces to the system browser and errors with a Clerk
->   `authorization_invalid`). **Email/password sign-in works.** Proper fix (later): route
->   social sign-in through the system browser (Clerk + `@capacitor/browser`).
+>   `authorization_invalid`). **Email/password sign-in works.**
+>   > **`@capacitor/browser` now exists in the project (added 2026-07-27) but does NOT
+>   > fix this on its own.** `NativeBridge`'s link handler deliberately **excludes**
+>   > camphawk.app and Clerk hosts from the system-browser handoff, because sending a
+>   > sign-in out to Safari/Chrome would complete the session *there* and strand the
+>   > app logged out. A real fix has to hand off to the browser **and** bring the
+>   > session back (Clerk's native/OAuth redirect flow), not just open a URL — so
+>   > don't "fix" it by deleting the exclusion.
 > - **Play Console device verification can't be done on an emulator** — it needs hardware
 >   attestation (the Play Console app just white-screens on an emulator). Use a real
 >   Android device (borrow one for 2 min). Identity (ID) verification is separate and
 >   gates publishing, not local testing.
-> - **`next build` won't complete in a keyless dev sandbox** — `api/stripe/checkout`
+> - **`next build` needs the Stripe + Clerk keys in the environment.** `api/stripe/checkout`
 >   inits `new Stripe(process.env.STRIPE_SECRET_KEY!.trim())` at module load, so a build
->   without Stripe env throws "Failed to collect page data" for that route. `tsc --noEmit`
->   still validates; Vercel has the key. Verify web changes with typecheck + a real page
->   after deploy, not a full local `next build`.
+>   without them throws "Failed to collect page data" for that route. **The CampHawk web
+>   session env now HAS both** (verified 2026-07-27 — `npx next build` runs clean here),
+>   so a full build IS a usable check again; it was not when this note was first written.
+>   Either way `next build` passing is **not** sufficient for layout/rendering changes —
+>   dynamic segments aren't executed at build, so a request-time throw only shows up on a
+>   real request. Smoke-test with `curl -sI camphawk.app/` after deploying.
 
 ### Android builds with NO Android Studio — Codemagic (added 2026-07-27)
 

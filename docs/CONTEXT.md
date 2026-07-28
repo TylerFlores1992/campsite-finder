@@ -757,10 +757,19 @@ shown once it's **honest**:
 > and the detail-page "How often it opens up" ladder) are hidden for now: with limited
 > history too many read a discouraging **0% / "rarely opens up"**, which lands as "no
 > hope" rather than "not enough data yet". The recorder/aggregation/APIs are untouched
-> and still accruing, so restoring is cheap — the detail ladder is behind a
-> `SHOW_LIKELIHOOD: boolean` flag in `campground/[id]/page.tsx` (grep `SHOW_LIKELIHOOD`);
-> the Watches-panel and card blocks were commented out (grep `is hidden`). Bring all
-> three back together once the longer-lead buckets are dense.
+> and still accruing, so restoring is cheap.
+>
+> **Post-rewrite this is ONE switch: `SHOW_LIKELIHOOD` in
+> `src/components/v2/likelihood.ts`** (2026-07-27). It used to be a flag in
+> `campground/[id]/page.tsx` plus two commented-out blocks you had to grep `is hidden`
+> to find — the rewrite consolidated all three surfaces onto the single constant, which
+> `v2/ResultCard.tsx` and `v2/WatchCard.tsx` both import. Flip it once the buckets are
+> dense; `/api/likelihood` needs no change.
+>
+> **Check the 4-7 day bucket before flipping it.** The roster probes at leads of 14 and
+> 45 days, so the short-lead bucket a "this weekend" searcher cares about is EMPTY —
+> turn the display on today and the ladder ships with a hole in the most-viewed row.
+> Widen `PROBE_LEAD_DAYS` and let it accrue first.
 
 ### Per-watch manage page + alert action links (feature D, reworked 2026-07-23)
 
