@@ -16,6 +16,7 @@ export default function BetaTesters() {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [note, setNote] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'invited'>('all');
 
   async function load() {
@@ -37,6 +38,7 @@ export default function BetaTesters() {
     if (!v) return;
     setBusy(true);
     setError('');
+    setNote('');
     try {
       const r = await fetch('/api/admin/beta', {
         method: 'POST',
@@ -44,6 +46,19 @@ export default function BetaTesters() {
         body: JSON.stringify({ email: v }),
       });
       if (!r.ok) { setError((await r.json().catch(() => ({}))).error || 'Could not add'); return; }
+      // Say whether the setup email actually went. Adding a tester sends one, and
+      // a silent failure here means someone sits waiting for an invite that never
+      // arrived — the exact problem the invite was added to solve.
+      const res = (await r.json().catch(() => ({}))) as {
+        invited?: boolean; alreadyListed?: boolean;
+      };
+      setNote(
+        res.alreadyListed
+          ? 'Already on the list — no second invite sent.'
+          : res.invited
+            ? 'Added, and the setup email is on its way.'
+            : 'Added, but the setup email failed to send. Check the logs.',
+      );
       setEmail('');
       await load();
     } catch {
@@ -101,6 +116,7 @@ export default function BetaTesters() {
         </button>
       </form>
       {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
+      {note && <p className="mb-3 text-xs text-ch-ink-2">{note}</p>}
 
       {!loading && testers.length > 0 && (
         <div className="inline-flex rounded-lg border border-ch-line p-0.5 mb-4 text-xs font-medium">

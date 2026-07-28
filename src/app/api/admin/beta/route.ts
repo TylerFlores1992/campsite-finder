@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query, mutate } from '@/lib/db/client';
 import { currentUserEmail, isAdminEmail } from '@/lib/admin';
+import { sendBetaInvite } from '@/lib/notifications/beta-invite';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,9 +36,30 @@ export async function POST(req: NextRequest) {
   const { email } = await req.json().catch(() => ({}));
   if (!isEmail(email)) return NextResponse.json({ error: 'valid email required' }, { status: 400 });
   const e = email.trim().toLowerCase();
-  await mutate(`INSERT INTO beta_emails (email) VALUES ($1) ON CONFLICT (email) DO NOTHING`, [e]);
+  // RETURNING tells us whether this was a NEW pre-approval or a re-add of one that
+  // already existed, which is what decides whether to email. Re-adding an existing
+  // tester must not spam them a second invite.
+  const inserted = await query<{ email: string }>(
+    `INSERT INTO beta_emails (email) VALUES ($1) ON CONFLICT (email) DO NOTHING RETURNING email`,
+    [e]
+  );
   await mutate(`UPDATE users SET is_beta = true, updated_at = NOW() WHERE lower(email) = $1`, [e]);
-  return NextResponse.json({ ok: true, email: e });
+
+  // Tell them. Being added used to be silent, so a tester either never signed up or
+  // signed up and saw no difference. Best-effort: a mail failure must not fail the
+  // add, or the admin retries and the row is already there — so the outcome is
+  // reported back instead and the panel can show it.
+  let invited = false;
+  if (inserted.length > 0) {
+    try {
+      await sendBetaInvite(e, process.env.NEXT_PUBLIC_APP_URL ?? 'https://camphawk.app');
+      invited = true;
+    } catch (err) {
+      console.error('[admin/beta] invite email failed for', e, err);
+    }
+  }
+
+  return NextResponse.json({ ok: true, email: e, invited, alreadyListed: inserted.length === 0 });
 }
 
 // Remove the pre-approval AND revoke beta access from any matching account.

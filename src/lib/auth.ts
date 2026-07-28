@@ -15,7 +15,7 @@ export async function syncUser(userId: string): Promise<void> {
   const email = user?.emailAddresses?.[0]?.emailAddress ?? null;
   await mutate(
     `INSERT INTO users (id, email, is_beta)
-     VALUES ($1, $2, EXISTS(SELECT 1 FROM beta_emails b WHERE b.email = LOWER($2)))
+     VALUES ($1, $2, EXISTS(SELECT 1 FROM beta_emails b WHERE LOWER(b.email) = LOWER($2)))
      ON CONFLICT (id) DO UPDATE SET
        email = COALESCE(EXCLUDED.email, users.email),
        is_beta = users.is_beta OR EXCLUDED.is_beta,
