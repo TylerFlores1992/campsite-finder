@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query, mutate } from '@/lib/db/client';
 import { currentUserIsAdmin } from '@/lib/admin';
-import { getFacilityMedia } from '@/lib/sources/ridb/client';
+import { getFacilityMedia, getFacilityMediaRaw } from '@/lib/sources/ridb/client';
 
 /**
  * Backfill RIDB photos, ONE BATCH PER REQUEST.
@@ -99,10 +99,50 @@ export async function POST(request: NextRequest) {
   });
 }
 
-/** How much is left to do, for the button's idle state. */
-export async function GET() {
+/**
+ * How much is left to do — and, with `?probe=1`, what RIDB actually returns.
+ *
+ * THE PROBE EXISTS BECAUSE A CLEAN ZERO IS A PARSING BUG, NOT A DATA FACT. The first
+ * run processed 1,880 facilities with 0 filled and 0 FAILED: every call succeeded and
+ * every one filtered to nothing. That rules out auth, rate limits and the network, and
+ * leaves the shape — a wrong envelope key, or a MediaType we don't match. Neither is
+ * visible from this sandbox, because RIDB_API_KEY only exists in this environment.
+ *
+ * So the probe reports what came back verbatim: the response's top-level keys, the
+ * record count, and the distinct MediaType values seen. That distinguishes all three
+ * hypotheses in one tap.
+ */
+export async function GET(request: NextRequest) {
   if (!(await currentUserIsAdmin())) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
+  if (request.nextUrl.searchParams.get('probe') === '1') {
+    const ids = await query<{ id: string; name: string }>(
+      `SELECT id, name FROM campgrounds WHERE source = 'ridb' ORDER BY id LIMIT 5`
+    );
+    const results = [];
+    for (const { id, name } of ids) {
+      try {
+        const raw = await getFacilityMediaRaw(id);
+        const records: unknown[] = Array.isArray(raw?.RECDATA) ? raw.RECDATA : [];
+        results.push({
+          id,
+          name,
+          topLevelKeys: raw && typeof raw === 'object' ? Object.keys(raw) : null,
+          recdataCount: records.length,
+          mediaTypes: [
+            ...new Set(
+              records.map((r) => (r as { MediaType?: string })?.MediaType ?? '(missing)')
+            ),
+          ],
+          firstRecord: records[0] ?? null,
+        });
+      } catch (err) {
+        results.push({ id, name, error: (err as Error).message });
+      }
+    }
+    return NextResponse.json({ probe: results }, { status: 200 });
   }
   const [counts] = await query<{ total: number; empty: number }>(
     `SELECT COUNT(*)::int AS total,
