@@ -22,6 +22,7 @@
  */
 import { query, mutate } from '../src/lib/db/client';
 import { getFacilityMedia } from '../src/lib/sources/ridb/client';
+import { mediaToPhotos } from '../src/lib/sources/ridb/transform';
 
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
@@ -64,12 +65,7 @@ async function main() {
       const row = targets[cursor++];
       try {
         const media = await getFacilityMedia(row.id);
-        // Same shape and same filter the transform uses, so a backfilled row is
-        // indistinguishable from a freshly synced one. Duplicating three lines is
-        // the wrong trade here — see the note at the bottom of this file.
-        const photos = media
-          .filter((m) => m.MediaType === 'Photo' && m.URL)
-          .map((m) => ({ url: m.URL, title: m.Title, isPrimary: m.IsPrimary }));
+        const photos = mediaToPhotos(media);
 
         if (photos.length === 0) {
           noMedia++;
@@ -106,9 +102,3 @@ main()
     process.exit(1);
   });
 
-// NOTE ON THE DUPLICATED FILTER: transformFacility() maps a whole facility, and
-// calling it here would need a fabricated RIDBFacility with a real name, location and
-// address — which the backfill would then upsert, overwriting good synced data with a
-// stub. Three lines of duplication is cheaper than that risk. If the photo shape ever
-// changes, it changes in both places; the shape is stored in `photos` and read by
-// CampgroundDetail, lib/seo and lib/jsonld.

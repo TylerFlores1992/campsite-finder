@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query, mutate } from '@/lib/db/client';
 import { currentUserIsAdmin } from '@/lib/admin';
 import { getFacilityMedia, getFacilityMediaRaw } from '@/lib/sources/ridb/client';
+import { mediaToPhotos } from '@/lib/sources/ridb/transform';
 
 /**
  * Backfill RIDB photos, ONE BATCH PER REQUEST.
@@ -65,11 +66,9 @@ export async function POST(request: NextRequest) {
       const { id } = rows[cursor++];
       try {
         const media = await getFacilityMedia(id);
-        // Same filter and shape as transformFacility, so a backfilled row is
-        // indistinguishable from a freshly synced one.
-        const photos = media
-          .filter((m) => m.MediaType === 'Photo' && m.URL)
-          .map((m) => ({ url: m.URL, title: m.Title, isPrimary: m.IsPrimary }));
+        // The same helper the sync uses, so a backfilled row is indistinguishable
+        // from a freshly synced one — and a fix to the filter reaches both.
+        const photos = mediaToPhotos(media);
         if (photos.length === 0) {
           noMedia++;
           continue;

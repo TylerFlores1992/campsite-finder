@@ -1,5 +1,43 @@
 import type { Campground, Campsite } from '@/lib/types';
-import type { RIDBFacility, RIDBCampsite } from './client';
+import type { RIDBFacility, RIDBCampsite, RIDBMedia } from './client';
+
+/**
+ * RIDB media records → the `photos` shape we store.
+ *
+ * ONE DEFINITION, THREE CALLERS (the transform, the admin backfill route, the CLI
+ * backfill script). It was copied into each, which is how the next fix ends up
+ * applied to two of them.
+ *
+ * DELIBERATELY TOLERANT ABOUT MediaType. The original filter demanded exactly
+ * `'Photo'` — and a first backfill run processed 1,880 facilities for 0 photos and
+ * 0 ERRORS, which is the signature of a filter that matches nothing rather than a
+ * fetch that fails. `'Image'` is the likely label (confirm with the admin probe,
+ * `GET /api/admin/backfill-photos?probe=1`, which reports the MediaType values
+ * actually returned).
+ *
+ * The point of the tolerance is not to dodge that question, it's that an exact
+ * string match on a vocabulary we don't control fails SILENTLY: a filter yields an
+ * empty array, never an error, so the photos just quietly vanish sitewide and no
+ * alarm goes off. Matching a set case-insensitively, and falling back to the URL
+ * when MediaType is absent, means a relabel upstream degrades to "we kept the
+ * photos" instead.
+ */
+const IMAGE_TYPES = new Set(['image', 'photo', 'photograph']);
+const IMAGE_EXT = /\.(jpe?g|png|webp|gif|avif)(\?|#|$)/i;
+
+export function mediaToPhotos(
+  media: readonly RIDBMedia[]
+): Array<{ url: string; title: string; isPrimary: boolean }> {
+  return media
+    .filter((m) => {
+      if (!m?.URL) return false;
+      const type = (m.MediaType ?? '').trim().toLowerCase();
+      if (type) return IMAGE_TYPES.has(type);
+      // No type given — fall back to the URL, rather than dropping a usable photo.
+      return IMAGE_EXT.test(m.URL);
+    })
+    .map((m) => ({ url: m.URL, title: m.Title, isPrimary: Boolean(m.IsPrimary) }));
+}
 
 // RIDB activity IDs we care about for tagging
 const ACTIVITY_TAGS: Record<string, string> = {
@@ -115,9 +153,7 @@ export function transformFacility(facility: RIDBFacility): Campground {
     facility.FacilityDescription ?? ''
   );
 
-  const photos = (facility.MEDIA ?? [])
-    .filter((m) => m.MediaType === 'Photo' && m.URL)
-    .map((m) => ({ url: m.URL, title: m.Title, isPrimary: m.IsPrimary }));
+  const photos = mediaToPhotos(facility.MEDIA ?? []);
 
   const primaryAddress = (facility.FACILITYADDRESS ?? []).find(
     (a) => a.AddressType === 'Default'
