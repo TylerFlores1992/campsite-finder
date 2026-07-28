@@ -158,16 +158,19 @@ workflows:
 
   android-release:
     name: Android · signed AAB + APK
-    # Linux, not a Mac — Android needs no macOS runner, so this is the cheaper
-    # instance and there is no reason to burn Mac minutes on it.
+    # A Mac runner for an ANDROID build looks wrong, and it is — on any plan that
+    # offers a Linux instance. This account's plan offers neither: `linux_x2` AND
+    # plain `linux` both fail in under a second, before a single step runs, with
+    # "The selected instance type is not available with the current billing plan"
+    # (both tried on 2026-07-28, the first two runs of this workflow). mac_mini_m2 is
+    # the one instance the plan can actually schedule — it's what the iOS workflow has
+    # always used — and Codemagic's macOS image carries the Android SDK, JDK and
+    # Gradle, so `bundleRelease` builds there fine.
     #
-    # `linux`, NOT `linux_x2`: the bigger instance is a paid-plan machine, and asking
-    # for it on a plan without it fails the build in under a second, before a single
-    # step runs, with "The selected instance type is not available with the current
-    # billing plan" — which reads like a config error but is purely billing (observed
-    # on the first-ever run of this workflow, 2026-07-28). Gradle is slower here but
-    # fine. If the plan is ever upgraded, `linux_x2` is the faster choice again.
-    instance_type: linux
+    # That failure reads like a broken workflow: zero steps, no logs, instant. It is
+    # purely billing. Nothing to do with the keystore, the Firebase variable or Gradle.
+    # If the plan ever gains Linux, switch back — it's cheaper and faster for this job.
+    instance_type: mac_mini_m2
     max_build_duration: 45
     environment:
       groups:
