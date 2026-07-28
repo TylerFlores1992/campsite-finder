@@ -10,9 +10,13 @@ import { Loader2, CheckCircle2, ShieldCheck, AlertTriangle } from 'lucide-react'
 // by itself when the session drops — saving is required, see the checkbox below. That form handles the vast majority of logins on its own.
 // The live streamed rec.gov window is reserved for the one case the form genuinely
 // can't clear: rec.gov throwing a CAPTCHA / 2FA challenge, which the broker signals with
-// a 'manual' message so the user can finish that step by hand. Ordinary failures (wrong
-// password, a broker that never answers) show a "check your credentials" retry instead
-// of dropping the user into that window.
+// a 'manual' message so the user can finish that step by hand. A wrong password also
+// comes back as 'manual', so it lands in that window rather than as an error here.
+//
+// A broker that never answers at all is the remaining case, and it is NOT a credential
+// problem — it means the mini-PC helper is on older code or briefly offline. The submit
+// handler below waits 90s (the broker can legitimately stay silent for ~34s) and then
+// says so, rather than telling the user to re-check a password that was fine.
 
 type Status = 'idle' | 'connecting' | 'live' | 'done' | 'error';
 
@@ -26,7 +30,14 @@ export default function ConnectPage() {
   const kbRef = useRef<HTMLInputElement>(null);
   const kbPrevRef = useRef(''); // last seen value of the hidden input, for delta diffing
   const loginTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // form-submit safety timeout
-  const clearLoginTimer = () => { if (loginTimerRef.current) { clearTimeout(loginTimerRef.current); loginTimerRef.current = null; } };
+  const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // "still working" nudge
+  const clearProgressTimer = () => { if (progressTimerRef.current) { clearTimeout(progressTimerRef.current); progressTimerRef.current = null; } };
+  // Always clears BOTH — the progress nudge must never outlive the attempt it
+  // describes, or a finished sign-in still says "still working".
+  const clearLoginTimer = () => {
+    if (loginTimerRef.current) { clearTimeout(loginTimerRef.current); loginTimerRef.current = null; }
+    clearProgressTimer();
+  };
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState('');
   // 'form' = our own credential fields (primary); 'stream' = fall back to the live
@@ -205,17 +216,31 @@ export default function ConnectPage() {
               e.preventDefault();
               if (!email || !password) return;
               setSubmitting(true);
+              setNote('');
               send({ t: 'login', email, password, remember });
-              // Safety net: if the mini-PC broker doesn't answer at all (e.g. it's on older
-              // code that doesn't know the 'login' message), don't hang — surface a retry.
-              // (A real CAPTCHA/2FA challenge comes back as a 'manual' message instead, which
-              // opens the live window; a silent no-response is not that case.)
+              // THE BROKER IS SILENT FOR A LONG TIME BY DESIGN, and 40s was not long
+              // enough. Its worst case before the first message is roughly:
+              //   openLoginModalAndFill  1.5s + 8s (email field) + 1.2s + 8s (password)
+              //   then doLogin's confirmation loop  15 x 1s
+              // ≈ 34s, before page-load time — so a login that was working could trip
+              // the old 40s timeout, and the message then blamed the user's password.
+              // It is never the password: a wrong one comes back as 'manual'.
               clearLoginTimer();
+              progressTimerRef.current = setTimeout(() => {
+                setNote('Still working — signing in to recreation.gov can take up to a minute.');
+              }, 20000);
               loginTimerRef.current = setTimeout(() => {
+                clearProgressTimer();
                 setSubmitting(false);
                 setStatus('error');
-                setError('Automatic sign-in didn’t respond in time. Please double-check your recreation.gov email and password, then try again.');
-              }, 40000);
+                // Say what is actually likely, in the order it is likely. A silent
+                // broker usually means the mini-PC helper is running older code that
+                // doesn't understand this sign-in yet — nothing the user can fix by
+                // retyping their password, which is what the old wording told them to do.
+                setError(
+                  "The sign-in helper didn't respond. That usually means it needs updating or briefly dropped offline — not that your details are wrong. Try again in a minute, and email alerts@camphawk.app if it keeps happening.",
+                );
+              }, 90000);
             }}
             className="mt-6 space-y-3 rounded-ch-card border border-ch-line bg-ch-card shadow-ch-card p-5"
           >
