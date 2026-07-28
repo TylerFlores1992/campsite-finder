@@ -7,8 +7,7 @@ import Button from "@/components/ui/Button";
 /**
  * Text alerts — phone number + consent.
  *
- * THE DISCLOSURE COPY IS CARRIER COMPLIANCE, NOT MARKETING, and it is reproduced
- * word for word from src/components/SmsOptIn.tsx. A2P 10DLC registration is
+ * THE DISCLOSURE COPY IS CARRIER COMPLIANCE, NOT MARKETING. A2P 10DLC registration is
  * approved against specific language: that consent is optional and not a
  * condition of purchase, the message-frequency statement, "message and data
  * rates may apply", HELP/STOP, and links to Terms and Privacy. Tightening any
@@ -18,13 +17,18 @@ import Button from "@/components/ui/Button";
  * Same /api/user/phone endpoint as the old form. POST with a number saves it,
  * POST with an empty string clears it — no data-layer change here at all.
  *
- * > **`/sms-opt-in` is a second copy of this consent script**, rendered from
- * > `components/SmsOptIn.tsx` — it's the public page carriers review without an
- * > account. The two are identical word for word today. **Edit the consent
- * > language here and you must edit that one too**, or reviewers see something
- * > users never do. Nothing type-checks it.
+ * **`demo` renders THIS component on the public `/sms-opt-in` page**, which is the
+ * page carriers and campaign reviewers look at without an account. It used to be a
+ * separate `components/SmsOptIn.tsx` holding a second, hand-synced copy of the same
+ * approved script — two files, one A2P registration, and nothing type-checking that
+ * they agreed. They did agree, but only by luck: the same class of drift had already
+ * bitten the auto-cart copy. That file is deleted and this is now the single source,
+ * so what a reviewer sees is literally what a user sees.
+ *
+ * In demo mode the component is inert — no load, no save — because the page is public
+ * and there is no session to read a number from. Everything else renders identically.
  */
-export default function SmsAlerts() {
+export default function SmsAlerts({ demo = false }: { demo?: boolean } = {}) {
   const [phone, setPhone] = useState("");
   const [savedPhone, setSavedPhone] = useState<string | null>(null);
   const [consented, setConsented] = useState(false);
@@ -34,6 +38,12 @@ export default function SmsAlerts() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Public page: no session, so /api/user/phone would 404 through Clerk. Skip
+    // straight to the loaded, empty state a new user sees.
+    if (demo) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     fetch("/api/user/phone")
       .then((r) => (r.ok ? r.json() : null))
@@ -55,9 +65,10 @@ export default function SmsAlerts() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [demo]);
 
   async function save() {
+    if (demo) return;
     setSaving(true);
     setError(null);
     try {
@@ -79,6 +90,7 @@ export default function SmsAlerts() {
   }
 
   async function turnOff() {
+    if (demo) return;
     setSaving(true);
     setError(null);
     try {

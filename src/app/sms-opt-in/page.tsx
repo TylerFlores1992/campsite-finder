@@ -1,4 +1,4 @@
-import SmsOptIn from '@/components/SmsOptIn';
+import SmsAlerts from '@/components/v2/SmsAlerts';
 import Logo from '@/components/Logo';
 
 export const metadata = { title: 'SMS Alert Opt-In — CampHawk' };
@@ -8,14 +8,11 @@ export const metadata = { title: 'SMS Alert Opt-In — CampHawk' };
  * carrier/campaign reviewers can see the exact opt-in experience without an
  * account. The real form lives on the `/settings` page, under "How we reach you".
  *
- * > **THIS PAGE MUST KEEP MATCHING THE REAL FORM.** It renders `SmsOptIn`,
- * > while the signed-in surface is now `v2/SmsAlerts` — two components, one
- * > A2P-approved script. Their consent copy is currently identical word for
- * > word (checked 2026-07-27: the checkbox label, the message-frequency line,
- * > "message and data rates may apply", HELP/STOP, and the Terms/Privacy
- * > links). **If you edit the consent language in either file, edit both**, or
- * > this page starts showing carriers something users never see. Nothing
- * > type-checks that.
+ * **It renders the REAL component** (`v2/SmsAlerts`, with `demo` so it can't
+ * load or save), so a reviewer is looking at the same markup a signed-in user
+ * gets. This used to be a second component holding a hand-synced copy of the
+ * A2P-approved script — they happened to stay identical, but nothing enforced
+ * it, and copy drift had already bitten elsewhere in the app. One source now.
  */
 export default function SmsOptInDemoPage() {
   return (
@@ -31,7 +28,7 @@ export default function SmsOptInDemoPage() {
         entirely and continue using every CampHawk feature with email alerts only.
       </p>
       <div className="bg-white border border-ch-line rounded-2xl shadow-sm p-5">
-        <SmsOptIn demo />
+        <SmsAlerts demo />
       </div>
       <p className="text-xs text-ch-muted mt-4">
         Prefer not to receive texts? Simply leave this form blank — no phone number is stored and
