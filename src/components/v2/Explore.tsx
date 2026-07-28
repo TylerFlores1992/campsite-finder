@@ -42,6 +42,11 @@ const ResultsMap = dynamic(() => import("./ResultsMap"), {
 
 const RADII = [10, 25, 50, 100, 200];
 
+/** Start tight. Most people search the place they're actually going, and a 50-mile
+ *  default buried the campground they had in mind under everything within an hour's
+ *  drive of it. Widening is one tap; noticing you were shown the wrong thing is not. */
+const DEFAULT_RADIUS = 10;
+
 type WhenPreset = "exact" | "tonight" | "weekend" | "flexible";
 
 /** Next Friday→Sunday. Matches the existing QuickFilters helper's intent. */
@@ -112,7 +117,7 @@ function decodeSearch(q: URLSearchParams): Partial<SearchState> {
   return {
     coords: Number.isFinite(lat) && Number.isFinite(lng) && q.has("lat") ? { lat, lng } : null,
     place: q.get("place") ?? "",
-    radius: RADII.includes(radius) ? radius : 50,
+    radius: RADII.includes(radius) ? radius : DEFAULT_RADIUS,
     when: when === "tonight" || when === "weekend" || when === "flexible" ? when : "exact",
     range: { start: (q.get("start") as ISODate | null) ?? null, end: (q.get("end") as ISODate | null) ?? null },
     flexNights: Number.isFinite(nights) && nights > 0 ? nights : 2,
@@ -241,7 +246,7 @@ export default function Explore() {
   // Origin used for the CURRENT results, so panning the form does not move the
   // map out from under pins that belong to the previous search.
   const [searchedAt, setSearchedAt] = useState<{ lat: number; lng: number } | null>(null);
-  const [radius, setRadius] = useState(50);
+  const [radius, setRadius] = useState(DEFAULT_RADIUS);
 
   const [when, setWhen] = useState<WhenPreset>("exact");
   const [range, setRange] = useState<DateRange>({ start: null, end: null });
