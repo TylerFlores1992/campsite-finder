@@ -81,8 +81,12 @@ Each source has an adapter in `src/lib/availability/` and a catalog sync in
   See `src/lib/sources/tnsc/`. Alert-only, and the worker reaches both **through a
   Vercel proxy** (`/api/tnsc-availability`) because the portal's WAF blocks Fly.
 
-State-park coverage spans **33 states** across those platforms, plus federal
-Recreation.gov nationwide. All non-rec.gov sources are **alert-only** (their carts are
+State-park coverage spans **34 states** across those platforms, plus federal
+Recreation.gov nationwide. (Counted from the registries 2026-07-27: UseDirect 10 +
+ReserveAmerica 18 + GoingToCamp 4 + TN/SC 2, no overlaps. `COVERAGE.stateParkStates`
+in `src/lib/coverage.ts` already said 34; this line said 33 and was the stale one —
+it predates SC shipping. **`coverage.ts` is the number the UI renders, so it is the
+one to trust.**) All non-rec.gov sources are **alert-only** (their carts are
 session-bound and don't sync to a phone). Adding a source = availability adapter +
 catalog sync + wire into search/worker/notifications + update coverage copy.
 

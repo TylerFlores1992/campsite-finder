@@ -10,13 +10,14 @@ import { providerLabel } from "@/components/v2/providers";
 /**
  * State landing page — /camping/oregon.
  *
- * WHY THIS ROUTE, NOT /v2/camping. Everything else in the redesign is
- * dark-launched behind /v2 and noindex, because it REPLACES a live page and
- * shipping both would show users two designs. A state page replaces nothing —
- * it's new — so there's no such conflict, and putting it behind noindex would
- * mean building the one thing whose entire purpose is search traffic and then
- * hiding it from search. It links out to /campground/<id>, the live route,
- * which the redesign takes over at the swap.
+ * WHY THIS LIVES OUTSIDE THE (app) ROUTE GROUP. It was built during the dark
+ * launch, when the rest of the redesign sat behind /v2 and noindex — everything
+ * there REPLACED a live page, and shipping both would have shown users two
+ * designs. A state page replaces nothing, so it had no such conflict, and
+ * hiding the one thing whose entire purpose is search traffic behind noindex
+ * would have been self-defeating. The /v2 prefix is long gone; the page kept its
+ * own breadcrumb chrome rather than the app nav, which is why it still sits
+ * outside the group.
  *
  * NOT A DOORWAY PAGE, and the distinction matters because that's a penalty.
  * A doorway is a thin page whose only content is a keyword and a link onward.

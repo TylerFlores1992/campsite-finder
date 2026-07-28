@@ -6,7 +6,7 @@ import { MessageSquare, Loader2, Check } from 'lucide-react';
 interface SmsOptInProps {
   /** Demo mode renders the exact same form without making API calls (for carrier review). */
   demo?: boolean;
-  /** In compact mode (e.g. the Watches panel) the form collapses to a small CTA
+  /** In compact mode the form collapses to a small CTA
    *  when unsigned, and to a one-line "on · Turn off" row once signed up. */
   compact?: boolean;
   initialPhone?: string;

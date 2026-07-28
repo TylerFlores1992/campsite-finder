@@ -17,6 +17,12 @@ import Button from "@/components/ui/Button";
  *
  * Same /api/user/phone endpoint as the old form. POST with a number saves it,
  * POST with an empty string clears it — no data-layer change here at all.
+ *
+ * > **`/sms-opt-in` is a second copy of this consent script**, rendered from
+ * > `components/SmsOptIn.tsx` — it's the public page carriers review without an
+ * > account. The two are identical word for word today. **Edit the consent
+ * > language here and you must edit that one too**, or reviewers see something
+ * > users never do. Nothing type-checks it.
  */
 export default function SmsAlerts() {
   const [phone, setPhone] = useState("");

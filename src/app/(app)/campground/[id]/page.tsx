@@ -70,7 +70,8 @@ export async function generateMetadata({
   return {
     title,
     description,
-    // The canonical points at /campground/<id>, the live URL, NOT this /v2 one.
+    // The canonical points at /campground/<id> — this IS the live URL now (the
+    // /v2 dark-launch path is gone).
     // See lib/seo.ts — the redesign takes over that route at the swap, and
     // naming the final address now means no indexed page ever has to move.
     alternates: { canonical },
@@ -113,7 +114,7 @@ export default async function V2CampgroundPage({
   //
   // The href is REBUILT here rather than used verbatim: `back` arrives in a URL
   // anyone can edit, and a raw pass-through would turn this link into an open
-  // redirect. Only the query survives, always onto /v2.
+  // redirect. Only the query survives, always onto /search or /watches.
   const backTo =
     from === "watches" ? "/watches" : back ? `/search?${stripLeading(back)}` : "/search";
   const backLabel = from === "watches" ? "Back to watches" : "Back to search";
