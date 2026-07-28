@@ -76,9 +76,10 @@ all gated behind a 20-sample **honesty threshold** (numbers hidden until honest)
 - **New public `/api/*` route 404s** until added to `isPublicRoute` in
   `src/middleware.ts` (Clerk's `auth.protect()` returns 404, not 401).
 - **NEVER call a request-time API (`headers()`/`cookies()`/`connection()`) in the ROOT
-  layout.** This build runs **Cache Components** (dynamicIO) — a request-time API in the
-  root layout without a Suspense boundary **throws at request time and 500s every page**,
-  while `/api/*` (no root layout) stays up. It cost a full prod outage 2026-07-24 (the
+  layout.** Doing so **500s every page at request time**, while `/api/*` (no root layout)
+  stays up. (This was long attributed to **Cache Components / `dynamicIO`**; that flag is
+  **not** enabled — `next.config.ts` sets no such option. The mechanism is unconfirmed;
+  the outage is not.) It cost a full prod outage 2026-07-24 (the
   native-app UA detection was done this way; moved to a client `useSyncExternalStore` in
   `src/lib/native/context.tsx`). Corollary: **`next build` passing is NOT enough** for
   layout/rendering changes — dynamic segments aren't executed at build, so the throw only

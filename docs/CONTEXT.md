@@ -527,12 +527,33 @@ live in `src/components/ui/`, screens in `src/components/v2/`.
 - **Watch creation is gated in exactly one component**, `v2/WatchCta.tsx`, backed by
   `v2/useSubscription.ts`. A failed status lookup is tracked as `unknown` and stays
   neutral rather than telling a paying subscriber to subscribe. Same rule in
-  `v2/Pricing.tsx`. Both render no price in the native app.
+  `v2/Pricing.tsx`.
+  > **That gates the CONTROL, which is not the same as gating the PRICE**, and reading
+  > it as the same shipped a live leak — see the store-billing section below. A price
+  > printed in the *server component around* a gated widget is still a price in the
+  > app. The native surfaces are now `v2/PricingSection.tsx` (the whole `/` block,
+  > copy included), `WatchCta`, `Explore`, `Settings` and `NewWatch`; adding a sixth
+  > means gating it there too, not relying on this one.
 - **Provider descriptions are HTML** — 4,469 of the 8,013 catalog rows. Render them
   through `v2/richText.tsx`, which parses to blocks and emits text. Never
   `dangerouslySetInnerHTML`: it is untrusted third-party markup.
-- **Campground `photos` is `[]` on every row.** The photo strip, `og:image` and
-  JSON-LD `image` therefore never render. That's an ingest bug, not a UI one.
+- **Campground `photos`: RIDB fixed 2026-07-27; the other 3,544 rows are still empty.**
+  3,775 of 4,469 RIDB rows now carry photos (25,570 images, 6.8 per campground); the
+  other 694 have no media in RIDB at all. Everything non-RIDB (UseDirect, GoingToCamp,
+  ReserveAmerica, the state portals) is still `[]` and was never investigated — each
+  portal needs its own look. The photo strip, `og:image` and JSON-LD `image` all read
+  this column directly, so they light up per row with no UI change.
+  > **Two silent bugs, and the second is the instructive one.** (1) RIDB serves media
+  > from a **separate `/facilities/<id>/media` endpoint** — the facility search never
+  > populates `MEDIA`, not even with `full=true` — and the sync never called it, so
+  > `facility.MEDIA` was always `undefined`. (2) Even once fetched, the filter demanded
+  > `MediaType === 'Photo'`; **RIDB labels every one of them `'Image'`**, verified
+  > against the live API. An exact match on a vocabulary you don't control fails as an
+  > empty array, never an error — so a first backfill run reported *1,880 processed, 0
+  > photos, 0 failures* and nothing anywhere alarmed. `mediaToPhotos` in
+  > `sources/ridb/transform.ts` is now the single definition (sync + backfill script
+  > both call it) and matches a set case-insensitively, falling back to the URL
+  > extension when `MediaType` is absent.
 
 ## SEO
 
@@ -832,10 +853,17 @@ steps (Firebase project `campapp-39c4b`).
   webview UA, and `NativeAppProvider` (`src/lib/native/context.tsx`) reads it
   **client-side** (`useSyncExternalStore`) and gates `v2/Pricing.tsx` / `v2/WatchCta.tsx`.
   > **The flag is read CLIENT-side, and MUST stay that way.** The first version read the
-  > UA in the root layout via `await headers()` for a flash-free server render — which
-  > under this build's **Cache Components** model threw at request time and **500'd every
-  > page in production** (2026-07-24 outage; `/api/*` stayed up because it has no root
-  > layout, and `next build` stayed green because dynamic segments don't run at build).
+  > UA in the root layout via `await headers()` for a flash-free server render, and it
+  > **500'd every page in production** (2026-07-24 outage; `/api/*` stayed up because it
+  > has no root layout, and `next build` stayed green because dynamic segments don't run
+  > at build).
+  >
+  > **Correction, 2026-07-27: this was previously attributed to Cache Components
+  > (`dynamicIO`). That flag is NOT enabled — `next.config.ts` sets no such option, it
+  > only wraps the config in `withSentryConfig`.** The mechanism was never actually
+  > root-caused; what is established is the empirical result above. The prohibition
+  > stands on that evidence, not on the explanation — so don't go checking the flag,
+  > find it off, and conclude the rule is obsolete.
   > **Never call `headers()`/`cookies()`/`connection()` in the root layout here.** The
   > only cost of client detection is a first-render flash of pricing UI *inside the
   > native app*; web users are never native, so nothing flips.
@@ -1187,11 +1215,19 @@ naming fifteen sources every morning. Canaries are still named individually; the
 and each is distinct.
 
 **Cost tracking (Costs tab):** two kinds of cost, summarized against MRR for a monthly net.
-- **Fixed line items** — editable, DB-backed in `cost_items` (**migration 024**), maintained
+- **Fixed line items** — editable, DB-backed in `cost_items` (**migrations 024 + 025**), maintained
   by hand since these providers (Vercel/Fly/Supabase/Clerk/Twilio number/…) have no simple
   billing API. CRUD via `/api/admin/costs` (admin-gated); UI is
-  `src/components/admin/CostsPanel.tsx` (inline auto-save). Seeded with the known providers
-  at $0 for the operator to fill in.
+  `src/components/admin/CostsPanel.tsx` (explicit Edit/Remove per row). Seeded with the
+  known providers at $0 for the operator to fill in.
+  > **Migration 025 stores what's ON THE INVOICE.** `monthly_cents` was **renamed** to
+  > `amount_cents` and a `billing_period` (`'monthly' | 'yearly'`) added, so an annual
+  > plan is entered as the figure you're actually charged and the monthly view is
+  > derived (`monthlyCents()` in `src/lib/costs.ts`). Renamed rather than kept
+  > alongside: two columns for the same money fails **silently** — a yearly row whose
+  > `monthly_cents` wasn't re-derived would overstate costs 12x in the one number
+  > (net margin) nobody would double-check. Anything summing costs must go through
+  > `monthlyCents()` / `yearlyCents()`, never raw `amount_cents`.
 - **Usage costs** — computed live from `notifications` (SMS/email/push sent this month) ×
   per-unit rates in `src/lib/costs.ts` (`USAGE_RATES`, env-overridable). SMS is the only
   real variable cost; email/push default to $0 (plan/free).

@@ -91,6 +91,19 @@ these by hand — but here's how each source refreshes:
 | **UseDirect** (state parks) | On the **Fly worker** hourly (`rcSyncIfDue` in `worker/poller.ts`) — NOT in the GitHub Action, because some RDR hosts WAF-block datacenter IPs and it routes through the `/api/rc-proxy` on Vercel | `npx tsx scripts/run-sync-ud.ts` (run from a **residential IP** — it forces direct, no proxy) |
 | **TN/SC State Parks** (ColdFusion portal) | **No scheduled sync yet** — TN shipped 2026-07-20 (39 parks), SC 2026-07-22 (34 camping parks); there is no worker `*SyncIfDue` for either, so the catalog only refreshes when you run it by hand. | `npx tsx scripts/run-sync-tnsc.ts TN` / `... SC` (or no arg = all verified). Run from a **residential IP** — the portal's WAF blocks datacenter IPs. TN coords are embedded; **SC coords come from a curated `SC_PARK_COORDS` table** (portal ships none; name-geocoding was worthless — see `docs/CONTEXT.md`), so no Mapbox token is needed. |
 
+**Campground photos (RIDB only).** The nightly RIDB sync now fetches media per
+facility, so anything it touches arrives with photos and there is no recurring job here.
+The one-time backfill for rows that predate the fix RAN 2026-07-27 (3,775 of 4,469
+filled). If it's ever needed again:
+`RIDB_API_KEY=... npx tsx scripts/backfill-ridb-photos.ts` — safe to re-run and to
+interrupt, only touches rows whose `photos` are empty, and writes no other column.
+Supports `--limit=N` and `--dry-run`.
+
+> **`RIDB_API_KEY` lives on Vercel, NOT on the Fly worker.** Worth knowing before you
+> plan where to run anything RIDB-flavoured: a web/agent session can't run this script,
+> because the key isn't in the environment it can reach. The nightly sync gets it from
+> the GitHub Action's secrets.
+
 **Feature-E probe roster (not a catalog sync).** `scripts/seed-probe-targets.ts`
 populates `probe_targets` — the high-demand campgrounds the worker probes hourly for
 the cancellation-likelihood signal. It's a **one-time-ish demand scan** (keeps sites
