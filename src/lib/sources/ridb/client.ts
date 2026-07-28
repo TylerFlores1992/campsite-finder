@@ -120,22 +120,6 @@ export async function getFacilityMedia(facilityId: string): Promise<RIDBMedia[]>
   return response.data?.RECDATA ?? [];
 }
 
-/**
- * The same call, undigested — for the admin probe.
- *
- * `getFacilityMedia` swallows an unexpected envelope: `?? []` turns "we don't
- * understand this response" into "there are no photos", silently and with no error.
- * That's the right behaviour for a sync (a media hiccup must not cost a campground)
- * and exactly the wrong thing when you're trying to work out why every facility came
- * back with nothing. This returns whatever arrived.
- */
-export async function getFacilityMediaRaw(
-  facilityId: string
-): Promise<{ RECDATA?: unknown[] } & Record<string, unknown>> {
-  const response = await http.get(`/facilities/${facilityId}/media`);
-  return response.data;
-}
-
 /** Fetch all campsites for a facility, handling pagination. */
 export async function getAllFacilityCampsites(facilityId: string): Promise<RIDBCampsite[]> {
   const pageSize = 100;

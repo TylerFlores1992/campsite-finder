@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, ExternalLink } from 'lucide-react';
 import BetaTesters from '@/components/BetaTesters';
 import CostsPanel from '@/components/admin/CostsPanel';
-import PhotoBackfillPanel from '@/components/admin/PhotoBackfillPanel';
 import type { CostItem, UsageCounts } from '@/lib/costs';
 
 /**
@@ -364,11 +363,6 @@ function SystemHealthPanel({ data }: { data: AdminData }) {
   const { beat, workerHealthy, canaryRows, syncRows } = data;
   return (
     <div className="grid gap-4 md:grid-cols-2">
-      {/* Catalog maintenance rather than health, but this is the tab that owns
-          sync, and a job you run by hand needs somewhere to live. */}
-      <Panel title="Campground photos">
-        <PhotoBackfillPanel />
-      </Panel>
       <Panel title="Poller worker">
         <div className="flex items-center gap-2">
           <span className={`size-2.5 rounded-full ${workerHealthy ? 'bg-ch-green' : 'bg-ch-alert'}`} />

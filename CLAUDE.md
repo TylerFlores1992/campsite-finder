@@ -112,7 +112,7 @@ toggle), the campsite mute list on `/manage/<token>`, and the admin menu item fo
 owner. Revert of the whole swap is `git revert a029c27` if something is badly wrong.
 
 ### Known, not urgent
-- **`campgrounds.photos`: RIDB ingest FIXED 2026-07-27, backfill NOT YET RUN.** Cause:
+- **`campgrounds.photos`: RIDB ingest FIXED and backfilled 2026-07-27.** Cause:
   TWO bugs, both silent. (1) RIDB serves media from a separate
   `/facilities/<id>/media` endpoint, which the sync never called, so `facility.MEDIA`
   was always undefined. (2) The filter demanded `MediaType === 'Photo'`; RIDB labels
@@ -121,10 +121,12 @@ owner. Revert of the whole swap is `git revert a029c27` if something is badly wr
   (non-fatal on failure) and `mediaToPhotos` (one helper, three callers) matches
   case-insensitively. Roughly 40% of facilities genuinely have no media in RIDB, so
   a complete backfill fills ~60% of rows, not all of them. **To fill the existing
-  rows:** **Admin -> System Health -> Campground photos -> Run backfill** (works from a
-  phone; runs on Vercel, where `RIDB_API_KEY` lives, in cursor-paged batches driven by
-  the browser). CLI equivalent: `RIDB_API_KEY=... npx tsx scripts/backfill-ridb-photos.ts`.
-  Safe to re-run and safe to interrupt; only touches empty rows. The photo strip, `og:image` and JSON-LD `image` already
+  rows:** the backfill RAN 2026-07-27 — **3,775 of 4,469 filled, 25,570 photos, 6.8 per
+  campground**; the other 694 have no media in RIDB at all. The one-shot admin panel was
+  removed once it was done. If it's ever needed again (it shouldn't be — the sync now
+  fetches media for every facility it touches):
+  `RIDB_API_KEY=... npx tsx scripts/backfill-ridb-photos.ts`, safe to re-run and
+  interrupt, only touches empty rows. The photo strip, `og:image` and JSON-LD `image` already
   consume the column, so they light up with no UI change.
   The other 3,544 rows (UseDirect / GoingToCamp / ReserveAmerica / state portals) are
   still empty and were NOT investigated — each portal needs its own look.
