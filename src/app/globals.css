@@ -11,7 +11,7 @@
  * They are GONE (2026-07-27): the rewrite moved the app onto the `--ch-*`
  * namespace below, and the last files still on the stock scales — sign-in,
  * sign-up, terms, privacy, sms-opt-in, auto-cart, /w/<token>, error, not-found,
- * Logo, SmsOptIn, BetaTesters, AdminAutoRefresh — were converted to `ch-*` in
+ * Logo, BetaTesters, AdminAutoRefresh — were converted to `ch-*` in
  * the same commit. Nothing references the stock scales now
  * (`grep -rE "(bg|text|border)-(green|gray|amber|blue)-[0-9]" src/`), so any
  * future use of one resolves to STOCK Tailwind, not the brand palette. Reach

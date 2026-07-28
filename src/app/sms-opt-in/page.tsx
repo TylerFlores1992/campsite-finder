@@ -14,7 +14,7 @@ export const metadata = { title: 'SMS Alert Opt-In — CampHawk' };
  * A2P-approved script — they happened to stay identical, but nothing enforced
  * it, and copy drift had already bitten elsewhere in the app. One source now.
  */
-export default function SmsOptInDemoPage() {
+export default function SmsOptInPage() {
   return (
     <div className="max-w-md mx-auto px-4 py-10">
       <div className="mb-4"><Logo markSize={34} /></div>
