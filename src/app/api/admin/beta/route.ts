@@ -39,7 +39,10 @@ export async function POST(req: NextRequest) {
   // RETURNING tells us whether this was a NEW pre-approval or a re-add of one that
   // already existed, which is what decides whether to email. Re-adding an existing
   // tester must not spam them a second invite.
-  const inserted = await query<{ email: string }>(
+  // mutate(), NOT query() — query() goes through exec_select, which rejects an
+  // INSERT outright, so every add 500'd. mutate() already returns rows when the
+  // statement has RETURNING (it detects the keyword and asks for a result set).
+  const inserted = await mutate<{ email: string }>(
     `INSERT INTO beta_emails (email) VALUES ($1) ON CONFLICT (email) DO NOTHING RETURNING email`,
     [e]
   );
