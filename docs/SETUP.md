@@ -73,7 +73,7 @@ run elsewhere (see Deploy).
 | Piece | Lives on | How to deploy |
 |-------|----------|----------------|
 | **Website** (Next.js) | Vercel | **Auto-deploys on every `git push` to `master`,** and `camphawk.app` auto-re-aliases to the new Production build (`autoAssignCustomDomains` is on). The old "build is `Ready` but the domain still points at the previous deployment" symptom (observed 2026-07-20) was **root-caused 2026-07-25**: pushing the *same commit SHA* to both a `claude/*` working branch and `master` made Vercel dedup by SHA — the branch preview built first and the master push then sometimes created **no** Production deployment, so auto-assign had nothing to move (and manual REST redeploys don't trigger auto-assign either). Fixed by **`vercel.json` → `git.deploymentEnabled: { "claude/*": false }`** so agent branches no longer spawn a shadowing preview; every `master` push now builds a fresh Production deployment and the domain follows on its own. So: **push to `master` and you're done — no `vercel --prod` / re-alias needed.** (If you ever *do* see a stale domain, `vercel --prod` from the repo root, or `POST /v2/deployments/<id>/aliases` with the READY Production deployment id, still forces it.) Also: **a new `SYNC_SECRET`-protected `/api/*` route 404s until it's added to `isPublicRoute` in `src/middleware.ts`** (Clerk's `auth.protect()` returns 404, not 401 — see `docs/CONTEXT.md`). |
-| **Alert worker** (`worker/poller.ts`) | Fly.io app `campsite-finder-worker` | `flyctl deploy --config worker/fly.toml --dockerfile worker/Dockerfile --remote-only` (needs Fly login, and run it from the repo root — the build context is the whole repo). **The deploy leaves the poller stopped; you must `flyctl machine start <primary-id>` afterward, or alerting stays dead silently — see `docs/CONTEXT.md`.** Only needed when you change `worker/` or `src/lib` it uses — **including adding a ReserveAmerica contract, GoingToCamp tenant, or TN/SC provider**, since the worker imports those registries and a stale worker silently never alerts for the new state. **From a Claude-web session `flyctl deploy` can't build** (both Fly remote builders fail from the sandbox) — use the build-locally-and-deploy-the-image workaround in the web-session gotchas below; that's how the flexible-dates worker change shipped 2026-07-22. Serves `POST /gtc/availability` for the website's search page, and calls **out** to Vercel's `/api/tnsc-availability` for TN openings (needs `TNSC_AVAILABILITY_URL` set — see the proxy note below). |
+| **Alert worker** (`worker/poller.ts`) | Fly.io app `campsite-finder-worker` | **GitHub Action `worker-deploy.yml` — this is the path now (added 2026-07-28).** It fires automatically on any push to `master` touching `worker/**`, `src/lib/{availability,sources,notifications,db}/**`, `src/lib/booking-url.ts` or the lockfile, and can be run by hand from the Actions tab (or dispatched by an agent). It builds with `--local-only` on the runner, restarts **exactly the machines that were running before** the deploy, then polls `/api/health/worker` and **fails the run if no fresh heartbeat lands in 4 minutes** — so the "deploy succeeded, alerting is dead" trap below can no longer pass silently. Needs one repo secret, `FLY_API_TOKEN` (`fly tokens create deploy -a campsite-finder-worker`). The auto-trigger is what kills the stale-worker bug: the worker compiles in the RA/UseDirect/GoingToCamp/TN-SC registries, so **adding a state used to need a deploy someone had to remember**, and a stale worker never alerts for it, silently. By hand it's still `flyctl deploy --config worker/fly.toml --dockerfile worker/Dockerfile --remote-only` from the repo root, followed by `flyctl machine start <primary-id>` — see the web-session note below for why building that way fails from a sandbox. Serves `POST /gtc/availability` for the website's search page, and calls **out** to Vercel's `/api/tnsc-availability` for TN openings (needs `TNSC_AVAILABILITY_URL` set — see the proxy note below). |
 | **Auto-cart bot** (`scripts/auto-cart-bot/`) | The mini PC only | `git push`, then run `mini-pc/update.bat` on the mini PC (via RustDesk). It can't run anywhere else — it drives a real logged-in recreation.gov browser. |
 | **Mobile app** (Capacitor) | App Store / Play Store | Thin native shell around the live site — most changes ship via the normal web deploy (the app loads `camphawk.app`); you only rebuild the binary for native/plugin/icon changes. **Neither binary needs a machine of your own** — both build on Codemagic and are started from its web UI (works on a phone): `ios-testflight` (macOS runner → TestFlight) and `android-release` (Linux → signed AAB + sideloadable APK). Paid dev accounts still required. See **"Building the mobile app"** below. Push needs `FCM_SERVICE_ACCOUNT` on **both Vercel and the Fly worker**. |
 
@@ -594,7 +594,15 @@ vars, and a setup-script field.
   installs flyctl + the Supabase CLI. The Supabase CLI comes from npm and installs
   fine; **flyctl does NOT** — see the next bullet.
 - **Rendering a real PAGE (not just a component) needs Clerk keys — the CampHawk
-  environment now has them (added 2026-07-27).** `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
+  environment now has them (added 2026-07-27).**
+  > **They are LIVE keys, not dev-instance ones (verified 2026-07-28: `pk_live_…` /
+  > `sk_live_…`).** So a `next build` in a web session bakes the **production**
+  > publishable key, and anything a session runs with `CLERK_SECRET_KEY` acts on the
+  > real user table — not a throwaway one. Worth swapping to a dev-instance pair unless
+  > that's deliberate; the reason to render a page here is layout, which dev keys serve
+  > equally well. (`STRIPE_SECRET_KEY` there is an `rk_live_` restricted key.)
+
+  `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
   and `CLERK_SECRET_KEY` are set there, so `npm run build && npx next start` serves
   the whole app and `curl localhost:3000/<route>` returns real HTML. That is the way
   to check a full page from a web session; the component harness above is the
@@ -643,7 +651,11 @@ vars, and a setup-script field.
     sync/e2e with **`NODE_USE_ENV_PROXY=1`** so Node routes through the proxy (which is
     allowlisted). `curl` already uses the proxy; only Node needs this.
   - **Neither Fly remote builder works from the sandbox, so `flyctl deploy` (which
-    builds) can't run here.** The **depot** builder (the default) fails its gRPC TLS
+    builds) can't run here.** **Since 2026-07-28 you should not need any of this —
+    dispatch the `worker-deploy.yml` Action instead** (GitHub runners build fine, and
+    the Action also restarts the machine and verifies the heartbeat, which this manual
+    path leaves to you). Keep the workaround below for when the Action itself is what's
+    broken. The **depot** builder (the default) fails its gRPC TLS
     handshake — the agent proxy MITMs it and depot's client bundles its own CA roots,
     so it ignores both `SSL_CERT_FILE` and the system trust store (unfixable). The
     **classic** builder (`--depot=false`) returns `unauthorized` — the app-scoped
@@ -677,6 +689,14 @@ vars, and a setup-script field.
     One time-saver learned that run: `docker build`'s final "exporting layers" step for
     the large `node_modules` layer easily exceeds a 2-min foreground timeout — run the
     build (and the push) in the background and poll, rather than assuming a hang.
+- **Vercel env vars are manageable FROM a web session — you don't have to type them
+  into the dashboard (verified 2026-07-28).** The environment carries `VERCEL_TOKEN`,
+  `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID`, and the token has **read *and* write** on
+  `/v10/projects/<id>/env` (confirmed by creating and deleting a scratch var). So
+  adding, rotating or auditing a Vercel env var is an agent task, not an errand. Fly
+  secrets are readable the same way (`flyctl secrets list`). **GitHub Actions secrets
+  are the one exception** — the session's GitHub token 403s on `/actions/secrets` and no
+  MCP tool writes them, so those must be added by hand, once, per secret.
 - **No secrets store yet:** env vars are stored in the environment config as plaintext,
   visible to anyone who can edit it. Keep the Fly token deploy-scoped, prefer a
   least-privilege Supabase role over the full service-role key where practical, and

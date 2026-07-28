@@ -56,10 +56,14 @@ all gated behind a 20-sample **honesty threshold** (numbers hidden until honest)
 
 ## Deploy (recap — details in SETUP.md)
 - **Website → Vercel**, auto-deploys on push to `master`.
-- **Worker → Fly** `campsite-finder-worker`. From a web session `flyctl deploy` can't
-  build (proxy blocks the builders); use the **build-image-locally + `flyctl deploy
-  --image`** workaround in SETUP.md. Worker changes need this; roster/data-only changes
-  don't (the poller reads `probe_targets` live).
+- **Worker → Fly** `campsite-finder-worker`, via the **`worker-deploy.yml` GitHub
+  Action** (2026-07-28). Auto-fires on a `master` push touching `worker/**` or the
+  `src/lib` dirs the worker imports, and is dispatchable by hand or by an agent. It
+  restarts the machines that were running pre-deploy and **fails unless a fresh
+  heartbeat lands** — the old "deploy looks fine, alerting is dead" trap. Needs repo
+  secret `FLY_API_TOKEN`. The build-image-locally workaround in SETUP.md is now only
+  the fallback for when the Action itself is broken. Roster/data-only changes need no
+  deploy at all (the poller reads `probe_targets` live).
 - **Non-secret worker tunables** live in `worker/fly.toml [env]`.
 
 ## Web-session gotchas (this environment)

@@ -1,0 +1,142 @@
+name: Deploy worker
+
+# Deploys the Fly.io cancellation poller (`worker/poller.ts`, app
+# campsite-finder-worker) and then PROVES it came back up.
+#
+# Why this exists: a `flyctl deploy` stops each machine to swap the image, and
+# `auto_start_machines = false` (load-bearing — see worker/fly.toml) means nothing
+# brings it back. flyctl prints "Machine ... reached stopped state", calls that "a
+# good state", and exits 0 — so the deploy LOOKS successful while alerting is dead.
+# That has to be caught by a machine, not remembered by a human, so this workflow
+# restarts exactly the machines that were running before and fails loudly if no
+# fresh heartbeat lands afterward.
+#
+# It also runs automatically on any push to master that touches code the worker
+# actually imports. The worker compiles in RA_CONTRACTS / USEDIRECT_PROVIDERS /
+# GOINGTOCAMP_PROVIDERS / TNSC_PROVIDERS, so a push without a worker deploy leaves
+# a new state searchable on the website but silently never alerting.
+#
+# Setup (one time): add repo secret FLY_API_TOKEN — a DEPLOY-scoped token, not
+# org-admin: `fly tokens create deploy -a campsite-finder-worker`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why (shows in the run title)'
+        required: false
+        default: 'manual'
+  push:
+    branches: [master]
+    paths:
+      # The worker itself.
+      - 'worker/**'
+      # Everything under src/ the worker imports — availability adapters, the
+      # provider/contract registries, notification dispatch, the DB client, and
+      # the shared booking-link builder.
+      - 'src/lib/availability/**'
+      - 'src/lib/sources/**'
+      - 'src/lib/notifications/**'
+      - 'src/lib/db/**'
+      - 'src/lib/booking-url.ts'
+      # A dependency change rebuilds the image.
+      - 'package.json'
+      - 'package-lock.json'
+      # So a change to this workflow is exercised by the next run.
+      - '.github/workflows/worker-deploy.yml'
+
+run-name: Deploy worker (${{ inputs.reason || github.event_name }})
+
+# Never let two deploys race for the same machines. Don't cancel a running one —
+# a half-finished deploy is how the poller ends up stopped.
+concurrency:
+  group: worker-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_CONFIG: worker/fly.toml
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require the Fly token
+        run: |
+          if [ -z "${FLY_API_TOKEN:-}" ]; then
+            echo "::error::FLY_API_TOKEN is not set. Add it under Settings → Secrets and variables → Actions. Create it with: fly tokens create deploy -a campsite-finder-worker"
+            exit 1
+          fi
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Record which machines are running before the deploy
+        id: pre
+        run: |
+          set -euo pipefail
+          flyctl machines list --config "$FLY_CONFIG"
+          running=$(flyctl machines list --config "$FLY_CONFIG" --json \
+            | jq -r '[.[] | select(.state == "started") | .id] | join(" ")')
+          echo "started before deploy: ${running:-<none>}"
+          echo "running=$running" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy
+        # --local-only builds with the runner's own Docker and pushes straight to
+        # registry.fly.io, so an app-scoped deploy token is enough. (Fly's remote
+        # builders need to provision a builder machine, which that token cannot do.
+        # Swap to --remote-only only with a wider-scoped token.)
+        run: |
+          set -euo pipefail
+          flyctl deploy \
+            --config "$FLY_CONFIG" \
+            --dockerfile worker/Dockerfile \
+            --local-only
+
+      - name: Restart exactly the machines that were running before
+        # NOT "start everything": there are two machines and the second is a
+        # standby. Starting both doubles the request rate against every provider
+        # for no benefit, which is the whole reason auto_start_machines is false.
+        run: |
+          set -euo pipefail
+          running="${{ steps.pre.outputs.running }}"
+          if [ -z "$running" ]; then
+            echo "::warning::No machine was running before this deploy — starting the primary only."
+            running=$(flyctl machines list --config "$FLY_CONFIG" --json | jq -r '.[0].id')
+          fi
+          for id in $running; do
+            state=$(flyctl machines list --config "$FLY_CONFIG" --json \
+              | jq -r --arg id "$id" '.[] | select(.id == $id) | .state')
+            echo "machine $id: $state"
+            if [ "$state" != "started" ]; then
+              flyctl machine start "$id" --config "$FLY_CONFIG"
+            fi
+          done
+
+      - name: Verify the poller is actually alive
+        # The deploy exiting 0 says nothing about whether detection resumed. The
+        # heartbeat is a DB write from inside the poller's cycle, so a fresh one is
+        # the only real proof. No secret needed — the endpoint is public.
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 240))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            body=$(curl -sf --max-time 20 https://camphawk.app/api/health/worker) || body=''
+            if [ -n "$body" ]; then
+              echo "health: $body"
+              ok=$(echo "$body" | jq -r '.ok')
+              age=$(echo "$body" | jq -r '(.ageSeconds // 99999) | floor')
+              if [ "$ok" = "true" ] && [ "$age" -lt 90 ]; then
+                echo "Heartbeat is ${age}s old — the poller is detecting again."
+                exit 0
+              fi
+            fi
+            sleep 15
+          done
+          echo "::error::Deployed, but no fresh heartbeat within 4 minutes — ALERTING MAY BE DEAD. Check https://fly.io/apps/campsite-finder-worker/monitoring"
+          exit 1
+
+      - name: Worker logs (on failure)
+        if: failure()
+        run: flyctl logs --config "$FLY_CONFIG" --no-tail | tail -60

@@ -227,7 +227,16 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > app also needed public IPs allocated — it had none as a pure background service.
 >
 > > **Consequence: a `flyctl deploy` leaves the poller STOPPED. Always start it
-> > manually afterward.** The rolling deploy stops each machine to swap the image,
+> > manually afterward.**
+> >
+> > **Automated 2026-07-28 — deploy through the `worker-deploy.yml` GitHub Action and
+> > this is handled for you.** It records which machines were `started` *before* the
+> > deploy, restarts exactly those (never the standby), and then fails the run unless a
+> > fresh `worker_heartbeat` lands within 4 minutes. The rule below is still the truth
+> > about what `flyctl deploy` does — it just no longer depends on a human remembering
+> > it. Everything after this paragraph applies to a by-hand deploy.
+> >
+> > The rolling deploy stops each machine to swap the image,
 > > and `auto_start_machines = false` means nothing brings it back — flyctl even
 > > prints "Machine … reached stopped state" and calls that "a good state", so the
 > > deploy *looks* successful while alerting is dead. Observed 2026-07-20: ~60s of
@@ -1366,6 +1375,7 @@ See `docs/SETUP.md`. Short version: website auto-deploys on `git push` to `maste
 `camphawk.app` auto-re-aliases to it (`autoAssignCustomDomains` on; **`vercel.json`
 disables deploys for `claude/*` branches** so an agent branch pushing the same SHA can't
 shadow the master Production build and strand the domain — root-caused 2026-07-25, see
-SETUP.md); the Fly worker deploys via `flyctl` **and must then be started by hand** (see
-the autostop note above — the deploy leaves it stopped and alerting silently dead); the
-mini-PC bot updates via `git push` + `update.bat` on the box.
+SETUP.md); the Fly worker deploys via the **`worker-deploy.yml` GitHub Action** — which
+restarts the machine and verifies the heartbeat, because a by-hand `flyctl` deploy leaves
+it stopped and alerting silently dead (see the autostop note above); the mini-PC bot
+updates via `git push` + `update.bat` on the box.
