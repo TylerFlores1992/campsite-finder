@@ -1055,18 +1055,26 @@ copy and must agree:
 | `src/app/connect/page.tsx` | the sign-in screen itself | yes |
 | `src/components/v2/TrustPanel.tsx` | shown when auto-cart is toggled on in New watch | yes |
 | `src/components/v2/AutoCartSettings.tsx` | the auto-cart block on `/settings` | yes |
-| `src/app/auto-cart/page.tsx` | **public** marketing page | **variant — see below** |
+| `src/app/auto-cart/page.tsx` | **public** marketing page | yes |
 
 `src/components/AutoCartToggle.tsx` used to be on this list and **no longer exists** —
 the 2026-07-27 rewrite deleted it. `v2/AutoCartSettings.tsx` replaced it and is the
 fourth surface now.
 
-> **`/auto-cart` says "the private machine that runs *your* session"** rather than "a
-> private machine we run" (checked 2026-07-27). It gets the important half right — "they
-> never reach CampHawk's web servers or database" — but "runs your session" is
-> ambiguous about *whose* machine in the same way "your own CampHawk server" was, and
-> this is the public page someone reads before deciding to hand over a password. Worth
-> aligning.
+> **All four aligned 2026-07-27.** `/auto-cart` and — despite its own header comment
+> claiming otherwise — **two places in `/connect`'s own form** still said "the private
+> machine that runs/holds *your* session", which is ambiguous about whose machine in the
+> same way "your own CampHawk server" was. The `/connect` pair is the worse of the two:
+> it sat directly on the checkbox where someone consents to storing a password. All now
+> say **"a private machine we run"**. Grep `that runs your session` / `that holds your
+> session` before shipping copy here — both should return nothing.
+>
+> **`/auto-cart` also described a UI that no longer exists** (fixed at the same time):
+> "tap *Notify me*" and "open the *Watches* panel (the bell, top-right) and flip
+> *Auto-cart openings*". None of those strings survive the rewrite — the real path is
+> **Watch this campground** → **Settings → Auto-cart → Set up auto-cart** → a
+> **Turn on/Turn off** switch. It's a public page and nothing type-checks marketing
+> copy, so it drifted silently for a week.
 
 > **This drifted once already (fixed 2026-07-27).** `/connect` said "your own
 > CampHawk server" while `TrustPanel` said "a private machine we run" — a

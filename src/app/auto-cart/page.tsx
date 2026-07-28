@@ -57,17 +57,20 @@ export default function AutoCartHelpPage() {
           <h2 className="font-ch-display font-semibold text-ch-ink mb-4">Set it up (one time)</h2>
           <ol className="space-y-5">
             <Step n={1} title="Set your watches">
-              Search for a campground, pick your dates, and tap{' '}<strong>Notify me</strong>{' '}on any
-              booked site. Auto-cart only acts on sites you&apos;re watching.
+              Search for a campground, pick your dates, and tap{' '}
+              <strong>Watch this campground</strong>{' '}on any booked site. Auto-cart only acts on
+              sites you&apos;re watching.
             </Step>
-            <Step n={2} title="Turn on Auto-cart">
-              Open the{' '}<strong>Watches</strong>{' '}panel (the bell, top-right) and flip{' '}
-              <strong>&ldquo;Auto-cart openings&rdquo;</strong>{' '}on. That enrolls you with the bot.
+            <Step n={2} title="Set up auto-cart">
+              Go to{' '}<strong>Settings</strong>{' '}and, under{' '}<strong>Auto-cart</strong>, tap{' '}
+              <strong>Set up auto-cart</strong>. Once it&apos;s connected the same block gives you a{' '}
+              <strong>Turn on</strong>{' '}/{' '}<strong>Turn off</strong>{' '}switch.
             </Step>
             <Step n={3} title="Sign in to recreation.gov once">
               You enter your recreation.gov email and password once. They&apos;re saved,{' '}
-              <strong>encrypted, on the private machine that runs your session</strong>{' '}so
-              auto-cart re-connects on its own if the session drops.{' '}
+              <strong>encrypted, on a private machine we run</strong>{' '}— the always-on computer
+              that holds your logged-in browser — so auto-cart signs back in by itself if the
+              session drops.{' '}
               <strong>They never reach CampHawk&apos;s web servers or database.</strong>
             </Step>
             <Step n={4} title="You're done">

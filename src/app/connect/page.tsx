@@ -254,9 +254,8 @@ export default function ConnectPage() {
               />
               <span>
                 <strong>Save my login to keep auto-cart connected (required).</strong>{' '}It&apos;s
-                stored, encrypted, on the private machine that holds your session, so it can sign
-                back in on its own when the session drops. It never reaches CampHawk&apos;s web
-                servers or database.
+                stored, encrypted, on a private machine we run, so it can sign back in on its own
+                when the session drops. It never reaches CampHawk&apos;s web servers or database.
               </span>
             </label>
             <button
@@ -272,8 +271,8 @@ export default function ConnectPage() {
               </p>
             )}
             <p className="text-center text-ch-fine text-ch-muted">
-              Saved encrypted on the private machine that runs your session — never on CampHawk&apos;s
-              web servers or database.
+              Saved encrypted on a private machine we run — never on CampHawk&apos;s web servers
+              or database.
             </p>
           </form>
         )}
