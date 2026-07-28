@@ -1050,12 +1050,23 @@ CampHawk's web servers or database"*. Do **not** say "your own CampHawk server"
 ("cloud" sounds reassuring while committing to nothing). Four surfaces carry this
 copy and must agree:
 
-| File | Surface |
-| --- | --- |
-| `src/app/connect/page.tsx` | the sign-in screen itself |
-| `src/components/v2/TrustPanel.tsx` | shown when auto-cart is toggled on in New watch |
-| `src/components/AutoCartToggle.tsx` | old-UI toggle |
-| `src/app/auto-cart/page.tsx` | **public** marketing page |
+| File | Surface | Carries the agreed phrasing? |
+| --- | --- | --- |
+| `src/app/connect/page.tsx` | the sign-in screen itself | yes |
+| `src/components/v2/TrustPanel.tsx` | shown when auto-cart is toggled on in New watch | yes |
+| `src/components/v2/AutoCartSettings.tsx` | the auto-cart block on `/settings` | yes |
+| `src/app/auto-cart/page.tsx` | **public** marketing page | **variant — see below** |
+
+`src/components/AutoCartToggle.tsx` used to be on this list and **no longer exists** —
+the 2026-07-27 rewrite deleted it. `v2/AutoCartSettings.tsx` replaced it and is the
+fourth surface now.
+
+> **`/auto-cart` says "the private machine that runs *your* session"** rather than "a
+> private machine we run" (checked 2026-07-27). It gets the important half right — "they
+> never reach CampHawk's web servers or database" — but "runs your session" is
+> ambiguous about *whose* machine in the same way "your own CampHawk server" was, and
+> this is the public page someone reads before deciding to hand over a password. Worth
+> aligning.
 
 > **This drifted once already (fixed 2026-07-27).** `/connect` said "your own
 > CampHawk server" while `TrustPanel` said "a private machine we run" — a
