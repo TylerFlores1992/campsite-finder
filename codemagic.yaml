@@ -187,6 +187,14 @@ workflows:
         - camphawk_upload
       vars:
         PACKAGE_NAME: "app.camphawk.mobile"
+      # Capacitor 7's own Android library compiles with `sourceCompatibility 21`, so a
+      # runner whose default JDK is older dies at :capacitor-android:compileReleaseJavaWithJavac
+      # with `error: invalid source release: 21` — AFTER 91 Gradle tasks have run, which
+      # makes it look like a project problem rather than a toolchain one. Observed
+      # 2026-07-28 on mac_mini_m2, whose default JDK is not 21. Pin it explicitly rather
+      # than inherit whatever the image ships, so an image update can't silently break
+      # or silently fix this.
+      java: 21
       node: 20
     scripts:
       - name: Install JS dependencies
