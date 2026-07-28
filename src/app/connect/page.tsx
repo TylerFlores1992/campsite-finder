@@ -86,6 +86,10 @@ export default function ConnectPage() {
       let m: { t: string; data?: string; w?: number; h?: number; message?: string };
       try { m = JSON.parse(ev.data); } catch { return; }
       if (m.t === 'ready' || m.t === 'live') setStatus('live');
+      // Purely additive: a broker too old to send 'ack' just never triggers this,
+      // and the existing timeout still covers that case. When it DOES arrive we
+      // know the helper received the request, so the wait is real progress.
+      else if (m.t === 'ack') setNote('Signing you in on the helper — this can take up to a minute.');
       else if (m.t === 'frame' && m.data) drawFrame(m.data, m.w || 1000, m.h || 760);
       else if (m.t === 'done') { clearLoginTimer(); setStatus('done'); ws.close(); }
       // Broker couldn't finish from the credentials alone — reveal the live window.

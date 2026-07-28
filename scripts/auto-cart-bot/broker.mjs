@@ -96,7 +96,17 @@ wss.on('connection', (ws) => {
     }
 
     // Post-auth: forward input events to the live page.
-    if (session?.onInput) await session.onInput(msg).catch(() => {});
+    // NOT `.catch(() => {})`. Swallowing here meant a throw inside doLogin produced
+    // no log line and no message to the browser, so the page just sat there until it
+    // timed out — the failure looked identical to "the helper never got the request",
+    // which is unknowable from the outside. Log it, and tell the client something
+    // happened.
+    if (session?.onInput) {
+      await session.onInput(msg).catch((e) => {
+        log(`  input handler failed on '${msg?.t}': ${e?.message || e}`);
+        try { session.sendJson({ t: 'error', message: 'The sign-in helper hit an error. Please try again.' }); } catch {}
+      });
+    }
   });
 
   ws.on('close', () => { if (session?.close) session.close('client disconnected'); });
@@ -209,7 +219,15 @@ async function startSession(userId, ws, sendJson) {
   // Map viewer input (canvas-space) onto the real page.
   const onInput = async (m) => {
     if (done || closed) return;
-    if (m.t === 'login') { await doLogin(m.email, m.password, m.remember); return; }
+    if (m.t === 'login') {
+      // Ack FIRST. The browser cannot otherwise tell "the helper never received
+      // this" from "the helper is working on it" — doLogin can legitimately stay
+      // silent for ~34s, and that ambiguity is what made this hard to diagnose.
+      log(`  ↩ login request received for ${userId}`);
+      try { sendJson({ t: 'ack' }); } catch {}
+      await doLogin(m.email, m.password, m.remember);
+      return;
+    }
     const px = Math.round((m.x ?? 0) * dims.w);
     const py = Math.round((m.y ?? 0) * dims.h);
     switch (m.t) {
