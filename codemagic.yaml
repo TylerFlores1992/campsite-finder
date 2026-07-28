@@ -1,4 +1,9 @@
-# Codemagic CI config — builds the iOS app on a cloud Mac and ships it to TestFlight.
+# Codemagic CI config — builds BOTH apps in the cloud. iOS on a macOS runner (→
+# TestFlight), Android on Linux (→ signed AAB + sideloadable APK).
+#
+# The point of this file is that neither build needs a machine of your own: both are
+# started from the Codemagic web UI, which works fine on a phone. There is no Mac and
+# no Android Studio in the loop.
 #
 # Why this exists: CampHawk has no committed native project (ios/ is git-ignored — see
 # capacitor.config.ts / docs/SETUP.md). This workflow regenerates ios/ from scratch on
@@ -150,3 +155,72 @@ workflows:
         # Connect, e.g.:
         # beta_groups:
         #   - CampHawk Internal
+
+  android-release:
+    name: Android · signed AAB + APK
+    # Linux, not a Mac — Android needs no macOS runner, so this is the cheaper
+    # instance and there is no reason to burn Mac minutes on it.
+    instance_type: linux_x2
+    max_build_duration: 45
+    environment:
+      groups:
+        # Supplies GOOGLE_SERVICES_JSON_B64 (secure) — base64 of the
+        # google-services.json from Firebase → Project settings → Android app.
+        # Same idea as the iOS plist; android/ is regenerated each build so it has to
+        # be written in rather than committed.
+        - android_firebase
+      android_signing:
+        # Upload the upload-keystore in the Codemagic UI (Team → Code signing
+        # identities → Android keystores) with this reference name. Codemagic then
+        # exports CM_KEYSTORE_PATH / CM_KEY_ALIAS / CM_KEY_PASSWORD / CM_KEYSTORE_PASSWORD
+        # and wires them into the Gradle build.
+        - camphawk_upload
+      vars:
+        PACKAGE_NAME: "app.camphawk.mobile"
+      node: 20
+    scripts:
+      - name: Install JS dependencies
+        script: npm ci
+      - name: Generate the Android native project
+        # android/ is git-ignored for the same reason ios/ is — see capacitor.config.ts.
+        script: npx cap add android || npx cap sync android
+      - name: Brand icons + splash
+        script: npm run cap:assets
+      - name: Capacitor sync (copy config + plugins into android/)
+        # This is the step that carries capacitor.config.ts across: the /search launch
+        # URL, errorPath, and the newly added @capacitor/browser plugin. A web deploy
+        # does NOT deliver any of those — only a rebuild does.
+        script: npx cap sync android
+      - name: Configure Firebase (Android FCM token)
+        # Without google-services.json the build still succeeds and push simply stays
+        # off, matching the iOS workflow's behaviour — a missing secret must not hard
+        # fail the pipeline.
+        script: |
+          if [ -z "$GOOGLE_SERVICES_JSON_B64" ]; then
+            echo "GOOGLE_SERVICES_JSON_B64 not set — skipping Firebase config (Android push disabled)"
+            exit 0
+          fi
+          echo "$GOOGLE_SERVICES_JSON_B64" | base64 --decode > android/app/google-services.json
+      - name: Set the version code
+        # Play rejects a duplicate versionCode. PROJECT_BUILD_NUMBER is Codemagic's
+        # monotonic per-workflow counter, same as the iOS build number.
+        script: |
+          cd android
+          sed -i "s/versionCode .*/versionCode ${PROJECT_BUILD_NUMBER:-1}/" app/build.gradle || true
+      - name: Build the AAB and APK
+        # AAB is what Play wants; the APK is the useful one for this stage — it can be
+        # sideloaded straight onto a device to test the back button, external links and
+        # offline behaviour without waiting on a Play review.
+        script: |
+          cd android
+          ./gradlew bundleRelease assembleRelease
+    artifacts:
+      - android/app/build/outputs/**/*.aab
+      - android/app/build/outputs/**/*.apk
+    # publishing:
+    #   Uncomment once a Google Play service account is added in the Codemagic UI
+    #   (Team → Integrations → Google Play). Until then the APK artifact is enough
+    #   for internal testing, and it avoids a half-configured publish failing the build.
+    #   google_play:
+    #     credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
+    #     track: internal

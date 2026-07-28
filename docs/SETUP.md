@@ -225,6 +225,31 @@ changes need a new store build.
 >   still validates; Vercel has the key. Verify web changes with typecheck + a real page
 >   after deploy, not a full local `next build`.
 
+### Android builds with NO Android Studio — Codemagic (added 2026-07-27)
+
+The `android-release` workflow in `codemagic.yaml` mirrors the iOS one on a **Linux**
+runner (no reason to spend Mac minutes): `npx cap add android`, brand, `cap sync`,
+decode `google-services.json`, set the versionCode from Codemagic's build counter, then
+`./gradlew bundleRelease assembleRelease`.
+
+It emits **both an AAB and an APK**. The APK is the useful one at this stage — sideload
+it and you can test the Android back button, external-link handoff and offline banner
+without waiting on a Play review.
+
+**Configure in the Codemagic UI, not in the file:**
+- an **Android keystore** uploaded under the reference name `camphawk_upload`
+  (Team → Code signing identities → Android keystores);
+- an environment group `android_firebase` holding **`GOOGLE_SERVICES_JSON_B64`** — base64
+  of `google-services.json` from Firebase → Project settings → Android app. If it's
+  unset the build still succeeds and Android push simply stays off, matching iOS.
+
+Play publishing is left commented out until a Google Play service account exists, so a
+half-configured integration can't fail an otherwise good build.
+
+**Both workflows are startable from a phone.** Codemagic → the app → Start new build →
+pick the workflow. That is the whole procedure; `cap sync` inside the workflow is what
+carries `capacitor.config.ts` and any new plugin across, which a web deploy never does.
+
 ### iOS builds with NO Mac — Codemagic cloud CI (SHIPPED 2026-07-26)
 
 The iOS app is built + shipped to TestFlight from **Codemagic** (macOS cloud runners),
