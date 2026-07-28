@@ -12,6 +12,7 @@ import ResultCard from "./ResultCard";
 import { useFavorites } from "./useFavorites";
 import { SubscribeLink, subscribeSentence } from "./nativeSubscribe";
 import { useSubscription } from "./useSubscription";
+import SubscribeCta, { useAccountGate } from "./SubscribeCta";
 import { useIsNativeApp } from "@/lib/native/context";
 import { campgroundsRounded } from "@/lib/coverage";
 import dynamic from "next/dynamic";
@@ -176,6 +177,50 @@ function ExploreAccountCta() {
           : "Start a 7-day free trial"}
       </a>
     </p>
+  );
+}
+
+/**
+ * The banner above the search rail, which now covers TWO account states rather
+ * than one.
+ *
+ * It used to render only for signed-out guests, which left the person closest to
+ * paying — signed in, no subscription — with no banner at all and no way to act
+ * from this screen. Both now get the same box with the copy and the control that
+ * fit them:
+ *
+ *   guest        -> search is free, an account is what unlocks watching
+ *   free account -> the account isn't the missing piece, the subscription is
+ *   subscribed   -> nothing. Selling to a customer is noise.
+ *   loading/unknown -> nothing, rather than flashing a pitch at a subscriber.
+ *
+ * "Live availability is free and always will be" stays in both, because it is the
+ * thing that makes the box read as context rather than a paywall — and it's true.
+ */
+function ExploreStatusBox() {
+  const { gate } = useAccountGate();
+  if (gate === "loading" || gate === "ready") return null;
+
+  const guest = gate === "signedOut";
+
+  return (
+    <div className="mb-4 rounded-[13px] border border-[#C6D3EC] bg-[#EEF2FA] px-3.5 py-3">
+      <p className="text-ch-body font-bold">
+        {guest ? "You're searching as a guest" : "You're searching with a free account"}
+      </p>
+      <p className="mt-1 text-ch-meta leading-normal text-ch-ink-2">
+        {guest
+          ? "Live availability is free and always will be. An account is only needed to watch a campground that's already booked."
+          : "Live availability is free and always will be. Watching a booked campground — and the text the moment someone cancels — needs a subscription."}
+      </p>
+      <SubscribeCta fallbackReturnTo="/search" className="mt-2.5" />
+      <Link
+        href="/watches"
+        className="mt-2 inline-block text-ch-body font-bold text-ch-green hover:text-ch-green-deep"
+      >
+        See what a watch does
+      </Link>
+    </div>
   );
 }
 
@@ -406,21 +451,7 @@ export default function Explore() {
     <div className="mx-auto max-w-[var(--ch-max)] px-5 py-6">
       {/* Guests get context, not a paywall. Search really is free, and saying so
           plainly converts better than hiding results behind a wall. */}
-      {guest && (
-        <div className="mb-4 rounded-[13px] border border-[#C6D3EC] bg-[#EEF2FA] px-3.5 py-3">
-          <p className="text-ch-body font-bold">You&apos;re searching as a guest</p>
-          <p className="mt-1 text-ch-meta leading-normal text-ch-ink-2">
-            Live availability is free and always will be. An account is only needed to watch a
-            campground that&apos;s already booked.
-          </p>
-          <Link
-            href="/watches"
-            className="mt-1.5 inline-block text-ch-body font-bold text-ch-green hover:text-ch-green-deep"
-          >
-            See what a watch does
-          </Link>
-        </div>
-      )}
+      <ExploreStatusBox />
 
       <div className="grid items-start gap-5 lg:grid-cols-[var(--ch-rail)_minmax(0,1fr)]">
         {/* ---------------- search rail ---------------- */}

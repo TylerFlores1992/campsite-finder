@@ -14,6 +14,7 @@ import { providerLabel, supportsAutoCart } from "./providers";
 import { addDays, formatRange, nightsBetween, todayISO } from "@/components/ui/date";
 import { useIsNativeApp } from "@/lib/native/context";
 import { NATIVE_LINKOUT, SUBSCRIBE_HREF } from "./nativeSubscribe";
+import SubscribeCta, { useAccountGate } from "./SubscribeCta";
 import type { Campground } from "@/lib/types";
 
 /**
@@ -60,6 +61,7 @@ export default function NewWatch({
 }: NewWatchProps) {
   const router = useRouter();
   const isNative = useIsNativeApp();
+  const { gate } = useAccountGate();
 
   const [campgroundId, setCampgroundId] = useState<string | null>(initialCampgroundId ?? null);
   const [campgroundName, setCampgroundName] = useState("");
@@ -502,9 +504,28 @@ export default function NewWatch({
         )}
 
         <div className="mt-4">
-          <Button type="submit" fullWidth disabled={saving || flexTooLong} onClick={() => void submit()}>
-            {saving ? "Setting up…" : "Start watching"}
-          </Button>
+          {/* THE CONTROL HAS TO MATCH WHO'S READING IT. This used to render "Start
+              watching" to everyone, including signed-out visitors, who could only
+              discover it wouldn't work by pressing it. Now a visitor who cannot
+              create a watch gets the step that IS available to them, and the
+              submit button stays for people it can actually serve.
+
+              `gate === "ready"` covers a failed status lookup as well as a real
+              subscriber, so a billing hiccup never demotes a paying customer to a
+              signup prompt. The post-submit messages below still handle the case
+              where the server disagrees with what the client believed. */}
+          {gate === "signedOut" || gate === "needsSub" ? (
+            <SubscribeCta fallbackReturnTo="/new" fullWidth />
+          ) : (
+            <Button
+              type="submit"
+              fullWidth
+              disabled={saving || flexTooLong || gate === "loading"}
+              onClick={() => void submit()}
+            >
+              {saving ? "Setting up…" : "Start watching"}
+            </Button>
+          )}
         </div>
 
         {/* THE ONE PLACE A PRICE COULD STILL REACH THE NATIVE APP. WatchCta gates
