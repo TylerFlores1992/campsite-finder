@@ -181,8 +181,10 @@ Supabase first (by hand, like 020/021). Devices register their token via
 > vars (`COST_PER_SMS_USD` etc.) with in-code defaults — see `docs/CONTEXT.md`. Nothing to
 > deploy beyond a `master` push; no worker or secret involved.
 
-**The native projects are NOT committed** (`ios/`, `android/` are git-ignored) — they're
-generated on a machine with the platform tooling:
+**The native projects are NOT committed** (`ios/`, `android/` are git-ignored). **The
+normal route is Codemagic — neither store build needs a machine of your own** (see the
+two Codemagic sections below; both start from a web UI that works fine on a phone). The
+local commands below are for hands-on debugging, not the usual path:
 
 ```
 npx cap add ios          # needs macOS + Xcode      (or use the Codemagic workflow)
@@ -346,17 +348,35 @@ Hard-won gotchas from the first end-to-end run (all cost real time):
 > button. This is enforced by a **native flag** — Capacitor appends `CampHawkApp` to
 > the webview User-Agent (`capacitor.config.ts`), and `NativeAppProvider`
 > (`src/lib/native/context.tsx`) reads it **client-side** (`useSyncExternalStore` over
-> `navigator.userAgent`) and provides it via context; the pricing surfaces
-> (`src/components/v2/Pricing.tsx` and `src/components/v2/WatchCta.tsx` — the only two
-> that exist since the 2026-07-27 rewrite) render "manage at camphawk.app" instead of
-> Stripe checkout when `useIsNativeApp()` is true. **Detection is CLIENT-side on purpose** — an earlier version read the UA in the
-> root layout via `await headers()`, which under this build's Cache Components model
-> 500'd every page at runtime (see the root-layout gotcha in `CLAUDE.md`/`CONTEXT.md`).
-> The tradeoff is a first-render flash of pricing UI *inside the native app only* — web
-> users are never native, so nothing flips for them; when the app ships, gate the
-> pricing components on a mounted+native check rather than reintroducing a dynamic root
-> layout. To sanity-check the web path is unaffected, load any page with a normal browser
-> UA (no `CampHawkApp`) and the $2.50/mo · $20/yr buttons appear as before.
+> `navigator.userAgent`) and provides it via context; the pricing surfaces are **FIVE**, not two:
+> `v2/PricingSection.tsx` (the whole `/` pricing block, copy included), `v2/WatchCta.tsx`,
+> `v2/Explore.tsx`, `v2/Settings.tsx` and `v2/NewWatch.tsx` — each renders a
+> price-free variant when `useIsNativeApp()` is true.
+>
+> **An earlier version of this note listed only `Pricing` + `WatchCta`, and that
+> undercount was the bug.** `Pricing` gated its own buttons while the price *headline
+> around it* sat ungated in a server component, so the app showed a full pricing panel
+> with the buy buttons missing — worse than either extreme. **Gating the checkout
+> control is not gating the price.** Audit with
+> `grep -rn '\$[0-9]\|/api/stripe' src/components/ 'src/app/(app)/'`.
+>
+> **Detection is CLIENT-side on purpose** — an earlier version read the UA in the root
+> layout via `await headers()` and 500'd every page at runtime (see the root-layout
+> gotcha in `CLAUDE.md` / `CONTEXT.md`; the Cache Components attribution there has since
+> been **retracted** — that flag is not enabled — but the prohibition stands on the
+> outage itself).
+>
+> The residual cost is a one-frame flash of the web variant *inside the app* on `/`.
+> That is why **`server.url` points at `/search`**: not landing on the only page with
+> checkout removes the frame, without delaying pricing for real web visitors the way a
+> mounted-gate would. Don't point it back at the root.
+>
+> **Steering out is built but OFF** — `NATIVE_LINKOUT` in `v2/nativeSubscribe.tsx`. Both
+> stores' anti-steering carve-outs are **US-storefront only**, so it stays dark until app
+> availability is restricted to the US in App Store Connect and Play Console.
+>
+> To sanity-check the web path is unaffected, load any page with a normal browser UA (no
+> `CampHawkApp`) and the $2.50/mo · $20/yr buttons appear as before.
 
 ## Repo layout (orientation)
 
