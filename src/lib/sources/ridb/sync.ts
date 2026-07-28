@@ -1,6 +1,6 @@
 ﻿import { mutate } from '@/lib/db/client';
-import { searchCampgroundsNear, searchCampgroundsByState, searchAllCampgrounds, getAllFacilityCampsites } from './client';
-import type { RIDBFacility } from './client';
+import { searchCampgroundsNear, searchCampgroundsByState, searchAllCampgrounds, getAllFacilityCampsites, getFacilityMedia } from './client';
+import type { RIDBFacility, RIDBMedia } from './client';
 import { transformFacility, transformCampsite, deriveCampgroundRollups } from './transform';
 import type { SyncOptions, SyncResult } from '../types';
 import type { Campground, Campsite } from '@/lib/types';
@@ -99,7 +99,27 @@ export async function syncFacility(
   let campsites = 0;
 
   try {
-    const campground = transformFacility(facility);
+    // PHOTOS COME FROM A SEPARATE ENDPOINT. `transformFacility` reads
+    // `facility.MEDIA`, but the /facilities search never populates it — not even
+    // with full=true — so that array was always undefined and every one of the
+    // 4,469 RIDB rows stored `photos: []`. Nothing errored; the photo strip, the
+    // og:image and the JSON-LD `image` were simply empty sitewide.
+    //
+    // Merged into the facility rather than passed as a second argument, so the
+    // transform stays a pure function of a facility and keeps working unchanged
+    // if RIDB ever does start embedding MEDIA.
+    //
+    // NEVER FATAL. Photos are decorative; campsites are the product. A media
+    // failure is recorded and the facility syncs without them, rather than
+    // costing us the campground over a picture.
+    const media = await getFacilityMedia(facility.FacilityID).catch((err: Error) => {
+      errors.push(`Facility ${facility.FacilityID} media: ${err.message}`);
+      return [] as RIDBMedia[];
+    });
+
+    const campground = transformFacility(
+      media.length > 0 ? { ...facility, MEDIA: media } : facility
+    );
     await upsertCampground(campground);
     campgrounds++;
 

@@ -112,8 +112,16 @@ toggle), the campsite mute list on `/manage/<token>`, and the admin menu item fo
 owner. Revert of the whole swap is `git revert a029c27` if something is badly wrong.
 
 ### Known, not urgent
-- **`campgrounds.photos` is `[]` on all 8,013 rows** — dead photo strip, no `og:image`,
-  no JSON-LD `image`. Ingest bug; `image` is a strong signal for place entities.
+- **`campgrounds.photos`: RIDB ingest FIXED 2026-07-27, backfill NOT YET RUN.** Cause:
+  RIDB serves media from a separate `/facilities/<id>/media` endpoint, which the sync
+  never called, so `facility.MEDIA` was always undefined and all 4,469 RIDB rows stored
+  `[]`. `syncFacility` now fetches it (non-fatal on failure). **To fill the existing
+  rows:** `RIDB_API_KEY=... npx tsx scripts/backfill-ridb-photos.ts` — the key lives on
+  Vercel, not the Fly worker, so it can't be run from a web session. Safe to re-run;
+  only touches empty rows. The photo strip, `og:image` and JSON-LD `image` already
+  consume the column, so they light up with no UI change.
+  The other 3,544 rows (UseDirect / GoingToCamp / ReserveAmerica / state portals) are
+  still empty and were NOT investigated — each portal needs its own look.
 - **Feature E has data** (81k observations, 510 campgrounds) but the probe roster
   clusters at 14-20 and 45-51 days out, so the **4-7 day bucket is empty** - the window
   a "tonight/this weekend" searcher cares about. Broaden the roster's lead spread before
