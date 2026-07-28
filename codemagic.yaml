@@ -225,6 +225,52 @@ workflows:
         script: |
           cd android
           sed -i "s/versionCode .*/versionCode ${PROJECT_BUILD_NUMBER:-1}/" app/build.gradle || true
+      - name: Wire the keystore into Gradle
+        # `android_signing` above makes Codemagic FETCH the keystore and export
+        # CM_KEYSTORE_PATH / CM_KEYSTORE_PASSWORD / CM_KEY_ALIAS / CM_KEY_PASSWORD —
+        # it does NOT make Gradle use them. Capacitor's generated app/build.gradle has
+        # no signingConfig at all, so without this step `assembleRelease` happily
+        # produces app-release-UNSIGNED.apk, the build goes green, and you don't find
+        # out until the APK refuses to install (observed 2026-07-28). android/ is
+        # regenerated every build, so this has to be patched in here, like versionCode.
+        script: |
+          cd android
+          if [ -z "$CM_KEYSTORE_PATH" ]; then
+            echo "CM_KEYSTORE_PATH is empty — the camphawk_upload keystore did not load."
+            echo "Refusing to build an unsigned release."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import re, sys
+          path = 'app/build.gradle'
+          src = open(path).read()
+          if 'signingConfigs' in src:
+              print('signingConfigs already present — leaving it alone')
+              sys.exit(0)
+          block = "\n".join([
+              "",
+              "    signingConfigs {",
+              "        release {",
+              "            storeFile file(System.getenv(\"CM_KEYSTORE_PATH\"))",
+              "            storePassword System.getenv(\"CM_KEYSTORE_PASSWORD\")",
+              "            keyAlias System.getenv(\"CM_KEY_ALIAS\")",
+              "            keyPassword System.getenv(\"CM_KEY_PASSWORD\")",
+              "        }",
+              "    }",
+              "",
+          ])
+          m = re.search(r'^android\s*\{', src, re.M)
+          if not m:
+              sys.exit('FATAL: no `android {` block in ' + path)
+          src = src[:m.end()] + block + src[m.end():]
+          m2 = re.search(r'buildTypes\s*\{\s*release\s*\{', src)
+          if not m2:
+              sys.exit('FATAL: no buildTypes.release block in ' + path)
+          src = src[:m2.end()] + '\n            signingConfig signingConfigs.release' + src[m2.end():]
+          open(path, 'w').write(src)
+          print('patched signing config into', path)
+          PY
+          grep -n 'signingConfig' app/build.gradle
       - name: Build the AAB and APK
         # AAB is what Play wants; the APK is the useful one for this stage — it can be
         # sideloaded straight onto a device to test the back button, external links and
@@ -232,6 +278,24 @@ workflows:
         script: |
           cd android
           ./gradlew bundleRelease assembleRelease
+      - name: Verify the APK is actually signed
+        # A green build that emits an unsigned artifact is the failure this workflow
+        # already shipped once. Gradle names an unsigned release APK *-unsigned.apk, so
+        # that name alone is proof; apksigner confirms the certificate when available.
+        script: |
+          cd android
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
+          echo "APK: $APK"
+          if [ -z "$APK" ]; then echo "No APK produced"; exit 1; fi
+          case "$APK" in
+            *unsigned*) echo "FATAL: $APK is UNSIGNED — it will not install on a device."; exit 1;;
+          esac
+          SIGNER=$(ls -d "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/*/apksigner 2>/dev/null | tail -1)
+          if [ -n "$SIGNER" ]; then
+            "$SIGNER" verify --print-certs "$APK" || exit 1
+          else
+            echo "apksigner not found; relied on the filename check above"
+          fi
     artifacts:
       - android/app/build/outputs/**/*.aab
       - android/app/build/outputs/**/*.apk
