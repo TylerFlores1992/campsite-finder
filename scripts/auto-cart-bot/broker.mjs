@@ -195,10 +195,27 @@ async function startSession(userId, ws, sendJson) {
   // the existing login-detection loop writes the ready-marker and sends 'done' — and if
   // `remember` was set, we persist the credentials ENCRYPTED so the bot can auto-relogin.
   const doLogin = async (email, password, remember) => {
-    if (done || closed || !email || !password) return;
+    // These used to return in silence, which from the browser is indistinguishable
+    // from the request never arriving at all.
+    if (done || closed || !email || !password) {
+      log(`  login ignored for ${userId} (done=${done} closed=${closed} creds=${!!email && !!password})`);
+      if (!done && !closed) sendJson({ t: 'manual', message: 'Please finish signing in in the window below.' });
+      return;
+    }
     try {
-      await openLoginModalAndFill(page, email, password);
-    } catch {
+      log(`  filling the rec.gov login form for ${userId}…`);
+      // HARD CEILING. openLoginModalAndFill can hang rather than throw — a page
+      // mid-navigation, a browser busy with the bot's keepalive, a profile lock.
+      // A hang here produced NOTHING: no error, no 'manual', just a browser sitting
+      // there until the user gave up. Losing the race is treated exactly like a
+      // failure, which hands over to the streamed window the user can finish by hand.
+      await Promise.race([
+        openLoginModalAndFill(page, email, password),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timed out filling the login form')), 30000)),
+      ]);
+      log(`  form filled for ${userId}, waiting for rec.gov to confirm…`);
+    } catch (e) {
+      log(`  couldn't fill the login form for ${userId}: ${e?.message || e}`);
       sendJson({ t: 'manual', message: 'Please finish signing in in the window below.' });
       return;
     }
@@ -213,7 +230,10 @@ async function startSession(userId, ws, sendJson) {
         return; // detection loop writes the marker + sends 'done'
       }
     }
-    if (!done && !closed) sendJson({ t: 'manual', message: "Couldn't finish sign-in automatically — please complete it in the window below." });
+    if (!done && !closed) {
+      log(`  rec.gov never confirmed the sign-in for ${userId} — handing over to the window`);
+      sendJson({ t: 'manual', message: "Couldn't finish sign-in automatically — please complete it in the window below." });
+    }
   };
 
   // Map viewer input (canvas-space) onto the real page.
