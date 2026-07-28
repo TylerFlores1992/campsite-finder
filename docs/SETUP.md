@@ -260,21 +260,65 @@ it reaches users **only** on a rebuild, however many times you deploy the websit
 
 ### Android builds with NO Android Studio — Codemagic (added 2026-07-27)
 
-The `android-release` workflow in `codemagic.yaml` mirrors the iOS one on a **Linux**
-runner (no reason to spend Mac minutes): `npx cap add android`, brand, `cap sync`,
-decode `google-services.json`, set the versionCode from Codemagic's build counter, then
-`./gradlew bundleRelease assembleRelease`.
+The `android-release` workflow in `codemagic.yaml`: `npx cap add android`, brand,
+`cap sync`, decode `google-services.json`, set the versionCode from Codemagic's build
+counter, patch the signing config into Gradle, `./gradlew bundleRelease assembleRelease`,
+then verify the APK actually came out signed.
 
-It emits **both an AAB and an APK**. The APK is the useful one at this stage — sideload
+> **FIRST GREEN RUN: 2026-07-28 (build 4).** This workflow was written 2026-07-27 and
+> had never executed; its first four runs found four separate problems, none of them
+> in the app. Recorded here because each one looks like something it isn't:
+> 1. **`instance_type: linux_x2` → failed instantly, zero steps, no logs**, with "The
+>    selected instance type is not available with the current billing plan". Reads like
+>    a broken workflow; it is **billing**. `linux` fails the same way — **this plan has
+>    NO Linux instance**, only `mac_mini_m2` (what iOS already used). A Mac runner for
+>    an Android build is odd but it's the only machine available, and the macOS image
+>    carries the Android SDK/JDK/Gradle, so it builds fine.
+> 2. **`error: invalid source release: 21`** at `:capacitor-android:compileReleaseJavaWithJavac`,
+>    **91 Gradle tasks in.** Capacitor 7's own Android library sets `sourceCompatibility 21`
+>    and the image's default JDK is older. Fixed with `environment.java: 21`, pinned so an
+>    image change can't move it. Surfacing that late makes it look like a project fault.
+> 3. **A GREEN build that emitted `app-release-UNSIGNED.apk`** — see the signing note
+>    below. This is the dangerous one: nothing failed.
+> 4. Nothing — build 4 produced a signed `app-release.apk` + `.aab`, certificate
+>    `CN=CampHawk, …` confirmed with `apksigner`.
+
+It emits **both an AAB and a signed APK**. The APK is the useful one at this stage — sideload
 it and you can test the Android back button, external-link handoff and offline banner
 without waiting on a Play review.
 
-**Configure in the Codemagic UI, not in the file:**
+**Configure in the Codemagic UI, not in the file** (both were done 2026-07-28):
 - an **Android keystore** uploaded under the reference name `camphawk_upload`
-  (Team → Code signing identities → Android keystores);
+  (Settings → Code signing identities → Android keystores). Alias `camphawk`; the
+  keystore file + password live in the operator's password manager, nowhere else, and
+  **must never be committed — this repo is public.** With Play App Signing an upload
+  key is resettable through the Play Console if it's ever lost or leaked.
 - an environment group `android_firebase` holding **`GOOGLE_SERVICES_JSON_B64`** — base64
-  of `google-services.json` from Firebase → Project settings → Android app. If it's
-  unset the build still succeeds and Android push simply stays off, matching iOS.
+  of `google-services.json` from Firebase → Project settings → Android app. If the
+  *variable* is unset the build still succeeds and Android push simply stays off,
+  matching iOS — but if the **whole group is missing**, Codemagic can reject the
+  workflow before it builds. (`google-services.json` is not a secret; it ships inside
+  every distributed APK. `FCM_SERVICE_ACCOUNT` is the one you must never paste anywhere.)
+
+> **UPLOADING THE KEYSTORE IS NOT THE SAME AS SIGNING WITH IT — this shipped an
+> unsigned APK on a GREEN build (2026-07-28).** `android_signing: [camphawk_upload]`
+> makes Codemagic fetch the keystore and export `CM_KEYSTORE_PATH` / `CM_KEYSTORE_PASSWORD`
+> / `CM_KEY_ALIAS` / `CM_KEY_PASSWORD`. It does **not** make Gradle use them, and
+> Capacitor's generated `android/app/build.gradle` declares no `signingConfig` at all —
+> so `assembleRelease` emitted `app-release-UNSIGNED.apk`, every step passed, and the
+> only clue was the filename. An unsigned APK will not install and an unsigned AAB will
+> not upload to Play.
+>
+> Two steps now handle it, and `android/` is regenerated every build so both have to
+> live in the workflow rather than in a committed Gradle file:
+> - **Wire the keystore into Gradle** patches `signingConfigs.release` into
+>   `app/build.gradle` and points `buildTypes.release` at it. Idempotent, and it
+>   **exits 1 when `CM_KEYSTORE_PATH` is empty** instead of quietly building unsigned.
+> - **Verify the APK is actually signed** rejects a `*-unsigned.apk` and runs
+>   `apksigner verify --print-certs`.
+>
+> Same lesson as the RIDB photo filter and the stopped-poller deploy: the failure mode
+> that costs real time is the one where **everything reports success**.
 
 Play publishing is left commented out until a Google Play service account exists, so a
 half-configured integration can't fail an otherwise good build.
