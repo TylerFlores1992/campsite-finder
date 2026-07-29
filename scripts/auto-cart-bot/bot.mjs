@@ -178,6 +178,21 @@ async function withBrowser(userId, fn, { headless = false } = {}) {
 
 // A user is "ready" once they've completed a sign-in (marker written on success).
 const readyMarker = (userId) => path.join(profileDir(userId), '.camphawk-ready');
+// When this profile was last confirmed warm. On DISK, not in memory, precisely so a
+// restart doesn't re-warm everyone: the startup pass fires 30s after every launch,
+// and during an evening of update.bat runs that is a burst of rec.gov logins from one
+// residential IP each time — which is what its anti-bot scoring reacts to.
+const warmMarker = (userId) => path.join(profileDir(userId), '.camphawk-warmed');
+
+function warmedRecently(userId) {
+  try {
+    const at = new Date(fs.readFileSync(warmMarker(userId), 'utf8')).getTime();
+    return Number.isFinite(at) && Date.now() - at < KEEPALIVE_MS * 0.75;
+  } catch { return false; }
+}
+function stampWarmed(userId) {
+  try { fs.writeFileSync(warmMarker(userId), new Date().toISOString()); } catch { /* best effort */ }
+}
 const isLoggedIn = (userId) => fs.existsSync(readyMarker(userId));
 const loggingIn = new Set();
 
@@ -233,9 +248,19 @@ async function ensureLogin(user) {
 async function keepSessionsWarm() {
   let users;
   try { users = await fetchRoster(); } catch { return; }
+  let warmedThisPass = 0;
   for (const user of users) {
     if (!isLoggedIn(user.userId) || inUse.has(user.userId)) continue;
+    // Still fresh — nothing to refresh, so don't open a browser at all. This is what
+    // makes a restart nearly free instead of a burst.
+    if (warmedRecently(user.userId)) continue;
     const who = user.email || user.userId;
+    // STAGGER. The loop is already sequential (one window at a time), but back to
+    // back it means N sign-in-shaped page loads from one IP inside a few seconds.
+    // A jittered gap makes the pass look like people rather than a script. Same
+    // reasoning as the Fly worker's paced probe roster.
+    if (warmedThisPass > 0) await sleep(15_000 + Math.floor(Math.random() * 30_000));
+    warmedThisPass++;
     try {
       // HEADED, like the cart path. rec.gov fingerprints headless Chromium (see
       // processJob), and this runs against the same profile the cart depends on —
@@ -259,6 +284,10 @@ async function keepSessionsWarm() {
         // ever stops landing (dead box / network drop), but on a healthy keepalive
         // we must re-assert the session is live.
         await reportConnected(user.userId, true);
+        // Local stamp too, so the next pass (and any restart) can skip this profile
+        // while it is still fresh. The server stamp drives the poller's lane; this
+        // one only decides whether to open a browser at all.
+        stampWarmed(user.userId);
         log(`♻ ${who}: rec.gov session kept warm`);
       } else if (state === 'out') {
         // Session died. If the user saved their login, try to re-login automatically
@@ -396,7 +425,9 @@ async function runMode() {
   setInterval(tick, POLL_MS);
 
   // Keep signed-in sessions alive so nobody has to re-sign-in every few days.
-  log(`Session keepalive every ${Math.round(KEEPALIVE_MS / 3600000)}h.`);
+  // Math.round(30min / 1h) is 1, so this used to announce "every 1h" for a 30-minute
+  // keepalive. Print the real number.
+  log(`Session keepalive every ${Math.round(KEEPALIVE_MS / 60000)}m (profiles warmed in the last ${Math.round(KEEPALIVE_MS * 0.75 / 60000)}m are skipped).`);
   setTimeout(keepSessionsWarm, 30_000); // once shortly after startup
   setInterval(keepSessionsWarm, KEEPALIVE_MS);
 }
