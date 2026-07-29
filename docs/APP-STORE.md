@@ -125,9 +125,19 @@ leaves search fully usable — the user types a place name instead.
 ## 4. Screenshots
 
 `npx tsx scripts/app-store-shots.mts` renders the **real production build** on
-localhost at Apple's 6.9" size (1320 × 2868) with the native User-Agent, so the store
-gating applies exactly as it does in the app — the script asserts no price text appears
-in any shot. Requires `next build` then `NODE_USE_ENV_PROXY=1 npx next start -p 3100`.
+localhost with the native User-Agent, so the store gating applies exactly as it does in
+the app — the script reports whether any price text appears, and whether the shot was
+caught mid-request. Requires `next build` then
+`NODE_USE_ENV_PROXY=1 npx next start -p 3100`.
+
+`SHOTS_SIZE=6.9` (default, 1320 × 2868) or `SHOTS_SIZE=6.5` (1284 × 2778). **App Store
+Connect has one upload box per display size and rejects anything whose dimensions don't
+match that box exactly** — a 6.9" shot dropped on the 6.5" box errors out rather than
+being resized. Only 6.9" is required; 6.5" is what older devices' store pages show.
+
+> The credentials the render needs (Clerk, Mapbox, Supabase) are **injected as process
+> env vars in the web session, not `.env` files** — `grep`ping for `.env` finds nothing
+> and is not evidence they're missing. Check `printenv` instead.
 
 > **The campground detail page is deliberately not in the set.** Its photo strip loads
 > from recreation.gov's CDN and its map from Mapbox, and a sandboxed browser can reach
