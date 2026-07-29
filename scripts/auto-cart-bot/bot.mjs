@@ -295,9 +295,28 @@ async function keepSessionsWarm() {
         const dir = profileDir(user.userId);
         if (hasCreds(dir)) {
           const creds = loadCreds(dir);
-          const ok = creds
-            ? await withBrowser(user.userId, (ctx) => attemptLoginWithCreds(ctx, creds.email, creds.password), { headless: false }).catch(() => false)
-            : false;
+          // Ask WHY it failed, not just whether. A reCAPTCHA is not a credential
+          // problem, and treating it as one destroys a perfectly good saved login.
+          const attempt = creds
+            ? await withBrowser(user.userId, async (ctx) => {
+                const okNow = await attemptLoginWithCreds(ctx, creds.email, creds.password);
+                if (okNow) return { ok: true, captcha: false };
+                const page = ctx.pages()[0];
+                const captcha = page
+                  ? await page
+                      .evaluate(() => {
+                        const text = document.body?.innerText || '';
+                        return (
+                          /additional verification required|i'm not a robot|recaptcha/i.test(text) ||
+                          !!document.querySelector('iframe[src*="recaptcha"], .g-recaptcha')
+                        );
+                      })
+                      .catch(() => false)
+                  : false;
+                return { ok: false, captcha };
+              }, { headless: false }).catch(() => ({ ok: false, captcha: false }))
+            : { ok: false, captcha: false };
+          const ok = attempt.ok;
           if (ok) {
             fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
             await reportConnected(user.userId, true);
@@ -305,12 +324,21 @@ async function keepSessionsWarm() {
             log(`🔓 ${who}: session had expired — auto-relogin from saved login succeeded, session restored`);
             continue;
           }
-          // Failed: wrong password, or a CAPTCHA/2FA we can't pass. Cap retries so we
-          // don't hammer rec.gov (lockout risk) — after 2 fails, purge the saved login
-          // and fall through to the normal "reconnect" path.
-          const fails = bumpReloginFails(dir);
-          if (fails >= 2) { deleteCreds(dir); log(`  ${who}: saved login failed ${fails}× (bad password or CAPTCHA/2FA) — cleared it; manual reconnect needed`); }
-          else log(`  ${who}: auto-relogin failed (attempt ${fails}) — will retry next cycle or on manual reconnect`);
+          // A CAPTCHA IS NOT A BAD PASSWORD, and must not count toward the purge.
+          // The two-strike rule exists to stop us hammering rec.gov with credentials
+          // it keeps rejecting — a real lockout risk. But rec.gov throws reCAPTCHA at
+          // this browser for its own reasons (see the headless gotcha in
+          // docs/CONTEXT.md), and two of those in a row would have deleted a login
+          // that was never wrong, forcing the user through a manual reconnect and the
+          // very CAPTCHA wall that blocked us. Back off and keep the credentials; the
+          // challenge lifts on its own.
+          if (attempt.captcha) {
+            log(`  ${who}: auto-relogin blocked by a rec.gov CAPTCHA — keeping the saved login, will retry next cycle`);
+          } else {
+            const fails = bumpReloginFails(dir);
+            if (fails >= 2) { deleteCreds(dir); log(`  ${who}: saved login failed ${fails}× (looks like a bad password) — cleared it; manual reconnect needed`); }
+            else log(`  ${who}: auto-relogin failed (attempt ${fails}) — will retry next cycle or on manual reconnect`);
+          }
         }
         try { fs.unlinkSync(readyMarker(user.userId)); } catch {}
         await reportConnected(user.userId, false);
