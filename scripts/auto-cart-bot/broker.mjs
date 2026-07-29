@@ -275,8 +275,27 @@ async function startSession(userId, ws, sendJson) {
     if (done) { saveIfWanted(); return; }
 
     if (!closed) {
-      log(`  rec.gov never confirmed the sign-in for ${userId} within 45s — handing over to the window`);
-      sendJson({ t: 'manual', message: "Couldn't finish sign-in automatically — please complete it in the window below." });
+      // WHY it didn't finish matters to the person reading it. rec.gov throws a
+      // reCAPTCHA at logins it suspects of automation ("Additional Verification
+      // Required"), and no amount of retrying clears that — a human has to tick the
+      // box. Saying "couldn't finish automatically" sends them to look for a problem
+      // with their password instead of at the checkbox sitting in the window.
+      const captcha = await page
+        .evaluate(() => {
+          const text = document.body?.innerText || '';
+          return (
+            /additional verification required|i'm not a robot|recaptcha/i.test(text) ||
+            !!document.querySelector('iframe[src*="recaptcha"], .g-recaptcha')
+          );
+        })
+        .catch(() => false);
+      log(`  rec.gov never confirmed the sign-in for ${userId} within 45s${captcha ? ' — reCAPTCHA challenge on the page' : ''} — handing over to the window`);
+      sendJson({
+        t: 'manual',
+        message: captcha
+          ? "rec.gov is asking for a CAPTCHA. Tick \u201cI\u2019m not a robot\u201d in the window below and press Log In \u2014 we\u2019ll take it from there."
+          : "Couldn't finish sign-in automatically — please complete it in the window below.",
+      });
     }
   };
 
