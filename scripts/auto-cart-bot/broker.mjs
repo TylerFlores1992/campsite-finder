@@ -220,18 +220,45 @@ async function startSession(userId, ws, sendJson) {
       return;
     }
     // Wait for a confirmed logged-in state; store creds on success, else hand off.
-    for (let i = 0; i < 15 && !done && !closed; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      if (await recgovLoggedIn(ctx).catch(() => false)) {
-        if (remember) {
-          try { saveCreds(profileDir(userId), email, password); log(`🔒 saved encrypted login for ${userId} (auto-relogin enabled)`); }
-          catch (e) { log(`  couldn't save login for ${userId}: ${e.message}`); }
-        }
-        return; // detection loop writes the marker + sends 'done'
+    //
+    // BOUNDED BY THE CLOCK, NOT BY A COUNT — this is what left the browser hanging.
+    // The old loop ran 15 iterations and read like "poll for 15 seconds", but each
+    // recgovLoggedIn() opens a page, navigates to /account/profile (25s timeout),
+    // waits 2s, then settles for up to 9s. That is up to ~36s PER CHECK, so fifteen
+    // of them is up to nine minutes. The browser gives up after 90s, so the user saw
+    // a timeout while this was still patiently working. Confirmed from the mini-PC
+    // log: "form filled … waiting for rec.gov to confirm" and then nothing.
+    //
+    // 45s total, and each check capped, so an answer always arrives before the page
+    // stops listening. Ending early is safe: the background poll above keeps
+    // checking and sends 'done' if the sign-in did land, which the client honours
+    // even after a 'manual'.
+    const saveIfWanted = () => {
+      if (!remember) return;
+      try { saveCreds(profileDir(userId), email, password); log(`🔒 saved encrypted login for ${userId} (auto-relogin enabled)`); }
+      catch (e) { log(`  couldn't save login for ${userId}: ${e.message}`); }
+    };
+
+    const deadline = Date.now() + 45000;
+    while (!done && !closed && Date.now() < deadline) {
+      const confirmed = await Promise.race([
+        recgovLoggedIn(ctx).catch(() => false),
+        new Promise((r) => setTimeout(() => r(false), 12000)),
+      ]);
+      if (confirmed) {
+        saveIfWanted();
+        return; // the background poll writes the marker + sends 'done'
       }
+      await new Promise((r) => setTimeout(r, 1000));
     }
-    if (!done && !closed) {
-      log(`  rec.gov never confirmed the sign-in for ${userId} — handing over to the window`);
+
+    // The background poll got there first — a success, not a failure, and the
+    // credentials still need saving. The old code fell through to the hand-off
+    // branch here and silently skipped saving them.
+    if (done) { saveIfWanted(); return; }
+
+    if (!closed) {
+      log(`  rec.gov never confirmed the sign-in for ${userId} within 45s — handing over to the window`);
       sendJson({ t: 'manual', message: "Couldn't finish sign-in automatically — please complete it in the window below." });
     }
   };
