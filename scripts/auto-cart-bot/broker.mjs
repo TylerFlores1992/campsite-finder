@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { verifyConnectToken } from './token.mjs';
 import { recgovLoginState } from './session.mjs';
 import { openLoginModalAndFill } from './recgov-login.mjs';
+import { waitForProfileLock, releaseProfileLock, releaseProfileLockIfMine, profileLockHolder } from './profile-lock.mjs';
 import { saveCreds } from './credstore.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -87,6 +88,10 @@ wss.on('connection', (ws) => {
       if (!userId) { sendJson({ t: 'error', message: 'bad or expired token' }); ws.close(); return; }
       authed = true;
       session = await startSession(userId, ws, sendJson).catch((e) => {
+        // A throw after the lock was taken (browser launch, CDP attach) would
+        // otherwise leave the profile locked until it goes stale, blocking the bot's
+        // keepalive and carting for ten minutes over a session that never started.
+        releaseProfileLockIfMine(profileDir(userId), 'broker');
         log(`  session start failed: ${e.message}`);
         sendJson({ t: 'error', message: 'could not start sign-in session' });
         ws.close();
@@ -123,6 +128,17 @@ async function startSession(userId, ws, sendJson) {
   }
 
   log(`🔐 remote sign-in started for ${userId}`);
+  // Take the profile before opening Chromium on it. The bot uses the same directory
+  // and its keepalive has landed mid-sign-in — one profile with two browsers on it
+  // means they disagree about whether the account is signed in, which is exactly the
+  // "form filled, never confirms" failure. The bot's jobs are short, so a short wait
+  // clears almost every collision.
+  if (!(await waitForProfileLock(profileDir(userId), 'broker'))) {
+    const held = profileLockHolder(profileDir(userId));
+    log(`  profile busy (held by ${held?.owner ?? 'unknown'}) — cannot start sign-in for ${userId}`);
+    sendJson({ t: 'error', message: 'The helper is busy with another job right now. Please try again in a minute.' });
+    throw new Error('profile locked');
+  }
   const ctx = await chromium.launchPersistentContext(profileDir(userId), {
     headless: HEADLESS,
     viewport: null,
@@ -153,6 +169,7 @@ async function startSession(userId, ws, sendJson) {
     clearInterval(poll);
     await client.send('Page.stopScreencast').catch(() => {});
     await ctx.close().catch(() => {});
+    releaseProfileLock(profileDir(userId));
     log(`  session ended for ${userId}${reason ? ` (${reason})` : ''}`);
   };
 

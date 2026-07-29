@@ -21,6 +21,7 @@ import { noteReserveCalifornia } from './reservecalifornia.mjs';
 import { recgovLoginState } from './session.mjs';
 import { attemptLoginWithCreds } from './recgov-login.mjs';
 import { hasCreds, loadCreds, deleteCreds, bumpReloginFails, resetReloginFails } from './credstore.mjs';
+import { acquireProfileLock, releaseProfileLock, profileLockHolder } from './profile-lock.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -143,6 +144,14 @@ const inUse = new Set();
 async function withBrowser(userId, fn, { headless = false } = {}) {
   for (let i = 0; inUse.has(userId) && i < 240; i++) await sleep(500); // wait up to ~2 min
   if (inUse.has(userId)) throw new Error('profile busy');
+  // `inUse` is in-process and cannot see the BROKER, which drives the same profile
+  // directory during a remote sign-in. Skipping here costs one keepalive or one cart
+  // attempt (both retry on the next tick); not skipping corrupts a sign-in a user is
+  // sitting in front of.
+  if (!acquireProfileLock(profileDir(userId), 'bot')) {
+    const held = profileLockHolder(profileDir(userId));
+    throw new Error(`profile busy (${held?.owner ?? 'locked'})`);
+  }
   inUse.add(userId);
   try {
     // The rec.gov session lives in the persistent profile on disk — Chromium keeps
@@ -159,6 +168,7 @@ async function withBrowser(userId, fn, { headless = false } = {}) {
     try { return await fn(ctx); }
     finally { await ctx.close().catch(() => {}); }
   } finally {
+    releaseProfileLock(profileDir(userId));
     inUse.delete(userId);
   }
 }
