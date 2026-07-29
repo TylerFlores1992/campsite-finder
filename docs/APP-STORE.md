@@ -151,3 +151,81 @@ screenshots above.
   end-to-end — it cannot be, from a sandbox, because it destroys the account it runs on.
 - Enter metadata, answer the age-rating questionnaire, submit the privacy answers above.
 - Upload screenshots, then Submit for Review.
+
+---
+
+## 6. Store listing copy
+
+Character counts are checked against Apple's limits and shown per field. **Nothing
+here names a price**, and nothing points at where to buy — the anti-steering rule
+covers the listing, not just the app, and a price in the description is the easy way
+to lose a 3.1.3(b) argument you would otherwise win.
+
+The affiliation disclaimer at the end is not boilerplate: the app searches government
+reservation systems, and implying endorsement is both untrue and a rejection risk.
+
+| Field | Value | Length |
+| --- | --- | --- |
+| **App Name** | `CampHawk: Campsite Alerts` | 25/30 |
+| **Subtitle** | `Catch campsite cancellations` | 28/30 |
+| **Keywords** | `campsite,campground,camping,cancellation,reservation,availability,tent,rv,national park,state park` | 98/100 |
+
+> **Keywords deliberately exclude "alerts", and every competitor name.** Apple indexes
+> the app name separately, and "Alerts" is already in it, so repeating it wastes
+> characters from a 100-char budget. Competitor brand names in keywords are a known
+> rejection. Note the field is comma-separated with NO spaces — a space costs a
+> character and buys nothing.
+
+**Promotional Text** (153/170 — editable any time WITHOUT submitting a new build, so
+this is the field to use for seasonal messaging):
+
+```
+Sold out for the weekend you wanted? CampHawk watches that campground around the clock and tells you the second someone cancels - usually within seconds.
+```
+
+**Description** (1502/4000):
+
+```
+The campsite you wanted is already booked. CampHawk waits for it.
+
+Popular campgrounds sell out months ahead - but people cancel constantly. CampHawk checks the campgrounds you care about every 15 seconds, around the clock, and tells you the moment a site opens up, so you can book it before anyone else notices.
+
+HOW IT WORKS
+1. Search live availability across 8,000+ campgrounds. Free, and no account needed.
+2. Everything booked? Set a watch on the campground and dates you want.
+3. Get an alert within seconds of a cancellation, with a link straight to the booking page.
+
+WHAT YOU GET
+- Checks every 15 seconds, day and night
+- Push, text and email alerts sent at once - whichever reaches you first wins
+- Flexible dates: watch for any two nights in a window, or weekends only
+- Auto-cart on Recreation.gov: the site is added to your cart, so you only have to check out
+- One tap from any alert to pause a watch, resume it, or mute a site you do not want
+
+WHERE IT WORKS
+Every Recreation.gov campground in all 50 states, plus state parks in 34 states - more than 8,000 campgrounds, with live availability for each.
+
+FREE AND PAID
+Searching live availability is free and needs no account. Watching a booked campground, and the alerts that come with it, require a subscription.
+
+CampHawk is an independent app. It is not affiliated with or endorsed by Recreation.gov, the National Park Service, the US Forest Service, or any state park agency. Bookings are completed on the official reservation site.
+```
+
+**What's New** (347/4000):
+
+```
+First release.
+
+CampHawk watches campgrounds that are already fully booked and alerts you within seconds of a cancellation, so you can grab the site.
+
+- Live availability search across 8,000+ campgrounds, free and without an account
+- Watches with push, text and email alerts
+- Flexible dates, including weekends-only
+- Auto-cart on Recreation.gov
+```
+
+> **The numbers are checked, not remembered.** 8,013 campgrounds in the catalog as of
+> 2026-07-29 (4,469 of them Recreation.gov), 50 states, 34 with state-park coverage,
+> and a 15-second poll (`POLL_INTERVAL_MS` in `worker/fly.toml`). Copy says "8,000+"
+> because `lib/coverage.ts` rounds DOWN by rule — never overstate. Re-check with
+> `npx tsx scripts/coverage-readout.mts` before changing these lines.
