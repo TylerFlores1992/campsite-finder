@@ -163,6 +163,9 @@ async function withBrowser(userId, fn, { headless = false } = {}) {
       headless,
       viewport: null,
       args: LAUNCH_ARGS,
+      // See the broker: --enable-automation sets navigator.webdriver, which rec.gov's
+      // reCAPTCHA reads. Same site, same gate, same treatment.
+      ignoreDefaultArgs: ['--enable-automation'],
       ...(CHANNEL ? { channel: CHANNEL } : {}),
     });
     try { return await fn(ctx); }

@@ -46,10 +46,21 @@ const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 // Headless by default: nobody watches the mini PC directly (the whole point is
 // remote streaming), and headless makes screencast + background login-checks
 // reliable — a headed browser throttles/steals focus when a check tab opens.
-// Set BROKER_HEADLESS=0 to watch the real window while debugging.
-const HEADLESS = !/^(0|false|no|off)$/i.test(process.env.BROKER_HEADLESS ?? '');
+// HEADED BY DEFAULT, and this is not a preference — it is the documented rule for
+// every rec.gov browser path (docs/CONTEXT.md, "Hard-won gotchas"): rec.gov flags
+// headless Chromium, a real headed browser on the residential mini PC passes. The
+// bot has always passed `headless: false` for carting and the keepalive; the broker
+// defaulted the other way, so remote sign-in ran headless and rec.gov answered with
+// a reCAPTCHA that could never be satisfied — solving it just produced another one,
+// because the browser itself was what failed the check (observed 2026-07-29).
+// Set BROKER_HEADLESS=1 to force headless for debugging; nothing else should.
+const HEADLESS = /^(1|true|yes|on)$/i.test(process.env.BROKER_HEADLESS ?? '');
+// `--disable-blink-features=AutomationControlled` clears navigator.webdriver, which
+// reCAPTCHA reads directly. Note --disable-gpu is dropped: it is a headless-era flag
+// and a real headed browser has no reason to run without the GPU.
 const LAUNCH_ARGS = (process.env.CHROME_ARGS ??
-  '--disable-gpu --window-position=-3000,-3000 --window-size=1000,760').split(' ').filter(Boolean);
+  '--disable-blink-features=AutomationControlled --window-position=-3000,-3000 --window-size=1000,760')
+  .split(' ').filter(Boolean);
 
 const log = (m) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -143,6 +154,9 @@ async function startSession(userId, ws, sendJson) {
     headless: HEADLESS,
     viewport: null,
     args: LAUNCH_ARGS,
+    // Playwright adds --enable-automation, which sets navigator.webdriver and is one
+    // of the first things reCAPTCHA looks at.
+    ignoreDefaultArgs: ['--enable-automation'],
     ...(CHANNEL ? { channel: CHANNEL } : {}),
   });
   const page = ctx.pages()[0] || (await ctx.newPage());

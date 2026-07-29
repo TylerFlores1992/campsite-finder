@@ -1239,6 +1239,18 @@ fourth surface now.
   The revert that established this only flipped the *cart* call, leaving the session
   keepalive headless for months; it now runs headed too. If you add another rec.gov
   browser path, default it to headed.
+  > **AND IT HAPPENED AGAIN — the BROKER was the third path (fixed 2026-07-29).**
+  > `broker.mjs` read `BROKER_HEADLESS` as `!/^(0|false|no|off)$/` on an unset value,
+  > which is `true`, so remote sign-in ran **headless by default** while the bot
+  > passed `headless: false` explicitly. The symptom is not a clean rejection: rec.gov
+  > serves a **reCAPTCHA that cannot be satisfied** — "Additional Verification
+  > Required" — and solving it just produces another one, because what failed the
+  > check is the browser, not the answer. It took ~10 challenges to get one login
+  > through. Now headed unless `BROKER_HEADLESS=1`, and both launches drop the two
+  > loudest automation tells: `ignoreDefaultArgs: ['--enable-automation']` and
+  > `--disable-blink-features=AutomationControlled`, which is what sets
+  > `navigator.webdriver` — the first thing reCAPTCHA reads. **A boolean env default
+  > is a real place this bug hides; read the negation twice.**
 - **Never clear a login on a single login-state read.** The keepalive is the only
   thing that deletes a ready-marker outside a cart attempt, so a false "logged out"
   there costs the user a re-sign-in — discovered, painfully, on a *missed
