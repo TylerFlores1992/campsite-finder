@@ -22,14 +22,19 @@ const shots: { name: string; path: string; settle?: number; scrollTo?: number }[
   {
     name: "02-openings",
     path: "/search?lat=47.03790&lng=-122.90070&place=Olympia%2C%20Washington&radius=50&start=2026-08-21&end=2026-08-23",
-    settle: 6000,
-    // Past the form, onto the results — the payoff, not the input.
-    scrollTo: 1450,
+    // A live availability sweep across a 50-mile radius takes longer than it
+    // looks. At 6s the button still said "Searching..." and the first result
+    // card was an empty placeholder — fine for a smoke test, unusable as a
+    // store screenshot. Wait for the search to actually finish.
+    settle: 14000,
+    // Past the form, onto the results — the payoff, not the input. Landing on a
+    // card boundary matters: 1450 sliced the first card in half.
+    scrollTo: 1330,
   },
   {
     name: "03-search",
     path: "/search?lat=47.03790&lng=-122.90070&place=Olympia%2C%20Washington&radius=50&start=2026-08-21&end=2026-08-23",
-    settle: 6000,
+    settle: 14000,
   },
   // NOT the campground detail page. Its photo strip loads from recreation.gov's
   // CDN and the map from Mapbox, neither of which a sandboxed browser can reach —
@@ -62,9 +67,14 @@ for (const s of shots) {
   await page.screenshot({ path: file });
   const box = await page.evaluate(() => ({
     prices: /\$\d/.test(document.body.innerText),
+    // A shot captured mid-request shows "Searching..." and empty result cards.
+    // It is not an error, which is exactly why it slipped through once.
+    loading: /Searching\.\.\./.test(document.body.innerText),
     text: document.body.innerText.slice(0, 90).replace(/\s+/g, " "),
   }));
-  console.log(`${s.name}: saved | price text present: ${box.prices} | "${box.text}"`);
+  console.log(
+    `${s.name}: saved | price text: ${box.prices} | still loading: ${box.loading} | "${box.text}"`,
+  );
 }
 
 await browser.close();
