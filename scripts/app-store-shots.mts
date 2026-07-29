@@ -1,17 +1,34 @@
 /**
- * App Store screenshots at Apple's 6.9" size (1320 x 2868).
+ * App Store screenshots at Apple's required iPhone sizes.
  *
  * Renders the REAL production build on localhost with the native User-Agent, so
  * the store gating (no price, no checkout) applies exactly as it does in the app.
+ *
+ * `SHOTS_SIZE=6.9` (default) or `6.5`. App Store Connect has a separate upload
+ * box per display size and REJECTS anything whose pixel dimensions don't match
+ * that box exactly — a 6.9" shot dropped on the 6.5" box is an error, not a
+ * resize. 6.9" is the one Apple requires; 6.5" is optional and is what older
+ * devices' store pages show.
  */
 import { chromium } from "playwright-core";
 
 const BASE = "http://localhost:3100";
 const OUT = process.env.SHOTS_OUT ?? "/tmp/camphawk-shots";
 
-// 6.9" iPhone: 440 x 956 CSS at 3x = 1320 x 2868 device pixels.
-const VIEWPORT = { width: 440, height: 956 };
-const SCALE = 3;
+/** CSS viewport x deviceScaleFactor must land exactly on an accepted size. */
+const SIZES = {
+  // 440 x 956 at 3x = 1320 x 2868.
+  "6.9": { width: 440, height: 956, scale: 3 },
+  // 428 x 926 at 3x = 1284 x 2778.
+  "6.5": { width: 428, height: 926, scale: 3 },
+} as const;
+
+const SIZE_KEY = (process.env.SHOTS_SIZE ?? "6.9") as keyof typeof SIZES;
+const SIZE = SIZES[SIZE_KEY];
+if (!SIZE) throw new Error(`SHOTS_SIZE must be one of ${Object.keys(SIZES).join(", ")}`);
+
+const VIEWPORT = { width: SIZE.width, height: SIZE.height };
+const SCALE = SIZE.scale;
 
 const UA =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 " +
