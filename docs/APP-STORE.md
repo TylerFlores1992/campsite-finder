@@ -144,13 +144,27 @@ Apple needs at least one 6.9" screenshot; up to 10 are allowed.
 export compliance, branded icons, TestFlight build, in-app account deletion, and the
 screenshots above.
 
+Also done 2026-07-29:
+- **Account deletion tested end-to-end** on a throwaway account with a real
+  subscription. Stripe showed `canceled`, the `users` row was gone, Clerk had zero
+  accounts. Re-signup with the same email works.
+- **Demo account** `tylerflores1992@yahoo.com` — `trialing`,
+  `cancel_at_period_end=False`, card attached, trial ends 2026-08-05. Three watches
+  across two reservation systems with October dates, so the reviewer sees a populated
+  app rather than an empty state.
+- **App Privacy label published** — the ten data types in §1, App Functionality on all
+  ten, tracking = No on all ten.
+- **Age rating** 4+, **Privacy Policy URL**, **Content Rights** = yes (RIDB + state
+  portal data is third-party content even though it's public).
+- **Pricing and Availability:** free, **United States only** — which is what keeps
+  `NATIVE_LINKOUT` legally usable. See the store-billing note in `docs/CONTEXT.md`.
+
 **Left, and only a human can do it:**
-- Create the review demo account and comp it a subscription in Stripe.
-- **Test account deletion once, on a throwaway account with a real subscription**, and
-  confirm in Stripe that the subscription shows `canceled`. It has never been run
-  end-to-end — it cannot be, from a sandbox, because it destroys the account it runs on.
-- Enter metadata, answer the age-rating questionnaire, submit the privacy answers above.
-- Upload screenshots, then Submit for Review.
+- Enter the §6 metadata on the version page, upload the screenshots, select the build.
+- Fill the demo account **password** into the §2 notes — the notes ship with a
+  `<fill in>` placeholder, and a reviewer who cannot sign in rejects on day one.
+- Submit for Review. Release is set to **manual**, so approval does not go live.
+- **On going live:** set `NATIVE_LINKOUT = true` in `v2/nativeSubscribe.tsx`.
 
 ---
 
