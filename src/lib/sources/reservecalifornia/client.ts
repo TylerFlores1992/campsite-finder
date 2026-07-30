@@ -382,6 +382,34 @@ async function sendProxySingle(
   return { ok: true, data: await res.json() };
 }
 
+export interface RdrOptions {
+  method?: string;
+  body?: unknown;
+  /**
+   * Opt out of proxy batching for this call. The catalog sync sets it.
+   *
+   * Batching exists for the POLLER's hot path — 11 fetches every 15 seconds is
+   * ~63,000 Vercel invocations a day. The nightly catalog sync is a few hundred calls
+   * ONCE a day, so coalescing it saves ~200 invocations out of 63,000 while being
+   * exactly the workload that makes concentration dangerous: hundreds of sequential
+   * grid calls at one host, where N separate invocations can be spread across N Vercel
+   * lambdas but one batch is N requests from a single lambda IP. These WAFs meter per
+   * IP. Nothing to gain, a real way to lose.
+   */
+  coalesce?: boolean;
+  /**
+   * Wait out an open breaker instead of failing immediately, up to `budget`.
+   *
+   * The poller must NOT do this: it wants to fail fast and try again in 15 seconds.
+   * The catalog sync must, because failing fast is what turned Illinois's 2026-07-30
+   * run into a total loss — four consecutive 403s opened the breaker for 60s, and the
+   * sync then burned through the remaining 278 facilities in 34 seconds, each throwing
+   * instantly against a cooldown nobody was waiting for. 0 campsites synced from 282
+   * campgrounds. Waiting is what "back off" was supposed to mean.
+   */
+  breakerWait?: { remainingMs: number };
+}
+
 /**
  * Fetch from a provider's RDR API — directly when this host's IPs pass the WAF
  * (Vercel, residential), or via our Vercel proxy when RC_PROXY_URL is set (Fly.io
@@ -393,19 +421,20 @@ async function rdrAttempt<T>(
   provider: UseDirectProvider,
   base: string,
   path: string,
-  opts: { method?: string; body?: unknown }
+  opts: RdrOptions
 ): Promise<{ ok: true; data: T } | { ok: false; status: number | null; message: string; err?: unknown }> {
   const proxyUrl = process.env.RC_PROXY_URL;
   const proxySecret = process.env.RC_PROXY_SECRET ?? process.env.SYNC_SECRET;
 
   if (proxyUrl && proxySecret) {
+    const req = { path, method: opts.method ?? 'GET', body: opts.body };
     // Coalesced. A retry re-enters here and simply joins the next batch, so the retry
     // loop and the breaker below see exactly what they saw before batching existed.
-    const outcome = await enqueueProxyRequest(proxyUrl, proxySecret, base, {
-      path,
-      method: opts.method ?? 'GET',
-      body: opts.body,
-    });
+    // `coalesce: false` opts out — see the catalog sync's call in sync.ts.
+    const outcome =
+      opts.coalesce === false
+        ? await sendProxySingle(proxyUrl, proxySecret, base, req)
+        : await enqueueProxyRequest(proxyUrl, proxySecret, base, req);
     return outcome.ok ? { ok: true, data: outcome.data as T } : outcome;
   }
 
@@ -433,16 +462,33 @@ async function rdrAttempt<T>(
 async function rdrFetch<T>(
   provider: UseDirectProvider,
   path: string,
-  opts: { method?: string; body?: unknown } = {}
+  opts: RdrOptions = {}
 ): Promise<T> {
   // Breaker open: fail immediately without touching the network. Same outcome the
   // caller was already getting, minus the wait and minus another request feeding
   // whatever is refusing us.
   const brk = breakerFor(provider.source);
   if (Date.now() < brk.openUntil) {
-    throw new Error(
-      `UseDirect ${provider.source} breaker open for ${Math.ceil((brk.openUntil - Date.now()) / 1000)}s — skipping ${path}`
+    const waitMs = brk.openUntil - Date.now();
+    const budget = opts.breakerWait;
+    // A caller that asked to wait, and can still afford this one, sleeps out the
+    // cooldown and carries on. The budget is shared across the whole run and is spent
+    // whether or not the retry then succeeds, so a host that is genuinely blocking
+    // costs a bounded delay rather than cooldown × facilities.
+    if (!budget || budget.remainingMs < waitMs) {
+      throw new Error(
+        `UseDirect ${provider.source} breaker open for ${Math.ceil(waitMs / 1000)}s — skipping ${path}` +
+          (budget ? ' (breaker-wait budget spent)' : '')
+      );
+    }
+    budget.remainingMs -= waitMs;
+    console.log(
+      `[UseDirect ${provider.source}] breaker open — waiting ${Math.ceil(waitMs / 1000)}s ` +
+        `(${Math.ceil(budget.remainingMs / 1000)}s of wait budget left)`
     );
+    // Jittered so the concurrent callers that all piled up on this cooldown don't
+    // resume in lockstep and re-trip it on the first tick.
+    await new Promise((res) => setTimeout(res, waitMs + Math.random() * 1000));
   }
 
   const base = await rdrBase(provider);
@@ -498,9 +544,12 @@ export function fetchGrid(
   provider: UseDirectProvider,
   facilityId: number,
   startDate: string, // YYYY-MM-DD
-  endDate: string
+  endDate: string,
+  /** Catalog-sync knobs; the poller and the search page pass nothing. */
+  opts: Pick<RdrOptions, 'coalesce' | 'breakerWait'> = {}
 ): Promise<RCGrid> {
   return rdrFetch<RCGrid>(provider, '/search/grid', {
+    ...opts,
     method: 'POST',
     body: {
       FacilityId: facilityId,

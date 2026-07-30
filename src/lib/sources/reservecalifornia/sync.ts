@@ -83,11 +83,28 @@ async function pMap<T, R>(items: T[], fn: (item: T) => Promise<R>, limit: number
 }
 
 /** Fetch a facility's units (1-night grid, off-season included) and sync them as campsites. */
+/**
+ * How long ONE sync run will spend sleeping out breaker cooldowns before it gives up
+ * and starts failing fast again.
+ *
+ * This is the difference between a bad patch and a wiped state: on 2026-07-30 Illinois
+ * hit four consecutive 403s, the breaker opened for 60s, and the run then tore through
+ * its remaining 278 facilities in 34 seconds — 282 campgrounds, 0 campsites.
+ *
+ * The budget is charged PER WAITER, not per cooldown, so at concurrency 2 five minutes
+ * buys two or three 60s cooldowns rather than five. That is the conservative direction
+ * and it keeps the accounting honest without coordinating the waiters. Bounded either
+ * way, so a host that is genuinely blocking costs +5 minutes rather than cooldown ×
+ * facilities — which for Illinois would have been 2.3 hours.
+ */
+const BREAKER_WAIT_BUDGET_MS = Number(process.env.UD_SYNC_BREAKER_WAIT_MS ?? 5 * 60 * 1000);
+
 async function syncFacilityUnits(
   provider: UseDirectProvider,
   facilityId: number,
   typeNames: Map<number, string>,
-  errors: string[]
+  errors: string[],
+  breakerWait: { remainingMs: number }
 ): Promise<number> {
   const campgroundId = campgroundIdFor(provider, facilityId);
   const startDate = new Date().toISOString().slice(0, 10);
@@ -97,7 +114,12 @@ async function syncFacilityUnits(
 
   let units: RCGridUnit[] = [];
   try {
-    const grid = await fetchGrid(provider, facilityId, startDate, endDate);
+    // coalesce: false — batching is for the poller's hot path, not for a nightly job
+    // whose calls are already paced. See RdrOptions in client.ts.
+    const grid = await fetchGrid(provider, facilityId, startDate, endDate, {
+      coalesce: false,
+      breakerWait,
+    });
     units = Object.values(grid.Facility?.Units ?? {});
   } catch (err) {
     errors.push(`${provider.source} grid ${facilityId}: ${(err as Error).message}`);
@@ -210,11 +232,18 @@ export async function syncUseDirect(provider: UseDirectProvider): Promise<SyncRe
     //
     // This is a nightly background job; halving its concurrency costs nothing that
     // matters and the retry in the client now absorbs what still slips through.
+    const breakerWait = { remainingMs: BREAKER_WAIT_BUDGET_MS };
     const unitCounts = await pMap(
       bookable,
-      (f) => syncFacilityUnits(provider, f.FacilityId, typeNames, errors),
+      (f) => syncFacilityUnits(provider, f.FacilityId, typeNames, errors, breakerWait),
       Number(process.env.UD_SYNC_CONCURRENCY ?? 2)
     );
+    if (breakerWait.remainingMs < BREAKER_WAIT_BUDGET_MS) {
+      console.log(
+        `[${provider.source} sync] spent ${((BREAKER_WAIT_BUDGET_MS - breakerWait.remainingMs) / 1000).toFixed(0)}s ` +
+          `waiting out breaker cooldowns${breakerWait.remainingMs <= 0 ? ' — BUDGET EXHAUSTED, the tail of this run failed fast' : ''}`
+      );
+    }
     campsitesSynced = unitCounts.reduce((a, b) => a + b, 0);
   } catch (err) {
     errors.push(`Top-level ${provider.source} sync error: ${(err as Error).message}`);

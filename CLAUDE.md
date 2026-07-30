@@ -80,8 +80,14 @@ Now `{base, requests:[…]}` → `{results:[…]}` in order, each with its own
 Coalescing is client-side in `reservecalifornia/client.ts` (40ms window per RDR base,
 deduped on method+path+body, below the retry loop so retries just rejoin a batch).
 Both wire shapes stay live in both directions because Vercel and Fly deploy from the
-same push. **Upstream load is unchanged and must stay that way** — the proxy paces a
-batch at `FANOUT = 2`; don't raise it. Details in `docs/CONTEXT.md`.
+same push. The proxy paces a batch at `FANOUT = 2`; **don't raise it**.
+- **The nightly catalog sync opts OUT** (`coalesce: false`). "Upstream load is
+  unchanged" counted requests and missed per-IP RATE — one batch is N requests from a
+  single Vercel lambda IP, and these WAFs meter per IP. The sync is a few hundred calls
+  a day (~200 invocations of 63,000): nothing to gain, a real way to lose.
+- **The sync also WAITS OUT an open breaker** (`UD_SYNC_BREAKER_WAIT_MS`, 5 min/run);
+  the poller still fails fast. Illinois lost all 282 campgrounds on 2026-07-30 because
+  the sync burned a 60s cooldown in 34 seconds. Details in `docs/CONTEXT.md`.
 
 ## Alerting — the claim (read this before touching the poller)
 The decision "may we alert for this?" is `worker/claim.ts`, keyed on

@@ -1276,11 +1276,16 @@ line in the usage bill, and most of the 1.44M invocations on the Jul-25 cycle.
   is bounded by the CALLER's fanout, not the window: the poller runs RC watches through
   `pMap(4)`, so a cycle costs **3 invocations instead of 11**. A queue of one is sent as
   a single — same cost, wider compatibility.
-- **UPSTREAM LOAD IS UNCHANGED, which is the point.** The same N requests still leave
-  Vercel; the proxy paces them at `FANOUT = 2`, *lower* than the 4 the poller ran. These
-  WAFs meter request rate from an IP (Virginia: 403 on 83 of 276 grid calls in one sync);
-  Vercel bills per invocation. Only the second number moves. **Do not "optimise" FANOUT
-  upward** — batching must not become a way to hit them harder.
+- **THE CATALOG SYNC OPTS OUT** (`coalesce: false`, 2026-07-30). "Upstream load is
+  unchanged" counted REQUESTS and missed per-IP RATE: N separate invocations can be
+  spread across N Vercel lambdas, but one batch is N requests from a single lambda IP,
+  and these WAFs meter per IP. Batching pays for itself only on the poller's hot path
+  (63,000 invocations/day); the nightly sync is a few hundred calls once a day — ~200
+  invocations saved out of 63,000 — while being exactly the shape that makes
+  concentration dangerous. Nothing to gain, a real way to lose. The poller and the
+  search page still coalesce.
+- **Do not "optimise" FANOUT upward** — the proxy paces a batch at `FANOUT = 2`, lower
+  than the 4 the poller runs. Batching must not become a way to hit these WAFs harder.
 
 **Requests present as the providers' own booking site** (`rdrRequestHeaders` in
 `providers.ts`) — full Chrome UA, `Accept-Language`, `sec-ch-*`, and Origin/Referer
@@ -1296,6 +1301,24 @@ the real client is correct regardless.
 burst from one address, which is what provokes the limit. A facility whose grid call
 fails syncs ZERO campsites, so going fast cost campsite-level detail — site types,
 hookups — on real campgrounds.
+
+> **The sync WAITS OUT an open breaker; the poller does not** (`breakerWait`,
+> 2026-07-30). Failing fast is right for the poller — it retries in 15 seconds — and
+> catastrophic for the sync, which has hundreds of facilities queued behind it.
+> Illinois' 2026-07-30 run is the proof: four consecutive 403s opened the breaker for
+> 60s, and the sync then tore through its remaining 278 facilities in **34 seconds**,
+> each throwing instantly against a cooldown nobody was waiting for. 282 campgrounds,
+> **0 campsites**. Now the sync sleeps out the cooldown (jittered, so piled-up waiters
+> don't resume in lockstep) against a per-run budget, `UD_SYNC_BREAKER_WAIT_MS`
+> (default 5 min). The budget is charged per WAITER, not per cooldown, so at
+> concurrency 2 it buys two or three 60s waits — conservative on purpose. Past the
+> budget it fails fast again, so a host that is genuinely blocking costs +5 minutes,
+> not cooldown × facilities (2.3 hours for Illinois). The run logs how much it spent
+> and says `BUDGET EXHAUSTED` when the tail failed fast.
+>
+> Nothing is lost when a grid call fails — campsites are upserted, never deleted. The
+> cost is stale campsite detail (site types, hookups) for that facility, not a missing
+> campground.
 
 > **Fly CANNOT reach the California RDR host at all** — three attempts, all
 > `TimeoutError`, from the worker's own egress. Virginia 403s Fly too. This is why
@@ -1736,9 +1759,11 @@ rec.gov throttle breaker `RECGOV_BREAKER_TRIP` (consecutive
 equivalents `UD_ATTEMPTS` (retries per call, 3), `UD_RETRY_BASE_MS` (backoff base,
 250ms — x8 on a 403), `UD_BREAKER_TRIP` (4), `UD_BREAKER_COOLDOWN_MS` (60s),
 `UD_TIMEOUT_MS` (15s), `UD_SYNC_CONCURRENCY` (grid fan-out during the catalog sync,
-2 — was 5, which provoked the WAF) and `UD_BATCH_WINDOW_MS` (40ms — how long proxied
+2 — was 5, which provoked the WAF), `UD_BATCH_WINDOW_MS` (40ms — how long proxied
 RDR requests wait to be coalesced into one `/api/rc-proxy` invocation; raising it
-batches more at the cost of alert latency on every cycle); `RECGOV_CONCURRENCY`
+batches more at the cost of alert latency on every cycle) and `UD_SYNC_BREAKER_WAIT_MS`
+(5 min — how long ONE catalog-sync run will sleep out breaker cooldowns before it goes
+back to failing fast); `RECGOV_CONCURRENCY`
 (per-provider fanout bound within a phase — note the six per-source phases now run
 concurrently as of `dfd4541`, so this bounds each provider, not the whole cycle);
 `AUTOCART_SESSION_STALE_MS` (how recently the bot must have stamped
