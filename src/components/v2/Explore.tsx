@@ -16,7 +16,7 @@ import SubscribeCta, { useAccountGate } from "./SubscribeCta";
 import { useIsNativeApp } from "@/lib/native/context";
 import { campgroundsRounded } from "@/lib/coverage";
 import dynamic from "next/dynamic";
-import { addDays, todayISO, type ISODate } from "@/components/ui/date";
+import { addDays, todayISO, thisWeekendRange, type ISODate } from "@/components/ui/date";
 import { deviceCoords, hitLabel, ipCoords, searchLocations, type LocationHit } from "./geo";
 import { LocateFixed, MapPin, Tent } from "lucide-react";
 import type { Campground } from "@/lib/types";
@@ -50,15 +50,6 @@ const DEFAULT_RADIUS = 10;
 type WhenPreset = "exact" | "tonight" | "weekend" | "flexible";
 
 /** Next Friday→Sunday. Matches the existing QuickFilters helper's intent. */
-function thisWeekend(): DateRange {
-  const today = todayISO();
-  const dow = new Date(today).getDay();
-  // getDay on a local-midnight Date is safe here because todayISO is local.
-  const toFriday = (5 - dow + 7) % 7;
-  const start = addDays(today, toFriday);
-  return { start, end: addDays(start, 2) };
-}
-
 
 /**
  * The search, as a query string.
@@ -328,7 +319,7 @@ export default function Explore() {
   const choosePreset = (p: WhenPreset) => {
     setWhen(p);
     if (p === "tonight") setRange({ start: todayISO(), end: addDays(todayISO(), 1) });
-    else if (p === "weekend") setRange(thisWeekend());
+    else if (p === "weekend") setRange(thisWeekendRange());
     else if (p === "flexible") {
       const start = todayISO();
       setRange({ start, end: addDays(start, 30) });

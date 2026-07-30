@@ -3,7 +3,7 @@ import { currentUserIsAdmin } from '@/lib/admin';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import Stripe from 'stripe';
-import Logo from '@/components/Logo';
+import { HawkMark } from '@/components/Logo';
 import AdminAutoRefresh from '@/components/AdminAutoRefresh';
 import AdminTabs, { type AdminData } from '@/components/admin/AdminTabs';
 import { query, queryOne } from '@/lib/db/client';
@@ -213,12 +213,24 @@ export default async function AdminPage() {
 
   return (
     <div className="min-h-dvh bg-ch-paper font-ch-body text-ch-ink">
-      <header className="flex items-center justify-between border-b border-ch-line bg-ch-card px-4 py-3">
-        <div className="flex items-center gap-3">
-          <Link href="/">
-            <Logo markSize={30} />
+      {/* Compact on purpose. This used the marketing <Logo/> lockup, whose badge is
+          sized 3.8em — about 68px next to a 30px mark — so the brand art plus the
+          Admin chip took more vertical space than the status banner underneath it.
+          /admin is an internal tool opened many times a day, not a landing page, so
+          it gets the bare mark and a one-line title. */}
+      <header className="flex items-center justify-between gap-3 border-b border-ch-line bg-ch-card px-4 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Link
+            href="/"
+            className="flex items-center gap-2 text-ch-ink hover:text-ch-green-deep"
+            aria-label="CampHawk home"
+          >
+            <HawkMark size={22} className="shrink-0 text-ch-green-deep" />
+            <span className="font-ch-display text-ch-body font-semibold tracking-tight">
+              CampHawk
+            </span>
           </Link>
-          <span className="rounded-ch-chip border border-[#E7C98C] bg-ch-ochre-soft px-2.5 py-0.5 text-ch-label font-bold uppercase tracking-[.1em] text-ch-ochre-ink">
+          <span className="rounded-ch-chip border border-[#E7C98C] bg-ch-ochre-soft px-2 py-0.5 text-ch-label font-bold uppercase tracking-[.1em] text-ch-ochre-ink">
             Admin
           </span>
         </div>

@@ -13,6 +13,7 @@ import { useIsNativeApp } from "@/lib/native/context";
 import { buttonClasses } from "@/components/ui/Button";
 import { cx } from "@/components/ui/cx";
 import BrandMark from "./BrandMark";
+import { useSubscription } from "./useSubscription";
 
 /**
  * Navigation for the redesign's three destinations, plus the account area.
@@ -38,13 +39,33 @@ const LINKS = [
 /** Scroll past this and the header art shrinks to its wordmark strip. */
 const COLLAPSE_AT = 28;
 
-async function openBillingPortal() {
+/**
+ * Open Stripe's billing portal.
+ *
+ * This used to swallow every failure — "the menu item just does nothing rather than
+ * throwing at the user" — which meant a signed-in non-subscriber clicked "Manage
+ * subscription" and got silence, because /api/stripe/portal 404s with "No
+ * subscription found" when there is no stripe_customer_id. Nothing was broken; the
+ * item simply should not have been offered. It is now hidden in that case, and the
+ * two remaining failures say something instead of nothing.
+ */
+async function openBillingPortal(): Promise<void> {
   try {
     const res = await fetch("/api/stripe/portal", { method: "POST" });
-    const data = await res.json();
-    if (data.url) window.location.href = data.url;
+    const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+    if (data.url) {
+      window.location.href = data.url;
+      return;
+    }
+    // 409: the stored customer is gone (e.g. a test-mode leftover). The route already
+    // tells us to send them to re-subscribe, so do that rather than dead-ending.
+    if (data.error === "billing_profile_missing") {
+      window.location.href = "/?resubscribe=1";
+      return;
+    }
+    window.alert("We couldn't open the billing portal just now. Please try again shortly.");
   } catch {
-    /* the menu item just does nothing rather than throwing at the user */
+    window.alert("We couldn't reach billing just now. Please check your connection and try again.");
   }
 }
 
@@ -91,6 +112,12 @@ function AccountControl({ compact = false }: { compact?: boolean }) {
   // exports no <SignedIn>/<SignedOut>.
   const { isLoaded, isSignedIn } = useUser();
   const isAdmin = useIsAdmin(Boolean(isLoaded && isSignedIn));
+  // Only offer "Manage subscription" when there is a subscription to manage. A
+  // non-subscriber's click 404s inside the portal route and used to do nothing at
+  // all. `unknown` counts as "show it": a failed status lookup must not hide billing
+  // from an actual subscriber — the same rule the watch gate uses in reverse.
+  const { subscribed, unknown } = useSubscription();
+  const canManageBilling = subscribed || unknown;
 
   // Reserve the space so the header doesn't jump once auth resolves.
   if (!isLoaded) return <span aria-hidden="true" className="size-8" />;
@@ -136,7 +163,7 @@ function AccountControl({ compact = false }: { compact?: boolean }) {
               the only way to cancel or update payment. Hidden in the native app,
               where surfacing billing would breach the store rules that keep
               Stripe on the web. */}
-            {!isNative && (
+            {!isNative && canManageBilling && (
               <UserButton.Action
                 label="Manage subscription"
                 labelIcon={<CreditCard size={14} />}

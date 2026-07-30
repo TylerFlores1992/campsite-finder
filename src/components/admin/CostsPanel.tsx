@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Plus, Trash2, Pencil, Loader2 } from 'lucide-react';
 import {
   BILLING_PERIODS,
+  oneTimeTotalCents,
   COST_CATEGORIES,
   monthlyCents,
   fixedTotalCents,
@@ -16,6 +17,13 @@ import {
 } from '@/lib/costs';
 
 const CHANNEL_LABEL: Record<string, string> = { sms: 'SMS (Twilio)', email: 'Email (Resend)', push: 'Push (FCM)' };
+
+/** Suffix per billing period. "once", not "/ once", which would read as a rate. */
+const PERIOD_SUFFIX: Record<BillingPeriod, string> = {
+  monthly: ' / mo',
+  yearly: ' / yr',
+  one_time: ' once',
+};
 
 export default function CostsPanel({
   initialItems,
@@ -39,6 +47,7 @@ export default function CostsPanel({
 
   const fixedCents = fixedTotalCents(items);
   const yearlyItemCount = items.filter((i) => i.billing_period === 'yearly').length;
+  const oneTimeCents = oneTimeTotalCents(items);
   const usageCents = usageTotalCents(usage);
   const totalCents = fixedCents + usageCents;
   const netCents = mrrCents == null ? null : mrrCents - totalCents;
@@ -154,7 +163,7 @@ export default function CostsPanel({
                     <td className="py-2 pr-3 text-right whitespace-nowrap text-ch-ink-2">
                       {fmtUSD(it.amount_cents)}
                       <span className="text-ch-muted">
-                        {it.billing_period === 'yearly' ? ' / yr' : ' / mo'}
+                        {PERIOD_SUFFIX[it.billing_period] ?? ' / mo'}
                       </span>
                     </td>
                     {/* The derived figure, shown next to the billed one rather
@@ -231,6 +240,29 @@ export default function CostsPanel({
                     } divided by 12. Fixed costs are ${fmtUSD(fixedCents * 12)} a year.`}
                   </td>
                 </tr>
+              )}
+              {/* Shown SEPARATELY from the fixed subtotal, never added to it. A
+                  one-time cost has no run rate, so folding it into monthly burn
+                  would overstate it forever and quietly move net margin — the one
+                  figure on this tab anyone acts on. This is "spent to date". */}
+              {oneTimeCents > 0 && (
+                <>
+                  <tr>
+                    <td colSpan={4} className="pt-3 font-bold text-ch-muted">
+                      One-time, to date
+                    </td>
+                    <td className="pt-3 text-right font-ch-display font-extrabold text-ch-ink">
+                      {fmtUSD(oneTimeCents)}
+                    </td>
+                    <td />
+                  </tr>
+                  <tr>
+                    <td colSpan={6} className="pt-1.5 text-ch-fine text-ch-muted">
+                      Not part of the monthly or yearly totals — paid once, so it has no
+                      run rate.
+                    </td>
+                  </tr>
+                </>
               )}
             </tfoot>
           </table>
@@ -389,11 +421,11 @@ function EditRow({
             value={period}
             onChange={(e) => setPeriod(e.target.value as BillingPeriod)}
             aria-label="Billing period"
-            className={`${field} w-[4.75rem] shrink-0`}
+            className={`${field} w-[5.5rem] shrink-0`}
           >
             {BILLING_PERIODS.map((p) => (
               <option key={p} value={p}>
-                {p === 'yearly' ? '/ yr' : '/ mo'}
+                {PERIOD_SUFFIX[p]}
               </option>
             ))}
           </select>

@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import Pricing from "./Pricing";
+import { buttonClasses } from "@/components/ui/Button";
 import { SubscribeLink, subscribeSentence } from "./nativeSubscribe";
 import { useSubscription } from "./useSubscription";
 import { useIsNativeApp } from "@/lib/native/context";
@@ -30,6 +32,50 @@ import { useIsNativeApp } from "@/lib/native/context";
 export default function PricingSection() {
   const isNative = useIsNativeApp();
   const { subscribed } = useSubscription();
+
+  // ALREADY PAYING? Then this block has no selling left to do, and doing it anyway is
+  // worse than neutral: a subscriber who reads "Searching is free. Watching is $2.50 a
+  // month" and "Subscribe now and you keep the rate you signed up at" is being pitched
+  // a thing they already bought, which reads as a billing failure. Launch-pricing
+  // urgency aimed at an existing customer is just noise.
+  //
+  // What replaces it is the useful version of the same information — what the
+  // subscription lets them do and where to go do it. Deliberately no price, and in the
+  // app deliberately no route to billing either: managing a subscription from inside
+  // the app is the kind of steering the store rules are strict about, and the account
+  // menu on the web already handles it.
+  if (subscribed) {
+    return (
+      <div className="rounded-ch-card border border-[#BFDDC9] bg-ch-green-soft p-5 sm:p-6">
+        <h2 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em] text-ch-green-deep">
+          You&apos;re all set — here&apos;s what you can do
+        </h2>
+        <ul className="mt-2.5 max-w-[58ch] space-y-1.5 text-ch-body leading-relaxed text-ch-green-deep">
+          <li>
+            Watch up to 10 campgrounds at once. We check each one every 15 seconds, around
+            the clock.
+          </li>
+          <li>
+            Add your number in Settings so alerts reach you by text as well as email — a
+            text is what actually wakes you at 6am.
+          </li>
+          <li>
+            On Recreation.gov, connect auto-cart once and an opening goes straight into
+            your cart while you get to your phone.
+          </li>
+          <li>Any alert lets you pause the watch, reopen it, or mute a site you don&apos;t want.</li>
+        </ul>
+        <div className="mt-4 flex flex-wrap gap-2.5">
+          <Link href="/new" className={buttonClasses({ variant: "primary" })}>
+            New watch
+          </Link>
+          <Link href="/settings" className={buttonClasses({ variant: "quiet" })}>
+            Alert settings
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   // In the app: what the subscription includes, no figure and no route to buy.
   // Still worth a block — someone who subscribed on the web needs to know the app

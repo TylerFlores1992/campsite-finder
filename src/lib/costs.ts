@@ -10,9 +10,16 @@ export type CostCategory = 'hosting' | 'data' | 'auth' | 'comms' | 'other';
 
 export const COST_CATEGORIES: CostCategory[] = ['hosting', 'data', 'auth', 'comms', 'other'];
 
-export type BillingPeriod = 'monthly' | 'yearly';
+export type BillingPeriod = 'monthly' | 'yearly' | 'one_time';
 
-export const BILLING_PERIODS: BillingPeriod[] = ['monthly', 'yearly'];
+export const BILLING_PERIODS: BillingPeriod[] = ['monthly', 'yearly', 'one_time'];
+
+/** Human label for the period selector and the line-item list. */
+export const BILLING_PERIOD_LABELS: Record<BillingPeriod, string> = {
+  monthly: 'per month',
+  yearly: 'per year',
+  one_time: 'one-time',
+};
 
 export interface CostItem {
   id: string;
@@ -39,13 +46,31 @@ export interface CostItem {
  */
 export function monthlyCents(item: Pick<CostItem, 'amount_cents' | 'billing_period'>): number {
   const amount = item.amount_cents || 0;
+  // A one-time cost has NO monthly figure. Returning the amount would add it to burn
+  // every month forever; amortising it would need a purchase date and a lifetime this
+  // table does not store, and a guessed lifetime moves net margin without saying so.
+  // It is reported separately by oneTimeTotalCents().
+  if (item.billing_period === 'one_time') return 0;
   return item.billing_period === 'yearly' ? Math.round(amount / 12) : amount;
 }
 
 /** Annualised, for the yearly view. */
 export function yearlyCents(item: Pick<CostItem, 'amount_cents' | 'billing_period'>): number {
   const amount = item.amount_cents || 0;
+  if (item.billing_period === 'one_time') return 0; // same reasoning as monthlyCents
   return item.billing_period === 'yearly' ? amount : amount * 12;
+}
+
+/**
+ * Everything paid once, summed — "spent to date", not a run rate.
+ *
+ * Kept out of the recurring totals on purpose, so it can be shown without making
+ * monthly burn or net margin wrong. Do not add this to fixedTotalCents().
+ */
+export function oneTimeTotalCents(items: CostItem[]): number {
+  return items
+    .filter((i) => i.billing_period === 'one_time')
+    .reduce((s, i) => s + (i.amount_cents || 0), 0);
 }
 
 // Per-unit usage rates in USD. Env-overridable so they can be tuned without a deploy.

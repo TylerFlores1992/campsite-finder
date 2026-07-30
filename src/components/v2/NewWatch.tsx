@@ -11,7 +11,7 @@ import TrustPanel from "./TrustPanel";
 import FavoriteHeart from "./FavoriteHeart";
 import { useFavorites } from "./useFavorites";
 import { providerLabel, supportsAutoCart } from "./providers";
-import { addDays, formatRange, nightsBetween, todayISO } from "@/components/ui/date";
+import { addDays, formatRange, nightsBetween, thisWeekendRange, todayISO } from "@/components/ui/date";
 import { useIsNativeApp } from "@/lib/native/context";
 import { NATIVE_LINKOUT, SUBSCRIBE_HREF } from "./nativeSubscribe";
 import SubscribeCta, { useAccountGate } from "./SubscribeCta";
@@ -229,6 +229,10 @@ export default function NewWatch({
   const windowNights = range.start && range.end ? nightsBetween(range.start, range.end) : 0;
   // The API rejects flexNights longer than the window; catch it before the round trip.
   const flexTooLong = mode === "flexible" && windowNights > 0 && flexNights > windowNights;
+  // Compared against the live helper rather than a flag, so the chip stays honest if
+  // the user edits the dates afterwards (and across a midnight rollover).
+  const weekend = thisWeekendRange();
+  const isThisWeekend = range.start === weekend.start && range.end === weekend.end;
 
   return (
     <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_288px]">
@@ -346,8 +350,24 @@ export default function NewWatch({
             Which nights
           </legend>
           <div className="mb-2 flex flex-wrap gap-1.5">
-            <Chip size="sm" selected={mode === "exact"} onClick={() => setMode("exact")}>
+            <Chip size="sm" selected={mode === "exact" && !isThisWeekend} onClick={() => setMode("exact")}>
               Exact dates
+            </Chip>
+            {/* A SHORTCUT, not a third mode. It fills in the coming Fri->Sun and leaves
+                the watch on exact dates, because that is what it is — two named nights.
+                Modelling it as a mode would mean a third branch through validation and
+                the submit payload for something that only differs by which dates are
+                prefilled. It reads as selected only while the range still IS that
+                weekend, so nudging a date afterwards doesn't leave a lying chip. */}
+            <Chip
+              size="sm"
+              selected={mode === "exact" && isThisWeekend}
+              onClick={() => {
+                setMode("exact");
+                setRange(thisWeekendRange());
+              }}
+            >
+              This weekend
             </Chip>
             <Chip size="sm" selected={mode === "flexible"} onClick={() => setMode("flexible")}>
               Flexible

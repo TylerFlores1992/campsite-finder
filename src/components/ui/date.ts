@@ -118,3 +118,20 @@ export function formatRange(start: ISODate | null, end: ISODate | null): string 
   if (!end) return `${shortDate(start)} – …`;
   return `${shortDate(start)} – ${shortDate(end)}`;
 }
+
+/**
+ * The coming Friday→Sunday, as `[start, end)` checkout-exclusive — i.e. two nights.
+ *
+ * Shared because Explore and New watch both offer a "This weekend" preset and must
+ * agree on what the weekend is; this lived privately in Explore.tsx until New watch
+ * needed it too. If today IS Friday, it means today, not next week: someone searching
+ * on a Friday afternoon for "this weekend" means tonight.
+ */
+export function thisWeekendRange(): { start: ISODate; end: ISODate } {
+  const today = todayISO();
+  // Safe to use getDay() on a local-midnight Date because todayISO() is local.
+  const dow = new Date(today).getDay();
+  const toFriday = (5 - dow + 7) % 7;
+  const start = addDays(today, toFriday);
+  return { start, end: addDays(start, 2) };
+}
