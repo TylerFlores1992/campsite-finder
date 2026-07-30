@@ -785,6 +785,16 @@ shown once it's **honest**:
    > requests/min per source. Symptom that means "throttled again, widen the spread":
    > `429`/`timeout` on rec.gov + detect canaries timing out while the heartbeat stays
    > fresh (only the direct-from-Fly sources; RC/TNSC via the Vercel proxy stay green).
+   > **THE ROSTER IS OFF as of 2026-07-30 — accrual has STOPPED.** 502 targets × 2 lead
+   > windows is ~24,000 probes/day, and the **327 UseDirect ones each cost a Vercel
+   > function invocation** through `/api/rc-proxy` (~15,700/day — on par with the entire
+   > watch poller) to feed a signal `SHOW_LIKELIHOOD` keeps hidden from every user.
+   > Two switches, both must flip to resume: `PROBE_ENABLED` in `worker/fly.toml`
+   > (default `false`; the poller logs `probe roster OFF` at startup) **and**
+   > `probe_targets.active`, set `false` on all 502 rows so accrual stopped the same
+   > hour with no deploy. Both exist on purpose — the flag is what stops a re-run of
+   > `seed-probe-targets.ts`, which sets `active = true`, from silently restarting it.
+   > The 137k observations already collected are untouched.
 3. **Aggregation** (`src/lib/likelihood.ts`, server-only) — reads the time series into
    an opening rate, **always bucketed on `lead_days`** (`LEAD_BUCKETS`: a site 3 days
    out vs 45 days out is a different game — never blend them) over a trailing window,
@@ -817,7 +827,13 @@ shown once it's **honest**:
 > targets per state, or GTC provinces — but coverage is national now. The signal still
 > needs a few weeks of history before the longer-lead buckets are dense.
 
-> **⏸ THE DISPLAY IS PAUSED (2026-07-23) — data collection is NOT.** All three UI
+> **⏸ AS OF 2026-07-30 THE WHOLE FEATURE IS PAUSED — display AND collection.** The
+> paragraph below describes the display pause; the roster stop is above (`PROBE_ENABLED`
+> + `probe_targets.active`). Restarting means flipping BOTH, and the roster needs weeks
+> of lead time to refill buckets — so turn accrual back on well before you plan to show
+> anything.
+>
+> **⏸ THE DISPLAY IS PAUSED (2026-07-23) — data collection was NOT, until now.** All three UI
 > surfaces (per-watch "% chance for your dates" on the watch card, result-card badge,
 > and the detail-page "How often it opens up" ladder) are hidden for now: with limited
 > history too many read a discouraging **0% / "rarely opens up"**, which lands as "no
@@ -1235,6 +1251,36 @@ logged its own 502 and discarded the body. The one fact identifying the cause re
 neither side's logs. It now returns `upstreamStatus` plus a slice of the upstream body
 AND `console.error`s it, which lands in Vercel's runtime logs where the worker cannot
 reach. The worker appends that body to the error it throws.
+
+**`/api/rc-proxy` TAKES A BATCH** (2026-07-30). It forwarded exactly one RDR request
+per invocation while sitting on the hot path of a 15-second poller: 11 RC fetches a
+cycle is ~63,000 Vercel function invocations a day for 16 watches — the largest single
+line in the usage bill, and most of the 1.44M invocations on the Jul-25 cycle.
+
+- **Wire shape:** `{ base, requests: [{path, method, body}, …] }` → `{ results: […] }`
+  in request order, each `{ok, status, data, error, upstreamStatus, detail}`. A
+  disallowed path or a failed upstream is THAT ITEM's result, so one bad request cannot
+  fail the other N-1, and the response is **200 even when items failed** — a 502 would
+  tell the caller nothing about which one.
+- **The single-request shape still works, in both directions.** Vercel and Fly deploy
+  from the same push and can land either way round, so the proxy still understands a
+  bare `path`, and the client (`sendProxyBatch`) latches to singles for the life of the
+  process if the proxy answers a batch with **400** — exactly how the pre-batch handler
+  rejects it, since it looks for a top-level `path`. Only 400 latches; a 500 is an
+  ordinary failure the retry loop owns.
+- **Coalescing is client-side**, in `reservecalifornia/client.ts`: requests landing
+  within `UD_BATCH_WINDOW_MS` (40ms) for the same RDR base go up together, **deduped on
+  method+path+body** — two subscribers watching the same campground for the same dates
+  send byte-identical grid POSTs every cycle. It sits below `rdrFetch`'s retry loop, so
+  a retry just joins the next batch and the breaker sees what it always saw. Batch size
+  is bounded by the CALLER's fanout, not the window: the poller runs RC watches through
+  `pMap(4)`, so a cycle costs **3 invocations instead of 11**. A queue of one is sent as
+  a single — same cost, wider compatibility.
+- **UPSTREAM LOAD IS UNCHANGED, which is the point.** The same N requests still leave
+  Vercel; the proxy paces them at `FANOUT = 2`, *lower* than the 4 the poller ran. These
+  WAFs meter request rate from an IP (Virginia: 403 on 83 of 276 grid calls in one sync);
+  Vercel bills per invocation. Only the second number moves. **Do not "optimise" FANOUT
+  upward** — batching must not become a way to hit them harder.
 
 **Requests present as the providers' own booking site** (`rdrRequestHeaders` in
 `providers.ts`) — full Chrome UA, `Accept-Language`, `sec-ch-*`, and Origin/Referer
@@ -1665,7 +1711,10 @@ leg records "skipped", a warn not a page); `CANARY_DELIVERY_INTERVAL_MS` and
 `CANARY_DETECT_INTERVAL_MS` — cadences, both non-secret and declared in
 `worker/fly.toml [env]` (delivery defaults to 6h in code, pinned to 24h there).
 Cancellation-likelihood (feature E, on the **Fly worker**, all non-secret with
-in-code defaults — override only to tune): `OBSERVATION_INTERVAL_MS` (per-window
+in-code defaults — override only to tune): **`PROBE_ENABLED`** — the roster master
+switch, `"false"` in `worker/fly.toml` since 2026-07-30 and `false` by default in code;
+nothing below runs while it is off, and `probe_targets.active` is the second switch;
+`OBSERVATION_INTERVAL_MS` (per-window
 record throttle, 1h), `OBSERVATION_RETENTION_DAYS` (90), `PROBE_INTERVAL_MS`
 (roster cadence, 1h), `PROBE_LEAD_DAYS` (`14,45`), `PROBE_NIGHTS` (2),
 `PROBE_SPREAD_FRACTION` (0.6) and `PROBE_SPREAD_MAX_MS` (45m) — the roster no longer
@@ -1686,8 +1735,10 @@ rec.gov throttle breaker `RECGOV_BREAKER_TRIP` (consecutive
 (short-circuit-to-empty window before a half-open probe, 60s); the UseDirect/RDR
 equivalents `UD_ATTEMPTS` (retries per call, 3), `UD_RETRY_BASE_MS` (backoff base,
 250ms — x8 on a 403), `UD_BREAKER_TRIP` (4), `UD_BREAKER_COOLDOWN_MS` (60s),
-`UD_TIMEOUT_MS` (15s) and `UD_SYNC_CONCURRENCY` (grid fan-out during the catalog sync,
-2 — was 5, which provoked the WAF); `RECGOV_CONCURRENCY`
+`UD_TIMEOUT_MS` (15s), `UD_SYNC_CONCURRENCY` (grid fan-out during the catalog sync,
+2 — was 5, which provoked the WAF) and `UD_BATCH_WINDOW_MS` (40ms — how long proxied
+RDR requests wait to be coalesced into one `/api/rc-proxy` invocation; raising it
+batches more at the cost of alert latency on every cycle); `RECGOV_CONCURRENCY`
 (per-provider fanout bound within a phase — note the six per-source phases now run
 concurrently as of `dfd4541`, so this bounds each provider, not the whole cycle);
 `AUTOCART_SESSION_STALE_MS` (how recently the bot must have stamped

@@ -19,6 +19,11 @@ primary_region = "sjc"
   # 6h code default: the SMS send costs A2P money and once/day still catches a Twilio
   # outage well within the window we'd want to know it broke.
   CANARY_DELIVERY_INTERVAL_MS = "86400000"
+  # Feature E's probe roster. OFF since 2026-07-30: ~24,000 probes/day, of which the
+  # 327 UseDirect targets each cost a Vercel function invocation via /api/rc-proxy,
+  # to feed a signal SHOW_LIKELIHOOD keeps hidden. Set to "true" AND reactivate
+  # probe_targets to resume — the rows are all active = false.
+  PROBE_ENABLED = "false"
 
 # This is primarily a background poller. The HTTP service exists for ONE endpoint
 # (POST /gtc/availability, shared-secret guarded) that the Vercel search page

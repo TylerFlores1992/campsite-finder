@@ -46,20 +46,42 @@ Server-rendered campground pages + per-page metadata (`lib/seo.ts`), JSON-LD
 A alert-health canary · B verified deep-links · C flexible dates · D smarter notifications
 (one-tap stop/reopen, site-mute, dead-man's switch) · E cancellation-likelihood signal.
 
-## Feature E — how it fits together
+## Feature E — FULLY STOPPED 2026-07-30 (display *and* collection)
 "This site had an opening on ~X% of recent checks for a stay this far out." Four parts,
-all gated behind a 20-sample **honesty threshold** (numbers hidden until honest):
+all gated behind a 20-sample **honesty threshold** (numbers hidden until honest).
+**Nothing is displayed and nothing is being recorded** — it cost ~15,700 Vercel function
+invocations a day (327 UseDirect probe targets via `/api/rc-proxy`) to feed a signal no
+user could see. **THREE switches, all must flip to bring it back:**
+1. `PROBE_ENABLED = "true"` in `worker/fly.toml` (needs a worker deploy; the poller logs
+   `probe roster OFF` at startup while it's false),
+2. `UPDATE probe_targets SET active = true` — all 502 rows are `false`; this one alone
+   restarts accrual with no deploy, which is why switch 1 exists (a re-run of
+   `seed-probe-targets.ts` sets `active = true` and would otherwise restart it silently),
+3. `SHOW_LIKELIHOOD = true` in `src/components/v2/likelihood.ts` for the UI.
+Accrual needs weeks of lead time before the buckets are honest again — turn it on well
+before you plan to show anything. The 137k observations collected so far are untouched.
 - **Recorder + probe roster** in `worker/poller.ts` → `availability_observations`
-  (migration 020) + `probe_targets` (021). Roster = 502 active (150 rec.gov + 120
-  ReserveCalifornia + ~207 across 9 other UseDirect states + 25 GoingToCamp; seeded
-  2026-07-25). Seed/broaden with `scripts/seed-probe-targets.ts --source=<src>`
-  (`NODE_USE_ENV_PROXY=1` for UseDirect **and GoingToCamp** sources — both route
-  through the agent proxy; the seed's `isOpenInRange` now supports all three families).
+  (migration 020) + `probe_targets` (021). Roster = 502 rows, now all inactive
+  (150 rec.gov + 120 ReserveCalifornia + ~207 across 9 other UseDirect states + 25
+  GoingToCamp; seeded 2026-07-25). Seed/broaden with
+  `scripts/seed-probe-targets.ts --source=<src>` (`NODE_USE_ENV_PROXY=1` for UseDirect
+  **and GoingToCamp** sources — both route through the agent proxy; the seed's
+  `isOpenInRange` supports all three families).
 - **Aggregation** `src/lib/likelihood.ts` (`getOpeningRate`, `campgroundBuckets`,
   `getHeadlines`). **Readout/sanity-check:** `scripts/likelihood-readout.mts`.
 - **UI:** card badge, detail-page ladder (`/api/likelihood`), per-watch odds — all share
-  the aggregation + gate. **Currently OFF everywhere:** `SHOW_LIKELIHOOD = false` in
-  `src/components/v2/likelihood.ts` is the single switch. Accrual continues regardless.
+  the aggregation + gate, all behind `SHOW_LIKELIHOOD`.
+
+## `/api/rc-proxy` takes a BATCH (2026-07-30)
+It forwarded one RDR request per invocation on the hot path of a 15s poller —
+~63,000 Vercel invocations/day for 16 watches, the biggest line in the usage bill.
+Now `{base, requests:[…]}` → `{results:[…]}` in order, each with its own
+`{ok,status,data,upstreamStatus,detail}`; one bad item never fails the other N-1.
+Coalescing is client-side in `reservecalifornia/client.ts` (40ms window per RDR base,
+deduped on method+path+body, below the retry loop so retries just rejoin a batch).
+Both wire shapes stay live in both directions because Vercel and Fly deploy from the
+same push. **Upstream load is unchanged and must stay that way** — the proxy paces a
+batch at `FANOUT = 2`; don't raise it. Details in `docs/CONTEXT.md`.
 
 ## Alerting — the claim (read this before touching the poller)
 The decision "may we alert for this?" is `worker/claim.ts`, keyed on
@@ -199,12 +221,12 @@ wrong.
   consume the column, so they light up with no UI change.
   The other 3,544 rows (UseDirect / GoingToCamp / ReserveAmerica / state portals) are
   still empty and were NOT investigated — each portal needs its own look.
-- **Feature E has data** (137k observations, 511 campgrounds as of 2026-07-30) but the
-  probe roster clusters at 14-20 and 45-51 days out, so the **4-7 day bucket is empty** -
-  the window a "tonight/this weekend" searcher cares about. Broaden the roster's lead
-  spread before turning `SHOW_LIKELIHOOD` on, or the ladder ships with holes. Note the
-  **25 Virginia probe targets have been 403ing since ~2026-07-30 00:40** — see the
-  provider-resilience section; no user watch is affected, Feature E is off.
+- **Feature E's frozen dataset** is 137k observations across 511 campgrounds (accrual
+  stopped 2026-07-30). It clusters at 14-20 and 45-51 days out, so the **4-7 day bucket
+  is empty** — the window a "tonight/this weekend" searcher cares about. If accrual is
+  ever restarted, broaden `PROBE_LEAD_DAYS` at the same time or the ladder ships with
+  holes. (The 25 Virginia targets were also 403ing from ~2026-07-30 00:40 — moot now,
+  and no user watch was ever affected.)
 - **Costs tab**: the "$0.00 providers" note is resolved — 6 rows, none at zero, after a
   dedupe (Vercel/Claude/Apple/Cloudflare each had 2-3 copies inflating fixed costs to
   ~$149/mo against a real ~$50). It now also tracks **one-time costs** and **lifetime

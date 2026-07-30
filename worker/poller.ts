@@ -227,6 +227,18 @@ const PROBE_CONCURRENCY = 3;
 // run past the next tick (the probeRunning guard also prevents overlap).
 const PROBE_SPREAD_FRACTION = Number(process.env.PROBE_SPREAD_FRACTION ?? 0.6);
 const PROBE_SPREAD_MAX_MS = Number(process.env.PROBE_SPREAD_MAX_MS ?? 45 * 60 * 1000);
+// OFF as of 2026-07-30, and off by default. The roster was 502 targets × 2 lead
+// windows = ~24,000 probes a day, of which the 327 UseDirect ones each cost a Vercel
+// function invocation through /api/rc-proxy — roughly 15,700 a day, on par with the
+// entire watch poller, to feed a signal that is not shown to anyone
+// (SHOW_LIKELIHOOD is false in src/components/v2/likelihood.ts).
+//
+// Two switches, deliberately: `probe_targets.active` was set false for all 502 rows
+// so accrual stopped immediately without a deploy, and this flag so re-running
+// scripts/seed-probe-targets.ts — which sets active = true — cannot silently restart
+// it. Set PROBE_ENABLED=true in worker/fly.toml AND reactivate the rows to resume.
+// The 137k observations already collected are untouched.
+const PROBE_ENABLED = process.env.PROBE_ENABLED === 'true';
 let probeRunning = false;
 
 /** The [start, checkout) of a PROBE_NIGHTS stay arriving the next Saturday on or
@@ -255,7 +267,7 @@ async function probeWholeStayOpen(source: string, campgroundId: string, start: s
 /** Probe every active roster target once across the standard lead windows and
  *  record the results. Non-overlapping and best-effort. */
 async function probeRosterIfDue(): Promise<void> {
-  if (probeRunning) return;
+  if (!PROBE_ENABLED || probeRunning) return;
   probeRunning = true;
   try {
     const targets = await query<{ campground_id: string; source: string }>(
@@ -1096,9 +1108,15 @@ async function main() {
 
   // Feature E probe roster: sample high-demand campgrounds hourly so the
   // cancellation-likelihood signal covers popular sites nobody is watching.
-  console.log(`[poller] probe roster — every ${(PROBE_INTERVAL_MS / 3_600_000).toFixed(1)}h, leads [${PROBE_LEAD_DAYS.join(', ')}]d × ${PROBE_NIGHTS}n`);
-  probeRosterIfDue();
-  setInterval(probeRosterIfDue, PROBE_INTERVAL_MS);
+  // Log the state either way — a silently-absent background job is how you end up
+  // wondering months later whether it was ever running.
+  if (PROBE_ENABLED) {
+    console.log(`[poller] probe roster — every ${(PROBE_INTERVAL_MS / 3_600_000).toFixed(1)}h, leads [${PROBE_LEAD_DAYS.join(', ')}]d × ${PROBE_NIGHTS}n`);
+    probeRosterIfDue();
+    setInterval(probeRosterIfDue, PROBE_INTERVAL_MS);
+  } else {
+    console.log('[poller] probe roster OFF (PROBE_ENABLED != true) — feature E accrual stopped');
+  }
 
   // Alert-health canary — non-overlapping, best-effort (never throws into the loop).
   console.log(

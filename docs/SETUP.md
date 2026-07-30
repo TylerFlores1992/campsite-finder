@@ -112,15 +112,23 @@ Supports `--limit=N` and `--dry-run`.
 > because the key isn't in the environment it can reach. The nightly sync gets it from
 > the GitHub Action's secrets.
 
-**Feature-E probe roster (not a catalog sync).** `scripts/seed-probe-targets.ts`
-populates `probe_targets` — the high-demand campgrounds the worker probes hourly for
-the cancellation-likelihood signal. It's a **one-time-ish demand scan** (keeps sites
-booked solid on a peak weekend), run by hand per source:
+**Feature-E probe roster (not a catalog sync) — TURNED OFF 2026-07-30.** Both switches
+are off: `PROBE_ENABLED = "false"` in `worker/fly.toml`, and all 502 `probe_targets`
+rows are `active = false`. Nothing is being probed and nothing is accruing. The reason
+was cost — the 327 UseDirect targets each spent a Vercel function invocation through
+`/api/rc-proxy`, ~15,700/day, for a signal `SHOW_LIKELIHOOD` hides. **Running the seed
+script below sets `active = true` again**, which is exactly what `PROBE_ENABLED` is
+there to stop; flip both, deliberately, if you mean to resume.
+
+`scripts/seed-probe-targets.ts` populates `probe_targets` — the high-demand campgrounds
+the worker probes hourly for the cancellation-likelihood signal. It's a **one-time-ish
+demand scan** (keeps sites booked solid on a peak weekend), run by hand per source:
 `NODE_USE_ENV_PROXY=1 npx tsx scripts/seed-probe-targets.ts --source=<src>` (add `--dry`
-to preview). As of 2026-07-25 the roster is **502 active** across rec.gov, all 10
+to preview). As of 2026-07-25 the roster was **502 rows** across rec.gov, all 10
 UseDirect states, and GoingToCamp (the seed's `isOpenInRange` supports all three; drop
-`--source` to default to rec.gov). It's data-only — the worker reads `probe_targets`
-live, so no redeploy. Migrations `020_availability_history` + `021_probe_targets` first.
+`--source` to default to rec.gov). Seeding is data-only — the worker reads
+`probe_targets` live, so no redeploy; flipping `PROBE_ENABLED` does need one.
+Migrations `020_availability_history` + `021_probe_targets` first.
 Sanity-check the resulting signal with `scripts/likelihood-readout.mts`. See
 "Cancellation-likelihood (feature E)" in `docs/CONTEXT.md`.
 
