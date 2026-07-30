@@ -19,7 +19,14 @@ The old pages and 14 orphaned components are **deleted**; `/v2` no longer exists
   `/camping` + `/camping/<state>` are SEO landing pages outside the group.
 - **Primitives** `src/components/ui/`, **screens** `src/components/v2/`.
 - **Watch creation is gated in ONE component** (`v2/WatchCta.tsx` + `useSubscription`);
-  `v2/Pricing.tsx` follows the same rule. Neither renders a price in the native app.
+  `v2/Pricing.tsx` and `v2/SubscribeCta.tsx` follow the same rule. None renders a price
+  in the native app. `unknown` (a failed status lookup) is treated as "don't nag",
+  never as "not subscribed" — that rule is why a Clerk blip can't tell a paying
+  subscriber to subscribe.
+- **A subscriber is never sold to.** `v2/PricingSection.tsx` returns a "here's what you
+  can do" block for `subscribed`, not the launch-pricing pitch — a paying customer
+  reading "$2.50 a month, subscribe now and keep your rate" reads it as a billing
+  failure.
 - **`robots` is per page, not in the layout.** `/` and `/search` index; `/watches`,
   `/settings`, `/new` don't; `/manage/<token>` is `noindex, nocache` — the URL contains
   the token that authorises the watch.
@@ -54,6 +61,38 @@ all gated behind a 20-sample **honesty threshold** (numbers hidden until honest)
   the aggregation + gate. **Currently OFF everywhere:** `SHOW_LIKELIHOOD = false` in
   `src/components/v2/likelihood.ts` is the single switch. Accrual continues regardless.
 
+## Alerting — the claim (read this before touching the poller)
+The decision "may we alert for this?" is `worker/claim.ts`, keyed on
+**(watch_id, site_key)** in `watch_site_alerts` (migration 026), 1-hour window.
+- It was one timestamp per WATCH until 2026-07-30, so the first site to open silenced
+  every other site on that watch for an hour — and because the auto-cart lane shares
+  the claim, the second site was never CARTED either, not merely un-announced.
+- Sources with no site id (ReserveAmerica, GoingToCamp, TN/SC) collapse onto a `'*'`
+  sentinel and keep the old per-watch behaviour, which is correct for them.
+- `claim.ts` is separate from `poller.ts` because importing the poller STARTS it —
+  that's what made the most consequential code in the repo untestable.
+
+## Tests exist now — `npm test`
+`node:test` via tsx, no framework dependency. `*.test.mts` under `worker/`: the
+alerting claim, the admin cost arithmetic, canary thresholds. **They hit the real DB
+on purpose** (the claim's correctness lives inside one `INSERT .. ON CONFLICT ..
+WHERE`; a mock would test a fake). The fixture watch is dated 2020 so the poller's
+`end_date > CURRENT_DATE` filter can never see it. Before trusting a regression test,
+break the code and watch it fail — that's how the claim suite was validated.
+
+## Reservation-provider resilience (2026-07-30)
+Both rec.gov and UseDirect now have a throttle breaker; **UseDirect had nothing** until
+this date, which is how every RC fetch could fail every 15s indefinitely.
+- **RC's API is flaky** — 20 identical calls returned nineteen 200s and one 500. Retry
+  (`UD_ATTEMPTS`) is the fix; there was none.
+- **A 403 from these WAFs means "slow down", not "never"** — one Virginia sync got 403
+  on 83 calls and 200 on 193, same address, same run. Retried with an 8x longer backoff.
+- **Fly cannot reach the California RDR host at all** (three attempts, all timeouts).
+  That is why `/api/rc-proxy` exists — don't "simplify" it away.
+- `/api/rc-proxy` now returns the real `upstreamStatus`; it used to collapse everything
+  to a bare 502 and the worker discarded the body, so the one identifying fact reached
+  neither log.
+
 ## Deploy (recap — details in SETUP.md)
 - **Website → Vercel**, auto-deploys on push to `master`.
 - **Worker → Fly** `campsite-finder-worker`, via the **`worker-deploy.yml` GitHub
@@ -68,6 +107,14 @@ all gated behind a 20-sample **honesty threshold** (numbers hidden until honest)
 
 ## Web-session gotchas (this environment)
 - **Node `fetch` needs `NODE_USE_ENV_PROXY=1`** to reach Supabase / reservation portals.
+- **The credentials are process env vars — THERE IS NO `.env` FILE.** `grep`ping `.env*`
+  finds nothing and looks exactly like "no credentials here". It isn't; check
+  `printenv`. Cost a wrong "I can't build here" call on 2026-07-29 with Clerk, Stripe,
+  Supabase and Mapbox all present. They are the **LIVE** keys.
+- **Chromium can't reach Mapbox either** (`ERR_CONNECTION_RESET` — same TLS reset that
+  blocks browsing the live site). `NODE_USE_ENV_PROXY=1` does NOT help: it affects
+  Node's fetch, not the browser. So any full-page screenshot renders maps as a blank
+  grey box, and rec.gov CDN photos likewise — capture those on a real device.
 - **Live site can't be browsed** — the agent proxy resets headless-Chromium TLS. `curl`
   against camphawk.app DOES work and is the way to verify a deploy. To eyeball UI, use
   `scripts/screenshot-component.mts <preset>` (isolated component render on localhost;
@@ -91,17 +138,28 @@ all gated behind a 20-sample **honesty threshold** (numbers hidden until honest)
 
 ## Open / next session
 
+### iOS is SUBMITTED (2026-07-30) — build 5, awaiting review
+Release is set to **manual**, so approval does NOT put it live; you flip it. Privacy
+label published, age rating 4+, content rights yes, **availability United States only**,
+screenshots in all three size boxes (6.9" / 6.5" / 13" iPad — the iPad set is required
+because the Capacitor build declares iPad support). Everything Apple asked for is in
+`docs/APP-STORE.md`; §2 is the review-notes text to paste into any Resolution Center
+reply. The rejection to argue rather than code around is **3.1.3(b)** — the app has no
+purchase mechanism at all, which is the whole defence.
+
 ### DO THIS THE MOMENT THE APP IS LIVE
 **Turn on store link-out:** set `NATIVE_LINKOUT = true` in
 `src/components/v2/nativeSubscribe.tsx`. It sends non-subscribers in the app to
 camphawk.app to subscribe, and it is built and wired into all five surfaces — just dark.
+**Web-side, so a push to `master` reaches already-installed apps — no rebuild, no new
+review.** Smoke-test a real page after (`curl -sI camphawk.app/`).
 
-**Precondition, non-negotiable:** app availability must first be restricted to the
-**United States** in App Store Connect **and** Play Console. Both stores' anti-steering
-carve-outs (Apple 3.1.1 post-*Epic* contempt ruling; Play post-Ninth-Circuit) are
-**US-storefront only**, and showing this UI to a non-US storefront is a review failure
-that can reportedly cost the entitlement. Device locale is NOT a storefront check.
-Full reasoning in `docs/CONTEXT.md` → store-billing, and in the file's own header.
+**Precondition:** app availability restricted to the **United States**. **DONE on Apple
+(2026-07-30); NOT done on Play** — do it before an Android release, not after. Both
+stores' anti-steering carve-outs (Apple 3.1.1 post-*Epic* contempt ruling; Play
+post-Ninth-Circuit) are **US-storefront only**, and showing this UI to a non-US
+storefront is a review failure that can reportedly cost the entitlement. Device locale
+is NOT a storefront check. Full reasoning in `docs/CONTEXT.md` → store-billing.
 
 ### Mobile app — everything below needs `npm install && npx cap sync` + a REBUILD
 Shipped 2026-07-27, all native-side, so **a web deploy does not deliver them**:
@@ -111,10 +169,16 @@ launch URL now `/search` (not `/`, the only page with checkout) · Android back 
 first load · offline handling (`errorPath` shell + in-app banner).
 The **pricing fixes are already live** in installed apps — those were web-side.
 
-### Still unverified from the sandbox — click through signed in
-Watch creation end-to-end, Stripe checkout, the settings writes (phone save, auto-cart
-toggle), the campsite mute list on `/manage/<token>`, and the admin menu item for the
-owner. Revert of the whole swap is `git revert a029c27` if something is badly wrong.
+### Verified since / still unverified
+**Verified 2026-07-29–30:** account deletion end-to-end (Stripe `canceled`, row gone,
+Clerk empty, re-signup works), watch creation (18 active across two reservation
+systems), Stripe checkout (demo account `trialing`, card attached), and
+`GET /api/manage/<token>` returning the watch on production.
+
+**Still unverified — click through signed in:** the settings writes (phone save,
+auto-cart toggle), the campsite mute list on `/manage/<token>`, and the admin menu item
+for the owner. Revert of the whole swap is `git revert a029c27` if something is badly
+wrong.
 
 ### Known, not urgent
 - **`campgrounds.photos`: RIDB ingest FIXED and backfilled 2026-07-27.** Cause:
@@ -135,11 +199,21 @@ owner. Revert of the whole swap is `git revert a029c27` if something is badly wr
   consume the column, so they light up with no UI change.
   The other 3,544 rows (UseDirect / GoingToCamp / ReserveAmerica / state portals) are
   still empty and were NOT investigated — each portal needs its own look.
-- **Feature E has data** (81k observations, 510 campgrounds) but the probe roster
-  clusters at 14-20 and 45-51 days out, so the **4-7 day bucket is empty** - the window
-  a "tonight/this weekend" searcher cares about. Broaden the roster's lead spread before
-  turning `SHOW_LIKELIHOOD` on, or the ladder ships with holes.
-- **Costs tab**: six providers (Fly, Supabase, Clerk, Twilio, Mapbox, Mini PC) sit at
-  $0.00 and almost certainly aren't free, so net margin currently flatters.
+- **Feature E has data** (137k observations, 511 campgrounds as of 2026-07-30) but the
+  probe roster clusters at 14-20 and 45-51 days out, so the **4-7 day bucket is empty** -
+  the window a "tonight/this weekend" searcher cares about. Broaden the roster's lead
+  spread before turning `SHOW_LIKELIHOOD` on, or the ladder ships with holes. Note the
+  **25 Virginia probe targets have been 403ing since ~2026-07-30 00:40** — see the
+  provider-resilience section; no user watch is affected, Feature E is off.
+- **Costs tab**: the "$0.00 providers" note is resolved — 6 rows, none at zero, after a
+  dedupe (Vercel/Claude/Apple/Cloudflare each had 2-3 copies inflating fixed costs to
+  ~$149/mo against a real ~$50). It now also tracks **one-time costs** and **lifetime
+  spend**, the latter needing a `started_at` per row (defaults to the date of entry).
+  **A cancelled service accrues forever** — `ended_at` was deliberately dropped in
+  migration 030, so deleting the row is the only way to stop it, which also erases its
+  history. Details in `docs/CONTEXT.md`.
+- **The admin banner used to cry wolf daily.** Canary staleness thresholds now live in
+  `src/lib/health-thresholds.ts` — they were in three places and disagreed with
+  `worker/fly.toml`. If you change the cadence there, change it there too.
 - **Search Console**: submitted, ~7,387 URLs. Expect "Discovered - currently not
   indexed" for weeks; that's the normal queue, not a fault.
