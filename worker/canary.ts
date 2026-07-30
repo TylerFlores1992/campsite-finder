@@ -159,7 +159,10 @@ export async function runDeliveryCanary(): Promise<void> {
   // of texts. We key off the last real delivery attempt recorded in the DB (skips don't
   // count), so N reboots inside one interval still send only once. The scheduled
   // interval tick is naturally older than the interval, so it always proceeds.
-  const intervalMs = Number(process.env.CANARY_DELIVERY_INTERVAL_MS ?? 6 * 60 * 60 * 1000);
+  // Default matches what production actually sets in worker/fly.toml (24h). It used
+  // to default to 6h, which nothing ran at — and `/api/health/status` had calibrated
+  // its staleness threshold against that phantom cadence.
+  const intervalMs = Number(process.env.CANARY_DELIVERY_INTERVAL_MS ?? 24 * 60 * 60 * 1000);
   const [last] = await query<{ last_run_at: string | null }>(
     `SELECT max(last_run_at)::text AS last_run_at FROM alert_canary
      WHERE key IN ('delivery:email', 'delivery:sms') AND detail NOT LIKE 'skipped%'`

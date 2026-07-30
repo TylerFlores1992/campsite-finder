@@ -92,7 +92,10 @@ const RECGOV_CONCURRENCY = 4;
 // avoid spamming the canary sink — /api/health/status staleness thresholds track
 // these (see the route). Both overridable via env.
 const CANARY_DETECT_INTERVAL_MS = Number(process.env.CANARY_DETECT_INTERVAL_MS ?? 120_000);
-const CANARY_DELIVERY_INTERVAL_MS = Number(process.env.CANARY_DELIVERY_INTERVAL_MS ?? 6 * 60 * 60 * 1000);
+// 24h to match worker/fly.toml, which is the only cadence this has ever run at.
+// This and worker/canary.ts must agree: canary.ts throttles at 0.9x the interval,
+// so a smaller default there would let a restart re-send a real email + SMS.
+const CANARY_DELIVERY_INTERVAL_MS = Number(process.env.CANARY_DELIVERY_INTERVAL_MS ?? 24 * 60 * 60 * 1000);
 // Self-heal watchdog: if no heartbeat has landed in the DB for this long, the
 // machine's networking has wedged (2026-07-22 incident — process up, all egress
 // timing out, alerting silently dead). Exit so Fly reboots the microVM and
@@ -474,23 +477,58 @@ async function loadWatches(): Promise<WatchRow[]> {
      JOIN users u ON u.id = w.user_id
      WHERE w.active = true
        AND w.end_date > CURRENT_DATE
-       AND (w.notification_sent_at IS NULL OR w.notification_sent_at < NOW() - ${RENOTIFY_WINDOW})`
+       `
   );
+  // NOTE: this deliberately no longer filters on notification_sent_at. The cooldown
+  // is per (watch, site) now — see claimNotification — and a watch that is never
+  // CHECKED can never reveal that a different site opened. Excluding it here was
+  // what made a new site invisible for up to an hour.
+  //
+  // Load is unchanged in the steady state: the candidate set is now "every active
+  // watch", which is exactly what it already was whenever nothing had alerted
+  // recently, and fetches are deduplicated per campground+month regardless.
 }
 
+/** Sources with no per-site id report campground-level availability only. */
+const WHOLE_CAMPGROUND_SITE_KEY = '*';
+
 /**
- * Atomically claim the right to notify for this watch. Returns true if we won
- * the claim; false if the Campflare webhook (or a concurrent cycle) got there first.
+ * Atomically claim the right to notify for this watch AND THIS SITE. Returns true
+ * if we won the claim; false if a concurrent cycle got there first, or if this
+ * exact site already alerted inside the window.
+ *
+ * The cooldown is per (watch, site), not per watch. The old per-watch version meant
+ * the first site to open silenced every OTHER site on that watch for a full hour —
+ * including the auto-cart lane, which shares this claim, so a new site was not just
+ * un-alerted but never carted. See migration 026.
+ *
+ * `campsiteId` is null for ReserveAmerica / GoingToCamp / TN-SC, which cannot name a
+ * site; those collapse onto one sentinel key and so keep the old per-watch behaviour,
+ * which is the correct reading of what those sources actually tell us.
+ *
+ * Atomicity lives in the single statement: a brand-new pair INSERTs, an existing pair
+ * only UPDATEs when it is outside the window, and RETURNING is empty otherwise — so
+ * two cycles racing the same pair cannot both win.
  */
-async function claimNotification(watchId: string): Promise<boolean> {
-  const rows = await mutate<{ id: string }>(
-    `UPDATE watches SET notification_sent_at = NOW()
-     WHERE id = $1 AND active = true
-       AND (notification_sent_at IS NULL OR notification_sent_at < NOW() - ${RENOTIFY_WINDOW})
-     RETURNING id`,
-    [watchId]
+async function claimNotification(watchId: string, campsiteId?: string | null): Promise<boolean> {
+  const siteKey = campsiteId ?? WHOLE_CAMPGROUND_SITE_KEY;
+  const rows = await mutate<{ watch_id: string }>(
+    `INSERT INTO watch_site_alerts (watch_id, site_key, last_alert_at)
+     SELECT $1, $2, NOW() FROM watches w WHERE w.id = $1 AND w.active = true
+     ON CONFLICT (watch_id, site_key) DO UPDATE SET last_alert_at = NOW()
+       WHERE watch_site_alerts.last_alert_at < NOW() - ${RENOTIFY_WINDOW}
+     RETURNING watch_id`,
+    [watchId, siteKey]
   );
-  return rows.length > 0;
+  if (rows.length === 0) return false;
+
+  // Keep the watch-level stamp current. It is no longer what gates a notification,
+  // but WatchCard renders "last alerted" from it and the Campflare webhook still
+  // dedupes on it, so letting it go stale would misreport both.
+  await mutate('UPDATE watches SET notification_sent_at = NOW() WHERE id = $1', [watchId]).catch(
+    (e) => console.error('[poller] notification_sent_at stamp failed (non-fatal):', e)
+  );
+  return true;
 }
 
 /**
@@ -745,8 +783,10 @@ async function cycle(): Promise<void> {
     const matchStart = result.dates[0] ?? watch.start_date;
     const matchEnd = checkoutAfter(result.dates, watch.end_date);
 
-    if (!(await claimNotification(watch.id))) {
-      console.log(`[poller] watch ${watch.id}: availability found but already notified — skipping`);
+    if (!(await claimNotification(watch.id, result.campsiteId))) {
+      console.log(
+        `[poller] watch ${watch.id}: ${result.campsiteId ?? 'campground'} availability found but already notified — skipping`
+      );
       continue;
     }
 
@@ -907,7 +947,10 @@ async function autocartCycle(): Promise<void> {
     for (const watch of watches) {
       const result = availableDatesForWatch(watch, monthData);
       if (result.dates.length === 0) continue;
-      if (!(await claimNotification(watch.id))) continue; // main cycle / prior tick won the claim
+      // Per-site claim: a watch that already alerted for a DIFFERENT site must still
+      // be able to cart this one. That was the sharper half of the old bug — the
+      // opening was not merely un-alerted, no autocart_jobs row was ever queued.
+      if (!(await claimNotification(watch.id, result.campsiteId))) continue;
       const payload = autocartPayload(watch, result);
       if (!result.campsiteId) {
         // No specific site to cart → behave like a normal alert.

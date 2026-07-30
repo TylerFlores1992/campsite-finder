@@ -42,6 +42,8 @@ export default function WatchesList() {
   const [sessionExpired, setSessionExpired] = useState(false);
   // null = not looked up yet; '' or null phone = no number saved.
   const [phone, setPhone] = useState<string | null | undefined>(undefined);
+  // undefined = not looked up yet. Same "don't nag on a failed read" rule as phone.
+  const [autocartConnected, setAutocartConnected] = useState<boolean | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,8 +79,10 @@ export default function WatchesList() {
     let cancelled = false;
     fetch("/api/user/autocart")
       .then((r) => (r.ok ? r.json() : null))
-      .then((j: { sessionExpired?: boolean } | null) => {
-        if (!cancelled && j) setSessionExpired(Boolean(j.sessionExpired));
+      .then((j: { sessionExpired?: boolean; connected?: boolean } | null) => {
+        if (cancelled || !j) return;
+        setSessionExpired(Boolean(j.sessionExpired));
+        setAutocartConnected(Boolean(j.connected));
       })
       .catch(() => {
         /* non-fatal — the card just stays in its resting state */
@@ -159,6 +163,12 @@ export default function WatchesList() {
 
   if (!watches || watches.length === 0) return <FirstRun />;
 
+  // Auto-cart only exists for rec.gov ("ridb"), so prompting someone whose watches
+  // are all state-park portals would be offering something we cannot do for them.
+  const recgovWatches = watches.filter(
+    (w) => w.active !== false && w.campground_source === "ridb",
+  ).length;
+
   const stalledCount = watches.filter(
     (w) => w.campground_source && stalledSources.has(w.campground_source),
   ).length;
@@ -193,6 +203,28 @@ export default function WatchesList() {
             className="mt-1.5 inline-block text-ch-body font-bold text-ch-green hover:text-ch-green-deep"
           >
             Turn on text alerts
+          </Link>
+        </div>
+      )}
+
+      {/* Auto-cart was never connected. Sibling of the phone nudge above and the
+          same rule: only when there is something to lose (a live rec.gov watch),
+          and never on an unread status, so a failed fetch can't invent a warning. */}
+      {autocartConnected === false && recgovWatches > 0 && (
+        <div className="mb-3.5 rounded-[13px] border border-ch-line bg-ch-card px-3.5 py-3">
+          <p className="text-ch-body font-bold">Auto-cart isn&apos;t connected</p>
+          <p className="mt-1 text-ch-meta leading-normal text-ch-ink-2">
+            {recgovWatches === 1
+              ? "One of your watches is on Recreation.gov."
+              : `${recgovWatches} of your watches are on Recreation.gov.`}{" "}
+            Connect once and we&apos;ll put an opening straight into your cart, so it&apos;s held
+            while you get to your phone. You&apos;ll still get the alert either way.
+          </p>
+          <Link
+            href="/connect"
+            className="mt-1.5 inline-block text-ch-body font-bold text-ch-green hover:text-ch-green-deep"
+          >
+            Connect auto-cart
           </Link>
         </div>
       )}

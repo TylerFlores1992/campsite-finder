@@ -22,7 +22,25 @@ interface Check {
 
 const WORKER_STALE_MS = 5 * 60 * 1000; // poller beats every ~15s
 const DETECT_STALE_MS = 10 * 60 * 1000; // detection canary runs every ~2m
-const DELIVERY_STALE_MS = 7 * 60 * 60 * 1000; // delivery canary runs every ~6h
+/**
+ * Delivery-canary staleness, DERIVED from the interval rather than hardcoded.
+ *
+ * This was `7h`, chosen to match `worker/canary.ts`'s 6h code default — but
+ * production overrides that to 24h in `worker/fly.toml`. So every day, about
+ * seven hours after the daily canary ran, all three delivery rows went `warn`
+ * and stayed there for the next seventeen, and the admin banner read
+ * "3 things need attention" almost permanently. Nothing was ever wrong; the
+ * threshold was measuring against a cadence the worker doesn't use.
+ *
+ * The worker's config isn't visible from Vercel, so the honest fix is to read
+ * the same env var with the same default and add slack for a late run. **If you
+ * change `CANARY_DELIVERY_INTERVAL_MS` in `worker/fly.toml`, set it here on
+ * Vercel too** — that split is the drift this comment exists to stop.
+ */
+const DELIVERY_INTERVAL_MS = Number(
+  process.env.CANARY_DELIVERY_INTERVAL_MS ?? 24 * 60 * 60 * 1000
+);
+const DELIVERY_STALE_MS = DELIVERY_INTERVAL_MS * 1.15;
 const SYNC_STALE_MS = 48 * 60 * 60 * 1000; // catalog syncs are ~nightly/hourly
 const BOT_STALE_MS = 5 * 60 * 1000; // roster poll ~2s; matches poller's isBotOnline intent
 
