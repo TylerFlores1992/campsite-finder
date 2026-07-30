@@ -92,7 +92,10 @@ const RECGOV_CONCURRENCY = 4;
 // avoid spamming the canary sink — /api/health/status staleness thresholds track
 // these (see the route). Both overridable via env.
 const CANARY_DETECT_INTERVAL_MS = Number(process.env.CANARY_DETECT_INTERVAL_MS ?? 120_000);
-const CANARY_DELIVERY_INTERVAL_MS = Number(process.env.CANARY_DELIVERY_INTERVAL_MS ?? 6 * 60 * 60 * 1000);
+// 24h to match worker/fly.toml, which is the only cadence this has ever run at.
+// This and worker/canary.ts must agree: canary.ts throttles at 0.9x the interval,
+// so a smaller default there would let a restart re-send a real email + SMS.
+const CANARY_DELIVERY_INTERVAL_MS = Number(process.env.CANARY_DELIVERY_INTERVAL_MS ?? 24 * 60 * 60 * 1000);
 // Self-heal watchdog: if no heartbeat has landed in the DB for this long, the
 // machine's networking has wedged (2026-07-22 incident — process up, all egress
 // timing out, alerting silently dead). Exit so Fly reboots the microVM and
