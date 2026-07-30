@@ -34,10 +34,13 @@ export interface CostItem {
   billing_period: BillingPeriod;
   notes: string | null;
   sort_order: number;
-  /** ISO date the cost STARTED. Null = unknown; lifetime is then unknowable, not 0. */
+  /**
+   * ISO date the cost started. Defaults to the day the row was entered (migration
+   * 030). Still typed nullable and still handled as "unknown" rather than zero: a
+   * row created before that default existed, or one written by something that
+   * bypasses the API, must not silently count as free.
+   */
   started_at?: string | null;
-  /** ISO date it stopped. Null = still running. */
-  ended_at?: string | null;
 }
 
 /**
@@ -144,18 +147,17 @@ function monthsBetween(a: Date, b: Date): number {
  * cost nothing.
  */
 export function billedPeriods(
-  item: Pick<CostItem, 'billing_period' | 'started_at' | 'ended_at'>,
+  item: Pick<CostItem, 'billing_period' | 'started_at'>,
   asOf: Date = new Date()
 ): number | null {
-  if (!item.started_at) return null; // unknown start — see migration 029
+  if (!item.started_at) return null; // unknown start — never treat as zero
   const start = new Date(`${item.started_at}T00:00:00Z`);
   if (Number.isNaN(start.getTime())) return null;
-  const endsAt = item.ended_at ? new Date(`${item.ended_at}T00:00:00Z`) : null;
-  const until = endsAt && endsAt < asOf ? endsAt : asOf;
-  if (until < start) return 0;
+  if (asOf < start) return 0; // dated in the future — nothing billed yet
 
+  // A one-time cost is counted once, whenever it happened.
   if (item.billing_period === 'one_time') return 1;
-  const months = monthsBetween(start, until);
+  const months = monthsBetween(start, asOf);
   if (item.billing_period === 'yearly') return Math.floor(months / 12) + 1;
   return months + 1;
 }
@@ -167,7 +169,7 @@ export function billedPeriods(
  * figure unknowable, and rendering it as 0 would quietly understate the total.
  */
 export function lifetimeCents(
-  item: Pick<CostItem, 'amount_cents' | 'billing_period' | 'started_at' | 'ended_at'>,
+  item: Pick<CostItem, 'amount_cents' | 'billing_period' | 'started_at'>,
   asOf: Date = new Date()
 ): number | null {
   const periods = billedPeriods(item, asOf);

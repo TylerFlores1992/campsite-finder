@@ -147,7 +147,7 @@ export default async function AdminPage() {
           // vanished. A caught error that returns an empty list is indistinguishable
           // from "no cost items", which is exactly why it went unnoticed.
           `SELECT id, label, category, amount_cents, billing_period, notes, sort_order,
-                  started_at::text, ended_at::text
+                  started_at::text
              FROM cost_items ORDER BY sort_order, label`
         ),
         []

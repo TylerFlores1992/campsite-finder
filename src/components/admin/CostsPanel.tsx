@@ -137,9 +137,8 @@ export default function CostsPanel({
           <td className="py-2 pr-3 text-ch-ink-2 capitalize">{it.category}</td>
           <td className="py-2 pr-3 text-ch-muted">
             {it.notes || '—'}
-            {/* Only meaningful where it drives accrual. */}
-            {showPerMonth && !it.started_at && (
-              <span className="ml-1 text-ch-fine text-ch-alert">no start date</span>
+            {it.started_at && (
+              <span className="ml-1 text-ch-fine text-ch-muted">from {it.started_at}</span>
             )}
           </td>
           <td className="py-2 pr-3 text-right whitespace-nowrap text-ch-ink-2">
@@ -244,8 +243,9 @@ export default function CostsPanel({
           </div>
         </dl>
         <p className="mt-2 text-ch-fine leading-normal text-ch-muted">
-          Recurring items are counted from their start date, billed in advance — so a plan
-          that began this month counts once. A cancelled item stops accruing at its end date.
+          Counted from each item&apos;s start date, billed in advance — a monthly plan adds one
+          charge per month, a yearly one per year, and a one-time cost counts once. New items
+          start from the day you add them.
         </p>
         {lifetime.unknownCount > 0 && (
           <p className="mt-1.5 text-ch-fine leading-normal text-ch-alert">
@@ -477,7 +477,6 @@ function EditRow({
   // Blank stays blank and saves as NULL. Defaulting to today would invent a start
   // date and with it a lifetime figure that looks measured but isn't.
   const [startedAt, setStartedAt] = useState(item.started_at ?? '');
-  const [endedAt, setEndedAt] = useState(item.ended_at ?? '');
 
   const cents = Math.max(0, Math.round(Number(dollars) * 100) || 0);
   const perMonthCents = monthlyCents({ amount_cents: cents, billing_period: period });
@@ -520,33 +519,21 @@ function EditRow({
           aria-label="Notes"
           className={`${field} w-full min-w-0`}
         />
-        {/* Start/end live in the notes cell rather than getting their own columns —
-            this table is already six columns wide on a phone. Start drives lifetime
-            spend; end stops a cancelled item accruing forever. */}
-        <span className="mt-1 flex flex-wrap items-center gap-1 text-ch-fine text-ch-muted">
-          <label className="flex items-center gap-1">
-            <span className="sr-only">Start date</span>
-            <span aria-hidden="true">from</span>
-            <input
-              type="date"
-              value={startedAt}
-              onChange={(e) => setStartedAt(e.target.value)}
-              aria-label="Start date"
-              className={`${field} w-[8.5rem] text-ch-fine`}
-            />
-          </label>
-          <label className="flex items-center gap-1">
-            <span className="sr-only">End date, if cancelled</span>
-            <span aria-hidden="true">to</span>
-            <input
-              type="date"
-              value={endedAt}
-              onChange={(e) => setEndedAt(e.target.value)}
-              aria-label="End date if cancelled"
-              className={`${field} w-[8.5rem] text-ch-fine`}
-            />
-          </label>
-        </span>
+        {/* ONE date, living in the notes cell rather than taking its own column —
+            this table is already wide on a phone. It is when the cost started, which
+            is all lifetime spend needs: a recurring item then accrues one charge per
+            month or per year, and a one-time item counts once. New rows default to
+            today, so this is normally only touched to correct something older. */}
+        <label className="mt-1 flex items-center gap-1 text-ch-fine text-ch-muted">
+          <span aria-hidden="true">started</span>
+          <input
+            type="date"
+            value={startedAt}
+            onChange={(e) => setStartedAt(e.target.value)}
+            aria-label="Date this cost started"
+            className={`${field} w-[8.5rem] text-ch-fine`}
+          />
+        </label>
       </td>
       <td className="py-2 pr-3">
         <div className="flex items-center justify-end gap-1">
@@ -595,7 +582,6 @@ function EditRow({
                 amount_cents: cents,
                 billing_period: period,
                 started_at: startedAt || null,
-                ended_at: endedAt || null,
               })
             }
             disabled={saving}

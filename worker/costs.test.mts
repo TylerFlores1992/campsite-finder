@@ -65,8 +65,7 @@ const dated = (
   amount_cents: number,
   billing_period: CostItem['billing_period'],
   started_at: string | null,
-  ended_at: string | null = null,
-): CostItem => ({ ...item(amount_cents, billing_period), started_at, ended_at });
+): CostItem => ({ ...item(amount_cents, billing_period), started_at });
 
 const AS_OF = new Date('2026-07-30T12:00:00Z');
 
@@ -87,9 +86,9 @@ test('a yearly plan bills once until the year is up', () => {
   assert.equal(lifetimeCents(dated(9900, 'yearly', '2025-01-01'), AS_OF), 19800);
 });
 
-test('an ended item stops accruing at its end date', () => {
-  // Cancelled in May: Mar, Apr, May — not through July.
-  assert.equal(billedPeriods(dated(1000, 'monthly', '2026-03-01', '2026-05-10'), AS_OF), 3);
+test('a one-time cost counts exactly once, however old', () => {
+  assert.equal(billedPeriods(dated(99900, 'one_time', '2020-01-01'), AS_OF), 1);
+  assert.equal(lifetimeCents(dated(99900, 'one_time', '2020-01-01'), AS_OF), 99900);
 });
 
 test('an unknown start date is UNKNOWN, never zero', () => {

@@ -18,7 +18,7 @@ const notFound = () => NextResponse.json({ error: 'not found' }, { status: 404 }
 
 async function listItems(): Promise<CostItem[]> {
   return query<CostItem>(
-    `SELECT id, label, category, amount_cents, billing_period, notes, sort_order, started_at::text, ended_at::text
+    `SELECT id, label, category, amount_cents, billing_period, notes, sort_order, started_at::text
        FROM cost_items ORDER BY sort_order, label`
   );
 }
@@ -47,27 +47,30 @@ export async function POST(req: NextRequest) {
   // that isn't a plain YYYY-MM-DD is treated as absent rather than passed to Postgres.
   const asDate = (v: unknown): string | null =>
     typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.trim()) ? v.trim() : null;
+  // Blank means "use the default", which Postgres fills with CURRENT_DATE on insert
+  // (migration 030). On UPDATE there is no default to fall back on, so a blank keeps
+  // whatever is already stored rather than wiping the date to NULL.
   const startedAt = asDate(body.started_at);
-  const endedAt = asDate(body.ended_at);
 
   if (body.id) {
     const [row] = await mutate<CostItem>(
       `UPDATE cost_items
           SET label = $1, category = $2, amount_cents = $3, billing_period = $4,
-              notes = $5, sort_order = $6, started_at = $7, ended_at = $8, updated_at = NOW()
-        WHERE id = $9
-        RETURNING id, label, category, amount_cents, billing_period, notes, sort_order, started_at::text, ended_at::text`,
-      [label, category, cents, period, notes, sortOrder, startedAt, endedAt, body.id]
+              notes = $5, sort_order = $6, started_at = COALESCE($7, started_at),
+              updated_at = NOW()
+        WHERE id = $8
+        RETURNING id, label, category, amount_cents, billing_period, notes, sort_order, started_at::text`,
+      [label, category, cents, period, notes, sortOrder, startedAt, body.id]
     );
     if (!row) return NextResponse.json({ error: 'not found' }, { status: 404 });
     return NextResponse.json({ item: row });
   }
 
   const [row] = await mutate<CostItem>(
-    `INSERT INTO cost_items (label, category, amount_cents, billing_period, notes, sort_order, started_at, ended_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     RETURNING id, label, category, amount_cents, billing_period, notes, sort_order, started_at::text, ended_at::text`,
-    [label, category, cents, period, notes, sortOrder, startedAt, endedAt]
+    `INSERT INTO cost_items (label, category, amount_cents, billing_period, notes, sort_order, started_at)
+     VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, CURRENT_DATE))
+     RETURNING id, label, category, amount_cents, billing_period, notes, sort_order, started_at::text`,
+    [label, category, cents, period, notes, sortOrder, startedAt]
   );
   return NextResponse.json({ item: row });
 }
