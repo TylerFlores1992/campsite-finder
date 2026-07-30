@@ -12,11 +12,10 @@
 import { query, mutate } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
 import { hasReserveAmericaAvailabilityInRange } from '../src/lib/availability/reserveamerica';
-import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
-import { fetchLocations } from '../src/lib/sources/goingtocamp/client';
+import { fetchGrid, facilityIdFromCampgroundId } from '../src/lib/sources/reservecalifornia/client';
+import { hasGoingToCampAvailabilityInRange } from '../src/lib/availability/goingtocamp';
 import { fetchAvailabilityBatch } from '../src/lib/sources/tnsc/client';
 import { USEDIRECT_PROVIDERS } from '../src/lib/sources/reservecalifornia/providers';
-import { GOINGTOCAMP_PROVIDERS } from '../src/lib/sources/goingtocamp/providers';
 import { TNSC_PROVIDERS } from '../src/lib/sources/tnsc/providers';
 import { sendEmail } from '../src/lib/notifications/email';
 import { sendSms } from '../src/lib/notifications/sms';
@@ -125,13 +124,37 @@ export async function runDetectionCanary(): Promise<void> {
   }]);
 
   probes.push(['detect:reservecalifornia', async () => {
-    const types = await fetchUnitTypes(USEDIRECT_PROVIDERS[0]);
-    return `UseDirect ${USEDIRECT_PROVIDERS[0].source}: ${types.length} unit types`;
+    // MUST be /search/grid, the endpoint the poller actually alerts from — NOT
+    // /fd/unittypes, which is what this probed until 2026-07-30. On that day RC's
+    // grid endpoint was dropping roughly 40% of requests, every RC watch was going
+    // unchecked, and this canary sat green reporting "146 unit types" because the
+    // catalog endpoint was perfectly healthy. A canary on a neighbouring endpoint
+    // is worse than none: it actively vouches for a path it never touched.
+    //
+    // fetchGrid throws (findRCOpenUnit swallows, so it cannot be the probe), and
+    // the retry inside the client means a lone flaky 500 no longer trips this —
+    // which is right: one blip is not an outage, a sustained one is.
+    const provider = USEDIRECT_PROVIDERS[0];
+    const [rc] = await query<{ id: string }>(
+      `SELECT id FROM campgrounds WHERE source = 'reservecalifornia' ORDER BY id LIMIT 1`
+    ).catch(() => [] as { id: string }[]);
+    if (!rc) throw new Error('no reservecalifornia campgrounds in catalog');
+    const grid = await fetchGrid(provider, facilityIdFromCampgroundId(rc.id), from, to);
+    const units = Object.keys(grid.Facility?.Units ?? {}).length;
+    if (units === 0) throw new Error(`RC grid for ${rc.id} returned 0 units — availability path broken`);
+    return `RC ${rc.id} ${from}: ${units} units via /search/grid`;
   }]);
 
   probes.push(['detect:goingtocamp', async () => {
-    const locs = await fetchLocations(GOINGTOCAMP_PROVIDERS[0]);
-    return `GTC ${GOINGTOCAMP_PROVIDERS[0].state}: ${locs.length} locations`;
+    // Same correction: this probed fetchLocations (the catalog) and so could not see
+    // an availability outage. hasGoingToCampAvailabilityInRange throws on transport
+    // failure, unlike findGoingToCampOpen which deliberately swallows for the poller.
+    const [gtc] = await query<{ id: string }>(
+      `SELECT id FROM campgrounds WHERE source = 'goingtocamp' ORDER BY id LIMIT 1`
+    ).catch(() => [] as { id: string }[]);
+    if (!gtc) throw new Error('no goingtocamp campgrounds in catalog');
+    const open = await hasGoingToCampAvailabilityInRange(gtc.id, from, to, 1);
+    return `GTC ${gtc.id} ${from}: reachable (open=${open})`;
   }]);
 
   probes.push(['detect:tnsc', async () => {
