@@ -337,8 +337,20 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > >
 > > Covered by `worker/recgov-breaker.test.mts`, which drives the real state machine
 > > with a 1ms timeout (a timeout counts as a throttle, so it takes the 429 path without
-> > needing rec.gov to cooperate). Both the half-open and escalation assertions were
-> > confirmed to FAIL against the old behaviour before being trusted.
+> > needing rec.gov to cooperate). Every assertion was confirmed to FAIL against the
+> > behaviour it guards before being trusted.
+> >
+> > **A fifth bug, in the escalation itself, shipped and was caught in production the
+> > same evening** — worth knowing because the shape recurs. A failure recorded while
+> > the breaker is open is NOT necessarily a failed recovery probe: it may be a request
+> > that crossed a closed gate and was still in flight when the breaker tripped. At
+> > 23:12:55 the poller's fourth paced fetch did exactly that and doubled 60s to 120s in
+> > the same second it opened. `enterRecgovGate` now returns `isProbe`, and only a real
+> > probe may escalate; a stale in-flight failure is counted and otherwise ignored.
+> > **The first test written for this passed against the bug** — it began with the
+> > breaker already open, so all five calls were denied at the gate, reached no network
+> > and recorded nothing. Hence `__recgovBreakerReset()`: a concurrency test that does
+> > not assert its starting state is a test of nothing.
 > >
 > > **The last two issue-#14 items SHIPPED 2026-07-24 — the cascade is now bounded and
 > > self-healing:** (1) the rec.gov request timeout is no longer a hardcoded 10s — it's

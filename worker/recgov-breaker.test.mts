@@ -19,7 +19,8 @@ process.env.RECGOV_BREAKER_TRIP = '3';
 process.env.RECGOV_BREAKER_COOLDOWN_MS = '400';
 process.env.RECGOV_BREAKER_MAX_COOLDOWN_MS = '1600';
 
-const { getAvailabilityFromRecGov, recgovBreakerOpen, __recgovBreakerState } = await import(
+const { getAvailabilityFromRecGov, recgovBreakerOpen, __recgovBreakerState, __recgovBreakerReset } =
+  await import(
   '../src/lib/availability/recgov.ts'
 );
 
@@ -49,7 +50,34 @@ test('rec.gov breaker', async (t) => {
     assert.deepEqual(res.campsites, [], 'short-circuit returns empty = "unknown"');
   });
 
+  await t.test('in-flight failures that land after it opens do NOT escalate', async () => {
+    // The bug this catches shipped and was caught in production the same evening
+    // (2026-07-30 23:12:55): the poller's fourth paced fetch had already crossed a
+    // closed gate when the first three opened the breaker, so its failure was read as
+    // a failed recovery probe and doubled 60s to 120s in the same second. The earlier
+    // subtests miss it because their failures are sequential; a real cycle's overlap.
+    // Must start CLOSED — with the breaker open every call is denied at the gate,
+    // reaches no network, records nothing, and the test proves nothing. (The first
+    // version of this test did exactly that and passed against the bug.)
+    __recgovBreakerReset();
+    assert.equal(recgovBreakerOpen(), false, 'precondition: breaker closed');
+
+    // All five cross the gate synchronously before any await resolves — exactly how
+    // the poller's concurrent fetches behave. Three trip it; the last two then record
+    // their failures against an already-open breaker.
+    await Promise.all(Array.from({ length: 5 }, () => getAvailabilityFromRecGov(CG, MONTH)));
+
+    assert.equal(recgovBreakerOpen(), true, 'five failures must have opened it');
+    assert.equal(
+      __recgovBreakerState().cooldownMs,
+      400,
+      'stale in-flight failures must not escalate; only a real probe may'
+    );
+  });
+
   await t.test('half-open admits exactly ONE prober, not the whole cycle', async () => {
+    // Left OPEN at the base 400ms cooldown by the subtest above.
+    assert.equal(__recgovBreakerState().cooldownMs, 400);
     await sleep(450); // cooldown elapsed
     assert.equal(recgovBreakerOpen(), true, 'still nominally open until a probe succeeds');
 

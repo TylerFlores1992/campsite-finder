@@ -149,6 +149,15 @@ export function __recgovBreakerState(): {
   };
 }
 
+/** Reset to CLOSED. Tests only — each scenario needs a known starting state, and a
+ *  test that silently begins with the breaker already open is a test of nothing. */
+export function __recgovBreakerReset(): void {
+  recgovConsecutiveThrottles = 0;
+  recgovBreakerOpenUntil = 0;
+  recgovCooldownMs = RECGOV_BREAKER_COOLDOWN_MS;
+  recgovProbeInFlight = false;
+}
+
 /**
  * Decide whether this call may touch the network, and HALF-OPEN properly.
  *
@@ -161,21 +170,23 @@ export function __recgovBreakerState(): {
  * Now exactly ONE caller crosses as a probe; the rest keep short-circuiting until it
  * resolves. One request cannot re-trip a limit that needs three.
  */
-function enterRecgovGate(): { allowed: boolean; release: () => void } {
+function enterRecgovGate(): { allowed: boolean; isProbe: boolean; release: () => void } {
   const noop = () => {};
-  if (recgovBreakerOpenUntil === 0) return { allowed: true, release: noop }; // closed
-  if (Date.now() < recgovBreakerOpenUntil) return { allowed: false, release: noop }; // open
-  if (recgovProbeInFlight) return { allowed: false, release: noop }; // half-open, taken
+  const denied = { allowed: false, isProbe: false, release: noop };
+  if (recgovBreakerOpenUntil === 0) return { allowed: true, isProbe: false, release: noop }; // closed
+  if (Date.now() < recgovBreakerOpenUntil) return denied; // open
+  if (recgovProbeInFlight) return denied; // half-open, probe already taken
   recgovProbeInFlight = true;
   return {
     allowed: true,
+    isProbe: true,
     release: () => {
       recgovProbeInFlight = false;
     },
   };
 }
 
-function recordRecgovOutcome(throttled: boolean): void {
+function recordRecgovOutcome(throttled: boolean, isProbe: boolean): void {
   if (!throttled) {
     if (recgovBreakerOpenUntil !== 0) {
       console.log('[RecGov availability] throttle breaker CLOSED — rec.gov reachable again');
@@ -188,6 +199,19 @@ function recordRecgovOutcome(throttled: boolean): void {
 
   recgovConsecutiveThrottles++;
   const wasOpen = recgovBreakerOpenUntil !== 0;
+
+  // A failure that arrives while the breaker is open, from a caller that was NOT the
+  // recovery probe, is a request that had already crossed a closed gate and was still
+  // in flight when the breaker tripped. It is stale news about a decision already made.
+  // Count it, but it must not escalate the cooldown or push the deadline out.
+  //
+  // Observed in production within minutes of shipping the escalation (2026-07-30
+  // 23:12:55): the poller's fourth paced fetch landed in the same second the first
+  // three opened the breaker, was read as a failed probe, and doubled 60s to 120s
+  // instantly. The unit test missed it because its failures were sequential; a real
+  // cycle's are concurrent.
+  if (wasOpen && !isProbe) return;
+
   // Closed and not yet at the trip count: just count it.
   if (!wasOpen && recgovConsecutiveThrottles < RECGOV_BREAKER_TRIP) return;
   // A failed half-open probe means the throttle is still on, so wait longer than last
@@ -223,10 +247,10 @@ export async function getAvailabilityFromRecGov(
       { timeout: RECGOV_TIMEOUT_MS, headers: recgovHeaders(campgroundId) }
     );
     rawCampsites = response.data?.campsites ?? {};
-    recordRecgovOutcome(false); // reachable — reset/close the breaker
+    recordRecgovOutcome(false, gate.isProbe); // reachable — reset/close the breaker
   } catch (err) {
     console.warn(`[RecGov availability] Failed for ${campgroundId}/${month}:`, (err as Error).message);
-    recordRecgovOutcome(isThrottleError(err)); // count 429/timeout toward tripping the breaker
+    recordRecgovOutcome(isThrottleError(err), gate.isProbe); // count 429/timeout toward tripping the breaker
     // Return empty availability rather than crashing
   } finally {
     gate.release();
