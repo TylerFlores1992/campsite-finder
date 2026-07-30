@@ -35,6 +35,16 @@ const UD_BREAKER_COOLDOWN_MS = Number(process.env.UD_BREAKER_COOLDOWN_MS ?? 60_0
 // stalled sockets starved the pool and made every OTHER source time out too; RC had
 // no timeout at all, so it was a candidate to cause exactly that for everyone else.
 const UD_TIMEOUT_MS = Number(process.env.UD_TIMEOUT_MS ?? 15_000);
+// RETRY, which is the actual fix for what was happening on 2026-07-30. Measured
+// directly against ReserveCalifornia: 20 IDENTICAL requests, seconds apart, same
+// body and headers → nineteen 200s and one 500. Their RDR API is simply flaky. It
+// is not our IP (the same request 500s and 200s from the same machine), not the
+// date range (both long and short ranges do it), and not our headers.
+//
+// With no retry at all, every one of those blips was a watch silently not checked
+// that cycle. Three attempts turns a ~5% per-request failure into ~0.01%.
+const UD_ATTEMPTS = Number(process.env.UD_ATTEMPTS ?? 3);
+const UD_RETRY_BASE_MS = Number(process.env.UD_RETRY_BASE_MS ?? 250);
 
 const _breaker = new Map<string, { consecutive: number; openUntil: number }>();
 const breakerFor = (source: string) => {
@@ -173,22 +183,13 @@ export interface RCGrid {
  * and GitHub runners get 403'd directly). The proxy is passed the resolved base so
  * it forwards to the right state.
  */
-async function rdrFetch<T>(
+/** One attempt. Reports the effective upstream status so the caller can decide. */
+async function rdrAttempt<T>(
   provider: UseDirectProvider,
+  base: string,
   path: string,
-  opts: { method?: string; body?: unknown } = {}
-): Promise<T> {
-  // Breaker open: fail immediately without touching the network. This is the same
-  // outcome the caller was already getting from the failing request, minus the wait
-  // and minus another request feeding whatever is refusing us.
-  const brk = breakerFor(provider.source);
-  if (Date.now() < brk.openUntil) {
-    throw new Error(
-      `UseDirect ${provider.source} breaker open for ${Math.ceil((brk.openUntil - Date.now()) / 1000)}s — skipping ${path}`
-    );
-  }
-
-  const base = await rdrBase(provider);
+  opts: { method?: string; body?: unknown }
+): Promise<{ ok: true; data: T } | { ok: false; status: number | null; message: string; err?: unknown }> {
   const proxyUrl = process.env.RC_PROXY_URL;
   const proxySecret = process.env.RC_PROXY_SECRET ?? process.env.SYNC_SECRET;
 
@@ -202,32 +203,22 @@ async function rdrFetch<T>(
         signal: AbortSignal.timeout(UD_TIMEOUT_MS),
       });
     } catch (err) {
-      recordUseDirectOutcome(provider.source, isUseDirectThrottle(null, err));
-      throw err;
+      return { ok: false, status: null, message: `RC proxy ${path} → ${(err as Error).message}`, err };
     }
     if (!res.ok) {
-      // The proxy collapses EVERY non-ok upstream into a flat 502 and puts the real
-      // status in its body ({error: "upstream 403"}). Logging only the proxy's own
-      // 502 threw that away, which is why an outage on 2026-07-30 — 10 of 15 watches
-      // failing every cycle — could not be told apart from RC being down. It was not:
-      // the same call returned 200 in under a second from a datacenter IP at the time.
-      // Whatever the cause, the next occurrence should name itself.
-      const detail = await res.text().then(
-        (t) => t.slice(0, 200),
-        () => '<unreadable>'
-      );
-      // Judge the breaker on the UPSTREAM status the proxy reports, not the proxy's
-      // own flat 502 — otherwise a plain "path not allowed" 400 from our own code
-      // would look identical to being rate-limited.
+      // The proxy collapses every non-ok upstream into a flat 502 and puts the real
+      // status in its body ({error, upstreamStatus, detail}). Retry and breaker
+      // decisions must key off THAT, not the proxy's 502 — otherwise a "path not
+      // allowed" 400 from our own code is indistinguishable from a flaky upstream.
+      const detail = await res.text().then((t) => t.slice(0, 200), () => '<unreadable>');
       const upstream = /upstream (\d{3})/.exec(detail)?.[1];
-      recordUseDirectOutcome(
-        provider.source,
-        isUseDirectThrottle(upstream ? Number(upstream) : res.status)
-      );
-      throw new Error(`RC proxy ${path} → ${res.status} ${detail}`);
+      return {
+        ok: false,
+        status: upstream ? Number(upstream) : res.status,
+        message: `RC proxy ${path} → ${res.status} ${detail}`,
+      };
     }
-    recordUseDirectOutcome(provider.source, false);
-    return res.json() as Promise<T>;
+    return { ok: true, data: (await res.json()) as T };
   }
 
   let res: Response;
@@ -239,15 +230,56 @@ async function rdrFetch<T>(
       signal: AbortSignal.timeout(UD_TIMEOUT_MS),
     });
   } catch (err) {
-    recordUseDirectOutcome(provider.source, isUseDirectThrottle(null, err));
-    throw err;
+    return { ok: false, status: null, message: `RC RDR ${path} → ${(err as Error).message}`, err };
   }
   if (!res.ok) {
-    recordUseDirectOutcome(provider.source, isUseDirectThrottle(res.status));
-    throw new Error(`RC RDR ${opts.method ?? 'GET'} ${path} → ${res.status}`);
+    return {
+      ok: false,
+      status: res.status,
+      message: `RC RDR ${opts.method ?? 'GET'} ${path} → ${res.status}`,
+    };
   }
-  recordUseDirectOutcome(provider.source, false);
-  return res.json() as Promise<T>;
+  return { ok: true, data: (await res.json()) as T };
+}
+
+async function rdrFetch<T>(
+  provider: UseDirectProvider,
+  path: string,
+  opts: { method?: string; body?: unknown } = {}
+): Promise<T> {
+  // Breaker open: fail immediately without touching the network. Same outcome the
+  // caller was already getting, minus the wait and minus another request feeding
+  // whatever is refusing us.
+  const brk = breakerFor(provider.source);
+  if (Date.now() < brk.openUntil) {
+    throw new Error(
+      `UseDirect ${provider.source} breaker open for ${Math.ceil((brk.openUntil - Date.now()) / 1000)}s — skipping ${path}`
+    );
+  }
+
+  const base = await rdrBase(provider);
+  let last: { status: number | null; message: string; err?: unknown } | null = null;
+
+  for (let attempt = 1; attempt <= UD_ATTEMPTS; attempt++) {
+    const r = await rdrAttempt<T>(provider, base, path, opts);
+    if (r.ok) {
+      if (attempt > 1) console.log(`[UseDirect ${provider.source}] ${path} OK on attempt ${attempt}`);
+      recordUseDirectOutcome(provider.source, false);
+      return r.data;
+    }
+    last = { status: r.status, message: r.message, err: r.err };
+
+    // A 403 is a settled refusal of this IP, not a blip — retrying burns time and
+    // changes nothing, so stop and let the breaker open quickly. Anything else that
+    // counts as a throttle (5xx, 429, timeout) is worth another go.
+    const retryable = r.status !== 403 && isUseDirectThrottle(r.status, r.err);
+    if (!retryable || attempt === UD_ATTEMPTS) break;
+    // Jittered backoff so N parallel watches don't retry in lockstep.
+    await new Promise((res) => setTimeout(res, UD_RETRY_BASE_MS * attempt + Math.random() * 150));
+  }
+
+  recordUseDirectOutcome(provider.source, isUseDirectThrottle(last!.status, last!.err));
+  throw new Error(last!.message);
 }
 
 export function fetchPlaces(provider: UseDirectProvider): Promise<RCPlace[]> {
