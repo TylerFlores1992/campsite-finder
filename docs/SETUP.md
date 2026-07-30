@@ -177,7 +177,10 @@ Supabase first (by hand, like 020/021). Devices register their token via
 > `025_cost_items_billing_period`** for the admin Costs tab; 025 applied to prod
 > 2026-07-27). Also applied to prod 2026-07-30: **`026_watch_site_alerts`** (per-site
 > alert cooldown — the poller depends on this table existing, so a worker deploy
-> without it would throw on every claim) and **`027_rls_action_tokens_canary`**.
+> without it would throw on every claim), **`027_rls_action_tokens_canary`**,
+> **`028_cost_items_one_time`**, **`029_cost_items_lifetime`** and
+> **`030_cost_items_single_date`** (which drops `ended_at` that 029 had just added, and
+> backfills `started_at` from `created_at` — see the Costs notes in CONTEXT).
 > Note `watch_id` in 026 is TEXT, because `watches.id` is TEXT despite holding
 > UUID-shaped values — a UUID column there fails with "foreign key constraint cannot
 > be implemented". In a web session you can apply one directly:
@@ -556,6 +559,36 @@ Three traps, all of which produced a bad screenshot before being fixed:
 
 Full submission reference — privacy answers, review notes, listing copy — is in
 `docs/APP-STORE.md`.
+
+## Running the tests
+
+```
+npm test
+```
+
+**`node:test` via tsx — no test framework dependency.** Files are `*.test.mts` under
+`worker/`. Added 2026-07-30; before that the repo had no test script, no framework and
+no test files.
+
+Three suites, chosen because a silent wrong answer in each is expensive:
+`worker/claim.test.mts` (the alerting claim — where a bug costs a user a campsite),
+`worker/costs.test.mts` (admin cost arithmetic — net margin), and
+`worker/health-thresholds.test.mts` (canary staleness — the banner that cried wolf).
+
+> **They hit the REAL database and need credentials**, so run with
+> `NODE_USE_ENV_PROXY=1` in a web session. That is deliberate, not laziness: the
+> claim's correctness lives entirely inside one `INSERT .. ON CONFLICT .. WHERE`, so a
+> mocked client would test a fake instead of the thing that decides.
+>
+> **Nothing they write can affect production alerting.** The fixture watch is dated
+> **2020** — `claimNotification` needs only `active = true`, but the poller's candidate
+> query needs `end_date > CURRENT_DATE`, so the row is claimable by the test and
+> invisible to the poller. It is deleted on the way out and `watch_site_alerts`
+> cascades with it. If you add a test that writes, keep that property.
+
+> **Prove a regression test can fail.** The claim suite was validated by reverting
+> `worker/claim.ts` to the pre-026 per-watch logic — 4 of 9 failed, including the one
+> naming the bug. A test that also passes on the broken version is decoration.
 
 ## Checking the SEO surfaces
 

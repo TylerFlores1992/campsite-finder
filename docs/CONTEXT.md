@@ -616,8 +616,10 @@ Added 2026-07-27, and mostly inert until the route swap lifted the layout `noind
    to the right availability adapter.
 2. **Watches** — a subscriber watches a booked campground for their dates.
 3. **Poller** (`worker/poller.ts`, on Fly, ~15s) — checks every active watch. On an
-   opening it dispatches notifications. Branches by source; uses an atomic claim on
-   `notification_sent_at` (1-hour re-notify window) so it never double-alerts.
+   opening it dispatches notifications. Branches by source; uses an atomic claim
+   (`worker/claim.ts`) so it never double-alerts. The claim is **per (watch, SITE)**
+   with a 1-hour window — see "Per-site alert cooldown" below; it was per watch until
+   2026-07-30, which silently swallowed openings.
 4. **Notifications** (`src/lib/notifications/`) — email (Resend) + SMS (Twilio) + native
    push (FCM). `dispatchNotifications` fans out to all three via `Promise.allSettled`;
    push goes to a user's registered devices (`push_tokens`, migration 023) and no-ops
@@ -680,8 +682,22 @@ Two layers, both using the **throwing** fetch functions — never the error-swal
 `find*Open` helpers, which return null on a transport failure and would let a dead
 source path pass the canary:
 
-1. **detect:<source>** — one real availability/catalog fetch per source succeeded.
-   Cheap (no send), so it runs every `CANARY_DETECT_INTERVAL_MS` (120s).
+1. **detect:<source>** — one real availability fetch per source succeeded. Cheap (no
+   send), so it runs every `CANARY_DETECT_INTERVAL_MS` (120s).
+
+   > **A CANARY MUST PROBE THE ENDPOINT ALERTING USES, NOT A NEIGHBOURING ONE.**
+   > `detect:reservecalifornia` probed `/fd/unittypes` and `detect:goingtocamp` probed
+   > the locations list — both CATALOG endpoints, neither on the path an alert depends
+   > on. So on 2026-07-30, while RC's `/search/grid` was dropping ~40% of requests and
+   > every RC watch went unchecked cycle after cycle, that canary sat green reporting
+   > "146 unit types", because the catalog endpoint was genuinely fine. A canary on a
+   > neighbouring endpoint is worse than none: it actively vouches for a path it never
+   > touched. Both now call what the poller calls — `fetchGrid` for RC (asserting units
+   > came back, since a 0-unit grid means the path is broken) and
+   > `hasGoingToCampAvailabilityInRange` for GTC. Fixed 2026-07-30.
+   >
+   > This mattered more than the count suggests: **all active watches sit on two
+   > sources**, so the most load-bearing detection canary was the mis-aimed one.
 2. **delivery:email / delivery:sms** — Resend/Twilio actually **accepted** a synthetic
    send to `CANARY_EMAIL` / `CANARY_PHONE` (proves the last mile, not just detection).
 3. **delivery:push** — the FCM service account still mints an access token
@@ -690,6 +706,26 @@ source path pass the canary:
    `FCM_SERVICE_ACCOUNT` is removed/malformed or the key is revoked. Skipped (warn, not
    page) until FCM is configured, like the other two. Also listed in the `/api/health/status`
    delivery loop, so it pages the same way.
+
+> **STALENESS THRESHOLDS LIVE IN ONE FILE: `src/lib/health-thresholds.ts`.** They were
+> in three, and they disagreed. `worker/fly.toml` runs the delivery canary every 24h;
+> `/api/health/status` hardcoded 7h; and `AdminTabs.canaryLevel` hardcoded its own 7h
+> with a comment claiming "delivery canaries run hourly". So for ~17 hours out of every
+> 24 the admin banner announced "3 things need attention — delivery:email is failing,
+> delivery:push is failing and delivery:sms is failing" about three canaries whose last
+> recorded result was SUCCESS. A dashboard that cries wolf daily trains its only reader
+> to ignore it, which is worse than not having one. Plain constants, not env reads: the
+> worker's config is invisible to Vercel, and a value resolving differently on the
+> server and in the client bundle is how the drift started. **Change the cadence in
+> `worker/fly.toml`, change it there too.**
+>
+> **Two tiers for DELIVERY only.** Late (`>1.15x` interval) is a warning; stopped
+> (`>3x`) is a red banner — with a single threshold you must choose between crying wolf
+> daily and never reporting a canary that quietly died. **Detection gets no second
+> tier: stale IS dead.** Writing one showed it would make the banner LESS sensitive
+> than `/api/health/status`, which fails outright on a stale detect canary, about the
+> canaries that matter most — detection stopping means openings are never noticed at
+> all.
 
 > **The SMS delivery canary is the highest-value one, not disposable.** SMS is both
 > the primary channel users act on and the one that fails *silently* (A2P suspension,
@@ -1100,6 +1136,184 @@ certain App Store rejection. Clerk-authed, so it is deliberately NOT in
   This could not be tested from a sandbox before, because the route destroys the account
   it runs on; treat the same way if the order ever changes.
 
+## Free-trial eligibility is checked in STRIPE, not our DB (2026-07-30)
+
+`/api/stripe/checkout` decides whether to attach `trial_period_days: 7`. It used to
+ask "does this `user_id` have a `subscriptions` row?" — and `user_id` is exactly what
+account deletion destroys. Deletion cascades `subscriptions` away and Clerk issues a
+fresh id on re-signup, so **the one row proving "already had a trial" is the one thing
+guaranteed to be gone.**
+
+Not hypothetical: one address drew two 7-day trials seventeen minutes apart, leaving
+two Stripe customers, one `canceled` and one `trialing`, with identical trial dates.
+
+Stripe is the source of truth now. We cancel the SUBSCRIPTION on delete but never the
+CUSTOMER, so a prior trial stays visible keyed by email rather than by an id we throw
+away. **`status: 'all'` is essential** — the giveaway subscription is normally
+`canceled` by the time someone tries again, which the default listing hides.
+
+- **This stores nothing new on our side.** The data is already Stripe's as our
+  processor, so *"deleting your account deletes your data"* stays true — which matters
+  because that sentence is in the App Store review notes and on `/privacy`. A local
+  "prior trials" ledger would have contradicted it.
+- **On a Stripe error it ALLOWS the trial.** Denying a genuine first-time subscriber
+  because Stripe blipped is worse than the alternative, and exploiting the gap needs a
+  delete-and-resignup timed to a Stripe outage.
+- Checkout also **reuses an existing customer** instead of passing `customer_email`,
+  which minted a new one per checkout — the reason that address had two.
+
+## RLS (migration 027, 2026-07-30)
+
+`action_tokens` and `alert_canary` had none. **No policies were created, deliberately:**
+RLS with zero policies denies anon and authenticated outright while `service_role` has
+`BYPASSRLS`, and every reader goes through the server-side admin client. A permissive
+policy added "so it keeps working" would undo the point.
+
+Supabase's advisor overstates the severity — it assumes a published anon key, and this
+project has none (`src/lib/db/client.ts` is the only `createClient` call, no anon JWT
+reaches the browser bundle, PostgREST 401s without a key). Worth closing anyway: the
+day someone adds a browser Supabase client, both tables become world-readable AND
+world-writable with no further mistake. **`action_tokens` is the one that matters** —
+those tokens ARE the authorisation for `/manage/<token>` and every one-tap
+stop/reopen link, which carry no other credential.
+
+> **`spatial_ref_sys` is deliberately left alone** and will keep appearing in the
+> advisor's list. It is PostGIS's own coordinate-system reference data — public
+> standards, no user content, owned by the extension, and `ALTER TABLE` needs
+> superuser. Expected and accepted, not an outstanding item.
+
+## UseDirect / RDR resilience (2026-07-30)
+
+`src/lib/sources/reservecalifornia/client.ts` backs ReserveCalifornia, Arizona,
+Virginia and the other UseDirect states. rec.gov had a throttle breaker for months;
+**this client had nothing** — no retry, no backoff, no timeout, no detection. That is
+how every RC fetch could fail on every 15-second cycle indefinitely, taking 10 of 15
+active watches with it, while the identical request answered 200 from another IP.
+
+**What was actually wrong, measured rather than guessed:**
+
+- **ReserveCalifornia's RDR API is simply flaky.** 20 identical requests — same body,
+  same headers, seconds apart, one machine — returned nineteen 200s and one 500.
+  Facility 767 for the same dates returned 200 twice then 500 on the third try. It is
+  not our IP, not the date range, not our User-Agent. **RETRY is the fix**, and there
+  was none: every blip was a watch silently not checked that cycle.
+- **A 403 from these WAFs means "slow down", not "never".** Virginia's catalog sync
+  got 403 on 83 grid calls and 200 on 193 others, in ONE run from ONE address; a hard
+  IP block fails all of them. 30 back-to-back grid calls from an unthrottled address
+  returned 200 thirty times, so it is a per-IP burst limit expressed as 403 rather
+  than 429.
+
+**What the client does now:**
+
+- **Retry** (`UD_ATTEMPTS`, 3) with jittered backoff — `UD_RETRY_BASE_MS` (250ms), and
+  **8x that for a 403**, because a rate limit needs real time where a flaky 500 needs
+  only another go. Measured effect in production: 12 retries absorbed against 1 hard
+  failure in one ~2-minute window, where it had been ~4 hard failures per 15s cycle.
+- **A per-PROVIDER breaker** (`UD_BREAKER_TRIP` 4, `UD_BREAKER_COOLDOWN_MS` 60s), keyed
+  on `provider.source` — California, Arizona and Virginia are different hosts behind
+  different WAFs, so a CA throttle must not blind AZ.
+- **`UD_TIMEOUT_MS`** (15s). There was no timeout at all, which made this client a
+  candidate to cause the "timeout cascade" documented for rec.gov.
+- **Breaker outcomes are recorded once per logical call**, after retries are exhausted
+  — never per attempt, or ordinary flakiness would walk the breaker toward opening.
+
+> **IT THROWS RATHER THAN RETURNING EMPTY** — the deliberate difference from the
+> rec.gov breaker, whose callers read empty as "unknown". An empty RC grid is
+> indistinguishable from "fully booked", and this client also backs the user-facing
+> search page, so short-circuiting to empty would render a live campground unavailable
+> and could swallow a real opening.
+
+> **Only genuine back-off signals trip it: 429, 403, any 5xx, timeouts.** The 5xx rule
+> started as `>= 502` on the theory that a 500 might be our own bad request — wrong,
+> and the live logs said so within one poll cycle, since RC's actual failure IS a bare
+> 500. Everything else in the 4xx range is our request being wrong; retrying cannot fix
+> it and it must never open the breaker.
+
+**`/api/rc-proxy` reports the real upstream status.** It collapses every non-ok
+upstream into a flat 502, and used to put the status only in a string; the worker then
+logged its own 502 and discarded the body. The one fact identifying the cause reached
+neither side's logs. It now returns `upstreamStatus` plus a slice of the upstream body
+AND `console.error`s it, which lands in Vercel's runtime logs where the worker cannot
+reach. The worker appends that body to the error it throws.
+
+**Requests present as the providers' own booking site** (`rdrRequestHeaders` in
+`providers.ts`) — full Chrome UA, `Accept-Language`, `sec-ch-*`, and Origin/Referer
+derived PER PROVIDER from its `parkUrl`, so Virginia gets `reservevaparks.com` and not
+a hardcoded Californian pair. An unknown host gets the headers with no Origin/Referer,
+since a mismatched pair is worse than none. Previously it announced itself as
+`Mozilla/5.0 (compatible; CampsiteFinder/1.0)`, which is trivially filterable. This did
+NOT fix the 403s on its own — it was aimed at a wrong diagnosis — but presenting like
+the real client is correct regardless.
+
+**The UseDirect catalog sync runs its grid pass at concurrency 2** (was 5,
+`UD_SYNC_CONCURRENCY`). Five in flight across a few hundred facilities is a sustained
+burst from one address, which is what provokes the limit. A facility whose grid call
+fails syncs ZERO campsites, so going fast cost campsite-level detail — site types,
+hookups — on real campgrounds.
+
+> **Fly CANNOT reach the California RDR host at all** — three attempts, all
+> `TimeoutError`, from the worker's own egress. Virginia 403s Fly too. This is why
+> `/api/rc-proxy` exists and why "just call it directly from the worker" is not an
+> option; tested 2026-07-30, not assumed.
+
+## Per-site alert cooldown (migration 026, 2026-07-30)
+
+The claim that decides "may we alert for this?" lives in **`worker/claim.ts`**, keyed
+on **(watch_id, site_key)** in `watch_site_alerts`, with a 1-hour window.
+
+It used to be one timestamp per watch (`watches.notification_sent_at`), and that was
+wrong in a way nobody could see. The FIRST site to open silenced every OTHER site on
+that watch for an hour. Observed live: site 008 alerted at 23:17, site 015 opened
+minutes later, the user heard about it at 00:19 — and went looking to find it still
+sitting there open.
+
+**The sharper half was auto-cart.** Both lanes share this claim, and the watch was
+dropped from the candidate query outright rather than merely having its notification
+suppressed — so no `autocart_jobs` row was ever queued for the second site. The
+opening was not just un-announced, it was never carted.
+
+- `site_key` is the provider's campsite id where one exists (rec.gov/RIDB,
+  ReserveCalifornia units). **ReserveAmerica, GoingToCamp and TN/SC report
+  campground-level availability with no site id**, so they collapse onto a `'*'`
+  sentinel and keep exactly the old per-watch behaviour — correct for them, since "a
+  site opened" is all those sources can tell us.
+- **The candidate query no longer filters on `notification_sent_at` at all.** A watch
+  that is never CHECKED cannot reveal that a different site opened, which is what made
+  the second site invisible. Steady-state load is unchanged: the candidate set is now
+  "every active watch", which is what it already was whenever nothing had alerted.
+- `notification_sent_at` is still stamped, because `WatchCard` renders "last alerted"
+  from it and the Campflare webhook still dedupes on it.
+- Atomicity is one statement — INSERT .. ON CONFLICT .. WHERE — so two cycles racing
+  the same pair cannot both win. `worker/claim.test.mts` pins that with 8 concurrent
+  claims expecting exactly one winner.
+
+## Tests — there are some now (`npm test`)
+
+The repo had **no test framework, no test script and no test files** until 2026-07-30.
+`npm test` runs **`node:test` via tsx**, so this adds no dependency.
+
+Files are `*.test.mts` under `worker/`. What is covered, and why these first:
+
+- **`worker/claim.test.mts`** — the alerting claim above. This is where a wrong answer
+  costs a user a campsite, and it was the least testable code in the repo because
+  importing `poller.ts` STARTS the poller. Extracting `claim.ts` is what made it
+  reachable.
+- **`worker/costs.test.mts`** — the admin cost arithmetic. A silent error there
+  misstates net margin, the one figure on that tab anyone acts on.
+- **`worker/health-thresholds.test.mts`** — canary staleness, pinning the "banner
+  cries wolf daily" regression.
+
+> **These hit the REAL database, deliberately.** The claim's correctness lives entirely
+> inside one `INSERT .. ON CONFLICT .. WHERE`, so a mocked client would test a fake
+> rather than the thing that decides. Postgres is the unit. The fixture watch is dated
+> **2020** — `claimNotification` needs only `active = true`, but the poller's candidate
+> query needs `end_date > CURRENT_DATE`, so it is claimable by the test and invisible
+> to production alerting. It is deleted on the way out.
+
+> **Prove a regression test fails before trusting it.** The claim tests were validated
+> by reverting `claim.ts` to the pre-026 per-watch logic: 4 of 9 failed, including the
+> one that names the bug. A test that also passes on the broken version is decoration.
+
 ## Auto-cart (rec.gov only) — the interesting part
 
 Goal: when a watched rec.gov site opens for an enrolled user, add it to their cart
@@ -1393,9 +1607,37 @@ and each is distinct.
   > `monthly_cents` wasn't re-derived would overstate costs 12x in the one number
   > (net margin) nobody would double-check. Anything summing costs must go through
   > `monthlyCents()` / `yearlyCents()`, never raw `amount_cents`.
+  > **`'one_time'` is a third billing period (migration 028)** — hardware, a developer
+  > enrolment, a domain transfer. It is EXCLUDED from the monthly and yearly totals
+  > rather than amortised: amortising needs a purchase date and a chosen lifetime the
+  > table doesn't store, and a guessed lifetime moves net margin silently. It gets its
+  > own "Spent to date" subtotal, and its own TABLE — "Per month" is meaningless for
+  > something paid once, and `monthlyCents()` returns 0 for it, so a shared table
+  > printed a confident "$0.00" beside a real purchase.
+- **Lifetime spend** — "what has this cost, ever": recurring accrued from each item's
+  start date, plus one-time at face value, plus usage over ALL time. Needs
+  `started_at` (**migrations 029 + 030**), which defaults to `CURRENT_DATE` on insert.
+  Billing counts **in advance**, so a plan started today counts once, not zero — these
+  are prepaid subscriptions and reporting one you've already paid for as free is wrong
+  on day one.
+  > **029 added `ended_at` and 030 removed it, at the owner's request.** The trade-off
+  > is real and recorded here rather than lost: **nothing now stops a CANCELLED service
+  > accruing forever.** Deleting the row stops it but also erases what it historically
+  > cost. If "I cancelled Twilio in March" ever needs to be true in the lifetime figure,
+  > `ended_at` is what has to come back.
+  > **029 refused to backfill `started_at` from `created_at`** — "when the row was
+  > added" is not "when the money started" — and that was right under its own rule, but
+  > left all 18 rows unknown behind a permanent warning. **030 defines the date AS the
+  > date of entry**, so `created_at` stopped being a proxy and became the answer, and
+  > the backfill is correct.
+  > **The admin page's cost query was broken for days**: it still selected
+  > `monthly_cents`, renamed away by 025, so it threw "column does not exist" every
+  > render and `safe()` swallowed it to `[]`. An empty list is indistinguishable from
+  > "no cost items", which is exactly why nobody noticed. Fixed 2026-07-30.
 - **Usage costs** — computed live from `notifications` (SMS/email/push sent this month) ×
   per-unit rates in `src/lib/costs.ts` (`USAGE_RATES`, env-overridable). SMS is the only
-  real variable cost; email/push default to $0 (plan/free).
+  real variable cost; email/push default to $0 (plan/free). The Costs tab ALSO queries an
+  unscoped all-time count for lifetime spend — don't confuse the two.
 
 ## Environment variables (names only — values in `.env.local` / Vercel / Fly)
 
@@ -1441,7 +1683,11 @@ failed, 0.8); `RECGOV_TIMEOUT_MS` (per-request rec.gov fetch
 timeout, 5s — shortened from 10s so a throttle storm can't starve the socket pool);
 rec.gov throttle breaker `RECGOV_BREAKER_TRIP` (consecutive
 429/timeout failures that OPEN the breaker, 3) and `RECGOV_BREAKER_COOLDOWN_MS`
-(short-circuit-to-empty window before a half-open probe, 60s); `RECGOV_CONCURRENCY`
+(short-circuit-to-empty window before a half-open probe, 60s); the UseDirect/RDR
+equivalents `UD_ATTEMPTS` (retries per call, 3), `UD_RETRY_BASE_MS` (backoff base,
+250ms — x8 on a 403), `UD_BREAKER_TRIP` (4), `UD_BREAKER_COOLDOWN_MS` (60s),
+`UD_TIMEOUT_MS` (15s) and `UD_SYNC_CONCURRENCY` (grid fan-out during the catalog sync,
+2 — was 5, which provoked the WAF); `RECGOV_CONCURRENCY`
 (per-provider fanout bound within a phase — note the six per-source phases now run
 concurrently as of `dfd4541`, so this bounds each provider, not the whole cycle);
 `AUTOCART_SESSION_STALE_MS` (how recently the bot must have stamped
