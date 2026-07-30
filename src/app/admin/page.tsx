@@ -126,8 +126,14 @@ export default async function AdminPage() {
           facilities_synced: number | null;
           error: string | null;
           metadata: { totalErrors?: number } | null;
+          age_s: number | null;
         }>(
-          `SELECT DISTINCT ON (source) source, finished_at::text, facilities_synced, error, metadata
+          // age_s is computed HERE, by Postgres, not in the client component. Calling
+          // Date.now() during render is impure — non-deterministic output and a
+          // hydration mismatch waiting to happen — which is why canaryRows already
+          // carries its age the same way.
+          `SELECT DISTINCT ON (source) source, finished_at::text, facilities_synced, error, metadata,
+                  extract(epoch from (now() - finished_at))::int AS age_s
            FROM sync_log ORDER BY source, started_at DESC`
         ),
         []

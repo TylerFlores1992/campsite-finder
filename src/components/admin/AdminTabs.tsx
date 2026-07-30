@@ -32,6 +32,8 @@ type SyncRow = {
   facilities_synced: number | null;
   error: string | null;
   metadata: { totalErrors?: number } | null;
+  /** Seconds since finished_at, computed by Postgres — see the note in admin/page.tsx. */
+  age_s: number | null;
 };
 
 export interface AdminData {
@@ -91,10 +93,24 @@ function canaryLevel(c: CanaryRow): Level {
   return 'ok';
 }
 
+/**
+ * Fraction of a source's campgrounds that may fail before it is worth looking at.
+ *
+ * ANY error used to mean "warn", which made 19 of 35 sources warn and the banner say
+ * "19 catalog syncs finished with warnings" every day. One skipped campground out of
+ * forty is not a problem — providers rate-limit individual facilities constantly, and
+ * the next run picks them up. Flagging it anyway buried the sources that genuinely
+ * lost a big share: Recreation.gov at 1,051 of 5,519, Virginia at 83 of 276.
+ */
+const SYNC_SKIP_TOLERANCE = 0.1;
+
 function syncLevel(s: SyncRow): Level {
   if (!s.finished_at) return 'warn'; // in progress
-  if ((s.facilities_synced ?? 0) === 0) return 'fail';
-  return s.error ? 'warn' : 'ok';
+  const synced = s.facilities_synced ?? 0;
+  if (synced === 0) return 'fail'; // nothing landed — this source is absent from search
+  const skipped = s.metadata?.totalErrors ?? 0;
+  if (!skipped) return 'ok';
+  return skipped / (synced + skipped) >= SYNC_SKIP_TOLERANCE ? 'warn' : 'ok';
 }
 
 /**
@@ -144,7 +160,12 @@ function overallStatus(data: AdminData): { level: Level; headline: string; detai
   if (canaryWarnings.length) parts.push(summarise(canaryWarnings, 3));
   if (syncWarnings) {
     parts.push(
-      `${syncWarnings} catalog ${syncWarnings === 1 ? 'sync' : 'syncs'} finished with warnings`
+      // "finished with warnings" tells you nothing about whether to care. What
+      // actually happened is that some individual campgrounds could not be read —
+      // usually a provider rate-limiting us mid-sync — so they are missing from
+      // SEARCH until the next run. Naming that is the difference between a line you
+      // can act on and one you learn to scroll past.
+      `${syncWarnings} ${syncWarnings === 1 ? 'source' : 'sources'} skipped some campgrounds`
     );
   }
 
@@ -378,89 +399,237 @@ function EngagementPanel({ data }: { data: AdminData }) {
 
 /* ---------------------------------------------------------- System Health */
 
+/**
+ * Plain-English name and purpose for each canary key.
+ *
+ * The panel used to print the raw key — "delivery:email", "detect:ridb" — which
+ * says nothing to a reader who isn't holding the code in their head. Worse, it left
+ * the two KINDS of canary looking identical when they answer opposite questions:
+ * detection is "can we still see an opening", delivery is "can we still tell you
+ * about one". Either failing loses a booking, for completely different reasons.
+ */
+const CANARY_META: Record<string, { label: string; what: string }> = {
+  'detect:ridb': { label: 'Recreation.gov', what: 'reading live availability' },
+  'detect:reserveamerica': { label: 'ReserveAmerica', what: 'reading live availability' },
+  'detect:reservecalifornia': { label: 'ReserveCalifornia', what: 'reading live availability' },
+  'detect:goingtocamp': { label: 'GoingToCamp', what: 'reading live availability' },
+  'detect:tnsc': { label: 'TN / SC parks', what: 'reading live availability' },
+  'delivery:email': { label: 'Email', what: 'Resend accepted a test alert' },
+  'delivery:sms': { label: 'Text', what: 'Twilio accepted a test alert' },
+  'delivery:push': { label: 'Push', what: 'Firebase credentials still valid' },
+};
+
+/** "just now" / "4m ago" / "14h ago" / "3d ago" — never a raw 873m. */
+function ago(seconds: number | null | undefined): string {
+  if (seconds == null) return 'never run';
+  if (seconds < 90) return 'just now';
+  const m = Math.round(seconds / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+/** "reserveamerica-AK" -> "ReserveAmerica · AK". Keeps the state, drops the slug. */
+function syncSourceLabel(source: string): string {
+  const NAMES: Record<string, string> = {
+    ridb: 'Recreation.gov',
+    reserveamerica: 'ReserveAmerica',
+    reservecalifornia: 'ReserveCalifornia',
+    goingtocamp: 'GoingToCamp',
+    tnsc: 'TN / SC parks',
+  };
+  const [head, state] = source.split('-');
+  const base = NAMES[head] ?? head.replace(/stateparks$/, ' state parks').replace(/^./, (c) => c.toUpperCase());
+  return state ? `${base} · ${state}` : base;
+}
+
+function HealthRow({
+  level,
+  label,
+  sub,
+  right,
+  title,
+}: {
+  level: Level;
+  label: string;
+  sub?: string;
+  right: string;
+  title?: string;
+}) {
+  const dot = level === 'ok' ? 'bg-ch-green' : level === 'warn' ? 'bg-ch-ochre' : 'bg-ch-alert';
+  return (
+    <li
+      className="flex items-start justify-between gap-3 border-b border-ch-line py-2 last:border-b-0"
+      title={title}
+    >
+      <span className="flex min-w-0 items-start gap-2">
+        <span className={`mt-1.5 size-2 shrink-0 rounded-full ${dot}`} />
+        <span className="min-w-0">
+          <span className="block truncate text-ch-body text-ch-ink">{label}</span>
+          {sub && <span className="block text-ch-fine leading-normal text-ch-muted">{sub}</span>}
+        </span>
+      </span>
+      <span className="shrink-0 pt-0.5 text-ch-meta whitespace-nowrap text-ch-muted">{right}</span>
+    </li>
+  );
+}
+
 function SystemHealthPanel({ data }: { data: AdminData }) {
   const { beat, workerHealthy, canaryRows, syncRows } = data;
+
+  const detect = canaryRows.filter((c) => c.key.startsWith('detect:'));
+  const delivery = canaryRows.filter((c) => c.key.startsWith('delivery:'));
+
+  // Catalog sync is ~30 near-identical rows, and reading them meant scanning every
+  // one for a coloured dot. Split so the ones needing attention are the only ones
+  // shown by default; the healthy majority collapses to a count.
+  const syncWithLevel = syncRows.map((s) => ({ s, lvl: syncLevel(s) }));
+  const syncProblems = syncWithLevel.filter((x) => x.lvl !== 'ok');
+  const syncFine = syncWithLevel.filter((x) => x.lvl === 'ok');
+
   return (
     <div className="grid gap-4 md:grid-cols-2">
-      <Panel title="Poller worker">
+      <Panel title="Alerting">
         <div className="flex items-center gap-2">
           <span className={`size-2.5 rounded-full ${workerHealthy ? 'bg-ch-green' : 'bg-ch-alert'}`} />
           <span className="text-ch-body font-bold">
-            {workerHealthy ? 'Healthy' : beat ? 'Stale' : 'No heartbeat'}
+            {workerHealthy ? 'Running' : beat ? 'Stalled' : 'Never started'}
           </span>
         </div>
         <p className="mt-1 text-ch-meta leading-normal text-ch-muted">
           {beat
             ? workerHealthy
-              ? `Last beat ${beat.age_s}s ago · ${beat.watches_checked} watches per cycle`
-              : `Last beat ${Math.round(beat.age_s / 60)} minutes ago — alerts are not going out`
+              ? `Checking ${beat.watches_checked} watches every 15 seconds. Last check ${ago(beat.age_s)}.`
+              : // Only claim alerts are down when the gap is actually long enough to
+                // mean it; "Last check just now — alerts are not going out" reads as a
+                // broken dashboard rather than a broken worker.
+                `Last check ${ago(beat.age_s)}. The poller should check every 15 seconds — alerts may not be going out.`
             : 'The worker has never recorded a heartbeat.'}
         </p>
 
-        <h3 className="mt-4 mb-1.5 text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
-          Alert canary
+        {/* The two questions, named. Grouping them is the point: a reader should be
+            able to tell at a glance whether we have stopped SEEING openings or
+            stopped SENDING them, without decoding a key prefix. */}
+        <h3 className="mt-4 mb-0.5 text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+          Can we still find openings?
         </h3>
+        <p className="mb-1 text-ch-fine text-ch-muted">
+          One real lookup per reservation system, every 2 minutes.
+        </p>
+        <ul>
+          {detect.map((c) => {
+            const meta = CANARY_META[c.key];
+            return (
+              <HealthRow
+                key={c.key}
+                level={canaryLevel(c)}
+                label={meta?.label ?? c.key}
+                sub={
+                  c.consecutive_failures > 0
+                    ? `${c.consecutive_failures} failed ${c.consecutive_failures === 1 ? 'check' : 'checks'} in a row`
+                    : undefined
+                }
+                right={ago(c.age_s)}
+                title={c.detail ?? undefined}
+              />
+            );
+          })}
+        </ul>
+
+        <h3 className="mt-4 mb-0.5 text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+          Can we still reach you?
+        </h3>
+        <p className="mb-1 text-ch-fine text-ch-muted">
+          A real test alert to the owner, once a day — so &ldquo;hours ago&rdquo; is normal here.
+        </p>
+        <ul>
+          {delivery.map((c) => {
+            const meta = CANARY_META[c.key];
+            return (
+              <HealthRow
+                key={c.key}
+                level={canaryLevel(c)}
+                label={meta?.label ?? c.key}
+                sub={meta?.what}
+                right={ago(c.age_s)}
+                title={c.detail ?? undefined}
+              />
+            );
+          })}
+        </ul>
         {canaryRows.length === 0 && (
           <p className="text-ch-fine text-ch-muted">No canary runs recorded.</p>
         )}
-        <ul>
-          {canaryRows.map((c) => {
-            const lvl = canaryLevel(c);
-            const dot = lvl === 'ok' ? 'bg-ch-green' : lvl === 'warn' ? 'bg-ch-ochre' : 'bg-ch-alert';
-            const age =
-              c.age_s == null ? 'never' : c.age_s < 90 ? `${c.age_s}s` : `${Math.round(c.age_s / 60)}m`;
-            return (
-              <li
-                key={c.key}
-                className="flex items-center justify-between gap-2 border-b border-ch-line py-1.5 last:border-b-0"
-              >
-                <span className="flex min-w-0 items-center gap-2 text-ch-meta text-ch-ink-2">
-                  <span className={`size-2 shrink-0 rounded-full ${dot}`} />
-                  <span className="truncate">{c.key}</span>
-                </span>
-                <span className="shrink-0 text-ch-meta text-ch-muted" title={c.detail ?? undefined}>
-                  {age}
-                  {c.consecutive_failures > 0 ? ` · ${c.consecutive_failures} fails` : ''}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
       </Panel>
 
-      <Panel title="Catalog sync">
-        {syncRows.length === 0 && (
-          <p className="text-ch-fine text-ch-muted">No sync runs recorded.</p>
+      <Panel title="Campground catalog">
+        <p className="text-ch-meta leading-normal text-ch-muted">
+          How many campgrounds each reservation system last handed us. This is the
+          SEARCHABLE list, not live availability — a stale catalog means a campground is
+          missing from search, never a missed alert.
+        </p>
+
+        {syncProblems.length === 0 ? (
+          <p className="mt-3 text-ch-body font-bold text-ch-ink">
+            All {syncFine.length} sources synced normally.
+          </p>
+        ) : (
+          <>
+            <h3 className="mt-4 mb-1 text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+              Worth a look ({syncProblems.length})
+            </h3>
+            <ul>
+              {syncProblems.map(({ s, lvl }) => {
+                const synced = s.facilities_synced ?? 0;
+                const skipped = s.metadata?.totalErrors ?? null;
+                return (
+                  <HealthRow
+                    key={s.source}
+                    level={lvl}
+                    label={syncSourceLabel(s.source)}
+                    sub={
+                      !s.finished_at
+                        ? 'still running'
+                        : lvl === 'fail'
+                          ? 'returned nothing — this source is not in search'
+                          : // A "warning" is per-campground: the sync finished, but some
+                            // individual facilities could not be read. Saying "skipped"
+                            // names what actually happened; "1,051 warnings" sounds like
+                            // an outage and is routine.
+                            `${synced.toLocaleString()} synced${
+                              skipped ? `, ${skipped.toLocaleString()} skipped` : ''
+                            }`
+                    }
+                    right={s.finished_at ? ago(s.age_s) : ''}
+                    title={s.error ?? undefined}
+                  />
+                );
+              })}
+            </ul>
+          </>
         )}
-        <ul>
-          {syncRows.map((s) => {
-            const lvl = syncLevel(s);
-            const dot = lvl === 'ok' ? 'bg-ch-green' : lvl === 'warn' ? 'bg-ch-ochre' : 'bg-ch-alert';
-            const synced = s.facilities_synced ?? 0;
-            const errCount = s.metadata?.totalErrors ?? null;
-            const stamp = s.finished_at ? new Date(s.finished_at).toLocaleString() : null;
-            return (
-              <li
-                key={s.source}
-                className="flex items-center justify-between gap-2 border-b border-ch-line py-1.5 last:border-b-0"
-              >
-                <span className="flex min-w-0 items-center gap-2 text-ch-meta text-ch-ink-2">
-                  <span className={`size-2 shrink-0 rounded-full ${dot}`} />
-                  <span className="truncate">{s.source}</span>
-                </span>
-                <span className="shrink-0 text-ch-meta text-ch-muted" title={s.error ?? undefined}>
-                  {!stamp
-                    ? 'in progress'
-                    : lvl === 'fail'
-                      ? `failed · ${stamp}`
-                      : `${synced.toLocaleString()} rows · ${stamp}${
-                          lvl === 'warn' ? ` · ${errCount ?? 'some'} warnings` : ''
-                        }`}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
+
+        {syncFine.length > 0 && syncProblems.length > 0 && (
+          <details className="mt-3">
+            <summary className="cursor-pointer text-ch-meta font-bold text-ch-muted hover:text-ch-green-deep">
+              {syncFine.length} synced normally
+            </summary>
+            <ul className="mt-1">
+              {syncFine.map(({ s, lvl }) => (
+                <HealthRow
+                  key={s.source}
+                  level={lvl}
+                  label={syncSourceLabel(s.source)}
+                  sub={`${(s.facilities_synced ?? 0).toLocaleString()} campgrounds`}
+                  right={s.finished_at ? ago(s.age_s) : ''}
+                />
+              ))}
+            </ul>
+          </details>
+        )}
+
+        {syncRows.length === 0 && <p className="text-ch-fine text-ch-muted">No sync runs recorded.</p>}
       </Panel>
     </div>
   );
