@@ -386,7 +386,10 @@ function EngagementPanel({ data }: { data: AdminData }) {
                 key={r.source}
                 className="rounded-ch-chip border border-ch-line px-3 py-1.5 text-ch-meta text-ch-ink-2"
               >
-                {`${r.source} · `}
+                {/* Same labels as System Health. These chips still read "ridb" and
+                    "virginiastateparks" after that panel was cleaned up — the source
+                    key is a database value, not a name anyone outside the code uses. */}
+                {`${syncSourceLabel(r.source)} · `}
                 <span className="font-bold text-ch-ink">{r.n.toLocaleString()}</span>
               </span>
             ))}
