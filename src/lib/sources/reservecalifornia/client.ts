@@ -124,7 +124,19 @@ async function rdrFetch<T>(
       headers: { 'Content-Type': 'application/json', 'x-sync-secret': proxySecret },
       body: JSON.stringify({ base, path, method: opts.method ?? 'GET', body: opts.body }),
     });
-    if (!res.ok) throw new Error(`RC proxy ${path} → ${res.status}`);
+    if (!res.ok) {
+      // The proxy collapses EVERY non-ok upstream into a flat 502 and puts the real
+      // status in its body ({error: "upstream 403"}). Logging only the proxy's own
+      // 502 threw that away, which is why an outage on 2026-07-30 — 10 of 15 watches
+      // failing every cycle — could not be told apart from RC being down. It was not:
+      // the same call returned 200 in under a second from a datacenter IP at the time.
+      // Whatever the cause, the next occurrence should name itself.
+      const detail = await res.text().then(
+        (t) => t.slice(0, 200),
+        () => '<unreadable>'
+      );
+      throw new Error(`RC proxy ${path} → ${res.status} ${detail}`);
+    }
     return res.json() as Promise<T>;
   }
 

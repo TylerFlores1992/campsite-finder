@@ -43,7 +43,18 @@ export async function POST(req: NextRequest) {
   });
 
   if (!res.ok) {
-    return NextResponse.json({ error: `upstream ${res.status}` }, { status: 502 });
+    // Carry a slice of the upstream body, not just its status. A WAF challenge, a
+    // rate-limit notice and a genuine 5xx all arrive as "not ok" and are otherwise
+    // indistinguishable to the caller — which is precisely the position we were in
+    // when every RC fetch started 502ing on 2026-07-30 while RC itself answered 200
+    // to a direct request. `console.error` also puts it in Vercel's runtime logs,
+    // where the caller's own logs cannot reach.
+    const detail = await res.text().then((t) => t.slice(0, 300), () => '');
+    console.error(`[rc-proxy] upstream ${res.status} for ${host}${path}: ${detail}`);
+    return NextResponse.json(
+      { error: `upstream ${res.status}`, upstreamStatus: res.status, detail },
+      { status: 502 }
+    );
   }
   return NextResponse.json(await res.json());
 }
