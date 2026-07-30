@@ -45,6 +45,7 @@ import { isUseDirectSource, USEDIRECT_PROVIDERS } from '../src/lib/sources/reser
 import { dispatchNotifications, type NotificationPayload } from '../src/lib/notifications';
 import { bookingLink } from '../src/lib/booking-url';
 import { runDetectionCanary, runDeliveryCanary } from './canary';
+import { claimNotification } from './claim';
 import { findQualifyingRun, flexCandidateStays, isFlexible, type FlexDays, type FlexSpec } from '../src/lib/availability/flex';
 import { markAlive, msSinceAlive, msSinceExternalFetchOk, externalFetchWedged } from './liveness';
 
@@ -129,8 +130,8 @@ const WATCHDOG_EXTERNAL_MAX_FAIL_RATIO = Number(process.env.WATCHDOG_EXTERNAL_MA
 // openings into the silent auto-cart lane — they fall back to normal immediate
 // alerts, because a dead bot must never silently swallow a cancellation.
 const AUTOCART_BOT_STALE_SEC = Number(process.env.AUTOCART_BOT_STALE_SEC ?? 60);
-// Matches the Campflare webhook handler: re-notify only if the last alert is >1h old.
-const RENOTIFY_WINDOW = "interval '1 hour'";
+// The alerting claim (and RENOTIFY_WINDOW) now lives in worker/claim.ts so it can
+// be tested — importing poller.ts starts the poller, so nothing here was testable.
 
 // --- Cancellation-likelihood recorder (feature E) --------------------------
 // Every cycle the poller already knows whether each watched campground has a
@@ -487,48 +488,6 @@ async function loadWatches(): Promise<WatchRow[]> {
   // Load is unchanged in the steady state: the candidate set is now "every active
   // watch", which is exactly what it already was whenever nothing had alerted
   // recently, and fetches are deduplicated per campground+month regardless.
-}
-
-/** Sources with no per-site id report campground-level availability only. */
-const WHOLE_CAMPGROUND_SITE_KEY = '*';
-
-/**
- * Atomically claim the right to notify for this watch AND THIS SITE. Returns true
- * if we won the claim; false if a concurrent cycle got there first, or if this
- * exact site already alerted inside the window.
- *
- * The cooldown is per (watch, site), not per watch. The old per-watch version meant
- * the first site to open silenced every OTHER site on that watch for a full hour —
- * including the auto-cart lane, which shares this claim, so a new site was not just
- * un-alerted but never carted. See migration 026.
- *
- * `campsiteId` is null for ReserveAmerica / GoingToCamp / TN-SC, which cannot name a
- * site; those collapse onto one sentinel key and so keep the old per-watch behaviour,
- * which is the correct reading of what those sources actually tell us.
- *
- * Atomicity lives in the single statement: a brand-new pair INSERTs, an existing pair
- * only UPDATEs when it is outside the window, and RETURNING is empty otherwise — so
- * two cycles racing the same pair cannot both win.
- */
-async function claimNotification(watchId: string, campsiteId?: string | null): Promise<boolean> {
-  const siteKey = campsiteId ?? WHOLE_CAMPGROUND_SITE_KEY;
-  const rows = await mutate<{ watch_id: string }>(
-    `INSERT INTO watch_site_alerts (watch_id, site_key, last_alert_at)
-     SELECT $1, $2, NOW() FROM watches w WHERE w.id = $1 AND w.active = true
-     ON CONFLICT (watch_id, site_key) DO UPDATE SET last_alert_at = NOW()
-       WHERE watch_site_alerts.last_alert_at < NOW() - ${RENOTIFY_WINDOW}
-     RETURNING watch_id`,
-    [watchId, siteKey]
-  );
-  if (rows.length === 0) return false;
-
-  // Keep the watch-level stamp current. It is no longer what gates a notification,
-  // but WatchCard renders "last alerted" from it and the Campflare webhook still
-  // dedupes on it, so letting it go stale would misreport both.
-  await mutate('UPDATE watches SET notification_sent_at = NOW() WHERE id = $1', [watchId]).catch(
-    (e) => console.error('[poller] notification_sent_at stamp failed (non-fatal):', e)
-  );
-  return true;
 }
 
 /**

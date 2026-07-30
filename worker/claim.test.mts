@@ -1,0 +1,134 @@
+// Regression tests for the alerting claim — the decision that, when wrong, means a
+// user does not hear about a campsite.
+//
+// Run: npm test   (node:test via tsx — no test framework dependency)
+//
+// These hit the REAL database, deliberately. The claim's whole correctness lives in
+// one INSERT .. ON CONFLICT .. WHERE statement, so a mocked client would be testing
+// a fake instead of the thing that actually decides. Postgres is the unit here.
+//
+// SAFETY: the fixture watch is created with dates in the PAST. `claimNotification`
+// only requires `active = true`, but the poller's candidate query requires
+// `end_date > CURRENT_DATE` — so this watch is claimable by the test and invisible to
+// production alerting. It is deleted on the way out, and `watch_site_alerts` cascades
+// with it. Nothing here can suppress a real user's alert.
+
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { query, mutate } from '../src/lib/db/client';
+import { claimNotification, WHOLE_CAMPGROUND_SITE_KEY } from './claim';
+
+let watchId: string;
+let inactiveWatchId: string;
+
+before(async () => {
+  const [user] = await query<{ id: string }>(`SELECT id FROM users LIMIT 1`);
+  assert.ok(user, 'need at least one user row to hang a fixture watch off');
+  const [cg] = await query<{ id: string }>(
+    `SELECT id FROM campgrounds WHERE source = 'ridb' ORDER BY id LIMIT 1`
+  );
+  assert.ok(cg, 'need at least one campground');
+
+  const [w] = await mutate<{ id: string }>(
+    `INSERT INTO watches (user_id, campground_id, start_date, end_date, min_nights, active)
+     VALUES ($1, $2, '2020-01-01', '2020-01-03', 1, true) RETURNING id`,
+    [user.id, cg.id]
+  );
+  watchId = w.id;
+
+  const [iw] = await mutate<{ id: string }>(
+    `INSERT INTO watches (user_id, campground_id, start_date, end_date, min_nights, active)
+     VALUES ($1, $2, '2020-01-01', '2020-01-03', 1, false) RETURNING id`,
+    [user.id, cg.id]
+  );
+  inactiveWatchId = iw.id;
+});
+
+after(async () => {
+  for (const id of [watchId, inactiveWatchId]) {
+    if (!id) continue;
+    await mutate(`DELETE FROM watch_site_alerts WHERE watch_id = $1`, [id]).catch(() => {});
+    await mutate(`DELETE FROM notifications WHERE watch_id = $1`, [id]).catch(() => {});
+    await mutate(`DELETE FROM watches WHERE id = $1`, [id]).catch(() => {});
+  }
+});
+
+/** Age a pair's last alert so it falls outside the re-notify window. */
+const age = (siteKey: string, minutes: number) =>
+  mutate(
+    `UPDATE watch_site_alerts SET last_alert_at = NOW() - ($2 || ' minutes')::interval
+     WHERE watch_id = $1 AND site_key = $3`,
+    [watchId, String(minutes), siteKey]
+  );
+
+test('a first alert for a site is claimable', async () => {
+  assert.equal(await claimNotification(watchId, '84671'), true);
+});
+
+test('THE BUG: a different site is claimable immediately after another alerted', async () => {
+  // This is the regression. Before migration 026 the cooldown was one timestamp per
+  // WATCH, so site 84937 opening seconds after 84671 alerted was silently dropped for
+  // an hour — no alert AND no auto-cart job, because the watch was excluded from the
+  // candidate query outright rather than merely having its notification suppressed.
+  // Observed live: 008 alerted 23:17, 015 opened minutes later, user heard at 00:19.
+  assert.equal(await claimNotification(watchId, '84937'), true);
+});
+
+test('the same site is not claimable twice inside the window', async () => {
+  assert.equal(await claimNotification(watchId, '84671'), false);
+  assert.equal(await claimNotification(watchId, '84937'), false);
+});
+
+test('a site becomes claimable again once its own window has passed', async () => {
+  await age('84671', 61);
+  assert.equal(await claimNotification(watchId, '84671'), true);
+  // …and that must not have reopened the OTHER site, whose clock is independent.
+  assert.equal(await claimNotification(watchId, '84937'), false);
+});
+
+test('sources with no site id share one key, keeping per-watch behaviour', async () => {
+  assert.equal(await claimNotification(watchId, null), true);
+  assert.equal(await claimNotification(watchId, null), false);
+  // undefined must behave as null, not as the string "undefined".
+  assert.equal(await claimNotification(watchId), false);
+  const rows = await query<{ site_key: string }>(
+    `SELECT site_key FROM watch_site_alerts WHERE watch_id = $1 AND site_key = $2`,
+    [watchId, WHOLE_CAMPGROUND_SITE_KEY]
+  );
+  assert.equal(rows.length, 1, 'null and undefined must collapse onto one sentinel row');
+});
+
+test('an inactive watch can never claim', async () => {
+  // A paused watch must not alert. The guard is `active = true` inside the statement,
+  // not a check by the caller, so it holds for every call site.
+  assert.equal(await claimNotification(inactiveWatchId, '84671'), false);
+});
+
+test('a nonexistent watch claims nothing and does not throw', async () => {
+  assert.equal(await claimNotification('00000000-0000-0000-0000-000000000000', '84671'), false);
+});
+
+test('winning a claim stamps notification_sent_at for the UI and webhook dedupe', async () => {
+  await age('84671', 61);
+  await mutate(`UPDATE watches SET notification_sent_at = NULL WHERE id = $1`, [watchId]);
+  assert.equal(await claimNotification(watchId, '84671'), true);
+  const [w] = await query<{ notification_sent_at: string | null }>(
+    `SELECT notification_sent_at FROM watches WHERE id = $1`,
+    [watchId]
+  );
+  assert.ok(w.notification_sent_at, 'WatchCard "last alerted" and Campflare dedupe read this');
+});
+
+test('concurrent claims on one pair produce exactly one winner', async () => {
+  // The race the single-statement design exists to prevent: the main cycle and the
+  // auto-cart lane can both see the same opening in the same instant.
+  await age('84671', 61);
+  const results = await Promise.all(
+    Array.from({ length: 8 }, () => claimNotification(watchId, '84671'))
+  );
+  assert.equal(
+    results.filter(Boolean).length,
+    1,
+    `expected exactly one winner, got ${results.filter(Boolean).length}`
+  );
+});

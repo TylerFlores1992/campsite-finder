@@ -10,7 +10,8 @@
     "cap:sync": "cap sync",
     "cap:assets": "npx --yes @capacitor/assets generate --assetPath assets",
     "cap:ios": "cap open ios",
-    "cap:android": "cap open android"
+    "cap:android": "cap open android",
+    "test": "tsx --test \"worker/**/*.test.mts\" \"src/**/*.test.mts\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.107.0",
