@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { USEDIRECT_ALLOWED_HOSTS, USEDIRECT_PROVIDERS } from '@/lib/sources/reservecalifornia/providers';
+import {
+  USEDIRECT_ALLOWED_HOSTS,
+  USEDIRECT_PROVIDERS,
+  rdrRequestHeaders,
+} from '@/lib/sources/reservecalifornia/providers';
 
 // UseDirect RDR WAFs block datacenter IPs (GitHub Actions, Fly.io) but allow
 // Vercel — so the Fly worker routes its RDR API calls (ReserveCalifornia, Arizona,
@@ -34,11 +38,9 @@ export async function POST(req: NextRequest) {
 
   const res = await fetch(`${String(base).replace(/\/+$/, '')}${path}`, {
     method,
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; CampsiteFinder/1.0)',
-      Accept: 'application/json',
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
+    // Shared with the direct (non-proxied) path so the two cannot drift — the
+    // proxy was the one sending the self-identifying CampsiteFinder/1.0 UA.
+    headers: rdrRequestHeaders(base, Boolean(body)),
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 

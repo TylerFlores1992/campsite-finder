@@ -9,12 +9,8 @@ import {
   type UseDirectProvider,
   providerByCampgroundId,
   USEDIRECT_PROVIDERS,
+  rdrRequestHeaders,
 } from './providers';
-
-const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (compatible; CampsiteFinder/1.0)',
-  Accept: 'application/json',
-};
 
 const _baseCache = new Map<string, string>(); // provider.source -> resolved RDR base
 
@@ -92,7 +88,7 @@ async function rdrBase(provider: UseDirectProvider): Promise<string> {
   let base = provider.rdrBase ?? provider.fallbackBase;
   if (provider.configUrl) {
     try {
-      const res = await fetch(provider.configUrl, { headers: HEADERS });
+      const res = await fetch(provider.configUrl, { headers: rdrRequestHeaders() });
       if (res.ok) {
         const config = (await res.json()) as { rdrApiUrl?: string };
         if (config.rdrApiUrl) base = config.rdrApiUrl;
@@ -238,7 +234,7 @@ async function rdrFetch<T>(
   try {
     res = await fetch(`${base}${path}`, {
       method: opts.method ?? 'GET',
-      headers: { ...HEADERS, ...(opts.body ? { 'Content-Type': 'application/json' } : {}) },
+      headers: rdrRequestHeaders(base, Boolean(opts.body)),
       ...(opts.body ? { body: JSON.stringify(opts.body) } : {}),
       signal: AbortSignal.timeout(UD_TIMEOUT_MS),
     });
