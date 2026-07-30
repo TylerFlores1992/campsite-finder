@@ -18,6 +18,65 @@ const HEADERS = {
 
 const _baseCache = new Map<string, string>(); // provider.source -> resolved RDR base
 
+// --- UseDirect throttle breaker (process-local, PER PROVIDER) -----------------
+// rec.gov has had one of these for a while; RC had nothing, which is how every RC
+// fetch could fail on every 15s cycle indefinitely on 2026-07-30 with no detection,
+// no backoff and no recovery — 10 of 15 active watches, silently, while the same
+// request answered 200 from another IP.
+//
+// Keyed by provider.source, NOT global: California, Arizona, Minnesota and the rest
+// are different hosts behind different WAFs, so a CA throttle must not blind AZ.
+//
+// IT THROWS RATHER THAN RETURNING EMPTY, which is where it deliberately differs
+// from the rec.gov breaker. An empty RC grid is indistinguishable from "campground
+// is fully booked", and this client also backs the user-facing search page — so
+// short-circuiting to empty would render a live campground as unavailable and could
+// suppress a real opening. A throw is what every caller already turns into
+// "couldn't determine"; see the `null` = unknown rule in the availability adapters.
+const UD_BREAKER_TRIP = Number(process.env.UD_BREAKER_TRIP ?? 4);
+const UD_BREAKER_COOLDOWN_MS = Number(process.env.UD_BREAKER_COOLDOWN_MS ?? 60_000);
+// Bounds a hung socket. rec.gov's notes record a "timeout cascade" where enough
+// stalled sockets starved the pool and made every OTHER source time out too; RC had
+// no timeout at all, so it was a candidate to cause exactly that for everyone else.
+const UD_TIMEOUT_MS = Number(process.env.UD_TIMEOUT_MS ?? 15_000);
+
+const _breaker = new Map<string, { consecutive: number; openUntil: number }>();
+const breakerFor = (source: string) => {
+  let s = _breaker.get(source);
+  if (!s) _breaker.set(source, (s = { consecutive: 0, openUntil: 0 }));
+  return s;
+};
+
+/**
+ * Failures that mean "back off", as opposed to a genuine bad request.
+ * 429 is the explicit rate limit; 403 is how these WAFs refuse a datacenter IP;
+ * 502/503/504 is what our own proxy reports when the upstream refused it. A 400
+ * is our bug and retrying it changes nothing, so it must not trip the breaker.
+ */
+function isUseDirectThrottle(status: number | null, err?: unknown): boolean {
+  if (status !== null) return status === 429 || status === 403 || status >= 502;
+  const e = err as { name?: string; message?: string } | undefined;
+  return e?.name === 'TimeoutError' || e?.name === 'AbortError' || /timeout|aborted/i.test(e?.message ?? '');
+}
+
+function recordUseDirectOutcome(source: string, throttled: boolean): void {
+  const s = breakerFor(source);
+  if (!throttled) {
+    if (s.openUntil !== 0) console.log(`[UseDirect ${source}] throttle breaker CLOSED — reachable again`);
+    s.consecutive = 0;
+    s.openUntil = 0;
+    return;
+  }
+  s.consecutive++;
+  if (s.consecutive >= UD_BREAKER_TRIP && Date.now() >= s.openUntil) {
+    s.openUntil = Date.now() + UD_BREAKER_COOLDOWN_MS;
+    console.warn(
+      `[UseDirect ${source}] throttle breaker OPEN after ${s.consecutive} throttled requests — ` +
+        `short-circuiting for ${UD_BREAKER_COOLDOWN_MS / 1000}s`
+    );
+  }
+}
+
 async function rdrBase(provider: UseDirectProvider): Promise<string> {
   const cached = _baseCache.get(provider.source);
   if (cached) return cached;
@@ -114,16 +173,33 @@ async function rdrFetch<T>(
   path: string,
   opts: { method?: string; body?: unknown } = {}
 ): Promise<T> {
+  // Breaker open: fail immediately without touching the network. This is the same
+  // outcome the caller was already getting from the failing request, minus the wait
+  // and minus another request feeding whatever is refusing us.
+  const brk = breakerFor(provider.source);
+  if (Date.now() < brk.openUntil) {
+    throw new Error(
+      `UseDirect ${provider.source} breaker open for ${Math.ceil((brk.openUntil - Date.now()) / 1000)}s — skipping ${path}`
+    );
+  }
+
   const base = await rdrBase(provider);
   const proxyUrl = process.env.RC_PROXY_URL;
   const proxySecret = process.env.RC_PROXY_SECRET ?? process.env.SYNC_SECRET;
 
   if (proxyUrl && proxySecret) {
-    const res = await fetch(proxyUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-sync-secret': proxySecret },
-      body: JSON.stringify({ base, path, method: opts.method ?? 'GET', body: opts.body }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-sync-secret': proxySecret },
+        body: JSON.stringify({ base, path, method: opts.method ?? 'GET', body: opts.body }),
+        signal: AbortSignal.timeout(UD_TIMEOUT_MS),
+      });
+    } catch (err) {
+      recordUseDirectOutcome(provider.source, isUseDirectThrottle(null, err));
+      throw err;
+    }
     if (!res.ok) {
       // The proxy collapses EVERY non-ok upstream into a flat 502 and puts the real
       // status in its body ({error: "upstream 403"}). Logging only the proxy's own
@@ -135,17 +211,37 @@ async function rdrFetch<T>(
         (t) => t.slice(0, 200),
         () => '<unreadable>'
       );
+      // Judge the breaker on the UPSTREAM status the proxy reports, not the proxy's
+      // own flat 502 — otherwise a plain "path not allowed" 400 from our own code
+      // would look identical to being rate-limited.
+      const upstream = /upstream (\d{3})/.exec(detail)?.[1];
+      recordUseDirectOutcome(
+        provider.source,
+        isUseDirectThrottle(upstream ? Number(upstream) : res.status)
+      );
       throw new Error(`RC proxy ${path} → ${res.status} ${detail}`);
     }
+    recordUseDirectOutcome(provider.source, false);
     return res.json() as Promise<T>;
   }
 
-  const res = await fetch(`${base}${path}`, {
-    method: opts.method ?? 'GET',
-    headers: { ...HEADERS, ...(opts.body ? { 'Content-Type': 'application/json' } : {}) },
-    ...(opts.body ? { body: JSON.stringify(opts.body) } : {}),
-  });
-  if (!res.ok) throw new Error(`RC RDR ${opts.method ?? 'GET'} ${path} → ${res.status}`);
+  let res: Response;
+  try {
+    res = await fetch(`${base}${path}`, {
+      method: opts.method ?? 'GET',
+      headers: { ...HEADERS, ...(opts.body ? { 'Content-Type': 'application/json' } : {}) },
+      ...(opts.body ? { body: JSON.stringify(opts.body) } : {}),
+      signal: AbortSignal.timeout(UD_TIMEOUT_MS),
+    });
+  } catch (err) {
+    recordUseDirectOutcome(provider.source, isUseDirectThrottle(null, err));
+    throw err;
+  }
+  if (!res.ok) {
+    recordUseDirectOutcome(provider.source, isUseDirectThrottle(res.status));
+    throw new Error(`RC RDR ${opts.method ?? 'GET'} ${path} → ${res.status}`);
+  }
+  recordUseDirectOutcome(provider.source, false);
   return res.json() as Promise<T>;
 }
 
