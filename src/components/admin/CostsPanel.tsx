@@ -5,6 +5,7 @@ import { Plus, Trash2, Pencil, Loader2 } from 'lucide-react';
 import {
   BILLING_PERIODS,
   oneTimeTotalCents,
+  lifetimeTotals,
   COST_CATEGORIES,
   monthlyCents,
   fixedTotalCents,
@@ -28,11 +29,13 @@ const PERIOD_SUFFIX: Record<BillingPeriod, string> = {
 export default function CostsPanel({
   initialItems,
   usage,
+  lifetimeUsage,
   mrrCents,
   monthLabel,
 }: {
   initialItems: CostItem[];
   usage: UsageCounts;
+  lifetimeUsage: UsageCounts;
   mrrCents: number | null;
   monthLabel: string;
 }) {
@@ -48,6 +51,7 @@ export default function CostsPanel({
   const fixedCents = fixedTotalCents(items);
   const yearlyItemCount = items.filter((i) => i.billing_period === 'yearly').length;
   const oneTimeCents = oneTimeTotalCents(items);
+  const lifetime = lifetimeTotals(items, lifetimeUsage);
   const usageCents = usageTotalCents(usage);
   const totalCents = fixedCents + usageCents;
   const netCents = mrrCents == null ? null : mrrCents - totalCents;
@@ -115,6 +119,50 @@ export default function CostsPanel({
           sub={mrrCents == null ? 'MRR unavailable' : `MRR ${fmtUSD(mrrCents)} − cost`}
           accent={netCents == null ? undefined : netCents >= 0 ? 'green' : 'red'}
         />
+      </div>
+
+      {/* LIFETIME SPEND — "what has this cost me, ever", as opposed to the run rate
+          above. Deliberately its own block and never folded into the monthly cards:
+          mixing a cumulative total with a monthly one is how a $99 annual fee ends up
+          looking like monthly burn.
+
+          The unknown count is shown rather than hidden. Items without a start date
+          contribute NOTHING here, so a total presented as complete would understate
+          spend by however many rows are unset — and silently, which is the failure
+          mode this panel already avoids elsewhere. */}
+      <div className="rounded-ch-card border border-ch-line bg-ch-card p-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-ch-body font-bold text-ch-ink">Lifetime spend</h3>
+          <span className="font-ch-display text-ch-title font-extrabold text-ch-ink">
+            {fmtUSD(lifetime.totalCents)}
+          </span>
+        </div>
+        <dl className="mt-2.5 grid grid-cols-1 gap-x-6 gap-y-1 text-ch-meta sm:grid-cols-3">
+          <div className="flex justify-between gap-2">
+            <dt className="text-ch-muted">Recurring, accrued</dt>
+            <dd className="font-bold text-ch-ink-2">{fmtUSD(lifetime.recurringCents)}</dd>
+          </div>
+          <div className="flex justify-between gap-2">
+            <dt className="text-ch-muted">One-time</dt>
+            <dd className="font-bold text-ch-ink-2">{fmtUSD(lifetime.oneTimeCents)}</dd>
+          </div>
+          <div className="flex justify-between gap-2">
+            <dt className="text-ch-muted">Usage, all time</dt>
+            <dd className="font-bold text-ch-ink-2">{fmtUSD(lifetime.usageCents)}</dd>
+          </div>
+        </dl>
+        <p className="mt-2 text-ch-fine leading-normal text-ch-muted">
+          Recurring items are counted from their start date, billed in advance — so a plan
+          that began this month counts once. A cancelled item stops accruing at its end date.
+        </p>
+        {lifetime.unknownCount > 0 && (
+          <p className="mt-1.5 text-ch-fine leading-normal text-ch-alert">
+            {lifetime.unknownCount === 1
+              ? '1 item has no start date, so it is missing from this total.'
+              : `${lifetime.unknownCount} items have no start date, so they are missing from this total.`}{' '}
+            Set one via Edit to include it.
+          </p>
+        )}
       </div>
 
       {/* Fixed line items — read-only rows with explicit Edit / Remove */}
@@ -362,6 +410,10 @@ function EditRow({
   const [notes, setNotes] = useState(item.notes ?? '');
   const [period, setPeriod] = useState<BillingPeriod>(item.billing_period);
   const [dollars, setDollars] = useState((item.amount_cents / 100).toString());
+  // Blank stays blank and saves as NULL. Defaulting to today would invent a start
+  // date and with it a lifetime figure that looks measured but isn't.
+  const [startedAt, setStartedAt] = useState(item.started_at ?? '');
+  const [endedAt, setEndedAt] = useState(item.ended_at ?? '');
 
   const cents = Math.max(0, Math.round(Number(dollars) * 100) || 0);
   const perMonth = monthlyCents({ amount_cents: cents, billing_period: period });
@@ -404,6 +456,33 @@ function EditRow({
           aria-label="Notes"
           className={`${field} w-full min-w-0`}
         />
+        {/* Start/end live in the notes cell rather than getting their own columns —
+            this table is already six columns wide on a phone. Start drives lifetime
+            spend; end stops a cancelled item accruing forever. */}
+        <span className="mt-1 flex flex-wrap items-center gap-1 text-ch-fine text-ch-muted">
+          <label className="flex items-center gap-1">
+            <span className="sr-only">Start date</span>
+            <span aria-hidden="true">from</span>
+            <input
+              type="date"
+              value={startedAt}
+              onChange={(e) => setStartedAt(e.target.value)}
+              aria-label="Start date"
+              className={`${field} w-[8.5rem] text-ch-fine`}
+            />
+          </label>
+          <label className="flex items-center gap-1">
+            <span className="sr-only">End date, if cancelled</span>
+            <span aria-hidden="true">to</span>
+            <input
+              type="date"
+              value={endedAt}
+              onChange={(e) => setEndedAt(e.target.value)}
+              aria-label="End date if cancelled"
+              className={`${field} w-[8.5rem] text-ch-fine`}
+            />
+          </label>
+        </span>
       </td>
       <td className="py-2 pr-3">
         <div className="flex items-center justify-end gap-1">
@@ -447,6 +526,8 @@ function EditRow({
                 notes: notes.trim() || null,
                 amount_cents: cents,
                 billing_period: period,
+                started_at: startedAt || null,
+                ended_at: endedAt || null,
               })
             }
             disabled={saving}

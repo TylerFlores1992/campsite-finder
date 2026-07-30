@@ -56,7 +56,7 @@ export default async function AdminPage() {
   // Allowlist lives in lib/admin — see the note there about the four copies.
   if (!(await currentUserIsAdmin())) notFound();
 
-  const [usersAgg, signupRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows, costItems, usageRows] =
+  const [usersAgg, signupRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows, costItems, usageRows, lifetimeUsageRows] =
     await Promise.all([
       safe(
         queryOne<{ total: number; new_7d: number; new_30d: number }>(
@@ -141,7 +141,13 @@ export default async function AdminPage() {
       ),
       safe(
         query<CostItem>(
-          `SELECT id, label, category, monthly_cents, notes, sort_order
+          // monthly_cents was RENAMED to amount_cents by migration 025. This select
+          // was never updated, so it threw "column does not exist" on every render and
+          // safe() swallowed it to [] — the Costs tab's server-side items silently
+          // vanished. A caught error that returns an empty list is indistinguishable
+          // from "no cost items", which is exactly why it went unnoticed.
+          `SELECT id, label, category, amount_cents, billing_period, notes, sort_order,
+                  started_at::text, ended_at::text
              FROM cost_items ORDER BY sort_order, label`
         ),
         []
@@ -151,6 +157,15 @@ export default async function AdminPage() {
           `SELECT channel, count(*)::int n FROM notifications
             WHERE status = 'sent' AND created_at >= date_trunc('month', now())
             GROUP BY channel`
+        ),
+        []
+      ),
+      // ALL TIME, deliberately unscoped — the query above is this month only, and
+      // lifetime spend needs every alert ever sent.
+      safe(
+        query<{ channel: string; n: number }>(
+          `SELECT channel, count(*)::int n FROM notifications
+            WHERE status = 'sent' GROUP BY channel`
         ),
         []
       ),
@@ -182,6 +197,12 @@ export default async function AdminPage() {
   const maxDay = Math.max(1, ...days.map((d) => d.n));
 
   // Usage this month, keyed by channel, for the Costs tab.
+  const lifetimeByChannel = Object.fromEntries(lifetimeUsageRows.map((r) => [r.channel, r.n]));
+  const lifetimeUsage: UsageCounts = {
+    sms: lifetimeByChannel['sms'] ?? 0,
+    email: lifetimeByChannel['email'] ?? 0,
+    push: lifetimeByChannel['push'] ?? 0,
+  };
   const usageByChannel = Object.fromEntries(usageRows.map((r) => [r.channel, r.n]));
   const usage: UsageCounts = {
     sms: usageByChannel['sms'] ?? 0,
@@ -208,6 +229,7 @@ export default async function AdminPage() {
     syncRows,
     costItems: costItems as CostItem[],
     usage,
+    lifetimeUsage,
     monthLabel,
   };
 

@@ -34,6 +34,10 @@ export interface CostItem {
   billing_period: BillingPeriod;
   notes: string | null;
   sort_order: number;
+  /** ISO date the cost STARTED. Null = unknown; lifetime is then unknowable, not 0. */
+  started_at?: string | null;
+  /** ISO date it stopped. Null = still running. */
+  ended_at?: string | null;
 }
 
 /**
@@ -118,4 +122,105 @@ export function fmtUSD(cents: number): string {
   const sign = cents < 0 ? '-' : '';
   const v = Math.abs(cents) / 100;
   return `${sign}$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+
+// --- Lifetime spend -----------------------------------------------------------
+// "What has this cost in total, ever." Three parts, summed by lifetimeTotals():
+// recurring items accrued from their start date, one-time items at face value, and
+// usage (SMS/email/push) counted over all time from the notifications table.
+
+/** Whole months from `a` to `b`, counting a partial final month as started. */
+function monthsBetween(a: Date, b: Date): number {
+  return (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+}
+
+/**
+ * How many times this item has been BILLED by `asOf`, inclusive of the first bill.
+ *
+ * These plans bill in advance: signing up today means one payment has already been
+ * made, so an item that started this morning has been billed once, not zero times.
+ * Counting elapsed periods instead would report a brand-new subscription as having
+ * cost nothing.
+ */
+export function billedPeriods(
+  item: Pick<CostItem, 'billing_period' | 'started_at' | 'ended_at'>,
+  asOf: Date = new Date()
+): number | null {
+  if (!item.started_at) return null; // unknown start — see migration 029
+  const start = new Date(`${item.started_at}T00:00:00Z`);
+  if (Number.isNaN(start.getTime())) return null;
+  const endsAt = item.ended_at ? new Date(`${item.ended_at}T00:00:00Z`) : null;
+  const until = endsAt && endsAt < asOf ? endsAt : asOf;
+  if (until < start) return 0;
+
+  if (item.billing_period === 'one_time') return 1;
+  const months = monthsBetween(start, until);
+  if (item.billing_period === 'yearly') return Math.floor(months / 12) + 1;
+  return months + 1;
+}
+
+/**
+ * Total ever paid for one item, or null when its start date is unknown.
+ *
+ * Null is deliberate and must survive to the UI: a missing start date makes the
+ * figure unknowable, and rendering it as 0 would quietly understate the total.
+ */
+export function lifetimeCents(
+  item: Pick<CostItem, 'amount_cents' | 'billing_period' | 'started_at' | 'ended_at'>,
+  asOf: Date = new Date()
+): number | null {
+  const periods = billedPeriods(item, asOf);
+  if (periods === null) return null;
+  return (item.amount_cents || 0) * periods;
+}
+
+export interface LifetimeTotals {
+  /** Recurring items accrued from their start dates. */
+  recurringCents: number;
+  /** One-time items, at face value. */
+  oneTimeCents: number;
+  /** SMS/email/push over all time. */
+  usageCents: number;
+  totalCents: number;
+  /** Items whose start date is unset, so they contribute NOTHING to the total. */
+  unknownCount: number;
+}
+
+/**
+ * Everything spent to date. `usage` must be ALL-TIME counts, not this month's —
+ * the admin page's usual usage query is scoped to the current month.
+ */
+export function lifetimeTotals(
+  items: CostItem[],
+  usage: UsageCounts,
+  asOf: Date = new Date()
+): LifetimeTotals {
+  let recurringCents = 0;
+  let oneTimeCents = 0;
+  let unknownCount = 0;
+
+  for (const item of items) {
+    if (item.billing_period === 'one_time') {
+      // A one-time cost's total is its amount whether or not a date is recorded, so
+      // it is never "unknown" — the date only affects when it is shown to have landed.
+      oneTimeCents += item.amount_cents || 0;
+      continue;
+    }
+    const cents = lifetimeCents(item, asOf);
+    if (cents === null) {
+      unknownCount++;
+      continue;
+    }
+    recurringCents += cents;
+  }
+
+  const usageCents = usageTotalCents(usage);
+  return {
+    recurringCents,
+    oneTimeCents,
+    usageCents,
+    totalCents: recurringCents + oneTimeCents + usageCents,
+    unknownCount,
+  };
 }

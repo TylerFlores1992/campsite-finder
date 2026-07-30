@@ -18,7 +18,7 @@ const notFound = () => NextResponse.json({ error: 'not found' }, { status: 404 }
 
 async function listItems(): Promise<CostItem[]> {
   return query<CostItem>(
-    `SELECT id, label, category, amount_cents, billing_period, notes, sort_order
+    `SELECT id, label, category, amount_cents, billing_period, notes, sort_order, started_at::text, ended_at::text
        FROM cost_items ORDER BY sort_order, label`
   );
 }
@@ -42,25 +42,32 @@ export async function POST(req: NextRequest) {
   const period = BILLING_PERIODS.includes(body.billing_period) ? body.billing_period : 'monthly';
   const notes = typeof body.notes === 'string' ? body.notes.trim() : null;
   const sortOrder = Math.round(Number(body.sort_order) || 0);
+  // Dates are optional and stay NULL when blank — an unknown start date must remain
+  // unknown rather than becoming today, which would invent lifetime spend. Anything
+  // that isn't a plain YYYY-MM-DD is treated as absent rather than passed to Postgres.
+  const asDate = (v: unknown): string | null =>
+    typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.trim()) ? v.trim() : null;
+  const startedAt = asDate(body.started_at);
+  const endedAt = asDate(body.ended_at);
 
   if (body.id) {
     const [row] = await mutate<CostItem>(
       `UPDATE cost_items
           SET label = $1, category = $2, amount_cents = $3, billing_period = $4,
-              notes = $5, sort_order = $6, updated_at = NOW()
-        WHERE id = $7
-        RETURNING id, label, category, amount_cents, billing_period, notes, sort_order`,
-      [label, category, cents, period, notes, sortOrder, body.id]
+              notes = $5, sort_order = $6, started_at = $7, ended_at = $8, updated_at = NOW()
+        WHERE id = $9
+        RETURNING id, label, category, amount_cents, billing_period, notes, sort_order, started_at::text, ended_at::text`,
+      [label, category, cents, period, notes, sortOrder, startedAt, endedAt, body.id]
     );
     if (!row) return NextResponse.json({ error: 'not found' }, { status: 404 });
     return NextResponse.json({ item: row });
   }
 
   const [row] = await mutate<CostItem>(
-    `INSERT INTO cost_items (label, category, amount_cents, billing_period, notes, sort_order)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, label, category, amount_cents, billing_period, notes, sort_order`,
-    [label, category, cents, period, notes, sortOrder]
+    `INSERT INTO cost_items (label, category, amount_cents, billing_period, notes, sort_order, started_at, ended_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, label, category, amount_cents, billing_period, notes, sort_order, started_at::text, ended_at::text`,
+    [label, category, cents, period, notes, sortOrder, startedAt, endedAt]
   );
   return NextResponse.json({ item: row });
 }

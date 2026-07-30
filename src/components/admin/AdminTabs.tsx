@@ -52,6 +52,8 @@ export interface AdminData {
   syncRows: SyncRow[];
   costItems: CostItem[];
   usage: UsageCounts;
+  /** ALL-TIME alert counts, for lifetime spend. Distinct from `usage` (this month). */
+  lifetimeUsage: UsageCounts;
   monthLabel: string;
 }
 
@@ -225,6 +227,7 @@ export default function AdminTabs({ data }: { data: AdminData }) {
         <CostsPanel
           initialItems={data.costItems}
           usage={data.usage}
+          lifetimeUsage={data.lifetimeUsage}
           mrrCents={mrrCents}
           monthLabel={data.monthLabel}
         />

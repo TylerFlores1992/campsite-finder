@@ -7,6 +7,9 @@ import {
   yearlyCents,
   oneTimeTotalCents,
   fixedTotalCents,
+  billedPeriods,
+  lifetimeCents,
+  lifetimeTotals,
   type CostItem,
 } from '../src/lib/costs';
 
@@ -51,4 +54,70 @@ test('a missing or zero amount cannot produce NaN in a total', () => {
   const items = [item(0, 'monthly'), { ...item(0, 'yearly'), amount_cents: undefined as unknown as number }];
   assert.equal(Number.isFinite(fixedTotalCents(items)), true);
   assert.equal(fixedTotalCents(items), 0);
+});
+
+// --- lifetime spend ----------------------------------------------------------
+// The figures here answer "what has this cost, ever", so an error compounds rather
+// than showing up once. The unknown-start case is the one that matters most: it must
+// stay unknown instead of quietly counting as zero.
+
+const dated = (
+  amount_cents: number,
+  billing_period: CostItem['billing_period'],
+  started_at: string | null,
+  ended_at: string | null = null,
+): CostItem => ({ ...item(amount_cents, billing_period), started_at, ended_at });
+
+const AS_OF = new Date('2026-07-30T12:00:00Z');
+
+test('billing is counted in advance, so a plan started today counts once', () => {
+  // Zero would report a subscription you have already paid for as having cost nothing.
+  assert.equal(billedPeriods(dated(2000, 'monthly', '2026-07-30'), AS_OF), 1);
+});
+
+test('a monthly plan accrues one charge per calendar month', () => {
+  // Apr, May, Jun, Jul.
+  assert.equal(billedPeriods(dated(2000, 'monthly', '2026-04-15'), AS_OF), 4);
+  assert.equal(lifetimeCents(dated(2000, 'monthly', '2026-04-15'), AS_OF), 8000);
+});
+
+test('a yearly plan bills once until the year is up', () => {
+  assert.equal(billedPeriods(dated(9900, 'yearly', '2026-01-01'), AS_OF), 1);
+  assert.equal(billedPeriods(dated(9900, 'yearly', '2025-01-01'), AS_OF), 2);
+  assert.equal(lifetimeCents(dated(9900, 'yearly', '2025-01-01'), AS_OF), 19800);
+});
+
+test('an ended item stops accruing at its end date', () => {
+  // Cancelled in May: Mar, Apr, May — not through July.
+  assert.equal(billedPeriods(dated(1000, 'monthly', '2026-03-01', '2026-05-10'), AS_OF), 3);
+});
+
+test('an unknown start date is UNKNOWN, never zero', () => {
+  assert.equal(billedPeriods(dated(2000, 'monthly', null), AS_OF), null);
+  assert.equal(lifetimeCents(dated(2000, 'monthly', null), AS_OF), null);
+});
+
+test('items with no start date are excluded AND counted as unknown', () => {
+  const items = [
+    dated(2000, 'monthly', '2026-04-15'), // 4 x 2000 = 8000
+    dated(2000, 'monthly', null), // unknown — must not contribute
+    dated(99900, 'one_time', null), // one-time needs no date
+  ];
+  const t = lifetimeTotals(items, { sms: 0, email: 0, push: 0 }, AS_OF);
+  assert.equal(t.recurringCents, 8000);
+  assert.equal(t.oneTimeCents, 99900);
+  assert.equal(t.unknownCount, 1, 'the missing row must be reported, not hidden');
+  assert.equal(t.totalCents, 107900);
+});
+
+test('lifetime usage is added to the total', () => {
+  const t = lifetimeTotals([], { sms: 1000, email: 0, push: 0 }, AS_OF);
+  // 1000 texts at the default $0.0115 = $11.50.
+  assert.equal(t.usageCents, 1150);
+  assert.equal(t.totalCents, 1150);
+});
+
+test('a future start date cannot produce a negative total', () => {
+  assert.equal(billedPeriods(dated(2000, 'monthly', '2027-01-01'), AS_OF), 0);
+  assert.equal(lifetimeCents(dated(2000, 'monthly', '2027-01-01'), AS_OF), 0);
 });
