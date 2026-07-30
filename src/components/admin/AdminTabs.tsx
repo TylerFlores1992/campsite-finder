@@ -57,22 +57,38 @@ export interface AdminData {
   monthLabel: string;
 }
 
+import {
+  DELIVERY_STALE_SECONDS,
+  DETECT_STALE_SECONDS,
+  DELIVERY_DEAD_SECONDS,
+  DETECT_DEAD_SECONDS,
+} from '@/lib/health-thresholds';
+
 const TABS = ['Overview', 'Users & Revenue', 'Engagement', 'System Health', 'Costs'] as const;
 type Tab = (typeof TABS)[number];
 
 type Level = 'ok' | 'warn' | 'fail';
 
-/** A canary's state, using the same thresholds the previous panel used. */
+
+/** A canary's state. Thresholds come from lib/health-thresholds — see the note there
+ *  about the three copies that disagreed. */
 function canaryLevel(c: CanaryRow): Level {
   const skipped = (c.detail ?? '').startsWith('skipped');
-  // Delivery canaries run hourly; detection canaries every 10 minutes.
-  const staleAfter = c.key.startsWith('delivery:') ? 7 * 3600 : 600;
-  const stale = c.age_s != null && c.age_s > staleAfter;
+  const isDelivery = c.key.startsWith('delivery:');
+  const staleAfter = isDelivery ? DELIVERY_STALE_SECONDS : DETECT_STALE_SECONDS;
+  const deadAfter = isDelivery ? DELIVERY_DEAD_SECONDS : DETECT_DEAD_SECONDS;
+  const age = c.age_s ?? 0;
   if (skipped) return 'warn';
   // One failure is a blip; two in a row is a problem.
   if (!c.ok && c.consecutive_failures < 2) return 'warn';
-  if (c.ok && !stale) return 'ok';
-  return 'fail';
+  if (!c.ok) return 'fail';
+  // OVERDUE IS NOT FAILED — but STOPPED is. Late gets a warning, matching
+  // /api/health/status; calling it "failing" put three red lines in the banner every
+  // day for a healthy pipeline. Past the dead threshold it has not slipped, it has
+  // stopped, and that earns the banner it was wrongly getting before.
+  if (age > deadAfter) return 'fail';
+  if (age > staleAfter) return 'warn';
+  return 'ok';
 }
 
 function syncLevel(s: SyncRow): Level {
