@@ -34,6 +34,14 @@ Stripe, Mapbox, Resend, Twilio, the auto-cart token, etc.). Two ways to get them
 - **Or copy** an existing `.env.local` from a machine that has one (via USB or a
   password-manager secure note — never email/Slack it; it contains live secrets).
 
+> **In a Claude-web session there is no third step: the values are already injected as
+> process env vars, and there is no `.env` file at all.** So `grep`ping `.env*` returns
+> nothing and looks exactly like "this environment has no credentials" — it isn't.
+> Check `printenv` (or `[ -n "${CLERK_SECRET_KEY:-}" ]`) instead. This cost a wrong
+> "I can't build here" call on 2026-07-29 when Clerk, Stripe, Supabase and Mapbox were
+> all present the whole time. Note these are the **LIVE** keys, not the test keys a
+> local `.env.local` carries.
+
 > Note: `.env.local` intentionally uses **Stripe TEST** keys for local dev, while
 > Vercel Production uses LIVE keys. If you `vercel env pull`, double-check you're
 > not running live Stripe against a local server.
@@ -503,6 +511,47 @@ Two things worth knowing before you fight it:
   the harness logs `pageerror`/console output so a throw can't masquerade as an empty
   page. If you add a component that imports something else Next-only, alias it there too.
 
+## Screenshotting whole PAGES (App Store submission)
+
+Different script, different job: `scripts/app-store-shots.mts` renders the **real
+production build** — full pages, real data, real Clerk — with the native
+User-Agent, so the store gating applies exactly as it does in the app. The run reports
+whether any price text appeared and whether the shot was caught mid-request.
+
+```
+NODE_USE_ENV_PROXY=1 npx next build
+NODE_USE_ENV_PROXY=1 npx next start -p 3100 &
+SHOTS_SIZE=6.9 SHOTS_OUT=/tmp/shots NODE_USE_ENV_PROXY=1 npx tsx scripts/app-store-shots.mts
+```
+
+`SHOTS_SIZE` picks the device: `6.9` (1320 × 2868, the size Apple requires), `6.5`
+(1284 × 2778, optional), `ipad13` (2064 × 2752). **App Store Connect has one upload box
+per display size and rejects anything whose pixel dimensions don't match that box
+exactly** — a 6.9" file dropped on the 6.5" box is a hard error, not a resize. iPad is
+required only because the Capacitor build declares iPad support.
+
+Three traps, all of which produced a bad screenshot before being fixed:
+
+- **The keys come from process env vars in a web session, NOT `.env` files.** Grepping
+  for `.env` finds nothing and reads as "no credentials available" — it isn't. Check
+  `printenv`. Without real Clerk keys every page 500s at request time while
+  `next build` still passes.
+- **Waiting 6s for `/search` is not enough.** A 50-mile availability sweep was still
+  running, so the shot showed a "Searching..." button over an empty result card. Not an
+  error, which is exactly why it shipped once. Settle is now 14s and the run logs
+  whether the page is still loading.
+- **Maps render as a blank grey box, and cannot be fixed from here.** Chromium can't
+  reach `api.mapbox.com` through the agent proxy (`ERR_CONNECTION_RESET`, confirmed
+  2026-07-29) — the same TLS reset that stops the live site being browsed.
+  `NODE_USE_ENV_PROXY=1` does **not** help: it only affects Node's `fetch`, not the
+  browser. This is why the iPad set stays on map-free pages — at iPad width `/search`
+  is two columns and the results column leads with the map. Same reason the campground
+  detail page is in no set: its photo strip comes from recreation.gov's CDN. Capture
+  those on a real device; screenshots can be replaced without submitting a new build.
+
+Full submission reference — privacy answers, review notes, listing copy — is in
+`docs/APP-STORE.md`.
+
 ## Checking the SEO surfaces
 
 ```
@@ -631,10 +680,12 @@ vars, and a setup-script field.
   and `FLY_API_TOKEN` (a **deploy**-scoped token: `fly tokens create deploy -a
   campsite-finder-worker`, not org-admin — so a leak only risks that one app, and an
   interactive `fly auth login` elsewhere is unaffected by revoking it). **Rotating it
-  is self-contained:** it lives ONLY in this env config — **no GitHub workflow deploys
-  to Fly** (deploys are manual; the `worker-watchdog` Action just curls health), so
-  after `fly tokens create deploy` + revoking the old one, update it here (and any local
-  copy) and nothing else. (3) set `ENABLE_OPS_TOOLS=1` so the hook
+  now has TWO places to update, not one** — this env config **and** the
+  `FLY_API_TOKEN` repo secret that `worker-deploy.yml` uses (added 2026-07-28; see the
+  deploy table above). This bullet used to say rotation was self-contained because no
+  workflow deployed to Fly, which was true until that Action existed: miss the repo
+  secret and the next `worker/**` push fails its deploy with an auth error that looks
+  nothing like a rotated token. (3) set `ENABLE_OPS_TOOLS=1` so the hook
   installs flyctl + the Supabase CLI. The Supabase CLI comes from npm and installs
   fine; **flyctl does NOT** — see the next bullet.
 - **Rendering a real PAGE (not just a component) needs Clerk keys — the CampHawk

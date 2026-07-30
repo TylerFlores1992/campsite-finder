@@ -532,6 +532,10 @@ live in `src/components/ui/`, screens in `src/components/v2/`.
   and `/new` are all listed. `/new` is listed **deliberately**: the New watch screen
   handles its own 401 with a message that keeps the campground, dates and filters
   already entered, and letting middleware intercept would throw that away.
+  **`/support` is listed too** (added 2026-07-28): it's the App Store Support URL, so
+  Apple fetches it unauthenticated and a 404 there fails review. It carries **no
+  prices** — it's reachable from inside the webview, which makes it a pricing surface
+  whether or not it looks like one.
 - **`robots` is set per page, not in the layout.** The layout carried a `noindex`
   during the dark launch and removing it is what made the campground SEO work count.
   `/` and `/search` are indexable; `/watches`, `/settings`, `/new` are not; and
@@ -547,6 +551,18 @@ live in `src/components/ui/`, screens in `src/components/v2/`.
   > app. The native surfaces are now `v2/PricingSection.tsx` (the whole `/` block,
   > copy included), `WatchCta`, `Explore`, `Settings` and `NewWatch`; adding a sixth
   > means gating it there too, not relying on this one.
+  > **`v2/SubscribeCta.tsx` (added 2026-07-28) follows the same rule** and exists because
+  > `/new` and the Explore guest box were dead ends: a visitor with no account, and a
+  > signed-in user with no subscription, both saw an explanation and no button. Its
+  > `useAccountGate()` returns `loading | ready | signedOut | needsSub`, and **`ready`
+  > deliberately includes `unknown`** — the same "never tell a paying subscriber to
+  > subscribe" rule as above. In the native app it renders Sign in / Create account or
+  > `subscribeSentence()`, **never a price**.
+- **`/api/subscription/status` now calls `syncUser(userId)` first** (2026-07-28). Without
+  it, a user whose row had never been written read as "no subscription" — which is how
+  every beta tester came to see "Start free trial" (see the admin/beta section). The
+  probe is also the thing you reach for when diagnosing that class of bug, so it needs
+  to provision before it answers, not after.
 - **Provider descriptions are HTML** — 4,469 of the 8,013 catalog rows. Render them
   through `v2/richText.tsx`, which parses to blocks and emits text. Never
   `dangerouslySetInnerHTML`: it is untrusted third-party markup.
@@ -922,6 +938,10 @@ steps (Firebase project `campapp-39c4b`).
   this UI to a non-US storefront is a review failure that can reportedly cost the
   entitlement.** Device locale is NOT a storefront check. Flip the switch only once app
   availability is restricted to the United States in App Store Connect and Play Console.
+  **iOS side of that precondition is DONE (2026-07-30): App Store availability is set to
+  United States only, price free.** So on iOS this is now purely a decision to flip, and
+  the natural moment is when the approved version is manually released. Play Console has
+  **not** been restricted yet — do that before an Android release, not after.
   Wired into all five non-subscriber surfaces (`PricingSection`, `WatchCta`, `Explore`,
   `Settings`, `NewWatch`), never shown to an active subscriber. Because the switch lives
   in web code and the app is a webview, turning it off is a push to master, **not an app
@@ -1010,13 +1030,21 @@ steps (Firebase project `campapp-39c4b`).
   the native bridge to `@capacitor-firebase/messaging` (FCM token, not APNs token) and
   uploading the APNs auth key to Firebase's **Production** slot (the Development-only trap;
   see SETUP.md). Apple Developer enrolled, App Store Connect app + API key done.
-- **Android: still emulator-only** — the shipped emulator build predates the push-plugin
-  switch, so it **needs a rebuild** with `@capacitor-firebase/messaging` (+ `cap:assets`
-  for the branded icon). Register flow worked on the old plugin (1 token landed 2026-07-25).
-- **LEFT:** rebuild Android with the new plugin; **Google Play** identity verification (ID
-  upload) + **device verification (needs a real Android device — emulator fails Play
-  Integrity)**; iOS public App Store submission (screenshots/metadata) when ready — the
-  TestFlight track itself is done.
+- **Android: rebuilt and signed 2026-07-28, still untested on hardware.** Codemagic now
+  produces a **signed** release APK off current `master`, so it carries
+  `@capacitor-firebase/messaging` and the branded icon. Getting there took four failed
+  builds — see the `codemagic.yaml` notes: this billing plan can schedule **no Linux
+  instance at all** (`mac_mini_m2` is the one that works), Capacitor 7 needs **JDK 21**,
+  and `android_signing` fetches the keystore but does **not** make Gradle use it, so a
+  green build happily shipped an unsigned APK until an explicit verify step was added.
+- **iOS: SUBMITTED for App Store review 2026-07-30**, build 5, release set to
+  **manual** so approval does not go live. Privacy label published, US-only availability,
+  screenshots in all three size boxes. Everything Apple asked for is recorded in
+  `docs/APP-STORE.md`; the likely rejection to argue rather than code around is
+  **3.1.3(b)**, and the reply is the review notes in §2 of that file.
+- **LEFT:** **Google Play** identity verification (ID upload) + **device verification
+  (needs a real Android device — emulator fails Play Integrity)**, which is the only
+  thing now blocking Android. On iOS going live, flip `NATIVE_LINKOUT` (below).
 
 ### Verifying a source actually alerts
 
@@ -1066,6 +1094,11 @@ certain App Store rejection. Clerk-authed, so it is deliberately NOT in
 - **Two-step confirm, not a typed confirmation.** Apple wants deletion genuinely
   reachable; a "type DELETE to continue" gate reads as obstruction. It is also its
   own `/settings` section rather than buried inside "Account", so a reviewer finds it.
+- **Verified end-to-end 2026-07-29** on a throwaway account with a real subscription —
+  Stripe showed `canceled`, the `users` row was gone, Clerk had zero accounts, and the
+  admin counts moved 12 → 11 and 2 → 1. Re-signup with the same email works afterwards.
+  This could not be tested from a sandbox before, because the route destroys the account
+  it runs on; treat the same way if the order ever changes.
 
 ## Auto-cart (rec.gov only) — the interesting part
 
@@ -1227,6 +1260,19 @@ fourth surface now.
   > streaming capability is unchanged — only the web client's use of it narrowed.
 - `recgov.mjs` — the actual add-to-cart, using **real Playwright mouse clicks**.
 - `session.mjs` — reliable login detection.
+- `profile-lock.mjs` — **a cross-process lock on one user's Chromium profile dir**
+  (added 2026-07-29). The bot and the broker are separate Node processes that compute
+  the same `profiles/<userId>` path and both call `launchPersistentContext` on it;
+  Chromium does not expect two instances on one user-data-dir and the result is not a
+  clean error. Observed: at 00:19:01 the bot's keepalive reported "session kept warm"
+  for an account while the broker — holding that same profile since 00:18:40 — was
+  looking at a logged-OUT rec.gov and could not confirm a sign-in for 45s. One profile,
+  two processes, opposite views. The bot's in-process `inUse` Set cannot see the broker
+  at all. The lock is a JSON file in the profile dir, **advisory and allowed to go
+  stale** (10 min): a crashed process locking someone out of auto-cart forever is worse
+  than the race it prevents. The broker waits for it (a person is sitting in front of a
+  page); `releaseProfileLockIfMine` exists so the error path can't strip another
+  process's lock.
 - Enrollment/connection state: `users.autocart_enabled` + `users.autocart_connected`.
   The Watches toggle shows "paused — reconnect" when enabled but not connected.
 
@@ -1260,6 +1306,20 @@ fourth surface now.
   polls until the signal settles ('in' returns immediately, 'out' only if it holds),
   and the keepalive additionally requires a second confirming read before clearing.
   **'unknown' must never clear anything** — that's what it's for.
+  > **Third cause, fixed 2026-07-29: a CAPTCHA was being treated as a bad password.**
+  > When rec.gov serves "Additional Verification Required", the saved credentials are
+  > *fine* — the browser got flagged. Purging them there makes the user re-enter a
+  > password that was never wrong, and it happens exactly when they're already stuck in
+  > a challenge loop. The broker now distinguishes the two and only clears on an actual
+  > credential rejection.
+- **Keepalives must not all fire at once.** Every enrolled profile waking together is
+  both a load spike on one mini PC and a burst of near-simultaneous rec.gov sessions
+  from one residential IP — the shape most likely to draw an anti-bot challenge. Two
+  changes (2026-07-29): a profile **warmed within 75% of `KEEPALIVE_MS` is skipped**
+  outright (tracked by a marker file, so a fresh sign-in doesn't trigger a redundant
+  warm seconds later), and the ones that do run are **staggered 15–45s with jitter**.
+  Related: the "every 1h" log line was computing `Math.round(30min / 1h)` and printing
+  a rounded-to-zero interval, which made a working keepalive look mis-scheduled.
 - **Date picker = react-aria RANGE calendar of `role="button"` divs.** Synthetic
   dispatched events do NOT complete the range (only the check-in anchor sticks →
   0-night payload → 400). Use **Playwright real mouse clicks** (`page.mouse`).
@@ -1291,6 +1351,25 @@ error rather than a silent leak of the roster into the JS bundle. Client compone
 a boolean, never the list. **None of this is the boundary by itself** — `/admin` calls
 `notFound()` (404, not 403, so the page's existence isn't revealed) and both API routes
 reject before touching data. Hiding a link only tidies the UI.
+
+**Beta testers (`beta_emails`) — two bugs fixed 2026-07-28, both worth remembering.**
+
+1. **The access check compared case-sensitively on one side only**, so a tester added as
+   `Cam1234123@Gmail.com` (or signed up with different capitalisation) read as having **no
+   subscription** and was shown "Start free trial". This affected every tester, not one.
+   `src/lib/auth.ts` now does `LOWER(b.email) = LOWER($2)`. Any email comparison against
+   user input needs both sides lowered — one side is the easy version of this bug.
+2. **`query()` cannot run an `INSERT`, even one with `RETURNING`.** Reaching for it to
+   get the inserted row back produced `syntax error at or near "INTO"`, surfacing in the
+   UI as a bare "Could not add" — because `query()` goes through the `exec_select` RPC,
+   which rejects anything that isn't a read. **`mutate()` already supports `RETURNING`**;
+   that is the one to use. (This was my own regression, introduced while adding the
+   invite email and caught only by trying it against the live DB.)
+
+Adding a tester now sends a setup email (`src/lib/notifications/beta-invite.ts`) naming
+the **exact address they must sign up with** — which is the failure mode above, made
+self-service. It fires only on a genuinely new insert, so re-adding someone doesn't
+re-mail them.
 
 **A status banner sits above the tabs**, derived from the same worker/canary/sync data
 System Health shows. It exists because "is anything broken right now" is the question
