@@ -100,6 +100,24 @@ The decision "may we alert for this?" is `worker/claim.ts`, keyed on
 - `claim.ts` is separate from `poller.ts` because importing the poller STARTS it —
   that's what made the most consequential code in the repo untestable.
 
+## rec.gov 429s — four fixes in one loop (2026-07-30)
+The breaker was flapping six times in thirteen minutes, so rec.gov watches went
+unchecked ~40% of the time and the "Recreation.gov isn't responding" banner flapped
+with it. All four causes were ours:
+1. **The half-open probe was a comment, not code** — the gate reopened for EVERYONE
+   after the cooldown, so all four concurrent fetches re-tripped it. Now exactly one
+   caller crosses (`enterRecgovGate`).
+2. **Flat 60s cooldown** → doubles per failed probe to `RECGOV_BREAKER_MAX_COOLDOWN_MS`
+   (8 min), reset by a success.
+3. **Bursted, not paced** — `pMap(4)` fired all four at once then idled 14s.
+   `RECGOV_SPREAD_MS` (half the interval) trickles them; costs ~2s of detection latency.
+4. **The UA announced a bot** (`CampsiteFinder/1.0`) under a comment claiming to mimic
+   a browser. `recgovHeaders` now sends real Chrome headers, like UseDirect already did.
+The `detect:ridb` canary also reported OUR backoff as "API likely down" and walked 16
+campgrounds into a live rate limit; it now names the state and stops early.
+`worker/recgov-breaker.test.mts` drives the real state machine (a 1ms timeout counts as
+a throttle, so it takes the 429 path without needing rec.gov to cooperate).
+
 ## Tests exist now — `npm test`
 `node:test` via tsx, no framework dependency. `*.test.mts` under `worker/`: the
 alerting claim, the admin cost arithmetic, canary thresholds. **They hit the real DB

@@ -312,6 +312,34 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > > stays fast and we stop feeding the ban. Per-process state, so it only trips in the
 > > throttled Fly worker, never Vercel search on its own IP.
 > >
+> > **THE HALF-OPEN PROBE WAS A COMMENT, NOT CODE, UNTIL 2026-07-30.** The paragraph
+> > above described the intent; the implementation reopened the gate for EVERYONE once
+> > the deadline passed, so all four of the poller's concurrent fetches hit a
+> > still-throttled rec.gov at once, three 429'd, and it slammed shut again. Six
+> > OPEN/CLOSED cycles in thirteen minutes — rec.gov watches unchecked ~40% of the time,
+> > and the user-visible "Recreation.gov isn't responding" banner flapping with it.
+> > Fixed together with three other things, all in the same failure loop:
+> > 1. **Real half-open** — exactly ONE caller crosses as a probe (`enterRecgovGate`);
+> >    the rest keep short-circuiting until it resolves. One request cannot re-trip a
+> >    limit that needs three.
+> > 2. **Escalating cooldown** — each failed probe doubles it (60s → 120s → …) up to
+> >    `RECGOV_BREAKER_MAX_COOLDOWN_MS` (8 min), reset by a success. It was a flat 60s,
+> >    so we walked back into the same rate limit every minute forever.
+> > 3. **Paced, not bursted** (`RECGOV_SPREAD_MS`, half the poll interval) — `pMap(4)`
+> >    fired all four campground-months simultaneously then idled for 14s. Same average
+> >    rate presented as a burst, which is exactly what a token bucket rejects; the
+> >    identical mistake once tripped rec.gov via the feature-E roster. Costs a couple
+> >    of seconds of average detection latency.
+> > 4. **Browser headers** (`recgovHeaders`) — the UA was
+> >    `Mozilla/5.0 (compatible; CampsiteFinder/1.0)` under a comment claiming to mimic
+> >    a browser. It announced a bot, and it is the cheapest thing for a limiter to key
+> >    on. Both header sets return the same 235 campsites against the live endpoint.
+> >
+> > Covered by `worker/recgov-breaker.test.mts`, which drives the real state machine
+> > with a 1ms timeout (a timeout counts as a throttle, so it takes the 429 path without
+> > needing rec.gov to cooperate). Both the half-open and escalation assertions were
+> > confirmed to FAIL against the old behaviour before being trusted.
+> >
 > > **The last two issue-#14 items SHIPPED 2026-07-24 — the cascade is now bounded and
 > > self-healing:** (1) the rec.gov request timeout is no longer a hardcoded 10s — it's
 > > `RECGOV_TIMEOUT_MS` (default **5s**), so a hung socket lives half as long and the
@@ -1754,8 +1782,11 @@ FLAPPING wedge — `WATCHDOG_EXTERNAL_WINDOW_MS` (rolling window, 5 min),
 failed, 0.8); `RECGOV_TIMEOUT_MS` (per-request rec.gov fetch
 timeout, 5s — shortened from 10s so a throttle storm can't starve the socket pool);
 rec.gov throttle breaker `RECGOV_BREAKER_TRIP` (consecutive
-429/timeout failures that OPEN the breaker, 3) and `RECGOV_BREAKER_COOLDOWN_MS`
-(short-circuit-to-empty window before a half-open probe, 60s); the UseDirect/RDR
+429/timeout failures that OPEN the breaker, 3), `RECGOV_BREAKER_COOLDOWN_MS`
+(short-circuit-to-empty window before a half-open probe, 60s — **doubles on each failed
+probe**), `RECGOV_BREAKER_MAX_COOLDOWN_MS` (ceiling on that escalation, 8 min) and
+`RECGOV_SPREAD_MS` (how much of a cycle the rec.gov fetches trickle across so they
+don't burst, default half of `POLL_INTERVAL_MS`); the UseDirect/RDR
 equivalents `UD_ATTEMPTS` (retries per call, 3), `UD_RETRY_BASE_MS` (backoff base,
 250ms — x8 on a 403), `UD_BREAKER_TRIP` (4), `UD_BREAKER_COOLDOWN_MS` (60s),
 `UD_TIMEOUT_MS` (15s), `UD_SYNC_CONCURRENCY` (grid fan-out during the catalog sync,

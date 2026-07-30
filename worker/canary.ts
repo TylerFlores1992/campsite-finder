@@ -10,7 +10,7 @@
 //   2. delivery:email / delivery:sms — Resend/Twilio actually accepted a synthetic
 //      send to a dedicated canary address (proves the last mile, not just detection).
 import { query, mutate } from '../src/lib/db/client';
-import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
+import { getAvailabilityFromRecGov, recgovBreakerOpen } from '../src/lib/availability/recgov';
 import { hasReserveAmericaAvailabilityInRange } from '../src/lib/availability/reserveamerica';
 import { fetchGrid, facilityIdFromCampgroundId } from '../src/lib/sources/reservecalifornia/client';
 import { hasGoingToCampAvailabilityInRange } from '../src/lib/availability/goingtocamp';
@@ -95,6 +95,13 @@ export async function runDetectionCanary(): Promise<void> {
     // campground that worked (cheap steady state), then a random sample, and pass if
     // ANY returns campsite rows; fail only if the whole batch comes back empty — the
     // real signature of a rec.gov outage.
+    // OUR breaker being open and rec.gov being down produce the identical empty
+    // result, and this probe used to report both as "API likely down". Say which one
+    // it is: the poller is deliberately backing off, the API's state is unknown, and
+    // walking the sample would only feed the throttle we are backing off from.
+    if (recgovBreakerOpen()) {
+      throw new Error('recgov: backing off — our throttle breaker is open (rate-limited, not down)');
+    }
     const prior = await query<{ detail: string | null }>(
       `SELECT detail FROM alert_canary WHERE key = 'detect:ridb'`
     ).catch(() => [] as { detail: string | null }[]);
@@ -103,10 +110,19 @@ export async function runDetectionCanary(): Promise<void> {
       `SELECT id FROM campgrounds WHERE source = 'ridb' ORDER BY random() LIMIT 15`
     ).catch(() => [] as { id: string }[]);
     const candidates = [...(lastGood ? [lastGood] : []), ...sample.map((r) => r.id)];
+    let tried = 0;
     for (const id of candidates) {
       const a = await getAvailabilityFromRecGov(id, month);
+      tried++;
       if (a.campsites.length > 0) {
         return `recgov reachable id=${id} ${month}: ${a.campsites.length} sites, ${a.availableCount} available`;
+      }
+      // Stop the moment the walk itself trips the breaker. Sixteen requests into a live
+      // rate limit is the canary deepening the outage it is measuring — and every
+      // remaining candidate would short-circuit to empty anyway, so the extra laps buy
+      // nothing but a worse verdict.
+      if (recgovBreakerOpen()) {
+        throw new Error(`recgov: rate-limited — breaker opened while probing (${tried} of ${candidates.length} tried)`);
       }
     }
     throw new Error(`recgov: 0 campsites across ${candidates.length} campgrounds — API likely down`);

@@ -88,6 +88,11 @@ const AUTOCART_POLL_INTERVAL_MS = Number(process.env.AUTOCART_POLL_INTERVAL_MS ?
 // re-verifies availability and decides the fallback alert (see 014_autocart_jobs).
 const RECONCILE_DELAY_SEC = Number(process.env.AUTOCART_RECONCILE_DELAY_SEC ?? 35);
 const RECGOV_CONCURRENCY = 4;
+// How much of a cycle the rec.gov fetches are spread across, so they trickle instead of
+// bursting. Kept to half the interval: pacedForEach spreads DISPATCH over this window
+// regardless of how many pairs there are, and the cycle's `running` guard skips a tick
+// if one overruns — so this must stay comfortably inside POLL_INTERVAL_MS.
+const RECGOV_SPREAD_MS = Number(process.env.RECGOV_SPREAD_MS ?? POLL_INTERVAL_MS * 0.5);
 // Alert-health canary cadences. Detection is cheap (one fetch per source) so it
 // runs often; delivery actually SENDS (Resend/Twilio), so it's slow by default to
 // avoid spamming the canary sink — /api/health/status staleness thresholds track
@@ -650,13 +655,25 @@ async function cycle(): Promise<void> {
     // recreation.gov. getAvailabilityFromRecGov swallows fetch errors and returns
     // empty campsites, so a transient failure never looks like "nothing available →
     // skip" incorrectly; it also self-throttles via a breaker under a 429 storm.
-    pMap(
+    //
+    // PACED, not bursted. pMap(4) fired all four campground-months simultaneously and
+    // then sat idle for the rest of the 15s cycle — the same average rate presented as
+    // a burst, which is exactly what a token-bucket limiter rejects. The identical
+    // mistake once tripped rec.gov with the feature-E probe roster (see PROBE_SPREAD_*)
+    // and was fixed there the same way. Same requests, same cadence, spread out.
+    //
+    // Cost: the last campground dispatched is checked up to RECGOV_SPREAD_MS later
+    // within its cycle, so average detection latency rises by a couple of seconds. That
+    // is worth far less than the ~40% of the time rec.gov watches were going unchecked
+    // behind an open breaker on 2026-07-30.
+    pacedForEach(
       [...pairs],
+      RECGOV_SPREAD_MS,
+      RECGOV_CONCURRENCY,
       async (pair) => {
         const [campgroundId, month] = pair.split('|');
         monthData.set(pair, await getAvailabilityFromRecGov(campgroundId, month));
-      },
-      RECGOV_CONCURRENCY
+      }
     ),
 
     // ReserveCalifornia: available units first, THEN the held/coming-soon check for
