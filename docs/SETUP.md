@@ -175,7 +175,12 @@ Supabase first (by hand, like 020/021). Devices register their token via
 
 > **Migrations are applied by hand** (020/021/023, and **`024_cost_items` +
 > `025_cost_items_billing_period`** for the admin Costs tab; 025 applied to prod
-> 2026-07-27). In a web session you can apply one directly:
+> 2026-07-27). Also applied to prod 2026-07-30: **`026_watch_site_alerts`** (per-site
+> alert cooldown — the poller depends on this table existing, so a worker deploy
+> without it would throw on every claim) and **`027_rls_action_tokens_canary`**.
+> Note `watch_id` in 026 is TEXT, because `watches.id` is TEXT despite holding
+> UUID-shaped values — a UUID column there fails with "foreign key constraint cannot
+> be implemented". In a web session you can apply one directly:
 > `sb.rpc('exec_dml', { query_text: <sql>, with_result: false })` with the service role —
 > `exec_dml` runs DDL, so no Supabase SQL-editor round-trip needed. (PostgREST `.from()`
 > won't see a brand-new table until its schema cache reloads; read back via `exec_select`.)

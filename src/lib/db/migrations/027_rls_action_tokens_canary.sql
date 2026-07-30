@@ -1,0 +1,35 @@
+-- Turn on RLS for the last two app tables that lacked it.
+--
+-- Supabase's advisor flagged these as "Table publicly accessible" / "Sensitive data
+-- publicly accessible" on 2026-07-26. The wording assumes a published anon key,
+-- which this project does not have: every query goes through the server-side
+-- service-role client (src/lib/db/client.ts is the only createClient call in the
+-- repo), no anon JWT is in the browser bundle, and PostgREST returns 401 without a
+-- key. So this was NOT exploitable as reported.
+--
+-- It is still worth closing, for one specific reason: the day anyone adds a browser
+-- Supabase client — the ordinary way to add realtime or a client-side read — these
+-- tables become world-readable and world-WRITABLE with no further mistake required.
+-- The protection should not depend on a coincidence of architecture.
+--
+-- `action_tokens` is the one that matters. Those tokens ARE the authorisation for
+-- managing a watch: /manage/<token> and the one-tap stop/reopen links in every alert
+-- carry no other credential (which is also why that page is noindex, nocache). A
+-- readable action_tokens table is the ability to pause or redirect other people's
+-- watches. `alert_canary` is monitoring state — low value, but there is no reason for
+-- it to be the one table without RLS.
+--
+-- NO POLICIES ARE CREATED, deliberately. RLS with zero policies denies everything to
+-- anon and authenticated, while the service_role the app uses has BYPASSRLS. Adding
+-- a permissive policy "so it keeps working" would undo the entire point — nothing in
+-- the app reads these as anon, so nothing needs one. If a future feature genuinely
+-- needs client-side access, it needs a narrow policy written for that case, not a
+-- blanket one added here in advance.
+ALTER TABLE action_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE alert_canary  ENABLE ROW LEVEL SECURITY;
+
+-- spatial_ref_sys is deliberately NOT touched. It is PostGIS's own reference table of
+-- coordinate-system definitions — public standards data, no user content, and owned by
+-- the extension rather than by us, so ALTER TABLE on it fails without superuser. It
+-- will keep appearing in the advisor's list; that is expected and accepted, not an
+-- outstanding item.
