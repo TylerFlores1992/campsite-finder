@@ -202,10 +202,18 @@ export async function syncUseDirect(provider: UseDirectProvider): Promise<SyncRe
       }
     }
 
+    // Concurrency 2, not 5. Each of these is a /search/grid call, and five in flight
+    // across a few hundred facilities is a sustained burst from ONE address — which is
+    // what these WAFs throttle. Virginia's 2026-07-30 run lost 83 of 276 facilities to
+    // 403 that way, and a facility whose grid call fails syncs ZERO campsites, so the
+    // cost of going fast was campgrounds missing from search entirely.
+    //
+    // This is a nightly background job; halving its concurrency costs nothing that
+    // matters and the retry in the client now absorbs what still slips through.
     const unitCounts = await pMap(
       bookable,
       (f) => syncFacilityUnits(provider, f.FacilityId, typeNames, errors),
-      5
+      Number(process.env.UD_SYNC_CONCURRENCY ?? 2)
     );
     campsitesSynced = unitCounts.reduce((a, b) => a + b, 0);
   } catch (err) {

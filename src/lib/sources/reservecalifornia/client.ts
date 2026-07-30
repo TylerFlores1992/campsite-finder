@@ -63,8 +63,10 @@ const breakerFor = (source: string) => {
  * is the sustained-failure case this breaker exists for, and a `>= 502` test would
  * have sat through it doing nothing.
  *
- * 429 is the explicit rate limit. 403 is how these WAFs refuse a datacenter IP —
- * seen the same minute from the Virginia host, as an nginx "403 Forbidden" page.
+ * 429 is the explicit rate limit. 403 is how these WAFs say "too fast" — it looks
+ * like a flat refusal (an nginx "403 Forbidden" page from the Virginia host) but is
+ * not one: that same sync got 403 on 83 grid calls and 200 on 193 others, in one run
+ * from one address. It is retried, with a much longer backoff than a 5xx.
  * Everything else in the 4xx range is our own request being wrong; retrying cannot
  * fix it and it must never open the breaker.
  */
@@ -269,13 +271,23 @@ async function rdrFetch<T>(
     }
     last = { status: r.status, message: r.message, err: r.err };
 
-    // A 403 is a settled refusal of this IP, not a blip — retrying burns time and
-    // changes nothing, so stop and let the breaker open quickly. Anything else that
-    // counts as a throttle (5xx, 429, timeout) is worth another go.
-    const retryable = r.status !== 403 && isUseDirectThrottle(r.status, r.err);
+    // 403 IS RETRYABLE, which reverses an earlier call here. It was excluded on the
+    // theory that a 403 is a settled refusal of the IP — true of a real block, and
+    // wrong for these WAFs. Virginia's 2026-07-30 catalog sync got 403 on 83 of 276
+    // grid calls and 200 on the other 193, in one run, from one address: a hard block
+    // would have failed all of them. It means "slow down", and the previous behaviour
+    // turned a pause into 83 campgrounds permanently missing from search, because
+    // syncFacilityUnits returns 0 for a facility whose grid call failed.
+    //
+    // A genuine block is still handled: 403 counts toward the breaker, so four in a
+    // row short-circuits the provider instead of grinding through retries.
+    const retryable = isUseDirectThrottle(r.status, r.err);
     if (!retryable || attempt === UD_ATTEMPTS) break;
-    // Jittered backoff so N parallel watches don't retry in lockstep.
-    await new Promise((res) => setTimeout(res, UD_RETRY_BASE_MS * attempt + Math.random() * 150));
+    // A rate limit needs real time, where a flaky 500 just needs another go — so back
+    // off much harder on 403 than on a transient error.
+    const backoffMs = r.status === 403 ? UD_RETRY_BASE_MS * 8 : UD_RETRY_BASE_MS;
+    // Jittered so N parallel calls don't retry in lockstep and re-trip the limit.
+    await new Promise((res) => setTimeout(res, backoffMs * attempt + Math.random() * 250));
   }
 
   recordUseDirectOutcome(provider.source, isUseDirectThrottle(last!.status, last!.err));
