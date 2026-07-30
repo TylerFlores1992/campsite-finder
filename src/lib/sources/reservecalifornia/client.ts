@@ -49,12 +49,21 @@ const breakerFor = (source: string) => {
 
 /**
  * Failures that mean "back off", as opposed to a genuine bad request.
- * 429 is the explicit rate limit; 403 is how these WAFs refuse a datacenter IP;
- * 502/503/504 is what our own proxy reports when the upstream refused it. A 400
- * is our bug and retrying it changes nothing, so it must not trip the breaker.
+ *
+ * Any 5xx counts. This started as `>= 502` on the theory that a 500 might be our
+ * own malformed request — wrong, and the live logs said so within one poll cycle:
+ * ReserveCalifornia answers Vercel's proxied /search/grid with a bare **500**
+ * (empty body) for the exact same facility that returns 200 from another IP. That
+ * is the sustained-failure case this breaker exists for, and a `>= 502` test would
+ * have sat through it doing nothing.
+ *
+ * 429 is the explicit rate limit. 403 is how these WAFs refuse a datacenter IP —
+ * seen the same minute from the Virginia host, as an nginx "403 Forbidden" page.
+ * Everything else in the 4xx range is our own request being wrong; retrying cannot
+ * fix it and it must never open the breaker.
  */
 function isUseDirectThrottle(status: number | null, err?: unknown): boolean {
-  if (status !== null) return status === 429 || status === 403 || status >= 502;
+  if (status !== null) return status === 429 || status === 403 || status >= 500;
   const e = err as { name?: string; message?: string } | undefined;
   return e?.name === 'TimeoutError' || e?.name === 'AbortError' || /timeout|aborted/i.test(e?.message ?? '');
 }
