@@ -12,7 +12,7 @@ process.env.RECGOV_BUDGET_PER_MIN = '60'; // 1/sec — round numbers for the ari
 process.env.RECGOV_BUDGET_BURST = '3';
 process.env.RECGOV_BUDGET_LOW_RESERVE = '1.5';
 
-const { getAvailability, schedulerStats, __resetScheduler } = await import('./recgov-scheduler');
+const { getAvailability, schedulerStats, __resetScheduler, createBucket } = await import('./recgov-scheduler');
 
 const avail = (campgroundId: string, month: string, n = 1): CampgroundAvailability => ({
   campgroundId,
@@ -149,6 +149,37 @@ test('recgov scheduler', async (t) => {
     assert.equal(schedulerStats(at).tokens, tokensBefore, 'and no budget spent on a no-op');
     assert.equal(r.stale, true);
     assert.equal(r.value.availableCount, 1, 'last real reading served, not blanked to unknown');
+  });
+
+  await t.test("BURST must absorb one cycle's paced dispatch, or the budget under-delivers", async () => {
+    // The regression this pins SHIPPED. BURST was set to 2 on the theory that a smaller
+    // burst is safer; the main cycle paces 4 campground-months over 7.5s and then idles,
+    // so the 2nd and 4th of every cycle landed just under the threshold and were refused
+    // — 8 served/min against 8 denied, half the budget never reaching the network while
+    // rec.gov was happy to serve it. The bucket does not create bursts (pacedForEach
+    // already spaced them); it only decides whether paced traffic gets through.
+    const BUDGET = 15, CYCLE_MS = 15_000, PACE_MS = 1_875, CYCLES = 20;
+    const servedPerMin = (burst: number) => {
+      const b = createBucket({ budgetPerMin: BUDGET, burst, lowReserve: 0.5, now: 0 });
+      let served = 0;
+      for (let c = 0; c < CYCLES; c++) {
+        for (let i = 0; i < 4; i++) {
+          if (b.trySpend('low', c * CYCLE_MS + i * PACE_MS)) served++;
+        }
+      }
+      return served / ((CYCLES * CYCLE_MS) / 60_000);
+    };
+    const tooSmall = servedPerMin(2);
+    const sized = servedPerMin(4);
+    assert.ok(tooSmall <= BUDGET * 0.6, `burst 2 must under-deliver, got ${tooSmall}/min`);
+    assert.ok(sized >= BUDGET * 0.95, `burst 4 must use the budget, got ${sized}/min`);
+    // And the HIGH reserve must be free at a correctly sized burst — that is the whole
+    // reason it survives rather than being dropped to zero.
+    const withReserve = servedPerMin(4);
+    const b0 = createBucket({ budgetPerMin: BUDGET, burst: 4, lowReserve: 0, now: 0 });
+    let noReserve = 0;
+    for (let c = 0; c < CYCLES; c++) for (let i = 0; i < 4; i++) if (b0.trySpend('low', c * CYCLE_MS + i * PACE_MS)) noReserve++;
+    assert.equal(withReserve, noReserve / ((CYCLES * CYCLE_MS) / 60_000), 'reserve costs nothing at a correct burst');
   });
 
   await t.test('tokens refill over time at the configured rate', async () => {

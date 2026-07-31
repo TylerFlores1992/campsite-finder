@@ -40,17 +40,33 @@ import { getAvailabilityFromRecGov, recgovBreakerOpen } from '../src/lib/availab
  */
 const BUDGET_PER_MIN = Number(process.env.RECGOV_BUDGET_PER_MIN ?? 15);
 /**
- * Burst capacity. Deliberately tiny. A token bucket with a large burst is just a
- * slower version of the bursting that provoked the limit in the first place — the
- * poller's `pMap(4)` firing four at once and then idling is exactly the shape a token
- * bucket is supposed to smooth out.
+ * Burst capacity. **Must be >= the number of requests a caller dispatches inside one
+ * pacing window**, or the bucket denies traffic that is already properly paced.
+ *
+ * This was set to 2 on the theory that a small burst is inherently safer. Wrong lever,
+ * and measurably so: the main cycle paces 4 campground-months over 7.5s and then idles,
+ * so with BURST=2 the second and fourth requests of every cycle arrived a few hundred
+ * milliseconds short of the threshold and were refused. Measured 8 served/min against 8
+ * denied/min — barely half the budget reaching the network, while rec.gov was perfectly
+ * happy to serve it.
+ *
+ * The bucket does not create bursts; `pacedForEach` already spaces the requests out.
+ * Burst capacity only decides whether the bucket LETS the paced traffic through, so
+ * sizing it to the cycle's working set costs nothing upstream. 4 restores full budget
+ * utilisation (15.2/min served, 0.8 denied in simulation against the real cadence).
+ *
+ * If the number of rec.gov campground-months per cycle grows well past this, raise it
+ * to match — or the budget will silently under-deliver again.
  */
-const BURST = Number(process.env.RECGOV_BUDGET_BURST ?? 2);
+const BURST = Number(process.env.RECGOV_BUDGET_BURST ?? 4);
 /**
- * LOW-priority callers may only spend down to this many tokens, leaving the rest as
- * headroom for HIGH. Without a reserve the main cycle's larger volume would crowd out
- * the auto-cart lane precisely when a site opens, which is the one moment carting has
- * to be fast.
+ * LOW-priority callers may only spend down to this many tokens, leaving headroom for
+ * HIGH — now the alert-health canary and the auto-cart reconciler, since auto-cart
+ * detection moved into the main cycle. Small but not zero: a denied canary reads its
+ * own starvation as "rec.gov is down" and raises a false banner.
+ *
+ * At BURST=4 this reserve costs nothing measurable (15.2/min served either way), which
+ * is the whole reason to keep it.
  */
 const LOW_PRIORITY_RESERVE = Number(process.env.RECGOV_BUDGET_LOW_RESERVE ?? 0.5);
 /** Drop cache entries nothing has asked for in this long, so the map can't grow forever. */
@@ -75,27 +91,47 @@ interface Entry {
 
 type Fetcher = (campgroundId: string, month: string) => Promise<CampgroundAvailability>;
 
+/**
+ * The token bucket, as a value rather than module state — so a test can instantiate it
+ * with arbitrary parameters and assert the arithmetic directly.
+ *
+ * It was module-global, and the first test written against it was worthless as a
+ * result: env changes after module load did nothing, a re-import returned the cached
+ * instance, and the assertions passed against a budget four times the one they claimed
+ * to be testing.
+ */
+export function createBucket(opts: { budgetPerMin: number; burst: number; lowReserve: number; now?: number }) {
+  let tokens = opts.burst;
+  let lastRefillAt = opts.now ?? Date.now();
+  const refill = (now: number) => {
+    const elapsed = now - lastRefillAt;
+    if (elapsed <= 0) return;
+    lastRefillAt = now;
+    tokens = Math.min(opts.burst, tokens + (elapsed / 60_000) * opts.budgetPerMin);
+  };
+  return {
+    /** Spend a token if this caller's priority is allowed to. Never blocks. */
+    trySpend(priority: Priority, now: number): boolean {
+      refill(now);
+      const floor = priority === 'high' ? 0 : opts.lowReserve;
+      if (tokens - 1 < floor) return false;
+      tokens -= 1;
+      return true;
+    },
+    tokens(now: number): number {
+      refill(now);
+      return tokens;
+    },
+  };
+}
+
 const entries = new Map<string, Entry>();
-let tokens = BURST;
-let lastRefillAt = Date.now();
+let bucket = createBucket({ budgetPerMin: BUDGET_PER_MIN, burst: BURST, lowReserve: LOW_PRIORITY_RESERVE });
+let servedSinceLog = 0;
 let deniedSinceLog = 0;
 let lastDenyLogAt = 0;
 
-function refill(now: number): void {
-  const elapsed = now - lastRefillAt;
-  if (elapsed <= 0) return;
-  lastRefillAt = now;
-  tokens = Math.min(BURST, tokens + (elapsed / 60_000) * BUDGET_PER_MIN);
-}
-
-/** Spend a token if this caller's priority is allowed to. Never blocks. */
-function trySpend(priority: Priority, now: number): boolean {
-  refill(now);
-  const floor = priority === 'high' ? 0 : LOW_PRIORITY_RESERVE;
-  if (tokens - 1 < floor) return false;
-  tokens -= 1;
-  return true;
-}
+const trySpend = (priority: Priority, now: number) => bucket.trySpend(priority, now);
 
 function evictIdle(now: number): void {
   for (const [key, e] of entries) {
@@ -160,11 +196,13 @@ export async function getAvailability(
     // a log line per denial would itself become the problem.
     if (now - lastDenyLogAt > 60_000) {
       console.warn(
-        `[recgov-scheduler] budget exhausted — ${deniedSinceLog} low-priority fetch(es) served from cache ` +
-          `in the last minute (budget ${BUDGET_PER_MIN}/min). Detection is slower, not blind.`
+        `[recgov-scheduler] budget squeeze — ${servedSinceLog} fetched / ${deniedSinceLog} served from cache ` +
+          `in the last minute (budget ${BUDGET_PER_MIN}/min, burst ${BURST}). Detection is slower, not blind. ` +
+          `If fetched is well under the budget, BURST is too small for the dispatch pattern — not the budget.`
       );
       lastDenyLogAt = now;
       deniedSinceLog = 0;
+      servedSinceLog = 0;
     }
     if (e.value) return { value: e.value, ageMs: age, stale: true };
     // Never fetched this one and can't afford to. `unknown` is the honest answer —
@@ -176,6 +214,7 @@ export async function getAvailability(
     };
   }
 
+  servedSinceLog++;
   const p = fetch(campgroundId, month)
     .then((value) => {
       // A failed/short-circuited read is `unknown` — it is not a newer reading, it is
@@ -197,9 +236,24 @@ export async function getAvailability(
 }
 
 /** Observability for the heartbeat line — you cannot budget what you cannot see. */
-export function schedulerStats(now = Date.now()): { tokens: number; tracked: number; budgetPerMin: number } {
-  refill(now);
-  return { tokens: Math.round(tokens * 10) / 10, tracked: entries.size, budgetPerMin: BUDGET_PER_MIN };
+export function schedulerStats(now = Date.now()): {
+  tokens: number;
+  tracked: number;
+  budgetPerMin: number;
+  burst: number;
+  lowReserve: number;
+  servedSinceLog: number;
+  deniedSinceLog: number;
+} {
+  return {
+    tokens: Math.round(bucket.tokens(now) * 10) / 10,
+    tracked: entries.size,
+    budgetPerMin: BUDGET_PER_MIN,
+    burst: BURST,
+    lowReserve: LOW_PRIORITY_RESERVE,
+    servedSinceLog,
+    deniedSinceLog,
+  };
 }
 
 /** Tests only — the module is process-global by design. `now` anchors the bucket's
@@ -207,8 +261,8 @@ export function schedulerStats(now = Date.now()): { tokens: number; tracked: num
  *  never refill and quietly assert nothing. */
 export function __resetScheduler(now = Date.now()): void {
   entries.clear();
-  tokens = BURST;
-  lastRefillAt = now;
+  bucket = createBucket({ budgetPerMin: BUDGET_PER_MIN, burst: BURST, lowReserve: LOW_PRIORITY_RESERVE, now });
   deniedSinceLog = 0;
+  servedSinceLog = 0;
   lastDenyLogAt = 0;
 }
