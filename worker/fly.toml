@@ -18,6 +18,16 @@ primary_region = "iad"
 [build]
   dockerfile = "Dockerfile"
 
+# 512MB, raised from 256MB on 2026-07-31 after a three-death crash loop. The breaker-
+# wait fixes made the nightly UseDirect sync THOROUGH — 50+ minutes of full grid
+# payloads instead of 22 minutes of fail-fast — and 256MB could not sustain that
+# alongside the poller: MemAvailable fell to 20MB mid-sync, the process thrashed
+# (rec.gov 5s timeouts, the :8080 server unresponsive, the poll cycle stalled), and
+# the watchdog killed it before the sync ever reached Illinois/Virginia. Never an
+# actual OOM kill — thrash, which is why it looked like "egress wedged".
+[[vm]]
+  memory = "512mb"
+
 [env]
   POLL_INTERVAL_MS = "15000"
   PORT = "8080"
