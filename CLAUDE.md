@@ -170,6 +170,14 @@ slamming the breaker shut.
   call, so spending a token on it buys nothing; the last real reading is served instead.
 - **An `unknown` never overwrites a real cached reading.** A failed read is the absence
   of a reading, not a newer one.
+- **Measured outcome (2026-07-31, iad, 14-min windows).** rec.gov 429s 0.58/min →
+  **0.14/min**; breaker openings 3 per 12 min → **0**; blind time ~40% → **0%**. The
+  cost is visible in the logs: ~15-18 low-priority refreshes denied per minute, so
+  demand is ~31/min against the 15/min budget. **The auto-cart lane's 6s cadence eats
+  ~10 of the 15 for ONE campground**, leaving ~5/min for the other four, i.e. a ~53s
+  effective refresh for non-auto-cart rec.gov watches. That is the live tradeoff — the
+  three levers are auto-cart cadence, lead-time tiering of the main cycle, and the
+  budget ceiling (already near the 429 floor, so don't just raise it).
 
 ## Tests exist now — `npm test`
 `node:test` via tsx, no framework dependency. `*.test.mts` under `worker/`: the
