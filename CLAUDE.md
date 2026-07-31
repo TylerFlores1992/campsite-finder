@@ -170,6 +170,14 @@ slamming the breaker shut.
   call, so spending a token on it buys nothing; the last real reading is served instead.
 - **An `unknown` never overwrites a real cached reading.** A failed read is the absence
   of a reading, not a newer one.
+- **The auto-cart lane's own detection loop is GONE (2026-07-31).** It ran every 6s
+  doing IDENTICAL detection to the main cycle with a different ending — queue a job
+  rather than send an alert — at 10 rec.gov req/min per campground-month against the
+  main cycle's 4. That 2.5x tax applied to every auto-cart campground and consumed two
+  thirds of the whole budget for ONE of five watches. The main cycle now detects for
+  every watch and branches on `isAutocartLane` after the claim; `autocartCycle` is
+  reconciliation only and makes no bulk rec.gov requests. Auto-cart detection is 15s
+  instead of a nominal 6s (which the saturated budget was not delivering anyway).
 - **Measured outcome (2026-07-31, iad, 14-min windows).** rec.gov 429s 0.58/min →
   **0.14/min**; breaker openings 3 per 12 min → **0**; blind time ~40% → **0%**. The
   cost is visible in the logs: ~15-18 low-priority refreshes denied per minute, so

@@ -84,6 +84,10 @@ const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 15_000);
 // Auto-cart rec.gov watches run on their own tighter loop so a cancellation gets
 // into the cart before someone else grabs it. Detection latency for these is
 // bounded by this interval instead of the slower main cycle.
+// Reconciler cadence. This was the auto-cart DETECTION interval until 2026-07-31 and
+// was the single largest rec.gov consumer in the worker — 10 req/min per campground-
+// month against the main cycle's 4. Detection moved into the main cycle; what is left
+// here touches the network only for jobs the bot failed to cart.
 const AUTOCART_POLL_INTERVAL_MS = Number(process.env.AUTOCART_POLL_INTERVAL_MS ?? 6_000);
 // How long after detection we let the bot attempt the cart before the reconciler
 // re-verifies availability and decides the fallback alert (see 014_autocart_jobs).
@@ -616,12 +620,19 @@ async function cycle(): Promise<void> {
     return;
   }
 
-  // Auto-cart rec.gov watches are handled by the tighter autocartCycle() below;
-  // everything else runs here on the main cadence. When the bot is offline the
-  // auto-cart lane is empty, so those watches drop through to here and alert
-  // immediately like any normal watch.
+  // ONE detection pass for every watch, auto-cart included (2026-07-31). Auto-cart
+  // used to have its own 6-SECOND loop doing identical detection with a different
+  // ending — queue a job instead of send an alert — which cost 10 rec.gov req/min per
+  // campground-month against the main cycle's 4, i.e. 2.5x for the same information.
+  // With a shared rate budget that multiplier was consuming two thirds of the worker's
+  // entire rec.gov allowance for a single campground, starving every other watch down
+  // to a ~53s refresh. Detection is the same work; only the terminal action differs, so
+  // it belongs in one loop.
+  //
+  // `isAutocartLane` only ever matches `ridb` watches, so dropping the filter here
+  // leaves the RA/RC/GTC/TNSC partitions below completely unchanged.
   const botOnline = await isBotOnline();
-  const mainWatches = watches.filter((w) => !isAutocartLane(w, botOnline));
+  const mainWatches = watches;
   const raWatches = mainWatches.filter((w) => w.campground_source === 'reserveamerica');
   const rcWatches = mainWatches.filter((w) => isUseDirectSource(w.campground_source));
   const gtcWatches = mainWatches.filter((w) => isGoingToCampSource(w.campground_source));
@@ -757,9 +768,8 @@ async function cycle(): Promise<void> {
 
   let notified = 0;
   // Feature E: this cycle's open/booked observation per watched window, recorded
-  // (throttled) after the notify loop. Covers every main-lane watch; auto-cart-lane
-  // rec.gov watches are handled in autocartCycle and fall into this lane whenever the
-  // bot is offline, so popular sites are still sampled.
+  // (throttled) after the notify loop. Covers EVERY watch now that auto-cart shares
+  // this loop, so the sampling no longer has a hole where the popular sites are.
   const observed: Array<{ w: WatchRow; hadOpening: boolean }> = [];
   for (const watch of mainWatches) {
     const rc = rcResults.get(watch.id);
@@ -787,6 +797,25 @@ async function cycle(): Promise<void> {
       console.log(
         `[poller] watch ${watch.id}: ${result.campsiteId ?? 'campground'} availability found but already notified — skipping`
       );
+      continue;
+    }
+
+    // Auto-cart lane: hand the opening to the bot instead of alerting. Same claim,
+    // same detection, different ending. If there is no specific site id there is
+    // nothing to cart, so it falls through to a normal alert.
+    if (isAutocartLane(watch, botOnline) && result.campsiteId) {
+      try {
+        await mutate(
+          `INSERT INTO autocart_jobs (watch_id, user_id, campground_id, campsite_id, payload)
+           VALUES ($1, $2, $3, $4, $5::jsonb)`,
+          [watch.id, watch.user_id, watch.campground_id, result.campsiteId, JSON.stringify(autocartPayload(watch, result))]
+        );
+        console.log(
+          `[poller] AUTOCART OPENING: ${watch.campground_name} site ${result.campsiteId} (${result.dates.join(', ')}) — job queued, waiting on the bot (watch ${watch.id})`
+        );
+      } catch (err) {
+        console.error(`[poller] autocart enqueue failed for watch ${watch.id}:`, err);
+      }
       continue;
     }
 
@@ -931,53 +960,16 @@ function autocartPayload(watch: WatchRow, result: WatchResult): NotificationPayl
   };
 }
 
+/**
+ * Auto-cart's own detection loop is GONE (2026-07-31) — the main cycle now detects for
+ * every watch and queues the job itself. What remains is reconciliation, which makes no
+ * bulk rec.gov requests: it re-verifies only the specific sites the bot failed to cart,
+ * at HIGH priority through the shared lane, and that is rare.
+ *
+ * Kept on its own timer because RECONCILE_DELAY_SEC is a deadline measured from when a
+ * job was queued, not something tied to the detection cadence.
+ */
 async function autocartCycle(): Promise<void> {
-  // If the bot is offline the lane is empty (the main cycle alerts these watches
-  // immediately instead); we still fall through to reconcile any jobs queued
-  // before it dropped.
-  const botOnline = await isBotOnline();
-  const watches = (await loadWatches()).filter((w) => isAutocartLane(w, botOnline));
-  if (watches.length > 0) {
-    // One recgov fetch per unique campground+month, shared across these watches.
-    const pairs = new Set<string>();
-    for (const w of watches) for (const m of monthsForRange(w.start_date, w.end_date)) pairs.add(`${w.campground_id}|${m}`);
-    const monthData = new Map<string, Awaited<ReturnType<typeof getAvailabilityFromRecGov>>>();
-    // HIGH priority and a tight freshness bound — carting is the paid feature and the
-    // one place a few seconds genuinely matter. What changed is that this no longer
-    // runs its OWN fetch loop: it shares the worker's single rec.gov lane, so it can
-    // ride on the main cycle's data when that is fresh enough, and the two can no
-    // longer stack up into a request rate nothing was measuring.
-    await pMap([...pairs], async (pair) => {
-      const [campgroundId, month] = pair.split('|');
-      const r = await recgovScheduler.getAvailability(campgroundId, month, {
-        maxAgeMs: AUTOCART_POLL_INTERVAL_MS * 0.8,
-        priority: 'high',
-      });
-      monthData.set(pair, r.value);
-    }, RECGOV_CONCURRENCY);
-
-    for (const watch of watches) {
-      const result = availableDatesForWatch(watch, monthData);
-      if (result.dates.length === 0) continue;
-      // Per-site claim: a watch that already alerted for a DIFFERENT site must still
-      // be able to cart this one. That was the sharper half of the old bug — the
-      // opening was not merely un-alerted, no autocart_jobs row was ever queued.
-      if (!(await claimNotification(watch.id, result.campsiteId))) continue;
-      const payload = autocartPayload(watch, result);
-      if (!result.campsiteId) {
-        // No specific site to cart → behave like a normal alert.
-        await dispatchNotifications(payload).catch((e) => console.error('[poller] autocart normal dispatch failed:', e));
-        continue;
-      }
-      await mutate(
-        `INSERT INTO autocart_jobs (watch_id, user_id, campground_id, campsite_id, payload)
-         VALUES ($1, $2, $3, $4, $5::jsonb)`,
-        [watch.id, watch.user_id, watch.campground_id, result.campsiteId, JSON.stringify(payload)]
-      );
-      console.log(`[poller] AUTOCART OPENING: ${watch.campground_name} site ${result.campsiteId} (${result.dates.join(', ')}) — job queued, waiting on the bot (watch ${watch.id})`);
-    }
-    await mutate(`UPDATE watches SET last_checked_at = NOW() WHERE id::text = ANY($1)`, [watches.map((w) => w.id)]).catch(() => {});
-  }
   await reconcileAutocartJobs();
 }
 
@@ -1249,8 +1241,10 @@ async function main() {
   await tick();
   setInterval(tick, POLL_INTERVAL_MS);
 
-  // Tighter, independent loop for auto-cart rec.gov watches + job reconciliation.
-  console.log(`[poller] auto-cart lane — interval ${AUTOCART_POLL_INTERVAL_MS / 1000}s, reconcile after ${RECONCILE_DELAY_SEC}s`);
+  // Reconciliation only — detection for auto-cart watches happens in the main cycle
+  // now. Still its own timer because RECONCILE_DELAY_SEC is a deadline measured from
+  // when a job was queued. Cheap: DB reads, plus a re-verify per job that missed.
+  console.log(`[poller] auto-cart reconciler — every ${AUTOCART_POLL_INTERVAL_MS / 1000}s, reconcile after ${RECONCILE_DELAY_SEC}s`);
   let acRunning = false;
   const acTick = async () => {
     if (acRunning) return;
