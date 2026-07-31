@@ -31,6 +31,7 @@ try {
 import { query, mutate, sqlit } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov, hasAvailabilityInRange, recgovBreakerOpen } from '../src/lib/availability/recgov';
 import * as recgovScheduler from './recgov-scheduler';
+import { SHARD_COUNT, LEASE_RENEW_MS, claimOrRenewShard, heldShard, ownsCampground } from './shard';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
 import { findGoingToCampOpen } from '../src/lib/availability/goingtocamp';
@@ -632,7 +633,10 @@ async function cycle(): Promise<void> {
   // `isAutocartLane` only ever matches `ridb` watches, so dropping the filter here
   // leaves the RA/RC/GTC/TNSC partitions below completely unchanged.
   const botOnline = await isBotOnline();
-  const mainWatches = watches;
+  // Shard filter. At SHARD_COUNT=1 ownsCampground is unconditionally true, so this is
+  // a no-op — see worker/shard.ts for why that short-circuit exists rather than
+  // depending on a lease the single poller doesn't need.
+  const mainWatches = SHARD_COUNT === 1 ? watches : watches.filter((w) => ownsCampground(w.campground_id));
   const raWatches = mainWatches.filter((w) => w.campground_source === 'reserveamerica');
   const rcWatches = mainWatches.filter((w) => isUseDirectSource(w.campground_source));
   const gtcWatches = mainWatches.filter((w) => isGoingToCampSource(w.campground_source));
@@ -928,7 +932,9 @@ async function cycle(): Promise<void> {
   await beat(watches.length);
 
   console.log(
-    `[poller] heartbeat — ${watches.length} watches (${rcWatches.length} RC), ${pairs.size} recgov + ${rcWatches.length} RC fetches, ${notified} notified` +
+    `[poller] heartbeat — ${mainWatches.length}${SHARD_COUNT > 1 ? `/${watches.length}` : ''} watches` +
+      `${SHARD_COUNT > 1 ? ` (shard ${heldShard() ?? '-'}/${SHARD_COUNT})` : ''}` +
+      ` (${rcWatches.length} RC), ${pairs.size} recgov + ${rcWatches.length} RC fetches, ${notified} notified` +
       // Surface the rec.gov rate every cycle. Nothing reporting our own request rate is
       // the root cause of every wrong diagnosis this session — including a budget that
       // was blamed twice while the real constraint was the bucket's burst size. The
@@ -1249,6 +1255,17 @@ async function main() {
       running = false;
     }
   };
+  // Claim a shard before the first cycle, and hold it on a timer. At SHARD_COUNT=1 the
+  // lease is still taken — it costs one tiny upsert every 15s and gives
+  // /api/health/status something real to assert — but ownsCampground does not depend
+  // on it, so a DB hiccup can never stop the only poller from polling.
+  await claimOrRenewShard();
+  console.log(`[poller] shard ${heldShard() ?? '-'} of ${SHARD_COUNT}` +
+    (SHARD_COUNT === 1 ? ' (single shard — owns every campground)' : ''));
+  setInterval(() => {
+    claimOrRenewShard().catch((err) => console.error('[poller] shard renew failed:', err));
+  }, LEASE_RENEW_MS);
+
   await tick();
   setInterval(tick, POLL_INTERVAL_MS);
 

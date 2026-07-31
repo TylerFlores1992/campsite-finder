@@ -187,6 +187,26 @@ slamming the breaker shut.
   three levers are auto-cart cadence, lead-time tiering of the main cycle, and the
   budget ceiling (already near the 429 floor, so don't just raise it).
 
+## Shard scaffolding — SHIPPED DARK at `SHARD_COUNT = 1` (2026-07-31)
+rec.gov capacity is per egress IP (measured: 3 Fly machines, two sharing a /24, all
+clean at ~16 req/min) ≈ **4 campground-months per machine at 15s**. `worker/shard.ts`
+divides campgrounds across machines so capacity grows by cloning a machine.
+- **At `SHARD_COUNT = 1` it is a deliberate no-op** — `ownsCampground` short-circuits to
+  true WITHOUT consulting the lease, so a DB hiccup can never stop the only poller.
+  Scaling later = raise `SHARD_COUNT` in `worker/fly.toml` + `flyctl machine clone`;
+  each machine leases a free index by itself. No per-machine env, nothing to forget.
+- **Shard by CAMPGROUND, never by watch or campground-month** — all watches for a
+  campground must share a machine or the dedup that makes this scale is lost.
+- **Lease, not config** (`poller_shards`, migration 031): one atomic
+  `INSERT .. ON CONFLICT .. WHERE`, same shape as the alerting claim. A holder renews;
+  an expired lease is takeable, so a dead machine self-heals.
+- **`poller.shards` in `/api/health/status` FAILS on an unheld shard.** That is the
+  silent-blindness case — those campgrounds are polled by nobody while everything else
+  reports green.
+- Tests: `worker/shard.test.mts` (pure hash: stability, range, even split, month
+  independence) + `worker/shard-lease.test.mts` (real DB: mutual exclusion, renewal,
+  expiry takeover, concurrent race). Both verified to fail against the bug they guard.
+
 ## Tests exist now — `npm test`
 `node:test` via tsx, no framework dependency. `*.test.mts` under `worker/`: the
 alerting claim, the admin cost arithmetic, canary thresholds. **They hit the real DB

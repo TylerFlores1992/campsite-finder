@@ -54,6 +54,34 @@ export async function GET() {
     checks.push({ name: 'worker.heartbeat', level: 'fail', detail: `read failed: ${(err as Error).message}` });
   }
 
+  // 1b. Shard coverage. An unheld shard means its campgrounds are watched by NOBODY —
+  //     and every other check stays green while it happens, which is the worst failure
+  //     this product has. A rec.gov deadlock on 2026-07-31 went unnoticed for twenty
+  //     minutes precisely because nothing asserted "work is actually being covered".
+  try {
+    const shards = await query<{ shard_index: number; shard_count: number }>(
+      `SELECT shard_index, shard_count FROM poller_shards WHERE leased_until > NOW()`
+    );
+    const expected = shards.reduce((m, r) => Math.max(m, r.shard_count), 0);
+    const live = shards.map((r) => r.shard_index);
+    const missing: number[] = [];
+    for (let i = 0; i < expected; i++) if (!live.includes(i)) missing.push(i);
+    checks.push({
+      name: 'poller.shards',
+      // No rows at all is a warn, not a fail: a worker predating the shard lease is a
+      // deploy-ordering artefact, not an outage.
+      level: expected === 0 ? 'warn' : missing.length > 0 ? 'fail' : 'ok',
+      detail:
+        expected === 0
+          ? 'no shard lease yet (worker may predate shard support)'
+          : missing.length > 0
+            ? `shard(s) ${missing.join(', ')} of ${expected} UNHELD — those campgrounds are not being polled`
+            : `${live.length}/${expected} shard(s) held`,
+    });
+  } catch (err) {
+    checks.push({ name: 'poller.shards', level: 'warn', detail: `read failed: ${(err as Error).message}` });
+  }
+
   // 2. Alert-health canary rows (detection per source + delivery). Written by the
   //    poller (worker/canary.ts). Missing rows mean the canary has never run.
   try {

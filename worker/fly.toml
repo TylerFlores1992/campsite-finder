@@ -21,6 +21,12 @@ primary_region = "iad"
 [env]
   POLL_INTERVAL_MS = "15000"
   PORT = "8080"
+  # How many slices the campground space is divided into — the SAME value on every
+  # machine. 1 = the shard machinery is a no-op (one index, owns everything, identical
+  # behaviour to before it existed). Raise it and add that many machines
+  # (`flyctl machine clone <id> --region iad`); each leases a free index by itself.
+  # Capacity is ~4 rec.gov campground-months per machine at a 15s cadence.
+  SHARD_COUNT = "1"
   # Delivery canary (synthetic email+SMS send proving the last mile). Daily, not the
   # 6h code default: the SMS send costs A2P money and once/day still catches a Twilio
   # outage well within the window we'd want to know it broke.
