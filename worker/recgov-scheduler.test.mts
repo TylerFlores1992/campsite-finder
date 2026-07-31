@@ -183,6 +183,36 @@ test('recgov scheduler', async (t) => {
     assert.equal(withReserve, noReserve / ((CYCLES * CYCLE_MS) / 60_000), 'reserve costs nothing at a correct burst');
   });
 
+  await t.test('a cooled-down breaker lets a prober through — no deadlock', async () => {
+    // THE OUTAGE THIS PINS. The scheduler skipped fetches while `recgovBreakerOpen()`
+    // was true, but that stays true until a SUCCESS closes the breaker — and the only
+    // thing that can produce a success is the half-open probe inside
+    // getAvailabilityFromRecGov, which never runs if the fetch is skipped. rec.gov
+    // detection deadlocked for 13 minutes in production, recoverable only by restart.
+    //
+    // The earlier breaker test asserted the SHORT-CIRCUIT and passed, because it
+    // injected `breakerOpen: () => true` forever — encoding the bug as the expectation.
+    // Recovery is the property that matters, so assert the transition, not the state.
+    const t0 = 1_000_000;
+    __resetScheduler(t0);
+    const f = countingFetcher();
+    await getAvailability('c1', '2026-09', { maxAgeMs: 0, now: t0, priority: 'high', fetcher: f.fn });
+
+    // Cooling down: skipped, as intended.
+    await getAvailability('c1', '2026-09', {
+      maxAgeMs: 0, now: t0 + 100, priority: 'high', fetcher: f.fn, breakerOpen: () => true,
+    });
+    assert.equal(f.calls.length, 1, 'hard cooldown must not spend a request');
+
+    // Cooldown elapsed — the breaker is still nominally OPEN, but a caller has to be
+    // allowed through or nothing can ever close it.
+    const r = await getAvailability('c1', '2026-09', {
+      maxAgeMs: 0, now: t0 + 200, priority: 'high', fetcher: f.fn, breakerOpen: () => false,
+    });
+    assert.equal(f.calls.length, 2, 'once cooled down, a prober MUST reach the network');
+    assert.equal(r.stale, false);
+  });
+
   await t.test('counters report a window the caller owns, and reset on read', async () => {
     // The bug this replaces: counters were reset inside the DENIAL branch and only
     // logged when a denial happened, so the window they covered was "however long since

@@ -125,11 +125,31 @@ function isThrottleError(err: unknown): boolean {
   return e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message ?? '');
 }
 
-/** True while rec.gov calls are being short-circuited. Exported so the alert-health
- *  canary can say "we are backing off" instead of "the API is down" — they produce
- *  identical empty results and used to be indistinguishable. */
+/** True from the moment the breaker trips until a success closes it — INCLUDING the
+ *  half-open phase, when one prober is allowed through. For "are we backing off",
+ *  which is what the canary reports. NOT a safe gate for skipping a call: see
+ *  recgovBreakerCoolingDown. */
 export function recgovBreakerOpen(): boolean {
   return recgovBreakerOpenUntil !== 0;
+}
+
+/**
+ * True only during the HARD cooldown, when a call is guaranteed to short-circuit
+ * without touching the network.
+ *
+ * This distinction is load-bearing and its absence took rec.gov detection down in
+ * production on 2026-07-31. The scheduler skipped fetches whenever
+ * `recgovBreakerOpen()` was true — but that stays true until a SUCCESS closes the
+ * breaker, and a success can only come from the half-open probe, which lives inside
+ * getAvailabilityFromRecGov and therefore never ran. The breaker opened at 15:37:45
+ * and was still open thirteen minutes later with zero fetches attempted: a deadlock
+ * that could only be cleared by restarting the worker.
+ *
+ * Once the cooldown elapses a caller MUST be allowed through so `enterRecgovGate` can
+ * admit its single prober. Skipping is only free while the answer is predetermined.
+ */
+export function recgovBreakerCoolingDown(): boolean {
+  return Date.now() < recgovBreakerOpenUntil;
 }
 
 /** Breaker internals, for tests only. The half-open and escalation rules are the kind

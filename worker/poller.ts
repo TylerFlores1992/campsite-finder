@@ -29,7 +29,7 @@ try {
 }
 
 import { query, mutate, sqlit } from '../src/lib/db/client';
-import { getAvailabilityFromRecGov, hasAvailabilityInRange } from '../src/lib/availability/recgov';
+import { getAvailabilityFromRecGov, hasAvailabilityInRange, recgovBreakerOpen } from '../src/lib/availability/recgov';
 import * as recgovScheduler from './recgov-scheduler';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
@@ -937,7 +937,11 @@ async function cycle(): Promise<void> {
       (() => {
         const c = recgovScheduler.takeCounters();
         const st = recgovScheduler.schedulerStats();
-        return ` [recgov ${c.served}f/${c.denied}c per ${(c.sinceMs / 1000).toFixed(0)}s, budget ${st.tokens}/${st.budgetPerMin}]`;
+        // Breaker state belongs here too: with the breaker open every call short-
+        // circuits before the counters, so the line reads `0f/0c` — identical to idle.
+        // That is exactly how a 13-minute rec.gov outage looked like a quiet night.
+        const brk = recgovBreakerOpen() ? ' BREAKER-OPEN' : '';
+        return ` [recgov ${c.served}f/${c.denied}c per ${(c.sinceMs / 1000).toFixed(0)}s, budget ${st.tokens}/${st.budgetPerMin}${brk}]`;
       })()
   );
 }

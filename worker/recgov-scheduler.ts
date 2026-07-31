@@ -29,7 +29,7 @@
 // already treat as "we don't know", NOT as "nothing is available".
 
 import type { CampgroundAvailability } from '../src/lib/types';
-import { getAvailabilityFromRecGov, recgovBreakerOpen } from '../src/lib/availability/recgov';
+import { getAvailabilityFromRecGov, recgovBreakerCoolingDown } from '../src/lib/availability/recgov';
 
 /**
  * Requests per minute this worker may make to rec.gov, across every lane.
@@ -182,11 +182,16 @@ export async function getAvailability(
     return { value, ageMs: 0, stale: false };
   }
 
-  // The rec.gov breaker short-circuits without touching the network, so a call made
-  // while it is open costs a token and buys nothing — and worse, its `unknown` result
-  // would overwrite a perfectly good cached reading from seconds earlier. Serve what we
-  // have instead, and keep the budget for when the network is actually reachable.
-  if ((opts.breakerOpen ?? recgovBreakerOpen)()) {
+  // Skip only during the breaker's HARD cooldown, when the call is guaranteed to
+  // short-circuit anyway — spending a token on that buys nothing, and its `unknown`
+  // would overwrite a good cached reading.
+  //
+  // It MUST be recgovBreakerCoolingDown and not recgovBreakerOpen. The latter stays
+  // true until a success closes the breaker, and the only thing that can produce that
+  // success is the half-open probe inside getAvailabilityFromRecGov — which never runs
+  // if we skip. That deadlocked rec.gov detection in production for thirteen minutes
+  // until the worker was restarted.
+  if ((opts.breakerOpen ?? recgovBreakerCoolingDown)()) {
     if (e.value) return { value: e.value, ageMs: age, stale: true };
     return {
       value: { campgroundId, month, campsites: [], availableCount: 0, unknown: true },
