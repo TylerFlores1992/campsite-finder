@@ -568,6 +568,25 @@ Three traps, all of which produced a bad screenshot before being fixed:
 Full submission reference — privacy answers, review notes, listing copy — is in
 `docs/APP-STORE.md`.
 
+## Typechecking
+
+```
+npm run typecheck        # BOTH configs — the plain `tsc` misses half the system
+```
+
+**`tsc --noEmit` alone does NOT cover the worker.** The root `tsconfig.json` excludes
+`worker` and `scripts` (Next.js owns that config and must not compile a long-running
+Node process into the app build), so the poller — the code that decides whether anyone
+gets alerted — was typechecked by nothing at all.
+
+Found on 2026-07-31 by widening one return type to `boolean | null`: `tsc` and
+`next build` both passed clean while `worker/poller.ts` had a hard type error at the
+call site, plus a second in `scripts/seed-probe-targets.ts`. Both would have shipped.
+`tsconfig.worker.json` covers `worker/` + `scripts/`; `npm run typecheck` runs both.
+
+Same family as the "`next build` passing is NOT enough" rule for layout changes — a
+green build says nothing about the parts Next.js does not compile.
+
 ## Running the tests
 
 ```
@@ -578,10 +597,14 @@ npm test
 `worker/`. Added 2026-07-30; before that the repo had no test script, no framework and
 no test files.
 
-Three suites, chosen because a silent wrong answer in each is expensive:
+Four suites, chosen because a silent wrong answer in each is expensive:
 `worker/claim.test.mts` (the alerting claim — where a bug costs a user a campsite),
-`worker/costs.test.mts` (admin cost arithmetic — net margin), and
-`worker/health-thresholds.test.mts` (canary staleness — the banner that cried wolf).
+`worker/costs.test.mts` (admin cost arithmetic — net margin),
+`worker/health-thresholds.test.mts` (canary staleness — the banner that cried wolf), and
+`worker/recgov-breaker.test.mts` (the rec.gov throttle breaker — which decides whether
+rec.gov watches get checked at all, and whose half-open probe was a comment rather than
+code until 2026-07-30). The breaker suite needs no credentials: a 1ms timeout counts as
+a throttle, so it drives the real 429 code path without rec.gov having to cooperate.
 
 > **They hit the REAL database and need credentials**, so run with
 > `NODE_USE_ENV_PROXY=1` in a web session. That is deliberate, not laziness: the

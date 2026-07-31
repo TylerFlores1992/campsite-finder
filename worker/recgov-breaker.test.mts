@@ -20,9 +20,7 @@ process.env.RECGOV_BREAKER_COOLDOWN_MS = '400';
 process.env.RECGOV_BREAKER_MAX_COOLDOWN_MS = '1600';
 
 const { getAvailabilityFromRecGov, recgovBreakerOpen, __recgovBreakerState, __recgovBreakerReset } =
-  await import(
-  '../src/lib/availability/recgov.ts'
-);
+  await import('../src/lib/availability/recgov');
 
 const CG = '232447';
 const MONTH = '2026-09';

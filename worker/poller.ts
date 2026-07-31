@@ -261,7 +261,9 @@ function probeArrival(leadDays: number): { start: string; end: string } {
 
 /** Whole-stay availability for any source, dispatching to the same adapters the
  *  poll cycle uses. True = a bookable stay exists across [start, end). */
-async function probeWholeStayOpen(source: string, campgroundId: string, start: string, end: string, nights: number): Promise<boolean> {
+/** `null` = we never found out (throttled / breaker open), which must NOT be recorded
+ *  as "no opening" — that is the same lie the search page was telling. */
+async function probeWholeStayOpen(source: string, campgroundId: string, start: string, end: string, nights: number): Promise<boolean | null> {
   if (isUseDirectSource(source)) return !!(await findRCOpenUnit(campgroundId, start, end, nights));
   if (isGoingToCampSource(source)) return !!(await findGoingToCampOpen(campgroundId, start, end, nights));
   if (isTnscSource(source)) return !!(await findTnscOpen(campgroundId, start, end, nights));
@@ -298,6 +300,9 @@ async function probeRosterIfDue(): Promise<void> {
     await pacedForEach(tasks, spreadMs, PROBE_CONCURRENCY, async ({ t, w }) => {
       try {
         const open = await probeWholeStayOpen(t.source, t.campground_id, w.start, w.end, PROBE_NIGHTS);
+        // Unknown is not a data point. Recording it as `false` would quietly poison the
+        // likelihood buckets with throttle noise, which is worse than a smaller sample.
+        if (open === null) return;
         rows.push({
           campgroundId: t.campground_id,
           source: t.source,

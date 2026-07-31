@@ -1292,6 +1292,55 @@ neither side's logs. It now returns `upstreamStatus` plus a slice of the upstrea
 AND `console.error`s it, which lands in Vercel's runtime logs where the worker cannot
 reach. The worker appends that body to the error it throws.
 
+## Empty is not "booked" (2026-07-31)
+
+`getAvailabilityFromRecGov` returns empty campsites for three different situations:
+rec.gov said there is nothing, rec.gov refused us (429), and our own breaker
+short-circuited without asking. `hasAvailabilityInRange` collapsed all three into
+`false`, and `/api/search` renders `false` as **fully booked**. So during a throttle the
+search page confidently told users that live, bookable campgrounds were full.
+
+Demonstrated on production while load-testing this: 15 Moab campgrounds all reported
+booked for a Tuesday night in November, while rec.gov asked directly from another IP
+reported 5 of 6 sites free at the first one.
+
+- `CampgroundAvailability.unknown?: boolean` marks a read we never actually got.
+- `hasAvailabilityInRange` returns **`boolean | null`**. Finding availability is positive
+  proof and stands even if another month failed; NOT finding it only means something
+  when every month was actually read.
+- `/api/search` already mapped a nullish check to "unknown" (it does this for the
+  GoingToCamp worker path), so the search page needed no change — it renders unknown.
+- **The same bug lived in two more places** and is fixed in both: the feature-E probe
+  recorder would have stored unknown as `hadOpening: false`, poisoning the likelihood
+  buckets with throttle noise; and `scripts/seed-probe-targets.ts` counted unknown as
+  "booked solid = high demand", which would seed probe targets on the strength of a rate
+  limit. Its own `catch` comment already said "transport error → don't treat as demand".
+
+> **The ReserveCalifornia client has always refused to do this** — it throws rather than
+> returning empty, and the comment explaining why explicitly names the rec.gov breaker as
+> the counter-example that gets it wrong. The rule was written down and simply never
+> applied to rec.gov. When adding a provider: an empty result and an unknown result must
+> not share a representation.
+
+### Routing rec.gov through Vercel: investigated and REJECTED (2026-07-31)
+
+The idea was to give the Fly worker's rec.gov calls a Vercel egress the way
+`/api/rc-proxy` does for UseDirect, since the breaker only ever tripped on Fly. **The
+premise is false.** Driving ~1,000 requests/minute at rec.gov through the public
+`/api/search` endpoint tripped the breaker on Vercel inside one round (round 1: 79 of 258
+campgrounds available; rounds 2 and 3: 0 of 258). Vercel is not immune, just less loaded.
+
+Two reasons not to do it, beyond that:
+- **It couples two failure domains that are currently separate.** Vercel's rec.gov lane
+  is shared with the search page. Today a throttled Fly worker degrades alerting only;
+  merging the lanes means one rate limit degrades search *and* alerting together.
+- The failure is silent and wrong rather than loud — see "Empty is not booked" above,
+  which is exactly what the load test surfaced on the live site.
+
+Don't revisit without new evidence. The remaining honest options are a different egress
+IP for the worker (a same-region Fly failover was already tried on 2026-07-22 and did
+**not** escape the throttle) or accepting a lower rec.gov poll rate.
+
 **`/api/rc-proxy` TAKES A BATCH** (2026-07-30). It forwarded exactly one RDR request
 per invocation while sitting on the hot path of a 15-second poller: 11 RC fetches a
 cycle is ~63,000 Vercel function invocations a day for 16 watches — the largest single

@@ -118,6 +118,34 @@ campgrounds into a live rate limit; it now names the state and stops early.
 `worker/recgov-breaker.test.mts` drives the real state machine (a 1ms timeout counts as
 a throttle, so it takes the 429 path without needing rec.gov to cooperate).
 
+## Empty ≠ booked (2026-07-31) — and rec.gov is NOT moving to Vercel
+`hasAvailabilityInRange` returned a flat boolean, so a throttled or breaker-short-
+circuited rec.gov read (empty campsites) was indistinguishable from "every site is
+booked" — and `/api/search` rendered live, bookable campgrounds as **fully booked**.
+Demonstrated on production: 15 Moab campgrounds all showed booked while rec.gov, asked
+directly, reported 5 of 6 sites free at the first one. It now returns **`boolean | null`**
+(`null` = never found out); `CampgroundAvailability.unknown` carries the flag. The
+search route already mapped nullish → "unknown", so it needed no change. The RC client
+has thrown rather than returned empty for exactly this reason all along, and its comment
+names the rec.gov breaker as the counter-example that got it wrong.
+- **Same bug, two more places:** the Feature E probe recorder would have logged unknown
+  as `hadOpening: false`, and `seed-probe-targets.ts` counted unknown as "booked solid =
+  high demand". Both now skip.
+- **Routing the poller's rec.gov traffic through Vercel was investigated and REJECTED.**
+  The premise ("Vercel isn't rate-limited by rec.gov") is false — driving ~1,000 req/min
+  through `/api/search` tripped the breaker on Vercel within one round. Vercel's rec.gov
+  lane is *shared with the search page*, so moving the worker onto it would couple
+  alerting and search into one failure domain that today are separate. Don't revisit
+  without new evidence.
+
+## `npm run typecheck` — `tsc` alone does NOT cover the worker
+The root `tsconfig.json` **excludes `worker` and `scripts`**, so the poller — the most
+consequential code in the repo — was typechecked by nothing. Found by widening one
+return type: `tsc` and `next build` both passed clean while `worker/poller.ts` had a hard
+type error at the call site, and it would have shipped. `tsconfig.worker.json` covers
+`worker/` + `scripts/`; **`npm run typecheck` runs both configs.** Same family as the
+"`next build` passing is NOT enough" rule below.
+
 ## Tests exist now — `npm test`
 `node:test` via tsx, no framework dependency. `*.test.mts` under `worker/`: the
 alerting claim, the admin cost arithmetic, canary thresholds. **They hit the real DB

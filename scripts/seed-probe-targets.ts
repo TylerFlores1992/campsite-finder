@@ -52,8 +52,10 @@ const NIGHTS = Number(arg('nights', '2'));
 const CONCURRENCY = 3;
 
 /** Whole-stay availability for the demand scan, dispatched by source. Throws on an
- *  unsupported source (so we never silently seed a catalog we can't actually probe). */
-function isOpenInRange(id: string, arrival: string, end: string, nights: number): Promise<boolean> {
+ *  unsupported source (so we never silently seed a catalog we can't actually probe).
+ *  `null` = we never found out; the caller must treat it like the throw, not like
+ *  "booked" — otherwise a rate limit reads as demand and seeds a bogus target. */
+function isOpenInRange(id: string, arrival: string, end: string, nights: number): Promise<boolean | null> {
   if (SOURCE === 'ridb') return hasAvailabilityInRange(id, arrival, end, nights);
   if (isUseDirectSource(SOURCE)) return hasRCAvailabilityInRange(id, arrival, end, nights);
   // GoingToCamp queries Camis directly. Camis' WAF 403s Vercel IPs but NOT the agent
@@ -110,6 +112,9 @@ async function main() {
     async (cg) => {
       try {
         const isOpen = await isOpenInRange(cg.id, arrival, end, NIGHTS);
+        // Unknown is not demand. Same rule as the catch below — a throttled read that
+        // came back empty must never be mistaken for "booked solid".
+        if (isOpen === null) { errors++; return; }
         probed++;
         if (isOpen) open++;
         else bookedSolid.push(cg); // no whole-stay opening = high demand

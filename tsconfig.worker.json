@@ -1,0 +1,22 @@
+// The worker is EXCLUDED from the root tsconfig (Next.js owns that one, and it must not
+// try to compile a long-running Node process into the app build). The consequence went
+// unnoticed for a long time: the most consequential code in the repo — the poller that
+// decides whether anyone gets alerted — was never typechecked by anything.
+//
+// Found on 2026-07-31 by widening `hasAvailabilityInRange` to `boolean | null`. `tsc`
+// and `next build` both passed clean while worker/poller.ts had a hard type error at
+// the call site. It would have shipped.
+//
+// `npm run typecheck` runs BOTH this and the root config. Same family as the "next
+// build passing is NOT enough" rule in CLAUDE.md: a green build says nothing about the
+// half of the system Next.js doesn't compile.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // The worker runs under tsx, which resolves .ts specifiers directly.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["worker/**/*.ts", "worker/**/*.mts", "scripts/**/*.ts", "scripts/**/*.mts", "src/**/*.ts"],
+  "exclude": ["node_modules"]
+}

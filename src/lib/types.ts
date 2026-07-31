@@ -72,6 +72,12 @@ export interface CampgroundAvailability {
   month: string; // YYYY-MM
   campsites: CampsiteAvailability[];
   availableCount: number; // sites with at least one open date
+  /**
+   * We never actually learned — the provider failed or our breaker short-circuited.
+   * NOT the same as "no sites are free", which is what an empty `campsites` looks
+   * like to every caller that doesn't check this. Treat as unknown, never as booked.
+   */
+  unknown?: boolean;
 }
 
 export interface SearchParams {

@@ -234,10 +234,11 @@ export async function getAvailabilityFromRecGov(
   // entirely (empty = "unknown", same as a storm).
   const gate = enterRecgovGate();
   if (!gate.allowed) {
-    return { campgroundId, month, campsites: [], availableCount: 0 };
+    return { campgroundId, month, campsites: [], availableCount: 0, unknown: true };
   }
 
   let rawCampsites: Record<string, RecGovCampsite> = {};
+  let unknown = false;
 
   try {
     // recreation.gov rejects unencoded ':' in query params ("query not encoded"),
@@ -251,7 +252,9 @@ export async function getAvailabilityFromRecGov(
   } catch (err) {
     console.warn(`[RecGov availability] Failed for ${campgroundId}/${month}:`, (err as Error).message);
     recordRecgovOutcome(isThrottleError(err), gate.isProbe); // count 429/timeout toward tripping the breaker
-    // Return empty availability rather than crashing
+    // Return empty availability rather than crashing — but FLAGGED, because empty and
+    // "we never found out" are the same shape and mean opposite things to a user.
+    unknown = true;
   } finally {
     gate.release();
   }
@@ -283,16 +286,31 @@ export async function getAvailabilityFromRecGov(
     month,
     campsites,
     availableCount,
+    ...(unknown ? { unknown: true } : {}),
   };
 }
 
-/** Check if a campground has any available nights in a date range across all its campsites. */
+/**
+ * Any available nights in this range? `null` means WE DON'T KNOW.
+ *
+ * This used to return a flat boolean, and that made the search page lie. A throttled
+ * or short-circuited fetch yields empty campsites, which is the exact shape of "every
+ * site is booked" — so during a rate limit `/api/search` rendered live, bookable
+ * campgrounds as fully booked, confidently. Demonstrated on production 2026-07-31:
+ * 15 Moab campgrounds all showed booked while rec.gov, asked directly, reported 5 of 6
+ * sites free at the first one.
+ *
+ * The ReserveCalifornia client already refuses to do this — it throws rather than
+ * returning empty, and its comment names the rec.gov breaker as the counter-example
+ * that gets it wrong. This closes that gap. `/api/search` already maps a nullish check
+ * to "unknown", so the search page needs no change: it renders unknown, not booked.
+ */
 export async function hasAvailabilityInRange(
   campgroundId: string,
   startDate: string, // YYYY-MM-DD
   endDate: string,   // YYYY-MM-DD
   minNights = 1
-): Promise<boolean> {
+): Promise<boolean | null> {
   // Determine which months to check
   const months = new Set<string>();
   const start = new Date(startDate);
@@ -306,8 +324,10 @@ export async function hasAvailabilityInRange(
   // Collect per-campsite availability across months so a stay spanning a month
   // boundary still counts as consecutive at the same site.
   const bySite = new Map<string, Map<string, boolean>>();
+  let anyUnknown = false;
   for (const month of months) {
     const avail = await getAvailabilityFromRecGov(campgroundId, month);
+    if (avail.unknown) anyUnknown = true;
     for (const cs of avail.campsites) {
       const days = bySite.get(cs.campsiteId) ?? new Map<string, boolean>();
       for (const day of cs.availability) {
@@ -331,5 +351,7 @@ export async function hasAvailabilityInRange(
     }
   }
 
-  return false;
+  // Finding availability is positive proof and stands even if another month failed.
+  // NOT finding it only means something when we actually looked at every month.
+  return anyUnknown ? null : false;
 }
