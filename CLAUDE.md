@@ -163,6 +163,13 @@ A denied refresh returns the **previous** value marked `stale`, or `unknown` if 
 never was one — never a fabricated empty, which downstream reads as "fully booked".
 Budget is printed on every heartbeat. Growth now degrades detection latency instead of
 slamming the breaker shut.
+- **FOUR call sites, not three.** `worker/canary.ts` was missed on the first pass — the
+  exact bug the scheduler exists to prevent. It goes through with `maxAgeMs: 0` (a
+  canary served from cache proves nothing) at HIGH priority.
+- **An open rec.gov breaker costs no budget** — it short-circuits without a network
+  call, so spending a token on it buys nothing; the last real reading is served instead.
+- **An `unknown` never overwrites a real cached reading.** A failed read is the absence
+  of a reading, not a newer one.
 
 ## Tests exist now — `npm test`
 `node:test` via tsx, no framework dependency. `*.test.mts` under `worker/`: the

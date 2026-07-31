@@ -10,7 +10,8 @@
 //   2. delivery:email / delivery:sms — Resend/Twilio actually accepted a synthetic
 //      send to a dedicated canary address (proves the last mile, not just detection).
 import { query, mutate } from '../src/lib/db/client';
-import { getAvailabilityFromRecGov, recgovBreakerOpen } from '../src/lib/availability/recgov';
+import { recgovBreakerOpen } from '../src/lib/availability/recgov';
+import * as recgovScheduler from './recgov-scheduler';
 import { hasReserveAmericaAvailabilityInRange } from '../src/lib/availability/reserveamerica';
 import { fetchGrid, facilityIdFromCampgroundId } from '../src/lib/sources/reservecalifornia/client';
 import { hasGoingToCampAvailabilityInRange } from '../src/lib/availability/goingtocamp';
@@ -112,7 +113,15 @@ export async function runDetectionCanary(): Promise<void> {
     const candidates = [...(lastGood ? [lastGood] : []), ...sample.map((r) => r.id)];
     let tried = 0;
     for (const id of candidates) {
-      const a = await getAvailabilityFromRecGov(id, month);
+      // Through the shared lane like everything else — this was the FOURTH unmetered
+      // rec.gov caller, missed when the other three were wired, which is precisely the
+      // bug the scheduler exists to prevent. maxAgeMs 0 because a canary served from
+      // cache proves nothing about reachability; HIGH because it is rare and its whole
+      // job is to answer "can we reach rec.gov right now".
+      const { value: a } = await recgovScheduler.getAvailability(id, month, {
+        maxAgeMs: 0,
+        priority: 'high',
+      });
       tried++;
       if (a.campsites.length > 0) {
         return `recgov reachable id=${id} ${month}: ${a.campsites.length} sites, ${a.availableCount} available`;

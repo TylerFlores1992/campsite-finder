@@ -114,6 +114,43 @@ test('recgov scheduler', async (t) => {
     assert.equal(r.value.unknown, undefined, 'a real prior reading is not "unknown"');
   });
 
+  await t.test('an unknown result never clobbers a real cached reading', async () => {
+    const t0 = 1_000_000;
+    __resetScheduler(t0);
+    const good = async () => avail('c1', '2026-09', 7);
+    const unknown = async () => ({ ...avail('c1', '2026-09', 0), unknown: true });
+
+    await getAvailability('c1', '2026-09', { maxAgeMs: 0, now: t0, priority: 'high', fetcher: good });
+    await getAvailability('c1', '2026-09', { maxAgeMs: 0, now: t0 + 10, priority: 'high', fetcher: unknown });
+    // A failed read is the ABSENCE of a reading, not a newer one. Overwriting here
+    // would turn a known-good campground into "we don't know" on one bad fetch.
+    const after = await getAvailability('c1', '2026-09', { maxAgeMs: 60_000, now: t0 + 20, fetcher: good });
+    assert.equal(after.value.availableCount, 7, 'previous real reading must survive');
+    assert.equal(after.value.unknown, undefined);
+  });
+
+  await t.test('an open breaker costs no budget and preserves the last reading', async () => {
+    const t0 = 1_000_000;
+    __resetScheduler(t0);
+    const f = countingFetcher();
+    await getAvailability('c1', '2026-09', { maxAgeMs: 0, now: t0, priority: 'high', fetcher: f.fn });
+    // Advance the clock: at a frozen instant age is 0, which counts as fresh and would
+    // return from cache before the breaker check is ever reached. Sample the budget at
+    // the SAME instant as the call so refill isn't mistaken for a spend.
+    const at = t0 + 100;
+    const tokensBefore = schedulerStats(at).tokens;
+
+    // The rec.gov breaker short-circuits without touching the network, so a call made
+    // while it is open would burn a token and buy nothing.
+    const r = await getAvailability('c1', '2026-09', {
+      maxAgeMs: 0, now: at, priority: 'high', fetcher: f.fn, breakerOpen: () => true,
+    });
+    assert.equal(f.calls.length, 1, 'no fetch attempted while the breaker is open');
+    assert.equal(schedulerStats(at).tokens, tokensBefore, 'and no budget spent on a no-op');
+    assert.equal(r.stale, true);
+    assert.equal(r.value.availableCount, 1, 'last real reading served, not blanked to unknown');
+  });
+
   await t.test('tokens refill over time at the configured rate', async () => {
     const t0 = 1_000_000;
     __resetScheduler(t0);

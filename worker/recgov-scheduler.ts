@@ -29,7 +29,7 @@
 // already treat as "we don't know", NOT as "nothing is available".
 
 import type { CampgroundAvailability } from '../src/lib/types';
-import { getAvailabilityFromRecGov } from '../src/lib/availability/recgov';
+import { getAvailabilityFromRecGov, recgovBreakerOpen } from '../src/lib/availability/recgov';
 
 /**
  * Requests per minute this worker may make to rec.gov, across every lane.
@@ -45,14 +45,14 @@ const BUDGET_PER_MIN = Number(process.env.RECGOV_BUDGET_PER_MIN ?? 15);
  * poller's `pMap(4)` firing four at once and then idling is exactly the shape a token
  * bucket is supposed to smooth out.
  */
-const BURST = Number(process.env.RECGOV_BUDGET_BURST ?? 3);
+const BURST = Number(process.env.RECGOV_BUDGET_BURST ?? 2);
 /**
  * LOW-priority callers may only spend down to this many tokens, leaving the rest as
  * headroom for HIGH. Without a reserve the main cycle's larger volume would crowd out
  * the auto-cart lane precisely when a site opens, which is the one moment carting has
  * to be fast.
  */
-const LOW_PRIORITY_RESERVE = Number(process.env.RECGOV_BUDGET_LOW_RESERVE ?? 1.5);
+const LOW_PRIORITY_RESERVE = Number(process.env.RECGOV_BUDGET_LOW_RESERVE ?? 0.5);
 /** Drop cache entries nothing has asked for in this long, so the map can't grow forever. */
 const IDLE_EVICT_MS = 15 * 60 * 1000;
 
@@ -113,7 +113,14 @@ function evictIdle(now: number): void {
 export async function getAvailability(
   campgroundId: string,
   month: string,
-  opts: { maxAgeMs: number; priority?: Priority; now?: number; fetcher?: Fetcher }
+  opts: {
+    maxAgeMs: number;
+    priority?: Priority;
+    now?: number;
+    fetcher?: Fetcher;
+    /** Injectable so the budget rules can be tested without real breaker state. */
+    breakerOpen?: () => boolean;
+  }
 ): Promise<CachedAvailability> {
   const now = opts.now ?? Date.now();
   const priority = opts.priority ?? 'low';
@@ -132,6 +139,19 @@ export async function getAvailability(
   if (e.inFlight) {
     const value = await e.inFlight;
     return { value, ageMs: 0, stale: false };
+  }
+
+  // The rec.gov breaker short-circuits without touching the network, so a call made
+  // while it is open costs a token and buys nothing — and worse, its `unknown` result
+  // would overwrite a perfectly good cached reading from seconds earlier. Serve what we
+  // have instead, and keep the budget for when the network is actually reachable.
+  if ((opts.breakerOpen ?? recgovBreakerOpen)()) {
+    if (e.value) return { value: e.value, ageMs: age, stale: true };
+    return {
+      value: { campgroundId, month, campsites: [], availableCount: 0, unknown: true },
+      ageMs: Infinity,
+      stale: true,
+    };
   }
 
   if (!trySpend(priority, now)) {
@@ -158,8 +178,13 @@ export async function getAvailability(
 
   const p = fetch(campgroundId, month)
     .then((value) => {
-      e!.value = value;
-      e!.fetchedAt = now;
+      // A failed/short-circuited read is `unknown` — it is not a newer reading, it is
+      // the absence of one. Keeping the previous real value is strictly more useful
+      // than replacing it with "we don't know".
+      if (!value.unknown || !e!.value) {
+        e!.value = value;
+        e!.fetchedAt = now;
+      }
       return value;
     })
     .finally(() => {
