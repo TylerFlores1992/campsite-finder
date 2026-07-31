@@ -30,6 +30,7 @@ try {
 
 import { query, mutate, sqlit } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov, hasAvailabilityInRange } from '../src/lib/availability/recgov';
+import * as recgovScheduler from './recgov-scheduler';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
 import { findGoingToCampOpen } from '../src/lib/availability/goingtocamp';
@@ -677,7 +678,13 @@ async function cycle(): Promise<void> {
       RECGOV_CONCURRENCY,
       async (pair) => {
         const [campgroundId, month] = pair.split('|');
-        monthData.set(pair, await getAvailabilityFromRecGov(campgroundId, month));
+        // LOW priority: this lane runs every 15s and can ride on anything the auto-cart
+        // lane fetched moments ago. Under a squeeze it yields to carting.
+        const r = await recgovScheduler.getAvailability(campgroundId, month, {
+          maxAgeMs: POLL_INTERVAL_MS * 0.8,
+          priority: 'low',
+        });
+        monthData.set(pair, r.value);
       }
     ),
 
@@ -892,7 +899,10 @@ async function cycle(): Promise<void> {
   await beat(watches.length);
 
   console.log(
-    `[poller] heartbeat — ${watches.length} watches (${rcWatches.length} RC), ${pairs.size} recgov + ${rcWatches.length} RC fetches, ${notified} notified`
+    `[poller] heartbeat — ${watches.length} watches (${rcWatches.length} RC), ${pairs.size} recgov + ${rcWatches.length} RC fetches, ${notified} notified` +
+      // Surface the rec.gov budget every cycle. The whole reason this session kept
+      // mis-diagnosing the 429s is that nothing reported our own request rate.
+      ` [recgov budget ${recgovScheduler.schedulerStats().tokens}/${recgovScheduler.schedulerStats().budgetPerMin}]`
   );
 }
 
@@ -932,9 +942,18 @@ async function autocartCycle(): Promise<void> {
     const pairs = new Set<string>();
     for (const w of watches) for (const m of monthsForRange(w.start_date, w.end_date)) pairs.add(`${w.campground_id}|${m}`);
     const monthData = new Map<string, Awaited<ReturnType<typeof getAvailabilityFromRecGov>>>();
+    // HIGH priority and a tight freshness bound — carting is the paid feature and the
+    // one place a few seconds genuinely matter. What changed is that this no longer
+    // runs its OWN fetch loop: it shares the worker's single rec.gov lane, so it can
+    // ride on the main cycle's data when that is fresh enough, and the two can no
+    // longer stack up into a request rate nothing was measuring.
     await pMap([...pairs], async (pair) => {
       const [campgroundId, month] = pair.split('|');
-      monthData.set(pair, await getAvailabilityFromRecGov(campgroundId, month));
+      const r = await recgovScheduler.getAvailability(campgroundId, month, {
+        maxAgeMs: AUTOCART_POLL_INTERVAL_MS * 0.8,
+        priority: 'high',
+      });
+      monthData.set(pair, r.value);
     }, RECGOV_CONCURRENCY);
 
     for (const watch of watches) {
@@ -1009,7 +1028,13 @@ async function recheckCampsite(campgroundId: string, campsiteId: string, startDa
   const nightSet = new Set(nights);
   const open = new Set<string>();
   for (const month of monthsForRange(startDate, endDate)) {
-    const avail = await getAvailabilityFromRecGov(campgroundId, month);
+    // HIGH and near-zero staleness: this decides whether to send a fallback alert for
+    // a site the bot failed to cart, so a cached "still open" would alert on a site
+    // that is already gone. Rare enough that it never meaningfully spends the budget.
+    const { value: avail } = await recgovScheduler.getAvailability(campgroundId, month, {
+      maxAgeMs: 2_000,
+      priority: 'high',
+    });
     for (const cs of avail.campsites) {
       if (String(cs.campsiteId) !== String(campsiteId)) continue;
       for (const day of cs.availability) if (day.status === 'available' && nightSet.has(day.date)) open.add(day.date);

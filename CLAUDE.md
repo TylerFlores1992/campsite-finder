@@ -146,6 +146,24 @@ type error at the call site, and it would have shipped. `tsconfig.worker.json` c
 `worker/` + `scripts/`; **`npm run typecheck` runs both configs.** Same family as the
 "`next build` passing is NOT enough" rule below.
 
+## One rec.gov fetch lane — `worker/recgov-scheduler.ts` (2026-07-31)
+There were TWO uncoordinated rec.gov fetch loops: the main cycle (15s) and
+`autocartCycle` (**every 6s**, unpaced, and excluded from the main cycle so genuinely
+additive). Real rate was ~26-36/min — including one campground URL fetched **10x a
+minute** — and it was not observable from any single place, which is why every estimate
+this session was wrong, including the one that moved the worker to another region for
+nothing. All three worker call sites now go through the scheduler:
+- **single-flight** (concurrent callers for the same campground-month share one request),
+- **short-TTL cache** (caller states `maxAgeMs`; auto-cart asks for fresh, main cycle
+  rides on whatever auto-cart just fetched),
+- **token-bucket budget** `RECGOV_BUDGET_PER_MIN` (15, measured — a clean IP took 160
+  sequential requests at 16/min with zero 429s). LOW callers stop at
+  `RECGOV_BUDGET_LOW_RESERVE`; HIGH (auto-cart, reconciler) may spend to zero.
+A denied refresh returns the **previous** value marked `stale`, or `unknown` if there
+never was one — never a fabricated empty, which downstream reads as "fully booked".
+Budget is printed on every heartbeat. Growth now degrades detection latency instead of
+slamming the breaker shut.
+
 ## Tests exist now — `npm test`
 `node:test` via tsx, no framework dependency. `*.test.mts` under `worker/`: the
 alerting claim, the admin cost arithmetic, canary thresholds. **They hit the real DB
