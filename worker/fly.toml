@@ -7,7 +7,13 @@
 #   RESEND_API_KEY, EMAIL_FROM
 
 app = "campsite-finder-worker"
-primary_region = "sjc"
+# iad since 2026-07-31. sjc was moved off after its egress IP turned out to be the
+# one rec.gov treated worst — though the move alone changed nothing measurable, because
+# the real cause was our own uncoordinated fetch lanes. Kept in iad regardless: it
+# measured clean (0 429s in 160 requests) where sjc did not, and there is no reason to
+# go back to a worse address. NOTE this only places NEW machines; existing ones stay
+# where they are and must be moved with `flyctl machine clone --region`.
+primary_region = "iad"
 
 [build]
   dockerfile = "Dockerfile"

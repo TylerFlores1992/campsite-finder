@@ -12,7 +12,8 @@ process.env.RECGOV_BUDGET_PER_MIN = '60'; // 1/sec — round numbers for the ari
 process.env.RECGOV_BUDGET_BURST = '3';
 process.env.RECGOV_BUDGET_LOW_RESERVE = '1.5';
 
-const { getAvailability, schedulerStats, __resetScheduler, createBucket } = await import('./recgov-scheduler');
+const { getAvailability, schedulerStats, __resetScheduler, createBucket, takeCounters } =
+  await import('./recgov-scheduler');
 
 const avail = (campgroundId: string, month: string, n = 1): CampgroundAvailability => ({
   campgroundId,
@@ -180,6 +181,29 @@ test('recgov scheduler', async (t) => {
     let noReserve = 0;
     for (let c = 0; c < CYCLES; c++) for (let i = 0; i < 4; i++) if (b0.trySpend('low', c * CYCLE_MS + i * PACE_MS)) noReserve++;
     assert.equal(withReserve, noReserve / ((CYCLES * CYCLE_MS) / 60_000), 'reserve costs nothing at a correct burst');
+  });
+
+  await t.test('counters report a window the caller owns, and reset on read', async () => {
+    // The bug this replaces: counters were reset inside the DENIAL branch and only
+    // logged when a denial happened, so the window they covered was "however long since
+    // the last denial" while the message claimed one minute. Sparse denials stretched it
+    // silently — a reporting bug inside the instrumentation added to stop guessing.
+    const t0 = 1_000_000;
+    __resetScheduler(t0);
+    const f = countingFetcher();
+    await getAvailability('a', '2026-09', { maxAgeMs: 0, now: t0, priority: 'high', fetcher: f.fn });
+    await getAvailability('b', '2026-09', { maxAgeMs: 0, now: t0, priority: 'high', fetcher: f.fn });
+
+    const first = takeCounters(t0 + 30_000);
+    assert.equal(first.served, 2);
+    assert.equal(first.sinceMs, 30_000, 'window is since the last read, stated not assumed');
+
+    // Reading resets, so the next window counts only what happened after it — with zero
+    // denials in between, which is exactly the case the old version never reported.
+    const second = takeCounters(t0 + 45_000);
+    assert.equal(second.served, 0);
+    assert.equal(second.denied, 0);
+    assert.equal(second.sinceMs, 15_000);
   });
 
   await t.test('tokens refill over time at the configured rate', async () => {

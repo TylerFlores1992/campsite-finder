@@ -127,9 +127,14 @@ export function createBucket(opts: { budgetPerMin: number; burst: number; lowRes
 
 const entries = new Map<string, Entry>();
 let bucket = createBucket({ budgetPerMin: BUDGET_PER_MIN, burst: BURST, lowReserve: LOW_PRIORITY_RESERVE });
-let servedSinceLog = 0;
-let deniedSinceLog = 0;
-let lastDenyLogAt = 0;
+// Counters since the last takeCounters(). NOT reset by logging: the previous version
+// reset them inside the denial branch and only logged when a denial happened, so the
+// window they covered was however long it had been since the last denial. Sparse
+// denials silently stretched it past a minute and the "per minute" label was wrong —
+// a reporting bug inside the very instrumentation added to stop guessing at throughput.
+let served = 0;
+let denied = 0;
+let countersSince = Date.now();
 
 const trySpend = (priority: Priority, now: number) => bucket.trySpend(priority, now);
 
@@ -191,19 +196,7 @@ export async function getAvailability(
   }
 
   if (!trySpend(priority, now)) {
-    deniedSinceLog++;
-    // Log at most once a minute: under a sustained squeeze this fires constantly, and
-    // a log line per denial would itself become the problem.
-    if (now - lastDenyLogAt > 60_000) {
-      console.warn(
-        `[recgov-scheduler] budget squeeze — ${servedSinceLog} fetched / ${deniedSinceLog} served from cache ` +
-          `in the last minute (budget ${BUDGET_PER_MIN}/min, burst ${BURST}). Detection is slower, not blind. ` +
-          `If fetched is well under the budget, BURST is too small for the dispatch pattern — not the budget.`
-      );
-      lastDenyLogAt = now;
-      deniedSinceLog = 0;
-      servedSinceLog = 0;
-    }
+    denied++;
     if (e.value) return { value: e.value, ageMs: age, stale: true };
     // Never fetched this one and can't afford to. `unknown` is the honest answer —
     // an empty result here would read as "fully booked" downstream.
@@ -214,7 +207,7 @@ export async function getAvailability(
     };
   }
 
-  servedSinceLog++;
+  served++;
   const p = fetch(campgroundId, month)
     .then((value) => {
       // A failed/short-circuited read is `unknown` — it is not a newer reading, it is
@@ -242,8 +235,6 @@ export function schedulerStats(now = Date.now()): {
   budgetPerMin: number;
   burst: number;
   lowReserve: number;
-  servedSinceLog: number;
-  deniedSinceLog: number;
 } {
   return {
     tokens: Math.round(bucket.tokens(now) * 10) / 10,
@@ -251,9 +242,20 @@ export function schedulerStats(now = Date.now()): {
     budgetPerMin: BUDGET_PER_MIN,
     burst: BURST,
     lowReserve: LOW_PRIORITY_RESERVE,
-    servedSinceLog,
-    deniedSinceLog,
   };
+}
+
+/**
+ * Read and reset the fetch counters. The caller owns the cadence, so the window is
+ * always exactly "since you last asked" — reported explicitly as `sinceMs` rather than
+ * assumed to be a minute. The poller calls this once per heartbeat.
+ */
+export function takeCounters(now = Date.now()): { served: number; denied: number; sinceMs: number } {
+  const out = { served, denied, sinceMs: now - countersSince };
+  served = 0;
+  denied = 0;
+  countersSince = now;
+  return out;
 }
 
 /** Tests only — the module is process-global by design. `now` anchors the bucket's
@@ -262,7 +264,7 @@ export function schedulerStats(now = Date.now()): {
 export function __resetScheduler(now = Date.now()): void {
   entries.clear();
   bucket = createBucket({ budgetPerMin: BUDGET_PER_MIN, burst: BURST, lowReserve: LOW_PRIORITY_RESERVE, now });
-  deniedSinceLog = 0;
-  servedSinceLog = 0;
-  lastDenyLogAt = 0;
+  served = 0;
+  denied = 0;
+  countersSince = now;
 }

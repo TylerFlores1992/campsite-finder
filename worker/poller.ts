@@ -929,9 +929,16 @@ async function cycle(): Promise<void> {
 
   console.log(
     `[poller] heartbeat — ${watches.length} watches (${rcWatches.length} RC), ${pairs.size} recgov + ${rcWatches.length} RC fetches, ${notified} notified` +
-      // Surface the rec.gov budget every cycle. The whole reason this session kept
-      // mis-diagnosing the 429s is that nothing reported our own request rate.
-      ` [recgov budget ${recgovScheduler.schedulerStats().tokens}/${recgovScheduler.schedulerStats().budgetPerMin}]`
+      // Surface the rec.gov rate every cycle. Nothing reporting our own request rate is
+      // the root cause of every wrong diagnosis this session — including a budget that
+      // was blamed twice while the real constraint was the bucket's burst size. The
+      // window is stated explicitly rather than assumed: `Nf/Mc per Xs` = N fetched,
+      // M served from cache, since the previous heartbeat.
+      (() => {
+        const c = recgovScheduler.takeCounters();
+        const st = recgovScheduler.schedulerStats();
+        return ` [recgov ${c.served}f/${c.denied}c per ${(c.sinceMs / 1000).toFixed(0)}s, budget ${st.tokens}/${st.budgetPerMin}]`;
+      })()
   );
 }
 
