@@ -30,9 +30,23 @@ be set today.
 
 ## 1. Country availability — US only
 
-**Set United States only on EVERY track.** Availability is per track (internal, closed,
-open, production), so restricting production while a testing track stays worldwide is an
-easy and invisible mistake.
+**IT CANNOT BE SET UNTIL PRODUCTION ACCESS IS GRANTED.** Verified in the console
+2026-08-01: the Production section answers *"You don't have access to production yet"*
+and has no Countries/regions tab at all. Production access itself is gated behind the
+closed test in §0, so the earliest this can be done is after those 14 days.
+
+Where it does and doesn't exist, once unlocked:
+
+| Track | Country setting? |
+| --- | --- |
+| Internal testing | **No** — access is by email tester list, geography is irrelevant |
+| Closed testing | **No** when using an email list / Google Group, for the same reason |
+| Open testing | Yes — but only relevant if an open beta is ever run |
+| **Production** | **Yes — this is the one that matters**, set on the production release |
+
+An earlier draft of this file said to set it on every track. That was wrong, and worth
+recording: a testing track gated by an explicit email list is not a geographic exposure,
+so there is nothing to restrict there.
 
 The reason is the same one that governs Apple: `NATIVE_LINKOUT` in
 `src/components/v2/nativeSubscribe.tsx` sends non-subscribers in the app out to
