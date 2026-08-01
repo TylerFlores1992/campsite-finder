@@ -141,8 +141,19 @@ export async function POST(request: NextRequest) {
   // Cap active watches per account. Replacing an existing watch (same campground +
   // dates) is fine since the net count doesn't grow.
   if (!existing) {
+    // COUNT WHAT THE POLLER ACTUALLY RUNS. This used to count every `active` row,
+    // including watches whose dates have passed — which the GET above hides
+    // (`end_date > CURRENT_DATE`) and which `loadWatches` in the poller filters out
+    // by the same rule, so they consume no capacity whatsoever. The result was an
+    // account showing "4 of 6 watches running" and being refused a fifth, with the
+    // three phantom rows invisible and therefore undeletable from the UI. Observed
+    // on a real account 2026-08-01: 7 counted, 4 shown.
+    //
+    // The cap and the list must share one definition of "a watch you have"; if you
+    // change the predicate here, change the GET query too.
     const cnt = await queryOne<{ n: number }>(
-      `SELECT count(*)::int AS n FROM watches WHERE user_id = $1 AND active = true`,
+      `SELECT count(*)::int AS n FROM watches
+        WHERE user_id = $1 AND active = true AND end_date > CURRENT_DATE`,
       [userId]
     );
     if ((cnt?.n ?? 0) >= WATCH_LIMIT) {

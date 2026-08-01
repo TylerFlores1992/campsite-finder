@@ -37,7 +37,16 @@ const LINKS = [
 ] as const;
 
 /** Scroll past this and the header art shrinks to its wordmark strip. */
-const COLLAPSE_AT = 28;
+/** Collapse once scrolled past this… */
+const COLLAPSE_AT = 96;
+/** …and only expand again below this. The gap must exceed the height the band
+ *  loses when it collapses (131 - 46 = 85px), or the layout shift that collapsing
+ *  causes can itself push scrollY back under the expand threshold — which is the
+ *  flutter. See the scroll effect. */
+const EXPAND_AT = 8;
+/** Matches the CSS height transition below; scroll readings are ignored for this
+ *  long after a flip, because mid-animation layout answers nothing. */
+const HEADER_ANIM_MS = 260;
 
 /**
  * Open Stripe's billing portal.
@@ -221,10 +230,30 @@ export default function V2Nav() {
 
   // Passive listener + a state change only on the transition, so scrolling
   // doesn't re-render on every frame.
+  //
+  // HYSTERESIS IS LOAD-BEARING, NOT POLISH. The band is `sticky`, so it sits in
+  // normal flow and collapsing it makes the document 85px shorter — which moves
+  // the very scroll position the decision is based on. With a single threshold
+  // that is a feedback loop: stop with the scroll near the trigger and it
+  // collapses, the content shifts, scrollY lands back under the threshold, it
+  // expands, and the header visibly flutters between the two heights (reported
+  // on a real device 2026-08-01, "if you stop half way it starts to flutter").
+  //
+  // Two thresholds with a wide dead band mean the state that just fired cannot
+  // immediately un-fire: once collapsed you must scroll nearly back to the top
+  // to expand again, and the shift caused by collapsing can never reach
+  // EXPAND_AT. The transition lock covers the animation itself, during which
+  // layout is mid-flight and any reading is meaningless.
   useEffect(() => {
+    let lockedUntil = 0;
     const onScroll = () => {
-      const past = window.scrollY > COLLAPSE_AT;
-      setCollapsed((prev) => (prev === past ? prev : past));
+      if (performance.now() < lockedUntil) return;
+      const y = window.scrollY;
+      setCollapsed((prev) => {
+        const next = prev ? y > EXPAND_AT : y > COLLAPSE_AT;
+        if (next !== prev) lockedUntil = performance.now() + HEADER_ANIM_MS;
+        return next;
+      });
     };
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -241,8 +270,16 @@ export default function V2Nav() {
       <div className="sticky top-0 z-30 sm:hidden">
         <div
           className="relative overflow-hidden bg-[#24382A] transition-[height] duration-[260ms] ease-out motion-reduce:transition-none"
+          // THE STATUS BAR MUST ADD TO THE HEIGHT, NOT EAT INTO IT. This was
+          // `height: var(--ch-header)` with `paddingTop: env(safe-area-inset-top)`,
+          // and Tailwind's border-box means the padding came OUT of the 131px — so
+          // on a phone with a ~40px status bar the artwork got a third shorter and
+          // the clock and battery sat on top of it. Collapsed (46px) it was worse:
+          // the status bar covered nearly the whole band. Adding the inset to the
+          // height gives the art its full size and puts the system icons in green
+          // space above it. Reported on a real device 2026-08-01.
           style={{
-            height: collapsed ? "var(--ch-header-min)" : "var(--ch-header)",
+            height: `calc(${collapsed ? "var(--ch-header-min)" : "var(--ch-header)"} + env(safe-area-inset-top))`,
             paddingTop: "env(safe-area-inset-top)",
           }}
         >
@@ -265,7 +302,14 @@ export default function V2Nav() {
                 : "object-contain object-center",
             )}
           />
-          <div className="absolute right-3 top-3 flex items-center gap-2">
+          {/* `absolute` resolves against the PADDING box, so a plain `top-3` sits
+              12px from the very top of the element and therefore UNDER the status
+              bar — which is exactly where the account avatar was rendering, next to
+              the clock and battery. Offset it by the inset explicitly. */}
+          <div
+            className="absolute right-3 flex items-center gap-2"
+            style={{ top: "calc(env(safe-area-inset-top) + 0.75rem)" }}
+          >
             <AccountControl compact />
           </div>
         </div>
