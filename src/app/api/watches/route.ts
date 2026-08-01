@@ -56,10 +56,22 @@ export async function GET(request: NextRequest) {
       try {
         const start = String(w.start_date).slice(0, 10);
         const lead = daysBetween(today, start);
-        if (lead < 0) return; // stay already started
-        const nights = (w.flex_nights as number | null) ?? Math.max(1, daysBetween(start, String(w.end_date).slice(0, 10)));
-        const r = await getOpeningRate(w.campground_id as string, lead, { nights });
-        if (r.enough && r.rate != null) w.likelihood = { rate: r.rate, samples: r.samples };
+        // `if (lead < 0) return` HERE RETURNED FROM THE WHOLE CALLBACK, not just the
+        // likelihood step — so a watch whose stay had already begun skipped the
+        // manage-token mint below and came back with no `manage_token`. WatchCard
+        // renders a DISABLED Manage button in that case, so the moment a trip
+        // started the user lost the only way to open, pause or delete that watch
+        // from the app. Reported 2026-08-01 on a Jul 31–Aug 2 watch whose sibling
+        // (Aug 14–16) was fine, which is exactly the shape of a lead-time gate.
+        //
+        // Scoped to the likelihood block now. Adding anything after this `try`
+        // means the same trap is one stray `return` away — keep early exits inside
+        // the block that owns them.
+        if (lead >= 0) {
+          const nights = (w.flex_nights as number | null) ?? Math.max(1, daysBetween(start, String(w.end_date).slice(0, 10)));
+          const r = await getOpeningRate(w.campground_id as string, lead, { nights });
+          if (r.enough && r.rate != null) w.likelihood = { rate: r.rate, samples: r.samples };
+        }
       } catch {
         /* non-fatal — omit likelihood for this watch */
       }
