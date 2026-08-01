@@ -132,6 +132,13 @@ minute".
   Justified by Feature E's frozen data (89% of ≥7-day-out openings survive an hour).
   A sub-15s hot lane is possible with the freed budget but needs the full-day 429
   profile before being promised anywhere.
+- **The full-day 429 profile is RECORDING since 2026-08-01 04:30 UTC**
+  (`worker/rate-profile.ts` → `recgov_rate_profile`, migration 033): every worker
+  rec.gov fetch outcome in 5-min buckets, rec.gov's behaviour (ok/429/timeout/error)
+  separated from ours (denied/breaker_skipped). Readout:
+  `NODE_USE_ENV_PROXY=1 npx tsx scripts/recgov-429-profile.mts` — refuses a verdict
+  until all 24 UTC hours have data. First readout scheduled 2026-08-02 05:00 UTC.
+  Retention 14d. The sub-15s decision hangs on this.
 
 ## Alerting — the claim (read this before touching the poller)
 The decision "may we alert for this?" is `worker/claim.ts`, keyed on
