@@ -187,6 +187,11 @@ export default function NewWatch({
           startDate: range.start,
           endDate: range.end,
           siteType: filters.siteType ?? undefined,
+          // The toggle above was PURELY DECORATIVE until 2026-08-01 — its value was
+          // never sent, the column was never written, and the poller decided the
+          // auto-cart lane from the account-level setting alone. Turning it off
+          // carted anyway.
+          autoCart,
           ...(mode === "flexible"
             ? { flexNights, ...(weekendsOnly ? { flexDays: "weekend" } : {}) }
             : {}),

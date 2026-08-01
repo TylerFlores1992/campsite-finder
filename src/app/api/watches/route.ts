@@ -100,7 +100,13 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { campgroundId, startDate, endDate, minNights = 1, siteType, flexNights, flexDays } = body;
+  const { campgroundId, startDate, endDate, minNights = 1, siteType, flexNights, flexDays, autoCart } = body;
+  // Per-watch auto-cart. Defaults TRUE when the caller says nothing, which keeps the
+  // account-level setting as the effective switch for older clients (and for the web
+  // app before this shipped) — the poller still requires the account to be enrolled,
+  // connected and entitled, so `true` here can never turn auto-cart ON for someone
+  // who hasn't set it up. `false` is what finally makes the toggle mean something.
+  const autoCartVal = autoCart === undefined ? true : !!autoCart;
 
   if (!campgroundId || !startDate || !endDate) {
     return NextResponse.json({ error: 'campgroundId, startDate, endDate required' }, { status: 400 });
@@ -177,10 +183,10 @@ export async function POST(request: NextRequest) {
   }
 
   const [row] = await mutate<{ id: string }>(
-    `INSERT INTO watches (user_id, campground_id, start_date, end_date, min_nights, site_type, flex_nights, flex_days)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO watches (user_id, campground_id, start_date, end_date, min_nights, site_type, flex_nights, flex_days, auto_cart)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING id`,
-    [userId, campgroundId, startDate, endDate, minNights, siteType ?? null, flexNightsVal, flexDaysVal]
+    [userId, campgroundId, startDate, endDate, minNights, siteType ?? null, flexNightsVal, flexDaysVal, autoCartVal]
   );
 
   const webhookBase = process.env.NEXT_PUBLIC_APP_URL

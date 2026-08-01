@@ -376,6 +376,8 @@ interface WatchRow {
   autocart_connected: boolean;
   autocart_verified_at: string | null;
   autocart_entitled: boolean;
+  /** Per-watch opt-out. See isAutocartLane. */
+  auto_cart: boolean;
 }
 
 // How recently the bot must have confirmed a user's rec.gov session (via a keepalive
@@ -407,6 +409,14 @@ function isAutocartLane(w: WatchRow, botOnline: boolean): boolean {
     // would keep swallowing their openings into a lane the bot no longer serves —
     // failing open to a normal alert is the only acceptable downgrade.
     w.autocart_entitled === true &&
+    // PER-WATCH opt-out (2026-08-01). `watches.auto_cart` existed since migration 001
+    // but was never written and never read here, so the New watch screen's auto-cart
+    // toggle did nothing at all — switch it off and the site was still carted. The
+    // account-level switches below remain necessary; this one lets a user say "not
+    // for THIS watch", which is the difference between a trip they want held
+    // automatically and one they'd rather decide on. Migration 035 backfilled it true
+    // for every watch that was already carting, so this changed no live behaviour.
+    w.auto_cart === true &&
     w.autocart_enabled === true &&
     w.autocart_connected === true &&
     autocartSessionFresh(w)
@@ -518,6 +528,7 @@ async function loadWatches(): Promise<WatchRow[]> {
     `SELECT w.id, w.user_id, w.campground_id,
             w.start_date::text, w.end_date::text, w.min_nights,
             w.rc_hold_notified_for, w.muted_site_ids, w.flex_nights, w.flex_days,
+            COALESCE(w.auto_cart, false) AS auto_cart,
             c.name AS campground_name, c.source AS campground_source,
             c.reservations_url,
             COALESCE(u.autocart_enabled, false) AS autocart_enabled,
