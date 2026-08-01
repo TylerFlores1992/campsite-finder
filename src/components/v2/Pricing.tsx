@@ -10,8 +10,11 @@ import { useSubscription } from "./useSubscription";
 /**
  * The checkout controls, in the ch-* system.
  *
- * SAME /api/stripe/checkout CONTRACT as the old PricingButtons — interval
- * 'monthly' | 'yearly', redirect to data.url. Nothing about billing changed.
+ * SAME /api/stripe/checkout CONTRACT as before, extended with plan:
+ * 'base' | 'autocart' (2026-08-01) — interval 'monthly' | 'yearly', redirect to
+ * data.url. The Auto-Cart plan column renders only while the server says its
+ * Stripe prices exist (autocartPlanAvailable), so a half-configured deploy can
+ * never show a $10 button that 503s.
  *
  * NEVER RENDERS IN THE NATIVE APP. Apple and Google require digital
  * subscriptions to go through in-app purchase, so the app shows where to go
@@ -21,24 +24,25 @@ import { useSubscription } from "./useSubscription";
  * A signed-OUT visitor can't check out — Stripe needs a customer — so they get
  * sign-up links instead of buttons that would bounce them through auth and lose
  * their place. A CURRENT subscriber gets nothing at all: showing prices to
- * someone already paying reads as a billing error.
+ * someone already paying reads as a billing error. (Their upgrade path is
+ * AutoCartSettings, which knows their entitlement.)
  */
 export default function Pricing() {
   const isNative = useIsNativeApp();
   const { isLoaded, isSignedIn } = useUser();
-  const { subscribed, everSubscribed, loaded: subLoaded, unknown } = useSubscription();
-  const [loading, setLoading] = useState<"monthly" | "yearly" | null>(null);
+  const { subscribed, everSubscribed, autocartPlanAvailable, loaded: subLoaded, unknown } = useSubscription();
+  const [loading, setLoading] = useState<string | null>(null);
 
-  async function subscribe(interval: "monthly" | "yearly") {
-    setLoading(interval);
+  async function subscribe(plan: "base" | "autocart", interval: "monthly" | "yearly") {
+    setLoading(`${plan}:${interval}`);
     try {
       const res = await fetch("/api/stripe/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ interval }),
+        body: JSON.stringify({ interval, plan }),
       });
       const data = await res.json();
-      if (data.url) window.location.href = data.url;
+      if (data.url) window.location.assign(data.url);
       else setLoading(null);
     } catch {
       setLoading(null);
@@ -85,28 +89,49 @@ export default function Pricing() {
     );
   }
 
+  const btn = (plan: "base" | "autocart", interval: "monthly" | "yearly", label: string, primary: boolean) => (
+    <button
+      onClick={() => void subscribe(plan, interval)}
+      disabled={!!loading}
+      className={buttonClasses({ variant: primary ? "primary" : "quiet", size: "sm" })}
+    >
+      {loading === `${plan}:${interval}` && (
+        <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+      )}
+      {label}
+    </button>
+  );
+
   // Signed in, no subscription. `unknown` means the status lookup failed — show
   // the buttons anyway rather than nothing, since checkout handles an existing
   // subscription correctly and a blank panel here is a dead end.
   return (
     <div>
-      <div className="flex flex-wrap gap-2">
-        <button
-          onClick={() => void subscribe("monthly")}
-          disabled={!!loading}
-          className={buttonClasses({ variant: "quiet", className: "px-5" })}
-        >
-          {loading === "monthly" && <Loader2 aria-hidden="true" className="size-4 animate-spin" />}
-          $2.50 / month
-        </button>
-        <button
-          onClick={() => void subscribe("yearly")}
-          disabled={!!loading}
-          className={buttonClasses({ className: "px-5" })}
-        >
-          {loading === "yearly" && <Loader2 aria-hidden="true" className="size-4 animate-spin" />}
-          $20 / year — save 33%
-        </button>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-ch-input border border-ch-line bg-white/60 p-4">
+          <p className="text-ch-body font-extrabold text-ch-green-deep">Alerts</p>
+          <p className="mt-0.5 text-ch-fine text-ch-muted">
+            Up to 6 watches, checked every 15 seconds. Text, push and email the moment a
+            site opens.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {btn("base", "monthly", "$2.50 / month", false)}
+            {btn("base", "yearly", "$20 / year — save 33%", true)}
+          </div>
+        </div>
+        {autocartPlanAvailable && (
+          <div className="rounded-ch-input border border-[#BFDDC9] bg-white/60 p-4">
+            <p className="text-ch-body font-extrabold text-ch-green-deep">Auto-Cart</p>
+            <p className="mt-0.5 text-ch-fine text-ch-muted">
+              Everything in Alerts, plus we put the opening straight into your
+              Recreation.gov cart — it&apos;s held while you get to your phone.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {btn("autocart", "monthly", "$10 / month", false)}
+              {btn("autocart", "yearly", "$50 / year — save 58%", true)}
+            </div>
+          </div>
+        )}
       </div>
       <p className="mt-2 text-ch-fine text-ch-muted">
         {unknown

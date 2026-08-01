@@ -269,7 +269,7 @@ function AccountWall() {
         {[
           [`Up to ${WATCH_LIMIT} watches at once`, "One per campground and date range."],
           ["Alerts in seconds", "Push, text and email the moment a site frees up."],
-          ["Auto-cart on Recreation.gov", "The site lands in your cart before you finish reading the alert."],
+          ["Auto-cart on Recreation.gov", "With the Auto-Cart plan, the site lands in your cart before you finish reading the alert."],
         ].map(([title, sub], i) => (
           <li key={title} className="flex gap-3 border-b border-ch-line py-3 last:border-b-0">
             <span className="grid size-6 shrink-0 place-items-center rounded-full bg-ch-green-soft text-[12px] font-extrabold text-ch-green-deep">

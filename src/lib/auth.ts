@@ -45,6 +45,32 @@ export async function hasActiveSubscription(userId: string): Promise<boolean> {
   return status === 'active' || status === 'trialing';
 }
 
+/**
+ * May this user use auto-cart? True for beta testers, the Auto-Cart tier, and
+ * grandfathered pre-tier subscriptions (sold "auto-cart included" — migration 032).
+ * The subscription must be live; a grandfathered sub that lapses loses the lane
+ * exactly like everyone else.
+ *
+ * One EXISTS, not "latest row": a user can carry an old canceled row next to a
+ * live one, and which is "latest" depends on ordering trivia that entitlement
+ * must not.
+ */
+export async function hasAutocartEntitlement(userId: string): Promise<boolean> {
+  const row = await queryOne<{ entitled: boolean }>(
+    `SELECT (
+       EXISTS (SELECT 1 FROM users u WHERE u.id = $1 AND u.is_beta)
+       OR EXISTS (
+         SELECT 1 FROM subscriptions s
+          WHERE s.user_id = $1
+            AND s.status IN ('active', 'trialing')
+            AND (s.tier = 'autocart' OR s.grandfathered)
+       )
+     ) AS entitled`,
+    [userId]
+  );
+  return row?.entitled === true;
+}
+
 export class AuthError extends Error {
   status = 401;
   constructor(message: string) {

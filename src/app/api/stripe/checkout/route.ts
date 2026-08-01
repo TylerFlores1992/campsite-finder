@@ -2,13 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { requireAuth, syncUser } from '@/lib/auth';
 import { queryOne } from '@/lib/db/client';
+import { autocartPlanConfigured, isBillingInterval, isPlanTier, priceIdFor } from '@/lib/stripe-plans';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!.trim());
-
-const PRICE_IDS: Record<string, string> = {
-  monthly: process.env.STRIPE_PRICE_ID_MONTHLY!,
-  yearly: process.env.STRIPE_PRICE_ID_YEARLY!,
-};
 
 export async function POST(req: NextRequest) {
   const userId = await requireAuth();
@@ -24,8 +20,19 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { interval = 'monthly' } = await req.json().catch(() => ({}));
-  const priceId = PRICE_IDS[interval] ?? PRICE_IDS.monthly;
+  const body = (await req.json().catch(() => ({}))) as { interval?: unknown; plan?: unknown };
+  const interval = isBillingInterval(body.interval) ? body.interval : 'monthly';
+  const plan = isPlanTier(body.plan) ? body.plan : 'base';
+
+  // A deploy where the Auto-Cart prices aren't configured yet must refuse the plan,
+  // not quietly sell base at base price to someone who clicked a $10 button.
+  if (plan === 'autocart' && !autocartPlanConfigured()) {
+    return NextResponse.json(
+      { error: 'not_configured', message: 'The Auto-Cart plan is not available yet.' },
+      { status: 503 }
+    );
+  }
+  const priceId = priceIdFor(plan, interval) ?? priceIdFor('base', 'monthly')!;
 
   const user = await queryOne<{ email: string }>('SELECT email FROM users WHERE id = $1', [userId]);
 
@@ -60,7 +67,14 @@ export async function POST(req: NextRequest) {
     // Stripe rejects both together, so it is one or the other.
     ...(existingCustomer ? { customer: existingCustomer } : { customer_email: user?.email ?? undefined }),
     metadata: { clerk_user_id: userId },
-    ...(priorTrial ? {} : { subscription_data: { trial_period_days: 7 } }),
+    // ALSO on the subscription itself, not just the session: customer.subscription.*
+    // events carry only the subscription's metadata, and without the user id there
+    // the webhook can't attribute them (it falls back to matching by subscription id,
+    // which works only for rows that already exist).
+    subscription_data: {
+      metadata: { clerk_user_id: userId },
+      ...(priorTrial ? {} : { trial_period_days: 7 }),
+    },
     success_url: `${process.env.NEXT_PUBLIC_APP_URL}/?subscribed=1`,
     cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/`,
   });

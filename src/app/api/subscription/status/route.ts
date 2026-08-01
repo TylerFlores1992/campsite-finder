@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { requireAuth, syncUser, hasActiveSubscription } from '@/lib/auth';
+import { requireAuth, syncUser, hasActiveSubscription, hasAutocartEntitlement } from '@/lib/auth';
 import { queryOne } from '@/lib/db/client';
+import { autocartPlanConfigured } from '@/lib/stripe-plans';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,5 +20,14 @@ export async function GET() {
     'SELECT id FROM subscriptions WHERE user_id = $1 LIMIT 1',
     [userId]
   );
-  return NextResponse.json({ active, everSubscribed: !!prior });
+  // autocart = may this user use auto-cart (Auto-Cart tier, grandfathered, or beta).
+  // autocartPlanAvailable = are the Auto-Cart prices configured — the UI hides the
+  // plan entirely while false, so nothing offers a checkout that would 503.
+  const autocart = await hasAutocartEntitlement(userId);
+  return NextResponse.json({
+    active,
+    everSubscribed: !!prior,
+    autocart,
+    autocartPlanAvailable: autocartPlanConfigured(),
+  });
 }

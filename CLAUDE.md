@@ -97,6 +97,38 @@ same push. The proxy paces a batch at `FANOUT = 2`; **don't raise it**.
   a second one added without noticing the first would have silently re-shrunk it on the
   next deploy). MemAvailable during a full sync: ~270MB.
 
+## Auto-Cart tier + lead-time tiering (2026-08-01)
+Auto-cart is now the paid **Auto-Cart plan** — $10/mo, $50/yr; base stays $2.50/$20
+alerts-only. Priced to undercut Campsite Tonight ($29.99/mo, $59.99/yr on the App
+Store) while our measured detection→cart is ~12s vs their documented "up to every
+minute".
+- **Entitlement** = active/trialing AND (`subscriptions.tier = 'autocart'` OR
+  `grandfathered`), OR `users.is_beta`. Migration 032 added both columns and set
+  `grandfathered = true` on every pre-tier row — the "keep your rate" promise kept
+  literally; the webhook NEVER writes grandfathered, so renewals can't strip it.
+  Tier is derived from the Stripe price id on every webhook event (unknown → 'base':
+  fails loud as "paying but treated as base", never silent free premium).
+- **One definition, four enforcers**: `lib/auth.hasAutocartEntitlement`, the toggle
+  API (403 on enable, off always allowed), the bot roster feed (keepalive slots are
+  the scarce resource), and the poller's `isAutocartLane` (lapsed premium fails open
+  to normal alerts). UI: `Pricing.tsx` two-plan cards (web only), `AutoCartSettings`
+  upgrade gate — two-step confirm for live-sub upgrades via **`/api/stripe/plan`**
+  (in-place price swap, prorated — a second checkout would double-bill), checkout for
+  non-subscribers. Native shows no prices anywhere (store rule).
+- **Stripe price mapping is by env id** (`src/lib/stripe-plans.ts`): the live key is
+  RESTRICTED (no product read/write — verified), so prices can't be created or looked
+  up by API. `STRIPE_PRICE_ID_AUTOCART_MONTHLY`/`_YEARLY` on Vercel; until both exist
+  `autocartPlanConfigured()` is false, the UI hides the plan and checkout 503s — the
+  tier ships dark, like the shard scaffolding.
+- **Lead-time tiering** (`worker/lead-time.ts` + poller): a campground-month whose
+  first wanted night is >14 days out (`RECGOV_HOT_LEAD_DAYS`) rides a 60s scheduler
+  cache (`RECGOV_COLD_MAX_AGE_MS`) instead of fresh-every-15s — ~1 req/min instead of
+  4 — per (watch, MONTH), so a long watch's far months go cold individually.
+  Auto-cart-lane pairs are always hot. Heartbeat prints `N recgov (H hot/C cold)`.
+  Justified by Feature E's frozen data (89% of ≥7-day-out openings survive an hour).
+  A sub-15s hot lane is possible with the freed budget but needs the full-day 429
+  profile before being promised anywhere.
+
 ## Alerting — the claim (read this before touching the poller)
 The decision "may we alert for this?" is `worker/claim.ts`, keyed on
 **(watch_id, site_key)** in `watch_site_alerts` (migration 026), 1-hour window.

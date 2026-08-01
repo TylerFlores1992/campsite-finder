@@ -32,7 +32,7 @@ import { WATCH_LIMIT } from "@/lib/limits";
  */
 export default function PricingSection() {
   const isNative = useIsNativeApp();
-  const { subscribed } = useSubscription();
+  const { subscribed, autocart, autocartPlanAvailable } = useSubscription();
 
   // ALREADY PAYING? Then this block has no selling left to do, and doing it anyway is
   // worse than neutral: a subscriber who reads "Searching is free. Watching is $2.50 a
@@ -61,8 +61,20 @@ export default function PricingSection() {
             text is what actually wakes you at 6am.
           </li>
           <li>
-            On Recreation.gov, connect auto-cart once and an opening goes straight into
-            your cart while you get to your phone.
+            {autocart ? (
+              <>
+                On Recreation.gov, connect auto-cart once and an opening goes straight into
+                your cart while you get to your phone.
+              </>
+            ) : (
+              // A base-plan subscriber. Deliberately no price here — this block also
+              // renders in the native app, where a figure is a store-review failure;
+              // Settings (AutoCartSettings) handles the web/native split properly.
+              <>
+                With the Auto-Cart plan, an opening goes straight into your Recreation.gov
+                cart while you get to your phone — add it in Settings.
+              </>
+            )}
           </li>
           <li>Any alert lets you pause the watch, reopen it, or mute a site you don&apos;t want.</li>
         </ul>
@@ -89,8 +101,9 @@ export default function PricingSection() {
           Searching is free. Watching needs a subscription.
         </h2>
         <p className="mt-2 max-w-[58ch] text-ch-body leading-relaxed text-ch-green-deep">
-          A subscription covers up to {WATCH_LIMIT} watches at once, push, text and email
-          alerts, and auto-cart on Recreation.gov. Live search keeps working either way.
+          A subscription covers up to {WATCH_LIMIT} watches at once with push, text and
+          email alerts; the Auto-Cart plan adds automatic carting on Recreation.gov. Live
+          search keeps working either way.
         </p>
         <p className="mt-2 max-w-[58ch] text-ch-meta leading-normal text-ch-green-deep">
           {subscribeSentence()} Once yours is active, everything works here.
@@ -119,9 +132,13 @@ export default function PricingSection() {
         Searching is free. Watching is $2.50 a month, or $20 a year.
       </h2>
       <p className="mt-2 max-w-[58ch] text-ch-body leading-relaxed text-ch-green-deep">
-        One subscription covers up to {WATCH_LIMIT} watches at once, text and email alerts,
-        and auto-cart on Recreation.gov. Cancel any time — and live search keeps working
-        either way.
+        One subscription covers up to {WATCH_LIMIT} watches at once with text, push and
+        email alerts{autocartPlanAvailable && (
+          <>
+            ; the Auto-Cart plan adds automatic carting on Recreation.gov — the site is
+            held in your cart while you get to your phone
+          </>
+        )}. Cancel any time — and live search keeps working either way.
       </p>
       <p className="mt-2 max-w-[58ch] text-ch-meta leading-normal text-ch-green-deep">
         This is introductory pricing while we&apos;re new, and it will go up as we add

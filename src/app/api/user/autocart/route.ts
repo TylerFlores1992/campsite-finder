@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, syncUser } from '@/lib/auth';
+import { requireAuth, syncUser, hasAutocartEntitlement } from '@/lib/auth';
 import { mutate, queryOne } from '@/lib/db/client';
 
 // How recently the bot must have confirmed the rec.gov session for auto-cart to
@@ -36,6 +36,9 @@ export async function GET() {
     sessionFresh,
     // True only when the user asked for auto-cart but it can't currently run.
     sessionExpired: !!row?.autocart_enabled && !!row?.autocart_connected && !sessionFresh,
+    // Plan gate (2026-08-01): auto-cart requires the Auto-Cart tier, a grandfathered
+    // pre-tier subscription, or beta. The UI shows an upgrade path when false.
+    entitled: await hasAutocartEntitlement(userId),
   });
 }
 
@@ -44,6 +47,14 @@ export async function POST(req: NextRequest) {
   await syncUser(userId);
 
   const { enabled } = await req.json();
+  // Turning it ON needs the plan; turning it OFF never does — a lapsed premium
+  // subscriber must always be able to switch the thing off.
+  if (enabled && !(await hasAutocartEntitlement(userId))) {
+    return NextResponse.json(
+      { error: 'upgrade_required', message: 'Auto-cart needs the Auto-Cart plan.' },
+      { status: 403 }
+    );
+  }
   await mutate('UPDATE users SET autocart_enabled = $1, updated_at = NOW() WHERE id = $2', [
     !!enabled,
     userId,

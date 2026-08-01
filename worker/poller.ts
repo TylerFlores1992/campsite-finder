@@ -32,6 +32,7 @@ import { query, mutate, sqlit } from '../src/lib/db/client';
 import { getAvailabilityFromRecGov, hasAvailabilityInRange, recgovBreakerOpen } from '../src/lib/availability/recgov';
 import * as recgovScheduler from './recgov-scheduler';
 import { SHARD_COUNT, LEASE_RENEW_MS, claimOrRenewShard, heldShard, ownsCampground } from './shard';
+import { leadDaysUntil } from './lead-time';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
 import { findGoingToCampOpen } from '../src/lib/availability/goingtocamp';
@@ -99,6 +100,19 @@ const RECGOV_CONCURRENCY = 4;
 // regardless of how many pairs there are, and the cycle's `running` guard skips a tick
 // if one overruns — so this must stay comfortably inside POLL_INTERVAL_MS.
 const RECGOV_SPREAD_MS = Number(process.env.RECGOV_SPREAD_MS ?? POLL_INTERVAL_MS * 0.5);
+// Lead-time tiering (2026-08-01). A campground-month whose first wanted night is more
+// than HOT_LEAD_DAYS out rides the scheduler cache for COLD_MAX_AGE_MS instead of
+// demanding a fresh read every cycle — so a far-out watch costs ~1 req/min instead
+// of 4, and the freed budget is what keeps near-term watches at a true 15s as the
+// watch count grows. Justified by the frozen Feature E dataset: 89% of openings
+// detected ≥7 days before the stay were still open an hour later, so a 60-second-old
+// reading for a next-month trip forfeits nearly nothing. Openings for stays within
+// days are the ones snapped up in minutes — those stay hot. A pair touched by an
+// auto-cart-lane watch is ALWAYS hot regardless of lead time: carting speed is the
+// paid promise, and it is cheap here because auto-cart watches are few by
+// construction (the plan gate).
+const RECGOV_HOT_LEAD_DAYS = Number(process.env.RECGOV_HOT_LEAD_DAYS ?? 14);
+const RECGOV_COLD_MAX_AGE_MS = Number(process.env.RECGOV_COLD_MAX_AGE_MS ?? 60_000);
 // Alert-health canary cadences. Detection is cheap (one fetch per source) so it
 // runs often; delivery actually SENDS (Resend/Twilio), so it's slow by default to
 // avoid spamming the canary sink — /api/health/status staleness thresholds track
@@ -360,6 +374,7 @@ interface WatchRow {
   autocart_enabled: boolean;
   autocart_connected: boolean;
   autocart_verified_at: string | null;
+  autocart_entitled: boolean;
 }
 
 // How recently the bot must have confirmed a user's rec.gov session (via a keepalive
@@ -385,6 +400,12 @@ function isAutocartLane(w: WatchRow, botOnline: boolean): boolean {
   return (
     botOnline &&
     w.campground_source === 'ridb' &&
+    // Plan gate (2026-08-01): auto-cart is the paid Auto-Cart tier (or a
+    // grandfathered pre-tier subscription, or beta). A user whose entitlement
+    // lapsed keeps autocart_enabled = true in their settings, so the flag alone
+    // would keep swallowing their openings into a lane the bot no longer serves —
+    // failing open to a normal alert is the only acceptable downgrade.
+    w.autocart_entitled === true &&
     w.autocart_enabled === true &&
     w.autocart_connected === true &&
     autocartSessionFresh(w)
@@ -500,7 +521,13 @@ async function loadWatches(): Promise<WatchRow[]> {
             c.reservations_url,
             COALESCE(u.autocart_enabled, false) AS autocart_enabled,
             COALESCE(u.autocart_connected, false) AS autocart_connected,
-            u.autocart_verified_at::text AS autocart_verified_at
+            u.autocart_verified_at::text AS autocart_verified_at,
+            (u.is_beta OR EXISTS (
+               SELECT 1 FROM subscriptions s
+                WHERE s.user_id = u.id
+                  AND s.status IN ('active', 'trialing')
+                  AND (s.tier = 'autocart' OR s.grandfathered)
+            )) AS autocart_entitled
      FROM watches w
      JOIN campgrounds c ON c.id = w.campground_id
      JOIN users u ON u.id = w.user_id
@@ -650,12 +677,20 @@ async function cycle(): Promise<void> {
   );
 
   // recreation.gov: one fetch per unique campground+month, shared across watches.
-  const pairs = new Set<string>();
+  // Each pair carries the smallest lead-days of any watch wanting it (0 for the
+  // auto-cart lane), which decides hot vs cold freshness at dispatch below.
+  const pairLead = new Map<string, number>();
   for (const w of ridbWatches) {
+    const laneHot = isAutocartLane(w, botOnline);
     for (const month of monthsForRange(w.start_date, w.end_date)) {
-      pairs.add(`${w.campground_id}|${month}`);
+      const key = `${w.campground_id}|${month}`;
+      const lead = laneHot ? 0 : leadDaysUntil(w.start_date, month);
+      const prev = pairLead.get(key);
+      if (prev === undefined || lead < prev) pairLead.set(key, lead);
     }
   }
+  const pairs = new Set(pairLead.keys());
+  const hotPairs = [...pairLead.values()].filter((l) => l <= RECGOV_HOT_LEAD_DAYS).length;
 
   const monthData = new Map<string, Awaited<ReturnType<typeof getAvailabilityFromRecGov>>>();
   const rcResults = new Map<string, { dates: string[]; unitId: number; sleepingUnitId: number | null }>();
@@ -695,8 +730,14 @@ async function cycle(): Promise<void> {
         const [campgroundId, month] = pair.split('|');
         // LOW priority: this lane runs every 15s and can ride on anything the auto-cart
         // lane fetched moments ago. Under a squeeze it yields to carting.
+        //
+        // HOT pairs (a wanted night within RECGOV_HOT_LEAD_DAYS, or any auto-cart-lane
+        // watch) insist on this cycle's freshness; COLD pairs accept a reading up to
+        // RECGOV_COLD_MAX_AGE_MS old, which the scheduler serves from cache for free —
+        // that skipped token is the budget headroom that keeps hot pairs at 15s.
+        const hot = (pairLead.get(pair) ?? 0) <= RECGOV_HOT_LEAD_DAYS;
         const r = await recgovScheduler.getAvailability(campgroundId, month, {
-          maxAgeMs: POLL_INTERVAL_MS * 0.8,
+          maxAgeMs: hot ? POLL_INTERVAL_MS * 0.8 : RECGOV_COLD_MAX_AGE_MS,
           priority: 'low',
         });
         monthData.set(pair, r.value);
@@ -934,7 +975,7 @@ async function cycle(): Promise<void> {
   console.log(
     `[poller] heartbeat — ${mainWatches.length}${SHARD_COUNT > 1 ? `/${watches.length}` : ''} watches` +
       `${SHARD_COUNT > 1 ? ` (shard ${heldShard() ?? '-'}/${SHARD_COUNT})` : ''}` +
-      ` (${rcWatches.length} RC), ${pairs.size} recgov + ${rcWatches.length} RC fetches, ${notified} notified` +
+      ` (${rcWatches.length} RC), ${pairs.size} recgov (${hotPairs} hot/${pairs.size - hotPairs} cold) + ${rcWatches.length} RC fetches, ${notified} notified` +
       // Surface the rec.gov rate every cycle. Nothing reporting our own request rate is
       // the root cause of every wrong diagnosis this session — including a budget that
       // was blamed twice while the real constraint was the bucket's burst size. The

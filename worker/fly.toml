@@ -27,6 +27,14 @@ primary_region = "iad"
   # (`flyctl machine clone <id> --region iad`); each leases a free index by itself.
   # Capacity is ~4 rec.gov campground-months per machine at a 15s cadence.
   SHARD_COUNT = "1"
+  # Lead-time tiering (2026-08-01). A rec.gov campground-month whose first wanted
+  # night is more than HOT_LEAD_DAYS out tolerates a COLD_MAX_AGE_MS-old cached
+  # reading instead of demanding a fresh fetch every 15s cycle (~1 req/min instead
+  # of 4). Feature E's frozen data: 89% of openings ≥7 days out survive an hour, so
+  # far-out watches lose almost nothing while hot watches keep the true 15s.
+  # Auto-cart-lane watches are always hot regardless of lead.
+  RECGOV_HOT_LEAD_DAYS = "14"
+  RECGOV_COLD_MAX_AGE_MS = "60000"
   # Delivery canary (synthetic email+SMS send proving the last mile). Daily, not the
   # 6h code default: the SMS send costs A2P money and once/day still catches a Twilio
   # outage well within the window we'd want to know it broke.

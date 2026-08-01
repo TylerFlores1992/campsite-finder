@@ -40,6 +40,16 @@ export async function GET(req: NextRequest) {
        AND j.detected_at > now() - interval '${windowMin} minutes'
      LEFT JOIN campgrounds c ON c.id = j.campground_id
      WHERE u.autocart_enabled = true
+       -- Plan gate (2026-08-01). The roster drives the bot's per-user session
+       -- keepalives — the scarcest resource in the auto-cart path — so a user whose
+       -- entitlement lapsed drops out of the feed entirely rather than continuing
+       -- to spend keepalive slots on a lane the poller will refuse anyway.
+       AND (u.is_beta OR EXISTS (
+         SELECT 1 FROM subscriptions s
+          WHERE s.user_id = u.id
+            AND s.status IN ('active', 'trialing')
+            AND (s.tier = 'autocart' OR s.grandfathered)
+       ))
      ORDER BY j.detected_at DESC NULLS LAST
      LIMIT 200`
   );

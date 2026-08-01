@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { buttonClasses } from "@/components/ui/Button";
 import Button from "@/components/ui/Button";
 import Tag from "@/components/ui/Tag";
+import { useIsNativeApp } from "@/lib/native/context";
+import { useSubscription } from "./useSubscription";
 
 /**
  * Auto-cart — the one-time Recreation.gov sign-in, and the switch that uses it.
@@ -36,6 +38,8 @@ interface AutoCartState {
   verifiedAt: string | null;
   sessionFresh: boolean;
   sessionExpired: boolean;
+  /** Plan gate — Auto-Cart tier, grandfathered pre-tier sub, or beta. */
+  entitled: boolean;
 }
 
 /**
@@ -54,6 +58,8 @@ function agoLabel(iso: string | null): string | null {
 }
 
 export default function AutoCartSettings() {
+  const isNative = useIsNativeApp();
+  const { subscribed } = useSubscription();
   const [state, setState] = useState<AutoCartState | null>(null);
   // Computed when the data lands, not during render — Date.now() in a render
   // body is an impure call and React (correctly) rejects it.
@@ -61,8 +67,14 @@ export default function AutoCartSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Two-step upgrade for existing subscribers: /api/stripe/plan swaps the price on
+  // their LIVE subscription (prorated) the moment it's called, so a single click
+  // must not be able to change what someone is billed. First click arms, second
+  // confirms.
+  const [upgradeArmed, setUpgradeArmed] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     let cancelled = false;
     fetch("/api/user/autocart")
       .then((r) => (r.ok ? r.json() : null))
@@ -81,6 +93,43 @@ export default function AutoCartSettings() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => refresh(), [refresh]);
+
+  async function upgrade() {
+    setUpgrading(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/stripe/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: "autocart" }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      refresh();
+    } catch {
+      setError("The upgrade didn't go through. Nothing was changed — try again.");
+    } finally {
+      setUpgrading(false);
+      setUpgradeArmed(false);
+    }
+  }
+
+  async function checkout(interval: "monthly" | "yearly") {
+    setUpgrading(true);
+    try {
+      const r = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: "autocart", interval }),
+      });
+      const j = await r.json();
+      if (j.url) window.location.assign(j.url);
+      else setUpgrading(false);
+    } catch {
+      setUpgrading(false);
+    }
+  }
 
   async function toggle(next: boolean) {
     setSaving(true);
@@ -115,6 +164,73 @@ export default function AutoCartSettings() {
       <p className="text-ch-body text-ch-muted">
         We couldn&apos;t load your auto-cart settings. Refresh to try again.
       </p>
+    );
+  }
+
+  // THE PLAN GATE (2026-08-01). Auto-cart is the paid Auto-Cart tier; without it the
+  // set-up flow and the toggle are replaced by the way to get it. The server enforces
+  // this too (403 on enable, and the poller ignores the lane) — this screen is just
+  // the honest version of that. IN THE NATIVE APP: no price and no purchase route,
+  // same store rule as Pricing; the text says where to manage it and stops.
+  if (!state.entitled) {
+    return (
+      <div>
+        <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
+          <Tag kind="paused">Auto-Cart plan</Tag>
+          <Tag kind="src">Recreation.gov only</Tag>
+        </div>
+        <p className="max-w-[62ch] text-ch-body leading-relaxed text-ch-ink-2">
+          When a site opens up on Recreation.gov we can put it in your cart automatically,
+          so it&apos;s held while you get to your phone. Auto-cart comes with the Auto-Cart
+          plan.
+        </p>
+        {isNative ? (
+          <p className="mt-3 text-ch-body text-ch-muted">
+            Subscriptions are managed at camphawk.app.
+          </p>
+        ) : subscribed ? (
+          <div className="mt-3 rounded-ch-input border border-ch-line px-3.5 py-3">
+            <p className="text-ch-body font-bold">Add Auto-Cart to your subscription</p>
+            <p className="mt-0.5 max-w-[58ch] text-ch-fine leading-normal text-ch-muted">
+              $10 a month, or $50 a year — you keep your current billing cycle and Stripe
+              prorates the difference from today.
+            </p>
+            {upgradeArmed ? (
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <Button size="sm" disabled={upgrading} onClick={() => void upgrade()}>
+                  {upgrading ? "Upgrading…" : "Confirm upgrade"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="quiet"
+                  disabled={upgrading}
+                  onClick={() => setUpgradeArmed(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Button size="sm" className="mt-2.5" onClick={() => setUpgradeArmed(true)}>
+                Upgrade to Auto-Cart
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button size="sm" variant="quiet" disabled={upgrading} onClick={() => void checkout("monthly")}>
+              Auto-Cart — $10 / month
+            </Button>
+            <Button size="sm" disabled={upgrading} onClick={() => void checkout("yearly")}>
+              Auto-Cart — $50 / year
+            </Button>
+          </div>
+        )}
+        {error && (
+          <p role="alert" className="mt-2 text-ch-fine text-ch-alert">
+            {error}
+          </p>
+        )}
+      </div>
     );
   }
 
