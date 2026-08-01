@@ -214,6 +214,15 @@ divides campgrounds across machines so capacity grows by cloning a machine.
 - Tests: `worker/shard.test.mts` (pure hash: stability, range, even split, month
   independence) + `worker/shard-lease.test.mts` (real DB: mutual exclusion, renewal,
   expiry takeover, concurrent race). Both verified to fail against the bug they guard.
+- **When to add a machine is now a gauge, not vigilance** (2026-08-01):
+  `poller.capacity` in `/api/health/status` counts distinct rec.gov campground-months
+  across active watches vs machines × `RECGOV_MONTHS_PER_MACHINE` (4, in
+  `lib/health-thresholds.ts`). AT capacity = warn, OVER = fail; nothing else goes red
+  for over-capacity — everything merely gets slower. Live at 3/4 on ship.
+- **Watch cap is 6** (was 10; 2026-08-01), ONE constant in `src/lib/limits.ts` feeding
+  the server 409 in `/api/watches` and all UI/pricing copy. Chosen because 6 watches
+  ≈ what one shard machine can carry; accounts already above it keep their watches but
+  can't add more until under.
 
 ## Tests exist now — `npm test`
 `node:test` via tsx, no framework dependency. `*.test.mts` under `worker/`: the
