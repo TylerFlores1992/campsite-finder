@@ -57,6 +57,13 @@ const MAX_CONCURRENCY = Math.max(1, Number(process.env.MAX_CONCURRENCY || 1)); /
 const PROFILES_DIR = path.resolve(__dirname, process.env.PROFILES_DIR || 'profiles');
 const HANDLED_FILE = path.join(__dirname, 'handled.json');
 const CARTED_FILE = path.join(__dirname, 'carted.json');
+// How long a successful cart mutes re-carting the SAME site for the same person.
+// This was 30 DAYS, and that cost a real cart on 2026-08-01: rec.gov cart holds
+// expire after 15 minutes, the user missed the window, the site re-opened an hour
+// later, and the bot silently skipped it — for what would have been a month. Just
+// past the hold window is long enough to stop churn while someone is checking out,
+// and short enough that a re-opened site gets carted again.
+const CARTED_TTL_MS = Number(process.env.CARTED_TTL_MS || 20 * 60 * 1000);
 const CHANNEL = process.env.CHROME_CHANNEL || undefined; // e.g. "chromium" on a Pi
 // 'local'  → the bot pops a login window on this machine when someone enrolls.
 // 'remote' → sign-in is done through the web broker (broker.mjs); the bot never
@@ -116,7 +123,15 @@ function saveMap(file, map, maxAgeMs) {
 }
 
 const handled = loadMap(HANDLED_FILE); // notification id -> ts (avoid re-processing a notification)
-const carted = loadMap(CARTED_FILE);   // userId::site -> ts  (one successful cart per site per person)
+const carted = loadMap(CARTED_FILE);   // userId::site -> ts  (one cart per site per person per CARTED_TTL_MS)
+
+// Freshness is checked at READ time, not just pruned on save: an existing carted.json
+// written by the old 30-day build carries stale entries, and they must stop muting
+// sites the moment this version starts.
+const cartedRecently = (key) => {
+  const t = carted.get(key);
+  return typeof t === 'number' && Date.now() - t < CARTED_TTL_MS;
+};
 
 function ask(q) {
   return new Promise((res) => {
@@ -368,7 +383,7 @@ function pump() {
 async function processJob({ user, job }) {
   const who = user.email || user.userId;
   const key = siteKey(user.userId, job.bookingUrl);
-  if (carted.has(key)) return; // already carted this site for this person
+  if (cartedRecently(key)) return; // carted this site for this person minutes ago
   if (!isLoggedIn(user.userId)) {
     log(`  ⚠ ${who} isn't signed in yet — skipping this one (login window should be open).`);
     await reportResult(job.id, 'skipped-not-logged-in');
@@ -382,13 +397,19 @@ async function processJob({ user, job }) {
   await reportResult(job.id, outcome);
   if (outcome === 'carted') {
     carted.set(key, Date.now());
-    saveMap(CARTED_FILE, carted, 30 * 864e5);
+    saveMap(CARTED_FILE, carted, CARTED_TTL_MS);
   } else if (outcome === 'session-expired') {
     // The cart page bounced to sign-in — the session really died. Clear the marker
     // and flip the app's connected state off so the user is prompted to reconnect.
     try { fs.unlinkSync(readyMarker(user.userId)); } catch {}
     await reportConnected(user.userId, false);
     log(`  ⚠ ${who}: rec.gov session expired — cleared the saved login; they'll be asked to reconnect.`);
+  } else {
+    // Every outcome gets a console line. These were reported to the server but printed
+    // NOTHING here — on 2026-07-29 a browser opened and closed in 3 seconds with no
+    // trace, and the only way to learn why was a database query. The server is the
+    // record; this log is how a human watching the box knows what just happened.
+    log(`  ⚠ ${who}: not carted — ${outcome}`);
   }
   log(`  ⧉ closed browser for ${who}`);
 }
@@ -442,7 +463,14 @@ async function runMode() {
         handled.set(job.id, Date.now());
         saveMap(HANDLED_FILE, handled, 2 * 3600 * 1000);
         if (job.source === 'reservecalifornia') { await noteReserveCalifornia(job, log); continue; }
-        if (carted.has(siteKey(user.userId, job.bookingUrl))) continue;
+        if (cartedRecently(siteKey(user.userId, job.bookingUrl))) {
+          // Say so and REPORT it — this skip used to be a silent `continue`, which left
+          // the job with no outcome at all: the server waited out its full reconcile
+          // delay before falling back to a plain alert, and the bot log showed nothing.
+          log(`  ↻ [${user.email || user.userId}] ${job.campgroundName} — skipped, carted for them in the last ${Math.round(CARTED_TTL_MS / 60000)}m`);
+          await reportResult(job.id, 'skipped-already-carted');
+          continue;
+        }
         log(`🔔 [${user.email || user.userId}] ${job.campgroundName} (${job.startDate}→${job.endDate})`);
         enqueue({ user, job });
       }

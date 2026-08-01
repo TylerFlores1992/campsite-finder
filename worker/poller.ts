@@ -1005,10 +1005,19 @@ interface AutocartJobRow {
  * silent (gone). The carted ones are resolved by /api/auto-cart/result.
  */
 async function reconcileAutocartJobs(): Promise<void> {
+  // Two ways a job becomes reconcilable: the deadline passes with no word from the
+  // bot, OR the bot has already reported a terminal non-carted outcome — in which
+  // case the cart attempt is over and waiting out the rest of the delay buys nothing
+  // but latency on the fallback alert. ('carted' jobs are resolved by the result
+  // endpoint and never reach this query.) The bot's 'skipped-already-carted' — a site
+  // it carted for this user minutes ago re-opening — lands here within seconds now
+  // instead of after the full delay.
   const jobs = await query<AutocartJobRow>(
     `SELECT id, campground_id, campsite_id, payload, cart_outcome
      FROM autocart_jobs
-     WHERE resolution IS NULL AND detected_at < NOW() - INTERVAL '${RECONCILE_DELAY_SEC} seconds'
+     WHERE resolution IS NULL
+       AND (detected_at < NOW() - INTERVAL '${RECONCILE_DELAY_SEC} seconds'
+            OR (cart_outcome IS NOT NULL AND cart_outcome != 'carted'))
      ORDER BY detected_at ASC LIMIT 50`
   );
   for (const job of jobs) {
