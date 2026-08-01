@@ -104,6 +104,16 @@ const PRESETS: Record<string, Preset> = {
       export const node = <PricingSection />;`,
     frame: 'max-w-3xl w-full mx-auto',
   },
+  'ch-upgrade-nudge': {
+    label: 'PricingLink — alerts-only subscriber upgrade nudge (foot of the app tabs)',
+    entry: `import PricingLink from '@/components/v2/PricingLink';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({ active: true, everSubscribed: true, autocart: false, autocartPlanAvailable: true }) });
+      }
+      export const node = <PricingLink />;`,
+    frame: 'max-w-2xl w-full mx-auto',
+  },
   'ch-onboarding-newwatch': {
     label: 'New watch — first-run explainer (no campground chosen)',
     entry: `import NewWatch from '@/components/v2/NewWatch';

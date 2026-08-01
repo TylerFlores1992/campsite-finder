@@ -79,7 +79,17 @@ export default function PricingSection() {
           <li>Any alert lets you pause the watch, reopen it, or mute a site you don&apos;t want.</li>
         </ul>
         <div className="mt-4 flex flex-wrap gap-2.5">
-          <Link href="/new" className={buttonClasses({ variant: "primary" })}>
+          {/* Alerts-plan subscribers get the upgrade as a first-class button — but
+              only on the web: the price belongs on it, and a price in the native
+              app is the store-review failure this file exists to prevent. The
+              destination is /settings (in-place prorated upgrade), never the
+              pricing page's checkout, which would mint a second subscription. */}
+          {!autocart && !isNative && (
+            <Link href="/settings" className={buttonClasses({ variant: "primary" })}>
+              Upgrade to Auto-Cart — $10/mo
+            </Link>
+          )}
+          <Link href="/new" className={buttonClasses({ variant: autocart || isNative ? "primary" : "quiet" })}>
             New watch
           </Link>
           <Link href="/settings" className={buttonClasses({ variant: "quiet" })}>
