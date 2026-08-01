@@ -275,7 +275,24 @@ async function dispatchPush(payload: NotificationPayload): Promise<void> {
 
   try {
     const result = await sendPush({ tokens, title, body, data });
-    await logNotification(payload, 'push', 'sent');
+    // RECORD WHAT ACTUALLY HAPPENED. This logged 'sent' unconditionally, ignoring
+    // result.sent — so an unconfigured FCM (sendPush returns {sent:0} and logs a
+    // line nobody reads) or a batch where every token was dead both went into the
+    // table as a successful send. On 2026-08-01 that cost a real debugging session:
+    // the notifications table said push was delivered while a device sat there with
+    // nothing on its lock screen, and the one place that could have said otherwise
+    // was asserting success. Same family as the unsigned-APK green build.
+    const status = result.sent > 0 ? 'sent' : 'failed';
+    const detail =
+      result.sent > 0
+        ? undefined
+        : `FCM accepted 0 of ${tokens.length} token(s)` +
+          (result.deadTokens.length ? ` (${result.deadTokens.length} dead)` : '');
+    console.log(
+      `[push] ${payload.campgroundName}: ${result.sent}/${tokens.length} token(s) accepted` +
+        (result.deadTokens.length ? `, ${result.deadTokens.length} dead` : '')
+    );
+    await logNotification(payload, 'push', status, detail);
     // Prune tokens FCM reported as permanently dead, so we stop delivering to them.
     if (result.deadTokens.length > 0) {
       await mutate(
