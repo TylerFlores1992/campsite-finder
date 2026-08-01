@@ -32,7 +32,9 @@ optionally weekends" (see "Flexible dates" under the core flow).
   through `exec_select` / `exec_dml` RPCs (see `src/lib/db/`). RLS is on for all app
   tables (deny-all; service role bypasses).
 - **Clerk** — auth (production instance on camphawk.app).
-- **Stripe** — subscriptions ($2.50/mo, $20/yr). Live in prod; test keys locally.
+- **Stripe** — subscriptions, two plans since 2026-08-01: **Alerts** ($2.50/mo, $20/yr)
+  and **Auto-Cart** ($10/mo, $50/yr). Live in prod; test keys locally. See
+  "Subscription plans & the Auto-Cart tier" below for how tier/entitlement work.
 - **Fly.io** — the always-on cancellation poller (`worker/poller.ts`, app
   `campsite-finder-worker`). It also serves one HTTP endpoint
   (`worker/http-server.ts`) that the website calls for GoingToCamp availability,
@@ -380,6 +382,62 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > > throttle + one flaky source (≤40% fail) but trips on a worker-wide wedge — now
 > > automatic, no human restart.
 >
+> > **ONE fetch lane since 2026-07-31 — `worker/recgov-scheduler.ts`.** Every worker
+> > rec.gov availability read goes through it (main cycle, auto-cart reconciler,
+> > canary — the canary was missed on the first pass, which is exactly the bug the
+> > scheduler exists to prevent). Three mechanisms: **single-flight** (concurrent
+> > callers for one campground-month share a request), a **short-TTL cache** (callers
+> > state `maxAgeMs`), and a **token-bucket budget** — `RECGOV_BUDGET_PER_MIN` (15,
+> > measured: a clean IP took 160 sequential requests at 16/min with zero 429s),
+> > burst `RECGOV_BUDGET_BURST` (4 — must be ≥ the per-cycle dispatch or the bucket
+> > denies traffic that is already paced; 2 halved throughput in production), and a
+> > low-priority reserve so the canary/reconciler always get through. A denied
+> > refresh returns the PREVIOUS value marked `stale`, or `unknown` — never a
+> > fabricated empty, which downstream reads as "fully booked". An `unknown` never
+> > overwrites a cached real reading, and an open-breaker skip costs no budget.
+> > **The breaker gate must be `recgovBreakerCoolingDown`, not `recgovBreakerOpen`**
+> > — the latter stays true until a success only the skipped call could produce,
+> > which deadlocked rec.gov detection for 20 minutes on 2026-07-31.
+> >
+> > **The auto-cart lane's own detection loop is GONE (2026-07-31).** It duplicated
+> > the main cycle's detection every 6s at 10 req/min per campground-month vs the
+> > main cycle's 4 — two thirds of the whole budget for one watch. The main cycle
+> > now detects for every watch and branches on `isAutocartLane` after the claim;
+> > `autocartCycle` is reconciliation only. Measured after the merge: 429s
+> > 0.58→~0.1/min, breaker openings → 0, blind time ~40% → 0%.
+> >
+> > **Lead-time tiering (2026-08-01, `worker/lead-time.ts`).** A campground-month
+> > whose first wanted night is more than `RECGOV_HOT_LEAD_DAYS` (14) out rides the
+> > cache for `RECGOV_COLD_MAX_AGE_MS` (60s) instead of demanding freshness every
+> > 15s — ~1 req/min instead of 4. Computed per (watch, MONTH), so a long watch's
+> > far months go cold individually; auto-cart-lane pairs are always hot. Justified
+> > by the frozen feature-E data: 89% of openings ≥7 days out survive an hour. The
+> > heartbeat prints `N recgov (H hot/C cold)` plus served/denied and budget level.
+> >
+> > **Scaling is by machine, not by tuning** — rec.gov's limit is per egress IP
+> > (measured per-address, NOT per-/24). `worker/shard.ts` divides campgrounds
+> > across machines by FNV-1a hash with a DB lease per shard (`poller_shards`,
+> > migration 031, same INSERT..ON CONFLICT..WHERE shape as the alerting claim).
+> > **Shipped dark at `SHARD_COUNT = 1`, where `ownsCampground` short-circuits true
+> > without consulting the lease** — a DB hiccup must never stop the only poller.
+> > Scale = raise `SHARD_COUNT` in `worker/fly.toml` + `flyctl machine clone`.
+> > Shard by CAMPGROUND, never by watch or campground-month, or the dedup is lost.
+> > `/api/health/status` watches both ends: `poller.shards` FAILS on an unheld shard
+> > (campgrounds polled by NOBODY while everything else is green), and
+> > `poller.capacity` compares distinct rec.gov campground-months across active
+> > watches to machines × `RECGOV_MONTHS_PER_MACHINE` (4, `lib/health-thresholds.ts`)
+> > — warn AT capacity, fail OVER it, because over-capacity breaks the 15s promise
+> > while every other check stays green. The user-facing **watch cap is 6**
+> > (`src/lib/limits.ts`, one constant feeding the server 409 and all copy), chosen
+> > because 6 watches ≈ one machine's capacity.
+> >
+> > **The full-day 429 profile records continuously** (`worker/rate-profile.ts` →
+> > `recgov_rate_profile`, migration 033, since 2026-08-01): every fetch outcome in
+> > 5-min buckets, rec.gov's behaviour (ok/429/timeout/error) separated from ours
+> > (denied/breaker_skipped). Readout `scripts/recgov-429-profile.mts` refuses a
+> > verdict until all 24 UTC hours have data. Any sub-15s hot lane waits on this —
+> > the 15/min budget was calibrated in quiet hours.
+>
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
 > GoingToCamp above, what actually remains here is small:
@@ -538,6 +596,7 @@ chrome (nav, brand backdrop, footer) without adding a path segment.
 | --- | --- | --- |
 | `/` | `(app)/page.tsx` | Marketing home. **Server-rendered** — carries the site `<h1>`, indexable. Only the pricing controls are client-side. |
 | `/search` | `(app)/search/page.tsx` | Explore: location + dates + filters + map. The free funnel. |
+| `/pricing` | `(app)/pricing/page.tsx` | Dedicated plans page (2026-08-01). Mounts the SAME `PricingSection` as `/` — one source of pricing truth. Indexed, in the sitemap, and in `isPublicRoute` (it 404'd on prod for its entire signed-out audience until added). The `/#pricing` anchor on the home page also still works. |
 | `/watches` | `(app)/watches/` | Watch list, quota, outage banner, alert history. |
 | `/new` | `(app)/new/` | The only place a watch is created. |
 | `/settings` | `(app)/settings/` | Alerts (SMS), auto-cart, subscription, account, admin link. |
@@ -568,8 +627,9 @@ live in `src/components/ui/`, screens in `src/components/v2/`.
 ### Things that will bite you
 
 - **A route not in `isPublicRoute` (`src/middleware.ts`) 404s**, because Clerk's
-  `auth.protect()` returns 404 rather than 401. `/search`, `/watches`, `/settings`
-  and `/new` are all listed. `/new` is listed **deliberately**: the New watch screen
+  `auth.protect()` returns 404 rather than 401. `/search`, `/watches`, `/settings`,
+  `/new` and `/pricing` are all listed (`/pricing` was caught 404ing on production
+  minutes after it shipped — the trap works on PAGES exactly as it does on `/api/*`). `/new` is listed **deliberately**: the New watch screen
   handles its own 401 with a message that keeps the campground, dates and filters
   already entered, and letting middleware intercept would throw that away.
   **`/support` is listed too** (added 2026-07-28): it's the App Store Support URL, so
@@ -588,9 +648,13 @@ live in `src/components/ui/`, screens in `src/components/v2/`.
   > **That gates the CONTROL, which is not the same as gating the PRICE**, and reading
   > it as the same shipped a live leak — see the store-billing section below. A price
   > printed in the *server component around* a gated widget is still a price in the
-  > app. The native surfaces are now `v2/PricingSection.tsx` (the whole `/` block,
-  > copy included), `WatchCta`, `Explore`, `Settings` and `NewWatch`; adding a sixth
-  > means gating it there too, not relying on this one.
+  > app. The native-gated surfaces are `v2/PricingSection.tsx` (the whole pricing
+  > block — mounted on BOTH `/` and `/pricing`), `Pricing` (the two plan cards inside
+  > it), `WatchCta`, `Explore`, `Settings`, `NewWatch`, and since 2026-08-01
+  > `PricingLink` (the plans/upgrade block at the foot of the three app tabs) and
+  > `AutoCartSettings` (its upgrade gate carries "$10/mo" on the web). Adding another
+  > means gating it there too, not relying on this one. Audit with
+  > `grep -rn '\$[0-9]\|/api/stripe' src/components/ 'src/app/(app)/'`.
   > **`v2/SubscribeCta.tsx` (added 2026-07-28) follows the same rule** and exists because
   > `/new` and the Explore guest box were dead ends: a visitor with no account, and a
   > signed-in user with no subscription, both saw an explanation and no button. Its
@@ -659,7 +723,10 @@ Added 2026-07-27, and mostly inert until the route swap lifted the layout `noind
    opening it dispatches notifications. Branches by source; uses an atomic claim
    (`worker/claim.ts`) so it never double-alerts. The claim is **per (watch, SITE)**
    with a 1-hour window — see "Per-site alert cooldown" below; it was per watch until
-   2026-07-30, which silently swallowed openings.
+   2026-07-30, which silently swallowed openings. All rec.gov reads go through ONE
+   budgeted fetch lane (`worker/recgov-scheduler.ts`) with lead-time tiering — see
+   the rec.gov entry under "Reservation sources" for the budget, sharding and
+   capacity model.
 4. **Notifications** (`src/lib/notifications/`) — email (Resend) + SMS (Twilio) + native
    push (FCM). `dispatchNotifications` fans out to all three via `Promise.allSettled`;
    push goes to a user's registered devices (`push_tokens`, migration 023) and no-ops
@@ -746,6 +813,16 @@ source path pass the canary:
    `FCM_SERVICE_ACCOUNT` is removed/malformed or the key is revoked. Skipped (warn, not
    page) until FCM is configured, like the other two. Also listed in the `/api/health/status`
    delivery loop, so it pages the same way.
+4. **poller.shards / poller.capacity** (in `/api/health/status` directly, not canary
+   rows — added 2026-07-31/08-01). `poller.shards` FAILS on an unheld shard index:
+   those campgrounds are polled by NOBODY while every other check stays green.
+   `poller.capacity` compares distinct rec.gov campground-months across active
+   watches to machines × `RECGOV_MONTHS_PER_MACHINE` — warn AT capacity ("clone a
+   machine now"), fail OVER it, because over-capacity merely makes everything
+   slower, which no other check would ever notice. Details in the rec.gov
+   fetch-lane block under "Reservation sources". The user-facing outage banner in
+   `WatchesList` reads only `detect:*` fails, so neither of these can leak a wrong
+   banner to users.
 
 > **STALENESS THRESHOLDS LIVE IN ONE FILE: `src/lib/health-thresholds.ts`.** They were
 > in three, and they disagreed. `worker/fly.toml` runs the delivery canary every 24h;
@@ -1218,6 +1295,56 @@ away. **`status: 'all'` is essential** — the giveaway subscription is normally
 - Checkout also **reuses an existing customer** instead of passing `customer_email`,
   which minted a new one per checkout — the reason that address had two.
 
+## Subscription plans & the Auto-Cart tier (2026-08-01)
+
+Two plans: **Alerts** ($2.50/mo, $20/yr — the original subscription) and **Auto-Cart**
+($10/mo, $50/yr — everything in Alerts plus the auto-cart lane). Priced against
+Campsite Tonight ($29.99/mo, $59.99/yr on the App Store at the time). The 7-day
+first-timer trial applies to either plan.
+
+- **Schema** (migration 032): `subscriptions.tier` (`'base' | 'autocart'`) and
+  `subscriptions.grandfathered`. Every row that existed at apply time got
+  `grandfathered = true` — pre-tier subscribers were sold "auto-cart included" under
+  the keep-your-rate promise, and they keep exactly that for as long as that
+  subscription runs. **The webhook never writes `grandfathered`**, so a renewal event
+  (whose price maps to 'base') cannot strip it. A grandfathered subscriber who cancels
+  and resubscribes gets a new row, born `grandfathered = false` — the promise is
+  scoped to the subscription, which is how the copy words it.
+- **Tier is DERIVED from the Stripe price id on every webhook event**
+  (`src/lib/stripe-plans.ts` maps `STRIPE_PRICE_ID_AUTOCART_MONTHLY/_YEARLY`; anything
+  else → 'base'). An unknown price failing to 'base' is deliberate: "paying premium,
+  treated as base" surfaces as a complaint; "free premium" never surfaces at all.
+  Prices are referenced **by env id, not looked up by API** — the live Stripe key is a
+  RESTRICTED key with no product/price read or write (verified: `prices.retrieve`
+  403s), so the prices were created in the dashboard by hand. If either env var
+  disappears, `autocartPlanConfigured()` goes false and the plan quietly de-lists
+  (signed-in cards hide, checkout 503s); the signed-out marketing copy is deliberately
+  NOT gated on it (signed-out visitors never fetch subscription status).
+- **Entitlement** = active/trialing AND (`tier = 'autocart'` OR `grandfathered`), OR
+  `users.is_beta`. One definition (`lib/auth.hasAutocartEntitlement`, an EXISTS —
+  never "latest row", which depends on ordering trivia), enforced in FOUR places:
+  the toggle API (`POST /api/user/autocart` 403s on enable; **off is always
+  allowed**), the bot roster feed (an unentitled user drops out entirely — the
+  per-user session keepalive is the mini-PC's scarce resource), and the poller's
+  `isAutocartLane` (a lapsed premium user keeps `autocart_enabled = true` in
+  settings, so the flag alone would keep swallowing their openings into a lane the
+  bot no longer serves — they fail open to normal alerts).
+- **Upgrades for existing subscribers go through `POST /api/stripe/plan`** — an
+  in-place price swap on the live subscription, prorated. NEVER a second checkout:
+  that mints a second subscription next to the first and double-bills. Every upgrade
+  surface (AutoCartSettings' two-step confirm, the homepage subscribed block, the
+  PricingLink nudge) routes to `/settings` for exactly this reason; `/pricing`'s
+  checkout buttons are for non-subscribers.
+- **Webhook robustness**: checkout now stamps `clerk_user_id` into
+  `subscription_data.metadata` (the SESSION metadata alone never reaches
+  `customer.subscription.*` events), and the webhook falls back to matching by
+  `stripe_subscription_id` for legacy subscriptions whose events carry no user id —
+  without that fallback, a pre-2026-08-01 subscriber's cancellation or plan change
+  never landed in our table.
+- `/api/subscription/status` returns `autocart` (entitlement) and
+  `autocartPlanAvailable` (env configured) alongside `active`/`everSubscribed`;
+  `v2/useSubscription.ts` exposes all four.
+
 ## RLS (migration 027, 2026-07-30)
 
 `action_tokens` and `alert_canary` had none. **No policies were created, deliberately:**
@@ -1538,9 +1665,15 @@ fourth surface now.
 
 ### Design: cart-outcome-gated alerts
 
-- The poller runs auto-cart-eligible rec.gov watches on a **tighter lane** and, on an
-  opening, does **not** alert immediately — it writes a pending row to the
-  `autocart_jobs` table (migration `014`).
+- **Auto-cart is the paid Auto-Cart tier since 2026-08-01** — the lane requires
+  entitlement (tier/grandfathered/beta; see "Subscription plans & the Auto-Cart
+  tier"), checked in the poller's `isAutocartLane`, the toggle API and the roster
+  feed. A lapsed subscription fails open to normal alerts.
+- On an opening for an entitled, enrolled watch the poller does **not** alert
+  immediately — it writes a pending row to the `autocart_jobs` table (migration
+  `014`). (Detection happens in the MAIN 15s cycle since 2026-07-31; the separate
+  6s auto-cart detection loop is gone — it was 2.5x the request cost for identical
+  information. `autocartCycle` is reconciliation only.)
 - The **mini-PC bot** (`scripts/auto-cart-bot/bot.mjs`) polls a roster
   (`/api/auto-cart/roster`, master `AUTOCART_TOKEN`), carts the site in the user's own
   logged-in browser, and reports the outcome to `/api/auto-cart/result`.
@@ -1806,7 +1939,10 @@ TN/SC availability (`TNSC_AVAILABILITY_URL` on the **Fly worker** → the Vercel
 portal blocks Fly and allows Vercel; also `SYNC_SECRET`-authenticated),
 Supabase (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`), Clerk
 (`NEXT_PUBLIC_CLERK_*`, `CLERK_SECRET_KEY`, `CLERK_WEBHOOK_SECRET`), Stripe
-(`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_MONTHLY/_YEARLY`),
+(`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_MONTHLY/_YEARLY`
+for the Alerts plan and `STRIPE_PRICE_ID_AUTOCART_MONTHLY/_YEARLY` for the
+Auto-Cart plan — all four on Vercel; if an Auto-Cart one goes missing the plan
+de-lists rather than erroring, see the tier section),
 Resend (`RESEND_API_KEY`, `EMAIL_FROM`), Twilio (`TWILIO_*`), Mapbox
 (`NEXT_PUBLIC_MAPBOX_TOKEN`), RIDB (`RIDB_API_KEY`), auto-cart
 (`AUTOCART_TOKEN`, `BROKER_WS_URL`), `NEXT_PUBLIC_APP_URL`, `SYNC_SECRET`.
@@ -1863,6 +1999,17 @@ concurrently as of `dfd4541`, so this bounds each provider, not the whole cycle)
 30m keepalive + a missed one; stale/NULL fails open to normal alerts). The bot-side
 keepalive cadence itself is `KEEPALIVE_MS` (default 30m), set in the mini-PC's own
 `.env`, not on Fly.
+rec.gov fetch-lane + scaling tunables (Fly worker, non-secret; the load-bearing ones
+are pinned in `worker/fly.toml [env]`): the scheduler budget `RECGOV_BUDGET_PER_MIN`
+(15 — measured against the per-IP 429 floor, don't just raise it),
+`RECGOV_BUDGET_BURST` (4 — must stay ≥ the per-cycle dispatch or the bucket denies
+already-paced traffic) and `RECGOV_BUDGET_LOW_RESERVE` (0.5); lead-time tiering
+`RECGOV_HOT_LEAD_DAYS` (14) and `RECGOV_COLD_MAX_AGE_MS` (60s); sharding
+`SHARD_COUNT` (1 — the SAME value on every machine; raising it is how capacity
+grows, see the rec.gov fetch-lane block) and `SHARD_LEASE_MS` (45s); the 429
+profile recorder `RECGOV_PROFILE_FLUSH_MS` (5 min buckets) and
+`RECGOV_PROFILE_RETENTION_DAYS` (14); `AUTOCART_POLL_INTERVAL_MS` (6s — the
+RECONCILER cadence only; auto-cart detection lives in the main 15s cycle).
 The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 `BROKER_PORT`, `POLL_MS`).
 Admin cost tracking (optional, non-secret, on Vercel — in-code defaults, override only to

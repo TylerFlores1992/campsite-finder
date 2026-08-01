@@ -444,7 +444,11 @@ Hard-won gotchas from the first end-to-end run (all cost real time):
 > availability is restricted to the US in App Store Connect and Play Console.
 >
 > To sanity-check the web path is unaffected, load any page with a normal browser UA (no
-> `CampHawkApp`) and the $2.50/mo · $20/yr buttons appear as before.
+> `CampHawkApp`) and the two plan cards appear as before — Alerts ($2.50/mo · $20/yr)
+> and Auto-Cart ($10/mo · $50/yr). Since 2026-08-01 the price-bearing surfaces also
+> include `/pricing`, the `PricingLink` block on the three app tabs, and the
+> AutoCartSettings upgrade gate — all native-gated; the audit grep in
+> `docs/CONTEXT.md` ("Things that will bite you") covers them.
 
 ## Repo layout (orientation)
 
@@ -597,14 +601,22 @@ npm test
 `worker/`. Added 2026-07-30; before that the repo had no test script, no framework and
 no test files.
 
-Four suites, chosen because a silent wrong answer in each is expensive:
+The suites, chosen because a silent wrong answer in each is expensive:
 `worker/claim.test.mts` (the alerting claim — where a bug costs a user a campsite),
 `worker/costs.test.mts` (admin cost arithmetic — net margin),
-`worker/health-thresholds.test.mts` (canary staleness — the banner that cried wolf), and
+`worker/health-thresholds.test.mts` (canary staleness — the banner that cried wolf),
 `worker/recgov-breaker.test.mts` (the rec.gov throttle breaker — which decides whether
 rec.gov watches get checked at all, and whose half-open probe was a comment rather than
-code until 2026-07-30). The breaker suite needs no credentials: a 1ms timeout counts as
-a throttle, so it drives the real 429 code path without rec.gov having to cooperate.
+code until 2026-07-30; needs no credentials — a 1ms timeout counts as a throttle, so it
+drives the real 429 path without rec.gov cooperating),
+`worker/recgov-scheduler.test.mts` + `worker/recgov-budget-defaults.test.mts` (the
+token-bucket fetch lane: burst sizing, the breaker-skip DEADLOCK transition, counter
+windows — the defaults suite is a separate FILE because the sibling suite overrides the
+env at module load),
+`worker/shard.test.mts` (pure hash: stability, range, even split, month independence) +
+`worker/shard-lease.test.mts` (real DB: mutual exclusion, renewal, expiry takeover,
+concurrent race — uses shard indices ~9000 so it can't disturb a live lease), and
+`worker/lead-time.test.mts` (the hot/cold lead-day arithmetic, validated by mutation).
 
 > **They hit the REAL database and need credentials**, so run with
 > `NODE_USE_ENV_PROXY=1` in a web session. That is deliberate, not laziness: the
