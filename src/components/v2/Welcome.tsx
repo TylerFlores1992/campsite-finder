@@ -45,6 +45,8 @@ export default function Welcome() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [autocartConnected, setAutocartConnected] = useState<boolean | null>(null);
+  // A 401 from the prefs read means no session — see the signed-out block below.
+  const [signedOut, setSignedOut] = useState(false);
 
   // Where to go when they're done: whatever sent them to sign-up, else the app.
   const next = params.get("next") || "/search";
@@ -53,7 +55,13 @@ export default function Welcome() {
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      fetch("/api/user/alert-prefs").then((r) => (r.ok ? r.json() : null)),
+      fetch("/api/user/alert-prefs").then((r) => {
+        if (r.status === 401 || r.status === 403 || r.status === 404) {
+          if (!cancelled) setSignedOut(true);
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      }),
       fetch("/api/user/autocart").then((r) => (r.ok ? r.json() : null)),
     ])
       .then(([prefs, ac]) => {
@@ -92,6 +100,31 @@ export default function Welcome() {
 
   if (loading) {
     return <div className="h-64 animate-pulse rounded-ch-card bg-ch-shell motion-reduce:animate-none" />;
+  }
+
+  // No session. Reachable two ways: someone opened the URL directly, or Clerk
+  // redirected here a beat before the session cookie was readable. Either way a
+  // dead end is the wrong answer — offer the way forward rather than a 404.
+  if (signedOut) {
+    return (
+      <div className="mx-auto max-w-[46ch]">
+        <h1 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em]">
+          Create your account first
+        </h1>
+        <p className="mt-1.5 text-ch-body text-ch-muted">
+          This is the setup step we show once your account exists — alerts, an optional
+          phone number, and auto-cart if you have it.
+        </p>
+        <div className="mt-4 grid gap-2">
+          <Link href="/sign-up" className={buttonClasses({ fullWidth: true })}>
+            Create an account
+          </Link>
+          <Link href="/sign-in" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
+            Sign in
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   const showAutocart = subLoaded && subscribed && autocart && autocartConnected === false;

@@ -25,6 +25,12 @@ const isPublicRoute = createRouteMatcher([
   // The dedicated plans page (2026-08-01). Marketing — its whole audience is
   // signed out, and auth.protect() would 404 it for exactly those visitors.
   '/pricing',
+  // The post-signup welcome step. Listed for the same reason `/new` is: Clerk
+  // redirects here the instant an account is created, and if the session cookie
+  // is not yet readable by middleware on that first request, auth.protect() would
+  // answer 404 — a brand-new user's very first impression being a dead page. The
+  // component renders its own signed-out state instead.
+  '/welcome',
   '/new',
   '/campground/(.*)',
   // State landing pages — public by definition, they exist for search traffic.
