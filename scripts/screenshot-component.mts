@@ -121,6 +121,23 @@ const PRESETS: Record<string, Preset> = {
       export const node = <Welcome />;`,
     frame: 'max-w-3xl w-full mx-auto',
   },
+  'ch-welcome-basic': {
+    label: 'Welcome — the common case: brand-new account, no subscription yet',
+    entry: `import Welcome from '@/components/v2/Welcome';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/alert-prefs')) return { ok: true, status: 200, json: async () => ({ email: 'you@example.com', emailAlerts: true, hasPhone: false, onboarded: false }) };
+          if (u.includes('/user/autocart')) return { ok: true, status: 200, json: async () => ({ enabled: false, connected: false, entitled: false, sessionFresh: false, sessionExpired: false, verifiedAt: null }) };
+          if (u.includes('/subscription/status')) return { ok: true, status: 200, json: async () => ({ active: false, everSubscribed: false, autocart: false, autocartPlanAvailable: true }) };
+          if (u.includes('/user/phone')) return { ok: true, status: 200, json: async () => ({ phone: null }) };
+          return { ok: true, status: 200, json: async () => ({}) };
+        };
+      }
+      export const node = <Welcome />;`,
+    frame: 'max-w-3xl w-full mx-auto',
+  },
   'ch-account-wall': {
     label: 'Watches account wall — trial / Plan options / Sign in button stack',
     // 401 on /api/watches is what puts the list into its signed-out wall; without a
