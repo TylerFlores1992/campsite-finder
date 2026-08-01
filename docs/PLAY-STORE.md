@@ -1,0 +1,185 @@
+# CampHawk — Google Play submission reference
+
+Companion to `docs/APP-STORE.md`. Same product, different taxonomy: Play's data-safety
+form and listing limits are NOT Apple's, so this file states Play's answers in Play's
+words rather than pointing at the Apple ones and hoping.
+
+App record created 2026-08-01. Package `app.camphawk.mobile` (permanent — it matches
+`appId` in `capacitor.config.ts` and the AAB Codemagic builds).
+
+---
+
+## 0. The critical path, and why production is ≥14 days out
+
+Play confirmed on the app dashboard (2026-08-01) that this **personal** developer
+account must, before it can even apply for production:
+
+1. Publish a **closed testing** release
+2. Have **at least 12 testers opted in** (0 currently)
+3. Run that closed test with those 12 for **at least 14 continuous days**
+
+The 14-day clock starts when the closed test is published, and a closed test cannot
+start until "Finish setting up your app" is complete — store listing, data safety,
+content rating. **That content is therefore the long pole, not the build.** The APK
+sideloaded onto a phone on 2026-08-01 does not count: testers must opt in through Play
+with real Google accounts and stay opted in for the whole window.
+
+Internal testing has no such gate and can be published immediately — do that first, both
+to prove the AAB uploads cleanly and because it is where the **country restriction** can
+be set today.
+
+## 1. Country availability — US only
+
+**Set United States only on EVERY track.** Availability is per track (internal, closed,
+open, production), so restricting production while a testing track stays worldwide is an
+easy and invisible mistake.
+
+The reason is the same one that governs Apple: `NATIVE_LINKOUT` in
+`src/components/v2/nativeSubscribe.tsx` sends non-subscribers in the app out to
+camphawk.app to subscribe, and both stores' anti-steering carve-outs are **US-storefront
+only**. Device locale is not a storefront check. Apple was restricted 2026-07-30.
+
+**The flag needs BOTH conditions and still stays dark until then:** US-restricted AND the
+app actually live in a store.
+
+## 2. Listing fields
+
+Play limits differ from Apple's, and Play has **no keywords field** — the full
+description is what gets indexed, so the terms have to appear in prose. Nothing below
+names a price, for the same reason as the App Store listing: the anti-steering rule
+covers the listing, not just the app.
+
+| Field | Value | Length |
+| --- | --- | --- |
+| **App name** | `CampHawk: Campsite Alerts` | 25/30 |
+| **Short description** | `Know within seconds when a booked campsite is cancelled.` | 56/80 |
+| **Category** | Travel & Local | — |
+| **Contact email** | the developer account address | — |
+| **Website** | `https://camphawk.app` | — |
+| **Privacy policy** | `https://camphawk.app/privacy` | — |
+
+**Full description** (1,928/4,000):
+
+```
+The campsite you wanted is already booked. CampHawk waits for it.
+
+Popular campgrounds sell out months ahead - but people cancel constantly. CampHawk checks the campgrounds you care about every 15 seconds, around the clock, and tells you the moment a site opens up, so you can book it before anyone else notices.
+
+HOW IT WORKS
+1. Search live campsite availability across 8,000+ campgrounds. Free, and no account needed.
+2. Everything booked? Set a watch on the campground and dates you want.
+3. Get a cancellation alert within seconds, with a link straight to the booking page.
+
+WHAT YOU GET
+- Checks every 15 seconds, day and night
+- Push, text and email alerts sent at once - whichever reaches you first wins
+- Flexible dates: watch for any two nights in a window, or weekends only
+- Auto-cart on Recreation.gov: the campsite is added to your cart, so you only have to check out
+- One tap from any alert to pause a watch, resume it, or mute a site you do not want
+
+WHERE IT WORKS
+Every Recreation.gov campground in all 50 states, plus state park camping in 34 states - more than 8,000 campgrounds, with live availability for each. National park campgrounds, national forest campgrounds, state park campsites, tent sites, RV sites and group sites.
+
+WHO IT IS FOR
+Anyone who has watched a national park campground sell out five minutes after the booking window opened. Yosemite, Yellowstone, Zion, Glacier, Joshua Tree, Acadia, the Smokies - the campgrounds that are always full are exactly the ones people cancel.
+
+FREE AND PAID
+Searching live campsite availability is free and needs no account. Watching a booked campground, and the cancellation alerts that come with it, require a subscription.
+
+CampHawk is an independent app. It is not affiliated with or endorsed by Recreation.gov, the National Park Service, the US Forest Service, or any state park agency. Bookings are always completed on the official reservation site.
+```
+
+> **Why this differs from the Apple description.** Play indexes the description, Apple
+> uses a separate keywords field, so this version works the search terms into prose —
+> "cancellation alert", "campsite availability", "national park campground", "RV sites",
+> and a WHO IT IS FOR paragraph naming the parks people actually search for. Same facts,
+> more surface. Numbers are re-checked, never remembered: 8,013 campgrounds as of
+> 2026-07-29 and a 15-second poll (`POLL_INTERVAL_MS`), stated as "8,000+" because
+> `lib/coverage.ts` rounds DOWN by rule.
+
+## 3. Graphics
+
+| Asset | Spec | Status |
+| --- | --- | --- |
+| App icon | 512×512 PNG, 32-bit | generated by `npm run cap:assets` |
+| **Feature graphic** | **1024×500 PNG/JPEG — REQUIRED** | see below |
+| Phone screenshots | 2–8, portrait | 5 captured on real hardware 2026-08-01 |
+
+**The feature graphic is a Play-only asset with no Apple equivalent**, and the listing
+cannot be published without it. It is displayed above the screenshots and must contain
+no device frames, no screenshots-of-screenshots, and no claims that duplicate the store
+metadata.
+
+Screenshots captured 2026-08-01 on a physical Android device — required because the
+sandboxed browser can reach neither Mapbox nor recreation.gov's photo CDN, so any
+map or photo strip renders blank from CI (see `docs/SETUP.md`). The set: search form,
+results + map, campground detail with photos, new watch, watches list.
+
+## 4. Data safety form
+
+Play's taxonomy, not Apple's. **"Shared" in Play means disclosed to a third party for
+their own use** — a processor acting on our behalf (Stripe, Resend, Twilio, Sentry) is
+NOT sharing, so every answer below is "collected, not shared".
+
+| Play data type | Collected | Optional? | Purpose | Notes |
+| --- | --- | --- | --- | --- |
+| Personal info → **Email address** | Yes | Required | App functionality, Account management | `users.email`, from Clerk at sign-up |
+| Personal info → **User IDs** | Yes | Required | App functionality, Account management | Clerk user id |
+| Personal info → **Phone number** | Yes | **Optional** | App functionality | Only if the user opts into SMS alerts |
+| Financial info → **Purchase history** | Yes | Required | App functionality | Subscription status + Stripe ids. **Payment info is NOT collected** — Stripe Checkout handles cards; no card data reaches our servers |
+| Location → **Approximate location** | Yes | Optional | App functionality | IP-derived to centre a first search. **Processed ephemerally — never stored** |
+| Location → **Precise location** | Yes | Optional | App functionality | Only when the user taps "use my location". **Processed ephemerally — never stored** |
+| App activity → **Other user-generated content** | Yes | Required | App functionality | The watches themselves: campground + dates + filters |
+| App info and performance → **Crash logs** | Yes | Optional | App functionality, Analytics | Sentry, `tracesSampleRate: 0.1` |
+| App info and performance → **Diagnostics** | Yes | Optional | App functionality, Analytics | Sentry |
+| Device or other IDs → **Device or other IDs** | Yes | Optional | App functionality | FCM push tokens (`push_tokens`), registered by the app |
+
+**Everything else: NOT collected** — name, address, race/ethnicity, political or
+religious beliefs, sexual orientation, other personal info, health, fitness, messages,
+photos, videos, audio, files, calendar, contacts, in-app search history, installed apps,
+web browsing history.
+
+**Security practices section:**
+
+| Question | Answer |
+| --- | --- |
+| Is data encrypted in transit? | **Yes** (HTTPS throughout) |
+| Can users request data deletion? | **Yes** — in-app: Settings → Delete account (`POST /api/user/delete`), which cancels the Stripe subscription, deletes the Clerk user and cascades every user-owned table |
+| Data deletion URL | `https://camphawk.app/settings` |
+| Committed to Play Families Policy | No — not child-directed |
+| Independent security review | No |
+
+> **No advertising or tracking anywhere.** No ad SDK, no ad ID, no data broker, nothing
+> joined with third-party data for advertising. Same finding as the Apple labels, and
+> the reason App Tracking Transparency does not apply there either.
+>
+> **Sentry Session Replay is NOT active** and must not be declared. `@sentry/nextjs` v10
+> only records with `Sentry.replayIntegration()`, which is not added (verified
+> 2026-07-28: zero references). **If anyone ever adds it, this form becomes wrong** —
+> replay captures screen contents and would have to be disclosed.
+
+## 5. Content rating
+
+Utility app: no violence, sexual content, profanity, gambling, drugs or user-to-user
+communication. Expect **Everyone**; Apple's equivalent rating is 4+. Answer the
+questionnaire honestly and it lands there on its own.
+
+The app **does** share the user's approximate/precise location with the developer's own
+service to run a search — declare that if asked; it is not the same as sharing location
+with other users, which the app never does.
+
+## 6. Target audience
+
+Not directed at children. Target age 18+. The app requires an account and a paid
+subscription for its main feature, and camping reservations are made by adults.
+
+## 7. Closed test — recruiting 12 testers
+
+Testers must **opt in through the Play link with a real Google account and stay opted in
+for the full 14 days**. Removing someone mid-window resets progress. Practical notes:
+
+- An email list or a Google Group both work; the Group is easier to manage at 12+.
+- Each tester must actually accept the invitation and install from Play at least once.
+- Friends and family are acceptable — Play does not require strangers.
+- Start the count as early as possible: the 14 days is a floor, not an estimate, and it
+  cannot run in parallel with "finish setting up your app".
