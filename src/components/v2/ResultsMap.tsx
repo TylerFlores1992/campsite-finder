@@ -163,7 +163,13 @@ export default function ResultsMap({
       <div ref={containerRef} className="size-full" />
 
       {(datesChosen || selectedId) && (
-        <div className="pointer-events-none absolute bottom-2 left-2 flex gap-3 rounded-[9px] bg-white/92 px-2.5 py-1.5 text-ch-fine font-bold text-ch-muted backdrop-blur">
+        // TOP-left, not bottom-left: Mapbox's logo and attribution are pinned to the
+        // bottom-left of every map and are contractually required to stay visible, so
+        // a legend there is guaranteed to collide — "Sites open" rendered half-buried
+        // under the mapbox wordmark on a real device (2026-08-01), on the single most
+        // important screenshot in the store listing. The top-left corner is empty; the
+        // zoom controls own the top-right.
+        <div className="pointer-events-none absolute top-2 left-2 flex gap-3 rounded-[9px] bg-white/92 px-2.5 py-1.5 text-ch-fine font-bold text-ch-muted backdrop-blur">
           {datesChosen && (
           <><span>
             <i className="mr-1.5 inline-block size-2.5 rounded-full align-[-1px]" style={{ background: GREEN }} />
