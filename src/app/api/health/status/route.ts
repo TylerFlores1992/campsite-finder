@@ -3,6 +3,7 @@ import { query, queryOne } from '@/lib/db/client';
 import {
   DELIVERY_STALE_MS as SHARED_DELIVERY_STALE_MS,
   DETECT_STALE_MS as SHARED_DETECT_STALE_MS,
+  RECGOV_MONTHS_PER_MACHINE,
 } from '@/lib/health-thresholds';
 
 // Machine-readable alert-health aggregate. Turns the "silent death" traps in
@@ -58,9 +59,12 @@ export async function GET() {
   //     and every other check stays green while it happens, which is the worst failure
   //     this product has. A rec.gov deadlock on 2026-07-31 went unnoticed for twenty
   //     minutes precisely because nothing asserted "work is actually being covered".
+  //     `machines` feeds the capacity check below; 1 when no lease rows exist, since
+  //     exactly one machine is doing the work whether or not it has leased yet.
+  let machines = 1;
   try {
-    const shards = await query<{ shard_index: number; shard_count: number }>(
-      `SELECT shard_index, shard_count FROM poller_shards WHERE leased_until > NOW()`
+    const shards = await query<{ shard_index: number; shard_count: number; machine_id: string }>(
+      `SELECT shard_index, shard_count, machine_id FROM poller_shards WHERE leased_until > NOW()`
     );
     const expected = shards.reduce((m, r) => Math.max(m, r.shard_count), 0);
     const live = shards.map((r) => r.shard_index);
@@ -78,8 +82,47 @@ export async function GET() {
             ? `shard(s) ${missing.join(', ')} of ${expected} UNHELD — those campgrounds are not being polled`
             : `${live.length}/${expected} shard(s) held`,
     });
+    machines = Math.max(1, new Set(shards.map((r) => r.machine_id)).size);
   } catch (err) {
     checks.push({ name: 'poller.shards', level: 'warn', detail: `read failed: ${(err as Error).message}` });
+  }
+
+  // 1c. Capacity vs demand — the "never trail demand" gauge. rec.gov capacity is per
+  //     egress IP, so it grows only by adding machines; this check counts what the
+  //     active watches actually require (distinct campground-months, because the
+  //     scheduler dedups every watch on the same campground-month into one fetch
+  //     stream) and compares it with machines × RECGOV_MONTHS_PER_MACHINE.
+  //     AT capacity = warn: the next watch created will push refresh past 15s — clone
+  //     a machine now. OVER capacity = fail: the 15s promise is already broken, and
+  //     nothing else goes red for it (the poller keeps beating, canaries keep
+  //     passing — everything merely gets slower). Ops-only: the user-facing outage
+  //     banner reads detect:* checks alone.
+  try {
+    const demand = await queryOne<{ n: number }>(
+      `SELECT COUNT(DISTINCT (w.campground_id, to_char(m, 'YYYY-MM')))::int AS n
+         FROM watches w
+         JOIN campgrounds c ON c.id = w.campground_id
+         CROSS JOIN LATERAL generate_series(
+           date_trunc('month', GREATEST(w.start_date, CURRENT_DATE)::timestamp),
+           date_trunc('month', w.end_date::timestamp),
+           interval '1 month') AS m
+        WHERE w.active = true AND w.end_date > CURRENT_DATE AND c.source = 'ridb'`
+    );
+    const n = demand?.n ?? 0;
+    const capacity = machines * RECGOV_MONTHS_PER_MACHINE;
+    checks.push({
+      name: 'poller.capacity',
+      level: n > capacity ? 'fail' : n === capacity ? 'warn' : 'ok',
+      detail:
+        `${n}/${capacity} rec.gov campground-months across ${machines} machine(s)` +
+        (n > capacity
+          ? ' — OVER capacity, refresh has fallen below 15s; raise SHARD_COUNT and clone a machine'
+          : n === capacity
+            ? ' — at capacity; the next watch degrades everyone. Clone a machine'
+            : ''),
+    });
+  } catch (err) {
+    checks.push({ name: 'poller.capacity', level: 'warn', detail: `read failed: ${(err as Error).message}` });
   }
 
   // 2. Alert-health canary rows (detection per source + delivery). Written by the

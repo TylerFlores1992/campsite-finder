@@ -49,6 +49,18 @@ export const DELIVERY_DEAD_MS = DELIVERY_INTERVAL_MS * 3;
  */
 export const DETECT_DEAD_MS = DETECT_STALE_MS;
 
+/**
+ * How many rec.gov campground-months one worker machine can poll at the 15-second
+ * cadence. Derived from measurement, not hope: a clean IP sustains ~15-16 req/min
+ * before 429s (the RECGOV_BUDGET_PER_MIN in worker/recgov-scheduler.ts), and one
+ * campground-month at 15s costs 4 req/min — so 4 pairs saturate a machine and a
+ * 5th degrades everyone's refresh below the promised 15s. `/api/health/status`
+ * compares live demand against machines × this and says when to clone a machine
+ * (raise SHARD_COUNT in worker/fly.toml + `flyctl machine clone`) BEFORE detection
+ * falls behind, which is the whole "never trail demand" policy.
+ */
+export const RECGOV_MONTHS_PER_MACHINE = 4;
+
 export const DELIVERY_STALE_SECONDS = DELIVERY_STALE_MS / 1000;
 export const DETECT_STALE_SECONDS = DETECT_STALE_MS / 1000;
 export const DELIVERY_DEAD_SECONDS = DELIVERY_DEAD_MS / 1000;
