@@ -33,6 +33,7 @@ import { getAvailabilityFromRecGov, hasAvailabilityInRange, recgovBreakerOpen } 
 import * as recgovScheduler from './recgov-scheduler';
 import { SHARD_COUNT, LEASE_RENEW_MS, claimOrRenewShard, heldShard, ownsCampground } from './shard';
 import { leadDaysUntil } from './lead-time';
+import { startRateProfile } from './rate-profile';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
 import { findGoingToCampOpen } from '../src/lib/availability/goingtocamp';
@@ -1177,6 +1178,11 @@ async function gtcSyncIfDue(): Promise<void> {
 
 async function main() {
   console.log(`[poller] starting — interval ${POLL_INTERVAL_MS / 1000}s, recgov concurrency ${RECGOV_CONCURRENCY}`);
+
+  // Full-day 429 profile: count every rec.gov fetch outcome (and our own budget
+  // denials / breaker skips) into recgov_rate_profile. This is the measurement the
+  // sub-15s hot lane is waiting on — see worker/rate-profile.ts.
+  startRateProfile();
 
   // Startup probe: verify the RC API is reachable via the configured path
   // (direct, or through the Vercel proxy when RC_PROXY_URL is set).

@@ -125,6 +125,25 @@ function isThrottleError(err: unknown): boolean {
   return e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message ?? '');
 }
 
+// --- fetch-outcome observer (worker only) -------------------------------------
+// The worker's rate-profile recorder registers here to count every real rec.gov
+// fetch outcome, split finer than the breaker needs: a 429 (rec.gov said slow down)
+// and a timeout (a hung socket, often the same throttle wearing a different hat)
+// escalate the breaker identically but mean different things when profiling how much
+// budget an hour of the day can carry. Null by default, so the Vercel deployment —
+// which shares this module via /api/search — records nothing.
+export type RecgovFetchOutcome = 'ok' | '429' | 'timeout' | 'error';
+let fetchObserver: ((outcome: RecgovFetchOutcome) => void) | null = null;
+export function setRecgovFetchObserver(cb: ((outcome: RecgovFetchOutcome) => void) | null): void {
+  fetchObserver = cb;
+}
+function classifyOutcome(err: unknown): RecgovFetchOutcome {
+  const e = err as { response?: { status?: number }; code?: string; message?: string };
+  if (e?.response?.status === 429) return '429';
+  if (e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message ?? '')) return 'timeout';
+  return 'error';
+}
+
 /** True from the moment the breaker trips until a success closes it — INCLUDING the
  *  half-open phase, when one prober is allowed through. For "are we backing off",
  *  which is what the canary reports. NOT a safe gate for skipping a call: see
@@ -269,9 +288,11 @@ export async function getAvailabilityFromRecGov(
     );
     rawCampsites = response.data?.campsites ?? {};
     recordRecgovOutcome(false, gate.isProbe); // reachable — reset/close the breaker
+    fetchObserver?.('ok');
   } catch (err) {
     console.warn(`[RecGov availability] Failed for ${campgroundId}/${month}:`, (err as Error).message);
     recordRecgovOutcome(isThrottleError(err), gate.isProbe); // count 429/timeout toward tripping the breaker
+    fetchObserver?.(classifyOutcome(err));
     // Return empty availability rather than crashing — but FLAGGED, because empty and
     // "we never found out" are the same shape and mean opposite things to a user.
     unknown = true;

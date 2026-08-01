@@ -30,6 +30,7 @@
 
 import type { CampgroundAvailability } from '../src/lib/types';
 import { getAvailabilityFromRecGov, recgovBreakerCoolingDown } from '../src/lib/availability/recgov';
+import { recordRateEvent } from './rate-profile';
 
 /**
  * Requests per minute this worker may make to rec.gov, across every lane.
@@ -192,6 +193,7 @@ export async function getAvailability(
   // if we skip. That deadlocked rec.gov detection in production for thirteen minutes
   // until the worker was restarted.
   if ((opts.breakerOpen ?? recgovBreakerCoolingDown)()) {
+    recordRateEvent('breaker_skipped');
     if (e.value) return { value: e.value, ageMs: age, stale: true };
     return {
       value: { campgroundId, month, campsites: [], availableCount: 0, unknown: true },
@@ -202,6 +204,7 @@ export async function getAvailability(
 
   if (!trySpend(priority, now)) {
     denied++;
+    recordRateEvent('denied');
     if (e.value) return { value: e.value, ageMs: age, stale: true };
     // Never fetched this one and can't afford to. `unknown` is the honest answer —
     // an empty result here would read as "fully booked" downstream.
