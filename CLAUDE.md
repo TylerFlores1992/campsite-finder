@@ -88,6 +88,14 @@ same push. The proxy paces a batch at `FANOUT = 2`; **don't raise it**.
 - **The sync also WAITS OUT an open breaker** (`UD_SYNC_BREAKER_WAIT_MS`, 5 min/run);
   the poller still fails fast. Illinois lost all 282 campgrounds on 2026-07-30 because
   the sync burned a 60s cooldown in 34 seconds. Details in `docs/CONTEXT.md`.
+- **VALIDATED end-to-end 2026-07-31 23:47:** Illinois 282/7,068 sites/5 errors (from
+  281 errors/0 sites), Virginia 193/3,181/7, Ohio 9,324/0 — best-ever numbers across
+  the board. But the thorough sync (50+ min of full grids vs 22 min fail-fast) THRASHED
+  the 256MB machine — three watchdog kills before any run reached Illinois, with
+  `oom_killed=false` every time (thrash stalls everything >252s; it looks like "egress
+  wedged", it's memory). **The worker is 512MB now** (`[[vm]]` in fly.toml — ONE block;
+  a second one added without noticing the first would have silently re-shrunk it on the
+  next deploy). MemAvailable during a full sync: ~270MB.
 
 ## Alerting — the claim (read this before touching the poller)
 The decision "may we alert for this?" is `worker/claim.ts`, keyed on
