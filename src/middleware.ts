@@ -22,6 +22,9 @@ const isPublicRoute = createRouteMatcher([
   '/search',
   '/watches',
   '/settings',
+  // The dedicated plans page (2026-08-01). Marketing — its whole audience is
+  // signed out, and auth.protect() would 404 it for exactly those visitors.
+  '/pricing',
   '/new',
   '/campground/(.*)',
   // State landing pages — public by definition, they exist for search traffic.
