@@ -88,6 +88,22 @@ const PRESETS: Record<string, Preset> = {
       export const node = <ManageWatch token="demo" />;`,
     frame: 'max-w-lg w-full mx-auto',
   },
+  'ch-pricing': {
+    label: 'PricingSection — signed-out two-plan comparison (the homepage funnel)',
+    entry: `import PricingSection from '@/components/v2/PricingSection';
+      export const node = <PricingSection />;`,
+    frame: 'max-w-3xl w-full mx-auto',
+  },
+  'ch-pricing-signedin': {
+    label: 'PricingSection — signed-in non-subscriber (checkout buttons)',
+    entry: `import PricingSection from '@/components/v2/PricingSection';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({ active: false, everSubscribed: false, autocart: false, autocartPlanAvailable: true }) });
+      }
+      export const node = <PricingSection />;`,
+    frame: 'max-w-3xl w-full mx-auto',
+  },
   'ch-onboarding-newwatch': {
     label: 'New watch — first-run explainer (no campground chosen)',
     entry: `import NewWatch from '@/components/v2/NewWatch';

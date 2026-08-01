@@ -570,9 +570,9 @@ export default function NewWatch({
               )
             ) : (
               <>
-                Watches need a subscription — $2.50/mo or $20/yr after a 7-day free trial.{" "}
-                <a className="font-bold underline" href="/">
-                  Start the trial
+                Watches need a subscription — from $2.50/mo after a 7-day free trial.{" "}
+                <a className="font-bold underline" href="/#pricing">
+                  Compare plans
                 </a>
               </>
             )}

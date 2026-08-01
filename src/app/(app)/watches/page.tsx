@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import WatchesList from "@/components/v2/WatchesList";
+import PricingLink from "@/components/v2/PricingLink";
 
 export const metadata: Metadata = {
   title: "Your watches — CampHawk",
@@ -14,6 +15,8 @@ export default function V2WatchesPage() {
         Your watches
       </h1>
       <WatchesList />
+      {/* Self-hiding: renders only for signed-out / non-subscribed web visitors. */}
+      <PricingLink className="mt-6" />
     </div>
   );
 }

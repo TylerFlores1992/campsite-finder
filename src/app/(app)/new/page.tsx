@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import NewWatch from "@/components/v2/NewWatch";
+import PricingLink from "@/components/v2/PricingLink";
 
 export const metadata: Metadata = {
   title: "New watch — CampHawk",
@@ -23,6 +24,8 @@ export default async function V2NewWatchPage({
         New watch
       </h1>
       <NewWatch initialCampgroundId={campground} initialStart={start} initialEnd={end} />
+      {/* Self-hiding: renders only for signed-out / non-subscribed web visitors. */}
+      <PricingLink className="mt-6" />
     </div>
   );
 }

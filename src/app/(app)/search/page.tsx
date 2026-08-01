@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Explore from "@/components/v2/Explore";
+import PricingLink from "@/components/v2/PricingLink";
 import BrandHeader from "@/components/v2/BrandHeader";
 import { COVERAGE, campgroundsRounded } from "@/lib/coverage";
 
@@ -29,6 +30,11 @@ export default function V2ExplorePage() {
       />
 
       <Explore />
+      {/* Self-hiding marketing link back to /#pricing — renders only for
+          signed-out / non-subscribed web visitors, nothing in the native app. */}
+      <div className="mx-auto max-w-[var(--ch-max)] px-5 pb-8">
+        <PricingLink />
+      </div>
     </>
   );
 }

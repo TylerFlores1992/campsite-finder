@@ -145,7 +145,10 @@ export default function V2HomePage() {
           native app gets a version with no price and no route to checkout. It
           used to be inline here with only <Pricing/>'s buttons gated, which left
           the app showing the price anyway. See PricingSection. */}
-      <section className="mx-auto max-w-[var(--ch-max)] px-5 py-6">
+      {/* id + scroll-mt: the three app tabs deep-link here as /#pricing (see
+          PricingLink), and without the scroll margin the sticky nav covers the
+          section heading on arrival. */}
+      <section id="pricing" className="mx-auto max-w-[var(--ch-max)] scroll-mt-24 px-5 py-6">
         <PricingSection />
       </section>
 
