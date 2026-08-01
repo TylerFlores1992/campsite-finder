@@ -117,9 +117,13 @@ minute".
   non-subscribers. Native shows no prices anywhere (store rule).
 - **Stripe price mapping is by env id** (`src/lib/stripe-plans.ts`): the live key is
   RESTRICTED (no product read/write — verified), so prices can't be created or looked
-  up by API. `STRIPE_PRICE_ID_AUTOCART_MONTHLY`/`_YEARLY` on Vercel; until both exist
-  `autocartPlanConfigured()` is false, the UI hides the plan and checkout 503s — the
-  tier ships dark, like the shard scaffolding.
+  up by API. `STRIPE_PRICE_ID_AUTOCART_MONTHLY`/`_YEARLY` on Vercel — **both set
+  2026-08-01 (owner created the prices in the dashboard), so the plan is LIVE.** If
+  either var ever disappears, `autocartPlanConfigured()` goes false and the plan
+  quietly de-lists (signed-in cards hide, checkout 503s). The signed-out marketing
+  sentence is deliberately NOT gated on it — signed-out visitors never fetch
+  subscription status, so a gate there hides the plan from the homepage's main
+  audience forever.
 - **Lead-time tiering** (`worker/lead-time.ts` + poller): a campground-month whose
   first wanted night is >14 days out (`RECGOV_HOT_LEAD_DAYS`) rides a 60s scheduler
   cache (`RECGOV_COLD_MAX_AGE_MS`) instead of fresh-every-15s — ~1 req/min instead of

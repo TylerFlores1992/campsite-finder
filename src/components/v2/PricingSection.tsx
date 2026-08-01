@@ -32,7 +32,7 @@ import { WATCH_LIMIT } from "@/lib/limits";
  */
 export default function PricingSection() {
   const isNative = useIsNativeApp();
-  const { subscribed, autocart, autocartPlanAvailable } = useSubscription();
+  const { subscribed, autocart } = useSubscription();
 
   // ALREADY PAYING? Then this block has no selling left to do, and doing it anyway is
   // worse than neutral: a subscriber who reads "Searching is free. Watching is $2.50 a
@@ -132,13 +132,16 @@ export default function PricingSection() {
         Searching is free. Watching is $2.50 a month, or $20 a year.
       </h2>
       <p className="mt-2 max-w-[58ch] text-ch-body leading-relaxed text-ch-green-deep">
+        {/* NOT gated on autocartPlanAvailable: signed-out visitors never fetch
+            subscription status (useSubscription only runs signed-in), so a gate here
+            would hide the Auto-Cart plan from the homepage's main audience forever.
+            The plan exists in Stripe as of 2026-08-01; the gate stays on the
+            INTERACTIVE plan cards in Pricing.tsx, where a mis-config would otherwise
+            sell a checkout that 503s. */}
         One subscription covers up to {WATCH_LIMIT} watches at once with text, push and
-        email alerts{autocartPlanAvailable && (
-          <>
-            ; the Auto-Cart plan adds automatic carting on Recreation.gov — the site is
-            held in your cart while you get to your phone
-          </>
-        )}. Cancel any time — and live search keeps working either way.
+        email alerts; the Auto-Cart plan adds automatic carting on Recreation.gov — the
+        site is held in your cart while you get to your phone. Cancel any time — and live
+        search keeps working either way.
       </p>
       <p className="mt-2 max-w-[58ch] text-ch-meta leading-normal text-ch-green-deep">
         This is introductory pricing while we&apos;re new, and it will go up as we add
