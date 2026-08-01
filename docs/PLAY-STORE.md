@@ -173,7 +173,44 @@ with other users, which the app never does.
 Not directed at children. Target age 18+. The app requires an account and a paid
 subscription for its main feature, and camping reservations are made by adults.
 
-## 7. Closed test — recruiting 12 testers
+## 7. App access — reviewer credentials
+
+Play's **App access** declaration asks whether any functionality is restricted. It is:
+searching is free and account-free, but creating a watch needs a signed-in account with
+an active subscription, so Play needs demo credentials or the reviewer sees only the
+free half.
+
+Declare: **"All or some functionality is restricted"**, then add one instruction set:
+
+| Field | Value |
+| --- | --- |
+| Name | `Watches (subscription required)` |
+| Username | *the demo account email* |
+| Password | *the demo account password* |
+| Any other instructions | paste the block below |
+
+```
+Searching live campsite availability is free and needs no account - open the app and
+search any location to see it.
+
+Creating a watch requires a signed-in account with an active subscription. The demo
+account above has one. Sign in with email and password (social sign-in is deliberately
+hidden inside the app because Google blocks OAuth in embedded webviews).
+
+To see the core feature: New watch -> search a campground -> pick dates -> Start
+watching. The app checks that campground every 15 seconds and sends a push, text and
+email the moment a site opens.
+
+Subscriptions are purchased on our website, camphawk.app. The app contains no purchase
+mechanism and displays no prices - it lets an existing subscriber use what they have
+already bought.
+```
+
+**Use the SAME demo account as Apple's review notes** (`docs/APP-STORE.md` §2) so there
+is one account to keep subscribed, not two to forget about. Fill the credentials in both
+places from the password manager; they are deliberately not committed here.
+
+## 8. Closed test — recruiting 12 testers
 
 Testers must **opt in through the Play link with a real Google account and stay opted in
 for the full 14 days**. Removing someone mid-window resets progress. Practical notes:
@@ -183,3 +220,27 @@ for the full 14 days**. Removing someone mid-window resets progress. Practical n
 - Friends and family are acceptable — Play does not require strangers.
 - Start the count as early as possible: the 14 days is a floor, not an estimate, and it
   cannot run in parallel with "finish setting up your app".
+
+**Invite message** — the ask is small but the instructions matter, because a tester who
+accepts the invite and never installs does not count:
+
+```
+I'm putting my camping app on Google Play and need 12 people to install it for two
+weeks so Google will let me publish. It's genuinely two minutes of your time.
+
+CampHawk watches campgrounds that are fully booked and texts you the second someone
+cancels, so you can grab the site. Searching is free.
+
+What I need:
+1. Reply with the Gmail address on your Android phone (it has to be a Google account).
+2. I'll send you a link - tap it, tap "Become a tester", then install from the Play
+   Store page it gives you.
+3. Open it once. That's it. Please leave it installed for two weeks - if you uninstall
+   or opt out, it resets my clock.
+
+Android only, sorry - iPhone can't test this one.
+```
+
+> **The APK sideloaded onto a phone on 2026-08-01 does not count toward the 12.** Play
+> counts opted-in testers who installed through Play, which is why the count reads 0
+> despite the app having already run on real hardware.
