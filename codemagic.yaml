@@ -222,9 +222,30 @@ workflows:
       - name: Set the version code
         # Play rejects a duplicate versionCode. PROJECT_BUILD_NUMBER is Codemagic's
         # monotonic per-workflow counter, same as the iOS build number.
+        #
+        # `sed -i "expr" file` DID NOT WORK HERE AND FAILED SILENTLY. This workflow runs
+        # on macOS (see instance_type — the plan has no Linux instance), and BSD sed's
+        # -i REQUIRES a backup-suffix argument, so it took the expression as the suffix,
+        # errored, and `|| true` swallowed it. Every build shipped Capacitor's default
+        # versionCode of 1. Found on 2026-08-01 when the first Play upload showed up as
+        # "1.aab (1.0)" instead of build 6 — the first upload succeeds either way, and
+        # the SECOND would have been rejected as a duplicate version code.
+        #
+        # `sed -i.bak` is the portable spelling: GNU and BSD both accept an attached
+        # suffix. The `|| true` is gone and the result is ASSERTED, because a version
+        # code that silently stays at 1 is exactly the kind of failure this repo keeps
+        # paying for — same family as the green build that emitted an unsigned APK.
         script: |
           cd android
-          sed -i "s/versionCode .*/versionCode ${PROJECT_BUILD_NUMBER:-1}/" app/build.gradle || true
+          VC="${PROJECT_BUILD_NUMBER:-1}"
+          sed -i.bak "s/versionCode .*/versionCode ${VC}/" app/build.gradle
+          rm -f app/build.gradle.bak
+          grep -q "versionCode ${VC}\b" app/build.gradle || {
+            echo "versionCode was NOT set to ${VC} — refusing to build a duplicate"
+            grep -n "versionCode" app/build.gradle
+            exit 1
+          }
+          echo "versionCode set to ${VC}"
       - name: Wire the keystore into Gradle
         # `android_signing` above makes Codemagic FETCH the keystore and export
         # CM_KEYSTORE_PATH / CM_KEYSTORE_PASSWORD / CM_KEY_ALIAS / CM_KEY_PASSWORD —
