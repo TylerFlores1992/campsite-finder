@@ -104,6 +104,37 @@ const PRESETS: Record<string, Preset> = {
       export const node = <PricingSection />;`,
     frame: 'max-w-3xl w-full mx-auto',
   },
+  'ch-welcome': {
+    label: 'Welcome — the post-signup step (phone + opt-ins), Auto-Cart subscriber',
+    entry: `import Welcome from '@/components/v2/Welcome';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/alert-prefs')) return { ok: true, status: 200, json: async () => ({ email: 'you@example.com', emailAlerts: true, hasPhone: false, onboarded: false }) };
+          if (u.includes('/user/autocart')) return { ok: true, status: 200, json: async () => ({ enabled: false, connected: false, entitled: true, sessionFresh: false, sessionExpired: false, verifiedAt: null }) };
+          if (u.includes('/subscription/status')) return { ok: true, status: 200, json: async () => ({ active: true, everSubscribed: true, autocart: true, autocartPlanAvailable: true }) };
+          if (u.includes('/user/phone')) return { ok: true, status: 200, json: async () => ({ phone: null }) };
+          return { ok: true, status: 200, json: async () => ({}) };
+        };
+      }
+      export const node = <Welcome />;`,
+    frame: 'max-w-3xl w-full mx-auto',
+  },
+  'ch-account-wall': {
+    label: 'Watches account wall — trial / Plan options / Sign in button stack',
+    // 401 on /api/watches is what puts the list into its signed-out wall; without a
+    // stub the harness fetches the real route, gets the HTML shell and throws.
+    entry: `import WatchesList from '@/components/v2/WatchesList';
+      if (typeof window !== 'undefined') {
+        window.fetch = async (url) => {
+          if (String(url).includes('/api/watches')) return { ok: false, status: 401, json: async () => ({}) };
+          return { ok: true, status: 200, json: async () => ({}) };
+        };
+      }
+      export const node = <WatchesList />;`,
+    frame: 'max-w-lg w-full mx-auto',
+  },
   'ch-upgrade-nudge': {
     label: 'PricingLink — alerts-only subscriber upgrade nudge (foot of the app tabs)',
     entry: `import PricingLink from '@/components/v2/PricingLink';

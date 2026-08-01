@@ -75,7 +75,11 @@ export async function POST(req: NextRequest) {
       metadata: { clerk_user_id: userId },
       ...(priorTrial ? {} : { trial_period_days: 7 }),
     },
-    success_url: `${process.env.NEXT_PUBLIC_APP_URL}/?subscribed=1`,
+    // Land on the welcome step, not the marketing home: a fresh Auto-Cart subscriber
+    // needs the one-time Recreation.gov sign-in, and that step only appears once the
+    // subscription exists. Someone who already did the welcome step just sees it
+    // again with everything filled in and presses Finish.
+    success_url: `${process.env.NEXT_PUBLIC_APP_URL}/welcome?subscribed=1`,
     cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/`,
   });
 

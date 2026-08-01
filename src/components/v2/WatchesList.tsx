@@ -6,6 +6,7 @@ import { buttonClasses } from "@/components/ui/Button";
 import Collapsible from "@/components/ui/Collapsible";
 import WatchCard, { type WatchCardWatch } from "./WatchCard";
 import WatchCta from "./WatchCta";
+import { PlanOptionsButton } from "./SubscribeCta";
 import { providerLabel } from "./providers";
 
 /**
@@ -286,6 +287,8 @@ function AccountWall() {
         <a href="/sign-up" className={buttonClasses({ fullWidth: true })}>
           Start 7-day free trial
         </a>
+        {/* Between the trial and Sign in, same size as both — see PlanOptionsButton. */}
+        <PlanOptionsButton fullWidth />
         <a href="/sign-in" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
           Sign in
         </a>

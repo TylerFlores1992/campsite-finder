@@ -122,6 +122,11 @@ export default function SubscribeCta({
         <Link href={signUpHref} className={buttonClasses({ fullWidth })}>
           Start free trial
         </Link>
+        {/* Between the trial and Sign in, deliberately: someone who isn't ready to
+            commit and isn't a returning user is exactly who needs to see what the
+            plans are. Same size/shape as its siblings — it is a peer choice, not a
+            footnote. Web only; /pricing carries prices (store rule). */}
+        <PlanOptionsButton fullWidth={fullWidth} />
         <Link href={signInHref} className={buttonClasses({ variant: "quiet", fullWidth })}>
           Sign in
         </Link>
@@ -136,6 +141,26 @@ export default function SubscribeCta({
       <Link href="/" className={buttonClasses({ fullWidth })}>
         {everSubscribed ? "Resubscribe" : "Start free trial"}
       </Link>
+      <PlanOptionsButton fullWidth={fullWidth} />
     </div>
+  );
+}
+
+/**
+ * "Plan options" → /pricing. Rendered beside the trial/sign-in buttons rather than
+ * as a footer link, so it reads as one of the choices on offer.
+ *
+ * NEVER in the native app: /pricing is a price-bearing page and steering someone
+ * there from inside the app is the store-review failure this file's siblings all
+ * guard against. Exported so WatchesList's account wall renders the identical
+ * control rather than a hand-copied lookalike.
+ */
+export function PlanOptionsButton({ fullWidth = false }: { fullWidth?: boolean }) {
+  const isNative = useIsNativeApp();
+  if (isNative) return null;
+  return (
+    <Link href="/pricing" className={buttonClasses({ variant: "quiet", fullWidth })}>
+      Plan options
+    </Link>
   );
 }

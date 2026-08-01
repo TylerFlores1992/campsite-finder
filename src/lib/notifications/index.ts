@@ -83,15 +83,22 @@ async function logNotification(
 }
 
 /** Get the user's email from the DB (stored as the user id for v1 anonymous users,
- *  or as a real email once proper auth is added). */
+ *  or as a real email once proper auth is added).
+ *
+ *  Returns null when the user has opted OUT of email alerts (migration 034 — the
+ *  choice is offered at sign-up). The column defaults to true and every pre-034
+ *  account was backfilled true, so this can only suppress an address whose owner
+ *  deliberately unticked the box. Canary and transactional mail do not come through
+ *  here, so an opt-out cannot blind the alert-health canary. */
 async function getUserEmail(userId: string): Promise<string | null> {
-  const rows = await query<{ email: string }>(
-    'SELECT email FROM users WHERE id = $1',
+  const rows = await query<{ email: string; email_alerts_opt_in: boolean }>(
+    'SELECT email, email_alerts_opt_in FROM users WHERE id = $1',
     [userId]
   );
   const email = rows[0]?.email;
   // Skip anonymous IDs (UUIDs stored as email placeholder in v1)
   if (!email || email === userId) return null;
+  if (rows[0]?.email_alerts_opt_in === false) return null;
   return email;
 }
 
