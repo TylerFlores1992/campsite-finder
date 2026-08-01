@@ -21,7 +21,7 @@ import { providerLabel } from "./providers";
  * needed for it — it was ops-only until now.
  */
 
-const WATCH_LIMIT = 10;
+import { WATCH_LIMIT } from "@/lib/limits";
 
 interface HealthCheck {
   name: string;
@@ -267,7 +267,7 @@ function AccountWall() {
       </p>
       <ol className="mt-4 rounded-ch-card border border-ch-line bg-ch-card p-4">
         {[
-          ["Up to 10 watches at once", "One per campground and date range."],
+          [`Up to ${WATCH_LIMIT} watches at once`, "One per campground and date range."],
           ["Alerts in seconds", "Push, text and email the moment a site frees up."],
           ["Auto-cart on Recreation.gov", "The site lands in your cart before you finish reading the alert."],
         ].map(([title, sub], i) => (

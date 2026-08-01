@@ -4,6 +4,7 @@ import { requireAuth, syncUser, hasActiveSubscription } from '@/lib/auth';
 import { createAlert, cancelAlert } from '@/lib/campflare/client';
 import { getOpeningRate } from '@/lib/likelihood';
 import { manageTokenFor, manageLink } from '@/lib/notifications/actions';
+import { WATCH_LIMIT } from '@/lib/limits';
 import type { CampflareDateRange } from '@/lib/campflare/types';
 
 const DAY_MS = 86_400_000;
@@ -144,11 +145,11 @@ export async function POST(request: NextRequest) {
       `SELECT count(*)::int AS n FROM watches WHERE user_id = $1 AND active = true`,
       [userId]
     );
-    if ((cnt?.n ?? 0) >= 10) {
+    if ((cnt?.n ?? 0) >= WATCH_LIMIT) {
       return NextResponse.json(
         {
           error: 'watch_limit',
-          message: 'You can watch up to 10 campgrounds at a time. Remove one to add another.',
+          message: `You can watch up to ${WATCH_LIMIT} campgrounds at a time. Remove one to add another.`,
         },
         { status: 409 }
       );

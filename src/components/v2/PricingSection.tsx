@@ -6,6 +6,7 @@ import { buttonClasses } from "@/components/ui/Button";
 import { SubscribeLink, subscribeSentence } from "./nativeSubscribe";
 import { useSubscription } from "./useSubscription";
 import { useIsNativeApp } from "@/lib/native/context";
+import { WATCH_LIMIT } from "@/lib/limits";
 
 /**
  * The pricing block on the marketing home — INCLUDING the copy around the buttons.
@@ -52,8 +53,8 @@ export default function PricingSection() {
         </h2>
         <ul className="mt-2.5 max-w-[58ch] space-y-1.5 text-ch-body leading-relaxed text-ch-green-deep">
           <li>
-            Watch up to 10 campgrounds at once. We check each one every 15 seconds, around
-            the clock.
+            Watch up to {WATCH_LIMIT} campgrounds at once. We check each one every 15
+            seconds, around the clock.
           </li>
           <li>
             Add your number in Settings so alerts reach you by text as well as email — a
@@ -88,8 +89,8 @@ export default function PricingSection() {
           Searching is free. Watching needs a subscription.
         </h2>
         <p className="mt-2 max-w-[58ch] text-ch-body leading-relaxed text-ch-green-deep">
-          A subscription covers up to 10 watches at once, push, text and email alerts, and
-          auto-cart on Recreation.gov. Live search keeps working either way.
+          A subscription covers up to {WATCH_LIMIT} watches at once, push, text and email
+          alerts, and auto-cart on Recreation.gov. Live search keeps working either way.
         </p>
         <p className="mt-2 max-w-[58ch] text-ch-meta leading-normal text-ch-green-deep">
           {subscribeSentence()} Once yours is active, everything works here.
@@ -118,8 +119,9 @@ export default function PricingSection() {
         Searching is free. Watching is $2.50 a month, or $20 a year.
       </h2>
       <p className="mt-2 max-w-[58ch] text-ch-body leading-relaxed text-ch-green-deep">
-        One subscription covers up to 10 watches at once, text and email alerts, and auto-cart
-        on Recreation.gov. Cancel any time — and live search keeps working either way.
+        One subscription covers up to {WATCH_LIMIT} watches at once, text and email alerts,
+        and auto-cart on Recreation.gov. Cancel any time — and live search keeps working
+        either way.
       </p>
       <p className="mt-2 max-w-[58ch] text-ch-meta leading-normal text-ch-green-deep">
         This is introductory pricing while we&apos;re new, and it will go up as we add

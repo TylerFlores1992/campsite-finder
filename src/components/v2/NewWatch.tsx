@@ -16,6 +16,7 @@ import { useIsNativeApp } from "@/lib/native/context";
 import { NATIVE_LINKOUT, SUBSCRIBE_HREF } from "./nativeSubscribe";
 import SubscribeCta, { useAccountGate } from "./SubscribeCta";
 import type { Campground } from "@/lib/types";
+import { WATCH_LIMIT } from "@/lib/limits";
 
 /**
  * New watch — now the only place a watch is created.
@@ -205,7 +206,7 @@ export default function NewWatch({
         return;
       }
       if (r.status === 409) {
-        setError("You've hit the 10-watch limit. Delete one to add another.");
+        setError(`You've hit the ${WATCH_LIMIT}-watch limit. Delete one to add another.`);
         return;
       }
       if (!r.ok) {
