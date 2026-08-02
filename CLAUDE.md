@@ -137,8 +137,19 @@ minute".
   rec.gov fetch outcome in 5-min buckets, rec.gov's behaviour (ok/429/timeout/error)
   separated from ours (denied/breaker_skipped). Readout:
   `NODE_USE_ENV_PROXY=1 npx tsx scripts/recgov-429-profile.mts` — refuses a verdict
-  until all 24 UTC hours have data. First readout scheduled 2026-08-02 05:00 UTC.
-  Retention 14d. The sub-15s decision hangs on this.
+  until all 24 UTC hours have data. Retention 14d.
+- **FIRST FULL READOUT 2026-08-02, and it killed the sub-15s-on-one-IP idea.**
+  24/24 hours, 294 buckets, one 10-min hole at 18:40 Aug 1 (a worker redeploy — the
+  counters are in-memory and flush every 5 min, so a restart drops the partial
+  bucket). At a steady **13.3 req/min the IP was throttled in EVERY hour**: 429s
+  0.02–0.42/min, 0.2–3.2% of attempts, **worst 3.2% at 15:00 UTC** (8am PT, the
+  booking-window peak), zero timeouts all day, and **our own budget denied almost
+  nothing** — so the budget was never the constraint and there was no headroom to
+  take. This contradicts the earlier clean-IP probe (160 sequential requests at
+  16/min, zero 429s): a burst probe and sustained production traffic are not the
+  same measurement, and production is the real one.
+  **Conclusion: keep 15s, do NOT raise `RECGOV_BUDGET_PER_MIN`, buy speed with
+  machines.** Acted on the same day — see `SHARD_COUNT = 2` above.
 
 ## Alerting — the claim (read this before touching the poller)
 The decision "may we alert for this?" is `worker/claim.ts`, keyed on
@@ -238,7 +249,22 @@ slamming the breaker shut.
   three levers are auto-cart cadence, lead-time tiering of the main cycle, and the
   budget ceiling (already near the 429 floor, so don't just raise it).
 
-## Shard scaffolding — SHIPPED DARK at `SHARD_COUNT = 1` (2026-07-31)
+## Sharding is LIVE at `SHARD_COUNT = 2` (2026-08-02)
+Two machines in iad (`84ed237b2d1e48` shard 0, `8ee952b7671278` shard 1), each with
+its own egress IP and its own 15/min budget — ~30/min across the pair. Live split
+verified: `9/14 watches (shard 0/2)` and `5/14 watches (shard 1/2)`, `poller.shards`
+2/2 held, `poller.capacity` 3/8.
+- **Why a machine and not a bigger budget:** the full-day 429 profile (below) showed a
+  single IP throttled in EVERY hour at a steady 13.3 req/min, while our own budget
+  denied almost nothing. There was no headroom to take — rec.gov was already pushing
+  back at today's rate. Capacity on rec.gov is bought with ADDRESSES.
+- **CLONE FIRST, THEN RAISE THE COUNT.** Raising it first leaves the new shard unheld
+  and half the campgrounds unpolled — the silent-blindness case. The reverse transient
+  (both machines still at `SHARD_COUNT=1`) is harmless: everyone polls everything, the
+  claim dedupes the alerts, each IP stays at its normal rate.
+- `min_machines_running` tracks `SHARD_COUNT`; raise both together.
+
+## Shard scaffolding — shipped dark at `SHARD_COUNT = 1` (2026-07-31)
 rec.gov capacity is per egress IP (measured: 3 Fly machines, two sharing a /24, all
 clean at ~16 req/min) ≈ **4 campground-months per machine at 15s**. `worker/shard.ts`
 divides campgrounds across machines so capacity grows by cloning a machine.
