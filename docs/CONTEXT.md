@@ -418,9 +418,11 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > > (measured per-address, NOT per-/24). `worker/shard.ts` divides campgrounds
 > > across machines by FNV-1a hash with a DB lease per shard (`poller_shards`,
 > > migration 031, same INSERT..ON CONFLICT..WHERE shape as the alerting claim).
-> > **Shipped dark at `SHARD_COUNT = 1`, where `ownsCampground` short-circuits true
-> > without consulting the lease** — a DB hiccup must never stop the only poller.
-> > Scale = raise `SHARD_COUNT` in `worker/fly.toml` + `flyctl machine clone`.
+> > **Shipped dark at `SHARD_COUNT = 1`** (2026-07-31), where `ownsCampground`
+> > short-circuits true without consulting the lease — a DB hiccup must never stop the
+> > only poller. **NOW LIVE AT 2** (2026-08-02; see the sharding note further down for
+> > the live machine ids and why). Scale = `flyctl machine clone` FIRST, then raise
+> > `SHARD_COUNT` and `min_machines_running` in `worker/fly.toml` together.
 > > Shard by CAMPGROUND, never by watch or campground-month, or the dedup is lost.
 > > `/api/health/status` watches both ends: `poller.shards` FAILS on an unheld shard
 > > (campgrounds polled by NOBODY while everything else is green), and
