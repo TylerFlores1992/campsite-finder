@@ -48,6 +48,17 @@ An earlier draft of this file said to set it on every track. That was wrong, and
 recording: a testing track gated by an explicit email list is not a geographic exposure,
 so there is nothing to restrict there.
 
+> **The CLOSED track is deliberately open to ALL COUNTRIES (2026-08-02)** — a paid
+> tester service is topping up the 12, and its testers are international. That is safe
+> ONLY because `NATIVE_LINKOUT` is false: with no price and no route to an outside
+> purchase anywhere in the app, there is no steering UI for a non-US storefront to
+> object to. The restriction protects the steering, not the app.
+>
+> **Therefore the two must move together.** Turning `NATIVE_LINKOUT` on while non-US
+> testers can install is exactly the combination the US-only rule exists to prevent.
+> Before that flag flips: production must be US-only AND the closed track's global
+> access must be withdrawn (or the track closed).
+
 The reason is the same one that governs Apple: `NATIVE_LINKOUT` in
 `src/components/v2/nativeSubscribe.tsx` sends non-subscribers in the app out to
 camphawk.app to subscribe, and both stores' anti-steering carve-outs are **US-storefront
