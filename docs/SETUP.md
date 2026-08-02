@@ -81,7 +81,7 @@ run elsewhere (see Deploy).
 | Piece | Lives on | How to deploy |
 |-------|----------|----------------|
 | **Website** (Next.js) | Vercel | **Auto-deploys on every `git push` to `master`,** and `camphawk.app` auto-re-aliases to the new Production build (`autoAssignCustomDomains` is on). The old "build is `Ready` but the domain still points at the previous deployment" symptom (observed 2026-07-20) was **root-caused 2026-07-25**: pushing the *same commit SHA* to both a `claude/*` working branch and `master` made Vercel dedup by SHA — the branch preview built first and the master push then sometimes created **no** Production deployment, so auto-assign had nothing to move (and manual REST redeploys don't trigger auto-assign either). Fixed by **`vercel.json` → `git.deploymentEnabled: { "claude/*": false }`** so agent branches no longer spawn a shadowing preview; every `master` push now builds a fresh Production deployment and the domain follows on its own. So: **push to `master` and you're done — no `vercel --prod` / re-alias needed.** (If you ever *do* see a stale domain, `vercel --prod` from the repo root, or `POST /v2/deployments/<id>/aliases` with the READY Production deployment id, still forces it.) Also: **a new `SYNC_SECRET`-protected `/api/*` route 404s until it's added to `isPublicRoute` in `src/middleware.ts`** (Clerk's `auth.protect()` returns 404, not 401 — see `docs/CONTEXT.md`). |
-| **Alert worker** (`worker/poller.ts`) | Fly.io app `campsite-finder-worker` | **GitHub Action `worker-deploy.yml` — this is the path now (added 2026-07-28).** It fires automatically on any push to `master` touching `worker/**`, `src/lib/{availability,sources,notifications,db}/**`, `src/lib/booking-url.ts` or the lockfile, and can be run by hand from the Actions tab (or dispatched by an agent). It builds with `--local-only` on the runner, restarts **exactly the machines that were running before** the deploy, then polls `/api/health/worker` and **fails the run if no fresh heartbeat lands in 4 minutes** — so the "deploy succeeded, alerting is dead" trap below can no longer pass silently. Needs one repo secret, `FLY_API_TOKEN` (`fly tokens create deploy -a campsite-finder-worker`). The auto-trigger is what kills the stale-worker bug: the worker compiles in the RA/UseDirect/GoingToCamp/TN-SC registries, so **adding a state used to need a deploy someone had to remember**, and a stale worker never alerts for it, silently. By hand it's still `flyctl deploy --config worker/fly.toml --dockerfile worker/Dockerfile --remote-only` from the repo root, followed by `flyctl machine start <primary-id>` — see the web-session note below for why building that way fails from a sandbox. Serves `POST /gtc/availability` for the website's search page, and calls **out** to Vercel's `/api/tnsc-availability` for TN openings (needs `TNSC_AVAILABILITY_URL` set — see the proxy note below). |
+| **Alert worker** (`worker/poller.ts`) | Fly.io app `campsite-finder-worker` | **GitHub Action `worker-deploy.yml` — this is the path now (added 2026-07-28).** It fires automatically on any push to `master` touching `worker/**`, `src/lib/{availability,sources,notifications,db}/**`, `src/lib/booking-url.ts` or the lockfile, and can be run by hand from the Actions tab (or dispatched by an agent). It builds with `--local-only` on the runner, restarts **exactly the machines that were running before** the deploy, then polls `/api/health/worker` and **fails the run if no fresh heartbeat lands in 4 minutes** — so the "deploy succeeded, alerting is dead" trap below can no longer pass silently. Needs one repo secret, `FLY_API_TOKEN` (`fly tokens create deploy -a campsite-finder-worker`). The auto-trigger is what kills the stale-worker bug: the worker compiles in the RA/UseDirect/GoingToCamp/TN-SC registries, so **adding a state used to need a deploy someone had to remember**, and a stale worker never alerts for it, silently. By hand it's still `flyctl deploy --config worker/fly.toml --dockerfile worker/Dockerfile --remote-only` from the repo root, followed by `flyctl machine start <primary-id>` — see the web-session note below for why building that way fails from a sandbox. Serves `POST /gtc/availability` for the website's search page, and calls **out** to Vercel's `/api/tnsc-availability` for TN openings (needs `TNSC_AVAILABILITY_URL` set — see the proxy note below). **TWO machines since 2026-08-02** (`SHARD_COUNT=2`, both iad), each polling a disjoint half of the campgrounds — the Action restarts both, and a deploy that leaves one down means its shard is unpolled, which `poller.shards` fails on. To add capacity: `flyctl machine clone <id> --region iad` FIRST, then raise `SHARD_COUNT` and `min_machines_running` together. |
 | **Auto-cart bot** (`scripts/auto-cart-bot/`) | The mini PC only | `git push`, then run `mini-pc/update.bat` on the mini PC (via RustDesk). It can't run anywhere else — it drives a real logged-in recreation.gov browser. |
 | **Mobile app** (Capacitor) | App Store / Play Store | Thin native shell around the live site — most changes ship via the normal web deploy (the app loads `camphawk.app`); you only rebuild the binary for native/plugin/icon changes. **Neither binary needs a machine of your own** — both build on Codemagic and are started from its web UI (works on a phone): `ios-testflight` (→ TestFlight) and `android-release` (→ signed AAB + sideloadable APK). **Both run on `mac_mini_m2`** — not because Android needs a Mac, but because this Codemagic plan has no Linux instance at all; see the Android section for the one-second, zero-log failure that fact produces. Paid dev accounts still required. See **"Building the mobile app"** below. Push needs `FCM_SERVICE_ACCOUNT` on **both Vercel and the Fly worker**. |
 
@@ -205,9 +205,19 @@ Supabase first (by hand, like 020/021). Devices register their token via
 > **Later migrations, all applied by hand to prod the same way:** `031_poller_shards`
 > (the shard lease, 2026-07-31), `032_subscription_tiers`
 > (`subscriptions.tier` + `grandfathered` — the Auto-Cart plan, 2026-08-01) and
-> `033_recgov_rate_profile` (the full-day 429 profile table, 2026-08-01). None needs a
-> worker deploy by itself, but 032 and 033 are both read by worker code, so ship the
-> migration BEFORE the code that queries it.
+> `033_recgov_rate_profile` (the full-day 429 profile table, 2026-08-01),
+> `034_alert_prefs` (`users.email_alerts_opt_in` / `sms_consent_at` / `onboarded_at`
+> for the welcome step, 2026-08-01) and `035_watch_auto_cart_backfill` (2026-08-01).
+> None needs a worker deploy by itself, but 032, 033 and 035 are all read by worker
+> code, so ship the migration BEFORE the code that queries it.
+>
+> **035 is a BACKFILL whose absence would have broken production.** `watches.auto_cart`
+> had existed since 001 and had never been written — every row was the `false` default —
+> so making the poller honour it would have switched auto-cart off for everyone. The
+> migration sets it true for exactly the active, unexpired watches of `autocart_enabled`
+> accounts (the ones carting at the time), which makes the code change a no-op on
+> existing data. If you ever start honouring a column that has always been ignored,
+> check what's actually in it first.
 
 > **Admin cost tracking needs migrations `024_cost_items.sql` and
 > `025_cost_items_billing_period.sql`** (applied by hand, like the others; 024 to prod
@@ -357,8 +367,25 @@ without waiting on a Play review.
 > Same lesson as the RIDB photo filter and the stopped-poller deploy: the failure mode
 > that costs real time is the one where **everything reports success**.
 
+> **THE WORKFLOW RUNS ON macOS, SO `sed -i "expr" file` SILENTLY DOES NOTHING.** BSD
+> sed's `-i` requires a backup-suffix argument, so it takes the expression as the suffix,
+> errors, and a trailing `|| true` hides it. The version-code step did exactly this and
+> every build shipped Capacitor's default `versionCode 1`. Found 2026-08-01 when the
+> first Play upload arrived as "1.aab (1.0)" instead of build 6 — the FIRST upload
+> succeeds either way, and the second would have been rejected as a duplicate version
+> code, most likely at the worst moment. Use `sed -i.bak` (GNU and BSD both accept an
+> attached suffix), drop the `|| true`, and ASSERT the result. Applies to any other
+> in-place edit added to this workflow.
+
 Play publishing is left commented out until a Google Play service account exists, so a
-half-configured integration can't fail an otherwise good build.
+half-configured integration can't fail an otherwise good build. **Adding one is the
+single highest-value Codemagic change left**: with it, every build uploads itself to the
+internal track and no AAB is ever hand-carried again.
+
+**Play submission reference — listing copy, data-safety answers, reviewer credentials,
+the 12-tester/14-day gate — is in `docs/PLAY-STORE.md`.** Graphics regenerate with
+`npx tsx scripts/play-assets.mts`; screenshots must come off a physical device (the
+sandbox reaches neither Mapbox nor recreation.gov's CDN).
 
 **Both workflows are startable from a phone.** Codemagic → the app → Start new build →
 pick the workflow. That is the whole procedure; `cap sync` inside the workflow is what
@@ -482,8 +509,9 @@ src/lib/            Core logic
   health-thresholds.ts  canary staleness + RECGOV_MONTHS_PER_MACHINE (capacity gauge)
   db/               Supabase client + migrations/
 src/app/(app)/      the app itself — a route group supplying nav/backdrop/footer
-                    without a path segment: / /search /pricing /watches /new
-                    /settings /campground/[id] /manage/[token].  See docs/CONTEXT.md.
+                    without a path segment: / /search /pricing /welcome /watches
+                    /new /settings /campground/[id] /manage/[token].
+                    See docs/CONTEXT.md.
 src/components/ui/  design primitives (Button, Chip, Tag, Card, DatePicker, …)
 src/components/v2/  the screens (Explore, WatchesList, NewWatch, Settings, …)
 src/components/     what's left of the pre-rewrite UI: Logo, AuthPanel, SmsOptIn,
@@ -508,7 +536,9 @@ extension/          Optional Chrome extension ("CampHawk Quick Cart") that reads
 scripts/auto-cart-bot/  Mini-PC Playwright bot + remote sign-in broker
 scripts/            run-sync*.ts catalog syncs; e2e-gtc-alert.mts (live alert test —
                     SENDS REAL EMAIL/SMS); recgov-429-profile.mts (the rate readout);
-                    likelihood-readout.mts; seo-check.mts; screenshot-component.mts
+                    likelihood-readout.mts; seo-check.mts; screenshot-component.mts;
+                    play-assets.mts (Play icon + feature graphic — Play-only assets
+                    with no Apple equivalent; see docs/PLAY-STORE.md)
 ```
 
 > **Proxy directions differ per WAF'd source — don't copy one to the other.** Three
@@ -561,6 +591,11 @@ Two things worth knowing before you fight it:
   the two-plan comparison), `ch-pricing-signedin` (checkout buttons) and
   `ch-upgrade-nudge` (an Alerts-plan subscriber's upgrade block). Omitting `autocart`
   silently renders the non-subscriber variant, which looks plausible and is wrong.
+  Same for the welcome step: `ch-welcome-basic` (new account, no plan — the common
+  case) and `ch-welcome` (an Auto-Cart subscriber, which adds the Recreation.gov
+  sign-in card), plus `ch-account-wall` for the Watches signed-out stack, which needs
+  `/api/watches` stubbed to 401 or the harness fetches the real route, gets the HTML
+  shell and throws.
 
 ## Screenshotting whole PAGES (App Store submission)
 

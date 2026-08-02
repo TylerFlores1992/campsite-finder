@@ -435,8 +435,35 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > > `recgov_rate_profile`, migration 033, since 2026-08-01): every fetch outcome in
 > > 5-min buckets, rec.gov's behaviour (ok/429/timeout/error) separated from ours
 > > (denied/breaker_skipped). Readout `scripts/recgov-429-profile.mts` refuses a
-> > verdict until all 24 UTC hours have data. Any sub-15s hot lane waits on this —
-> > the 15/min budget was calibrated in quiet hours.
+> > verdict until all 24 UTC hours have data.
+> >
+> > **FIRST FULL READOUT, 2026-08-02 — it killed the sub-15s-on-one-IP idea.** 24/24
+> > hours, 294 buckets. At a steady **13.3 req/min the IP was throttled in EVERY
+> > hour**: 429s 0.02–0.42/min, 0.2–3.2% of attempts, worst **3.2% at 15:00 UTC**
+> > (8am PT, the booking peak), **zero timeouts all day**, and **our own budget denied
+> > almost nothing** — so the budget was never the constraint and there was no headroom
+> > to take by raising it. This CONTRADICTS the earlier clean-IP probe (160 sequential
+> > requests at 16/min, zero 429s): a burst probe and sustained production traffic are
+> > different measurements, and production is the real one. Conclusion: keep 15s, do
+> > NOT raise `RECGOV_BUDGET_PER_MIN`, buy speed with machines.
+> > One 10-min hole at 18:40 Aug 1 — a worker redeploy; counters are in-memory and
+> > flush every 5 min, so a restart drops the partial bucket. Not a broken flush.
+> > *(Gotcha for anyone re-checking: detect bucket gaps in SQL with `LAG()`. A JS
+> > `Date.parse` on the `+00` offset returns NaN, so every comparison is false and the
+> > check silently reports "no gaps" — that mistake was made once already.)*
+> >
+> > **SHARDING WENT LIVE AT `SHARD_COUNT = 2` the same day.** Two machines in iad
+> > (`84ed237b2d1e48` shard 0, `8ee952b7671278` shard 1), each with its own egress IP
+> > and its own 15/min budget — ~30/min across the pair without either going faster
+> > than the rate already measured as survivable. Verified live: `9/14 watches (shard
+> > 0/2)` and `5/14 (shard 1/2)`, `poller.shards` 2/2, `poller.capacity` 3/8. The two
+> > stopped `sjc` machines were destroyed on 2026-08-02 (they ran the same image, so
+> > they were no rollback path; the real rollback is `git revert` + redeploy).
+> > **CLONE FIRST, THEN RAISE THE COUNT** — raising it first leaves the new shard
+> > unheld and half the campgrounds unpolled, the silent-blindness case. The reverse
+> > transient (all machines still at `SHARD_COUNT=1`) is harmless: everyone polls
+> > everything, the claim dedupes, each IP stays at its normal rate.
+> > `min_machines_running` tracks `SHARD_COUNT`; raise both together.
 >
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
@@ -599,6 +626,7 @@ chrome (nav, brand backdrop, footer) without adding a path segment.
 | `/pricing` | `(app)/pricing/page.tsx` | Dedicated plans page (2026-08-01). Mounts the SAME `PricingSection` as `/` — one source of pricing truth. Indexed, in the sitemap, and in `isPublicRoute` (it 404'd on prod for its entire signed-out audience until added). The `/#pricing` anchor on the home page also still works. |
 | `/watches` | `(app)/watches/` | Watch list, quota, outage banner, alert history. |
 | `/new` | `(app)/new/` | The only place a watch is created. |
+| `/welcome` | `(app)/welcome/` | Post-signup setup step (2026-08-01): email-alert opt-in, optional phone + SMS consent, and the Recreation.gov sign-in for an entitled Auto-Cart subscriber. Clerk lands new accounts here; Stripe's checkout `success_url` returns here too. In `isPublicRoute` with its own signed-out state — see below. `noindex`. |
 | `/settings` | `(app)/settings/` | Alerts (SMS), auto-cart, subscription, account, admin link. |
 | `/campground/<id>` | `(app)/campground/[id]/` | **Server-rendered** detail + per-page metadata + JSON-LD. |
 | `/manage/<token>` | `(app)/manage/[token]/` | Token-authorised per-watch manage. `manageLink()` has always emitted this path, so links already in the wild land here. |
@@ -628,7 +656,7 @@ live in `src/components/ui/`, screens in `src/components/v2/`.
 
 - **A route not in `isPublicRoute` (`src/middleware.ts`) 404s**, because Clerk's
   `auth.protect()` returns 404 rather than 401. `/search`, `/watches`, `/settings`,
-  `/new` and `/pricing` are all listed (`/pricing` was caught 404ing on production
+  `/new`, `/pricing` and `/welcome` are all listed (`/pricing` was caught 404ing on production
   minutes after it shipped — the trap works on PAGES exactly as it does on `/api/*`). `/new` is listed **deliberately**: the New watch screen
   handles its own 401 with a message that keeps the campground, dates and filters
   already entered, and letting middleware intercept would throw that away.
@@ -636,6 +664,38 @@ live in `src/components/ui/`, screens in `src/components/v2/`.
   Apple fetches it unauthenticated and a 404 there fails review. It carries **no
   prices** — it's reachable from inside the webview, which makes it a pricing surface
   whether or not it looks like one.
+  **`/welcome` is listed for a subtler reason** (2026-08-01): Clerk redirects a
+  brand-new account there the instant it exists, and if the session cookie is not yet
+  readable by middleware on that first request, `auth.protect()` answers 404 — a new
+  user's very first impression being a dead page. The component renders its own
+  create-account / sign-in block instead of assuming a session.
+- **AN EARLY `return` INSIDE A `Promise.all(map(...))` CALLBACK SKIPS EVERYTHING BELOW
+  IT.** `/api/watches` computed a per-watch likelihood and bailed with
+  `if (lead < 0) return` for a stay already underway — which returned from the whole
+  callback, skipping the manage-token mint that followed. `WatchCard` renders a
+  DISABLED Manage button when `manage_token` is missing, so **the moment a trip
+  started the user lost the only way to open, pause or delete that watch**. Found
+  2026-08-01 on a real device: a Jul 31–Aug 2 watch had Manage greyed out while its
+  Aug 14–16 sibling worked. Keep early exits inside the block that owns them.
+- **The account quota must count what the POLLER runs, not every `active` row.** The
+  watch cap counted active watches regardless of date, while the list and
+  `loadWatches` both require `end_date > CURRENT_DATE`. An account showed "4 of 6
+  watches running" and was refused a fifth, with three expired rows invisible and
+  therefore undeletable (measured: 7 counted, 4 shown). Cap and list now share one
+  predicate — change both together.
+- **A scroll handler that resizes a `sticky` element is a feedback loop.** The mobile
+  header band collapses on scroll, and because it sits in normal flow, collapsing it
+  shortens the document by 85px — moving the scroll position the decision reads. One
+  threshold made it oscillate visibly whenever you stopped near the trigger. It now
+  uses two thresholds with a dead band wider than the height change, plus a lock for
+  the duration of the animation. Reported from a real device; not reproducible in the
+  component harness.
+- **`env(safe-area-inset-top)` must ADD to a fixed height, not be padded into it**, and
+  `position: absolute` resolves against the padding box so it ignores the inset
+  entirely. The header had both bugs: with border-box the inset came out of the 131px
+  (so the artwork lost a third of its height under the status bar), and the account
+  avatar sat beside the system clock because `top-3` measured from the element's very
+  top. Any new fixed-height element behind the notch needs both halves.
 - **`robots` is set per page, not in the layout.** The layout carried a `noindex`
   during the dark launch and removing it is what made the campground SEO work count.
   `/` and `/search` are indexable; `/watches`, `/settings`, `/new` are not; and
@@ -1054,6 +1114,27 @@ steps (Firebase project `campapp-39c4b`).
   bridge is `src/components/NativeBridge.tsx` (no-op on web; requests permission,
   registers the token, deep-links on notification tap). A `delivery:push` canary guards
   the credential (see feature A).
+  > **`dispatchPush` used to record status `'sent'` unconditionally**, discarding
+  > `sendPush`'s result — so an unconfigured FCM (`{sent:0}`, logging a line nobody
+  > reads) or a batch where every token was dead both landed in `notifications` as a
+  > delivered push. Fixed 2026-08-01 after it cost a debugging session: a device sat with
+  > nothing on its lock screen while the table asserted success. The row now carries the
+  > true outcome and every dispatch prints `N/M token(s) accepted`. Same family as the
+  > green build that emitted an unsigned APK — the expensive failure is the one that
+  > reports success.
+  > **STILL OPEN: there is no `notificationReceived` listener.** `NativeBridge` handles
+  > `tokenReceived` and `notificationActionPerformed` (tap) only. On Android, a push
+  > arriving while the app is in the FOREGROUND is handed to the app instead of drawn by
+  > the system, and nothing listens — so an open app shows nothing. That is a real gap
+  > for someone actively hunting a campsite. Fixing it properly needs
+  > `@capacitor/local-notifications` (a native plugin, so `npm install` + `cap sync` +
+  > a REBUILD); an in-app banner would be web-side and instant.
+  > **Android push delivery is UNVERIFIED end-to-end.** On 2026-08-01 a real device
+  > registered a token, FCM accepted every message with zero errors, the `delivery:push`
+  > canary was green, notification permission was granted, DND was off and the app was
+  > backgrounded — and no notification appeared. iOS push was verified on real hardware
+  > (see `docs/APP-STORE.md`); Android has never been. Next step is a direct send to a
+  > known token, reading FCM's raw per-token response.
 - **Store-billing: Stripe stays web-only** (Apple/Google forbid selling a digital sub
   outside their IAP). The app shows no price/buy button — a non-subscriber sees "manage
   at camphawk.app". Enforced by a native flag: Capacitor appends `CampHawkApp` to the
@@ -1344,6 +1425,47 @@ first-timer trial applies to either plan.
 - `/api/subscription/status` returns `autocart` (entitlement) and
   `autocartPlanAvailable` (env configured) alongside `active`/`everSubscribed`;
   `v2/useSubscription.ts` exposes all four.
+
+## Sign-up onboarding — the welcome step (migration 034, 2026-08-01)
+
+Everything an account needs is asked once, immediately after it's created: email-alert
+opt-in, an optional phone number with SMS consent, and — for someone already entitled —
+the one-time Recreation.gov sign-in for auto-cart.
+
+- **WHY IT IS A SEPARATE STEP AND NOT FIELDS ON THE SIGN-UP FORM.** Clerk's `<SignUp/>`
+  is a prebuilt widget and takes no arbitrary fields. Adding a phone box inside it would
+  mean abandoning Clerk's hosted flow and with it the password rules, bot protection and
+  email verification. So `AuthPanel` sets `forceRedirectUrl` to `/welcome`, and the
+  original destination rides along as `?next=` — `forceRedirectUrl` OVERRIDES Clerk's own
+  `redirect_url` handling, so without that the user is stranded away from whatever they
+  were doing. Sign-IN is untouched; an existing account has already answered.
+- **Stripe's checkout `success_url` returns to `/welcome` too**, so a fresh Auto-Cart
+  subscriber gets the Recreation.gov sign-in immediately rather than discovering it in
+  Settings later. The auto-cart block renders only when entitled AND not yet connected —
+  showing "set up auto-cart" to someone who hasn't bought it is an ad dressed as a setup
+  step.
+- **Schema** (034): `users.email_alerts_opt_in` (default true, backfilled true so no
+  existing subscriber silently loses alerts), `users.sms_consent_at` (per-subscriber
+  consent evidence, backfilled from `created_at` for numbers already on file), and
+  `users.onboarded_at` so the step is shown once whether finished OR skipped.
+  `getUserEmail` in `lib/notifications` returns null when the user opted out, so the
+  choice actually suppresses alert email — canary and transactional mail don't route
+  through it, so an opt-out can't blind the alert-health canary.
+
+> **THE A2P POSITION CHANGED HERE, AND THE PUBLIC PAGE HAD TO CHANGE WITH IT.**
+> `/sms-opt-in` — the page carrier and campaign reviewers read — previously stated the
+> phone number and SMS consent were "**not** part of sign-up". Putting the form on the
+> welcome step made that false, so the page now describes both locations honestly.
+>
+> The substance is unchanged and load-bearing: `/welcome` renders the SAME `SmsAlerts`
+> component as `/settings` and `/sms-opt-in`, so the approved consent script has exactly
+> one source and cannot drift; the consent box is unchecked; saving a number is a
+> separate deliberate action; and **Skip is always available** — no field on the step
+> gates account creation, which is what "consent is not a condition of purchase" has to
+> mean in the flow and not just in the sentence.
+>
+> **If it ever becomes required, the A2P campaign description must change first.** The
+> registered description with Twilio should also be updated to match this flow.
 
 ## RLS (migration 027, 2026-07-30)
 
@@ -1669,6 +1791,22 @@ fourth surface now.
   entitlement (tier/grandfathered/beta; see "Subscription plans & the Auto-Cart
   tier"), checked in the poller's `isAutocartLane`, the toggle API and the roster
   feed. A lapsed subscription fails open to normal alerts.
+- **The PER-WATCH toggle only started working on 2026-08-01 (migration 035).**
+  `watches.auto_cart` has existed since migration 001 and had **never been written** —
+  every production row was the `false` default. New watch showed a toggle (defaulting
+  ON) whose value was never sent, the API never stored it, and `isAutocartLane` read
+  only the account-level `users.autocart_enabled`. So switching it OFF carted the site
+  anyway: confirmed when a watch created with the toggle off queued five cart jobs.
+  **Two other features read that column and therefore never rendered for anyone** —
+  the "Auto-cart" tag on a watch card, and the authexpired "Reconnect Recreation.gov"
+  recovery state (`WatchCard:89`).
+  Now wired end to end: `NewWatch` sends `autoCart`, the API stores it (defaulting
+  TRUE when absent, so older clients keep today's behaviour — and `true` can never turn
+  auto-cart ON for an account that isn't enrolled, connected and entitled), and
+  `isAutocartLane` requires it. **Migration 035 backfilled `auto_cart = true` for
+  exactly the active unexpired watches of `autocart_enabled` accounts** — the ones
+  carting at the time — so the poller change altered no live behaviour. Without that
+  backfill, honouring the column would have switched auto-cart off for everyone.
 - On an opening for an entitled, enrolled watch the poller does **not** alert
   immediately — it writes a pending row to the `autocart_jobs` table (migration
   `014`). (Detection happens in the MAIN 15s cycle since 2026-07-31; the separate
