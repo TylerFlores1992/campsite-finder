@@ -50,6 +50,7 @@ import { dispatchNotifications, type NotificationPayload } from '../src/lib/noti
 import { bookingLink } from '../src/lib/booking-url';
 import { runDetectionCanary, runDeliveryCanary } from './canary';
 import { claimNotification } from './claim';
+import { alreadyCartedForWatch } from './carted-history';
 import { findQualifyingRun, flexCandidateStays, isFlexible, type FlexDays, type FlexSpec } from '../src/lib/availability/flex';
 import { markAlive, msSinceAlive, msSinceExternalFetchOk, externalFetchWedged } from './liveness';
 
@@ -859,16 +860,24 @@ async function cycle(): Promise<void> {
 
     // Auto-cart lane: hand the opening to the bot instead of alerting. Same claim,
     // same detection, different ending. If there is no specific site id there is
-    // nothing to cart, so it falls through to a normal alert.
-    if (isAutocartLane(watch, botOnline) && result.campsiteId) {
+    // nothing to cart, so it falls through to a normal alert. A site this watch has
+    // already had carted once is also excluded — see alreadyCartedForWatch.
+    const cartSiteId = isAutocartLane(watch, botOnline) ? result.campsiteId : null;
+    const alreadyCarted = cartSiteId !== null && (await alreadyCartedForWatch(watch.id, cartSiteId));
+    if (alreadyCarted) {
+      console.log(
+        `[poller] watch ${watch.id}: site ${cartSiteId} was already carted for this watch — alerting instead of re-carting`
+      );
+    }
+    if (cartSiteId !== null && !alreadyCarted) {
       try {
         await mutate(
           `INSERT INTO autocart_jobs (watch_id, user_id, campground_id, campsite_id, payload)
            VALUES ($1, $2, $3, $4, $5::jsonb)`,
-          [watch.id, watch.user_id, watch.campground_id, result.campsiteId, JSON.stringify(autocartPayload(watch, result))]
+          [watch.id, watch.user_id, watch.campground_id, cartSiteId, JSON.stringify(autocartPayload(watch, result))]
         );
         console.log(
-          `[poller] AUTOCART OPENING: ${watch.campground_name} site ${result.campsiteId} (${result.dates.join(', ')}) — job queued, waiting on the bot (watch ${watch.id})`
+          `[poller] AUTOCART OPENING: ${watch.campground_name} site ${cartSiteId} (${result.dates.join(', ')}) — job queued, waiting on the bot (watch ${watch.id})`
         );
       } catch (err) {
         console.error(`[poller] autocart enqueue failed for watch ${watch.id}:`, err);

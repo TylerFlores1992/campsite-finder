@@ -161,6 +161,13 @@ The decision "may we alert for this?" is `worker/claim.ts`, keyed on
   sentinel and keep the old per-watch behaviour, which is correct for them.
 - `claim.ts` is separate from `poller.ts` because importing the poller STARTS it —
   that's what made the most consequential code in the repo untestable.
+- **The auto-cart lane has a SECOND gate: one cart per (watch, site), forever**
+  (`worker/carted-history.ts`, index in migration 036). The claim's 1-hour window
+  re-fires for an opening that stays open, and the bot's own guard is a 20-minute
+  TTL, so a site sat in one user's cart being re-carted **five times in five hours**
+  (Silver Lake 84611, 2026-08-02). Already-carted sites now fall through to a normal
+  alert. Keyed on `watch_id`, so a new watch for the same campground starts over
+  for free; a FAILED attempt doesn't block a retry; fail-OPEN on a read error.
 
 ## rec.gov 429s — four fixes in one loop (2026-07-30)
 The breaker was flapping six times in thirteen minutes, so rec.gov watches went

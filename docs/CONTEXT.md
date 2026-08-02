@@ -1822,6 +1822,35 @@ fourth surface now.
   - **not carted** → the poller re-verifies the site is still open ~35s later and
     sends a normal "still open — book it" alert, or stays **silent** if it's gone.
 - `autocart_jobs` is also the permanent record of every cart attempt.
+- **ONE cart per (watch, site), forever** (`worker/carted-history.ts`, index in
+  migration 036). Before queueing a job the poller asks whether this watch has
+  already had this exact site carted; if so it skips the lane and sends a **normal
+  alert** instead. The site is not silenced — it just isn't carted twice.
+
+> **Why this had to exist (2026-08-02): Silver Lake site 84611 was placed in one
+> user's cart FIVE times, once an hour, for a single watch.** Two independent
+> guards both let it through and neither was wrong on its own — the alerting claim
+> (`watch_site_alerts`) has a **1-hour** window, so an opening that STAYS open
+> re-claims every hour and queued a fresh job; the bot's own guard is a **20-minute**
+> TTL (`CARTED_TTL_MS` in `bot.mjs`), sized for how long rec.gov holds a cart, so by
+> then it has deliberately forgotten. Neither remembers across hours, and nothing was
+> asking the permanent record. A cart the user already has is not a second
+> opportunity — re-carting churns their cart and re-fires "it's in your cart".
+>
+> - **Keyed on `watch_id`**, which is what makes "a new watch for the same campground
+>   starts over" true for free — a new watch is a new id with no history (and
+>   deleting one cascades its jobs away).
+> - **`cart_outcome` is checked alongside `resolution`**: a job the reconciler
+>   resolved as `alerted` before the bot's late `carted` report landed still ended up
+>   in the cart.
+> - **A FAILED attempt does not block a retry** — `already-booked`, `cta-not-ready`
+>   and friends mean we never got it, so the user is still owed a cart.
+> - **Fail-OPEN on a read error** (cart it anyway): auto-cart is the paid feature, and
+>   a duplicate cart is a much smaller failure than a missed one.
+> - It lives in its own module for the same reason `claim.ts` does — importing
+>   `poller.ts` starts the poller, so nothing inside it is testable.
+>   `worker/carted-history.test.mts` (real DB) was verified to fail against both the
+>   original bug and the per-watch-instead-of-per-site mis-key.
 
 > **The lane is gated on a live-bot heartbeat (migration `015`), because the silent
 > branch above silently swallowed a real cancellation.** A watch only enters this lane
