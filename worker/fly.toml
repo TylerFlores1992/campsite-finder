@@ -26,7 +26,24 @@ primary_region = "iad"
   # behaviour to before it existed). Raise it and add that many machines
   # (`flyctl machine clone <id> --region iad`); each leases a free index by itself.
   # Capacity is ~4 rec.gov campground-months per machine at a 15s cadence.
-  SHARD_COUNT = "1"
+  # 2 since 2026-08-02. rec.gov's rate limit is per EGRESS IP, so speed and capacity
+  # are bought with machines, not with a bigger budget on one machine — the full-day
+  # 429 profile settled that: at a steady 13.3 req/min a single IP was throttled in
+  # EVERY hour of the day (0.2-3.2%, worst at 15:00 UTC), while our own budget denied
+  # almost nothing. There was no headroom to take.
+  #
+  # Two machines in iad, each with its own address and its own 15/min budget, so the
+  # pair carries ~30/min without either one going faster than the rate already
+  # measured as survivable. Campgrounds are split by FNV-1a hash (worker/shard.ts);
+  # each machine leases its index from poller_shards, and /api/health/status fails on
+  # an unheld shard because those campgrounds would be polled by nobody.
+  #
+  # ORDER MATTERS WHEN CHANGING THIS. Clone the machine FIRST, then raise the count:
+  # raising it first leaves the extra shard unheld, and half the campgrounds go
+  # unpolled until a machine arrives. The reverse transient (N machines still at
+  # SHARD_COUNT=1) is harmless — everyone polls everything, the alerting claim dedupes
+  # the alerts, and each IP stays at its own normal rate.
+  SHARD_COUNT = "2"
   # Lead-time tiering (2026-08-01). A rec.gov campground-month whose first wanted
   # night is more than HOT_LEAD_DAYS out tolerates a COLD_MAX_AGE_MS-old cached
   # reading instead of demanding a fresh fetch every 15s cycle (~1 req/min instead
@@ -50,15 +67,23 @@ primary_region = "iad"
 # calls, because Camis' WAF 403s Vercel's IPs but not Fly's.
 #
 # The autostop/autostart settings are load-bearing: the poller must run
-# continuously, so machines must NEVER be stopped for being idle, and Fly must
-# not start the second (standby) machine on traffic — two live pollers would
-# double the Camis request rate for no benefit.
+# continuously, so machines must NEVER be stopped for being idle.
+#
+# The old warning here — "Fly must not start the second (standby) machine on
+# traffic, two live pollers would double the Camis request rate" — stopped being
+# true at SHARD_COUNT=2 (2026-08-02). Two live pollers are now the intended state,
+# and they do NOT double anything: each owns a disjoint slice of campgrounds, so
+# the GoingToCamp/Camis calls are split between them rather than duplicated.
+# auto_start_machines stays false regardless: a machine started by traffic rather
+# than by us is one we did not decide to add capacity with.
 [http_service]
   internal_port = 8080
   force_https = true
   auto_stop_machines = "off"
   auto_start_machines = false
-  min_machines_running = 1
+  # Matches SHARD_COUNT: every shard needs a live machine or its campgrounds are
+  # polled by nobody. Raise both together when adding capacity.
+  min_machines_running = 2
 
 # Readiness check on the poller's /health, which reports 503 once heartbeats stop
 # landing (a wedged-but-"started" machine — the 2026-07-22 incident). This surfaces
