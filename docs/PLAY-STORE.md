@@ -83,9 +83,40 @@ covers the listing, not just the app.
 | **Website** | `https://camphawk.app` | — |
 | **Privacy policy** | `https://camphawk.app/privacy` | — |
 
-**Full description** (1,928/4,000):
+> ### REJECTED 2026-08-03 — Misleading Claims, "Missing Source Link for Government
+> ### Information". The description below is the REPLACEMENT.
+>
+> Play rejected the listing because an app that surfaces government information must
+> (a) cite a clear, official, functional source for it in the description and (b) carry
+> an **easy-to-see** disclaimer that it does not represent a government entity.
+>
+> **Do not appeal.** The appeal path is only for developers who hold written proof of
+> government affiliation or authorization. CampHawk has neither, and says so — appealing
+> asserts the opposite and burns 7+ days.
+>
+> Two things were wrong, and only one was obvious:
+> - **No source URLs anywhere.** This was the named violation.
+> - **The disclaimer was the LAST paragraph**, after the paywall sentence. The wording
+>   was already fine — Google quoted it back approvingly as a separate finding — but
+>   buried is not "easy to see". It now opens the description and closes it.
+>
+> The canonical source list is `src/lib/data-sources.ts`, rendered at
+> **https://camphawk.app/sources** and linked from the app footer, so the citation is
+> reachable from inside the app and not only from the listing. **Adding a sync adapter
+> means adding it there in the same change** or the app ships government data with no
+> cited source again.
+>
+> The description text lives in `docs/play-full-description.txt` — paste that file, do
+> not retype from here.
+
+**Full description** (3,898/4,000 — 102 spare; re-count after any edit, the source list
+is long and the cap is hard). Verbatim copy of `docs/play-full-description.txt`. Every
+URL was checked live on 2026-08-03 and all 19 returned HTTP 200; a dead link here is
+the exact violation being fixed:
 
 ```
+CampHawk is an independent app and does not represent any government entity. It is not affiliated with or endorsed by any government agency. Every source of campground information used in this app is listed at the end of this description.
+
 The campsite you wanted is already booked. CampHawk waits for it.
 
 Popular campgrounds sell out months ahead - but people cancel constantly. CampHawk checks the campgrounds you care about every 15 seconds, around the clock, and tells you the moment a site opens up, so you can book it before anyone else notices.
@@ -93,7 +124,7 @@ Popular campgrounds sell out months ahead - but people cancel constantly. CampHa
 HOW IT WORKS
 1. Search live campsite availability across 8,000+ campgrounds. Free, and no account needed.
 2. Everything booked? Set a watch on the campground and dates you want.
-3. Get a cancellation alert within seconds, with a link straight to the booking page.
+3. Get a cancellation alert within seconds, with a link straight to the official booking page.
 
 WHAT YOU GET
 - Checks every 15 seconds, day and night
@@ -111,7 +142,30 @@ Anyone who has watched a national park campground sell out five minutes after th
 FREE AND PAID
 Searching live campsite availability is free and needs no account. Watching a booked campground, and the cancellation alerts that come with it, require a subscription.
 
-CampHawk is an independent app. It is not affiliated with or endorsed by Recreation.gov, the National Park Service, the US Forest Service, or any state park agency. Bookings are always completed on the official reservation site.
+WHERE OUR INFORMATION COMES FROM
+CampHawk does not create campground or availability information. It reads what the official reservation systems below publish and links you back to them to book. The same list is also at https://camphawk.app/sources
+
+- Recreation.gov - federal campgrounds in all 50 states (National Park Service, U.S. Forest Service, Bureau of Land Management, U.S. Army Corps of Engineers): https://www.recreation.gov
+- ReserveAmerica state parks in AK, CT, DE, GA, IA, IN, KY, MT, NC, NE, NH, NM, NY, OR, PA, RI, TX, UT: https://www.reserveamerica.com
+- Ohio State Parks: https://reserveohio.com
+- California State Parks: https://www.reservecalifornia.com
+- Michigan DNR: https://midnrreservations.com
+- Mississippi MDWFP: https://reserve.mdwfp.com
+- Washington State Parks: https://washington.goingtocamp.com
+- Wisconsin State Parks: https://wisconsin.goingtocamp.com
+- Minnesota State Parks: https://reservemn.usedirect.com
+- Illinois State Parks: https://recreation.exploremoreil.com
+- Virginia State Parks: https://www.reservevaparks.com
+- Florida State Parks: https://reserve.floridastateparks.org
+- Missouri State Parks: https://icampmo1.usedirect.com
+- Wyoming State Parks: https://reserve.wyoming.gov
+- Nevada State Parks: https://www.reservenevada.com
+- Tennessee State Parks: https://reserve.tnstateparks.com
+- South Carolina State Parks: https://reserve.southcarolinaparks.com
+- Arizona State Parks & Trails: https://azstateparks.com/reserve/
+
+DISCLAIMER
+CampHawk is an independent app and does not represent any government entity. It is not affiliated with, endorsed by, or authorized by Recreation.gov, the National Park Service, the U.S. Forest Service, the Bureau of Land Management, the U.S. Army Corps of Engineers, or any state park agency. All campground information and availability shown in CampHawk comes from the official sources listed above, and every booking is completed on the official reservation site.
 ```
 
 > **Why this differs from the Apple description.** Play indexes the description, Apple

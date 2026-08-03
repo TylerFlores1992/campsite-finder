@@ -77,6 +77,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${BASE}/pricing`, changeFrequency: 'weekly', priority: 0.8 },
     { url: `${BASE}/terms`, changeFrequency: 'yearly', priority: 0.3 },
     { url: `${BASE}/privacy`, changeFrequency: 'yearly', priority: 0.3 },
+    // Listed so the source citation is publicly discoverable, not just linked
+    // from the store descriptions. See src/lib/data-sources.ts.
+    { url: `${BASE}/sources`, changeFrequency: 'monthly', priority: 0.3 },
   ];
 
   try {

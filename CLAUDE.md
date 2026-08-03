@@ -389,6 +389,25 @@ post-Ninth-Circuit) are **US-storefront only**, and showing this UI to a non-US
 storefront is a review failure that can reportedly cost the entitlement. Device locale
 is NOT a storefront check. Full reasoning in `docs/CONTEXT.md` → store-billing.
 
+### Play REJECTED 2026-08-03 — Misleading Claims, missing government source links
+An app that shows government information must cite an official, functional source for it
+**in the description** and carry an **easy-to-see** non-affiliation disclaimer. We had
+neither URL (the named violation) nor a visible disclaimer — the wording existed but sat
+in the last paragraph. Fixed listing-side only: **no code in the app changed, no new
+AAB, no rebuild.**
+- **`src/lib/data-sources.ts` is the canonical source list** (14 sources, 8,013
+  campgrounds, all 19 URLs verified 200 on 2026-08-03), rendered at **`/sources`** and
+  linked in the app footer so the citation is reachable from inside the app, not only
+  from the listing. **Add a sync adapter → add it there in the same change**, or we ship
+  government data with no cited source again. `/sources` is in `isPublicRoute` (a
+  reviewer opens it signed out; `auth.protect()` 404s).
+- New description in `docs/play-full-description.txt` (3,898/4,000 — paste the file,
+  re-count after any edit). Disclaimer opens AND closes it.
+- **Do NOT appeal.** That path is only for developers holding written proof of
+  government authorization; we state the opposite, and it burns 7+ days.
+- The **App Store listing still has no source links.** Same policy family, Apple hasn't
+  raised it, and iOS is mid-review — see `docs/PLAY-STORE.md`.
+
 ### Mobile app — everything below needs `npm install && npx cap sync` + a REBUILD
 Shipped 2026-07-27, all native-side, so **a web deploy does not deliver them**:
 launch URL now `/search` (not `/`, the only page with checkout) · Android back button

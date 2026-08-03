@@ -9,6 +9,11 @@ const isPublicRoute = createRouteMatcher([
   '/terms',
   '/sms-opt-in',
   '/auto-cart',
+  // Where the campground data comes from. Google Play requires an accessible link
+  // to the official source of any government information an app shows, and the
+  // store listing points here — a reviewer opens it signed out, so a 404 from
+  // auth.protect() would fail the very check it exists to pass.
+  '/sources',
   '/robots.txt',
   '/sitemap.xml',
   // The app's free surface. Search is the funnel and must work signed-out;

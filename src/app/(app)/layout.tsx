@@ -32,6 +32,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <span>© 2026 CampHawk</span>
           <span className="flex gap-4">
             <a className="hover:text-ch-ink-2" href="/support">Support</a>
+            {/* Play policy: the source of the government information this app shows
+                must be reachable from the app itself, not only from the listing. */}
+            <a className="hover:text-ch-ink-2" href="/sources">Data sources</a>
             <a className="hover:text-ch-ink-2" href="/terms">Terms</a>
             <a className="hover:text-ch-ink-2" href="/privacy">Privacy</a>
           </span>
