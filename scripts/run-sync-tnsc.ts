@@ -3,8 +3,11 @@
 // Usage: npx tsx scripts/run-sync-tnsc.ts        # every VERIFIED provider (TN)
 //        npx tsx scripts/run-sync-tnsc.ts TN     # one provider
 //
-// NOTE: reachability from a datacenter IP is unverified — run from a residential
-// IP until the Fly/Vercel reachability test is done (see docs/CONTEXT.md).
+// Reachability: residential works, and so does a Claude-web session via the agent
+// proxy — run it with `NODE_USE_ENV_PROXY=1` (verified 2026-08-04, TN 39 + SC 34
+// parks, 0 errors). Node's fetch ignores the proxy without that flag and you get a
+// WAF 403 that reads like a hard block. FLY is genuinely blocked and is why the
+// worker goes through `/api/tnsc-availability` — see docs/CONTEXT.md.
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 

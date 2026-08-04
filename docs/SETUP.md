@@ -71,8 +71,8 @@ run elsewhere (see Deploy).
 >
 > TN/SC is the mirror image: `TNSC_AVAILABILITY_URL` is set on the **Fly worker**
 > only, so the worker uses the Vercel proxy while local runs and the sync call the
-> portal **directly** (fine from a residential IP — the portal's WAF blocks
-> datacenter IPs, i.e. Fly, not homes). So TN availability can look fine locally and
+> portal **directly** (fine from a residential IP, and from a web session through the
+> agent proxy — the portal's WAF blocks Fly, not homes). So TN availability can look fine locally and
 > from Vercel, yet the worker still needs the proxy — which is exactly what bit us:
 > the worker got `403 on landing` until `TNSC_AVAILABILITY_URL` was wired.
 
@@ -97,7 +97,7 @@ these by hand — but here's how each source refreshes:
 | **ReserveAmerica** (state parks) | Same nightly Action (added step) | `npx tsx scripts/run-sync-ra.ts` (all contracts), or `npx tsx scripts/run-sync-ra.ts DE` for one state — use the single-state form when adding one, a full run re-scrapes ~18 states |
 | **GoingToCamp** (WA/MI/WI/MS) | On the **Fly worker** hourly (`gtcSyncIfDue` in `worker/poller.ts`, fires at 22h staleness) — NOT in the GitHub Action, because the Camis WAF blocks Vercel and the worker throttles itself | `npx tsx scripts/run-sync-gtc.ts` (all), or `... run-sync-gtc.ts WA` for one state. Needs `NEXT_PUBLIC_MAPBOX_TOKEN` — most rows are geocoded from their full street address. |
 | **UseDirect** (state parks) | On the **Fly worker** hourly (`rcSyncIfDue` in `worker/poller.ts`) — NOT in the GitHub Action, because some RDR hosts WAF-block datacenter IPs and it routes through the `/api/rc-proxy` on Vercel | `npx tsx scripts/run-sync-ud.ts` (run from a **residential IP** — it forces direct, no proxy) |
-| **TN/SC State Parks** (ColdFusion portal) | **No scheduled sync yet** — TN shipped 2026-07-20 (39 parks), SC 2026-07-22 (34 camping parks); there is no worker `*SyncIfDue` for either, so the catalog only refreshes when you run it by hand. | `npx tsx scripts/run-sync-tnsc.ts TN` / `... SC` (or no arg = all verified). Run from a **residential IP** — the portal's WAF blocks datacenter IPs. TN coords are embedded; **SC coords come from a curated `SC_PARK_COORDS` table** (portal ships none; name-geocoding was worthless — see `docs/CONTEXT.md`), so no Mapbox token is needed. |
+| **TN/SC State Parks** (ColdFusion portal) | **No scheduled sync yet** — TN shipped 2026-07-20 (39 parks), SC 2026-07-22 (34 camping parks); there is no worker `*SyncIfDue` for either, so the catalog only refreshes when you run it by hand. **So `catalog.syncs` in `/api/health/status` goes `warn` every 48h and stays there** — it read "2 stale" for twelve days until a hand-run on 2026-08-04, and it will do it again. Running the sync resets the clock, it does not fix the cause; the fix is a scheduled sync, and now that the agent proxy is known to reach this portal the **nightly GitHub Action** is a candidate the way it already is for RIDB and ReserveAmerica (the Fly worker still can't, which is why there's no `*SyncIfDue`). | `NODE_USE_ENV_PROXY=1 npx tsx scripts/run-sync-tnsc.ts TN` / `... SC` (or no arg = all verified). Runs from a residential IP **or from a web session** — the agent proxy reaches this portal, verified 2026-08-04 (TN 39 + SC 34 parks, 0 errors, ~9s each). **The flag is load-bearing**: Node's fetch ignores the proxy without it and the WAF answers 403, which reads as "datacenter IPs are blocked" when the proxy would have gone straight through. What is blocked is **Fly**, which is why the worker uses `/api/tnsc-availability`. TN coords are embedded; **SC coords come from a curated `SC_PARK_COORDS` table** (portal ships none; name-geocoding was worthless — see `docs/CONTEXT.md`), so no Mapbox token is needed. |
 
 **Campground photos (RIDB only).** The nightly RIDB sync now fetches media per
 facility, so anything it touches arrives with photos and there is no recurring job here.

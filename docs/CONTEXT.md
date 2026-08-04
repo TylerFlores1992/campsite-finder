@@ -589,6 +589,19 @@ catalog sync + wire into search/worker/notifications + update coverage copy +
 >     `/api/search` returns real `hasAvailability` for TN parks). The AWS-ALB "should
 >     be fine from a datacenter" prior was WRONG — don't trust ALB-vs-Azure to predict
 >     WAF IP policy; measure it.
+>     >
+>     > **The agent proxy also reaches it — so a web session CAN run the catalog sync
+>     > (verified 2026-08-04).** `curl` got 200 + the real page title from both hosts,
+>     > and `NODE_USE_ENV_PROXY=1 npx tsx scripts/run-sync-tnsc.ts TN|SC` completed the
+>     > whole CSRF handshake + batched POST for both states — TN 39 parks, SC 34, zero
+>     > errors, ~9s each. **This does NOT soften the Fly finding**: Fly is still blocked
+>     > and the worker still needs `/api/tnsc-availability`. The agent proxy is its own
+>     > egress, same as it is for the UseDirect and GoingToCamp seeds. The rule is
+>     > "Fly blocked, Vercel fine, agent proxy fine" — not "datacenter IPs are blocked",
+>     > which is how SETUP.md and the script's own header comment had it, and which is
+>     > what stopped anyone trying for two weeks. **Without the flag Node's fetch skips
+>     > the proxy and the WAF answers 403** — indistinguishable from a hard IP block,
+>     > and the likely origin of the wrong generalisation.
 >   - **So the worker routes TN availability through a Vercel proxy**, exactly like
 >     UseDirect's `/api/rc-proxy`: `src/app/api/tnsc-availability` does the whole
 >     CSRF handshake + batched POST from a Vercel IP and returns parsed rows; the
@@ -641,8 +654,10 @@ catalog sync + wire into search/worker/notifications + update coverage copy +
 >     - Reachability is the SAME as TN (Fly blocked, Vercel fine), so SC reuses the
 >       existing `/api/tnsc-availability` proxy unchanged — the proxy route keys on
 >       `state`, and the wire row now carries `key` instead of `parkId`.
->     - **Still no scheduled sync** (like TN): refresh with `npx tsx scripts/run-sync-tnsc.ts SC`
->       from a residential IP, then **deploy the Fly worker** so it picks up SC watches.
+>     - **Still no scheduled sync** (like TN): refresh with
+>       `NODE_USE_ENV_PROXY=1 npx tsx scripts/run-sync-tnsc.ts SC` from a residential IP
+>       or a web session (see the TN/SC reachability note below), then **deploy the Fly
+>       worker** so it picks up SC watches.
 > - **CO = bespoke.** "Colorado Parks and Wildlife IPAWS", ASP.NET, Active Network
 >   (`actv_kuid_*` cookie), and behind a queue-it gate. Hostile; 1 state.
 > - **WV = not a campground system at all.** `wvstateparks.com` is a WordPress
