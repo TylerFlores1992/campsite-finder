@@ -618,8 +618,28 @@ catalog sync + wire into search/worker/notifications + update coverage copy +
 >     > Vercel ✓, Fly ✗, GitHub runners ✗** — and the only one of those that can run on
 >     > a schedule AND reach the portal is **Vercel**. So the remaining option for a
 >     > scheduled TN/SC catalog sync is a **Vercel Cron hitting a sync route**, reusing
->     > the egress `/api/tnsc-availability` already proves works. Untried as of
->     > 2026-08-04.
+>     > the egress `/api/tnsc-availability` already proves works.
+>     >
+>     > **BUILT 2026-08-04 — `crons` in `vercel.json` → `GET /api/cron/sync-tnsc`,
+>     > daily 09:30 UTC** (30 min after the nightly Action, so they don't overlap).
+>     > `maxDuration = 120`: the sync measures ~16s for both states and the Next default
+>     > is BELOW that, so it would have timed out mid-sync every night. Auth takes either
+>     > `Authorization: Bearer <CRON_SECRET>` (the only header Vercel Cron can send) or
+>     > the usual `x-sync-secret: <SYNC_SECRET>` for a by-hand run, and **fails closed** —
+>     > an unset secret makes the route unreachable rather than open, which matters
+>     > because this route writes the catalog and an open one would let anyone drive our
+>     > Vercel IP at the portal, the surest way to lose the last working egress. Zero
+>     > parks returns **500**, not an empty 200, for the same reason the script exits 1:
+>     > a blocked landing here can be 200-but-empty, and a green cron over a rotting
+>     > catalog is this repo's most expensive recurring failure shape.
+>     >
+>     > **TWO THINGS GATE IT, and until both are done there is still no scheduled sync:**
+>     > (1) **`CRON_SECRET` must be set on Vercel Production** — it did not exist as of
+>     > 2026-08-04 and the write was blocked in-session, so it is a by-hand step; without
+>     > it the cron 401s nightly. (2) **`crons` only registers on a production deploy from
+>     > `master`** — `vercel.json` disables deploys for `claude/*`, so it does nothing on
+>     > a working branch. Verified locally against the real portal + DB before shipping:
+>     > both auth forms 200 with 73 parks in ~17s, three bad-credential shapes 401.
 >   - **So the worker routes TN availability through a Vercel proxy**, exactly like
 >     UseDirect's `/api/rc-proxy`: `src/app/api/tnsc-availability` does the whole
 >     CSRF handshake + batched POST from a Vercel IP and returns parsed rows; the
@@ -2222,6 +2242,12 @@ Supabase (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`), Clerk
 for the Alerts plan and `STRIPE_PRICE_ID_AUTOCART_MONTHLY/_YEARLY` for the
 Auto-Cart plan — all four on Vercel; if an Auto-Cart one goes missing the plan
 de-lists rather than erroring, see the tier section),
+Vercel Cron (`CRON_SECRET`, Production only — the bearer token Vercel Cron sends as
+`Authorization: Bearer <CRON_SECRET>`, the ONLY header a cron can carry, which is why
+`/api/cron/*` accepts it as well as the usual `x-sync-secret`). **If it is unset the
+cron 401s every night** — deliberately loud rather than an open sync endpoint, but it
+means the TN/SC catalog silently stops refreshing, so set it before relying on the
+schedule. See the TN/SC row in `docs/SETUP.md`.
 Resend (`RESEND_API_KEY`, `EMAIL_FROM`), Twilio (`TWILIO_*`), Mapbox
 (`NEXT_PUBLIC_MAPBOX_TOKEN`), RIDB (`RIDB_API_KEY`), auto-cart
 (`AUTOCART_TOKEN`, `BROKER_WS_URL`), `NEXT_PUBLIC_APP_URL`, `SYNC_SECRET`.

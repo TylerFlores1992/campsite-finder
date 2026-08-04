@@ -4,5 +4,11 @@
     "deploymentEnabled": {
       "claude/*": false
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/sync-tnsc",
+      "schedule": "30 9 * * *"
+    }
+  ]
 }

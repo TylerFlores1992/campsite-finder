@@ -55,6 +55,11 @@ const isPublicRoute = createRouteMatcher([
   '/api/auto-cart/(.*)',
   '/api/rc-proxy',
   '/api/tnsc-availability',
+  // Vercel Cron entry points. Vercel invokes these unauthenticated as far as Clerk
+  // is concerned, so auth.protect() would 404 them and the cron would "run" and
+  // fail forever with nothing in the app's own logs. Each route does its own
+  // secret check (CRON_SECRET bearer, or SYNC_SECRET by hand) and fails closed.
+  '/api/cron/(.*)',
   '/sign-in(.*)',
   '/sign-up(.*)',
 ]);

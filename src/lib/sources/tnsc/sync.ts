@@ -132,7 +132,12 @@ export async function syncTnsc(provider: TnscProvider): Promise<SyncResult> {
   return { facilitiesSynced, campsitesSynced: 0, errors, durationMs };
 }
 
-/** Sync every VERIFIED provider (skips unverified states like SC). */
+/**
+ * Sync every VERIFIED provider. That is TN **and SC** — SC has been
+ * `verified: true` since it shipped 2026-07-22, so the parenthetical that used to
+ * say "skips unverified states like SC" was stale and read as if this call only
+ * covered TN. Both states sync in one no-arg call (73 parks: TN 39, SC 34).
+ */
 export async function syncAllTnsc(): Promise<SyncResult> {
   const agg: SyncResult = { facilitiesSynced: 0, campsitesSynced: 0, errors: [], durationMs: 0 };
   for (const provider of TNSC_PROVIDERS) {
