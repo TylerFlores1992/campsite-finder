@@ -7,14 +7,22 @@ import {
 } from './providers';
 import { fetchLocations, parseGpsCoordinates, goingToCampBookingBase, type GtcLocation } from './client';
 import type { SyncResult } from '../types';
-import { inState } from '../geocode';
+import { inState, geocodePlaceName } from '../geocode';
 
 /**
  * Rows that aren't campgrounds. The location list mixes in trails, harbors and
  * junk entries (Wisconsin literally lists one called "Internet"). Availability
  * would just come back empty for these, but they'd still clutter search results.
  */
-const NON_CAMPGROUND = /\b(trail|internet|day\s*use|golf|museum|office|headquarters)\b/i;
+// Entries the reservation system lists that are NOT campgrounds. Extended 2026-08-04
+// when the name-geocoding fallback started resolving them: "Riverside HQ" landed on the
+// TOWN of Riverside, ~100 miles from Riverside State Park, and "Lewis & Clark IC" (an
+// interpretive centre) on a real point that is still not somewhere you can camp. These
+// were previously excluded only by ACCIDENT — they carry no coordinates, so they fell
+// out of the sync as errors. Excluding them on purpose means the fallback cannot drag
+// them back in, and the error log stops listing them as failures worth investigating.
+export const NON_CAMPGROUND =
+  /\b(trail|internet|day\s*use|golf|museum|office|headquarters|hq|depot|ic|visitors?\s*cent(er|re)|information\s*cent(er|re)|interpretive\s*cent(er|re)|front\s*desk)\b/i;
 
 /**
  * Coordinates: only Washington ships them reliably (136/167). MI has 15, WI and
@@ -30,7 +38,15 @@ async function geocode(loc: GtcLocation, provider: GoingToCampProvider): Promise
   const v = loc.localizedValues?.[0] ?? {};
   const street = (v.streetAddress ?? '').trim();
   const city = (v.city ?? '').trim();
-  if (!street || !city) return null;
+  // NO ADDRESS AT ALL — the feed carries an empty street AND city for some locations
+  // (measured 2026-08-04: 19 of them, including Kettle Moraine's units, Waterloo
+  // Recreation Area and Silver Lake State Park, all of which were being DROPPED from
+  // the catalog entirely). Fall back to locating the park by NAME in OpenStreetMap,
+  // which unlike Mapbox actually holds these geometries. Guarded — see geocodePlaceName.
+  if (!street || !city) {
+    const name = (v.fullName ?? '').trim();
+    return name ? geocodePlaceName(name, provider.state) : null;
+  }
 
   const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
   if (!token) return null;

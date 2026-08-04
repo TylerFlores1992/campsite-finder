@@ -11,7 +11,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { inState, isRealCoord, geocodeAddress } from '../src/lib/sources/geocode';
+import { inState, isRealCoord, geocodeAddress, geocodePlaceName } from '../src/lib/sources/geocode';
+import { NON_CAMPGROUND } from '../src/lib/sources/goingtocamp/sync';
 
 test('isRealCoord rejects the null-island placeholder', () => {
   // ReserveAmerica publishes `0.0, -0.0` for parks it has no location for — confirmed
@@ -58,4 +59,31 @@ test('a street with no city, or a city with no street, is not geocoded', async (
   assert.equal(await geocodeAddress({ street: '124 Main Street', city: '' }), null);
   assert.equal(await geocodeAddress({ street: '', city: 'Kingston', state: 'NH' }), null);
   assert.equal(await geocodeAddress({}), null);
+});
+
+test('a name with no distinctive words is never geocoded', async () => {
+  // "Information Center/Front Desk" is not a place; anything a geocoder says about it
+  // is noise. Rejected before any network call, so this needs no credentials.
+  for (const name of ['Information Center/Front Desk', 'State Park', 'North Area', 'Camping']) {
+    assert.equal(await geocodePlaceName(name, 'WA'), null, `${name} must not be geocoded`);
+  }
+});
+
+test('the non-campground filter catches facility entries, not campgrounds', () => {
+  // These were excluded only by ACCIDENT before — they carry no coordinates, so they
+  // failed as errors. Once name-geocoding could resolve them, accident stopped being
+  // enough: "Riverside HQ" resolved to the TOWN of Riverside, ~100 miles from
+  // Riverside State Park, and would have entered the catalog as a campground.
+  for (const n of ['Riverside HQ', 'Lewis & Clark IC', 'Ginkgo IC', 'Information Center/Front Desk',
+                   'Silver Lake Visitors Center', 'S.Cle Elm Depot', 'Elroy-Sparta State Trail']) {
+    assert.equal(NON_CAMPGROUND.test(n), true, `${n} is not a campground`);
+  }
+  // Verified against all four providers' live feeds on 2026-08-04: these are the kinds
+  // of names that must survive the filter, and nothing real was swept up.
+  for (const n of ['Kettle Moraine State Forest - Northern Unit', 'Silver Lake State Park',
+                   'Waterloo Recreation Area', 'Turtle Flambeau Scenic Waters Area',
+                   'Willow Flowage', 'Upright Channel', 'Westhaven', 'Chippewa Flowage',
+                   'Devil\'s Lake State Park', 'Peninsula State Park']) {
+    assert.equal(NON_CAMPGROUND.test(n), false, `${n} IS a campground and must not be filtered`);
+  }
 });

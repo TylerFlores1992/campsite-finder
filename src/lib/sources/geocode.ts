@@ -184,3 +184,96 @@ export async function geocodeAddress(addr: PostalAddress): Promise<[number, numb
     return null;
   }
 }
+
+
+// ---------------------------------------------------------------------------------
+// Last resort: locate a park BY NAME, via OpenStreetMap.
+// ---------------------------------------------------------------------------------
+//
+// "Never geocode by name" is the rule above, and it stands FOR MAPBOX — measured twice
+// (SC parks 2026-07-22, "Clough State Park" 2026-08-04), it has no POI for these places
+// and answers with a state centroid. Re-measured 2026-08-04 against the 16 GoingToCamp
+// locations this exists for: Mapbox returned ZERO results with types=poi. Not bad
+// results — none.
+//
+// OpenStreetMap is a different proposition because it carries the actual park and
+// protected-area GEOMETRIES. It is where the curated SC_PARK_COORDS table was sourced
+// from by hand; this automates the same lookup. Measured on those 16: 14 resolved, and
+// the good ones landed on the real feature (Wolfe Property → "Cascadia Marine Trail
+// Campsite - Wolfe Property State Park", Silver Lake State Park → 43.668,-86.523).
+//
+// It is still name matching, so it is wrapped in TWO independent checks, and both were
+// written against a real wrong answer from this exact call:
+//   - the caller's state box. "Big Eddy, Washington" returned a covered bridge in
+//     Washington COUNTY, VERMONT; "Riverside HQ, Washington" returned Riverside,
+//     Washington County, IOWA. Both are confidently wrong and both are far outside the
+//     Washington box.
+//   - a distinctive-token check, below, so a result that shares no meaningful word with
+//     the park name is rejected even if it lands in the right state.
+//
+// USAGE POLICY. Nominatim asks for at most one request per second and a User-Agent that
+// identifies the caller. This runs only for locations that have neither coordinates nor
+// a street address — about 19 a night — and requests are serialised with a delay.
+
+/** Words that identify nothing on their own: every third park contains them. */
+const GENERIC_NAME_WORDS = new Set([
+  'state', 'park', 'parks', 'forest', 'recreation', 'area', 'unit', 'campground',
+  'camping', 'national', 'scenic', 'waters', 'north', 'south', 'east', 'west',
+  'northern', 'southern', 'eastern', 'western', 'lake', 'river', 'the', 'and',
+  'center', 'centre', 'front', 'desk', 'site', 'sites', 'reserve', 'trail',
+]);
+
+/** Tokens distinctive enough to confirm a match. Empty means the name says nothing. */
+function distinctiveTokens(name: string): string[] {
+  return name
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter((w) => w.length >= 4 && !GENERIC_NAME_WORDS.has(w));
+}
+
+let nominatimGate: Promise<void> = Promise.resolve();
+/** Serialise calls at ~1/sec, as Nominatim's usage policy requires. */
+function nominatimSlot(): Promise<void> {
+  const wait = nominatimGate;
+  nominatimGate = wait.then(() => new Promise((r) => setTimeout(r, 1100)));
+  return wait;
+}
+
+/**
+ * Find a named park in a state. Returns null unless the answer is BOTH inside the
+ * state box and shares a distinctive word with the name asked for.
+ *
+ * Deliberately returns null for a name with no distinctive tokens — "Information
+ * Center/Front Desk" is not a place, and anything a geocoder says about it is noise.
+ */
+export async function geocodePlaceName(name: string, state: string): Promise<[number, number] | null> {
+  const tokens = distinctiveTokens(name);
+  if (tokens.length === 0) return null;
+
+  await nominatimSlot();
+  try {
+    const url =
+      `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=us` +
+      `&q=${encodeURIComponent(`${name}, ${state}, USA`)}`;
+    const res = await fetch(url, {
+      headers: { 'user-agent': 'CampHawk/1.0 (+https://camphawk.app; alerts@camphawk.app)' },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as Array<{ lat?: string; lon?: string; display_name?: string }>;
+    const hit = json?.[0];
+    if (!hit?.lat || !hit?.lon) return null;
+
+    const lng = Number(hit.lon);
+    const lat = Number(hit.lat);
+    if (!isRealCoord(lng, lat)) return null;
+    if (!inState(state, lng, lat)) return null;
+
+    const display = (hit.display_name ?? '').toLowerCase();
+    if (!tokens.some((t) => display.includes(t))) return null;
+
+    return [lng, lat];
+  } catch {
+    return null;
+  }
+}
