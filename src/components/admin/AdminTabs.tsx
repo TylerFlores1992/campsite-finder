@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, ExternalLink } from 'lucide-react';
 import BetaTesters from '@/components/BetaTesters';
 import CostsPanel from '@/components/admin/CostsPanel';
+import MetricChart, { MetricSwitcher, METRICS, type MetricKey } from '@/components/admin/MetricChart';
 import type { CostItem, UsageCounts } from '@/lib/costs';
 
 /**
@@ -46,7 +47,8 @@ export interface AdminData {
   cgRows: { source: string; n: number }[];
   cgTotal: number;
   days: { day: string; n: number }[];
-  maxDay: number;
+  /** The switchable 30-day series behind the chart. Same date spine as `days`. */
+  series: Record<MetricKey, { day: string; n: number }[]>;
   mrr: { monthly: number; activeCount: number } | null;
   beat: Beat;
   workerHealthy: boolean;
@@ -207,6 +209,9 @@ const LEVEL_STYLE: Record<Level, { box: string; text: string }> = {
 
 export default function AdminTabs({ data }: { data: AdminData }) {
   const [tab, setTab] = useState<Tab>('Overview');
+  // Shared so switching tabs keeps the metric you were looking at — the two tabs
+  // render the SAME chart, and having it silently reset would look like a bug.
+  const [metric, setMetric] = useState<MetricKey>('users');
   const mrrCents = data.mrr ? Math.round(data.mrr.monthly * 100) : null;
   const status = overallStatus(data);
   const style = LEVEL_STYLE[status.level];
@@ -237,8 +242,11 @@ export default function AdminTabs({ data }: { data: AdminData }) {
         </div>
       </div>
 
-      <div className="mb-5 overflow-x-auto border-b border-ch-line">
-        <nav className="flex min-w-max gap-1">
+      {/* WRAPS, never scrolls. `overflow-x-auto` + `min-w-max` put a horizontal
+          scrollbar under the tabs on narrower windows — a scroll affordance for five
+          short words, and the only scrollbar on the page that wasn't the window's. */}
+      <div className="mb-5 border-b border-ch-line">
+        <nav className="flex flex-wrap gap-1">
           {TABS.map((t) => (
             <button
               key={t}
@@ -256,8 +264,12 @@ export default function AdminTabs({ data }: { data: AdminData }) {
         </nav>
       </div>
 
-      {tab === 'Overview' && <OverviewPanel data={data} />}
-      {tab === 'Users & Revenue' && <UsersRevenuePanel data={data} />}
+      {tab === 'Overview' && (
+        <OverviewPanel data={data} metric={metric} onMetricChange={setMetric} />
+      )}
+      {tab === 'Users & Revenue' && (
+        <UsersRevenuePanel data={data} metric={metric} onMetricChange={setMetric} />
+      )}
       {tab === 'Engagement' && <EngagementPanel data={data} />}
       {tab === 'System Health' && <SystemHealthPanel data={data} />}
       {tab === 'Costs' && (
@@ -275,8 +287,18 @@ export default function AdminTabs({ data }: { data: AdminData }) {
 
 /* ---------------------------------------------------------------- Overview */
 
-function OverviewPanel({ data }: { data: AdminData }) {
+function OverviewPanel({
+  data,
+  metric,
+  onMetricChange,
+}: {
+  data: AdminData;
+  metric: MetricKey;
+  onMetricChange: (k: MetricKey) => void;
+}) {
   const { clerkTotal, usersAgg, activeSub, subMap, watchAgg, alertAgg, mrr } = data;
+  const def = METRICS.find((m) => m.key === metric) ?? METRICS[0];
+  const series = data.series?.[metric] ?? [];
   return (
     <div className="space-y-4">
       {/* MRR promoted into the headline row. It was on a second tab, and "how
@@ -292,24 +314,42 @@ function OverviewPanel({ data }: { data: AdminData }) {
           label="Users"
           value={(clerkTotal ?? usersAgg.total).toLocaleString()}
           sub={`+${usersAgg.new_7d} this week`}
+          metric="users"
+          selected={metric === 'users'}
+          onSelect={onMetricChange}
         />
         <Kpi
           label="Subscribers"
           value={activeSub.n.toLocaleString()}
           sub={`${subMap['trialing'] ?? 0} on trial`}
+          metric="subs"
+          selected={metric === 'subs'}
+          onSelect={onMetricChange}
         />
         <Kpi
           label="Active watches"
           value={watchAgg.active.toLocaleString()}
           sub={`${watchAgg.watchers} watchers`}
+          metric="watches"
+          selected={metric === 'watches'}
+          onSelect={onMetricChange}
         />
         <Kpi
           label="Alerts sent"
           value={alertAgg.sent.toLocaleString()}
           sub={`+${alertAgg.sent_7d} this week`}
+          metric="alerts"
+          selected={metric === 'alerts'}
+          onSelect={onMetricChange}
         />
       </div>
-      <SignupsChart data={data} />
+      {/* The KPI row IS the switcher, so the chart hides its own — two sets of
+          controls for one choice is the clutter this was meant to remove. */}
+      <MetricChart
+        metric={def}
+        data={series}
+        total={series.reduce((sum, d) => sum + d.n, 0)}
+      />
       <QuickLinks />
     </div>
   );
@@ -317,13 +357,30 @@ function OverviewPanel({ data }: { data: AdminData }) {
 
 /* -------------------------------------------------------- Users & Revenue */
 
-function UsersRevenuePanel({ data }: { data: AdminData }) {
+function UsersRevenuePanel({
+  data,
+  metric,
+  onMetricChange,
+}: {
+  data: AdminData;
+  metric: MetricKey;
+  onMetricChange: (k: MetricKey) => void;
+}) {
   const { mrr, subMap, usersAgg } = data;
+  const def = METRICS.find((m) => m.key === metric) ?? METRICS[0];
+  const series = data.series?.[metric] ?? [];
   return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-3">
-        <div className="md:col-span-2">
-          <SignupsChart data={data} />
+        <div className="md:col-span-2 space-y-3">
+          {/* Switcher ABOVE the card, not inside it — same chart as Overview, whose
+              KPI row plays this role. */}
+          <MetricSwitcher metric={metric} onMetricChange={onMetricChange} />
+          <MetricChart
+            metric={def}
+            data={series}
+            total={series.reduce((sum, d) => sum + d.n, 0)}
+          />
         </div>
         <Panel title="Subscriptions">
           <p className="font-ch-display text-[28px] font-extrabold text-ch-green-deep">
@@ -649,38 +706,6 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
-function SignupsChart({ data }: { data: AdminData }) {
-  const { days, maxDay, usersAgg } = data;
-  return (
-    <div className="rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-card">
-      <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="font-ch-display text-ch-h font-bold">New users · last 30 days</h2>
-        <span className="text-ch-meta text-ch-muted">{usersAgg.new_30d} total</span>
-      </div>
-      <div className="flex h-28 items-end gap-[3px]">
-        {days.map((d) => (
-          // h-full matters: with only `items-end` the column is content-sized,
-          // so the bar's percentage height resolved against `auto` and every bar
-          // computed to zero. The chart has been rendering blank.
-          <div key={d.day} className="group relative flex h-full flex-1 items-end">
-            <div
-              // Solid token, no /alpha modifier: the opacity form rendered the
-              // bars invisible, which made an empty chart look like no signups.
-              className="w-full rounded-t bg-ch-green transition-colors group-hover:bg-ch-green-deep"
-              style={{ height: `${Math.max(2, (d.n / maxDay) * 100)}%` }}
-              title={`${d.day}: ${d.n}`}
-            />
-          </div>
-        ))}
-      </div>
-      <div className="mt-2 flex justify-between text-ch-fine text-ch-muted">
-        <span>{days[0]?.day.slice(5)}</span>
-        <span>{days[days.length - 1]?.day.slice(5)}</span>
-      </div>
-    </div>
-  );
-}
-
 function QuickLinks() {
   // Grouped, because twelve equal tiles is a wall you have to read every time.
   // Money first (opened most), then the things you open at 2am, then the rest.
@@ -747,27 +772,62 @@ function QuickLinks() {
   );
 }
 
+/**
+ * A headline number, and on Overview also the chart's metric switcher.
+ *
+ * Passing `metric` turns the tile into a button. Reusing the KPI row rather than
+ * adding a second control row is the point: the tiles were already there, already
+ * name the four metrics, and already sit in one row above the chart.
+ *
+ * MRR deliberately stays a plain tile — it is a Stripe snapshot with no daily series
+ * behind it, and a tile that looks clickable but plots nothing is worse than one that
+ * plainly isn't.
+ */
 function Kpi({
   label,
   value,
   sub,
   accent,
+  metric,
+  selected,
+  onSelect,
 }: {
   label: string;
   value: string;
   sub?: string;
   accent?: 'green' | 'alert';
+  metric?: MetricKey;
+  selected?: boolean;
+  onSelect?: (k: MetricKey) => void;
 }) {
   const color =
     accent === 'green' ? 'text-ch-green-deep' : accent === 'alert' ? 'text-ch-alert' : 'text-ch-ink';
-  return (
-    <div className="rounded-ch-card border border-ch-line bg-ch-card p-4 shadow-ch-card">
+  const body = (
+    <>
       <p className="text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">{label}</p>
       <p className={`mt-1 font-ch-display text-[26px] leading-none font-extrabold ${color}`}>
         {value}
       </p>
       {sub && <p className="mt-1.5 text-ch-fine text-ch-muted">{sub}</p>}
-    </div>
+    </>
+  );
+  const base = 'rounded-ch-card border bg-ch-card p-4 text-left shadow-ch-card';
+  if (!metric || !onSelect) {
+    return <div className={`${base} border-ch-line`}>{body}</div>;
+  }
+  return (
+    <button
+      onClick={() => onSelect(metric)}
+      aria-pressed={selected}
+      title={`Chart ${label.toLowerCase()}`}
+      className={`${base} cursor-pointer transition-colors ${
+        selected
+          ? 'border-ch-green ring-1 ring-ch-green'
+          : 'border-ch-line hover:border-ch-green'
+      }`}
+    >
+      {body}
+    </button>
   );
 }
 

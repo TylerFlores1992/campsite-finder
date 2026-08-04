@@ -56,7 +56,7 @@ export default async function AdminPage() {
   // Allowlist lives in lib/admin — see the note there about the four copies.
   if (!(await currentUserIsAdmin())) notFound();
 
-  const [usersAgg, signupRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows, costItems, usageRows, lifetimeUsageRows] =
+  const [usersAgg, signupRows, seriesRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows, costItems, usageRows, lifetimeUsageRows] =
     await Promise.all([
       safe(
         queryOne<{ total: number; new_7d: number; new_30d: number }>(
@@ -72,6 +72,24 @@ export default async function AdminPage() {
           `SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS d, count(*)::int AS n
            FROM users WHERE created_at > now() - interval '30 days'
            GROUP BY 1 ORDER BY 1`
+        ),
+        []
+      ),
+      // The other three daily series, for the chart's metric switcher. ONE query
+      // rather than three round trips, and deliberately SEPARATE from the signups
+      // query above so a failure here empties the switchable metrics rather than the
+      // default one the page opens on.
+      safe(
+        query<{ metric: string; d: string; n: number }>(
+          `SELECT 'watches' AS metric, to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS d, count(*)::int AS n
+             FROM watches WHERE created_at > now() - interval '30 days' GROUP BY 2
+           UNION ALL
+           SELECT 'alerts', to_char(date_trunc('day', created_at), 'YYYY-MM-DD'), count(*)::int
+             FROM notifications WHERE status = 'sent' AND created_at > now() - interval '30 days' GROUP BY 2
+           UNION ALL
+           SELECT 'subs', to_char(date_trunc('day', created_at), 'YYYY-MM-DD'), count(*)::int
+             FROM subscriptions WHERE created_at > now() - interval '30 days' GROUP BY 2
+           ORDER BY 1, 2`
         ),
         []
       ),
@@ -190,17 +208,27 @@ export default async function AdminPage() {
   const cgTotal = cgRows.reduce((s, r) => s + r.n, 0);
   const workerHealthy = !!beat && beat.age_s < 300;
 
-  // 30-day signups series, zero-filled.
-  const byDay = new Map(signupRows.map((r) => [r.d, r.n]));
-  const days: { day: string; n: number }[] = [];
+  // 30-day series, zero-filled off ONE date spine so every metric shares an x-axis —
+  // a day with no rows must plot as 0, not vanish and shorten the line.
+  const spine: string[] = [];
   const today = new Date();
   for (let i = 29; i >= 0; i--) {
     const d = new Date(today);
     d.setUTCDate(today.getUTCDate() - i);
-    const key = d.toISOString().slice(0, 10);
-    days.push({ day: key, n: byDay.get(key) ?? 0 });
+    spine.push(d.toISOString().slice(0, 10));
   }
-  const maxDay = Math.max(1, ...days.map((d) => d.n));
+  const fill = (rows: { d: string; n: number }[]) => {
+    const byDay = new Map(rows.map((r) => [r.d, r.n]));
+    return spine.map((day) => ({ day, n: byDay.get(day) ?? 0 }));
+  };
+  const pick = (metric: string) => seriesRows.filter((r) => r.metric === metric);
+  const days = fill(signupRows);
+  const series = {
+    users: days,
+    watches: fill(pick('watches')),
+    alerts: fill(pick('alerts')),
+    subs: fill(pick('subs')),
+  };
 
   // Usage this month, keyed by channel, for the Costs tab.
   const lifetimeByChannel = Object.fromEntries(lifetimeUsageRows.map((r) => [r.channel, r.n]));
@@ -227,7 +255,7 @@ export default async function AdminPage() {
     cgRows,
     cgTotal,
     days,
-    maxDay,
+    series,
     mrr,
     beat,
     workerHealthy,
