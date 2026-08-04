@@ -77,6 +77,18 @@ const MAX_CITY_DISTANCE_KM = 60;
 
 const norm = (v: string) => v.toLowerCase().replace(/[^a-z]/g, '');
 
+let warnedNoToken = false;
+/** Say it once per process, not once per park — 16 identical lines help nobody. */
+function warnNoToken(): void {
+  if (warnedNoToken) return;
+  warnedNoToken = true;
+  console.warn(
+    '[geocode] NEXT_PUBLIC_MAPBOX_TOKEN is NOT SET — every address geocode will fail ' +
+      'and parks without portal coordinates will be skipped. This is an environment ' +
+      'problem, not a data problem.'
+  );
+}
+
 /** Great-circle distance in km between two [lng, lat] points. */
 function haversineKm(a: [number, number], b: [number, number]): number {
   const R = 6371;
@@ -135,7 +147,16 @@ export async function geocodeAddress(addr: PostalAddress): Promise<[number, numb
   if (/\b(p\.?\s?o\.?\s*box|post\s+office\s+box)\b/i.test(street)) return null;
 
   const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
-  if (!token) return null;
+  if (!token) {
+    // LOUD, ONCE. A missing token used to return null exactly like "Mapbox found
+    // nothing", so a whole environment with no geocoding at all logged the same
+    // "geocode failed" as a genuinely unresolvable address. That is how the
+    // ReserveAmerica fix ran as a no-op for a full day: the GitHub Action never
+    // passed this variable, while the Fly worker did, and the two looked identical
+    // in sync_log.
+    warnNoToken();
+    return null;
+  }
 
   const q = [street, city, addr.state ?? '', addr.zip ?? ''].filter(Boolean).join(', ');
   const url =

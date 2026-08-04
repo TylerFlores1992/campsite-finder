@@ -45,6 +45,14 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # REQUIRED since 2026-08-04: parks whose portal page ships no coordinates are
+          # geocoded from their street address, and geocodeAddress returns null the
+          # instant this is missing. Without it the fix is a silent no-op — the first
+          # post-fix run logged "geocode failed" for all 16 parks and the catalog stayed
+          # at 872, while the SAME code recovered 12 GoingToCamp parks on the Fly worker,
+          # which has the token as a secret. Same code, two environments, one of them
+          # missing a variable nothing checked for.
+          NEXT_PUBLIC_MAPBOX_TOKEN: ${{ secrets.NEXT_PUBLIC_MAPBOX_TOKEN }}
         run: npx tsx scripts/run-sync-ra.ts
 
       # NB: the ReserveCalifornia sync does NOT run here — their WAF blocks

@@ -201,6 +201,23 @@ there is no general way to tell an administrative address from a site address.
 Tests: `worker/geocode.test.mts` (pure, no network or credentials — the only suite in
 the repo that needs neither).
 
+> **THE RESERVEAMERICA HALF SHIPPED AS A NO-OP, for a full day (found 2026-08-04).**
+> The first post-fix nightly run recovered NOTHING: 872 facilities, unchanged, and all
+> 16 parks logged `geocode failed`. The code was fine — `.github/workflows/nightly-sync.yml`
+> never passed **`NEXT_PUBLIC_MAPBOX_TOKEN`** to the ReserveAmerica step, and
+> `geocodeAddress` returns null the instant the token is missing.
+>
+> The tell was that the SAME code worked elsewhere the same night: GoingToCamp runs on
+> the Fly worker, which has the token as a secret, and its catalog went 362 → **374**
+> (+12: WA +5, WI +5, MI +2) exactly as measured in the sandbox. Same commit, two
+> environments, one missing a variable nothing checked for.
+>
+> `geocodeAddress` now WARNS ONCE per process when the token is absent, because a
+> missing token used to return null identically to "Mapbox found nothing" — an entire
+> environment with no geocoding at all logged the same `geocode failed` as a genuinely
+> unresolvable address. **An environment problem that is indistinguishable from a data
+> problem will be read as a data problem.**
+
 > **Adding a state to an existing source REQUIRES a Fly worker deploy, not just a
 > push.** The worker imports `RA_CONTRACTS` / `USEDIRECT_PROVIDERS` /
 > `GOINGTOCAMP_PROVIDERS` directly, so on a stale worker the new state's watches hit
@@ -576,6 +593,20 @@ the repo that needs neither).
 > > everything, the claim dedupes, each IP stays at its normal rate.
 > > `min_machines_running` tracks `SHARD_COUNT`; raise both together.
 > >
+> > **CONFIRMED FIXED — first post-claim run, 2026-08-04 16:45–18:50 UTC:** 14 sources,
+> > **exactly ONE run each**, no 45-second-apart pairs, and the chain is contiguous (each
+> > source starts as the previous finishes) — one machine, start to end. `sync_claims`
+> > was EMPTY afterwards, so the claim released cleanly. Errors collapsed, which is what
+> > confirms the doubling was the cause rather than a coincidence:
+> >
+> > | source | 08-03 (doubled) | 08-04 (claimed) |
+> > | --- | --- | --- |
+> > | ohiostateparks | 311 | **15** |
+> > | minnesotastateparks | 80 and 140 | **5** |
+> > | illinoisstateparks | 139 and 42 | **9** |
+> > | virginiastateparks | 80 and 10 | **18** |
+> > | floridastateparks | 24 | **0** |
+> >
 > > **SHARDING DOUBLED THE NIGHTLY CATALOG SYNC, and nothing noticed for two days**
 > > (fixed 2026-08-04, `worker/sync-claim.ts`, migration 037). `ownsCampground` shards
 > > the POLLING; `rcSyncIfDue` and `gtcSyncIfDue` were never shard-aware, so BOTH
@@ -590,6 +621,16 @@ the repo that needs neither).
 > > Vercel IPs and these WAFs meter per IP. Exactly what `coalesce: false` on the
 > > nightly sync already exists to prevent. Cost: 252 of 478 Ohio campgrounds left with
 > > no campsite rows (other UseDirect states run 2-10%).
+> >
+> > **THAT LAST SENTENCE WAS WRONG, and it is the second time the same mistake was
+> > made in this file.** Ohio is still 252 of 478 after a clean 15-error run — the
+> > number did not move, so it was never measuring the 403s. Sampling says why:
+> > "Grand Lake St. Marys — Bayview Marina", "Nagy's Subdivision", "Guilford Lake —
+> > Whinnery". Ohio's portal lists marinas, lakefront lease lots and subdivisions
+> > alongside campgrounds, and those have no campsites to sync. Exactly the shape of
+> > the rec.gov "675 empty campgrounds" error. **A count that does not move between a
+> > broken run and a clean one was never measuring the breakage** — check that a
+> > number RESPONDS to the bug before quoting it as the bug's cost.
 > >
 > > **A CLAIM, not a shard index.** Pinning the sync to shard 0 is one line, but a
 > > machine 0 that is down means the catalog silently stops refreshing — and a stale
