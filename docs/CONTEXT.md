@@ -633,13 +633,23 @@ catalog sync + wire into search/worker/notifications + update coverage copy +
 >     > a blocked landing here can be 200-but-empty, and a green cron over a rotting
 >     > catalog is this repo's most expensive recurring failure shape.
 >     >
->     > **TWO THINGS GATE IT, and until both are done there is still no scheduled sync:**
->     > (1) **`CRON_SECRET` must be set on Vercel Production** — it did not exist as of
->     > 2026-08-04 and the write was blocked in-session, so it is a by-hand step; without
->     > it the cron 401s nightly. (2) **`crons` only registers on a production deploy from
->     > `master`** — `vercel.json` disables deploys for `claude/*`, so it does nothing on
->     > a working branch. Verified locally against the real portal + DB before shipping:
->     > both auth forms 200 with 73 parks in ~17s, three bad-credential shapes 401.
+>     > **BOTH GATES CLEARED 2026-08-04 — the schedule is LIVE.** `CRON_SECRET` is set
+>     > on Vercel **Production only** (type `sensitive`, 32 random bytes), and the cron
+>     > is registered on the live deployment: `/api/cron/sync-tnsc`, `30 9 * * *`.
+>     >
+>     > **THE GOTCHA THAT COST A ROUND: setting the variable is not enough — Vercel
+>     > bakes env vars into a deployment at build time.** Immediately after the write,
+>     > production still 401'd the CORRECT bearer, because the running deployment
+>     > predated the variable. **A redeploy is mandatory** for any new secret to reach
+>     > the running site, and "I set it and it still 401s" looks exactly like a wrong
+>     > value. `crons` also only registers on a production deploy from `master` —
+>     > `vercel.json` disables deploys for `claude/*`, so it does nothing on a branch.
+>     >
+>     > **Verified on production after the redeploy:** the real cron call returned
+>     > `{"ok":true,"facilitiesSynced":73,"errorCount":0}` in 10.4s (TN 39 + SC 34), and
+>     > three bad-credential shapes — no header, wrong bearer, secret as a query param —
+>     > all 401. `catalog.syncs` went `2 stale (>48h)` → **`0 stale`**, and
+>     > `/api/health/status` is green overall.
 >   - **So the worker routes TN availability through a Vercel proxy**, exactly like
 >     UseDirect's `/api/rc-proxy`: `src/app/api/tnsc-availability` does the whole
 >     CSRF handshake + batched POST from a Vercel IP and returns parsed rows; the
@@ -2244,10 +2254,13 @@ Auto-Cart plan — all four on Vercel; if an Auto-Cart one goes missing the plan
 de-lists rather than erroring, see the tier section),
 Vercel Cron (`CRON_SECRET`, Production only — the bearer token Vercel Cron sends as
 `Authorization: Bearer <CRON_SECRET>`, the ONLY header a cron can carry, which is why
-`/api/cron/*` accepts it as well as the usual `x-sync-secret`). **If it is unset the
-cron 401s every night** — deliberately loud rather than an open sync endpoint, but it
-means the TN/SC catalog silently stops refreshing, so set it before relying on the
-schedule. See the TN/SC row in `docs/SETUP.md`.
+`/api/cron/*` accepts it as well as the usual `x-sync-secret`). **SET AND VERIFIED
+2026-08-04.** If it is ever unset the cron 401s every night — deliberately loud rather
+than an open sync endpoint, but the TN/SC catalog then silently stops refreshing.
+**Adding or changing it requires a REDEPLOY**: Vercel bakes env vars into a deployment,
+so the running site keeps 401ing the correct value until you redeploy. To run the sync
+by hand, use `x-sync-secret: <SYNC_SECRET>` instead — same route, no need to know this
+one. See the TN/SC row in `docs/SETUP.md`.
 Resend (`RESEND_API_KEY`, `EMAIL_FROM`), Twilio (`TWILIO_*`), Mapbox
 (`NEXT_PUBLIC_MAPBOX_TOKEN`), RIDB (`RIDB_API_KEY`), auto-cart
 (`AUTOCART_TOKEN`, `BROKER_WS_URL`), `NEXT_PUBLIC_APP_URL`, `SYNC_SECRET`.
