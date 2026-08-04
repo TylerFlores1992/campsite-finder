@@ -126,6 +126,81 @@ catalog sync + wire into search/worker/notifications + update coverage copy +
 >   from review, and Description needs a new build to change (Promotional Text does not).
 > - Listing text: `docs/play-full-description.txt`. Full write-up: `docs/PLAY-STORE.md`.
 
+### A park with no coordinates used to be DELETED (fixed 2026-08-04)
+
+`campgrounds.location` is NOT NULL, so a park whose portal ships no coordinates was
+silently dropped by its sync — absent from search, unwatchable, and visible only as a
+line in `sync_log.error`. That was **35 parks**: 16 ReserveAmerica across 11 contracts
+and 19 GoingToCamp. `src/lib/sources/geocode.ts` is the shared ladder that recovered 22
+of them, and every guard in it was written against a measured wrong answer.
+
+**The ladder, in order.** Portal coordinates → geocode the STREET ADDRESS (Mapbox) →
+geocode the NAME (OpenStreetMap). Each rung is tried only when the one above yields
+nothing, and a park that falls off the bottom is skipped **and logged**, never guessed.
+
+| | RA | GTC |
+| --- | --- | --- |
+| recovered | 10 of 16 | 12 of 19 |
+| still skipped | 6 | 2 |
+
+> **`0.0, -0.0` is a coordinate, and it parses.** ReserveAmerica publishes it for parks
+> it has no location for (Clough State Park, NH). The old code survived only by
+> ACCIDENT: those pages also omit the Open Graph meta it read, so its regex failed and
+> returned null. Reading the schema.org `itemprop` block as a second source removed the
+> accident and made the check mandatory — hence `isRealCoord`, not a null test. Null
+> Island is in the Gulf of Guinea; nothing else about the row would have looked wrong.
+
+> **NEVER NAME-GEOCODE WITH MAPBOX. The rule stands, and was re-measured twice.**
+> "Clough State Park, New Hampshire" returns the NEW HAMPSHIRE STATE CENTROID — a
+> confident pin ~40 miles out. Asked for the 16 GoingToCamp names with `types=poi`,
+> Mapbox returned **zero** results. Not bad ones: none. (Original measurement, SC
+> portal 2026-07-22: 5 of 43 resolved, ~20 stacked on one wrong point.)
+>
+> **OpenStreetMap is a different proposition** and is the bottom rung: it holds the
+> actual park and protected-area geometries, and is where `SC_PARK_COORDS` was sourced
+> by hand in July — this automates a lookup already trusted here. Nominatim asks for
+> ≤1 request/second and an identifying User-Agent; calls are serialised and it runs for
+> ~19 locations a night.
+
+**Three guards, each from a real wrong answer:**
+- **A PO box is a mailbox, not a place.** Glen Island lists "PO Box 993, Bolton
+  Landing" (Lake George, ~-73.65). Mapbox returned western New York on one call and
+  Moorestown **NEW JERSEY** on another. The first is inside the New York box.
+- **Compare POSITION, not city names.** Mapbox labels "5800 W. Sprague Road, Martell
+  NE" as *Crete* — the postal city, correct and not a string match, and rejecting it
+  lost a real park. So when the returned city differs, the TOWN is geocoded and the
+  address must land within `MAX_CITY_DISTANCE_KM` (60). Martell passes at ~0km;
+  Bolton Landing against Moorestown is ~400km and fails.
+- **The state box, now for all 50 states.** It lived in the GoingToCamp sync with the
+  four states that source needed; ReserveAmerica spans 18 contracts, so every other
+  state fell through the unknown-state escape hatch unchecked. It earns its keep: "Big
+  Eddy, Washington" → a covered bridge in Washington COUNTY, **VERMONT**; "Riverside
+  HQ, Washington" → Riverside, Washington County, **IOWA**.
+
+> **Widening the non-campground filter was FORCED by fixing the geocoding**, and this
+> is the part worth remembering. HQs, visitor and interpretive centres, front desks and
+> depots were excluded only BY ACCIDENT — they carry no coordinates, so they failed as
+> errors. Once name-geocoding could resolve them, accident stopped being enough:
+> "Riverside HQ" resolves to the TOWN of Riverside, ~100 miles from Riverside State
+> Park, and would have entered the catalog as a bookable campground. `NON_CAMPGROUND`
+> in `goingtocamp/sync.ts` now names them. Checked against all four live feeds: it
+> excludes exactly 6 WA facility entries and **zero** real campgrounds in MI/WI/MS.
+> **A fix that makes a previously-failing path succeed can promote junk that was only
+> ever filtered by its own failure.**
+
+**Still skipped, correctly** — fail loud beats a guessed position. RA: three publish no
+address at all (Lake George Islands Day Use, Illinois River Forks, Clough) and three
+only a PO box (Glen Island, Wildcat Hills, Wood-Tikchik). GTC: Kettle Moraine's
+**Northern** Unit and Menominee River SRA are not in OpenStreetMap under those names —
+note the Southern Unit is, which is why the pair looks inconsistent in the log.
+
+**One honest limitation:** Blackfoot River Corridor geocodes to 3201 Spurgin Road,
+Missoula — the managing FWP office, not the river. That is what the portal publishes and
+there is no general way to tell an administrative address from a site address.
+
+Tests: `worker/geocode.test.mts` (pure, no network or credentials — the only suite in
+the repo that needs neither).
+
 > **Adding a state to an existing source REQUIRES a Fly worker deploy, not just a
 > push.** The worker imports `RA_CONTRACTS` / `USEDIRECT_PROVIDERS` /
 > `GOINGTOCAMP_PROVIDERS` directly, so on a stale worker the new state's watches hit
@@ -501,6 +576,31 @@ catalog sync + wire into search/worker/notifications + update coverage copy +
 > > everything, the claim dedupes, each IP stays at its normal rate.
 > > `min_machines_running` tracks `SHARD_COUNT`; raise both together.
 > >
+> > **SHARDING DOUBLED THE NIGHTLY CATALOG SYNC, and nothing noticed for two days**
+> > (fixed 2026-08-04, `worker/sync-claim.ts`, migration 037). `ownsCampground` shards
+> > the POLLING; `rcSyncIfDue` and `gtcSyncIfDue` were never shard-aware, so BOTH
+> > machines ran the whole sync. Their only guard was an in-process boolean, which
+> > cannot see the other machine — both read `sync_log`, both see "due", both start.
+> >
+> > Measured on 08-03: two identical UseDirect chains 45 seconds apart through the same
+> > states in the same order, every error `RC proxy /search/grid → 502 upstream 403`.
+> > Ohio 311, Minnesota 80 and 140, Illinois 139 and 42, Virginia 80 and 10 — against
+> > Minnesota's ZERO every night from 07-17 to 08-02. It bites because UseDirect syncs
+> > route through `/api/rc-proxy` on **Vercel**, so both workers exit from the SAME
+> > Vercel IPs and these WAFs meter per IP. Exactly what `coalesce: false` on the
+> > nightly sync already exists to prevent. Cost: 252 of 478 Ohio campgrounds left with
+> > no campsite rows (other UseDirect states run 2-10%).
+> >
+> > **A CLAIM, not a shard index.** Pinning the sync to shard 0 is one line, but a
+> > machine 0 that is down means the catalog silently stops refreshing — and a stale
+> > catalog is invisible until someone searches for a campground that should be there.
+> > Same `INSERT .. ON CONFLICT .. WHERE` shape as the alerting claim and the shard
+> > lease. The holder RENEWS while it works (`SYNC_CLAIM_MS`, 10 min, renewed at a
+> > third) so a 50-minute sync cannot have its claim expire underneath it, and an
+> > expired claim is takeable so a crash frees it in minutes rather than never.
+> > `withSyncClaim` releases on the way out **including when the sync throws**.
+> > Tests: `worker/sync-claim.test.mts`.
+> >
 > > **TWO-MACHINE READOUT, 2026-08-03 — the split helped, but far less than the
 > > arithmetic promised, and the answer is still "keep 15s".** 24h of post-split
 > > buckets only (`bucket_start >= 2026-08-02 06:00`), 297 per machine, **no gaps on
@@ -875,6 +975,37 @@ live in `src/components/ui/`, screens in `src/components/v2/`.
 - **Provider descriptions are HTML** — 4,469 of the 8,013 catalog rows. Render them
   through `v2/richText.tsx`, which parses to blocks and emits text. Never
   `dangerouslySetInnerHTML`: it is untrusted third-party markup.
+> **THE MEDIA FETCH IS WHAT STARTED THE rec.gov 429s** (fixed 2026-08-04). Calling a
+> second endpoint for every facility doubled the sync's request count the day it
+> shipped, and `sync_log` dates the regression exactly: runs on **07-24..27 fetched all
+> 116,475 campsites with ZERO errors** in 16-18 minutes; from **07-28** they went
+> bimodal — ~105k campsites and ~1,000 errors on a good night, ~43k and ~6,200 on a bad
+> one. **The bad runs are the FAST ones** (6 minutes against 18), which is the tell: the
+> sync was not doing less work slowly, it was giving up early. 675 of 4,469 rec.gov
+> campgrounds were left with no campsite rows.
+>
+> Three changes, smallest lever first:
+> - **Skip the media call for facilities that already have photos** — 3,775 of 4,469, so
+>   nightly media calls drop to ~700. Campsites are the product; photos are decoration.
+>   Rows WITHOUT photos are still asked every night, so a facility that gains one later
+>   still picks it up.
+> - **Retry with backoff** (`RIDB_ATTEMPTS`), honouring `Retry-After`, with JITTER —
+>   without it every worker throttled in the same instant retries in the same instant
+>   and rebuilds the burst. UseDirect got this on 2026-07-30 under "a 403 from these
+>   WAFs means slow down, not never"; RIDB never did, so one 429 was a PERMANENT loss of
+>   that facility's campsites.
+> - **Concurrency 15 → 8** (`RIDB_CONCURRENCY`).
+>
+> **The skip nearly did something worse than the bug.** With no MEDIA the transform
+> yields `photos: []`, and `photos = EXCLUDED.photos` would have erased 3,775 rows on
+> the first run — silently, because an empty array is not an error. The first fix for
+> that was a NULL param with `COALESCE`, and the test caught that **`campgrounds.photos`
+> is NOT NULL**: the proposed INSERT tuple is rejected before the ON CONFLICT branch
+> runs, so it would have failed every facility that HAS photos. It is an explicit flag
+> (`keepExistingPhotos` → `CASE WHEN`) now. `worker/ridb-photos.test.mts` guards it, and
+> distinguishes "we did not ask" from "we asked and RIDB has none" — collapsing those
+> would freeze a stale photo set forever once media was withdrawn.
+
 - **Campground `photos`: RIDB fixed 2026-07-27; the other 3,544 rows are still empty.**
   3,775 of 4,469 RIDB rows now carry photos (25,570 images, 6.8 per campground); the
   other 694 have no media in RIDB at all. Everything non-RIDB (UseDirect, GoingToCamp,
@@ -2331,7 +2462,11 @@ is how capacity grows, and `min_machines_running` must move with it. CLONE THE
 MACHINE FIRST, THEN RAISE THE COUNT — see the rec.gov fetch-lane block) and
 `SHARD_LEASE_MS` (45s); the 429
 profile recorder `RECGOV_PROFILE_FLUSH_MS` (5 min buckets) and
-`RECGOV_PROFILE_RETENTION_DAYS` (14); `AUTOCART_POLL_INTERVAL_MS` (6s — the
+`RECGOV_PROFILE_RETENTION_DAYS` (14); the nightly-catalog-sync claim `SYNC_CLAIM_MS`
+(10 min — deliberately far SHORTER than a 50-minute sync, because the holder renews
+while it works; a TTL sized to the longest run would strand the catalog for that long
+after a crash); the RIDB catalog sync's `RIDB_CONCURRENCY` (8, was a hard-coded 15),
+`RIDB_ATTEMPTS` (4) and `RIDB_BACKOFF_MS` (2000); `AUTOCART_POLL_INTERVAL_MS` (6s — the
 RECONCILER cadence only; auto-cart detection lives in the main 15s cycle).
 The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 `BROKER_PORT`, `POLL_MS`).

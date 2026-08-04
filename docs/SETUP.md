@@ -210,8 +210,10 @@ Supabase first (by hand, like 020/021). Devices register their token via
 > for the welcome step, 2026-08-01), `035_watch_auto_cart_backfill` (2026-08-01) and
 > `036_autocart_carted_history` (2026-08-03 — a partial index on
 > `autocart_jobs (watch_id, campsite_id)` for the one-cart-per-site rule; index only,
-> no schema change).
-> None needs a worker deploy by itself, but 032, 033, 035 and 036 are all read by
+> no schema change) and `037_sync_claims` (2026-08-04 — one machine runs each nightly
+> catalog sync; see the sharding section of `docs/CONTEXT.md` for why both machines were
+> running the whole thing).
+> None needs a worker deploy by itself, but 032, 033, 035, 036 and 037 are all read by
 > worker code, so ship the migration BEFORE the code that queries it.
 >
 > **035 is a BACKFILL whose absence would have broken production.** `watches.auto_cart`
@@ -509,6 +511,9 @@ src/lib/            Core logic
                     records what each provider actually honors — see docs/CONTEXT.md
   limits.ts         WATCH_LIMIT — the account watch cap (6), server 409 + all copy
   stripe-plans.ts   price-id ↔ plan-tier mapping (server-only); the Auto-Cart tier
+  sources/geocode.ts  the coordinate ladder — portal coords, then street-address
+                    geocoding (Mapbox), then name lookup (OpenStreetMap). NEVER
+                    name-geocode with Mapbox; see docs/CONTEXT.md
   data-sources.ts   the 14 official data sources + non-affiliation disclaimer, one
                     list feeding /sources and both store listings. ADD A SYNC
                     ADAPTER → ADD IT HERE (Play policy; see docs/PLAY-STORE.md)
@@ -532,6 +537,8 @@ worker/             Fly.io cancellation poller (poller.ts)
                                     STARTS it, which made it untestable)
                     carted-history.ts  one auto-cart per (watch, site), forever —
                                     separate for the same reason claim.ts is
+                    sync-claim.ts   one machine runs each nightly catalog sync (the
+                                    other shard machine must not run it too)
                     recgov-scheduler.ts  THE one rec.gov fetch lane (single-flight,
                                     TTL cache, token-bucket budget)
                     lead-time.ts    hot/cold lead-day arithmetic for that lane
@@ -694,6 +701,15 @@ env at module load),
 `worker/shard-lease.test.mts` (real DB: mutual exclusion, renewal, expiry takeover,
 concurrent race — uses shard indices ~9000 so it can't disturb a live lease),
 `worker/lead-time.test.mts` (the hot/cold lead-day arithmetic, validated by mutation),
+`worker/sync-claim.test.mts` (real DB: only one machine may run a nightly catalog sync
+— an expired claim is takeable so a dead machine cannot block the catalog, a renewal
+extends only OUR claim, the claim is released even when the sync THROWS, and eight
+DIFFERENT machine ids racing for a free job produce exactly one winner),
+`worker/ridb-photos.test.mts` (real DB, guards a DATA-DESTRUCTIVE edge: skipping the
+RIDB media call must not erase the 3,775 rows that already have photos, while a real
+empty result still clears them),
+`worker/geocode.test.mts` (**the only suite needing neither network nor credentials** —
+null-island rejection, the 50-state box, PO-box refusal, and the non-campground filter),
 and `worker/carted-history.test.mts` (real DB: the one-cart-per-(watch, site) rule —
 that a carted site blocks a second cart, that a DIFFERENT site on the same watch does
 not, that a NEW watch starts over, that a late `carted` report still blocks even when
@@ -718,6 +734,12 @@ not block a retry).
 > the lookup to `false` (the original re-carting bug) failed 2 tests, and dropping
 > `campsite_id` from the predicate (a per-WATCH key, which would silence every other
 > site) failed a different one. Breaking it one way only proves half of it.
+> The sync-claim suite was validated the same way: removing the `WHERE` (every machine
+> wins) failed 3, removing the expiry (a dead machine blocks forever) failed 4.
+> **And watch what the test is actually pointed at.** The first version of its race test
+> re-typed the claim SQL inline and passed happily while the module was broken — a copy
+> cannot notice a change to the thing it is guarding. `claimSyncJob` takes an optional
+> `machineId` purely so the real function can be raced by eight machines.
 
 ## Checking the SEO surfaces
 

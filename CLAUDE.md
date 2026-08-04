@@ -256,6 +256,34 @@ slamming the breaker shut.
   three levers are auto-cart cadence, lead-time tiering of the main cycle, and the
   budget ceiling (already near the 429 floor, so don't just raise it).
 
+## Catalog syncs — three fixes on 2026-08-04, one theme
+**Growth and fixes both create failure modes that nothing was watching.**
+- **Sharding doubled the nightly catalog sync.** `ownsCampground` shards POLLING;
+  `rcSyncIfDue`/`gtcSyncIfDue` were never shard-aware, so BOTH machines ran the whole
+  sync, guarded only by an in-process boolean. UseDirect syncs exit through the same
+  **Vercel** IPs via `/api/rc-proxy`, and those WAFs meter per IP → 403 storms (Ohio
+  311 errors; Minnesota 0 every night for a fortnight, then 80 and 140). Fixed with a
+  DB claim (`worker/sync-claim.ts`, migration 037) — a claim, not shard 0, so a dead
+  machine can't silently stop the catalog. Holder renews; expired claims are takeable.
+- **The RIDB media fix started the rec.gov 429s.** It doubled the request count on
+  07-27; from 07-28 runs went bimodal and **the bad runs are the FAST ones** (6 min vs
+  18) — giving up early, not working slowly. Fixed by skipping media for the 3,775
+  facilities that already have photos, `Retry-After`-aware retry with jitter
+  (`RIDB_ATTEMPTS`), and concurrency 15 → 8. **That skip nearly erased 3,775 rows of
+  photos** — `photos = EXCLUDED.photos` with an empty array is silent; and the first
+  fix (NULL + COALESCE) would have failed every such facility because
+  `campgrounds.photos` is NOT NULL. Explicit flag now, guarded by a test.
+- **35 parks with no coordinates were being DELETED** (`location` is NOT NULL), 22
+  recovered. Ladder in `src/lib/sources/geocode.ts`: portal coords → street address
+  (Mapbox) → name (**OpenStreetMap only**). `0.0,-0.0` is a real published value, so
+  the check is `isRealCoord` not a null test. **NEVER name-geocode with Mapbox** — it
+  returns state centroids, and zero POIs for these names. Guards: PO boxes refused,
+  distance-to-town not name-matching, 50-state box.
+- **Fixing the geocoding FORCED widening the non-campground filter**: HQs, visitor
+  centres and depots were excluded only because they had no coords. Once resolvable,
+  "Riverside HQ" would have entered the catalog as a campground. **A fix that makes a
+  failing path succeed can promote junk that was only ever filtered by its failure.**
+
 ## Sharding is LIVE at `SHARD_COUNT = 2` (2026-08-02)
 Two machines in iad (`84ed237b2d1e48` shard 0, `8ee952b7671278` shard 1), each with
 its own egress IP and its own 15/min budget — ~30/min across the pair. Live split
