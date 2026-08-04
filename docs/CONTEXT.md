@@ -602,6 +602,24 @@ catalog sync + wire into search/worker/notifications + update coverage copy +
 >     > what stopped anyone trying for two weeks. **Without the flag Node's fetch skips
 >     > the proxy and the WAF answers 403** — indistinguishable from a hard IP block,
 >     > and the likely origin of the wrong generalisation.
+>     >
+>     > **GITHUB ACTIONS RUNNERS ARE BLOCKED — tested 2026-08-04, don't re-try it.**
+>     > The obvious next move after the above was "then schedule it in the nightly
+>     > Action alongside RIDB and ReserveAmerica". A step was written and dispatched
+>     > (run `30878585899`, `only: tnsc`): **both states returned 0 parks / 1 error in
+>     > 0.6s and 0.3s** — an instant refusal, the same answer ReserveCalifornia's WAF
+>     > gives runner IPs, which is why THAT sync isn't in the Action either. The step
+>     > was removed; the workflow carries the result as a comment.
+>     >
+>     > **The lesson is the one this file keeps re-learning: one egress passing tells
+>     > you nothing about another.** "Agent proxy reaches it" did not generalise to
+>     > GitHub's ranges any more than "Vercel reaches it" generalised to Fly. Four
+>     > egresses are now measured against this portal — **residential ✓, agent proxy ✓,
+>     > Vercel ✓, Fly ✗, GitHub runners ✗** — and the only one of those that can run on
+>     > a schedule AND reach the portal is **Vercel**. So the remaining option for a
+>     > scheduled TN/SC catalog sync is a **Vercel Cron hitting a sync route**, reusing
+>     > the egress `/api/tnsc-availability` already proves works. Untried as of
+>     > 2026-08-04.
 >   - **So the worker routes TN availability through a Vercel proxy**, exactly like
 >     UseDirect's `/api/rc-proxy`: `src/app/api/tnsc-availability` does the whole
 >     CSRF handshake + batched POST from a Vercel IP and returns parsed rows; the

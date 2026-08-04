@@ -15,7 +15,7 @@ on:
         required: false
         default: '20000'
       only:
-        description: 'Run one sync only: all | ridb | ra | tnsc'
+        description: 'Run one sync only: all | ridb | ra'
         required: false
         default: 'all'
 
@@ -47,26 +47,22 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: npx tsx scripts/run-sync-ra.ts
 
-      # TN/SC (ColdFusion portal) syncs TN + SC in one no-arg call — both
-      # providers are `verified: true`. It runs LAST on purpose: this portal's
-      # WAF is the least predictable of the three and a failure here must not
-      # cost the RIDB and ReserveAmerica data already written above.
-      #
-      # Deliberately NOT continue-on-error. Before this existed there was no
-      # scheduled sync at all, so `catalog.syncs` in /api/health/status sat at
-      # "2 stale" for twelve days and nobody was paged — a red run is the whole
-      # improvement. If the WAF starts refusing runner IPs the way it refuses
-      # Fly, this step going red is how you find out; the script exits non-zero
-      # on zero parks precisely so a 200-but-empty block cannot pass as green.
-      - name: Run TN/SC State Parks sync
-        if: ${{ github.event.inputs.only == '' || github.event.inputs.only == 'all' || github.event.inputs.only == 'tnsc' }}
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: npx tsx scripts/run-sync-tnsc.ts
-
       # NB: the ReserveCalifornia sync does NOT run here — their WAF blocks
       # GitHub Actions runner IPs with 403. It runs daily on the Fly.io worker
-      # instead (see worker/poller.ts rcSyncIfDue). That precedent is exactly
-      # why the TN/SC step above had to be verified from a runner rather than
-      # assumed: "reachable from a web session" says nothing about this IP range.
+      # instead (see worker/poller.ts rcSyncIfDue).
+      #
+      # NB: the TN/SC sync does NOT run here either, and that was MEASURED, not
+      # assumed — run 30878585899 on 2026-08-04, dispatched with `only: tnsc`.
+      # Both states came back "0 parks, 1 error" in 0.6s and 0.3s: an instant
+      # WAF refusal of the runner IP, the same answer ReserveCalifornia gives.
+      # A step here is therefore a nightly RED run, not a fix. It was written,
+      # dispatched, and removed on the strength of that result — so if you are
+      # about to add one, this is the experiment you were going to run.
+      #
+      # TN/SC consequently has NO scheduled sync anywhere, which is a real gap
+      # rather than a decision: the Fly worker is WAF-blocked (which is why
+      # /api/tnsc-availability exists) and so is this runner, so `catalog.syncs`
+      # in /api/health/status returns to warn 48h after each hand-run. The one
+      # egress known to reach this portal on a schedule is VERCEL — the same
+      # one the availability proxy already uses — so a Vercel Cron calling a
+      # sync route is the next thing to try.
