@@ -90,7 +90,38 @@ in `src/lib/coverage.ts` already said 34; this line said 33 and was the stale on
 it predates SC shipping. **`coverage.ts` is the number the UI renders, so it is the
 one to trust.**) All non-rec.gov sources are **alert-only** (their carts are
 session-bound and don't sync to a phone). Adding a source = availability adapter +
-catalog sync + wire into search/worker/notifications + update coverage copy.
+catalog sync + wire into search/worker/notifications + update coverage copy +
+**a row in `src/lib/data-sources.ts`** (below).
+
+> **EVERY SOURCE MUST BE CITED, AND THAT IS A STORE-POLICY REQUIREMENT, not a nicety.**
+> Google Play **rejected the Android listing on 2026-08-03** under the Misleading
+> Claims policy — *"Missing Source Link for Government Information"*. An app that
+> surfaces government information must cite a clear, official, **functional** source
+> for it in the store description AND carry an **easy-to-see** disclaimer that it does
+> not represent a government entity.
+>
+> - **`src/lib/data-sources.ts` is the one list** — 14 sources, matching the 14
+>   distinct `campgrounds.source` values, together covering all 8,013 rows. It also
+>   holds `AFFILIATION_DISCLAIMER`, in one place so the page and both store listings
+>   cannot drift into saying different things.
+> - It renders at **`/sources`** (public, in `isPublicRoute`, in the sitemap) and is
+>   **linked from the app footer**, so the citation is reachable from inside the native
+>   app — it's a webview, so this needed no rebuild and no new AAB.
+> - **Adding a sync adapter without adding it there ships government data with no cited
+>   source again.** Same change, not a follow-up.
+> - A **dead link is the exact violation**. All 19 URLs were fetched and returned 200
+>   on 2026-08-03; re-check before any resubmission.
+> - Two things were wrong, and only one was named. The disclaimer text already existed
+>   — Google quoted it back approvingly — but it was the LAST paragraph of the
+>   description. **Buried is not "easy to see".** It now opens the description and
+>   closes it.
+> - **Do NOT appeal** a rejection of this kind: that path is only for developers
+>   holding written proof of government affiliation or authorization, we declare the
+>   opposite in both the description and Play's **Government apps** declaration, and it
+>   burns 7+ days. The two declarations must keep agreeing.
+> - The App Store listing has **no source links yet**. Same policy family; Apple has
+>   not raised it and iOS was mid-review, so it was deliberately left alone.
+> - Listing text: `docs/play-full-description.txt`. Full write-up: `docs/PLAY-STORE.md`.
 
 > **Adding a state to an existing source REQUIRES a Fly worker deploy, not just a
 > push.** The worker imports `RA_CONTRACTS` / `USEDIRECT_PROVIDERS` /
@@ -466,6 +497,48 @@ catalog sync + wire into search/worker/notifications + update coverage copy.
 > > transient (all machines still at `SHARD_COUNT=1`) is harmless: everyone polls
 > > everything, the claim dedupes, each IP stays at its normal rate.
 > > `min_machines_running` tracks `SHARD_COUNT`; raise both together.
+> >
+> > **TWO-MACHINE READOUT, 2026-08-03 — the split helped, but far less than the
+> > arithmetic promised, and the answer is still "keep 15s".** 24h of post-split
+> > buckets only (`bucket_start >= 2026-08-02 06:00`), 297 per machine, **no gaps on
+> > either** (the 23:27 worker deploy cost ~1 request, not the 10-minute hole the
+> > Aug 1 redeploy did).
+> >
+> > | | shard 0 `84ed237b…` | shard 1 `8ee952b7…` |
+> > | --- | --- | --- |
+> > | req/min | 5.2 | 4.4 |
+> > | throttled | 0.89% | 1.2% |
+> > | hours with ≥1 429 | 18/24 | 20/24 |
+> > | worst hour | 2.6% (04:00) | **4.17% (17:00)**, 4.07% (20:00) |
+> >
+> > Same machine before vs after: **12.3 req/min → 5.2, but 1.32% throttled → 0.89%.**
+> > A 58% rate cut bought a 33% throttle cut — **sub-linear**, and three things say
+> > the per-IP rate is not the dominant variable:
+> > 1. **The NEW IP is the WORSE one.** Shard 1 runs slower and throttles more, with
+> >    peak hours (4.17%) worse than ANY hour of the single-IP baseline (3.2%). A
+> >    fresh address at a third of the old rate should have been clean.
+> > 2. **Neither IP is ever clean** — 18/24 and 20/24 hours carry a 429. There is no
+> >    quiet window to hide a faster lane in.
+> > 3. **Our budget is idle** — 3.1–3.4 of 15 on every heartbeat, 0.01 denials/min
+> >    against 140 pre-split. Confirms again the ceiling is upstream.
+> >
+> > Likely mechanism: rec.gov meters something COARSER than one IP. Both machines are
+> > Fly iad and two of three Fly machines were already measured sharing a /24. If so,
+> > cloning within one region buys less than machines × budget suggests — a thing to
+> > test with a machine in a different region before buying more iad capacity.
+> >
+> > **Why a sub-15s hot lane still loses, and it is NOT the budget.** Per hot
+> > campground-month: **4 req/min at 15s, 6 at 10s, 8 at 7.5s**. Today's 3
+> > campground-months at 10s would put shard 0 at 7/min and shard 1 at 6 — both inside
+> > the 15/min budget. What breaks is CAPACITY: `RECGOV_MONTHS_PER_MACHINE` is 4
+> > because 4 × 4 = 16 ≈ the budget, and at 10s that becomes 4 × 6 = 24, so
+> > **per-machine capacity halves from 4 campground-months to 2**. At 3/8 utilisation
+> > that is spending the growth headroom the second machine just bought to buy five
+> > seconds, into IPs that already throttle in ~80% of hours.
+> >
+> > *(The readout script aggregates ALL machines together, so a naive run mixes pre-
+> > and post-split data and understates per-IP rates. Query `recgov_rate_profile` by
+> > `machine_id` directly for a per-machine breakdown, and restrict the window.)*
 >
 > **The "Aspira six" — surveyed 2026-07-19, and MI/MS turned out to be Camis.**
 > CO/MI/TN/WV/KS/MS do *not* share a backend. After reclassifying MI+MS into
@@ -633,6 +706,7 @@ chrome (nav, brand backdrop, footer) without adding a path segment.
 | `/campground/<id>` | `(app)/campground/[id]/` | **Server-rendered** detail + per-page metadata + JSON-LD. |
 | `/manage/<token>` | `(app)/manage/[token]/` | Token-authorised per-watch manage. `manageLink()` has always emitted this path, so links already in the wild land here. |
 | `/camping`, `/camping/<state>` | `app/camping/` | SEO landing pages. **Outside** the group — own breadcrumb chrome. |
+| `/sources` | `app/sources/page.tsx` | Where the campground data comes from — 14 official sources, each with its link, disclaimer first. **Outside** the group. Required by Google Play (see "Reservation sources"); linked from the app footer so it is reachable inside the native app. In `isPublicRoute` — a reviewer opens it signed out. |
 
 Outside the group and deliberately without app chrome: `/terms`, `/privacy`,
 `/connect`, `/admin`, `/sign-in`, `/sign-up`, `/w/<token>`, `/b/<token>`,
@@ -665,7 +739,10 @@ live in `src/components/ui/`, screens in `src/components/v2/`.
   **`/support` is listed too** (added 2026-07-28): it's the App Store Support URL, so
   Apple fetches it unauthenticated and a 404 there fails review. It carries **no
   prices** — it's reachable from inside the webview, which makes it a pricing surface
-  whether or not it looks like one.
+  whether or not it looks like one. **`/sources` is listed for the same reason**
+  (2026-08-03): it is the source citation Google Play's Misleading Claims policy
+  requires, a reviewer opens it signed out, and a 404 would fail the very check it
+  exists to pass. It carries no prices either.
   **`/welcome` is listed for a subtler reason** (2026-08-01): Clerk redirects a
   brand-new account there the instant it exists, and if the session cookie is not yet
   readable by middleware on that first request, `auth.protect()` answers 404 — a new
@@ -2174,8 +2251,10 @@ are pinned in `worker/fly.toml [env]`): the scheduler budget `RECGOV_BUDGET_PER_
 `RECGOV_BUDGET_BURST` (4 — must stay ≥ the per-cycle dispatch or the bucket denies
 already-paced traffic) and `RECGOV_BUDGET_LOW_RESERVE` (0.5); lead-time tiering
 `RECGOV_HOT_LEAD_DAYS` (14) and `RECGOV_COLD_MAX_AGE_MS` (60s); sharding
-`SHARD_COUNT` (1 — the SAME value on every machine; raising it is how capacity
-grows, see the rec.gov fetch-lane block) and `SHARD_LEASE_MS` (45s); the 429
+`SHARD_COUNT` (**2 since 2026-08-02** — the SAME value on every machine; raising it
+is how capacity grows, and `min_machines_running` must move with it. CLONE THE
+MACHINE FIRST, THEN RAISE THE COUNT — see the rec.gov fetch-lane block) and
+`SHARD_LEASE_MS` (45s); the 429
 profile recorder `RECGOV_PROFILE_FLUSH_MS` (5 min buckets) and
 `RECGOV_PROFILE_RETENTION_DAYS` (14); `AUTOCART_POLL_INTERVAL_MS` (6s — the
 RECONCILER cadence only; auto-cart detection lives in the main 15s cycle).
