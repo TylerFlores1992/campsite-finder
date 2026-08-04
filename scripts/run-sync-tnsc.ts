@@ -40,8 +40,18 @@ if (only && !provider) {
 (provider ? syncTnsc(provider) : syncAllTnsc())
   .then((result) => {
     console.log('Total:', JSON.stringify({ ...result, errors: result.errors.length }, null, 2));
-    if (result.errors.length > 0 && result.facilitiesSynced === 0) {
-      console.error('[run-sync-tnsc] Errored with zero parks synced — treating as failure.');
+    // Zero parks is a FAILURE even with zero errors. This portal's WAF does not
+    // always answer 403 — a blocked landing can come back 200-but-empty (observed
+    // from Fly), which parses to "0 parks, 0 errors" and used to exit 0. Running
+    // nightly, that is a step that reports success while the catalog silently
+    // rots; `facilities_synced = 0` is the honest signal (see docs/CONTEXT.md,
+    // "Reading `sync_log`"). Neither state has ever legitimately returned zero —
+    // TN has 39 camping parks and SC 34.
+    if (result.facilitiesSynced === 0) {
+      console.error(
+        `[run-sync-tnsc] ZERO parks synced (${result.errors.length} error(s)) — treating as failure. ` +
+          'Most likely the portal WAF refused this IP; check the landing response before assuming a code fault.'
+      );
       process.exit(1);
     }
     process.exit(0);
