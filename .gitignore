@@ -52,3 +52,8 @@ scripts/apply-migration-004.mjs
 /ios/
 /android/
 .seo-check/
+
+# scratch render from `npx tsx scripts/screenshot-component.mts <preset>` (its default
+# --out). An image of a component at one moment, regenerated on demand — not source,
+# and it lands in the repo root every time anyone eyeballs a component.
+/screenshot.png
