@@ -5,6 +5,7 @@
 // with its parkId. Coordinates aren't in the list, so the sync geocodes by name.
 
 import type { RAContract } from './client';
+import { isRealCoord, type PostalAddress } from '../geocode';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
 
@@ -76,20 +77,65 @@ export async function fetchParkCatalog(contract: RAContract): Promise<RAPark[]> 
 }
 
 /** Read a park's authoritative coordinates from its detail page's Open Graph meta. */
+/**
+ * Coordinates AND postal address from a park's detail page.
+ *
+ * Two coordinate sources, because the Open Graph meta this used to read exclusively is
+ * absent on some parks while the schema.org `itemprop` block is present (and vice
+ * versa). Whichever answers first wins.
+ *
+ * THE PORTAL PUBLISHES `0.0, -0.0` FOR PARKS IT HAS NO LOCATION FOR — confirmed on
+ * Clough State Park, NH, 2026-08-04. That parses as a perfectly good number and would
+ * put a campground in the Gulf of Guinea, so it is rejected by `isRealCoord`. The old
+ * code survived this only by accident: those pages happen to omit the OG meta, so the
+ * regex failed and returned null. Reading a second source removes that accident.
+ *
+ * The address is returned even when coordinates are found — it costs nothing (same
+ * page) and lets the caller geocode when the coordinates turn out to be a placeholder.
+ */
+export async function fetchParkLocation(
+  contract: RAContract,
+  detailPath: string,
+  cookie: string
+): Promise<{ coords: [number, number] | null; address: PostalAddress }> {
+  const empty = { coords: null, address: {} as PostalAddress };
+  try {
+    const body = await html(`https://${contract.host}${detailPath}`, cookie);
+
+    const pick = (re: RegExp): string | null => body.match(re)?.[1]?.trim() || null;
+
+    // 1. Open Graph meta (single-quoted content, as this portal writes it).
+    let lat = pick(/place:location:latitude"\s*content='(-?\d+(?:\.\d+)?)'/);
+    let lng = pick(/place:location:longitude"\s*content='(-?\d+(?:\.\d+)?)'/);
+    // 2. schema.org GeoCoordinates itemprops.
+    if (!lat || !lng) {
+      lat = pick(/itemprop="latitude"\s*>\s*(-?\d+(?:\.\d+)?)/);
+      lng = pick(/itemprop="longitude"\s*>\s*(-?\d+(?:\.\d+)?)/);
+    }
+
+    const address: PostalAddress = {
+      street: pick(/itemprop="streetAddress"[^>]*>([^<]{3,120})/),
+      city: pick(/itemprop="addressLocality"[^>]*>([^<]{2,60})/),
+      state: pick(/itemprop="addressRegion"[^>]*>([^<]{2,30})/) ?? contract.state,
+      zip: pick(/itemprop="postalCode"[^>]*>([^<]{3,12})/),
+    };
+
+    if (!lat || !lng) return { coords: null, address };
+    const [nlng, nlat] = [Number(lng), Number(lat)];
+    if (!isRealCoord(nlng, nlat)) return { coords: null, address };
+    return { coords: [nlng, nlat], address };
+  } catch {
+    return empty;
+  }
+}
+
+/** Back-compat wrapper — coordinates only. */
 export async function fetchParkCoords(
   contract: RAContract,
   detailPath: string,
   cookie: string
 ): Promise<[number, number] | null> {
-  try {
-    const body = await html(`https://${contract.host}${detailPath}`, cookie);
-    const lat = body.match(/place:location:latitude"\s*content='(-?\d+\.\d+)'/);
-    const lng = body.match(/place:location:longitude"\s*content='(-?\d+\.\d+)'/);
-    if (!lat || !lng) return null;
-    return [Number(lng[1]), Number(lat[1])]; // [lng, lat]
-  } catch {
-    return null;
-  }
+  return (await fetchParkLocation(contract, detailPath, cookie)).coords;
 }
 
 /** Session cookie for coord fetching (exported for the sync). */

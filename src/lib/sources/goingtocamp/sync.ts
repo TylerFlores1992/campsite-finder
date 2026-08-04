@@ -7,6 +7,7 @@ import {
 } from './providers';
 import { fetchLocations, parseGpsCoordinates, goingToCampBookingBase, type GtcLocation } from './client';
 import type { SyncResult } from '../types';
+import { inState } from '../geocode';
 
 /**
  * Rows that aren't campgrounds. The location list mixes in trails, harbors and
@@ -50,20 +51,8 @@ async function geocode(loc: GtcLocation, provider: GoingToCampProvider): Promise
   }
 }
 
-/** Rough per-state bounding box, so a bad geocode can't land a park in another state. */
-const BBOX: Record<string, [number, number, number, number]> = {
-  // [minLat, maxLat, minLng, maxLng]
-  WA: [45.5, 49.1, -124.9, -116.9],
-  MI: [41.6, 48.3, -90.5, -82.1],
-  WI: [42.4, 47.1, -92.9, -86.8],
-  MS: [30.1, 35.1, -91.7, -88.0],
-};
-
-function inState(state: string, lng: number, lat: number): boolean {
-  const b = BBOX[state];
-  if (!b) return true;
-  return lat >= b[0] && lat <= b[1] && lng >= b[2] && lng <= b[3];
-}
+// Bounding box + `inState` now come from ../geocode — one box covering all 50 states
+// rather than the four this file happened to need, shared with the ReserveAmerica sync.
 
 async function pMap<T, R>(items: T[], fn: (item: T) => Promise<R>, limit: number): Promise<R[]> {
   const results: R[] = [];

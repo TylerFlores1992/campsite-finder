@@ -1,6 +1,7 @@
 import { mutate } from '@/lib/db/client';
 import { RA_CONTRACTS, type RAContract } from './client';
-import { fetchParkCatalog, fetchParkCoords, raSession } from './catalog';
+import { fetchParkCatalog, fetchParkLocation, raSession } from './catalog';
+import { geocodeAddress, inState } from '../geocode';
 import type { SyncResult } from '../types';
 
 function titleCase(s: string): string {
@@ -35,8 +36,31 @@ export async function syncReserveAmerica(contract: RAContract): Promise<SyncResu
     await pMap(
       parks,
       async (p) => {
-        const coords = await fetchParkCoords(contract, p.detailPath, cookie);
-        if (!coords) { errors.push(`${contract.contractCode} ${p.parkId} (${p.name}): no coords`); return; }
+        // Coordinates, or the park's postal address to fall back on. Until 2026-08-04
+        // a park whose page carried no usable coordinates was simply DROPPED — 16 of
+        // them across 11 contracts, invisible in search and unwatchable. The portal
+        // publishes `0.0, -0.0` rather than nothing for some of these, which is why
+        // the coordinate check is `isRealCoord` and not a null test.
+        const { coords: direct, address } = await fetchParkLocation(contract, p.detailPath, cookie);
+        let coords = direct;
+        if (!coords) {
+          // ADDRESS, never name. "Clough State Park, New Hampshire" geocodes to the
+          // state centroid — a confident, plausible, wrong pin ~40 miles out. See
+          // src/lib/sources/geocode.ts.
+          const geo = await geocodeAddress({ ...address, state: address.state ?? contract.state });
+          if (geo && !inState(contract.state, geo[0], geo[1])) {
+            errors.push(`${contract.contractCode} ${p.parkId} (${p.name}): geocode outside ${contract.state} (${geo[1]},${geo[0]})`);
+            return;
+          }
+          coords = geo;
+        }
+        if (!coords) {
+          // Fail LOUD, as the SC portal does: a park with neither coordinates nor a
+          // street address needs a human, not a guessed position.
+          const why = address.street && address.city ? 'geocode failed' : 'no coords and no street address';
+          errors.push(`${contract.contractCode} ${p.parkId} (${p.name}): ${why}`);
+          return;
+        }
         const id = `ra-${contract.contractCode}-${p.parkId}`;
         const url = `https://${contract.host}/campsiteCalendar.do?page=matrix&contractCode=${contract.contractCode}&parkId=${p.parkId}`;
         try {
