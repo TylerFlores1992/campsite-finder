@@ -51,6 +51,7 @@ import { bookingLink } from '../src/lib/booking-url';
 import { runDetectionCanary, runDeliveryCanary } from './canary';
 import { claimNotification } from './claim';
 import { alreadyCartedForWatch } from './carted-history';
+import { withSyncClaim } from './sync-claim';
 import { findQualifyingRun, flexCandidateStays, isFlexible, type FlexDays, type FlexSpec } from '../src/lib/availability/flex';
 import { markAlive, msSinceAlive, msSinceExternalFetchOk, externalFetchWedged } from './liveness';
 
@@ -1149,9 +1150,16 @@ async function rcSyncIfDue(): Promise<void> {
     const age = row[0]?.age_hours;
     const allSynced = Number(row[0]?.synced_sources ?? 0) >= sources.length;
     if (allSynced && age != null && age < RC_SYNC_MAX_AGE_HOURS) return;
-    console.log(`[poller] UseDirect sync due (oldest ${age?.toFixed(1) ?? 'never'}h ago) — starting`);
-    const result = await syncAllUseDirect();
-    console.log(`[poller] UseDirect sync finished: ${result.facilitiesSynced} campgrounds, ${result.campsitesSynced} units, ${result.errors.length} errors`);
+    // ONE MACHINE ONLY. `rcSyncRunning` above is in-process and cannot see the other
+    // shard machine, so at SHARD_COUNT=2 both ran this whole sync 45s apart on
+    // 2026-08-03 and the UseDirect WAF 403'd us — both exit through the SAME Vercel
+    // IPs via /api/rc-proxy, and these WAFs meter per IP. See worker/sync-claim.ts.
+    const ran = await withSyncClaim('usedirect', async () => {
+      console.log(`[poller] UseDirect sync due (oldest ${age?.toFixed(1) ?? 'never'}h ago) — starting`);
+      const result = await syncAllUseDirect();
+      console.log(`[poller] UseDirect sync finished: ${result.facilitiesSynced} campgrounds, ${result.campsitesSynced} units, ${result.errors.length} errors`);
+    });
+    if (!ran) console.log('[poller] UseDirect sync due but another machine holds the claim — skipping');
   } catch (err) {
     console.error('[poller] RC sync failed:', err);
   } finally {
@@ -1184,11 +1192,18 @@ async function gtcSyncIfDue(): Promise<void> {
     const age = row[0]?.age_hours;
     const allSynced = Number(row[0]?.synced_sources ?? 0) >= sources.length;
     if (allSynced && age != null && age < GTC_SYNC_MAX_AGE_HOURS) return;
-    console.log(`[poller] GoingToCamp sync due (oldest ${age?.toFixed(1) ?? 'never'}h ago) — starting`);
-    const result = await syncAllGoingToCamp();
-    console.log(
-      `[poller] GoingToCamp sync finished: ${result.facilitiesSynced} campgrounds, ${result.errors.length} errors`
-    );
+    // ONE MACHINE ONLY — same reason as the UseDirect sync above. GoingToCamp calls
+    // leave from Fly directly rather than through Vercel, so a doubled run spends two
+    // egress IPs rather than one, but doubling a catalog sweep against a WAF that
+    // already challenges us buys nothing either way.
+    const ran = await withSyncClaim('goingtocamp', async () => {
+      console.log(`[poller] GoingToCamp sync due (oldest ${age?.toFixed(1) ?? 'never'}h ago) — starting`);
+      const result = await syncAllGoingToCamp();
+      console.log(
+        `[poller] GoingToCamp sync finished: ${result.facilitiesSynced} campgrounds, ${result.errors.length} errors`
+      );
+    });
+    if (!ran) console.log('[poller] GoingToCamp sync due but another machine holds the claim — skipping');
   } catch (err) {
     console.error('[poller] GoingToCamp sync failed:', err);
   } finally {
