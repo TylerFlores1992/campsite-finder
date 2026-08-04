@@ -15,6 +15,63 @@ http.interceptors.request.use((config) => {
   return config;
 });
 
+/**
+ * How many times a throttled or transient request is retried. UseDirect got this on
+ * 2026-07-30 under the rule that "a 403 from these WAFs means slow down, not never";
+ * RIDB never did, so a single 429 was a PERMANENT loss of that facility's campsites.
+ *
+ * Measured cost of having none (sync_log, `ridb`): runs on 07-24..27 fetched all
+ * 116,475 campsites with ZERO errors. From 07-28 — the day the media fix started
+ * calling a second endpoint for every facility, doubling the request count — runs
+ * went bimodal: either ~105k campsites and ~1,000 errors, or ~43k campsites and
+ * ~6,200 errors. The bad runs are also the FAST ones (6 minutes against 18), which is
+ * the tell: the sync was not doing less work slowly, it was giving up early.
+ */
+const ATTEMPTS = Math.max(1, Number(process.env.RIDB_ATTEMPTS ?? 4));
+/** First backoff step; doubles per attempt. A 429 wants seconds, not milliseconds. */
+const BACKOFF_MS = Number(process.env.RIDB_BACKOFF_MS ?? 2000);
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Retry 429s, 5xx and network errors. Never retry a 4xx we caused (401, 404). */
+function retryable(err: unknown): boolean {
+  const e = err as { response?: { status?: number }; code?: string };
+  const status = e?.response?.status;
+  if (status === undefined) return true;            // network error / timeout
+  if (status === 429) return true;                  // throttled — the whole point
+  return status >= 500;                             // upstream fault
+}
+
+/**
+ * Honour `Retry-After` when RIDB sends it (seconds, or an HTTP date), else exponential
+ * backoff with jitter. The jitter matters: without it every one of the N concurrent
+ * workers that got a 429 in the same instant retries in the same instant, which is the
+ * burst that caused the throttle rebuilt exactly.
+ */
+function backoffFor(err: unknown, attempt: number): number {
+  const header = (err as { response?: { headers?: Record<string, string> } })?.response?.headers?.['retry-after'];
+  if (header) {
+    const asSeconds = Number(header);
+    if (Number.isFinite(asSeconds)) return asSeconds * 1000;
+    const asDate = Date.parse(header);
+    if (Number.isFinite(asDate)) return Math.max(0, asDate - Date.now());
+  }
+  const base = BACKOFF_MS * 2 ** (attempt - 1);
+  return base + Math.floor(Math.random() * base * 0.3);
+}
+
+http.interceptors.response.use(undefined, async (err) => {
+  const cfg = (err.config ?? {}) as { __ridbAttempt?: number };
+  const attempt = (cfg.__ridbAttempt ?? 0) + 1;
+  if (attempt >= ATTEMPTS || !retryable(err) || !err.config) throw err;
+  cfg.__ridbAttempt = attempt;
+  const wait = backoffFor(err, attempt);
+  const status = err.response?.status ?? err.code ?? 'network';
+  console.warn(`[RIDB] ${status} on ${err.config.url} — retry ${attempt}/${ATTEMPTS - 1} in ${Math.round(wait)}ms`);
+  await sleep(wait);
+  return http.request(err.config);
+});
+
 // ---------- RIDB response types ----------
 
 export interface RIDBFacility {
