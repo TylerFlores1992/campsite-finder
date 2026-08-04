@@ -185,8 +185,34 @@ here names a price**, and nothing points at where to buy — the anti-steering r
 covers the listing, not just the app, and a price in the description is the easy way
 to lose a 3.1.3(b) argument you would otherwise win.
 
-The affiliation disclaimer at the end is not boilerplate: the app searches government
+The affiliation disclaimer is not boilerplate: the app searches government
 reservation systems, and implying endorsement is both untrue and a rejection risk.
+
+> **SOURCE LINKS ADDED 2026-08-04, and the disclaimer MOVED TO THE TOP — learned from
+> Google, not from Apple.** Play rejected the Android listing on 2026-08-03 under its
+> Misleading Claims policy: an app showing government information must cite a clear,
+> official, **functional** source for it in the description and carry an **easy-to-see**
+> disclaimer that it does not represent a government entity. Apple has never raised it
+> and its guideline wording differs, so this is pre-emptive — but the exposure is the
+> same shape, the fix is text-only, and being the second store to notice is a worse
+> position than being ready.
+>
+> The disclaimer text here was already correct and still got cited: Google's objection
+> was that it sat in the FINAL paragraph. **Buried is not "easy to see."** It now opens
+> the description and closes it, exactly as on Play.
+>
+> Source of truth is `src/lib/data-sources.ts` — the same list feeding `/sources` and
+> the Play listing, so the three cannot drift. **Adding a sync adapter means adding it
+> there in the same change.** A dead link is the violation itself; all 19 URLs were
+> re-fetched on 2026-08-04 and returned 200.
+>
+> Paste `docs/appstore-description.txt`, don't retype from here.
+>
+> **TIMING — check the version state in App Store Connect first.** A version that is
+> *In Review* cannot have its metadata edited without pulling it from review, which
+> forfeits the queue position. If the current version is in review, either wait for the
+> decision or edit only after it lands. The Description is NOT one of the fields
+> editable without a new build — unlike Promotional Text, which is.
 
 | Field | Value | Length |
 | --- | --- | --- |
@@ -207,9 +233,12 @@ this is the field to use for seasonal messaging):
 Sold out for the weekend you wanted? CampHawk watches that campground around the clock and tells you the second someone cancels - usually within seconds.
 ```
 
-**Description** (1502/4000):
+**Description** (3581/4000 — 419 spare). Verbatim copy of
+`docs/appstore-description.txt`:
 
 ```
+CampHawk is an independent app and does not represent any government entity. It is not affiliated with or endorsed by any government agency. Every source of campground information used in this app is listed at the end of this description.
+
 The campsite you wanted is already booked. CampHawk waits for it.
 
 Popular campgrounds sell out months ahead - but people cancel constantly. CampHawk checks the campgrounds you care about every 15 seconds, around the clock, and tells you the moment a site opens up, so you can book it before anyone else notices.
@@ -217,7 +246,7 @@ Popular campgrounds sell out months ahead - but people cancel constantly. CampHa
 HOW IT WORKS
 1. Search live availability across 8,000+ campgrounds. Free, and no account needed.
 2. Everything booked? Set a watch on the campground and dates you want.
-3. Get an alert within seconds of a cancellation, with a link straight to the booking page.
+3. Get an alert within seconds of a cancellation, with a link straight to the official booking page.
 
 WHAT YOU GET
 - Checks every 15 seconds, day and night
@@ -232,7 +261,31 @@ Every Recreation.gov campground in all 50 states, plus state parks in 34 states 
 FREE AND PAID
 Searching live availability is free and needs no account. Watching a booked campground, and the alerts that come with it, require a subscription.
 
-CampHawk is an independent app. It is not affiliated with or endorsed by Recreation.gov, the National Park Service, the US Forest Service, or any state park agency. Bookings are completed on the official reservation site.
+WHERE OUR INFORMATION COMES FROM
+CampHawk does not create campground or availability information. It reads what the official reservation systems below publish and links you back to them to book. The same list is also at https://camphawk.app/sources
+
+- Recreation.gov - federal campgrounds in all 50 states (National Park Service, U.S. Forest Service, Bureau of Land Management, U.S. Army Corps of Engineers): https://www.recreation.gov
+- Recreation Information Database (RIDB), the federal open-data service: https://ridb.recreation.gov
+- ReserveAmerica state parks in AK, CT, DE, GA, IA, IN, KY, MT, NC, NE, NH, NM, NY, OR, PA, RI, TX, UT: https://www.reserveamerica.com
+- Ohio State Parks: https://reserveohio.com
+- California State Parks: https://www.reservecalifornia.com
+- Michigan DNR: https://midnrreservations.com
+- Mississippi MDWFP: https://reserve.mdwfp.com
+- Washington State Parks: https://washington.goingtocamp.com
+- Wisconsin State Parks: https://wisconsin.goingtocamp.com
+- Minnesota State Parks: https://reservemn.usedirect.com
+- Illinois State Parks: https://recreation.exploremoreil.com
+- Virginia State Parks: https://www.reservevaparks.com
+- Florida State Parks: https://reserve.floridastateparks.org
+- Missouri State Parks: https://icampmo1.usedirect.com
+- Wyoming State Parks: https://reserve.wyoming.gov
+- Nevada State Parks: https://www.reservenevada.com
+- Tennessee State Parks: https://reserve.tnstateparks.com
+- South Carolina State Parks: https://reserve.southcarolinaparks.com
+- Arizona State Parks & Trails: https://azstateparks.com/reserve/
+
+DISCLAIMER
+CampHawk is an independent app and does not represent any government entity. It is not affiliated with, endorsed by, or authorized by Recreation.gov, the National Park Service, the U.S. Forest Service, the Bureau of Land Management, the U.S. Army Corps of Engineers, or any state park agency. All campground information and availability shown in CampHawk comes from the official sources listed above, and every booking is completed on the official reservation site.
 ```
 
 **What's New** (347/4000):

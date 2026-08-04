@@ -119,8 +119,11 @@ catalog sync + wire into search/worker/notifications + update coverage copy +
 >   holding written proof of government affiliation or authorization, we declare the
 >   opposite in both the description and Play's **Government apps** declaration, and it
 >   burns 7+ days. The two declarations must keep agreeing.
-> - The App Store listing has **no source links yet**. Same policy family; Apple has
->   not raised it and iOS was mid-review, so it was deliberately left alone.
+> - **The App Store listing carries the same block since 2026-08-04**
+>   (`docs/appstore-description.txt`). Apple never raised it — this is pre-emptive, on
+>   the reasoning that the exposure is the same shape and the fix is text-only. Mind the
+>   timing: a version *In Review* cannot have its Description edited without pulling it
+>   from review, and Description needs a new build to change (Promotional Text does not).
 > - Listing text: `docs/play-full-description.txt`. Full write-up: `docs/PLAY-STORE.md`.
 
 > **Adding a state to an existing source REQUIRES a Fly worker deploy, not just a

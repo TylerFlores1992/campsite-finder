@@ -405,8 +405,12 @@ AAB, no rebuild.**
   re-count after any edit). Disclaimer opens AND closes it.
 - **Do NOT appeal.** That path is only for developers holding written proof of
   government authorization; we state the opposite, and it burns 7+ days.
-- The **App Store listing still has no source links.** Same policy family, Apple hasn't
-  raised it, and iOS is mid-review — see `docs/PLAY-STORE.md`.
+- **The App Store listing got the same treatment 2026-08-04** (`docs/appstore-description.txt`,
+  3,581/4,000, disclaimer top and bottom, all 19 URLs re-verified 200). Pre-emptive —
+  Apple never raised it — but same shape of exposure and the fix is text-only.
+  **Check the version state in App Store Connect first: a version *In Review* can't have
+  its Description edited without pulling it from review**, and Description is not one of
+  the fields editable without a new build (Promotional Text is).
 
 ### Mobile app — everything below needs `npm install && npx cap sync` + a REBUILD
 Shipped 2026-07-27, all native-side, so **a web deploy does not deliver them**:
