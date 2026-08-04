@@ -4,7 +4,15 @@ import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, ExternalLink } from 'lucide-react';
 import BetaTesters from '@/components/BetaTesters';
 import CostsPanel from '@/components/admin/CostsPanel';
-import MetricChart, { MetricSwitcher, METRICS, type MetricKey } from '@/components/admin/MetricChart';
+import MetricChart, {
+  MetricSwitcher,
+  RangeSwitcher,
+  METRICS,
+  metricDef,
+  type MetricKey,
+  type RangeKey,
+  type SeriesKey,
+} from '@/components/admin/MetricChart';
 import type { CostItem, UsageCounts } from '@/lib/costs';
 
 /**
@@ -46,9 +54,11 @@ export interface AdminData {
   alertAgg: { sent: number; sent_7d: number; failed: number };
   cgRows: { source: string; n: number }[];
   cgTotal: number;
-  days: { day: string; n: number }[];
-  /** The switchable 30-day series behind the chart. Same date spine as `days`. */
-  series: Record<MetricKey, { day: string; n: number }[]>;
+  /**
+   * RAW all-time daily counts per series, ascending. The chart buckets these to the
+   * selected range — see MetricChart.bucket().
+   */
+  series: Record<SeriesKey, { day: string; n: number }[]>;
   mrr: { monthly: number; activeCount: number } | null;
   beat: Beat;
   workerHealthy: boolean;
@@ -211,7 +221,9 @@ export default function AdminTabs({ data }: { data: AdminData }) {
   const [tab, setTab] = useState<Tab>('Overview');
   // Shared so switching tabs keeps the metric you were looking at — the two tabs
   // render the SAME chart, and having it silently reset would look like a bug.
-  const [metric, setMetric] = useState<MetricKey>('users');
+  const [metric, setMetric] = useState<MetricKey>('users_total');
+  // Range is shared too: it scopes the same chart on both tabs.
+  const [range, setRange] = useState<RangeKey>('30d');
   const mrrCents = data.mrr ? Math.round(data.mrr.monthly * 100) : null;
   const status = overallStatus(data);
   const style = LEVEL_STYLE[status.level];
@@ -265,10 +277,22 @@ export default function AdminTabs({ data }: { data: AdminData }) {
       </div>
 
       {tab === 'Overview' && (
-        <OverviewPanel data={data} metric={metric} onMetricChange={setMetric} />
+        <OverviewPanel
+          data={data}
+          metric={metric}
+          onMetricChange={setMetric}
+          range={range}
+          onRangeChange={setRange}
+        />
       )}
       {tab === 'Users & Revenue' && (
-        <UsersRevenuePanel data={data} metric={metric} onMetricChange={setMetric} />
+        <UsersRevenuePanel
+          data={data}
+          metric={metric}
+          onMetricChange={setMetric}
+          range={range}
+          onRangeChange={setRange}
+        />
       )}
       {tab === 'Engagement' && <EngagementPanel data={data} />}
       {tab === 'System Health' && <SystemHealthPanel data={data} />}
@@ -291,14 +315,18 @@ function OverviewPanel({
   data,
   metric,
   onMetricChange,
+  range,
+  onRangeChange,
 }: {
   data: AdminData;
   metric: MetricKey;
   onMetricChange: (k: MetricKey) => void;
+  range: RangeKey;
+  onRangeChange: (r: RangeKey) => void;
 }) {
   const { clerkTotal, usersAgg, activeSub, subMap, watchAgg, alertAgg, mrr } = data;
-  const def = METRICS.find((m) => m.key === metric) ?? METRICS[0];
-  const series = data.series?.[metric] ?? [];
+  const def = metricDef(metric);
+  const rows = data.series?.[def.series] ?? [];
   return (
     <div className="space-y-4">
       {/* MRR promoted into the headline row. It was on a second tab, and "how
@@ -314,16 +342,16 @@ function OverviewPanel({
           label="Users"
           value={(clerkTotal ?? usersAgg.total).toLocaleString()}
           sub={`+${usersAgg.new_7d} this week`}
-          metric="users"
-          selected={metric === 'users'}
+          metric="users_total"
+          selected={def.series === 'users'}
           onSelect={onMetricChange}
         />
         <Kpi
           label="Subscribers"
           value={activeSub.n.toLocaleString()}
           sub={`${subMap['trialing'] ?? 0} on trial`}
-          metric="subs"
-          selected={metric === 'subs'}
+          metric="subs_total"
+          selected={def.series === 'subs'}
           onSelect={onMetricChange}
         />
         <Kpi
@@ -343,13 +371,10 @@ function OverviewPanel({
           onSelect={onMetricChange}
         />
       </div>
-      {/* The KPI row IS the switcher, so the chart hides its own — two sets of
-          controls for one choice is the clutter this was meant to remove. */}
-      <MetricChart
-        metric={def}
-        data={series}
-        total={series.reduce((sum, d) => sum + d.n, 0)}
-      />
+      {/* The KPI row IS the metric switcher; only the range needs its own control,
+          and it sits above the card like any filter. */}
+      <RangeSwitcher range={range} onRangeChange={onRangeChange} />
+      <MetricChart metric={def} rows={rows} range={range} />
       <QuickLinks />
     </div>
   );
@@ -361,26 +386,36 @@ function UsersRevenuePanel({
   data,
   metric,
   onMetricChange,
+  range,
+  onRangeChange,
 }: {
   data: AdminData;
   metric: MetricKey;
   onMetricChange: (k: MetricKey) => void;
+  range: RangeKey;
+  onRangeChange: (r: RangeKey) => void;
 }) {
   const { mrr, subMap, usersAgg } = data;
-  const def = METRICS.find((m) => m.key === metric) ?? METRICS[0];
-  const series = data.series?.[metric] ?? [];
+  // This tab is about users and revenue, so it offers only those four. Watches and
+  // alerts are engagement — they live on Overview and Engagement.
+  const tabMetrics = METRICS.filter((m) => m.series === 'users' || m.series === 'subs');
+  const def = tabMetrics.some((m) => m.key === metric) ? metricDef(metric) : tabMetrics[0];
+  const rows = data.series?.[def.series] ?? [];
   return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-3">
         <div className="md:col-span-2 space-y-3">
-          {/* Switcher ABOVE the card, not inside it — same chart as Overview, whose
-              KPI row plays this role. */}
-          <MetricSwitcher metric={metric} onMetricChange={onMetricChange} />
-          <MetricChart
-            metric={def}
-            data={series}
-            total={series.reduce((sum, d) => sum + d.n, 0)}
-          />
+          {/* Controls ABOVE the card, not inside it — same chart as Overview, whose
+              KPI row plays the metric-switcher role. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <MetricSwitcher
+              metric={def.key}
+              onMetricChange={onMetricChange}
+              metrics={tabMetrics}
+            />
+            <RangeSwitcher range={range} onRangeChange={onRangeChange} />
+          </div>
+          <MetricChart metric={def} rows={rows} range={range} />
         </div>
         <Panel title="Subscriptions">
           <p className="font-ch-display text-[28px] font-extrabold text-ch-green-deep">

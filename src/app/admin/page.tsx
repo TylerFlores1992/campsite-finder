@@ -56,7 +56,7 @@ export default async function AdminPage() {
   // Allowlist lives in lib/admin — see the note there about the four copies.
   if (!(await currentUserIsAdmin())) notFound();
 
-  const [usersAgg, signupRows, seriesRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows, costItems, usageRows, lifetimeUsageRows] =
+  const [usersAgg, seriesRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows, costItems, usageRows, lifetimeUsageRows] =
     await Promise.all([
       safe(
         queryOne<{ total: number; new_7d: number; new_30d: number }>(
@@ -67,28 +67,27 @@ export default async function AdminPage() {
         ),
         { total: 0, new_7d: 0, new_30d: 0 }
       ),
-      safe(
-        query<{ d: string; n: number }>(
-          `SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS d, count(*)::int AS n
-           FROM users WHERE created_at > now() - interval '30 days'
-           GROUP BY 1 ORDER BY 1`
-        ),
-        []
-      ),
-      // The other three daily series, for the chart's metric switcher. ONE query
-      // rather than three round trips, and deliberately SEPARATE from the signups
-      // query above so a failure here empties the switchable metrics rather than the
-      // default one the page opens on.
+      // ALL-TIME daily counts for every charted metric, in one query.
+      //
+      // Not windowed to 30 days, because the chart now offers months and years and a
+      // running TOTAL. Re-fetching per range would make every range click a round
+      // trip; grouping by day server-side and re-bucketing in the browser makes them
+      // instant, and a cumulative total needs the whole history anyway — you cannot
+      // sum "users so far" from a 30-day slice. One row per metric per day, so this
+      // is bounded by the age of the product, not by row count.
       safe(
         query<{ metric: string; d: string; n: number }>(
-          `SELECT 'watches' AS metric, to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS d, count(*)::int AS n
-             FROM watches WHERE created_at > now() - interval '30 days' GROUP BY 2
-           UNION ALL
-           SELECT 'alerts', to_char(date_trunc('day', created_at), 'YYYY-MM-DD'), count(*)::int
-             FROM notifications WHERE status = 'sent' AND created_at > now() - interval '30 days' GROUP BY 2
+          `SELECT 'users' AS metric, to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS d, count(*)::int AS n
+             FROM users GROUP BY 2
            UNION ALL
            SELECT 'subs', to_char(date_trunc('day', created_at), 'YYYY-MM-DD'), count(*)::int
-             FROM subscriptions WHERE created_at > now() - interval '30 days' GROUP BY 2
+             FROM subscriptions GROUP BY 2
+           UNION ALL
+           SELECT 'watches', to_char(date_trunc('day', created_at), 'YYYY-MM-DD'), count(*)::int
+             FROM watches GROUP BY 2
+           UNION ALL
+           SELECT 'alerts', to_char(date_trunc('day', created_at), 'YYYY-MM-DD'), count(*)::int
+             FROM notifications WHERE status = 'sent' GROUP BY 2
            ORDER BY 1, 2`
         ),
         []
@@ -208,26 +207,15 @@ export default async function AdminPage() {
   const cgTotal = cgRows.reduce((s, r) => s + r.n, 0);
   const workerHealthy = !!beat && beat.age_s < 300;
 
-  // 30-day series, zero-filled off ONE date spine so every metric shares an x-axis —
-  // a day with no rows must plot as 0, not vanish and shorten the line.
-  const spine: string[] = [];
-  const today = new Date();
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(today);
-    d.setUTCDate(today.getUTCDate() - i);
-    spine.push(d.toISOString().slice(0, 10));
-  }
-  const fill = (rows: { d: string; n: number }[]) => {
-    const byDay = new Map(rows.map((r) => [r.d, r.n]));
-    return spine.map((day) => ({ day, n: byDay.get(day) ?? 0 }));
-  };
-  const pick = (metric: string) => seriesRows.filter((r) => r.metric === metric);
-  const days = fill(signupRows);
+  // Raw all-time daily counts per metric, ascending. The client zero-fills and
+  // re-buckets these to whatever range is selected — see MetricChart.bucket().
+  const pick = (metric: string) =>
+    seriesRows.filter((r) => r.metric === metric).map((r) => ({ day: r.d, n: r.n }));
   const series = {
-    users: days,
-    watches: fill(pick('watches')),
-    alerts: fill(pick('alerts')),
-    subs: fill(pick('subs')),
+    users: pick('users'),
+    subs: pick('subs'),
+    watches: pick('watches'),
+    alerts: pick('alerts'),
   };
 
   // Usage this month, keyed by channel, for the Costs tab.
@@ -254,7 +242,6 @@ export default async function AdminPage() {
     alertAgg,
     cgRows,
     cgTotal,
-    days,
     series,
     mrr,
     beat,

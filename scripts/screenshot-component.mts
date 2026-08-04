@@ -45,21 +45,26 @@ interface Preset {
 
 const PRESETS: Record<string, Preset> = {
   'admin-chart': {
-    label: 'MetricChart (the one admin chart, with its switcher)',
-    // Thirty days of plausible daily counts — a couple of zero days and one spike, so
-    // the baseline, the gridlines and the peak all get exercised rather than a
-    // smooth curve that would hide every edge case.
-    entry: `import MetricChart, { MetricSwitcher, METRICS } from '@/components/admin/MetricChart';
-      const N = [3,1,0,2,5,4,2,0,1,6,3,2,4,9,5,3,1,0,2,4,7,5,3,2,1,4,6,3,2,5];
-      const data = N.map((n, i) => {
-        const d = new Date(Date.UTC(2026, 6, 6));
-        d.setUTCDate(d.getUTCDate() + i);
-        return { day: d.toISOString().slice(0, 10), n };
-      });
+    label: 'MetricChart (total users, 30 days) with metric + range controls',
+    // Raw all-time daily rows, as the server now sends them: a long tail before the
+    // visible window so the CUMULATIVE line starts from a real total rather than 0.
+    entry: `import MetricChart, { MetricSwitcher, RangeSwitcher, METRICS, metricDef } from '@/components/admin/MetricChart';
+      const rows = [];
+      let d = new Date(Date.UTC(2026, 2, 1));
+      const today = new Date();
+      while (d <= today) {
+        const n = [0,1,2,3,1,0,2,4,1,2][d.getUTCDate() % 10];
+        if (n) rows.push({ day: d.toISOString().slice(0, 10), n });
+        d = new Date(d.getTime() + 86400000);
+      }
+      const tabMetrics = METRICS.filter((m) => m.series === 'users' || m.series === 'subs');
       export const node = (
         <div className="space-y-3">
-          <MetricSwitcher metric="users" onMetricChange={() => {}} />
-          <MetricChart metric={METRICS[0]} data={data} total={data.reduce((s, d) => s + d.n, 0)} />
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <MetricSwitcher metric="users_total" onMetricChange={() => {}} metrics={tabMetrics} />
+            <RangeSwitcher range="30d" onRangeChange={() => {}} />
+          </div>
+          <MetricChart metric={metricDef('users_total')} rows={rows} range="30d" />
         </div>
       );`,
     frame: 'max-w-3xl w-full mx-auto',
