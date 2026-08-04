@@ -74,6 +74,31 @@ description is what gets indexed, so the terms have to appear in prose. Nothing 
 names a price, for the same reason as the App Store listing: the anti-steering rule
 covers the listing, not just the app.
 
+> **Where these actually live in the console** (verified 2026-08-03 — this cost two
+> wrong guesses, one of them mine, so it is written down rather than re-derived):
+>
+> | Thing | Path |
+> | --- | --- |
+> | The description | **Grow users → Store presence → Store listings → Default store listing → Edit listing** |
+> | Government apps declaration | **Monitor and improve → Policy and programs → App content** |
+> | Submitting | **Publishing overview → Send changes for review** |
+>
+> - There is **no "Main store listing" menu item** and no search box. "Store listings"
+>   opens a page whose visible call to action is *Create custom listing* — that is a
+>   DIFFERENT feature (per-country listing variants). The default listing is further
+>   down the same page.
+> - **Send changes for review is a manual button.** Saving the listing only stages it;
+>   Play first runs ~15 minutes of automated "quick checks", and the banner then reads
+>   *"You have changes ready to send for review"* — it does not submit itself.
+> - Until anything has published, the whole listing is ONE pending change, so a
+>   description edit shows up as `English (United States) – en-US · Default store
+>   listing` rather than as its own row. That is the row to look for on Publishing
+>   overview; if no Store listings section appears at all, the edit did not save.
+> - **The Government apps declaration must read "your app is not a government app"** and
+>   agree with the description's disclaimer. Answering yes puts you on the same footing
+>   as an appeal: Play then wants written proof of government authorization. Confirmed
+>   correct 2026-08-03.
+
 | Field | Value | Length |
 | --- | --- | --- |
 | **App name** | `CampHawk: Campsite Alerts` | 25/30 |
