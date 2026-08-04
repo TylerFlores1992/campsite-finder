@@ -975,14 +975,34 @@ live in `src/components/ui/`, screens in `src/components/v2/`.
 - **Provider descriptions are HTML** — 4,469 of the 8,013 catalog rows. Render them
   through `v2/richText.tsx`, which parses to blocks and emits text. Never
   `dangerouslySetInnerHTML`: it is untrusted third-party markup.
+> **CONFIRMED FIXED — first post-fix nightly run, 2026-08-04 11:15 UTC:**
+> **116,476 campsites, ZERO errors, 21.7 min.** That is one campsite *above* the
+> best-ever clean baseline (116,475 on 07-24..27) against 105,713/1,028 errors the day
+> before. The run is ~4 minutes longer than the old clean runs, which is the expected
+> price of concurrency 8 plus retries — duration was never the pass criterion.
+> Photos held at **3,775 of 4,469**, unchanged across a real write, so the
+> `keepExistingPhotos` guard works.
+>
+> *(A note on GitHub's scheduler: this workflow's `0 9 * * *` cron consistently fires
+> 1.5–3.5 hours late — observed starts 10:26, 10:27, 11:15, 11:22, 12:13 UTC. Anything
+> checking its results must confirm a row for TODAY exists first, or it reports on
+> yesterday's run and calls it a result.)*
+>
 > **THE MEDIA FETCH IS WHAT STARTED THE rec.gov 429s** (fixed 2026-08-04). Calling a
 > second endpoint for every facility doubled the sync's request count the day it
 > shipped, and `sync_log` dates the regression exactly: runs on **07-24..27 fetched all
 > 116,475 campsites with ZERO errors** in 16-18 minutes; from **07-28** they went
 > bimodal — ~105k campsites and ~1,000 errors on a good night, ~43k and ~6,200 on a bad
 > one. **The bad runs are the FAST ones** (6 minutes against 18), which is the tell: the
-> sync was not doing less work slowly, it was giving up early. 675 of 4,469 rec.gov
-> campgrounds were left with no campsite rows.
+> sync was not doing less work slowly, it was giving up early.
+>
+> **What the 429s cost was CAMPSITES, not campgrounds.** An earlier reading of this
+> blamed them for the 675 rec.gov campgrounds with no campsite rows; that was wrong.
+> 675 is the STEADY STATE — identical before the fix and after the clean 116,476-row
+> run — because those facilities publish no CAMPSITE records in RIDB at all (sampled:
+> Beavertail, Bad Medicine, Chukar Park, Starr Springs — real campgrounds, typically
+> first-come-first-served with nothing reservable). A count that does not move between
+> a broken run and a clean one was never measuring the breakage.
 >
 > Three changes, smallest lever first:
 > - **Skip the media call for facilities that already have photos** — 3,775 of 4,469, so
