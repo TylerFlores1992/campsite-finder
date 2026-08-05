@@ -2418,6 +2418,52 @@ Files are `*.test.mts` under `worker/`. What is covered, and why these first:
 > by reverting `claim.ts` to the pre-026 per-watch logic: 4 of 9 failed, including the
 > one that names the bug. A test that also passes on the broken version is decoration.
 
+## ReserveCalifornia auto-cart — mechanism found, one test from viable (2026-08-05)
+
+RC auto-cart looked dead (a bot cart doesn't sync to the user's phone). Reading RC's own
+web bundle reopened it. The findings, so nobody re-derives them:
+
+- **The cart is anonymous, keyed only by a `shoppingCartKey` GUID.** `CustomerId: 0` on
+  every entry. `POST rdapi.reservecalifornia.com/api/webaccesscustomer/load/shoppingcart`
+  with `{shoppingCartKey}` in the body returns that cart. Reading needs *a* valid Okta
+  token (401 without) but not a *matching* one — any authenticated session can very
+  likely read any cart by key.
+- **`localStorage["shoppingCartKey"]` is the web app's sole source of truth.** Verified in
+  the bundle: every cart op (`emptyCart`, `extendShoppingCartTimer`, checkout) reads the
+  key from there; **nothing reads it from the URL**. That is why the `?shoppingCartKey=`
+  URL test failed — not because the cart can't be adopted, but because RC ignores the URL
+  and reads localStorage. Write that one value and the session adopts the cart.
+- **The 15-minute hold is extendable** — the bundle exposes `extendShoppingCartTimer`
+  ({shoppingCartKey}). A holder can keep a site well past 15 minutes.
+- **reCAPTCHA + Okta MFA live only on cart/checkout** (added Oct 2025). They hit the BOT
+  if it must log in and pre-cart; they do NOT block the hand-off, and the human solves
+  the checkout reCAPTCHA.
+- **No public source documents any of the customer/cart API** — every open-source RC bot
+  is search-only. This is all from the live bundle + network trace.
+
+**The design that follows** (bot holds, human claims — the "auto-cart without checkout"
+the owner wanted): bot detects the opening (poller already does), creates the cart
+server-side via `precartdata` under an RC session it holds, extends the timer, and
+reports the `shoppingCartKey` on the `autocart_job`. The alert carries the key; on
+desktop `extension/content-rc.js` writes `localStorage["shoppingCartKey"]` and reloads
+(`#camphawk-rccart=<key>`, built 2026-08-05), on mobile the native app injects it into
+its reservecalifornia.com webview. The human reviews and checks out. No payment
+automation.
+
+**THE ONE MAKE-OR-BREAK TEST, still unrun** (needs a real RC login, ~3 min, no bot):
+in a browser logged into RC with a site in the cart, run in the console
+`localStorage.setItem("shoppingCartKey","00000000-0000-0000-0000-000000000000");location.reload()`
+→ cart should read EMPTY (proves the app follows localStorage), then set it back to the
+real key and reload → the site should REAPPEAR (proves a written key is adopted). Then
+repeat the "set to the real key" step in a *second* browser/incognito logged into RC to
+prove cross-session adoption — that last one is the real question, because the bot
+creates the cart under its token and the user reads under theirs.
+
+**Two open risks after that:** whether `precartdata`/pre-cart trips reCAPTCHA for the bot
+(needs a live authenticated attempt), and per-state `installationsidentity`/`storeid`
+values (CA is `cali`/`111`; each of the other 9 UseDirect states needs its own captured
+from a trace). Detail in `scripts/auto-cart-bot/reservecalifornia.mjs`.
+
 ## Auto-cart (rec.gov only) — the interesting part
 
 Goal: when a watched rec.gov site opens for an enrolled user, add it to their cart

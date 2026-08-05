@@ -1,19 +1,37 @@
-// ReserveCalifornia (CA State Parks) is NOT auto-carted by the bot. Tested, not assumed
-// — 2026-08-05, against a live RC account, and worth reading before anyone tries again.
+// ReserveCalifornia auto-cart: NOT enabled yet, but a viable path has been identified.
+// Investigated 2026-08-05 against a live RC account AND by reading RC's own web bundle.
+// Read this before touching it.
 //
 // WHAT WE ESTABLISHED
 //
 // 1. The cart is a free-floating object keyed by a GUID, not owned by an account.
 //    `POST rdapi.reservecalifornia.com/api/webaccesscustomer/load/shoppingcart` takes
-//    `{"shoppingCartKey": "<guid>"}` in the BODY and returns that cart. Every entry in
-//    the response carries `"CustomerId": 0` — the cart is not attached to the signed-in
-//    customer at all.
-// 2. So a second device sees nothing: it mints its own key and asks for a different
-//    cart. Confirmed — cart on desktop, phone shows empty.
-// 3. And the key CANNOT be handed over. Tested three URL shapes on a phone signed into
-//    the same account, inside the 15-minute window, all with `?shoppingCartKey=<guid>`:
-//    `/`, `/park/665/539`, and `/Web/Default.aspx`. None loaded the cart. RC's front end
-//    only ever uses the key in its own storage; the query parameter is ignored.
+//    `{"shoppingCartKey": "<guid>"}` in the BODY and returns that cart. Every entry
+//    carries `"CustomerId": 0` — the cart is not attached to the signed-in customer.
+//    Reading a cart still needs SOME valid Okta token (401 without one), but because the
+//    cart is anonymous, any valid token can almost certainly read any cart by key.
+// 2. The web app's SINGLE source of truth for "which cart am I" is
+//    `localStorage["shoppingCartKey"]`. Confirmed by reading the bundle: every cart op
+//    (emptyCart, extendShoppingCartTimer, checkout) reads the key from there, and
+//    NOTHING reads it from the URL — which is exactly why the `?shoppingCartKey=` URL
+//    test failed (three URL shapes, live cart, same account, phone all showed empty).
+// 3. THEREFORE the transfer works by writing that one localStorage value. On desktop the
+//    CampHawk extension does it (extension/content-rc.js, #camphawk-rccart=<key>): write
+//    the key, reload, RC shows the held cart, human checks out. On mobile the native app
+//    could do the same by injecting the value into its reservecalifornia.com webview.
+// 4. THE 15-MINUTE HOLD IS NOT A CEILING. The bundle exposes `extendShoppingCartTimer`
+//    ({shoppingCartKey}) — whoever holds the key can keep the cart alive. A bot can hold
+//    a site well past 15 minutes while the user gets to their phone.
+//
+// STILL UNPROVEN (the one make-or-break): that a DIFFERENT logged-in session adopts a
+// foreign cart key written to its localStorage and sees that cart. Everything points to
+// yes (anonymous cart, pure-GUID addressing, localStorage is the store), but it must be
+// confirmed with the two-browser test before the bot side is built. See docs/CONTEXT.md.
+//
+// THE BOT SIDE, once confirmed: the bot needs an RC session (its own login, or a stored
+// user login via a /connect flow like rec.gov) to POST precartdata and create the cart,
+// then reports the shoppingCartKey back on the autocart_job. No payment automation, no
+// checkout — the reCAPTCHA lives only on the final checkout the human does.
 //
 // The consequence: a bot carting on the mini-PC creates a cart the user can never reach.
 // It could truthfully report "carted" and the site would still be unbookable by them —

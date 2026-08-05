@@ -19,6 +19,41 @@
   const STASH = 'camphawk_rc';
   const ENDPOINT = 'https://rdapi.reservecalifornia.com/api/webaccessfacility/submit/precartdataforbookingmodify';
 
+  // -------------------------------------------------------------------------
+  // ADOPT-CART PATH (2026-08-05). The one below builds a cart in the user's own
+  // browser from the raw booking details. This one is different and much simpler:
+  // the CampHawk BOT already created the cart server-side the instant the site
+  // opened, and the alert just carries that cart's key. We hand the browser the
+  // key and let RC show the held cart.
+  //
+  // Why this works — established by reading RC's own bundle, not by guessing:
+  //   • RC's cart is an anonymous object keyed ONLY by a shoppingCartKey GUID
+  //     (cart entries carry CustomerId 0).
+  //   • The web app's single source of truth for "which cart am I" is
+  //     localStorage["shoppingCartKey"] — every cart op reads it from there, and
+  //     nothing reads it from the URL (which is why ?shoppingCartKey= did nothing).
+  //   • So writing that one value makes this logged-in session adopt the bot's cart.
+  //
+  // The alert link ends with #camphawk-rccart=<shoppingCartKey>. We write it and
+  // reload; RC then loads the held cart. The human reviews and checks out — no
+  // payment automation, and the reCAPTCHA at checkout is theirs to solve.
+  const ADOPTED_FLAG = 'camphawk_rc_adopted';
+  const adopt = location.hash.match(/camphawk-rccart=([0-9a-fA-F-]{30,})/);
+  if (adopt) {
+    try { localStorage.setItem('shoppingCartKey', adopt[1]); } catch {}
+    // Strip the key from the URL bar (it authorises the cart) and mark that we
+    // just adopted, so the post-reload run shows a confirmation instead of looping.
+    try { sessionStorage.setItem(ADOPTED_FLAG, '1'); } catch {}
+    history.replaceState(null, '', location.pathname + location.search);
+    location.reload();
+    return;
+  }
+  if (sessionStorage.getItem(ADOPTED_FLAG)) {
+    try { sessionStorage.removeItem(ADOPTED_FLAG); } catch {}
+    adoptBanner();
+    return;
+  }
+
   function readFragment() {
     const m = location.hash.match(/camphawk-rc=(\d+)_(\d{4}-\d{2}-\d{2})_(\d+)_(\d*)/);
     if (!m) return null;
@@ -190,4 +225,30 @@
     if (accepted && enabled) addToCart();
     else setStatus('Auto-cart off — use the button, or enable it in the CampHawk extension.');
   });
+
+  // Shown after we've adopted the bot's cart key and reloaded. RC has loaded the
+  // held cart by now; this just points the user at it. No API calls, no auth — the
+  // cart is already theirs to check out.
+  function adoptBanner() {
+    const cartUrl = 'https://www.reservecalifornia.com/Customers/ShoppingCart';
+    const bar = document.createElement('div');
+    bar.style.cssText =
+      'position:fixed;z-index:2147483647;left:50%;bottom:20px;transform:translateX(-50%);' +
+      'background:#1F3D2E;color:#FAF7F2;font:14px system-ui,sans-serif;padding:12px 16px;border-radius:14px;' +
+      'box-shadow:0 6px 24px rgba(0,0,0,.28);display:flex;align-items:center;gap:12px;max-width:92vw';
+    bar.innerHTML =
+      '<span style="font-size:18px">🦅</span>' +
+      '<span><strong>CampHawk</strong> held your site — it’s in your cart.<br>' +
+      '<span style="opacity:.85">Review the dates and check out before the hold expires.</span></span>';
+    const btn = document.createElement('a');
+    btn.textContent = 'Open cart';
+    btn.href = cartUrl;
+    btn.style.cssText = 'background:#E8873A;color:#fff;border:0;border-radius:10px;padding:8px 12px;font-weight:600;cursor:pointer;white-space:nowrap;text-decoration:none';
+    const close = document.createElement('button');
+    close.textContent = '✕';
+    close.style.cssText = 'background:transparent;color:#FAF7F2;border:0;font-size:16px;cursor:pointer;opacity:.7';
+    close.onclick = () => bar.remove();
+    bar.appendChild(btn); bar.appendChild(close);
+    document.body.appendChild(bar);
+  }
 })();
