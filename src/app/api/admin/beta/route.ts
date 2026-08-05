@@ -33,9 +33,32 @@ export async function GET() {
 // Add a pre-approval AND flag any already-signed-up matching account immediately.
 export async function POST(req: NextRequest) {
   if (!(await requireAdmin())) return NextResponse.json({ error: 'not found' }, { status: 404 });
-  const { email } = await req.json().catch(() => ({}));
+  const { email, resend } = await req.json().catch(() => ({}));
   if (!isEmail(email)) return NextResponse.json({ error: 'valid email required' }, { status: 400 });
   const e = email.trim().toLowerCase();
+
+  // Deliberate re-send to someone already on the list. The insert-gated path below
+  // exists so a fat-fingered re-add can't spam a tester, but it left no way to mail
+  // the people added BEFORE the invite shipped (2026-07-28) — nine of whom, added
+  // 07-17 to 07-24, were never told anything, and not one has signed up since. This
+  // is that door, and it is explicit rather than a side effect of re-adding.
+  if (resend === true) {
+    const listed = await query<{ email: string }>(
+      `SELECT email FROM beta_emails WHERE email = $1`,
+      [e]
+    );
+    if (listed.length === 0) {
+      return NextResponse.json({ error: 'not on the beta list' }, { status: 404 });
+    }
+    try {
+      await sendBetaInvite(e, process.env.NEXT_PUBLIC_APP_URL ?? 'https://camphawk.app');
+      return NextResponse.json({ ok: true, email: e, invited: true, resent: true });
+    } catch (err) {
+      console.error('[admin/beta] resend failed for', e, err);
+      return NextResponse.json({ error: 'send failed' }, { status: 502 });
+    }
+  }
+
   // RETURNING tells us whether this was a NEW pre-approval or a re-add of one that
   // already existed, which is what decides whether to email. Re-adding an existing
   // tester must not spam them a second invite.

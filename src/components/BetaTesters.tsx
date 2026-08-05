@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Loader2, Plus, Trash2, Check, Clock } from 'lucide-react';
+import { Loader2, Plus, Trash2, Check, Clock, Send } from 'lucide-react';
 
 interface Tester {
   email: string;
@@ -18,6 +18,9 @@ export default function BetaTesters() {
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'invited'>('all');
+  // Which row is mid-send. Per-row rather than a single global flag so a slow
+  // send can't grey out every other button on the list.
+  const [sending, setSending] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -65,6 +68,28 @@ export default function BetaTesters() {
       setError('Could not add');
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Send the setup email to someone ALREADY on the list. Adding only mails on a
+  // fresh insert — right, so a re-add can't spam anyone — which left the testers
+  // added before the invite existed with no way to ever receive one.
+  async function resend(target: string) {
+    if (!confirm(`Send the setup email to ${target}?`)) return;
+    setSending(target);
+    setError('');
+    setNote('');
+    try {
+      const r = await fetch('/api/admin/beta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: target, resend: true }),
+      });
+      setNote(r.ok ? `Setup email sent to ${target}.` : `Could not email ${target} — check the logs.`);
+    } catch {
+      setError(`Could not email ${target}`);
+    } finally {
+      setSending(null);
     }
   }
 
@@ -171,6 +196,15 @@ export default function BetaTesters() {
                   <Clock size={11} /> invited
                 </span>
               )}
+              <button
+                onClick={() => resend(t.email)}
+                disabled={sending === t.email}
+                title="Send the setup email again"
+                aria-label={`Send the setup email to ${t.email}`}
+                className="rounded-lg p-1.5 text-ch-muted hover:bg-ch-green-soft hover:text-ch-green-deep disabled:opacity-50"
+              >
+                {sending === t.email ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              </button>
               <button
                 onClick={() => remove(t.email)}
                 className="text-ch-faint hover:text-red-500 transition-colors"
