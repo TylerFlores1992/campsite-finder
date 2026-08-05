@@ -891,6 +891,60 @@ the repo that needs neither).
 > benign causes: UseDirect grid 403s (above), and parks skipped for missing coords in
 > ReserveAmerica/GoingToCamp. `metadata.totalErrors` carries the count.
 
+## WebRezPro / `secure.webrez.com` — investigated 2026-08-05, DECIDED AGAINST
+
+Prompted by a request to add **Big Sur Campground & Cabins** (`bigsurcamp.com`), whose
+Reservations button goes to `secure.webrez.com/hotel/3590`. Recorded so nobody spends a
+day rediscovering it.
+
+**Both of the obvious objections were wrong, and the real blocker was somewhere else.**
+
+- *"A hotel booking engine can't model campsites."* **False.** The booking page embeds
+  `global_points_on_image_hash_array`, mapping **87 individual sites** at Big Sur to map
+  coordinates and human site numbers (`004`, `065-A`, …) across 24 unit types. Those
+  point ids are the same `inventory_id`s the availability response returns, so joining
+  them gives true per-site, per-night availability. Per-site watches and site-mute would
+  work.
+- *"It's one campground, so no leverage."* **Half wrong.** `secure.webrez.com` is the
+  multi-tenant booking host for **WebRezPro**, a PMS by World Web Technologies (Calgary),
+  advertising *"More than 2,000 properties worldwide"* with campgrounds/RV parks as a
+  named vertical. It is a family, like UseDirect.
+- The API is *technically cleaner than rec.gov's*:
+  `GET secure.webrez.com/Bookings105/activity-edit.html?table=hotels&listing_id=<id>&mode=ajax&command=website_availability_calendar_html_29&hotel_id=<id>&merchant_id=<id>&location_id=-1&language=english&date_start=YYYYMMDD`
+  returns pure JSON with **no cookies, no session, no CSRF, no auth**. (Traps: despite
+  `_html_` in the command name it is JSON; `date_from` is silently ignored — the param
+  is `date_start`; the window is a fixed 14 days.)
+
+**Why we are not building it:**
+
+1. **`robots.txt` is a blanket prohibition.** In full:
+   `User-agent: Googlebot / Allow: / · User-agent: * / Disallow: /`. Every other source
+   in this catalog is a government or public-agency portal with a public-data defence.
+   This is a private vendor's commercial booking engine run for private businesses, and
+   the page carries no terms at all — so robots.txt *is* the stated position. Polling it
+   every 15s from one Fly egress IP is a different risk category from anything the
+   project currently carries.
+2. **The leverage isn't actually there.** WebRezPro is primarily a hotel/inn/B&B PMS;
+   campgrounds are one of ~10 verticals. Eleven campground tenants were found by hand
+   (ids 1202–4018, four of them Canadian and therefore out of scope for a US-only app).
+   The estimate of **~50-150 US campgrounds is INFERRED from the id range and vertical
+   mix — the vendor publishes no campground count.** Against UseDirect's 9 states that
+   is one to two orders of magnitude less leverage.
+3. **There is no discovery path that isn't itself the violation.** No public directory,
+   no catalog endpoint; `secure.webrez.com/` is a staff sign-in. Finding the properties
+   means enumerating ~4,000 ids against that robots.txt.
+4. **Payload economics are bad** — ~500 KB per property per request (234 KB of it an
+   unused `html` blob that `return_html=0` does not suppress), i.e. ~2 MB/min per
+   campground at the 15s cadence.
+5. **Cloudflare Turnstile is already wired into the platform**, currently only on guest
+   sign-in modals. The vendor has the switch and an obvious reason to flip it.
+
+**The one legitimate path** if private campgrounds ever become strategic: WebRezPro runs
+a formal integration-partner programme (150+ partners). That would give sanctioned
+access, a real property catalog and probably a lighter payload — a business-development
+conversation, not an engineering spike. Until then the honest answer to "can you watch
+this private campground?" is **no, and it's a policy limit rather than a technical one**.
+
 ## The front end
 
 Rewritten and swapped over the live routes on 2026-07-27. Presentation only — no
