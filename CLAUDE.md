@@ -194,7 +194,29 @@ SID), `delivery_status` (Twilio's vocabulary, stored verbatim), `delivery_error`
   delivered. All-pending-with-no-answers **warns**: that's a broken callback URL, and a
   naive `delivered/answered` would be 0/0 = NaN and report perfect health.
 
-## Alert texts must stay in ONE segment (2026-08-05) — and the open question
+## SMS: link ONLY to the provider, never to camphawk.app (2026-08-05) — SOLVED
+Every alert text was filtered (30007) while auto-cart texts arrived. Cause: the A2P
+10DLC campaign's **registered sample messages** (written 7/7/2026, never changed) link
+to `recreation.gov/camping/campgrounds/[ID]` and `reservecalifornia.com/park/[ID]`.
+Live traffic sent `camphawk.app/b/<token>` — a domain in NO sample, in the exact shape
+carriers treat as a public URL shortener. Evidence, same handset, same segment count:
+recgov link → **Delivered**; no link → **Delivered**; camphawk.app link →
+**Undelivered/30007**. Campaign is Approved, "embedded links" is declared **Yes**, so
+neither was the problem — the CODE had drifted from the registration.
+- **`dispatchSms` now sends `payload.bookingUrl` directly** (fragment stripped). No
+  more `mintBookingToken`/`bookLink` in SMS; `/b/<token>` stays live for already-sent
+  links, and email always used the full URL. **Do not reintroduce a camphawk.app link
+  in SMS without first registering the domain on the campaign.**
+- **A first hypothesis — "2 segments get filtered" — was WRONG and the data looked
+  identical.** Every 2-segment message also happened to carry a camphawk.app link, so
+  both theories predicted all 50 rows. Dropping `Manage:` (1 segment, still our domain)
+  is what separated them, and it was still filtered.
+- **The delivery panel is now the regression detector.** Anyone who puts our domain
+  back into an SMS turns "Did the texts arrive?" red within hours.
+- The campaign is **SOLE_PROPRIETOR** (Starter), trust score blank, "Other carriers:
+  None specified". Not implicated by the evidence, but it is the lowest-trust tier.
+
+## Alert texts must stay in ONE segment (2026-08-05) — the length theory, disproved
 Within a day, migration 038 answered "why don't the texts arrive?". Twilio's log split
 perfectly on the **segment count**: every 1-segment message to our subscribers
 **Delivered**, every 2-segment message **Undelivered / 30007 ("message filtered")** —
@@ -210,12 +232,12 @@ can't be auto-carted and only ever sends the long kind.
   (two segments that say something beat one that says nothing). Trim marker is `.`,
   never `…` — the ellipsis is outside GSM-7 and would tip the message into UCS-2 where
   the budget is **70**, turning the fix into the bug.
-- **THE CORRELATION IS CONFOUNDED and this is only half a fix.** Every 2-segment
-  message also carries a `camphawk.app` link and every 1-segment one doesn't, so
-  "too long" and "untrusted link domain" predict the identical 50 rows. Dropping
-  `Manage:` is the discriminator: 1 segment, still a camphawk.app link. **Arriving ⇒ it
-  was length, done. Still filtered ⇒ it's the DOMAIN**, and the fix is registering
-  camphawk.app on the A2P 10DLC campaign, not more copy-trimming.
+- **THE CORRELATION WAS CONFOUNDED, and length LOST.** Every 2-segment message also
+  carried a `camphawk.app` link, so "too long" and "untrusted link domain" predicted the
+  identical 50 rows. Dropping `Manage:` was the discriminator — 1 segment, still our
+  domain — and Twilio's own log confirmed **1 segment, still Undelivered**. See the
+  section above: it was the domain. The one-segment work is kept anyway (cheaper, and
+  a 2-segment alert is still worse), but it fixed nothing on its own.
 - **`SMS_ONE_SEGMENT = 160` assumes Twilio Smart Encoding is ON** (evidence: delivered
   cart texts contain an em dash in source, arrived as a hyphen, counted 1 segment).
   Turn it off on the Messaging Service and every alert silently goes back to two.

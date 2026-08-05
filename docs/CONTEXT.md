@@ -2168,19 +2168,55 @@ keeping:
   Messaging Service that constant is a lie and every alert silently returns to two
   segments.
 
-**Do not read this as solved.** Every 2-segment message we send *also* carries a
-`camphawk.app` link, and every 1-segment one does not — so "carriers filter our long
-messages" and "carriers distrust our link domain" predict the identical fifty rows.
-Dropping `Manage:` is what separates them, because the result is one segment that STILL
-carries a camphawk.app link:
+#### The answer: it was the LINK DOMAIN, not the length
 
-- **alerts start arriving** ⇒ it was length. Done.
-- **alerts still filtered** ⇒ it is the DOMAIN. The fix is registering `camphawk.app` as
-  the campaign's link domain under Messaging → Regulatory Compliance → A2P 10DLC (and
-  making the sample messages match what we actually send), not more copy-trimming.
+The one-segment change was deployed to both shards at 14:33 UTC and the next three texts
+settled it:
 
-The admin "Did the texts arrive?" panel answers this on its own within a few hours of
-the next alerts; no further instrumentation is needed to decide.
+| time (UTC) | message | segments (per Twilio) | result |
+| --- | --- | --- | --- |
+| 15:00:22 | `coming_soon`, no link | 1 | **Delivered** |
+| 15:00:50 | `coming_soon`, no link | 1 | **Delivered** |
+| 15:30:49 | `available`, `camphawk.app/b/<token>` | **1** | **Undelivered · 30007** |
+
+A 127-character single-segment message was still filtered, and the same handset had
+accepted a 1-segment `recreation.gov` link the day before. **Length was never the
+cause.**
+
+The campaign itself was fine — Approved, `SOLE_PROPRIETOR`/Starter, "Messages contain
+embedded links: **Yes**". What was wrong sat in its **sample messages**, written
+7/7/2026 and never touched:
+
+```
+#1  Camp Hawk: 🏕 [Campground Name] has availability for your watched dates: [MM/DD],
+    [MM/DD]. Book now: https://www.recreation.gov/camping/campgrounds/[ID]. Reply STOP…
+#2  Camp Hawk: 🏕 A campsite opened up at [Park Name] for [MM/DD]-[MM/DD]. Reserve it at
+    https://www.reservecalifornia.com/park/[ID] before it's gone. Reply STOP…
+```
+
+Both link to the PROVIDER. Neither mentions `camphawk.app`. The `/b/<token>` shortlink
+was added to the code later, so live traffic carried a domain that appears nowhere in
+the registration — in the exact shape carriers treat as a public URL shortener (short
+domain, opaque token path). Everything observed fits with nothing left over: a
+recreation.gov link matches sample #1 and delivers, a linkless message has nothing to
+flag and delivers, our own domain matches no sample and is filtered.
+
+**The fix was to make the code match the registration, not to re-register.**
+`dispatchSms` now sends `payload.bookingUrl` directly (fragment stripped) — 142-150
+characters, still one segment, because a real booking URL is only 45-49 characters
+against the shortlink's ~39. `mintBookingToken`/`bookLink` are gone from the SMS path;
+`/b/<token>` stays live for links already sent, and email always used the full URL.
+
+> **Do not reintroduce a `camphawk.app` link into an SMS** without first getting the
+> domain onto the campaign. There is no unit test for this — the "Did the texts arrive?"
+> panel is the regression detector, and it goes red within hours.
+
+Two things left deliberately alone: the registered samples end with "Reply STOP to opt
+out" and ours don't (the Messaging Service's Advanced Opt-Out handles STOP/HELP, and
+adding 24 characters to every alert to match a sample is not worth doubling the segment
+count); and the brand is the lowest-trust `SOLE_PROPRIETOR` tier with a blank trust
+score and "Other carriers: None specified" — not implicated by any evidence here, but
+the thing to look at first if filtering ever returns without a code change.
 
 ## Expired watches close themselves (2026-08-05)
 

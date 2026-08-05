@@ -2,7 +2,7 @@ import { query, mutate } from '@/lib/db/client';
 import { sendEmail } from './email';
 import { sendSms } from './sms';
 import { sendPush } from './push';
-import { actionUrlFor, mintBookingToken, bookLink } from './actions';
+import { actionUrlFor } from './actions';
 import { fitOneSegment } from './sms-fit';
 import type { CampflareWebhookPayload } from '@/lib/campflare/types';
 import { USEDIRECT_PROVIDERS } from '@/lib/sources/reservecalifornia/providers';
@@ -252,11 +252,30 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
     } else {
       const dates = payload.availableDates.slice(0, 3).join(', ');
       const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3}` : '';
-      // Short-link the booking URL (fragment stripped — the #camphawk extension hint
-      // does nothing on a phone). Falls back to the full URL if minting fails.
-      const full = payload.bookingUrl.split('#')[0];
-      const tok = await mintBookingToken(payload.watchId, full, payload.campsiteId ?? null);
-      const bookTxt = tok ? bookLink(tok) : full;
+      // THE PROVIDER'S OWN URL, NOT OUR `camphawk.app/b/<token>` SHORTLINK (2026-08-05).
+      //
+      // This is the line that was silently filtering every alert. Our A2P 10DLC
+      // campaign's registered sample messages — written 7/7/2026, never changed — link
+      // to `recreation.gov/camping/campgrounds/[ID]` and
+      // `reservecalifornia.com/park/[ID]`. The shortlink went in later, so live traffic
+      // carried a domain that appears nowhere in the registration, in the one shape
+      // carriers treat as a public URL shortener: short domain, opaque token path.
+      // Delivery receipts made the consequence visible in a day — messages carrying a
+      // recreation.gov link were Delivered, messages carrying camphawk.app were
+      // Undelivered / 30007 ("message filtered"), same handset, same segment count.
+      //
+      // So the fix is to match the registration rather than re-register: the sample
+      // messages were right and the code drifted from them. It also costs almost
+      // nothing — a real booking URL is 45-49 characters against the shortlink's ~39,
+      // and the fragment is stripped because the #camphawk extension hint does nothing
+      // on a phone.
+      //
+      // `/b/<token>` STAYS ALIVE for links already sent; we simply stop minting new
+      // ones for SMS, which was their only consumer. Email uses the full URL already.
+      //
+      // Do not "improve" this back into a tracked shortlink without first getting the
+      // domain onto the campaign — the tracking is worth less than the message.
+      const bookTxt = payload.bookingUrl.split('#')[0];
       // A long campground name plus three dates can still clear 160 on its own, and an
       // alert that quietly goes back to two segments would look like the fix failing.
       body = fitOneSegment(
