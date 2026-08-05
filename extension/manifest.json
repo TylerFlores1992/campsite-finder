@@ -1,10 +1,14 @@
 {
   "manifest_version": 3,
   "name": "CampHawk Quick Cart",
-  "version": "0.1.0",
-  "description": "When you tap a CampHawk alert, optionally auto-fill dates and add the site to your cart on Recreation.gov — in your own browser session.",
+  "version": "0.2.0",
+  "description": "When you tap a CampHawk alert, optionally auto-fill dates and add the site to your cart on Recreation.gov or ReserveCalifornia — in your own browser session.",
   "permissions": ["storage"],
-  "host_permissions": ["https://www.recreation.gov/*"],
+  "host_permissions": [
+    "https://www.recreation.gov/*",
+    "https://www.reservecalifornia.com/*",
+    "https://rdapi.reservecalifornia.com/*"
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "CampHawk Quick Cart"
@@ -14,6 +18,19 @@
       "matches": ["https://www.recreation.gov/*"],
       "run_at": "document_idle",
       "js": ["content.js"]
+    },
+    {
+      "comment": "MAIN world at document_start: RC's auth token is Okta-encrypted in localStorage and only ever decrypted in page JS, so rc-inject.js wraps XHR/fetch to capture the live `accesstoken` header off RC's own calls. An isolated-world script cannot see it, and starting later misses the calls that carry it.",
+      "matches": ["https://www.reservecalifornia.com/*"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "js": ["rc-inject.js"]
+    },
+    {
+      "comment": "Isolated world, document_idle: reads the #camphawk-rc fragment, draws the banner, and POSTs the add-to-cart using the token rc-inject.js hands over via postMessage.",
+      "matches": ["https://www.reservecalifornia.com/*"],
+      "run_at": "document_idle",
+      "js": ["content-rc.js"]
     }
   ]
 }
