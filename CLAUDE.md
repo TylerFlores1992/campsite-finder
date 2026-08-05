@@ -194,6 +194,32 @@ SID), `delivery_status` (Twilio's vocabulary, stored verbatim), `delivery_error`
   delivered. All-pending-with-no-answers **warns**: that's a broken callback URL, and a
   naive `delivered/answered` would be 0/0 = NaN and report perfect health.
 
+## Alert texts must stay in ONE segment (2026-08-05) — and the open question
+Within a day, migration 038 answered "why don't the texts arrive?". Twilio's log split
+perfectly on the **segment count**: every 1-segment message to our subscribers
+**Delivered**, every 2-segment message **Undelivered / 30007 ("message filtered")** —
+50 rows, one exception, and that one was a different handset. Auto-cart texts kept
+arriving (~133 chars, one `recreation.gov` link); alerts did not (~186 chars, a `Book:`
+AND a `Manage:` link). Leo Carrillo NEVER arrived because it's ReserveCalifornia, so it
+can't be auto-carted and only ever sends the long kind.
+- **The `Manage:` link is GONE from SMS.** Alerts are now ~127-137 chars, one segment.
+  It survives in the email footer and the app. `carted` is UNCHANGED on purpose — it's
+  the control.
+- **`fitOneSegment` (`lib/notifications/sms-fit.ts`) trims the campground NAME** until
+  the body fits 160; never the dates or the link. Unfittable → returns the full body
+  (two segments that say something beat one that says nothing). Trim marker is `.`,
+  never `…` — the ellipsis is outside GSM-7 and would tip the message into UCS-2 where
+  the budget is **70**, turning the fix into the bug.
+- **THE CORRELATION IS CONFOUNDED and this is only half a fix.** Every 2-segment
+  message also carries a `camphawk.app` link and every 1-segment one doesn't, so
+  "too long" and "untrusted link domain" predict the identical 50 rows. Dropping
+  `Manage:` is the discriminator: 1 segment, still a camphawk.app link. **Arriving ⇒ it
+  was length, done. Still filtered ⇒ it's the DOMAIN**, and the fix is registering
+  camphawk.app on the A2P 10DLC campaign, not more copy-trimming.
+- **`SMS_ONE_SEGMENT = 160` assumes Twilio Smart Encoding is ON** (evidence: delivered
+  cart texts contain an em dash in source, arrived as a hyphen, counted 1 segment).
+  Turn it off on the Messaging Service and every alert silently goes back to two.
+
 ## Expired watches close themselves (2026-08-05)
 `worker/expire-watches.ts`, hourly, under a `withSyncClaim('expire-watches')`.
 **The predicate must never be wider than the poller's filter.** The poller runs

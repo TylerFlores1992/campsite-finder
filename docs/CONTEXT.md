@@ -2120,6 +2120,68 @@ warn ≥3%, fail ≥10%).
   `sent` and `delivered`. A PERMANENT stream of them means the SID is not being saved
   at send time, which is the one way this feature dies quietly.
 
+### What the receipts found on day one — alerts were 2 segments and 2 segments were filtered
+
+Migration 038 shipped at 05:21 UTC on 2026-08-05 and had its answer by evening. Twilio's
+Programmable Messaging log splits **perfectly on the segment column**:
+
+| | segments | outcome |
+| --- | --- | --- |
+| delivery canary (no link) | 1 | **Delivered** |
+| `carted` (one `recreation.gov/cart` link, ~133 chars) | 1 | **Delivered** |
+| `available` (`Book:` + `Manage:`, ~186 chars) | 2 | **Undelivered · 30007** |
+| `coming_soon` (`Manage:`, ~182 chars) | 2 | **Undelivered · 30007** |
+
+Fifty rows, one exception, and that exception was a 1-segment message to a *different*
+handset. 30007 is "message filtered — blocked by Twilio or a carrier".
+
+This also explains the shape of the complaint exactly. **Silver Lake arrived and Leo
+Carrillo never did** because Silver Lake is rec.gov and gets auto-carted — a short,
+single-link text — while Leo Carrillo is ReserveCalifornia, which auto-cart does not
+cover, so every text it can ever send is the long kind. And a single site flipped
+mid-stream: Silver Lake 008 arrived at 04:29 as a cart text, then the
+one-cart-per-(watch,site) gate made every later opening fall through to a normal alert,
+and delivery stopped at 05:29 and never resumed.
+
+**Other subscribers were affected too** — +1 805 404 7195, +1 805 368 8804 — so this was
+not one handset being odd.
+
+#### The fix, and the confound it does NOT resolve
+
+The `Manage:` link is **removed from SMS** (`dispatchSms`). Alerts go from ~186 to
+~127-137 characters — one segment. The link survives in the email footer and in the app;
+a manage link inside a text nobody receives is worth less than no manage link in a text
+that arrives. **`carted` is deliberately unchanged** — it is the control.
+
+`fitOneSegment` in **`lib/notifications/sms-fit.ts`** keeps it there. It trims the
+campground NAME until the body fits 160, never the dates and never the booking link
+(those are what the reader acts on; a name is still useful truncated). If even a minimal
+name won't fit it returns the FULL body rather than a mangled one. Two rules worth
+keeping:
+
+- **The trim marker is `.`, never `…`.** The ellipsis character is outside GSM-7, so it
+  would either cost three characters after transliteration or tip the whole message into
+  **UCS-2, where the budget collapses to 70** — turning the fix into the bug.
+- **`SMS_ONE_SEGMENT = 160` assumes Twilio's Smart Encoding is ON.** The evidence says it
+  is: the delivered cart texts contain an em dash in our source, arrived rendering a
+  hyphen, and Twilio counted them as one segment. If it is ever switched off on the
+  Messaging Service that constant is a lie and every alert silently returns to two
+  segments.
+
+**Do not read this as solved.** Every 2-segment message we send *also* carries a
+`camphawk.app` link, and every 1-segment one does not — so "carriers filter our long
+messages" and "carriers distrust our link domain" predict the identical fifty rows.
+Dropping `Manage:` is what separates them, because the result is one segment that STILL
+carries a camphawk.app link:
+
+- **alerts start arriving** ⇒ it was length. Done.
+- **alerts still filtered** ⇒ it is the DOMAIN. The fix is registering `camphawk.app` as
+  the campaign's link domain under Messaging → Regulatory Compliance → A2P 10DLC (and
+  making the sample messages match what we actually send), not more copy-trimming.
+
+The admin "Did the texts arrive?" panel answers this on its own within a few hours of
+the next alerts; no further instrumentation is needed to decide.
+
 ## Expired watches close themselves (2026-08-05)
 
 `worker/expire-watches.ts`, hourly, under `withSyncClaim('expire-watches')`.

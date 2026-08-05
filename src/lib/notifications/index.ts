@@ -2,7 +2,8 @@ import { query, mutate } from '@/lib/db/client';
 import { sendEmail } from './email';
 import { sendSms } from './sms';
 import { sendPush } from './push';
-import { actionUrlFor, mintBookingToken, bookLink, manageUrlFor } from './actions';
+import { actionUrlFor, mintBookingToken, bookLink } from './actions';
+import { fitOneSegment } from './sms-fit';
 import type { CampflareWebhookPayload } from '@/lib/campflare/types';
 import { USEDIRECT_PROVIDERS } from '@/lib/sources/reservecalifornia/providers';
 import { GOINGTOCAMP_PROVIDERS } from '@/lib/sources/goingtocamp/providers';
@@ -208,20 +209,46 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
   // camphawk.app/b/<token> redirect. The per-message "Reply STOP" is dropped — the
   // Twilio Messaging Service's Advanced Opt-Out handles STOP/HELP.
   //
-  // The separate Mute/Stop links are collapsed into ONE "Manage" link to the per-watch
-  // manage page (pause/resume, alert history, per-site mute) — cleaner in the text and
-  // more capable than two one-tap links. `links` still feeds the richer email footer.
+  // THE "Manage:" LINK IS GONE FROM SMS (2026-08-05), and it is not a tidy-up.
+  //
+  // It used to be here because collapsing the old Mute/Stop pair into one manage link
+  // read better and did more. Then delivery receipts (migration 038) showed what it
+  // actually cost: with both a Book: and a Manage: link an alert ran ~186 characters —
+  // TWO segments — and in Twilio's log every 2-segment message to our subscribers came
+  // back Undelivered with error 30007, while every 1-segment one was Delivered. The
+  // auto-cart texts kept arriving precisely because they carry one short
+  // recreation.gov link and nothing else. Dropping this line takes an alert to ~131
+  // characters and one segment.
+  //
+  // The link is not lost: the email footer still carries it, and the app has the same
+  // page. A manage link in a text nobody receives is worth less than no manage link in
+  // a text that arrives.
+  //
+  // See sms-fit.ts for the confound this does NOT resolve — every 2-segment message
+  // also happens to carry a camphawk.app link, so if alerts still don't arrive after
+  // this, the cause is the link DOMAIN and the fix is on the A2P 10DLC campaign.
+  //
+  // URLs keep their `https://` scheme so every SMS client renders them as tappable
+  // links. We previously stripped the scheme to save 8 chars/link, relying on clients
+  // to auto-linkify the bare domain — but that's unreliable (a bare `camphawk.app/…`
+  // with a path is NOT linkified on many Android/RCS clients), so alerts arrived with
+  // dead links. Clickability wins. The per-message "Reply STOP" is dropped too — the
+  // Twilio Messaging Service's Advanced Opt-Out handles STOP/HELP.
   const site = payload.campsiteName ? ` Site ${payload.campsiteName}` : '';
   const name = payload.campgroundName.replace(/\s+(campground|cg)\.?$/i, '');
-  const manageUrl = await manageUrlFor(payload.watchId);
-  const manageTxt = manageUrl ? ` Manage: ${manageUrl}` : '';
 
   try {
     let body: string;
     if (payload.kind === 'carted') {
+      // Already one segment and already arriving. Left exactly as it was — this is the
+      // control in the experiment, and changing it would throw that away.
       body = `CampHawk: ${name}${site} is in your cart — check out now, held ~15 min: https://www.recreation.gov/cart`;
     } else if (payload.kind === 'coming_soon') {
-      body = `CampHawk: ${name}${site} was just cancelled, opens ${formatReleaseTime(payload.availableAt, true)}. We'll text when it's bookable.${manageTxt}`;
+      const when = formatReleaseTime(payload.availableAt, true);
+      body = fitOneSegment(
+        (n) => `CampHawk: ${n}${site} was just cancelled, opens ${when}. We'll text when it's bookable.`,
+        name
+      );
     } else {
       const dates = payload.availableDates.slice(0, 3).join(', ');
       const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3}` : '';
@@ -230,7 +257,12 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
       const full = payload.bookingUrl.split('#')[0];
       const tok = await mintBookingToken(payload.watchId, full, payload.campsiteId ?? null);
       const bookTxt = tok ? bookLink(tok) : full;
-      body = `CampHawk: ${name}${site} open ${dates}${more}. Book: ${bookTxt}${manageTxt}`;
+      // A long campground name plus three dates can still clear 160 on its own, and an
+      // alert that quietly goes back to two segments would look like the fix failing.
+      body = fitOneSegment(
+        (n) => `CampHawk: ${n}${site} open ${dates}${more}. Book: ${bookTxt}`,
+        name
+      );
     }
     // `sent` here still means only "Twilio accepted it" — the row is completed later
     // by /api/webhooks/twilio, matched on this SID. Without the SID the receipt has
