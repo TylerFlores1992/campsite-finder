@@ -52,6 +52,7 @@ import { runDetectionCanary, runDeliveryCanary } from './canary';
 import { claimNotification } from './claim';
 import { alreadyCartedForWatch } from './carted-history';
 import { withSyncClaim } from './sync-claim';
+import { expireFinishedWatches, EXPIRE_INTERVAL_MS } from './expire-watches';
 import { findQualifyingRun, flexCandidateStays, isFlexible, type FlexDays, type FlexSpec } from '../src/lib/availability/flex';
 import { markAlive, msSinceAlive, msSinceExternalFetchOk, externalFetchWedged } from './liveness';
 
@@ -1252,6 +1253,25 @@ async function main() {
   setInterval(rcSyncIfDue, 60 * 60 * 1000);
   gtcSyncIfDue();
   setInterval(gtcSyncIfDue, 60 * 60 * 1000);
+
+  // Close watches whose trip has already happened — see worker/expire-watches.ts for
+  // why the predicate must stay exactly the complement of the poller's own filter.
+  // Under a claim so only one machine writes, though the UPDATE is idempotent.
+  const expireSweep = async () => {
+    try {
+      await withSyncClaim('expire-watches', async () => {
+        const closed = await expireFinishedWatches();
+        if (closed.length > 0)
+          console.log(
+            `[poller] closed ${closed.length} watch${closed.length === 1 ? '' : 'es'} whose dates have passed`
+          );
+      });
+    } catch (err) {
+      console.error('[poller] expire sweep failed:', (err as Error).message);
+    }
+  };
+  expireSweep();
+  setInterval(expireSweep, EXPIRE_INTERVAL_MS);
 
   // Feature E probe roster: sample high-demand campgrounds hourly so the
   // cancellation-likelihood signal covers popular sites nobody is watching.

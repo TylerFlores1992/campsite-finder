@@ -44,6 +44,55 @@ interface Preset {
 }
 
 const PRESETS: Record<string, Preset> = {
+  'admin-health': {
+    label: 'AdminTabs → System Health, with a warn and a fail among the rows',
+    // The reason this preset exists: the page's status was carried by hue alone, and
+    // the owner is colour-blind. Every level here must be readable with the colour
+    // channel ignored — so the fixture deliberately mixes ok/warn/fail in one view.
+    //
+    // The tab is selected by CLICKING it after mount rather than by adding an
+    // `initialTab` prop: a screenshot harness should not widen a component's
+    // production API. Pass --wait so the click lands before the capture.
+    entry: `import AdminTabs from '@/components/admin/AdminTabs';
+      const day = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+      const series = { users: [{ day: day(3), n: 2 }], subs: [], watches: [], alerts: [] };
+      const data = {
+        clerkTotal: 41, usersAgg: { total: 38, new_7d: 3, new_30d: 9 }, activeSub: { n: 6 },
+        subMap: { active: 5, trialing: 1, past_due: 1, canceled: 2 },
+        watchAgg: { active: 13, total: 61, watchers: 11 },
+        alertAgg: { sent: 402, sent_7d: 21, failed: 12 },
+        cgRows: [{ source: 'ridb', n: 4469 }], cgTotal: 8013, series, mrr: { monthly: 21.5, activeCount: 6 },
+        beat: { beat_at: new Date().toISOString(), watches_checked: 13, age_s: 11 },
+        workerHealthy: true,
+        canaryRows: [
+          { key: 'detect:ridb', ok: true, age_s: 40, consecutive_failures: 0, detail: null },
+          { key: 'detect:reservecalifornia', ok: true, age_s: 55, consecutive_failures: 0, detail: null },
+          { key: 'detect:goingtocamp', ok: false, age_s: 90, consecutive_failures: 1, detail: 'timeout' },
+          { key: 'detect:tnsc', ok: false, age_s: 300, consecutive_failures: 4, detail: 'HTTP 403' },
+          { key: 'delivery:email', ok: true, age_s: 3600 * 6, consecutive_failures: 0, detail: null },
+          { key: 'delivery:sms', ok: true, age_s: 3600 * 9, consecutive_failures: 0, detail: null },
+          { key: 'delivery:push', ok: true, age_s: 3600 * 7, consecutive_failures: 0, detail: null },
+        ],
+        syncRows: [
+          { source: 'ridb', finished_at: day(0), facilities_synced: 4469, error: null, metadata: { totalErrors: 0 }, age_s: 7200 },
+          { source: 'goingtocamp-WA', finished_at: day(0), facilities_synced: 120, error: 'WAF challenge', metadata: { totalErrors: 40 }, age_s: 9000 },
+          { source: 'reserveamerica-IL', finished_at: day(0), facilities_synced: 0, error: '403', metadata: { totalErrors: 282 }, age_s: 9600 },
+          { source: 'reservecalifornia', finished_at: day(0), facilities_synced: 1211, error: null, metadata: { totalErrors: 3 }, age_s: 12000 },
+        ],
+        smsDelivery: { delivered: 84, dropped: 5, pending: 2, untracked: 311 },
+        costItems: [], usage: { sms: 0, email: 0, push: 0 }, lifetimeUsage: { sms: 0, email: 0, push: 0 },
+        monthLabel: 'Aug 2026',
+      };
+      if (typeof window !== 'undefined') {
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) });
+        setTimeout(() => {
+          const b = [...document.querySelectorAll('button')].find((x) => x.textContent === 'System Health');
+          b && b.click();
+        }, 400);
+      }
+      export const node = <AdminTabs data={data} />;`,
+    frame: 'max-w-5xl w-full mx-auto',
+  },
   'admin-chart': {
     label: 'MetricChart (total users, 30 days) with metric + range controls',
     // Raw all-time daily rows, as the server now sends them: a long tail before the

@@ -56,7 +56,7 @@ export default async function AdminPage() {
   // Allowlist lives in lib/admin — see the note there about the four copies.
   if (!(await currentUserIsAdmin())) notFound();
 
-  const [usersAgg, seriesRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows, costItems, usageRows, lifetimeUsageRows] =
+  const [usersAgg, seriesRows, subRows, activeSub, watchAgg, alertAgg, cgRows, beat, syncRows, canaryRows, costItems, usageRows, lifetimeUsageRows, smsDelivery] =
     await Promise.all([
       safe(
         queryOne<{ total: number; new_7d: number; new_30d: number }>(
@@ -192,6 +192,35 @@ export default async function AdminPage() {
         ),
         []
       ),
+      // DID THE TEXTS ACTUALLY ARRIVE? (migration 038)
+      //
+      // `status = 'sent'` above counts messages TWILIO ACCEPTED, which is what we
+      // could measure before delivery receipts existed and is not the same question.
+      // These buckets are the carrier's answer:
+      //   delivered   — it reached a handset.
+      //   dropped     — undelivered/failed: carrier rejection, unreachable handset,
+      //                 A2P filtering. The silent failure this whole feature is for.
+      //   pending     — accepted, receipt not in yet. Normal for seconds, suspicious
+      //                 for hours.
+      //   untracked   — sent before 038, or sent with no SID captured. Kept visible
+      //                 rather than folded into "delivered", so the denominator is
+      //                 honest while the backlog ages out.
+      // 30 days, because a rate over all time would take months to react to a
+      // regression that started yesterday.
+      safe(
+        queryOne<{ delivered: number; dropped: number; pending: number; untracked: number }>(
+          `SELECT count(*) FILTER (WHERE delivery_status = 'delivered')::int delivered,
+                  count(*) FILTER (WHERE delivery_status IN ('undelivered','failed','canceled'))::int dropped,
+                  count(*) FILTER (WHERE provider_id IS NOT NULL
+                                     AND (delivery_status IS NULL
+                                          OR delivery_status NOT IN ('delivered','undelivered','failed','canceled')))::int pending,
+                  count(*) FILTER (WHERE provider_id IS NULL)::int untracked
+             FROM notifications
+            WHERE channel = 'sms' AND status = 'sent'
+              AND created_at > now() - interval '30 days'`
+        ),
+        { delivered: 0, dropped: 0, pending: 0, untracked: 0 }
+      ),
     ]);
 
   const mrr = await computeMrr().catch(() => null);
@@ -248,6 +277,7 @@ export default async function AdminPage() {
     workerHealthy,
     canaryRows,
     syncRows,
+    smsDelivery,
     costItems: costItems as CostItem[],
     usage,
     lifetimeUsage,

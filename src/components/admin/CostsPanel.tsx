@@ -207,7 +207,13 @@ export default function CostsPanel({
         <SummaryCard
           label="Net / month"
           value={netCents == null ? '—' : fmtUSD(netCents)}
-          sub={mrrCents == null ? 'MRR unavailable' : `MRR ${fmtUSD(mrrCents)} − cost`}
+          // Green-vs-red was carrying "are we making money" on its own, and a leading
+          // minus sign on a small number is easy to miss. Say it.
+          sub={
+            mrrCents == null
+              ? 'MRR unavailable'
+              : `${netCents != null && netCents < 0 ? 'Losing money · ' : 'Profit · '}MRR ${fmtUSD(mrrCents)} − cost`
+          }
           accent={netCents == null ? undefined : netCents >= 0 ? 'green' : 'red'}
         />
       </div>

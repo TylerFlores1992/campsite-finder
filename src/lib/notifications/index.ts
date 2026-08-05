@@ -65,11 +65,15 @@ async function logNotification(
   payload: NotificationPayload,
   channel: string,
   status: 'sent' | 'failed',
-  error?: string
+  error?: string,
+  /** Provider message id — the Twilio SID for SMS. This is the join key the delivery
+   *  callback arrives with, so a row logged without it can never learn whether the
+   *  text landed: the receipt comes back and matches nothing. */
+  providerId?: string | null
 ): Promise<void> {
   await mutate(
-    `INSERT INTO notifications (user_id, watch_id, campground_id, channel, status, payload, error)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    `INSERT INTO notifications (user_id, watch_id, campground_id, channel, status, payload, error, provider_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [
       payload.userId,
       payload.watchId,
@@ -78,6 +82,7 @@ async function logNotification(
       status,
       JSON.stringify(payload),
       error ?? null,
+      providerId ?? null,
     ]
   ).catch((err) => console.error('[notifications] Failed to log:', err));
 }
@@ -227,8 +232,11 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
       const bookTxt = tok ? bookLink(tok) : full;
       body = `CampHawk: ${name}${site} open ${dates}${more}. Book: ${bookTxt}${manageTxt}`;
     }
-    await sendSms({ to: phone, body });
-    await logNotification(payload, 'sms', 'sent');
+    // `sent` here still means only "Twilio accepted it" — the row is completed later
+    // by /api/webhooks/twilio, matched on this SID. Without the SID the receipt has
+    // nothing to write to, so this is the one place the whole feature hinges on.
+    const { sid } = await sendSms({ to: phone, body });
+    await logNotification(payload, 'sms', 'sent', undefined, sid);
   } catch (err) {
     await logNotification(payload, 'sms', 'failed', (err as Error).message);
   }

@@ -61,6 +61,51 @@ export const DETECT_DEAD_MS = DETECT_STALE_MS;
  */
 export const RECGOV_MONTHS_PER_MACHINE = 4;
 
+/* ------------------------------------------------------------ SMS delivery */
+
+/** Carrier outcomes for SMS over a window — see migration 038 for each bucket. */
+export type SmsDelivery = {
+  delivered: number;
+  dropped: number;
+  pending: number;
+  untracked: number;
+};
+
+/**
+ * Below this many carrier-ANSWERED messages, a rate is noise: one undelivered text out
+ * of three is 33% and means nothing. Same lesson as the canary thresholds above — a
+ * dashboard that cries wolf trains its only reader to ignore it.
+ */
+export const SMS_MIN_SAMPLE = 10;
+/** A few percent of drops is ordinary carrier behaviour on any A2P route. */
+export const SMS_DROP_WARN = 0.03;
+/** Past this it is us, not the carriers: a filtered campaign, a bad sender id, a
+ *  number pool that lost its registration. */
+export const SMS_DROP_FAIL = 0.1;
+
+/**
+ * "Are the texts arriving?" — which is NOT what the SMS canary answers. The canary
+ * proves Twilio ACCEPTS a message from us; delivery is a different system failing in a
+ * different way, and the gap between the two is where a real alert went missing on
+ * 2026-08-05 (email and push arrived, the text did not, every row said `sent`).
+ *
+ * Two distinct failures. The obvious one is a high drop rate. The quiet one is receipts
+ * never coming back AT ALL: if the StatusCallback URL is wrong, or the signature check
+ * is rejecting Twilio, every message sits `pending` forever and a naive rate over
+ * `delivered / answered` would divide by zero and report perfect health while measuring
+ * nothing. Hence the first branch — a pile of pending with no answers among them is a
+ * broken pipe, not patience.
+ */
+export function smsLevel(d: SmsDelivery): 'ok' | 'warn' | 'fail' {
+  const answered = d.delivered + d.dropped;
+  if (answered === 0) return d.pending >= SMS_MIN_SAMPLE ? 'warn' : 'ok';
+  if (answered < SMS_MIN_SAMPLE) return 'ok';
+  const rate = d.dropped / answered;
+  if (rate >= SMS_DROP_FAIL) return 'fail';
+  if (rate >= SMS_DROP_WARN) return 'warn';
+  return 'ok';
+}
+
 export const DELIVERY_STALE_SECONDS = DELIVERY_STALE_MS / 1000;
 export const DETECT_STALE_SECONDS = DETECT_STALE_MS / 1000;
 export const DELIVERY_DEAD_SECONDS = DELIVERY_DEAD_MS / 1000;

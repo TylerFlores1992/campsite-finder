@@ -169,6 +169,51 @@ The decision "may we alert for this?" is `worker/claim.ts`, keyed on
   alert. Keyed on `watch_id`, so a new watch for the same campground starts over
   for free; a FAILED attempt doesn't block a retry; fail-OPEN on a read error.
 
+## SMS delivery is MEASURED now, not assumed (2026-08-05)
+`notifications.status = 'sent'` only ever meant **Twilio's API returned 2xx**. Carrier
+rejection, an unreachable handset and A2P filtering all happen after that, so a dropped
+text and a read text were the same row. Migration 038 adds `provider_id` (the Twilio
+SID), `delivery_status` (Twilio's vocabulary, stored verbatim), `delivery_error`,
+`delivered_at`.
+- `sendSms` now **returns `{sid, status}`** instead of discarding the response body, and
+  sends a `StatusCallback`. `status` here is `queued`/`accepted` — **never read it as
+  delivery.** The real answer lands at **`/api/webhooks/twilio`**.
+- **`status` and `delivery_status` are deliberately separate columns**: one records what
+  WE did, one what the CARRIER did. Collapsing them destroys the only distinction that
+  makes this useful.
+- The webhook is PUBLIC (`/api/webhooks/(.*)` is already in `isPublicRoute`), so
+  `lib/notifications/twilio-signature.ts` is the entire access control — fails CLOSED
+  on a missing header or missing `TWILIO_AUTH_TOKEN`. It signs **the URL we gave
+  Twilio**, not `req.url`: behind Vercel's proxy those differ and signing the wrong one
+  rejects 100% of callbacks. Tested against Twilio's published example, so the test
+  asserts the ALGORITHM, not that our encoder agrees with our decoder.
+- A way-point never overwrites a terminal status (callbacks are unordered and retried).
+- Admin: **"Did the texts arrive?"** panel + banner integration, thresholds and
+  `smsLevel()` in `lib/health-thresholds.ts`. Guarded by `SMS_MIN_SAMPLE = 10` — 2 of 3
+  dropped is 67% and means nothing. `untracked` (pre-038 rows) is shown, never assumed
+  delivered. All-pending-with-no-answers **warns**: that's a broken callback URL, and a
+  naive `delivered/answered` would be 0/0 = NaN and report perfect health.
+
+## Expired watches close themselves (2026-08-05)
+`worker/expire-watches.ts`, hourly, under a `withSyncClaim('expire-watches')`.
+**The predicate must never be wider than the poller's filter.** The poller runs
+`end_date > CURRENT_DATE`; the sweep closes exactly the complement. Wider by a day and
+it switches off watches the poller is still running — a silent alerting outage with no
+error anywhere. Narrower is harmless. `worker/expire-watches.test.mts` fails against
+exactly that bug (verified by making it).
+
+## The admin dashboard never signals with colour alone (2026-08-05)
+The owner is colour-blind; green/ochre/red dots are three grey dots to a deuteranope, on
+the one page whose job is "is anything broken?". Every status now carries a distinct
+**icon shape** and a **word** — `LEVEL_MARK` / `StatusMark` in `AdminTabs.tsx`, hue as
+the redundant third channel. Shapes differ in silhouette at 12px (round tick, triangle,
+round cross); the banner used a triangle for BOTH warn and fail, i.e. the two states it
+exists to tell apart differed only in hue. **Route any new status through
+`LEVEL_MARK`/`StatusMark`** — a bare `bg-ch-*` dot is a regression. Same rule applied to
+"Failed alerts" (says "above the 2% ceiling") and Costs → Net/month (says "Losing money"
+rather than relying on red and a minus sign). Preset `admin-health` in
+`scripts/screenshot-component.mts` renders the tab with a warn and a fail in view.
+
 ## rec.gov 429s — four fixes in one loop (2026-07-30)
 The breaker was flapping six times in thirteen minutes, so rec.gov watches went
 unchecked ~40% of the time and the "Recreation.gov isn't responding" banner flapped

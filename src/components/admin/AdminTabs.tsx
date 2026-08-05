@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertTriangle, CheckCircle2, ExternalLink } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ExternalLink, XCircle } from 'lucide-react';
 import BetaTesters from '@/components/BetaTesters';
 import CostsPanel from '@/components/admin/CostsPanel';
 import MetricChart, {
@@ -14,6 +14,7 @@ import MetricChart, {
   type SeriesKey,
 } from '@/components/admin/MetricChart';
 import type { CostItem, UsageCounts } from '@/lib/costs';
+import type { SmsDelivery } from '@/lib/health-thresholds';
 
 /**
  * Admin dashboard, in the redesign's ch-* system.
@@ -31,6 +32,14 @@ import type { CostItem, UsageCounts } from '@/lib/costs';
  * Colour is used sparingly and consistently: green healthy, ochre
  * degraded-but-working, red broken. That's the ch-* Tag vocabulary the rest of
  * the app already uses, so the dashboard reads the way the product does.
+ *
+ * BUT COLOUR IS NEVER THE ONLY CHANNEL (2026-08-05). The owner of this dashboard is
+ * colour-blind, and green/ochre/red dots are three grey dots to a deuteranope — this
+ * page's entire job is "is anything broken?", answered in the one channel they can't
+ * read. Every status now carries a distinct ICON SHAPE and a WORD (`LEVEL_MARK`);
+ * hue is the redundant third channel, not the signal. If you add a status anywhere on
+ * this page, route it through `StatusMark`/`LEVEL_MARK` rather than picking a
+ * `bg-ch-*` class — a bare coloured dot is a regression, not a style choice.
  */
 
 type Beat = { beat_at: string; watches_checked: number; age_s: number } | null;
@@ -64,6 +73,9 @@ export interface AdminData {
   workerHealthy: boolean;
   canaryRows: CanaryRow[];
   syncRows: SyncRow[];
+  /** Carrier outcomes for SMS sent in the last 30 days (migration 038). `alertAgg.sent`
+   *  counts messages Twilio ACCEPTED; this counts messages that actually landed. */
+  smsDelivery: SmsDelivery;
   costItems: CostItem[];
   usage: UsageCounts;
   /** ALL-TIME alert counts, for lifetime spend. Distinct from `usage` (this month). */
@@ -76,6 +88,8 @@ import {
   DETECT_STALE_SECONDS,
   DELIVERY_DEAD_SECONDS,
   DETECT_DEAD_SECONDS,
+  SMS_MIN_SAMPLE,
+  smsLevel,
 } from '@/lib/health-thresholds';
 
 const TABS = ['Overview', 'Users & Revenue', 'Engagement', 'System Health', 'Costs'] as const;
@@ -157,6 +171,17 @@ function overallStatus(data: AdminData): { level: Level; headline: string; detai
     if (lvl === 'fail') problems.push(`the ${sy.source} sync returned nothing`);
     else if (lvl === 'warn' && sy.error) syncWarnings++;
   }
+  // Texts that never arrive belong in the banner: the canaries prove we CAN send one,
+  // and a carrier dropping real alerts is invisible to them.
+  const sms = data.smsDelivery;
+  const smsLvl = smsLevel(sms);
+  const smsAnswered = sms.delivered + sms.dropped;
+  const smsNote =
+    smsAnswered === 0
+      ? 'no SMS delivery receipts are coming back from Twilio'
+      : `${((sms.dropped / smsAnswered) * 100).toFixed(0)}% of texts are not reaching phones`;
+  if (smsLvl === 'fail') problems.push(smsNote);
+  else if (smsLvl === 'warn') canaryWarnings.push(smsNote);
 
   if (problems.length) {
     return {
@@ -211,11 +236,57 @@ function summarise(items: string[], max: number): string {
   return `${items.slice(0, max).join(', ')} and ${items.length - max} more`;
 }
 
-const LEVEL_STYLE: Record<Level, { box: string; text: string }> = {
-  ok: { box: 'border-[#BFDDC9] bg-ch-green-soft', text: 'text-ch-green-deep' },
-  warn: { box: 'border-[#E7C98C] bg-ch-ochre-soft', text: 'text-ch-ochre-ink' },
-  fail: { box: 'border-[#E7BFB4] bg-ch-alert-soft', text: 'text-ch-alert-deep' },
+/**
+ * The three levels, in every channel at once: a distinct icon SHAPE, a WORD, and only
+ * then a colour. One record so a new status surface can't invent its own vocabulary —
+ * the previous version of this file had "green dot / ochre dot / red dot" spelled out
+ * inline in three different places, which is exactly how a page ends up legible only
+ * to people who can separate those three hues.
+ *
+ * The shapes are chosen to differ at 12px in silhouette alone: a round tick, a
+ * triangle, a round cross. Two triangles for warn and fail would have been prettier
+ * and useless.
+ */
+const LEVEL_MARK: Record<
+  Level,
+  { Icon: typeof CheckCircle2; word: string; box: string; text: string }
+> = {
+  ok: {
+    Icon: CheckCircle2,
+    word: 'OK',
+    box: 'border-[#BFDDC9] bg-ch-green-soft',
+    text: 'text-ch-green-deep',
+  },
+  warn: {
+    Icon: AlertTriangle,
+    word: 'Warning',
+    box: 'border-[#E7C98C] bg-ch-ochre-soft',
+    text: 'text-ch-ochre-ink',
+  },
+  fail: {
+    Icon: XCircle,
+    word: 'Failing',
+    box: 'border-[#E7BFB4] bg-ch-alert-soft',
+    text: 'text-ch-alert-deep',
+  },
 };
+
+/**
+ * The status marker used everywhere on this page.
+ *
+ * `showWord` only controls the VISIBLE word — it is always present for screen readers,
+ * so hiding it never costs the label, just the pixels. Callers that already print the
+ * word elsewhere in the row (the Alerting header says "Running"/"Stalled") pass false.
+ */
+function StatusMark({ level, showWord = true }: { level: Level; showWord?: boolean }) {
+  const { Icon, word, text } = LEVEL_MARK[level];
+  return (
+    <span className={`inline-flex items-center gap-1 whitespace-nowrap font-bold ${text}`}>
+      <Icon aria-hidden="true" className="size-3.5 shrink-0" />
+      {showWord ? word : <span className="sr-only">{word}</span>}
+    </span>
+  );
+}
 
 export default function AdminTabs({ data }: { data: AdminData }) {
   const [tab, setTab] = useState<Tab>('Overview');
@@ -226,19 +297,27 @@ export default function AdminTabs({ data }: { data: AdminData }) {
   const [range, setRange] = useState<RangeKey>('30d');
   const mrrCents = data.mrr ? Math.round(data.mrr.monthly * 100) : null;
   const status = overallStatus(data);
-  const style = LEVEL_STYLE[status.level];
+  const style = LEVEL_MARK[status.level];
+  // Distinct shape per level. This used to be "tick if ok, triangle otherwise", so
+  // warn and fail — the two the banner exists to tell apart — shared one glyph and
+  // differed only in hue.
+  const BannerIcon = style.Icon;
 
   return (
     <div className="font-ch-body text-ch-ink">
       {/* Status above the tabs — it's true regardless of which tab you're on,
           and it's the reason most visits to this page happen. */}
       <div className={`mb-5 flex items-start gap-3 rounded-ch-card border p-4 ${style.box}`}>
-        {status.level === 'ok' ? (
-          <CheckCircle2 aria-hidden="true" className={`mt-0.5 size-5 shrink-0 ${style.text}`} />
-        ) : (
-          <AlertTriangle aria-hidden="true" className={`mt-0.5 size-5 shrink-0 ${style.text}`} />
-        )}
+        <BannerIcon aria-hidden="true" className={`mt-0.5 size-5 shrink-0 ${style.text}`} />
         <div className="min-w-0">
+          {/* The level, spelled out. The headline names the problem but not its
+              severity — "3 catalog syncs finished with warnings" and "the poller has
+              stopped" were the same sentence shape in two shades of pastel. */}
+          <p
+            className={`text-ch-label font-bold tracking-[.12em] uppercase opacity-80 ${style.text}`}
+          >
+            {style.word}
+          </p>
           <p className={`font-ch-display text-ch-h font-bold ${style.text}`}>{status.headline}</p>
           <p className={`mt-0.5 text-ch-meta leading-normal opacity-90 ${style.text}`}>
             {status.detail}
@@ -466,7 +545,12 @@ function EngagementPanel({ data }: { data: AdminData }) {
         <Kpi
           label="Failed alerts"
           value={alertAgg.failed.toLocaleString()}
-          sub={alertAgg.sent > 0 ? `${failRate.toFixed(1)}% of sends` : 'no sends yet'}
+          sub={
+            alertAgg.sent === 0
+              ? 'no sends yet'
+              : // The red number was the only thing saying "and that is too many".
+                `${failRate.toFixed(1)}% of sends${failRate > 2 ? ' — above the 2% ceiling' : ''}`
+          }
           accent={failRate > 2 ? 'alert' : undefined}
         />
       </div>
@@ -552,21 +636,97 @@ function HealthRow({
   right: string;
   title?: string;
 }) {
-  const dot = level === 'ok' ? 'bg-ch-green' : level === 'warn' ? 'bg-ch-ochre' : 'bg-ch-alert';
+  const { Icon, word, text } = LEVEL_MARK[level];
   return (
     <li
       className="flex items-start justify-between gap-3 border-b border-ch-line py-2 last:border-b-0"
       title={title}
     >
       <span className="flex min-w-0 items-start gap-2">
-        <span className={`mt-1.5 size-2 shrink-0 rounded-full ${dot}`} />
+        {/* Icon left (where the coloured dot was, so the rows still align), word right
+            next to the age. Both, not either: the shape survives a screenshot, the word
+            survives a shape you don't recognise. */}
+        <Icon aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${text}`} />
         <span className="min-w-0">
           <span className="block truncate text-ch-body text-ch-ink">{label}</span>
           {sub && <span className="block text-ch-fine leading-normal text-ch-muted">{sub}</span>}
         </span>
       </span>
-      <span className="shrink-0 pt-0.5 text-ch-meta whitespace-nowrap text-ch-muted">{right}</span>
+      <span className="shrink-0 pt-0.5 text-ch-meta whitespace-nowrap text-ch-muted">
+        <span className={`font-bold ${text}`}>{word}</span>
+        {right && ` · ${right}`}
+      </span>
     </li>
+  );
+}
+
+/**
+ * The delivery panel the canaries could never be.
+ *
+ * `delivery:sms` proves Twilio ACCEPTS a message from us. It cannot prove a carrier
+ * delivered one — those are different systems failing in different ways, and the gap
+ * between them is exactly where a real alert went missing on 2026-08-05: email and
+ * push arrived, the text did not, and every row in our own database said `sent`.
+ *
+ * Counts, not just a percentage: "2 of 47" and "2 of 3" are the same 4%-vs-67% trap
+ * the Failed alerts KPI already learned about, in reverse.
+ */
+function SmsDeliveryPanel({ d }: { d: SmsDelivery }) {
+  const answered = d.delivered + d.dropped;
+  const lvl = smsLevel(d);
+  const total = answered + d.pending + d.untracked;
+
+  return (
+    <Panel title="Did the texts arrive?">
+      <div className="flex items-center gap-2 text-ch-body">
+        <StatusMark level={lvl} showWord={false} />
+        <span className="font-bold">
+          {total === 0
+            ? 'No texts sent in the last 30 days'
+            : answered === 0 && d.pending > 0
+              ? 'No delivery receipts yet'
+              : answered === 0
+                ? 'Nothing to measure yet'
+                : `${((d.delivered / answered) * 100).toFixed(0)}% delivered`}
+        </span>
+      </div>
+      <p className="mt-1 text-ch-meta leading-normal text-ch-muted">
+        Twilio&rsquo;s carrier receipt for every alert text, last 30 days. This is the
+        only place that distinguishes &ldquo;we sent it&rdquo; from &ldquo;their phone
+        buzzed&rdquo; — everything else on this page, including the SMS canary, stops at
+        Twilio accepting the message.
+        {answered > 0 && answered < SMS_MIN_SAMPLE && ' Too few so far to read a rate into.'}
+      </p>
+      {/* Counts, each with what it means underneath — no dots, no colour key. Reading
+          this needs no legend, which is the whole point of the change that added it. */}
+      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+        {(
+          [
+            ['Delivered', d.delivered, 'reached a handset'],
+            ['Never arrived', d.dropped, 'rejected or filtered'],
+            ['Awaiting receipt', d.pending, 'sent, no answer yet'],
+            ['Not tracked', d.untracked, 'sent before receipts'],
+          ] as const
+        ).map(([label, n, what]) => (
+          <div key={label}>
+            <dt className="text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+              {label}
+            </dt>
+            <dd className="font-ch-display text-[20px] leading-none font-extrabold">
+              {n.toLocaleString()}
+            </dd>
+            <dd className="mt-0.5 text-ch-fine text-ch-muted">{what}</dd>
+          </div>
+        ))}
+      </dl>
+      {d.untracked > 0 && (
+        <p className="mt-2 text-ch-fine text-ch-muted">
+          &ldquo;Not tracked&rdquo; is texts sent before delivery receipts existed. It
+          only shrinks — nothing new lands there — and it is counted separately rather
+          than assumed delivered.
+        </p>
+      )}
+    </Panel>
   );
 }
 
@@ -586,9 +746,10 @@ function SystemHealthPanel({ data }: { data: AdminData }) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <Panel title="Alerting">
-        <div className="flex items-center gap-2">
-          <span className={`size-2.5 rounded-full ${workerHealthy ? 'bg-ch-green' : 'bg-ch-alert'}`} />
-          <span className="text-ch-body font-bold">
+        <div className="flex items-center gap-2 text-ch-body">
+          {/* showWord={false}: the state is already spelled out beside it. */}
+          <StatusMark level={workerHealthy ? 'ok' : 'fail'} showWord={false} />
+          <span className="font-bold">
             {workerHealthy ? 'Running' : beat ? 'Stalled' : 'Never started'}
           </span>
         </div>
@@ -726,6 +887,12 @@ function SystemHealthPanel({ data }: { data: AdminData }) {
 
         {syncRows.length === 0 && <p className="text-ch-fine text-ch-muted">No sync runs recorded.</p>}
       </Panel>
+
+      {/* Full width: it is a four-across stat row, and the two panels above it are
+          different heights, so anything narrower leaves a column-shaped hole. */}
+      <div className="md:col-span-2">
+        <SmsDeliveryPanel d={data.smsDelivery} />
+      </div>
     </div>
   );
 }
