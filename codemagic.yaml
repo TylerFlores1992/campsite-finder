@@ -35,7 +35,11 @@ workflows:
         BUNDLE_ID: "app.camphawk.mobile"
         XCODE_WORKSPACE: "App.xcworkspace"   # Capacitor names the iOS workspace "App"
         XCODE_SCHEME: "App"
-      node: 20
+      # Capacitor 8's CLI declares `engines: { node: ">=22.0.0" }` — on node 20 the
+      # build dies at `npm ci`, before a single Capacitor command runs, which reads
+      # like a dependency problem rather than a runtime one. Raised with the
+      # Capacitor 7 -> 8 upgrade (target API 36 for Play, 2026-08-05).
+      node: 22
       xcode: latest
       cocoapods: default
     scripts:
@@ -195,7 +199,9 @@ workflows:
       # than inherit whatever the image ships, so an image update can't silently break
       # or silently fix this.
       java: 21
-      node: 20
+      # See the iOS workflow: Capacitor 8's CLI requires node >= 22. Both workflows
+      # share one dependency tree, so they move together.
+      node: 22
     scripts:
       - name: Install JS dependencies
         script: npm ci
@@ -209,6 +215,29 @@ workflows:
         # URL, errorPath, and the newly added @capacitor/browser plugin. A web deploy
         # does NOT deliver any of those — only a rebuild does.
         script: npx cap sync android
+      - name: Assert the Play target API level
+        # Google Play requires apps to TARGET Android 16 (API 36) for new uploads and
+        # updates from 2026-08-31 (extension available to 2026-11-01). android/ is
+        # regenerated every build, so the level comes from whatever @capacitor/android
+        # defaults to — v7 shipped 35, v8 ships 36. Nothing in the repo pins it, which
+        # means a dependency change could silently drop us below the requirement and
+        # the first sign would be Play rejecting an upload months later.
+        #
+        # Asserted rather than pinned on purpose: pinning would freeze us at 36 and this
+        # requirement moves every year. The assert fails loudly the moment the generated
+        # value goes below what Play accepts, which is the failure worth catching.
+        script: |
+          cd android
+          MIN_TARGET=36
+          TARGET=$(sed -n 's/.*targetSdkVersion *= *\([0-9][0-9]*\).*/\1/p' variables.gradle | head -1)
+          echo "generated targetSdkVersion: ${TARGET:-<none>}"
+          if [ -z "$TARGET" ] || [ "$TARGET" -lt "$MIN_TARGET" ]; then
+            echo "FATAL: targetSdkVersion is '${TARGET:-<none>}', Play requires >= ${MIN_TARGET}."
+            echo "Bump @capacitor/android (its default sets this) or set targetSdkVersion in variables.gradle."
+            cat variables.gradle
+            exit 1
+          fi
+
       - name: Configure Firebase (Android FCM token)
         # Without google-services.json the build still succeeds and push simply stays
         # off, matching the iOS workflow's behaviour — a missing secret must not hard

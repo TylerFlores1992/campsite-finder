@@ -547,6 +547,19 @@ AAB, no rebuild.**
   its Description edited without pulling it from review**, and Description is not one of
   the fields editable without a new build (Promotional Text is).
 
+### Play target API 36 — Capacitor upgraded to 8, NOT yet built (2026-08-05)
+Play requires apps to **target API 36 from 2026-08-31** for new uploads *and updates*
+(extension to 2026-11-01 available in Console). Existing installs are unaffected; you
+just can't ship an update. We were on 35 and nothing in the repo said so — `android/` is
+git-ignored and regenerated each build, so the level came from
+`@capacitor/android@7`'s default. **Capacitor is now `^8.5.0` (targetSdk 36, AGP 8.13.0,
+same Java 21)**, with `firebase ^12.6.0` and **`node: 22` in BOTH codemagic workflows**
+(`@capacitor/cli@8` needs node ≥22 or `npm ci` dies). The Android build now **asserts**
+`targetSdkVersion >= 36` rather than trusting the default.
+**Both stores share one dependency tree — ship a TestFlight build and check it before
+the Play upload.** Nothing native has been compiled yet; JS install/typecheck/build/tests
+are all clean. Details in `docs/PLAY-STORE.md` §0a.
+
 ### Mobile app — everything below needs `npm install && npx cap sync` + a REBUILD
 Shipped 2026-07-27, all native-side, so **a web deploy does not deliver them**:
 launch URL now `/search` (not `/`, the only page with checkout) · Android back button

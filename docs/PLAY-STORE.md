@@ -9,6 +9,45 @@ App record created 2026-08-01. Package `app.camphawk.mobile` (permanent — it m
 
 ---
 
+## 0a. Target API level — API 36 required from 2026-08-31
+
+Google emailed on 2026-08-05: the app targets an old Android version. The rule, from
+`developer.android.com/google/play/requirements/target-sdk`:
+
+- **New apps AND app updates must target Android 16 (API 36) or higher from
+  2026-08-31.** An extension to **2026-11-01** can be requested in Play Console.
+- Existing installs are NOT removed. An app at API 35 stays available to existing users
+  and remains discoverable; what you lose is the ability to **ship an update**.
+
+**We were on API 35, and nothing in the repo said so.** `android/` is git-ignored and
+regenerated on every Codemagic build (see `capacitor.config.ts`), so the target level
+comes from whatever `@capacitor/android` defaults to — v7.6.8 pinned
+`compileSdk 35` / `targetSdkVersion 35`.
+
+**Fixed by upgrading Capacitor 7 → 8** (2026-08-05). `@capacitor/android@8.5.0` defaults
+to `compileSdk 36` / `targetSdkVersion 36` with AGP 8.13.0 and the same Java 21 the
+Android workflow already pins, so no gradle patching was needed. Three things moved
+together and all three are required:
+
+| change | why |
+| --- | --- |
+| every `@capacitor/*` + `@capacitor-firebase/*` → `^8` | `@capacitor/android@8` peers `@capacitor/core@^8.5.0` |
+| `firebase` `^11` → `^12.6.0` | `@capacitor-firebase/messaging@8` peers `firebase ^12.6.0` |
+| `codemagic.yaml` `node: 20` → `22`, **both workflows** | `@capacitor/cli@8` declares `engines: node >=22`; on node 20 the build dies at `npm ci` before any Capacitor command runs |
+
+**This touches iOS too.** Both workflows share one dependency tree, so the Capacitor
+bump reaches the iOS build as well — ship a TestFlight build and check it before the
+Play upload, rather than discovering a native regression in review.
+
+**A build now ASSERTS the level** ("Assert the Play target API level" in the Android
+workflow) rather than trusting the default. It fails if the generated
+`android/variables.gradle` carries a `targetSdkVersion` below 36. Asserted, not pinned:
+pinning would freeze us at 36 and this requirement moves every year, while the assert
+catches the case that actually hurts — a dependency change silently dropping us below
+what Play accepts, discovered months later when an upload is rejected.
+
+---
+
 ## 0. The critical path, and why production is ≥14 days out
 
 Play confirmed on the app dashboard (2026-08-01) that this **personal** developer
