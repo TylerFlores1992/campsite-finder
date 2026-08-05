@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Explore from "@/components/v2/Explore";
 import PricingLink from "@/components/v2/PricingLink";
+import SetupNudges from "@/components/v2/SetupNudges";
 import BrandHeader from "@/components/v2/BrandHeader";
 import { COVERAGE, campgroundsRounded } from "@/lib/coverage";
 
@@ -30,9 +31,13 @@ export default function V2ExplorePage() {
       />
 
       <Explore />
-      {/* Self-hiding marketing link back to /#pricing — renders only for
-          signed-out / non-subscribed web visitors, nothing in the native app. */}
       <div className="mx-auto max-w-[var(--ch-max)] px-5 pb-8">
+        {/* "Your alerting isn't finished" — self-hiding, and shown to SUBSCRIBERS,
+            which is the opposite audience to PricingLink below. Someone who lives on
+            Explore and never opens /watches used to be told neither. */}
+        <SetupNudges className="mb-4" />
+        {/* Self-hiding marketing link back to /#pricing — renders only for
+            signed-out / non-subscribed web visitors, nothing in the native app. */}
         <PricingLink />
       </div>
     </>

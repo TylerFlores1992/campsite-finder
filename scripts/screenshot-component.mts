@@ -44,6 +44,27 @@ interface Preset {
 }
 
 const PRESETS: Record<string, Preset> = {
+  'setup-nudges': {
+    label: 'SetupNudges — all three states at once (no phone, unconnected, RC-only)',
+    // Three mounts with three stubbed responses, because in production a single
+    // account never sees all three: the last two are mutually exclusive by design.
+    entry: `import SetupNudges from '@/components/v2/SetupNudges';
+      const CASES = [
+        { hasPhone: false, autocartConnected: false, autocartEnabled: false, autocartEntitled: true, recgovWatches: 2, liveWatches: 4 },
+        { hasPhone: true,  autocartConnected: false, autocartEnabled: false, autocartEntitled: true, recgovWatches: 1, liveWatches: 3 },
+        { hasPhone: true,  autocartConnected: false, autocartEnabled: false, autocartEntitled: true, recgovWatches: 0, liveWatches: 6 },
+      ];
+      let i = 0;
+      if (typeof window !== 'undefined') {
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => CASES[Math.min(i++, CASES.length - 1)] });
+      }
+      export const node = (
+        <div className="space-y-6">
+          {CASES.map((_, n) => <SetupNudges key={n} />)}
+        </div>
+      );`,
+    frame: 'max-w-lg w-full mx-auto',
+  },
   'admin-health': {
     label: 'AdminTabs → System Health, with a warn and a fail among the rows',
     // The reason this preset exists: the page's status was carried by hue alone, and

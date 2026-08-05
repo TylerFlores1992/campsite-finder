@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import NewWatch from "@/components/v2/NewWatch";
 import PricingLink from "@/components/v2/PricingLink";
+import SetupNudges from "@/components/v2/SetupNudges";
 
 export const metadata: Metadata = {
   title: "New watch — CampHawk",
@@ -24,6 +25,9 @@ export default async function V2NewWatchPage({
         New watch
       </h1>
       <NewWatch initialCampgroundId={campground} initialStart={start} initialEnd={end} />
+      {/* Someone adding their second watch is exactly who should be told the first
+          one can only reach them by email. Self-hiding when nothing is missing. */}
+      <SetupNudges className="mt-6" />
       {/* Self-hiding: renders only for signed-out / non-subscribed web visitors. */}
       <PricingLink className="mt-6" />
     </div>
