@@ -254,27 +254,38 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
       const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3}` : '';
       // THE PROVIDER'S OWN URL, NOT OUR `camphawk.app/b/<token>` SHORTLINK (2026-08-05).
       //
-      // This is the line that was silently filtering every alert. Our A2P 10DLC
-      // campaign's registered sample messages — written 7/7/2026, never changed — link
-      // to `recreation.gov/camping/campgrounds/[ID]` and
-      // `reservecalifornia.com/park/[ID]`. The shortlink went in later, so live traffic
-      // carried a domain that appears nowhere in the registration, in the one shape
-      // carriers treat as a public URL shortener: short domain, opaque token path.
-      // Delivery receipts made the consequence visible in a day — messages carrying a
-      // recreation.gov link were Delivered, messages carrying camphawk.app were
-      // Undelivered / 30007 ("message filtered"), same handset, same segment count.
+      // OBSERVED, on one handset, same segment count: a `recreation.gov` link →
+      // Delivered. No link at all → Delivered. `camphawk.app/b/<token>` → Undelivered
+      // with 30007 ("message filtered"), 10 for 10. Our A2P 10DLC campaign's registered
+      // sample messages — written 7/7/2026, never changed — link to
+      // `recreation.gov/camping/campgrounds/[ID]` and `reservecalifornia.com/park/[ID]`;
+      // the shortlink went into the code later and appears in no sample.
       //
-      // So the fix is to match the registration rather than re-register: the sample
-      // messages were right and the code drifted from them. It also costs almost
-      // nothing — a real booking URL is 45-49 characters against the shortlink's ~39,
-      // and the fragment is stripped because the #camphawk extension hint does nothing
-      // on a phone.
+      // WHY the carrier dislikes it is INFERENCE, not documentation, and the two
+      // candidates matter differently:
+      //   - T-Mobile's Code of Conduct has sections "4.8 URL Redirects/Forwarding" and
+      //     "3.3 Use One Recognizable Domain Name", and Twilio's campaign-troubleshooting
+      //     page requires "a dedicated, branded short domain that belongs to your
+      //     business". `/b/<token>` is a redirect that hides its destination, which fits.
+      //   - That a short opaque PATH on a legitimately-owned domain is itself a trigger
+      //     is NOT documented anywhere. Don't repeat it as fact.
+      // There is also no "declared link domain" to have gotten wrong: Twilio's campaign
+      // API exposes only the boolean `HasEmbeddedLinks` (ours is correctly true) and
+      // `MessageSamples`. So "undeclared domain" is not the mechanism either.
+      //
+      // Either way this line sidesteps the question: the provider's own URL is a
+      // well-known destination with no redirect, and it is what the samples show. It
+      // costs almost nothing — a real booking URL is 45-49 characters against the
+      // shortlink's ~39 — and the fragment is stripped because the #camphawk extension
+      // hint does nothing on a phone.
       //
       // `/b/<token>` STAYS ALIVE for links already sent; we simply stop minting new
       // ones for SMS, which was their only consumer. Email uses the full URL already.
       //
-      // Do not "improve" this back into a tracked shortlink without first getting the
-      // domain onto the campaign — the tracking is worth less than the message.
+      // Do not "improve" this back into a tracked shortlink. The campaign's samples and
+      // HasEmbeddedLinks are NOT editable after approval — matching a new link shape
+      // would mean registering a NEW campaign — and the tracking is worth less than the
+      // message arriving.
       const bookTxt = payload.bookingUrl.split('#')[0];
       // A long campground name plus three dates can still clear 160 on its own, and an
       // alert that quietly goes back to two segments would look like the fix failing.

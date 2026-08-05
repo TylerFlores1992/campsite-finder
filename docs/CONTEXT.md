@@ -2195,11 +2195,54 @@ embedded links: **Yes**". What was wrong sat in its **sample messages**, written
 ```
 
 Both link to the PROVIDER. Neither mentions `camphawk.app`. The `/b/<token>` shortlink
-was added to the code later, so live traffic carried a domain that appears nowhere in
-the registration — in the exact shape carriers treat as a public URL shortener (short
-domain, opaque token path). Everything observed fits with nothing left over: a
-recreation.gov link matches sample #1 and delivers, a linkless message has nothing to
-flag and delivers, our own domain matches no sample and is filtered.
+was added to the code later, so live traffic carried a link shape that appears nowhere
+in the registration. Everything observed fits with nothing left over: a recreation.gov
+link matches sample #1 and delivers, a linkless message has nothing to flag and
+delivers, our own domain matches no sample and is filtered.
+
+**Separate the observation from the explanation.** The correlation above is measured.
+*Why* a carrier dislikes our link is inference, and a research pass over Twilio, TCR,
+T-Mobile and CTIA sources pinned down which parts are actually documented:
+
+- **Documented.** Twilio's campaign-troubleshooting page requires "a dedicated, branded
+  short domain that belongs to your business. You cannot use the sort of
+  randomly-shortened URL typically furnished by a free service like bit.ly or TinyUrl."
+  T-Mobile's Code of Conduct v2.2 carries sections **"4.7 URL Cycling / Public URL
+  Shorteners"**, **"4.8 URL Redirects/Forwarding"** and **"3.3 Use One Recognizable
+  Domain Name"**. `/b/<token>` is a redirect that hides its destination — that fits.
+- **NOT documented.** That a short opaque PATH on a domain you legitimately own is
+  itself a filtering trigger. No Twilio, TCR, CTIA or carrier source says this. It is a
+  plausible inference and nothing more; do not repeat it as fact.
+- **Not a mechanism at all.** "Undeclared link domain" — there is no domain field to
+  leave undeclared. Twilio's UsAppToPerson API exposes only the boolean
+  **`HasEmbeddedLinks`** ("Indicates that this SMS campaign will send messages that
+  contain links", ours correctly `true`) and **`MessageSamples`**. TCR's own schema has
+  an `embeddedLinkSample`, but it is a sample, not an allow-list, and Twilio doesn't
+  expose it.
+- **30007 is deliberately ambiguous** between Twilio-side and carrier-side filtering
+  ("by Twilio **or** by the carrier"). The only documented way to learn which is to send
+  3+ Message SIDs to Twilio Support. That distinction matters: if it is Twilio's own
+  policy filter, domain reputation is not the explanation at all.
+- **The campaign's samples and `HasEmbeddedLinks` are NOT editable after approval.** An
+  earlier note in this session said they were; that was wrong. Changing the registered
+  link shape means registering a **new campaign**, which is a further reason the fix
+  belongs in the code.
+
+#### Sole Proprietor caps, for when this grows
+
+The brand is `SOLE_PROPRIETOR` — the lowest tier, and its limits are real even though
+none of them caused this:
+
+| limit | value |
+| --- | --- |
+| daily volume | **1,000 SMS segments/day to T-Mobile** (~3,000 across US carriers) |
+| AT&T rate | 15 messages/minute per campaign |
+| phone numbers | **one** — a Sole Proprietor campaign can attach exactly one 10DLC number |
+| campaigns | one per brand |
+
+At today's volume (~10-20 texts/day) none of these bind. The one-number cap is the one
+that bites first on growth, and moving off Sole Proprietor means a new brand and a new
+campaign, not a settings change.
 
 **The fix was to make the code match the registration, not to re-register.**
 `dispatchSms` now sends `payload.bookingUrl` directly (fragment stripped) — 142-150

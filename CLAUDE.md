@@ -198,11 +198,25 @@ SID), `delivery_status` (Twilio's vocabulary, stored verbatim), `delivery_error`
 Every alert text was filtered (30007) while auto-cart texts arrived. Cause: the A2P
 10DLC campaign's **registered sample messages** (written 7/7/2026, never changed) link
 to `recreation.gov/camping/campgrounds/[ID]` and `reservecalifornia.com/park/[ID]`.
-Live traffic sent `camphawk.app/b/<token>` — a domain in NO sample, in the exact shape
-carriers treat as a public URL shortener. Evidence, same handset, same segment count:
-recgov link → **Delivered**; no link → **Delivered**; camphawk.app link →
-**Undelivered/30007**. Campaign is Approved, "embedded links" is declared **Yes**, so
-neither was the problem — the CODE had drifted from the registration.
+Live traffic sent `camphawk.app/b/<token>`, which appears in NO sample. Evidence, same
+handset, same segment count: recgov link → **Delivered**; no link → **Delivered**;
+camphawk.app link → **Undelivered/30007**, 10 for 10. Campaign is Approved and
+"embedded links" is declared **Yes**, so neither was the problem — the CODE had drifted
+from the registration.
+- **WHY the carrier dislikes it is INFERENCE.** Documented: T-Mobile's Code of Conduct
+  §4.8 "URL Redirects/Forwarding" + §3.3 "Use One Recognizable Domain Name", and Twilio
+  requires "a dedicated, branded short domain that belongs to your business". `/b/` is a
+  destination-hiding redirect, which fits. **NOT documented anywhere:** that a short
+  opaque PATH is itself a trigger — don't repeat that as fact. And there is **no
+  "declared link domain"** to have gotten wrong: Twilio's campaign API has only the
+  boolean `HasEmbeddedLinks` and `MessageSamples`.
+- **Campaign samples + `HasEmbeddedLinks` are NOT editable after approval** — changing
+  the registered link shape means registering a NEW campaign.
+- **30007 doesn't say whether TWILIO or the CARRIER filtered.** The only documented way
+  to find out is 3+ Message SIDs to Twilio Support.
+- **Sole Proprietor caps worth knowing before growth:** 1,000 SMS segments/day to
+  T-Mobile (~3,000 across carriers), 15 msg/min AT&T, one campaign per brand, and
+  **only ONE phone number attachable**.
 - **`dispatchSms` now sends `payload.bookingUrl` directly** (fragment stripped). No
   more `mintBookingToken`/`bookLink` in SMS; `/b/<token>` stays live for already-sent
   links, and email always used the full URL. **Do not reintroduce a camphawk.app link
