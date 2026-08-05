@@ -22,12 +22,34 @@ import { verifyTwilioSignature } from '@/lib/notifications/twilio-signature';
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://camphawk.app').replace(/\/$/, '');
 
-/** The URL Twilio signed. Twilio computes the signature over the URL IT WAS GIVEN, not
- *  over whatever the request looks like by the time it reaches this function — behind
- *  Vercel's proxy `req.url` can be an internal hostname, and signing that instead is a
- *  100%-failure bug that only shows up in production. This is the same string
- *  lib/notifications/sms.ts sends as StatusCallback; keep them in step. */
-const CALLBACK_URL = `${APP_URL}/api/webhooks/twilio`;
+const PATH = '/api/webhooks/twilio';
+
+/**
+ * The URL Twilio signed — and the reason this is a LIST.
+ *
+ * Twilio computes the signature over the URL it was GIVEN, which is whatever the
+ * sender put in `StatusCallback`. Two senders exist and they read
+ * `NEXT_PUBLIC_APP_URL` from two different environments: the Fly worker (which has no
+ * such var, so it falls back to camphawk.app) and Vercel (which has one, set to a value
+ * neither the API nor the build output will show us). If those two strings ever differ
+ * — an `www.`, a trailing slash, a preview domain — verifying against only one of them
+ * rejects 100% of the other sender's receipts, forever, with nothing in the data but
+ * texts stuck on `pending`.
+ *
+ * So accept a signature computed over EITHER the configured URL or the URL this request
+ * actually arrived at (`x-forwarded-host` first: behind Vercel's proxy `req.url` can be
+ * an internal hostname). This is not a weakening — every candidate is still verified
+ * against `TWILIO_AUTH_TOKEN`, so a forged Host buys an attacker nothing without the
+ * secret, and it is what Twilio's own helper libraries do (they validate against the
+ * received request URL).
+ */
+function candidateUrls(req: NextRequest): string[] {
+  const urls = [`${APP_URL}${PATH}`];
+  const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host');
+  const proto = req.headers.get('x-forwarded-proto') ?? 'https';
+  if (host) urls.push(`${proto}://${host}${PATH}`);
+  return [...new Set(urls)];
+}
 
 /** Twilio's terminal states. Anything else is a way-point we record but don't stamp. */
 const TERMINAL = new Set(['delivered', 'undelivered', 'failed', 'canceled']);
@@ -36,11 +58,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const raw = await req.text();
   const params = new URLSearchParams(raw);
 
-  const verified = verifyTwilioSignature(
-    CALLBACK_URL,
-    params,
-    req.headers.get('x-twilio-signature'),
-    process.env.TWILIO_AUTH_TOKEN
+  const header = req.headers.get('x-twilio-signature');
+  const verified = candidateUrls(req).some((url) =>
+    verifyTwilioSignature(url, params, header, process.env.TWILIO_AUTH_TOKEN)
   );
   if (!verified) {
     console.warn('[twilio] rejected a status callback with a bad or missing signature');

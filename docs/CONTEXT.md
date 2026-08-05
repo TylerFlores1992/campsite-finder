@@ -2031,6 +2031,154 @@ opening was not just un-announced, it was never carted.
   the same pair cannot both win. `worker/claim.test.mts` pins that with 8 concurrent
   claims expecting exactly one winner.
 
+## SMS delivery receipts (migration 038, 2026-08-05)
+
+**`notifications.status = 'sent'` has never meant the text arrived.** It means Twilio's
+API returned 2xx — we handed the message over. Carrier rejection, an unreachable
+handset, A2P filtering and a landline all happen seconds to minutes later, and every
+one of them left a row saying `sent` next to a phone that stayed quiet. The user hit
+exactly this on 2026-08-05: email and push arrived for a Leo Carillo opening, the text
+did not, and nothing in our own data could tell a dropped message from a slow one.
+
+Migration 038 adds four nullable columns to `notifications`, with **no backfill** — a
+pre-038 row genuinely has no delivery information and inventing `delivered` for it
+would poison the first metric anyone computes:
+
+| column | what it holds |
+| --- | --- |
+| `provider_id` | the Twilio Message SID (`SM…`) — the key the callback arrives with |
+| `delivery_status` | Twilio's own vocabulary, verbatim: `queued`/`sending`/`sent`/`delivered`/`undelivered`/`failed` |
+| `delivery_error` | Twilio error code + message (30003 unreachable handset, 30007 carrier violation, …) |
+| `delivered_at` | when the terminal status landed |
+
+**`status` and `delivery_status` are deliberately two columns.** `status` records what
+WE did (handed it over, or didn't); `delivery_status` records what the CARRIER did.
+Collapsing them destroys the only distinction that makes any of this useful.
+
+### The pieces
+
+- **`lib/notifications/sms.ts`** — `sendSms` now returns `{sid, status}` instead of
+  reading the status code and discarding the body, and sends a `StatusCallback`. Its
+  `status` is `queued`/`accepted`, essentially never `delivered`; **do not read it as
+  delivery.** Parsing the body is best-effort inside a `try`: a message that SENT but
+  whose body failed to parse is still sent, and throwing there would make the caller
+  log `failed` and, worse, retry — the user gets a second copy of the alert.
+- **`logNotification(..., providerId)`** — the SID is the join key. A row logged
+  without it can never learn whether the text landed: the receipt comes back and
+  matches nothing.
+- **`/api/webhooks/twilio`** — records the outcome. Public (`/api/webhooks/(.*)` is
+  already in `isPublicRoute`), 200-with-empty-body always (Twilio retries anything
+  else and does not read the body).
+- **`lib/notifications/twilio-signature.ts`** — extracted from the route *so it can be
+  tested*, the same reason `worker/claim.ts` is not inside `poller.ts`: a Next route
+  pulls in `next/server` and the `@/` alias, neither of which the tsx test runner
+  resolves. It is the entire access control on a public endpoint that writes delivery
+  history, and a signature check that always returns true looks identical from outside
+  to one that works.
+
+### Three things to get right, all of which fail silently
+
+1. **The URL is part of the signed payload, and TWO senders pick it independently.**
+   Twilio signs whatever the sender put in `StatusCallback`; the Fly worker and Vercel
+   each read `NEXT_PUBLIC_APP_URL` from their own environment (the worker has none and
+   falls back to `camphawk.app`; Vercel has one whose value the API won't return). If
+   those strings ever differ by a `www.` or a trailing slash, verifying against only one
+   rejects 100% of the other sender's receipts — forever, with nothing in the data but
+   texts stuck on `pending`. So the route verifies against a **list**: the configured URL
+   AND the URL the request actually arrived at (`x-forwarded-host`, because behind
+   Vercel's proxy `req.url` can be an internal hostname). Not a weakening — every
+   candidate is still checked against `TWILIO_AUTH_TOKEN`, so a forged Host buys nothing
+   without the secret, and it is what Twilio's own helper libraries do.
+2. **Fail CLOSED.** No header, wrong signature, or no `TWILIO_AUTH_TOKEN` → 403,
+   nothing written. "Cannot verify" must never mean "accept": an unsigned POST claiming
+   `MessageStatus=delivered` would otherwise let anyone paper over an outage in our own
+   data. `timingSafeEqual` THROWS on a length mismatch, so the length check is required,
+   not an optimisation — uncaught it turns a junk POST into a 500 on a route Twilio
+   retries.
+3. **A way-point never overwrites a terminal status.** Callbacks are unordered and
+   retried; without the `NOT IN ('delivered',…)` guard a delivered message can end its
+   life recorded as `sent`.
+
+`twilio-signature.test.mts` asserts against **Twilio's published worked example**
+(docs/usage/security), not against our own encoder — a test that signs with the
+function it verifies with would pass just as happily if we had invented our own scheme.
+
+### Reading the panel
+
+Admin → System Health → **"Did the texts arrive?"**, 30-day window. Thresholds and the
+verdict live in `lib/health-thresholds.ts` (`smsLevel`, `SMS_MIN_SAMPLE = 10`,
+warn ≥3%, fail ≥10%).
+
+- **`untracked`** is pre-038 rows. Shown as its own number, never folded into
+  `delivered` — it only shrinks, and the denominator stays honest while it ages out.
+- **All-pending-with-no-answers warns.** That is the shape of a broken callback URL,
+  and the naive `delivered / answered` would be 0/0 = NaN, every comparison false, and
+  the panel serene while measuring nothing.
+- **A few "no open notification row to update" lines are normal**: the daily delivery
+  canary sends without logging a row, and the first `queued` callback can beat our own
+  INSERT (written just after `sendSms` returns). Self-healing — Twilio posts again for
+  `sent` and `delivered`. A PERMANENT stream of them means the SID is not being saved
+  at send time, which is the one way this feature dies quietly.
+
+## Expired watches close themselves (2026-08-05)
+
+`worker/expire-watches.ts`, hourly, under `withSyncClaim('expire-watches')`.
+
+A finished watch stayed `active = true` forever. The poller and the watch cap both
+filter it out (`end_date > CURRENT_DATE`) and the watches list hides it, so it was
+never polled and consumed no slot — but it was still "active" to anything that
+reasonably reads `WHERE active`. On the day this shipped: 5 dead against 13 live, 28%
+noise. The sweep closed all 5 on the first run (`[poller] closed 5 watches whose dates
+have passed`, one machine, 05:21:52 UTC) and the live 13 were untouched.
+
+**THE PREDICATE MUST NEVER BE WIDER THAN THE POLLER'S FILTER.** The poller runs
+`end_date > CURRENT_DATE`; the sweep closes exactly the complement,
+`end_date <= CURRENT_DATE`. Wider by a day — a "grace period", a `+ 1` — and it
+switches off watches the poller is still running: a silent alerting outage with no
+error anywhere. Narrower is harmless (a few rows linger an extra hour). **If you change
+the poller's filter, change this one in the same commit.**
+
+Old rows carry a `campflare_sub_id` from the third-party alert service we no longer use
+(no `CAMPFLARE_*` credentials exist anywhere). Nothing to cancel, so the sweep makes no
+network call — bolting a call to a dead vendor onto a one-line UPDATE is a new failure
+mode for nothing.
+
+`expireFinishedWatches(onlyIds?)` takes an optional id list **only so the test can
+drive the real predicate without closing every real user's finished watches as a side
+effect of `npm test`** — the same device as `claimSyncJob(job, ttl, machineId)`.
+Production passes nothing. `worker/expire-watches.test.mts` was verified by breaking
+the predicate to `CURRENT_DATE + 1` and watching "never closes a watch the poller is
+still running" fail.
+
+## The admin dashboard never signals with colour alone (2026-08-05)
+
+The owner of this dashboard is colour-blind. Green / ochre / red dots are three grey
+dots to a deuteranope — on the one page whose entire job is "is anything broken?",
+answered in the single channel they cannot read.
+
+Every status now carries a distinct **icon shape** and a **word**; hue is the redundant
+third channel, not the signal. One record, `LEVEL_MARK` in `AdminTabs.tsx`, plus a
+`StatusMark` component. **Route any new status through them** — a bare `bg-ch-*` dot is
+a regression, not a style choice. The previous version spelled "green dot / ochre dot /
+red dot" out inline in three separate places, which is exactly how a page ends up
+legible only to people who can separate those three hues.
+
+- Shapes are chosen to differ in silhouette at 12px: round tick, triangle, round cross.
+  The banner previously used **the same triangle for warn and fail** — the two states it
+  exists to distinguish differed only in colour.
+- `HealthRow` puts the icon on the left (where the dot was, so rows still align) and the
+  word on the right beside the age: the shape survives a screenshot, the word survives a
+  shape you don't recognise.
+- Same rule applied outside System Health: **Failed alerts** says "above the 2% ceiling"
+  rather than just turning red, and Costs → **Net / month** says "Losing money ·" rather
+  than relying on red plus a leading minus sign.
+- `StatusMark`'s `showWord` hides only the VISIBLE word — it is always present for
+  screen readers.
+- To eyeball it: `npx tsx scripts/screenshot-component.mts admin-health --wait=2500`.
+  The preset fixture deliberately mixes ok/warn/fail in one view, and selects the tab by
+  clicking it after mount rather than by adding an `initialTab` prop — a screenshot
+  harness should not widen a component's production API.
+
 ## Tests — there are some now (`npm test`)
 
 The repo had **no test framework, no test script and no test files** until 2026-07-30.
@@ -2046,6 +2194,23 @@ Files are `*.test.mts` under `worker/`. What is covered, and why these first:
   misstates net margin, the one figure on that tab anyone acts on.
 - **`worker/health-thresholds.test.mts`** — canary staleness, pinning the "banner
   cries wolf daily" regression.
+- **`worker/expire-watches.test.mts`** (2026-08-05) — the expired-watch sweep. The case
+  that earns its keep is "never closes a watch the poller is still running": that
+  failure produces no error, no log line and no user-visible signal, alerts just stop.
+- **`src/lib/notifications/twilio-signature.test.mts`** (2026-08-05) — the delivery
+  webhook's signature check, against Twilio's published example. Pure.
+- **`src/lib/health-thresholds.test.mts`** (2026-08-05) — `smsLevel`, including the
+  0/0 = NaN branch that would report perfect health from a broken callback URL. Pure.
+
+> `npm test` globs `src/**/*.test.mts` as well as `worker/**` — a pure test does not
+> have to live under `worker/` to run.
+
+> **A rare interaction worth knowing before you chase it.** The DB-backed suites hang
+> their fixtures off watches dated **2020**, and the hourly expired-watch sweep closes
+> exactly that shape of row. If a sweep lands inside a test run (a sub-second job once
+> an hour, against a ~12-second suite) a fixture can go `active = false` mid-test and
+> `claim.test.mts` fails for a reason that is nowhere in its own code. Re-run before
+> investigating.
 
 > **These hit the REAL database, deliberately.** The claim's correctness lives entirely
 > inside one `INSERT .. ON CONFLICT .. WHERE`, so a mocked client would test a fake
@@ -2459,6 +2624,14 @@ one. See the TN/SC row in `docs/SETUP.md`.
 Resend (`RESEND_API_KEY`, `EMAIL_FROM`), Twilio (`TWILIO_*`), Mapbox
 (`NEXT_PUBLIC_MAPBOX_TOKEN`), RIDB (`RIDB_API_KEY`), auto-cart
 (`AUTOCART_TOKEN`, `BROKER_WS_URL`), `NEXT_PUBLIC_APP_URL`, `SYNC_SECRET`.
+`TWILIO_AUTH_TOKEN` gained a **second** job on 2026-08-05: it verifies the delivery
+receipts arriving at `/api/webhooks/twilio`. It must be present **on Vercel** for that
+(the worker only needs it to send). Unset there → every callback 403s and every text
+sits `pending` forever, which the admin panel reports as "No delivery receipts yet".
+`NEXT_PUBLIC_APP_URL` likewise now has to match on **both** Vercel and Fly: the worker
+builds the `StatusCallback` URL from it and Vercel signs against the same string, so a
+mismatch rejects 100% of receipts. Both default to `https://camphawk.app`, so leaving
+them unset is safe; setting only one is not.
 Native push (feature: mobile app — on **both** the Fly worker AND Vercel):
 `FCM_SERVICE_ACCOUNT` — the full Firebase service-account JSON (Project Settings →
 Service accounts → Generate new private key) as a single env string. The worker is the
