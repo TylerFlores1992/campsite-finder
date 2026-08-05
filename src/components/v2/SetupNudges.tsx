@@ -12,12 +12,15 @@ import Link from "next/link";
  * auto-cart was sitting unconnected. Reported by a real account: six live watches, an
  * auto-cart entitlement, nothing connected, and no idea.
  *
- * THE THIRD BANNER IS THE POINT OF THE REPORT. Auto-cart is Recreation.gov ONLY, so the
- * "connect auto-cart" prompt is gated on owning at least one rec.gov watch — correct,
- * because prompting someone to set up a bot that cannot fire for any watch they own is
- * worse than silence. But the account above had SIX ReserveCalifornia watches and zero
- * rec.gov ones, so it stayed silent, and silence read as "it's on". The gate was right
- * and the outcome was still wrong. `Coverage` says the quiet part out loud.
+ * AUTO-CART IS RECREATION.GOV ONLY, so the "connect auto-cart" prompt is gated on
+ * owning at least one rec.gov watch. Prompting someone to set up a bot that cannot fire
+ * for any watch they own would be worse than silence.
+ *
+ * A third banner briefly lived here, telling users whose watches are all state-park
+ * portals that auto-cart cannot cover them. It was removed on request — a permanent
+ * notice about a feature you can't use is clutter, not help. The coverage limit is
+ * still stated on the auto-cart settings and marketing pages; don't reintroduce it as
+ * a banner.
  *
  * Rules this file inherits from the rest of the app:
  *   - NEVER nag on a failed or unresolved read. `data === null` renders nothing, so a
@@ -62,11 +65,10 @@ export default function SetupNudges({ className = "" }: { className?: string }) 
   if (data.liveWatches === 0) return null;
 
   const noPhone = !data.hasPhone;
-  const canAutocart = data.autocartEntitled && !data.autocartConnected;
-  const autocartUnconnected = canAutocart && data.recgovWatches > 0;
-  const autocartInapplicable = canAutocart && data.recgovWatches === 0;
+  const autocartUnconnected =
+    data.autocartEntitled && !data.autocartConnected && data.recgovWatches > 0;
 
-  if (!noPhone && !autocartUnconnected && !autocartInapplicable) return null;
+  if (!noPhone && !autocartUnconnected) return null;
 
   return (
     <div className={`space-y-3.5 ${className}`}>
@@ -90,17 +92,6 @@ export default function SetupNudges({ className = "" }: { className?: string }) 
           } Connect once and we'll put an opening straight into your cart, so it's held while you get to your phone. You'll still get the alert either way.`}
           href="/connect"
           cta="Connect auto-cart"
-        />
-      )}
-
-      {autocartInapplicable && (
-        <Nudge
-          title="Auto-cart doesn't cover these parks"
-          body={`Auto-cart works on Recreation.gov only, and ${
-            data.liveWatches === 1 ? "your watch is" : `none of your ${data.liveWatches} watches are`
-          } on it. There's nothing for it to add to a cart, so we haven't asked you to set it up — you'll get alerts for these as normal.`}
-          href="/search"
-          cta="Find a Recreation.gov campground"
         />
       )}
     </div>

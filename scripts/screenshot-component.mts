@@ -45,14 +45,13 @@ interface Preset {
 
 const PRESETS: Record<string, Preset> = {
   'setup-nudges': {
-    label: 'SetupNudges — all three states at once (no phone, unconnected, RC-only)',
-    // Three mounts with three stubbed responses, because in production a single
-    // account never sees all three: the last two are mutually exclusive by design.
+    label: 'SetupNudges — both states (no phone, auto-cart unconnected)',
+    // Two mounts with two stubbed responses. A real account can see both at once;
+    // rendering them separately is just what makes each one's copy readable here.
     entry: `import SetupNudges from '@/components/v2/SetupNudges';
       const CASES = [
         { hasPhone: false, autocartConnected: false, autocartEnabled: false, autocartEntitled: true, recgovWatches: 2, liveWatches: 4 },
         { hasPhone: true,  autocartConnected: false, autocartEnabled: false, autocartEntitled: true, recgovWatches: 1, liveWatches: 3 },
-        { hasPhone: true,  autocartConnected: false, autocartEnabled: false, autocartEntitled: true, recgovWatches: 0, liveWatches: 6 },
       ];
       let i = 0;
       if (typeof window !== 'undefined') {
