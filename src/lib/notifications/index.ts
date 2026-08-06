@@ -4,6 +4,7 @@ import { sendSms } from './sms';
 import { sendPush } from './push';
 import { actionUrlFor } from './actions';
 import { fitOneSegment } from './sms-fit';
+import { formatStayDates } from './dates';
 import type { CampflareWebhookPayload } from '@/lib/campflare/types';
 import { USEDIRECT_PROVIDERS } from '@/lib/sources/reservecalifornia/providers';
 import { GOINGTOCAMP_PROVIDERS } from '@/lib/sources/goingtocamp/providers';
@@ -258,8 +259,11 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
         name
       );
     } else {
-      const dates = payload.availableDates.slice(0, 3).join(', ');
-      const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3}` : '';
+      // "Sep 4-6", not "2026-09-04, 2026-09-05, 2026-09-06". Three ISO dates in a row
+      // read as timestamps, cost ~24 characters of a 160-character budget, and — in the
+      // same thread as a "coming soon" text that says "opens Aug 6, 8:15 AM PT" — made
+      // the owner read stay nights as a release date. See notifications/dates.ts.
+      const dates = formatStayDates(payload.availableDates);
       // THE PROVIDER'S OWN URL, NOT OUR `camphawk.app/b/<token>` SHORTLINK (2026-08-05).
       //
       // OBSERVED, on one handset, same segment count: a `recreation.gov` link →
@@ -300,9 +304,12 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
       // "STILL open" is the whole point of the follow-up: six hours on, a text worded
       // like the first one reads as a duplicate, which is the complaint that produced
       // this feature in the first place.
-      const lead = payload.kind === 'still_open' ? 'STILL open' : 'open';
+      // "open FOR Sep 4-6" — the preposition is doing real work. "open Sep 4-6" was
+      // read as "opens on Sep 4", because the neighbouring coming-soon text uses
+      // "opens <date>" to mean exactly that.
+      const lead = payload.kind === 'still_open' ? 'STILL open for' : 'open for';
       body = fitOneSegment(
-        (n) => `CampHawk: ${n}${site} ${lead} ${dates}${more}. Book: ${bookTxt}`,
+        (n) => `CampHawk: ${n}${site} ${lead} ${dates}. Book: ${bookTxt}`,
         name
       );
     }
@@ -341,15 +348,13 @@ async function dispatchPush(payload: NotificationPayload): Promise<void> {
     title = `⏳ Opening soon: ${name}`;
     body = `${name}${site} was just cancelled — we'll alert you when it's bookable.`;
   } else if (payload.kind === 'still_open') {
-    const dates = payload.availableDates.slice(0, 3).join(', ');
-    const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3}` : '';
+    const dates = formatStayDates(payload.availableDates);
     title = `⛺ Still available: ${name}`;
-    body = `${name}${site} is still open ${dates}${more}. Tap to book.`;
+    body = `${name}${site} is still open for ${dates}. Tap to book.`;
   } else {
-    const dates = payload.availableDates.slice(0, 3).join(', ');
-    const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3}` : '';
+    const dates = formatStayDates(payload.availableDates);
     title = `⛺ Available: ${name}`;
-    body = `${name}${site} open ${dates}${more}. Tap to book.`;
+    body = `${name}${site} open for ${dates}. Tap to book.`;
   }
 
   // Deep-link the app to the watch/campground; strip the extension-only #camphawk hint.

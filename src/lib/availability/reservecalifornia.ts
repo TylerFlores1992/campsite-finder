@@ -91,7 +91,7 @@ export async function findRCOpenUnit(
   minNights = 1,
   excludeUnitIds?: string[],
   flex?: FlexSpec
-): Promise<{ unitId: number; sleepingUnitId: number | null; dates: string[] } | null> {
+): Promise<{ unitId: number; sleepingUnitId: number | null; dates: string[]; name: string | null } | null> {
   const provider = providerByCampgroundId(campgroundId);
   if (!provider) return null;
   const muted = new Set(excludeUnitIds ?? []);
@@ -111,9 +111,9 @@ export async function findRCOpenUnit(
         .sort();
       if (flexible) {
         const run = findQualifyingRun(dates, runLength, flex!.days);
-        if (run) return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, dates: run };
+        if (run) return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, dates: run, name: unit.Name ?? null };
       } else if (hasConsecutiveRun(dates, runLength)) {
-        return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, dates };
+        return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, dates, name: unit.Name ?? null };
       }
     }
   } catch (err) {

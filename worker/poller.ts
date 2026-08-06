@@ -566,14 +566,73 @@ async function loadWatches(): Promise<WatchRow[]> {
  * for hours, so we must alert once, not every cycle). Does NOT touch
  * notification_sent_at, so the real "now available" alert still fires at release.
  */
+/**
+ * A hold is only NEWS if it releases far enough out to be worth waiting for.
+ *
+ * The "coming soon" alert assumes RC's `Lock` is the overnight release — a cancelled
+ * site held until ~8am the next day. Observed 2026-08-06, that assumption broke: the
+ * owner got two texts a minute apart reading "opens Aug 6, 8:15 AM PT" and "opens Aug 6,
+ * 8:16 AM PT", i.e. a lock roughly ONE MINUTE ahead that kept moving. A stable overnight
+ * release cannot do that; a short lock being held and extended can — which is exactly
+ * what a shopping cart is (our own bot does it via `extendShoppingCartTimer`).
+ *
+ * I could not observe a locked slice live to confirm the mechanism, so this does not
+ * claim to know what `Lock` means in general. It only declines to describe a lock
+ * expiring in minutes as "was just cancelled, opens at X".
+ *
+ * Suppressing these costs nothing: when the lock lapses the site becomes free, and the
+ * ordinary availability alert fires within one poll cycle. The heads-up exists for the
+ * case where that is HOURS away and the user needs to set an alarm.
+ */
+const HOLD_MIN_LEAD_MS = 60 * 60_000;
+
+export function holdIsNewsworthy(availableAt: string, now = new Date()): boolean {
+  // RC sends ISO local (no zone). Treat it as wall-clock in the server's zone, which is
+  // what the formatter downstream already assumes — consistent beats subtly-different.
+  const at = new Date(availableAt).getTime();
+  if (!Number.isFinite(at)) return false;
+  return at - now.getTime() >= HOLD_MIN_LEAD_MS;
+}
+
+/**
+ * Claim the right to send ONE "coming soon" for this watch's current hold.
+ *
+ * Keyed on the release time rounded to the HOUR, not the exact instant. The exact
+ * timestamp was the dedupe key, so a lock that crept forward by a minute read as a
+ * brand-new event and sent another text — two identical alerts, one minute apart. The
+ * user cannot act on minute-level precision in a release that is at least an hour away,
+ * so the hour is the honest granularity.
+ */
 async function claimHoldNotification(watchId: string, releaseAt: string): Promise<boolean> {
+  const bucket = new Date(releaseAt);
+  const key = Number.isFinite(bucket.getTime())
+    ? `${bucket.getFullYear()}-${bucket.getMonth() + 1}-${bucket.getDate()}T${bucket.getHours()}`
+    : releaseAt;
   const rows = await mutate<{ id: string }>(
     `UPDATE watches SET rc_hold_notified_for = $2
      WHERE id = $1 AND active = true AND rc_hold_notified_for IS DISTINCT FROM $2
      RETURNING id`,
-    [watchId, releaseAt]
+    [watchId, key]
   );
   return rows.length > 0;
+}
+
+/**
+ * The site number a ReserveCalifornia camper would recognise.
+ *
+ * RC's grid gives every unit a human name — "Hook Up (E ) Campsite #L006" — and we were
+ * discarding it in favour of `Unit ${UnitId}`, RC's internal primary key. An alert
+ * reading "Site Unit 42573" names a number that appears NOWHERE on ReserveCalifornia's
+ * own pages, so it cannot be matched against the map or the listing.
+ *
+ * The `#L006` token is the part people actually use, so prefer it; fall back to the
+ * whole name, and only to the id if RC gave us nothing.
+ */
+export function rcSiteLabel(name: string | null | undefined, unitId: number): string {
+  const trimmed = (name ?? '').trim();
+  if (!trimmed) return `Unit ${unitId}`;
+  const hash = /#\s*([A-Za-z0-9][A-Za-z0-9-]*)/.exec(trimmed);
+  return hash ? `#${hash[1]}` : trimmed;
 }
 
 interface WatchResult {
@@ -708,7 +767,7 @@ async function cycle(): Promise<void> {
   const hotPairs = [...pairLead.values()].filter((l) => l <= RECGOV_HOT_LEAD_DAYS).length;
 
   const monthData = new Map<string, Awaited<ReturnType<typeof getAvailabilityFromRecGov>>>();
-  const rcResults = new Map<string, { dates: string[]; unitId: number; sleepingUnitId: number | null }>();
+  const rcResults = new Map<string, { dates: string[]; unitId: number; sleepingUnitId: number | null; name: string | null }>();
   const rcHeld = new Map<string, { dates: string[]; availableAt: string }>();
   const raResults = new Map<string, { dates: string[]; siteIds: number[]; start: string; end: string }>();
   const gtcResults = new Map<string, { dates: string[]; resourceIds: number[]; start: string; end: string }>();
@@ -770,7 +829,7 @@ async function cycle(): Promise<void> {
           const required = Math.max(w.min_nights, nights.length);
           const open = await findRCOpenUnit(w.campground_id, w.start_date, w.end_date, required, w.muted_site_ids, flexOf(w));
           // Flexible watches report just the matched run; fixed report the whole stay.
-          if (open) rcResults.set(w.id, { dates: open.dates.length ? open.dates : nights, unitId: open.unitId, sleepingUnitId: open.sleepingUnitId });
+          if (open) rcResults.set(w.id, { dates: open.dates.length ? open.dates : nights, unitId: open.unitId, sleepingUnitId: open.sleepingUnitId, name: open.name });
         },
         RECGOV_CONCURRENCY
       );
@@ -842,7 +901,10 @@ async function cycle(): Promise<void> {
           ? { dates: tnscResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
         : isUseDirectSource(watch.campground_source)
           // Surface the RC unit as the mutable "site" (id + friendly label).
-          ? { dates: rc?.dates ?? [], campsiteId: rc ? String(rc.unitId) : null, campsiteName: rc ? `Unit ${rc.unitId}` : null }
+          // RC's own label for the unit ("Hook Up (E ) Campsite #L006"), not its
+          // internal UnitId. An alert reading "Site Unit 42573" names a number the
+          // user cannot find anywhere on ReserveCalifornia's own site.
+          ? { dates: rc?.dates ?? [], campsiteId: rc ? String(rc.unitId) : null, campsiteName: rc ? rcSiteLabel(rc.name, rc.unitId) : null }
           : availableDatesForWatch(watch, monthData);
     observed.push({ w: watch, hadOpening: result.dates.length > 0 });
     if (result.dates.length === 0) continue;
@@ -971,6 +1033,14 @@ async function cycle(): Promise<void> {
     if (rcResults.has(w.id)) continue; // already alerted as available above
     const held = rcHeld.get(w.id);
     if (!held) continue;
+    // A lock expiring in minutes is not a cancellation heads-up — see holdIsNewsworthy.
+    // The site becoming free will alert on its own within a cycle.
+    if (!holdIsNewsworthy(held.availableAt)) {
+      console.log(
+        `[poller] watch ${w.id}: hold on ${w.campground_name} releases ${held.availableAt} — too soon to be news, staying quiet`
+      );
+      continue;
+    }
     if (!(await claimHoldNotification(w.id, held.availableAt))) continue;
 
     console.log(

@@ -168,6 +168,28 @@ minute".
 - **The precart payload is solved** — `{extraId, extraValue}`, lowerCamel; see the same
   doc. That contract is reusable by whichever hand-off we pick.
 
+## Alert copy — three bugs from one real text (2026-08-06)
+A live alert read *"Leo Carrillo SP - Canyon Campground **(si.** Site **Unit 42573** open
+**2026-09-04, 2026-09-05, 2026-09-06**"* and the owner read it as "the site opens Sep 4".
+- **`Unit 42573` was RC's internal primary key.** The grid carries a human name
+  (`Hook Up (E ) Campsite #L006`) which we were discarding — a number that appears
+  nowhere on RC's own pages is unmatchable against the map or the listing.
+  `rcSiteLabel()` in `worker/poller.ts` prefers the `#L006` token.
+- **`formatStayDates()`** (`lib/notifications/dates.ts`) → `Sep 4-6`. Gaps stay visible
+  (a range would promise a night that isn't free) and dates are parsed as STRINGS —
+  `new Date('2026-09-04')` is midnight UTC and renders as Sep 3 in every US timezone.
+- **"open **for** Sep 4-6"** — the preposition is load-bearing. The coming-soon text in
+  the same thread uses "opens \<date\>" to mean a real release time, so both readings
+  were live at once.
+- **`fitOneSegment` drops a trailing parenthetical WHOLE** before cutting, then cuts on a
+  word boundary. `(si.` was a blind mid-token cut. With the shorter dates the real Leo
+  Carrillo alert now fits at 148 chars **with** its full name — 160 before.
+- **"Coming soon" needs ≥1h lead** (`holdIsNewsworthy`) and dedupes on the release hour,
+  not the exact instant. Two texts arrived a minute apart ("opens 8:15 AM", "opens
+  8:16 AM"): RC's `Lock` was ~1 min ahead and creeping, which is a cart hold being
+  extended, not the overnight release the code assumed. Suppressing these costs nothing —
+  when the lock lapses the ordinary availability alert fires within a cycle.
+
 ## Alerting — the claim (read this before touching the poller)
 The decision "may we alert for this?" is `worker/claim.ts`, keyed on
 **(watch_id, site_key)** in `watch_site_alerts` (migration 026), 1-hour window.

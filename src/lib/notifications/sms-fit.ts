@@ -52,14 +52,37 @@ export function fitOneSegment(build: (name: string) => string, name: string): st
   const full = build(name);
   if (full.length <= SMS_ONE_SEGMENT) return full;
 
-  const room = name.length - (full.length - SMS_ONE_SEGMENT) - 1; // -1 for the ellipsis
-  if (room < MIN_NAME) return full;
+  // STEP 1: drop a trailing parenthetical before cutting anything else.
+  //
+  // "Leo Carrillo SP - Canyon Campground (sites 1-24, 78-133)" is the real shape, and
+  // the bracket is both the longest and least useful part — the alert already names the
+  // specific site, so the range in the name tells the reader nothing. Cutting blind
+  // through it produced "Leo Carrillo SP - Canyon Campground (si." in a live alert,
+  // which looks like a bug even though the message was correct.
+  const noParens = name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  if (noParens.length >= MIN_NAME && noParens !== name) {
+    const attempt = build(noParens);
+    if (attempt.length <= SMS_ONE_SEGMENT) return attempt;
+    name = noParens; // still too long, but a better starting point for the cut below
+  }
+
+  const overBy = build(name).length - SMS_ONE_SEGMENT;
+  const room = name.length - overBy - 1; // -1 for the trailing '.'
+  if (room < MIN_NAME) return build(name).length <= SMS_ONE_SEGMENT ? build(name) : full;
+
+  // STEP 2: cut on a WORD BOUNDARY, and never leave a dangling opener.
+  //
+  // Truncating mid-token is what makes a trimmed name look broken rather than short.
+  // Falling back to the hard cut matters for names with no spaces in range.
+  let short = name.slice(0, room);
+  const lastSpace = short.lastIndexOf(' ');
+  if (lastSpace >= MIN_NAME) short = short.slice(0, lastSpace);
+  short = short.replace(/[\s(\-–—,;:]+$/, '').trimEnd();
+  if (short.length < MIN_NAME) short = name.slice(0, room).trimEnd();
 
   // A single '.' rather than '…': the ellipsis character is not in GSM-7, so it would
   // either cost three characters after transliteration or tip the whole message into
   // UCS-2 — the exact failure this function exists to avoid.
-  const short = `${name.slice(0, room).trimEnd()}.`;
-  const fitted = build(short);
-  // trimEnd() can only shorten, so this cannot come back over budget; belt and braces.
+  const fitted = build(`${short}.`);
   return fitted.length <= SMS_ONE_SEGMENT ? fitted : full;
 }

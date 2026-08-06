@@ -74,3 +74,54 @@ test('the coming_soon shape fits too, with the longest real name', () => {
   const out = fitOneSegment(soon, 'Leo Carrillo SP — Canyon Campground (sites 1-24, 78-133)');
   assert.ok(out.length <= SMS_ONE_SEGMENT, `was ${out.length}`);
 });
+
+// ── Regressions from a real alert, 2026-08-06 ────────────────────────────────────
+// The live text read:
+//   "CampHawk: Leo Carrillo SP - Canyon Campground (si. Site Unit 42573 open
+//    2026-09-04, 2026-09-05, 2026-09-06. Book: https://www.reservecalifornia.com/..."
+// Three separate defects in one message; these cover the trimming half.
+
+const LEO = 'Leo Carrillo SP - Canyon Campground (sites 1-24, 78-133)';
+
+/** The invariant that actually matters: never leave a bracket open. "(si." is what a
+ *  blind mid-token cut produces, and it reads as a broken message. */
+const noDanglingParen = (out: string) =>
+  (out.match(/\(/g) ?? []).length === (out.match(/\)/g) ?? []).length;
+
+test('the real Leo Carrillo alert now fits WITH its full name', () => {
+  // Shortening the dates to "Sep 4-6" bought back ~24 characters, which is enough that
+  // this message no longer needs trimming at all — the best fix for a bad truncation.
+  const build = (n: string) =>
+    `CampHawk: ${n} #L006 open for Sep 4-6. Book: https://www.reservecalifornia.com/park/665/539`;
+  const out = fitOneSegment(build, LEO);
+  assert.ok(out.length <= SMS_ONE_SEGMENT, `was ${out.length}: ${out}`);
+  assert.ok(out.includes(LEO), `should not have needed cutting: ${out}`);
+  assert.ok(noDanglingParen(out), out);
+});
+
+test('when the parenthetical must go, it goes WHOLE — never "(si."', () => {
+  // Force the squeeze with a long site label and a long link.
+  const build = (n: string) =>
+    `CampHawk: ${n} #L006 open for Sep 4-6, Sep 11-13. Book: https://www.reservecalifornia.com/park/665/539/unit/42573`;
+  const out = fitOneSegment(build, LEO);
+  assert.ok(noDanglingParen(out), `left a bracket open: ${out}`);
+  assert.ok(out.includes('Leo Carrillo SP'), `lost the identifying part: ${out}`);
+});
+
+test('when a cut IS needed it lands on a word boundary, not mid-token', () => {
+  const build = (n: string) =>
+    `CampHawk: ${n} #L006 open for Sep 4-6, Sep 11-13. Book: https://www.reservecalifornia.com/park/665/539/extra`;
+  const out = fitOneSegment(build, 'Leo Carrillo State Park Canyon Campground North Loop Area');
+  assert.ok(out.length <= SMS_ONE_SEGMENT, `was ${out.length}`);
+  // The name portion ends '.', and the character before it must not be a word fragment
+  // dangling off a bracket or a hyphen.
+  const m = /CampHawk: (.+?)\.? #L006/.exec(out);
+  assert.ok(m, `unexpected shape: ${out}`);
+  assert.ok(!/[(\-–—,;:]$/.test(m![1].replace(/\.$/, '')), `dangling punctuation: ${m![1]}`);
+});
+
+test('a name with no spaces still gets cut rather than blowing the budget', () => {
+  const build = (n: string) => `CampHawk: ${n} open for Sep 4-6. Book: https://example.com/a/b/c/d/e/f`;
+  const out = fitOneSegment(build, 'A'.repeat(200));
+  assert.ok(out.length <= SMS_ONE_SEGMENT || out === build('A'.repeat(200)));
+});
