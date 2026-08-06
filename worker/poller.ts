@@ -856,11 +856,17 @@ async function cycle(): Promise<void> {
     // Also the "still open" observation — see claimNotification. A quiet answer here
     // usually means the site has been open continuously since we alerted, which is not
     // news; it is the same opening we already reported.
-    if (!(await claimNotification(watch.id, result.campsiteId))) {
+    const claim = await claimNotification(watch.id, result.campsiteId);
+    if (!claim.won) {
       console.log(
         `[poller] watch ${watch.id}: ${result.campsiteId ?? 'campground'} still open, already alerted — staying quiet`
       );
       continue;
+    }
+    if (claim.reason === 'nudge') {
+      console.log(
+        `[poller] watch ${watch.id}: ${result.campsiteId ?? 'campground'} STILL open 6h on — sending the one follow-up`
+      );
     }
 
     // Auto-cart lane: hand the opening to the bot instead of alerting. Same claim,
@@ -943,6 +949,9 @@ async function cycle(): Promise<void> {
         campsiteName: result.campsiteName,
         startDate: matchStart,
         endDate: matchEnd,
+        // The six-hour follow-up must not read like a fresh opening — worded the same,
+        // it is indistinguishable from the hourly-repeat bug it replaces.
+        kind: claim.reason === 'nudge' ? 'still_open' : 'available',
       });
       notified++;
       // A held site that just went live: clear the held marker so a future

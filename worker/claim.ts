@@ -35,6 +35,20 @@ export const RENOTIFY_WINDOW = "interval '1 hour'";
 export const CONTINUOUS_GAP = "interval '10 minutes'";
 
 /**
+ * How long a site must stay open before we send ONE follow-up.
+ *
+ * Alerting on the transition (039) removed the hourly repeat — and with it something
+ * real, because that repeat was incidentally a retry for a first alert that never
+ * landed. Six hours later, if the site is somehow STILL open, it is worth one more
+ * message: either the first was missed, or the user has been handed an unusually long
+ * window to act on.
+ *
+ * ONE. `nudged_at` is what enforces that, and it is the whole difference between this
+ * and the bug it replaces — a six-hour repeat is just a slower drumbeat.
+ */
+export const NUDGE_AFTER = "interval '6 hours'";
+
+/**
  * Sources that report campground-level availability with no site id
  * (ReserveAmerica, GoingToCamp, TN/SC) collapse onto this one key, and so keep the
  * old per-watch behaviour — which is the honest reading of what they tell us.
@@ -62,29 +76,61 @@ export const WHOLE_CAMPGROUND_SITE_KEY = '*';
  * across the statement, which is what makes `last_alert_at = NOW()` a sound test of
  * "did this call win?" — two cycles racing the same pair still cannot both win.
  */
+/**
+ * Why we are allowed to speak — the caller needs this, not just permission.
+ *
+ * A `nudge` must not be worded like a fresh opening. Six hours on, an alert identical
+ * to the first one reads exactly like the hourly-repeat bug we just removed, and the
+ * user cannot tell "it opened again" from "it never closed". The reason travels with
+ * the claim so the message can say which it is.
+ */
+export type ClaimReason = 'new' | 'reopened' | 'nudge';
+export interface ClaimResult {
+  won: boolean;
+  reason: ClaimReason | null;
+}
+
 export async function claimNotification(
   watchId: string,
   campsiteId?: string | null
-): Promise<boolean> {
+): Promise<ClaimResult> {
   const siteKey = campsiteId ?? WHOLE_CAMPGROUND_SITE_KEY;
-  const rows = await mutate<{ won: boolean }>(
+  // Named once, used three times — the two paths to a claim, and the reason we report.
+  const REOPENED = `watch_site_alerts.last_alert_at < NOW() - ${RENOTIFY_WINDOW}
+      AND COALESCE(watch_site_alerts.last_seen_open_at, '-infinity'::timestamptz)
+          < NOW() - ${CONTINUOUS_GAP}`;
+  const NUDGE = `watch_site_alerts.nudged_at IS NULL
+      AND watch_site_alerts.last_alert_at < NOW() - ${NUDGE_AFTER}`;
+
+  const rows = await mutate<{ won: boolean; reason: ClaimReason | null }>(
     `INSERT INTO watch_site_alerts (watch_id, site_key, last_alert_at, last_seen_open_at)
      SELECT $1, $2, NOW(), NOW() FROM watches w WHERE w.id = $1 AND w.active = true
      ON CONFLICT (watch_id, site_key) DO UPDATE SET
        last_seen_open_at = NOW(),
        last_alert_at = CASE
-         WHEN watch_site_alerts.last_alert_at < NOW() - ${RENOTIFY_WINDOW}
-          AND COALESCE(watch_site_alerts.last_seen_open_at, '-infinity'::timestamptz)
-              < NOW() - ${CONTINUOUS_GAP}
-         THEN NOW()
+         WHEN ${REOPENED} OR ${NUDGE} THEN NOW()
          ELSE watch_site_alerts.last_alert_at
+       END,
+       -- A genuine re-open is a NEW opening, so it gets its own second chance: clear
+       -- the nudge. Without this reset the follow-up would fire once per (watch, site)
+       -- for the life of the watch and then go silent for every later stay.
+       nudged_at = CASE
+         WHEN ${REOPENED} THEN NULL
+         WHEN ${NUDGE} THEN NOW()
+         ELSE watch_site_alerts.nudged_at
        END
-     RETURNING (last_alert_at = NOW()) AS won`,
+     RETURNING (last_alert_at = NOW()) AS won,
+               CASE WHEN last_alert_at = NOW()
+                    THEN CASE WHEN nudged_at = NOW() THEN 'nudge' ELSE 'reopened' END
+               END AS reason`,
     [watchId, siteKey]
   );
-  // No row at all means the watch is gone or inactive; a row with won=false means we
-  // observed the site but are deliberately staying quiet.
-  if (rows.length === 0 || !rows[0].won) return false;
+  // No row at all means the watch is gone or inactive; won=false means we observed the
+  // site but are deliberately staying quiet.
+  if (rows.length === 0 || !rows[0].won) return { won: false, reason: null };
+  // The INSERT path returns no reason (there is no conflicting row to compare against),
+  // and it is always a first alert.
+  const reason: ClaimReason = rows[0].reason ?? 'new';
 
   // Keep the watch-level stamp current. It no longer gates a notification, but
   // WatchCard renders "last alerted" from it and the Campflare webhook still dedupes
@@ -92,5 +138,5 @@ export async function claimNotification(
   await mutate('UPDATE watches SET notification_sent_at = NOW() WHERE id = $1', [watchId]).catch(
     (e) => console.error('[poller] notification_sent_at stamp failed (non-fatal):', e)
   );
-  return true;
+  return { won: true, reason };
 }

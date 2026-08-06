@@ -164,6 +164,15 @@ The decision "may we alert for this?" is `worker/claim.ts`, keyed on
   mean to alert**: it doubles as the observation, and a skipped cycle looks exactly like
   the site vanishing. `NULL` (pre-039 rows) means "we don't know" and does NOT suppress.
   `worker/claim.test.mts` fails against the bug (verified by restoring it).
+- **ONE "still open" nudge at 6h (migration 040).** Transition-only alerting removed the
+  hourly repeat — and with it the accidental *retry* it gave a first alert that never
+  landed. `nudged_at` buys back exactly one follow-up while the site is still open, and
+  is what makes it once rather than a slower drumbeat. It **resets to NULL on a genuine
+  re-open**, so each opening gets its own; without that reset it would latch for the life
+  of the pair and every later stay would silently lose its follow-up.
+  `claimNotification` returns `{won, reason}` — `reason: 'nudge'` becomes
+  `kind: 'still_open'`, which is worded differently in email/SMS/push **on purpose**: a
+  follow-up that reads like a fresh alert is indistinguishable from the bug above.
 - It was one timestamp per WATCH until 2026-07-30, so the first site to open silenced
   every other site on that watch for an hour — and because the auto-cart lane shares
   the claim, the second site was never CARTED either, not merely un-announced.

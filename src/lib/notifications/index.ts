@@ -44,8 +44,12 @@ export interface NotificationPayload {
   /** 'available' = bookable now (default). 'coming_soon' = ReserveCalifornia held
    *  a cancelled site that releases at `availableAt` — a heads-up before it's live.
    *  'carted' = the auto-cart bot already added this exact site to the user's
-   *  recreation.gov cart — they just need to check out. */
-  kind?: 'available' | 'coming_soon' | 'carted';
+   *  recreation.gov cart — they just need to check out.
+   *  'still_open' = the ONE follow-up, six hours after an alert, for a site that never
+   *  closed. Same opening, not a new one — and it must SAY so. Worded like a fresh
+   *  alert it is indistinguishable from the hourly-repeat bug it replaces, and the
+   *  user cannot tell "it opened again" from "it never closed". */
+  kind?: 'available' | 'coming_soon' | 'carted' | 'still_open';
   /** For 'coming_soon': ISO-local release time (e.g. "2026-07-18T08:00:00"). */
   availableAt?: string | null;
 }
@@ -183,7 +187,11 @@ async function dispatchEmail(payload: NotificationPayload, links: ActionLinks): 
         ? `✅ In your cart: ${payload.campgroundName} — check out now`
         : comingSoon
           ? `⏳ Opening soon: ${payload.campgroundName}`
-          : `⛺ Campsite available: ${payload.campgroundName}`,
+          : payload.kind === 'still_open'
+            // Distinct subject on purpose: in a mailbox, an identical one six hours
+            // later just looks like we sent the same alert twice.
+            ? `⛺ Still available: ${payload.campgroundName}`
+            : `⛺ Campsite available: ${payload.campgroundName}`,
       html: buildEmailHtml(payload).replace('</body>', `${actionFooterHtml(links)}</body>`),
     });
     await logNotification(payload, 'email', 'sent');
@@ -289,8 +297,12 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
       const bookTxt = payload.bookingUrl.split('#')[0];
       // A long campground name plus three dates can still clear 160 on its own, and an
       // alert that quietly goes back to two segments would look like the fix failing.
+      // "STILL open" is the whole point of the follow-up: six hours on, a text worded
+      // like the first one reads as a duplicate, which is the complaint that produced
+      // this feature in the first place.
+      const lead = payload.kind === 'still_open' ? 'STILL open' : 'open';
       body = fitOneSegment(
-        (n) => `CampHawk: ${n}${site} open ${dates}${more}. Book: ${bookTxt}`,
+        (n) => `CampHawk: ${n}${site} ${lead} ${dates}${more}. Book: ${bookTxt}`,
         name
       );
     }
@@ -328,6 +340,11 @@ async function dispatchPush(payload: NotificationPayload): Promise<void> {
   } else if (payload.kind === 'coming_soon') {
     title = `⏳ Opening soon: ${name}`;
     body = `${name}${site} was just cancelled — we'll alert you when it's bookable.`;
+  } else if (payload.kind === 'still_open') {
+    const dates = payload.availableDates.slice(0, 3).join(', ');
+    const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3}` : '';
+    title = `⛺ Still available: ${name}`;
+    body = `${name}${site} is still open ${dates}${more}. Tap to book.`;
   } else {
     const dates = payload.availableDates.slice(0, 3).join(', ');
     const more = payload.availableDates.length > 3 ? ` +${payload.availableDates.length - 3}` : '';
@@ -455,8 +472,15 @@ function buildEmailHtml(payload: NotificationPayload): string {
 <!DOCTYPE html>
 <html>
 <body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#1a1a1a">
-  <h2 style="color:#16a34a;margin-bottom:4px">⛺ Campsite Available!</h2>
-  <p style="margin-top:0;color:#555">A cancellation opened up at a campground you're watching.</p>
+  <h2 style="color:#16a34a;margin-bottom:4px">${payload.kind === 'still_open' ? '⛺ Still available' : '⛺ Campsite Available!'}</h2>
+  <p style="margin-top:0;color:#555">${
+    payload.kind === 'still_open'
+      // Say plainly that this is a follow-up and that there will be no more. Otherwise
+      // the reader's question is "why am I getting this again?", and the honest answer
+      // — "in case you missed the first one" — is worth one sentence.
+      ? "We told you about this one a few hours ago and it's <strong>still open</strong> — sending once more in case that alert didn't reach you. This is the only reminder you'll get for this opening."
+      : "A cancellation opened up at a campground you're watching."
+  }</p>
 
   <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:20px;margin:20px 0">
     <h3 style="margin:0 0 8px">${payload.campgroundName}${siteSuffix}</h3>
