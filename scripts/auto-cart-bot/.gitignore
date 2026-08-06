@@ -14,3 +14,6 @@ rc-blob.json
 rc-precart-load.json
 rc-ui-load.json
 rc-ui-submit.json
+# Failure captures — a screenshot of a signed-in page is a session on disk.
+rc-probe-*.png
+rc-probe-*.txt

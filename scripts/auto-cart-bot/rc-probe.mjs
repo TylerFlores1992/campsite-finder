@@ -161,9 +161,40 @@ async function diagnose(page) {
         has(/captcha|are you a robot|verify you are human/i),
       badCreds: has(/incorrect|invalid|does not match|unable to sign/i),
       locked: has(/locked|too many attempts|temporarily unavailable/i),
+      // Okta puts the real reason in a dedicated banner, and it is frequently a
+      // sentence none of the regexes above would match. Read it rather than infer it.
+      error: Array.from(
+        document.querySelectorAll('[role="alert"], .okta-form-infobox-error, .infobox-error, .o-form-error-container'),
+      ).map((el) => el.textContent?.trim()).filter(Boolean).join(' | ').slice(0, 300),
       snippet: text.replace(/\s+/g, ' ').slice(0, 300),
     };
   });
+}
+
+/**
+ * Write down what the page actually looked like when a step failed.
+ *
+ * Every login failure so far has been diagnosed from a 300-character text snippet,
+ * which is how "the Next button didn't work" and "Okta showed a challenge we don't
+ * recognise" ended up indistinguishable. A screenshot and the full text cost nothing
+ * and settle it. Both are gitignored — the screenshot can contain a signed-in session.
+ */
+async function captureFailure(page, name) {
+  const shot = path.join(HERE, `rc-probe-${name}.png`);
+  const txt = path.join(HERE, `rc-probe-${name}.txt`);
+  try {
+    await page.screenshot({ path: shot, fullPage: true });
+    const body = await page.evaluate(() => {
+      const frames = [document, ...Array.from(document.querySelectorAll('iframe'))
+        .map((f) => { try { return f.contentDocument; } catch { return null; } }).filter(Boolean)];
+      return frames.map((d, i) => `--- frame ${i} (${d.location?.href ?? '?'}) ---\n${d.body?.innerText ?? ''}`).join('\n\n');
+    });
+    fs.writeFileSync(txt, `url: ${page.url()}\n\n${body}`, { mode: 0o600 });
+    log(`   captured: ${shot}`);
+    log(`             ${txt}`);
+  } catch (err) {
+    log(`   (could not capture the failure state: ${err.message})`);
+  }
 }
 
 const ctx = await chromium.launchPersistentContext(path.join(HERE, '.rc-probe-profile'), {
@@ -185,6 +216,13 @@ try {
     step(2, 'Already signed in (persistent profile) — skipping login.');
   } else {
     step(2, 'Signing in…');
+    // A run that previously said "Already signed in" and now doesn't means the session
+    // was DROPPED, not that it never existed. That distinction matters: an expiring
+    // session is the design working (log in once, ride it), while a revoked one is RC
+    // pushing back on this machine. The profile dir is the evidence either way.
+    if (fs.existsSync(path.join(HERE, '.rc-probe-profile'))) {
+      log('   (the persistent profile exists but holds no token — a previous session was lost)');
+    }
     // RC hands off to Okta at signin.reservecalifornia.com. Selectors are best-effort
     // across their hosted-widget variants; --headful shows what actually appeared.
     const signIn = page
@@ -200,6 +238,8 @@ try {
     if (!user) {
       const d = await diagnose(page);
       log('   Page says:', d.snippet);
+      if (d.error) log(`   Okta error banner: "${d.error}"`);
+      await captureFailure(page, 'login-no-form');
       throw new Error('login form not found — rerun with --headful and watch the page');
     }
     log(`   email field: ${user.sel}`);
@@ -211,16 +251,32 @@ try {
     // one-page widget), this second lookup just finds it immediately.
     let pass = await findIn(page, PASSWORD_SELECTORS, { timeout: 2000, label: 'password (same screen)' });
     if (!pass) {
-      const next = await findIn(page, SUBMIT_SELECTORS, { timeout: 5000, label: 'the Next button' });
-      if (next) await next.loc.click().catch(() => {});
-      else await page.keyboard.press('Enter');
-      await page.waitForTimeout(4000);
-      pass = await findIn(page, PASSWORD_SELECTORS, { label: 'the password field' });
+      // TWO attempts, and the click's failure is REPORTED. `.catch(() => {})` used to
+      // make "clicked, and Okta ignored it" and "the click itself threw" the same
+      // outcome — so a run that never submitted anything reported "password step not
+      // reached", which points at Okta for something that was ours.
+      for (let attempt = 1; attempt <= 2 && !pass; attempt++) {
+        const next = await findIn(page, SUBMIT_SELECTORS, { timeout: 5000, label: 'the Next button' });
+        if (next) {
+          log(`   submitting the email (attempt ${attempt}, ${next.sel})`);
+          try {
+            await next.loc.click({ timeout: 5000 });
+          } catch (err) {
+            log(`   ⚠ the Next click FAILED: ${err.message.split('\n')[0]}`);
+          }
+        } else {
+          log(`   no Next button found (attempt ${attempt}) — pressing Enter in the field`);
+          await user.loc.press('Enter').catch(() => {});
+        }
+        pass = await findIn(page, PASSWORD_SELECTORS, { timeout: 8000, label: 'the password field' });
+      }
     }
     if (!pass) {
       const d = await diagnose(page);
       log('   No password field appeared. Page says:', d.snippet);
+      if (d.error) log(`   Okta error banner: "${d.error}"`);
       if (d.mfa) log('   → looks like Okta went straight to an MFA challenge.');
+      await captureFailure(page, 'login-no-password');
       throw new Error('password step not reached');
     }
     log(`   password field: ${pass.sel}`);
@@ -247,6 +303,7 @@ try {
   if (!signedIn) log(`   page text : ${d.snippet}`);
 
   if (!signedIn) {
+    await captureFailure(page, 'login-failed');
     log('\nVERDICT: the bot could NOT log in unattended.');
     log(d.mfa
       ? '  Cause: Okta MFA. Options: an app-password/trusted-device flow, or a one-time\n  human login on the mini-PC whose persistent profile the bot then reuses.'
