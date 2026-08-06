@@ -45,6 +45,39 @@ const BUNDLE_INVARIANTS: Array<{ needle: string; why: string }> = [
   },
 ];
 
+/**
+ * The precart chunk carries the second half of the design: how a facility's required
+ * "extras" are answered. Both the KEY NAMES and the checkbox value rule were read out of
+ * this file, and getting either wrong fails in the most misleading way available — RC
+ * answers HTTP 200 with `IsSuccess: false` naming the field, which reads as a wrong VALUE
+ * when it is really a wrong KEY. Five rounds of guessing were spent there.
+ *
+ * The chunk's filename is content-hashed, so it must be discovered through the import
+ * graph (index → Route → FacilityPreCart) rather than pinned.
+ */
+const PRECART_INVARIANTS: Array<{ needle: string; why: string }> = [
+  {
+    needle: 'extraId:',
+    why: 'the wire key is lowerCamel `extraId` — PascalCase is silently ignored and the required-field error never clears',
+  },
+  {
+    needle: 'extraValue:',
+    why: 'the wire key is lowerCamel `extraValue` — same failure mode as extraId',
+  },
+  {
+    needle: 'UnitDetail.Extras',
+    why: 'the extras we must answer are read from UnitDetail.Extras.$values in the load response',
+  },
+  {
+    needle: 'IsWebRequired',
+    why: 'which extras are mandatory is decided by this flag; without it we cannot tell what must be answered',
+  },
+  {
+    needle: 'IsWebViewable',
+    why: 'only viewable extras are submitted — sending the others is a difference from what the real UI does',
+  },
+];
+
 type Check = { name: string; ok: boolean; detail: string };
 
 async function proxiedFetch(url: string, init?: RequestInit): Promise<Response> {
@@ -72,6 +105,21 @@ async function resolveBundleUrl(): Promise<string> {
   return new URL(m[0], RC_HOME).toString();
 }
 
+/** Follow the import graph to the precart chunk. Every filename is content-hashed, so
+ *  each hop must be read out of the file before it — pinning any of them means the canary
+ *  keeps checking a bundle RC no longer serves. */
+async function resolvePrecartChunkUrl(indexJs: string): Promise<string> {
+  const chunkIn = (js: string, prefix: string) => {
+    const m = js.match(new RegExp(`${prefix}-[A-Za-z0-9_-]{6,12}\\.js`));
+    if (!m) throw new Error(`no ${prefix}-*.js reference found`);
+    return new URL(`/assets/${m[0]}`, RC_HOME).toString();
+  };
+  // index lazy-loads a single Route chunk, which is what actually lists every page.
+  const routeRes = await proxiedFetch(chunkIn(indexJs, 'Route'));
+  if (!routeRes.ok) throw new Error(`Route chunk returned ${routeRes.status}`);
+  return chunkIn(await routeRes.text(), 'FacilityPreCart');
+}
+
 async function run(): Promise<Check[]> {
   const checks: Check[] = [];
 
@@ -88,6 +136,45 @@ async function run(): Promise<Check[]> {
         name: `bundle: ${inv.needle}`,
         ok,
         detail: ok ? 'present' : `MISSING — ${inv.why}`,
+      });
+    }
+
+    // 1b. Precart chunk invariants — the extras contract.
+    try {
+      const precartUrl = await resolvePrecartChunkUrl(js);
+      const pRes = await proxiedFetch(precartUrl);
+      if (!pRes.ok) throw new Error(`precart chunk returned ${pRes.status}`);
+      const pJs = await pRes.text();
+      for (const inv of PRECART_INVARIANTS) {
+        const ok = pJs.includes(inv.needle);
+        checks.push({
+          name: `precart: ${inv.needle}`,
+          ok,
+          detail: ok ? 'present' : `MISSING — ${inv.why}`,
+        });
+      }
+      // ExtraType 0 = CheckBox lives in its own tiny enum chunk. If RC renumbers it, a
+      // required checkbox stops being recognised as one and we answer it with the wrong
+      // kind of value — a silent failure, so assert the number, not just the name.
+      const enumUrl = new URL(
+        `/assets/${pJs.match(/extraTypes-[A-Za-z0-9_-]{6,12}\.js/)?.[0] ?? ''}`,
+        RC_HOME,
+      ).toString();
+      const eRes = await proxiedFetch(enumUrl);
+      const eJs = eRes.ok ? await eRes.text() : '';
+      const ok = /\[\s*e\.CheckBox\s*=\s*0\s*\]|e\[e\.CheckBox=0\]/.test(eJs);
+      checks.push({
+        name: 'precart: ExtraType.CheckBox === 0',
+        ok,
+        detail: ok
+          ? 'present'
+          : 'MISSING — the ExtraType enum was renumbered; a required checkbox would be answered as free text',
+      });
+    } catch (err) {
+      checks.push({
+        name: 'precart: chunk',
+        ok: false,
+        detail: `could not read the precart chunk (${(err as Error).message}) — cannot verify the extras contract`,
       });
     }
   } catch (err) {

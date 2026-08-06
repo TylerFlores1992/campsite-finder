@@ -374,26 +374,30 @@ try {
           // supposed to acquire one.
           if (loadRes?.ShoppingCartKey) body.shoppingCartKey = loadRes.ShoppingCartKey;
 
-          let submitted = await call(submitUrl);
-          const attempts = [{ shape: 'extraValues: [] (as before)', v: verdict(submitted) }];
-
-          // THE WAIVERS. `load` returns the facility's required acknowledgements and the
-          // submit stays IsSuccess:false until they are answered — "Please confirm your
-          // booking dates…" is one of them. We do not know the exact `extraValues` wire
-          // shape, so try a small BOUNDED set of plausible ones and report every result.
-          // Guessing silently is what produced the false success earlier; this guesses
-          // in the open, and the dumped definitions below are the authoritative answer.
-          // .NET serialises collections as {"$type":…,"$values":[…]}, NOT as a bare
-          // array — Array.isArray() on them is always false. Unwrap before touching one.
-
-          // THE REQUIRED FIELD, located rather than guessed. Searching the load response
-          // for the rejected label found an `ExtraDefinition`:
-          //   ExtraId 163, Name "Please confirm your booking dates…",
-          //   IsWebRequired true, DefaultValue "Unchecked"
-          // "Unchecked" is the tell: it is a CHECKBOX, so the value RC wants is
-          // "Checked" — not the "true" the earlier guesses sent. The definitions are
-          // nested somewhere under the load response, so walk the whole tree for any
-          // object carrying an ExtraId instead of hard-coding a path that may move.
+          // THE EXTRAS — no longer guessed. RC's own web bundle was read
+          // (assets/FacilityPreCart-*.js), and it settles both halves of the question:
+          //
+          //   xs = (s) => { ... a.UnitDetail.Extras.$values.forEach((n) => {
+          //          if (n.IsWebViewable) { let r = {...n};
+          //            r.value = r.ExtraType === ke.CheckBox
+          //              ? (r.Value ? r.Value.toString() === "true"
+          //                         : !!(r.DefaultValue?.toLowerCase() === "checked"))
+          //              : (r.Value ? r.Value : r.DefaultValue);
+          //            if (r.ExtraType === ke.Choice && !r.value) r.value = "-- None --";
+          //   ... and on submit:
+          //     l.extraValues.forEach(h => u.extraValues.push({
+          //       extraId: h.ExtraId, extraValue: h.value }))
+          //
+          // TWO facts, and the first is why five rounds of guessing all failed:
+          //  1. THE KEYS ARE lowerCamel — `extraId` / `extraValue`. Every earlier attempt
+          //     sent `ExtraId` + `Value`, which the API ignores, so the answer never
+          //     landed and the SAME "required field" error came back each time. The
+          //     error was honest; our key names were wrong.
+          //  2. ExtraType 0 = CheckBox (assets/extraTypes-*.js), and the tick handler is
+          //     `u(e.ExtraId, checked ? "true" : "false")` — a checkbox answers with the
+          //     STRING "true", not "Checked". DefaultValue "Unchecked" describes the
+          //     starting state, not the wire value.
+          // Source of truth: RC's shipped code, re-asserted by scripts/rc-cart-canary.mts.
           const extras = [];
           const paths = [];
           const seen = new Set();
@@ -417,24 +421,50 @@ try {
             }
           })(loadRes, '');
 
-          const needed = extras.filter((e) => e.IsWebRequired || e.Required || e.IsCRSRequired);
-          if (!verdict(submitted).isSuccess && needed.length) {
-            // A checkbox extra answers with the opposite of DefaultValue. Anything else
-            // gets its default echoed back, which is what the UI submits untouched.
-            const answer = (e) => (String(e.DefaultValue) === 'Unchecked' ? 'Checked' : String(e.DefaultValue ?? ''));
-            const shapes = [
-              ['{ExtraId,Value:"Checked"}', (e) => ({ ExtraId: e.ExtraId, Value: answer(e) })],
-              ['definition echoed + Value', (e) => ({ ...e, Value: answer(e) })],
-              ['{ExtraId,Name,Value}', (e) => ({ ExtraId: e.ExtraId, Name: e.Name, Value: answer(e) })],
-              ['{ExtraId,Value:"true"}', (e) => ({ ExtraId: e.ExtraId, Value: 'true' })],
-            ];
-            for (const [name, make] of shapes) {
-              body.extraValues = needed.map(make);
-              const r = await call(submitUrl);
-              const v = verdict(r);
-              attempts.push({ shape: name, v });
-              if (v.isSuccess) { submitted = r; break; }
+          // RC's own value derivation, transcribed. Only IsWebViewable extras are sent,
+          // and every one of them is — not just the required ones, because that is what
+          // the UI does and a missing optional extra is a difference we'd rather not have.
+          const CHECKBOX = 0, CHOICE = 4;
+          const rcValue = (e) => {
+            if (e.ExtraType === CHECKBOX) {
+              // A REQUIRED checkbox must end up ticked or RC's own validator rejects it
+              // (`IsWebRequired && !value` → "…is required"). An optional one keeps its
+              // default. This is the human ticking the box, which is the only way the
+              // real UI ever gets past this screen.
+              if (e.IsWebRequired) return 'true';
+              return String(e.Value ?? '').toString() === 'true' ||
+                String(e.DefaultValue ?? '').toLowerCase() === 'checked' ? 'true' : 'false';
             }
+            const v = e.Value ? e.Value : e.DefaultValue;
+            if (e.ExtraType === CHOICE && !v) return '-- None --';
+            return v ?? '';
+          };
+          const viewable = extras.filter((e) => e.IsWebViewable !== false);
+          const needed = extras.filter((e) => e.IsWebRequired || e.Required || e.IsCRSRequired);
+
+          const attempts = [];
+          if (viewable.length) {
+            body.extraValues = viewable.map((e) => ({ extraId: e.ExtraId, extraValue: rcValue(e) }));
+          }
+          let submitted = await call(submitUrl);
+          attempts.push({
+            shape: viewable.length
+              ? `RC's own shape: ${JSON.stringify(body.extraValues).slice(0, 200)}`
+              : 'extraValues: [] (no viewable extras declared)',
+            v: verdict(submitted),
+          });
+
+          // ONE fallback, and only one: the initializer reads a checkbox's stored answer
+          // as a real boolean, so a server that type-checks might want `true` rather than
+          // "true". Trying both is cheap; trying twelve was the mistake.
+          if (!verdict(submitted).isSuccess && viewable.length) {
+            body.extraValues = viewable.map((e) => {
+              const v = rcValue(e);
+              return { extraId: e.ExtraId, extraValue: e.ExtraType === CHECKBOX ? v === 'true' : v };
+            });
+            const r = await call(submitUrl);
+            attempts.push({ shape: 'same, checkbox as a real boolean', v: verdict(r) });
+            if (verdict(r).isSuccess) submitted = r;
           }
 
           return {

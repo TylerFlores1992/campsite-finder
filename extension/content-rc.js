@@ -9,14 +9,25 @@
  *
  * Runs entirely in the user's browser/session; CampHawk never sees their RC login.
  *
- * NOTE (maintainers): a couple of payload fields (extraValues, customerClassificationId,
+ * NOTE (maintainers): a couple of payload fields (customerClassificationId,
  * sleepingUnit.name) are unit/customer-specific. We send best-effort defaults captured
  * from a real add-to-cart; if RC rejects them the banner reports the error and the
  * user books manually. Re-capture a live payload if RC changes its schema.
+ *
+ * extraValues is NO LONGER a guess (2026-08-06). Many CA facilities declare a required
+ * "extra" — e.g. the checkbox "Please confirm your booking dates before finalizing your
+ * reservation." — and a submit that omits it comes back HTTP 200 with IsSuccess:false
+ * and that field named. We answer it exactly the way RC's own bundle does; the wire
+ * shape and the value rules are documented on buildExtraValues() below.
  */
 
 (function () {
   const STASH = 'camphawk_rc';
+  // RC does precart in TWO steps and the real UI always does both: `load` returns the
+  // facility's rules (including the "extras" it will demand back) and takes the unit
+  // lock; `submit` places it in the cart. Calling only `submit` is why an add could come
+  // back 200-but-IsSuccess:false complaining about a field we never had the chance to see.
+  const LOAD_ENDPOINT = 'https://rdapi.reservecalifornia.com/api/webaccessfacility/load/precartdataforbookingmodify';
   const ENDPOINT = 'https://rdapi.reservecalifornia.com/api/webaccessfacility/submit/precartdataforbookingmodify';
 
   // -------------------------------------------------------------------------
@@ -106,7 +117,42 @@
     } catch { return ''; }
   }
 
+  // .NET serialises collections as {"$type":…,"$values":[…]}, so Array.isArray() on one
+  // is always false. Unwrap before touching any RC list.
+  const unwrap = (v) => (Array.isArray(v) ? v : Array.isArray(v && v.$values) ? v.$values : []);
+
+  /**
+   * Answer the facility's required "extras", the way RC's own bundle does.
+   *
+   * Transcribed from assets/FacilityPreCart-*.js — the initializer walks
+   * `UnitDetail.Extras.$values`, keeps the `IsWebViewable` ones, derives a value, and the
+   * submit maps them to `{extraId, extraValue}`. Two details are load-bearing:
+   *   • the keys are lowerCamel — `extraId`/`extraValue`. PascalCase is silently ignored,
+   *     so the same "field is required" error comes back and looks like a wrong VALUE
+   *     when it is really a wrong KEY.
+   *   • ExtraType 0 is CheckBox (assets/extraTypes-*.js) and its tick handler sends the
+   *     STRING "true". `DefaultValue: "Unchecked"` is the starting state, not the wire
+   *     value — a required checkbox has to end up "true" or RC's validator refuses it.
+   * scripts/rc-cart-canary.mts re-asserts both against the live bundle daily.
+   */
+  const EXTRA_CHECKBOX = 0, EXTRA_CHOICE = 4;
+  function buildExtraValues(loadResult) {
+    const extras = unwrap(loadResult && loadResult.UnitDetail && loadResult.UnitDetail.Extras);
+    return extras.filter((e) => e.IsWebViewable).map((e) => {
+      let value;
+      if (e.ExtraType === EXTRA_CHECKBOX) {
+        value = e.IsWebRequired || String(e.Value) === 'true' ||
+          String(e.DefaultValue || '').toLowerCase() === 'checked' ? 'true' : 'false';
+      } else {
+        value = e.Value ? e.Value : e.DefaultValue;
+        if (e.ExtraType === EXTRA_CHOICE && !value) value = '-- None --';
+      }
+      return { extraId: e.ExtraId, extraValue: value == null ? '' : value };
+    });
+  }
+
   let _cartKey = '';
+  let _extraValues = [];
   function buildPayload() {
     return {
       arrivalDate: job.arrivalDate,
@@ -123,7 +169,7 @@
       customerClassificationId: 1,
       discountPromoCode: null,
       dynamicOccupancyByNight: {},
-      extraValues: [],
+      extraValues: _extraValues,
       fdUsageClassificationId: 1,
       fdUsageClassificationName: 'Regular',
       isCheckIn: false,
@@ -163,32 +209,62 @@
     if (!cartKey) { setStatus('Click the 🛒 cart icon once (to start your cart), then click Add to cart.'); return; }
     _cartKey = cartKey;
     setStatus('Adding to your cart…');
+    // RC's rdApi wants the same token in BOTH accesstoken and authorization, plus two
+    // constant headers (installationsidentity=cali, storeid=111).
+    const rcHeaders = {
+      'Content-Type': 'application/json',
+      accesstoken: token,
+      authorization: 'Bearer ' + token,
+      installationsidentity: 'cali',
+      storeid: '111',
+    };
     try {
-      // RC's rdApi wants the same token in BOTH accesstoken and authorization,
-      // plus two constant headers (installationsidentity=cali, storeid=111).
+      // Step 1 — load. Gives us the facility's required extras and takes the unit lock.
+      // Non-fatal: if it fails we still try the submit with no extras, which is strictly
+      // no worse than what this did before.
+      try {
+        const lr = await fetch(LOAD_ENDPOINT, {
+          method: 'POST', credentials: 'include', headers: rcHeaders,
+          body: JSON.stringify(buildPayload()),
+        });
+        const lj = JSON.parse(await lr.text());
+        _extraValues = buildExtraValues(lj && lj.Result ? lj.Result : lj);
+      } catch (e) {
+        console.log('[CampHawk RC] precart load failed, submitting without extras:', e);
+      }
+
+      // Step 2 — submit.
       const res = await fetch(ENDPOINT, {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          accesstoken: token,
-          authorization: 'Bearer ' + token,
-          installationsidentity: 'cali',
-          storeid: '111',
-        },
+        headers: rcHeaders,
         body: JSON.stringify(buildPayload()),
       });
-      if (res.ok) {
+      // RC ANSWERS HTTP 200 WITH IsSuccess:false. Judging by status code reports a failed
+      // cart as a success — the same trap as "an empty grid means fully booked". The one
+      // promise auto-cart makes is that "it's in your cart" is true, so read the payload.
+      let ok = res.ok;
+      let apiError = '';
+      if (ok) {
+        try {
+          const j = JSON.parse(await res.clone().text());
+          const r = j && j.Result ? j.Result : j;
+          if (r && r.IsSuccess === false) { ok = false; apiError = r.ErrorMessage || 'RC declined'; }
+        } catch { /* unparseable — fall back to the status code */ }
+      }
+      if (ok) {
         setStatus('✓ Added to cart — review & check out on ReserveCalifornia.');
       } else {
-        let detail = '';
+        let detail = apiError;
         try {
           const raw = await res.text();
           console.log('[CampHawk RC] full error body:', raw);
-          const j = JSON.parse(raw);
-          detail = j.errors ? Object.keys(j.errors).join(', ') : (j.title || raw.slice(0, 160));
+          if (!detail) {
+            const j = JSON.parse(raw);
+            detail = j.errors ? Object.keys(j.errors).join(', ') : (j.title || raw.slice(0, 160));
+          }
         } catch {}
-        setStatus(`RC declined (${res.status}) — fields: ${detail || 'see console'}`);
+        setStatus(`RC declined (${res.status}) — ${(detail || 'see console').replace(/<br\/?>/g, ' ')}`);
       }
     } catch (e) {
       setStatus('Couldn’t reach RC — book manually.');

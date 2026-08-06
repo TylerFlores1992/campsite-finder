@@ -2500,6 +2500,50 @@ trips a reCAPTCHA the login didn't. `node rc-probe.mjs --cart` with `RC_UNIT_ID`
 
 Detail in `scripts/auto-cart-bot/reservecalifornia.mjs`.
 
+### The precart `extraValues` contract — READ RC'S CODE, DON'T GUESS (2026-08-06)
+
+The bot's `submit/precartdataforbookingmodify` came back **HTTP 200 with
+`IsSuccess: false`**, naming one field: *"Please confirm your booking dates before
+finalizing your reservation."* Five rounds of guessing the `extraValues` shape all
+returned the **identical** error, which read as "still the wrong value" and was in fact
+something else entirely. The answer was sitting in RC's own shipped bundle:
+
+- **The chunk is `assets/FacilityPreCart-*.js`**, reachable only through the import graph
+  (`index-*.js` → `Route-*.js` → `FacilityPreCart-*.js`); every filename is
+  content-hashed, so none of them can be pinned.
+- **The wire keys are lowerCamel — `{extraId, extraValue}`.** RC's submit does
+  `u.extraValues.push({extraId: h.ExtraId, extraValue: h.value})`. Every earlier attempt
+  sent `ExtraId` + `Value`; the API **ignores unknown keys silently**, so the answer never
+  arrived and the same required-field error came back each time. *The error was honest —
+  our key names were wrong.* A wrong KEY and a wrong VALUE are indistinguishable from the
+  error message alone, which is exactly what made this cost five rounds.
+- **`ExtraType 0` is `CheckBox`** (`assets/extraTypes-*.js`: CheckBox 0, Text 1, DateTime
+  2, Number 3, Choice 4, StaticText 5, PhoneNumber 6). Its tick handler is
+  `u(e.ExtraId, checked ? "true" : "false")` — a checkbox answers with the **string
+  `"true"`**. `DefaultValue: "Unchecked"` describes the *starting state*, not the wire
+  value; "Checked" is never sent.
+- **The extras live at `Result.UnitDetail.Extras.$values`** in the load response — not in
+  a top-level `Waivers`. Only `IsWebViewable` ones are submitted, and RC submits **all**
+  of them (with defaults), not only the required ones.
+- **Value rule, transcribed:** checkbox → `Value === "true"` else
+  `DefaultValue.toLowerCase() === "checked"`; anything else → `Value || DefaultValue`;
+  a `Choice` with no value → `"-- None --"` (which then FAILS validation if required).
+- RC's own validator is `IsWebRequired && !value → reject`, so **a required checkbox must
+  end up `"true"`** — the human ticking the box is the only way the real UI passes.
+
+Implemented identically in **`scripts/auto-cart-bot/rc-probe.mjs`** and
+**`extension/content-rc.js`** (`buildExtraValues`, which also switched the extension to
+the two-step load→submit the real UI does — it was submit-only, so it never saw the
+extras at all). **`scripts/rc-cart-canary.mts` now asserts all of it** — the two key
+names, the three field flags, and `CheckBox === 0` — because a rename here breaks carting
+with a plausible-looking error rather than an obvious one. Verified 2026-08-06: 11/11
+invariants hold, and the canary was broken on purpose to confirm it exits non-zero.
+
+**The general rule this bought:** when a payload is unknown, *read the client or record
+it* — don't enumerate shapes. `rc-probe.mjs --capture` now exists for the record-it half:
+it opens RC signed in, waits for a human add-to-cart, and writes the exact body RC's own
+UI sent.
+
 The mechanism notes below are still accurate and worth keeping; they're just not
 sufficient, because of the session-binding above.
 

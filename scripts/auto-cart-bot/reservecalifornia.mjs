@@ -50,6 +50,17 @@
 // on desktop (extension/content-rc.js precart path) — same session, so no hand-off.
 // That needs the user at their machine; it is not the away-from-keyboard win.
 //
+// THE PRECART PAYLOAD IS SOLVED (2026-08-06). The submit used to come back HTTP 200 with
+// IsSuccess:false naming one field ("Please confirm your booking dates…"). It is an
+// "extra": RC's own bundle (assets/FacilityPreCart-*.js) submits them as
+// `{extraId, extraValue}` — lowerCamel — read from `UnitDetail.Extras.$values` in the
+// LOAD response, and ExtraType 0 is a CheckBox whose answer is the string "true".
+// Five earlier attempts sent `ExtraId`/`Value`; unknown keys are dropped silently, so
+// every one produced the SAME error and it looked like a wrong value. Both this repo's
+// implementations (rc-probe.mjs, extension/content-rc.js) now do it RC's way, and
+// scripts/rc-cart-canary.mts asserts the contract daily. Full write-up in
+// docs/CONTEXT.md → "The precart extraValues contract".
+//
 // The consequence: a bot carting on the mini-PC creates a cart the user can never reach.
 // It could truthfully report "carted" and the site would still be unbookable by them —
 // which is worse than not carting, because auto-cart's one promise is that "it's in your
