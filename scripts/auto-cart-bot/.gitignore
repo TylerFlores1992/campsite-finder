@@ -5,3 +5,9 @@ handled.json
 carted.json
 .env
 logs/
+
+# rc-probe.mjs artifacts. rc-blob.json is a LIVE ReserveCalifornia session (full
+# account access until the token expires) and the profile dir holds its cookies —
+# neither may ever be committed.
+rc-blob.json
+.rc-probe-profile/
