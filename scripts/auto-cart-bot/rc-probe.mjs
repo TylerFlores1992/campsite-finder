@@ -643,7 +643,29 @@ const page = ctx.pages()[0] ?? (await ctx.newPage());
 
 try {
   step(1, 'Loading ReserveCalifornia…');
-  await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  log(`   a Chromium window ${HEADFUL ? 'should have opened' : 'is running hidden (--headful to watch it)'}`);
+  // A bare goto with a 60s timeout looks identical to a hung script for a full minute,
+  // and the first thing anyone does is kill it — losing the error that would have said
+  // why. Report before waiting, shorten the wait, and say what the page ACTUALLY was.
+  {
+    let loaded = false;
+    for (let attempt = 1; attempt <= 2 && !loaded; attempt++) {
+      try {
+        await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 25_000 });
+        loaded = true;
+      } catch (err) {
+        log(`   attempt ${attempt}: ${err.message.split('\n')[0]}`);
+        log(`   current url: ${page.url() || '(none)'}`);
+      }
+    }
+    if (!loaded) {
+      await captureFailure(page, 'load-home');
+      log('   RC did not load. This machine got a 403 from RC on 2026-08-06, so a WAF');
+      log('   block is a live possibility — check whether reservecalifornia.com opens in');
+      log('   your normal browser on this box before assuming the probe is at fault.');
+      throw new Error('could not load reservecalifornia.com');
+    }
+  }
   await page.waitForTimeout(3000);
 
   // Already signed in from a previous probe run? The persistent profile keeps it.
