@@ -36,8 +36,17 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RC_HOME = 'https://www.reservecalifornia.com/';
-const PRECART_ENDPOINT =
+// RC does precart in TWO steps — its own bundle exposes both, and a live trace shows
+// them back to back (a big `load` response, then a small `submit`). Calling only
+// `submit` is what made the first --cart run fail.
+const PRECART_LOAD =
+  'https://rdapi.reservecalifornia.com/api/webaccessfacility/load/precartdataforbookingmodify';
+const PRECART_SUBMIT =
   'https://rdapi.reservecalifornia.com/api/webaccessfacility/submit/precartdataforbookingmodify';
+/** RC's own sentinel for "I have no cart yet" — its `emptyCart` falls back to exactly
+ *  this when localStorage has no key. An EMPTY STRING is rejected by validation. */
+const NO_CART = '00000000-0000-0000-0000-000000000000';
+const RC_CART_PAGE = 'https://www.reservecalifornia.com/Customers/ShoppingCart';
 
 const args = new Set(process.argv.slice(2));
 const HEADFUL = args.has('--headful');
@@ -244,14 +253,29 @@ try {
     if (!unitId || !arrival) {
       log('\nSkipping --cart: set RC_UNIT_ID and RC_ARRIVAL (see header).');
     } else {
-      step(4, `Carting unit ${unitId} on ${arrival} for ${nights} night(s)…`);
-      // Fire the same request the site fires, from inside the page so it carries the
-      // session automatically. Mirrors extension/content-rc.js buildPayload().
+      // A brand-new session has NO cart key, and RC's validation rejects an empty
+      // string for it (that is what the first --cart run hit — a .NET
+      // ValidationProblemDetails on `shoppingCartKey`, NOT a CAPTCHA). RC's UI gets a
+      // key by starting a cart, which is why the extension asks the human to click the
+      // 🛒 icon. Here we do the machine equivalent: visit the cart page to let RC mint
+      // one, and fall back to RC's own "no cart yet" sentinel if it still hasn't.
+      step(4, 'Ensuring a shopping-cart key…');
+      let cartKey = await page.evaluate(() => localStorage.getItem('shoppingCartKey'));
+      if (!cartKey) {
+        await page.goto(RC_CART_PAGE, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+        await page.waitForTimeout(5000);
+        cartKey = await page.evaluate(() => localStorage.getItem('shoppingCartKey'));
+      }
+      log(`   cart key: ${cartKey ?? `(none — using RC's no-cart sentinel ${NO_CART})`}`);
+
+      step(5, `Carting unit ${unitId} on ${arrival} for ${nights} night(s)…`);
+      // Mirror the real app: LOAD the precart, then SUBMIT it. A live trace shows both,
+      // back to back. `load` is also where RC takes the unit lock, so skipping it may be
+      // why a submit-only call is rejected.
       const result = await page.evaluate(
-        async ({ endpoint, unitId, arrival, nights }) => {
+        async ({ loadUrl, submitUrl, unitId, arrival, nights, cartKey, NO_CART }) => {
           const ls = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
           const token = ls('ssoAccessToken') || ls('accessToken');
-          const cartKey = ls('shoppingCartKey') || '';
           let occupant = ls('customerName') || ls('ssoCustomerName') || '';
           if (!occupant) {
             try { const c = JSON.parse(ls('customerDetail') || '{}'); occupant = [c.FirstName, c.LastName].filter(Boolean).join(' '); } catch {}
@@ -266,26 +290,50 @@ try {
             occupantName: occupant, occupantPhoneNumber: null, optionalAuthorizedPerson: null,
             padLength: '0', preCartReservationComments: null, precartComments: null,
             prevSelectedClassification: null, promoCode: null, reservationVehicles: [],
-            selectedClassification: null, shoppingCartKey: cartKey, sleepingUnit: null,
-            timeDuration: null, unitPriceType: 1, vehicleCount: 0, vehicleLength: '0',
-            vehiclePlates: null, vehicleTypeIds: null, vehicles: [],
+            selectedClassification: null, shoppingCartKey: cartKey || NO_CART,
+            sleepingUnit: null, timeDuration: null, unitPriceType: 1, vehicleCount: 0,
+            vehicleLength: '0', vehiclePlates: null, vehicleTypeIds: null, vehicles: [],
           };
-          const res = await fetch(endpoint, {
-            method: 'POST', credentials: 'include',
-            headers: {
-              'Content-Type': 'application/json', accesstoken: token,
-              authorization: 'Bearer ' + token, installationsidentity: 'cali', storeid: '111',
-            },
-            body: JSON.stringify(body),
-          });
-          const raw = await res.text();
-          return { status: res.status, ok: res.ok, raw: raw.slice(0, 400) };
+          const headers = {
+            'Content-Type': 'application/json', accesstoken: token,
+            authorization: 'Bearer ' + token, installationsidentity: 'cali', storeid: '111',
+          };
+          const call = async (url) => {
+            const res = await fetch(url, { method: 'POST', credentials: 'include', headers, body: JSON.stringify(body) });
+            const raw = await res.text();
+            return { status: res.status, ok: res.ok, raw };
+          };
+          const loaded = await call(loadUrl);
+          // If `load` handed back a cart key, use it for the submit — that is how a
+          // fresh session is supposed to acquire one.
+          try {
+            const j = JSON.parse(loaded.raw);
+            const k = j?.Result?.ShoppingCartKey || j?.ShoppingCartKey;
+            if (k) body.shoppingCartKey = k;
+          } catch {}
+          const submitted = await call(submitUrl);
+          return {
+            loaded: { status: loaded.status, ok: loaded.ok, raw: loaded.raw.slice(0, 600) },
+            submitted: { status: submitted.status, ok: submitted.ok, raw: submitted.raw.slice(0, 1200) },
+            usedKey: body.shoppingCartKey,
+            finalKey: ls('shoppingCartKey'),
+          };
         },
-        { endpoint: PRECART_ENDPOINT, unitId, arrival, nights }
+        { loadUrl: PRECART_LOAD, submitUrl: PRECART_SUBMIT, unitId, arrival, nights, cartKey, NO_CART }
       );
-      log(`   HTTP ${result.status} ${result.ok ? 'OK' : 'FAILED'}`);
-      log(`   ${result.raw}`);
-      if (result.ok) log('   → Bot-side carting WORKS. This is the whole feature.');
+
+      log(`   load   → HTTP ${result.loaded.status} ${result.loaded.ok ? 'OK' : 'FAILED'}`);
+      if (!result.loaded.ok) log(`     ${result.loaded.raw}`);
+      log(`   submit → HTTP ${result.submitted.status} ${result.submitted.ok ? 'OK' : 'FAILED'}  (key ${result.usedKey})`);
+      log(`     ${result.submitted.raw}`);
+      if (result.submitted.ok) {
+        log('   → BOT-SIDE CARTING WORKS. That is the whole feature.');
+        log('     Open the cart page in this browser to see it, and note the cart key');
+        log(`     now in localStorage: ${result.finalKey}`);
+      } else {
+        log('   → Still failing. Read the body above: a validation error names the bad');
+        log('     field (our payload); a captcha/challenge would name that instead.');
+      }
     }
   }
 
