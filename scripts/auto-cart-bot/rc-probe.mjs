@@ -312,9 +312,20 @@ try {
             if (k) body.shoppingCartKey = k;
           } catch {}
           const submitted = await call(submitUrl);
+          // RC ANSWERS HTTP 200 WITH IsSuccess:false. Judging by status code reports a
+          // failed cart as a success — the same "a 200 is not success" trap as
+          // empty-grid-means-booked. Always read the payload.
+          const verdict = (r) => {
+            try {
+              const j = JSON.parse(r.raw);
+              const res = j?.Result ?? j;
+              return { isSuccess: res?.IsSuccess === true, error: res?.ErrorMessage || '', cartKey: res?.ShoppingCartKey || '' };
+            } catch { return { isSuccess: false, error: '(unparseable body)', cartKey: '' }; }
+          };
           return {
-            loaded: { status: loaded.status, ok: loaded.ok, raw: loaded.raw.slice(0, 600) },
-            submitted: { status: submitted.status, ok: submitted.ok, raw: submitted.raw.slice(0, 1200) },
+            loaded: { status: loaded.status, ok: loaded.ok, raw: loaded.raw.slice(0, 600), v: verdict(loaded) },
+            submitted: { status: submitted.status, ok: submitted.ok, raw: submitted.raw.slice(0, 1200), v: verdict(submitted) },
+            loadedFull: loaded.raw,
             usedKey: body.shoppingCartKey,
             finalKey: ls('shoppingCartKey'),
           };
@@ -322,17 +333,37 @@ try {
         { loadUrl: PRECART_LOAD, submitUrl: PRECART_SUBMIT, unitId, arrival, nights, cartKey, NO_CART }
       );
 
-      log(`   load   → HTTP ${result.loaded.status} ${result.loaded.ok ? 'OK' : 'FAILED'}`);
-      if (!result.loaded.ok) log(`     ${result.loaded.raw}`);
-      log(`   submit → HTTP ${result.submitted.status} ${result.submitted.ok ? 'OK' : 'FAILED'}  (key ${result.usedKey})`);
-      log(`     ${result.submitted.raw}`);
-      if (result.submitted.ok) {
+      const okLoad = result.loaded.v.isSuccess;
+      const okSubmit = result.submitted.v.isSuccess;
+      log(`   load   → HTTP ${result.loaded.status}, IsSuccess=${okLoad}${result.loaded.v.error ? ` — ${result.loaded.v.error}` : ''}`);
+      log(`   submit → HTTP ${result.submitted.status}, IsSuccess=${okSubmit}  (key ${result.usedKey})`);
+      if (result.submitted.v.error) log(`     ErrorMessage: ${result.submitted.v.error.replace(/<br\/?>/g, ' ')}`);
+
+      // The load response carries the facility's REQUIRED "extra values" (per-park
+      // questions like "confirm your booking dates"). We send extraValues: [] and RC
+      // rejects the submit for the missing answer — so dump the shape and surface the
+      // candidates rather than guessing at them.
+      const dump = path.join(HERE, 'rc-precart-load.json');
+      fs.writeFileSync(dump, result.loadedFull, { mode: 0o600 });
+      log(`   load response saved → ${dump}`);
+      try {
+        const j = JSON.parse(result.loadedFull);
+        const res = j?.Result ?? j;
+        log(`   load Result keys: ${Object.keys(res).join(', ')}`);
+        for (const k of Object.keys(res)) {
+          if (/extra|question|required|custom|attribute/i.test(k)) {
+            log(`   ▸ ${k}: ${JSON.stringify(res[k]).slice(0, 700)}`);
+          }
+        }
+      } catch { log('   (could not parse the load response)'); }
+
+      if (okSubmit) {
         log('   → BOT-SIDE CARTING WORKS. That is the whole feature.');
-        log('     Open the cart page in this browser to see it, and note the cart key');
-        log(`     now in localStorage: ${result.finalKey}`);
+        log(`     Cart key now: ${result.submitted.v.cartKey || result.finalKey}`);
       } else {
-        log('   → Still failing. Read the body above: a validation error names the bad');
-        log('     field (our payload); a captcha/challenge would name that instead.');
+        log('   → NOT carted. HTTP 200 with IsSuccess=false is still a failure.');
+        log('     If ErrorMessage names a required field, it is our payload (fixable);');
+        log('     a captcha or challenge would be RC actually defending.');
       }
     }
   }

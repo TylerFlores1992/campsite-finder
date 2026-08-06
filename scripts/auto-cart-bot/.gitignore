@@ -11,3 +11,4 @@ logs/
 # neither may ever be committed.
 rc-blob.json
 .rc-probe-profile/
+rc-precart-load.json
