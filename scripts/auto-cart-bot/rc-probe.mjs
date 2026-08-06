@@ -710,29 +710,47 @@ try {
               timeout: 30_000,
             });
             const raw = await r.text();
-            // A cart entry names its unit; find one matching what we asked for, anywhere
-            // in the response, rather than assuming a shape we haven't pinned down.
-            let hit = false, count = 0;
+            // Count the CART ENTRIES, from the list RC actually returns. An earlier
+            // version counted objects carrying a `unitId` key and reported ZERO for a
+            // response whose CartEntry list plainly had members — the entries name the
+            // unit under some other key. A verifier that invents its own idea of the
+            // shape can report an empty cart for a full one, which is the exact false
+            // negative this step exists to prevent.
+            let count = 0, hit = false, keys = '';
             try {
+              const res = JSON.parse(raw)?.Result ?? {};
+              const entries = res.CartEntry?.$values ?? (Array.isArray(res.CartEntry) ? res.CartEntry : []);
+              count = entries.length;
+              keys = entries[0] ? Object.keys(entries[0]).filter((k) => k !== '$type' && k !== '$id').join(',') : '';
+              // Match on the unit id by VALUE, at any depth and under any key name —
+              // we do not need to know what RC calls the field to see that it is there.
               const seen = new Set();
               (function walk(n) {
-                if (!n || typeof n !== 'object' || seen.has(n)) return;
+                if (hit || !n || typeof n !== 'object' || seen.has(n)) return;
                 seen.add(n);
-                const arr = Array.isArray(n) ? n : Array.isArray(n.$values) ? n.$values : null;
-                if (arr) { for (const it of arr) walk(it); return; }
-                if ('unitId' in n || 'UnitId' in n) {
-                  count++;
-                  if (Number(n.unitId ?? n.UnitId) === unitId) hit = true;
+                for (const [k, v] of Object.entries(n)) {
+                  if (k === '$type' || k === '$id') continue;
+                  if (Number(v) === unitId) { hit = true; return; }
+                  walk(v);
                 }
-                for (const [k, v] of Object.entries(n)) { if (k !== '$type' && k !== '$id') walk(v); }
-              })(JSON.parse(raw));
-            } catch { /* fall through — raw is reported */ }
-            return { status: r.status(), hit, count, raw: raw.slice(0, 400).replace(/\s+/g, ' ') };
+              })(entries);
+            } catch { /* fall through — the full body is written to disk below */ }
+            return { status: r.status(), hit, count, keys, raw };
           } catch (err) {
             return { status: 0, hit: false, count: 0, raw: `network error: ${err.message}` };
           }
         })();
+        // Always keep the whole thing. A 400-character preview is how the last run
+        // reported "0 entries" for a body that visibly contained a cart entry.
+        const cartDump = path.join(HERE, 'rc-cart-read.json');
+        fs.writeFileSync(cartDump, check.raw ?? '', { mode: 0o600 });
         log(`   cart read → HTTP ${check.status}, ${check.count} entr${check.count === 1 ? 'y' : 'ies'}, unit ${unitId} present: ${check.hit ? 'YES' : 'NO'}`);
+        log(`   full cart response saved → ${cartDump}`);
+        if (check.keys) log(`   entry fields: ${check.keys}`);
+        if (check.count > 0 && !check.hit) {
+          log('   ⚠ the cart HAS entries but none carries this unit id — either the hold');
+          log('     is for something else, or it is a leftover from an earlier run.');
+        }
         if (check.hit) {
           log('   → BOT-SIDE CARTING WORKS, confirmed by reading the cart back.');
           log('     Open the cart page in this window to see it with your own eyes:');
@@ -740,9 +758,10 @@ try {
           log('     (the probe has written the key to localStorage, so the page will find it)');
         } else {
           log('   → RC ACCEPTED the submit but the cart does not contain that unit.');
-          log(`     Raw: ${check.raw}`);
           log('     Do NOT record this as a working cart — an accepted request and a held');
           log('     site are different claims, and this is the gap between them.');
+          log('     Read the saved response before believing this line: the check has been');
+          log('     wrong before, and a false "empty" here is worse than no check at all.');
         }
       } else if (result.loaded.netError || result.submitted.netError) {
         log('   → NOT carted, and NOT because of our payload — the request never got a');
