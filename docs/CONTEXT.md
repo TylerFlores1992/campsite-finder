@@ -2455,13 +2455,31 @@ Three options survive, ranked by how I'd pursue them (deep-dive 2026-08-05):
    - Honest limit (tap variant): needs the user to TAP within the ~15-min hold. It is NOT
      the asleep-at-2am hold. But detection→alert is seconds and texts now arrive, so
      "tap the text, it's in your cart, pay" is the realistic differentiator.
-2. **Full session clone** (server holds, phone resumes): bot logs in AS the user, carts,
-   and transfers token + `AWSALBAPP`/`stickounet` cookies + key so the device becomes the
-   bot's session. Only this reaches the truly-away case without spending money. Fragile:
-   1-hour Okta token, cross-subdomain cookies, moving a live session. **One cheap datum
-   would gauge feasibility** — in the working RC window, delete just the `AWSALBAPP-*`
-   cookies and reload: cart gone ⇒ it's LB stickiness (lighter transfer), cart survives
-   ⇒ it's the token (heavier). Not yet run.
+2. **Full session clone (server holds, phone resumes) — MUCH more viable than first
+   assessed. Tested 2026-08-05:**
+   - **Cookies are NOT the binding.** Deleted `AWSALBAPP-0..3` on
+     `rdapi.reservecalifornia.com` with a live cart, reloaded → **cart survived**. So it
+     is not AWS load-balancer stickiness.
+   - **localStorage alone carries the ENTIRE session.** Copied all of
+     `localStorage` from the working window into a **brand-new incognito window that had
+     never logged in** → that window came up **logged in AND showing the cart**. The
+     whole session — Okta token, customer identity, cart key — is client-side.
+   - **Therefore the transfer is a localStorage write, not cookie surgery.** This kills
+     the old "cross-subdomain cookie injection" fragility entirely: the extension can do
+     it on desktop (it already has the host permission + content script), and the native
+     app can do it in its `reservecalifornia.com` webview.
+   - **The 1-hour token expiry is NOT the binding constraint either**, because the cart
+     itself only lives ~15 min. The cart dies long before the token does. (If we ever
+     extend the hold via `extendShoppingCartTimer`, the bot just re-exports a fresh blob.)
+   - **STILL UNPROVEN — the one that matters: CROSS-MACHINE.** The incognito test was the
+     same PC and the same IP. The mini-PC previously failed, but that was with the cart
+     key ALONE (no token). The blob has NOT been carried to a different machine yet. If
+     RC binds the session to device/IP, this still dies. **Test: paste the full
+     localStorage blob into the mini-PC (or a phone) and see if it comes up logged in +
+     carted.**
+   - **SECURITY, load-bearing:** that blob is full RC account access for up to an hour.
+     It must NEVER travel in an SMS or email link. It has to be fetched by an
+     authenticated CampHawk client (app/extension), one-time-use, short TTL, over HTTPS.
 3. **Bot completes checkout**: the only true hands-off 24/7 grab, but it SPENDS the user's
    money and must clear the Oct-2025 reCAPTCHA + Okta MFA. A different, riskier product.
 
