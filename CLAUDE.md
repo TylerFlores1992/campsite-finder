@@ -154,6 +154,16 @@ minute".
 ## Alerting — the claim (read this before touching the poller)
 The decision "may we alert for this?" is `worker/claim.ts`, keyed on
 **(watch_id, site_key)** in `watch_site_alerts` (migration 026), 1-hour window.
+- **We alert on the TRANSITION, not the state (migration 039, 2026-08-06).** The hour
+  window was the whole rule, and nothing recorded whether the site had been open that
+  whole time — so a site that simply never closed re-alerted every hour forever. One
+  Silver Lake opening sent **16 identical alerts in a day**. `last_seen_open_at` is now
+  stamped on EVERY cycle the site is open, and a re-alert needs BOTH the hour AND a
+  `CONTINUOUS_GAP` (10 min) of not having seen it — i.e. it actually went away and came
+  back. **Call `claimNotification` on every cycle the site is open, not only when you
+  mean to alert**: it doubles as the observation, and a skipped cycle looks exactly like
+  the site vanishing. `NULL` (pre-039 rows) means "we don't know" and does NOT suppress.
+  `worker/claim.test.mts` fails against the bug (verified by restoring it).
 - It was one timestamp per WATCH until 2026-07-30, so the first site to open silenced
   every other site on that watch for an hour — and because the auto-cart lane shares
   the claim, the second site was never CARTED either, not merely un-announced.

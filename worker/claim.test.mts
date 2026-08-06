@@ -53,13 +53,38 @@ after(async () => {
   }
 });
 
-/** Age a pair's last alert so it falls outside the re-notify window. */
+/**
+ * Age a pair so it is claimable again — which since migration 039 takes BOTH clocks.
+ *
+ * `last_alert_at` alone is no longer enough: a site whose `last_seen_open_at` is recent
+ * has been open continuously, and re-alerting it is the Silver Lake bug. Ageing both is
+ * the simulation of "the site went away, and later came back", which is the only thing
+ * that should re-alert.
+ */
 const age = (siteKey: string, minutes: number) =>
   mutate(
-    `UPDATE watch_site_alerts SET last_alert_at = NOW() - ($2 || ' minutes')::interval
-     WHERE watch_id = $1 AND site_key = $3`,
+    `UPDATE watch_site_alerts
+        SET last_alert_at     = NOW() - ($2 || ' minutes')::interval,
+            last_seen_open_at = NOW() - ($2 || ' minutes')::interval
+      WHERE watch_id = $1 AND site_key = $3`,
     [watchId, String(minutes), siteKey]
   );
+
+/** Age ONLY the alert clock: the site has stayed open the whole time. */
+const ageAlertOnly = (siteKey: string, minutes: number) =>
+  mutate(
+    `UPDATE watch_site_alerts SET last_alert_at = NOW() - ($2 || ' minutes')::interval
+      WHERE watch_id = $1 AND site_key = $3`,
+    [watchId, String(minutes), siteKey]
+  );
+
+const seenOpenAt = async (siteKey: string) => {
+  const [r] = await query<{ last_seen_open_at: string | null }>(
+    `SELECT last_seen_open_at FROM watch_site_alerts WHERE watch_id = $1 AND site_key = $2`,
+    [watchId, siteKey]
+  );
+  return r?.last_seen_open_at ?? null;
+};
 
 test('a first alert for a site is claimable', async () => {
   assert.equal(await claimNotification(watchId, '84671'), true);
@@ -79,11 +104,69 @@ test('the same site is not claimable twice inside the window', async () => {
   assert.equal(await claimNotification(watchId, '84937'), false);
 });
 
-test('a site becomes claimable again once its own window has passed', async () => {
+test('a site becomes claimable again once it has CLOSED and re-opened', async () => {
   await age('84671', 61);
   assert.equal(await claimNotification(watchId, '84671'), true);
   // …and that must not have reopened the OTHER site, whose clock is independent.
   assert.equal(await claimNotification(watchId, '84937'), false);
+});
+
+test('THE SILVER LAKE BUG: a site that stays open does not re-alert every hour', async () => {
+  // The regression this migration exists for. On 2026-08-05 one Silver Lake opening
+  // produced SIXTEEN identical alerts in a day — one an hour, for a site that never
+  // closed. The window had passed each time, and nothing recorded that the site had
+  // been open continuously, so every hour looked like fresh news.
+  //
+  // A cancellation is an event. We report it once.
+  await age('84671', 61);
+  assert.equal(await claimNotification(watchId, '84671'), true, 'the opening itself alerts');
+
+  // Now the hours roll by with the site still open. The poller calls the claim every
+  // cycle (that is how "still open" is recorded), so simulate several cycles and then
+  // push the alert clock past the window — exactly the state the old code re-fired on.
+  for (let i = 0; i < 3; i++) assert.equal(await claimNotification(watchId, '84671'), false);
+  await ageAlertOnly('84671', 61);
+  assert.equal(
+    await claimNotification(watchId, '84671'),
+    false,
+    'still open since the last alert — this is the same opening, not a new one',
+  );
+  await ageAlertOnly('84671', 600);
+  assert.equal(await claimNotification(watchId, '84671'), false, 'ten hours later, still not news');
+});
+
+test('a quiet cycle still records that the site was seen open', async () => {
+  // The suppression above only works if every cycle stamps the observation, including
+  // the ones that decline to alert. If a quiet cycle left the stamp alone, ten minutes
+  // of silence would look exactly like the site vanishing and re-alert.
+  await age('84671', 61);
+  assert.equal(await claimNotification(watchId, '84671'), true);
+  await mutate(
+    `UPDATE watch_site_alerts SET last_seen_open_at = NOW() - interval '30 minutes'
+      WHERE watch_id = $1 AND site_key = '84671'`,
+    [watchId],
+  );
+  assert.equal(await claimNotification(watchId, '84671'), false, 'quiet, but observing');
+  const stamped = await seenOpenAt('84671');
+  assert.ok(stamped, 'the observation must be recorded');
+  assert.ok(
+    Date.now() - new Date(stamped).getTime() < 60_000,
+    `a declining cycle must still refresh last_seen_open_at (got ${stamped})`,
+  );
+});
+
+test('a pre-039 row with no observation keeps the old hourly behaviour', async () => {
+  // Backfilling a value for rows that predate the column would be a guess about
+  // history we do not have, and guessing "seen recently" would SILENCE a real
+  // re-opening. NULL means "we do not know", and not-knowing must not suppress.
+  await claimNotification(watchId, 'legacy-site');
+  await mutate(
+    `UPDATE watch_site_alerts
+        SET last_alert_at = NOW() - interval '61 minutes', last_seen_open_at = NULL
+      WHERE watch_id = $1 AND site_key = 'legacy-site'`,
+    [watchId],
+  );
+  assert.equal(await claimNotification(watchId, 'legacy-site'), true);
 });
 
 test('sources with no site id share one key, keeping per-watch behaviour', async () => {

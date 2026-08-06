@@ -853,9 +853,12 @@ async function cycle(): Promise<void> {
     const matchStart = result.dates[0] ?? watch.start_date;
     const matchEnd = checkoutAfter(result.dates, watch.end_date);
 
+    // Also the "still open" observation — see claimNotification. A quiet answer here
+    // usually means the site has been open continuously since we alerted, which is not
+    // news; it is the same opening we already reported.
     if (!(await claimNotification(watch.id, result.campsiteId))) {
       console.log(
-        `[poller] watch ${watch.id}: ${result.campsiteId ?? 'campground'} availability found but already notified — skipping`
+        `[poller] watch ${watch.id}: ${result.campsiteId ?? 'campground'} still open, already alerted — staying quiet`
       );
       continue;
     }

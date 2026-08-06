@@ -202,6 +202,10 @@ Supabase first (by hand, like 020/021). Devices register their token via
 > grandfathered = false` (032). Write the migration file that way too, so re-applying it
 > from the file doesn't fail where the by-hand run succeeded.
 >
+> **`039_alert_on_transition`** (2026-08-06 — `watch_site_alerts.last_seen_open_at`, so
+> a site that stays open stops re-alerting every hour; **applied to prod 2026-08-06**,
+> before the worker code that reads it, per the rule below).
+>
 > **Later migrations, all applied by hand to prod the same way:** `031_poller_shards`
 > (the shard lease, 2026-07-31), `032_subscription_tiers`
 > (`subscriptions.tier` + `grandfathered` — the Auto-Cart plan, 2026-08-01) and
