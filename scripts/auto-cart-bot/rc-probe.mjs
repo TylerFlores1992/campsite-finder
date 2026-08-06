@@ -59,6 +59,72 @@ async function readBlob(page) {
   return page.evaluate(() => Object.entries(localStorage));
 }
 
+// RC signs in through OKTA IDENTITY ENGINE (observed 2026-08-05), not Okta Classic.
+// OIE names the fields `identifier` and `credentials.passcode`; Classic used `username`
+// and `password`. It is also IDENTIFIER-FIRST: email + "Next", then password on a
+// second screen. Both vocabularies are listed so a hosted-widget swap doesn't break us.
+const EMAIL_SELECTORS = [
+  'input[name="identifier"]',            // Okta Identity Engine
+  'input[name="username"]',              // Okta Classic
+  '#okta-signin-username',
+  'input[autocomplete="username"]',
+  'input[type="email"]',
+];
+const PASSWORD_SELECTORS = [
+  'input[name="credentials.passcode"]',  // Okta Identity Engine
+  'input[name="password"]',              // Okta Classic
+  '#okta-signin-password',
+  'input[type="password"]',
+];
+const SUBMIT_SELECTORS = [
+  'input[type="submit"]',
+  'button[type="submit"]',
+  'button:has-text("Next")',
+  'button:has-text("Verify")',
+  'button:has-text("Sign In")',
+];
+
+/**
+ * Find the first visible match for any selector, ACROSS ALL FRAMES.
+ *
+ * Okta is frequently served in an iframe, and a main-frame-only lookup reports
+ * "field not found" for a field that is plainly on screen — which is exactly how the
+ * first run of this probe failed. Polls, because the widget renders after load.
+ */
+async function findIn(page, selectors, { timeout = 20_000, label = 'field' } = {}) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    for (const frame of page.frames()) {
+      for (const sel of selectors) {
+        try {
+          const loc = frame.locator(sel).first();
+          if ((await loc.count()) && (await loc.isVisible())) return { loc, sel };
+        } catch { /* frame detached mid-poll — try the next */ }
+      }
+    }
+    await page.waitForTimeout(500);
+  }
+  log(`   (could not find ${label}; tried: ${selectors.join(', ')})`);
+  return null;
+}
+
+/** Tick "Keep me signed in" when present. Load-bearing for the whole design: the bot
+ *  should need at most ONE human login, and this is what makes the session stick. */
+async function keepSignedIn(page) {
+  for (const frame of page.frames()) {
+    for (const sel of ['input[type="checkbox"][name*="rememberMe" i]', 'input[type="checkbox"]']) {
+      try {
+        const box = frame.locator(sel).first();
+        if ((await box.count()) && (await box.isVisible()) && !(await box.isChecked())) {
+          await box.check({ timeout: 3000 });
+          log('   ticked "Keep me signed in"');
+          return;
+        }
+      } catch { /* not the box, or not checkable */ }
+    }
+  }
+}
+
 /** The signals that tell us WHY an unattended login failed. Distinguishing "MFA asked
  *  for an email code" from "reCAPTCHA blocked us" from "wrong password" is the entire
  *  point of the probe — they have completely different answers. */
@@ -109,22 +175,40 @@ try {
       await page.waitForTimeout(4000);
     }
 
-    const user = page.locator('input[name="username"], input[type="email"], #okta-signin-username').first();
-    const pass = page.locator('input[name="password"], input[type="password"], #okta-signin-password').first();
-    if (!(await user.count())) {
+    const user = await findIn(page, EMAIL_SELECTORS, { label: 'the email field' });
+    if (!user) {
       const d = await diagnose(page);
-      log('   Could not find a username field. Page says:', d.snippet);
-      throw new Error('login form not found — run with --headful to see the page');
+      log('   Page says:', d.snippet);
+      throw new Error('login form not found — rerun with --headful and watch the page');
     }
-    await user.fill(EMAIL);
-    if (await pass.count()) await pass.fill(PASSWORD);
-    else {
-      // Okta identifier-first: submit the email, then the password appears.
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(3500);
-      await page.locator('input[type="password"]').first().fill(PASSWORD);
+    log(`   email field: ${user.sel}`);
+    await user.loc.fill(EMAIL);
+    await keepSignedIn(page);
+
+    // Identifier-first: the password field usually isn't on this screen yet. Submit
+    // the email, then look again. If a password field IS already present (Classic
+    // one-page widget), this second lookup just finds it immediately.
+    let pass = await findIn(page, PASSWORD_SELECTORS, { timeout: 2000, label: 'password (same screen)' });
+    if (!pass) {
+      const next = await findIn(page, SUBMIT_SELECTORS, { timeout: 5000, label: 'the Next button' });
+      if (next) await next.loc.click().catch(() => {});
+      else await page.keyboard.press('Enter');
+      await page.waitForTimeout(4000);
+      pass = await findIn(page, PASSWORD_SELECTORS, { label: 'the password field' });
     }
-    await page.keyboard.press('Enter');
+    if (!pass) {
+      const d = await diagnose(page);
+      log('   No password field appeared. Page says:', d.snippet);
+      if (d.mfa) log('   → looks like Okta went straight to an MFA challenge.');
+      throw new Error('password step not reached');
+    }
+    log(`   password field: ${pass.sel}`);
+    await pass.loc.fill(PASSWORD);
+    await keepSignedIn(page);
+
+    const submit = await findIn(page, SUBMIT_SELECTORS, { timeout: 5000, label: 'the submit button' });
+    if (submit) await submit.loc.click().catch(() => {});
+    else await page.keyboard.press('Enter');
     await page.waitForTimeout(9000);
 
     blob = await readBlob(page);
