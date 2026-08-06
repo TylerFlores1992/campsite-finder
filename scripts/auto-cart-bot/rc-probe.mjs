@@ -746,61 +746,96 @@ try {
         // its status behind CORS, and a verifier that can only say "something went wrong"
         // is no better than the claim it is checking. Playwright's request context shares
         // the browser's cookies and session but is not a page, so we always get a status.
-        const check = await (async () => {
+        // Match the way RC's DATA lets us, not the way we wish it did.
+        //
+        // Two false negatives came out of this check before I stopped trusting it.
+        // First a walker that counted objects carrying a `unitId` key — RC's cart
+        // entries have NO unit field at all (CartEntryType, CartEntryKey, SummaryLines,
+        // TransactionEntry, PlaceId, FacilityId, …). Then a bare numeric match, which
+        // needs the unit number to appear literally somewhere in the response.
+        //
+        // The load response's `LockedShoppingCart` names the hold as
+        // (placeId, facilityId, unitId, arrivalDate), and PlaceId/FacilityId ARE fields
+        // the cart entry has. That is a fingerprint we can actually check.
+        //
+        // And it PRINTS what each entry says about itself either way. A check that
+        // answers "no" without showing its working has now been wrong twice; showing
+        // the entries costs four lines and ends the guessing.
+        const locked = (() => {
+          try { return (JSON.parse(result.loadedFull)?.Result ?? {}).LockedShoppingCart ?? null; }
+          catch { return null; }
+        })();
+        const place = locked?.placeId ?? null;
+        const facility = locked?.facilityId ?? null;
+        if (place != null) log(`   looking for placeId=${place} facilityId=${facility} (from LockedShoppingCart)`);
+
+        const readCart = async (cartKeyToRead) => {
           try {
             const r = await page.context().request.post(CART_LOAD, {
               headers: result.replay.headers,
-              data: { shoppingCartKey: key },
+              data: { shoppingCartKey: cartKeyToRead },
               timeout: 30_000,
             });
             const raw = await r.text();
-            // Count the CART ENTRIES, from the list RC actually returns. An earlier
-            // version counted objects carrying a `unitId` key and reported ZERO for a
-            // response whose CartEntry list plainly had members — the entries name the
-            // unit under some other key. A verifier that invents its own idea of the
-            // shape can report an empty cart for a full one, which is the exact false
-            // negative this step exists to prevent.
-            let count = 0, hit = false, keys = '';
+            let count = 0, hit = false, keys = '', entries = [];
             try {
               const res = JSON.parse(raw)?.Result ?? {};
-              const entries = res.CartEntry?.$values ?? (Array.isArray(res.CartEntry) ? res.CartEntry : []);
-              count = entries.length;
-              keys = entries[0] ? Object.keys(entries[0]).filter((k) => k !== '$type' && k !== '$id').join(',') : '';
-              // Match on the unit id by VALUE, at any depth and under any key name —
-              // we do not need to know what RC calls the field to see that it is there.
-              const seen = new Set();
-              (function walk(n) {
-                if (hit || !n || typeof n !== 'object' || seen.has(n)) return;
-                seen.add(n);
-                for (const [k, v] of Object.entries(n)) {
-                  if (k === '$type' || k === '$id') continue;
-                  if (Number(v) === unitId) { hit = true; return; }
-                  walk(v);
-                }
-              })(entries);
-            } catch { /* fall through — the full body is written to disk below */ }
-            return { status: r.status(), hit, count, keys, raw };
+              const list = res.CartEntry?.$values ?? (Array.isArray(res.CartEntry) ? res.CartEntry : []);
+              count = list.length;
+              keys = list[0] ? Object.keys(list[0]).filter((k) => k !== '$type' && k !== '$id').join(',') : '';
+              const textOf = (v, d = 0) => {
+                const out = [];
+                (function w(n, depth) {
+                  if (!n || depth > 4) return;
+                  if (typeof n === 'string' && n.trim()) out.push(n.trim());
+                  else if (typeof n === 'object') for (const [k, x] of Object.entries(n)) { if (k !== '$type' && k !== '$id') w(x, depth + 1); }
+                })(v, d);
+                return out.join(' | ').slice(0, 200);
+              };
+              entries = list.map((e) => ({
+                type: e.CartEntryType,
+                placeId: e.PlaceId,
+                facilityId: e.FacilityId,
+                summary: textOf(e.SummaryLines) || textOf(e.TransactionEntry),
+              }));
+              hit = list.some(
+                (e) =>
+                  (place != null && Number(e.PlaceId) === Number(place) &&
+                   facility != null && Number(e.FacilityId) === Number(facility)) ||
+                  JSON.stringify(e).includes(String(unitId)),
+              );
+            } catch { /* the full body goes to disk */ }
+            return { status: r.status(), hit, count, keys, entries, raw };
           } catch (err) {
-            return { status: 0, hit: false, count: 0, raw: `network error: ${err.message}` };
+            return { status: 0, hit: false, count: 0, keys: '', entries: [], raw: `network error: ${err.message}` };
           }
-        })();
-        // Always keep the whole thing. A 400-character preview is how the last run
-        // reported "0 entries" for a body that visibly contained a cart entry.
-        const cartDump = path.join(HERE, 'rc-cart-read.json');
-        fs.writeFileSync(cartDump, check.raw ?? '', { mode: 0o600 });
-        log(`   cart read → HTTP ${check.status}, ${check.count} entr${check.count === 1 ? 'y' : 'ies'}, unit ${unitId} present: ${check.hit ? 'YES' : 'NO'}`);
-        log(`   full cart response saved → ${cartDump}`);
-        if (check.keys) log(`   entry fields: ${check.keys}`);
-        if (check.count > 0 && !check.hit) {
-          log('   ⚠ the cart HAS entries but none carries this unit id — either the hold');
-          log('     is for something else, or it is a leftover from an earlier run.');
+        };
+
+        // BOTH keys. The submit answered with a DIFFERENT ShoppingCartKey than the one
+        // it was given, so "the cart" is ambiguous — reading only one of them is how a
+        // held site gets reported as missing.
+        const candidates = [...new Set([key, cartKey, result.usedKey].filter(Boolean))];
+        let check = null;
+        for (const k of candidates) {
+          const c = await readCart(k);
+          log(`   cart ${k} → HTTP ${c.status}, ${c.count} entr${c.count === 1 ? 'y' : 'ies'}, ours present: ${c.hit ? 'YES' : 'NO'}`);
+          for (const e of c.entries) {
+            log(`      · type=${e.type} placeId=${e.placeId} facilityId=${e.facilityId}${e.summary ? ` — ${e.summary}` : ''}`);
+          }
+          if (!check || c.hit) check = c;
+          if (c.hit) { cartedKey = k; break; }
         }
+        const cartDump = path.join(HERE, 'rc-cart-read.json');
+        fs.writeFileSync(cartDump, check?.raw ?? '', { mode: 0o600 });
+        log(`   full cart response saved → ${cartDump}`);
+        if (check?.keys) log(`   entry fields: ${check.keys}`);
+
         // The verdict comes from the CART, not from the submit. "cart is already added"
         // is a rejected submit on top of a held site — the strongest possible evidence
         // that carting works, and the previous version called it "NOT carted".
         const already = /already added/i.test(result.submitted.v.error ?? '');
-        if (check.hit) {
-          cartedKey = key;
+        if (check?.hit) {
+          // cartedKey was set to the key that actually held it, in the loop above.
           cartedUnit = unitId;
           log('   → BOT-SIDE CARTING WORKS, confirmed by reading the cart back.');
           if (already) {
@@ -818,11 +853,12 @@ try {
           log('     a 403 there means RC is blocking this machine, and no payload edit');
           log('     will fix that.');
         } else if (okSubmit) {
-          log('   → RC ACCEPTED the submit but the cart does not contain that unit.');
+          log('   → RC ACCEPTED the submit but no cart we can read contains our site.');
           log('     Do NOT record this as a working cart — an accepted request and a held');
           log('     site are different claims, and this is the gap between them.');
-          log('     Read the saved response before believing this line: the check has been');
-          log('     wrong before, and a false "empty" here is worse than no check at all.');
+          log('     BUT read the entries printed above first. This check has produced a');
+          log('     false negative twice; if an entry names our placeId/facilityId, the');
+          log('     cart is fine and the matcher is what is wrong.');
         } else {
           log('   → NOT carted. HTTP 200 with IsSuccess=false is still a failure.');
           log('     If ErrorMessage names a required field, it is our payload (fixable);');
