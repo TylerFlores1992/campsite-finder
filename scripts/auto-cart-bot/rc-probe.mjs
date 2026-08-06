@@ -216,6 +216,12 @@ async function captureFailure(page, name) {
     fs.writeFileSync(txt, `url: ${page.url()}\n\n${body}`, { mode: 0o600 });
     log(`   captured: ${shot}`);
     log(`             ${txt}`);
+    // PRINT it too. A file on the mini-PC is a round trip away from whoever is reading
+    // the output, and every round trip here has cost more than the information did.
+    const flat = body.replace(/\n{2,}/g, '\n').split('\n').map((l) => l.trim()).filter(Boolean);
+    log('   ── what the page actually said ──');
+    for (const line of flat.slice(0, 25)) log(`   | ${line.slice(0, 160)}`);
+    if (flat.length > 25) log(`   | …${flat.length - 25} more lines in the .txt`);
   } catch (err) {
     log(`   (could not capture the failure state: ${err.message})`);
   }
@@ -245,7 +251,7 @@ async function signIn(page, { profileDir } = {}) {
       await page.waitForTimeout(4000);
     }
 
-    const user = await findIn(page, EMAIL_SELECTORS, { label: 'the email field' });
+    let user = await findIn(page, EMAIL_SELECTORS, { label: 'the email field' });
     if (!user) {
       const d = await diagnose(page);
       log('   Page says:', d.snippet);
@@ -266,20 +272,45 @@ async function signIn(page, { profileDir } = {}) {
       // make "clicked, and Okta ignored it" and "the click itself threw" the same
       // outcome — so a run that never submitted anything reported "password step not
       // reached", which points at Okta for something that was ours.
-      for (let attempt = 1; attempt <= 2 && !pass; attempt++) {
+      // THREE attempts, ENTER FIRST, and a reload between rounds.
+      //
+      // This step is flaky rather than blocked: the same code got through on the main
+      // profile minutes earlier and failed here. The observed signature — the first
+      // click reporting nothing, the second timing out at 5s — is Okta DISABLING the
+      // button while a transaction is in flight, so the retry fights a widget that is
+      // mid-request rather than a widget that refused us.
+      //
+      // Enter goes first because it submits the form Okta is actually listening to,
+      // without needing the button to be enabled and hittable. A reload between rounds
+      // clears a half-finished transaction, which clicking again never does.
+      for (let attempt = 1; attempt <= 3 && !pass; attempt++) {
+        if (attempt > 1) {
+          log(`   reloading and retrying the email step (attempt ${attempt})`);
+          await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+          await page.waitForTimeout(3000);
+          const again = await findIn(page, EMAIL_SELECTORS, { timeout: 15_000, label: 'the email field' });
+          if (!again) break;
+          user = again;
+          await user.loc.fill(EMAIL);
+          await keepSignedIn(page);
+        }
+        log(`   submitting the email (attempt ${attempt}) — Enter`);
+        await user.loc.press('Enter').catch((e) => log(`   ⚠ Enter failed: ${e.message.split('\n')[0]}`));
+        pass = await findIn(page, PASSWORD_SELECTORS, { timeout: 10_000, label: 'the password field' });
+        if (pass) break;
+
         const next = await findIn(page, SUBMIT_SELECTORS, { timeout: 5000, label: 'the Next button' });
         if (next) {
-          log(`   submitting the email (attempt ${attempt}, ${next.sel})`);
+          log(`   Enter did not advance — clicking ${next.sel}`);
           try {
-            await next.loc.click({ timeout: 5000 });
+            await next.loc.click({ timeout: 8000 });
           } catch (err) {
+            // A timeout here usually means the button is DISABLED mid-transaction,
+            // which is a "wait", not a "no".
             log(`   ⚠ the Next click FAILED: ${err.message.split('\n')[0]}`);
           }
-        } else {
-          log(`   no Next button found (attempt ${attempt}) — pressing Enter in the field`);
-          await user.loc.press('Enter').catch(() => {});
         }
-        pass = await findIn(page, PASSWORD_SELECTORS, { timeout: 8000, label: 'the password field' });
+        pass = await findIn(page, PASSWORD_SELECTORS, { timeout: 12_000, label: 'the password field' });
       }
     }
     if (!pass) {
@@ -895,11 +926,23 @@ try {
         await pageB.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 });
         await pageB.waitForTimeout(3000);
         log('   signing the second session in…');
-        const okB = await signIn(pageB);
+        // Contained. A flaky login in the SECOND session must not throw away the FIRST
+        // session's result — that is exactly what happened on the first --handoff run:
+        // the cart was confirmed, then the probe died before it could report anything
+        // else. The hand-off is one question among several, not the whole run.
+        let okB = false;
+        try {
+          okB = await signIn(pageB);
+        } catch (err) {
+          log(`   second session login threw: ${err.message}`);
+        }
         log(`   second session signed in: ${okB ? 'YES' : 'NO'}`);
         if (!okB) {
           await captureFailure(pageB, 'handoff-login');
           log('   → cannot conclude anything: the second session never logged in.');
+          log('     This is the flaky Okta email step, not a verdict — the SAME code');
+          log('     signs in fine on the main profile. Re-run; the cart survives, and');
+          log('     "cart is already added" on the next --cart is the proof it did.');
         } else {
           const tokenB = await pageB.evaluate(
             () => localStorage.getItem('ssoAccessToken') || localStorage.getItem('accessToken'),
