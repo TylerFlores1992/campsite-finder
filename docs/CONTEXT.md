@@ -2430,12 +2430,31 @@ the `AWSALBAPP-*` / `stickounet` load-balancer cookies), not to the key and not 
 customer. `CustomerId: 0` was a red herring.
 
 So the "bot holds it, you claim it on your phone" design is dead as a **key** hand-off.
-Two heavier options survive, both with real costs — a full session clone (transfer
-token + cookies + key so the phone BECOMES the bot's session; fragile, 1-hour token,
-cross-subdomain cookies) or the bot completing checkout (spends money, must clear the
-Oct-2025 reCAPTCHA + MFA). Detail in `scripts/auto-cart-bot/reservecalifornia.mjs`. What
-works today is the browser extension carting in the user's OWN desktop session — no
-hand-off, but requires them at the machine.
+Three options survive, ranked by how I'd pursue them (deep-dive 2026-08-05):
+
+1. **CART ON TAP — cart in the user's OWN session, never hand off (recommended).** The
+   binding wall only exists because the carting session and the checkout session differ.
+   Make them the SAME: the CampHawk surface that the user already controls does the cart.
+   - Desktop: the browser extension already does this (`extension/content-rc.js` precart
+     path) — tap the alert, it carts in your logged-in RC tab. Shipped.
+   - Mobile: the native app holds a logged-in RC session in its webview; on tapping the
+     alert the app fires the cart POST in that session, then shows checkout. No transfer,
+     no session-binding problem. Needs: the native app (in store review), an in-app RC
+     login persisted, and cart-on-foreground wired.
+   - Honest limit: needs the user to TAP within the ~15-min hold. It is NOT the
+     asleep-at-2am hold. But detection→alert is seconds and texts now arrive, so
+     "tap the text, it's in your cart, pay" is the realistic differentiator.
+2. **Full session clone** (server holds, phone resumes): bot logs in AS the user, carts,
+   and transfers token + `AWSALBAPP`/`stickounet` cookies + key so the device becomes the
+   bot's session. Only this reaches the truly-away case without spending money. Fragile:
+   1-hour Okta token, cross-subdomain cookies, moving a live session. **One cheap datum
+   would gauge feasibility** — in the working RC window, delete just the `AWSALBAPP-*`
+   cookies and reload: cart gone ⇒ it's LB stickiness (lighter transfer), cart survives
+   ⇒ it's the token (heavier). Not yet run.
+3. **Bot completes checkout**: the only true hands-off 24/7 grab, but it SPENDS the user's
+   money and must clear the Oct-2025 reCAPTCHA + Okta MFA. A different, riskier product.
+
+Detail in `scripts/auto-cart-bot/reservecalifornia.mjs`.
 
 The mechanism notes below are still accurate and worth keeping; they're just not
 sufficient, because of the session-binding above.
