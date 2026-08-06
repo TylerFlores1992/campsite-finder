@@ -2418,10 +2418,29 @@ Files are `*.test.mts` under `worker/`. What is covered, and why these first:
 > by reverting `claim.ts` to the pre-026 per-watch logic: 4 of 9 failed, including the
 > one that names the bug. A test that also passes on the broken version is decoration.
 
-## ReserveCalifornia auto-cart — mechanism found, one test from viable (2026-08-05)
+## ReserveCalifornia auto-cart — the key hand-off is DEAD; cart is session-bound (2026-08-05)
 
-RC auto-cart looked dead (a bot cart doesn't sync to the user's phone). Reading RC's own
-web bundle reopened it. The findings, so nobody re-derives them:
+**Verdict first, because an earlier commit in this session overclaimed it as "plausible":
+you cannot create an RC cart in one session and let another session claim it by key.**
+Tested live — writing the same `shoppingCartKey` into localStorage: the ORIGINAL window
+that made the cart showed it (trivial), but a fresh **incognito window on the same PC,
+logged into the same account**, showed EMPTY, and so did the mini-PC. Same account, same
+key, fresh session ⇒ empty. The cart is bound to the **session** (its Okta token and/or
+the `AWSALBAPP-*` / `stickounet` load-balancer cookies), not to the key and not to the
+customer. `CustomerId: 0` was a red herring.
+
+So the "bot holds it, you claim it on your phone" design is dead as a **key** hand-off.
+Two heavier options survive, both with real costs — a full session clone (transfer
+token + cookies + key so the phone BECOMES the bot's session; fragile, 1-hour token,
+cross-subdomain cookies) or the bot completing checkout (spends money, must clear the
+Oct-2025 reCAPTCHA + MFA). Detail in `scripts/auto-cart-bot/reservecalifornia.mjs`. What
+works today is the browser extension carting in the user's OWN desktop session — no
+hand-off, but requires them at the machine.
+
+The mechanism notes below are still accurate and worth keeping; they're just not
+sufficient, because of the session-binding above.
+
+RC's own web bundle is where these came from — so nobody re-derives them:
 
 - **The cart is anonymous, keyed only by a `shoppingCartKey` GUID.** `CustomerId: 0` on
   every entry. `POST rdapi.reservecalifornia.com/api/webaccesscustomer/load/shoppingcart`

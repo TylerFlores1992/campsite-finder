@@ -23,15 +23,32 @@
 //    ({shoppingCartKey}) — whoever holds the key can keep the cart alive. A bot can hold
 //    a site well past 15 minutes while the user gets to their phone.
 //
-// STILL UNPROVEN (the one make-or-break): that a DIFFERENT logged-in session adopts a
-// foreign cart key written to its localStorage and sees that cart. Everything points to
-// yes (anonymous cart, pure-GUID addressing, localStorage is the store), but it must be
-// confirmed with the two-browser test before the bot side is built. See docs/CONTEXT.md.
+// TESTED 2026-08-05 — AND THE CROSS-SESSION HAND-OFF DOES NOT WORK. Writing the same
+// shoppingCartKey into localStorage was tried in three places:
+//   • the ORIGINAL window that created the cart (this PC, logged in as the owner) → the
+//     cart showed. Trivial — same session, same token, same cookies.
+//   • a fresh INCOGNITO window on the SAME PC, logged into the SAME account → EMPTY.
+//   • the mini-PC → EMPTY.
+// Same account, same key, fresh session ⇒ empty. So the cart is bound to the SESSION
+// that created it — its Okta token and/or the AWS load-balancer stickiness cookies
+// (`AWSALBAPP-*`, `stickounet`) — NOT to the cart key or the customer. `CustomerId: 0`
+// was a red herring: the key alone is not a bearer of the cart.
 //
-// THE BOT SIDE, once confirmed: the bot needs an RC session (its own login, or a stored
-// user login via a /connect flow like rec.gov) to POST precartdata and create the cart,
-// then reports the shoppingCartKey back on the autocart_job. No payment automation, no
-// checkout — the reCAPTCHA lives only on the final checkout the human does.
+// CONSEQUENCE: a bot on the mini-PC cannot create a cart the user's phone can later
+// claim by key. The clean "bot holds, user claims" design is dead as a KEY hand-off.
+//
+// What remains, both with real costs:
+//   1. FULL SESSION CLONE — the bot logs in AS the user, and we transfer the whole
+//      session (Okta token + AWSALBAPP/stickounet cookies + cart key) to the user's
+//      device so it BECOMES the bot's session. Fragile: the token expires in ~1 hour,
+//      the cookies live on rdapi.reservecalifornia.com (a different subdomain, hard to
+//      inject), and it moves a live RC session token around. Not attempted.
+//   2. BOT COMPLETES CHECKOUT — the only true 24/7 auto-grab, but it spends the user's
+//      money and must clear the Oct-2025 reCAPTCHA + Okta MFA. A different product.
+//
+// What DOES work today: the CampHawk browser extension carts in the USER'S OWN session
+// on desktop (extension/content-rc.js precart path) — same session, so no hand-off.
+// That needs the user at their machine; it is not the away-from-keyboard win.
 //
 // The consequence: a bot carting on the mini-PC creates a cart the user can never reach.
 // It could truthfully report "carted" and the site would still be unbookable by them —

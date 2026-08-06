@@ -26,17 +26,19 @@
   // opened, and the alert just carries that cart's key. We hand the browser the
   // key and let RC show the held cart.
   //
-  // Why this works — established by reading RC's own bundle, not by guessing:
-  //   • RC's cart is an anonymous object keyed ONLY by a shoppingCartKey GUID
-  //     (cart entries carry CustomerId 0).
-  //   • The web app's single source of truth for "which cart am I" is
-  //     localStorage["shoppingCartKey"] — every cart op reads it from there, and
-  //     nothing reads it from the URL (which is why ?shoppingCartKey= did nothing).
-  //   • So writing that one value makes this logged-in session adopt the bot's cart.
+  // ⚠️ TESTED 2026-08-05: this ADOPTS a cart only within the SAME session that created
+  // it. Writing a cart key made by a DIFFERENT session (e.g. the mini-PC bot) does NOT
+  // surface here — a fresh incognito window on the same PC, same RC account, showed an
+  // empty cart. The RC cart is bound to the originating session (Okta token + AWSALBAPP
+  // stickiness cookies), not to the key. So this path does NOT achieve the bot→user
+  // hand-off it was built for; it only helps when THIS browser's own session made the
+  // cart. Kept for that narrow case and as the anchor for any future session-clone work;
+  // see scripts/auto-cart-bot/reservecalifornia.mjs for the full finding.
   //
-  // The alert link ends with #camphawk-rccart=<shoppingCartKey>. We write it and
-  // reload; RC then loads the held cart. The human reviews and checks out — no
-  // payment automation, and the reCAPTCHA at checkout is theirs to solve.
+  // Reading of RC's bundle (still accurate, just not sufficient): the cart is anonymous
+  // (CustomerId 0), keyed by a shoppingCartKey GUID, and the web app's source of truth
+  // for "which cart am I" is localStorage["shoppingCartKey"] — nothing reads it from the
+  // URL, which is why ?shoppingCartKey= did nothing.
   const ADOPTED_FLAG = 'camphawk_rc_adopted';
   const adopt = location.hash.match(/camphawk-rccart=([0-9a-fA-F-]{30,})/);
   if (adopt) {
