@@ -27,6 +27,10 @@
  *             exact request RC's own UI sends. Use it when --cart is rejected for a
  *             field we can't guess — a recording beats another round of enumeration:
  *               ... node rc-probe.mjs --headful --capture
+ * --handoff   THE architecture question. Carts, then logs a SECOND, independent
+ *             session into the same account and asks it to read that cart by key.
+ *             If the key is enough, the alert never has to carry a session:
+ *               ... RC_UNIT_ID=… RC_ARRIVAL=… node rc-probe.mjs --cart --handoff
  *
  * SECURITY: the exported blob is a LIVE RC session — full account access until the
  * token expires (~1h). It is written to rc-blob.json in this directory and gitignored.
@@ -64,6 +68,26 @@ const KEEP_OPEN = args.has('--keep-open');
  *  RC's own UI sent. Five rounds of guessing `extraValues` cost more than one recording
  *  would have; when a payload is unknown, capture it rather than enumerate it. */
 const CAPTURE = args.has('--capture');
+/**
+ * --handoff: THE question that decides the whole RC auto-cart architecture.
+ *
+ * We know the cart key alone does NOT transfer to a fresh session, and that copying the
+ * entire localStorage blob DOES (cross-machine, cross-IP). The blob contains the token
+ * and the key does not, so the binding is to the TOKEN — but that leaves the decisive
+ * case untested: can a DIFFERENT session, freshly logged into the SAME RC account, read
+ * that cart by key?
+ *
+ *   YES → the alert carries only the cart KEY. Harmless, no session ever moves, the
+ *         user signs into RC themselves. The clean design.
+ *   NO  → we must transfer a live session blob — full account access — and everything
+ *         downstream (delivery, TTL, revocation, the native webview) gets heavier.
+ *
+ * The earlier incognito test pointed at NO, but it cannot settle it: we do not know
+ * whether that window was actually signed in when the key was written. This runs both
+ * halves itself, in one process, with a genuinely separate profile — no copy-paste, no
+ * ambiguity about what state the second browser was in.
+ */
+const HANDOFF = args.has('--handoff');
 
 const EMAIL = process.env.RC_EMAIL;
 const PASSWORD = process.env.RC_PASSWORD;
@@ -197,30 +221,17 @@ async function captureFailure(page, name) {
   }
 }
 
-const ctx = await chromium.launchPersistentContext(path.join(HERE, '.rc-probe-profile'), {
-  headless: !HEADFUL,
-  viewport: { width: 1280, height: 900 },
-});
-const page = ctx.pages()[0] ?? (await ctx.newPage());
-
-try {
-  step(1, 'Loading ReserveCalifornia…');
-  await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await page.waitForTimeout(3000);
-
-  // Already signed in from a previous probe run? The persistent profile keeps it.
-  let blob = await readBlob(page);
-  let signedIn = blob.some(([k]) => k === 'ssoAccessToken' || k === 'accessToken');
-
-  if (signedIn) {
-    step(2, 'Already signed in (persistent profile) — skipping login.');
-  } else {
-    step(2, 'Signing in…');
+/**
+ * Sign in, on whatever page it is handed. Extracted so the HAND-OFF test can drive a
+ * SECOND, completely independent session through the same flow — that test is worthless
+ * if the two sessions do not log in identically.
+ */
+async function signIn(page, { profileDir } = {}) {
     // A run that previously said "Already signed in" and now doesn't means the session
     // was DROPPED, not that it never existed. That distinction matters: an expiring
     // session is the design working (log in once, ride it), while a revoked one is RC
     // pushing back on this machine. The profile dir is the evidence either way.
-    if (fs.existsSync(path.join(HERE, '.rc-probe-profile'))) {
+    if (profileDir && fs.existsSync(profileDir)) {
       log('   (the persistent profile exists but holds no token — a previous session was lost)');
     }
     // RC hands off to Okta at signin.reservecalifornia.com. Selectors are best-effort
@@ -288,8 +299,31 @@ try {
     else await page.keyboard.press('Enter');
     await page.waitForTimeout(9000);
 
+    const after = await readBlob(page);
+    return after.some(([k]) => k === 'ssoAccessToken' || k === 'accessToken');
+}
+
+const ctx = await chromium.launchPersistentContext(path.join(HERE, '.rc-probe-profile'), {
+  headless: !HEADFUL,
+  viewport: { width: 1280, height: 900 },
+});
+const page = ctx.pages()[0] ?? (await ctx.newPage());
+
+try {
+  step(1, 'Loading ReserveCalifornia…');
+  await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.waitForTimeout(3000);
+
+  // Already signed in from a previous probe run? The persistent profile keeps it.
+  let blob = await readBlob(page);
+  let signedIn = blob.some(([k]) => k === 'ssoAccessToken' || k === 'accessToken');
+
+  if (signedIn) {
+    step(2, 'Already signed in (persistent profile) — skipping login.');
+  } else {
+    step(2, 'Signing in…');
+    signedIn = await signIn(page, { profileDir: path.join(HERE, '.rc-probe-profile') });
     blob = await readBlob(page);
-    signedIn = blob.some(([k]) => k === 'ssoAccessToken' || k === 'accessToken');
   }
 
   const d = await diagnose(page);
@@ -358,6 +392,10 @@ try {
       log('   Full body saved above. Copy extraValues into the bot payload verbatim.');
     }
   }
+
+  // Carried out of the cart block for the hand-off test below.
+  let cartedKey = null;
+  let cartedUnit = null;
 
   if (signedIn && DO_CART) {
     const unitId = Number(process.env.RC_UNIT_ID);
@@ -762,6 +800,8 @@ try {
         // that carting works, and the previous version called it "NOT carted".
         const already = /already added/i.test(result.submitted.v.error ?? '');
         if (check.hit) {
+          cartedKey = key;
+          cartedUnit = unitId;
           log('   → BOT-SIDE CARTING WORKS, confirmed by reading the cart back.');
           if (already) {
             log('     (the submit was REJECTED with "cart is already added" — because a');
@@ -788,6 +828,97 @@ try {
           log('     If ErrorMessage names a required field, it is our payload (fixable);');
           log('     a captcha or challenge would be RC actually defending.');
         }
+      }
+    }
+  }
+
+  // ── THE HAND-OFF TEST ───────────────────────────────────────────────────────────
+  // A SECOND browser, a genuinely separate profile, logging into the SAME RC account,
+  // asked to read the cart the first one just made. Nothing is copied between them
+  // except the cart key — which is exactly the thing we want to know is sufficient.
+  if (HANDOFF) {
+    if (!cartedKey) {
+      log('\n--handoff needs a confirmed cart to hand off. Run it with --cart, and');
+      log('make sure the cart read-back said YES — there is nothing to test otherwise.');
+    } else {
+      step(8, 'HAND-OFF TEST — can a different session of the same account read this cart?');
+      // Deleted, not reused: a leftover profile would still hold the FIRST session's
+      // token and the test would "pass" by reading its own cart. That failure mode is
+      // silent and would send us down the wrong architecture, so start from nothing.
+      const dirB = path.join(HERE, '.rc-probe-profile-b');
+      fs.rmSync(dirB, { recursive: true, force: true });
+      log(`   fresh profile: ${dirB} (deleted first — a reused one would hold the FIRST`);
+      log('   session\'s token and the test would pass by reading its own cart)');
+
+      const ctxB = await chromium.launchPersistentContext(dirB, {
+        headless: !HEADFUL,
+        viewport: { width: 1280, height: 900 },
+      });
+      try {
+        const pageB = ctxB.pages()[0] ?? (await ctxB.newPage());
+        await pageB.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        await pageB.waitForTimeout(3000);
+        log('   signing the second session in…');
+        const okB = await signIn(pageB);
+        log(`   second session signed in: ${okB ? 'YES' : 'NO'}`);
+        if (!okB) {
+          await captureFailure(pageB, 'handoff-login');
+          log('   → cannot conclude anything: the second session never logged in.');
+        } else {
+          const tokenB = await pageB.evaluate(
+            () => localStorage.getItem('ssoAccessToken') || localStorage.getItem('accessToken'),
+          );
+          const tokenA = blob.find(([k]) => k === 'ssoAccessToken' || k === 'accessToken')?.[1];
+          log(`   tokens differ: ${tokenA !== tokenB ? 'YES (as they must)' : 'NO ← same token, test is void'}`);
+
+          const r = await ctxB.request.post(CART_LOAD, {
+            headers: {
+              'Content-Type': 'application/json',
+              accesstoken: tokenB,
+              authorization: 'Bearer ' + tokenB,
+              installationsidentity: 'cali',
+              storeid: '111',
+            },
+            data: { shoppingCartKey: cartedKey },
+            timeout: 30_000,
+          });
+          const raw = await r.text();
+          fs.writeFileSync(path.join(HERE, 'rc-handoff-read.json'), raw, { mode: 0o600 });
+          let hit = false, count = 0;
+          try {
+            const res = JSON.parse(raw)?.Result ?? {};
+            const entries = res.CartEntry?.$values ?? (Array.isArray(res.CartEntry) ? res.CartEntry : []);
+            count = entries.length;
+            const seen = new Set();
+            (function walk(n) {
+              if (hit || !n || typeof n !== 'object' || seen.has(n)) return;
+              seen.add(n);
+              for (const [k, v] of Object.entries(n)) {
+                if (k === '$type' || k === '$id') continue;
+                if (Number(v) === cartedUnit) { hit = true; return; }
+                walk(v);
+              }
+            })(entries);
+          } catch { /* the full body is on disk */ }
+
+          log(`   cart read by session B → HTTP ${r.status()}, ${count} entr${count === 1 ? 'y' : 'ies'}, unit ${cartedUnit} present: ${hit ? 'YES' : 'NO'}`);
+          log(`   full response saved → ${path.join(HERE, 'rc-handoff-read.json')}`);
+          if (hit) {
+            log('\n   ★ THE KEY IS ENOUGH. A different session of the same account can read');
+            log('     the cart. The alert can carry just the shoppingCartKey — no session');
+            log('     blob ever has to move, and the user signs into RC themselves.');
+            log('     Next: confirm the UI shows it (write the key to localStorage and');
+            log('     open the cart page in THIS second browser).');
+          } else {
+            log('\n   ✗ THE KEY IS NOT ENOUGH. The cart is bound to the session that made');
+            log('     it, not to the account. A bot-made cart cannot be claimed by the');
+            log('     user\'s own login, so "bot holds, user checks out" needs either a');
+            log('     full session transfer (live token — treat as a credential) or the');
+            log('     bot completing checkout (spends money — a different product).');
+          }
+        }
+      } finally {
+        await ctxB.close();
       }
     }
   }

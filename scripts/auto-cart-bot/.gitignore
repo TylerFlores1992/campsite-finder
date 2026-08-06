@@ -18,3 +18,5 @@ rc-ui-submit.json
 rc-probe-*.png
 rc-probe-*.txt
 rc-cart-read.json
+rc-handoff-read.json
+.rc-probe-profile-b/
