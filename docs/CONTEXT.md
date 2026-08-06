@@ -2500,6 +2500,40 @@ trips a reCAPTCHA the login didn't. `node rc-probe.mjs --cart` with `RC_UNIT_ID`
 
 Detail in `scripts/auto-cart-bot/reservecalifornia.mjs`.
 
+### RC BLOCKED THE HOUSEHOLD IP (2026-08-06) — read before any further probing
+
+**What happened.** After a day of probe runs, `reservecalifornia.com` stopped loading on
+BOTH machines at the owner's home — the mini-PC and his desktop — showing "We're having
+trouble loading the application" and, earlier, a bare **403 on the ShoppingCart HTML
+page** plus a 401 on the public `load/enterprise` call. Meanwhile RC answered **200 in
+0.6s** from the agent sandbox, **200** from the Fly worker, and the production
+`detect:reservecalifornia` canary stayed green throughout. **The same phone loaded RC
+fine on cellular with WiFi off.** Two machines, one household IP, everywhere else
+unaffected: the address is blocked, not the code.
+
+**The likely trigger is the LOGINS, not the carting.** Across the day the probe did
+repeated Okta sign-ins from *freshly deleted browser profiles* — `--handoff` and
+`--release` each delete their profile precisely so the test is honest, which means every
+run is a brand-new device signing into the same account from one address. That is the
+shape of credential stuffing, and Okta defends against it aggressively. Total request
+volume was low (order 100-200 calls over hours), which argues against a plain rate limit.
+**This is inference, not proof** — RC gave no error naming a reason.
+
+**Why it matters beyond today.** The auto-cart bot lives on that residential connection.
+Whatever hand-off design wins, it must not look like this:
+- **Reuse ONE persistent session.** Production already does — the bot logs in once and
+  keeps it warm. The probe's repeated fresh-profile logins are a *testing* artifact and
+  should never be the production pattern.
+- **Do not loop the probe.** Space runs out, and prefer `--cart` alone (no fresh profile)
+  over `--handoff`/`--release` unless the extra session is the point of the run.
+- **A blocked household IP costs the owner personally** — nobody in the house can book a
+  campsite from home while it lasts. That is a real cost of testing against a live
+  consumer site, and it belongs in the decision about how much more probing to do.
+
+**Recovery:** unknown duration; these usually clear on their own in minutes to hours.
+Check occasionally from a browser — do NOT poll it, since more traffic is what caused it.
+Production alerting is unaffected (the poller reaches RC from Fly).
+
 ### SETTLED 2026-08-06: the bot carts; the KEY alone cannot hand it over
 
 Three things are now proven with evidence rather than inference, all via

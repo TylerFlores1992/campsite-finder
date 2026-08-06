@@ -47,6 +47,14 @@
  * SECURITY: the exported blob is a LIVE RC session — full account access until the
  * token expires (~1h). It is written to rc-blob.json in this directory and gitignored.
  * Delete it when you are done. Never paste it anywhere, and never put it in a link.
+ *
+ * ⚠️ RC BLOCKED THE OWNER'S HOME IP ON 2026-08-06 after a day of these runs — both
+ * machines in the house lost reservecalifornia.com entirely while cellular and every
+ * datacenter path stayed fine. The likely trigger is `--handoff`/`--release` deleting
+ * their browser profile every run, so each one is a NEW device signing into the same
+ * account from one address: the shape of credential stuffing. Space runs out, prefer
+ * plain `--cart` (which reuses the persistent profile), and remember a block costs the
+ * household its own ability to book. Details in docs/CONTEXT.md.
  */
 
 import { chromium } from 'playwright';
