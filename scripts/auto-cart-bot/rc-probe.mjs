@@ -330,7 +330,11 @@ try {
           // shape, so try a small BOUNDED set of plausible ones and report every result.
           // Guessing silently is what produced the false success earlier; this guesses
           // in the open, and the dumped Waivers below is the authoritative answer.
-          const waivers = Array.isArray(loadRes?.Waivers) ? loadRes.Waivers : [];
+          // .NET serialises collections as {"$type":…,"$values":[…]}, NOT as a bare
+          // array — so Array.isArray() on them is always false and the loop below
+          // silently never ran. Unwrap before touching any RC list.
+          const unwrap = (v) => (Array.isArray(v) ? v : Array.isArray(v?.$values) ? v.$values : []);
+          const waivers = unwrap(loadRes?.Waivers);
           if (!verdict(submitted).isSuccess && waivers.length) {
             const idOf = (w) =>
               w?.Id ?? w?.WaiverId ?? w?.ID ??
@@ -358,11 +362,18 @@ try {
             finalKey: ls('shoppingCartKey'),
             attempts,
             waiverCount: waivers.length,
+            // Diagnostics for the "required field" hunt.
+            occupantName: occupant,
+            occupantKeys: ['customerName', 'ssoCustomerName', 'customerDetail'].map((k) => `${k}=${ls(k) ? 'set' : 'EMPTY'}`).join(' '),
           };
         },
         { loadUrl: PRECART_LOAD, submitUrl: PRECART_SUBMIT, unitId, arrival, nights, cartKey, NO_CART }
       );
 
+      // `Settings.IsOccupantNameRequiredForReservations: true` on this facility, and we
+      // derive occupantName from localStorage — so an empty one is a live suspect for
+      // the "required field" rejection regardless of what the label says.
+      log(`   occupantName: ${result.occupantName ? `"${result.occupantName}"` : 'EMPTY  ← required by this facility'}  (${result.occupantKeys})`);
       const okLoad = result.loaded.v.isSuccess;
       const okSubmit = result.submitted.v.isSuccess;
       log(`   load   → HTTP ${result.loaded.status}, IsSuccess=${okLoad}${result.loaded.v.error ? ` — ${result.loaded.v.error}` : ''}`);
@@ -383,9 +394,38 @@ try {
         // By NAME, not by pattern. The previous /custom/ regex matched
         // "CustomerClassificationId" and missed `Waivers` — the one field that
         // actually mattered. Naming them is the whole lesson.
-        for (const k of ['Waivers', 'Alerts', 'Settings', 'ErrorMessages', 'LockedShoppingCart']) {
-          if (k in res) log(`   ▸ ${k}: ${JSON.stringify(res[k]).slice(0, 1500)}`);
+        for (const k of ['Settings', 'ErrorMessages', 'LockedShoppingCart']) {
+          if (k in res) log(`   ▸ ${k}: ${JSON.stringify(res[k]).slice(0, 900)}`);
         }
+
+        // THE DECISIVE ONE. The submit is rejected naming a label — "Please confirm
+        // your booking dates before finalizing your reservation." Rather than guess
+        // which structure declares it, find that phrase IN the load response and show
+        // its surroundings: whatever object contains it is the field we must answer.
+        const needle = /confirm your booking dates/i;
+        const hay = result.loadedFull;
+        let at = hay.search(needle);
+        if (at === -1) {
+          log('   ▸ the rejected label does NOT appear in the load response.');
+          log('     → it is not a facility field we can read here; likely a client-side');
+          log('       confirmation the UI adds, or a global setting.');
+        } else {
+          let shown = 0;
+          while (at !== -1 && shown < 3) {
+            log(`   ▸ label found at ${at}: …${hay.slice(Math.max(0, at - 420), at + 260).replace(/\s+/g, ' ')}…`);
+            const next = hay.slice(at + 1).search(needle);
+            at = next === -1 ? -1 : at + 1 + next;
+            shown++;
+          }
+        }
+
+        // Every top-level key with its type, so an array of field definitions can't
+        // hide from us again the way Waivers did behind a regex.
+        log('   ▸ Result shape: ' + Object.keys(res).map((k) => {
+          const v = res[k];
+          const n = Array.isArray(v?.$values) ? `[${v.$values.length}]` : Array.isArray(v) ? `[${v.length}]` : typeof v;
+          return `${k}:${n}`;
+        }).join(' '));
       } catch { log('   (could not parse the load response)'); }
 
       if (result.attempts?.length > 1) {
