@@ -12,3 +12,5 @@ logs/
 rc-blob.json
 .rc-probe-profile/
 rc-precart-load.json
+rc-ui-load.json
+rc-ui-submit.json

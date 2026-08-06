@@ -23,6 +23,10 @@
  *
  * --headful shows the browser (use it the first time; MFA prompts are visible).
  * --keep-open leaves it open at the end so you can eyeball the cart.
+ * --capture   waits for YOU to add a site to the cart in the browser and records the
+ *             exact request RC's own UI sends. Use it when --cart is rejected for a
+ *             field we can't guess — a recording beats another round of enumeration:
+ *               ... node rc-probe.mjs --headful --capture
  *
  * SECURITY: the exported blob is a LIVE RC session — full account access until the
  * token expires (~1h). It is written to rc-blob.json in this directory and gitignored.
@@ -52,6 +56,11 @@ const args = new Set(process.argv.slice(2));
 const HEADFUL = args.has('--headful');
 const DO_CART = args.has('--cart');
 const KEEP_OPEN = args.has('--keep-open');
+/** --capture: stop guessing, RECORD. Opens RC signed in and waits for YOU to add a site
+ *  to the cart by hand, then writes the exact `submit/precartdataforbookingmodify` body
+ *  RC's own UI sent. Five rounds of guessing `extraValues` cost more than one recording
+ *  would have; when a payload is unknown, capture it rather than enumerate it. */
+const CAPTURE = args.has('--capture');
 
 const EMAIL = process.env.RC_EMAIL;
 const PASSWORD = process.env.RC_PASSWORD;
@@ -246,6 +255,50 @@ try {
     log('\nVERDICT: unattended login WORKS. (Or the profile was already authenticated —\nif this is the first run, that distinction matters; check the MFA/CAPTCHA lines.)');
   }
 
+  if (signedIn && CAPTURE) {
+    step(4, 'CAPTURE mode — waiting for a real add-to-cart from the RC UI.');
+    log('   In the browser window: find any available site, pick dates, and click');
+    log('   "Add to cart" the way a normal user would. Nothing is charged — a cart is');
+    log('   only a hold, and you can empty it afterwards.');
+    log('   This records what RC ITSELF sends, which is the answer our guesses are');
+    log('   circling. Up to 15 minutes; Ctrl-C to give up.\n');
+
+    let captured = null;
+    page.on('request', (req) => {
+      const u = req.url();
+      if (!u.startsWith(PRECART_SUBMIT) && !u.startsWith(PRECART_LOAD)) return;
+      const which = u.startsWith(PRECART_SUBMIT) ? 'submit' : 'load';
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData() ?? 'null'); } catch { /* not JSON */ }
+      const file = path.join(HERE, `rc-ui-${which}.json`);
+      fs.writeFileSync(file, req.postData() ?? '', { mode: 0o600 });
+      log(`   ✓ captured ${which} → ${file}`);
+      if (which === 'submit') captured = parsed ?? {};
+    });
+
+    await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+    const deadline = Date.now() + 15 * 60_000;
+    while (!captured && Date.now() < deadline) await page.waitForTimeout(1000);
+
+    if (!captured) {
+      log('\n   Nothing captured. Either no add-to-cart happened, or RC changed the');
+      log('   endpoint — check DevTools → Network for what the button actually calls.');
+    } else {
+      log('\n   THE REAL PAYLOAD (this is ground truth, not a guess):');
+      log(`   extraValues: ${JSON.stringify(captured.extraValues)}`);
+      // Everything our bot's body differs on, named. These are the fields to copy.
+      const interesting = [
+        'extraValues', 'customerClassificationId', 'sleepingUnit', 'occupantName',
+        'unitPriceType', 'fdUsageClassificationId', 'selectedClassification',
+        'dynamicOccupancyByNight', 'adults', 'children', 'shoppingCartKey',
+      ];
+      for (const k of interesting) {
+        if (k in captured) log(`     ${k}: ${JSON.stringify(captured[k]).slice(0, 300)}`);
+      }
+      log('   Full body saved above. Copy extraValues into the bot payload verbatim.');
+    }
+  }
+
   if (signedIn && DO_CART) {
     const unitId = Number(process.env.RC_UNIT_ID);
     const arrival = process.env.RC_ARRIVAL;
@@ -329,24 +382,54 @@ try {
           // booking dates…" is one of them. We do not know the exact `extraValues` wire
           // shape, so try a small BOUNDED set of plausible ones and report every result.
           // Guessing silently is what produced the false success earlier; this guesses
-          // in the open, and the dumped Waivers below is the authoritative answer.
+          // in the open, and the dumped definitions below are the authoritative answer.
           // .NET serialises collections as {"$type":…,"$values":[…]}, NOT as a bare
-          // array — so Array.isArray() on them is always false and the loop below
-          // silently never ran. Unwrap before touching any RC list.
-          const unwrap = (v) => (Array.isArray(v) ? v : Array.isArray(v?.$values) ? v.$values : []);
-          const waivers = unwrap(loadRes?.Waivers);
-          if (!verdict(submitted).isSuccess && waivers.length) {
-            const idOf = (w) =>
-              w?.Id ?? w?.WaiverId ?? w?.ID ??
-              Object.entries(w || {}).find(([kk]) => /(^|[^a-z])id$/i.test(kk))?.[1];
+          // array — Array.isArray() on them is always false. Unwrap before touching one.
+
+          // THE REQUIRED FIELD, located rather than guessed. Searching the load response
+          // for the rejected label found an `ExtraDefinition`:
+          //   ExtraId 163, Name "Please confirm your booking dates…",
+          //   IsWebRequired true, DefaultValue "Unchecked"
+          // "Unchecked" is the tell: it is a CHECKBOX, so the value RC wants is
+          // "Checked" — not the "true" the earlier guesses sent. The definitions are
+          // nested somewhere under the load response, so walk the whole tree for any
+          // object carrying an ExtraId instead of hard-coding a path that may move.
+          const extras = [];
+          const paths = [];
+          const seen = new Set();
+          (function walk(node, at) {
+            if (!node || typeof node !== 'object' || seen.has(node)) return;
+            seen.add(node);
+            const arr = Array.isArray(node) ? node : Array.isArray(node.$values) ? node.$values : null;
+            if (arr) {
+              for (const item of arr) {
+                if (item && typeof item === 'object' && 'ExtraId' in item) {
+                  extras.push(item);
+                  paths.push(at);
+                }
+                walk(item, at);
+              }
+              return;
+            }
+            for (const [kk, vv] of Object.entries(node)) {
+              if (kk === '$type' || kk === '$id') continue;
+              walk(vv, at ? `${at}.${kk}` : kk);
+            }
+          })(loadRes, '');
+
+          const needed = extras.filter((e) => e.IsWebRequired || e.Required || e.IsCRSRequired);
+          if (!verdict(submitted).isSuccess && needed.length) {
+            // A checkbox extra answers with the opposite of DefaultValue. Anything else
+            // gets its default echoed back, which is what the UI submits untouched.
+            const answer = (e) => (String(e.DefaultValue) === 'Unchecked' ? 'Checked' : String(e.DefaultValue ?? ''));
             const shapes = [
-              ['{Id,Value:"true"}', (w) => ({ Id: idOf(w), Value: 'true' })],
-              ['{ExtraId,Value:"true"}', (w) => ({ ExtraId: idOf(w), Value: 'true' })],
-              ['{Id,Value:"true",IsRequired:true}', (w) => ({ Id: idOf(w), Value: 'true', IsRequired: true })],
-              ['waiver echoed + IsAccepted', (w) => ({ ...w, IsAccepted: true, Value: 'true' })],
+              ['{ExtraId,Value:"Checked"}', (e) => ({ ExtraId: e.ExtraId, Value: answer(e) })],
+              ['definition echoed + Value', (e) => ({ ...e, Value: answer(e) })],
+              ['{ExtraId,Name,Value}', (e) => ({ ExtraId: e.ExtraId, Name: e.Name, Value: answer(e) })],
+              ['{ExtraId,Value:"true"}', (e) => ({ ExtraId: e.ExtraId, Value: 'true' })],
             ];
             for (const [name, make] of shapes) {
-              body.extraValues = waivers.map(make);
+              body.extraValues = needed.map(make);
               const r = await call(submitUrl);
               const v = verdict(r);
               attempts.push({ shape: name, v });
@@ -361,7 +444,18 @@ try {
             usedKey: body.shoppingCartKey,
             finalKey: ls('shoppingCartKey'),
             attempts,
-            waiverCount: waivers.length,
+            // Every extra definition we found and where it lived, so a failed run still
+            // teaches us the shape rather than only that four guesses missed.
+            extrasFound: extras.map((e, i) => ({
+              at: paths[i],
+              ExtraId: e.ExtraId,
+              Name: String(e.Name ?? '').slice(0, 90),
+              DefaultValue: e.DefaultValue,
+              ExtraType: e.ExtraType,
+              required: Boolean(e.IsWebRequired || e.Required || e.IsCRSRequired),
+              keys: Object.keys(e).filter((k) => k !== '$type' && k !== '$id').join(','),
+            })),
+            neededCount: needed.length,
             // Diagnostics for the "required field" hunt.
             occupantName: occupant,
             occupantKeys: ['customerName', 'ssoCustomerName', 'customerDetail'].map((k) => `${k}=${ls(k) ? 'set' : 'EMPTY'}`).join(' '),
@@ -428,8 +522,23 @@ try {
         }).join(' '));
       } catch { log('   (could not parse the load response)'); }
 
+      // Every `ExtraId`-bearing object the load response carries, whether or not the
+      // submit needed it. If all four shapes miss, THIS is the evidence for the next
+      // attempt — the field's own key list tells us what RC expects back.
+      if (result.extrasFound?.length) {
+        log(`   ▸ ${result.extrasFound.length} extra definition(s) found (${result.neededCount} required):`);
+        for (const e of result.extrasFound) {
+          log(`     ${e.required ? 'REQ ' : '    '}ExtraId=${e.ExtraId} type=${e.ExtraType} default=${JSON.stringify(e.DefaultValue)} at "${e.at}" — ${e.Name}`);
+          if (e.required) log(`         keys: ${e.keys}`);
+        }
+      } else {
+        log('   ▸ NO ExtraId-bearing objects anywhere in the load response.');
+        log('     → the required answer is not declared here; look at what the real UI');
+        log('       POSTs (DevTools → Network → submit/precartdataforbookingmodify).');
+      }
+
       if (result.attempts?.length > 1) {
-        log(`   tried ${result.attempts.length} extraValues shapes against ${result.waiverCount} waiver(s):`);
+        log(`   tried ${result.attempts.length} extraValues shapes against ${result.neededCount} required extra(s):`);
         for (const a of result.attempts) {
           const err = a.v.error ? ` — ${a.v.error.replace(/<br\/?>/g, ' ').slice(0, 120)}` : '';
           log(`     ${a.v.isSuccess ? 'OK  ' : 'no  '} ${a.shape}${err}`);
