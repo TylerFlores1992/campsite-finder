@@ -2441,8 +2441,19 @@ Three options survive, ranked by how I'd pursue them (deep-dive 2026-08-05):
      alert the app fires the cart POST in that session, then shows checkout. No transfer,
      no session-binding problem. Needs: the native app (in store review), an in-app RC
      login persisted, and cart-on-foreground wired.
-   - Honest limit: needs the user to TAP within the ~15-min hold. It is NOT the
-     asleep-at-2am hold. But detection→alert is seconds and texts now arrive, so
+   - **NO-TAP variant (push-triggered cart) splits by platform.** A silent/data push
+     could wake the app to cart with no human. **Android: feasible** — a high-priority
+     FCM data message wakes the app (bypasses Doze) and it can cart, modulo OEM battery
+     managers and refreshing the ~1h RC token first. **iOS: NOT reliable** — Apple forces
+     `content-available` pushes to low priority, throttles/coalesces them (a few/hour, at
+     the system's discretion, delayed in Low Power Mode), and **will not wake a
+     force-quit app at all**. Apple's own guidance is not to use silent push for
+     time-sensitive work, which a 15-min cancellation window is. So push-triggered
+     auto-cart would work on Android and flake unpredictably on iOS — worst on the
+     store the app leads with. The reliable-server version of "no tap" is not this; it
+     is option 2/3 (the cart must run where it's reliable = the mini-PC = hand-off again).
+   - Honest limit (tap variant): needs the user to TAP within the ~15-min hold. It is NOT
+     the asleep-at-2am hold. But detection→alert is seconds and texts now arrive, so
      "tap the text, it's in your cart, pay" is the realistic differentiator.
 2. **Full session clone** (server holds, phone resumes): bot logs in AS the user, carts,
    and transfers token + `AWSALBAPP`/`stickounet` cookies + key so the device becomes the
