@@ -228,6 +228,66 @@ async function captureFailure(page, name) {
 }
 
 /**
+ * Type the email as real keystrokes, and CHECK IT LANDED.
+ *
+ * `fill()` sets the value and dispatches one input event. Widgets that track their own
+ * validity can miss that and keep the submit button disabled — which presents as a
+ * CLICK TIMEOUT, because Playwright waits for an enabled, stable, hittable element and
+ * never gets one. That is indistinguishable from "the site blocked us" in the log, and
+ * it is what three identical failures looked like.
+ *
+ * So: click, type character by character, then read the value back. If the field does
+ * not hold what we typed, say so — that is the whole answer, not a symptom.
+ */
+async function typeEmail(loc) {
+  await loc.click({ timeout: 5000 }).catch(() => {});
+  await loc.fill('').catch(() => {});
+  await loc.pressSequentially(EMAIL, { delay: 25 }).catch(async () => { await loc.fill(EMAIL); });
+  const got = await loc.inputValue().catch(() => null);
+  if (got !== EMAIL) log(`   ⚠ the email field holds ${JSON.stringify(got)}, not the address we typed`);
+  return got === EMAIL;
+}
+
+/**
+ * Every login attempt so far separates perfectly on ONE variable: headless.
+ *
+ *   headless  --cart --keep-open      → failed at the email step
+ *   HEADFUL   --cart --headful        → signed in
+ *   headless  --cart --handoff        → failed, 3 identical attempts
+ *
+ * Three failures and one success is not proof, and the mechanism is unknown — Okta may
+ * be refusing a headless client, or the button may simply never become hittable without
+ * a real compositor. But the correlation is clean enough to act on, and it matters far
+ * beyond this script: if RC's Okta will not accept a headless browser, the PRODUCTION
+ * bot cannot run headless either. On the mini-PC that is free (it has a desktop);
+ * anywhere else it means a virtual display.
+ *
+ * Do not treat a headless failure here as "RC blocked us" until it has been retried
+ * with --headful. That mistake costs a day.
+ */
+function warnHeadless() {
+  log('   ⚠ running HEADLESS. Every failed login in this chain has been headless and');
+  log('     the only success was --headful. If this fails, retry with --headful before');
+  log('     concluding anything about RC.');
+}
+
+/** Why can't we click it? Playwright's timeout says "not actionable" and stops there;
+ *  disabled / invisible / zero-sized / covered need completely different responses. */
+async function describeButton(loc) {
+  try {
+    const [visible, enabled, box, html] = await Promise.all([
+      loc.isVisible().catch(() => null),
+      loc.isEnabled().catch(() => null),
+      loc.boundingBox().catch(() => null),
+      loc.evaluate((el) => el.outerHTML.slice(0, 160)).catch(() => ''),
+    ]);
+    return `visible=${visible} enabled=${enabled} box=${box ? `${Math.round(box.width)}x${Math.round(box.height)}` : 'none'} ${html}`;
+  } catch (err) {
+    return `(could not inspect: ${err.message})`;
+  }
+}
+
+/**
  * Sign in, on whatever page it is handed. Extracted so the HAND-OFF test can drive a
  * SECOND, completely independent session through the same flow — that test is worthless
  * if the two sessions do not log in identically.
@@ -260,7 +320,7 @@ async function signIn(page, { profileDir } = {}) {
       throw new Error('login form not found — rerun with --headful and watch the page');
     }
     log(`   email field: ${user.sel}`);
-    await user.loc.fill(EMAIL);
+    await typeEmail(user.loc);
     await keepSignedIn(page);
 
     // Identifier-first: the password field usually isn't on this screen yet. Submit
@@ -291,7 +351,7 @@ async function signIn(page, { profileDir } = {}) {
           const again = await findIn(page, EMAIL_SELECTORS, { timeout: 15_000, label: 'the email field' });
           if (!again) break;
           user = again;
-          await user.loc.fill(EMAIL);
+          await typeEmail(user.loc);
           await keepSignedIn(page);
         }
         log(`   submitting the email (attempt ${attempt}) — Enter`);
@@ -302,12 +362,18 @@ async function signIn(page, { profileDir } = {}) {
         const next = await findIn(page, SUBMIT_SELECTORS, { timeout: 5000, label: 'the Next button' });
         if (next) {
           log(`   Enter did not advance — clicking ${next.sel}`);
+          log(`   button state: ${await describeButton(next.loc)}`);
           try {
             await next.loc.click({ timeout: 8000 });
           } catch (err) {
-            // A timeout here usually means the button is DISABLED mid-transaction,
-            // which is a "wait", not a "no".
             log(`   ⚠ the Next click FAILED: ${err.message.split('\n')[0]}`);
+            log(`   button state after: ${await describeButton(next.loc)}`);
+            // Last resort: fire the DOM click directly, bypassing every actionability
+            // check. If THIS advances the page, the button was fine and Playwright's
+            // hit-testing was the obstacle (an overlay, a zero-size hit area) — a very
+            // different problem from Okta refusing the submission.
+            log('   trying a direct DOM click (bypasses actionability checks)…');
+            await next.loc.evaluate((el) => el.click()).catch((e) => log(`   ⚠ DOM click threw: ${e.message}`));
           }
         }
         pass = await findIn(page, PASSWORD_SELECTORS, { timeout: 12_000, label: 'the password field' });
@@ -353,6 +419,7 @@ try {
     step(2, 'Already signed in (persistent profile) — skipping login.');
   } else {
     step(2, 'Signing in…');
+    if (!HEADFUL) warnHeadless();
     signedIn = await signIn(page, { profileDir: path.join(HERE, '.rc-probe-profile') });
     blob = await readBlob(page);
   }
@@ -926,6 +993,7 @@ try {
         await pageB.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 });
         await pageB.waitForTimeout(3000);
         log('   signing the second session in…');
+        if (!HEADFUL) warnHeadless();
         // Contained. A flaky login in the SECOND session must not throw away the FIRST
         // session's result — that is exactly what happened on the first --handoff run:
         // the cart was confirmed, then the probe died before it could report anything
