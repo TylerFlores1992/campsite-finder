@@ -20,3 +20,5 @@ rc-probe-*.txt
 rc-cart-read.json
 rc-handoff-read.json
 .rc-probe-profile-b/
+rc-release-read.json
+.rc-probe-profile-c/

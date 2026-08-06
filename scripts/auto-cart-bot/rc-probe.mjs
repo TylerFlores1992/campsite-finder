@@ -36,8 +36,13 @@
  *               ... node rc-probe.mjs --headful --capture
  * --handoff   THE architecture question. Carts, then logs a SECOND, independent
  *             session into the same account and asks it to read that cart by key.
- *             If the key is enough, the alert never has to carry a session:
+ *             ANSWERED 2026-08-06: it cannot. The cart is session-bound.
  *               ... RC_UNIT_ID=… RC_ARRIVAL=… node rc-probe.mjs --cart --handoff
+ * --release   Whether PATH B works: bot holds the site, releases on demand, and the
+ *             user's own session takes it. Logs a second session in FIRST (as the
+ *             user's device already would be), releases, re-carts, and MEASURES the
+ *             exposure window. Needs --headful, like every RC login:
+ *               ... RC_UNIT_ID=… RC_ARRIVAL=… node rc-probe.mjs --cart --release --headful
  *
  * SECURITY: the exported blob is a LIVE RC session — full account access until the
  * token expires (~1h). It is written to rc-blob.json in this directory and gitignored.
@@ -95,6 +100,28 @@ const CAPTURE = args.has('--capture');
  * ambiguity about what state the second browser was in.
  */
 const HANDOFF = args.has('--handoff');
+/**
+ * --release: does path B work? The whole of it, measured end to end.
+ *
+ * The key cannot hand a cart over (--handoff proved that), so the remaining design
+ * without moving a credential is: the bot HOLDS the site — which is the real value, it
+ * is off the market while the user gets to their phone — and when the user acts, the
+ * bot releases and the user's OWN session takes it immediately.
+ *
+ * That rests on one assumption nobody has tested: **that releasing frees the unit at
+ * once.** If RC applies any cooldown to a just-released unit, path B is dead and the
+ * only remaining option moves a live session.
+ *
+ * So this measures the actual race rather than reasoning about it: log session B in
+ * FIRST (as the user's device would already be), release from A, and have B try to cart
+ * the same unit as fast as it can. It reports whether B won and how many milliseconds
+ * the site was exposed.
+ */
+const RELEASE = args.has('--release');
+/** Releases ONE entry, leaving the rest of the cart alone — what a bot holding several
+ *  sites needs. Both shapes read out of RC's bundle (2026-08-06). */
+const CART_REMOVE_ENTRY = 'https://rdapi.reservecalifornia.com/api/webaccesscustomer/remove/cartentry';
+const CART_EMPTY = 'https://rdapi.reservecalifornia.com/api/webaccesscustomer/empty/shoppingcart';
 
 const EMAIL = process.env.RC_EMAIL;
 const PASSWORD = process.env.RC_PASSWORD;
@@ -407,6 +434,207 @@ async function signIn(page, { profileDir } = {}) {
     return after.some(([k]) => k === 'ssoAccessToken' || k === 'accessToken');
 }
 
+/**
+ * Run RC's two-step precart in whatever session this page holds, and report everything.
+ *
+ * Extracted so the RELEASE probe can drive a SECOND session through the identical
+ * request. A hand-off test where the two sessions cart differently proves nothing about
+ * the hand-off.
+ */
+async function precartInPage(page, { unitId, arrival, nights, cartKey }) {
+return page.evaluate(
+  async ({ loadUrl, submitUrl, unitId, arrival, nights, cartKey, NO_CART }) => {
+    const ls = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+    const token = ls('ssoAccessToken') || ls('accessToken');
+    let occupant = ls('customerName') || ls('ssoCustomerName') || '';
+    if (!occupant) {
+      try { const c = JSON.parse(ls('customerDetail') || '{}'); occupant = [c.FirstName, c.LastName].filter(Boolean).join(' '); } catch {}
+    }
+    const body = {
+      arrivalDate: arrival, nights, confirmation_number: null, reservationId: 0,
+      unitId, IsReservationDrawing: false, accessTypeId: 0, accountPassNumber: null,
+      adults: 1, allowSpecialBenefits: false, children: 0, customerClassificationId: 1,
+      discountPromoCode: null, dynamicOccupancyByNight: {}, extraValues: [],
+      fdUsageClassificationId: 1, fdUsageClassificationName: 'Regular', isCheckIn: false,
+      isDiscount: false, isModifyPreCart: false, isOrganization: false,
+      occupantName: occupant, occupantPhoneNumber: null, optionalAuthorizedPerson: null,
+      padLength: '0', preCartReservationComments: null, precartComments: null,
+      prevSelectedClassification: null, promoCode: null, reservationVehicles: [],
+      selectedClassification: null, shoppingCartKey: cartKey || NO_CART,
+      sleepingUnit: null, timeDuration: null, unitPriceType: 1, vehicleCount: 0,
+      vehicleLength: '0', vehiclePlates: null, vehicleTypeIds: null, vehicles: [],
+    };
+    const headers = {
+      'Content-Type': 'application/json', accesstoken: token,
+      authorization: 'Bearer ' + token, installationsidentity: 'cali', storeid: '111',
+    };
+    // NEVER let a network rejection throw out of here. A browser `fetch` that
+    // rejects with "Failed to fetch" has NOT told us the request failed to
+    // arrive — CORS forbids reading a response the browser did receive, so a WAF
+    // 403 and an unreachable host are the same exception. Throwing killed the
+    // whole probe and reported the one thing we can be sure isn't the answer.
+    // Record it and let the Node-side replay (outside CORS) get the real status.
+    const call = async (url) => {
+      try {
+        const res = await fetch(url, { method: 'POST', credentials: 'include', headers, body: JSON.stringify(body) });
+        const raw = await res.text();
+        return { status: res.status, ok: res.ok, raw };
+      } catch (e) {
+        return { status: 0, ok: false, raw: '', netError: String((e && e.message) || e) };
+      }
+    };
+    // RC ANSWERS HTTP 200 WITH IsSuccess:false. Judging by status code reports a
+    // failed cart as a success — the same "a 200 is not success" trap as
+    // empty-grid-means-booked. Always read the payload.
+    const verdict = (r) => {
+      try {
+        const j = JSON.parse(r.raw);
+        const res = j?.Result ?? j;
+        return { isSuccess: res?.IsSuccess === true, error: res?.ErrorMessage || '', cartKey: res?.ShoppingCartKey || '' };
+      } catch { return { isSuccess: false, error: '(unparseable body)', cartKey: '' }; }
+    };
+
+    const loaded = await call(loadUrl);
+    let loadRes = null;
+    try { const j = JSON.parse(loaded.raw); loadRes = j?.Result ?? j; } catch {}
+    // If `load` handed back a cart key, use it — that is how a fresh session is
+    // supposed to acquire one.
+    if (loadRes?.ShoppingCartKey) body.shoppingCartKey = loadRes.ShoppingCartKey;
+
+    // THE EXTRAS — no longer guessed. RC's own web bundle was read
+    // (assets/FacilityPreCart-*.js), and it settles both halves of the question:
+    //
+    //   xs = (s) => { ... a.UnitDetail.Extras.$values.forEach((n) => {
+    //          if (n.IsWebViewable) { let r = {...n};
+    //            r.value = r.ExtraType === ke.CheckBox
+    //              ? (r.Value ? r.Value.toString() === "true"
+    //                         : !!(r.DefaultValue?.toLowerCase() === "checked"))
+    //              : (r.Value ? r.Value : r.DefaultValue);
+    //            if (r.ExtraType === ke.Choice && !r.value) r.value = "-- None --";
+    //   ... and on submit:
+    //     l.extraValues.forEach(h => u.extraValues.push({
+    //       extraId: h.ExtraId, extraValue: h.value }))
+    //
+    // TWO facts, and the first is why five rounds of guessing all failed:
+    //  1. THE KEYS ARE lowerCamel — `extraId` / `extraValue`. Every earlier attempt
+    //     sent `ExtraId` + `Value`, which the API ignores, so the answer never
+    //     landed and the SAME "required field" error came back each time. The
+    //     error was honest; our key names were wrong.
+    //  2. ExtraType 0 = CheckBox (assets/extraTypes-*.js), and the tick handler is
+    //     `u(e.ExtraId, checked ? "true" : "false")` — a checkbox answers with the
+    //     STRING "true", not "Checked". DefaultValue "Unchecked" describes the
+    //     starting state, not the wire value.
+    // Source of truth: RC's shipped code, re-asserted by scripts/rc-cart-canary.mts.
+    const extras = [];
+    const paths = [];
+    const seen = new Set();
+    (function walk(node, at) {
+      if (!node || typeof node !== 'object' || seen.has(node)) return;
+      seen.add(node);
+      const arr = Array.isArray(node) ? node : Array.isArray(node.$values) ? node.$values : null;
+      if (arr) {
+        for (const item of arr) {
+          if (item && typeof item === 'object' && 'ExtraId' in item) {
+            extras.push(item);
+            paths.push(at);
+          }
+          walk(item, at);
+        }
+        return;
+      }
+      for (const [kk, vv] of Object.entries(node)) {
+        if (kk === '$type' || kk === '$id') continue;
+        walk(vv, at ? `${at}.${kk}` : kk);
+      }
+    })(loadRes, '');
+
+    // RC's own value derivation, transcribed. Only IsWebViewable extras are sent,
+    // and every one of them is — not just the required ones, because that is what
+    // the UI does and a missing optional extra is a difference we'd rather not have.
+    const CHECKBOX = 0, CHOICE = 4;
+    const rcValue = (e) => {
+      if (e.ExtraType === CHECKBOX) {
+        // A REQUIRED checkbox must end up ticked or RC's own validator rejects it
+        // (`IsWebRequired && !value` → "…is required"). An optional one keeps its
+        // default. This is the human ticking the box, which is the only way the
+        // real UI ever gets past this screen.
+        if (e.IsWebRequired) return 'true';
+        return String(e.Value ?? '').toString() === 'true' ||
+          String(e.DefaultValue ?? '').toLowerCase() === 'checked' ? 'true' : 'false';
+      }
+      const v = e.Value ? e.Value : e.DefaultValue;
+      if (e.ExtraType === CHOICE && !v) return '-- None --';
+      return v ?? '';
+    };
+    const viewable = extras.filter((e) => e.IsWebViewable !== false);
+    const needed = extras.filter((e) => e.IsWebRequired || e.Required || e.IsCRSRequired);
+
+    const attempts = [];
+    if (viewable.length) {
+      body.extraValues = viewable.map((e) => ({ extraId: e.ExtraId, extraValue: rcValue(e) }));
+    }
+    let submitted = await call(submitUrl);
+    attempts.push({
+      shape: viewable.length
+        ? `RC's own shape: ${JSON.stringify(body.extraValues).slice(0, 200)}`
+        : 'extraValues: [] (no viewable extras declared)',
+      v: verdict(submitted),
+    });
+
+    // ONE fallback, and only one: the initializer reads a checkbox's stored answer
+    // as a real boolean, so a server that type-checks might want `true` rather than
+    // "true". Trying both is cheap; trying twelve was the mistake.
+    if (!verdict(submitted).isSuccess && viewable.length) {
+      body.extraValues = viewable.map((e) => {
+        const v = rcValue(e);
+        return { extraId: e.ExtraId, extraValue: e.ExtraType === CHECKBOX ? v === 'true' : v };
+      });
+      const r = await call(submitUrl);
+      attempts.push({ shape: 'same, checkbox as a real boolean', v: verdict(r) });
+      if (verdict(r).isSuccess) submitted = r;
+    }
+
+    // ADOPT THE CART WE JUST MADE. The submit happens over HTTP and the page never
+    // hears about it — `localStorage["shoppingCartKey"]` is still whatever it was
+    // (empty, on a fresh session), so the RC cart page shows EMPTY and the run
+    // looks like a failure it isn't. The app's sole source of truth is this one
+    // value, so write it. Same session, so this is the adoption case that works.
+    const newKey = verdict(submitted).cartKey;
+    if (verdict(submitted).isSuccess && newKey) {
+      try { localStorage.setItem('shoppingCartKey', newKey); } catch { /* ignore */ }
+    }
+
+    return {
+      loaded: { status: loaded.status, ok: loaded.ok, raw: loaded.raw.slice(0, 600), v: verdict(loaded), netError: loaded.netError },
+      submitted: { status: submitted.status, ok: submitted.ok, raw: submitted.raw.slice(0, 1200), v: verdict(submitted), netError: submitted.netError },
+      loadedFull: loaded.raw,
+      // Handed back so Node can replay the EXACT request outside the browser's
+      // CORS rules when the in-page fetch is rejected without a status.
+      replay: { headers, body },
+      usedKey: body.shoppingCartKey,
+      finalKey: ls('shoppingCartKey'),
+      attempts,
+      // Every extra definition we found and where it lived, so a failed run still
+      // teaches us the shape rather than only that four guesses missed.
+      extrasFound: extras.map((e, i) => ({
+        at: paths[i],
+        ExtraId: e.ExtraId,
+        Name: String(e.Name ?? '').slice(0, 90),
+        DefaultValue: e.DefaultValue,
+        ExtraType: e.ExtraType,
+        required: Boolean(e.IsWebRequired || e.Required || e.IsCRSRequired),
+        keys: Object.keys(e).filter((k) => k !== '$type' && k !== '$id').join(','),
+      })),
+      neededCount: needed.length,
+      // Diagnostics for the "required field" hunt.
+      occupantName: occupant,
+      occupantKeys: ['customerName', 'ssoCustomerName', 'customerDetail'].map((k) => `${k}=${ls(k) ? 'set' : 'EMPTY'}`).join(' '),
+    };
+  },
+  { loadUrl: PRECART_LOAD, submitUrl: PRECART_SUBMIT, unitId, arrival, nights, cartKey, NO_CART }
+);
+}
+
 const ctx = await chromium.launchPersistentContext(path.join(HERE, '.rc-probe-profile'), {
   headless: !HEADFUL,
   viewport: { width: 1280, height: 900 },
@@ -501,6 +729,11 @@ try {
   // Carried out of the cart block for the hand-off test below.
   let cartedKey = null;
   let cartedUnit = null;
+  let cartedEntryKey = null;
+  let cartedPlace = null;
+  let cartedFacility = null;
+  let cartedArrival = null;
+  let cartedNights = 1;
 
   if (signedIn && DO_CART) {
     const unitId = Number(process.env.RC_UNIT_ID);
@@ -528,197 +761,7 @@ try {
       // Mirror the real app: LOAD the precart, then SUBMIT it. A live trace shows both,
       // back to back. `load` is also where RC takes the unit lock, so skipping it may be
       // why a submit-only call is rejected.
-      const result = await page.evaluate(
-        async ({ loadUrl, submitUrl, unitId, arrival, nights, cartKey, NO_CART }) => {
-          const ls = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
-          const token = ls('ssoAccessToken') || ls('accessToken');
-          let occupant = ls('customerName') || ls('ssoCustomerName') || '';
-          if (!occupant) {
-            try { const c = JSON.parse(ls('customerDetail') || '{}'); occupant = [c.FirstName, c.LastName].filter(Boolean).join(' '); } catch {}
-          }
-          const body = {
-            arrivalDate: arrival, nights, confirmation_number: null, reservationId: 0,
-            unitId, IsReservationDrawing: false, accessTypeId: 0, accountPassNumber: null,
-            adults: 1, allowSpecialBenefits: false, children: 0, customerClassificationId: 1,
-            discountPromoCode: null, dynamicOccupancyByNight: {}, extraValues: [],
-            fdUsageClassificationId: 1, fdUsageClassificationName: 'Regular', isCheckIn: false,
-            isDiscount: false, isModifyPreCart: false, isOrganization: false,
-            occupantName: occupant, occupantPhoneNumber: null, optionalAuthorizedPerson: null,
-            padLength: '0', preCartReservationComments: null, precartComments: null,
-            prevSelectedClassification: null, promoCode: null, reservationVehicles: [],
-            selectedClassification: null, shoppingCartKey: cartKey || NO_CART,
-            sleepingUnit: null, timeDuration: null, unitPriceType: 1, vehicleCount: 0,
-            vehicleLength: '0', vehiclePlates: null, vehicleTypeIds: null, vehicles: [],
-          };
-          const headers = {
-            'Content-Type': 'application/json', accesstoken: token,
-            authorization: 'Bearer ' + token, installationsidentity: 'cali', storeid: '111',
-          };
-          // NEVER let a network rejection throw out of here. A browser `fetch` that
-          // rejects with "Failed to fetch" has NOT told us the request failed to
-          // arrive — CORS forbids reading a response the browser did receive, so a WAF
-          // 403 and an unreachable host are the same exception. Throwing killed the
-          // whole probe and reported the one thing we can be sure isn't the answer.
-          // Record it and let the Node-side replay (outside CORS) get the real status.
-          const call = async (url) => {
-            try {
-              const res = await fetch(url, { method: 'POST', credentials: 'include', headers, body: JSON.stringify(body) });
-              const raw = await res.text();
-              return { status: res.status, ok: res.ok, raw };
-            } catch (e) {
-              return { status: 0, ok: false, raw: '', netError: String((e && e.message) || e) };
-            }
-          };
-          // RC ANSWERS HTTP 200 WITH IsSuccess:false. Judging by status code reports a
-          // failed cart as a success — the same "a 200 is not success" trap as
-          // empty-grid-means-booked. Always read the payload.
-          const verdict = (r) => {
-            try {
-              const j = JSON.parse(r.raw);
-              const res = j?.Result ?? j;
-              return { isSuccess: res?.IsSuccess === true, error: res?.ErrorMessage || '', cartKey: res?.ShoppingCartKey || '' };
-            } catch { return { isSuccess: false, error: '(unparseable body)', cartKey: '' }; }
-          };
-
-          const loaded = await call(loadUrl);
-          let loadRes = null;
-          try { const j = JSON.parse(loaded.raw); loadRes = j?.Result ?? j; } catch {}
-          // If `load` handed back a cart key, use it — that is how a fresh session is
-          // supposed to acquire one.
-          if (loadRes?.ShoppingCartKey) body.shoppingCartKey = loadRes.ShoppingCartKey;
-
-          // THE EXTRAS — no longer guessed. RC's own web bundle was read
-          // (assets/FacilityPreCart-*.js), and it settles both halves of the question:
-          //
-          //   xs = (s) => { ... a.UnitDetail.Extras.$values.forEach((n) => {
-          //          if (n.IsWebViewable) { let r = {...n};
-          //            r.value = r.ExtraType === ke.CheckBox
-          //              ? (r.Value ? r.Value.toString() === "true"
-          //                         : !!(r.DefaultValue?.toLowerCase() === "checked"))
-          //              : (r.Value ? r.Value : r.DefaultValue);
-          //            if (r.ExtraType === ke.Choice && !r.value) r.value = "-- None --";
-          //   ... and on submit:
-          //     l.extraValues.forEach(h => u.extraValues.push({
-          //       extraId: h.ExtraId, extraValue: h.value }))
-          //
-          // TWO facts, and the first is why five rounds of guessing all failed:
-          //  1. THE KEYS ARE lowerCamel — `extraId` / `extraValue`. Every earlier attempt
-          //     sent `ExtraId` + `Value`, which the API ignores, so the answer never
-          //     landed and the SAME "required field" error came back each time. The
-          //     error was honest; our key names were wrong.
-          //  2. ExtraType 0 = CheckBox (assets/extraTypes-*.js), and the tick handler is
-          //     `u(e.ExtraId, checked ? "true" : "false")` — a checkbox answers with the
-          //     STRING "true", not "Checked". DefaultValue "Unchecked" describes the
-          //     starting state, not the wire value.
-          // Source of truth: RC's shipped code, re-asserted by scripts/rc-cart-canary.mts.
-          const extras = [];
-          const paths = [];
-          const seen = new Set();
-          (function walk(node, at) {
-            if (!node || typeof node !== 'object' || seen.has(node)) return;
-            seen.add(node);
-            const arr = Array.isArray(node) ? node : Array.isArray(node.$values) ? node.$values : null;
-            if (arr) {
-              for (const item of arr) {
-                if (item && typeof item === 'object' && 'ExtraId' in item) {
-                  extras.push(item);
-                  paths.push(at);
-                }
-                walk(item, at);
-              }
-              return;
-            }
-            for (const [kk, vv] of Object.entries(node)) {
-              if (kk === '$type' || kk === '$id') continue;
-              walk(vv, at ? `${at}.${kk}` : kk);
-            }
-          })(loadRes, '');
-
-          // RC's own value derivation, transcribed. Only IsWebViewable extras are sent,
-          // and every one of them is — not just the required ones, because that is what
-          // the UI does and a missing optional extra is a difference we'd rather not have.
-          const CHECKBOX = 0, CHOICE = 4;
-          const rcValue = (e) => {
-            if (e.ExtraType === CHECKBOX) {
-              // A REQUIRED checkbox must end up ticked or RC's own validator rejects it
-              // (`IsWebRequired && !value` → "…is required"). An optional one keeps its
-              // default. This is the human ticking the box, which is the only way the
-              // real UI ever gets past this screen.
-              if (e.IsWebRequired) return 'true';
-              return String(e.Value ?? '').toString() === 'true' ||
-                String(e.DefaultValue ?? '').toLowerCase() === 'checked' ? 'true' : 'false';
-            }
-            const v = e.Value ? e.Value : e.DefaultValue;
-            if (e.ExtraType === CHOICE && !v) return '-- None --';
-            return v ?? '';
-          };
-          const viewable = extras.filter((e) => e.IsWebViewable !== false);
-          const needed = extras.filter((e) => e.IsWebRequired || e.Required || e.IsCRSRequired);
-
-          const attempts = [];
-          if (viewable.length) {
-            body.extraValues = viewable.map((e) => ({ extraId: e.ExtraId, extraValue: rcValue(e) }));
-          }
-          let submitted = await call(submitUrl);
-          attempts.push({
-            shape: viewable.length
-              ? `RC's own shape: ${JSON.stringify(body.extraValues).slice(0, 200)}`
-              : 'extraValues: [] (no viewable extras declared)',
-            v: verdict(submitted),
-          });
-
-          // ONE fallback, and only one: the initializer reads a checkbox's stored answer
-          // as a real boolean, so a server that type-checks might want `true` rather than
-          // "true". Trying both is cheap; trying twelve was the mistake.
-          if (!verdict(submitted).isSuccess && viewable.length) {
-            body.extraValues = viewable.map((e) => {
-              const v = rcValue(e);
-              return { extraId: e.ExtraId, extraValue: e.ExtraType === CHECKBOX ? v === 'true' : v };
-            });
-            const r = await call(submitUrl);
-            attempts.push({ shape: 'same, checkbox as a real boolean', v: verdict(r) });
-            if (verdict(r).isSuccess) submitted = r;
-          }
-
-          // ADOPT THE CART WE JUST MADE. The submit happens over HTTP and the page never
-          // hears about it — `localStorage["shoppingCartKey"]` is still whatever it was
-          // (empty, on a fresh session), so the RC cart page shows EMPTY and the run
-          // looks like a failure it isn't. The app's sole source of truth is this one
-          // value, so write it. Same session, so this is the adoption case that works.
-          const newKey = verdict(submitted).cartKey;
-          if (verdict(submitted).isSuccess && newKey) {
-            try { localStorage.setItem('shoppingCartKey', newKey); } catch { /* ignore */ }
-          }
-
-          return {
-            loaded: { status: loaded.status, ok: loaded.ok, raw: loaded.raw.slice(0, 600), v: verdict(loaded), netError: loaded.netError },
-            submitted: { status: submitted.status, ok: submitted.ok, raw: submitted.raw.slice(0, 1200), v: verdict(submitted), netError: submitted.netError },
-            loadedFull: loaded.raw,
-            // Handed back so Node can replay the EXACT request outside the browser's
-            // CORS rules when the in-page fetch is rejected without a status.
-            replay: { headers, body },
-            usedKey: body.shoppingCartKey,
-            finalKey: ls('shoppingCartKey'),
-            attempts,
-            // Every extra definition we found and where it lived, so a failed run still
-            // teaches us the shape rather than only that four guesses missed.
-            extrasFound: extras.map((e, i) => ({
-              at: paths[i],
-              ExtraId: e.ExtraId,
-              Name: String(e.Name ?? '').slice(0, 90),
-              DefaultValue: e.DefaultValue,
-              ExtraType: e.ExtraType,
-              required: Boolean(e.IsWebRequired || e.Required || e.IsCRSRequired),
-              keys: Object.keys(e).filter((k) => k !== '$type' && k !== '$id').join(','),
-            })),
-            neededCount: needed.length,
-            // Diagnostics for the "required field" hunt.
-            occupantName: occupant,
-            occupantKeys: ['customerName', 'ssoCustomerName', 'customerDetail'].map((k) => `${k}=${ls(k) ? 'set' : 'EMPTY'}`).join(' '),
-          };
-        },
-        { loadUrl: PRECART_LOAD, submitUrl: PRECART_SUBMIT, unitId, arrival, nights, cartKey, NO_CART }
-      );
+      const result = await precartInPage(page, { unitId, arrival, nights, cartKey });
 
       // `Settings.IsOccupantNameRequiredForReservations: true` on this facility, and we
       // derive occupantName from localStorage — so an empty one is a live suspect for
@@ -898,6 +941,7 @@ try {
                 return out.join(' | ').slice(0, 200);
               };
               entries = list.map((e) => ({
+                entryKey: e.CartEntryKey,
                 type: e.CartEntryType,
                 placeId: e.PlaceId,
                 facilityId: e.FacilityId,
@@ -928,7 +972,12 @@ try {
             log(`      · type=${e.type} placeId=${e.placeId} facilityId=${e.facilityId}${e.summary ? ` — ${e.summary}` : ''}`);
           }
           if (!check || c.hit) check = c;
-          if (c.hit) { cartedKey = k; break; }
+          if (c.hit) {
+            cartedKey = k;
+            // The handle RC uses to release ONE entry — see remove/cartentry.
+            cartedEntryKey = (c.entries.find((e) => Number(e.placeId) === Number(place)) ?? c.entries[0])?.entryKey ?? null;
+            break;
+          }
         }
         const cartDump = path.join(HERE, 'rc-cart-read.json');
         fs.writeFileSync(cartDump, check?.raw ?? '', { mode: 0o600 });
@@ -942,6 +991,10 @@ try {
         if (check?.hit) {
           // cartedKey was set to the key that actually held it, in the loop above.
           cartedUnit = unitId;
+          cartedPlace = place;
+          cartedFacility = facility;
+          cartedArrival = arrival;
+          cartedNights = nights;
           log('   → BOT-SIDE CARTING WORKS, confirmed by reading the cart back.');
           if (already) {
             log('     (the submit was REJECTED with "cart is already added" — because a');
@@ -969,6 +1022,114 @@ try {
           log('     If ErrorMessage names a required field, it is our payload (fixable);');
           log('     a captcha or challenge would be RC actually defending.');
         }
+      }
+    }
+  }
+
+  // ── THE RELEASE / RECAPTURE PROBE (path B) ──────────────────────────────────────
+  if (RELEASE) {
+    if (!cartedKey) {
+      log('\n--release needs a confirmed cart to release. Run with --cart and make sure');
+      log('the read-back said YES — there is nothing to hand over otherwise.');
+    } else {
+      step(9, 'RELEASE PROBE — can the user\'s own session take the site the instant we drop it?');
+      if (!HEADFUL) warnHeadless();
+      const dirC = path.join(HERE, '.rc-probe-profile-c');
+      fs.rmSync(dirC, { recursive: true, force: true });
+      const ctxC = await chromium.launchPersistentContext(dirC, {
+        headless: !HEADFUL,
+        viewport: { width: 1280, height: 900 },
+      });
+      try {
+        const pageC = ctxC.pages()[0] ?? (await ctxC.newPage());
+        await pageC.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        await pageC.waitForTimeout(3000);
+        // Log in BEFORE releasing. In production the user's device is already signed in
+        // when they tap the alert; making them wait for a login here would measure our
+        // test harness rather than the race.
+        log('   signing in the "user" session (before the release, as in production)…');
+        let okC = false;
+        try { okC = await signIn(pageC); } catch (err) { log(`   login threw: ${err.message}`); }
+        log(`   user session signed in: ${okC ? 'YES' : 'NO'}`);
+
+        if (!okC) {
+          await captureFailure(pageC, 'release-login');
+          log('   → cannot measure the race without a second session. Retry with --headful.');
+        } else {
+          const headers = {
+            'Content-Type': 'application/json',
+            accesstoken: blob.find(([k]) => k === 'ssoAccessToken' || k === 'accessToken')?.[1],
+            authorization: 'Bearer ' + blob.find(([k]) => k === 'ssoAccessToken' || k === 'accessToken')?.[1],
+            installationsidentity: 'cali',
+            storeid: '111',
+          };
+
+          // RELEASE. Prefer remove/cartentry — a real bot holds several sites and must
+          // drop exactly one. Fall back to emptying if RC gave us no entry key.
+          const t0 = Date.now();
+          let releaseStatus = 0;
+          if (cartedEntryKey) {
+            const r = await page.context().request.post(CART_REMOVE_ENTRY, {
+              headers, data: { shoppingCartKey: cartedKey, cartEntryKey: cartedEntryKey }, timeout: 30_000,
+            });
+            releaseStatus = r.status();
+            log(`   released entry ${cartedEntryKey} → HTTP ${releaseStatus} (${Date.now() - t0}ms)`);
+          } else {
+            const r = await page.context().request.post(CART_EMPTY, {
+              headers, data: { shoppingCartKey: cartedKey }, timeout: 30_000,
+            });
+            releaseStatus = r.status();
+            log(`   no entry key — emptied the whole cart → HTTP ${releaseStatus} (${Date.now() - t0}ms)`);
+          }
+
+          // RECAPTURE, immediately, from the user's session.
+          const grab = await precartInPage(pageC, {
+            unitId: cartedUnit, arrival: cartedArrival, nights: cartedNights, cartKey: null,
+          });
+          const elapsed = Date.now() - t0;
+          const ok = grab.submitted?.v?.isSuccess === true;
+          log(`   user session re-cart → ${ok ? 'SUCCESS' : 'FAILED'} after ${elapsed}ms`);
+          if (!ok) log(`     ${grab.submitted?.v?.error || `HTTP ${grab.submitted?.status}`}`);
+
+          // VERIFY AGAINST THE CART, not the flag. `IsSuccess: true` has already lied
+          // once in this chain, and a release probe that reports a capture it did not
+          // make would send us to build path B on nothing.
+          let verified = false;
+          if (ok) {
+            const newKey = grab.submitted.v.cartKey || grab.finalKey;
+            try {
+              const rr = await ctxC.request.post(CART_LOAD, {
+                headers: grab.replay.headers, data: { shoppingCartKey: newKey }, timeout: 30_000,
+              });
+              const raw = await rr.text();
+              fs.writeFileSync(path.join(HERE, 'rc-release-read.json'), raw, { mode: 0o600 });
+              const res = JSON.parse(raw)?.Result ?? {};
+              const list = res.CartEntry?.$values ?? [];
+              verified = list.some((e) => Number(e.PlaceId) === Number(cartedPlace) && Number(e.FacilityId) === Number(cartedFacility));
+              log(`   user's cart now → ${list.length} entr${list.length === 1 ? 'y' : 'ies'}, ours present: ${verified ? 'YES' : 'NO'}`);
+            } catch (err) {
+              log(`   (could not read the user's cart back: ${err.message})`);
+            }
+          }
+
+          if (ok && verified) {
+            log('\n   ★ PATH B WORKS, verified by reading the new cart back. The unit was');
+            log(`     free the instant we let go, and the user's own session took it in`);
+            log(`     ${elapsed}ms — that is the whole window in which someone else could`);
+            log('     have grabbed it. No credential moved, and the bot needs ONE account');
+            log('     rather than one per user.');
+          } else if (ok) {
+            log('\n   ~ RC accepted the re-cart but the site is not in the user\'s cart.');
+            log('     Do not count this as working; read rc-release-read.json.');
+          } else {
+            log('\n   ✗ The user session could NOT take it straight after the release.');
+            log('     Either RC holds a just-released unit for a cooldown — which kills');
+            log('     path B — or this is our payload again. Read the error above: a');
+            log('     named field is ours, a lock/availability message is RC\'s.');
+          }
+        }
+      } finally {
+        await ctxC.close();
       }
     }
   }
