@@ -303,15 +303,6 @@ try {
             const raw = await res.text();
             return { status: res.status, ok: res.ok, raw };
           };
-          const loaded = await call(loadUrl);
-          // If `load` handed back a cart key, use it for the submit — that is how a
-          // fresh session is supposed to acquire one.
-          try {
-            const j = JSON.parse(loaded.raw);
-            const k = j?.Result?.ShoppingCartKey || j?.ShoppingCartKey;
-            if (k) body.shoppingCartKey = k;
-          } catch {}
-          const submitted = await call(submitUrl);
           // RC ANSWERS HTTP 200 WITH IsSuccess:false. Judging by status code reports a
           // failed cart as a success — the same "a 200 is not success" trap as
           // empty-grid-means-booked. Always read the payload.
@@ -322,12 +313,51 @@ try {
               return { isSuccess: res?.IsSuccess === true, error: res?.ErrorMessage || '', cartKey: res?.ShoppingCartKey || '' };
             } catch { return { isSuccess: false, error: '(unparseable body)', cartKey: '' }; }
           };
+
+          const loaded = await call(loadUrl);
+          let loadRes = null;
+          try { const j = JSON.parse(loaded.raw); loadRes = j?.Result ?? j; } catch {}
+          // If `load` handed back a cart key, use it — that is how a fresh session is
+          // supposed to acquire one.
+          if (loadRes?.ShoppingCartKey) body.shoppingCartKey = loadRes.ShoppingCartKey;
+
+          let submitted = await call(submitUrl);
+          const attempts = [{ shape: 'extraValues: [] (as before)', v: verdict(submitted) }];
+
+          // THE WAIVERS. `load` returns the facility's required acknowledgements and the
+          // submit stays IsSuccess:false until they are answered — "Please confirm your
+          // booking dates…" is one of them. We do not know the exact `extraValues` wire
+          // shape, so try a small BOUNDED set of plausible ones and report every result.
+          // Guessing silently is what produced the false success earlier; this guesses
+          // in the open, and the dumped Waivers below is the authoritative answer.
+          const waivers = Array.isArray(loadRes?.Waivers) ? loadRes.Waivers : [];
+          if (!verdict(submitted).isSuccess && waivers.length) {
+            const idOf = (w) =>
+              w?.Id ?? w?.WaiverId ?? w?.ID ??
+              Object.entries(w || {}).find(([kk]) => /(^|[^a-z])id$/i.test(kk))?.[1];
+            const shapes = [
+              ['{Id,Value:"true"}', (w) => ({ Id: idOf(w), Value: 'true' })],
+              ['{ExtraId,Value:"true"}', (w) => ({ ExtraId: idOf(w), Value: 'true' })],
+              ['{Id,Value:"true",IsRequired:true}', (w) => ({ Id: idOf(w), Value: 'true', IsRequired: true })],
+              ['waiver echoed + IsAccepted', (w) => ({ ...w, IsAccepted: true, Value: 'true' })],
+            ];
+            for (const [name, make] of shapes) {
+              body.extraValues = waivers.map(make);
+              const r = await call(submitUrl);
+              const v = verdict(r);
+              attempts.push({ shape: name, v });
+              if (v.isSuccess) { submitted = r; break; }
+            }
+          }
+
           return {
             loaded: { status: loaded.status, ok: loaded.ok, raw: loaded.raw.slice(0, 600), v: verdict(loaded) },
             submitted: { status: submitted.status, ok: submitted.ok, raw: submitted.raw.slice(0, 1200), v: verdict(submitted) },
             loadedFull: loaded.raw,
             usedKey: body.shoppingCartKey,
             finalKey: ls('shoppingCartKey'),
+            attempts,
+            waiverCount: waivers.length,
           };
         },
         { loadUrl: PRECART_LOAD, submitUrl: PRECART_SUBMIT, unitId, arrival, nights, cartKey, NO_CART }
@@ -350,13 +380,21 @@ try {
         const j = JSON.parse(result.loadedFull);
         const res = j?.Result ?? j;
         log(`   load Result keys: ${Object.keys(res).join(', ')}`);
-        for (const k of Object.keys(res)) {
-          if (/extra|question|required|custom|attribute/i.test(k)) {
-            log(`   ▸ ${k}: ${JSON.stringify(res[k]).slice(0, 700)}`);
-          }
+        // By NAME, not by pattern. The previous /custom/ regex matched
+        // "CustomerClassificationId" and missed `Waivers` — the one field that
+        // actually mattered. Naming them is the whole lesson.
+        for (const k of ['Waivers', 'Alerts', 'Settings', 'ErrorMessages', 'LockedShoppingCart']) {
+          if (k in res) log(`   ▸ ${k}: ${JSON.stringify(res[k]).slice(0, 1500)}`);
         }
       } catch { log('   (could not parse the load response)'); }
 
+      if (result.attempts?.length > 1) {
+        log(`   tried ${result.attempts.length} extraValues shapes against ${result.waiverCount} waiver(s):`);
+        for (const a of result.attempts) {
+          const err = a.v.error ? ` — ${a.v.error.replace(/<br\/?>/g, ' ').slice(0, 120)}` : '';
+          log(`     ${a.v.isSuccess ? 'OK  ' : 'no  '} ${a.shape}${err}`);
+        }
+      }
       if (okSubmit) {
         log('   → BOT-SIDE CARTING WORKS. That is the whole feature.');
         log(`     Cart key now: ${result.submitted.v.cartKey || result.finalKey}`);
