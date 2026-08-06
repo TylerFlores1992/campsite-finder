@@ -212,8 +212,11 @@ async function sendStopConfirmation(watchId: string, campgroundName: string | un
           html: `<p>You've stopped watching <b>${name}</b> — no more alerts for it.</p><p>Changed your mind? <a href="${link}">Reopen this watch</a>.</p>`,
         })
       : Promise.resolve(),
+    // No link: a camphawk.app URL in an SMS is filtered by the carrier and the text
+    // never arrives (see sendSms). The reopen link lives in the email above, which is
+    // where it always worked.
     u.phone && process.env.TWILIO_ACCOUNT_SID
-      ? sendSms({ to: u.phone, body: `CampHawk: stopped watching ${name}. Reopen: ${link}` })
+      ? sendSms({ to: u.phone, body: `CampHawk: stopped watching ${name}. Check your email to reopen it.` })
       : Promise.resolve(),
   ]);
 }

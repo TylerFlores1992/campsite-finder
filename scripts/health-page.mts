@@ -94,7 +94,12 @@ const textBody = `Alert-health is DOWN as of ${body.checkedAt}.\n\nFailing:\n${l
 await sendEmail({ to: email, subject, html: `<p><b>Alert-health is DOWN</b> as of ${body.checkedAt}.</p><pre>${lines}</pre><p><a href="${base}/api/health/status">${base}/api/health/status</a></p>` })
   .catch((e) => console.error('page email failed:', (e as Error).message));
 if (phone) {
-  await sendSms({ to: phone, body: `CampHawk DOWN: ${failing.map((c) => c.name).join(', ')}. See ${base}/api/health/status` })
+  // NO LINK. This is the alarm — the one text that must arrive — and it carried a
+  // camphawk.app URL, which carriers filter (30007). It has therefore been silently
+  // undeliverable since the A2P campaign was registered: the site could go down and
+  // the SMS telling you so would never land. The failing check names are the useful
+  // part anyway; the URL is in the email.
+  await sendSms({ to: phone, body: `CampHawk DOWN: ${failing.map((c) => c.name).join(', ')}. Details emailed.` })
     .catch((e) => console.error('page sms failed:', (e as Error).message));
 }
 await setPageState(sig);

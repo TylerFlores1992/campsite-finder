@@ -687,8 +687,14 @@ try {
           log(`     ${a.v.isSuccess ? 'OK  ' : 'no  '} ${a.shape}${err}`);
         }
       }
-      if (okSubmit) {
-        const key = result.submitted.v.cartKey || result.finalKey;
+      // ALWAYS read the cart back — success or failure. Gating this on `okSubmit`
+      // skipped it in the one case that mattered most: RC answered "cart is already
+      // added", which is not a failure to cart, it is proof the site is ALREADY held
+      // from a previous run. The run reported "NOT carted" while holding the site.
+      // A check you only run when you expect to pass tells you nothing you didn't
+      // already assume.
+      {
+        const key = result.submitted.v.cartKey || result.finalKey || cartKey;
         log(`   Cart key now: ${key}`);
 
         // READ THE CART BACK. `IsSuccess: true` is RC's word for "I accepted the
@@ -751,27 +757,37 @@ try {
           log('   ⚠ the cart HAS entries but none carries this unit id — either the hold');
           log('     is for something else, or it is a leftover from an earlier run.');
         }
+        // The verdict comes from the CART, not from the submit. "cart is already added"
+        // is a rejected submit on top of a held site — the strongest possible evidence
+        // that carting works, and the previous version called it "NOT carted".
+        const already = /already added/i.test(result.submitted.v.error ?? '');
         if (check.hit) {
           log('   → BOT-SIDE CARTING WORKS, confirmed by reading the cart back.');
+          if (already) {
+            log('     (the submit was REJECTED with "cart is already added" — because a');
+            log('      previous run already put this site in the cart. A rejected submit');
+            log('      on top of a held site is proof, not failure.)');
+          }
           log('     Open the cart page in this window to see it with your own eyes:');
           log(`     ${RC_CART_PAGE}`);
           log('     (the probe has written the key to localStorage, so the page will find it)');
-        } else {
+          log('     To re-test from scratch, empty the cart first or pick another unit.');
+        } else if (result.loaded.netError || result.submitted.netError) {
+          log('   → NOT carted, and NOT because of our payload — the request never got a');
+          log('     readable answer. Read the replayed status above before changing code:');
+          log('     a 403 there means RC is blocking this machine, and no payload edit');
+          log('     will fix that.');
+        } else if (okSubmit) {
           log('   → RC ACCEPTED the submit but the cart does not contain that unit.');
           log('     Do NOT record this as a working cart — an accepted request and a held');
           log('     site are different claims, and this is the gap between them.');
           log('     Read the saved response before believing this line: the check has been');
           log('     wrong before, and a false "empty" here is worse than no check at all.');
+        } else {
+          log('   → NOT carted. HTTP 200 with IsSuccess=false is still a failure.');
+          log('     If ErrorMessage names a required field, it is our payload (fixable);');
+          log('     a captcha or challenge would be RC actually defending.');
         }
-      } else if (result.loaded.netError || result.submitted.netError) {
-        log('   → NOT carted, and NOT because of our payload — the request never got a');
-        log('     readable answer. Read the replayed status above before changing code:');
-        log('     a 403 there means RC is blocking this machine, and no payload edit');
-        log('     will fix that.');
-      } else {
-        log('   → NOT carted. HTTP 200 with IsSuccess=false is still a failure.');
-        log('     If ErrorMessage names a required field, it is our payload (fixable);');
-        log('     a captcha or challenge would be RC actually defending.');
       }
     }
   }

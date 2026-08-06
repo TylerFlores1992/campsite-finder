@@ -53,7 +53,10 @@ for (const row of toPause) {
     row,
     `Paused your watch on ${row.name}`,
     `<p>We hadn't heard back, so we paused your watch on <b>${row.name}</b> (${row.start_date} → ${row.end_date}) to keep your alerts tidy.</p><p>Still want it? <a href="${reopen}">Resume this watch</a>.</p>`,
-    `CampHawk: paused your quiet watch on ${row.name}. Resume: ${reopen}`
+    // The SMS carries NO link. A camphawk.app URL is filtered by the carrier, so the
+    // text with the one-tap link never arrived at all — the email did, and that is
+    // where the link belongs. See sendSms / docs/CONTEXT.md.
+    `CampHawk: paused your quiet watch on ${row.name}. Check your email to resume it.`
   );
   paused++;
 }
@@ -78,7 +81,10 @@ for (const row of toPrompt) {
     row,
     `Still watching ${row.name}?`,
     `<p>Your watch on <b>${row.name}</b> (${row.start_date} → ${row.end_date}) has been quiet for a while.</p><p><a href="${keepUrl}">Yes, keep watching</a> &nbsp;·&nbsp; <a href="${cancelUrl}">No, stop</a></p><p style="font-size:12px;color:#999">If we don't hear back, we'll pause it in ${GRACE_DAYS} days.</p>`,
-    `CampHawk: still want ${row.name}? Keep: ${keepUrl} Stop: ${cancelUrl}`
+    // Same rule: the keep/stop links are in the email, which delivers. This text used
+    // TWO camphawk.app URLs and was filtered every single time — the prompt that asks
+    // "do you still want this?" was never reaching anyone by SMS.
+    `CampHawk: still watching ${row.name}? Check your email to keep or stop it.`
   );
   prompted++;
 }

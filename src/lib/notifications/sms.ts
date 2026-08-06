@@ -33,7 +33,40 @@ export interface SmsResult {
   status: string | null;
 }
 
+/**
+ * Our own domain, in any SMS body, is a delivery failure — measured, not suspected.
+ *
+ * The A2P 10DLC campaign's registered sample messages link only to recreation.gov and
+ * reservecalifornia.com. A body containing camphawk.app was filtered 10 for 10 on the
+ * same handset where the identical message without it delivered (2026-08-05). Alerts
+ * were fixed by sending the provider's URL — but FOUR other senders were never touched,
+ * and each has been quietly filtered ever since, including the "CampHawk DOWN" alarm.
+ *
+ * Sending one anyway is strictly worse than not sending it: the user never receives it
+ * either way, and the failed traffic counts against our sender reputation. So this
+ * throws rather than trying. Callers see a real error instead of a silent nothing.
+ *
+ * To put a link back in an SMS, the domain must first be registered on a NEW A2P
+ * campaign — samples are not editable after approval. Until then, put the link in the
+ * email and make the text point at it.
+ */
+const APP_HOST = APP_URL.replace(/^https?:\/\//, '');
+export function findAppLink(body: string): string | null {
+  const m = body.match(new RegExp(`\\b${APP_HOST.replace(/\./g, '\\.')}\\S*`, 'i'));
+  return m ? m[0] : null;
+}
+
 export async function sendSms(params: SmsParams): Promise<SmsResult> {
+  const appLink = findAppLink(params.body);
+  if (appLink) {
+    throw new Error(
+      `[sms] refusing to send: body contains a ${APP_HOST} link (${appLink}). ` +
+        'Carriers filter these (30007) — the text would not arrive. Put the link in ' +
+        'the email instead, or register the domain on a new A2P campaign first. ' +
+        'See docs/CONTEXT.md → "SMS: link ONLY to the provider".',
+    );
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const from = process.env.TWILIO_FROM_NUMBER;
