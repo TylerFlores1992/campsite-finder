@@ -151,6 +151,23 @@ minute".
   **Conclusion: keep 15s, do NOT raise `RECGOV_BUDGET_PER_MIN`, buy speed with
   machines.** Acted on the same day — see `SHARD_COUNT = 2` above.
 
+## ReserveCalifornia auto-cart — SETTLED 2026-08-06, and still OFF
+`scripts/auto-cart-bot/rc-probe.mjs` answered all three open questions:
+- **Unattended login works, HEADFUL ONLY.** Every headless attempt failed at the Okta
+  email step; every headful one passed first try. The production bot needs a real
+  display. Never read a headless failure as "RC blocked us".
+- **The bot CARTS**, verified by reading the cart back and matching `LockedShoppingCart`'s
+  `(placeId, facilityId)` — Leo Carrillo site 006, 08/27→08/28. `cart is already added`
+  on a re-run is proof the hold survived, not a failure.
+- **The cart KEY cannot hand it over.** A second session on the SAME account (different
+  token, fresh profile) reads that cart as 0 entries — it is bound to the SESSION.
+- **Therefore carting is currently HARMFUL**: the hold locks the unit, so it takes the
+  site off the market and denies it to the person we alerted. **Stays OFF until a
+  hand-off is built.** Two candidates (move the session vs. release-and-recapture) with
+  their trade-offs in `docs/CONTEXT.md` → "SETTLED 2026-08-06".
+- **The precart payload is solved** — `{extraId, extraValue}`, lowerCamel; see the same
+  doc. That contract is reusable by whichever hand-off we pick.
+
 ## Alerting — the claim (read this before touching the poller)
 The decision "may we alert for this?" is `worker/claim.ts`, keyed on
 **(watch_id, site_key)** in `watch_site_alerts` (migration 026), 1-hour window.

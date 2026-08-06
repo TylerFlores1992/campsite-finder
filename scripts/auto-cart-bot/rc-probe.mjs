@@ -3,11 +3,18 @@
  * can be built: can the bot log into RC and cart WITHOUT a human, or do Okta MFA /
  * reCAPTCHA stop it?
  *
- * Everything else is already proven (2026-08-05, see docs/CONTEXT.md):
- *   • the whole RC session lives in localStorage — token, identity, cart key;
- *   • copying that blob into a fresh browser makes it logged in AND carted;
- *   • it works CROSS-MACHINE and cross-IP (PC → mini-PC, incognito, never logged in).
- * So the hand-off works. What is NOT proven is the bot end: an unattended login.
+ * ANSWERED, 2026-08-06 — and then some. See docs/CONTEXT.md for the full write-up.
+ *   • Unattended login WORKS, but only HEADFUL. Every headless attempt failed at the
+ *     email step; every headful one succeeded on the first press of Enter.
+ *   • Bot-side carting WORKS, verified by reading the cart back by name:
+ *     "Leo Carrillo SP - Canyon Campground - Hook Up (E) Campsite - 006,
+ *      Thu 08/27/2026 - Fri 08/28/2026", placeId 665 / facilityId 539.
+ *   • THE CART KEY IS NOT ENOUGH. A second session, freshly logged into the SAME
+ *     account with a different token, reads that cart as EMPTY (--handoff, 2026-08-06).
+ *     The cart is bound to the SESSION that made it, not to the account.
+ *   • The whole session lives in localStorage, and copying that blob DOES carry both
+ *     the login and the cart to another machine. That is the only hand-off that works,
+ *     and it moves a live credential.
  *
  * This is deliberately a PROBE, not the feature. It runs one login, reports exactly
  * what blocked it if anything, and (optionally) does one cart + blob export so we can

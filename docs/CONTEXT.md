@@ -2500,6 +2500,46 @@ trips a reCAPTCHA the login didn't. `node rc-probe.mjs --cart` with `RC_UNIT_ID`
 
 Detail in `scripts/auto-cart-bot/reservecalifornia.mjs`.
 
+### SETTLED 2026-08-06: the bot carts; the KEY alone cannot hand it over
+
+Three things are now proven with evidence rather than inference, all via
+`scripts/auto-cart-bot/rc-probe.mjs`:
+
+1. **Unattended login WORKS — but only HEADFUL.** Every headless attempt failed at the
+   Okta email step (three identical failures, not flakiness — I called it flaky on one
+   data point and was wrong); every headful attempt signed in on the first Enter. **The
+   production bot needs a real display.** On the mini-PC that is free; anywhere else it
+   means a virtual display. Do not read a headless failure as "RC blocked us".
+2. **The bot CARTS.** Verified by reading the cart back and matching on
+   `LockedShoppingCart`'s `(placeId, facilityId)` — not by trusting `IsSuccess`:
+   *"Leo Carrillo SP - Canyon Campground - Hook Up (E) Campsite - 006, Thu 08/27/2026 -
+   Fri 08/28/2026"*, placeId 665 / facilityId 539. `cart is already added` on a re-run is
+   **proof the hold survived**, not a failure.
+3. **THE CART KEY IS NOT ENOUGH.** `--handoff` logs a SECOND session into the SAME
+   account from a freshly-deleted profile, asserts the two tokens differ, and asks it to
+   read the cart by key → **0 entries**. The cart is bound to the SESSION that created
+   it — not to the account, not to the key.
+
+**The consequence is sharper than "the hand-off needs work".** The hold LOCKS THE UNIT.
+Carting without a working hand-off takes the site off the market and then denies it to
+the person we just alerted — strictly worse than not carting. **RC auto-cart stays OFF
+until a hand-off exists and is tested.**
+
+**Two paths remain, and they trade different things:**
+- **Move the session.** Proven to work mechanically — the whole login lives in
+  `localStorage` and copying that blob carries login *and* cart to another machine,
+  cross-IP. Cost: a live RC token reaches the user's device, so we would be storing RC
+  credentials and minting sessions. It is the user's *own* account, which changes the
+  risk calculus but does not erase it. Delivery must be an authenticated client fetch,
+  one-time-use, short TTL — **never** a link in an SMS or email. Token life ~1h against
+  a 15-minute hold, extendable via `extendShoppingCartTimer`, so the timing works.
+- **Release and recapture.** The bot holds the site (which is the actual value — it is
+  off the market while the user gets to their phone). When the user acts, the bot empties
+  its cart and the user's OWN session carts it immediately, using the exact payload
+  contract below. Nothing sensitive ever moves. Cost: a race window of one round trip,
+  and it needs the user's own RC login in the extension (desktop) or the app's webview
+  (mobile).
+
 ### The precart `extraValues` contract — READ RC'S CODE, DON'T GUESS (2026-08-06)
 
 The bot's `submit/precartdataforbookingmodify` came back **HTTP 200 with

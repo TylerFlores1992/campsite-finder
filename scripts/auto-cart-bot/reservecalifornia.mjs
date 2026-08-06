@@ -1,3 +1,30 @@
+// ═══════════════════════════════════════════════════════════════════════════════════
+// SETTLED 2026-08-06 — read this first; the notes below it predate the real test.
+//
+// PROVEN, with evidence, by scripts/auto-cart-bot/rc-probe.mjs:
+//   1. The bot logs into RC unattended — no MFA, no CAPTCHA — but ONLY HEADFUL. Every
+//      headless attempt died at the Okta email step; every headful one passed on the
+//      first Enter. The production bot therefore needs a real display, not just a
+//      process. On the mini-PC that is free; anywhere else it means a virtual display.
+//   2. The bot CARTS. Confirmed by reading the cart back by name, not by trusting a
+//      success flag: "Leo Carrillo SP - Canyon Campground - Hook Up (E) Campsite - 006,
+//      Thu 08/27/2026 - Fri 08/28/2026", placeId 665 / facilityId 539.
+//   3. THE CART KEY IS NOT ENOUGH — this is the one that decides the architecture.
+//      `rc-probe.mjs --cart --handoff` logs a SECOND session into the SAME account from
+//      a freshly deleted profile, confirms the two tokens differ, and asks it to read
+//      the cart by key: 0 entries. The cart is bound to the SESSION that created it,
+//      not to the account and not to the key.
+//
+// THE CONSEQUENCE, and it is not a small one: a bot-held cart is not merely unreachable
+// by the user — the hold LOCKS THE UNIT. Carting without a working hand-off would take
+// the site off the market and then deny it to the very person we alerted. That is worse
+// than doing nothing, so RC auto-cart stays OFF until a hand-off is built and tested.
+//
+// What remains is in docs/CONTEXT.md → "ReserveCalifornia auto-cart". Short version:
+// either move the session (works, but moves a live credential), or have the bot release
+// its hold at the moment the user's own session takes it (moves nothing, small race).
+// ═══════════════════════════════════════════════════════════════════════════════════
+//
 // ReserveCalifornia auto-cart: NOT enabled yet, but a viable path has been identified.
 // Investigated 2026-08-05 against a live RC account AND by reading RC's own web bundle.
 // Read this before touching it.
