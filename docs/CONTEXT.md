@@ -2483,6 +2483,21 @@ Three options survive, ranked by how I'd pursue them (deep-dive 2026-08-05):
 3. **Bot completes checkout**: the only true hands-off 24/7 grab, but it SPENDS the user's
    money and must clear the Oct-2025 reCAPTCHA + Okta MFA. A different, riskier product.
 
+**BOT-SIDE LOGIN IS PROVEN TOO (2026-08-05).** `scripts/auto-cart-bot/rc-probe.mjs`, run
+on the mini-PC against a fresh profile, logged into ReserveCalifornia **fully unattended
+— no MFA prompt, no CAPTCHA** — and exported a 12-key session blob. Notes for whoever
+maintains it: RC is on **Okta Identity Engine**, so the fields are `identifier` and
+`credentials.passcode` (not Classic's `username`/`password`), the flow is
+**identifier-first** (email → Next → password on a second screen), and the widget can be
+in an iframe, so selector lookups must poll across ALL frames. The probe ticks "Keep me
+signed in", and uses its own profile dir so it can never disturb the rec.gov profiles.
+
+So every link in the chain is now individually proven: bot logs in unattended → (cart
+step, see below) → blob transfers cross-machine → recipient is logged in and carted.
+**The one step still unproven is the bot's precart call** — whether adding to the cart
+trips a reCAPTCHA the login didn't. `node rc-probe.mjs --cart` with `RC_UNIT_ID` /
+`RC_ARRIVAL` / `RC_NIGHTS` answers exactly that and nothing else.
+
 Detail in `scripts/auto-cart-bot/reservecalifornia.mjs`.
 
 The mechanism notes below are still accurate and worth keeping; they're just not
