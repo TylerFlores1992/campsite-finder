@@ -6,6 +6,10 @@ import { Loader2, Plus, Trash2, Check, Clock, Send } from 'lucide-react';
 interface Tester {
   email: string;
   added_at: string;
+  /** When the setup email actually went out. NULL means WE DO NOT KNOW — rows added
+   *  before invite-tracking shipped (2026-08-06), or before the auto-invite itself
+   *  (2026-07-28). It is not proof that nothing was sent. */
+  invited_at: string | null;
   signed_up: boolean;
   is_beta: boolean;
 }
@@ -86,6 +90,8 @@ export default function BetaTesters() {
         body: JSON.stringify({ email: target, resend: true }),
       });
       setNote(r.ok ? `Setup email sent to ${target}.` : `Could not email ${target} — check the logs.`);
+      if (r.ok) load(); // pull the new invited_at back so the row stops saying "no record"
+
     } catch {
       setError(`Could not email ${target}`);
     } finally {
@@ -179,6 +185,10 @@ export default function BetaTesters() {
                 <p className="text-sm text-ch-ink truncate">{t.email}</p>
                 <p className="text-[11px] text-ch-muted">
                   added {new Date(t.added_at).toLocaleDateString()}
+                  {' · '}
+                  {t.invited_at
+                    ? `emailed ${new Date(t.invited_at).toLocaleDateString()}`
+                    : 'no record of an email'}
                 </p>
               </div>
               {t.signed_up ? (
@@ -191,9 +201,12 @@ export default function BetaTesters() {
               ) : (
                 <span
                   className="inline-flex items-center gap-1 text-[11px] font-medium text-ch-muted bg-ch-paper border border-ch-line rounded-full px-2 py-0.5"
-                  title="Pre-approved — access applies when they sign up"
+                  title="Pre-approved — beta access applies the moment they sign up"
                 >
-                  <Clock size={11} /> invited
+                  {/* NOT "invited". Whether they were emailed is a separate fact, shown
+                      on the line above — and for months this badge asserted an invite
+                      that, for fourteen of sixteen testers, had never been sent. */}
+                  <Clock size={11} /> pre-approved
                 </span>
               )}
               <button

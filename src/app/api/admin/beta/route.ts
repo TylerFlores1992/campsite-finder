@@ -19,8 +19,8 @@ const isEmail = (s: unknown): s is string =>
 // signed up yet and whether their account currently has beta access.
 export async function GET() {
   if (!(await requireAdmin())) return NextResponse.json({ error: 'not found' }, { status: 404 });
-  const testers = await query<{ email: string; added_at: string; signed_up: boolean; is_beta: boolean }>(
-    `SELECT b.email, b.added_at::text AS added_at,
+  const testers = await query<{ email: string; added_at: string; invited_at: string | null; signed_up: boolean; is_beta: boolean }>(
+    `SELECT b.email, b.added_at::text AS added_at, b.invited_at::text AS invited_at,
             (u.id IS NOT NULL) AS signed_up,
             COALESCE(u.is_beta, false) AS is_beta
      FROM beta_emails b
@@ -52,6 +52,10 @@ export async function POST(req: NextRequest) {
     }
     try {
       await sendBetaInvite(e, process.env.NEXT_PUBLIC_APP_URL ?? 'https://camphawk.app');
+      // RECORD IT. Sends used to go to Resend and leave no trace here, so "was this
+      // person ever invited?" could only be answered from Resend's dashboard — and
+      // when it was actually asked, it couldn't be answered at all.
+      await mutate(`UPDATE beta_emails SET invited_at = NOW() WHERE email = $1`, [e]);
       return NextResponse.json({ ok: true, email: e, invited: true, resent: true });
     } catch (err) {
       console.error('[admin/beta] resend failed for', e, err);
@@ -79,6 +83,7 @@ export async function POST(req: NextRequest) {
   if (inserted.length > 0) {
     try {
       await sendBetaInvite(e, process.env.NEXT_PUBLIC_APP_URL ?? 'https://camphawk.app');
+      await mutate(`UPDATE beta_emails SET invited_at = NOW() WHERE email = $1`, [e]);
       invited = true;
     } catch (err) {
       console.error('[admin/beta] invite email failed for', e, err);
