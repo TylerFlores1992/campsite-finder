@@ -467,6 +467,16 @@ try {
             if (verdict(r).isSuccess) submitted = r;
           }
 
+          // ADOPT THE CART WE JUST MADE. The submit happens over HTTP and the page never
+          // hears about it — `localStorage["shoppingCartKey"]` is still whatever it was
+          // (empty, on a fresh session), so the RC cart page shows EMPTY and the run
+          // looks like a failure it isn't. The app's sole source of truth is this one
+          // value, so write it. Same session, so this is the adoption case that works.
+          const newKey = verdict(submitted).cartKey;
+          if (verdict(submitted).isSuccess && newKey) {
+            try { localStorage.setItem('shoppingCartKey', newKey); } catch { /* ignore */ }
+          }
+
           return {
             loaded: { status: loaded.status, ok: loaded.ok, raw: loaded.raw.slice(0, 600), v: verdict(loaded) },
             submitted: { status: submitted.status, ok: submitted.ok, raw: submitted.raw.slice(0, 1200), v: verdict(submitted) },
@@ -575,8 +585,62 @@ try {
         }
       }
       if (okSubmit) {
-        log('   → BOT-SIDE CARTING WORKS. That is the whole feature.');
-        log(`     Cart key now: ${result.submitted.v.cartKey || result.finalKey}`);
+        const key = result.submitted.v.cartKey || result.finalKey;
+        log(`   Cart key now: ${key}`);
+
+        // READ THE CART BACK. `IsSuccess: true` is RC's word for "I accepted the
+        // request"; it is not the same claim as "the site is in the cart", and this
+        // probe has already once reported a success that wasn't one. So ask RC for the
+        // cart's CONTENTS and look for the unit we asked for. The whole promise of
+        // auto-cart is that "it's in your cart" is verifiable — verify it.
+        step(6, 'Reading the cart back to confirm the site is really in it…');
+        const check = await page.evaluate(
+          async ({ url, key, unitId }) => {
+            const ls = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+            const token = ls('ssoAccessToken') || ls('accessToken');
+            const res = await fetch(url, {
+              method: 'POST', credentials: 'include',
+              headers: {
+                'Content-Type': 'application/json', accesstoken: token,
+                authorization: 'Bearer ' + token, installationsidentity: 'cali', storeid: '111',
+              },
+              body: JSON.stringify({ shoppingCartKey: key }),
+            });
+            const raw = await res.text();
+            // A cart entry names its unit; find one matching what we asked for, anywhere
+            // in the response, rather than assuming a shape we haven't pinned down.
+            let hit = false, count = 0;
+            try {
+              const j = JSON.parse(raw);
+              const seen = new Set();
+              (function walk(n) {
+                if (!n || typeof n !== 'object' || seen.has(n)) return;
+                seen.add(n);
+                const arr = Array.isArray(n) ? n : Array.isArray(n.$values) ? n.$values : null;
+                if (arr) { for (const it of arr) walk(it); return; }
+                if ('unitId' in n || 'UnitId' in n) {
+                  count++;
+                  if (Number(n.unitId ?? n.UnitId) === unitId) hit = true;
+                }
+                for (const [k, v] of Object.entries(n)) { if (k !== '$type' && k !== '$id') walk(v); }
+              })(j);
+            } catch { /* fall through — raw is reported */ }
+            return { status: res.status, hit, count, raw: raw.slice(0, 400) };
+          },
+          { url: 'https://rdapi.reservecalifornia.com/api/webaccesscustomer/load/shoppingcart', key, unitId },
+        );
+        log(`   cart read → HTTP ${check.status}, ${check.count} entr${check.count === 1 ? 'y' : 'ies'}, unit ${unitId} present: ${check.hit ? 'YES' : 'NO'}`);
+        if (check.hit) {
+          log('   → BOT-SIDE CARTING WORKS, confirmed by reading the cart back.');
+          log('     Open the cart page in this window to see it with your own eyes:');
+          log(`     ${RC_CART_PAGE}`);
+          log('     (the probe has written the key to localStorage, so the page will find it)');
+        } else {
+          log('   → RC ACCEPTED the submit but the cart does not contain that unit.');
+          log(`     Raw: ${check.raw}`);
+          log('     Do NOT record this as a working cart — an accepted request and a held');
+          log('     site are different claims, and this is the gap between them.');
+        }
       } else {
         log('   → NOT carted. HTTP 200 with IsSuccess=false is still a failure.');
         log('     If ErrorMessage names a required field, it is our payload (fixable);');
@@ -589,7 +653,7 @@ try {
     blob = await readBlob(page);
     const out = path.join(HERE, 'rc-blob.json');
     fs.writeFileSync(out, JSON.stringify(blob), { mode: 0o600 });
-    step(5, `Session blob written to ${out} (${blob.length} keys, mode 600).`);
+    step(7, `Session blob written to ${out} (${blob.length} keys, mode 600).`);
     log('   This is a LIVE login. Delete it when done; never put it in a link.');
     log('   To verify the hand-off: paste its contents on another machine as');
     log('     const d = <contents>; d.forEach(([k,v])=>localStorage.setItem(k,v)); location.reload();');
