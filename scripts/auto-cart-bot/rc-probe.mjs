@@ -51,6 +51,9 @@ const PRECART_SUBMIT =
  *  this when localStorage has no key. An EMPTY STRING is rejected by validation. */
 const NO_CART = '00000000-0000-0000-0000-000000000000';
 const RC_CART_PAGE = 'https://www.reservecalifornia.com/Customers/ShoppingCart';
+/** Reads a cart's CONTENTS by key. This is how "is it really in the cart?" is answered
+ *  with evidence rather than with RC's own IsSuccess flag. */
+const CART_LOAD = 'https://rdapi.reservecalifornia.com/api/webaccesscustomer/load/shoppingcart';
 
 const args = new Set(process.argv.slice(2));
 const HEADFUL = args.has('--headful');
@@ -351,10 +354,20 @@ try {
             'Content-Type': 'application/json', accesstoken: token,
             authorization: 'Bearer ' + token, installationsidentity: 'cali', storeid: '111',
           };
+          // NEVER let a network rejection throw out of here. A browser `fetch` that
+          // rejects with "Failed to fetch" has NOT told us the request failed to
+          // arrive — CORS forbids reading a response the browser did receive, so a WAF
+          // 403 and an unreachable host are the same exception. Throwing killed the
+          // whole probe and reported the one thing we can be sure isn't the answer.
+          // Record it and let the Node-side replay (outside CORS) get the real status.
           const call = async (url) => {
-            const res = await fetch(url, { method: 'POST', credentials: 'include', headers, body: JSON.stringify(body) });
-            const raw = await res.text();
-            return { status: res.status, ok: res.ok, raw };
+            try {
+              const res = await fetch(url, { method: 'POST', credentials: 'include', headers, body: JSON.stringify(body) });
+              const raw = await res.text();
+              return { status: res.status, ok: res.ok, raw };
+            } catch (e) {
+              return { status: 0, ok: false, raw: '', netError: String((e && e.message) || e) };
+            }
           };
           // RC ANSWERS HTTP 200 WITH IsSuccess:false. Judging by status code reports a
           // failed cart as a success — the same "a 200 is not success" trap as
@@ -478,9 +491,12 @@ try {
           }
 
           return {
-            loaded: { status: loaded.status, ok: loaded.ok, raw: loaded.raw.slice(0, 600), v: verdict(loaded) },
-            submitted: { status: submitted.status, ok: submitted.ok, raw: submitted.raw.slice(0, 1200), v: verdict(submitted) },
+            loaded: { status: loaded.status, ok: loaded.ok, raw: loaded.raw.slice(0, 600), v: verdict(loaded), netError: loaded.netError },
+            submitted: { status: submitted.status, ok: submitted.ok, raw: submitted.raw.slice(0, 1200), v: verdict(submitted), netError: submitted.netError },
             loadedFull: loaded.raw,
+            // Handed back so Node can replay the EXACT request outside the browser's
+            // CORS rules when the in-page fetch is rejected without a status.
+            replay: { headers, body },
             usedKey: body.shoppingCartKey,
             finalKey: ls('shoppingCartKey'),
             attempts,
@@ -510,9 +526,37 @@ try {
       log(`   occupantName: ${result.occupantName ? `"${result.occupantName}"` : 'EMPTY  ← required by this facility'}  (${result.occupantKeys})`);
       const okLoad = result.loaded.v.isSuccess;
       const okSubmit = result.submitted.v.isSuccess;
-      log(`   load   → HTTP ${result.loaded.status}, IsSuccess=${okLoad}${result.loaded.v.error ? ` — ${result.loaded.v.error}` : ''}`);
-      log(`   submit → HTTP ${result.submitted.status}, IsSuccess=${okSubmit}  (key ${result.usedKey})`);
+      log(`   load   → ${result.loaded.netError ? `NETWORK: ${result.loaded.netError}` : `HTTP ${result.loaded.status}, IsSuccess=${okLoad}${result.loaded.v.error ? ` — ${result.loaded.v.error}` : ''}`}`);
+      log(`   submit → ${result.submitted.netError ? `NETWORK: ${result.submitted.netError}` : `HTTP ${result.submitted.status}, IsSuccess=${okSubmit}  (key ${result.usedKey})`}`);
       if (result.submitted.v.error) log(`     ErrorMessage: ${result.submitted.v.error.replace(/<br\/?>/g, ' ')}`);
+
+      // THE STATUS THE BROWSER WOULDN'T SHOW US. Playwright's request context shares the
+      // browser's cookie jar but is NOT a page, so CORS does not apply and we can read
+      // whatever RC actually answered. This is the difference between "RC is blocking
+      // this machine" and "RC is unreachable", which the in-page error cannot tell apart.
+      if (result.loaded.netError || result.submitted.netError) {
+        log('\n   The browser refused to show the status (CORS hides it on a rejected');
+        log('   fetch). Replaying the same request from Node, where CORS does not apply…');
+        for (const [name, url] of [['load', PRECART_LOAD], ['submit', PRECART_SUBMIT]]) {
+          try {
+            const r = await page.context().request.post(url, {
+              headers: result.replay.headers,
+              data: result.replay.body,
+              timeout: 30_000,
+            });
+            const text = (await r.text()).slice(0, 300).replace(/\s+/g, ' ');
+            log(`     ${name} → HTTP ${r.status()}  ${text}`);
+          } catch (err) {
+            log(`     ${name} → still failed at the network layer: ${err.message}`);
+          }
+        }
+        log('   Reading of the result:');
+        log('     403 → RC\'s WAF is blocking this machine. Not our payload; back off,');
+        log('           and note the ShoppingCart page 403 on this host as the same event.');
+        log('     401 → the session token expired mid-run; re-run and it should pass.');
+        log('     a real HTTP status at all → the origin is reachable and the in-page');
+        log('           failure was CORS on an error response, not a dead network.');
+      }
 
       // The load response carries the facility's REQUIRED "extra values" (per-park
       // questions like "confirm your booking dates"). We send extraValues: [] and RC
@@ -571,6 +615,8 @@ try {
           log(`     ${e.required ? 'REQ ' : '    '}ExtraId=${e.ExtraId} type=${e.ExtraType} default=${JSON.stringify(e.DefaultValue)} at "${e.at}" — ${e.Name}`);
           if (e.required) log(`         keys: ${e.keys}`);
         }
+      } else if (result.loaded.netError) {
+        log('   ▸ no extras read — the load request never returned a body (see above).');
       } else {
         log('   ▸ NO ExtraId-bearing objects anywhere in the load response.');
         log('     → the required answer is not declared here; look at what the real UI');
@@ -594,24 +640,23 @@ try {
         // cart's CONTENTS and look for the unit we asked for. The whole promise of
         // auto-cart is that "it's in your cart" is verifiable — verify it.
         step(6, 'Reading the cart back to confirm the site is really in it…');
-        const check = await page.evaluate(
-          async ({ url, key, unitId }) => {
-            const ls = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
-            const token = ls('ssoAccessToken') || ls('accessToken');
-            const res = await fetch(url, {
-              method: 'POST', credentials: 'include',
-              headers: {
-                'Content-Type': 'application/json', accesstoken: token,
-                authorization: 'Bearer ' + token, installationsidentity: 'cali', storeid: '111',
-              },
-              body: JSON.stringify({ shoppingCartKey: key }),
+        // Deliberately NOT an in-page fetch. The verification step must not be capable of
+        // failing the way the thing it verifies just did — a rejected browser fetch hides
+        // its status behind CORS, and a verifier that can only say "something went wrong"
+        // is no better than the claim it is checking. Playwright's request context shares
+        // the browser's cookies and session but is not a page, so we always get a status.
+        const check = await (async () => {
+          try {
+            const r = await page.context().request.post(CART_LOAD, {
+              headers: result.replay.headers,
+              data: { shoppingCartKey: key },
+              timeout: 30_000,
             });
-            const raw = await res.text();
+            const raw = await r.text();
             // A cart entry names its unit; find one matching what we asked for, anywhere
             // in the response, rather than assuming a shape we haven't pinned down.
             let hit = false, count = 0;
             try {
-              const j = JSON.parse(raw);
               const seen = new Set();
               (function walk(n) {
                 if (!n || typeof n !== 'object' || seen.has(n)) return;
@@ -623,12 +668,13 @@ try {
                   if (Number(n.unitId ?? n.UnitId) === unitId) hit = true;
                 }
                 for (const [k, v] of Object.entries(n)) { if (k !== '$type' && k !== '$id') walk(v); }
-              })(j);
+              })(JSON.parse(raw));
             } catch { /* fall through — raw is reported */ }
-            return { status: res.status, hit, count, raw: raw.slice(0, 400) };
-          },
-          { url: 'https://rdapi.reservecalifornia.com/api/webaccesscustomer/load/shoppingcart', key, unitId },
-        );
+            return { status: r.status(), hit, count, raw: raw.slice(0, 400).replace(/\s+/g, ' ') };
+          } catch (err) {
+            return { status: 0, hit: false, count: 0, raw: `network error: ${err.message}` };
+          }
+        })();
         log(`   cart read → HTTP ${check.status}, ${check.count} entr${check.count === 1 ? 'y' : 'ies'}, unit ${unitId} present: ${check.hit ? 'YES' : 'NO'}`);
         if (check.hit) {
           log('   → BOT-SIDE CARTING WORKS, confirmed by reading the cart back.');
@@ -641,6 +687,11 @@ try {
           log('     Do NOT record this as a working cart — an accepted request and a held');
           log('     site are different claims, and this is the gap between them.');
         }
+      } else if (result.loaded.netError || result.submitted.netError) {
+        log('   → NOT carted, and NOT because of our payload — the request never got a');
+        log('     readable answer. Read the replayed status above before changing code:');
+        log('     a 403 there means RC is blocking this machine, and no payload edit');
+        log('     will fix that.');
       } else {
         log('   → NOT carted. HTTP 200 with IsSuccess=false is still a failure.');
         log('     If ErrorMessage names a required field, it is our payload (fixable);');
