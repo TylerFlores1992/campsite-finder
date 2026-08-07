@@ -62,6 +62,41 @@ test('--once runs one pass and exits, instead of looping or crashing', async () 
   assert.doesNotMatch(out, /Assertion failed/, 'exited mid-teardown');
 });
 
+test('a pasted placeholder is refused, and it says the shell is why', async () => {
+  // The exact value from the setup instructions, left in a PowerShell session. It is
+  // truthy, so the "is it set?" check passes; and the shell beats .env by design, so the
+  // symptom is a 401 while the file on disk is perfectly correct. That cost two rounds.
+  const dir = stagedBot();
+  const err = await run(process.execPath, ['rc-hold-runner.mjs', '--once'], {
+    cwd: dir, timeout: 30_000,
+    env: { ...process.env, AUTOCART_TOKEN: '<same token the rec.gov bot uses>' },
+  }).then(() => null, (e: { code?: number; stderr?: string }) => e);
+  assert.equal(err?.code, 2, 'it must refuse to run, not fail later as a 401');
+  assert.match(err?.stderr ?? '', /placeholder/);
+  assert.match(err?.stderr ?? '', /Remove-Item Env:AUTOCART_TOKEN/, 'must name the actual fix');
+});
+
+test('a rejected token names WHERE the token came from', async () => {
+  // `feed 401` alone says the token is wrong and nothing about which one is in use — so
+  // the one you go and check is not the one that failed.
+  const { createServer } = await import('node:http');
+  const server = createServer((_req, res) => { res.writeHead(401); res.end('{}'); });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const { stdout, stderr } = await run(process.execPath, ['rc-hold-runner.mjs', '--once'], {
+      cwd: stagedBot(), timeout: 30_000,
+      env: { ...process.env, AUTOCART_TOKEN: 'looks-real-but-wrong', CAMPHAWK_URL: `http://127.0.0.1:${port}` },
+    });
+    const out = stdout + stderr;
+    assert.match(out, /feed 401/);
+    assert.match(out, /from the shell/, 'the source is the fact that makes a 401 actionable');
+    assert.match(out, /Remove-Item Env:AUTOCART_TOKEN/);
+  } finally {
+    server.close();
+  }
+});
+
 test('a nonzero verdict still reaches the shell', async () => {
   // rc-keepwarm --once exits 1 for a dead session, and start-all/cron read that. Setting
   // process.exitCode instead of calling process.exit() must not lose it.

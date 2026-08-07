@@ -30,7 +30,7 @@ import { precartInPage, findCartEntry, releaseEntry, NO_CART } from './rc-cart.m
 import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
 } from './profile-lock.mjs';
-import { loadEnv } from './load-env.mjs';
+import { loadEnv, envSource, looksLikePlaceholder } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 
 // The token lives in scripts/auto-cart-bot/.env alongside the rec.gov bot's. Without
@@ -61,8 +61,23 @@ const ONCE = args.has('--once');
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Where AUTOCART_TOKEN came from — printed on any auth failure. See load-env.mjs. */
+const TOKEN_SOURCE = envSource('AUTOCART_TOKEN');
+
 if (!TOKEN) {
-  console.error('Set AUTOCART_TOKEN (the same master token the rec.gov bot uses).');
+  console.error('No AUTOCART_TOKEN. Put it in scripts/auto-cart-bot/.env, next to the');
+  console.error('rec.gov bot\'s — it is on Vercel under CampHawk → Settings → Environment Variables.');
+  process.exit(2);
+}
+if (looksLikePlaceholder(TOKEN)) {
+  // A pasted placeholder is set, so it passes the check above, and an exported one BEATS
+  // the .env file by design — so the symptom is a 401 while the file on disk is perfect.
+  console.error(`AUTOCART_TOKEN (from the ${TOKEN_SOURCE}) contains a bracket or a space, so it is`);
+  console.error('almost certainly a placeholder pasted from instructions, not the real token.');
+  if (TOKEN_SOURCE === 'shell') {
+    console.error('It came from the shell, which overrides .env on purpose. Clear it and re-run:');
+    console.error('  Remove-Item Env:AUTOCART_TOKEN        (PowerShell)');
+  }
   process.exit(2);
 }
 if (!fs.existsSync(PROFILE_DIR)) {
@@ -74,6 +89,18 @@ async function feed() {
   const res = await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
     headers: { authorization: `Bearer ${TOKEN}` },
   });
+  // A bare `feed 401` says the token is wrong and nothing about WHICH token — and the
+  // shell silently outranks .env, so the one you would go and check is not the one in
+  // use. Name the source; that is the whole difference between a one-line fix and an
+  // evening of pulling the repo again.
+  if (res.status === 401) {
+    throw new Error(
+      `feed 401 — camphawk.app rejected AUTOCART_TOKEN (taken from the ${TOKEN_SOURCE})` +
+        (TOKEN_SOURCE === 'shell'
+          ? '. The shell overrides .env by design; `Remove-Item Env:AUTOCART_TOKEN` and re-run to use the file.'
+          : '. Check it against Vercel → CampHawk → Settings → Environment Variables → AUTOCART_TOKEN.')
+    );
+  }
   if (!res.ok) throw new Error(`feed ${res.status}`);
   return res.json();
 }
