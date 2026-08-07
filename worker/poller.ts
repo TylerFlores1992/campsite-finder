@@ -838,11 +838,19 @@ async function cycle(): Promise<void> {
       );
       // Held state: cancelled sites RC locks until a release time (~8am next day).
       // Only check watches that aren't already bookable now.
+      //
+      // FLEX GOES THROUGH, exactly as it does for the open check above. Without it the
+      // required run is the whole window — for "any 4 nights between Sep 4 and Sep 13"
+      // that asked whether one unit held all NINE, which never happens. Six of the nine
+      // live RC watches were flexible on 2026-08-07, so two thirds of them could never
+      // receive a coming-soon alert or an 8am hold offer. Unlike probeFlexStay this
+      // costs no extra upstream calls: RC's grid is a full grid, so the run search is
+      // in-memory over the one fetch.
       await pMap(
         rcWatches.filter((w) => !rcResults.has(w.id)),
         async (w) => {
           const required = Math.max(w.min_nights, nightsOfRange(w.start_date, w.end_date).length);
-          const held = await findRCHeldUnit(w.campground_id, w.start_date, w.end_date, required);
+          const held = await findRCHeldUnit(w.campground_id, w.start_date, w.end_date, required, flexOf(w));
           if (held) rcHeld.set(w.id, { dates: held.dates, availableAt: held.availableAt, unitId: held.unitId, name: held.name });
         },
         RECGOV_CONCURRENCY

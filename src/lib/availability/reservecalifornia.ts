@@ -142,6 +142,39 @@ function hasRealLock(lock: string | null | undefined): boolean {
 }
 
 /**
+ * Which held nights of ONE unit do we claim, and when does the stay actually free?
+ *
+ * Pure, and exported so it can be tested without a live grid — the flex bug below lived
+ * entirely in this decision, and it was invisible from the outside because the wrong
+ * answer is "no held unit", which is also the correct answer almost every cycle.
+ *
+ * `held` must already be filtered to real held nights, sorted by date.
+ */
+export function heldStayRun(
+  held: { Date: string; Lock?: string | null }[],
+  minNights: number,
+  flex?: FlexSpec
+): { dates: string[]; availableAt: string } | null {
+  const flexible = flex?.nights != null && flex.nights > 0;
+  const runLength = flexible ? flex!.nights! : minNights;
+  const dates = held.map((s) => s.Date);
+  // Flexible reports the MATCHED RUN, not every held night of the window. The run is what
+  // the alert names and what the hold offer carts, so reporting the whole window would
+  // queue a cart for nights the user never asked for.
+  const run = flexible
+    ? findQualifyingRun(dates, runLength, flex!.days)
+    : hasConsecutiveRun(dates, runLength) ? dates : null;
+  if (!run || !run.length) return null;
+  const inRun = new Set(run);
+  const slices = held.filter((s) => inRun.has(s.Date));
+  // The release time is the LATEST lock across the nights we are claiming — the stay is
+  // not bookable until the last of them frees, and promising the earliest would send the
+  // user (and the bot) at a moment when part of the stay is still locked.
+  const availableAt = slices.reduce((max, s) => (s.Lock! > max ? s.Lock! : max), slices[0].Lock!);
+  return { dates: run, availableAt };
+}
+
+/**
  * Find a unit whose full stay is currently in UseDirect's cancelled-but-held state
  * — booked night was cancelled, and it's locked until a release time. Returns the unit
  * and that release time (`availableAt`, ISO local) so we can tell the user when it goes
@@ -154,12 +187,21 @@ function hasRealLock(lock: string | null | undefined): boolean {
  * rather than an overnight release. That difference is a usable discriminator: an 08:00
  * lock is a cancellation you can plan around; a lock a few minutes out is a cart that
  * will probably complete.
+ *
+ * TAKES `flex` FOR THE SAME REASON findRCOpenUnit DOES. Without it the caller can only
+ * ask "is the WHOLE window held?", and a flexible watch's window is its whole search
+ * range — "any 4 nights between Sep 4 and Sep 13" became "are all nine nights held by one
+ * unit?", which never happens. Six of nine live RC watches were flexible on 2026-08-07,
+ * so the coming-soon alert — and with it the 8am hold offer — could not fire for two
+ * thirds of them. The run search is in-memory over one grid, so honouring flex costs
+ * nothing: unlike a whole-stay source, we already have every night.
  */
 export async function findRCHeldUnit(
   campgroundId: string,
   startDate: string,
   endDate: string,
-  minNights = 1
+  minNights = 1,
+  flex?: FlexSpec
 ): Promise<{ unitId: number; sleepingUnitId: number | null; dates: string[]; availableAt: string; name: string | null } | null> {
   const provider = providerByCampgroundId(campgroundId);
   if (!provider) return null;
@@ -178,10 +220,9 @@ export async function findRCHeldUnit(
             s.Date < endDate
         )
         .sort((a, b) => a.Date.localeCompare(b.Date));
-      const dates = held.map((s) => s.Date);
-      if (hasConsecutiveRun(dates, minNights)) {
-        const availableAt = held.reduce((max, s) => (s.Lock! > max ? s.Lock! : max), held[0].Lock!);
-        return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, dates, availableAt, name: unit.Name ?? null };
+      const run = heldStayRun(held, minNights, flex);
+      if (run) {
+        return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, ...run, name: unit.Name ?? null };
       }
     }
   } catch (err) {
