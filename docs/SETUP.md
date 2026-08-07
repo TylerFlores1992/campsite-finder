@@ -82,7 +82,7 @@ run elsewhere (see Deploy).
 |-------|----------|----------------|
 | **Website** (Next.js) | Vercel | **Auto-deploys on every `git push` to `master`,** and `camphawk.app` auto-re-aliases to the new Production build (`autoAssignCustomDomains` is on). The old "build is `Ready` but the domain still points at the previous deployment" symptom (observed 2026-07-20) was **root-caused 2026-07-25**: pushing the *same commit SHA* to both a `claude/*` working branch and `master` made Vercel dedup by SHA — the branch preview built first and the master push then sometimes created **no** Production deployment, so auto-assign had nothing to move (and manual REST redeploys don't trigger auto-assign either). Fixed by **`vercel.json` → `git.deploymentEnabled: { "claude/*": false }`** so agent branches no longer spawn a shadowing preview; every `master` push now builds a fresh Production deployment and the domain follows on its own. So: **push to `master` and you're done — no `vercel --prod` / re-alias needed.** (If you ever *do* see a stale domain, `vercel --prod` from the repo root, or `POST /v2/deployments/<id>/aliases` with the READY Production deployment id, still forces it.) Also: **a new `SYNC_SECRET`-protected `/api/*` route 404s until it's added to `isPublicRoute` in `src/middleware.ts`** (Clerk's `auth.protect()` returns 404, not 401 — see `docs/CONTEXT.md`). |
 | **Alert worker** (`worker/poller.ts`) | Fly.io app `campsite-finder-worker` | **GitHub Action `worker-deploy.yml` — this is the path now (added 2026-07-28).** It fires automatically on any push to `master` touching `worker/**`, `src/lib/{availability,sources,notifications,db}/**`, `src/lib/booking-url.ts` or the lockfile, and can be run by hand from the Actions tab (or dispatched by an agent). It builds with `--local-only` on the runner, restarts **exactly the machines that were running before** the deploy, then polls `/api/health/worker` and **fails the run if no fresh heartbeat lands in 4 minutes** — so the "deploy succeeded, alerting is dead" trap below can no longer pass silently. Needs one repo secret, `FLY_API_TOKEN` (`fly tokens create deploy -a campsite-finder-worker`). The auto-trigger is what kills the stale-worker bug: the worker compiles in the RA/UseDirect/GoingToCamp/TN-SC registries, so **adding a state used to need a deploy someone had to remember**, and a stale worker never alerts for it, silently. By hand it's still `flyctl deploy --config worker/fly.toml --dockerfile worker/Dockerfile --remote-only` from the repo root, followed by `flyctl machine start <primary-id>` — see the web-session note below for why building that way fails from a sandbox. Serves `POST /gtc/availability` for the website's search page, and calls **out** to Vercel's `/api/tnsc-availability` for TN openings (needs `TNSC_AVAILABILITY_URL` set — see the proxy note below). **TWO machines since 2026-08-02** (`SHARD_COUNT=2`, both iad), each polling a disjoint half of the campgrounds — the Action restarts both, and a deploy that leaves one down means its shard is unpolled, which `poller.shards` fails on. To add capacity: `flyctl machine clone <id> --region iad` FIRST, then raise `SHARD_COUNT` and `min_machines_running` together. |
-| **Auto-cart bot** (`scripts/auto-cart-bot/`) | The mini PC only | `git push`, then run `mini-pc/update.bat` on the mini PC (via RustDesk). It can't run anywhere else — it drives a real logged-in recreation.gov browser. |
+| **Auto-cart bot** (`scripts/auto-cart-bot/`) | The mini PC only | `git push`, then run `mini-pc/update.bat` on the mini PC (via RustDesk). It can't run anywhere else — it drives real logged-in recreation.gov **and ReserveCalifornia** browsers. **FIVE processes since 2026-08-07**, all started by `mini-pc/start-all.bat`: tunnel, bot, broker, `rc-keepwarm.mjs`, `rc-hold-runner.mjs`. **`update.bat` and `start-all.bat` delete the Chromium profile locks before relaunching** — a hard `taskkill` never runs the lock's release, so the file survives and reads as *held* for ten minutes, during which the RC processes skip every pass; an update at 07:55 would silently cost the 8am cart. **Never type the node commands into a fresh PowerShell window** — it opens in `C:\Users\<you>` and fails with `MODULE_NOT_FOUND`, which reads like a broken install rather than a wrong directory. Use `mini-pc/rc-login.bat` (the one human RC sign-in) and `mini-pc/rc-check.bat` (is it working?); both `cd` themselves. |
 | **Mobile app** (Capacitor) | App Store / Play Store | Thin native shell around the live site — most changes ship via the normal web deploy (the app loads `camphawk.app`); you only rebuild the binary for native/plugin/icon changes. **Neither binary needs a machine of your own** — both build on Codemagic and are started from its web UI (works on a phone): `ios-testflight` (→ TestFlight) and `android-release` (→ signed AAB + sideloadable APK). **Both run on `mac_mini_m2`** — not because Android needs a Mac, but because this Codemagic plan has no Linux instance at all; see the Android section for the one-second, zero-log failure that fact produces. Paid dev accounts still required. See **"Building the mobile app"** below. Push needs `FCM_SERVICE_ACCOUNT` on **both Vercel and the Fly worker**. |
 
 ## Catalog syncs (which campgrounds exist)
@@ -550,15 +550,28 @@ worker/             Fly.io cancellation poller (poller.ts)
                     shard.ts        campground→machine sharding + DB lease (LIVE at
                                     SHARD_COUNT=2 since 2026-08-02)
                     rate-profile.ts full-day 429 profile recorder (recgov_rate_profile)
+                    (RC day-before holds live in src/lib/rc-holds.ts — the state
+                    machine is shared by the poller, the /w/<token> action and the
+                    mini-PC runner, so it sits with the app, not the worker)
 capacitor.config.ts  native app shell config; native/shell/ offline fallback page
                     (ios/, android/ generated by `npx cap add`, git-ignored)
 extension/          Optional Chrome extension ("CampHawk Quick Cart") that reads the
                     #camphawk / #camphawk-rc fragments in alert links to autofill dates
                     and add to cart, in the user's own browser. Desktop only —
                     extensions don't run in mobile Chrome. Ships OFF by default.
-scripts/auto-cart-bot/  Mini-PC Playwright bot + remote sign-in broker
+scripts/auto-cart-bot/  Mini-PC Playwright bots + remote sign-in broker. FIVE
+                    processes: bot.mjs (rec.gov) + broker.mjs, and for RC
+                    rc-keepwarm.mjs (OWNS the session, the only thing that logs in)
+                    + rc-hold-runner.mjs (drives it, never logs in). Shared:
+                    rc-cart.mjs (the precart/release contract, so probe and runner
+                    cannot drift), profile-lock.mjs (one Chromium per profile dir),
+                    load-env.mjs (every process reads .env), exit-clean.mjs (a
+                    one-shot run must not die in Windows libuv teardown).
+                    mini-pc/*.bat cd themselves — rc-login.bat, rc-check.bat.
 scripts/            run-sync*.ts catalog syncs; e2e-gtc-alert.mts (live alert test —
                     SENDS REAL EMAIL/SMS); recgov-429-profile.mts (the rate readout);
+                    rc-holds-readout.mts ("did the 8am cart fire?" — the only view of
+                    the hold chain, which spans four processes and no single log);
                     likelihood-readout.mts; seo-check.mts; screenshot-component.mts;
                     play-assets.mts (Play icon + feature graphic — Play-only assets
                     with no Apple equivalent; see docs/PLAY-STORE.md)
@@ -687,8 +700,9 @@ npm test
 ```
 
 **`node:test` via tsx — no test framework dependency.** Files are `*.test.mts` under
-`worker/`. Added 2026-07-30; before that the repo had no test script, no framework and
-no test files.
+**`worker/` AND `src/`** — the script globs both, so a suite next to the code it covers
+(`src/lib/notifications/*.test.mts`) is picked up too. Added 2026-07-30; before that the
+repo had no test script, no framework and no test files. 183 tests as of 2026-08-07.
 
 The suites, chosen because a silent wrong answer in each is expensive:
 `worker/claim.test.mts` (the alerting claim — where a bug costs a user a campsite),
@@ -713,15 +727,33 @@ DIFFERENT machine ids racing for a free job produce exactly one winner),
 `worker/ridb-photos.test.mts` (real DB, guards a DATA-DESTRUCTIVE edge: skipping the
 RIDB media call must not erase the 3,775 rows that already have photos, while a real
 empty result still clears them),
-`worker/geocode.test.mts` (**the only suite needing neither network nor credentials** —
-null-island rejection, the 50-state box, PO-box refusal, and the non-campground filter),
+`worker/geocode.test.mts` (null-island rejection, the 50-state box, PO-box refusal, and
+the non-campground filter),
+`worker/rc-holds.test.mts` (real DB: the RC day-before hold state machine — above all
+that an `offered` row is **never** due, because only a tap may authorise a cart),
+`worker/rc-held-flex.test.mts` (pure: which held nights we claim for a flexible watch,
+and that `availableAt` is the LATEST lock of the CLAIMED run),
 and `worker/carted-history.test.mts` (real DB: the one-cart-per-(watch, site) rule —
 that a carted site blocks a second cart, that a DIFFERENT site on the same watch does
 not, that a NEW watch starts over, that a late `carted` report still blocks even when
 the reconciler already resolved the job as `alerted`, and that a FAILED attempt does
 not block a retry).
 
-> **They hit the REAL database and need credentials**, so run with
+**Four suites need neither network nor credentials** and are the fastest feedback in the
+repo — they guard the mini-PC bot, which nothing else can reach from here because
+deploying to that box is a human running `update.bat`:
+`worker/profile-lock.test.mts` (mutual exclusion, stale takeover, renewal holding a long
+job, and the error path not stripping another process's lock),
+`worker/bot-env.test.mts` (parses `mini-pc/start-all.bat`, resolves its npm scripts to
+files, and asserts **every process launched at boot reads `.env`** — the gap that made
+`rc-hold-runner` answer `feed 401` against a perfect config file),
+`worker/rc-runner-cli.test.mts` (**executes the CLI**, with `playwright` stubbed, to prove
+`--once` runs one pass and terminates — it caught a fall-through that `node --check`
+could not see, introduced while fixing a Windows libuv exit assertion),
+and `worker/geocode.test.mts`.
+Plus `src/lib/notifications/{dates,sms-fit,twilio-signature}.test.mts`.
+
+> **The rest hit the REAL database and need credentials**, so run with
 > `NODE_USE_ENV_PROXY=1` in a web session. That is deliberate, not laziness: the
 > claim's correctness lives entirely inside one `INSERT .. ON CONFLICT .. WHERE`, so a
 > mocked client would test a fake instead of the thing that decides.
@@ -994,6 +1026,15 @@ vars, and a setup-script field.
   every future session) but changes only take effect in a **new** session — the running
   container keeps the policy it started with.
 - The **mini-PC bot** can never be driven from a web session regardless — it needs a
-  headed browser on the residential box (RustDesk).
+  headed browser on the residential box (RustDesk). Corollary worth stating plainly:
+  **its code cannot be smoke-tested from here**, because Playwright is not installed next
+  to it and RC/rec.gov both refuse headless. That is exactly why
+  `worker/{profile-lock,bot-env,rc-runner-cli}.test.mts` exist and stub the browser — they
+  are the only mechanism that can catch a broken boot script before a human runs
+  `update.bat`. Two real bugs shipped to that box on 2026-08-07 before they existed.
+- **You CAN see the RC hold flow's state from a web session**, even though the bot is
+  unreachable: `NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts`. It reads the
+  database, so it works from anywhere, and it is the fastest answer to "did the 8am cart
+  fire?" — `requested` with the release time already past means the runner is down.
 
 See `docs/CONTEXT.md` for architecture and the decisions/gotchas behind the code.

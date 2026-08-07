@@ -971,7 +971,15 @@ chrome (nav, brand backdrop, footer) without adding a path segment.
 
 Outside the group and deliberately without app chrome: `/terms`, `/privacy`,
 `/connect`, `/admin`, `/sign-in`, `/sign-up`, `/w/<token>`, `/b/<token>`,
-`/auto-cart`, `/sms-opt-in`.
+`/auto-cart`, `/sms-opt-in`, **`/claim/<id>`**.
+
+`/claim/<id>?t=<manage token>` (2026-08-07) is the RC hold hand-off: the bot is holding a
+site and this is where the user takes it. Authorised by the hold id **plus** the watch's
+manage token — possession of both, no sign-in, because they are acting from a phone at
+8am. `noindex, nocache` for the same reason `/manage/<token>` is: the URL carries the
+token. It polls `/api/rc-holds/claim` at 600ms while `claiming` and redirects to RC the
+moment the bot reports `released`; both it and `/api/rc-holds/claim` are in
+`isPublicRoute`, or Clerk 404s them.
 
 ### Design system
 
@@ -2085,6 +2093,38 @@ opening was not just un-announced, it was never carted.
   the same pair cannot both win. `worker/claim.test.mts` pins that with 8 concurrent
   claims expecting exactly one winner.
 
+### We alert on the TRANSITION, not the state (migration 039, 2026-08-06)
+
+The hour window above was the whole rule, and **nothing recorded whether the site had
+been open that entire time** — so a site that simply never closed re-alerted every hour,
+forever. One Silver Lake opening sent **16 identical alerts in a day**.
+
+`watch_site_alerts.last_seen_open_at` is now stamped on EVERY cycle the site is open, and
+a re-alert needs BOTH the hour AND a `CONTINUOUS_GAP` (10 min) of not having seen it —
+i.e. it actually went away and came back.
+
+> **Call `claimNotification` on every cycle the site is open, not only when you mean to
+> alert.** It doubles as the observation, and a skipped cycle looks exactly like the site
+> vanishing — which would re-arm the alert it exists to suppress.
+
+`NULL` (pre-039 rows) means "we don't know" and does **not** suppress.
+`worker/claim.test.mts` was verified to fail against the bug by restoring it.
+
+### ONE "still open" nudge at 6h (migration 040, 2026-08-06)
+
+Transition-only alerting removed the hourly repeat — and with it the accidental *retry*
+it had been giving a first alert that never landed. `nudged_at` buys back exactly one
+follow-up while the site is still open, and is what makes it **once** rather than a
+slower drumbeat.
+
+It **resets to NULL on a genuine re-open**, so each opening gets its own. Without that
+reset it would latch for the life of the pair and every later stay would silently lose
+its follow-up.
+
+`claimNotification` returns `{won, reason}`; `reason: 'nudge'` becomes `kind:
+'still_open'`, which is **worded differently in email/SMS/push on purpose** — a follow-up
+that reads like a fresh alert is indistinguishable from the 16-alerts-a-day bug above.
+
 ## SMS delivery receipts (migration 038, 2026-08-05)
 
 **`notifications.status = 'sent'` has never meant the text arrived.** It means Twilio's
@@ -2222,6 +2262,41 @@ keeping:
   Messaging Service that constant is a lie and every alert silently returns to two
   segments.
 
+#### Three copy bugs from ONE real text (2026-08-06)
+
+A live alert read *"Leo Carrillo SP - Canyon Campground **(si.** Site **Unit 42573** open
+**2026-09-04, 2026-09-05, 2026-09-06**"* — and the owner read it as "the site opens Sep 4".
+Four defects in one message:
+
+- **`Unit 42573` was RC's internal primary key.** The grid carries a human name
+  (`Hook Up (E ) Campsite #L006`) that we were discarding — a number appearing nowhere on
+  RC's own pages is unmatchable against the map or the listing. `rcSiteLabel()` in
+  `worker/poller.ts` prefers the `#L006` token.
+- **`formatStayDates()`** (`lib/notifications/dates.ts`) → `Sep 4-6`. Gaps stay visible
+  (a range would promise a night that isn't free), and dates are parsed as **strings** —
+  `new Date('2026-09-04')` is midnight UTC and renders as **Sep 3** in every US timezone.
+- **"open **for** Sep 4-6"** — the preposition is load-bearing. The coming-soon text in the
+  same thread uses "opens \<date\>" to mean a real release time, so both readings were
+  live at once.
+- **`(si.` was a blind mid-token cut.** `fitOneSegment` now drops a trailing parenthetical
+  WHOLE before cutting, then cuts on a word boundary; the invariant the tests actually
+  assert is *never leave a bracket open*. With the shorter dates the real Leo Carrillo
+  alert now fits at 148 chars **with** its full name — it was 160 before.
+
+**And a false "coming soon".** Two texts arrived a minute apart ("opens 8:15 AM", "opens
+8:16 AM"): RC's `Lock` was ~1 min ahead and creeping, which is a **cart hold being
+extended**, not the overnight release the code assumed. `holdIsNewsworthy` now requires
+**≥1h lead** and dedupes on the release HOUR, not the exact instant. Suppressing these
+costs nothing — when the lock lapses the ordinary availability alert fires within a cycle.
+
+> **Most `Lock` values in the grid are not locks at all.** UseDirect serialises "no lock"
+> as .NET's `"0001-01-01T00:00:00"`, not null — so `!!s.Lock` is true for every unlocked
+> slice. Measured across 70 facilities: 5,092 slices carried a `Lock` and **4,800 (94%)
+> were the zero date**. `hasRealLock()` (year > 2000) is the filter. Unfiltered, this
+> feeds "opens at \<time\>" alerts off slices that were never held, with a release time
+> rendered from year 1 — the lead-time gate happens to reject those, but that is luck,
+> not design.
+
 #### The answer: it was the LINK DOMAIN, not the length
 
 The one-segment change was deployed to both shards at 14:33 UTC and the next three texts
@@ -2277,10 +2352,26 @@ T-Mobile and CTIA sources pinned down which parts are actually documented:
   ("by Twilio **or** by the carrier"). The only documented way to learn which is to send
   3+ Message SIDs to Twilio Support. That distinction matters: if it is Twilio's own
   policy filter, domain reputation is not the explanation at all.
-- **The campaign's samples and `HasEmbeddedLinks` are NOT editable after approval.** An
-  earlier note in this session said they were; that was wrong. Changing the registered
-  link shape means registering a **new campaign**, which is a further reason the fix
-  belongs in the code.
+- **Samples ARE editable after approval; only the four BOOLEANS are frozen (corrected
+  2026-08-07).** This bounced twice — first claimed editable, then "corrected" to not
+  editable, and that correction was itself wrong. Twilio's rectifying-campaigns doc is
+  explicit: an update `POST /v1/Services/<MG…>/Compliance/Usa2p/<CM…>` may be made against
+  an approved campaign; all seven fields must be resent, and only `has_embedded_links`,
+  `has_embedded_phone`, `direct_lending` and `age_gated` carry *"Value CANNOT CHANGE for
+  an update call made after TCR approval"*. `description`, `message_flow` and
+  **`message_samples`** can all change.
+  **`HasEmbeddedLinks` is already `true` for us, so nothing frozen is in the way** —
+  putting `camphawk.app` into the samples is an in-place edit, not a re-registration, and
+  the Sole-Proprietor one-campaign-per-brand cap does not bite.
+  Three things decide whether to actually do it: the edit path is **Private Beta**
+  (Console "Edit Campaign" or API — confirm the account has it); an update **re-triggers
+  vetting** on a campaign that is currently Approved and working, which is the real risk;
+  and since **2026-06-30** registration requires `PrivacyPolicyUrl` and
+  `TermsAndConditionsUrl` (`camphawk.app/privacy` and `/terms`, both verified public 200).
+  Cheaper things to do first: stop using `/b/<token>` — a destination-hiding redirect,
+  which T-Mobile's Code of Conduct §4.8 covers explicitly — in favour of a real page path,
+  and send 3+ SIDs to Support to learn whether Twilio or the carrier is filtering, since
+  a Twilio-side filter would make the sample edit the wrong fix entirely.
 
 #### Sole Proprietor caps, for when this grows
 
@@ -2483,7 +2574,14 @@ Three options survive, ranked by how I'd pursue them (deep-dive 2026-08-05):
 3. **Bot completes checkout**: the only true hands-off 24/7 grab, but it SPENDS the user's
    money and must clear the Oct-2025 reCAPTCHA + Okta MFA. A different, riskier product.
 
-**BOT-SIDE LOGIN IS PROVEN TOO (2026-08-05).** `scripts/auto-cart-bot/rc-probe.mjs`, run
+> **SUPERSEDED 2026-08-07 — DO NOT BUILD ON THE PARAGRAPH BELOW.** RC's Okta page now
+> serves a reCAPTCHA image challenge to the bot's browser, so **unattended login is no
+> longer available**; see "RC login now hits a reCAPTCHA" further down. What replaced it
+> is the keep-warm loop: a human signs in ONCE and the session is never allowed to lapse.
+> The 08-05 result is kept because it dates the escalation — it worked that morning and
+> did not that evening, which is what makes "we provoked this" the leading explanation.
+
+**BOT-SIDE LOGIN WAS PROVEN (2026-08-05, no longer true).** `scripts/auto-cart-bot/rc-probe.mjs`, run
 on the mini-PC against a fresh profile, logged into ReserveCalifornia **fully unattended
 — no MFA prompt, no CAPTCHA** — and exported a 12-key session blob. Notes for whoever
 maintains it: RC is on **Okta Identity Engine**, so the fields are `identifier` and
@@ -2497,6 +2595,13 @@ step, see below) → blob transfers cross-machine → recipient is logged in and
 **The one step still unproven is the bot's precart call** — whether adding to the cart
 trips a reCAPTCHA the login didn't. `node rc-probe.mjs --cart` with `RC_UNIT_ID` /
 `RC_ARRIVAL` / `RC_NIGHTS` answers exactly that and nothing else.
+
+> **BOTH HALVES OF THAT PARAGRAPH ARE OUT OF DATE (2026-08-07).** The precart question it
+> calls open was answered the next day — **the bot carts**, verified by reading the cart
+> back (see "SETTLED 2026-08-06"). And the login it treats as settled is the part that
+> broke. The blob hand-off it describes was also abandoned: **Path B** (bot holds, bot
+> releases on demand, the user's own session re-carts) beats it, because no credential
+> moves and the bot needs ONE account rather than one per user.
 
 Detail in `scripts/auto-cart-bot/reservecalifornia.mjs`.
 
@@ -2727,6 +2832,147 @@ creates the cart under its token and the user reads under theirs.
 values (CA is `cali`/`111`; each of the other 9 UseDirect states needs its own captured
 from a trace). Detail in `scripts/auto-cart-bot/reservecalifornia.mjs`.
 
+## RC login now hits a reCAPTCHA — and the keep-warm loop is the answer (2026-08-07)
+
+An image challenge ("select all images with bicycles") appeared on
+`signin.reservecalifornia.com`'s Okta page for the probe's browser. **This is what every
+earlier "login failure" actually was**: the Next button reported `visible=true
+enabled=true` and every click still timed out, because the challenge's overlay was
+swallowing pointer events. Retrying harder can never work, and two earlier calls die with
+it — "headless vs headful" was correlation rather than cause, and the 12-hour CloudFront
+403 looks a lot less coincidental beside an escalating anti-bot posture toward the same
+address.
+
+**Unattended login is therefore off the table.** Earlier the same day it worked with no
+MFA and no CAPTCHA, so this is an escalation — most plausibly from repeated fresh-profile
+logins, which is exactly what `--handoff`/`--release` do by design.
+
+**The design that survives it:** a human signs in ONCE with "Keep me signed in" ticked,
+and the bot never lets the session lapse — the same shape the rec.gov bot already runs.
+A bot that can re-login on demand is off the table; a bot that never needs to is not.
+
+`scripts/auto-cart-bot/rc-keepwarm.mjs` owns that session and is **the only thing that
+ever touches login**:
+- Every `RC_KEEPALIVE_MS` (20 min, against a ~1h Okta token) it opens the persistent
+  profile and LOADS RC. Loading the app is what makes this a renewal rather than an
+  observation — RC's own JS silently refreshes the token, so polling an API with the
+  token would prove liveness while doing nothing to extend it.
+- Liveness is an authenticated `load/shoppingcart` call, **not** the presence of a token:
+  a stale token sits in localStorage long after it stops working. Same family as a Twilio
+  2xx that was never delivered.
+- **Three outcomes, on purpose.** 401 = dead. 403 (RC's edge refusing us, as it did for
+  ~12h on 08-06) and a network error are **inconclusive and must never be actioned as
+  dead** — destroying a good session over one costs a human sign-in that may now face a
+  CAPTCHA.
+- It **never types a password**. The only way in is `--login`, with a human present. That
+  removes the pattern we believe provoked the challenge, and means the file needs no
+  credentials at all.
+
+**`rc-probe.mjs` detects the challenge** and waits up to 5 minutes for a human (headful
+only) instead of burning three retries on an unclickable button.
+
+## Day-before opt-in holds — the RC 8am flow (migrations 043 + 044, 2026-08-07)
+
+**The idea (owner's).** RC locks a cancelled site until a release time, and that time is
+08:00 in **289 of 292 real locks** measured across 70 facilities — 99%. So the night
+before, we already know which sites open and when. Rather than polling all day and racing
+to cart whatever appears, the coming-soon alert asks *do you want this one?* — and only a
+tap authorises a cart.
+
+Why this beats carting on detection, beyond the saved polling:
+- **We only ever hold inventory somebody asked for.** A bot that grabs speculatively takes
+  sites off the market from other campers; this one cannot.
+- **Consent removes the race.** The ~2.5s release-and-recapture window exists to hand a
+  *surprise* hold to someone who didn't ask. Here they asked, so it can sit in the bot's
+  cart until they claim it.
+- **It fails safe.** No opt-in means no cart — exactly today's behaviour.
+
+### The state machine (`src/lib/rc-holds.ts`)
+
+`offered → requested → carted → claiming → released → claimed`, with dead ends at
+`expired` / `failed`. Three callers touch these rows and must not disagree about what a
+status means: the poller (offers), the `/w/<token>` action (requests), the bot (carts,
+releases).
+
+- **Only `requested` authorises a cart.** An `offered` row is a question nobody answered.
+  `dueHolds` filters on `status = 'requested'` alone, and `worker/rc-holds.test.mts` fails
+  if that ever widens.
+- **A row is created at ALERT time, not tap time**, so the tap carries no booking data.
+  Encoding unit/dates/release into a token would put details in a URL that outlives them
+  and cannot be corrected if the grid changes before 8am.
+- **Re-alerting must not walk a `requested` row back to `offered`** — the poller re-offers
+  on every coming-soon alert, and resetting would silently discard a tap.
+- **`release_at` is RC's own zone-less Pacific wall-clock string**, compared against
+  Pacific wall-clock in SQL rather than parsed into a Date. Same reasoning as
+  `formatStayDates`: `new Date('2026-08-07T08:00:00')` shifts the hour for anyone not on
+  Pacific, and the bot runs wherever it runs.
+- **`markCarted` returns the TRANSITION**, so the "it's held" alert fires exactly once —
+  the runner re-reads its feed every pass. Same lesson as migration 039.
+- **A `carted` hold nobody claimed is surfaced for RELEASE, not left sitting.** Holding a
+  site the user never came for is the inventory-grabbing this design exists to prevent, so
+  the release is the job, not a tidy-up task.
+
+### The two halves
+
+**Server:** `GET/POST /api/auto-cart/rc-holds` — same master-token model as the rec.gov
+roster, because the bot holds no database credentials. One call returns `claim` (urgent —
+someone is watching a spinner), `cart` (due now) and `release` (nobody came), plus
+`pollMs`, which drops to 1s while anything is claimable: on the lazy 20s cadence the
+exposure window would be the poll interval rather than the ~2.5s the release probe
+measured. `ok: true` **must** carry the cart AND entry keys — without the entry key the
+only way to release is emptying the whole cart, taking every other user's hold with it.
+
+**Bot:** `scripts/auto-cart-bot/rc-hold-runner.mjs` on the mini-PC. **It never logs in** —
+it drives the profile `rc-keepwarm.mjs` keeps alive, and says so and skips if that session
+is dead. Order within a pass is deliberate: **claims first**, then stale releases, then
+carts. If the browser dies mid-pass the thing we most want already done is *letting go* —
+a hold kept by accident denies the site to everyone, including the person who asked.
+
+**Claim surface:** `/claim/<id>?t=<manage token>` + `/api/rc-holds/claim`. Authorised by
+hold id **plus** the watch's manage token, so the user can act from a phone at 8am without
+signing in; `noindex, nocache` because the URL contains that token. It polls at 600ms while
+`claiming` and redirects the moment the bot reports `released`.
+
+**Entitlement is checked TWICE** — when the offer is built and again when the `hold`
+action fires. Not a duplicate: an email link is durable, so a lapsed Auto-Cart subscriber
+can tap one sent while they were paying. Entitlement is checked where it would be spent.
+
+### Where the offer appears — and where it deliberately does not
+
+Email carries the button. **Push carries it too** (added 2026-08-07 after the owner noticed
+it missing): push has no carrier filtering, and it is the notification most likely to be
+SEEN, because these alerts land overnight for an 8am release. The push `data.url` prefers
+`holdUrl` over `bookingUrl` — when there is an action of ours to take, deep-linking to the
+reservation provider sends the tap to the one place that cannot do it.
+
+**SMS carries no link, and that is measured, not caution** — a `camphawk.app` link is
+filtered (30007, 10 for 10). The text names the release time and points at email or the
+app. It previously said only "we'll text when it's bookable", which promised *less* than
+what was on offer.
+
+### `findRCHeldUnit` takes a flex spec — six of nine live watches needed it
+
+The held check ran on `max(min_nights, whole window)`, so a flexible watch — whose window
+is its entire search range — was asked "is one unit holding all NINE nights?", which never
+happens. **Six of the nine live RC watches were flexible on 2026-08-07**, so two thirds of
+them could never receive a coming-soon alert, let alone an 8am offer. It failed silently:
+the wrong answer is "no held unit", which is also the right answer almost every cycle.
+
+Honouring flex costs no upstream calls here, unlike `probeFlexStay` — RC's grid is a full
+grid, so the run search is in-memory over the one fetch. `heldStayRun` is exported and pure
+(`worker/rc-held-flex.test.mts`): flexible reports the **matched run**, never every held
+night in the window, and `availableAt` is the **latest** lock across the **claimed** nights
+only — the earliest would send the user while part of the stay is still locked, and taking
+the max over the whole window would make them wait hours for a stay free at 08:00.
+
+### Readout
+
+`NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts [--hours=48]` — one row per
+hold with each transition timestamped. The chain crosses four processes and no single log
+shows all of them. **`requested` with the release time already past is the one
+unambiguously broken state** (the runner is down or cannot reach RC); `offered` is the
+opt-in working, not a fault.
+
 ## Auto-cart (rec.gov only) — the interesting part
 
 Goal: when a watched rec.gov site opens for an enrolled user, add it to their cart
@@ -2951,6 +3197,43 @@ fourth surface now.
   than the race it prevents. The broker waits for it (a person is sitting in front of a
   page); `releaseProfileLockIfMine` exists so the error path can't strip another
   process's lock.
+  **Extended 2026-08-07 to the RC pair.** `rc-keepwarm.mjs` and `rc-hold-runner.mjs` are
+  two more processes computing one path (`.rc-bot-profile`), and on THAT profile the thing
+  at risk is the RC session — the one thing we cannot rebuild without a human. The
+  priority is deliberate: the **runner waits 60s** (it is carting at an exact minute, or
+  releasing for someone watching a spinner) while the **keep-warm waits 15s and then
+  SKIPS** — the token lives ~1h, there is another pass in 20 minutes, and a runner pass
+  loads RC itself, so a skipped pass is one the runner renewed. A busy profile returns a
+  distinct `BUSY` value, never `false` and never a throw, so it can never be read as a
+  dead session and send the owner off to sign in over a healthy one.
+  `renewProfileLock` was added because staleness cuts both ways: `--login` waits up to ten
+  minutes for a human to type a password and solve a CAPTCHA, landing exactly on the 10-min
+  boundary — and a stale lock reads as **free**. It renews only a lock we hold.
+  **A hard kill leaves the file behind**, so `update.bat` and `start-all.bat` both delete
+  the lock files before relaunching: nothing is running at either point, and without it an
+  update at 07:55 would silently cost the 8am cart. Covered by
+  `worker/profile-lock.test.mts`.
+- `load-env.mjs` — **one loader for every process on the box** (2026-08-07). It was
+  copy-pasted privately inside `bot.mjs` and `broker.mjs`, so each NEW process started life
+  unable to read `.env`; `rc-hold-runner.mjs` shipped that way and answered `feed 401`,
+  indistinguishable from a wrong token, and `start-all.bat` passes no environment of its
+  own so it would have failed that way every night. **An already-exported variable wins**
+  over the file, deliberately, so a one-off override works — which is itself a trap, since
+  a placeholder left in a PowerShell session silently beats a perfect `.env`.
+  `envSource()` reports shell-vs-file and the runner prints it on any 401;
+  `looksLikePlaceholder()` refuses to start on brackets or whitespace (narrow on purpose —
+  a broad heuristic would eventually reject a real credential at 8am).
+  `worker/bot-env.test.mts` parses `start-all.bat` and asserts every process it launches
+  calls the loader.
+- `exit-clean.mjs` — `exitWhenDrained()`. `process.exit()` tears the loop down
+  immediately, and with an async handle mid-close (undici keeps sockets alive after a
+  fetch resolves) **libuv on Windows asserts**: `!(handle->flags & UV_HANDLE_CLOSING)`,
+  `async.c:94`. A run that fully succeeded ends in a crash message you cannot tell from
+  the work failing. It sets the exit code and lets the loop drain (~380ms measured), with
+  an unref'd hard exit only for something holding a socket open forever. **It does not
+  stop execution the way `process.exit` did** — so every caller must be an `else` branch,
+  or a `--once` run falls straight through into the forever loop. `worker/rc-runner-cli.test.mts`
+  executes the CLI to catch exactly that.
 - Enrollment/connection state: `users.autocart_enabled` + `users.autocart_connected`.
   The Watches toggle shows "paused — reconnect" when enabled but not connected.
 
@@ -3207,7 +3490,15 @@ after a crash); the RIDB catalog sync's `RIDB_CONCURRENCY` (8, was a hard-coded 
 `RIDB_ATTEMPTS` (4) and `RIDB_BACKOFF_MS` (2000); `AUTOCART_POLL_INTERVAL_MS` (6s — the
 RECONCILER cadence only; auto-cart detection lives in the main 15s cycle).
 The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
-`BROKER_PORT`, `POLL_MS`).
+`BROKER_PORT`, `POLL_MS`) — **read by every process on the box via `load-env.mjs`**, and
+an already-exported shell variable beats it (see the bot section; that override is
+correct and is also how a pasted placeholder 401s against a perfect file).
+The RC pair adds optional, non-secret tunables, all with working defaults so `.env` needs
+none of them: `RC_PROFILE_DIR` (`.rc-bot-profile`), `RC_KEEPALIVE_MS` (20 min),
+`RC_HOLD_POLL_MS` (20s), `RC_PROFILE_LOCK_WAIT_MS` (60s), `RC_HEADLESS`
+(**leave it false** — RC/Okta fingerprint headless Chromium), and `CAMPHAWK_URL`
+(`https://camphawk.app`). Neither RC process needs a credential of its own: the runner
+uses the same `AUTOCART_TOKEN`, and the keep-warm never types a password at all.
 Admin cost tracking (optional, non-secret, on Vercel — in-code defaults, override only to
 tune): `COST_PER_SMS_USD` (default 0.0115), `COST_PER_EMAIL_USD` (0), `COST_PER_PUSH_USD`
 (0) — the per-unit usage rates the Costs tab multiplies against this-month send counts.
@@ -3260,3 +3551,15 @@ SETUP.md); the Fly worker deploys via the **`worker-deploy.yml` GitHub Action** 
 restarts the machine and verifies the heartbeat, because a by-hand `flyctl` deploy leaves
 it stopped and alerting silently dead (see the autostop note above); the mini-PC bot
 updates via `git push` + `update.bat` on the box.
+
+**The mini-PC now runs FIVE processes**, all launched by `mini-pc/start-all.bat`: the
+Cloudflare tunnel, the rec.gov bot, the sign-in broker, `rc-keepwarm.mjs` and
+`rc-hold-runner.mjs`. Two RC-specific helpers exist because a fresh PowerShell window
+opens in `C:\Users\<you>`, where `node rc-keepwarm.mjs` fails with `MODULE_NOT_FOUND` —
+which reads like a broken install rather than a wrong directory, and cost three rounds on
+2026-08-07. Both `cd` themselves:
+- **`mini-pc/rc-login.bat`** — the one human step. Closes anything holding the RC profile,
+  opens RC to sign in ("Keep me signed in"), relaunches both processes on success.
+- **`mini-pc/rc-check.bat`** — "is RC auto-cart working?", answering the feed and the RC
+  session **separately**, because they fail independently: the feed can be fine while the
+  session is dead, and assuming one from the other is how a hold sits unclaimed at 8am.

@@ -601,6 +601,29 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
 
 ## Open / next session
 
+### FIRST THING: did the 8am RC hold cart? (set up 2026-08-07 night)
+The day-before opt-in flow is live end to end and one real hold is queued:
+**Leo Carrillo — Canyon, unit 42558 `#L108`, arrival 2026-09-04, releases
+2026-08-07T08:00 PT**, status `requested` (tapped 06:00:53Z). Everything upstream is
+verified — poller offered it, all three channels alerted, the mini-PC runner reports
+`token accepted`, and the RC session was signed in by hand at 05:54:58Z with the
+keep-warm loop holding it.
+
+```
+NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
+```
+- `carted`/`claiming`/`released`/`claimed` → **it worked**; say which and how far it got.
+- **`requested` with the release time already past → the ONE broken state.** The runner
+  is down or could not reach RC. It cannot be fixed from a web session — the bot is on
+  the owner's mini-PC. Have them run `mini-pc\rc-check.bat`.
+- `offered` → nobody tapped. Not a fault.
+
+A Routine (`trig_01KvxPSzmrwKHZ8CY3tDgbnj`) fires daily at 08:15 PT and reports this;
+delete it once the flow has proven itself over a few runs.
+**Docs are current as of this session** — `docs/CONTEXT.md` and `docs/SETUP.md` were both
+brought up to date with the hold flow, the reCAPTCHA/keep-warm design, the mini-PC's five
+processes, migrations 039/040/043/044, and the corrected A2P facts.
+
 ### iOS is SUBMITTED (2026-07-30) — build 5, awaiting review
 Release is set to **manual**, so approval does NOT put it live; you flip it. Privacy
 label published, age rating 4+, content rights yes, **availability United States only**,
