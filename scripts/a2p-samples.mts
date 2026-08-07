@@ -9,8 +9,9 @@
  * The registration had not broken; **the code drifted away from it**, and nothing could
  * notice. This makes the drift visible: run it, diff against the campaign, see it.
  *
- *   npx tsx scripts/a2p-samples.mts            # the samples, ready to paste
- *   npx tsx scripts/a2p-samples.mts --check    # exit 1 if any body is over one segment
+ *   npx tsx scripts/a2p-samples.mts             # what we send today, ready to paste
+ *   npx tsx scripts/a2p-samples.mts --proposed  # + the camphawk.app shapes to register
+ *   npx tsx scripts/a2p-samples.mts --check     # exit 1 if any body is over one segment
  *
  * No credentials and no network: the bodies are built by the same pure `smsBody()` the
  * dispatcher uses. It CANNOT read the live campaign — Twilio's keys are Vercel
@@ -18,7 +19,7 @@
  * registered is a human step in the Console.
  */
 import { smsBody, type SmsBodyInput } from '../src/lib/notifications/sms-body';
-import { SMS_ONE_SEGMENT } from '../src/lib/notifications/sms-fit';
+import { fitOneSegment, SMS_ONE_SEGMENT } from '../src/lib/notifications/sms-fit';
 
 /** The same formatter the dispatcher injects (kept local so this needs no server deps). */
 function formatReleaseTime(iso?: string | null, short = false): string {
@@ -130,7 +131,41 @@ const CASES: Array<{ label: string; note?: string; input: SmsBodyInput }> = [
   },
 ];
 
+/**
+ * PROPOSED bodies — what we want to send ONCE camphawk.app is in the registered samples.
+ *
+ * Not what we send today, and deliberately not wired into `smsBody`. The order is the
+ * whole lesson of 2026-08-05: **register first, then send.** Sending a shape that is not
+ * in the samples is exactly how every alert got filtered while the campaign sat healthy
+ * and Approved.
+ *
+ * The two messages that gain something are the ones where the next action is on OUR site
+ * and the user is racing a clock. Today they read "open your email or the app", which is
+ * an extra hop at the precise moment speed matters — the site is held, or about to be.
+ *
+ * NOTE ON LENGTH: no URL shortening is needed. Measured with the real `fitOneSegment`,
+ * the live 74-character `/claim/<uuid>?t=<token>` link still lands at 155 characters —
+ * one segment. Shortening would buy back the campground name that gets trimmed, which is
+ * cosmetic. It is NOT a precondition, and reaching for a short opaque path would edge
+ * back toward `/b/<token>`, whose REDIRECT behaviour (T-Mobile CoC §4.8) is the
+ * documented suspicion. `/claim/...` renders a real page; it does not forward.
+ */
+const CLAIM_URL = 'https://camphawk.app/claim/fb538861-3c2f-4b1e-9a77-2e0d5c8a91b4?t=aB3xY9zQ';
+const PROPOSED: Array<{ label: string; note?: string; build: (n: string) => string }> = [
+  {
+    label: 'RC hold secured — claim link (PROPOSED)',
+    note: 'Replaces "open your email or the app to claim it".',
+    build: (n) => `CampHawk: ${n} Site #L108 is HELD for you. Claim: ${CLAIM_URL}`,
+  },
+  {
+    label: 'Coming soon, hold offered — one-tap opt in (PROPOSED)',
+    note: 'Replaces "open your email or the app to have us hold it".',
+    build: (n) => `CampHawk: ${n} Site #L108 opens Aug 7, 8:00 AM PT. Have us hold it: ${CLAIM_URL}`,
+  },
+];
+
 const check = process.argv.includes('--check');
+const proposed = process.argv.includes('--proposed');
 let over = 0;
 const domains = new Set<string>();
 
@@ -147,6 +182,21 @@ for (const c of CASES) {
   }
 }
 
+if (proposed) {
+  console.log('\n\n════ PROPOSED — register these BEFORE sending them ════');
+  for (const p of PROPOSED) {
+    const body = fitOneSegment(p.build, LONGEST_REAL_NAME);
+    const segs = body.length <= SMS_ONE_SEGMENT ? 1 : Math.ceil(body.length / 153);
+    console.log(`\n── ${p.label}`);
+    if (p.note) console.log(`   ${p.note}`);
+    console.log(`   ${body.length} chars, ${segs} segment${segs === 1 ? '' : 's'}  (worst-case campground name)`);
+    console.log(`\n${body}\n`);
+    if (segs > 1) over++;
+  }
+  console.log('These are NOT sent today. sendSms throws on a camphawk.app link, and that');
+  console.log('guard stays until the campaign samples above are updated and re-approved.');
+}
+
 console.log('\n=== Link domains that appear in live SMS ===');
 for (const d of [...domains].sort()) console.log(`  ${d}`);
 console.log(
@@ -155,7 +205,7 @@ console.log(
   'filtered, and the campaign looks healthy the entire time.',
 );
 if (domains.has('camphawk.app')) {
-  console.error('\n!! camphawk.app is in an SMS body. sendSms throws on our own domain — see sms.ts.');
+  console.error('\n!! camphawk.app is in a LIVE SMS body. sendSms throws on our own domain — see sms.ts.');
   process.exit(1);
 }
 
