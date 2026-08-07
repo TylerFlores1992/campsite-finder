@@ -2570,6 +2570,43 @@ Three options survive, ranked by how I'd pursue them (deep-dive 2026-08-05):
    - Honest limit (tap variant): needs the user to TAP within the ~15-min hold. It is NOT
      the asleep-at-2am hold. But detection→alert is seconds and texts now arrive, so
      "tap the text, it's in your cart, pay" is the realistic differentiator.
+
+### Why a WEB PAGE can never do the recapture — it is the sandbox, not the device
+
+Asked and re-derived more than once, so: **the blocker is same-origin policy, and it
+applies on desktop exactly as much as on mobile.** Carting in the user's own RC session
+means running code inside `reservecalifornia.com`'s page context. Our claim page is on
+camphawk.app, so it cannot read RC's storage, cannot borrow its token, and cannot make an
+authenticated call on the user's behalf. No amount of front-end work changes that; it is
+the rule the browser exists to enforce.
+
+**And RC is harder than the usual case.** From `extension/rc-inject.js`: RC's auth token is
+stored **AES-encrypted by Okta and only decrypted in the page's JS memory**, so even a
+normal isolated-world content script cannot read it. The extension has to inject a
+**MAIN-world** script at `document_start` that wraps `XHR`/`fetch` and catches the live
+`accesstoken` header off RC's own API calls as they pass. That needs `host_permissions` on
+reservecalifornia.com plus main-world injection — the extension is an **exemption** from
+the sandbox, not a trick within it.
+
+So the ranking is about who holds that exemption, not about screen size:
+- **Desktop browser + our extension — works today.** It has the exemption.
+- **Any browser without the extension (desktop or mobile) — cannot, ever.** The claim page
+  therefore deep-links to the PARK'S booking page and the user books by hand. That is why
+  `/api/rc-holds/claim` returns `bookingUrl`; sending them to RC's homepage instead wastes
+  the entire ~2.5s window (fixed 2026-08-07 — it had been doing exactly that).
+- **Mobile browsers have no escape hatch.** Chrome on Android and iOS support no
+  extensions at all. **Safari on iOS does** support web extensions (iOS 15+), so this is
+  not literally impossible — but it means a second extension, a second store review, and a
+  user installing and enabling it *before* their 8am hold. Do not plan around it.
+- **The native app CAN, and it is strictly better.** A Capacitor `WKWebView`/Android
+  `WebView` is ours: `evaluateJavaScript` into a page we loaded is functionally the same
+  privilege as main-world injection, with no sandbox to escape because the app IS the
+  browser. And it removes the exposure window entirely — the bot never releases into open
+  air, because the user's own session does the carting.
+
+**So "mobile can't auto-recapture" is a sequencing statement, not an architectural one.**
+It is blocked on the app being live, a persisted in-app RC login (separate from the
+CampHawk account — a one-time sign-in inside the webview), and cart-on-foreground.
 2. **Full session clone (server holds, phone resumes) — MUCH more viable than first
    assessed. Tested 2026-08-05:**
    - **Cookies are NOT the binding.** Deleted `AWSALBAPP-0..3` on
