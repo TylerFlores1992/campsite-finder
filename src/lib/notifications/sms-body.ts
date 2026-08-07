@@ -20,9 +20,12 @@
 
 import { fitOneSegment } from '@/lib/notifications/sms-fit';
 import { formatStayDates } from '@/lib/notifications/dates';
+import type { NotificationPayload } from '@/lib/notifications';
 
 export interface SmsBodyInput {
-  kind?: 'available' | 'coming_soon' | 'carted' | 'still_open';
+  /** Derived from the payload rather than re-typed: a second copy of this union drifts,
+   *  and the compiler only catches it when a new kind happens to reach here. */
+  kind?: NotificationPayload['kind'];
   campgroundName: string;
   campsiteName?: string | null;
   availableDates: string[];
@@ -63,6 +66,17 @@ export function smsBody(p: SmsBodyInput): string {
     const when = p.formatReleaseTime(p.availableAt, true);
     return fitOneSegment(
       (n) => `CampHawk: ${n}${site} opens ${when}. Open your email or the app to have us hold it.`,
+      name,
+    );
+  }
+
+  if (p.kind === 'hold_missed') {
+    // Says the thing plainly and then points at what still works. "Sorry" without a next
+    // step wastes the one segment we get; the site really may still be free, and the
+    // provider link is the same one an ordinary alert would have carried.
+    const bookTxt = p.bookingUrl.split('#')[0];
+    return fitOneSegment(
+      (n) => `CampHawk: we could NOT hold ${n}${site} — our bot missed the release. It may still be free: ${bookTxt}`,
       name,
     );
   }

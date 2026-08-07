@@ -49,8 +49,14 @@ export interface NotificationPayload {
    *  'still_open' = the ONE follow-up, six hours after an alert, for a site that never
    *  closed. Same opening, not a new one — and it must SAY so. Worded like a fresh
    *  alert it is indistinguishable from the hourly-repeat bug it replaces, and the
-   *  user cannot tell "it opened again" from "it never closed". */
-  kind?: 'available' | 'coming_soon' | 'carted' | 'still_open';
+   *  user cannot tell "it opened again" from "it never closed".
+   *  'hold_missed' = we promised to grab a site at its release time and did not. Its own
+   *  kind because the only thing worse than missing it is saying nothing: the user tapped
+   *  "hold it for me" and was told they would get a text when it was in the cart. It must
+   *  not be dressed up as an ordinary opening — that would quietly convert a broken
+   *  promise into a routine alert and hide a real outage from the person best placed to
+   *  report it. */
+  kind?: 'available' | 'coming_soon' | 'carted' | 'still_open' | 'hold_missed';
   /** For 'coming_soon': ISO-local release time (e.g. "2026-07-18T08:00:00"). */
   availableAt?: string | null;
   /** The one-tap CampHawk URL for this alert: "hold it for me" on a 'coming_soon',
@@ -194,7 +200,11 @@ async function dispatchEmail(payload: NotificationPayload, links: ActionLinks): 
   try {
     await sendEmail({
       to: email,
-      subject: carted && payload.holdUrl
+      subject: payload.kind === 'hold_missed'
+        // Says what happened in the subject. Burying "we missed it" inside a mail titled
+        // like an opening is how a broken promise becomes invisible.
+        ? `⚠️ We couldn't hold ${payload.campgroundName}`
+        : carted && payload.holdUrl
         ? `🔒 Held for you: ${payload.campgroundName} — claim it`
         : carted
         ? `✅ In your cart: ${payload.campgroundName} — check out now`
@@ -304,6 +314,11 @@ async function dispatchPush(payload: NotificationPayload): Promise<void> {
   } else if (payload.kind === 'carted') {
     title = `✅ In your cart: ${name}`;
     body = `${name}${site} is in your cart — check out now (held ~15 min).`;
+  } else if (payload.kind === 'hold_missed') {
+    // Deliberately NOT dressed up as an opening. The user is owed the truth about a
+    // promise we made, and the title is what they see on a lock screen.
+    title = `⚠️ We couldn't hold ${name}`;
+    body = `Our bot missed the release for${site || ` ${name}`}. It may still be free — tap to check.`;
   } else if (payload.kind === 'coming_soon' && payload.holdUrl) {
     // THE OFFER BELONGS HERE, not only in the email. SMS genuinely cannot carry it — a
     // camphawk.app link is filtered (30007, 10 for 10) — but push has no such limit, and
@@ -375,6 +390,35 @@ function buildEmailHtml(payload: NotificationPayload): string {
   const provider = providerLabel(payload.bookingUrl);
   const siteSuffix = payload.campsiteName ? ` — Site ${payload.campsiteName}` : '';
   const comingSoon = payload.kind === 'coming_soon';
+
+  // A promise we did not keep. Leads with that, in our own words, before anything else —
+  // the user tapped "hold it for me" and was told they would get a text when it was in
+  // the cart. It then does the useful thing: the site really may still be free, and this
+  // is the same link an ordinary alert would have carried.
+  if (payload.kind === 'hold_missed') {
+    return `
+<!DOCTYPE html>
+<html>
+<body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#1a1a1a">
+  <h2 style="color:#b45309;margin-bottom:4px">We couldn&rsquo;t hold it — sorry</h2>
+  <p style="margin-top:0;color:#555">You asked us to grab this one the moment it opened, and our booking bot didn&rsquo;t manage it. That&rsquo;s on us, not on you or the campground.</p>
+
+  <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:20px;margin:20px 0">
+    <h3 style="margin:0 0 8px">${payload.campgroundName}${siteSuffix}</h3>
+    <p style="margin:0;color:#555"><strong>${payload.startDate}</strong> &rarr; <strong>${payload.endDate}</strong></p>
+  </div>
+
+  <p style="color:#555">Cancelled sites often sit for a while after they release, so it may well still be there. Worth a look right now:</p>
+
+  <a href="${payload.bookingUrl}"
+     style="display:inline-block;background:#d97706;color:white;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:8px">
+    Check ${provider} &rarr;
+  </a>
+
+  <p style="margin-top:16px;font-size:13px;color:#666">Your watch is still running — we&rsquo;ll keep alerting you on this campground as normal.</p>
+</body>
+</html>`;
+  }
 
   // Auto-cart success: we already added this exact site to the user's rec.gov
   // cart — the only thing left is to check out before the ~15-minute hold lapses.

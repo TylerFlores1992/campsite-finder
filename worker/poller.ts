@@ -56,6 +56,7 @@ import { actionUrlFor } from '../src/lib/notifications/actions';
 import { alreadyCartedForWatch } from './carted-history';
 import { withSyncClaim } from './sync-claim';
 import { expireFinishedWatches, EXPIRE_INTERVAL_MS } from './expire-watches';
+import { sweepMissedHolds, EXPIRE_HOLDS_INTERVAL_MS } from './expire-holds';
 import { findQualifyingRun, flexCandidateStays, isFlexible, type FlexDays, type FlexSpec } from '../src/lib/availability/flex';
 import { markAlive, msSinceAlive, msSinceExternalFetchOk, externalFetchWedged } from './liveness';
 
@@ -1394,6 +1395,24 @@ async function main() {
   };
   expireSweep();
   setInterval(expireSweep, EXPIRE_INTERVAL_MS);
+
+  // Tell a user when we promised to hold a site and did not. This CANNOT live in the
+  // hold feed, which is where the rest of the hold housekeeping runs: that feed only
+  // executes when the mini-PC runner polls it, so a runner that is down never triggers
+  // the sweep that would notice the runner is down. It belongs here, on a machine with
+  // no dependency on that box. See worker/expire-holds.ts.
+  const holdSweep = async () => {
+    try {
+      await withSyncClaim('expire-holds', async () => {
+        const missed = await sweepMissedHolds();
+        if (missed > 0) console.error(`[poller] ${missed} RC hold(s) missed their release — users notified`);
+      });
+    } catch (err) {
+      console.error('[poller] hold sweep failed:', (err as Error).message);
+    }
+  };
+  holdSweep();
+  setInterval(holdSweep, EXPIRE_HOLDS_INTERVAL_MS);
 
   // Feature E probe roster: sample high-demand campgrounds hourly so the
   // cancellation-likelihood signal covers popular sites nobody is watching.
