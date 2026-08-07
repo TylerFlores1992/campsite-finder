@@ -462,6 +462,13 @@ function buildEmailHtml(payload: NotificationPayload): string {
     </p>
   </div>
 
+  ${/* NO UPSELL IN THE `else` BRANCH, deliberately. holdUrl is absent for several
+       reasons — not on the Auto-Cart plan, no specific unit, or the offer simply
+       failed to record — and this template cannot tell them apart. Keying a "upgrade
+       to hold it" pitch on a missing link would show it to paying Auto-Cart
+       subscribers whenever an offer hiccuped, which is the same failure as telling a
+       subscriber to subscribe: `unknown` must mean "don't nag", never "not
+       subscribed". The upgrade path lives in Settings, where the answer is known. */ ''}
   ${payload.holdUrl ? `
   <p style="color:#555">Cancelled sites get snapped up within seconds of release. We can be waiting for this one — tap below and CampHawk will put it in a cart the moment it opens, then hand it to you.</p>
 

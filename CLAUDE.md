@@ -108,10 +108,13 @@ minute".
   literally; the webhook NEVER writes grandfathered, so renewals can't strip it.
   Tier is derived from the Stripe price id on every webhook event (unknown → 'base':
   fails loud as "paying but treated as base", never silent free premium).
-- **One definition, four enforcers**: `lib/auth.hasAutocartEntitlement`, the toggle
+- **One definition, SIX enforcers**: `lib/auth.hasAutocartEntitlement`, the toggle
   API (403 on enable, off always allowed), the bot roster feed (keepalive slots are
-  the scarce resource), and the poller's `isAutocartLane` (lapsed premium fails open
-  to normal alerts). UI: `Pricing.tsx` two-plan cards (web only), `AutoCartSettings`
+  the scarce resource), the poller's `isAutocartLane` (lapsed premium fails open
+  to normal alerts), and — for RC day-before holds (2026-08-07) — the poller's offer
+  (no entitlement, no "Hold it for me" button) **and** the `hold` action itself. The
+  action check is not a duplicate: an email link is durable, so a lapsed subscriber can
+  tap one sent while they were paying. Entitlement is checked where it would be spent. UI: `Pricing.tsx` two-plan cards (web only), `AutoCartSettings`
   upgrade gate — two-step confirm for live-sub upgrades via **`/api/stripe/plan`**
   (in-place price swap, prorated — a second checkout would double-bill), checkout for
   non-subscribers. Native shows no prices anywhere (store rule).

@@ -185,6 +185,20 @@ export async function performAction(token: string): Promise<ActionResult> {
     // flips it to `requested`. A token that carried unit/dates/release would outlive
     // them and could not be corrected if the grid changed before 8am.
     case 'hold': {
+      // SECOND ENFORCER, not a duplicate. The offer is gated when the alert is built,
+      // but an email link is durable: a lapsed Auto-Cart subscriber can tap one sent
+      // while they were paying, weeks later. Entitlement is checked at the moment it
+      // would be spent, using the same lib/auth definition as everywhere else.
+      const [owner] = await query<{ user_id: string }>(
+        `SELECT user_id FROM watches WHERE id = $1`, [watchId]
+      );
+      const { hasAutocartEntitlement } = await import('@/lib/auth');
+      if (!owner || !(await hasAutocartEntitlement(owner.user_id))) {
+        return {
+          ok: false,
+          message: 'Holding a site at release time is part of the Auto-Cart plan. Your alerts carry on as normal — you can still book it yourself the moment it opens.',
+        };
+      }
       const { requestHold } = await import('@/lib/rc-holds');
       const req = siteId ? await requestHold(watchId, siteId) : null;
       if (!req) {

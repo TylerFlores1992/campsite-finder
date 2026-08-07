@@ -51,6 +51,7 @@ import { bookingLink } from '../src/lib/booking-url';
 import { runDetectionCanary, runDeliveryCanary } from './canary';
 import { claimNotification } from './claim';
 import { offerHold } from '../src/lib/rc-holds';
+import { hasAutocartEntitlement } from '../src/lib/auth';
 import { actionUrlFor } from '../src/lib/notifications/actions';
 import { alreadyCartedForWatch } from './carted-history';
 import { withSyncClaim } from './sync-claim';
@@ -1054,7 +1055,13 @@ async function cycle(): Promise<void> {
       // hand the alert a "hold it for me" link; only a tap authorises the bot to cart,
       // so we never take a site off the market that nobody asked for.
       let holdUrl: string | null = null;
-      if (held.unitId != null) {
+      // Gated on the Auto-Cart plan, the SAME definition every other enforcer uses
+      // (lib/auth.hasAutocartEntitlement — active/trialing autocart or grandfathered,
+      // or is_beta). Holding a site consumes the one bot account's capacity, so it is
+      // plan work; and offering a button that then refuses on tap is worse than not
+      // offering it. Checked here AND in the action, because a link outlives the alert.
+      const mayHold = held.unitId != null && (await hasAutocartEntitlement(w.user_id).catch(() => false));
+      if (mayHold && held.unitId != null) {
         const offered = await offerHold({
           watchId: w.id,
           userId: w.user_id,
