@@ -56,10 +56,25 @@ the API are a **Private Beta**, "only available to participants in this beta pro
 with no self-serve enrollment. The edit modal, where available, covers description,
 samples (up to five) and the opt-in description, but **not the use case**.
 
-**If there is no Edit link — and expect that — it is a Twilio Support ticket.** Draft
-below. Support is also the only documented way to learn whether a 30007 was Twilio's
-filter or the carrier's, so both questions can go in one ticket, and the answer to the
-second may make the first unnecessary.
+**If there is no Edit link — confirmed absent 2026-08-07 — it is a Twilio Support
+ticket.** Draft below. Support is also the only documented way to learn whether a 30007
+was Twilio's filter or the carrier's, so both questions go in one ticket, and the answer
+to the second may make the first unnecessary.
+
+**Filing it, on this account's plan.** Support Center says web support is included with
+the **Developer** plan (~1 business day), but the *Support tickets* card offers only
+"View ticket history" — there is **no create button**. Chat and phone are paid plans only.
+So either:
+1. `https://www.twilio.com/console/support/tickets/create` directly — the form may work
+   even though the card does not link to it; or
+2. **Ask Twilio Assistant**, which is how ticket creation is fronted on this plan, and
+   **explicitly ask it to open a ticket / escalate to a human**. It is triage, not a
+   replacement, and it will close the conversation if you only describe a symptom.
+
+Lead with the ASK, not the error. Opening with the 30007s invites the generic "make your
+samples match your traffic" article — the thing we already know — and never produces a
+ticket. Open with "I need a ticket opened: I cannot edit an approved campaign's samples
+and there is no Edit Campaign link."
 
 ### Support ticket draft
 
