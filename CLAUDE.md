@@ -179,10 +179,17 @@ events. Retrying harder can never work.
   on a re-run is proof the hold survived, not a failure.
 - **The cart KEY cannot hand it over.** A second session on the SAME account (different
   token, fresh profile) reads that cart as 0 entries — it is bound to the SESSION.
-- **Therefore carting is currently HARMFUL**: the hold locks the unit, so it takes the
-  site off the market and denies it to the person we alerted. **Stays OFF until a
-  hand-off is built.** Two candidates (move the session vs. release-and-recapture) with
-  their trade-offs in `docs/CONTEXT.md` → "SETTLED 2026-08-06".
+- **Therefore carting is HARMFUL without a hand-off**: the hold locks the unit, so it
+  takes the site off the market and denies it to the person we alerted.
+- **PATH B IS VALIDATED (2026-08-07)** — bot holds, releases on demand, the user's OWN
+  session takes it. `remove/cartentry` returned in **97ms** and a different session
+  re-carted **2544ms** later, confirmed by reading that session's cart back. **No cooldown
+  on a released unit.** ~2.5s is the whole exposure window, and it is dominated by the two
+  precart round trips, not the release. No credential moves and the bot needs ONE account,
+  not one per user — which is why this beats the session-transfer path.
+- **What remains before it can ship:** the RC session keep-warm (see the reCAPTCHA section
+  above — it is the foundation, not an optimisation), a release API, and the recapture in
+  the extension / app webview.
 - **The precart payload is solved** — `{extraId, extraValue}`, lowerCamel; see the same
   doc. That contract is reusable by whichever hand-off we pick.
 

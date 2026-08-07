@@ -2597,6 +2597,31 @@ Carting without a working hand-off takes the site off the market and then denies
 the person we just alerted — strictly worse than not carting. **RC auto-cart stays OFF
 until a hand-off exists and is tested.**
 
+### PATH B IS VALIDATED (2026-08-07) — release frees the unit immediately
+
+`rc-probe.mjs --cart --release --headful`, measured end to end:
+```
+released entry 12d9b756-… → HTTP 200 (97ms)      [remove/cartentry, bot's session]
+user session re-cart      → SUCCESS after 2544ms [load+submit precart, OTHER session]
+user's cart now           → 1 entry, ours present: YES
+```
+- **There is no cooldown on a released unit.** That was the single assumption path B rested
+  on, and it holds.
+- **The exposure window is ~2.5s** — from the bot letting go to the other session holding
+  it. That is the whole time the site is visible to anyone else, and it is dominated by
+  the two precart round trips, not by the release (97ms).
+- Verified by **reading the second session's cart back** and matching placeId/facilityId,
+  not by an `IsSuccess` flag.
+- The second session was signed in BEFORE the release, deliberately: in production the
+  user's device is already logged in when they tap the alert. Timing it any other way
+  would measure our test harness.
+
+**Caveats worth carrying into the build.** Both sessions were on one machine, so a real
+user adds their own network latency — call it 3-5s, still small. And the recapture needs
+the user logged into RC in the surface doing it (extension on desktop, app webview on
+mobile). If it fails, the site is simply free and they book normally: it degrades to an
+ordinary alert rather than to a broken promise.
+
 **Two paths remain, and they trade different things:**
 - **Move the session.** Proven to work mechanically — the whole login lives in
   `localStorage` and copying that blob carries login *and* cart to another machine,
