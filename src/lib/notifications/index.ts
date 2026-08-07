@@ -267,6 +267,17 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
       // Already one segment and already arriving. Left exactly as it was — this is the
       // control in the experiment, and changing it would throw that away.
       body = `CampHawk: ${name}${site} is in your cart — check out now, held ~15 min: https://www.recreation.gov/cart`;
+    } else if (payload.kind === 'coming_soon' && payload.holdUrl) {
+      // The offer itself cannot go in a text — it lives on camphawk.app, and a
+      // camphawk.app link is filtered (30007, measured 10 for 10). So the text points at
+      // the channels that CAN carry it rather than pretending the option does not exist.
+      // Without this the SMS said only "we'll text when it's bookable", which is a
+      // promise to do LESS than what was actually on offer.
+      const when = formatReleaseTime(payload.availableAt, true);
+      body = fitOneSegment(
+        (n) => `CampHawk: ${n}${site} opens ${when}. Open your email or the app to have us hold it.`,
+        name
+      );
     } else if (payload.kind === 'coming_soon') {
       const when = formatReleaseTime(payload.availableAt, true);
       body = fitOneSegment(
@@ -362,6 +373,13 @@ async function dispatchPush(payload: NotificationPayload): Promise<void> {
   } else if (payload.kind === 'carted') {
     title = `✅ In your cart: ${name}`;
     body = `${name}${site} is in your cart — check out now (held ~15 min).`;
+  } else if (payload.kind === 'coming_soon' && payload.holdUrl) {
+    // THE OFFER BELONGS HERE, not only in the email. SMS genuinely cannot carry it — a
+    // camphawk.app link is filtered (30007, 10 for 10) — but push has no such limit, and
+    // it is the channel most likely to be seen, since these alerts land overnight for an
+    // 8am release. Leaving it out meant an offer with a deadline sat unread in an inbox.
+    title = `⏳ Opening soon: ${name}`;
+    body = `${name}${site} releases ${formatReleaseTime(payload.availableAt, true)}. Tap to have us hold it for you.`;
   } else if (payload.kind === 'coming_soon') {
     title = `⏳ Opening soon: ${name}`;
     body = `${name}${site} was just cancelled — we'll alert you when it's bookable.`;
@@ -376,11 +394,14 @@ async function dispatchPush(payload: NotificationPayload): Promise<void> {
   }
 
   // Deep-link the app to the watch/campground; strip the extension-only #camphawk hint.
+  // A hold URL WINS over the booking URL: when there is an action of ours to take —
+  // "hold it for me", or "claim it" — sending the tap to the provider instead is sending
+  // it to the one place that cannot do the thing the notification just offered.
   const data: Record<string, string> = {
     watchId: payload.watchId,
     campgroundId: payload.campgroundId,
     kind: payload.kind ?? 'available',
-    url: payload.bookingUrl.split('#')[0],
+    url: (payload.holdUrl ?? payload.bookingUrl).split('#')[0],
   };
 
   try {

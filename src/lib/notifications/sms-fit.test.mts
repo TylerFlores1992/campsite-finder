@@ -75,6 +75,18 @@ test('the coming_soon shape fits too, with the longest real name', () => {
   assert.ok(out.length <= SMS_ONE_SEGMENT, `was ${out.length}`);
 });
 
+test('the coming_soon WITH a hold offer also fits one segment', () => {
+  // The offer cannot go in the text — a camphawk.app link is filtered (30007, 10 for 10)
+  // — so this wording points at the channels that can carry it. Longer than the plain
+  // coming_soon, and it must still fit: a two-segment alert is the one that never
+  // arrives.
+  const soon = (n: string) =>
+    `CampHawk: ${n} — Site #L108 opens Aug 7, 8:00 AM PT. Open your email or the app to have us hold it.`;
+  const out = fitOneSegment(soon, 'Leo Carrillo SP — Canyon Campground (sites 1-24, 78-133)');
+  assert.ok(out.length <= SMS_ONE_SEGMENT, `was ${out.length}: ${out}`);
+  assert.match(out, /hold it/, 'the whole point of this variant must survive the trim');
+});
+
 // ── Regressions from a real alert, 2026-08-06 ────────────────────────────────────
 // The live text read:
 //   "CampHawk: Leo Carrillo SP - Canyon Campground (si. Site Unit 42573 open
