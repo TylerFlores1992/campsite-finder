@@ -10,7 +10,8 @@
 
 import { query, mutate } from '@/lib/db/client';
 
-export type HoldStatus = 'offered' | 'requested' | 'carted' | 'claimed' | 'expired' | 'failed';
+export type HoldStatus =
+  | 'offered' | 'requested' | 'carted' | 'claiming' | 'released' | 'claimed' | 'expired' | 'failed';
 
 export interface HoldRequest {
   id: string;
@@ -23,6 +24,7 @@ export interface HoldRequest {
   nights: number;
   release_at: string;
   status: HoldStatus;
+  claim_started_at: string | null;
   cart_key: string | null;
   cart_entry_key: string | null;
 }
@@ -128,14 +130,70 @@ export async function dueHolds(leadSeconds = 60, graceMinutes = 20): Promise<Hol
   }
 }
 
-/** The bot got it. Record HOW TO LET GO as well as that we hold it — without the entry
- *  key we could only empty the whole cart, taking every other user's hold with it. */
-export async function markCarted(id: string, cartKey: string, cartEntryKey: string | null): Promise<void> {
+/**
+ * The user pressed claim. Ask the bot to let go of THIS entry.
+ *
+ * Only a `carted` hold can be claimed — there is nothing to hand over otherwise — and
+ * re-pressing while already `claiming` or `released` is a no-op rather than an error,
+ * because a double-tap on a phone is normal and must not look like a failure.
+ */
+export async function startClaim(id: string): Promise<HoldRequest | null> {
+  try {
+    const rows = await mutate<HoldRequest>(
+      `UPDATE rc_hold_requests
+          SET status = 'claiming', claim_started_at = COALESCE(claim_started_at, NOW()), updated_at = NOW()
+        WHERE id = $1 AND status IN ('carted', 'claiming')
+        RETURNING *`,
+      [id],
+    );
+    if (rows[0]) return rows[0];
+    // Already released, or never carted. Hand the row back so the caller can tell the
+    // user WHICH — "already let go, go book it" and "nothing is held" are different.
+    const [existing] = await query<HoldRequest>(`SELECT * FROM rc_hold_requests WHERE id = $1`, [id]);
+    return existing ?? null;
+  } catch (err) {
+    console.error('[rc-holds] startClaim failed:', (err as Error).message);
+    return null;
+  }
+}
+
+/** The bot has let go. The exposure window starts HERE. */
+export async function markReleased(id: string): Promise<void> {
   await mutate(
+    `UPDATE rc_hold_requests SET status = 'released', released_at = NOW(), updated_at = NOW()
+      WHERE id = $1 AND status IN ('claiming','carted')`,
+    [id],
+  ).catch((e) => console.error('[rc-holds] markReleased failed:', e.message));
+}
+
+/** Claims waiting on the bot. Separate from the stale-release sweep because these are
+ *  URGENT — somebody is watching a spinner — while a stale release is merely overdue. */
+export async function pendingClaims(): Promise<HoldRequest[]> {
+  return query<HoldRequest>(
+    `SELECT * FROM rc_hold_requests WHERE status = 'claiming' ORDER BY claim_started_at ASC LIMIT 25`,
+  ).catch(() => []);
+}
+
+/** One row, for the claim page to poll. */
+export async function getHold(id: string): Promise<HoldRequest | null> {
+  const [row] = await query<HoldRequest>(`SELECT * FROM rc_hold_requests WHERE id = $1`, [id]).catch(() => []);
+  return row ?? null;
+}
+
+/** The bot got it. Record HOW TO LET GO as well as that we hold it — without the entry
+ *  key we could only empty the whole cart, taking every other user's hold with it.
+ *
+ *  Returns whether this call is the one that flipped it, so the caller can send the
+ *  "it's held, come and get it" alert EXACTLY once. Re-running the runner over a hold it
+ *  already carted must not text the user again. */
+export async function markCarted(id: string, cartKey: string, cartEntryKey: string | null): Promise<boolean> {
+  const rows = await mutate<{ id: string }>(
     `UPDATE rc_hold_requests SET status = 'carted', carted_at = NOW(), cart_key = $2,
-            cart_entry_key = $3, updated_at = NOW() WHERE id = $1`,
+            cart_entry_key = $3, updated_at = NOW()
+      WHERE id = $1 AND status <> 'carted' RETURNING id`,
     [id, cartKey, cartEntryKey],
-  ).catch((e) => console.error('[rc-holds] markCarted failed:', e.message));
+  ).catch((e) => { console.error('[rc-holds] markCarted failed:', e.message); return []; });
+  return rows.length > 0;
 }
 
 export async function markClaimed(id: string): Promise<void> {

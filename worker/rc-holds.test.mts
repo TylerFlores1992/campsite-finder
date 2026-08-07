@@ -136,3 +136,52 @@ test('an unanswered offer past its release is expired', async () => {
     `SELECT status FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = '9008'`, [watchId]);
   assert.equal(row.status, 'expired');
 });
+
+// ── The claim handshake ──────────────────────────────────────────────────────────
+// Only the session that made a cart entry can remove it, so a claim is a two-party
+// swap across a polling boundary. These cover the states that make it safe.
+
+test('only a CARTED hold can be claimed — there is nothing else to hand over', async () => {
+  const { startClaim } = await import('../src/lib/rc-holds');
+  await offer('9101', pacific(60));
+  const req = await requestHold(watchId, '9101');
+  // Requested but not yet carted: pressing claim must not pretend we hold something.
+  const early = await startClaim(req!.id);
+  assert.equal(early?.status, 'requested', 'a requested-but-uncarted hold is not claimable');
+});
+
+test('a double-tap is a no-op, not an error', async () => {
+  const { startClaim } = await import('../src/lib/rc-holds');
+  await offer('9102', pacific(60));
+  const req = await requestHold(watchId, '9102');
+  await markCarted(req!.id, 'ck', 'ek');
+  const first = await startClaim(req!.id);
+  const second = await startClaim(req!.id);
+  assert.equal(first?.status, 'claiming');
+  assert.equal(second?.status, 'claiming', 'a second tap on a phone is normal, not a failure');
+});
+
+test('a claim shows up in the URGENT lane, and release marks it released', async () => {
+  const { startClaim, pendingClaims, markReleased } = await import('../src/lib/rc-holds');
+  await offer('9103', pacific(60));
+  const req = await requestHold(watchId, '9103');
+  await markCarted(req!.id, 'ck', 'ek');
+  await startClaim(req!.id);
+  const pending = await pendingClaims();
+  assert.equal(pending.some((h) => h.id === req!.id), true, 'the bot must see it immediately');
+  await markReleased(req!.id);
+  const [row] = await query<{ status: string; released_at: string | null }>(
+    `SELECT status, released_at FROM rc_hold_requests WHERE id = $1`, [req!.id]);
+  assert.equal(row.status, 'released');
+  assert.ok(row.released_at, 'the exposure window starts here — it must be recorded');
+});
+
+test('markCarted reports the TRANSITION, so the "held" alert fires once', async () => {
+  // The runner re-reads its feed every pass. Without this, a hold it already carted
+  // would text the user again on every single pass — the same bug as alerting on the
+  // state rather than the transition (migration 039).
+  await offer('9104', pacific(60));
+  const req = await requestHold(watchId, '9104');
+  assert.equal(await markCarted(req!.id, 'ck', 'ek'), true, 'first carting is the transition');
+  assert.equal(await markCarted(req!.id, 'ck', 'ek'), false, 'a repeat must not re-alert');
+});

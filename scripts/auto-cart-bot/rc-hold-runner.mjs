@@ -40,6 +40,8 @@ const TOKEN = process.env.AUTOCART_TOKEN;
  * browser. Tighter would just add requests from an address that has been 403'd once.
  */
 const POLL_MS = Number(process.env.RC_HOLD_POLL_MS || 20_000);
+/** Overridden by the feed's `pollMs` while a claim is outstanding. */
+let nextPollMs = POLL_MS;
 const HEADLESS = process.env.RC_HEADLESS === 'true';
 
 const args = new Set(process.argv.slice(2));
@@ -115,18 +117,38 @@ async function runPass() {
     log(`feed error: ${err.message}`);
     return;
   }
-  const { cart = [], release = [], expired = 0 } = work;
+  const { claim = [], cart = [], release = [], expired = 0, pollMs } = work;
+  // The server sets pollMs while anything is claimable. Somebody is watching a spinner
+  // and the site is about to sit unheld — the exposure window is our poll interval plus
+  // the release, so this is the one time to come back fast.
+  nextPollMs = pollMs || POLL_MS;
   if (expired) log(`(${expired} unanswered offer(s) expired)`);
-  if (!cart.length && !release.length) return;
+  if (!claim.length && !cart.length && !release.length) return;
 
-  log(`${cart.length} to cart, ${release.length} to release`);
+  log(`${claim.length} to hand over, ${cart.length} to cart, ${release.length} to release`);
 
   await withRC(async (ctx, page, token) => {
     const headers = rcHeaders(token);
 
-    // RELEASE FIRST. If the browser dies mid-pass, the thing we most want already done
-    // is letting go of sites nobody claimed — a hold we keep by accident is worse than
-    // a cart we miss, because it denies the site to everyone including the person who
+    // CLAIMS FIRST, ahead of everything. A user is on the claim page right now and
+    // cannot take the site until we let go; every millisecond here is theirs, not ours.
+    for (const h of claim) {
+      if (!h.cartKey || !h.cartEntryKey) {
+        log(`  ${h.unitName ?? h.unitId}: claim with no entry key — reporting released so the user is not stuck`);
+        await report({ id: h.id, released: true, forClaim: true });
+        continue;
+      }
+      const r = await releaseEntry(ctx.request, headers, h.cartKey, h.cartEntryKey);
+      log(`  → handed over ${h.unitName ?? h.unitId} (HTTP ${r.status})`);
+      // Report even on a non-2xx: if we cannot release, the user must not be left
+      // watching a spinner over a site they will never get. Better they find it free
+      // (or not) on RC than wait on us forever.
+      await report({ id: h.id, released: true, forClaim: true });
+    }
+
+    // Then release the ones nobody came for. If the browser dies mid-pass, the thing we
+    // most want already done is letting go — a hold we keep by accident is worse than a
+    // cart we miss, because it denies the site to everyone including the person who
     // asked for it.
     for (const h of release) {
       if (!h.cartKey || !h.cartEntryKey) {
@@ -189,5 +211,5 @@ if (ONCE) {
 }
 for (;;) {
   await runPass().catch((err) => log(`pass error: ${err.message}`));
-  await sleep(POLL_MS);
+  await sleep(nextPollMs);
 }

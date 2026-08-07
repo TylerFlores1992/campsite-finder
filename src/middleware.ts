@@ -53,6 +53,12 @@ const isPublicRoute = createRouteMatcher([
   '/api/campgrounds/(.*)',
   '/api/webhooks/(.*)',
   '/api/auto-cart/(.*)',
+  // Claim a held RC site. Authorised by (hold id + the watch's manage token), not by a
+  // login: the claim happens on a phone at 8am from an email link, and a sign-in wall
+  // would spend the very seconds the hold exists to save. Both halves are unguessable
+  // and the route checks them; Clerk would 404 it otherwise.
+  '/claim/(.*)',
+  '/api/rc-holds/(.*)',
   '/api/rc-proxy',
   '/api/tnsc-availability',
   // Vercel Cron entry points. Vercel invokes these unauthenticated as far as Clerk

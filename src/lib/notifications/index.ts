@@ -188,7 +188,9 @@ async function dispatchEmail(payload: NotificationPayload, links: ActionLinks): 
   try {
     await sendEmail({
       to: email,
-      subject: carted
+      subject: carted && payload.holdUrl
+        ? `🔒 Held for you: ${payload.campgroundName} — claim it`
+        : carted
         ? `✅ In your cart: ${payload.campgroundName} — check out now`
         : comingSoon
           ? `⏳ Opening soon: ${payload.campgroundName}`
@@ -252,7 +254,16 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
 
   try {
     let body: string;
-    if (payload.kind === 'carted') {
+    if (payload.kind === 'carted' && payload.holdUrl) {
+      // An RC HOLD, not a rec.gov cart. The site is in CampHawk's cart, not theirs, and
+      // claiming it needs our page — which cannot go in an SMS, because a camphawk.app
+      // link is filtered (30007, 10 for 10). So the text says what happened and sends
+      // them to a channel that works. A text that arrives beats a link that doesn't.
+      body = fitOneSegment(
+        (n) => `CampHawk: ${n}${site} is HELD for you. Open your email or the CampHawk app to claim it.`,
+        name,
+      );
+    } else if (payload.kind === 'carted') {
       // Already one segment and already arriving. Left exactly as it was — this is the
       // control in the experiment, and changing it would throw that away.
       body = `CampHawk: ${name}${site} is in your cart — check out now, held ~15 min: https://www.recreation.gov/cart`;
@@ -345,7 +356,10 @@ async function dispatchPush(payload: NotificationPayload): Promise<void> {
 
   let title: string;
   let body: string;
-  if (payload.kind === 'carted') {
+  if (payload.kind === 'carted' && payload.holdUrl) {
+    title = `🔒 Held for you: ${name}`;
+    body = `${name}${site} is held. Tap to claim it — we let go the moment you do.`;
+  } else if (payload.kind === 'carted') {
     title = `✅ In your cart: ${name}`;
     body = `${name}${site} is in your cart — check out now (held ~15 min).`;
   } else if (payload.kind === 'coming_soon') {
@@ -412,6 +426,34 @@ function buildEmailHtml(payload: NotificationPayload): string {
 
   // Auto-cart success: we already added this exact site to the user's rec.gov
   // cart — the only thing left is to check out before the ~15-minute hold lapses.
+  // An RC HOLD: the site is in CampHawk's cart, not theirs, and the whole email is one
+  // button. The swap is the risky moment (~2.5s exposed), so the copy says so rather
+  // than pretending it is instant — and says we only let go when they press.
+  if (payload.kind === 'carted' && payload.holdUrl) {
+    return `
+<!DOCTYPE html>
+<html>
+<body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#1a1a1a">
+  <h2 style="color:#166534;margin-bottom:4px">🔒 We're holding it for you</h2>
+  <p style="margin-top:0;color:#555">You asked us to grab this one at release time. It's held in CampHawk's cart — nobody else can take it while we have it.</p>
+
+  <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:20px;margin:20px 0">
+    <h3 style="margin:0 0 8px">${payload.campgroundName}${siteSuffix}</h3>
+    <p style="margin:0;color:#555"><strong>${payload.startDate}</strong> → <strong>${payload.endDate}</strong></p>
+  </div>
+
+  <p style="color:#555">Sign in to ReserveCalifornia first, then tap below. We let go and you take it — the swap takes a couple of seconds, and the site is open to anyone during it, so only tap when you're ready to finish.</p>
+
+  <a href="${payload.holdUrl}"
+     style="display:inline-block;background:#166534;color:white;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:8px">
+    Claim it now →
+  </a>
+
+  <p style="margin-top:16px;font-size:13px;color:#666">If you don't claim it, we release it automatically so another camper can have it.</p>
+</body>
+</html>`;
+  }
+
   if (payload.kind === 'carted') {
     return `
 <!DOCTYPE html>
