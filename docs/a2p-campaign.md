@@ -38,10 +38,17 @@ One source of truth each: samples come from the dispatcher, prose lives here.
 
 ## Where this actually gets entered
 
-**Console:** Messaging → Regulatory Compliance → Campaigns → click the campaign. The
-sections on that page map to the fields below: *Campaign description and content* holds
-the **description**, *Sample messages* holds the **samples**, and *End user consent
-(message flow)* holds the **message flow**.
+**Console:** **Trust Hub → Registrations → `A2P CAMPAIGNS` tab → click the campaign.**
+That lands on "A2P Campaign Details", which shows the brand as Approved and has the
+sections that map to the fields below: *Campaign description and content* holds the
+**description**, *Sample messages* holds the **samples**, and *End user consent (message
+flow)* holds the **message flow**.
+
+> Twilio's docs give the path as "Messaging → Regulatory Compliance → Campaigns". That
+> does NOT match this account's Console, and following it lands on **Regulatory
+> Compliance**, a same-named tab in the same Registrations screen that is about buying
+> phone numbers outside the US/Canada — nothing to do with A2P. Verified 2026-08-07 by
+> ending up there. Use the A2P CAMPAIGNS tab.
 
 Look for a blue **"Edit Campaign"** link. Twilio's docs say it appears on **failed**
 campaign detail pages — ours is Approved, so it may well not be there. Campaign edits via
