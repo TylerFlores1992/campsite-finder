@@ -296,8 +296,22 @@ from the registration.
   opaque PATH is itself a trigger — don't repeat that as fact. And there is **no
   "declared link domain"** to have gotten wrong: Twilio's campaign API has only the
   boolean `HasEmbeddedLinks` and `MessageSamples`.
-- **Campaign samples + `HasEmbeddedLinks` are NOT editable after approval** — changing
-  the registered link shape means registering a NEW campaign.
+- **CORRECTED 2026-08-07: campaign SAMPLES *are* editable after approval.** The earlier
+  note here ("samples + `HasEmbeddedLinks` are NOT editable, you need a NEW campaign")
+  was wrong and made the fix look far more expensive than it is. Twilio's rectifying-
+  campaigns doc: an update `POST
+  /v1/Services/<MG…>/Compliance/Usa2p/<CM…>` may be made against an approved campaign,
+  and only the FOUR BOOLEANS (`has_embedded_links`, `has_embedded_phone`,
+  `direct_lending`, `age_gated`) are frozen — "Value CANNOT CHANGE for an update call
+  made after TCR approval". `description`, `message_flow` and `message_samples` can all
+  change. All seven fields must be resent, with the booleans identical.
+  **`HasEmbeddedLinks` is already `Yes` on our campaign, so nothing frozen blocks us** —
+  putting `camphawk.app` into the samples is an in-place edit, not a re-registration.
+  Three caveats before doing it: the edit path is **Private Beta** (Console "Edit
+  Campaign" or API — confirm the account has it), an update **re-triggers vetting** on a
+  campaign that is currently Approved, and since 2026-06-30 `PrivacyPolicyUrl` +
+  `TermsAndConditionsUrl` are required on registration (camphawk.app/privacy and /terms
+  are both live and public, verified 200).
 - **30007 doesn't say whether TWILIO or the CARRIER filtered.** The only documented way
   to find out is 3+ Message SIDs to Twilio Support.
 - **Sole Proprietor caps worth knowing before growth:** 1,000 SMS segments/day to
