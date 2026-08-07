@@ -3,8 +3,8 @@ import { sendEmail } from './email';
 import { sendSms } from './sms';
 import { sendPush } from './push';
 import { actionUrlFor } from './actions';
-import { fitOneSegment } from './sms-fit';
 import { formatStayDates } from './dates';
+import { smsBody } from './sms-body';
 import type { CampflareWebhookPayload } from '@/lib/campflare/types';
 import { USEDIRECT_PROVIDERS } from '@/lib/sources/reservecalifornia/providers';
 import { GOINGTOCAMP_PROVIDERS } from '@/lib/sources/goingtocamp/providers';
@@ -255,96 +255,21 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
   // with a path is NOT linkified on many Android/RCS clients), so alerts arrived with
   // dead links. Clickability wins. The per-message "Reply STOP" is dropped too — the
   // Twilio Messaging Service's Advanced Opt-Out handles STOP/HELP.
-  const site = payload.campsiteName ? ` Site ${payload.campsiteName}` : '';
-  const name = payload.campgroundName.replace(/\s+(campground|cg)\.?$/i, '');
-
   try {
-    let body: string;
-    if (payload.kind === 'carted' && payload.holdUrl) {
-      // An RC HOLD, not a rec.gov cart. The site is in CampHawk's cart, not theirs, and
-      // claiming it needs our page — which cannot go in an SMS, because a camphawk.app
-      // link is filtered (30007, 10 for 10). So the text says what happened and sends
-      // them to a channel that works. A text that arrives beats a link that doesn't.
-      body = fitOneSegment(
-        (n) => `CampHawk: ${n}${site} is HELD for you. Open your email or the CampHawk app to claim it.`,
-        name,
-      );
-    } else if (payload.kind === 'carted') {
-      // Already one segment and already arriving. Left exactly as it was — this is the
-      // control in the experiment, and changing it would throw that away.
-      body = `CampHawk: ${name}${site} is in your cart — check out now, held ~15 min: https://www.recreation.gov/cart`;
-    } else if (payload.kind === 'coming_soon' && payload.holdUrl) {
-      // The offer itself cannot go in a text — it lives on camphawk.app, and a
-      // camphawk.app link is filtered (30007, measured 10 for 10). So the text points at
-      // the channels that CAN carry it rather than pretending the option does not exist.
-      // Without this the SMS said only "we'll text when it's bookable", which is a
-      // promise to do LESS than what was actually on offer.
-      const when = formatReleaseTime(payload.availableAt, true);
-      body = fitOneSegment(
-        (n) => `CampHawk: ${n}${site} opens ${when}. Open your email or the app to have us hold it.`,
-        name
-      );
-    } else if (payload.kind === 'coming_soon') {
-      const when = formatReleaseTime(payload.availableAt, true);
-      body = fitOneSegment(
-        (n) => `CampHawk: ${n}${site} was just cancelled, opens ${when}. We'll text when it's bookable.`,
-        name
-      );
-    } else {
-      // "Sep 4-6", not "2026-09-04, 2026-09-05, 2026-09-06". Three ISO dates in a row
-      // read as timestamps, cost ~24 characters of a 160-character budget, and — in the
-      // same thread as a "coming soon" text that says "opens Aug 6, 8:15 AM PT" — made
-      // the owner read stay nights as a release date. See notifications/dates.ts.
-      const dates = formatStayDates(payload.availableDates);
-      // THE PROVIDER'S OWN URL, NOT OUR `camphawk.app/b/<token>` SHORTLINK (2026-08-05).
-      //
-      // OBSERVED, on one handset, same segment count: a `recreation.gov` link →
-      // Delivered. No link at all → Delivered. `camphawk.app/b/<token>` → Undelivered
-      // with 30007 ("message filtered"), 10 for 10. Our A2P 10DLC campaign's registered
-      // sample messages — written 7/7/2026, never changed — link to
-      // `recreation.gov/camping/campgrounds/[ID]` and `reservecalifornia.com/park/[ID]`;
-      // the shortlink went into the code later and appears in no sample.
-      //
-      // WHY the carrier dislikes it is INFERENCE, not documentation, and the two
-      // candidates matter differently:
-      //   - T-Mobile's Code of Conduct has sections "4.8 URL Redirects/Forwarding" and
-      //     "3.3 Use One Recognizable Domain Name", and Twilio's campaign-troubleshooting
-      //     page requires "a dedicated, branded short domain that belongs to your
-      //     business". `/b/<token>` is a redirect that hides its destination, which fits.
-      //   - That a short opaque PATH on a legitimately-owned domain is itself a trigger
-      //     is NOT documented anywhere. Don't repeat it as fact.
-      // There is also no "declared link domain" to have gotten wrong: Twilio's campaign
-      // API exposes only the boolean `HasEmbeddedLinks` (ours is correctly true) and
-      // `MessageSamples`. So "undeclared domain" is not the mechanism either.
-      //
-      // Either way this line sidesteps the question: the provider's own URL is a
-      // well-known destination with no redirect, and it is what the samples show. It
-      // costs almost nothing — a real booking URL is 45-49 characters against the
-      // shortlink's ~39 — and the fragment is stripped because the #camphawk extension
-      // hint does nothing on a phone.
-      //
-      // `/b/<token>` STAYS ALIVE for links already sent; we simply stop minting new
-      // ones for SMS, which was their only consumer. Email uses the full URL already.
-      //
-      // Do not "improve" this back into a tracked shortlink. The campaign's samples and
-      // HasEmbeddedLinks are NOT editable after approval — matching a new link shape
-      // would mean registering a NEW campaign — and the tracking is worth less than the
-      // message arriving.
-      const bookTxt = payload.bookingUrl.split('#')[0];
-      // A long campground name plus three dates can still clear 160 on its own, and an
-      // alert that quietly goes back to two segments would look like the fix failing.
-      // "STILL open" is the whole point of the follow-up: six hours on, a text worded
-      // like the first one reads as a duplicate, which is the complaint that produced
-      // this feature in the first place.
-      // "open FOR Sep 4-6" — the preposition is doing real work. "open Sep 4-6" was
-      // read as "opens on Sep 4", because the neighbouring coming-soon text uses
-      // "opens <date>" to mean exactly that.
-      const lead = payload.kind === 'still_open' ? 'STILL open for' : 'open for';
-      body = fitOneSegment(
-        (n) => `CampHawk: ${n}${site} ${lead} ${dates}. Book: ${bookTxt}`,
-        name
-      );
-    }
+    // Every body is built by `smsBody` in sms-body.ts — pure, no DB, no network — so
+    // `scripts/a2p-samples.mts` can print exactly what we send. That script exists
+    // because the A2P campaign's registered samples and this code silently drifted
+    // apart once already, and every alert was filtered for it.
+    const body = smsBody({
+      kind: payload.kind,
+      campgroundName: payload.campgroundName,
+      campsiteName: payload.campsiteName,
+      availableDates: payload.availableDates,
+      bookingUrl: payload.bookingUrl,
+      availableAt: payload.availableAt,
+      holdUrl: payload.holdUrl,
+      formatReleaseTime,
+    });
     // `sent` here still means only "Twilio accepted it" — the row is completed later
     // by /api/webhooks/twilio, matched on this SID. Without the SID the receipt has
     // nothing to write to, so this is the one place the whole feature hinges on.
