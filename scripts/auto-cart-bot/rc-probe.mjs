@@ -313,6 +313,28 @@ function warnHeadless() {
   log('     concluding anything about RC.');
 }
 
+/**
+ * Is a reCAPTCHA challenge on screen?
+ *
+ * Checked across ALL frames, because the challenge renders in its own iframe — and the
+ * badge alone is not enough: RC shows a passive reCAPTCHA badge on pages that are
+ * perfectly automatable. What matters is an actual CHALLENGE (the image grid), which
+ * lives in a `bframe` iframe, or a visible challenge container.
+ */
+async function captchaPresent(page) {
+  for (const frame of page.frames()) {
+    const url = frame.url() || '';
+    if (/recaptcha.*bframe|hcaptcha.*challenge/i.test(url)) return true;
+  }
+  try {
+    return await page.evaluate(() =>
+      !!document.querySelector('iframe[src*="recaptcha"][src*="bframe"], .g-recaptcha-bubble-arrow, div[style*="visibility: visible"] > iframe[src*="recaptcha"]'),
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Why can't we click it? Playwright's timeout says "not actionable" and stops there;
  *  disabled / invisible / zero-sized / covered need completely different responses. */
 async function describeButton(loc) {
@@ -386,6 +408,29 @@ async function signIn(page, { profileDir } = {}) {
       // without needing the button to be enabled and hittable. A reload between rounds
       // clears a half-finished transaction, which clicking again never does.
       for (let attempt = 1; attempt <= 3 && !pass; attempt++) {
+        // A reCAPTCHA challenge is not something to retry harder at. Observed
+        // 2026-08-07: RC's Okta page served an image challenge ("select all images with
+        // bicycles"), and the Next button reported visible=true enabled=true while every
+        // click timed out — the challenge's overlay was swallowing the pointer events.
+        // That is what three rounds of "the click failed" actually were, and no amount
+        // of clicking gets past it.
+        //
+        // The right move is the one production makes anyway: let a HUMAN solve it once,
+        // then ride the session. So pause and wait instead of failing.
+        if (await captchaPresent(page)) {
+          log('\n   ⚠ reCAPTCHA challenge on the sign-in page.');
+          if (!HEADFUL) {
+            log('   Running headless, so nobody can solve it. Re-run with --headful.');
+            break;
+          }
+          log('   SOLVE IT IN THE BROWSER WINDOW — this probe will wait up to 5 minutes.');
+          log('   (Then it carries on by itself. "Keep me signed in" is already ticked,');
+          log('    so the persistent profile should hold the session for later runs.)');
+          pass = await findIn(page, PASSWORD_SELECTORS, { timeout: 300_000, label: 'the password field (after your solve)' });
+          if (pass) { log('   thank you — continuing.'); break; }
+          log('   still no password field after 5 minutes.');
+          break;
+        }
         if (attempt > 1) {
           log(`   reloading and retrying the email step (attempt ${attempt})`);
           await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});

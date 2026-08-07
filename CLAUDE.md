@@ -151,6 +151,24 @@ minute".
   **Conclusion: keep 15s, do NOT raise `RECGOV_BUDGET_PER_MIN`, buy speed with
   machines.** Acted on the same day — see `SHARD_COUNT = 2` above.
 
+## RC login now hits a reCAPTCHA (2026-08-07) — the binding constraint
+An image challenge ("select all images with bicycles") appeared on
+`signin.reservecalifornia.com`'s Okta page for the probe's browser. **This is what all
+the earlier login failures were**: the Next button reported `visible=true enabled=true`
+and every click still timed out, because the challenge's overlay was swallowing pointer
+events. Retrying harder can never work.
+- **It also invalidates two earlier calls.** "Headless vs headful" was correlation, not
+  cause; and the 12-hour CloudFront 403 looks much less coincidental next to an escalating
+  anti-bot posture toward the same address.
+- **Unattended RC login is therefore NOT available.** Earlier the same day it was (no MFA,
+  no CAPTCHA), so this is an escalation — most plausibly from repeated fresh-profile
+  logins, which is exactly what `--handoff`/`--release` do by design.
+- **The design that survives this:** a human signs in ONCE, "Keep me signed in" is ticked,
+  and the bot never lets the session lapse — the same keep-warm loop rec.gov already has.
+  A bot that can re-login on demand is off the table; a bot that never needs to isn't.
+- `rc-probe.mjs` now DETECTS the challenge and waits up to 5 minutes for a human to solve
+  it (headful only) instead of burning three retries on an unclickable button.
+
 ## ReserveCalifornia auto-cart — SETTLED 2026-08-06, and still OFF
 `scripts/auto-cart-bot/rc-probe.mjs` answered all three open questions:
 - **Unattended login works, HEADFUL ONLY.** Every headless attempt failed at the Okta
