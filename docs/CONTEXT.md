@@ -2546,12 +2546,31 @@ curl https://rdapi.reservecalifornia.com/api/webaccesscustomer/load/enterprise
 - `Age` shows CloudFront served it from cache, so the exact TTL you see will vary; do not
   read a changing `Age` as the block lifting.
 
-**Recovery:** it survived 12+ hours, so this is not a short rate-limit cool-off. Options,
-cheapest first: power the modem off for 10-15 minutes (a residential lease gap that long
-usually gets a new address; a quick reboot returns the same one), or tether the mini-PC
-to a phone hotspot for a single test run. Do NOT poll it — more traffic is what caused it.
-Production alerting is unaffected (the poller reaches RC from Fly, and
-`detect:reservecalifornia` stayed green throughout).
+**IT CLEARED BY ITSELF after ~12-13 hours** (gone by 2026-08-07 03:36 UTC), with nothing
+done to the network: no modem reboot, no DNS change, no IPv6 change. Plain `curl -I`
+returned 200 from the same machine and the same CloudFront POP that had been 403ing.
+
+**Two diagnoses were floated during it and BOTH were wrong** — worth recording, because
+each looked convincing:
+- *"AWS WAF is blocking the address."* Argued against by the 403's own body: it was RC's
+  **real `index.html`**, same bundle hash the sandbox got, not a block page. A WAF refusal
+  does not hand back the application's genuine HTML.
+- *"It's the IPv6 path."* `curl -4` returned 200 while the default had 403'd minutes
+  earlier — but a control run of BOTH back to back returned 200 for each. The 403 had
+  simply expired in between. Without that control this would have been written up as an
+  IPv6 bug and IPv6 disabled on the mini-PC for no reason.
+
+**What is actually established:** RC/CloudFront served 403 to that household for ~12h and
+then stopped, and no evidence ties it to anything we did. The probe traffic is a
+*plausible* trigger and nothing more — do not repeat it as fact, and do not use it as
+evidence that "RC blocks bots", which is the reading that was about to influence the
+auto-cart architecture decision.
+
+**If it recurs:** capture `curl -I` (status + `X-Amz-Cf-Pop` + `Age`) AND the body before
+theorising, and re-run any comparison as a back-to-back control — a cached CloudFront
+error expiring mid-investigation will fake almost any hypothesis you have. Production
+alerting was unaffected throughout (the poller reaches RC from Fly, and
+`detect:reservecalifornia` stayed green the entire time).
 
 ### SETTLED 2026-08-06: the bot carts; the KEY alone cannot hand it over
 

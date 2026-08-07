@@ -48,13 +48,13 @@
  * token expires (~1h). It is written to rc-blob.json in this directory and gitignored.
  * Delete it when you are done. Never paste it anywhere, and never put it in a link.
  *
- * ⚠️ RC BLOCKED THE OWNER'S HOME IP ON 2026-08-06 after a day of these runs — both
- * machines in the house lost reservecalifornia.com entirely while cellular and every
- * datacenter path stayed fine. The likely trigger is `--handoff`/`--release` deleting
- * their browser profile every run, so each one is a NEW device signing into the same
- * account from one address: the shape of credential stuffing. Space runs out, prefer
- * plain `--cart` (which reuses the persistent profile), and remember a block costs the
- * household its own ability to book. Details in docs/CONTEXT.md.
+ * ⚠️ RC served 403 to the owner's household for ~12h on 2026-08-06, then stopped on its
+ * own. Nothing ties it to these runs — that was a guess, and two confident diagnoses
+ * during it (a WAF block, then an IPv6 problem) both turned out wrong. Still: prefer
+ * plain `--cart`, which reuses the persistent profile, over `--handoff`/`--release`,
+ * which delete theirs and force a fresh Okta login every run. Space them out. A 403
+ * costs the household its own ability to book, whatever caused it. docs/CONTEXT.md has
+ * the full write-up, including why a cached CloudFront error can fake any hypothesis.
  */
 
 import { chromium } from 'playwright';
