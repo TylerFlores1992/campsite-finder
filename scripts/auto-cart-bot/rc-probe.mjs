@@ -322,14 +322,33 @@ function warnHeadless() {
  * lives in a `bframe` iframe, or a visible challenge container.
  */
 async function captchaPresent(page) {
-  for (const frame of page.frames()) {
-    const url = frame.url() || '';
-    if (/recaptcha.*bframe|hcaptcha.*challenge/i.test(url)) return true;
-  }
+  // PRESENCE IS NOT A CHALLENGE. reCAPTCHA injects its `bframe` iframe on every page
+  // that loads the widget, sized 0x0 and hidden, and RC loads the widget on sign-in
+  // pages that automate perfectly well. The first version of this checked only that the
+  // iframe EXISTED and so fired on a login with no challenge at all — it made the probe
+  // sit waiting five minutes for a human who had nothing to solve, and I then repeated
+  // that false reading back as "you had to solve two CAPTCHAs".
+  //
+  // A real challenge is VISIBLE and has real size. Measure that.
   try {
-    return await page.evaluate(() =>
-      !!document.querySelector('iframe[src*="recaptcha"][src*="bframe"], .g-recaptcha-bubble-arrow, div[style*="visibility: visible"] > iframe[src*="recaptcha"]'),
-    );
+    return await page.evaluate(() => {
+      const frames = Array.from(
+        document.querySelectorAll('iframe[src*="recaptcha"][src*="bframe"], iframe[src*="hcaptcha"][src*="challenge"]'),
+      );
+      return frames.some((f) => {
+        const r = f.getBoundingClientRect();
+        if (r.width < 100 || r.height < 100) return false;
+        const st = getComputedStyle(f);
+        if (st.visibility === 'hidden' || st.display === 'none' || Number(st.opacity) === 0) return false;
+        // The challenge sits in a wrapper that is toggled hidden between uses; an
+        // ancestor with visibility:hidden means it is loaded but not being asked.
+        for (let el = f.parentElement; el; el = el.parentElement) {
+          const s = getComputedStyle(el);
+          if (s.visibility === 'hidden' || s.display === 'none') return false;
+        }
+        return true;
+      });
+    });
   } catch {
     return false;
   }

@@ -123,11 +123,37 @@ export async function findRCOpenUnit(
 }
 
 /**
+ * Is this slice's `Lock` a REAL hold, or .NET's zero date?
+ *
+ * UseDirect serialises "no lock" as `"0001-01-01T00:00:00"` — DateTime.MinValue — not as
+ * null or an empty string. So `!!s.Lock` is true for every unlocked slice in the grid.
+ * Measured 2026-08-07 across 70 facilities: 5,092 slices carried a `Lock`, and **4,800 of
+ * them (94%) were the zero date**. Only 292 were real.
+ *
+ * Left unfiltered this feeds "cancelled, opens at <time>" alerts off slices that were
+ * never held, with a release time rendered from year 1. The `holdIsNewsworthy` lead-time
+ * gate in the poller happens to reject them — a date in year 1 is not ≥1h in the future —
+ * so this never reached a user, but that is luck, not design.
+ */
+function hasRealLock(lock: string | null | undefined): boolean {
+  if (!lock) return false;
+  const year = Number(String(lock).slice(0, 4));
+  return Number.isFinite(year) && year > 2000;
+}
+
+/**
  * Find a unit whose full stay is currently in UseDirect's cancelled-but-held state
- * — booked night was cancelled, and it's locked until a release time (usually 8am
- * next day). Returns the unit and that release time (`availableAt`, ISO local) so
- * we can tell the user when it goes live. A held night is: not free, not blocked,
- * no active reservation, and a Lock timestamp set.
+ * — booked night was cancelled, and it's locked until a release time. Returns the unit
+ * and that release time (`availableAt`, ISO local) so we can tell the user when it goes
+ * live. A held night is: not free, not blocked, no active reservation, and a REAL Lock
+ * (see hasRealLock — most Locks in the grid are .NET's zero date).
+ *
+ * **The 8am rule is measured, not folklore** (2026-08-07, 70 facilities): of 292 real
+ * locks, **289 released at exactly 08:00** — 99%. The other three sat minutes in the
+ * future at 21:06/21:10/21:19, which is the signature of somebody's shopping-cart hold
+ * rather than an overnight release. That difference is a usable discriminator: an 08:00
+ * lock is a cancellation you can plan around; a lock a few minutes out is a cart that
+ * will probably complete.
  */
 export async function findRCHeldUnit(
   campgroundId: string,
@@ -147,7 +173,7 @@ export async function findRCHeldUnit(
             !s.IsFree &&
             !s.IsBlocked &&
             !(s.ReservationId && s.ReservationId > 0) &&
-            !!s.Lock &&
+            hasRealLock(s.Lock) &&
             s.Date >= startDate &&
             s.Date < endDate
         )
