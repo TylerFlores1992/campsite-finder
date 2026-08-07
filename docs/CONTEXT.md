@@ -2530,9 +2530,28 @@ Whatever hand-off design wins, it must not look like this:
   campsite from home while it lasts. That is a real cost of testing against a live
   consumer site, and it belongs in the decision about how much more probing to do.
 
-**Recovery:** unknown duration; these usually clear on their own in minutes to hours.
-Check occasionally from a browser — do NOT poll it, since more traffic is what caused it.
-Production alerting is unaffected (the poller reaches RC from Fly).
+**What the block actually looks like** (measured 2026-08-07 03:24 UTC, ~12h in):
+```
+curl -I https://www.reservecalifornia.com/
+  HTTP/1.1 403 Forbidden      Server: AmazonS3
+  X-Cache: Error from cloudfront    X-Amz-Cf-Pop: LAX54-P11    Age: 85
+curl https://rdapi.reservecalifornia.com/api/webaccesscustomer/load/enterprise
+  403 in 0.128s
+```
+- **BOTH hosts are blocked**, `www` and `rdapi`. That matters more than it looks: the bot
+  talks to `rdapi`, so there is no "the web app is blocked but the API still works"
+  fallback. A blocked address cannot run the bot at all.
+- **403 at the CloudFront edge in ~130ms** — an edge rejection, not a timeout and not an
+  application error. Consistent with AWS WAF on the distribution refusing the address.
+- `Age` shows CloudFront served it from cache, so the exact TTL you see will vary; do not
+  read a changing `Age` as the block lifting.
+
+**Recovery:** it survived 12+ hours, so this is not a short rate-limit cool-off. Options,
+cheapest first: power the modem off for 10-15 minutes (a residential lease gap that long
+usually gets a new address; a quick reboot returns the same one), or tether the mini-PC
+to a phone hotspot for a single test run. Do NOT poll it — more traffic is what caused it.
+Production alerting is unaffected (the poller reaches RC from Fly, and
+`detect:reservecalifornia` stayed green throughout).
 
 ### SETTLED 2026-08-06: the bot carts; the KEY alone cannot hand it over
 
