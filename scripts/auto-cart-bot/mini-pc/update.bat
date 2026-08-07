@@ -6,9 +6,11 @@ setlocal
 cd /d "%~dp0.."
 
 echo(
-echo === Stopping bot, broker, and tunnel ===
+echo === Stopping bot, broker, tunnel, and the RC processes ===
 taskkill /FI "WINDOWTITLE eq CampHawk bot*"     /T /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq CampHawk broker*"  /T /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq CampHawk RC keep-warm*" /T /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq CampHawk RC holds*"     /T /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq Cloudflare tunnel*" /T /F >nul 2>&1
 REM Dedicated bot host: node.exe is only the bot + broker, so clear any strays.
 taskkill /IM node.exe /F >nul 2>&1
@@ -18,6 +20,13 @@ REM hold the profile or linger after an update.
 taskkill /IM chrome.exe /F >nul 2>&1
 taskkill /IM headless_shell.exe /F >nul 2>&1
 timeout /t 2 /nobreak >nul
+
+REM A hard kill never runs the lock's release, so the file survives and reads as HELD for
+REM ten minutes — during which the relaunched RC processes refuse to open the profile and
+REM skip their passes. An update at 07:55 would silently cost the 8am cart. Nothing is
+REM running at this point, so clearing it is safe by construction.
+del /q "profiles\*\.camphawk-profile-lock" >nul 2>&1
+del /q ".rc-bot-profile\.camphawk-profile-lock" >nul 2>&1
 
 echo(
 echo === Pulling latest code ===

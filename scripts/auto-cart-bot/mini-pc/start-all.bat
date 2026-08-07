@@ -3,6 +3,11 @@ REM Full auto-start: Cloudflare tunnel + bot + broker + the two RC processes.
 REM Put a shortcut to this file in shell:startup for launch-on-boot.
 cd /d "%~dp0.."
 if not exist logs mkdir logs
+REM A power cut or a taskkill leaves the profile locks behind — the release never runs.
+REM They read as HELD for ten minutes, so the processes we are about to start would skip
+REM their first passes for no reason. At boot nothing is running, so clearing is safe.
+del /q "profiles\*\.camphawk-profile-lock" >nul 2>&1
+del /q ".rc-bot-profile\.camphawk-profile-lock" >nul 2>&1
 REM Bot + broker output is mirrored to logs\*.log (console still shows too) so cart
 REM outcomes survive a window close/reboot — handy for diagnosing a missed cart.
 start "Cloudflare tunnel" cmd /k "cloudflared tunnel run camphawk-broker"

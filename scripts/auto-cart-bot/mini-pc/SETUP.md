@@ -99,6 +99,32 @@ Make all three (bot, broker, tunnel) start when the machine powers on:
 The machine will launch everything on login. Set the mini PC to **auto-login** and
 never sleep (Settings → Power → Screen/Sleep = Never; and disable "require sign-in").
 
+## 8. ReserveCalifornia (the 8am day-before holds)
+
+Two more processes, and `start-all.bat` already launches both. The split matters:
+**`rc-keepwarm.mjs` owns the session and is the only thing that ever touches login**;
+`rc-hold-runner.mjs` only drives the session it is handed. RC began serving a reCAPTCHA
+on sign-in (2026-08-07), so a bot that can re-log-in is off the table — one that never
+needs to is not.
+
+**Double-click these; do not type the node commands.** A fresh PowerShell window opens in
+`C:\Users\<you>`, and `node rc-keepwarm.mjs` there fails with `MODULE_NOT_FOUND`, which
+reads like a broken install rather than a wrong directory. The `.bat` files cd for you.
+
+| when | run |
+|---|---|
+| "is RC auto-cart working?" | `mini-pc\rc-check.bat` |
+| rc-keepwarm says **RC SESSION IS DEAD** | `mini-pc\rc-login.bat` |
+
+`rc-login.bat` closes anything holding the profile, opens RC for you to sign in — **tick
+"Keep me signed in"** — and relaunches both processes once the session is confirmed.
+
+They need no token of their own: both read `.env`, the same file the rec.gov bot uses.
+An `AUTOCART_TOKEN` exported in your shell **overrides** that file (deliberately, so a
+one-off override works), so a placeholder left in a PowerShell session will 401 against a
+perfectly good `.env`. The runner now refuses to start on an obvious placeholder and names
+the source on any 401.
+
 ## Notes / troubleshooting
 - Logs: bot/broker print to their windows. For headless debugging of the sign-in
   window, set `BROKER_HEADLESS=0` in `.env` to watch the real browser.
