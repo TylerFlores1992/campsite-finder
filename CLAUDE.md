@@ -647,8 +647,13 @@ NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
   the owner's mini-PC. Have them run `mini-pc\rc-check.bat`.
 - `offered` → nobody tapped. Not a fault.
 
-A Routine (`trig_01KvxPSzmrwKHZ8CY3tDgbnj`) fires daily at 08:15 PT and reports this;
-delete it once the flow has proven itself over a few runs.
+**Two Routines cover this daily** — delete both once the flow has proven itself:
+- `trig_015nU7BciNU5GKimmgXjvAZG` — **07:30 PT pre-flight**, the one that can actually
+  save a hold. Reads `autocart.rc_runner` from `/api/health/status` and shouts only when
+  the beat is stale AND holds are due. Deliberately needs no repo and no DB, just the
+  public endpoint, so it cannot fail the way a clone-dependent check did on its first run.
+- `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
+  what actually happened. This one is a post-mortem by construction; 08:00 has passed.
 **Docs are current as of this session** — `docs/CONTEXT.md` and `docs/SETUP.md` were both
 brought up to date with the hold flow, the reCAPTCHA/keep-warm design, the mini-PC's five
 processes, migrations 039/040/043/044, and the corrected A2P facts.
