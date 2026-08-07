@@ -38,6 +38,7 @@ import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
 } from './profile-lock.mjs';
 import { loadEnv } from './load-env.mjs';
+import { exitWhenDrained } from './exit-clean.mjs';
 
 // No secrets here, but RC_PROFILE_DIR / RC_KEEPALIVE_MS / RC_HEADLESS are read the same
 // way as everywhere else. A process that silently ignores the config file is the bug
@@ -244,25 +245,30 @@ async function humanLogin() {
   return ok;
 }
 
+// ONE chain, not a sequence of early exits. `exitWhenDrained` sets the exit code and
+// lets the loop finish — it does NOT stop execution the way process.exit() does — so a
+// `--login` run written as a bare `if` would fall straight through and start the
+// keep-warm loop on top of the sign-in it just did.
 if (LOGIN) {
   const ok = await humanLogin();
-  process.exit(ok ? 0 : 1);
-}
-
-if (!fs.existsSync(PROFILE_DIR)) {
+  exitWhenDrained(ok ? 0 : 1);
+} else if (!fs.existsSync(PROFILE_DIR)) {
   log(`No RC profile at ${PROFILE_DIR}.`);
   log('Run `node rc-keepwarm.mjs --login` once, with a human at the keyboard.');
+  // Safe as a hard exit: nothing async has run yet, so there is no handle mid-close.
   process.exit(2);
-}
-
-if (ONCE) {
+} else if (ONCE) {
   const state = await warmOnce().catch((err) => { log(`keep-warm error: ${err.message}`); return 'unknown'; });
-  process.exit(state === 'dead' ? 1 : 0);
+  exitWhenDrained(state === 'dead' ? 1 : 0);
+} else {
+  await runForever();
 }
 
-log(`RC session keep-warm every ${Math.round(KEEPALIVE_MS / 60000)}m — profile ${PROFILE_DIR}`);
-log('Ctrl-C to stop. A dead session is reported loudly and needs one human sign-in.');
-await warmOnce().catch((err) => log(`keep-warm error: ${err.message}`));
-setInterval(() => {
-  warmOnce().catch((err) => log(`keep-warm error: ${err.message}`));
-}, KEEPALIVE_MS);
+async function runForever() {
+  log(`RC session keep-warm every ${Math.round(KEEPALIVE_MS / 60000)}m — profile ${PROFILE_DIR}`);
+  log('Ctrl-C to stop. A dead session is reported loudly and needs one human sign-in.');
+  await warmOnce().catch((err) => log(`keep-warm error: ${err.message}`));
+  setInterval(() => {
+    warmOnce().catch((err) => log(`keep-warm error: ${err.message}`));
+  }, KEEPALIVE_MS);
+}

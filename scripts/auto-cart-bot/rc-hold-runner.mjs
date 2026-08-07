@@ -31,6 +31,7 @@ import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
 } from './profile-lock.mjs';
 import { loadEnv } from './load-env.mjs';
+import { exitWhenDrained } from './exit-clean.mjs';
 
 // The token lives in scripts/auto-cart-bot/.env alongside the rec.gov bot's. Without
 // this the runner answered `feed 401` — which reads exactly like a wrong token, not a
@@ -162,7 +163,13 @@ async function runPass() {
   // the release, so this is the one time to come back fast.
   nextPollMs = pollMs || POLL_MS;
   if (expired) log(`(${expired} unanswered offer(s) expired)`);
-  if (!claim.length && !cart.length && !release.length) return;
+  if (!claim.length && !cart.length && !release.length) {
+    // Silence is right on the 20s loop and wrong for a smoke test: with nothing to do and
+    // nothing printed, a successful pass looks exactly like a crash — which is how the
+    // libuv exit assertion read on 2026-08-07.
+    if (ONCE) log('nothing to hand over, cart, or release. Feed reachable, token accepted.');
+    return;
+  }
 
   log(`${claim.length} to hand over, ${cart.length} to cart, ${release.length} to release`);
 
@@ -244,11 +251,14 @@ async function runPass() {
 log(`RC hold runner → ${CAMPHAWK_URL}, every ${POLL_MS / 1000}s, profile ${PROFILE_DIR}`);
 log('It never logs in; rc-keepwarm.mjs owns the session. Ctrl-C to stop.');
 
+// else, NOT a bare if. `exitWhenDrained` sets the exit code and lets the loop finish; it
+// does not stop execution the way process.exit() did, so a `--once` run would otherwise
+// fall through into the forever loop below and never come back.
 if (ONCE) {
   await runPass();
-  process.exit(0);
-}
-for (;;) {
+  log('single pass done.');
+  exitWhenDrained(0);
+} else for (;;) {
   await runPass().catch((err) => log(`pass error: ${err.message}`));
   await sleep(nextPollMs);
 }
