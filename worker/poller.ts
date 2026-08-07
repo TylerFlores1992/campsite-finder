@@ -50,6 +50,8 @@ import { dispatchNotifications, type NotificationPayload } from '../src/lib/noti
 import { bookingLink } from '../src/lib/booking-url';
 import { runDetectionCanary, runDeliveryCanary } from './canary';
 import { claimNotification } from './claim';
+import { offerHold } from '../src/lib/rc-holds';
+import { actionUrlFor } from '../src/lib/notifications/actions';
 import { alreadyCartedForWatch } from './carted-history';
 import { withSyncClaim } from './sync-claim';
 import { expireFinishedWatches, EXPIRE_INTERVAL_MS } from './expire-watches';
@@ -768,7 +770,7 @@ async function cycle(): Promise<void> {
 
   const monthData = new Map<string, Awaited<ReturnType<typeof getAvailabilityFromRecGov>>>();
   const rcResults = new Map<string, { dates: string[]; unitId: number; sleepingUnitId: number | null; name: string | null }>();
-  const rcHeld = new Map<string, { dates: string[]; availableAt: string }>();
+  const rcHeld = new Map<string, { dates: string[]; availableAt: string; unitId: number | null; name: string | null }>();
   const raResults = new Map<string, { dates: string[]; siteIds: number[]; start: string; end: string }>();
   const gtcResults = new Map<string, { dates: string[]; resourceIds: number[]; start: string; end: string }>();
   const tnscResults = new Map<string, { dates: string[]; start: string; end: string }>();
@@ -840,7 +842,7 @@ async function cycle(): Promise<void> {
         async (w) => {
           const required = Math.max(w.min_nights, nightsOfRange(w.start_date, w.end_date).length);
           const held = await findRCHeldUnit(w.campground_id, w.start_date, w.end_date, required);
-          if (held) rcHeld.set(w.id, { dates: held.dates, availableAt: held.availableAt });
+          if (held) rcHeld.set(w.id, { dates: held.dates, availableAt: held.availableAt, unitId: held.unitId, name: held.name });
         },
         RECGOV_CONCURRENCY
       );
@@ -1047,14 +1049,37 @@ async function cycle(): Promise<void> {
       `[poller] COMING SOON: ${w.campground_name} (${w.campground_id}) — releases ${held.availableAt} — notifying watch ${w.id}`
     );
     try {
+      // THE OPT-IN. RC releases 99% of held sites at exactly 08:00, so we know the
+      // night before what opens and when — see findRCHeldUnit. Record the offer and
+      // hand the alert a "hold it for me" link; only a tap authorises the bot to cart,
+      // so we never take a site off the market that nobody asked for.
+      let holdUrl: string | null = null;
+      if (held.unitId != null) {
+        const offered = await offerHold({
+          watchId: w.id,
+          userId: w.user_id,
+          campgroundId: w.campground_id,
+          unitId: String(held.unitId),
+          unitName: rcSiteLabel(held.name, held.unitId),
+          arrivalDate: held.dates[0] ?? w.start_date,
+          nights: held.dates.length || 1,
+          releaseAt: held.availableAt,
+        }).catch(() => null);
+        // A missing hold link must never block the alert — the heads-up is useful on
+        // its own, and the user can still book manually at 8am.
+        if (offered) holdUrl = await actionUrlFor(w.id, 'hold', String(held.unitId)).catch(() => null);
+      }
+
       await dispatchNotifications({
         userId: w.user_id,
         watchId: w.id,
         campgroundId: w.campground_id,
         campgroundName: w.campground_name,
         availableDates: held.dates,
+        holdUrl,
+        campsiteName: held.unitId != null ? rcSiteLabel(held.name, held.unitId) : null,
+        campsiteId: held.unitId != null ? String(held.unitId) : null,
         bookingUrl: w.reservations_url ?? 'https://www.reservecalifornia.com/',
-        campsiteName: null,
         startDate: w.start_date,
         endDate: w.end_date,
         kind: 'coming_soon',

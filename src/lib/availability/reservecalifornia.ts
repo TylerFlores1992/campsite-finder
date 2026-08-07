@@ -160,7 +160,7 @@ export async function findRCHeldUnit(
   startDate: string,
   endDate: string,
   minNights = 1
-): Promise<{ unitId: number; sleepingUnitId: number | null; dates: string[]; availableAt: string } | null> {
+): Promise<{ unitId: number; sleepingUnitId: number | null; dates: string[]; availableAt: string; name: string | null } | null> {
   const provider = providerByCampgroundId(campgroundId);
   if (!provider) return null;
   try {
@@ -181,7 +181,7 @@ export async function findRCHeldUnit(
       const dates = held.map((s) => s.Date);
       if (hasConsecutiveRun(dates, minNights)) {
         const availableAt = held.reduce((max, s) => (s.Lock! > max ? s.Lock! : max), held[0].Lock!);
-        return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, dates, availableAt };
+        return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, dates, availableAt, name: unit.Name ?? null };
       }
     }
   } catch (err) {

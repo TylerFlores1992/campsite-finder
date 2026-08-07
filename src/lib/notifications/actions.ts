@@ -6,7 +6,7 @@ import { query, mutate } from '@/lib/db/client';
 import { sendEmail } from './email';
 import { sendSms } from './sms';
 
-export type WatchAction = 'stop' | 'reopen' | 'mute_site' | 'keep' | 'cancel' | 'book' | 'manage';
+export type WatchAction = 'stop' | 'reopen' | 'mute_site' | 'keep' | 'cancel' | 'book' | 'manage' | 'hold';
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://camphawk.app').replace(/\/$/, '');
 
@@ -179,6 +179,25 @@ export async function performAction(token: string): Promise<ActionResult> {
       const stopUrl = await actionUrlFor(watchId, 'stop');
       return { ok: true, action, changed: true, campgroundName, inverseUrl: stopUrl,
         message: `Kept ${campgroundName ?? 'this watch'} active.` };
+    }
+    // "Hold it for me" on a coming-soon alert. The booking details are NOT in this
+    // token — the poller wrote an `offered` row when it sent the alert, and this only
+    // flips it to `requested`. A token that carried unit/dates/release would outlive
+    // them and could not be corrected if the grid changed before 8am.
+    case 'hold': {
+      const { requestHold } = await import('@/lib/rc-holds');
+      const req = siteId ? await requestHold(watchId, siteId) : null;
+      if (!req) {
+        return {
+          ok: false,
+          message: 'That hold is no longer available — the site may have already been released, or the request expired.',
+        };
+      }
+      const when = req.release_at.replace('T', ' ').slice(0, 16);
+      return {
+        ok: true, action, changed: true, campgroundName, siteId,
+        message: `We'll grab site ${req.unit_name ?? req.unit_id} at ${campgroundName ?? 'this campground'} the moment it opens (${when} PT). You'll get a text when it's in the cart.`,
+      };
     }
     case 'mute_site': {
       // array_append only if not already present, so a repeat tap is a no-op.

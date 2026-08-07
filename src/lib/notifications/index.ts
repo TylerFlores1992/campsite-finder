@@ -53,6 +53,10 @@ export interface NotificationPayload {
   kind?: 'available' | 'coming_soon' | 'carted' | 'still_open';
   /** For 'coming_soon': ISO-local release time (e.g. "2026-07-18T08:00:00"). */
   availableAt?: string | null;
+  /** For 'coming_soon': the one-tap "hold it for me" URL. Present only when we can
+   *  actually act on it — a specific RC unit with a known release time. EMAIL ONLY:
+   *  it is a camphawk.app link, and those are filtered out of SMS (see sendSms). */
+  holdUrl?: string | null;
 }
 
 /** Format an RC release timestamp (ISO local, no TZ) as e.g. "Sat, Jul 18, 8:00 AM PT".
@@ -458,12 +462,24 @@ function buildEmailHtml(payload: NotificationPayload): string {
     </p>
   </div>
 
+  ${payload.holdUrl ? `
+  <p style="color:#555">Cancelled sites get snapped up within seconds of release. We can be waiting for this one — tap below and CampHawk will put it in a cart the moment it opens, then hand it to you.</p>
+
+  <a href="${payload.holdUrl}"
+     style="display:inline-block;background:#166534;color:white;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:8px">
+    Hold it for me →
+  </a>
+  <p style="margin-top:10px;font-size:12px;color:#999">Only if you tap. We never hold a site nobody asked for — that would take it off the market for another camper.</p>
+
+  <p style="margin-top:20px;color:#555">Prefer to do it yourself? <a href="${payload.bookingUrl}" style="color:#d97706">See it on ${provider}</a> and be ready at ${releaseAt}.</p>
+  ` : `
   <p style="color:#555">We'll email and text you the moment it's actually available. Cancelled sites get snapped up fast at release time, so be ready.</p>
 
   <a href="${payload.bookingUrl}"
      style="display:inline-block;background:#d97706;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">
     See it on ${provider} →
   </a>
+  `}
 
   <p style="margin-top:32px;font-size:12px;color:#999">
     You're receiving this because you set up a watch on CampHawk.
