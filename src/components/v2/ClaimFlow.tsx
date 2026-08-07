@@ -31,10 +31,15 @@ interface HoldState {
   unitName?: string | null;
   arrivalDate?: string;
   nights?: number;
+  /** The park's own booking page — where the hand-off lands. */
+  bookingUrl?: string;
 }
 
 export default function ClaimFlow({ holdId, token }: { holdId: string; token: string }) {
   const [state, setState] = useState<HoldState | null>(null);
+  // Captured on first load, BEFORE the release. The redirect fires the instant status
+  // flips, and re-reading state there would race the fetch that set it.
+  const bookingUrl = useRef<string>('https://www.reservecalifornia.com/');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   /**
@@ -57,6 +62,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
       const r = await fetch(`/api/rc-holds/claim?id=${encodeURIComponent(holdId)}&token=${encodeURIComponent(token)}`);
       if (!r.ok) { setError('This link is no longer valid.'); return null; }
       const j = (await r.json()) as HoldState;
+      if (j.bookingUrl) bookingUrl.current = j.bookingUrl;
       setState(j);
       return j;
     } catch {
@@ -81,10 +87,14 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     const frag = state.unitId
       ? `#camphawk-rc=${state.unitId}_${state.arrivalDate}_${state.nights ?? 1}_`
       : '';
-    // The extension recognises this fragment and carts it in the user's own session.
-    // Without the extension they land on the right site page and book by hand — slower,
-    // but the site is genuinely free at that point, not lost.
-    window.location.href = `https://www.reservecalifornia.com/${frag}`;
+    // THE PARK'S OWN BOOKING PAGE, not reservecalifornia.com's homepage — which is where
+    // this used to land, under a comment claiming otherwise. The fragment is read by the
+    // desktop extension, which carts in the user's own session; on a phone nothing
+    // consumes it, and the base URL is all they get. Dropping a phone user on RC's front
+    // page to search for the park by hand spends the entire ~2.5s window this design
+    // exists to protect. The base is stripped of any existing fragment so we cannot emit
+    // two.
+    window.location.href = `${bookingUrl.current.split('#')[0]}${frag}`;
   }, [state]);
 
   async function claim() {
@@ -199,12 +209,22 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
       <Shell>
         <Check className="text-ch-green-deep" size={32} />
         <h1 className="text-xl font-bold text-ch-ink mt-3">{site} is yours to book</h1>
-        <p className="text-ch-muted mt-2">We&rsquo;ve let go — finish checkout on ReserveCalifornia.</p>
+        <p className="text-ch-muted mt-2">We&rsquo;ve let go — grab it on ReserveCalifornia.</p>
+        {/* The PARK page, not the cart. The cart is only populated for desktop users
+            whose extension caught the release; on a phone it is empty, and sending
+            someone to an empty cart to explain a site they are trying to book is the
+            worst of both. The park page works for everyone. */}
         <a
-          href="https://www.reservecalifornia.com/Customers/ShoppingCart"
+          href={bookingUrl.current.split('#')[0]}
           className="mt-6 inline-block rounded-xl bg-ch-green-deep px-6 py-4 font-bold text-white"
         >
-          Open ReserveCalifornia →
+          Book {site} on ReserveCalifornia →
+        </a>
+        <a
+          href="https://www.reservecalifornia.com/Customers/ShoppingCart"
+          className="mt-4 block text-sm text-ch-muted underline"
+        >
+          Already in your cart? Go to checkout
         </a>
       </Shell>
     );

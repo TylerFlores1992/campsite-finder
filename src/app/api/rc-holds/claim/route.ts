@@ -17,6 +17,27 @@ export const dynamic = 'force-dynamic';
  *        picks it up within ~1s and releases.
  * GET  — poll until `released`, which is the starting gun for the recapture.
  */
+/**
+ * Where to send the user the instant the bot lets go.
+ *
+ * THIS IS THE HAND-OFF, and it was landing on reservecalifornia.com's HOMEPAGE. The
+ * `#camphawk-rc=` fragment is only understood by the desktop browser extension; on a
+ * phone — which is the whole point of a claim link at 8am — nothing consumes it, so the
+ * user arrived at RC's front page and had to search for the park, find the unit and pick
+ * the dates, all while the site sat unheld and free to anyone. That spends the entire
+ * ~2.5s window the design exists to protect.
+ *
+ * `campgrounds.reservations_url` is the park's own booking page, already stored and
+ * already used by every alert. Falling back to the root only when a campground has none.
+ */
+async function bookingUrlFor(campgroundId: string): Promise<string> {
+  const [c] = await query<{ reservations_url: string | null }>(
+    `SELECT reservations_url FROM campgrounds WHERE id = $1`,
+    [campgroundId],
+  ).catch(() => []);
+  return c?.reservations_url ?? 'https://www.reservecalifornia.com/';
+}
+
 async function authorise(holdId: string, token: string) {
   if (!holdId || !token) return null;
   const hold = await getHold(holdId);
@@ -59,6 +80,7 @@ export async function GET(req: NextRequest) {
     unitName: hold.unit_name,
     arrivalDate: hold.arrival_date,
     nights: hold.nights,
+    bookingUrl: await bookingUrlFor(hold.campground_id),
   });
 }
 

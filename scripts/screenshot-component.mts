@@ -191,6 +191,7 @@ const PRESETS: Record<string, Preset> = {
         window.fetch = async () => ({ ok: true, status: 200, json: async () => ({
           status: 'carted', unitId: '42558', unitName: 'Hook Up (E ) Campsite #L108',
           arrivalDate: '2026-09-04', nights: 1,
+          bookingUrl: 'https://www.reservecalifornia.com/park/665/539',
         }) });
       }
       export const node = <ClaimFlow holdId="demo" token="demo" />;`,
