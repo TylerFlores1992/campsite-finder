@@ -53,9 +53,15 @@ export interface NotificationPayload {
   kind?: 'available' | 'coming_soon' | 'carted' | 'still_open';
   /** For 'coming_soon': ISO-local release time (e.g. "2026-07-18T08:00:00"). */
   availableAt?: string | null;
-  /** For 'coming_soon': the one-tap "hold it for me" URL. Present only when we can
-   *  actually act on it — a specific RC unit with a known release time. EMAIL ONLY:
-   *  it is a camphawk.app link, and those are filtered out of SMS (see sendSms). */
+  /** The one-tap CampHawk URL for this alert: "hold it for me" on a 'coming_soon',
+   *  "claim it" on a 'carted' RC hold. Present only when we can actually act on it — a
+   *  specific RC unit with a known release time, for an entitled subscriber.
+   *
+   *  EMAIL AND PUSH, NEVER SMS. It is a camphawk.app link and those are filtered from
+   *  texts (30007, measured 10 for 10 — see sendSms, which throws on our own domain).
+   *  Push has no such limit and is the channel most likely to be seen, since these land
+   *  overnight for an 8am release. The SMS says what happened and points at the two
+   *  channels that can carry the action. */
   holdUrl?: string | null;
 }
 

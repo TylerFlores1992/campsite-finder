@@ -2062,6 +2062,30 @@ hookups — on real campgrounds.
 > `/api/rc-proxy` exists and why "just call it directly from the worker" is not an
 > option; tested 2026-07-30, not assumed.
 
+## The five alert kinds (`NotificationPayload.kind`)
+
+One dispatch path, five messages. Each channel renders every kind separately, so a change
+to one kind's copy is three edits in `src/lib/notifications/index.ts`.
+
+| kind | means | link it carries |
+| --- | --- | --- |
+| `available` | a watched site is bookable **now** | the provider's booking URL |
+| `coming_soon` | RC has it cancelled-but-locked; it releases at a known time | `holdUrl` if we can act (email + push), else the provider's |
+| `carted` | rec.gov: it is in the user's OWN cart, ~15 min to check out | `recreation.gov/cart` |
+| `carted` + `holdUrl` | **RC: it is in CAMPHAWK's cart**, waiting for them to claim | `/claim/<id>` (email + push) |
+| `still_open` | the one 6h follow-up while a site is *still* open | same as `available` |
+
+Two rules that are load-bearing rather than stylistic:
+
+- **`still_open` must not read like a fresh alert.** It is deliberately worded differently
+  on every channel, because a follow-up indistinguishable from a new opening is exactly
+  the 16-alerts-a-day bug migration 039 fixed.
+- **`carted` means two opposite things** depending on `holdUrl`, and conflating them
+  would be a serious copy bug: without it the site is in the USER's cart and they just
+  pay; with it the site is in OUR cart and nothing happens until they claim, at which
+  point there is a ~2.5s window where anyone can take it. The RC copy says so rather than
+  pretending the swap is instant.
+
 ## Per-site alert cooldown (migration 026, 2026-07-30)
 
 The claim that decides "may we alert for this?" lives in **`worker/claim.ts`**, keyed
@@ -3331,6 +3355,16 @@ Adding a tester now sends a setup email (`src/lib/notifications/beta-invite.ts`)
 the **exact address they must sign up with** — which is the failure mode above, made
 self-service. It fires only on a genuinely new insert, so re-adding someone doesn't
 re-mail them.
+
+3. **Whether an invite was actually SENT is recorded now (`invited_at`, migrations 041 +
+   042, 2026-08-06).** Before that, "did this tester get their email?" was unanswerable:
+   the send was fire-and-forget, so a row existed whether the mail went out or not, and
+   the admin panel could only offer to send again — with no way to tell a first send from
+   a duplicate. `invited_at` is stamped only on a send that succeeded. **A failed send
+   leaves it NULL**, which is the point: NULL means "we do not know that they got it",
+   never "they did". Migration 042 backfilled the 14 pre-tracking testers **on the
+   owner's explicit confirmation** that he had mailed them by hand — a backfill of a fact
+   nobody witnessed would have been a guess written down as data.
 
 **A status banner sits above the tabs**, derived from the same worker/canary/sync data
 System Health shows. It exists because "is anything broken right now" is the question
