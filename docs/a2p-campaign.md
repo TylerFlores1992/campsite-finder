@@ -76,6 +76,16 @@ samples match your traffic" article — the thing we already know — and never 
 ticket. Open with "I need a ticket opened: I cannot edit an approved campaign's samples
 and there is no Edit Campaign link."
 
+### FILED: ticket #28871693 (2026-08-07 14:28 PT, P3, status New)
+
+Submitted with the text below plus both custom-field answers ("Approved"; and that the
+samples do follow the brand-name/variable guidelines — the problem is drift, not
+compliance). Web support on the Developer plan quotes ~1 business day.
+
+**When they reply, the decision is:** if the carrier filtered those SIDs, do the sample
+edit. If TWILIO filtered them, the edit would not have fixed it — do not re-trigger
+vetting on a campaign that is currently delivering.
+
 ### Support ticket draft
 
 > **Subject:** Update message samples and description on approved A2P campaign

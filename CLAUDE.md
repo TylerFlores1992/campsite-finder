@@ -601,7 +601,36 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
 
 ## Open / next session
 
-### FIRST THING: did the 8am RC hold cart? (set up 2026-08-07 night)
+### The first 8am hold FAILED — and the recovery worked (2026-08-07)
+Offered 05:26, tapped 06:00, site released at 08:00 exactly as predicted (the poller saw
+it and sent a normal `available` alert at 08:00:10) — and **the mini-PC runner never
+picked it up**. Not a cart, not a `failed`, no error: `updated_at` unchanged since the
+tap. The rec.gov bot carted two sites that afternoon, so the box was up and networked;
+the RC runner specifically was dead, and `autocart.bot` stayed green throughout because
+that is a different process.
+- **Three fixes shipped the same day, all verified in production:**
+  `worker/expire-holds.ts` (hourly on Fly — the old cleanup lived in the hold feed, which
+  only runs when the runner polls, i.e. a watchdog wired to the thing it watches) marked
+  the hold `failed` at 20:59 and sent a `hold_missed` alert on all three channels, **SMS
+  confirmed delivered by the carrier receipt**; migration 045 `rc_runner_heartbeat` +
+  the `autocart.rc_runner` health check, which FAILS only when the beat is stale AND a
+  hold is due; and `findRCHeldUnit` now takes a flex spec (six of nine live RC watches
+  are flexible and could never have been offered a hold at all).
+- **STILL UNDIAGNOSED: why the runner stopped.** It cannot be determined from a web
+  session. Ask the owner what that window says.
+
+### Twilio A2P ticket #28871693 is OPEN (filed 2026-08-07 14:28 PT, P3)
+Asks two things: apply the sample/description/message-flow edit to the approved campaign
+(no "Edit Campaign" link exists — that surfaces on FAILED campaigns, and API edits are
+Private Beta), and confirm whether Twilio or the carrier filtered four 30007 SIDs.
+**The reply decides the work:** carrier → do the edit; Twilio-side → the edit would not
+have fixed it, so do NOT re-trigger vetting on a campaign that is currently delivering.
+Full text, replacement copy and the Console path in `docs/a2p-campaign.md`; samples are
+generated from the dispatcher by `scripts/a2p-samples.mts`.
+**Not urgent:** all twelve recorded 30007s are from 2026-08-05, before the
+`camphawk.app/b/<token>` link came out of SMS. None since.
+
+### If a hold is queued: did the 8am cart fire? (the daily check)
 The day-before opt-in flow is live end to end and one real hold is queued:
 **Leo Carrillo — Canyon, unit 42558 `#L108`, arrival 2026-09-04, releases
 2026-08-07T08:00 PT**, status `requested` (tapped 06:00:53Z). Everything upstream is
