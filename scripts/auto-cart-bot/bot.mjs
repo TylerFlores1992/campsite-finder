@@ -22,20 +22,11 @@ import { recgovLoginState } from './session.mjs';
 import { attemptLoginWithCreds } from './recgov-login.mjs';
 import { hasCreds, loadCreds, deleteCreds, bumpReloginFails, resetReloginFails } from './credstore.mjs';
 import { acquireProfileLock, releaseProfileLock, profileLockHolder } from './profile-lock.mjs';
+import { loadEnv } from './load-env.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-(function loadEnv() {
-  const p = path.join(__dirname, '.env');
-  if (!fs.existsSync(p)) return;
-  for (const line of fs.readFileSync(p, 'utf8').split('\n')) {
-    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-    if (!m) continue;
-    let v = m[2].trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-    if (!(m[1] in process.env)) process.env[m[1]] = v;
-  }
-})();
+loadEnv(import.meta.url);
 
 const CAMPHAWK_URL = (process.env.CAMPHAWK_URL || 'https://camphawk.app').replace(/\/$/, '');
 const TOKEN = process.env.AUTOCART_TOKEN; // master token

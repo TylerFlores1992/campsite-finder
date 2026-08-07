@@ -37,6 +37,12 @@ import { fileURLToPath } from 'node:url';
 import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
 } from './profile-lock.mjs';
+import { loadEnv } from './load-env.mjs';
+
+// No secrets here, but RC_PROFILE_DIR / RC_KEEPALIVE_MS / RC_HEADLESS are read the same
+// way as everywhere else. A process that silently ignores the config file is the bug
+// this file's sibling just shipped.
+loadEnv(import.meta.url);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RC_HOME = 'https://www.reservecalifornia.com/';

@@ -30,6 +30,13 @@ import { precartInPage, findCartEntry, releaseEntry, NO_CART } from './rc-cart.m
 import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
 } from './profile-lock.mjs';
+import { loadEnv } from './load-env.mjs';
+
+// The token lives in scripts/auto-cart-bot/.env alongside the rec.gov bot's. Without
+// this the runner answered `feed 401` — which reads exactly like a wrong token, not a
+// config file nobody opened — and start-all.bat, which passes no environment of its own,
+// would have failed that way on every boot.
+loadEnv(import.meta.url);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RC_HOME = 'https://www.reservecalifornia.com/';
