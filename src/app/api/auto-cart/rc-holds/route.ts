@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, type HoldRequest } from '@/lib/rc-holds';
-import { query } from '@/lib/db/client';
+import { query, mutate } from '@/lib/db/client';
 import { manageTokenFor } from '@/lib/notifications/actions';
 import { dispatchNotifications } from '@/lib/notifications';
 
@@ -45,6 +45,13 @@ const forBot = (h: HoldRequest) => ({
 export async function GET(req: NextRequest) {
   const bad = unauthorized(req);
   if (bad) return bad;
+
+  // LIVENESS, stamped on the authorized poll itself (same pattern as the rec.gov roster,
+  // migration 015). The runner's death was undetectable until a user's hold silently
+  // failed — and `autocart.bot` stayed green throughout, because that is a DIFFERENT
+  // process which was genuinely fine. Fire-and-forget: a heartbeat write must never be
+  // able to fail the request that carts a site.
+  mutate(`UPDATE rc_runner_heartbeat SET beat_at = NOW() WHERE id = 1`).catch(() => {});
 
   // Lead time on purpose: the bot should be mid-request when the site frees, not
   // starting to think about it a second late. RC releases on the exact minute.

@@ -32,6 +32,11 @@ const DETECT_STALE_MS = SHARED_DETECT_STALE_MS;
 const DELIVERY_STALE_MS = SHARED_DELIVERY_STALE_MS;
 const SYNC_STALE_MS = 48 * 60 * 60 * 1000; // catalog syncs are ~nightly/hourly
 const BOT_STALE_MS = 5 * 60 * 1000; // roster poll ~2s; matches poller's isBotOnline intent
+// The RC hold runner polls every ~20s (RC_HOLD_POLL_MS). Three minutes is nine missed
+// polls — comfortably past a transient network blip, and still well inside the ~21-minute
+// window a hold is reachable in, so a stale beat is actionable BEFORE the release is lost
+// rather than a post-mortem.
+const RC_RUNNER_STALE_MS = 3 * 60 * 1000;
 
 const ageMs = (ts: string | null | undefined) => (ts ? Date.now() - new Date(ts).getTime() : Infinity);
 const secs = (ms: number) => (Number.isFinite(ms) ? Math.round(ms / 1000) : undefined);
@@ -231,6 +236,41 @@ export async function GET() {
     });
   } catch (err) {
     checks.push({ name: 'autocart.bot', level: 'warn', detail: `read failed: ${(err as Error).message}` });
+  }
+
+  // 4b. RC hold runner — a SEPARATE process from the rec.gov bot above, and they fail
+  //     independently: on 2026-08-07 the rec.gov bot carted sites all afternoon while
+  //     this one was dead, so `autocart.bot` sat green and actively reassured.
+  //
+  //     Judged against PENDING WORK, not staleness alone. The runner only matters when a
+  //     hold is due — a quiet box overnight is normal and must not page anyone, while a
+  //     dead runner with a `requested` hold at its release time is a user losing a site
+  //     they were promised. Same principle as `poller.shards`: the alarming state is
+  //     silent blindness, not idleness.
+  try {
+    const [beat, due] = await Promise.all([
+      queryOne<{ beat_at: string | null }>(`SELECT beat_at::text FROM rc_runner_heartbeat WHERE id = 1`),
+      queryOne<{ n: string }>(
+        `SELECT count(*) AS n FROM rc_hold_requests
+          WHERE status = 'requested'
+            AND release_at <= to_char((NOW() + interval '10 minutes') AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`
+      ),
+    ]);
+    const age = ageMs(beat?.beat_at);
+    const pending = Number(due?.n ?? 0);
+    const stale = !beat || age > RC_RUNNER_STALE_MS;
+    checks.push({
+      name: 'autocart.rc_runner',
+      // FAIL only when both are true — that combination is a hold about to be missed.
+      level: stale && pending > 0 ? 'fail' : stale ? 'warn' : 'ok',
+      detail: !beat
+        ? 'no runner heartbeat row'
+        : `last poll ${secs(age)}s ago` +
+          (pending > 0 ? `, ${pending} hold(s) due — these will be MISSED if it stays down` : ', no holds due'),
+      ageSeconds: secs(age),
+    });
+  } catch (err) {
+    checks.push({ name: 'autocart.rc_runner', level: 'warn', detail: `read failed: ${(err as Error).message}` });
   }
 
   const anyFail = checks.some((c) => c.level === 'fail');
