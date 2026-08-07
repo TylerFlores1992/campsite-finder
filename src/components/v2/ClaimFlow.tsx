@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Check, AlertTriangle, Tent } from 'lucide-react';
+import { formatStayDates } from '@/lib/notifications/dates';
 
 /**
  * The hand-off, from the user's side.
@@ -36,6 +37,19 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
   const [state, setState] = useState<HoldState | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  /**
+   * "I am signed in to ReserveCalifornia" — a gate, not a formality.
+   *
+   * Pressing the button starts a ~2.5s window in which the site belongs to nobody. A user
+   * who is signed OUT spends that window on RC's login form, so the hold we kept for them
+   * all morning is handed to whoever else is watching. The instruction was already in the
+   * copy as a sentence, and a sentence immediately above an inviting green button is a
+   * sentence people skim.
+   *
+   * Deliberately NOT remembered between visits. Each claim is its own risky moment, and a
+   * box that arrives pre-ticked from last time is the sentence again.
+   */
+  const [signedIn, setSignedIn] = useState(false);
   const redirected = useRef(false);
 
   const load = useCallback(async () => {
@@ -74,6 +88,9 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
   }, [state]);
 
   async function claim() {
+    // Defensive: the button is disabled, but nothing else stops a stray call, and this
+    // one is not undoable — the bot lets go and the site is on the open market.
+    if (!signedIn) return;
     setBusy(true);
     setError('');
     try {
@@ -102,21 +119,56 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
         <Tent className="text-ch-green-deep" size={32} />
         <h1 className="text-2xl font-bold text-ch-ink mt-3">We&rsquo;re holding {site} for you</h1>
         <p className="text-ch-muted mt-2">
-          {state.arrivalDate}
-          {state.nights && state.nights > 1 ? ` · ${state.nights} nights` : ''}
+          {stayLabel(state.arrivalDate, state.nights)}
         </p>
         <p className="text-ch-ink mt-5">
-          Make sure you&rsquo;re signed in to ReserveCalifornia in this browser first. When you tap below we
-          let go and you take it — that swap takes a couple of seconds, and the site is
-          open to anyone during it, so only tap when you&rsquo;re ready to finish.
+          When you tap below we let go and you take it — that swap takes a couple of
+          seconds, and the site is open to anyone during it, so only tap when you&rsquo;re
+          ready to finish.
         </p>
+
+        {/* NEW TAB on purpose: navigating away to sign in would lose this page, and the
+            hold id + token live only in its URL.
+
+            Points at the app ROOT, not a guessed /Customers/SignIn — RC is a SPA whose
+            sign-in is an Okta page on another host, and the WAF 403s this project's
+            egress so no deep path can be verified from here. One extra click beats a dead
+            link on the one screen where a wrong turn costs the site. */}
+        <a
+          href="https://www.reservecalifornia.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-4 text-sm font-semibold text-ch-green-deep underline"
+        >
+          Not signed in? Open ReserveCalifornia and sign in (new tab)
+        </a>
+
+        <label className="mt-5 flex w-full cursor-pointer items-start gap-3 rounded-xl border border-ch-line p-4 text-left">
+          <input
+            type="checkbox"
+            checked={signedIn}
+            onChange={(e) => setSignedIn(e.target.checked)}
+            className="mt-0.5 size-5 shrink-0 accent-ch-green-deep"
+          />
+          <span className="text-sm text-ch-ink">
+            I&rsquo;m signed in to ReserveCalifornia in this browser
+          </span>
+        </label>
+
         <button
           onClick={claim}
-          disabled={busy}
-          className="mt-6 w-full rounded-xl bg-ch-green-deep px-6 py-4 text-lg font-bold text-white disabled:opacity-60"
+          disabled={busy || !signedIn}
+          className="mt-4 w-full rounded-xl bg-ch-green-deep px-6 py-4 text-lg font-bold text-white disabled:opacity-60"
         >
           {busy ? 'Releasing…' : "It's mine — hand it over"}
         </button>
+        {/* Say WHY it is disabled. A dead button with no explanation reads as broken,
+            and this one is the last step of a flow they have already waited hours for. */}
+        {!signedIn && (
+          <p className="mt-3 text-sm text-ch-muted">
+            Tick the box once you&rsquo;re signed in — we won&rsquo;t let go until then.
+          </p>
+        )}
       </Shell>
     );
   }
@@ -171,6 +223,26 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
       </p>
     </Shell>
   );
+}
+
+/**
+ * "Sep 4-6 · 3 nights", not "2026-09-04".
+ *
+ * Same rule as the alert copy (lib/notifications/dates.ts): a bare ISO date is read as a
+ * timestamp rather than a stay, and it was mis-read exactly that way in a real alert on
+ * 2026-08-06. Days are stepped in UTC and re-serialised, never via `new Date(iso)` plus
+ * local arithmetic — a bare date parses as midnight UTC and renders a day early for
+ * everyone west of Greenwich, which on this screen would name the wrong night.
+ */
+function stayLabel(arrival?: string, nights?: number): string {
+  if (!arrival) return '';
+  const n = Math.max(1, nights ?? 1);
+  const start = Date.parse(`${arrival}T00:00:00Z`);
+  if (Number.isNaN(start)) return arrival;
+  const dates = Array.from({ length: n }, (_, i) =>
+    new Date(start + i * 86_400_000).toISOString().slice(0, 10),
+  );
+  return `${formatStayDates(dates)} · ${n} night${n === 1 ? '' : 's'}`;
 }
 
 function Shell({ children }: { children: React.ReactNode }) {

@@ -182,6 +182,20 @@ const PRESETS: Record<string, Preset> = {
       export const node = <ManageWatch token="demo" />;`,
     frame: 'max-w-lg w-full mx-auto',
   },
+  'ch-claim': {
+    label: 'ClaimFlow — the RC hand-off, gated on the signed-in confirmation',
+    entry: `import ClaimFlow from '@/components/v2/ClaimFlow';
+      if (typeof window !== 'undefined') {
+        // The 'carted' state is the only one with a decision in it — the other statuses
+        // are spinners and outcomes. Freeze it here so the gate can be eyeballed.
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({
+          status: 'carted', unitId: '42558', unitName: 'Hook Up (E ) Campsite #L108',
+          arrivalDate: '2026-09-04', nights: 1,
+        }) });
+      }
+      export const node = <ClaimFlow holdId="demo" token="demo" />;`,
+    frame: 'max-w-md w-full mx-auto',
+  },
   'ch-pricing': {
     label: 'PricingSection — signed-out two-plan comparison (the homepage funnel)',
     entry: `import PricingSection from '@/components/v2/PricingSection';

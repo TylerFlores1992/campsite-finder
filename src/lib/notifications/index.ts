@@ -469,7 +469,12 @@ function buildEmailHtml(payload: NotificationPayload): string {
     <p style="margin:0;color:#555"><strong>${payload.startDate}</strong> → <strong>${payload.endDate}</strong></p>
   </div>
 
-  <p style="color:#555">Sign in to ReserveCalifornia first, then tap below. We let go and you take it — the swap takes a couple of seconds, and the site is open to anyone during it, so only tap when you're ready to finish.</p>
+  <!-- "Sign in FIRST" is the whole ballgame: the swap opens a ~2.5s window in which the
+       site belongs to nobody, and a signed-out user spends it on RC's login form while
+       someone else takes the site. The claim page makes them tick a box to confirm it
+       before the button works; this says the same thing, so the instruction is not new
+       information arriving at the riskiest moment. -->
+  <p style="color:#555"><strong>Sign in to ReserveCalifornia first</strong> — the page will ask you to confirm you have. Then tap below: we let go and you take it. The swap takes a couple of seconds and the site is open to anyone during it, so only tap when you're ready to finish.</p>
 
   <a href="${payload.holdUrl}"
      style="display:inline-block;background:#166534;color:white;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:8px">
