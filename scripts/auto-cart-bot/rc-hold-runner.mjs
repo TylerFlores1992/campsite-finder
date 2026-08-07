@@ -27,6 +27,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { precartInPage, findCartEntry, releaseEntry, NO_CART } from './rc-cart.mjs';
+import {
+  waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
+} from './profile-lock.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RC_HOME = 'https://www.reservecalifornia.com/';
@@ -84,11 +87,38 @@ const rcHeaders = (token) => ({
   storeid: '111',
 });
 
+const LOCK_OWNER = 'rc-hold-runner';
+const RENEW_MS = 2 * 60_000;
+/** Generous, because we are the process that must win. `rc-keepwarm` holds the profile
+ *  for ~15s a pass and yields quickly; waiting that out beats colliding. */
+const LOCK_WAIT_MS = Number(process.env.RC_PROFILE_LOCK_WAIT_MS || 60_000);
+
+/**
+ * `rc-keepwarm.mjs` opens the SAME profile directory every 20 minutes, and two Chromium
+ * instances on one user-data-dir do not fail cleanly — they end up disagreeing about what
+ * is in the profile (observed on the rec.gov bot, 2026-07-29; see profile-lock.mjs). On
+ * this profile that means the session, which is the one thing here we cannot rebuild
+ * without a human.
+ *
+ * If the lock never comes free we do NOT proceed anyway. Nothing is lost by skipping:
+ * requested holds stay requested, the feed's 20-minute grace window still returns them,
+ * and a claim is retried on the next pass a second later.
+ */
 async function withRC(fn) {
+  if (!(await waitForProfileLock(PROFILE_DIR, LOCK_OWNER, LOCK_WAIT_MS))) {
+    const held = profileLockHolder(PROFILE_DIR);
+    log(`⚠ profile held by ${held?.owner ?? 'another process'} — skipping this pass, work stays queued`);
+    return null;
+  }
+  const renew = setInterval(() => renewProfileLock(PROFILE_DIR, LOCK_OWNER), RENEW_MS);
   const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
     headless: HEADLESS,
     viewport: null,
     ignoreDefaultArgs: ['--enable-automation'],
+  }).catch((err) => {
+    clearInterval(renew);
+    releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
+    throw err;
   });
   try {
     const page = ctx.pages()[0] ?? (await ctx.newPage());
@@ -106,6 +136,8 @@ async function withRC(fn) {
     return await fn(ctx, page, token);
   } finally {
     await ctx.close().catch(() => {});
+    clearInterval(renew);
+    releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
   }
 }
 

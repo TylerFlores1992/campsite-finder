@@ -34,6 +34,9 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
+} from './profile-lock.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RC_HOME = 'https://www.reservecalifornia.com/';
@@ -115,26 +118,60 @@ async function sessionLive(ctx, page) {
   }
 }
 
-async function withProfile(fn, { headless = HEADLESS } = {}) {
+/**
+ * Returned instead of a result when another process holds the profile.
+ *
+ * A distinct value, not `false` and not a throw, because the ONE thing that must never
+ * happen is a busy profile being read as a dead session — that would tell the owner to
+ * go and do a human sign-in over a session that is perfectly healthy.
+ */
+export const BUSY = Symbol('rc-profile-busy');
+
+const LOCK_OWNER = 'rc-keepwarm';
+/** Comfortably inside STALE_MS, so a long sign-in never reads as abandoned. */
+const RENEW_MS = 2 * 60_000;
+
+/**
+ * `rc-hold-runner.mjs` drives the SAME profile directory, and two Chromium instances on
+ * one user-data-dir do not fail cleanly — they disagree about what is in the profile
+ * (observed on the rec.gov bot, 2026-07-29, see profile-lock.mjs).
+ *
+ * The keep-warm yields, and the runner waits. That is the right way round: the runner is
+ * carting at an exact minute or handing a site to someone watching a spinner, while a
+ * skipped keep-warm pass costs nothing — the token lives ~1h and there is another pass in
+ * 20 minutes. The runner also loads RC itself, so a pass we skip because it is working is
+ * a pass it renewed the token for us.
+ */
+async function withProfile(fn, { headless = HEADLESS, waitMs = 15_000 } = {}) {
+  if (!(await waitForProfileLock(PROFILE_DIR, LOCK_OWNER, waitMs))) {
+    return BUSY;
+  }
+  const renew = setInterval(() => renewProfileLock(PROFILE_DIR, LOCK_OWNER), RENEW_MS);
   const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
     headless,
     viewport: null,
     // navigator.webdriver is set by --enable-automation and reCAPTCHA reads it. The
     // rec.gov bot strips it for exactly this reason; RC gates on the same signal.
     ignoreDefaultArgs: ['--enable-automation'],
+  }).catch((err) => {
+    clearInterval(renew);
+    releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
+    throw err;
   });
   try {
     const page = ctx.pages()[0] ?? (await ctx.newPage());
     return await fn(ctx, page);
   } finally {
     await ctx.close().catch(() => {});
+    clearInterval(renew);
+    releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
   }
 }
 
 /** One refresh pass. Returns 'warm' | 'dead' | 'unknown' — three outcomes on purpose,
  *  because "we could not tell" must never be actioned as "it is dead". */
 async function warmOnce() {
-  return withProfile(async (ctx, page) => {
+  const state = await withProfile(async (ctx, page) => {
     await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 });
     // Let RC's app boot and run its silent token renewal. This wait IS the keep-warm;
     // navigating and leaving immediately would prove the session without extending it.
@@ -158,6 +195,13 @@ async function warmOnce() {
     log('  unaffected (the poller detects from Fly, not from here).');
     return 'dead';
   });
+
+  if (state === BUSY) {
+    const held = profileLockHolder(PROFILE_DIR);
+    log(`… profile busy (${held?.owner ?? 'another process'}) — skipping this pass, NOT a dead session`);
+    return 'unknown';
+  }
+  return state;
 }
 
 /** The one human step. Opens the profile headful and waits for a real session. */
@@ -165,7 +209,7 @@ async function humanLogin() {
   log('Opening ReserveCalifornia for a ONE-TIME human sign-in.');
   log('Sign in, TICK "Keep me signed in", and solve the CAPTCHA if it appears.');
   log('This window closes by itself once the session is confirmed (up to 10 min).');
-  return withProfile(async (ctx, page) => {
+  const ok = await withProfile(async (ctx, page) => {
     await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     const deadline = Date.now() + 10 * 60_000;
     while (Date.now() < deadline) {
@@ -180,7 +224,18 @@ async function humanLogin() {
     }
     log('✗ No session after 10 minutes. Re-run when you have a moment.');
     return false;
-  }, { headless: false });
+    // Waits longer than a keep-warm pass would: a person is at the keyboard, so making
+    // them re-run the command because a background pass happened to be mid-flight is a
+    // worse outcome than sixty seconds of nothing.
+  }, { headless: false, waitMs: 60_000 });
+
+  if (ok === BUSY) {
+    const held = profileLockHolder(PROFILE_DIR);
+    log(`✗ The profile is in use by ${held?.owner ?? 'another process'} and did not come free.`);
+    log('  Stop the keep-warm loop / hold runner in the other window, then re-run this.');
+    return false;
+  }
+  return ok;
 }
 
 if (LOGIN) {

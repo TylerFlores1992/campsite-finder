@@ -75,6 +75,33 @@ export async function waitForProfileLock(profileDir, owner, timeoutMs = 20000) {
 }
 
 /**
+ * Refresh OUR lock's timestamp, so a long job does not read as abandoned while it is
+ * still genuinely running.
+ *
+ * STALE_MS exists so a crash cannot lock a profile forever, but it cuts both ways: the
+ * RC human sign-in waits up to ten minutes for a person to type a password and solve a
+ * CAPTCHA, which lands exactly on the staleness boundary. A stale lock reads as FREE, so
+ * without this the other process would open the same profile out from under a live
+ * session — the precise collision this module exists to prevent.
+ *
+ * Only renews a lock we actually hold; renewing someone else's would be indistinguishable
+ * from stealing it.
+ */
+export function renewProfileLock(profileDir, owner) {
+  const held = profileLockHolder(profileDir);
+  if (!held || held.owner !== owner || held.pid !== process.pid) return false;
+  try {
+    fs.writeFileSync(
+      lockPath(profileDir),
+      JSON.stringify({ owner, pid: process.pid, at: new Date().toISOString() }),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Release only if WE still hold it. Used on the error path, where the failure may
  * have been "someone else holds this" — deleting the file blindly there would strip
  * the other process's lock and reintroduce the very race this prevents.
