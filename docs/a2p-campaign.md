@@ -36,6 +36,65 @@ One source of truth each: samples come from the dispatcher, prose lives here.
 
 ---
 
+## Where this actually gets entered
+
+**Console:** Messaging → Regulatory Compliance → Campaigns → click the campaign. The
+sections on that page map to the fields below: *Campaign description and content* holds
+the **description**, *Sample messages* holds the **samples**, and *End user consent
+(message flow)* holds the **message flow**.
+
+Look for a blue **"Edit Campaign"** link. Twilio's docs say it appears on **failed**
+campaign detail pages — ours is Approved, so it may well not be there. Campaign edits via
+the API are a **Private Beta**, "only available to participants in this beta program",
+with no self-serve enrollment. The edit modal, where available, covers description,
+samples (up to five) and the opt-in description, but **not the use case**.
+
+**If there is no Edit link — and expect that — it is a Twilio Support ticket.** Draft
+below. Support is also the only documented way to learn whether a 30007 was Twilio's
+filter or the carrier's, so both questions can go in one ticket, and the answer to the
+second may make the first unnecessary.
+
+### Support ticket draft
+
+> **Subject:** Update message samples and description on approved A2P campaign
+>
+> Account: `My First Twilio Account`
+> Brand: Camp Hawk — `BNb2dc221e086e621a5d4afdb77c387d7e`
+> Messaging Service: Camp Hawk Alerts — `MG7bf4f78c06ea99f61efcbccd8fe47b5b`
+>
+> Two requests, and the second may answer the first.
+>
+> **1. Our registered message samples have drifted from live traffic.** They were written
+> in July and our message copy has changed since: the sender string, the wording, and the
+> set of reservation-site links we include. I would like to update the description,
+> message flow and message samples on the approved campaign. I understand the four content
+> booleans cannot change — `has_embedded_links` is already true and should stay true — and
+> that an update re-triggers vetting. Please advise whether you can apply this edit, or
+> whether my account can be enabled for the campaign-edit beta. The replacement text is
+> ready to send.
+>
+> **2. We have been seeing error 30007 on alert messages.** Could you confirm whether
+> those were filtered by Twilio or by the carrier? Message SIDs: `<paste 3+ SIDs>`. If the
+> filtering is Twilio-side, the sample update above may not be the right fix and I would
+> rather know before re-vetting a campaign that is currently delivering.
+>
+> `SM65b49396606386c2dd4bcb42b5175a1d` (2026-08-05 16:30 UTC)
+> `SMfd84ee2df6442c3677bbd1dee1468b03` (2026-08-05 15:30 UTC)
+> `SM96f9416e3874b52befb7c5297d7724db` (2026-08-05 14:30 UTC)
+> `SMd7a8105387d4dd8f86f6920e8031bbcf` (2026-08-05 13:03 UTC)
+
+All twelve recorded 30007s are from **2026-08-05**, before the `camphawk.app/b/<token>`
+link was removed from SMS — none since. That is the strongest single piece of evidence we
+have, and it is worth stating in the ticket if they ask. Re-pull any time:
+
+```sql
+SELECT provider_id, created_at, delivery_error FROM notifications
+ WHERE channel = 'sms' AND provider_id IS NOT NULL AND delivery_error IS NOT NULL
+ ORDER BY created_at DESC;
+```
+
+---
+
 ## Description
 
 > CampHawk (camphawk.app) is a campsite cancellation alert service. A user creates an
