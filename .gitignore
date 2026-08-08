@@ -36,6 +36,15 @@ yarn-error.log*
 # vercel
 .vercel
 
+# THROWAWAY probe scripts. The pattern used all over this project is to write
+# `scripts/.something.mts`, run it with tsx, then `rm -f` it — the leading dot marks it as
+# scratch. That is fine until an unrelated `git add -A` runs in the window between the
+# write and the delete, which is exactly how `scripts/.w.mts` got committed on 2026-08-08
+# and then showed up as a phantom deletion in the next status. Ignore them by shape so the
+# race cannot commit one.
+scripts/.*.mts
+scripts/.*.ts
+
 # one-off local scripts that may contain secrets
 scripts/fix-exec-dml.mjs
 
