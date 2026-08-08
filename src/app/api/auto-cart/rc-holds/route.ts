@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, reportCartFailure, type HoldRequest } from '@/lib/rc-holds';
 import { query, mutate } from '@/lib/db/client';
+import { notifyHoldMissed } from '@/lib/rc-holds-notify';
 import { manageTokenFor } from '@/lib/notifications/actions';
 import { dispatchNotifications } from '@/lib/notifications';
 
@@ -152,7 +153,17 @@ export async function POST(req: NextRequest) {
   // FIRST attempt is always before the release, so treating it as final guaranteed every
   // hold failed exactly once, too early, forever.
   const outcome = await reportCartFailure(id, typeof error === 'string' ? error : 'unknown error');
-  return NextResponse.json({ ok: true, state: outcome });
+  // AND TELL THEM. A hold that the runner reports as dead used to be the SILENT path —
+  // only `expire-holds`'s sweep notified, and its `WHERE status = 'requested'` can never
+  // match a row the runner already failed. So the case where we know exactly what went
+  // wrong said nothing, while the case where we infer from silence shouted. On 2026-08-08
+  // the only thing the user got was an ordinary "#41 is available", which does not
+  // distinguish "we're holding it for you" from "we tried and couldn't" — and they had
+  // asked us to hold it the night before.
+  if (outcome.state === 'failed' && outcome.hold) {
+    await notifyHoldMissed(outcome.hold).catch((e) => console.error('[rc-holds] missed alert failed:', e));
+  }
+  return NextResponse.json({ ok: true, state: outcome.state });
 }
 
 /**

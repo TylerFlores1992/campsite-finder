@@ -21,7 +21,7 @@
 // a lie.
 
 import { query, mutate } from '../src/lib/db/client';
-import { dispatchNotifications } from '../src/lib/notifications';
+import { notifyHoldMissed } from '../src/lib/rc-holds-notify';
 
 /** Hourly. Nothing here is urgent — the moment is already lost — and the value is
  *  telling the user, which is worth doing reliably rather than instantly. */
@@ -72,36 +72,6 @@ export async function failMissedHolds(onlyIds?: string[]): Promise<MissedHold[]>
   });
 }
 
-/**
- * "We couldn't hold it after all."
- *
- * Sent as an ordinary `available`-shaped alert on purpose rather than a new kind: the
- * useful fact for the user is that the site released and they can still go and look. A
- * bespoke apology that does not say what to do next would be worse than the alert they
- * would have received anyway.
- */
-async function notifyMissed(h: MissedHold): Promise<void> {
-  const [w] = await query<{ start_date: string; end_date: string; name: string; reservations_url: string | null }>(
-    `SELECT wt.start_date::text, wt.end_date::text, c.name, c.reservations_url
-       FROM watches wt JOIN campgrounds c ON c.id = wt.campground_id WHERE wt.id = $1`,
-    [h.watch_id],
-  );
-  if (!w) return;
-  await dispatchNotifications({
-    userId: h.user_id,
-    watchId: h.watch_id,
-    campgroundId: h.campground_id,
-    campgroundName: w.name,
-    availableDates: [h.arrival_date],
-    bookingUrl: w.reservations_url ?? 'https://www.reservecalifornia.com/',
-    campsiteName: h.unit_name,
-    campsiteId: h.unit_id,
-    startDate: w.start_date,
-    endDate: w.end_date,
-    kind: 'hold_missed',
-  });
-}
-
 export async function sweepMissedHolds(): Promise<number> {
   const missed = await failMissedHolds();
   for (const h of missed) {
@@ -109,7 +79,7 @@ export async function sweepMissedHolds(): Promise<number> {
       `[expire-holds] MISSED: hold ${h.id} (${h.unit_name ?? h.unit_id}) released ${h.release_at} ` +
         `and was never carted — the mini-PC runner was not reachable.`,
     );
-    await notifyMissed(h).catch((e) => console.error('[expire-holds] notify failed:', e));
+    await notifyHoldMissed(h).catch((e) => console.error('[expire-holds] notify failed:', e));
   }
   return missed.length;
 }

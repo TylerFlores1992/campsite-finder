@@ -271,7 +271,7 @@ test('a cart failure BEFORE the release is retryable, not final', async () => {
   const req = await requestHold(watchId, '9106');
 
   const outcome = await reportCartFailure(req!.id, 'The unit is not available for the date(s) specified.');
-  assert.equal(outcome, 'retry', 'a failure while the release is still ahead must not be final');
+  assert.equal(outcome.state, 'retry', 'a failure while the release is still ahead must not be final');
 
   const [row] = await query<{ status: string; error: string | null; last_attempt_note: string | null }>(
     `SELECT status, error, last_attempt_note FROM rc_hold_requests WHERE id = $1`, [req!.id],
@@ -295,7 +295,14 @@ test('once the window has closed, a cart failure IS final', async () => {
     `SELECT id FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = '9107'`, [watchId]);
 
   const outcome = await reportCartFailure(row0.id, 'RC said no');
-  assert.equal(outcome, 'failed', 'past the grace window there is nothing left to retry');
+  assert.equal(outcome.state, 'failed', 'past the grace window there is nothing left to retry');
+  assert.ok(outcome.hold, 'the row comes back so the caller can TELL the user it failed');
+
+  // Exactly once. A repeat report must not send a second "we couldn't hold it" — the same
+  // transition rule as markCarted and migration 039.
+  const again = await reportCartFailure(row0.id, 'RC said no');
+  assert.equal(again.state, 'already-failed', 'a repeat report is not a new failure');
+  assert.equal(again.hold, null, 'and carries nothing to notify about');
   const [row] = await query<{ status: string; error: string | null }>(
     `SELECT status, error FROM rc_hold_requests WHERE id = $1`, [row0.id]);
   assert.equal(row.status, 'failed');

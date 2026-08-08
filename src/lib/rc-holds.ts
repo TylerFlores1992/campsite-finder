@@ -300,9 +300,9 @@ export async function markClaimed(id: string): Promise<void> {
  */
 export async function reportCartFailure(
   id: string, error: string, graceMinutes = 20,
-): Promise<'retry' | 'failed'> {
+): Promise<{ state: 'retry' | 'failed' | 'already-failed'; hold: HoldRequest | null }> {
   const stillOpen = `release_at >= to_char((NOW() - ($3 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`;
-  const rows = await mutate<{ status: HoldStatus }>(
+  const rows = await mutate<HoldRequest & { status: HoldStatus }>(
     `UPDATE rc_hold_requests
         SET last_attempt_at = NOW(), last_attempt_note = $2,
             status     = CASE WHEN ${stillOpen} THEN status     ELSE 'failed' END,
@@ -310,11 +310,15 @@ export async function reportCartFailure(
             -- updated_at means "the hold changed". A retryable attempt is not a change,
             -- and moving it would destroy the unchanged-since-the-tap tell (migration 046).
             updated_at = CASE WHEN ${stillOpen} THEN updated_at ELSE NOW() END
-      WHERE id = $1
-      RETURNING status`,
+      -- The status guard makes this report the TRANSITION, so the caller can tell the
+      -- user exactly once. Without it, any repeat report would send a second "we couldn't
+      -- hold it" — the same lesson as markCarted and migration 039.
+      WHERE id = $1 AND status <> 'failed'
+      RETURNING *`,
     [id, error.slice(0, 500), String(graceMinutes)],
   ).catch((e) => { console.error('[rc-holds] reportCartFailure failed:', e.message); return []; });
-  return rows[0]?.status === 'failed' ? 'failed' : 'retry';
+  if (!rows[0]) return { state: 'already-failed', hold: null };
+  return { state: rows[0].status === 'failed' ? 'failed' : 'retry', hold: rows[0] };
 }
 
 export async function markFailed(id: string, error: string): Promise<void> {
