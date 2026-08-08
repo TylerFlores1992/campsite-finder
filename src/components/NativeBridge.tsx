@@ -71,6 +71,43 @@ export default function NativeBridge() {
         'notificationActionPerformed',
         (event) => {
           const data = event.notification.data as Record<string, string> | undefined;
+
+          // `data.url` FIRST. It is the action the notification just offered — the
+          // claim page for an RC hold, or "hold it for me" on a coming-soon — and
+          // this handler used to ignore it entirely, sending every tap to the
+          // campground page instead. So a push saying "Tap to have us hold it"
+          // landed somewhere with no such button (reported 2026-08-08). Setting the
+          // field server-side is only half the job; something has to read it.
+          //
+          // Only OUR pages are navigated in the webview. `data.url` is the provider's
+          // booking URL for an ordinary availability alert, and assigning that here
+          // would walk the app out of camphawk.app and into recreation.gov with no
+          // way back — the same reason the click handler below routes off-site links
+          // to the system browser.
+          const raw = data?.url;
+          if (raw) {
+            try {
+              const url = new URL(raw, window.location.href);
+              if (url.protocol === 'http:' || url.protocol === 'https:') {
+                if (url.hostname.endsWith('camphawk.app') || url.hostname === window.location.hostname) {
+                  window.location.assign(url.href);
+                  return;
+                }
+                // Imported HERE rather than closing over the `Browser` binding below:
+                // that `const` is declared later in this same async function, so a tap
+                // arriving before it is evaluated would hit the temporal dead zone and
+                // throw inside a listener nobody is watching.
+                const href = url.href;
+                void import('@capacitor/browser')
+                  .then(({ Browser }) => Browser.open({ url: href }))
+                  .catch(() => window.location.assign(href));
+                return;
+              }
+            } catch {
+              // Malformed — fall through to the campground page rather than dead-end.
+            }
+          }
+
           const campgroundId = data?.campgroundId;
           if (campgroundId) {
             // Relative path keeps navigation inside the webview (the live site).
