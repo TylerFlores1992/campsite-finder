@@ -57,3 +57,10 @@ scripts/apply-migration-004.mjs
 # --out). An image of a component at one moment, regenerated on demand — not source,
 # and it lands in the repo root every time anyone eyeballs a component.
 /screenshot.png
+
+# store assets from `npx tsx scripts/play-assets.mts` — a pure downscale of
+# assets/icon-only.png and a composite of the same source, regenerated on demand for a
+# Play or tester-service upload form. Derived output, not source: committing it would
+# mean two copies of the brand mark that can silently disagree, and the one in assets/
+# is the one @capacitor/assets builds the launcher icons from.
+/.play-assets/
