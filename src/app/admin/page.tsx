@@ -205,21 +205,44 @@ export default async function AdminPage() {
       //   untracked   — sent before 038, or sent with no SID captured. Kept visible
       //                 rather than folded into "delivered", so the denominator is
       //                 honest while the backlog ages out.
-      // 30 days, because a rate over all time would take months to react to a
-      // regression that started yesterday.
+      // TWO WINDOWS, and the distinction is the point (2026-08-08).
+      //
+      // A single 30-day rate answers "did texts arrive over the last month?" and then
+      // gets read as "are texts arriving?". Those are different questions, and after a
+      // FIXED incident they give opposite answers: every one of the 13 drops happened on
+      // 2026-08-05, before the camphawk.app link came out of SMS, and none since — yet
+      // the banner read "33% of texts are not reaching phones" for three days after the
+      // cause was gone. A dashboard that reports a resolved outage as a current one
+      // trains its only reader to ignore it, which is the same failure the canary
+      // thresholds exist to prevent.
+      //
+      // So: `recent` (7d) decides the LEVEL, `window` (30d) is shown as history. Nothing
+      // is hidden and nothing is deleted — those rows are the evidence that the fix
+      // worked, and four of their SIDs are in an open Twilio ticket.
       safe(
-        queryOne<{ delivered: number; dropped: number; pending: number; untracked: number }>(
+        queryOne<{
+          delivered: number; dropped: number; pending: number; untracked: number;
+          r_delivered: number; r_dropped: number; r_pending: number; r_untracked: number;
+        }>(
           `SELECT count(*) FILTER (WHERE delivery_status = 'delivered')::int delivered,
                   count(*) FILTER (WHERE delivery_status IN ('undelivered','failed','canceled'))::int dropped,
                   count(*) FILTER (WHERE provider_id IS NOT NULL
                                      AND (delivery_status IS NULL
                                           OR delivery_status NOT IN ('delivered','undelivered','failed','canceled')))::int pending,
-                  count(*) FILTER (WHERE provider_id IS NULL)::int untracked
-             FROM notifications
-            WHERE channel = 'sms' AND status = 'sent'
-              AND created_at > now() - interval '30 days'`
+                  count(*) FILTER (WHERE provider_id IS NULL)::int untracked,
+                  count(*) FILTER (WHERE delivery_status = 'delivered' AND recent)::int r_delivered,
+                  count(*) FILTER (WHERE delivery_status IN ('undelivered','failed','canceled') AND recent)::int r_dropped,
+                  count(*) FILTER (WHERE recent AND provider_id IS NOT NULL
+                                     AND (delivery_status IS NULL
+                                          OR delivery_status NOT IN ('delivered','undelivered','failed','canceled')))::int r_pending,
+                  count(*) FILTER (WHERE recent AND provider_id IS NULL)::int r_untracked
+             FROM (SELECT *, created_at > now() - interval '7 days' AS recent
+                     FROM notifications
+                    WHERE channel = 'sms' AND status = 'sent'
+                      AND created_at > now() - interval '30 days') n`
         ),
-        { delivered: 0, dropped: 0, pending: 0, untracked: 0 }
+        { delivered: 0, dropped: 0, pending: 0, untracked: 0,
+          r_delivered: 0, r_dropped: 0, r_pending: 0, r_untracked: 0 }
       ),
     ]);
 

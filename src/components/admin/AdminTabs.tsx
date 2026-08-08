@@ -73,9 +73,13 @@ export interface AdminData {
   workerHealthy: boolean;
   canaryRows: CanaryRow[];
   syncRows: SyncRow[];
-  /** Carrier outcomes for SMS sent in the last 30 days (migration 038). `alertAgg.sent`
-   *  counts messages Twilio ACCEPTED; this counts messages that actually landed. */
-  smsDelivery: SmsDelivery;
+  /** Carrier outcomes for SMS (migration 038). `alertAgg.sent` counts messages Twilio
+   *  ACCEPTED; this counts messages that actually landed. Carries BOTH windows: the 30d
+   *  figures are the history, the `r_*` 7d figures are what the status level is judged
+   *  on — see the query in app/admin/page.tsx for why they are not the same question. */
+  smsDelivery: SmsDelivery & {
+    r_delivered: number; r_dropped: number; r_pending: number; r_untracked: number;
+  };
   costItems: CostItem[];
   usage: UsageCounts;
   /** ALL-TIME alert counts, for lifetime spend. Distinct from `usage` (this month). */
@@ -173,13 +177,23 @@ function overallStatus(data: AdminData): { level: Level; headline: string; detai
   }
   // Texts that never arrive belong in the banner: the canaries prove we CAN send one,
   // and a carrier dropping real alerts is invisible to them.
+  //
+  // JUDGED ON THE LAST 7 DAYS, matching the panel below. On the 30-day window this
+  // banner announced "33% of texts are not reaching phones" for three days after the
+  // cause was fixed — every one of those drops was 2026-08-05, before the camphawk.app
+  // link came out of SMS, and there have been none since. A banner that keeps shouting
+  // about a solved problem is how the one person who reads it learns to scroll past it.
   const sms = data.smsDelivery;
-  const smsLvl = smsLevel(sms);
-  const smsAnswered = sms.delivered + sms.dropped;
+  const smsRecent = {
+    delivered: sms.r_delivered, dropped: sms.r_dropped,
+    pending: sms.r_pending, untracked: sms.r_untracked,
+  };
+  const smsLvl = smsLevel(smsRecent);
+  const smsAnswered = smsRecent.delivered + smsRecent.dropped;
   const smsNote =
     smsAnswered === 0
       ? 'no SMS delivery receipts are coming back from Twilio'
-      : `${((sms.dropped / smsAnswered) * 100).toFixed(0)}% of texts are not reaching phones`;
+      : `${((smsRecent.dropped / smsAnswered) * 100).toFixed(0)}% of texts are not reaching phones`;
   if (smsLvl === 'fail') problems.push(smsNote);
   else if (smsLvl === 'warn') canaryWarnings.push(smsNote);
 
@@ -671,10 +685,23 @@ function HealthRow({
  * Counts, not just a percentage: "2 of 47" and "2 of 3" are the same 4%-vs-67% trap
  * the Failed alerts KPI already learned about, in reverse.
  */
-function SmsDeliveryPanel({ d }: { d: SmsDelivery }) {
+function SmsDeliveryPanel({
+  d,
+}: {
+  d: SmsDelivery & { r_delivered: number; r_dropped: number; r_pending: number; r_untracked: number };
+}) {
   const answered = d.delivered + d.dropped;
-  const lvl = smsLevel(d);
   const total = answered + d.pending + d.untracked;
+
+  // THE LEVEL COMES FROM THE LAST 7 DAYS, the headline rate with it. A 30-day rate keeps
+  // reporting a fixed outage as a live one: all 13 drops were on 2026-08-05, and this
+  // panel still read "33% of texts are not reaching phones" three days after the cause
+  // was removed. The 30-day counts stay on screen underneath — the history is not the
+  // problem, presenting it as the present was.
+  const recent = { delivered: d.r_delivered, dropped: d.r_dropped, pending: d.r_pending, untracked: d.r_untracked };
+  const rAnswered = recent.delivered + recent.dropped;
+  const lvl = smsLevel(recent);
+  const olderDrops = d.dropped - recent.dropped;
 
   return (
     <Panel title="Did the texts arrive?">
@@ -683,11 +710,11 @@ function SmsDeliveryPanel({ d }: { d: SmsDelivery }) {
         <span className="font-bold">
           {total === 0
             ? 'No texts sent in the last 30 days'
-            : answered === 0 && d.pending > 0
+            : rAnswered === 0 && recent.pending > 0
               ? 'No delivery receipts yet'
-              : answered === 0
-                ? 'Nothing to measure yet'
-                : `${((d.delivered / answered) * 100).toFixed(0)}% delivered`}
+              : rAnswered === 0
+                ? 'No texts to measure in the last 7 days'
+                : `${((recent.delivered / rAnswered) * 100).toFixed(0)}% delivered this week`}
         </span>
       </div>
       <p className="mt-1 text-ch-meta leading-normal text-ch-muted">
@@ -695,8 +722,19 @@ function SmsDeliveryPanel({ d }: { d: SmsDelivery }) {
         only place that distinguishes &ldquo;we sent it&rdquo; from &ldquo;their phone
         buzzed&rdquo; — everything else on this page, including the SMS canary, stops at
         Twilio accepting the message.
-        {answered > 0 && answered < SMS_MIN_SAMPLE && ' Too few so far to read a rate into.'}
+        {rAnswered > 0 && rAnswered < SMS_MIN_SAMPLE && ' Too few this week to read a rate into.'}
       </p>
+      {/* Say plainly that older drops exist and are NOT in the headline. Quietly
+          narrowing the window would be indistinguishable from hiding a problem, and the
+          whole reason this panel is trusted is that it never assumes good news. */}
+      {olderDrops > 0 && (
+        <p className="mt-1 text-ch-meta leading-normal text-ch-muted">
+          The counts below cover 30 days and include{' '}
+          <strong className="font-semibold text-ch-ink-2">{olderDrops}</strong> older
+          failure{olderDrops === 1 ? '' : 's'} from before a fix — outside the 7-day window
+          the status above is judged on. They age out on their own.
+        </p>
+      )}
       {/* Counts, each with what it means underneath — no dots, no colour key. Reading
           this needs no legend, which is the whole point of the change that added it. */}
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
