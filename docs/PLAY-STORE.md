@@ -67,6 +67,49 @@ Internal testing has no such gate and can be published immediately — do that f
 to prove the AAB uploads cleanly and because it is where the **country restriction** can
 be set today.
 
+## 0b. Automating the upload — Google Play service account
+
+**Not set up as of 2026-08-08.** Uploads are by hand: Codemagic build → download
+`app-release.aab` → Play Console → Closed testing → Create new release. The publishing
+block in `codemagic.yaml` is written and commented out; wiring this up is the only thing
+between it and every future build publishing itself.
+
+**It cannot be done from a Claude session** — it needs the Google Cloud Console and the
+Play Console, and no session has credentials for either. Roughly 15 minutes by hand, once.
+
+1. **Google Cloud Console** → pick or create a project → **APIs & Services → Library** →
+   enable **Google Play Android Developer API**. *(Enabling the API is a separate step
+   from creating the account and is the one most often skipped; without it every publish
+   returns 403 with a message about the caller lacking permission, which reads like a
+   Play Console permissions problem and sends you to the wrong console.)*
+2. **IAM & Admin → Service Accounts → Create service account.** No Cloud IAM roles are
+   needed — the permissions that matter are granted in Play, not here.
+3. On that account → **Keys → Add key → Create new key → JSON**. Download it. This file
+   is the credential; treat it like a password and never commit it.
+4. **Play Console → Users and permissions → Invite new user.** Paste the service
+   account's email (`…@….iam.gserviceaccount.com`). Grant, on the CampHawk app:
+   - **View app information**
+   - **Releases → Release to testing tracks** *(and `Release to production` only when you
+     actually want CI able to ship to production — leave it off while the closed test is
+     the goal)*
+5. **Codemagic → Team → Integrations → Google Play** → paste the JSON, name it so the
+   variable resolves as `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS`.
+6. Uncomment the `publishing:` block at the end of the `android-release` workflow.
+
+**`track: alpha`, NOT `internal`.** Play's tracks are internal / alpha (= CLOSED testing)
+/ beta (= open) / production. The 12-testers-for-14-continuous-days requirement in §0
+counts CLOSED testing only. Publishing to `internal` satisfies the API-36 upload
+requirement, looks like progress, and starts no clock — and you would find out two weeks
+later. The commented block was pre-set to `internal` and was corrected 2026-08-08.
+
+**Permissions can take a few minutes to propagate.** A 401/403 on the first publish right
+after granting access is usually that, not a mistake — re-run the build before re-doing
+the setup.
+
+**The first upload of a package must still be done by hand.** The API cannot create the
+very first release for a package that Play has never seen; that only applies once, and
+CampHawk is already past it (`app.camphawk.mobile`, last upload 2026-08-04).
+
 ## 1. Country availability — US only
 
 **IT CANNOT BE SET UNTIL PRODUCTION ACCESS IS GRANTED.** Verified in the console
