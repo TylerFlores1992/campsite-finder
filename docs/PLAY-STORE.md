@@ -69,10 +69,10 @@ be set today.
 
 ## 0b. Automating the upload — Google Play service account
 
-**Not set up as of 2026-08-08.** Uploads are by hand: Codemagic build → download
-`app-release.aab` → Play Console → Closed testing → Create new release. The publishing
-block in `codemagic.yaml` is written and commented out; wiring this up is the only thing
-between it and every future build publishing itself.
+**LIVE since 2026-08-08.** Every green `android-release` build now uploads itself to Play
+**closed testing** (`track: alpha`) — no downloading an AAB and clicking through the
+Console. The steps below are kept as the record of how it was set up, and what to redo if
+the credential is ever rotated or revoked.
 
 **It cannot be done from a Claude session** — it needs the Google Cloud Console and the
 Play Console, and no session has credentials for either. Roughly 15 minutes by hand, once.

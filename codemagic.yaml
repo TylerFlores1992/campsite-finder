@@ -209,6 +209,13 @@ workflows:
         # Same idea as the iOS plist; android/ is regenerated each build so it has to
         # be written in rather than committed.
         - android_firebase
+        # Supplies GCLOUD_SERVICE_ACCOUNT_CREDENTIALS (secure) — the Google Play service
+        # account JSON, for the publishing block at the end of this workflow. Kept in its
+        # OWN group rather than folded into android_firebase so the publish credential can
+        # be rotated or revoked without touching push. Listing the group here is what puts
+        # the variable in scope: defined but unlisted, it resolves EMPTY and the publish
+        # fails as a bad credential rather than a missing one.
+        - google_play
       android_signing:
         # Upload the upload-keystore in the Codemagic UI (Team → Code signing
         # identities → Android keystores) with this reference name. Codemagic then
@@ -375,17 +382,19 @@ workflows:
     artifacts:
       - android/app/build/outputs/**/*.aab
       - android/app/build/outputs/**/*.apk
-    # publishing:
-    #   Uncomment once a Google Play service account is added in the Codemagic UI
-    #   (Team → Integrations → Google Play). Until then the AAB/APK artifacts are enough
-    #   to upload by hand, and it avoids a half-configured publish failing the build.
-    #
-    #   USE `alpha`, NOT `internal`. Play's tracks are internal / alpha (= CLOSED
-    #   testing) / beta (= open) / production, and the 12-testers-for-14-continuous-days
-    #   requirement a personal developer account must satisfy before production counts
-    #   CLOSED testing only. Publishing to `internal` looks like progress, satisfies the
-    #   API-36 upload requirement, and starts NO clock — the slowest possible way to
-    #   discover the distinction is two weeks from now.
-    #   google_play:
-    #     credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
-    #     track: alpha
+    publishing:
+      # LIVE since 2026-08-08. Every green android-release build now uploads itself to
+      # Play closed testing; no more downloading an AAB and clicking through the Console.
+      #
+      # `alpha` IS CLOSED TESTING. Play's tracks are internal / alpha (= closed) /
+      # beta (= open) / production, and the 12-testers-for-14-continuous-days gate a
+      # personal developer account must clear before production counts CLOSED testing
+      # only. `internal` would satisfy the API-36 upload requirement, look like progress,
+      # and start no clock — with the discovery arriving two weeks later.
+      #
+      # The service account is deliberately NOT granted "Release to production" in Play,
+      # so this cannot ship to real users even if the track were changed by mistake.
+      # Widen the permission only when automated production releases are actually wanted.
+      google_play:
+        credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
+        track: alpha
