@@ -426,6 +426,13 @@ carries `capacitor.config.ts` and any new plugin across, which a web deploy neve
 >
 > **Android is not affected** — it builds through Gradle and never had this problem.
 >
+> **THE CODEMAGIC BUILD NUMBER IS NOT THE `index` THE API RETURNS.** `GET /builds`
+> reports `index`, a per-workflow run counter (8 for the iOS run on 2026-08-08). What
+> lands in the app is `PROJECT_BUILD_NUMBER`, a different counter that `agvtool` /
+> `versionCode` write in — TestFlight showed that same run as **1.0 (15)**. Quoting
+> `index` at someone checking TestFlight tells them they are on a stale build when they
+> are not. Read the number from TestFlight, Play, or Settings in the app.
+>
 > **Builds can be triggered from a web session, not just the UI.** `CODEMAGIC_API_TOKEN`
 > is in the environment:
 > ```

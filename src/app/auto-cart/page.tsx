@@ -24,7 +24,12 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 export default function AutoCartHelpPage() {
   return (
     <div className="min-h-screen bg-[#F3EFE0]">
-      <header className="bg-white border-b border-ch-line px-4 py-3">
+      <header
+        // Same safe-area fix as /admin — this page is outside the (app) group too, so
+        // nothing else supplies the status-bar inset. It is reachable from the auto-cart
+        // setup flow in the app, so it can be the first screen a phone shows.
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
+        className="bg-white border-b border-ch-line px-4 pb-3">
         <div className="max-w-2xl mx-auto flex items-center justify-between">
           <Link href="/"><Logo markSize={30} /></Link>
           <Link href="/" className="text-sm text-ch-muted hover:text-ch-green-deep">← Back</Link>

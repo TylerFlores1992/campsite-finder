@@ -295,7 +295,15 @@ export default async function AdminPage() {
 
           "Admin" is a quiet label rather than an ochre chip: there is exactly one
           person who can load this page, and they know where they are. */}
-      <header className="flex items-center justify-between gap-3 border-b border-ch-line bg-ch-card px-4 py-2.5">
+      <header
+        // SAFE-AREA INSET. /admin sits OUTSIDE the (app) route group, so it never gets
+        // V2Nav — and V2Nav is where every other screen's status-bar handling lives.
+        // On Android the webview draws under the cutout, so this bar rendered beneath
+        // the camera and the clock: the logo, "Admin" and the refresh control were all
+        // partly hidden (reported on a real device, 2026-08-08). Same fix as V2Nav uses;
+        // it resolves to 0px on the web and in a browser tab, so nothing else moves.
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.625rem)" }}
+        className="flex items-center justify-between gap-3 border-b border-ch-line bg-ch-card px-4 pb-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <Link
             href="/"

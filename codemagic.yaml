@@ -80,8 +80,20 @@ workflows:
         # the permission. ios/ is regenerated each build, so re-add it here.
         script: |
           DESC="CampHawk uses your location to find campgrounds near you."
-          /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string $DESC" ios/App/App/Info.plist \
-            || /usr/libexec/PlistBuddy -c "Set :NSLocationWhenInUseUsageDescription $DESC" ios/App/App/Info.plist
+          # BOTH KEYS. Build 15 delivered with ITMS-90683: Apple wants
+          # NSLocationAlwaysAndWhenInUseUsageDescription as well, because the geolocation
+          # SDK REFERENCES the always-authorization API even though we never request it —
+          # "While your app might not use these APIs, a purpose string is still required."
+          # It is a warning today and a rejection risk at review, so both are set.
+          #
+          # The string is the same because the reason is the same: we ask once, at the
+          # moment you tap "near me", and never in the background. Writing a scarier
+          # always-on justification here would describe behaviour the app does not have.
+          for KEY in NSLocationWhenInUseUsageDescription NSLocationAlwaysAndWhenInUseUsageDescription; do
+            /usr/libexec/PlistBuddy -c "Add :$KEY string $DESC" ios/App/App/Info.plist \
+              || /usr/libexec/PlistBuddy -c "Set :$KEY $DESC" ios/App/App/Info.plist
+          done
+          /usr/libexec/PlistBuddy -c "Print :NSLocationAlwaysAndWhenInUseUsageDescription" ios/App/App/Info.plist
       - name: Enable Push Notifications capability
         # ios/ is regenerated each build, so the aps-environment entitlement must be
         # re-applied here. Write the entitlements file and point the App target's
