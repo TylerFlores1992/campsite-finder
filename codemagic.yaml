@@ -377,8 +377,15 @@ workflows:
       - android/app/build/outputs/**/*.apk
     # publishing:
     #   Uncomment once a Google Play service account is added in the Codemagic UI
-    #   (Team → Integrations → Google Play). Until then the APK artifact is enough
-    #   for internal testing, and it avoids a half-configured publish failing the build.
+    #   (Team → Integrations → Google Play). Until then the AAB/APK artifacts are enough
+    #   to upload by hand, and it avoids a half-configured publish failing the build.
+    #
+    #   USE `alpha`, NOT `internal`. Play's tracks are internal / alpha (= CLOSED
+    #   testing) / beta (= open) / production, and the 12-testers-for-14-continuous-days
+    #   requirement a personal developer account must satisfy before production counts
+    #   CLOSED testing only. Publishing to `internal` looks like progress, satisfies the
+    #   API-36 upload requirement, and starts NO clock — the slowest possible way to
+    #   discover the distinction is two weeks from now.
     #   google_play:
     #     credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
-    #     track: internal
+    #     track: alpha
