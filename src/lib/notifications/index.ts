@@ -73,7 +73,9 @@ export interface NotificationPayload {
 
 /** Format an RC release timestamp (ISO local, no TZ) as e.g. "Sat, Jul 18, 8:00 AM PT".
  *  Parsed as literal wall-clock (RC times are Pacific) so the server's TZ never shifts it. */
-function formatReleaseTime(iso?: string | null, short = false): string {
+/** Exported alongside pushBody/buildEmailHtml so a preview can build all three channels
+ *  from the real code. `smsBody` takes it injected, to stay pure. */
+export function formatReleaseTime(iso?: string | null, short = false): string {
   const m = iso?.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
   if (!m) return 'soon';
   const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]));
@@ -299,10 +301,16 @@ async function getUserPushTokens(userId: string): Promise<string[]> {
   return rows.map((r) => r.token);
 }
 
-async function dispatchPush(payload: NotificationPayload): Promise<void> {
-  const tokens = await getUserPushTokens(payload.userId);
-  if (tokens.length === 0) return; // no app installs for this user
-
+/**
+ * The push title and body, as a pure function.
+ *
+ * Extracted so the copy can be READ without sending anything — the same reason `smsBody`
+ * lives on its own. Alert wording has been wrong in production more than once (a
+ * mid-token cut, a date a day early, "opens" meaning two different things), and copy you
+ * can only see by triggering a real alert is copy nobody checks.
+ * `scripts/alert-preview.mts` renders it.
+ */
+export function pushBody(payload: NotificationPayload): { title: string; body: string } {
   const name = payload.campgroundName.replace(/\s+(campground|cg)\.?$/i, '');
   const site = payload.campsiteName ? ` — Site ${payload.campsiteName}` : '';
 
@@ -338,6 +346,14 @@ async function dispatchPush(payload: NotificationPayload): Promise<void> {
     title = `⛺ Available: ${name}`;
     body = `${name}${site} open for ${dates}. Tap to book.`;
   }
+
+  return { title, body };
+}
+
+async function dispatchPush(payload: NotificationPayload): Promise<void> {
+  const tokens = await getUserPushTokens(payload.userId);
+  if (tokens.length === 0) return; // no app installs for this user
+  const { title, body } = pushBody(payload);
 
   // Deep-link the app to the watch/campground; strip the extension-only #camphawk hint.
   // A hold URL WINS over the booking URL: when there is an action of ours to take —
@@ -383,7 +399,9 @@ async function dispatchPush(payload: NotificationPayload): Promise<void> {
   }
 }
 
-function buildEmailHtml(payload: NotificationPayload): string {
+/** Exported for `scripts/alert-preview.mts` — see pushBody for why the copy is
+ *  renderable without sending. */
+export function buildEmailHtml(payload: NotificationPayload): string {
   const dateList = payload.availableDates
     .map((d) => `<li style="margin:4px 0">${d}</li>`)
     .join('');

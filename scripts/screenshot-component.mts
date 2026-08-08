@@ -410,6 +410,25 @@ const PRESETS: Record<string, Preset> = {
       export const node = <div className="font-ch-body text-ch-ink"><TrustPanel /></div>;`,
     frame: 'max-w-md w-full mx-auto',
   },
+  'ch-hold-confirm': {
+    // The screen a tapped "hold it for me" now lands on. Previously the tap BOOKED the
+    // hold on page load — see the note in app/w/[token]/page.tsx — so there was nothing
+    // to look at and no decision to make.
+    label: 'HoldConfirm — do you want THIS site?',
+    entry: `import HoldConfirm from '@/components/v2/HoldConfirm';
+      const preview = {
+        token: 'Jp4XhBaz',
+        campgroundName: 'Pfeiffer Big Sur SP — South Camp (sites 1-78)',
+        unitLabel: '#SC29',
+        arrivalDate: '2026-09-04',
+        nights: 1,
+        releaseAt: '2026-08-09T08:00:00',
+        bookingUrl: 'https://www.reservecalifornia.com/park/690/611',
+        alreadyRequested: false,
+      };
+      export const node = <div className="font-ch-body text-ch-ink"><HoldConfirm preview={preview} /></div>;`,
+    frame: 'w-full',
+  },
   'ch-nav-collapsed': {
     // The SCROLLED state at phone width, which is the only one where the account
     // controls and the artwork's tagline compete for the same pixels. Scrolling is
