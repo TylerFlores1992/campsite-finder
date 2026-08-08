@@ -19,19 +19,26 @@
  * page load inside the token's lifetime is the renewal, where polling an API with the
  * token would prove liveness while doing nothing to extend it.
  *
- * **THAT THEORY IS UNDER INVESTIGATION AND MAY BE WRONG (2026-08-08).** It was written as
- * fact and never measured. The first real measurement — sign-in to death, from
- * `session_since`/`session_live_since` — came back **1h20m**, with this loop running the
- * whole time and "Keep me signed in" confirmed ticked. That is about one Okta access
- * token, i.e. exactly what a session that is NEVER renewed looks like. Earlier "8-9 hour"
- * figures were not measurements; nobody looked in between, so they bounded when we
- * NOTICED, not when it died.
+ * **AND THE EVIDENCE AGAINST IT WAS OUR OWN BUG (2026-08-08).** This file spent a day
+ * reporting "RC REJECTED the session — a human must sign in", and the numbers built on
+ * that — a 1h20m session lifetime, then a 13-minute one, `renewed=no` every pass — were
+ * measurements of a STALE READ, not of RC.
  *
- * `tokenExpiry` below now records the token's `exp` and whether it CHANGED on each pass,
- * and reports both to camphawk.app. If `exp` marches forward, the theory holds and the
- * deaths have another cause. If it stays put and the session dies when it lapses, no
- * cadence of page loads can save this and the 8am flow needs a different shape — most
- * likely a sign-in shortly before the release rather than a permanent session.
+ * `readToken` used to take `localStorage.ssoAccessToken` directly. That is not the
+ * credential the app sends: RC's token is AES-encrypted by Okta and only decrypted in page
+ * memory. `extension/rc-inject.js` has said so since it was written, and the extension has
+ * to run a MAIN-world script wrapping fetch/XHR precisely because localStorage cannot be
+ * trusted here. So the liveness probe POSTed a stale token, got a 401, and blamed the
+ * session. The giveaway was in the data all along: a token whose own `exp` was already
+ * three hours in the past AT the moment we called the session live.
+ *
+ * It now captures the live token off RC's own requests (`rc-token.mjs`), and a 401 on a
+ * localStorage FALLBACK is reported as INCONCLUSIVE rather than dead — same rule as a 403
+ * or a network error. Sending someone to do a human sign-in over a healthy session is the
+ * expensive mistake here, not the noise.
+ *
+ * **So the renewal theory is untested again, not disproven.** Do not repeat the 1h20m
+ * figure; it measured our own bug.
  *
  * RUN IT ON THE MINI-PC, alongside the rec.gov bot:
  *   node rc-keepwarm.mjs                 # RESIDENT: holds RC open, yields to the runner
@@ -52,6 +59,7 @@ import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
   profileRequested,
 } from './profile-lock.mjs';
+import { installTokenCapture, readLiveToken, primeToken } from './rc-token.mjs';
 import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 
@@ -102,16 +110,19 @@ const LOGIN = args.has('--login');
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** The session IS these localStorage keys — see docs/CONTEXT.md. A token that exists
- *  is necessary but not sufficient; `load/enterprise` answering 200 is the proof. */
+/**
+ * The token the app is ACTUALLY sending — not the localStorage copy.
+ *
+ * This used to read `localStorage.ssoAccessToken` directly, and that is not the live
+ * credential: RC's token is AES-encrypted by Okta and only decrypted in page memory (see
+ * rc-token.mjs and extension/rc-inject.js). Probing with the stale copy produced a 401
+ * and a confident "RC REJECTED the session — a human must sign in" for a session that
+ * may have been fine. `source` is carried so a localStorage fallback is never reported
+ * as though it were a live reading.
+ */
 async function readToken(page) {
-  return page.evaluate(() => {
-    try {
-      return localStorage.getItem('ssoAccessToken') || localStorage.getItem('accessToken');
-    } catch {
-      return null;
-    }
-  });
+  const { token } = await readLiveToken(page);
+  return token;
 }
 
 /**
@@ -226,6 +237,8 @@ async function withProfile(fn, { headless = HEADLESS, waitMs = 15_000 } = {}) {
     throw err;
   });
   try {
+    // BEFORE the first navigation, or the calls carrying the token have already gone.
+    await installTokenCapture(ctx);
     const page = ctx.pages()[0] ?? (await ctx.newPage());
     return await fn(ctx, page);
   } finally {
@@ -432,9 +445,11 @@ async function warmResident() {
           '--disable-renderer-backgrounding',
         ],
       });
+      await installTokenCapture(ctx);
       const page = ctx.pages()[0] ?? (await ctx.newPage());
       await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-      log('RC loaded and STAYING OPEN — this is what lets the app renew its own token.');
+      const primed = await primeToken(page);
+      log(`RC loaded and STAYING OPEN — token source: ${primed.source}`);
       log('Leave this browser window ALONE. Closing it stops the renewal; it will reopen.');
 
       // 0, so the first check fires IMMEDIATELY on every open. After a restart or a yield
@@ -481,14 +496,23 @@ async function warmResident() {
 
 /** Liveness + renewal measurement against an ALREADY-OPEN page. */
 async function checkAndReport(ctx, page) {
-  const before = await readToken(page);
+  const { token: before, source } = await readLiveToken(page);
   const exp = tokenExpiry(before);
   const { live, why } = await sessionLive(ctx, page);
   const after = await readToken(page);
   const changed = before != null && after != null && before !== after;
   const note =
     (exp ? `token exp in ${Math.round((exp - Date.now()) / 60000)}m` : 'token exp unknown') +
-    `; renewed=${changed ? 'YES' : 'no'}`;
+    `; renewed=${changed ? 'YES' : 'no'}; src=${source}`;
+
+  // A FAILURE ON A localStorage TOKEN PROVES NOTHING. That copy is not what the app
+  // sends, so a 401 from it is our stale read, not RC's verdict — and reporting it as
+  // `dead` sends the owner to do a human sign-in over a healthy session. Downgrade to
+  // inconclusive, exactly like a 403 or a network error.
+  if (live === false && source !== 'live') {
+    log(`… RC rejected a ${source} token — INCONCLUSIVE, not a dead session (${why})`);
+    return;
+  }
 
   if (live === true) {
     try { fs.writeFileSync(WARM_MARKER, new Date().toISOString()); } catch { /* best effort */ }

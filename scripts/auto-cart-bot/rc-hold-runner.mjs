@@ -31,6 +31,7 @@ import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
   requestProfile, clearProfileRequest,
 } from './profile-lock.mjs';
+import { installTokenCapture, primeToken } from './rc-token.mjs';
 import { loadEnv, envSource, looksLikePlaceholder } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 
@@ -230,20 +231,21 @@ async function withRCLocked(fn) {
     throw err;
   });
   try {
+    // BEFORE navigating. RC's real token is AES-encrypted by Okta and only decrypted in
+    // page memory (rc-token.mjs) — the localStorage copy this used to read is not what the
+    // app sends, so carting with it risks a 401 at 08:00:00 against a healthy session.
+    await installTokenCapture(ctx);
     const page = ctx.pages()[0] ?? (await ctx.newPage());
     await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-    await page.waitForTimeout(3000);
-    const token = await page.evaluate(() => {
-      try { return localStorage.getItem('ssoAccessToken') || localStorage.getItem('accessToken'); }
-      catch { return null; }
-    });
+    const { token, source } = await primeToken(page);
+    if (token) log(`  RC token acquired (${source})`);
     if (!token) {
       log('⚠ RC session is dead — a human must run `node rc-keepwarm.mjs --login`.');
       log('  Skipping this pass. Nothing is lost: holds stay requested and retry.');
       // Tell the server too. Keep-warm is the process that normally reports this, so a
       // dead session showing up HERE also means keep-warm is not doing its job — which
       // is why the report carries its source.
-      await reportSession(false, 'no RC token in the profile at cart time');
+      await reportSession(false, 'no RC token at all — neither live nor stored');
       return { skipped: 'RC session is dead — needs a human sign-in' };
     }
     // A working token is worth reporting as loudly as a broken one: it is the only
