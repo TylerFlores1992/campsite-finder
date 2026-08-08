@@ -704,7 +704,7 @@ AAB, no rebuild.**
   its Description edited without pulling it from review**, and Description is not one of
   the fields editable without a new build (Promotional Text is).
 
-### Play target API 36 — Capacitor upgraded to 8, NOT yet built (2026-08-05)
+### Play target API 36 — Capacitor 8 BUILT AND ON TESTFLIGHT (build 8, 2026-08-08)
 Play requires apps to **target API 36 from 2026-08-31** for new uploads *and updates*
 (extension to 2026-11-01 available in Console). Existing installs are unaffected; you
 just can't ship an update. We were on 35 and nothing in the repo said so — `android/` is
@@ -713,9 +713,26 @@ git-ignored and regenerated each build, so the level came from
 same Java 21)**, with `firebase ^12.6.0` and **`node: 22` in BOTH codemagic workflows**
 (`@capacitor/cli@8` needs node ≥22 or `npm ci` dies). The Android build now **asserts**
 `targetSdkVersion >= 36` rather than trusting the default.
-**Both stores share one dependency tree — ship a TestFlight build and check it before
-the Play upload.** Nothing native has been compiled yet; JS install/typecheck/build/tests
-are all clean. Details in `docs/PLAY-STORE.md` §0a.
+**Both stores share one dependency tree, so iOS went first — and it caught a real
+break.** TestFlight build **8 is up (2026-08-08)**, after two failures worth knowing about:
+- **Capacitor 8 defaults iOS to Swift Package Manager**, so `cap add ios` emits
+  `App.xcodeproj` + `CapApp-SPM/` and **no `App.xcworkspace` and no Podfile**. The
+  workflow's `--workspace App.xcworkspace` then died in **0.8s** — a duration that IS the
+  diagnosis, since a real compile takes minutes. The upstream tell was the same: any step
+  that genuinely runs `pod install` cannot finish in 1 second.
+- **SPM then could not resolve our plugins at all.** It derives package identity from the
+  last path segment, so `@capacitor/app` and `@capacitor-firebase/app` both claim `app`:
+  *"Conflicting identity for app … Could not resolve package dependencies"*. Neither is
+  droppable — the first supplies the Android back button and lifecycle events, the second
+  initialises the native Firebase SDK from `GoogleService-Info.plist`, so removing it
+  breaks push SILENTLY.
+- **Fix: `npx cap add ios --packagemanager cocoapods`** (still first-class in v8).
+  CocoaPods has no identity restriction — `CapacitorApp` vs `CapacitorFirebaseApp` — and
+  it is the configuration that shipped build 5. **Do not "modernise" this to SPM** until
+  upstream renames one of those packages.
+- Android was never affected: it builds through Gradle. The API-36 assertion was verified
+  against a locally generated project — `targetSdkVersion = 36`, assertion passes.
+Details in `docs/PLAY-STORE.md` §0a.
 
 ### Mobile app — everything below needs `npm install && npx cap sync` + a REBUILD
 Shipped 2026-07-27, all native-side, so **a web deploy does not deliver them**:

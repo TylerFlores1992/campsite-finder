@@ -403,6 +403,44 @@ carries `capacitor.config.ts` and any new plugin across, which a web deploy neve
 
 ### iOS builds with NO Mac — Codemagic cloud CI (SHIPPED 2026-07-26)
 
+> **CAPACITOR 8: THE iOS BUILD MUST USE COCOAPODS. Do not "modernise" it to SPM.**
+> Capacitor 8 defaults iOS to Swift Package Manager, and that default cost two builds on
+> 2026-08-08 before it worked:
+> - `cap add ios` on the default emits `App.xcodeproj` + `CapApp-SPM/` and **no
+>   `App.xcworkspace`, no Podfile**, so `xcode-project build-ipa --workspace` fails in
+>   **0.8 seconds**. That duration is the whole diagnosis — a real Xcode compile takes
+>   minutes, so a sub-second failure is an argument error, not a code error. The same tell
+>   was upstream and missed: "Capacitor sync" finished in 1.0s, and any step that truly
+>   runs `pod install` cannot.
+> - Switching the flag to `--project App.xcodeproj` got a real 48s resolve, then:
+>   `Conflicting identity for app: '@capacitor/app' and '@capacitor-firebase/app' both
+>   point to the same package identity 'app'`. **SPM derives identity from the last path
+>   segment**, so those two collide no matter what we do. Neither is removable:
+>   `@capacitor/app` is the Android back button and lifecycle events;
+>   `@capacitor-firebase/app` initialises the native Firebase SDK from
+>   `GoogleService-Info.plist`, so dropping it breaks push SILENTLY.
+> - **The fix is `npx cap add ios --packagemanager cocoapods`**, which is first-class in
+>   v8. Pods have no identity restriction (`CapacitorApp` vs `CapacitorFirebaseApp`) and
+>   it is the configuration that shipped builds 5 and 8. Revisit only if upstream renames
+>   one of those packages.
+>
+> **Android is not affected** — it builds through Gradle and never had this problem.
+>
+> **Builds can be triggered from a web session, not just the UI.** `CODEMAGIC_API_TOKEN`
+> is in the environment:
+> ```
+> curl -s -X POST https://api.codemagic.io/builds -H "x-auth-token: $CODEMAGIC_API_TOKEN" \
+>   -H "Content-Type: application/json" \
+>   -d '{"appId":"6a6586c1ca94d01c31a8247e","workflowId":"ios-testflight","branch":"master"}'
+> ```
+> `workflowId` is the **key in codemagic.yaml** (`ios-testflight` / `android-release`),
+> not the id the `/apps` endpoint lists — that one is the UI-configured "Default
+> Workflow". Poll `GET /builds/<id>` for status and per-step durations. **There is no log
+> API** (404 on every shape), but a FAILED build attaches
+> `<app>_<n>_artifacts.zip` containing `App.log` — the real xcodebuild output, and the
+> only place the SPM identity error appeared. Fetch it with `curl -L`; the artefact URL
+> 302s to storage.googleapis.com and without `-L` you save the HTML redirect page.
+
 The iOS app is built + shipped to TestFlight from **Codemagic** (macOS cloud runners),
 so **no Mac is needed**. Config is `codemagic.yaml` (workflow `ios-testflight`); it
 regenerates the git-ignored `ios/` each build (`npx cap add ios`), brands assets, signs,
