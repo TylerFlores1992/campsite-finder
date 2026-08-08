@@ -33,7 +33,13 @@ workflows:
         - ios_signing
       vars:
         BUNDLE_ID: "app.camphawk.mobile"
-        XCODE_WORKSPACE: "App.xcworkspace"   # Capacitor names the iOS workspace "App"
+        # CAPACITOR 8 BUILDS iOS WITH SWIFT PACKAGE MANAGER, NOT COCOAPODS.
+        # `npx cap add ios` now emits App.xcodeproj + CapApp-SPM/Package.swift and NO
+        # App.xcworkspace and NO Podfile. This was `--workspace "App.xcworkspace"` and
+        # build #6 died in 0.8s on a file that no longer exists — which reads like a
+        # signing or Xcode failure, but the giveaway was upstream: "Capacitor sync" took
+        # 1.0s, and any step that really ran `pod install` takes minutes.
+        XCODE_PROJECT: "App.xcodeproj"
         XCODE_SCHEME: "App"
       # Capacitor 8's CLI declares `engines: { node: ">=22.0.0" }` — on node 20 the
       # build dies at `npm ci`, before a single Capacitor command runs, which reads
@@ -41,7 +47,6 @@ workflows:
       # Capacitor 7 -> 8 upgrade (target API 36 for Play, 2026-08-05).
       node: 22
       xcode: latest
-      cocoapods: default
     scripts:
       - name: Install JS dependencies
         script: npm ci
@@ -146,7 +151,7 @@ workflows:
         script: |
           cd ios/App
           xcode-project build-ipa \
-            --workspace "$XCODE_WORKSPACE" \
+            --project "$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME"
     artifacts:
       - ios/App/build/ios/ipa/*.ipa
