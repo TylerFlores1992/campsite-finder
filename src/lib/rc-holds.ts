@@ -273,6 +273,50 @@ export async function markClaimed(id: string): Promise<void> {
   ).catch((e) => console.error('[rc-holds] markClaimed failed:', e.message));
 }
 
+/**
+ * The bot tried to cart and RC said no. Is that final, or is it just too early?
+ *
+ * THE BUG THIS EXISTS TO FIX (2026-08-08). The feed hands the bot a hold **90 seconds
+ * before** its release, deliberately — "the bot should be mid-request when the site frees,
+ * not starting to think about it a second late". The runner carted immediately, RC
+ * correctly answered *"The unit is not available for the date(s) specified"* because the
+ * site had not been released yet, and `markFailed` wrote that down as final. `failed` is
+ * terminal — `dueHolds` only ever returns `requested` — so **the one and only attempt was
+ * guaranteed to happen before the release, and there was never a second one.**
+ *
+ * Measured on the first hold that got this far: attempt at 07:58:35 PT for an 08:00:00
+ * release. The lead time did not help the bot arrive first; it guaranteed the shot was
+ * fired before the gun. This flow could not have succeeded no matter how healthy the
+ * runner and the session were — and yesterday's dead runner hid it.
+ *
+ * So a failure while the release window is still open is an ATTEMPT, not an outcome: the
+ * status stays `requested`, the hold stays in the feed, and the runner retries on its next
+ * ~20s pass. Only once the window has closed does it become `failed`.
+ *
+ * The window matches `dueHolds`'s grace on purpose. Past it the hold stops being served to
+ * the bot anyway, so anything else would leave rows `requested` forever with nothing
+ * looking at them — and `worker/expire-holds.ts` (45-minute grace) is the backstop that
+ * notifies the user either way.
+ */
+export async function reportCartFailure(
+  id: string, error: string, graceMinutes = 20,
+): Promise<'retry' | 'failed'> {
+  const stillOpen = `release_at >= to_char((NOW() - ($3 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`;
+  const rows = await mutate<{ status: HoldStatus }>(
+    `UPDATE rc_hold_requests
+        SET last_attempt_at = NOW(), last_attempt_note = $2,
+            status     = CASE WHEN ${stillOpen} THEN status     ELSE 'failed' END,
+            error      = CASE WHEN ${stillOpen} THEN error      ELSE $2 END,
+            -- updated_at means "the hold changed". A retryable attempt is not a change,
+            -- and moving it would destroy the unchanged-since-the-tap tell (migration 046).
+            updated_at = CASE WHEN ${stillOpen} THEN updated_at ELSE NOW() END
+      WHERE id = $1
+      RETURNING status`,
+    [id, error.slice(0, 500), String(graceMinutes)],
+  ).catch((e) => { console.error('[rc-holds] reportCartFailure failed:', e.message); return []; });
+  return rows[0]?.status === 'failed' ? 'failed' : 'retry';
+}
+
 export async function markFailed(id: string, error: string): Promise<void> {
   await mutate(
     `UPDATE rc_hold_requests SET status = 'failed', error = $2, updated_at = NOW() WHERE id = $1`,

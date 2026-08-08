@@ -13,7 +13,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { query, mutate } from '../src/lib/db/client';
-import { offerHold, requestHold, dueHolds, markCarted, markClaimed, expireStaleHolds, noteAttempt, recordSessionHealth } from '../src/lib/rc-holds';
+import { offerHold, requestHold, dueHolds, markCarted, markClaimed, expireStaleHolds, noteAttempt, recordSessionHealth, reportCartFailure } from '../src/lib/rc-holds';
 
 let watchId: string;
 let userId: string;
@@ -257,4 +257,47 @@ test('session health records both verdicts, and never invents one', async () => 
     await mutate(`UPDATE rc_runner_heartbeat SET session_ok = NULL, session_at = NULL,
                   session_detail = NULL, session_source = NULL WHERE id = 1`);
   }
+});
+
+test('a cart failure BEFORE the release is retryable, not final', async () => {
+  // THE BUG THAT COST THE FIRST HOLD THAT GOT THIS FAR (2026-08-08). The feed serves a
+  // hold 90 seconds early so the bot can be ready; the runner carted immediately, RC said
+  // "The unit is not available for the date(s) specified" — correctly, since the site had
+  // not been released — and the server wrote that down as `failed`. `failed` is terminal
+  // and `dueHolds` only returns `requested`, so the single attempt was GUARANTEED to be
+  // too early and there was never a second one. Measured: attempt 07:58:35 PT for an
+  // 08:00:00 release.
+  await offer('9106', pacific(60));
+  const req = await requestHold(watchId, '9106');
+
+  const outcome = await reportCartFailure(req!.id, 'The unit is not available for the date(s) specified.');
+  assert.equal(outcome, 'retry', 'a failure while the release is still ahead must not be final');
+
+  const [row] = await query<{ status: string; error: string | null; last_attempt_note: string | null }>(
+    `SELECT status, error, last_attempt_note FROM rc_hold_requests WHERE id = $1`, [req!.id],
+  );
+  assert.equal(row.status, 'requested', 'it must stay in the feed so the next pass retries');
+  assert.equal(row.error, null, 'and must not present an early miss as the reason it failed');
+  assert.match(row.last_attempt_note ?? '', /not available/, 'but the attempt is still recorded');
+
+  // The retry is the whole point: it has to come back from the feed.
+  const due = await dueHolds(60 * 60, 24 * 60);
+  assert.ok(due.some((h) => h.unit_id === '9106'), 'a retryable failure stays due');
+});
+
+test('once the window has closed, a cart failure IS final', async () => {
+  // The other half. Without this the hold would sit `requested` forever, invisible to the
+  // bot (out of dueHolds' grace) and never resolved — the missed-hold sweep would be the
+  // only thing that ever closed it, 45 minutes later, with no reason attached.
+  await offer('9107', pacific(-90));   // released 90 minutes ago
+  await mutate(`UPDATE rc_hold_requests SET status = 'requested' WHERE watch_id = $1 AND unit_id = '9107'`, [watchId]);
+  const [row0] = await query<{ id: string }>(
+    `SELECT id FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = '9107'`, [watchId]);
+
+  const outcome = await reportCartFailure(row0.id, 'RC said no');
+  assert.equal(outcome, 'failed', 'past the grace window there is nothing left to retry');
+  const [row] = await query<{ status: string; error: string | null }>(
+    `SELECT status, error FROM rc_hold_requests WHERE id = $1`, [row0.id]);
+  assert.equal(row.status, 'failed');
+  assert.match(row.error ?? '', /RC said no/, 'and the reason is recorded where the user-facing sweep reads it');
 });

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, type HoldRequest } from '@/lib/rc-holds';
+import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, reportCartFailure, type HoldRequest } from '@/lib/rc-holds';
 import { query, mutate } from '@/lib/db/client';
 import { manageTokenFor } from '@/lib/notifications/actions';
 import { dispatchNotifications } from '@/lib/notifications';
@@ -138,8 +138,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, state: 'carted' });
   }
 
-  await markFailed(id, typeof error === 'string' ? error : 'unknown error');
-  return NextResponse.json({ ok: true, state: 'failed' });
+  // NOT `markFailed`. A cart that fails while the release window is still open is an
+  // attempt, not an outcome — see reportCartFailure. The feed's 90-second lead means the
+  // FIRST attempt is always before the release, so treating it as final guaranteed every
+  // hold failed exactly once, too early, forever.
+  const outcome = await reportCartFailure(id, typeof error === 'string' ? error : 'unknown error');
+  return NextResponse.json({ ok: true, state: outcome });
 }
 
 /**

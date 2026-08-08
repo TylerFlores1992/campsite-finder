@@ -14,10 +14,24 @@
  * can re-login on demand is off the table. A bot that never needs to is not.
  *
  * WHAT IT DOES. Every KEEPALIVE_MS it opens the persistent profile, loads RC, and checks
- * the session is still real. Loading the app is what makes this work rather than merely
- * observe: RC's own JS silently renews the Okta token, so a page load inside the token's
- * lifetime is the renewal. Polling an API with the token would prove liveness while
- * doing nothing to extend it.
+ * the session is still real. Loading the app is *meant* to be what makes this work rather
+ * than merely observe: the theory is that RC's own JS silently renews the Okta token, so a
+ * page load inside the token's lifetime is the renewal, where polling an API with the
+ * token would prove liveness while doing nothing to extend it.
+ *
+ * **THAT THEORY IS UNDER INVESTIGATION AND MAY BE WRONG (2026-08-08).** It was written as
+ * fact and never measured. The first real measurement — sign-in to death, from
+ * `session_since`/`session_live_since` — came back **1h20m**, with this loop running the
+ * whole time and "Keep me signed in" confirmed ticked. That is about one Okta access
+ * token, i.e. exactly what a session that is NEVER renewed looks like. Earlier "8-9 hour"
+ * figures were not measurements; nobody looked in between, so they bounded when we
+ * NOTICED, not when it died.
+ *
+ * `tokenExpiry` below now records the token's `exp` and whether it CHANGED on each pass,
+ * and reports both to camphawk.app. If `exp` marches forward, the theory holds and the
+ * deaths have another cause. If it stays put and the session dies when it lapses, no
+ * cadence of page loads can save this and the 8am flow needs a different shape — most
+ * likely a sign-in shortly before the release rather than a permanent session.
  *
  * RUN IT ON THE MINI-PC, alongside the rec.gov bot:
  *   node rc-keepwarm.mjs                 # loop forever
@@ -97,6 +111,39 @@ async function readToken(page) {
       return null;
     }
   });
+}
+
+/**
+ * When does this token expire, and is it being renewed?
+ *
+ * THE PREMISE OF THIS WHOLE FILE IS UNPROVEN. The header says "RC's own JS silently renews
+ * the Okta token, so a page load inside the token's lifetime is the renewal." That was
+ * never measured — and on 2026-08-08 the first real measurement came back **1h20m** from a
+ * fresh human sign-in to a dead session, with this loop running every 20 minutes
+ * throughout and "Keep me signed in" confirmed ticked. 1h20m is about one Okta access
+ * token, which is what you would see if the renewal simply is not happening.
+ *
+ * (The earlier "8-9 hours" figures were not measurements. Nobody looked in between, so
+ * they were upper bounds on when we NOTICED, which is a different quantity. That is
+ * exactly why `session_since` exists.)
+ *
+ * So stop asserting and start recording. If `exp` marches forward across passes the
+ * renewal is real and the death has another cause; if it stays put and the session dies
+ * when it lapses, the design premise is false and no cadence of page loads can save it —
+ * the 8am flow needs a different shape. Two or three passes answer it either way.
+ *
+ * Best-effort by construction: not every token is a JWT, and a token we cannot decode
+ * must never be treated as a token that has expired.
+ */
+function tokenExpiry(token) {
+  try {
+    const [, payload] = String(token).split('.');
+    if (!payload) return null;
+    const json = JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    return typeof json.exp === 'number' ? json.exp * 1000 : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -190,11 +237,27 @@ async function withProfile(fn, { headless = HEADLESS, waitMs = 15_000 } = {}) {
 /** One refresh pass. Returns 'warm' | 'dead' | 'unknown' — three outcomes on purpose,
  *  because "we could not tell" must never be actioned as "it is dead". */
 async function warmOnce() {
+  /** Carried out of withProfile so it can be reported alongside the verdict. */
+  let renewalNote = '';
   const state = await withProfile(async (ctx, page) => {
     await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    // BEFORE the wait, so the comparison below is "did loading the app change it?" and
+    // not "is it different from twenty minutes ago?".
+    const before = await readToken(page);
     // Let RC's app boot and run its silent token renewal. This wait IS the keep-warm;
     // navigating and leaving immediately would prove the session without extending it.
     await page.waitForTimeout(8000);
+
+    // DID THE RENEWAL ACTUALLY HAPPEN? See tokenExpiry — this file has always ASSERTED
+    // that loading the app renews the Okta token, and the one real measurement we have
+    // says a session dies after about one token lifetime. Record it rather than argue.
+    const after = await readToken(page);
+    const exp = tokenExpiry(after);
+    const changed = before != null && after != null && before !== after;
+    renewalNote =
+      (exp ? `token exp in ${Math.round((exp - Date.now()) / 60000)}m` : 'token exp unknown') +
+      `; renewed=${changed ? 'YES' : 'no'}`;
+    log(`   ${renewalNote}`);
 
     const { live, why } = await sessionLive(ctx, page);
     if (live === true) {
@@ -220,7 +283,7 @@ async function warmOnce() {
     log(`… profile busy (${held?.owner ?? 'another process'}) — skipping this pass, NOT a dead session`);
     return 'unknown';
   }
-  await reportSession(state);
+  await reportSession(state, renewalNote);
   return state;
 }
 
@@ -245,14 +308,22 @@ async function warmOnce() {
  * this recently. Same rule as `hasAvailabilityInRange` returning null — the absence of a
  * reading is not a negative reading.
  */
-async function reportSession(state) {
+async function reportSession(state, renewalNote = '') {
   if (state !== 'warm' && state !== 'dead') return;
   if (!TOKEN) return;
   await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
     method: 'POST',
     headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
     body: JSON.stringify({
-      session: { live: state === 'warm', why: state === 'dead' ? 'keep-warm probe: RC rejected the session' : null },
+      session: {
+        live: state === 'warm',
+        // Carry the renewal measurement into the dashboard, not just the mini-PC console.
+        // "token exp in 43m; renewed=no" counting DOWN across passes is the proof that
+        // loading the app does not renew the session — and it is visible at 07:30 on the
+        // pre-flight, where it can still be acted on.
+        why: [state === 'dead' ? 'keep-warm probe: RC rejected the session' : null, renewalNote]
+          .filter(Boolean).join(' — ') || null,
+      },
       source: 'keepwarm',
     }),
     // A health report must never be able to break the keep-warm. Reaching camphawk.app is

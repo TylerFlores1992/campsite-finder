@@ -61,6 +61,49 @@ const ONCE = args.has('--once');
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Now, as an RC-style Pacific wall-clock string — the same shape as `release_at`. */
+function pacificNow() {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(new Date()).reduce((a, x) => ((a[x.type] = x.value), a), {});
+  return `${p.year}-${p.month}-${p.day}T${p.hour === '24' ? '00' : p.hour}:${p.minute}:${p.second}`;
+}
+
+/**
+ * Milliseconds until a hold's release, from a zone-less Pacific `release_at`.
+ *
+ * Both sides are parsed AS IF UTC, which is correct because both are wall-clock in the
+ * same zone and the offset cancels. It would only mislead across a DST transition, and
+ * this is only ever asked about gaps of a few minutes.
+ *
+ * Never parse `release_at` with `new Date()` directly: a zone-less string is read as local
+ * time on a box whose timezone we do not control, which silently shifts the hour — the
+ * same trap that made an alert say "Sep 3" for a Sep 4 stay.
+ */
+function msUntilRelease(releaseAt) {
+  const ms = Date.parse(`${releaseAt}Z`) - Date.parse(`${pacificNow()}Z`);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+/**
+ * The feed serves a hold up to 90 seconds EARLY so the browser can be open and the token
+ * in hand when the site frees. That lead is for getting READY — it is not permission to
+ * submit. Carting early asks RC for a site it has not released yet, and RC answers, quite
+ * correctly, "The unit is not available for the date(s) specified".
+ *
+ * On 2026-08-08 that is exactly what happened: the one attempt fired at 07:58:35 PT for an
+ * 08:00:00 release, the server wrote it down as `failed`, and `failed` is terminal — so
+ * there was never a second attempt. The server no longer treats an early failure as final
+ * (see `reportCartFailure`), which alone would have carted this hold on a later pass; this
+ * makes the first attempt the RIGHT one instead of relying on the retry.
+ *
+ * Capped so a malformed or mis-zoned timestamp can never park the pass — the claims and
+ * releases have already been done by the time we get here, but a wedged runner is still
+ * the failure mode this whole file exists to avoid.
+ */
+const MAX_RELEASE_WAIT_MS = 3 * 60_000;
+
 /** Where AUTOCART_TOKEN came from — printed on any auth failure. See load-env.mjs. */
 const TOKEN_SOURCE = envSource('AUTOCART_TOKEN');
 
@@ -267,6 +310,15 @@ async function runPass() {
 
     for (const h of cart) {
       try {
+        // WAIT OUT THE LEAD. Browser open, token in hand — that was the point of being
+        // handed this 90 seconds early. Submitting now would ask RC for a site it has not
+        // released yet and get a "not available" that means nothing.
+        const wait = Math.min(msUntilRelease(h.releaseAt), MAX_RELEASE_WAIT_MS);
+        if (wait > 0) {
+          log(`  ready for ${h.unitName ?? h.unitId} — holding ${(wait / 1000).toFixed(1)}s until ${h.releaseAt} PT`);
+          await sleep(wait);
+        }
+
         const existing = await page.evaluate(() => {
           try { return localStorage.getItem('shoppingCartKey'); } catch { return null; }
         });
