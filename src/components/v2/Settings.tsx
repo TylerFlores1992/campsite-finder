@@ -10,6 +10,7 @@ import SmsAlerts from "./SmsAlerts";
 import AutoCartSettings from "./AutoCartSettings";
 import { SubscribeLink, subscribeSentence } from "./nativeSubscribe";
 import DeleteAccount from "./DeleteAccount";
+import BuildStamp from "./BuildStamp";
 
 /**
  * Settings — where alerts get set up.
@@ -181,6 +182,10 @@ export default function Settings() {
       </Section>
       {/* The admin link used to live here. It moved into the account menu
           (V2Nav) — it's an account-level destination, not a setting. */}
+
+      {/* Native only, and it renders nothing on the web. Answers "am I testing the new
+          build or the old one?" without leaving the app for TestFlight. */}
+      <BuildStamp />
     </div>
   );
 }
