@@ -455,6 +455,15 @@ for the full 14 days**. Removing someone mid-window resets progress. Practical n
 - An email list or a Google Group both work; the Group is easier to manage at 12+.
 - Each tester must actually accept the invitation and install from Play at least once.
 - Friends and family are acceptable — Play does not require strangers.
+- **PAID TESTER SERVICES ARE A REAL RISK, and the risk is not the money.** A service was
+  bought for this app on 2026-08-08 (testerscommunity.com), with the plan of using 12 of
+  theirs plus real people. Two things to know: when you apply for production access Play
+  asks **in writing** how you recruited your testers and what feedback you acted on, and
+  the 12/14 requirement exists specifically to filter out apps that cannot find twelve
+  real users. Rejections and reset windows are widely reported when a test looks
+  inauthentic — reported experience, not a rule quotable from policy. **The mitigation is
+  the real testers, so weight the list toward people you actually know**: they are what
+  makes the recruitment answer truthful and give you feedback worth describing.
 - Start the count as early as possible: the 14 days is a floor, not an estimate, and it
   cannot run in parallel with "finish setting up your app".
 
