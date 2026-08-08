@@ -44,7 +44,7 @@ async function reservableRows(): Promise<Row[]> {
   return query<Row>(
     `SELECT id, name, address->>'city' AS city, address->>'state' AS state, source
        FROM campgrounds
-      WHERE reservable = true
+      WHERE reservable = true AND hidden = false
       ORDER BY name`
   );
 }

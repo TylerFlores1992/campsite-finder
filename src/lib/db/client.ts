@@ -57,8 +57,16 @@ export async function mutate<T = Record<string, unknown>>(
 ): Promise<T[]> {
   const finalSql = params ? interpolate(sql, params) : sql;
   // Detect RETURNING on the raw template (params can contain the word
-  // "returning" as data — e.g. campground descriptions).
-  const hasReturning = /\breturning\b/i.test(sql);
+  // "returning" as data — e.g. campground descriptions), and IGNORE COMMENTS.
+  //
+  // A comment is not code, and this heuristic decides how `exec_dml` executes the
+  // statement: with RETURNING it wraps the SQL in `WITH __dml__ AS (…)`, which is a syntax
+  // error for anything that is not a data-modifying statement. So a migration whose
+  // COMMENT happened to contain the word — "-- Search stops returning picnic shelters" —
+  // failed with `syntax error at or near "CREATE"`, pointing at code that was perfectly
+  // valid. Cost twenty minutes on 2026-08-08 and would have cost more to anyone who had
+  // not just written the comment.
+  const hasReturning = /\breturning\b/i.test(stripSqlComments(sql));
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase.rpc('exec_dml', {
     query_text: finalSql,
@@ -66,6 +74,18 @@ export async function mutate<T = Record<string, unknown>>(
   });
   if (error) throw new Error(`DB mutate error: ${error.message}\nSQL: ${finalSql}`);
   return (data as T[]) ?? [];
+}
+
+/**
+ * Remove `-- line` and block comments so a comment cannot change how SQL is executed.
+ *
+ * Deliberately naive about string literals: it is only ever used to decide whether the
+ * word RETURNING appears in CODE, and the cost of a wrong answer in either direction is
+ * bounded (a real RETURNING inside a quoted string is not something this codebase writes).
+ * It is NOT a sanitiser and must not be used as one.
+ */
+function stripSqlComments(sql: string): string {
+  return sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
 }
 
 /** Replace $1..$N params with safely quoted literals. */

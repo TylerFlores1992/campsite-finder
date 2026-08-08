@@ -39,7 +39,7 @@ async function campgroundEntries(): Promise<MetadataRoute.Sitemap> {
   const rows = await query<{ id: string; last_synced_at: string | null }>(
     `SELECT id, last_synced_at::text
        FROM campgrounds
-      WHERE reservable = true
+      WHERE reservable = true AND hidden = false
       ORDER BY id`
   );
 
