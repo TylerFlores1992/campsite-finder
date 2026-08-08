@@ -45,10 +45,12 @@ const holds = await query<{
 // runner whose RC session is dead, and until migration 046 that fact lived only in a
 // console on the mini-PC — so a readout could show a stalled hold and give no hint why.
 const [session] = await query<{
-  session_ok: boolean | null; session_at: string | null;
+  session_ok: boolean | null; session_at: string | null; session_since: string | null;
+  session_live_since: string | null;
   session_detail: string | null; session_source: string | null; beat_at: string | null;
 }>(
-  `SELECT session_ok, session_at::text, session_detail, session_source, beat_at::text
+  `SELECT session_ok, session_at::text, session_since::text, session_live_since::text,
+          session_detail, session_source, beat_at::text
      FROM rc_runner_heartbeat WHERE id = 1`,
 ).catch(() => []);
 
@@ -58,18 +60,40 @@ console.log(`RC holds offered in the last ${hours}h — ${holds.length} row(s). 
 // queued is the cheapest possible moment to fix it, and the only one where a human has
 // time. RC serves a reCAPTCHA on sign-in now, so this always needs a person.
 const mins = (t: string | null) => (t ? Math.round((Date.now() - new Date(t).getTime()) / 60000) : null);
+/** "7h20m". These durations run to hours and the whole question is how many. */
+const hms = (t: string | null) => {
+  const m = mins(t);
+  if (m == null) return 'an unknown time';
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m`;
+};
+/** How long the last session survived: sign-in → death. The number the design turns on. */
+const lifetime = (from: string | null, to: string | null) => {
+  if (!from || !to) return 'an unmeasured time';
+  const m = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 60000);
+  if (m < 0) return 'an unmeasured time';
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m`;
+};
 if (!session || session.session_ok == null) {
   console.log('RC session: UNKNOWN — never reported. Is rc-keepwarm.mjs running, with');
   console.log('  AUTOCART_TOKEN in scripts/auto-cart-bot/.env? Unknown is not healthy.\n');
 } else if (session.session_ok === false) {
-  console.log(`⚠ RC SESSION IS DEAD (per ${session.session_source}, ${mins(session.session_at)}m ago)`);
+  console.log(`⚠ RC SESSION IS DEAD — dead for ${hms(session.session_since)}, per ${session.session_source}`);
+  // THE MEASUREMENT. Two sessions have died 8-9 hours after a fresh sign-in, with
+  // keep-warm loading RC every 20 minutes throughout the second one and "Keep me signed
+  // in" confirmed ticked. If that holds, RC caps the session absolutely and no amount of
+  // page-loading can hold it — which falsifies "sign in once and never let it lapse" and
+  // means the 8am flow needs a different shape. See migration 047.
+  console.log(`  IT LASTED ${lifetime(session.session_live_since, session.session_since)} after sign-in.`);
   console.log(`  ${session.session_detail ?? ''}`);
   console.log('  Nothing below can be carted until a human runs, on the mini-PC:');
   console.log('    node rc-keepwarm.mjs --login      (tick "Keep me signed in")\n');
 } else {
   const age = mins(session.session_at);
   const stale = age != null && age > 45;
-  console.log(`RC session: OK (per ${session.session_source}, ${age}m ago)${stale ? ' — STALE, keep-warm may be down' : ''}\n`);
+  console.log(
+    `RC session: OK for ${hms(session.session_since)} (per ${session.session_source},` +
+    ` checked ${age}m ago)${stale ? ' — STALE, keep-warm may be down' : ''}`);
+  console.log('  Both sessions so far died 8-9h after sign-in. Watch this number.\n');
 }
 
 if (!holds.length) {

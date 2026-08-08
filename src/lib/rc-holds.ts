@@ -247,8 +247,20 @@ export async function recordSessionHealth(
   ok: boolean, detail: string | null, source: string,
 ): Promise<void> {
   await mutate(
+    // `session_since` moves ONLY on a change of verdict. `session_at` is "when we last
+    // looked", which on a 20-minute loop overwrites the death with every reconfirmation
+    // of it — a session that died at 05:30 and was probed at 13:40 would read "dead, 0
+    // minutes ago". The difference between an ok-since and the dead-since that follows it
+    // IS the session lifetime, which is the number that decides whether "sign in once and
+    // never let it lapse" is a viable design at all. See migration 047.
     `UPDATE rc_runner_heartbeat
-        SET session_ok = $1, session_at = NOW(), session_detail = $2, session_source = $3
+        SET session_ok = $1, session_at = NOW(), session_detail = $2, session_source = $3,
+            session_since = CASE WHEN session_ok IS DISTINCT FROM $1 THEN NOW() ELSE session_since END,
+            -- Only on a flip to ALIVE, and never cleared: it has to outlive the death it
+            -- will be subtracted from, or the lifetime is unmeasurable at the one moment
+            -- we want to know it.
+            session_live_since = CASE WHEN $1 AND session_ok IS DISTINCT FROM $1
+                                      THEN NOW() ELSE session_live_since END
       WHERE id = 1`,
     [ok, detail ? detail.slice(0, 300) : null, source.slice(0, 40)],
   ).catch((e) => console.error('[rc-holds] recordSessionHealth failed:', e.message));

@@ -66,6 +66,12 @@ const RC_SESSION_STALE_MS = 45 * 60 * 1000;
 
 const ageMs = (ts: string | null | undefined) => (ts ? Date.now() - new Date(ts).getTime() : Infinity);
 const secs = (ms: number) => (Number.isFinite(ms) ? Math.round(ms / 1000) : undefined);
+/** "7h20m" — durations here run to hours, and 26400s is not a number anyone reads. */
+const hms = (ms: number) => {
+  if (!Number.isFinite(ms)) return 'unknown';
+  const m = Math.round(ms / 60000);
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m`;
+};
 
 export async function GET() {
   const checks: Check[] = [];
@@ -281,8 +287,10 @@ export async function GET() {
       queryOne<{
         beat_at: string | null; session_ok: boolean | null;
         session_at: string | null; session_detail: string | null; session_source: string | null;
+        session_since: string | null;
       }>(
-        `SELECT beat_at::text, session_ok, session_at::text, session_detail, session_source
+        `SELECT beat_at::text, session_ok, session_at::text, session_detail, session_source,
+                session_since::text
            FROM rc_runner_heartbeat WHERE id = 1`,
       ),
       queryOne<{ n: string }>(
@@ -343,7 +351,11 @@ export async function GET() {
         beat?.session_ok == null
           ? 'never reported — is rc-keepwarm.mjs running with AUTOCART_TOKEN set?'
           : (dead ? 'RC REJECTED the session — a human must run `node rc-keepwarm.mjs --login`' : 'RC accepts the session') +
-            ` (${beat.session_source ?? 'unknown'}, ${secs(sessionAge)}s ago` +
+            // "for 7h20m" is the number the design turns on: an RC session has died
+            // ~8-9h after sign-in twice, with keep-warm running throughout, so how long
+            // this one has survived is the live measurement — not a footnote. See 047.
+            ` for ${hms(ageMs(beat.session_since))}` +
+            ` (${beat.session_source ?? 'unknown'}, checked ${secs(sessionAge)}s ago` +
             (sessionStale ? ', STALE' : '') + ')' +
             (dead && ahead > 0 ? ` — ${ahead} hold(s) still ahead will fail` : '') +
             (beat.session_detail ? `: ${beat.session_detail}` : ''),
