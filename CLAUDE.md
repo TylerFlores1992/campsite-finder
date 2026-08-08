@@ -658,22 +658,32 @@ NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
 brought up to date with the hold flow, the reCAPTCHA/keep-warm design, the mini-PC's five
 processes, migrations 039/040/043/044, and the corrected A2P facts.
 
-### iOS — CHECK WHETHER IT WAS EVER ACTUALLY SUBMITTED (2026-08-08)
-**This heading used to read "SUBMITTED — build 5, awaiting review". It contradicts
-`docs/APP-STORE.md` §5, which still lists "Submit for Review" under *Left, and only a
-human can do it*, and nine days with no decision is not how App Store review behaves —
-the median is ~24h and 90% clear inside 48h.** So the likely state is *Prepare for
-Submission* or *Waiting for Review* with the version never actually submitted, which is
-silent by design: nothing chases you.
-**Verify in App Store Connect before assuming Apple is slow**, and read §5's checklist as
-the source of truth over this file until one of them is confirmed.
-Two things that must be true before it goes in, both from §5 and neither verifiable from
-a web session:
-- **The demo password is still `<fill in>` in the §2 review notes** (docs/APP-STORE.md
-  lines 89-90). A reviewer who cannot sign in rejects on day one, and this is the single
-  most likely cause of a wasted round trip.
-- The build must be SELECTED on the version page — uploading to TestFlight does not
-  attach it.
+### iOS 1.0 IS SUBMITTED — "Waiting for Review", and DON'T PULL IT (2026-08-08)
+Confirmed from App Store Connect: the version reads **Waiting for Review**, so it was
+submitted and is genuinely queued. (This heading briefly said the opposite — I inferred
+from §5's stale checklist that it had never gone in. The console is the source of truth;
+§5's "Left, and only a human can do it" list was simply never ticked off.)
+**Waiting for Review is the QUEUE, not the review.** The "median ~24h" figure people
+quote is *In Review → decision*; time spent queued is not in it, and a first submission
+from a brand-new team sits longest. Nine days is unusual, not broken, and there is
+nothing to fix in the repo — the fixes are in the console.
+- **The version banner is the whole decision: *"You can edit some information while your
+  version is waiting for review. To submit a new build, you must remove this version from
+  review."*** Metadata and **App Review Information (demo account + notes)** are editable
+  IN PLACE, keeping the queue position. Only swapping the BUILD costs it.
+- **So fix the review notes and leave the build alone.** The demo password is still
+  `<fill in>` in `docs/APP-STORE.md` §2 (lines 89-90) — that's the doc, but the field
+  that matters is App Review Information in the console, and a reviewer who cannot sign
+  in rejects on day one. Editing it is free; it is the single highest-value action.
+- **Do NOT remove from review to attach a newer build.** The app is a webview on
+  camphawk.app, so nearly everything shipped since is WEB-side and already reaches
+  whatever build is attached. The iOS-native delta is the Capacitor 8 shell and the
+  second location purpose string — and **ITMS-90683 is a warning email, not a rejection**
+  ("a purpose string is still required" in *future* submissions). Both keys are already
+  in `codemagic.yaml`, so the next build clears it whenever there is a next build.
+- If it keeps sitting, the sanctioned nudge is Contact Us → App Review → status enquiry.
+  **Expedited review is not warranted here** (it's for critical fixes / dated events) and
+  you only get so many.
 **The demo account is fine** (checked 2026-08-08): `tylerflores1992@yahoo.com` converted
 from `trialing` to `active` on 08-05 rather than lapsing, still `grandfathered`, with 2
 live watches — a reviewer sees a populated paid app.

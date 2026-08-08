@@ -169,11 +169,36 @@ Also done 2026-07-29:
 - **Pricing and Availability:** free, **United States only** — which is what keeps
   `NATIVE_LINKOUT` legally usable. See the store-billing note in `docs/CONTEXT.md`.
 
-**Left, and only a human can do it:**
-- Enter the §6 metadata on the version page, upload the screenshots, select the build.
-- Fill the demo account **password** into the §2 notes — the notes ship with a
-  `<fill in>` placeholder, and a reviewer who cannot sign in rejects on day one.
-- Submit for Review. Release is set to **manual**, so approval does not go live.
+**SUBMITTED 2026-07-30ish — version 1.0 is "Waiting for Review" (confirmed 2026-08-08).**
+The checklist below was never ticked off, which made this file read as though nothing had
+been submitted. It had. **Trust App Store Connect over this section**; the items are kept
+only because two of them are still worth doing.
+
+**Waiting for Review is the QUEUE, not the review.** The "median ~24h" figure is
+*In Review → decision* and excludes queue time; a first submission from a new team sits
+longest. Long ≠ stuck, and there is nothing in the repo to change.
+
+**What is still editable WITHOUT losing the queue position.** The version page says:
+*"You can edit some information while your version is waiting for review. To submit a new
+build, you must remove this version from review."* So metadata and **App Review
+Information** can be fixed in place — only a BUILD swap costs the place in line.
+- **Fill the demo account password** into App Review Information in the console (the §2
+  text above still carries a `<fill in>` placeholder). A reviewer who cannot sign in
+  rejects on day one. Free to do, highest value.
+- Confirm the §6 metadata and screenshots are what you want; also editable in place.
+
+**What NOT to do:** don't remove from review to attach a newer build. The app is a webview
+on camphawk.app, so almost every fix since is web-side and already reaches the attached
+build. The native-only delta is the Capacitor 8 shell and the second location purpose
+string, and **ITMS-90683 is a warning email, not a rejection** — it says a purpose string
+will be required in *future* submissions. Both keys are in `codemagic.yaml` already, so
+the next build clears it whenever a next build happens for another reason.
+
+**If it keeps sitting:** Contact Us → App Review → status enquiry is the sanctioned nudge.
+Expedited review is for critical fixes and dated events, not a slow first queue.
+
+**Still left:**
+- Release is set to **manual**, so approval does not go live — a human flips it.
 - **On going live:** set `NATIVE_LINKOUT = true` in `v2/nativeSubscribe.tsx`.
 
 ---
