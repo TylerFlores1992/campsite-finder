@@ -63,12 +63,21 @@ export async function GET(req: NextRequest) {
   // a second they cannot take the site. `pollMs` tells the runner to come back fast
   // while anything is claimable — on its lazy cadence the exposure would be the poll
   // interval, not the ~2.5s the release probe measured.
+  //
+  // A DUE CART GETS ITS OWN FAST LANE for the same reason, one step less urgent. Since
+  // `reportCartFailure`, an early or beaten attempt stays `requested` and is retried —
+  // and the gap between retries is the runner's poll interval, which at the idle cadence
+  // would hand a contested site to whoever else is watching. 5s is a compromise, not a
+  // maximum: the precart is a real POST from a residential IP that RC's WAF has 403'd
+  // before, so retrying every second for twenty minutes is how we lose the address.
+  // With the runner now waiting out the lead, the first attempt should be correctly
+  // timed anyway and this is the fallback, not the plan.
   return NextResponse.json({
     claim: claims.map(forBot),
     cart: cart.map(forBot),
     release: stale.toRelease.map(forBot),
     expired: stale.expired,
-    pollMs: claims.length ? 1000 : null,
+    pollMs: claims.length ? 1000 : cart.length ? 5000 : null,
   });
 }
 

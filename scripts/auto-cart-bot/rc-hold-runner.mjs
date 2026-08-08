@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { precartInPage, findCartEntry, releaseEntry, NO_CART } from './rc-cart.mjs';
 import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
+  requestProfile, clearProfileRequest,
 } from './profile-lock.mjs';
 import { loadEnv, envSource, looksLikePlaceholder } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
@@ -47,10 +48,16 @@ const CAMPHAWK_URL = (process.env.CAMPHAWK_URL || 'https://camphawk.app').replac
 const TOKEN = process.env.AUTOCART_TOKEN;
 /**
  * How often to ask for work. RC releases on the minute and the feed already looks 90s
- * ahead, so a 20s poll means we are always inside the window with time to open a
- * browser. Tighter would just add requests from an address that has been 403'd once.
+ * ahead, so this only has to be tight enough that we are always inside the window with
+ * time to open a browser. Tighter than this would just add requests from an address that
+ * has been 403'd once.
+ *
+ * 15s, matching the poller's own cycle. The number that actually matters for a contested
+ * site is the RETRY gap after a failed cart, and the feed drives that separately (see
+ * `pollMs` in the route) — the idle cadence is not the thing standing between a user and
+ * their site.
  */
-const POLL_MS = Number(process.env.RC_HOLD_POLL_MS || 20_000);
+const POLL_MS = Number(process.env.RC_HOLD_POLL_MS || 15_000);
 /** Overridden by the feed's `pollMs` while a claim is outstanding. */
 let nextPollMs = POLL_MS;
 const HEADLESS = process.env.RC_HEADLESS === 'true';
@@ -193,6 +200,20 @@ const LOCK_WAIT_MS = Number(process.env.RC_PROFILE_LOCK_WAIT_MS || 60_000);
  * caller now reports the reason against the affected holds; see migration 046.
  */
 async function withRC(fn) {
+  // ASK FIRST. rc-keepwarm now holds the profile resident (it has to — RC only renews its
+  // token while a page is loaded), so a plain wait would time out every single time, at
+  // 08:00:00, on the one job that matters. The flag makes it stand down within a second.
+  requestProfile(PROFILE_DIR, LOCK_OWNER);
+  try {
+    return await withRCLocked(fn);
+  } finally {
+    // ALWAYS, including the failure paths — a request left behind keeps the keep-warm
+    // stood down indefinitely, which would kill the session it exists to preserve.
+    clearProfileRequest(PROFILE_DIR);
+  }
+}
+
+async function withRCLocked(fn) {
   if (!(await waitForProfileLock(PROFILE_DIR, LOCK_OWNER, LOCK_WAIT_MS))) {
     const held = profileLockHolder(PROFILE_DIR);
     log(`⚠ profile held by ${held?.owner ?? 'another process'} — skipping this pass, work stays queued`);

@@ -34,7 +34,7 @@
  * likely a sign-in shortly before the release rather than a permanent session.
  *
  * RUN IT ON THE MINI-PC, alongside the rec.gov bot:
- *   node rc-keepwarm.mjs                 # loop forever
+ *   node rc-keepwarm.mjs                 # RESIDENT: holds RC open, yields to the runner
  *   node rc-keepwarm.mjs --once          # single pass, for a cron or a smoke test
  *   node rc-keepwarm.mjs --login         # headful, for the ONE human sign-in
  *
@@ -50,6 +50,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
+  profileRequested,
 } from './profile-lock.mjs';
 import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
@@ -384,14 +385,107 @@ if (LOGIN) {
   await runForever();
 }
 
+/**
+ * RESIDENT MODE — the page stays open, and that is the whole fix.
+ *
+ * WHY THE OLD LOOP COULD NOT WORK. It opened a tab for eight seconds every twenty
+ * minutes. RC's SPA renews its Okta token on its own schedule, somewhere inside the
+ * token's ~1h life — so the chance of the tab being open at the moment the renewal fires
+ * is about 8s in 20min, under one percent. The loop was not renewing the session; it was
+ * observing it, occasionally, and reporting a token that had never been extended. That is
+ * precisely the 1h20m sign-in-to-death we measured on 2026-08-08: one access token, and
+ * then nothing.
+ *
+ * A real user's browser stays open. So does this one now. The keep-warm holds the profile
+ * and keeps RC loaded continuously, re-checking liveness every KEEPALIVE_MS, and YIELDS
+ * the moment the hold runner asks for the profile (see profile-lock's preemption). One
+ * Chromium on the profile at a time, still — that invariant is not negotiable, because
+ * two of them corrupt the session this exists to protect.
+ *
+ * If `renewed=YES` starts appearing in the log, that is the theory confirmed. If the token
+ * still never changes with a page open for hours, the renewal is not time-based and the
+ * next move is to drive the OIDC silent-auth endpoint explicitly.
+ */
+async function warmResident() {
+  for (;;) {
+    if (!(await waitForProfileLock(PROFILE_DIR, LOCK_OWNER, 60_000))) {
+      const held = profileLockHolder(PROFILE_DIR);
+      log(`… profile busy (${held?.owner ?? 'another process'}) — retrying in 30s, NOT a dead session`);
+      await sleep(30_000);
+      continue;
+    }
+    const renew = setInterval(() => renewProfileLock(PROFILE_DIR, LOCK_OWNER), RENEW_MS);
+    let ctx = null;
+    try {
+      ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
+        headless: HEADLESS, viewport: null, ignoreDefaultArgs: ['--enable-automation'],
+      });
+      const page = ctx.pages()[0] ?? (await ctx.newPage());
+      await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+      log('RC loaded and STAYING OPEN — this is what lets the app renew its own token.');
+
+      let lastCheck = 0;
+      for (;;) {
+        // Yield fast. The runner is asking because a site releases in seconds; making it
+        // wait out a 60s lock timeout at 08:00:00 would lose exactly the thing we are
+        // keeping the session alive FOR.
+        if (profileRequested(PROFILE_DIR)) {
+          log('→ hold runner wants the profile — closing and standing down');
+          break;
+        }
+        if (Date.now() - lastCheck >= KEEPALIVE_MS) {
+          lastCheck = Date.now();
+          await checkAndReport(ctx, page).catch((e) => log(`check failed: ${e.message}`));
+        }
+        await sleep(1000);
+      }
+    } catch (err) {
+      log(`resident keep-warm error: ${err.message} — reopening in 30s`);
+    } finally {
+      await ctx?.close().catch(() => {});
+      clearInterval(renew);
+      releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
+    }
+    // Wait for the requester to finish before grabbing it back, or we would race them for
+    // the lock they just asked us to give up.
+    while (profileRequested(PROFILE_DIR)) await sleep(1000);
+    await sleep(2000);
+  }
+}
+
+/** Liveness + renewal measurement against an ALREADY-OPEN page. */
+async function checkAndReport(ctx, page) {
+  const before = await readToken(page);
+  const exp = tokenExpiry(before);
+  const { live, why } = await sessionLive(ctx, page);
+  const after = await readToken(page);
+  const changed = before != null && after != null && before !== after;
+  const note =
+    (exp ? `token exp in ${Math.round((exp - Date.now()) / 60000)}m` : 'token exp unknown') +
+    `; renewed=${changed ? 'YES' : 'no'}`;
+
+  if (live === true) {
+    try { fs.writeFileSync(WARM_MARKER, new Date().toISOString()); } catch { /* best effort */ }
+    log(`♻ RC session kept warm (${why}) — ${note}`);
+    await reportSession('warm', note);
+  } else if (live === null) {
+    log(`… RC keep-warm inconclusive: ${why} — reporting nothing, unknown is not dead`);
+  } else {
+    log(`⚠ RC SESSION IS DEAD: ${why} — ${note}`);
+    log('  A human must sign in once: node rc-keepwarm.mjs --login');
+    await reportSession('dead', note);
+  }
+}
+
 async function runForever() {
   log(`RC session keep-warm every ${Math.round(KEEPALIVE_MS / 60000)}m — profile ${PROFILE_DIR}`);
   log('Ctrl-C to stop. A dead session is reported loudly and needs one human sign-in.');
   if (TOKEN) log(`Reporting session health to ${CAMPHAWK_URL}.`);
   else log('⚠ No AUTOCART_TOKEN — session health will NOT reach camphawk.app, so a dead');
   if (!TOKEN) log('  session will look like silence on the dashboard. Add it to .env.');
-  await warmOnce().catch((err) => log(`keep-warm error: ${err.message}`));
-  setInterval(() => {
-    warmOnce().catch((err) => log(`keep-warm error: ${err.message}`));
-  }, KEEPALIVE_MS);
+  // RESIDENT, not a timer. See warmResident: an 8-second visit every 20 minutes could
+  // never coincide with the app's own token renewal, which is why sessions were dying
+  // after one token. `--once` keeps the old open-check-close shape, which is right for a
+  // smoke test — it answers "is the session alive", not "keep it alive".
+  await warmResident();
 }

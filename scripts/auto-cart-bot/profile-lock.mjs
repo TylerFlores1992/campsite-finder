@@ -114,3 +114,60 @@ export function releaseProfileLockIfMine(profileDir, owner) {
 export function releaseProfileLock(profileDir) {
   try { fs.rmSync(lockPath(profileDir), { force: true }); } catch { /* best effort */ }
 }
+
+/**
+ * ── PREEMPTION ──────────────────────────────────────────────────────────────────────
+ *
+ * The lock above assumes every holder is doing a short job. That stopped being true when
+ * the RC keep-warm became RESIDENT — it holds the profile open more or less permanently,
+ * because RC's SPA only renews its Okta token while a page is actually loaded, and a
+ * process that opens a tab for eight seconds every twenty minutes will essentially never
+ * be present when that renewal fires. (Measured: sign-in to death, 1h20m — about one
+ * access token, i.e. what a never-renewed session looks like.)
+ *
+ * A permanent holder and a short-job holder cannot share a plain mutex: the runner would
+ * time out every time, at 08:00:00, on the one job that matters.
+ *
+ * So the resident holder yields on request. The runner drops a flag file, the keep-warm
+ * sees it within a second, closes its browser and releases; the runner takes the lock,
+ * does its work, clears the flag, and the keep-warm reopens. Exactly one Chromium is ever
+ * open on the profile — which is the invariant this whole module exists to protect, and
+ * the reason two instances corrupting the session is not a risk we take.
+ *
+ * A flag file rather than a signal or a port: the two processes already share this
+ * directory and nothing else, it survives either of them crashing (a stale request is
+ * cleared by age, like the lock), and it needs no new configuration on the mini-PC.
+ */
+const REQUEST_FILE = '.camphawk-profile-wanted';
+/** A request older than this is abandoned — the requester died before taking the lock.
+ *  Short, because the cost of ignoring a live request is a missed cart. */
+const REQUEST_STALE_MS = 2 * 60 * 1000;
+
+const requestPath = (profileDir) => path.join(profileDir, REQUEST_FILE);
+
+/** "I need the profile — resident holders please stand down." */
+export function requestProfile(profileDir, owner) {
+  try {
+    fs.mkdirSync(profileDir, { recursive: true });
+    fs.writeFileSync(requestPath(profileDir), JSON.stringify({ owner, at: new Date().toISOString() }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Is someone waiting for us to let go? Stale requests read as none. */
+export function profileRequested(profileDir) {
+  try {
+    const { owner, at } = JSON.parse(fs.readFileSync(requestPath(profileDir), 'utf8'));
+    if (!at || Date.now() - new Date(at).getTime() > REQUEST_STALE_MS) return null;
+    return { owner, at };
+  } catch {
+    return null;
+  }
+}
+
+/** Done — the resident may take it back. Safe to call when no request exists. */
+export function clearProfileRequest(profileDir) {
+  try { fs.unlinkSync(requestPath(profileDir)); } catch { /* not there is the goal */ }
+}

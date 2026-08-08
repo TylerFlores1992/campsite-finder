@@ -15,6 +15,7 @@ import path from 'node:path';
 import {
   acquireProfileLock, releaseProfileLock, releaseProfileLockIfMine,
   renewProfileLock, profileLockHolder,
+  requestProfile, profileRequested, clearProfileRequest,
 } from '../scripts/auto-cart-bot/profile-lock.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ch-lock-'));
@@ -73,4 +74,49 @@ test('the error path never strips another process’s lock', () => {
   assert.equal(profileLockHolder(dir)?.owner, 'rc-keepwarm', 'the real holder must survive');
   releaseProfileLockIfMine(dir, 'rc-keepwarm');
   assert.equal(profileLockHolder(dir), null);
+});
+
+test('a resident holder can be asked to stand down, and the request expires on its own', async () => {
+  // The RC keep-warm holds the profile RESIDENT — it has to, because RC's SPA only renews
+  // its Okta token while a page is loaded, and an 8-second visit every 20 minutes has
+  // under a 1% chance of being open when that fires. (Measured: 1h20m from sign-in to
+  // death, i.e. one access token and then nothing.)
+  //
+  // A permanent holder and a short-job holder cannot share a plain mutex: the hold runner
+  // would time out every time, at 08:00:00, on the one job that matters. So the resident
+  // yields on request.
+  const dir = tmp();
+  try {
+    assert.equal(profileRequested(dir), null, 'nothing pending on a fresh profile');
+
+    requestProfile(dir, 'rc-hold-runner');
+    const req = profileRequested(dir);
+    assert.equal(req?.owner, 'rc-hold-runner', 'the resident can see WHO wants it');
+
+    clearProfileRequest(dir);
+    assert.equal(profileRequested(dir), null, 'and the resident may take it back');
+
+    // A requester that dies before taking the lock must not stand the keep-warm down
+    // forever — that would kill the session the whole thing exists to preserve.
+    requestProfile(dir, 'rc-hold-runner');
+    fs.writeFileSync(
+      path.join(dir, '.camphawk-profile-wanted'),
+      JSON.stringify({ owner: 'rc-hold-runner', at: new Date(Date.now() - 10 * 60_000).toISOString() }),
+    );
+    assert.equal(profileRequested(dir), null, 'a stale request reads as no request');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('clearing a request is safe when there is none', () => {
+  // Called in a `finally` on every runner pass, including the ones that never asked.
+  const dir = tmp();
+  try {
+    clearProfileRequest(dir);
+    clearProfileRequest(dir);
+    assert.equal(profileRequested(dir), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
