@@ -624,6 +624,31 @@ function ago(seconds: number | null | undefined): string {
 }
 
 /** "reserveamerica-AK" -> "ReserveAmerica · AK". Keeps the state, drops the slug. */
+/**
+ * Why were campgrounds skipped? — the one fact "8 skipped" was missing.
+ *
+ * The reasons were already being stored (sync_log.error, first ten lines) and shown only
+ * as a hover title, which nobody hovers. So ReserveAmerica DE quietly skipped 8 of its 13
+ * parks for weeks — including Cape Henlopen and Delaware Seashore, the two biggest
+ * campgrounds in the state — and the page said "8 skipped", which reads like rounding.
+ *
+ * Takes the reason off the FIRST line and strips the identifiers, because the lines are
+ * `DE 360108 (Cape Henlopen State Park): no coords and no street address` and the useful
+ * half is the last clause. One shared cause is the common case; when they differ, the
+ * first is still a better starting point than a number. The full list stays in the title.
+ */
+function skipReason(error: string | null | undefined): string | null {
+  if (!error) return null;
+  const first = error.split('\n')[0] ?? '';
+  const why = first.includes(': ') ? first.slice(first.indexOf(': ') + 2) : first;
+  const trimmed = why.trim();
+  if (!trimmed) return null;
+  // These carry a whole HTML error document (a WAF 403 body). Naming the shape beats
+  // pasting the first 60 characters of a DOCTYPE into the admin page.
+  if (/^\s*<|DOCTYPE/i.test(trimmed)) return 'upstream refused the request';
+  return trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed;
+}
+
 function syncSourceLabel(source: string): string {
   const NAMES: Record<string, string> = {
     ridb: 'Recreation.gov',
@@ -893,7 +918,7 @@ function SystemHealthPanel({ data }: { data: AdminData }) {
                             // an outage and is routine.
                             `${synced.toLocaleString()} synced${
                               skipped ? `, ${skipped.toLocaleString()} skipped` : ''
-                            }`
+                            }${skipReason(s.error) ? ` — ${skipReason(s.error)}` : ''}`
                     }
                     right={s.finished_at ? ago(s.age_s) : ''}
                     title={s.error ?? undefined}

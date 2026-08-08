@@ -1,7 +1,7 @@
 import { mutate } from '@/lib/db/client';
 import { RA_CONTRACTS, type RAContract } from './client';
 import { fetchParkCatalog, fetchParkLocation, raSession } from './catalog';
-import { geocodeAddress, inState } from '../geocode';
+import { geocodeAddress, geocodePlaceName, inState } from '../geocode';
 import type { SyncResult } from '../types';
 
 function titleCase(s: string): string {
@@ -44,9 +44,9 @@ export async function syncReserveAmerica(contract: RAContract): Promise<SyncResu
         const { coords: direct, address } = await fetchParkLocation(contract, p.detailPath, cookie);
         let coords = direct;
         if (!coords) {
-          // ADDRESS, never name. "Clough State Park, New Hampshire" geocodes to the
-          // state centroid — a confident, plausible, wrong pin ~40 miles out. See
-          // src/lib/sources/geocode.ts.
+          // ADDRESS, never name — with MAPBOX. "Clough State Park, New Hampshire" geocoded
+          // by Mapbox lands on the state centroid: a confident, plausible, wrong pin ~40
+          // miles out. See src/lib/sources/geocode.ts.
           const geo = await geocodeAddress({ ...address, state: address.state ?? contract.state });
           if (geo && !inState(contract.state, geo[0], geo[1])) {
             errors.push(`${contract.contractCode} ${p.parkId} (${p.name}): geocode outside ${contract.state} (${geo[1]},${geo[0]})`);
@@ -55,9 +55,26 @@ export async function syncReserveAmerica(contract: RAContract): Promise<SyncResu
           coords = geo;
         }
         if (!coords) {
-          // Fail LOUD, as the SC portal does: a park with neither coordinates nor a
-          // street address needs a human, not a guessed position.
-          const why = address.street && address.city ? 'geocode failed' : 'no coords and no street address';
+          // THE NAME RUNG, and it is not the thing the comment above forbids. That rule is
+          // "never name-geocode with MAPBOX"; `geocodePlaceName` is OpenStreetMap only and
+          // carries the guards that make a name safe — the answer must fall inside the
+          // state's bounding box AND its display_name must share a distinctive word with
+          // what we asked for, so a state centroid or a same-named place elsewhere is
+          // rejected rather than believed. It was built for exactly this case on
+          // 2026-08-04 and the ReserveAmerica sync was never wired to it.
+          //
+          // The cost of the omission was real and invisible: ReserveAmerica DE was
+          // skipping 8 of its 13 parks — including Cape Henlopen and Delaware Seashore,
+          // the two biggest campgrounds in the state — because ReserveAmerica publishes
+          // neither coordinates nor a street address for them. Unreachable in search,
+          // unwatchable, and the only symptom was "8 skipped" on the admin page.
+          // Measured: all 8 DE and all 3 NH skips resolve by name, in-state, correctly.
+          coords = await geocodePlaceName(p.name, contract.state);
+        }
+        if (!coords) {
+          // Fail LOUD, as the SC portal does: a park that no rung of the ladder can place
+          // needs a human, not a guessed position.
+          const why = address.street && address.city ? 'geocode failed' : 'no coords, no street address, and no name match';
           errors.push(`${contract.contractCode} ${p.parkId} (${p.name}): ${why}`);
           return;
         }
