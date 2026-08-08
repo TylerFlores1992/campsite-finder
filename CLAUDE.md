@@ -687,6 +687,70 @@ generated from the dispatcher by `scripts/a2p-samples.mts`.
 **Not urgent:** all twelve recorded 30007s are from 2026-08-05, before the
 `camphawk.app/b/<token>` link came out of SMS. None since.
 
+### The 8am flow could never have worked — the cart fired BEFORE the release (2026-08-08)
+The second hold (South Carlsbad `#41`) failed with RC's own words: *"The unit is not
+available for the date(s) specified."* Exact times: **attempt 14:58:35 UTC, release
+15:00:00 UTC.** It carted **85 seconds early**, and the site had not been released yet.
+- **The feed serves a hold 90s early on purpose** so the browser is open and the token in
+  hand when the site frees. The runner treated that as permission to submit. RC said no —
+  correctly — the server called `markFailed`, and **`failed` is terminal**: `dueHolds`
+  only ever returns `requested`, so the one and only attempt was guaranteed to be too
+  early and there was never a second. **No session and no runner could have saved it.**
+  Yesterday's dead runner hid this completely.
+- **Three fixes.** `reportCartFailure` keeps a hold `requested` while its release window is
+  still open, so the next pass retries — server-side, and alone it would have carted this
+  one. The runner now **waits out the lead** before submitting (`msUntilRelease`, Pacific
+  wall-clock parsed as UTC on both sides so the offset cancels; never `new Date()` on a
+  zone-less string). And a due cart gets a **5s feed lane** like claims do — not 1s: the
+  precart is a real POST from a residential IP RC's WAF has 403'd before.
+  `worker/rc-holds.test.mts` fails against the terminal-failure bug, verified by restoring it.
+
+### The RC keep-warm was never renewing anything (2026-08-08)
+It opened a tab for **8 seconds every 20 minutes**. RC's SPA renews its Okta token on its
+own timer somewhere inside the token's ~1h life, so the odds of that tab being open when
+the renewal fires are **8s in 20min — under 1%**. It was not renewing the session; it was
+observing it occasionally and reporting a token nothing had ever extended.
+- **The measurement is what exposed it.** `session_since` / `session_live_since`
+  (migration 047) record when the verdict CHANGED, not when it was last checked — the
+  latter is overwritten on every 20-minute reconfirmation, so a session that died at 05:30
+  and was probed at 13:40 read as "dead, 0 minutes ago". First real reading: **1h20m from
+  sign-in to death**, about one access token.
+- **THE "~8 HOUR SESSION CAP" I WROTE HERE WAS WRONG.** Two earlier figures (~9h, ~8.4h)
+  were not measurements — nobody looked in between, so they bounded when we NOTICED. The
+  first actual measurement falsified the hypothesis within hours of my writing it down.
+  Do not reason from "when we noticed" again; that is what 047 exists to prevent.
+- **The fix: the page stays open.** `warmResident()` holds the profile with RC loaded
+  continuously; the 20-minute tick is now only a liveness check and measurement, not the
+  keep-alive. A real user's browser stays open, and so does this one.
+- **That needed the profile lock to grow PREEMPTION.** A permanent holder and a short-job
+  holder cannot share a plain mutex — the runner would time out every time, at 08:00:00,
+  on the one job that matters. The runner drops `.camphawk-profile-wanted`, the keep-warm
+  sees it within a second, closes and releases; the runner works, clears the flag, the
+  keep-warm reopens. Still exactly one Chromium on the profile. A stale request expires on
+  its own — a requester that dies must not stand the keep-warm down forever.
+- **Two ways a resident tab silently buys nothing**, both fixed: Chrome **throttles timers
+  in background/occluded windows** (so the tab looks healthy and renews as little as the
+  8-second visit did — launched with the three backgrounding flags disabled), and a
+  **visible window gets closed** by anyone tidying up (it is headful because RC
+  fingerprints headless Chromium; the loop now notices a dead context and reopens).
+- **VERDICT PENDING.** Watch `token exp in Xm; renewed=` in the keep-warm log and on
+  `autocart.rc_session`. `exp` climbing back toward ~60m = solved. Counting to zero and
+  dying = the renewal is not a background timer, and the next move is driving the OIDC
+  **silent-auth** endpoint (`/authorize?prompt=none`) against the persistent "Keep me
+  signed in" cookie — **no password and no CAPTCHA**, because the challenge lives on the
+  credential form, not on a cookie exchange. Stored-credential auto-relogin stays the last
+  resort: repeated Okta logins from one address is what we believe got the household IP
+  blocked for 12h on 08-06.
+
+### A dead RC session is NOT "alerting is broken" (2026-08-08)
+`autocart.rc_session` went in as a plain `fail`, so it turned `/api/health/status` 503 and
+the 5-minute pager emailed **"CampHawk DOWN"** every 30 minutes for eight hours overnight.
+**Not one alert was affected** — the poller detects and notifies from Fly. `Check.pages`
+now marks the auto-cart family non-paging: still `fail`, still red on the admin page, still
+read by the 07:30 pre-flight (which is the *right* pager for this — once, when a human can
+act). A non-paging failure reads `degraded`, so nothing is hidden. The cost of crying wolf
+is not the noise, it is that the next real page gets skimmed.
+
 ### If a hold is queued: did the 8am cart fire? (the daily check)
 The second attempt is queued: **South Carlsbad SB — Northern End, unit 45725 `#41`,
 arrival 2026-09-13, releases 2026-08-08T08:00 PT**, status `requested`. (The first — Leo

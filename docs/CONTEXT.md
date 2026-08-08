@@ -2932,6 +2932,65 @@ ever touches login**:
 **`rc-probe.mjs` detects the challenge** and waits up to 5 minutes for a human (headful
 only) instead of burning three retries on an unclickable button.
 
+### The keep-warm was never renewing anything (2026-08-08) — and how we found out
+
+Everything above describes the *intent*. The implementation opened a tab for **eight
+seconds every twenty minutes**. RC's SPA renews its Okta token on its own timer somewhere
+inside the token's ~1h life, so the probability of that tab being open at the moment the
+renewal fires is 8s in 20min — **under one percent**. It was not renewing the session. It
+was observing it, occasionally, and reporting a token nothing had ever extended.
+
+**The measurement is the whole story.** For weeks the only evidence was "signed in in the
+morning, dead by the afternoon", which produced an ~8-hour figure and a confident
+hypothesis (RC caps sessions absolutely; page loads cannot extend an absolute lifetime;
+the design is unviable). That hypothesis was **wrong**, and it was wrong because those
+numbers were never measurements — nobody looked in between, so they bounded *when we
+noticed*, not when it died. Migration 047 added `session_since` (moves only when the
+verdict CHANGES — `session_at` is overwritten by every reconfirmation, so a session that
+died at 05:30 and was probed at 13:40 read as "dead, 0 minutes ago") and
+`session_live_since` (set only on a flip to alive, never cleared, so it outlives the death
+it must be subtracted from). First real reading: **1h20m, sign-in to death.** About one
+access token. The hypothesis died within hours of being written down.
+
+**The fix is that the page stays open.** `warmResident()` holds the profile with RC loaded
+continuously; the twenty-minute tick is now only a liveness check and a measurement, not
+the keep-alive. A real user's browser stays open, and that is the entire difference.
+
+**Which forced preemption into the profile lock.** A permanent holder and a short-job
+holder cannot share a plain mutex: the hold runner would time out on every attempt, at
+08:00:00, on the one job that matters. So the resident yields on request —
+`.camphawk-profile-wanted`, seen within a second, browser closed, lock released; the
+runner works, clears the flag, the keep-warm reopens. **Exactly one Chromium on the
+profile at any time**, which is the invariant the lock has always existed for and the
+reason two instances corrupting the session is not a risk we run. A stale request expires
+on its own: a requester that dies must not stand the keep-warm down forever, which would
+kill the session it exists to preserve.
+
+**Two ways a resident tab silently buys nothing**, both found by looking at a screenshot of
+the actual desktop rather than at the code:
+- **Chrome throttles timers in background, minimised and occluded windows.** This window
+  will spend its life behind something. The renewal we are staying open to catch is a
+  timer inside RC's app, and a throttled timer renews exactly as little as the eight-second
+  visit did — while the tab sits there looking healthy. Launched with
+  `--disable-background-timer-throttling`, `--disable-backgrounding-occluded-windows`,
+  `--disable-renderer-backgrounding`.
+- **A visible window gets closed.** It is headful by design (RC fingerprints headless
+  Chromium) and it sits on the owner's desktop. Without a check, the loop would spin for
+  days on a dead context, logging a caught error every twenty minutes while the session
+  quietly lapsed — a keep-warm that keeps nothing warm and still reports for duty.
+
+**Verdict pending as of writing.** `token exp in Xm; renewed=` is logged every pass and
+carried into `autocart.rc_session`, so the answer is visible on the dashboard. `exp`
+climbing back toward ~60m means the resident tab catches the renewal and the session holds
+indefinitely. `exp` counting to zero and the session dying means the renewal is not a
+background timer at all, and the next move is to drive the **OIDC silent-auth** endpoint
+explicitly (`/authorize?prompt=none`) against the persistent "Keep me signed in" cookie.
+Worth knowing before dismissing that as another login: **it involves no password and no
+CAPTCHA** — the challenge lives on the credential form, and a cookie exchange never shows
+it. Stored-credential auto-relogin (the rec.gov shape) stays the last resort, because
+repeated Okta sign-ins from one address is the leading explanation for the household IP
+being blocked for twelve hours on 2026-08-06.
+
 ## Day-before opt-in holds — the RC 8am flow (migrations 043 + 044, 2026-08-07)
 
 **The idea (owner's).** RC locks a cancelled site until a release time, and that time is
@@ -2958,6 +3017,40 @@ releases).
 - **Only `requested` authorises a cart.** An `offered` row is a question nobody answered.
   `dueHolds` filters on `status = 'requested'` alone, and `worker/rc-holds.test.mts` fails
   if that ever widens.
+
+> ### The lead time guaranteed the cart fired before the release (2026-08-08)
+>
+> The first hold that got past the runner and the session failed anyway, with RC's own
+> words: *"The unit is not available for the date(s) specified."* Exact times — **attempt
+> 14:58:35 UTC, release 15:00:00 UTC**. It carted **85 seconds early**, against a site RC
+> had not released yet.
+>
+> The feed serves a hold 90 seconds early **on purpose**, so the browser is open and the
+> token in hand when the site frees. The runner read that as permission to submit. RC
+> refused, correctly; the server called `markFailed`; and **`failed` is terminal**, because
+> `dueHolds` only ever returns `requested`. So the single attempt was guaranteed to be too
+> early, and there was never a second one. **This flow could not have succeeded no matter
+> how healthy the runner and the session were** — the dead runner on 08-07 and the dead
+> session overnight hid it completely, each failing earlier in the same chain.
+>
+> Three changes, and the first is the one that matters:
+> - **`reportCartFailure`** — a cart failure while the release window is still open is an
+>   ATTEMPT, not an outcome. Status stays `requested`, `error` is left alone, the reason
+>   goes to `last_attempt_note`, and the hold stays in the feed so the next pass retries.
+>   Only once the window closes does it become `failed`, with the reason attached where the
+>   missed-hold sweep reads it. `updated_at` does **not** move on a retryable attempt —
+>   that column means "the hold changed", and moving it would destroy the
+>   unchanged-since-the-tap tell from migration 046.
+> - **The runner waits out the lead** (`msUntilRelease`). Both sides are Pacific wall-clock
+>   parsed as if UTC, so the offset cancels; never `new Date()` on a zone-less string,
+>   which reads as local time on a box whose timezone we do not control. Capped at three
+>   minutes so a malformed timestamp cannot park a pass.
+> - **A due cart gets a 5s feed lane**, the same idea as the 1s claim lane one notch less
+>   urgent. Not 1s: the precart is a real POST from a residential IP that RC's WAF has
+>   403'd before, and retrying every second for twenty minutes is how we lose the address.
+>
+> `worker/rc-holds.test.mts` covers both halves and fails against the terminal-failure bug
+> — verified by restoring it.
 - **A row is created at ALERT time, not tap time**, so the tap carries no booking data.
   Encoding unit/dates/release into a token would put details in a URL that outlives them
   and cannot be corrected if the grid changes before 8am.
