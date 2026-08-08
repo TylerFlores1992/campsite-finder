@@ -428,7 +428,7 @@ const PRESETS: Record<string, Preset> = {
     frame: 'w-full',
   },
   'ch-nav-admin': {
-    label: 'Nav — admin shortcut beside the avatar (owner only)',
+    label: 'Nav — expanded header (admin now lives in the account menu)',
     entry: `import V2Nav from '@/components/v2/V2Nav';
       if (typeof window !== 'undefined') {
         window.__CH_SIGNED_IN = true;

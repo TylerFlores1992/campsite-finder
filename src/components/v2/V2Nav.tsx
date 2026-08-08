@@ -134,32 +134,28 @@ function AccountControl({ compact = false }: { compact?: boolean }) {
   if (isSignedIn) {
     return (
       <>
-        {/* Admin sits IN the header, beside the avatar, rather than inside the
-            account menu. It's the one destination the owner opens constantly
-            and nobody else can see at all, so a click to open a menu first is
-            pure friction for the only person who uses it. Icon-only: it's a
-            personal shortcut, not something that needs explaining, and a label
-            would push the nav around on phones.
-            Only drawn for an admin, and only ever a link — /admin 404s for
-            anyone else, so this grants nothing. */}
-        {isAdmin && (
-          <Link
-            href="/admin"
-            aria-label="Admin dashboard"
-            title="Admin"
-            className={cx(
-              "grid size-8 shrink-0 place-items-center rounded-full transition-colors",
-              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green",
-              compact
-                ? "bg-white/90 text-ch-ink-2 shadow-ch-card backdrop-blur hover:bg-white"
-                : "text-ch-muted hover:bg-ch-green-soft hover:text-ch-green-deep",
-            )}
-          >
-            <ShieldCheck aria-hidden="true" className="size-4" />
-          </Link>
-        )}
         <UserButton appearance={{ elements: { avatarBox: "w-8 h-8" } }}>
           <UserButton.MenuItems>
+            {/* ADMIN LIVES IN THE MENU, on every viewport (2026-08-08).
+                It spent a while as a standalone shield beside the avatar, on the
+                argument that the owner opens it constantly and a menu click is
+                pure friction for its only user. True, and it cost more than it
+                saved: two 32px buttons in a 46px collapsed header is most of the
+                width the artwork's "FIND YOUR NEXT ADVENTURE" tagline occupies,
+                so the header could not be made to look right with both there.
+                One tap to reach a page one person visits beats a permanently
+                crowded header for everyone. Same treatment on desktop rather than
+                a viewport-dependent split — a control that moves depending on
+                window width is harder to find than one that never moves.
+                Still only drawn for an admin, and still only a link: /admin
+                enforces access itself, so this grants nothing either way. */}
+            {isAdmin && (
+              <UserButton.Action
+                label="Admin"
+                labelIcon={<ShieldCheck size={14} />}
+                onClick={() => router.push("/admin")}
+              />
+            )}
             {/* Settings lives here rather than as a fourth tab: it's visited once
               at setup and rarely after, and the account menu is where people
               already look for it. */}

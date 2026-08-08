@@ -33,9 +33,17 @@ The old pages and 14 orphaned components are **deleted**; `/v2` no longer exists
 - **The stock Tailwind colour overrides are DELETED (2026-07-27).** The last 13 files
   on `bg-green-600`/`text-gray-*` were converted, so `--ch-*` is the only palette —
   a new `bg-green-600` now renders STOCK Tailwind green. Use a `ch-*` token.
-- **The admin link lives in the account menu** (`V2Nav`), not `/settings`. `V2Nav` is a
-  client component, so it gets the boolean from `GET /api/admin/status` (Clerk-authed,
-  `lib/admin` stays `server-only`) — never a client-side email check.
+- **The admin link lives in the account menu** (`V2Nav`), not `/settings`, and not as a
+  button in the header. `V2Nav` is a client component, so it gets the boolean from
+  `GET /api/admin/status` (Clerk-authed, `lib/admin` stays `server-only`) — never a
+  client-side email check.
+  It spent a while as a standalone shield beside the avatar, on the argument that the
+  owner opens it constantly. **Put back in the menu on both viewports 2026-08-08**: two
+  32px buttons take up most of the width the header artwork's "FIND YOUR NEXT ADVENTURE"
+  tagline occupies, so the collapsed mobile header could not be made to look right with
+  both there. One tap for the one person who visits `/admin` beats a crowded header for
+  everyone. Same on desktop deliberately — a control that moves with window width is
+  harder to find than one that never moves.
 
 ## SEO (added 2026-07-27, live since the swap lifted the layout `noindex`)
 Server-rendered campground pages + per-page metadata (`lib/seo.ts`), JSON-LD
