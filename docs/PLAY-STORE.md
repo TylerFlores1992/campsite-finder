@@ -112,9 +112,16 @@ project picker. A second project is not wrong, just pointless.
    - **Releases → Release to testing tracks**
    - Leave **Release to production** OFF while the closed test is the goal — CI can only
      do what it is authorised to do.
-5. **Give it to Codemagic** — <https://codemagic.io/teams> → your team → **Integrations**
-   → **Google Play** → paste the JSON, naming it so it resolves as
-   `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS`.
+5. **Give it to Codemagic.** This account is a **Personal Account**, which has no Team →
+   Integrations page — that route exists only on team plans, so the credential goes in as
+   a secure environment variable instead:
+   <https://codemagic.io/apps> → campsite-finder → **Settings → Environment variables**
+   - **Name:** `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS`
+   - **Value:** the ENTIRE contents of the JSON file from step 3, pasted as one line
+   - **Group:** `google_play`
+   - **Secure:** ticked — without it the value is printed in build logs
+   Then add `- google_play` to `environment.groups` in the `android-release` workflow, or
+   the variable is not in scope and the publish fails with an empty credential.
 6. Uncomment the `publishing:` block at the end of the `android-release` workflow.
 
 **`track: alpha`, NOT `internal`.** Play's tracks are internal / alpha (= CLOSED testing)

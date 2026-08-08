@@ -731,7 +731,9 @@ break.** TestFlight build **8 is up (2026-08-08)**, after two failures worth kno
   it is the configuration that shipped build 5. **Do not "modernise" this to SPM** until
   upstream renames one of those packages.
 - Android was never affected: it builds through Gradle. **`android-release` build 8 is
-  GREEN (2026-08-08)** — `app-release.aab` (11.0 MB) + `app-release.apk`, versionCode 8,
+  GREEN (2026-08-08)** — `app-release.aab` (11.0 MB) + `app-release.apk`, **versionCode
+  16** (Codemagic's `PROJECT_BUILD_NUMBER`, shared across workflows — NOT the API's
+  per-workflow `index`, which read 8 and which I twice quoted as the build number),
   with "Assert the Play target API level" and "Verify the APK is actually signed" both
   passing. **The API-36 deadline is cleared as soon as that AAB is uploaded.**
   NOT yet uploaded to Play, and the 12-tester / 14-day closed-testing clock has NOT
