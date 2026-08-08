@@ -308,24 +308,43 @@ export default function V2Nav() {
               at this aspect ratio the scale is width-driven, so the crop stays
               vertical and "CampHawk" can never lose its C — the failure the
               `object-contain` comment above was added for. */}
-          <div className="flex size-full items-start">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/brand/app-header.jpg"
-              alt="CampHawk — find your next adventure"
-              className={cx(
-                "h-full min-w-0 flex-1",
-                collapsed
-                  ? "object-cover object-bottom"
-                  : "object-contain object-center",
-              )}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/app-header.jpg"
+            alt="CampHawk — find your next adventure"
+            className={cx(
+              "size-full",
+              collapsed
+                ? "object-cover object-bottom"
+                : "object-contain object-center",
+            )}
+          />
+          {/* THE ART STAYS FULL-BLEED. A first attempt made the controls a flex
+              sibling so the image took only the remaining width — which does stop
+              them covering the tagline, and leaves a hard vertical seam where the
+              cream sky stops and flat green starts. It reads as an image that
+              failed to load. Full-bleed with a scrim is the right trade: the
+              banner survives, and the tagline fades into the green rather than
+              disappearing behind an opaque circle.
+
+              Collapsed only, because expanded the controls sit over sky and there
+              is nothing to protect. Pointer-events off so it can never eat a tap
+              meant for the avatar. */}
+          {collapsed && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 right-0 w-32 bg-gradient-to-l from-[#24382A] via-[#24382A]/85 to-transparent"
             />
-            {/* No `absolute` and so no safe-area maths: the parent's padding-top
-                already places this below the status bar, which is what the old
-                explicit offset was compensating for by hand. */}
-            <div className="flex shrink-0 items-center gap-2 pt-3 pr-3 pl-2">
-              <AccountControl compact />
-            </div>
+          )}
+          {/* `absolute` resolves against the PADDING box, so a plain `top-3` sits
+              12px from the very top of the element and therefore UNDER the status
+              bar — which is exactly where the account avatar was rendering, next to
+              the clock and battery. Offset it by the inset explicitly. */}
+          <div
+            className="absolute right-3 flex items-center gap-2"
+            style={{ top: "calc(env(safe-area-inset-top) + 0.75rem)" }}
+          >
+            <AccountControl compact />
           </div>
         </div>
 
