@@ -395,6 +395,13 @@ workflows:
       # The service account is deliberately NOT granted "Release to production" in Play,
       # so this cannot ship to real users even if the track were changed by mistake.
       # Widen the permission only when automated production releases are actually wanted.
+      #
+      # The variable is named GCLOUD_SERVICE_ACCOUNT_CREDENTIALS to match the Codemagic
+      # env-var group, and the CLI warns that reading a credential from that NAME is
+      # deprecated in favour of GOOGLE_PLAY_SERVICE_ACCOUNT_CREDENTIALS. It is only a
+      # warning today. If a future Codemagic release drops it, this publish starts
+      # failing on an empty credential — rename the variable in the UI group AND here,
+      # together, or it fails as a bad credential rather than a missing one.
       google_play:
         credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
         track: alpha

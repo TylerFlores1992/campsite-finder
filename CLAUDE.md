@@ -736,8 +736,11 @@ break.** TestFlight build **8 is up (2026-08-08)**, after two failures worth kno
   per-workflow `index`, which read 8 and which I twice quoted as the build number),
   with "Assert the Play target API level" and "Verify the APK is actually signed" both
   passing. **The API-36 deadline is cleared as soon as that AAB is uploaded.**
-  NOT yet uploaded to Play, and the 12-tester / 14-day closed-testing clock has NOT
-  started — that is the long pole, not the build.
+  **PUBLISHED TO PLAY CLOSED TESTING (alpha) 2026-08-08, versionCode 18** — the API-36
+  deadline is CLEARED. Every green `android-release` build now uploads itself: a Google
+  Play service account is wired in via the `google_play` env group (setup + gotchas in
+  `docs/PLAY-STORE.md` §0b). The 12-tester / 14-day closed-testing clock still has NOT
+  started — that is the long pole, and no build shortens it.
 Details in `docs/PLAY-STORE.md` §0a.
 
 ### Mobile app — everything below needs `npm install && npx cap sync` + a REBUILD
