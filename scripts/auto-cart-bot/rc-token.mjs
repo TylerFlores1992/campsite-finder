@@ -41,36 +41,68 @@
  * already gone past.
  */
 
-/** Wrap fetch/XHR in every page of this context. Call right after launching it. */
+/**
+ * Wrap fetch/XHR in every page of this context. Call right after launching it.
+ *
+ * ONLY RESERVECALIFORNIA'S OWN REQUESTS COUNT. The first version captured
+ * `authorization` off ANY request the page made, which is a page full of third parties —
+ * analytics, maps, Okta itself — each with its own bearer. The symptom was immediate and
+ * confusing: a token that captured as `src=live`, would not decode as a JWT (`token exp
+ * unknown`), and got a 401 from `load/shoppingcart`, which reads exactly like a dead
+ * session. It was somebody else's credential.
+ *
+ * `accesstoken` is preferred over `authorization` for the same reason — it is RC's own
+ * bespoke header, so it cannot be confused with anyone else's scheme.
+ */
 export async function installTokenCapture(ctx) {
   await ctx.addInitScript(() => {
     try {
+      const isRC = (url) => {
+        try { return /(^|\.)reservecalifornia\.com/i.test(new URL(String(url), location.href).hostname); }
+        catch { return false; }
+      };
       const keep = (v) => {
         if (!v) return;
         const t = String(v).replace(/^Bearer\s+/i, '').trim();
-        // A short value is a header we mis-read, not a JWT.
+        // A short value is a header we mis-read, not a token.
         if (t.length > 20) window.__camphawkRcToken = t;
       };
       const readHeaders = (h) => {
         try {
           if (!h) return;
+          // accesstoken FIRST — RC's own header, unambiguous.
           if (typeof h.get === 'function') { keep(h.get('accesstoken') || h.get('authorization')); return; }
+          let auth = null;
           for (const k of Object.keys(h)) {
-            if (/^(accesstoken|authorization)$/i.test(k)) keep(h[k]);
+            if (/^accesstoken$/i.test(k)) { keep(h[k]); return; }
+            if (/^authorization$/i.test(k)) auth = h[k];
           }
+          keep(auth);
         } catch { /* never break the page */ }
       };
       const of = window.fetch;
       window.fetch = function (input, init) {
         try {
-          readHeaders(init && init.headers);
-          if (input && typeof input === 'object' && input.headers) readHeaders(input.headers);
+          const url = input && typeof input === 'object' && input.url ? input.url : input;
+          if (isRC(url)) {
+            readHeaders(init && init.headers);
+            if (input && typeof input === 'object' && input.headers) readHeaders(input.headers);
+          }
         } catch { /* ignore */ }
         return of.apply(this, arguments);
       };
+      const oo = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url) {
+        try { this.__chRC = isRC(url); } catch { this.__chRC = false; }
+        return oo.apply(this, arguments);
+      };
       const os = XMLHttpRequest.prototype.setRequestHeader;
       XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
-        try { if (/^(accesstoken|authorization)$/i.test(name)) keep(value); } catch { /* ignore */ }
+        try {
+          // setRequestHeader does not know the URL, so `open` records it on the instance.
+          if (this.__chRC && /^accesstoken$/i.test(name)) keep(value);
+          else if (this.__chRC && /^authorization$/i.test(name)) keep(value);
+        } catch { /* ignore */ }
         return os.apply(this, arguments);
       };
     } catch { /* a capture failure must never stop the page loading */ }
