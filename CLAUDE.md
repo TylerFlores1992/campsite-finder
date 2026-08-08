@@ -675,7 +675,17 @@ camphawk.app to subscribe, and it is built and wired into all five surfaces — 
 review.** Smoke-test a real page after (`curl -sI camphawk.app/`).
 
 **Precondition:** app availability restricted to the **United States**. **DONE on Apple
-(2026-07-30); NOT done on Play** — do it before an Android release, not after. Both
+(2026-07-30); NOT done on Play** — do it before an Android release, not after.
+
+> **THE CLOSED TEST IS GLOBAL ON PURPOSE (2026-08-08), AND THAT IS NOT A CONTRADICTION —
+> but it is a trap.** The paid tester service requires worldwide availability on the
+> testing track plus the group `testers-community@googlegroups.com`. Play targets
+> countries PER TRACK, so a global closed test and a US-only production release coexist
+> fine. What must NOT happen is flipping `NATIVE_LINKOUT` while that global track is live:
+> the anti-steering carve-outs are US-storefront only, and the link-out UI would then be
+> shown to non-US testers — the exact review failure the precondition exists to prevent.
+> The flag is `false` today, so nothing is exposed. **Read "flip it the moment the app is
+> live" as "flip it once PRODUCTION is live and US-only"**, not while a global test runs. Both
 stores' anti-steering carve-outs (Apple 3.1.1 post-*Epic* contempt ruling; Play
 post-Ninth-Circuit) are **US-storefront only**, and showing this UI to a non-US
 storefront is a review failure that can reportedly cost the entitlement. Device locale

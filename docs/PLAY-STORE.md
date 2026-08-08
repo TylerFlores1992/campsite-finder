@@ -453,6 +453,10 @@ Testers must **opt in through the Play link with a real Google account and stay 
 for the full 14 days**. Removing someone mid-window resets progress. Practical notes:
 
 - An email list or a Google Group both work; the Group is easier to manage at 12+.
+- **The paid service needs `testers-community@googlegroups.com` on the track AND the
+  track set to worldwide.** Country targeting is PER TRACK in Play, so a global closed
+  test does not conflict with a US-only production release — see the linkout warning in
+  CLAUDE.md for the one thing that must not be done while the global track is live.
 - Each tester must actually accept the invitation and install from Play at least once.
 - Friends and family are acceptable — Play does not require strangers.
 - **PAID TESTER SERVICES ARE A REAL RISK, and the risk is not the money.** A service was
