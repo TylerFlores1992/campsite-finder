@@ -730,8 +730,12 @@ break.** TestFlight build **8 is up (2026-08-08)**, after two failures worth kno
   CocoaPods has no identity restriction — `CapacitorApp` vs `CapacitorFirebaseApp` — and
   it is the configuration that shipped build 5. **Do not "modernise" this to SPM** until
   upstream renames one of those packages.
-- Android was never affected: it builds through Gradle. The API-36 assertion was verified
-  against a locally generated project — `targetSdkVersion = 36`, assertion passes.
+- Android was never affected: it builds through Gradle. **`android-release` build 8 is
+  GREEN (2026-08-08)** — `app-release.aab` (11.0 MB) + `app-release.apk`, versionCode 8,
+  with "Assert the Play target API level" and "Verify the APK is actually signed" both
+  passing. **The API-36 deadline is cleared as soon as that AAB is uploaded.**
+  NOT yet uploaded to Play, and the 12-tester / 14-day closed-testing clock has NOT
+  started — that is the long pole, not the build.
 Details in `docs/PLAY-STORE.md` §0a.
 
 ### Mobile app — everything below needs `npm install && npx cap sync` + a REBUILD
