@@ -77,23 +77,44 @@ between it and every future build publishing itself.
 **It cannot be done from a Claude session** — it needs the Google Cloud Console and the
 Play Console, and no session has credentials for either. Roughly 15 minutes by hand, once.
 
-1. **Google Cloud Console** → pick or create a project → **APIs & Services → Library** →
-   enable **Google Play Android Developer API**. *(Enabling the API is a separate step
-   from creating the account and is the one most often skipped; without it every publish
-   returns 403 with a message about the caller lacking permission, which reads like a
-   Play Console permissions problem and sends you to the wrong console.)*
-2. **IAM & Admin → Service Accounts → Create service account.** No Cloud IAM roles are
-   needed — the permissions that matter are granted in Play, not here.
-3. On that account → **Keys → Add key → Create new key → JSON**. Download it. This file
-   is the credential; treat it like a password and never commit it.
-4. **Play Console → Users and permissions → Invite new user.** Paste the service
-   account's email (`…@….iam.gserviceaccount.com`). Grant, on the CampHawk app:
+**Two different Google consoles, and the naming does not help.**
+- **Google Cloud Console** — <https://console.cloud.google.com> — Google's infrastructure
+  platform: projects, APIs, and *service accounts*.
+- **Play Console** — <https://play.google.com/console> — the app store side.
+
+A **service account** is a robot user. It lives in Cloud, carries a JSON key file instead
+of a password, and you invite it into Play Console like a teammate. Hence both consoles:
+create the robot in one, grant it access in the other.
+
+**You already have a Cloud project — use it, do not create one.** Firebase projects ARE
+Cloud projects, and CampHawk has one for push (FCM). It is listed at
+<https://console.firebase.google.com>, and the same project appears in the Cloud Console
+project picker. A second project is not wrong, just pointless.
+
+1. **Enable the API** — <https://console.cloud.google.com/apis/library/androidpublisher.googleapis.com>
+   → pick the Firebase project in the top bar → **Enable**. *(A separate step from
+   creating the account, and the one most often skipped; without it every publish returns
+   403 with wording about the caller lacking permission, which reads like a Play Console
+   problem and sends you to the wrong console.)*
+2. **Create the service account** —
+   <https://console.cloud.google.com/iam-admin/serviceaccounts> → **Create service
+   account** → any name (`codemagic-publisher`) → **Done**. Skip the "grant this service
+   account access to the project" step: no Cloud IAM roles are needed, because the
+   permissions that matter are granted in Play.
+3. **Make its key** — click the new account → **Keys** → **Add key → Create new key →
+   JSON** → it downloads. That file IS the credential: treat it like a password, never
+   commit it.
+4. **Invite it to Play** — <https://play.google.com/console> → **Users and permissions**
+   → **Invite new user** → paste the account's email (it looks like
+   `codemagic-publisher@your-project.iam.gserviceaccount.com`, copyable from step 2).
+   Grant, on the CampHawk app:
    - **View app information**
-   - **Releases → Release to testing tracks** *(and `Release to production` only when you
-     actually want CI able to ship to production — leave it off while the closed test is
-     the goal)*
-5. **Codemagic → Team → Integrations → Google Play** → paste the JSON, name it so the
-   variable resolves as `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS`.
+   - **Releases → Release to testing tracks**
+   - Leave **Release to production** OFF while the closed test is the goal — CI can only
+     do what it is authorised to do.
+5. **Give it to Codemagic** — <https://codemagic.io/teams> → your team → **Integrations**
+   → **Google Play** → paste the JSON, naming it so it resolves as
+   `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS`.
 6. Uncomment the `publishing:` block at the end of the `android-release` workflow.
 
 **`track: alpha`, NOT `internal`.** Play's tracks are internal / alpha (= CLOSED testing)
