@@ -418,12 +418,29 @@ async function warmResident() {
     let ctx = null;
     try {
       ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
-        headless: HEADLESS, viewport: null, ignoreDefaultArgs: ['--enable-automation'],
+        headless: HEADLESS, viewport: null,
+        ignoreDefaultArgs: ['--enable-automation'],
+        // WITHOUT THESE, KEEPING THE PAGE OPEN BUYS NOTHING. Chrome aggressively throttles
+        // timers in background, minimised and occluded tabs — and this window will spend
+        // its whole life behind something on a desktop the owner actually uses. The
+        // renewal we are staying open to catch is a timer inside RC's app; a throttled
+        // timer is a timer that does not fire, so the resident tab would sit there looking
+        // healthy and renew exactly as little as the old eight-second visit did.
+        args: [
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
+        ],
       });
       const page = ctx.pages()[0] ?? (await ctx.newPage());
       await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 });
       log('RC loaded and STAYING OPEN — this is what lets the app renew its own token.');
+      log('Leave this browser window ALONE. Closing it stops the renewal; it will reopen.');
 
+      // 0, so the first check fires IMMEDIATELY on every open. After a restart or a yield
+      // to the runner, waiting twenty minutes to say anything would leave
+      // `autocart.rc_session` stale — reading "we have not confirmed this recently" when
+      // in fact we just did, on the one dashboard that decides whether to wake someone.
       let lastCheck = 0;
       for (;;) {
         // Yield fast. The runner is asking because a site releases in seconds; making it
@@ -431,6 +448,15 @@ async function warmResident() {
         // keeping the session alive FOR.
         if (profileRequested(PROFILE_DIR)) {
           log('→ hold runner wants the profile — closing and standing down');
+          break;
+        }
+        // A VISIBLE WINDOW GETS CLOSED. It is headful by design (RC fingerprints headless
+        // Chromium) and it sits on the owner's desktop, so somebody tidying up will shut
+        // it sooner or later. Without this the loop would spin for days on a dead context,
+        // logging a caught error every twenty minutes while the session quietly lapsed —
+        // a keep-warm that keeps nothing warm and still reports for duty.
+        if (!ctx.pages().length || page.isClosed()) {
+          log('⚠ the RC window was closed — reopening it');
           break;
         }
         if (Date.now() - lastCheck >= KEEPALIVE_MS) {
