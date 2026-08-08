@@ -13,7 +13,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { query, mutate } from '../src/lib/db/client';
-import { offerHold, requestHold, dueHolds, markCarted, markClaimed, expireStaleHolds } from '../src/lib/rc-holds';
+import { offerHold, requestHold, dueHolds, markCarted, markClaimed, expireStaleHolds, noteAttempt, recordSessionHealth } from '../src/lib/rc-holds';
 
 let watchId: string;
 let userId: string;
@@ -184,4 +184,77 @@ test('markCarted reports the TRANSITION, so the "held" alert fires once', async 
   const req = await requestHold(watchId, '9104');
   assert.equal(await markCarted(req!.id, 'ck', 'ek'), true, 'first carting is the transition');
   assert.equal(await markCarted(req!.id, 'ck', 'ek'), false, 'a repeat must not re-alert');
+});
+
+test('a skipped pass is recorded WITHOUT closing the hold or touching updated_at', async () => {
+  // THE 2026-08-07 BUG, as a test. The runner polled its feed happily all morning and
+  // could not open Chromium, so `withRC` returned null on every pass and the row sat at
+  // `requested` with `updated_at` frozen at the tap — byte-identical to a row no process
+  // had ever looked at. That ambiguity is what made it undiagnosable six hours later.
+  //
+  // Three things must all hold, and each one has a way of being got wrong:
+  //   • the note is recorded            (otherwise we are back to 08-07)
+  //   • the STATUS does not move        (a skip must retry; `failed` would close a live
+  //                                      hold and fire the missed-hold alert for nothing)
+  //   • `updated_at` does NOT move      (that column means "the hold changed"; a failed
+  //                                      attempt is not a change, and conflating them
+  //                                      destroys the "unchanged since the tap" tell)
+  await offer('9105', pacific(60));
+  const req = await requestHold(watchId, '9105');
+  const [before] = await query<{ updated_at: string; status: string }>(
+    `SELECT updated_at::text, status FROM rc_hold_requests WHERE id = $1`, [req!.id],
+  );
+
+  await noteAttempt([req!.id], 'RC session is dead — needs a human sign-in');
+
+  const [after_] = await query<{ updated_at: string; status: string; last_attempt_note: string | null; last_attempt_at: string | null }>(
+    `SELECT updated_at::text, status, last_attempt_note, last_attempt_at::text
+       FROM rc_hold_requests WHERE id = $1`, [req!.id],
+  );
+  assert.match(after_.last_attempt_note ?? '', /session is dead/, 'the reason must be recorded');
+  assert.ok(after_.last_attempt_at, 'and when it was tried');
+  assert.equal(after_.status, before.status, 'a skip must NOT change status — it retries');
+  assert.equal(after_.updated_at, before.updated_at, 'a failed attempt is not a change to the hold');
+});
+
+test('a hold that is still due is returned again after a skip — the retry is the point', async () => {
+  // The corollary of the test above, and the reason `noteAttempt` is not `markFailed`:
+  // recording why we could not act must leave the hold in the bot's queue. If a skip
+  // dropped it out of `dueHolds`, a transient profile lock would permanently lose a site.
+  const due = await dueHolds(60 * 60, 24 * 60);
+  assert.ok(due.some((h) => h.unit_id === '9105'), 'a noted hold is still due');
+});
+
+test('session health records both verdicts, and never invents one', async () => {
+  // `unknown` is not reported at all (see rc-keepwarm's reportSession) — a busy profile,
+  // a 403 from RC's edge and a network blip all mean "we could not tell", and writing
+  // those as `false` would send the owner to do a human sign-in over a healthy session.
+  // What this asserts is the storage contract underneath that: the column carries the
+  // verdict it was given, and NULL is a real third state meaning nobody has said.
+  const read = async () =>
+    (await query<{ session_ok: boolean | null; session_source: string | null; session_detail: string | null }>(
+      `SELECT session_ok, session_source, session_detail FROM rc_runner_heartbeat WHERE id = 1`,
+    ))[0];
+  const original = await read();
+
+  await recordSessionHealth(false, 'RC rejected the token (401)', 'keepwarm');
+  let now = await read();
+  assert.equal(now.session_ok, false);
+  assert.equal(now.session_source, 'keepwarm');
+  assert.match(now.session_detail ?? '', /401/);
+
+  await recordSessionHealth(true, null, 'runner');
+  now = await read();
+  assert.equal(now.session_ok, true, 'a later good verdict must clear a bad one');
+  assert.equal(now.session_source, 'runner');
+
+  // Put back whatever the real bot last said, so a test run cannot leave the dashboard
+  // asserting something about production that a test made up.
+  await recordSessionHealth(
+    original.session_ok ?? true, original.session_detail, original.session_source ?? 'keepwarm',
+  );
+  if (original.session_ok == null) {
+    await mutate(`UPDATE rc_runner_heartbeat SET session_ok = NULL, session_at = NULL,
+                  session_detail = NULL, session_source = NULL WHERE id = 1`);
+  }
 });

@@ -68,6 +68,18 @@ const KEEPALIVE_MS = Number(process.env.RC_KEEPALIVE_MS || 20 * 60 * 1000);
  *  rec.gov bot follows, and the reason its cart path is headed too. */
 const HEADLESS = process.env.RC_HEADLESS === 'true';
 
+/**
+ * Where to report the session verdict, and the same master token the sibling processes
+ * already use. STILL NO RC CREDENTIALS — the header above says this file needs none and
+ * that remains true; `AUTOCART_TOKEN` authorises talking to camphawk.app, not to RC.
+ *
+ * Optional on purpose. A missing token must not stop the keep-warm, which is the job that
+ * actually matters — but it is announced at startup, because a health report nobody
+ * receives is worse than none: it looks like the box is fine.
+ */
+const CAMPHAWK_URL = (process.env.CAMPHAWK_URL || 'https://camphawk.app').replace(/\/$/, '');
+const TOKEN = process.env.AUTOCART_TOKEN;
+
 const args = new Set(process.argv.slice(2));
 const ONCE = args.has('--once');
 const LOGIN = args.has('--login');
@@ -208,7 +220,44 @@ async function warmOnce() {
     log(`… profile busy (${held?.owner ?? 'another process'}) — skipping this pass, NOT a dead session`);
     return 'unknown';
   }
+  await reportSession(state);
   return state;
+}
+
+/**
+ * Send the verdict to camphawk.app.
+ *
+ * THIS PROCESS HAS ALWAYS KNOWN AND NEVER TOLD ANYONE. `sessionLive` asks RC a question
+ * only an authenticated session can answer, every 20 minutes, and the answer went to a
+ * console on a box in someone's house. Meanwhile the server's only RC signal was the hold
+ * runner's feed poll, which proves network reach and nothing else — so on 2026-08-07 the
+ * dashboard was green while the session behind it was useless.
+ *
+ * The value is LEAD TIME. A dead RC session needs a human (RC serves a reCAPTCHA on
+ * sign-in now, so there is no unattended re-login). Knowing at 21:00 that tomorrow's
+ * 08:00 hold has nothing behind it is a fixable evening; knowing at 08:00:10 is a
+ * post-mortem. See migration 046.
+ *
+ * `unknown` REPORTS NOTHING, deliberately. A busy profile, a 403 from RC's edge and a
+ * network blip are all "we could not tell", and writing them as `false` would send the
+ * owner to do a human sign-in over a perfectly healthy session. The server sees the
+ * previous verdict go stale instead, which is the honest reading: we have not confirmed
+ * this recently. Same rule as `hasAvailabilityInRange` returning null — the absence of a
+ * reading is not a negative reading.
+ */
+async function reportSession(state) {
+  if (state !== 'warm' && state !== 'dead') return;
+  if (!TOKEN) return;
+  await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      session: { live: state === 'warm', why: state === 'dead' ? 'keep-warm probe: RC rejected the session' : null },
+      source: 'keepwarm',
+    }),
+    // A health report must never be able to break the keep-warm. Reaching camphawk.app is
+    // not this process's job; keeping the session alive is.
+  }).catch((e) => log(`  (could not report session health: ${e.message})`));
 }
 
 /** The one human step. Opens the profile headful and waits for a real session. */
@@ -267,6 +316,9 @@ if (LOGIN) {
 async function runForever() {
   log(`RC session keep-warm every ${Math.round(KEEPALIVE_MS / 60000)}m — profile ${PROFILE_DIR}`);
   log('Ctrl-C to stop. A dead session is reported loudly and needs one human sign-in.');
+  if (TOKEN) log(`Reporting session health to ${CAMPHAWK_URL}.`);
+  else log('⚠ No AUTOCART_TOKEN — session health will NOT reach camphawk.app, so a dead');
+  if (!TOKEN) log('  session will look like silence on the dashboard. Add it to .env.');
   await warmOnce().catch((err) => log(`keep-warm error: ${err.message}`));
   setInterval(() => {
     warmOnce().catch((err) => log(`keep-warm error: ${err.message}`));

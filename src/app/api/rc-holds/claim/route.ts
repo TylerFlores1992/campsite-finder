@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db/client';
 import { startClaim, getHold, markClaimed } from '@/lib/rc-holds';
+import { bookingLink } from '@/lib/booking-url';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,13 +30,25 @@ export const dynamic = 'force-dynamic';
  *
  * `campgrounds.reservations_url` is the park's own booking page, already stored and
  * already used by every alert. Falling back to the root only when a campground has none.
+ *
+ * AND IT GOES ONE LEVEL DEEPER THAN THE PARK. This used to return `reservations_url`
+ * raw — `/park/<placeId>` — while `lib/booking-url.ts` has known since 2026-07-22 how to
+ * build `/park/<placeId>/<facilityId>`, the specific LOOP that opened. Every alert email
+ * in the product already links the loop; the one screen where navigation is measured in
+ * seconds of exposure was the one landing a level short, making the user pick their loop
+ * out of a park list while the site sat free. Route it through the shared helper so this
+ * link can never again be less specific than the alert that led here.
  */
 async function bookingUrlFor(campgroundId: string): Promise<string> {
-  const [c] = await query<{ reservations_url: string | null }>(
-    `SELECT reservations_url FROM campgrounds WHERE id = $1`,
+  const [c] = await query<{ reservations_url: string | null; source: string | null }>(
+    `SELECT reservations_url, source FROM campgrounds WHERE id = $1`,
     [campgroundId],
   ).catch(() => []);
-  return c?.reservations_url ?? 'https://www.reservecalifornia.com/';
+  return (
+    bookingLink({ source: c?.source, reservationsUrl: c?.reservations_url, campgroundId }) ??
+    c?.reservations_url ??
+    'https://www.reservecalifornia.com/'
+  );
 }
 
 async function authorise(holdId: string, token: string) {

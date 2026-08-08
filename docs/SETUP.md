@@ -207,6 +207,14 @@ Supabase first (by hand, like 020/021). Devices register their token via
 > (2026-08-06 — `watch_site_alerts.nudged_at`, the one 6-hour follow-up). **Both applied
 > to prod 2026-08-06**, before the worker code that reads them, per the rule below.
 >
+> **`046_rc_session_health`** (2026-08-08 — `rc_runner_heartbeat.session_ok/at/detail/source`
+> plus `rc_hold_requests.last_attempt_at/note`, so a runner that polls happily and cannot
+> drive RC stops reading as healthy; see the RC-holds section of `docs/CONTEXT.md`).
+> **Applied to prod 2026-08-08**, before the code that reads it. **It needs a mini-PC
+> update to produce data** — `mini-pc/update.bat`, run by a human — and until that happens
+> `autocart.rc_session` correctly reads "never reported" (a warn, so the admin banner is
+> amber). Unknown is not healthy.
+>
 > **Later migrations, all applied by hand to prod the same way:** `031_poller_shards`
 > (the shard lease, 2026-07-31), `032_subscription_tiers`
 > (`subscriptions.tier` + `grandfathered` — the Auto-Cart plan, 2026-08-01) and
@@ -606,7 +614,9 @@ extension/          Optional Chrome extension ("CampHawk Quick Cart") that reads
                     extensions don't run in mobile Chrome. Ships OFF by default.
 scripts/auto-cart-bot/  Mini-PC Playwright bots + remote sign-in broker. FIVE
                     processes: bot.mjs (rec.gov) + broker.mjs, and for RC
-                    rc-keepwarm.mjs (OWNS the session, the only thing that logs in)
+                    rc-keepwarm.mjs (OWNS the session, the only thing that logs
+                    in, and since 2026-08-08 REPORTS whether RC still accepts it
+                    — needs AUTOCART_TOKEN in .env, already there for the runner)
                     + rc-hold-runner.mjs (drives it, never logs in). Shared:
                     rc-cart.mjs (the precart/release contract, so probe and runner
                     cannot drift), profile-lock.mjs (one Chromium per profile dir),

@@ -37,6 +37,11 @@ const BOT_STALE_MS = 5 * 60 * 1000; // roster poll ~2s; matches poller's isBotOn
 // window a hold is reachable in, so a stale beat is actionable BEFORE the release is lost
 // rather than a post-mortem.
 const RC_RUNNER_STALE_MS = 3 * 60 * 1000;
+// The session verdict comes from rc-keepwarm.mjs's 20-minute pass. 45 minutes is two
+// missed passes, which allows for one inconclusive result (a busy profile, a 403 from
+// RC's edge) without crying wolf — those report NOTHING rather than `false` on purpose,
+// so staleness is how "we could not tell for a while" surfaces at all.
+const RC_SESSION_STALE_MS = 45 * 60 * 1000;
 
 const ageMs = (ts: string | null | undefined) => (ts ? Date.now() - new Date(ts).getTime() : Infinity);
 const secs = (ms: number) => (Number.isFinite(ms) ? Math.round(ms / 1000) : undefined);
@@ -248,12 +253,26 @@ export async function GET() {
   //     they were promised. Same principle as `poller.shards`: the alarming state is
   //     silent blindness, not idleness.
   try {
-    const [beat, due] = await Promise.all([
-      queryOne<{ beat_at: string | null }>(`SELECT beat_at::text FROM rc_runner_heartbeat WHERE id = 1`),
+    const [beat, due, upcoming] = await Promise.all([
+      queryOne<{
+        beat_at: string | null; session_ok: boolean | null;
+        session_at: string | null; session_detail: string | null; session_source: string | null;
+      }>(
+        `SELECT beat_at::text, session_ok, session_at::text, session_detail, session_source
+           FROM rc_runner_heartbeat WHERE id = 1`,
+      ),
       queryOne<{ n: string }>(
         `SELECT count(*) AS n FROM rc_hold_requests
           WHERE status = 'requested'
             AND release_at <= to_char((NOW() + interval '10 minutes') AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`
+      ),
+      // Anything still ahead of us. A dead session matters for a hold due TOMORROW too —
+      // in fact that is the only case a human can still save, which is the entire reason
+      // for reporting session health rather than waiting for the runner to fail.
+      queryOne<{ n: string }>(
+        `SELECT count(*) AS n FROM rc_hold_requests
+          WHERE status IN ('requested','carted','claiming')
+            AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`
       ),
     ]);
     const age = ageMs(beat?.beat_at);
@@ -268,6 +287,38 @@ export async function GET() {
         : `last poll ${secs(age)}s ago` +
           (pending > 0 ? `, ${pending} hold(s) due — these will be MISSED if it stays down` : ', no holds due'),
       ageSeconds: secs(age),
+    });
+
+    // 4c. THE RC SESSION ITSELF — one level deeper than 4b, and the level that failed.
+    //     The runner heartbeat proves the process can reach camphawk.app. It cannot
+    //     distinguish a runner that is carting sites from one that opens Chromium, finds
+    //     a dead session and skips every pass in silence. On 2026-08-07 that distinction
+    //     was the whole incident, and 4b would have been green for it.
+    //
+    //     Reported by `rc-keepwarm.mjs` every ~20 minutes and by the runner whenever it
+    //     opens the profile for real work. NULL means never reported — shown as unknown,
+    //     never as healthy, the same rule as `untracked` SMS rows and a null availability
+    //     read: the absence of an answer is not a good answer.
+    const sessionAge = ageMs(beat?.session_at);
+    const sessionStale = !beat?.session_at || sessionAge > RC_SESSION_STALE_MS;
+    const ahead = Number(upcoming?.n ?? 0);
+    const dead = beat?.session_ok === false;
+    checks.push({
+      name: 'autocart.rc_session',
+      // A dead session with a hold still ahead of it is a promise we cannot keep and
+      // only a human can fix — that is the one that should shout. Dead with nothing
+      // queued still warns: the fix needs lead time, so "nobody is affected yet" is
+      // exactly when it is cheapest to act.
+      level: dead && ahead > 0 ? 'fail' : dead || sessionStale || beat?.session_ok == null ? 'warn' : 'ok',
+      detail:
+        beat?.session_ok == null
+          ? 'never reported — is rc-keepwarm.mjs running with AUTOCART_TOKEN set?'
+          : (dead ? 'RC REJECTED the session — a human must run `node rc-keepwarm.mjs --login`' : 'RC accepts the session') +
+            ` (${beat.session_source ?? 'unknown'}, ${secs(sessionAge)}s ago` +
+            (sessionStale ? ', STALE' : '') + ')' +
+            (dead && ahead > 0 ? ` — ${ahead} hold(s) still ahead will fail` : '') +
+            (beat.session_detail ? `: ${beat.session_detail}` : ''),
+      ageSeconds: secs(sessionAge),
     });
   } catch (err) {
     checks.push({ name: 'autocart.rc_runner', level: 'warn', detail: `read failed: ${(err as Error).message}` });

@@ -2989,10 +2989,77 @@ is dead. Order within a pass is deliberate: **claims first**, then stale release
 carts. If the browser dies mid-pass the thing we most want already done is *letting go* —
 a hold kept by accident denies the site to everyone, including the person who asked.
 
+### A runner can be alive, polling, and completely useless (migration 046, 2026-08-08)
+
+Migration 045 put a liveness beacon on the runner and it was **one level too shallow**. The
+beat is stamped by `GET /api/auto-cart/rc-holds` — the feed poll — so it proves the process
+exists and can reach camphawk.app, and nothing at all about whether it can touch RC.
+
+`withRC` has three paths that do the whole job and change nothing: the Chromium profile
+lock is held (a 60s wait, and a crashed process leaves a stale lock file that reads as held
+for ten minutes), the RC session is dead (no token in localStorage), or
+`launchPersistentContext` throws. In every one the hold stays `requested`, `updated_at`
+never moves, no `failed` row is written, and **`autocart.rc_runner` stays green**. That is
+exactly the 2026-08-07 signature — six hours after the tap the row was byte-identical to
+one nothing had ever looked at. 045 catches "the process is gone"; it cannot catch "the
+process is fine and useless", which is the failure we actually had.
+
+Two additions, and the split matters:
+- **`autocart.rc_session`** — `rc-keepwarm.mjs` has always asked RC a question only an
+  authenticated session can answer, every 20 minutes, and thrown the answer away into a
+  console on a box nobody watches. It POSTs it now. The value is **lead time**: RC serves a
+  reCAPTCHA on sign-in, so a dead session needs a human, and a human needs notice. Learning
+  at 21:00 that tomorrow's 08:00 hold has nothing behind it is a fixable evening. `fail`
+  only when dead AND a hold is still ahead of it; `warn` when dead with nothing queued,
+  because that is when the fix is cheapest.
+- **`rc_hold_requests.last_attempt_note`** — a skipped pass records WHY against the holds
+  it was about to touch, **without moving status** (they must retry; `failed` would close a
+  live hold and fire the missed-hold alert for nothing) and **without touching
+  `updated_at`** (that column means "the hold changed", and conflating them destroys the
+  "unchanged since the tap" tell that exposed the outage in the first place). The readout
+  now prints "the runner TRIED 3m ago — RC session is dead" instead of silence.
+
+**`unknown` is never written as dead.** A busy profile, a 403 from RC's edge and a network
+blip all mean "we could not tell"; recording those as `false` would send the owner to do a
+human sign-in over a perfectly healthy session. Keep-warm posts nothing, the previous
+verdict goes stale, and staleness is how "we have not confirmed this recently" surfaces.
+Same rule as `hasAvailabilityInRange` returning null and `untracked` SMS rows.
+
+**The success-path report is deliberately NOT awaited.** It runs at 08:00:00.000 with a
+site about to free; awaiting a camphawk.app round trip in front of the precart would spend
+the exact milliseconds the design exists to save, in order to record that things are fine.
+
+`worker/rc-holds.test.mts` fails against both of the tempting mistakes (marking a skip
+`failed`, and bumping `updated_at`) — verified by making them.
+
 **Claim surface:** `/claim/<id>?t=<manage token>` + `/api/rc-holds/claim`. Authorised by
 hold id **plus** the watch's manage token, so the user can act from a phone at 8am without
 signing in; `noindex, nocache` because the URL contains that token. It polls at 600ms while
 `claiming` and redirects the moment the bot reports `released`.
+
+**The hand-off lands on the LOOP, and the navigating happens BEFORE the release
+(2026-08-08).** Two things were spending the exposure window on work that did not need to
+be in it:
+- `bookingUrlFor` returned `campgrounds.reservations_url` raw — `/park/<placeId>` — while
+  `lib/booking-url.ts` had known since 2026-07-22 how to build `/park/<placeId>/<facilityId>`,
+  the loop that actually opened. Every alert email in the product already linked the loop;
+  the one screen where navigation is measured in seconds of exposure was the one landing a
+  level short. It routes through the shared helper now, so this link can never again be
+  less specific than the alert that led here. (Live example: `/park/720` → `/park/720/715`.)
+- The screen offered a sign-in link and a checkbox, then released and sent the user off to
+  *start* looking. On a desktop with the extension that is fine — it carts for them. On a
+  phone nothing consumes the fragment, so the release started a clock and only then did the
+  user begin navigating, signing in and hunting. **The claim link is tapped on a phone at
+  8am; that is the normal case.** The steps are now ordered 1-2-3: open RC and find the
+  site, come back and hand over, switch tabs and book. The checkbox says "signed in **and
+  looking at** {site}". Nothing clever — it just stops spending the window on work that
+  could have been done while the bot was still holding it.
+
+**Recapture on MOBILE is the one piece still missing.** iOS Safari and Chrome Android
+cannot run the MV3 extension, and the app opens external links in the system browser, so
+the `#camphawk-rc` fragment is inert there. Doing it properly needs an in-app webview we
+can inject into — a native plugin, a rebuild and a new review, i.e. **native-side work, not
+a web deploy**. The ordering fix above is the mitigation, not a substitute.
 
 **Entitlement is checked TWICE** — when the offer is built and again when the `hold`
 action fires. Not a duplicate: an email link is durable, so a lapsed Auto-Cart subscriber

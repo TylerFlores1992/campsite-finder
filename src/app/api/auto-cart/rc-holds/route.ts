@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, type HoldRequest } from '@/lib/rc-holds';
+import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, type HoldRequest } from '@/lib/rc-holds';
 import { query, mutate } from '@/lib/db/client';
 import { manageTokenFor } from '@/lib/notifications/actions';
 import { dispatchNotifications } from '@/lib/notifications';
@@ -85,6 +85,29 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}));
   const { id, ok, cartKey, cartEntryKey, released, error } = body ?? {};
+
+  // SESSION LIVENESS — no hold id, because it is about the bot, not about one hold.
+  // `rc-keepwarm.mjs` posts this every pass; the runner posts it whenever it opens the
+  // profile and finds out the hard way. See migration 046: a runner that polls this feed
+  // happily and cannot drive RC is the exact failure 045's heartbeat cannot see.
+  if (body?.session && typeof body.session.live === 'boolean') {
+    await recordSessionHealth(
+      body.session.live,
+      typeof body.session.why === 'string' ? body.session.why : null,
+      typeof body.source === 'string' ? body.source : 'unknown',
+    );
+    return NextResponse.json({ ok: true, state: 'session-recorded' });
+  }
+
+  // A PASS THAT COULD NOT ACT. Records why against the holds it was about to touch and
+  // leaves their status alone — they must retry. Marking them failed here would close
+  // holds that are still live and fire the missed-hold alert for nothing.
+  if (body?.skipped === true) {
+    const ids = Array.isArray(body.ids) ? body.ids.filter((v: unknown) => typeof v === 'string') : [];
+    await noteAttempt(ids, typeof body.reason === 'string' ? body.reason : 'runner skipped');
+    return NextResponse.json({ ok: true, state: 'skip-recorded', noted: ids.length });
+  }
+
   if (typeof id !== 'string' || !id) {
     return NextResponse.json({ error: 'id required' }, { status: 400 });
   }

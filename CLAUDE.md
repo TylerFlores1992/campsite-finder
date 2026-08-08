@@ -190,9 +190,24 @@ events. Retrying harder can never work.
   on a released unit.** ~2.5s is the whole exposure window, and it is dominated by the two
   precart round trips, not the release. No credential moves and the bot needs ONE account,
   not one per user — which is why this beats the session-transfer path.
-- **What remains before it can ship:** the RC session keep-warm (see the reCAPTCHA section
-  above — it is the foundation, not an optimisation), a release API, and the recapture in
-  the extension / app webview.
+- **What remains — CORRECTED 2026-08-08.** This used to list "the keep-warm, a release API,
+  and the recapture in the extension / app webview". Three of those four shipped on
+  2026-08-07 and the entry was never updated: the keep-warm is `rc-keepwarm.mjs`, the
+  release API is `POST /api/rc-holds/claim` → `claiming` → the runner's 1s fast lane →
+  `released`, and the desktop **extension already recaptures** (`extension/`, MV3;
+  `rc-inject.js` grabs the live `accesstoken` from RC's own calls in the MAIN world,
+  `content-rc.js` reads the `#camphawk-rc` fragment and precarts).
+  **The one genuinely missing piece is recapture ON MOBILE** — and the claim link is
+  tapped on a phone at 8am, so it is the case that matters most. iOS Safari and Chrome
+  Android cannot run the extension, and the app opens external links in the system
+  browser, so nothing consumes the fragment there. Doing it properly needs an in-app
+  webview we can inject into (a native plugin → rebuild → new review), so it is
+  **native-side work, not a web deploy**.
+  Mitigated web-side 2026-08-08 instead of waiting for that: the hand-off lands on the
+  exact **loop** (`bookingUrlFor` now routes through `lib/booking-url`, so `/park/720`
+  became `/park/720/715`), and the claim screen **orders the steps so the navigating
+  happens BEFORE the release** — open RC, find the site, then hand over — rather than
+  starting the clock and only then sending the user off to search.
 - **The precart payload is solved** — `{extraId, extraValue}`, lowerCamel; see the same
   doc. That contract is reusable by whichever hand-off we pick.
 
@@ -616,8 +631,32 @@ that is a different process.
   the `autocart.rc_runner` health check, which FAILS only when the beat is stale AND a
   hold is due; and `findRCHeldUnit` now takes a flex spec (six of nine live RC watches
   are flexible and could never have been offered a hold at all).
-- **STILL UNDIAGNOSED: why the runner stopped.** It cannot be determined from a web
-  session. Ask the owner what that window says.
+- **WHY THE RUNNER STOPPED: the mechanism is now known, the instance is not (2026-08-08).**
+  `runPass()` has three paths that do the whole job and change NOTHING — the Chromium
+  profile lock is held (60s wait, and a crashed process leaves a stale lock file), the RC
+  session is dead (no token in localStorage), or `launchPersistentContext` throws. In all
+  three the hold stays `requested`, `updated_at` never moves, no `failed` row is written,
+  **and `autocart.rc_runner` stays GREEN** — because that heartbeat is stamped by the FEED
+  POLL, which only proves the runner can reach camphawk.app. That is exactly the observed
+  signature, and given RC's reCAPTCHA escalation the same day and a session hand-signed-in
+  nine hours earlier, "session dead" is the leading candidate. It cannot be confirmed
+  retroactively: nothing recorded it.
+- **So the fix is to make all three self-reporting (migration 046).** `rc-keepwarm.mjs`
+  already asks RC a question only an authenticated session can answer, every 20 minutes,
+  and threw the answer away into a console on the mini-PC — it now POSTs it, so a dead
+  session is a **`autocart.rc_session` warning the evening before** rather than a
+  post-mortem at 08:00:10. And a skipped pass stamps `last_attempt_note` on the affected
+  holds **without moving status** (they must retry) and **without touching `updated_at`**
+  (that means "the hold changed"; conflating them destroys the "unchanged since the tap"
+  tell). `worker/rc-holds.test.mts` fails against both mistakes — verified by making them.
+- **`unknown` is never reported as dead.** A busy profile, a 403 from RC's edge and a
+  network blip all mean "we could not tell"; writing those as `false` would send the owner
+  to do a human sign-in over a healthy session. Keep-warm posts nothing in that case and
+  the server sees the last verdict go stale, which is the honest reading. Same rule as
+  `hasAvailabilityInRange` returning null.
+- **This needs a mini-PC update to take effect** — `update.bat`, run by a human. Until
+  then `autocart.rc_session` reads "never reported" (a warn, so the banner is amber), which
+  is correct: unknown is not healthy.
 
 ### Twilio A2P ticket #28871693 is OPEN (filed 2026-08-07 14:28 PT, P3)
 Asks two things: apply the sample/description/message-flow edit to the approved campaign

@@ -139,11 +139,21 @@ const LOCK_WAIT_MS = Number(process.env.RC_PROFILE_LOCK_WAIT_MS || 60_000);
  * requested holds stay requested, the feed's 20-minute grace window still returns them,
  * and a claim is retried on the next pass a second later.
  */
+/**
+ * Returns `{ skipped: '<reason>' }` rather than a bare null, because the reason is the
+ * whole point.
+ *
+ * ON 2026-08-07 THIS FUNCTION RETURNING NULL WAS INVISIBLE. Every path below leaves the
+ * hold rows untouched — no status change, no `updated_at`, no error — while the runner
+ * carries on polling the feed, which is what stamps the liveness beacon. So the process
+ * looked healthy from the server, the row looked untouched, and a user lost a site. The
+ * caller now reports the reason against the affected holds; see migration 046.
+ */
 async function withRC(fn) {
   if (!(await waitForProfileLock(PROFILE_DIR, LOCK_OWNER, LOCK_WAIT_MS))) {
     const held = profileLockHolder(PROFILE_DIR);
     log(`⚠ profile held by ${held?.owner ?? 'another process'} — skipping this pass, work stays queued`);
-    return null;
+    return { skipped: `Chromium profile held by ${held?.owner ?? 'another process'}` };
   }
   const renew = setInterval(() => renewProfileLock(PROFILE_DIR, LOCK_OWNER), RENEW_MS);
   const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
@@ -166,14 +176,36 @@ async function withRC(fn) {
     if (!token) {
       log('⚠ RC session is dead — a human must run `node rc-keepwarm.mjs --login`.');
       log('  Skipping this pass. Nothing is lost: holds stay requested and retry.');
-      return null;
+      // Tell the server too. Keep-warm is the process that normally reports this, so a
+      // dead session showing up HERE also means keep-warm is not doing its job — which
+      // is why the report carries its source.
+      await reportSession(false, 'no RC token in the profile at cart time');
+      return { skipped: 'RC session is dead — needs a human sign-in' };
     }
+    // A working token is worth reporting as loudly as a broken one: it is the only
+    // positive confirmation that comes from actually doing the job rather than probing.
+    //
+    // NOT AWAITED, and that is the point. This runs at 08:00:00.000 with a site about to
+    // free, or with someone watching a spinner over a hold we have not let go of yet.
+    // Awaiting a health report here would put a camphawk.app round trip in front of the
+    // precart — spending the very milliseconds the whole design exists to save, to record
+    // that things are fine. It reports when it reports.
+    void reportSession(true, null);
     return await fn(ctx, page, token);
   } finally {
     await ctx.close().catch(() => {});
     clearInterval(renew);
     releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
   }
+}
+
+/** Fire-and-forget: a health report must never be able to break a cart. */
+async function reportSession(live, why) {
+  await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ session: { live, why }, source: 'runner' }),
+  }).catch(() => {});
 }
 
 async function runPass() {
@@ -200,7 +232,7 @@ async function runPass() {
 
   log(`${claim.length} to hand over, ${cart.length} to cart, ${release.length} to release`);
 
-  await withRC(async (ctx, page, token) => {
+  const outcome = await withRC(async (ctx, page, token) => {
     const headers = rcHeaders(token);
 
     // CLAIMS FIRST, ahead of everything. A user is on the claim page right now and
@@ -273,6 +305,19 @@ async function runPass() {
       }
     }
   });
+
+  // THE PASS DID NOTHING AND NOBODY WOULD HAVE KNOWN. Record the reason against every
+  // hold we were about to touch, WITHOUT changing their status — they retry next pass.
+  // Without this the row is byte-identical to one no process has ever looked at, which is
+  // exactly how 2026-08-07 read six hours after the fact.
+  if (outcome?.skipped) {
+    const ids = [...claim, ...cart, ...release].map((h) => h.id);
+    await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ skipped: true, reason: outcome.skipped, ids }),
+    }).catch((e) => log(`  skip report failed: ${e.message}`));
+  }
 }
 
 log(`RC hold runner → ${CAMPHAWK_URL}, every ${POLL_MS / 1000}s, profile ${PROFILE_DIR}`);

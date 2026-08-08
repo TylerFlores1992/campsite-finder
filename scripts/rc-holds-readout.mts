@@ -27,10 +27,12 @@ const holds = await query<{
   release_at: string; status: string; error: string | null; name: string; email: string;
   offered_at: string; requested_at: string | null; carted_at: string | null;
   claim_started_at: string | null; released_at: string | null; claimed_at: string | null;
+  last_attempt_at: string | null; last_attempt_note: string | null;
 }>(
   `SELECT r.id, r.unit_id, r.unit_name, r.arrival_date::text AS arrival, r.nights,
           r.release_at, r.status, r.error, c.name, u.email,
-          r.offered_at, r.requested_at, r.carted_at, r.claim_started_at, r.released_at, r.claimed_at
+          r.offered_at, r.requested_at, r.carted_at, r.claim_started_at, r.released_at, r.claimed_at,
+          r.last_attempt_at, r.last_attempt_note
      FROM rc_hold_requests r
      JOIN campgrounds c ON c.id = r.campground_id
      JOIN users u ON u.id = r.user_id
@@ -39,7 +41,37 @@ const holds = await query<{
   [String(hours)],
 );
 
+// The bot's session, which is upstream of every row above. A hold cannot be carted by a
+// runner whose RC session is dead, and until migration 046 that fact lived only in a
+// console on the mini-PC — so a readout could show a stalled hold and give no hint why.
+const [session] = await query<{
+  session_ok: boolean | null; session_at: string | null;
+  session_detail: string | null; session_source: string | null; beat_at: string | null;
+}>(
+  `SELECT session_ok, session_at::text, session_detail, session_source, beat_at::text
+     FROM rc_runner_heartbeat WHERE id = 1`,
+).catch(() => []);
+
 console.log(`RC holds offered in the last ${hours}h — ${holds.length} row(s). Now: ${pacificNow} PT\n`);
+
+// Printed BEFORE the table and even when there are no holds: a dead session with nothing
+// queued is the cheapest possible moment to fix it, and the only one where a human has
+// time. RC serves a reCAPTCHA on sign-in now, so this always needs a person.
+const mins = (t: string | null) => (t ? Math.round((Date.now() - new Date(t).getTime()) / 60000) : null);
+if (!session || session.session_ok == null) {
+  console.log('RC session: UNKNOWN — never reported. Is rc-keepwarm.mjs running, with');
+  console.log('  AUTOCART_TOKEN in scripts/auto-cart-bot/.env? Unknown is not healthy.\n');
+} else if (session.session_ok === false) {
+  console.log(`⚠ RC SESSION IS DEAD (per ${session.session_source}, ${mins(session.session_at)}m ago)`);
+  console.log(`  ${session.session_detail ?? ''}`);
+  console.log('  Nothing below can be carted until a human runs, on the mini-PC:');
+  console.log('    node rc-keepwarm.mjs --login      (tick "Keep me signed in")\n');
+} else {
+  const age = mins(session.session_at);
+  const stale = age != null && age > 45;
+  console.log(`RC session: OK (per ${session.session_source}, ${age}m ago)${stale ? ' — STALE, keep-warm may be down' : ''}\n`);
+}
+
 if (!holds.length) {
   console.log('Nothing offered. That is the normal state: it needs a watched RC site to be');
   console.log('cancelled-but-held, for an entitled subscriber, with ≥1h before it releases.');
@@ -72,8 +104,18 @@ const nowStr = `${nowPacific.year}-${nowPacific.month}-${nowPacific.day}T${nowPa
 const missed = holds.filter((h) => h.status === 'requested' && h.release_at < nowStr);
 if (missed.length) {
   console.log(`\n⚠ ${missed.length} hold(s) were REQUESTED and their release has passed with no cart.`);
-  console.log('  That is the runner down, or unable to reach RC. On the mini-PC:');
-  console.log('    node rc-hold-runner.mjs --once      (and check rc-keepwarm is not reporting a dead session)');
+  // THE QUESTION THIS COULD NOT ANSWER BEFORE. On 2026-08-07 the row was byte-identical
+  // to one nothing had ever looked at, so "the runner is down" and "the runner is up and
+  // cannot open Chromium" were indistinguishable. `last_attempt_note` separates them.
+  for (const h of missed) {
+    console.log(
+      h.last_attempt_note
+        ? `  • ${h.unit_name ?? h.unit_id}: the runner TRIED ${mins(h.last_attempt_at)}m ago — ${h.last_attempt_note}`
+        : `  • ${h.unit_name ?? h.unit_id}: NOTHING has tried to act on this hold at all.`,
+    );
+  }
+  console.log('  On the mini-PC:');
+  console.log('    node rc-hold-runner.mjs --once');
 }
 for (const h of holds.filter((x) => x.status === 'failed' && x.error)) {
   console.log(`\n✗ ${h.unit_name ?? h.unit_id}: ${h.error}`);

@@ -131,6 +131,33 @@ export async function dueHolds(leadSeconds = 60, graceMinutes = 20): Promise<Hol
 }
 
 /**
+ * "Something tried to act on this hold and could not" — recorded WITHOUT moving status.
+ *
+ * WHY NOT `failed`. A skipped pass must retry: the profile lock frees, keep-warm renews
+ * the session, the next pass works. Marking these failed would close a hold that is still
+ * perfectly live, and would fire the missed-hold alert for a hold nothing has given up on.
+ *
+ * WHY RECORD IT AT ALL. Because the absence of this is what made 2026-08-07 undiagnosable.
+ * The row sat at `requested` with `updated_at` frozen at the tap, which is *identical* to
+ * "no process ever looked at it" — and the runner heartbeat was green, because the runner
+ * was polling the feed fine and failing only when it tried to open Chromium. Status
+ * answers "what happened to my hold"; this answers "is anything even trying", and neither
+ * can be derived from the other.
+ *
+ * Deliberately does NOT touch `updated_at`: that column means "the hold changed", and a
+ * failed attempt is not a change to the hold. Conflating them would make the readout's
+ * "unchanged since the tap" tell — the one signal that exposed the outage — useless.
+ */
+export async function noteAttempt(ids: string[], note: string): Promise<void> {
+  if (!ids.length) return;
+  await mutate(
+    `UPDATE rc_hold_requests SET last_attempt_at = NOW(), last_attempt_note = $2
+      WHERE id = ANY($1::text[])`,
+    [ids, note.slice(0, 300)],
+  ).catch((e) => console.error('[rc-holds] noteAttempt failed:', e.message));
+}
+
+/**
  * The user pressed claim. Ask the bot to let go of THIS entry.
  *
  * Only a `carted` hold can be claimed — there is nothing to hand over otherwise — and
@@ -194,6 +221,37 @@ export async function markCarted(id: string, cartKey: string, cartEntryKey: stri
     [id, cartKey, cartEntryKey],
   ).catch((e) => { console.error('[rc-holds] markCarted failed:', e.message); return []; });
   return rows.length > 0;
+}
+
+export interface RcSessionHealth {
+  ok: boolean | null;
+  at: string | null;
+  detail: string | null;
+  source: string | null;
+}
+
+/**
+ * Record whether ReserveCalifornia still accepts the bot's session.
+ *
+ * `rc-keepwarm.mjs` has always known this — it asks RC a question only an authenticated
+ * session can answer, every 20 minutes — and has always thrown the answer away into a
+ * console on a box nobody watches. It is the earliest possible warning we have, and it
+ * was not leaving the mini-PC.
+ *
+ * The value of getting it here is LEAD TIME. RC serves a reCAPTCHA on sign-in now, so
+ * there is no unattended re-login: a dead session needs a human. Learning at 21:00 that
+ * tomorrow's 08:00 hold has no session behind it is a fixable evening. Learning at
+ * 08:00:10 is a post-mortem.
+ */
+export async function recordSessionHealth(
+  ok: boolean, detail: string | null, source: string,
+): Promise<void> {
+  await mutate(
+    `UPDATE rc_runner_heartbeat
+        SET session_ok = $1, session_at = NOW(), session_detail = $2, session_source = $3
+      WHERE id = 1`,
+    [ok, detail ? detail.slice(0, 300) : null, source.slice(0, 40)],
+  ).catch((e) => console.error('[rc-holds] recordSessionHealth failed:', e.message));
 }
 
 export async function markClaimed(id: string): Promise<void> {
