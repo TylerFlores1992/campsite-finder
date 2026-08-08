@@ -1,14 +1,33 @@
 import Link from 'next/link';
-import { performAction } from '@/lib/notifications/actions';
+import { performAction, previewHold } from '@/lib/notifications/actions';
+import HoldConfirm from '@/components/v2/HoldConfirm';
 
 // Public one-tap action landing (feature D): a tapped alert link lands here, the
 // action is performed, and we show a small confirmation with the inverse action.
 // Acting on load mirrors unsubscribe links; every action is reversible, so an
 // accidental email-client prefetch is harmless.
+//
+// EXCEPT `hold`, WHICH IS NOT REVERSIBLE (2026-08-08). Every other action here can be
+// undone with a second tap — stop/reopen, mute, keep. `hold` commits the bot to carting
+// a real site at 08:00, which takes it off the market for every other camper; that is the
+// exact behaviour the whole opt-in design exists to prevent, so it must not happen
+// without a person deciding. Two things went wrong on the same link:
+//   • tapping the PUSH notification performed the hold before the owner had seen which
+//     site it was — no campground, no site number, no dates, no chance to check;
+//   • acting on GET means an email scanner or a link preview can fire it unasked, which
+//     for a reversible action is harmless and for this one is not.
+// So `hold` gets a preview page and a POST to confirm. Everything else keeps its single
+// tap, because making stop-watching a two-step flow would be worse, not safer.
 export const dynamic = 'force-dynamic';
 
 export default async function WatchActionPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
+
+  // Read-only. Returns null for every other action and for a dead offer, so the
+  // fall-through below is the unchanged one-tap path.
+  const preview = await previewHold(token);
+  if (preview) return <HoldConfirm preview={preview} />;
+
   const result = await performAction(token);
 
   const inverseLabel =

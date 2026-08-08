@@ -137,6 +137,72 @@ export interface ActionResult {
  * fresh `stop` it also fires the "stopped — tap to reopen" confirmation message,
  * which is why stop doubles as snooze.
  */
+/**
+ * What a `hold` token WOULD do, without doing it.
+ *
+ * WHY THIS EXISTS. `/w/<token>` performs its action on page load, under a comment saying
+ * every action is reversible so an accidental prefetch is harmless. That is true of
+ * stop/reopen/keep/mute — and **false of `hold`**, which is the one action that commits
+ * the bot to taking a real site off the market at 08:00. Tapping the push notification
+ * therefore booked the hold before the user had seen which site it was; and an email
+ * scanner or link preview could have done the same thing unasked.
+ *
+ * So `hold` gets a confirm step, and this is the read half: everything needed to show
+ * WHICH site, WHICH nights and WHEN it releases, plus a link to look at it on the
+ * provider first. Returns null for any other action, or if there is no live offer —
+ * the caller falls back to performing, which keeps every reversible action one tap.
+ */
+export interface HoldPreview {
+  token: string;
+  campgroundName: string | null;
+  unitLabel: string;
+  arrivalDate: string;
+  nights: number;
+  releaseAt: string;
+  bookingUrl: string | null;
+  alreadyRequested: boolean;
+}
+
+export async function previewHold(token: string): Promise<HoldPreview | null> {
+  const [row] = await query<{ watch_id: string; action: WatchAction; site_id: string | null }>(
+    `SELECT watch_id, action, site_id FROM action_tokens WHERE token = $1 AND expires_at > NOW()`,
+    [token]
+  );
+  if (!row || row.action !== 'hold' || !row.site_id) return null;
+
+  const [h] = await query<{
+    unit_id: string; unit_name: string | null; arrival_date: string; nights: number;
+    release_at: string; status: string; name: string; source: string; reservations_url: string | null;
+    campground_id: string;
+  }>(
+    `SELECT r.unit_id, r.unit_name, r.arrival_date::text AS arrival_date, r.nights, r.release_at,
+            r.status, c.name, c.source, c.reservations_url, c.id AS campground_id
+       FROM rc_hold_requests r JOIN campgrounds c ON c.id = r.campground_id
+      WHERE r.watch_id = $1 AND r.unit_id = $2
+        AND r.status IN ('offered', 'requested')
+        AND r.release_at > to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+      ORDER BY r.release_at ASC LIMIT 1`,
+    [row.watch_id, row.site_id]
+  );
+  if (!h) return null;
+
+  const { bookingLink } = await import('@/lib/booking-url');
+  return {
+    token,
+    campgroundName: h.name,
+    unitLabel: h.unit_name ?? h.unit_id,
+    arrivalDate: h.arrival_date,
+    nights: h.nights,
+    releaseAt: h.release_at,
+    // The LOOP, not the park — same helper the claim hand-off uses, so "go and look at
+    // it" lands on the page the site is actually on.
+    bookingUrl: bookingLink({
+      source: h.source, reservationsUrl: h.reservations_url, campgroundId: h.campground_id,
+    }) ?? h.reservations_url,
+    alreadyRequested: h.status === 'requested',
+  };
+}
+
 export async function performAction(token: string): Promise<ActionResult> {
   const [row] = await query<{ watch_id: string; action: WatchAction; site_id: string | null }>(
     `SELECT watch_id, action, site_id FROM action_tokens WHERE token = $1 AND expires_at > NOW()`,

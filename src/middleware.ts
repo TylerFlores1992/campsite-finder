@@ -42,6 +42,11 @@ const isPublicRoute = createRouteMatcher([
   '/camping',
   '/camping/(.*)',
   '/w/(.*)',
+  // The POST that confirms a "hold it for me". Authorised by the same token as /w/<token>
+  // — the confirm step changes WHEN the action fires, not who may fire it — so it has to
+  // be public for the same reason /w/ is: it is tapped from an email or a push
+  // notification, by someone who is not signed in on that device.
+  '/api/w/hold',
   '/b/(.*)',
   '/manage/(.*)',
   '/api/manage/(.*)',
