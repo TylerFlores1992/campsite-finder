@@ -33,13 +33,7 @@ workflows:
         - ios_signing
       vars:
         BUNDLE_ID: "app.camphawk.mobile"
-        # CAPACITOR 8 BUILDS iOS WITH SWIFT PACKAGE MANAGER, NOT COCOAPODS.
-        # `npx cap add ios` now emits App.xcodeproj + CapApp-SPM/Package.swift and NO
-        # App.xcworkspace and NO Podfile. This was `--workspace "App.xcworkspace"` and
-        # build #6 died in 0.8s on a file that no longer exists — which reads like a
-        # signing or Xcode failure, but the giveaway was upstream: "Capacitor sync" took
-        # 1.0s, and any step that really ran `pod install` takes minutes.
-        XCODE_PROJECT: "App.xcodeproj"
+        XCODE_WORKSPACE: "App.xcworkspace"   # Capacitor names the iOS workspace "App"
         XCODE_SCHEME: "App"
       # Capacitor 8's CLI declares `engines: { node: ">=22.0.0" }` — on node 20 the
       # build dies at `npm ci`, before a single Capacitor command runs, which reads
@@ -47,13 +41,28 @@ workflows:
       # Capacitor 7 -> 8 upgrade (target API 36 for Play, 2026-08-05).
       node: 22
       xcode: latest
+      cocoapods: default
     scripts:
       - name: Install JS dependencies
         script: npm ci
       - name: Generate the iOS native project
-        # ios/ is not committed, so create it fresh. `|| true` keeps re-runs idempotent
-        # if a cached checkout already has it.
-        script: npx cap add ios || npx cap sync ios
+        # ios/ is not committed, so create it fresh.
+        #
+        # `--packagemanager cocoapods` IS LOAD-BEARING. Capacitor 8 defaults iOS to Swift
+        # Package Manager, and SPM derives a package's identity from its last path
+        # segment — so `@capacitor/app` and `@capacitor-firebase/app` both claim the
+        # identity `app` and xcodebuild refuses to resolve:
+        #   "Conflicting identity for app: ... both point to the same package identity"
+        # (build #7, 2026-08-08). Neither package is droppable: @capacitor/app supplies
+        # the Android back-button and lifecycle events, and @capacitor-firebase/app is
+        # what initialises the native Firebase SDK from GoogleService-Info.plist, so
+        # removing it would break push silently rather than loudly.
+        #
+        # CocoaPods has no such restriction — the two become CapacitorApp and
+        # CapacitorFirebaseApp — and it is still first-class in v8. It is also the exact
+        # configuration that built and shipped build 5. Revisit if upstream renames one
+        # of the packages.
+        script: npx cap add ios --packagemanager cocoapods || npx cap sync ios
       - name: Brand icons + splash
         script: npm run cap:assets
       - name: Capacitor sync (copy config + plugins into ios/)
@@ -151,7 +160,7 @@ workflows:
         script: |
           cd ios/App
           xcode-project build-ipa \
-            --project "$XCODE_PROJECT" \
+            --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
     artifacts:
       - ios/App/build/ios/ipa/*.ipa
