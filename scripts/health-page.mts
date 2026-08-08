@@ -34,7 +34,7 @@ const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://camphawk.app').replace
 const email = process.env.HEALTH_ALERT_EMAIL || 'tylerflores1992@gmail.com';
 const phone = process.env.HEALTH_ALERT_PHONE || null;
 
-interface Check { name: string; level: 'ok' | 'warn' | 'fail'; detail: string }
+interface Check { name: string; level: 'ok' | 'warn' | 'fail'; detail: string; pages?: boolean }
 interface Status { status: 'ok' | 'degraded' | 'down'; checkedAt: string; checks: Check[] }
 
 const res = await fetch(`${base}/api/health/status`, { signal: AbortSignal.timeout(30_000) }).catch((e) => {
@@ -44,9 +44,20 @@ const res = await fetch(`${base}/api/health/status`, { signal: AbortSignal.timeo
 // A hard fetch failure (endpoint/site down) is itself a page-worthy outage.
 const body: Status = res ? await res.json().catch(() => ({ status: 'down', checkedAt: new Date().toISOString(), checks: [{ name: 'endpoint', level: 'fail', detail: 'non-JSON response' }] })) : { status: 'down', checkedAt: new Date().toISOString(), checks: [{ name: 'endpoint', level: 'fail', detail: `unreachable ${base}/api/health/status` }] };
 
-const failing = body.checks.filter((c) => c.level === 'fail');
-const down = body.status === 'down' || (res != null && res.status === 503);
+// `pages: false` marks a check whose failure does not mean ALERTING is broken — today
+// the auto-cart family. Filtered HERE as well as in the endpoint's own `status`, because
+// this pager is the thing that wakes someone up and it should not depend on a remote
+// field being computed correctly. A dead ReserveCalifornia session paged every 30 minutes
+// for eight hours on 2026-08-08 without a single alert being affected; the damage from
+// that is not the noise, it is that the next real page gets skimmed.
+const failing = body.checks.filter((c) => c.level === 'fail' && c.pages !== false);
+const suppressed = body.checks.filter((c) => c.level === 'fail' && c.pages === false);
+const down = failing.length > 0;
 console.log(`[health-page] status=${body.status} http=${res?.status ?? 'none'} failing=[${failing.map((c) => c.name).join(', ')}]`);
+// Never silently. A non-paging failure is still a failure someone should see in the log.
+if (suppressed.length) {
+  console.log(`[health-page] not paging for: ${suppressed.map((c) => `${c.name} (${c.detail})`).join('; ')}`);
+}
 
 // Prior page state (single row, key 'paging:owner'): detail = last failing-set signature.
 const [prev] = await query<{ last_run_at: string | null; detail: string | null }>(

@@ -23,6 +23,27 @@ interface Check {
   level: Level;
   detail: string;
   ageSeconds?: number;
+  /**
+   * Whether a `fail` here means ALERTING is broken, and so should turn this endpoint
+   * 503 and wake the owner at 3am. Defaults to true; only the auto-cart family opts out.
+   *
+   * WHY THIS EXISTS (2026-08-08). `autocart.rc_session` was added as a plain `fail`, so a
+   * dead ReserveCalifornia session made the whole endpoint report `down` — and the pager
+   * (.github/workflows/health-canary.yml, every 5 min, 30-min re-page throttle) emailed
+   * "CampHawk DOWN — alerting is broken" roughly every half hour for eight hours
+   * overnight. **Not one alert was affected.** The poller detects and notifies from Fly;
+   * a dead RC session disables one optional convenience for one subscriber.
+   *
+   * That is the wolf-crying this file's header already forbids — it says 503 means
+   * "alerting is (or is about to be) broken", and an auto-cart fault is not that. The
+   * cost is not the noise, it is that the NEXT page gets skimmed.
+   *
+   * These checks are still `fail`, still red in the admin banner, and still read by the
+   * 07:30 PT pre-flight Routine, which is the right pager for them: it fires once, 30
+   * minutes before the release, when a human can still act. Severity and paging are
+   * different questions and this is where they part.
+   */
+  pages?: boolean;
 }
 
 const WORKER_STALE_MS = 5 * 60 * 1000; // poller beats every ~15s
@@ -235,12 +256,15 @@ export async function GET() {
     const age = ageMs(bot?.beat_at);
     checks.push({
       name: 'autocart.bot',
+      // Auto-cart, not alerting — see the `pages` field on Check. A bot offline fails
+      // OPEN to normal alerts, so nothing a subscriber depends on is lost.
+      pages: false,
       level: !bot || age > BOT_STALE_MS ? 'warn' : 'ok',
       detail: !bot ? 'no bot heartbeat row' : `last beat ${secs(age)}s ago`,
       ageSeconds: secs(age),
     });
   } catch (err) {
-    checks.push({ name: 'autocart.bot', level: 'warn', detail: `read failed: ${(err as Error).message}` });
+    checks.push({ name: 'autocart.bot', level: 'warn', pages: false, detail: `read failed: ${(err as Error).message}` });
   }
 
   // 4b. RC hold runner — a SEPARATE process from the rec.gov bot above, and they fail
@@ -280,6 +304,8 @@ export async function GET() {
     const stale = !beat || age > RC_RUNNER_STALE_MS;
     checks.push({
       name: 'autocart.rc_runner',
+      // Auto-cart, not alerting — see the `pages` field on Check.
+      pages: false,
       // FAIL only when both are true — that combination is a hold about to be missed.
       level: stale && pending > 0 ? 'fail' : stale ? 'warn' : 'ok',
       detail: !beat
@@ -305,6 +331,9 @@ export async function GET() {
     const dead = beat?.session_ok === false;
     checks.push({
       name: 'autocart.rc_session',
+      // Auto-cart, not alerting — see the `pages` field on Check. The 07:30 PT pre-flight
+      // Routine is what pages for this, once, when it can still be acted on.
+      pages: false,
       // A dead session with a hold still ahead of it is a promise we cannot keep and
       // only a human can fix — that is the one that should shout. Dead with nothing
       // queued still warns: the fix needs lead time, so "nobody is affected yet" is
@@ -321,15 +350,23 @@ export async function GET() {
       ageSeconds: secs(sessionAge),
     });
   } catch (err) {
-    checks.push({ name: 'autocart.rc_runner', level: 'warn', detail: `read failed: ${(err as Error).message}` });
+    checks.push({ name: 'autocart.rc_runner', level: 'warn', pages: false, detail: `read failed: ${(err as Error).message}` });
   }
 
+  // `down`/503 means ALERTING is broken — the contract stated at the top of this file,
+  // and what the 5-minute pager wakes the owner for. A failing check that does not page
+  // (the auto-cart family; see `Check.pages`) still drags the overall status to
+  // `degraded`, so nothing is hidden — it just stops claiming the product is down when
+  // the poller is happily alerting. On 2026-08-08 the difference was eight hours of
+  // half-hourly "CampHawk DOWN — alerting is broken" emails for a dead ReserveCalifornia
+  // session that cost precisely zero alerts.
+  const anyPagingFail = checks.some((c) => c.level === 'fail' && c.pages !== false);
   const anyFail = checks.some((c) => c.level === 'fail');
   const anyWarn = checks.some((c) => c.level === 'warn');
-  const status = anyFail ? 'down' : anyWarn ? 'degraded' : 'ok';
+  const status = anyPagingFail ? 'down' : anyFail || anyWarn ? 'degraded' : 'ok';
 
   return NextResponse.json(
     { status, checkedAt: new Date().toISOString(), checks },
-    { status: anyFail ? 503 : 200 }
+    { status: anyPagingFail ? 503 : 200 }
   );
 }
