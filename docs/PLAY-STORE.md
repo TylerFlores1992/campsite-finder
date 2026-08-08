@@ -105,8 +105,21 @@ project picker. A second project is not wrong, just pointless.
    JSON** → it downloads. That file IS the credential: treat it like a password, never
    commit it.
 4. **Invite it to Play** — <https://play.google.com/console> → **Users and permissions**
-   → **Invite new user** → paste the account's email (it looks like
-   `codemagic-publisher@your-project.iam.gserviceaccount.com`, copyable from step 2).
+   → **Invite new user** → paste the account's **real** email address.
+
+   **COPY IT, DO NOT TYPE IT FROM THIS DOC.** It ends
+   `@<your-actual-project-id>.iam.gserviceaccount.com`, and the project id is specific to
+   your Firebase project. It is the `client_email` field inside the JSON from step 3, and
+   the Email column at
+   <https://console.cloud.google.com/iam-admin/serviceaccounts>.
+
+   > This went wrong on 2026-08-08: a documented EXAMPLE address containing
+   > `@your-project.` was pasted in verbatim, so Play invited an account that does not
+   > exist. Everything looked configured — a row in Users and permissions with the right
+   > boxes ticked — and the publish failed with **"The caller does not have permission"**,
+   > which reads like a permissions problem on a real account rather than a fictional one.
+   > If you see that error, check the invited address FIRST: it is quicker to rule out
+   > than propagation, and Play will happily invite an address that has no owner.
    Grant, on the CampHawk app:
    - **View app information**
    - **Releases → Release to testing tracks**
@@ -130,9 +143,19 @@ counts CLOSED testing only. Publishing to `internal` satisfies the API-36 upload
 requirement, looks like progress, and starts no clock — and you would find out two weeks
 later. The commented block was pre-set to `internal` and was corrected 2026-08-08.
 
-**Permissions can take a few minutes to propagate.** A 401/403 on the first publish right
-after granting access is usually that, not a mistake — re-run the build before re-doing
-the setup.
+**"The caller does not have permission" — check in this order.** The message is the same
+for several different causes, and they are not equally likely:
+1. **The invited address is wrong** — see the warning in step 4. Costs ten seconds to
+   check and was the real cause the first time this was set up.
+2. **Permissions have not propagated.** A few minutes is normal after granting; re-run
+   the build before changing anything.
+3. **The Google Play Android Developer API is not enabled** (step 1) — though this
+   usually produces the distinctive *"…has not been used in project X before or it is
+   disabled"* instead.
+
+**The credential itself is NOT in doubt when you see this.** A malformed or empty JSON
+fails as a parse or auth error; "does not have permission" means Google accepted the
+identity and then refused the action, so steps 3 and 5 are already correct.
 
 **The first upload of a package must still be done by hand.** The API cannot create the
 very first release for a package that Play has never seen; that only applies once, and
