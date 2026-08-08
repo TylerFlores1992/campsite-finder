@@ -658,7 +658,26 @@ NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
 brought up to date with the hold flow, the reCAPTCHA/keep-warm design, the mini-PC's five
 processes, migrations 039/040/043/044, and the corrected A2P facts.
 
-### iOS is SUBMITTED (2026-07-30) — build 5, awaiting review
+### iOS — CHECK WHETHER IT WAS EVER ACTUALLY SUBMITTED (2026-08-08)
+**This heading used to read "SUBMITTED — build 5, awaiting review". It contradicts
+`docs/APP-STORE.md` §5, which still lists "Submit for Review" under *Left, and only a
+human can do it*, and nine days with no decision is not how App Store review behaves —
+the median is ~24h and 90% clear inside 48h.** So the likely state is *Prepare for
+Submission* or *Waiting for Review* with the version never actually submitted, which is
+silent by design: nothing chases you.
+**Verify in App Store Connect before assuming Apple is slow**, and read §5's checklist as
+the source of truth over this file until one of them is confirmed.
+Two things that must be true before it goes in, both from §5 and neither verifiable from
+a web session:
+- **The demo password is still `<fill in>` in the §2 review notes** (docs/APP-STORE.md
+  lines 89-90). A reviewer who cannot sign in rejects on day one, and this is the single
+  most likely cause of a wasted round trip.
+- The build must be SELECTED on the version page — uploading to TestFlight does not
+  attach it.
+**The demo account is fine** (checked 2026-08-08): `tylerflores1992@yahoo.com` converted
+from `trialing` to `active` on 08-05 rather than lapsing, still `grandfathered`, with 2
+live watches — a reviewer sees a populated paid app.
+
 Release is set to **manual**, so approval does NOT put it live; you flip it. Privacy
 label published, age rating 4+, content rights yes, **availability United States only**,
 screenshots in all three size boxes (6.9" / 6.5" / 13" iPad — the iPad set is required
