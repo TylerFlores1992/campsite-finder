@@ -80,10 +80,35 @@ export async function installTokenCapture(ctx) {
           keep(auth);
         } catch { /* never break the page */ }
       };
+      // LEARN THE APP'S OWN OIDC CALL, in case we ever have to make it ourselves.
+      // RC is on Okta's org auth server with PKCE/S256, so a hand-built
+      // `authorize?prompt=none` needs the real client_id, redirect_uri and a code
+      // verifier — three things worth capturing from the app rather than guessing in the
+      // one code path that has to work at 08:00. Recorded, never sent anywhere.
+      const noteAuthorize = (url) => {
+        try {
+          const u = String(url);
+          if (/\/oauth2\/[^/]*\/?v1\/authorize/i.test(u)) window.__camphawkRcAuthorize = u;
+        } catch { /* ignore */ }
+      };
+      try {
+        const op = window.open;
+        window.open = function (u) { noteAuthorize(u); return op.apply(this, arguments); };
+        // The silent flow is classically a hidden iframe; catch it as it is attached.
+        const setSrc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'src');
+        if (setSrc && setSrc.set) {
+          Object.defineProperty(HTMLIFrameElement.prototype, 'src', {
+            ...setSrc,
+            set(v) { noteAuthorize(v); return setSrc.set.call(this, v); },
+          });
+        }
+      } catch { /* ignore */ }
+
       const of = window.fetch;
       window.fetch = function (input, init) {
         try {
           const url = input && typeof input === 'object' && input.url ? input.url : input;
+          noteAuthorize(url);
           if (isRC(url)) {
             readHeaders(init && init.headers);
             if (input && typeof input === 'object' && input.headers) readHeaders(input.headers);
@@ -93,7 +118,7 @@ export async function installTokenCapture(ctx) {
       };
       const oo = XMLHttpRequest.prototype.open;
       XMLHttpRequest.prototype.open = function (method, url) {
-        try { this.__chRC = isRC(url); } catch { this.__chRC = false; }
+        try { noteAuthorize(url); this.__chRC = isRC(url); } catch { this.__chRC = false; }
         return oo.apply(this, arguments);
       };
       const os = XMLHttpRequest.prototype.setRequestHeader;
@@ -126,6 +151,63 @@ export async function readLiveToken(page) {
       return { token: null, source: 'none' };
     }
   });
+}
+
+/** The `/authorize` URL the app used, if we caught one. Diagnostics only. */
+export async function readAuthorizeUrl(page) {
+  return page.evaluate(() => {
+    try { return window.__camphawkRcAuthorize ?? null; } catch { return null; }
+  });
+}
+
+/**
+ * Seconds of life left in a token, or null if it will not decode.
+ *
+ * Shared so the keep-warm and anything else agree on what "about to expire" means.
+ */
+export function tokenSecondsLeft(token) {
+  try {
+    const [, payload] = String(token).split('.');
+    if (!payload) return null;
+    const json = JSON.parse(
+      Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'),
+    );
+    return typeof json.exp === 'number' ? Math.round(json.exp - Date.now() / 1000) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * RENEW THE SESSION THE WAY THE APP DOES — by re-bootstrapping it.
+ *
+ * This is the "silent auth" path, in the only form worth running. The textbook version is
+ * to build `authorize?prompt=none` ourselves against the persistent "Keep me signed in"
+ * cookie. RC is on Okta's ORG authorization server with PKCE/S256 (confirmed from
+ * `signin.reservecalifornia.com/.well-known/openid-configuration`), so doing that by hand
+ * means supplying the right `client_id`, the registered `redirect_uri`, and a code
+ * verifier — three values we would be guessing, in the one code path that has to work at
+ * 08:00:00 on the morning somebody is counting on it.
+ *
+ * A RELOAD runs exactly that exchange using the app's own code, which already holds all
+ * three and stays correct when RC changes them. It is what a user pressing F5 does, it
+ * needs no credential, and it never shows a CAPTCHA — the challenge lives on the password
+ * form, not on a cookie exchange.
+ *
+ * The important difference from the old keep-warm is WHEN. That reloaded every 20 minutes
+ * regardless, which is not the same as reloading BECAUSE the token is nearly out; and the
+ * resident tab never reloads at all, so if the app's in-page renewal timer does not fire
+ * the token simply runs down. This watches the clock and acts on it.
+ *
+ * Returns `{ renewed, before, after }` in seconds — `after > before` is the proof.
+ */
+export async function renewByReload(page, url) {
+  const before = tokenSecondsLeft((await readLiveToken(page)).token);
+  await page.evaluate(() => { try { delete window.__camphawkRcToken; } catch { /* ignore */ } });
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  const { token } = await primeToken(page, { timeoutMs: 20_000 });
+  const after = tokenSecondsLeft(token);
+  return { renewed: after != null && (before == null || after > before), before, after };
 }
 
 /**

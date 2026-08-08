@@ -59,7 +59,10 @@ import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
   profileRequested,
 } from './profile-lock.mjs';
-import { installTokenCapture, readLiveToken, primeToken } from './rc-token.mjs';
+import {
+  installTokenCapture, readLiveToken, primeToken, renewByReload, tokenSecondsLeft,
+  readAuthorizeUrl,
+} from './rc-token.mjs';
 import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 
@@ -87,6 +90,18 @@ const WARM_MARKER = path.join(PROFILE_DIR, '.camphawk-rc-warmed');
  */
 const KEEPALIVE_MS = Number(process.env.RC_KEEPALIVE_MS || 20 * 60 * 1000);
 
+/**
+ * Renew when the token has less than this left — the SILENT-AUTH trigger.
+ *
+ * Ten minutes against an ~1h token: comfortably before expiry, and far enough out that a
+ * reload which fails can be retried twice before anything is lost. The old loop reloaded
+ * every twenty minutes regardless of the clock, which is not the same thing at all — it
+ * renewed by accident when the timing happened to line up, and not otherwise.
+ */
+const RENEW_BEFORE_S = Number(process.env.RC_RENEW_BEFORE_S || 10 * 60);
+/** How often to look at the clock. Cheap — one page.evaluate against an open tab. */
+const EXPIRY_POLL_MS = 60_000;
+
 /** Headful by default. RC/Okta fingerprints headless Chromium — the same rule the
  *  rec.gov bot follows, and the reason its cart path is headed too. */
 const HEADLESS = process.env.RC_HEADLESS === 'true';
@@ -107,6 +122,8 @@ const args = new Set(process.argv.slice(2));
 const ONCE = args.has('--once');
 const LOGIN = args.has('--login');
 
+/** Log the app's own authorize URL once, not on every 20-minute pass. */
+let warmedAuthLogged = false;
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -457,6 +474,7 @@ async function warmResident() {
       // `autocart.rc_session` stale — reading "we have not confirmed this recently" when
       // in fact we just did, on the one dashboard that decides whether to wake someone.
       let lastCheck = 0;
+      let lastExpiryPoll = 0;
       for (;;) {
         // Yield fast. The runner is asking because a site releases in seconds; making it
         // wait out a 60s lock timeout at 08:00:00 would lose exactly the thing we are
@@ -473,6 +491,35 @@ async function warmResident() {
         if (!ctx.pages().length || page.isClosed()) {
           log('⚠ the RC window was closed — reopening it');
           break;
+        }
+        // SILENT AUTH, on the clock rather than on a fixed cadence. A reload re-runs the
+        // app's own OIDC exchange against the persistent "Keep me signed in" cookie —
+        // correct client_id, correct redirect_uri, correct PKCE verifier, none of which we
+        // would have to guess — and never shows a CAPTCHA, because the challenge lives on
+        // the password form, not on a cookie exchange. See renewByReload.
+        if (Date.now() - lastExpiryPoll >= EXPIRY_POLL_MS) {
+          lastExpiryPoll = Date.now();
+          const { token, source } = await readLiveToken(page).catch(() => ({ token: null, source: 'none' }));
+          const left = tokenSecondsLeft(token);
+          // `left === null` (no token, or one that will not decode) is NOT a reason to
+          // reload on a loop — that would hammer RC every minute on a signed-out page.
+          // The 20-minute check reports it; a human decides.
+          if (left != null && left < RENEW_BEFORE_S) {
+            log(`token has ${Math.round(left / 60)}m left (src=${source}) — renewing by reload`);
+            const r = await renewByReload(page, RC_HOME).catch((e) => {
+              log(`  renew failed: ${e.message}`);
+              return null;
+            });
+            if (r) {
+              log(r.renewed
+                ? `  ✓ renewed: ${Math.round((r.before ?? 0) / 60)}m → ${Math.round((r.after ?? 0) / 60)}m`
+                : `  ✗ reload did NOT mint a fresher token (${r.before}s → ${r.after}s) — the Okta cookie may be gone`);
+            }
+            // Report immediately either way: this is the event worth seeing on the
+            // dashboard, not something to sit on until the next 20-minute tick.
+            lastCheck = Date.now();
+            await checkAndReport(ctx, page).catch((e) => log(`check failed: ${e.message}`));
+          }
         }
         if (Date.now() - lastCheck >= KEEPALIVE_MS) {
           lastCheck = Date.now();
@@ -504,6 +551,16 @@ async function checkAndReport(ctx, page) {
   const note =
     (exp ? `token exp in ${Math.round((exp - Date.now()) / 60000)}m` : 'token exp unknown') +
     `; renewed=${changed ? 'YES' : 'no'}; src=${source}`;
+
+  // One-off diagnostic, logged not reported: if the app ever makes its own
+  // `authorize?prompt=none` call we want the real client_id / redirect_uri / PKCE shape
+  // recorded, so an explicit silent-auth could be built from fact rather than guesswork.
+  // Not sent to the server — an authorize URL carries state and nonce.
+  const authUrl = await readAuthorizeUrl(page).catch(() => null);
+  if (authUrl && !warmedAuthLogged) {
+    warmedAuthLogged = true;
+    log(`   (app authorize URL seen: ${authUrl.slice(0, 200)})`);
+  }
 
   // A FAILURE ON A localStorage TOKEN PROVES NOTHING. That copy is not what the app
   // sends, so a 401 from it is our stale read, not RC's verdict — and reporting it as
