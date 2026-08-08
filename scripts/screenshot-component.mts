@@ -410,6 +410,23 @@ const PRESETS: Record<string, Preset> = {
       export const node = <div className="font-ch-body text-ch-ink"><TrustPanel /></div>;`,
     frame: 'max-w-md w-full mx-auto',
   },
+  'ch-nav-collapsed': {
+    // The SCROLLED state at phone width, which is the only one where the account
+    // controls and the artwork's tagline compete for the same pixels. Scrolling is
+    // faked because the harness renders one component with no page under it.
+    label: 'Nav — collapsed on a phone, controls beside the tagline',
+    entry: `import V2Nav from '@/components/v2/V2Nav';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        window.fetch = async (url) => String(url).includes('/api/admin/status')
+          ? { ok: true, json: async () => ({ isAdmin: true }) }
+          : { ok: true, json: async () => ({}) };
+        Object.defineProperty(window, 'scrollY', { get: () => 400, configurable: true });
+        setTimeout(() => window.dispatchEvent(new Event('scroll')), 200);
+      }
+      export const node = <div style={{ height: '200vh' }}><V2Nav /></div>;`,
+    frame: 'w-full',
+  },
   'ch-nav-admin': {
     label: 'Nav — admin shortcut beside the avatar (owner only)',
     entry: `import V2Nav from '@/components/v2/V2Nav';

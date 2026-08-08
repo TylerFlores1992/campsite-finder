@@ -291,26 +291,41 @@ export default function V2Nav() {
               COLLAPSED: cover, anchored to the BOTTOM. That's the strip the
               wordmark and tagline sit in, so shrinking the band keeps the brand
               on screen instead of leaving a meaningless sliver of sky. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/brand/app-header.jpg"
-            alt="CampHawk — find your next adventure"
-            className={cx(
-              "size-full",
-              collapsed
-                ? "object-cover object-bottom"
-                : "object-contain object-center",
-            )}
-          />
-          {/* `absolute` resolves against the PADDING box, so a plain `top-3` sits
-              12px from the very top of the element and therefore UNDER the status
-              bar — which is exactly where the account avatar was rendering, next to
-              the clock and battery. Offset it by the inset explicitly. */}
-          <div
-            className="absolute right-3 flex items-center gap-2"
-            style={{ top: "calc(env(safe-area-inset-top) + 0.75rem)" }}
-          >
-            <AccountControl compact />
+          {/* THE CONTROLS SIT BESIDE THE ART, NOT ON TOP OF IT.
+              They used to be `absolute right-3`, which put them exactly where the
+              artwork's tagline ends — the JPEG carries "CampHawk" bottom-left and
+              "FIND YOUR NEXT ADVENTURE" bottom-right, running to the right edge.
+              Collapsed, `object-cover` scales the art to the full band width, so the
+              avatar (and, for the owner, the admin shield beside it) landed squarely
+              on the words. Reported on a real phone 2026-08-08.
+
+              A flex row instead of a reserved-width guess, because the controls are
+              32px, 76px or 0px wide depending on whether you are signed in and
+              whether you are an admin — any hard-coded inset is wrong for two of
+              those three. The browser measures them; the image takes what is left,
+              and `object-contain`/`object-cover` re-fit inside the narrower box, so
+              the tagline simply ends before the buttons begin. Nothing is clipped:
+              at this aspect ratio the scale is width-driven, so the crop stays
+              vertical and "CampHawk" can never lose its C — the failure the
+              `object-contain` comment above was added for. */}
+          <div className="flex size-full items-start">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/app-header.jpg"
+              alt="CampHawk — find your next adventure"
+              className={cx(
+                "h-full min-w-0 flex-1",
+                collapsed
+                  ? "object-cover object-bottom"
+                  : "object-contain object-center",
+              )}
+            />
+            {/* No `absolute` and so no safe-area maths: the parent's padding-top
+                already places this below the status bar, which is what the old
+                explicit offset was compensating for by hand. */}
+            <div className="flex shrink-0 items-center gap-2 pt-3 pr-3 pl-2">
+              <AccountControl compact />
+            </div>
           </div>
         </div>
 
