@@ -3032,6 +3032,24 @@ the exact milliseconds the design exists to save, in order to record that things
 `worker/rc-holds.test.mts` fails against both of the tempting mistakes (marking a skip
 `failed`, and bumping `updated_at`) — verified by making them.
 
+**IT CAUGHT A DEAD SESSION 90 SECONDS AFTER GOING LIVE, ten hours before the release.**
+The mini-PC was updated at ~04:57 UTC on 2026-08-08; the first keep-warm report came back
+`RC REJECTED the session`, with one hold still ahead of it (South Carlsbad #41, releasing
+08:00 PT). Throughout, **`autocart.rc_runner` was green — `last poll 9s ago`** — because
+the runner was genuinely healthy and had never been the problem. That is the entire thesis
+of this section, observed live within minutes of shipping: the shallow beacon reassures
+while the deep one condemns, and the deep one is right. One `rc-login.bat` later,
+`load/shoppingcart → HTTP 200` and the check went green.
+
+**What this does and does not prove about 2026-08-07.** It proves the failure mode is real
+and recurs — "the RC session dies while the runner stays perfectly healthy" is now an
+observed event, not a hypothesis. It does **not** prove that is what killed the 08-07 hold:
+nothing recorded the session state that day, and it never will. Nor can we say whether this
+session died on its own or whether `update.bat`'s `taskkill /IM chrome.exe /F` finished it
+off — there was no prior reading to compare against, which is a one-time cost of the
+instrumentation not having existed yet. From here there is a continuous record and the
+question is answerable.
+
 **Claim surface:** `/claim/<id>?t=<manage token>` + `/api/rc-holds/claim`. Authorised by
 hold id **plus** the watch's manage token, so the user can act from a phone at 8am without
 signing in; `noindex, nocache` because the URL contains that token. It polls at 600ms while
@@ -3701,3 +3719,31 @@ which reads like a broken install rather than a wrong directory, and cost three 
 - **`mini-pc/rc-check.bat`** — "is RC auto-cart working?", answering the feed and the RC
   session **separately**, because they fail independently: the feed can be fine while the
   session is dead, and assuming one from the other is how a hold sits unclaimed at 8am.
+
+> **NEVER `taskkill /FI "WINDOWTITLE eq …"` FOR THESE PROCESSES — it matches nothing
+> (found 2026-08-08).** `start-all.bat` launches them as `start "CampHawk RC keep-warm"
+> powershell -NoExit -Command …`, and **PowerShell retitles its own console on startup**,
+> so the title `start` set is gone before taskkill ever looks. `rc-login.bat` had killed
+> that way since it was written, which means **every run of it left the old keep-warm and
+> hold runner alive** — the exact processes it opens by saying "Closing anything holding
+> the RC profile".
+>
+> It failed **silently at the step that matters** and then loudly somewhere harmless: the
+> relaunched windows died on `Tee-Object` with *"cannot access the file … because it is
+> being used by another process"*, because the survivors still held `logs\rc-*.log` open.
+> A file-lock error is what you see; a stale process on the RC profile is what it means,
+> and two Chromium instances on one user-data-dir corrupt the session this script exists
+> to restore. **The profile lock is what stood between that bug and real damage** — it is
+> load-bearing, not belt-and-braces.
+>
+> Kill by COMMAND LINE instead (`Get-CimInstance Win32_Process | Where-Object
+> { $_.CommandLine -match 'rc-keepwarm\.mjs|rc-hold-runner\.mjs' -and $_.ProcessId -ne $PID }`).
+> **Not `taskkill /IM node.exe /F`** — that is precisely why `update.bat` was immune to
+> this bug, but in `rc-login.bat` it would take the rec.gov bot and the broker down too.
+>
+> Same family: `update.bat` finished by saying **"Three new windows should have opened"**
+> long after there were five. Someone counting windows to confirm an update would see
+> three, tick the box, and never notice the two RC processes had failed to start — and
+> those are the pair whose silent absence cost a hold on 2026-08-07. Both now name all
+> five and describe what a FAILED relaunch looks like, because a window that opens, prints
+> a red error and sits there still reads as "a window opened".

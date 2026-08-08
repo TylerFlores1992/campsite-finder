@@ -654,9 +654,27 @@ that is a different process.
   to do a human sign-in over a healthy session. Keep-warm posts nothing in that case and
   the server sees the last verdict go stale, which is the honest reading. Same rule as
   `hasAvailabilityInRange` returning null.
+- **It caught a dead session 90 SECONDS after going live** (2026-08-08 ~04:57 UTC), ten
+  hours before the release, with one hold ahead of it — while `autocart.rc_runner` sat
+  green at `last poll 9s ago`, because the runner was healthy and never was the problem.
+  The whole thesis, observed live within minutes of shipping. One `rc-login.bat` later:
+  `load/shoppingcart → HTTP 200`, everything green. **It proves the failure mode is real
+  and recurs; it does NOT prove it is what killed the 08-07 hold** — nothing recorded that
+  day's session state and nothing ever will. From here there is a continuous record.
+- **`rc-login.bat` was killing by WINDOW TITLE, which matched nothing** (found the same
+  night). `start-all.bat` launches these through `powershell -NoExit`, and PowerShell
+  retitles its own console, so every run of the script left the old keep-warm and hold
+  runner ALIVE — the processes it opens by announcing "Closing anything holding the RC
+  profile". It failed silently at the only step that mattered, then loudly somewhere
+  harmless (the relaunched windows died on `Tee-Object`, since the survivors held the logs
+  open). Two Chromium on one user-data-dir corrupt the session it exists to restore, so
+  **the profile lock is what stood between this and real damage.** Kills by command line
+  now — deliberately NOT `taskkill /IM node.exe /F`, which is why `update.bat` was immune
+  but would take the rec.gov bot down here. And `update.bat` said "Three new windows"
+  long after there were five.
 - **This needs a mini-PC update to take effect** — `update.bat`, run by a human. Until
   then `autocart.rc_session` reads "never reported" (a warn, so the banner is amber), which
-  is correct: unknown is not healthy.
+  is correct: unknown is not healthy. **Done 2026-08-08; live and green.**
 
 ### Twilio A2P ticket #28871693 is OPEN (filed 2026-08-07 14:28 PT, P3)
 Asks two things: apply the sample/description/message-flow edit to the approved campaign
@@ -670,32 +688,41 @@ generated from the dispatcher by `scripts/a2p-samples.mts`.
 `camphawk.app/b/<token>` link came out of SMS. None since.
 
 ### If a hold is queued: did the 8am cart fire? (the daily check)
-The day-before opt-in flow is live end to end and one real hold is queued:
-**Leo Carrillo — Canyon, unit 42558 `#L108`, arrival 2026-09-04, releases
-2026-08-07T08:00 PT**, status `requested` (tapped 06:00:53Z). Everything upstream is
-verified — poller offered it, all three channels alerted, the mini-PC runner reports
-`token accepted`, and the RC session was signed in by hand at 05:54:58Z with the
-keep-warm loop holding it.
+The second attempt is queued: **South Carlsbad SB — Northern End, unit 45725 `#41`,
+arrival 2026-09-13, releases 2026-08-08T08:00 PT**, status `requested`. (The first — Leo
+Carrillo `#L108`, 2026-08-07 — FAILED; see the runner section above.) Verified green at
+05:20 UTC on 08-08 across every link that broke last time: `autocart.rc_session` ok
+(`load/shoppingcart → HTTP 200`), `autocart.rc_runner` polling, hand-off landing on
+`/park/720/715`.
 
 ```
 NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
 ```
+It now prints the **RC session verdict first**, above the table and even when there are no
+holds — a dead session with nothing queued is the cheapest moment to fix it, and the only
+one with time to spare.
 - `carted`/`claiming`/`released`/`claimed` → **it worked**; say which and how far it got.
-- **`requested` with the release time already past → the ONE broken state.** The runner
-  is down or could not reach RC. It cannot be fixed from a web session — the bot is on
-  the owner's mini-PC. Have them run `mini-pc\rc-check.bat`.
+- **`requested` with the release time already past → the ONE broken state.** Read
+  `last_attempt_note`, which the readout prints per row: *"the runner TRIED 3m ago — RC
+  session is dead"* and *"NOTHING has tried to act on this hold at all"* are different
+  faults with different fixes, and before 2026-08-08 they were the same silence. It cannot
+  be fixed from a web session — the bot is on the owner's mini-PC. Have them run
+  `mini-pc\rc-check.bat`, or `mini-pc\rc-login.bat` if the session is the problem.
 - `offered` → nobody tapped. Not a fault.
 
 **Two Routines cover this daily** — delete both once the flow has proven itself:
 - `trig_015nU7BciNU5GKimmgXjvAZG` — **07:30 PT pre-flight**, the one that can actually
-  save a hold. Reads `autocart.rc_runner` from `/api/health/status` and shouts only when
-  the beat is stale AND holds are due. Deliberately needs no repo and no DB, just the
-  public endpoint, so it cannot fail the way a clone-dependent check did on its first run.
+  save a hold. Reads **both** `autocart.rc_session` and `autocart.rc_runner` from
+  `/api/health/status` — they are different failures, and a green runner says nothing
+  about the session (that gap is the whole 08-07 story). Deliberately needs no repo and no
+  DB, just the public endpoint, so it cannot fail the way a clone-dependent check did on
+  its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
 **Docs are current as of this session** — `docs/CONTEXT.md` and `docs/SETUP.md` were both
 brought up to date with the hold flow, the reCAPTCHA/keep-warm design, the mini-PC's five
-processes, migrations 039/040/043/044, and the corrected A2P facts.
+processes, migrations 039/040/043/044/**046**, the `rc-login.bat` window-title bug, and
+the corrected A2P facts.
 
 ### iOS 1.0 IS SUBMITTED — "Waiting for Review", and DON'T PULL IT (2026-08-08)
 Confirmed from App Store Connect: the version reads **Waiting for Review**, so it was
