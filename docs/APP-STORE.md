@@ -62,8 +62,24 @@ matters.
 
 ## 2. App Review notes
 
-Paste into **App Review Information → Notes**. The first section is the one that
-prevents the predictable rejection.
+**Where:** on the **version page** (iOS App Version 1.0), section *App Review
+Information* — not the app-level "General → App Review" nav item. It is one of the
+fields Apple lets you edit while the version sits in *Waiting for Review*, so it can be
+corrected without giving up the queue position.
+
+Three parts, all filled in and saved as of 2026-08-08:
+- **Sign-In Information** — "Sign-in required" ticked, username `tylerflores1992@yahoo.com`
+  and a real password. **This is the field that matters**; a reviewer who cannot sign in
+  rejects on day one.
+- **Contact Information** — name, phone, email. Populated.
+- **Notes** — the block below, 1,992 characters in the field.
+
+> **The `<fill in>` password below is CORRECT and must stay that way.** This file is in
+> git; the real password belongs only in the console's Password field. "The doc still
+> says `<fill in>`" is not a defect and has now twice been mistaken for one — **verified
+> 2026-08-08 that the console field is populated**, which is the only thing that matters.
+
+The first section of the notes is the one that prevents the predictable rejection.
 
 ```
 WHAT THE APP DOES
@@ -86,8 +102,7 @@ There is therefore no in-app purchase to implement. The free functionality (sear
 works fully without an account or a subscription.
 
 DEMO ACCOUNT
-Email:    <fill in>
-Password: <fill in>
+Credentials are in the Sign-In Information fields above.
 This account has an active subscription so you can see watch creation and alerts.
 Sign-in is email + password. Social sign-in is deliberately hidden in the app
 (Google blocks OAuth inside embedded webviews), so no third-party login is offered
@@ -182,9 +197,9 @@ longest. Long ≠ stuck, and there is nothing in the repo to change.
 *"You can edit some information while your version is waiting for review. To submit a new
 build, you must remove this version from review."* So metadata and **App Review
 Information** can be fixed in place — only a BUILD swap costs the place in line.
-- **Fill the demo account password** into App Review Information in the console (the §2
-  text above still carries a `<fill in>` placeholder). A reviewer who cannot sign in
-  rejects on day one. Free to do, highest value.
+- ~~Fill the demo account password~~ — **VERIFIED DONE 2026-08-08.** Sign-in required is
+  ticked, username + password are present, contact info is filled and the notes field
+  holds 1,992 characters. Nothing to fix; stop re-flagging §2's `<fill in>`.
 - Confirm the §6 metadata and screenshots are what you want; also editable in place.
 
 **What NOT to do:** don't remove from review to attach a newer build. The app is a webview
@@ -198,7 +213,13 @@ the next build clears it whenever a next build happens for another reason.
 Expedited review is for critical fixes and dated events, not a slow first queue.
 
 **Still left:**
-- Release is set to **manual**, so approval does not go live — a human flips it.
+- **Release is AUTOMATIC, not manual** (corrected 2026-08-08 from the version page — this
+  doc and `CLAUDE.md` both claimed manual for weeks). *"Automatically release this
+  version"* is selected, so **approval puts it on the App Store by itself** with no human
+  step. Deliberately left that way: the app is a webview on camphawk.app, so there is no
+  pre-launch work that has to happen between approval and going live, and after a queue
+  this long the shortest path to live is the right one. The `NATIVE_LINKOUT` flip is a
+  *post*-launch step by design — its precondition is production being live and US-only.
 - **On going live:** set `NATIVE_LINKOUT = true` in `v2/nativeSubscribe.tsx`.
 
 ---

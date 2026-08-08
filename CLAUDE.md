@@ -671,10 +671,14 @@ nothing to fix in the repo — the fixes are in the console.
   version is waiting for review. To submit a new build, you must remove this version from
   review."*** Metadata and **App Review Information (demo account + notes)** are editable
   IN PLACE, keeping the queue position. Only swapping the BUILD costs it.
-- **So fix the review notes and leave the build alone.** The demo password is still
-  `<fill in>` in `docs/APP-STORE.md` §2 (lines 89-90) — that's the doc, but the field
-  that matters is App Review Information in the console, and a reviewer who cannot sign
-  in rejects on day one. Editing it is free; it is the single highest-value action.
+- **The review notes are already correct — VERIFIED 2026-08-08.** *App Review
+  Information* on the **version page** (not the app-level "General → App Review" nav
+  item) has Sign-in required ticked, `tylerflores1992@yahoo.com` + a real password,
+  contact details, and 1,992 characters of notes. **`docs/APP-STORE.md` §2 keeps
+  `<fill in>` on purpose** (no secrets in git) — that placeholder is NOT the defect and
+  has now been mistaken for one twice. Only the console field counts, and it is filled.
+  So there is nothing left to fix here: the queue is the only thing between us and a
+  decision.
 - **Do NOT remove from review to attach a newer build.** The app is a webview on
   camphawk.app, so nearly everything shipped since is WEB-side and already reaches
   whatever build is attached. The iOS-native delta is the Capacitor 8 shell and the
@@ -688,7 +692,11 @@ nothing to fix in the repo — the fixes are in the console.
 from `trialing` to `active` on 08-05 rather than lapsing, still `grandfathered`, with 2
 live watches — a reviewer sees a populated paid app.
 
-Release is set to **manual**, so approval does NOT put it live; you flip it. Privacy
+**Release is AUTOMATIC — approval puts it LIVE with no human step** (read off the version
+page 2026-08-08; this file said "manual, you flip it" for weeks and that was wrong). Left
+that way on purpose: the app is a webview, so nothing has to happen between approval and
+launch, and `NATIVE_LINKOUT` is a *post*-launch flip anyway. The consequence to plan for
+is that **you may find out it shipped by seeing it on the App Store.** Privacy
 label published, age rating 4+, content rights yes, **availability United States only**,
 screenshots in all three size boxes (6.9" / 6.5" / 13" iPad — the iPad set is required
 because the Capacitor build declares iPad support). Everything Apple asked for is in
