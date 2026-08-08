@@ -37,11 +37,21 @@ echo === Installing dependencies (quick if nothing changed) ===
 call npm install || goto :fail
 
 echo(
-echo === Relaunching tunnel + bot + broker ===
+echo === Relaunching tunnel + bot + broker + the two RC processes ===
 call "%~dp0start-all.bat"
 
 echo(
-echo === Update complete. Three new windows should have opened. ===
+REM FIVE, not three. This said "Three new windows" from before the RC pair existed, which
+REM is the worst kind of stale: someone counting windows to check the update worked would
+REM see three, tick the box, and never notice the two RC processes had failed to start —
+REM and the RC ones are exactly the pair whose silent absence cost a hold on 2026-08-07.
+echo === Update complete. FIVE new windows should have opened: ===
+echo     Cloudflare tunnel, CampHawk bot, CampHawk broker,
+echo     CampHawk RC keep-warm, CampHawk RC holds.
+echo If you cannot see all five, something failed to start — do not assume it is fine.
+echo(
+echo Watch the "CampHawk RC keep-warm" window for one pass. If it says
+echo "RC SESSION IS DEAD", run mini-pc\rc-login.bat once, by hand.
 echo You can close this window.
 pause
 exit /b 0
