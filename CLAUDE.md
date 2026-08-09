@@ -767,6 +767,33 @@ observing it occasionally and reporting a token nothing had ever extended.
   routinely screen-shared. Saved once with `mini-pc\rc-save-password.bat` (echo muted for
   the same reason). `credentials()` is not exported, and `worker/rc-autologin.test.mts`
   asserts that plus every line the plaintext may appear on.
+- **The first `--save-login` ECHOED THE PASSWORD** (reported 2026-08-09, fixed same day).
+  It created a `readline` for the email prompt and left it OPEN while reading the password
+  raw — and readline in terminal mode echoes every keypress itself. `setRawMode(true)`
+  silences the TTY driver, not another library listening on the same stream. Reproduced
+  under a pty before fixing, which also exposed a second bug: the old handler compared the
+  whole CHUNK to `'\r'`, so a PASTED password (one buffer) fell through and was stored with
+  a trailing carriage return. Hand-typed input was fine; pasted was silently wrong. It now
+  asks twice, because a hidden field with no confirmation makes a typo undiscoverable until
+  07:45, where it reports "check the password" — indistinguishable from a real change.
+- **`mini-pc\rc-test-login.bat` proves it works BEFORE the morning it matters.** It clears
+  the localStorage token **only** — never cookies, and do not sign out via RC's own menu
+  either: the `DT` cookie is the device identity, and losing it makes the login look like a
+  fresh profile, which is the exact shape that got the IP blocked. Then it runs the real
+  `attemptLogin`. **A failure leaves you signed OUT**, and the script says so and points at
+  `rc-login.bat`.
+- **A dead session with a hold <45 min out now RINGS THE PHONE** (`lib/notifications/voice.ts`,
+  `holdAtRisk`). Not a louder push: iOS Critical Alerts needs an entitlement Apple grants to
+  medical/public-safety apps, and Time Sensitive is a *native* entitlement that would cost
+  the 1.0's review-queue position and still is not an alarm. **It calls TWICE, 45s apart,
+  and the repeat is the MECHANISM not a retry** — iOS lets a second call from the same
+  number within three minutes through Do Not Disturb. Each call rings 25s so the first has
+  stopped before the second lands. **Scheduled with `after()` from `next/server` plus
+  `maxDuration = 90`**: a bare `setTimeout` in a route handler is frozen with the invocation
+  and silently never fires, while the first call still goes out and every log line reads as
+  success. Test it from Admin → System Health → **"Ring my phone now"** — the one delivery
+  canary that cannot run itself, and worth a button because a 21210 ("not voice-capable")
+  is only knowable at call time. `AUTOCART_ALARM_PHONE` overrides the destination.
 
 ### A dead RC session is NOT "alerting is broken" (2026-08-08)
 `autocart.rc_session` went in as a plain `fail`, so it turned `/api/health/status` 503 and

@@ -2086,6 +2086,74 @@ Two rules that are load-bearing rather than stylistic:
   point there is a ~2.5s window where anyone can take it. The RC copy says so rather than
   pretending the swap is instant.
 
+## The alarm call — `lib/notifications/voice.ts` (2026-08-09)
+
+**One condition only:** the RC session is reported dead AND a hold releases within
+`AUTOCART_ALARM_LEAD_MIN` (45). That is the moment a campsite is minutes from being lost
+and only a human can sign in — and it is also the moment a push and a text are least likely
+to be seen, because it is early and the phone is asleep. A dead session at 2pm stays what it
+already was: a red admin check and a 07:30 pre-flight. **The cost of crying wolf is not the
+noise, it is that the next real one gets skimmed** — the same lesson as the "CampHawk DOWN"
+pager on 08-08.
+
+### Why a call and not an "alarm" push
+
+The request was literally for a push that goes off like an alarm. On iOS that is a specific
+gated thing and we cannot have it:
+- **Critical Alerts** (ignores the mute switch AND Do Not Disturb, own volume) requires
+  `com.apple.developer.usernotifications.critical-alerts`, which Apple grants per
+  application to medical, public-safety and home-security apps. A campsite alerter does not
+  qualify and asking would not be honest.
+- **Time Sensitive** (pierces Focus; still a normal notification sound, still obeys the
+  ringer switch) is freely available but is a *native* entitlement — a new binary, and the
+  1.0 currently "Waiting for Review" would have to be pulled from the queue to attach one.
+  Worth doing at the next natural build; not worth the queue position, and not an alarm.
+
+A voice call needs no entitlement, no build and no review, rings through the RINGER rather
+than the notification sound, and we already pay Twilio.
+
+### It calls TWICE, and that is the mechanism
+
+iOS's **"Allow Repeated Calls"** — on by default — lets a *second* call from the same number
+within three minutes ring through Do Not Disturb and Focus. One call gets silenced by a
+sleeping phone; two do not. **So the repeat is placed whether or not the first was
+answered.** Making it conditional would turn the mechanism back into a retry and quietly
+delete the whole feature. `worker/voice-alarm.test.mts` fails if the repeat is dropped or
+made conditional (verified by doing both).
+- 45s gap, 25s ring (`Timeout`, against Twilio's 60s default) so the first call has stopped
+  before the second arrives — otherwise it lands as call-waiting on a call in progress,
+  which is not what the repeated-call rule looks at.
+- **Scheduled with `after()` from `next/server`, and the route sets `maxDuration = 90`.** A
+  bare `setTimeout` in a route handler is frozen with the invocation on Vercel and may
+  simply never fire — and the failure is invisible: the first call still goes and the log
+  still reads as success. `alarmCall` takes the scheduler as a parameter so this cannot be
+  got wrong silently.
+- TwiML is passed INLINE, not hosted at a URL: a hosted endpoint would be one more thing
+  that has to be up at 07:45, and the alarm exists for mornings when something already isn't.
+- `<Say>` three times — someone woken by it misses the first pass entirely.
+
+### The rate limit is weaker than it looks, on purpose
+
+`lastCallAt` is an in-process Map, so a cold start resets it and two lambda instances do not
+see each other. It reliably kills a *tight* loop (the runner posting every 5s during a due
+cart lands on a warm instance); it does **not** guarantee one call per 15 minutes globally.
+The real bound is the trigger: the window closes when the release passes, and the keep-warm
+reports every 20 minutes, so a genuine emergency is two or three calls. Not in the DB
+deliberately — a round trip is one more thing that can fail on the alarm's own path, and the
+failure mode here should be an extra call, never a missed one.
+
+### Testing it
+
+Admin → System Health → **"Ring my phone now"** (`/api/admin/test-alarm`). The other three
+delivery canaries run themselves daily because email and SMS to yourself are free and
+silent; a call is neither, so this one is a button. It goes through the real `alarmCall` —
+a test on a different path would confirm the wrong thing — and reports the MASKED number it
+dialled, because "it worked" against the wrong phone is exactly what it exists to rule out.
+**Twilio rejects a non-voice-capable `From` with a 21210 at call time**, which is not
+knowable from the code, and we had never placed a voice call from this account.
+`AUTOCART_ALARM_PHONE` overrides the destination — the person who can reach the mini-PC is
+not necessarily the user whose hold it is.
+
 ## Per-site alert cooldown (migration 026, 2026-07-30)
 
 The claim that decides "may we alert for this?" lives in **`worker/claim.ts`**, keyed
@@ -3811,6 +3879,14 @@ which reads like a broken install rather than a wrong directory, and cost three 
   the RC password so `maybeAutoLogin` can obtain a token ~15 minutes before a hold. Opens
   no browser, touches no profile lock, stops nothing — so unlike `update.bat` it is safe
   to run at 07:55.
+- **`mini-pc/rc-test-login.bat`** — proves the unattended sign-in works, on demand. The
+  guards that make `maybeAutoLogin` safe (once per release, only near a hold, never a
+  retry) also mean its first real run is the morning it is load-bearing, which is the worst
+  time to find a mistyped password. **It clears the localStorage token and NOTHING ELSE**,
+  and a human should not sign out through RC's menu either: `DT` on
+  `signin.reservecalifornia.com` is the device identity, and a login without it is what a
+  fresh profile looks like — the shape that got the household IP blocked for 12h on
+  2026-08-06. A FAILED test leaves the box signed out, which the script says loudly.
 - **`mini-pc/rc-login.bat`** — the human fallback, for when the auto-login reports it could
   not get in (a CAPTCHA, a changed password, an MFA prompt). Closes anything holding the RC
   profile, opens RC to sign in ("Keep me signed in"), relaunches both processes on success.
