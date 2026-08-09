@@ -924,9 +924,11 @@ function RcWebviewTest() {
         Can we sign in to RC in the app?
       </h3>
       <p className="mb-2 text-ch-fine text-ch-muted">
-        Open this <strong>from the phone app</strong>. If ReserveCalifornia&rsquo;s sign-in
-        loads and accepts your password inside the window that opens, mobile auto-cart
-        works. On desktop this just opens RC in a tab.
+        Open this <strong>from the CampHawk app</strong>, not from a browser — the whole
+        question is what the app&rsquo;s own webview does, and a browser tells you nothing.
+        If ReserveCalifornia&rsquo;s sign-in loads and accepts your password inside the
+        window that opens, mobile auto-cart works. Read the line below the button first: it
+        says which kind of window you got.
       </p>
       <button
         type="button"
