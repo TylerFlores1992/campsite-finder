@@ -236,6 +236,48 @@ events. Retrying harder can never work.
 - **The precart payload is solved** — `{extraId, extraValue}`, lowerCamel; see the same
   doc. That contract is reusable by whichever hand-off we pick.
 
+### MOBILE RECAPTURE IS SOLVED ON ANDROID — MEASURED 2026-08-09, not reasoned
+The paragraph above says the missing piece is recapture on mobile. **It is no longer
+missing on Android.** `cordova-plugin-inappbrowser` (v7.0.0 — the ONLY package of the
+three unpacked that actually has `executeScript`; `@capacitor/inappbrowser` does not,
+and I asserted otherwise from memory once) is in the Capacitor 8 Android build, and all
+three questions were answered on a live emulator against production:
+1. **RC's Okta signs in INSIDE the app's WebView.** Email + password accepted. A CAPTCHA
+   appeared and was solved by hand. That is survivable here and fatal on the mini-PC — the
+   difference is that a human is holding the phone, having just tapped "claim". Do not
+   carry the bot's "a CAPTCHA is a full stop" rule onto this path; it is a different
+   threat model.
+2. **The session SURVIVES closing the webview**, and
+3. **survives force-closing the whole app.** Android's `CookieManager` is process-wide and
+   the InAppBrowser shares it with the main WebView. That was the expectation, and it was
+   still tested, because "the keep-warm renews the session" and "a second session can adopt
+   the cart" were both expectations of exactly this confidence and both measured FALSE.
+**So the design is: sign into RC in the app ONCE, and the 8am claim is one tap with no
+credentials in the critical path** — which is a better story than the desktop extension,
+not a worse one. `ClaimFlow` already routes through `openRcHandoff`, so the plumbing
+needed no change.
+- **iOS is UNPROVEN and must not be assumed.** WKWebView has its own cookie store and its
+  own ITP rules, and the 1.0 build in review has no InAppBrowser plugin at all. Android
+  can ship this; iOS needs the plugin, a rebuild, and its own run of the three tests above.
+- **THE TEST HARNESS IS WHERE THE TIME WENT, NOT THE QUESTION.** Three consecutive runs
+  were lost to identity confusion, and all three looked like RC rejecting us:
+  a hand-written RC URL that 404'd (see below), the admin page opened in **Chrome**
+  instead of the app (the result line says which window you got — read it FIRST), and
+  Android Studio's **Run** silently reinstalling the local debug variant (versionCode 1,
+  targetSdk 35, no Cordova plugins) over the release APK (19/36). **Launch the installed
+  build with `adb shell monkey -p app.camphawk.mobile …`, never ▶ Run**, and when its
+  "the device already has a newer version" dialog appears, the newer version is the one
+  you want — Cancel, not OK. `appBuild` in the diagnostics panel is the only fact that
+  settles which binary is answering.
+- **`/Web/#!park/<place>/<facility>` IS NOT A REAL RC URL** and has now been written from
+  memory twice, both times answered with RC's branded 404, the second time burning a live
+  test that needed a human, an emulator and a fresh build to set up. The real shape is
+  `/park/<placeId>/<facilityId>` and the ONE place allowed to build it is
+  `lib/booking-url`. `worker/rc-handoff.test.mts` fails on the invented shape now.
+  Worse: the commit that claimed to fix this the first time (`6006428`, "it is now what
+  builds the URL") **only changed the instructional copy** — the URL line was never
+  touched. A commit message is not evidence that a change was made.
+
 ## Alert copy — three bugs from one real text (2026-08-06)
 A live alert read *"Leo Carrillo SP - Canyon Campground **(si.** Site **Unit 42573** open
 **2026-09-04, 2026-09-05, 2026-09-06**"* and the owner read it as "the site opens Sep 4".
