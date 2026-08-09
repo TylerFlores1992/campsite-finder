@@ -78,22 +78,29 @@ if (!session || session.session_ok == null) {
   console.log('  AUTOCART_TOKEN in scripts/auto-cart-bot/.env? Unknown is not healthy.\n');
 } else if (session.session_ok === false) {
   console.log(`⚠ RC SESSION IS DEAD — dead for ${hms(session.session_since)}, per ${session.session_source}`);
-  // THE MEASUREMENT. Two sessions have died 8-9 hours after a fresh sign-in, with
-  // keep-warm loading RC every 20 minutes throughout the second one and "Keep me signed
-  // in" confirmed ticked. If that holds, RC caps the session absolutely and no amount of
-  // page-loading can hold it — which falsifies "sign in once and never let it lapse" and
-  // means the 8am flow needs a different shape. See migration 047.
+  // THE MEASUREMENT (see migration 047). The "8-9 hours" this used to print was never a
+  // measurement — nobody looked in between, so it bounded when we NOTICED. The first real
+  // reading was 1h20m: about one Okta access token, which is what you see when nothing is
+  // renewing. Print the number, not a remembered claim about it.
   console.log(`  IT LASTED ${lifetime(session.session_live_since, session.session_since)} after sign-in.`);
   console.log(`  ${session.session_detail ?? ''}`);
-  console.log('  Nothing below can be carted until a human runs, on the mini-PC:');
-  console.log('    node rc-keepwarm.mjs --login      (tick "Keep me signed in")\n');
+  console.log('  Nothing below can be carted until there is a session again. Since 2026-08-09');
+  console.log('  the bot can get one itself ~15 min before a hold, so this may fix itself —');
+  console.log('  if it does not, on the mini-PC: mini-pc\\rc-login.bat\n');
 } else {
   const age = mins(session.session_at);
   const stale = age != null && age > 45;
   console.log(
     `RC session: OK for ${hms(session.session_since)} (per ${session.session_source},` +
     ` checked ${age}m ago)${stale ? ' — STALE, keep-warm may be down' : ''}`);
-  console.log('  Both sessions so far died 8-9h after sign-in. Watch this number.\n');
+  // WATCH THE LIFETIME, DO NOT ASSERT IT. Every figure quoted here before 047 was an
+  // upper bound on when somebody happened to look, and one of them ("~8 hour cap") was
+  // written down as fact and falsified within hours. The line above prints the real
+  // elapsed time; that is the number, and there is nothing to add to it.
+  console.log(`  ${session.session_detail ?? ''}`);
+  console.log('  okta=ALIVE means a real Okta session exists (only since the ported login');
+  console.log('  started ticking "Keep me signed in"); okta=GONE means the access token IS');
+  console.log('  the whole session and it lasts about an hour.\n');
 }
 
 if (!holds.length) {

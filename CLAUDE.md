@@ -776,6 +776,23 @@ observing it occasionally and reporting a token nothing had ever extended.
   a trailing carriage return. Hand-typed input was fine; pasted was silently wrong. It now
   asks twice, because a hidden field with no confirmation makes a typo undiscoverable until
   07:45, where it reports "check the password" — indistinguishable from a real change.
+- **AN OKTA SESSION EXISTS NOW, AND THAT REOPENS A CLOSED QUESTION (2026-08-09 21:40 PT).**
+  The first successful `--test-login` reported `okta=ALIVE (exp 2026-08-09T16:36:23)` — a
+  200 from `/api/v1/sessions/me` with a **~12-hour expiry**. Every earlier reading was
+  `okta=GONE(404)`, which is what "THERE IS NOTHING TO KEEP WARM" below was built on.
+  **The likeliest cause is the tick-box:** the ported login calls `keepSignedIn()`, and the
+  hand-rolled one never did — every previous session was established without "Keep me
+  signed in", so of course Okta issued nothing persistent. The human `--login` path only
+  *asks* a person to tick it.
+  **Do not rewrite the conclusion below yet.** One reading is not a lifetime, and the thing
+  that matters is not whether a session EXISTS but whether RC's `authorize?prompt=none`
+  now succeeds against it — that was never testable before, because there was nothing to
+  authenticate against. **The evidence arrives on its own:** watch `token exp in Xm;
+  renewed=` on `autocart.rc_session` across the 20-minute passes. Climbing back toward
+  ~60m ⇒ silent renewal works and the keep-warm becomes real again; counting to zero and
+  dying ⇒ the access token is still the whole session and the auto-login stays the answer.
+  Either way the 08:00 hold is now covered twice over: the Okta session outlives it
+  (expires 09:36 PT) and `maybeAutoLogin` is the backstop.
 - **`rc-autologin.mjs`'s sign-in is PORTED FROM `rc-probe.mjs`, and reinventing it cost two
   failed runs (2026-08-09).** The probe signed in unattended and carted on 08-06; the new
   module was then written from scratch, four hundred lines from a working implementation in
