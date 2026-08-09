@@ -1,5 +1,6 @@
 'use client';
 
+import { openRcHandoff, rcHandoffUrl } from '@/lib/native/rc-handoff';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Check, AlertTriangle, Tent } from 'lucide-react';
 import { formatStayDates } from '@/lib/notifications/dates';
@@ -84,17 +85,22 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
   useEffect(() => {
     if (state?.status !== 'released' || redirected.current) return;
     redirected.current = true;
-    const frag = state.unitId
-      ? `#camphawk-rc=${state.unitId}_${state.arrivalDate}_${state.nights ?? 1}_`
-      : '';
     // THE PARK'S OWN BOOKING PAGE, not reservecalifornia.com's homepage — which is where
     // this used to land, under a comment claiming otherwise. The fragment is read by the
     // desktop extension, which carts in the user's own session; on a phone nothing
     // consumes it, and the base URL is all they get. Dropping a phone user on RC's front
     // page to search for the park by hand spends the entire ~2.5s window this design
-    // exists to protect. The base is stripped of any existing fragment so we cannot emit
-    // two.
-    window.location.href = `${bookingUrl.current.split('#')[0]}${frag}`;
+    // exists to protect.
+    //
+    // Routed through openRcHandoff so the day an injectable in-app webview exists, the
+    // phone gets the same automatic cart the desktop extension already does — and it
+    // changes in ONE place rather than in the three exits this screen has.
+    void openRcHandoff({
+      url: bookingUrl.current,
+      unitId: state.unitId,
+      arrivalDate: state.arrivalDate,
+      nights: state.nights,
+    });
   }, [state]);
 
   async function claim() {
@@ -161,7 +167,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
             <span className="font-bold text-ch-green-deep">1.</span>
             <span>
               <a
-                href={bookingUrl.current.split('#')[0]}
+                href={rcHandoffUrl({ url: bookingUrl.current })}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="font-semibold text-ch-green-deep underline"
@@ -262,9 +268,24 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
             extension user who lands here rather than via the auto-redirect still gets the
             autofill — it is inert everywhere else. */}
         <a
-          href={`${bookingUrl.current.split('#')[0]}${
-            state.unitId ? `#camphawk-rc=${state.unitId}_${state.arrivalDate}_${state.nights ?? 1}_` : ''
-          }`}
+          href={rcHandoffUrl({
+            url: bookingUrl.current,
+            unitId: state.unitId,
+            arrivalDate: state.arrivalDate,
+            nights: state.nights,
+          })}
+          onClick={(e) => {
+            // Kept as a real <a> with a real href — middle-click, long-press and "copy
+            // link" all still work, and it degrades if JS is broken. The handler only
+            // takes over when there is something better to do than follow it.
+            e.preventDefault();
+            void openRcHandoff({
+              url: bookingUrl.current,
+              unitId: state.unitId,
+              arrivalDate: state.arrivalDate,
+              nights: state.nights,
+            });
+          }}
           className="mt-6 inline-block rounded-xl bg-ch-green-deep px-6 py-4 font-bold text-white"
         >
           Book {site} on ReserveCalifornia →
