@@ -29,6 +29,24 @@ export interface PushResult {
   deadTokens: string[];
 }
 
+/**
+ * Is FCM usable IN THIS RUNTIME? Names no secret — just whether one is loadable here.
+ *
+ * WHY THIS IS NOT THE SAME QUESTION the `delivery:push` canary answers. That canary runs
+ * in the WORKER, on Fly, and proves Fly's credentials mint an access token. But the most
+ * important push this product sends — "we're holding your site, come and get it" — is
+ * dispatched from a VERCEL route (`notifyHeld` in the hold feed), and nothing anywhere
+ * checked Vercel's copy.
+ *
+ * On 2026-08-09 that gap cost the real one: the cart push failed with "FCM accepted 0 of 2
+ * token(s)" at 15:00:03 while the worker's ordinary alert to the SAME two devices went out
+ * fine eight seconds later. Two runtimes, one configured. A green canary in the wrong
+ * process is not coverage.
+ */
+export function pushConfiguredHere(): boolean {
+  return loadServiceAccount() !== null;
+}
+
 function loadServiceAccount(): ServiceAccount | null {
   const raw = process.env.FCM_SERVICE_ACCOUNT;
   if (!raw) return null;
