@@ -43,8 +43,34 @@ export interface PushResult {
  * fine eight seconds later. Two runtimes, one configured. A green canary in the wrong
  * process is not coverage.
  */
-export function pushConfiguredHere(): boolean {
-  return loadServiceAccount() !== null;
+export function pushConfigStatus(): { ok: boolean; detail: string } {
+  const raw = process.env.FCM_SERVICE_ACCOUNT;
+  if (!raw) return { ok: false, detail: 'FCM_SERVICE_ACCOUNT is not set in this runtime' };
+
+  // SHAPE ONLY, NEVER CONTENT. Length and the first character are enough to tell the
+  // three failure modes apart and give away nothing: a service account that arrived
+  // double-encoded starts with a quote, a truncated paste is short, and a good one starts
+  // with a brace. The value is a private key — it must not reach a log, a health endpoint
+  // or an error message.
+  const shape = `${raw.length} chars, starts ${JSON.stringify(raw[0] ?? '')}`;
+
+  let sa: ServiceAccount;
+  try {
+    sa = JSON.parse(raw) as ServiceAccount;
+  } catch {
+    return {
+      ok: false,
+      detail:
+        `FCM_SERVICE_ACCOUNT is set but is NOT VALID JSON (${shape}). ` +
+        'Usual cause: the key was pasted with surrounding quotes, or newlines in ' +
+        'private_key broke it. Paste the service-account file verbatim.',
+    };
+  }
+  const missing = (['client_email', 'private_key', 'project_id'] as const).filter((k) => !sa[k]);
+  if (missing.length) {
+    return { ok: false, detail: `FCM_SERVICE_ACCOUNT parses but is missing: ${missing.join(', ')}` };
+  }
+  return { ok: true, detail: `FCM service account loads (project ${sa.project_id})` };
 }
 
 function loadServiceAccount(): ServiceAccount | null {

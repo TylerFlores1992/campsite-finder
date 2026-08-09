@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { query, queryOne } from '@/lib/db/client';
 import { getShardCoverage, getPollerCapacity } from '@/lib/capacity';
-import { pushConfiguredHere } from '@/lib/notifications/push';
+import { pushConfigStatus } from '@/lib/notifications/push';
 import {
   DELIVERY_STALE_MS as SHARED_DELIVERY_STALE_MS,
   DETECT_STALE_MS as SHARED_DETECT_STALE_MS,
@@ -123,20 +123,15 @@ export async function GET() {
   //     dispatched from. They are different processes with different environments, and on
   //     2026-08-09 exactly one of them was configured — the cart alert's push failed while
   //     the worker's ordinary alert reached the same two devices seconds later.
-  checks.push(
-    pushConfiguredHere()
-      ? { name: 'delivery:push_web', level: 'ok', detail: 'FCM service account loads in the web runtime' }
-      : {
-          name: 'delivery:push_web',
-          level: 'fail',
-          // Not a pager: alerting from the worker is unaffected, and this is about the
-          // auto-cart family. Same reasoning as autocart.* — see the `pages` field.
-          pages: false,
-          detail:
-            'FCM_SERVICE_ACCOUNT is missing or unparseable ON VERCEL — hold/claim pushes ' +
-            'cannot send. The worker has its own copy; set this one in Vercel env.',
-        },
-  );
+  const pushCfg = pushConfigStatus();
+  checks.push({
+    name: 'delivery:push_web',
+    level: pushCfg.ok ? 'ok' : 'fail',
+    // Not a pager: alerting from the worker is unaffected, and this is about the
+    // auto-cart family. Same reasoning as autocart.* — see the `pages` field.
+    ...(pushCfg.ok ? {} : { pages: false }),
+    detail: pushCfg.ok ? pushCfg.detail : `${pushCfg.detail} — hold/claim pushes cannot send`,
+  });
 
   // 2. Alert-health canary rows (detection per source + delivery). Written by the
   //    poller (worker/canary.ts). Missing rows mean the canary has never run.
