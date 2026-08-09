@@ -85,6 +85,7 @@ async function forward(base: string, host: string, req: ProxyRequest): Promise<P
   if (typeof req?.path !== 'string' || !ALLOWED_PATHS.some((re) => re.test(req.path))) {
     return { ok: false, status: 400, error: 'path not allowed' };
   }
+  const startedAt = Date.now();
   try {
     const res = await fetch(`${base}${req.path}`, {
       method: req.method ?? 'GET',
@@ -113,11 +114,23 @@ async function forward(base: string, host: string, req: ProxyRequest): Promise<P
         detail,
       };
     }
-    return { ok: true, status: 200, data: await res.json() };
+    const data = await res.json();
+    // HOW LONG UPSTREAM ACTUALLY TOOK — the number missing from every diagnosis of this
+    // route so far. Bounding the fetch (2026-08-09) changed whole-batch aborts into
+    // single-item timeouts, which was the right fix for the CONTRACT, and did nothing to
+    // the retry VOLUME: ~100% of first attempts still fail and the retry still succeeds.
+    // That is deterministic, so it is not "upstream is randomly slow", and the two live
+    // candidates — upstream genuinely needing more than the bound, versus a cold
+    // connection on the first call of an invocation that the retry then reuses — have
+    // opposite fixes and are indistinguishable without a duration. Logged only when slow,
+    // so a healthy path stays quiet.
+    const ms = Date.now() - startedAt;
+    if (ms > 3_000) console.log(`[rc-proxy] slow upstream ${ms}ms for ${host}${req.path}`);
+    return { ok: true, status: 200, data };
   } catch (err) {
     // A transport failure is this item's result, not the batch's.
     const message = (err as Error).message.slice(0, 200);
-    console.error(`[rc-proxy] fetch failed for ${host}${req.path}: ${message}`);
+    console.error(`[rc-proxy] fetch failed after ${Date.now() - startedAt}ms for ${host}${req.path}: ${message}`);
     return { ok: false, status: 502, error: `fetch failed: ${message}` };
   }
 }
