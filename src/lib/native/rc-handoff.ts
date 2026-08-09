@@ -346,7 +346,11 @@ export async function openRcHandoff(
  */
 async function rcInjectedPrecart(): Promise<string | null> {
   try {
-    const res = await fetch('/api/rc-precart', { cache: 'force-cache' });
+    // `default`, NOT `force-cache`. force-cache serves a cached response even when STALE,
+    // which silently defeats the route's short max-age — the one property that makes a
+    // broken precart a push to master rather than an app release. Within the 5-minute
+    // window this is still a cache hit with no network, so 08:00:00 pays nothing for it.
+    const res = await fetch('/api/rc-precart', { cache: 'default' });
     if (!res.ok) return null;
     const code = await res.text();
     // A truncated or error-page body would inject nothing and report success, and the
