@@ -28,9 +28,11 @@ node rc-keepwarm.mjs --save-login
 if errorlevel 1 goto :fail
 
 echo(
-echo === Saved. Now restart the RC processes so they pick it up ===
-echo Run mini-pc\update.bat (or leave it - they will read the store on their
-echo next launch either way; update.bat just makes it immediate).
+echo === Saved. Nothing needs restarting ===
+echo The keep-warm checks for the stored password on every pass, so the copy
+echo already running will find it without being touched. Do NOT run update.bat
+echo just for this - it force-kills every node process, and near 8am that is a
+echo real way to lose a hold for no reason.
 echo(
 echo To check it is working, watch the "CampHawk RC keep-warm" window before your
 echo next 8am hold. About 15 minutes out it should print:
