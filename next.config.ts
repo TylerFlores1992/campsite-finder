@@ -2,7 +2,14 @@ import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // The RC precart route READS extension/*.js at runtime and serves them to the mobile
+  // in-app webview, so the extension source is the single implementation of that wire
+  // contract. Next only bundles files it can trace through imports, and a readFileSync
+  // path is invisible to tracing — without this the route 500s in production while
+  // working perfectly in dev, which is the worst shape of deploy bug.
+  outputFileTracingIncludes: {
+    '/api/rc-precart': ['./extension/rc-inject.js', './extension/content-rc.js'],
+  },
 };
 
 // Sentry wraps the build for error monitoring. Source-map upload only runs when

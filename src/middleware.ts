@@ -14,6 +14,11 @@ const isPublicRoute = createRouteMatcher([
   // store listing points here — a reviewer opens it signed out, so a 404 from
   // auth.protect() would fail the very check it exists to pass.
   '/sources',
+  // The RC precart script the mobile in-app webview injects. Fetched by a webview with
+  // no CampHawk session, at 08:00:00, when a site is seconds from being lost — an auth
+  // dance there is latency we cannot spend. It is the source of a published extension
+  // and carries no credential; see the route.
+  '/api/rc-precart',
   '/robots.txt',
   '/sitemap.xml',
   // The app's free surface. Search is the funnel and must work signed-out;

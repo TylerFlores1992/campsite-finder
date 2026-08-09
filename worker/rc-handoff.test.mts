@@ -73,3 +73,43 @@ test('injection is not claimed until it can actually be done', () => {
     );
   }
 });
+
+test('the served precart is the extension file, and it parses', async () => {
+  // ONE IMPLEMENTATION, TWO CONSUMERS. The extension keeps using its own copy (MV3 forbids
+  // remote code); the phone fetches the same bytes. If this route ever grew its own copy
+  // of the precart, RC's next schema change would fix one and leave the other broken —
+  // exactly what rc-cart.mjs exists to prevent between the probe and the runner.
+  const route = readFileSync('src/app/api/rc-precart/route.ts', 'utf8');
+  assert.match(route, /extension/, 'the route must read from extension/, not embed a copy');
+  assert.ok(
+    !/precartdataforbookingmodify/.test(route),
+    'the route must not contain precart logic of its own — serve the file',
+  );
+
+  // Build the same string the route builds and check it is valid JS. A syntax error here
+  // injects nothing, and an injection that runs nothing is indistinguishable from a cart
+  // that failed silently.
+  const inject = readFileSync('extension/rc-inject.js', 'utf8');
+  const content = readFileSync('extension/content-rc.js', 'utf8');
+  const shim = 'if (typeof chrome === "undefined") { var chrome = { storage: { local: { get: function (d, cb) { cb({}); } } } }; }';
+  const script = [shim, inject, content].join('\n');
+  new (await import('node:vm')).Script(script); // throws on a syntax error
+
+  // The one string the handoff sanity-checks the response body for.
+  assert.match(script, /precartdataforbookingmodify/);
+});
+
+test('the precart route is reachable without a CampHawk session', () => {
+  // Clerk's auth.protect() returns 404, not 401, for a route that is not public — so this
+  // would fail as "not found" in a webview at 08:00:00 and read like a deploy problem.
+  const mw = readFileSync('src/middleware.ts', 'utf8');
+  assert.match(mw, /'\/api\/rc-precart'/, 'must be in isPublicRoute');
+});
+
+test('extension/ is included in the deployment', () => {
+  // readFileSync paths are invisible to Next's file tracing, so without this the route
+  // works in dev and 500s in production — the worst shape of deploy bug.
+  const cfg = readFileSync('next.config.ts', 'utf8');
+  assert.match(cfg, /outputFileTracingIncludes/);
+  assert.match(cfg, /extension\/content-rc\.js/);
+});

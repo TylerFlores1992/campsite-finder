@@ -217,17 +217,26 @@ export async function openRcHandoff(h: RcHandoff): Promise<'injected' | 'in-app'
 /**
  * The precart script to inject, or null if we cannot serve one.
  *
- * DELIBERATELY NOT WRITTEN HERE. `extension/content-rc.js` is 332 lines of hard-won
- * behaviour — RC's two-step load-then-submit precart, the `extraValues` contract it
- * returns 200-but-IsSuccess:false without, and unit-specific defaults captured from a real
- * add-to-cart. Re-implementing that from memory for the phone would produce a second
- * version to keep in sync with the first, and the codebase already has a rule about this
- * (see `rc-cart.mjs`, shared so the probe and the runner cannot drift).
+ * SERVED, NOT COPIED. `/api/rc-precart` hands back the bytes of `extension/content-rc.js`
+ * — 332 lines of hard-won behaviour (RC's two-step load-then-submit, the `extraValues`
+ * contract it answers 200-but-IsSuccess:false without, unit defaults from a live capture).
+ * A second implementation for the phone would be two versions of one wire contract, which
+ * this codebase has a rule against; see `rc-cart.mjs`.
  *
- * So the injected code will be SERVED from the one source, not copied. Returning null
- * until that endpoint exists keeps the fallback honest rather than shipping a half-copy
- * that carts nothing and reports success.
+ * Returning null on any doubt is deliberate: `openRcHandoff` only reports 'injected' when
+ * this returns code, so a failure degrades to the manual flow instead of promising a cart
+ * that never happens.
  */
 async function rcInjectedPrecart(): Promise<string | null> {
-  return null;
+  try {
+    const res = await fetch('/api/rc-precart', { cache: 'force-cache' });
+    if (!res.ok) return null;
+    const code = await res.text();
+    // A truncated or error-page body would inject nothing and report success, and the
+    // claim screen would tell the user we were carting for them. Cheap sanity check on
+    // the one string that must be there.
+    return code.includes('precartdataforbookingmodify') ? code : null;
+  } catch {
+    return null;
+  }
 }
