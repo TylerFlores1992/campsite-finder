@@ -200,9 +200,40 @@ export async function POST(req: NextRequest) {
  */
 const ALARM_LEAD_MIN = Number(process.env.AUTOCART_ALARM_LEAD_MIN || 45);
 
+/**
+ * Below this many minutes to release, the unattended login has had its chance.
+ *
+ * THE ALARM CRIED WOLF ON ITS FIRST REAL MORNING (2026-08-09) and this is why. It gated on
+ * a 45-minute clock, while `maybeAutoLogin` does not even try until T-15 — so the alarm was
+ * STRUCTURALLY GUARANTEED to ring before the thing that fixes it, on every hold, not as an
+ * edge case. It rang twice, told the owner to go and sign in by hand, and the session was
+ * healthy: the bot carted the site two seconds after release using the very session the
+ * alarm had called dead.
+ *
+ * A dead session at T-40 is not an emergency, it is a pending repair. It becomes an
+ * emergency when the repair has been attempted and failed, or when there is no longer time
+ * for it. 12 is just inside RC_AUTOLOGIN_LEAD_MIN (15), so the window has demonstrably
+ * opened and passed without success.
+ */
+const ALARM_AFTER_MIN = Number(process.env.AUTOCART_ALARM_AFTER_MIN || 12);
+
 async function alarmSessionDead(why: string | null): Promise<void> {
   const at = await holdAtRisk(ALARM_LEAD_MIN);
   if (!at) return;
+
+  // RING ONLY IF THE REPAIR IS DONE FOR, one of two ways: the keep-warm has reported an
+  // auto sign-in that actually failed (definitive — it tried, RC said no), or the login
+  // window has closed with the session still dead. Anything earlier is a phone call about
+  // a problem the machine is about to solve, and the cost of that is not the noise — it is
+  // that the next real one gets skimmed.
+  const loginFailed = /auto sign-in failed/i.test(why ?? '');
+  if (!loginFailed && at.minutesAway > ALARM_AFTER_MIN) {
+    console.log(
+      `[rc-holds] session dead, hold ${at.hold.id} is ${Math.round(at.minutesAway)}m away — ` +
+      `NOT alarming yet; the auto-login has not had its turn`,
+    );
+    return;
+  }
 
   const where = at.campground ?? 'a campground';
   const site = at.hold.unit_name ? ` site ${at.hold.unit_name}` : '';

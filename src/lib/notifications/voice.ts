@@ -128,18 +128,26 @@ async function placeOne(to: string, message: string): Promise<CallResult> {
  * while a cart is due lands on a warm instance and is suppressed — and it does NOT
  * guarantee a global one-call-per-15-minutes.
  *
- * The real bound on how many times this can ring is the trigger, not this map: the alarm
- * only fires while a hold is inside ALARM_LEAD_MIN of releasing, and the keep-warm reports
- * session health once every twenty minutes. That is at most two or three calls for a
- * genuine "your campsite is about to be lost" — which is the behaviour we want anyway, and
- * it cannot run all night because the window closes when the release passes.
+ * The real bound is the TRIGGER, not this map — and the trigger is what was wrong. This
+ * comment used to say the arrangement gave "at most two or three calls for a genuine
+ * emergency, which is the behaviour we want anyway". Both halves were false on 2026-08-09:
+ * the alarm fired on a 45-minute clock while the repair does not run until T-15, so it was
+ * not a genuine emergency, and two of the three calls were pure noise. The gate now waits
+ * for the unattended login to actually fail (see ALARM_AFTER_MIN in the hold feed), which
+ * leaves roughly a twelve-minute window — narrower than the reporting cadence, so one
+ * incident is one alarm.
  *
  * Deliberately not in the database: a DB round trip is one more thing that can fail on the
  * path of the alarm, and the failure mode of this design is an extra call rather than a
  * missed one. For this alarm that is the right direction to err.
  */
 const lastCallAt = new Map<string, number>();
-const MIN_GAP_MS = 15 * 60_000;
+// LONGER THAN THE REPORTER'S CADENCE, or it suppresses nothing. This was 15 minutes while
+// the keep-warm reports session health every 20 — so the gap between two reports was
+// ALWAYS wider than the window, every report got through, and the limit was decoration.
+// It read like a safeguard in review and was dead code in production. 30 minutes is wider
+// than the 20-minute cadence with room for jitter.
+const MIN_GAP_MS = 30 * 60_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

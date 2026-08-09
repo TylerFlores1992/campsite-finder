@@ -194,12 +194,17 @@ export async function nextHoldRelease(): Promise<string | null> {
  * laptop and sign in by hand.
  */
 export async function holdAtRisk(withinMinutes: number): Promise<
-  { hold: HoldRequest; phone: string | null; campground: string | null } | null
+  { hold: HoldRequest; phone: string | null; campground: string | null; minutesAway: number } | null
 > {
-  const [row] = await query<HoldRequest & { phone: string | null; campground: string | null }>(
+  const [row] = await query<HoldRequest & { phone: string | null; campground: string | null; minutes_away: number }>(
     // Pacific wall-clock on both sides, so the offset cancels and no zone-less string is
     // ever handed to a Date. Same discipline as the runner's msUntilRelease.
-    `SELECT h.*, u.phone, c.name AS campground
+    // `minutes_away` is computed HERE, in Pacific, because `release_at` is a zone-less
+    // wall-clock string and parsing one in JS reads it as the server's local time — the
+    // trap that made an alert say "Sep 3" for a Sep 4 stay.
+    `SELECT h.*, u.phone, c.name AS campground,
+            EXTRACT(EPOCH FROM (h.release_at::timestamp
+              - (NOW() AT TIME ZONE 'America/Los_Angeles'))) / 60 AS minutes_away
        FROM rc_hold_requests h
        JOIN users u ON u.id = h.user_id
        LEFT JOIN campgrounds c ON c.id = h.campground_id
@@ -210,8 +215,8 @@ export async function holdAtRisk(withinMinutes: number): Promise<
     [String(withinMinutes)],
   ).catch(() => []);
   if (!row) return null;
-  const { phone, campground, ...hold } = row;
-  return { hold, phone, campground };
+  const { phone, campground, minutes_away, ...hold } = row;
+  return { hold, phone, campground, minutesAway: Number(minutes_away) };
 }
 
 /**

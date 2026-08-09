@@ -849,6 +849,32 @@ observing it occasionally and reporting a token nothing had ever extended.
   fire-and-forget because at 08:00:00.000 nothing may go in front of the precart. An
   undecodable token now reports NOTHING rather than guessing — keep-warm asks RC properly
   every pass and is the authority on a positive verdict.
+- **THE FIRST REAL 8AM HOLD WORKED, 2026-08-09: carted at 15:00:02Z, TWO SECONDS after the
+  release, claimed 15:02:01, released.** Every link that had broken before held at once —
+  the runner picked it up (unlike 08-07), the cart was correctly timed (unlike 08-08's 85s
+  early), the session was live, and the hand-off completed for the first time.
+- **AND THE MORNING'S THREE FAILURES WERE ALL MINE, from one missing check.**
+  `attemptLogin` had no already-signed-in branch. `maybeAutoLogin` runs because the token it
+  can SEE is gone — but loading RC's home page is itself what makes the SPA fetch one, so by
+  the time it looked for a sign-in link there was a healthy session and no link to find. It
+  reported "the sign-in form did not load", which drove a dead-session verdict, which fired
+  two alarm calls, which sent me chasing a phantom pre-check-in modal and telling the owner
+  to sign in by hand — over the session that carted the site fifteen minutes later. The
+  token proved it: 45 minutes left on a 60-minute token at 15:00 puts its issue at 14:45,
+  exactly when the "failed" login ran. **It now asks `isLive()` after the page load, before
+  hunting for a form.** Note the banner RC showed ("You have a reservation arriving on
+  today's date") is only ever rendered to a SIGNED-IN user — it was evidence of success and
+  I read it as the obstacle.
+- **The alarm gate was structurally guaranteed to cry wolf** (fixed same day). It fired at
+  `ALARM_LEAD_MIN` (45) while the repair does not run until `RC_AUTOLOGIN_LEAD_MIN` (15) —
+  so on EVERY hold, not as an edge case, the phone rang half an hour before the thing that
+  fixes it. It now waits for `auto sign-in failed` in the reported detail, or for the login
+  window to close (`ALARM_AFTER_MIN` = 12, just inside the lead). `worker/alarm-gate.test.mts`
+  fails against the 45-minute version.
+- **And its rate limit was dead code:** `MIN_GAP_MS` was 15 minutes against a keep-warm that
+  reports every 20, so every report cleared the window and nothing was ever suppressed. It
+  read like a safeguard in review. 30 minutes now, and the test asserts it exceeds the
+  cadence rather than asserting a number.
 - **A dead session with a hold <45 min out now RINGS THE PHONE** (`lib/notifications/voice.ts`,
   `holdAtRisk`). Not a louder push: iOS Critical Alerts needs an entitlement Apple grants to
   medical/public-safety apps, and Time Sensitive is a *native* entitlement that would cost

@@ -318,6 +318,32 @@ export async function attemptLogin(ctx, page, { homeUrl, isLive, log = () => {},
     await page.goto(homeUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
     step(`opened ${new URL(page.url()).host}`);
 
+    // ARE WE ALREADY IN? Ask before hunting for a form to fill.
+    //
+    // THE BUG THIS FIXES, and it cost a morning (2026-08-09). `maybeAutoLogin` decides to
+    // run because the token it can SEE is gone — but loading RC's home page is itself what
+    // makes the SPA fetch a token, so by the time we look for a sign-in link there may be
+    // a perfectly good session and no link to find. That is exactly what happened: the
+    // login "failed" at 14:45 with "the sign-in form did not load", the session was in
+    // fact healthy, and the token proved it — 45 minutes of life left on a 60-minute token
+    // at 15:00 puts its issue right at 14:45. The bot then carted the site two seconds
+    // after release using the very session it had just reported dead.
+    //
+    // The false failure was not harmless: it drove the dead-session verdict, which fired
+    // two alarm calls at the owner, which sent me chasing a phantom modal and telling them
+    // to sign in by hand over a working session.
+    //
+    // `isLive()` is the caller's real probe — it POSTs to RC's API and reads the status —
+    // so this is the authoritative question, not another guess from page furniture. The
+    // wait exists because the token arrives with RC's own first API call, not with
+    // domcontentloaded; without it this would report "not signed in" for a session that is
+    // one second away from proving itself.
+    await page.waitForTimeout(4000);
+    if ((await isLive()) === true) {
+      step('already signed in — nothing to do');
+      return { ok: true, reason: 'already signed in' };
+    }
+
     // Get to the Okta form. RC's sign-in is a link/button on its own header; going
     // straight at a guessed /Customers/SignIn path is how earlier attempts hit dead ends.
     const link = await findIn(page, SIGNIN_LINK_SELECTORS, 10_000);
