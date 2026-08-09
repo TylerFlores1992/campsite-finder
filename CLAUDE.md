@@ -776,6 +776,20 @@ observing it occasionally and reporting a token nothing had ever extended.
   a trailing carriage return. Hand-typed input was fine; pasted was silently wrong. It now
   asks twice, because a hidden field with no confirmation makes a typo undiscoverable until
   07:45, where it reports "check the password" — indistinguishable from a real change.
+- **`rc-autologin.mjs`'s sign-in is PORTED FROM `rc-probe.mjs`, and reinventing it cost two
+  failed runs (2026-08-09).** The probe signed in unattended and carted on 08-06; the new
+  module was then written from scratch, four hundred lines from a working implementation in
+  the same directory, and hit the same walls the probe had already documented. **Before
+  touching the login flow, read `rc-probe.mjs`'s `signIn()`.** The differences that mattered:
+  **Enter BEFORE the button** (Okta disables Next mid-transaction, so a click reports
+  success and does nothing — this file had it backwards); the email step is **flaky, not
+  blocked**, so three rounds with a **reload** between, which clears a half-finished
+  transaction; **"Keep me signed in"** was never ticked; **Okta's error banner**
+  (`[role="alert"]`, `.okta-form-infobox-error`) was never read, so "check the password" was
+  a guess from which timeout expired rather than RC's own words; the email was `fill()`ed
+  and never read back; and a **DOM-click fallback** separates "Okta refused us" from
+  "Playwright could not hit the button". Not ported: the probe's willingness to continue —
+  one login per release still stands, and a wrong password or CAPTCHA stops dead.
 - **`mini-pc\rc-test-login.bat` proves it works BEFORE the morning it matters.** It clears
   the localStorage token **only** — never cookies, and do not sign out via RC's own menu
   either: the `DT` cookie is the device identity, and losing it makes the login look like a
