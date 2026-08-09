@@ -16,6 +16,27 @@ export const metadata = {
 };
 
 
+/**
+ * Exclude seed/test accounts from every counted metric.
+ *
+ * Clerk user ids are always `user_…`. The five rows that are not — `test-user-001/002/003`,
+ * `test-rpc-check`, `webhook-test-user`, all dated 2026-06-30 — were inserted by hand while
+ * building the RPC and webhook paths, and they were being counted as real users everywhere
+ * on this page except the headline. They also own **5 of the 33 watches**, so "Watches"
+ * was inflated too; that one was less obvious because nothing about a watch says who made
+ * it.
+ *
+ * Worst of all they were HIDING a discrepancy: the Users tile reads Clerk, everything else
+ * reads this table, and both said 25 — which looked like agreement and was actually five
+ * fake rows papering over five signups who never took an action. Real users are 20.
+ *
+ * ONE constant, applied to users/watches by id shape rather than a hardcoded list of five
+ * ids, so a sixth test row inserted tomorrow is excluded without anyone remembering to add
+ * it. `\_` is escaped because `_` is a single-character wildcard in LIKE — unescaped,
+ * `'user_%'` would also match a `userX…` id.
+ */
+const REAL_USER = (col = 'user_id') => `${col} LIKE 'user\\_%'`;
+
 async function safe<T>(p: Promise<T | null>, fallback: T): Promise<T> {
   try {
     return (await p) ?? fallback;
@@ -63,7 +84,7 @@ export default async function AdminPage() {
           `SELECT count(*)::int total,
                   count(*) FILTER (WHERE created_at > now() - interval '7 days')::int new_7d,
                   count(*) FILTER (WHERE created_at > now() - interval '30 days')::int new_30d
-           FROM users`
+           FROM users WHERE ${REAL_USER('id')}`
         ),
         { total: 0, new_7d: 0, new_30d: 0 }
       ),
@@ -78,13 +99,13 @@ export default async function AdminPage() {
       safe(
         query<{ metric: string; d: string; n: number }>(
           `SELECT 'users' AS metric, to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS d, count(*)::int AS n
-             FROM users GROUP BY 2
+             FROM users WHERE ${REAL_USER('id')} GROUP BY 2
            UNION ALL
            SELECT 'subs', to_char(date_trunc('day', created_at), 'YYYY-MM-DD'), count(*)::int
              FROM subscriptions GROUP BY 2
            UNION ALL
            SELECT 'watches', to_char(date_trunc('day', created_at), 'YYYY-MM-DD'), count(*)::int
-             FROM watches GROUP BY 2
+             FROM watches WHERE ${REAL_USER()} GROUP BY 2
            UNION ALL
            SELECT 'alerts', to_char(date_trunc('day', created_at), 'YYYY-MM-DD'), count(*)::int
              FROM notifications WHERE status = 'sent' GROUP BY 2
@@ -111,7 +132,7 @@ export default async function AdminPage() {
       safe(
         queryOne<{ active: number; total: number; watchers: number }>(
           `SELECT count(*) FILTER (WHERE active)::int active, count(*)::int total,
-                  count(DISTINCT user_id)::int watchers FROM watches`
+                  count(DISTINCT user_id)::int watchers FROM watches WHERE ${REAL_USER()}`
         ),
         { active: 0, total: 0, watchers: 0 }
       ),

@@ -431,10 +431,28 @@ function OverviewPanel({
           sub={mrr ? `${mrr.activeCount} paying` : 'Stripe unavailable'}
           accent="green"
         />
+        {/* TWO SOURCES, SAID OUT LOUD. The big number is Clerk's signup count; everything
+            else about users — this subtitle, and the chart you get by clicking the tile —
+            comes from our own `users` table, which only gains a row once somebody takes an
+            authenticated action. So the tile's number is always >= the chart's running
+            total, and until 2026-08-09 nothing said why: five hand-inserted test rows
+            happened to make both read 25, which looked like agreement and was five fakes
+            covering five signups who never came back. The label now names each source, so
+            a gap reads as "signed up but never used it" — which is the useful metric —
+            rather than as a broken page. */}
         <Kpi
-          label="Users"
+          label="Signups"
           value={(clerkTotal ?? usersAgg.total).toLocaleString()}
-          sub={`+${usersAgg.new_7d} this week`}
+          sub={
+            clerkTotal == null
+              ? `${usersAgg.total} active · Clerk unavailable`
+              : `${usersAgg.total} active · +${usersAgg.new_7d} this week`
+          }
+          title={
+            clerkTotal == null
+              ? 'Clerk could not be reached, so this is the active count (people who have used the app), not signups.'
+              : `${clerkTotal} accounts created (Clerk). ${usersAgg.total} of them have actually used the app — that is what the chart plots. Seed/test rows are excluded.`
+          }
           metric="users_total"
           selected={def.series === 'users'}
           onSelect={onMetricChange}
@@ -1105,6 +1123,7 @@ function Kpi({
   label,
   value,
   sub,
+  title,
   accent,
   metric,
   selected,
@@ -1113,6 +1132,10 @@ function Kpi({
   label: string;
   value: string;
   sub?: string;
+  /** Hover text. For a tile whose number and subtitle come from DIFFERENT sources, this
+   *  is where the difference gets spelled out — the subtitle has room to name them, not
+   *  to explain them. */
+  title?: string;
   accent?: 'green' | 'alert';
   metric?: MetricKey;
   selected?: boolean;
@@ -1131,7 +1154,7 @@ function Kpi({
   );
   const base = 'rounded-ch-card border bg-ch-card p-4 text-left shadow-ch-card';
   if (!metric || !onSelect) {
-    return <div className={`${base} border-ch-line`}>{body}</div>;
+    return <div className={`${base} border-ch-line`} title={title}>{body}</div>;
   }
   return (
     <button
