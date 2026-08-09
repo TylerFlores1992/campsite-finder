@@ -181,6 +181,40 @@ export async function nextHoldRelease(): Promise<string | null> {
 }
 
 /**
+ * A hold that is about to release, with the phone of whoever loses it — or null.
+ *
+ * THIS IS THE ALARM'S TRIGGER, and the window is the whole design. A dead RC session at
+ * two in the afternoon is a thing to fix today; a dead RC session forty minutes before a
+ * site releases is a thing to fix NOW, and it is the only case that justifies ringing
+ * somebody's phone. Same rule that makes `autocart.rc_session` fail only when a hold is
+ * due — the check is not "is something broken", it is "is something about to be lost".
+ *
+ * The window is wider than the auto-login's 15-minute lead on purpose: the auto-login
+ * reports its failure at T-15, and a person needs longer than that to wake up, find a
+ * laptop and sign in by hand.
+ */
+export async function holdAtRisk(withinMinutes: number): Promise<
+  { hold: HoldRequest; phone: string | null; campground: string | null } | null
+> {
+  const [row] = await query<HoldRequest & { phone: string | null; campground: string | null }>(
+    // Pacific wall-clock on both sides, so the offset cancels and no zone-less string is
+    // ever handed to a Date. Same discipline as the runner's msUntilRelease.
+    `SELECT h.*, u.phone, c.name AS campground
+       FROM rc_hold_requests h
+       JOIN users u ON u.id = h.user_id
+       LEFT JOIN campgrounds c ON c.id = h.campground_id
+      WHERE h.status IN ('requested', 'carted', 'claiming')
+        AND h.release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+        AND h.release_at <= to_char((NOW() + ($1 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+      ORDER BY h.release_at ASC LIMIT 1`,
+    [String(withinMinutes)],
+  ).catch(() => []);
+  if (!row) return null;
+  const { phone, campground, ...hold } = row;
+  return { hold, phone, campground };
+}
+
+/**
  * The user pressed claim. Ask the bot to let go of THIS entry.
  *
  * Only a `carted` hold can be claimed — there is nothing to hand over otherwise — and

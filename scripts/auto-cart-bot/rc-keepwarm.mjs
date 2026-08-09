@@ -43,13 +43,21 @@
  * RUN IT ON THE MINI-PC, alongside the rec.gov bot:
  *   node rc-keepwarm.mjs                 # RESIDENT: holds RC open, yields to the runner
  *   node rc-keepwarm.mjs --once          # single pass, for a cron or a smoke test
- *   node rc-keepwarm.mjs --login         # headful, for the ONE human sign-in
+ *   node rc-keepwarm.mjs --login         # headful, for a human sign-in (the fallback)
  *   node rc-keepwarm.mjs --save-login    # store the RC password, encrypted, once
+ *   node rc-keepwarm.mjs --test-login    # prove the unattended login works, NOW
  *
- * IT NEVER TYPES A PASSWORD. Deliberate: the only way in is `--login`, with a human at
- * the keyboard. That removes the pattern (repeated automated logins from one address)
- * that we believe provoked the challenge in the first place, and it means this file
- * needs no credentials at all — nothing to store, nothing to leak.
+ * IT DOES TYPE A PASSWORD NOW, AND THAT REVERSED A RULE THIS FILE USED TO STATE.
+ * The old header said "it never types a password — the only way in is `--login`, with a
+ * human at the keyboard", on the reasoning that repeated automated logins from one address
+ * are what provoked the CAPTCHA. That reasoning still holds; what changed is the discovery
+ * (2026-08-09) that there is no session to keep warm at all — RC issues no Okta session
+ * cookie, so the ~1h access token IS the session and no cadence of page loads extends it.
+ * "Never log in" and "be signed in at 08:00 without a human" turned out to be incompatible,
+ * so the rule became a budget instead of a ban: `maybeAutoLogin` signs in ONCE, within
+ * AUTOLOGIN_LEAD_MIN of a real hold, one attempt per release forever, from the PERSISTENT
+ * profile whose `DT` cookie is what tells Okta this is a known machine. A few times a
+ * month, never on a timer, never in a loop. See rc-autologin.mjs for the full argument.
  */
 
 import { chromium } from 'playwright';
@@ -136,6 +144,7 @@ const args = new Set(process.argv.slice(2));
 const ONCE = args.has('--once');
 const LOGIN = args.has('--login');
 const SAVE_LOGIN = args.has('--save-login');
+const TEST_LOGIN = args.has('--test-login');
 
 /** Log the app's own authorize URL once, not on every 20-minute pass. */
 let warmedAuthLogged = false;
@@ -460,6 +469,66 @@ async function reportSession(state, renewalNote = '') {
 }
 
 /**
+ * Read one line with the echo muted.
+ *
+ * THE FIRST VERSION OF THIS ECHOED THE PASSWORD IN FULL (reported 2026-08-09). It created
+ * a `readline` interface for the email prompt and left it OPEN while reading the password
+ * raw from stdin — and a readline interface in terminal mode echoes every keypress itself.
+ * `setRawMode(true)` stops the TTY driver echoing; it does nothing about another library
+ * listening on the same stream and helpfully writing to stdout. Two readers, one of them
+ * chatty. So: no readline anywhere near this. It owns stdin, then hands it back.
+ *
+ * A non-TTY stdin (piped, redirected, no console) CANNOT be muted — there is no raw mode
+ * to set. It refuses rather than echoing, because printing the password while promising
+ * not to is exactly the bug being fixed.
+ */
+function readHidden(prompt) {
+  if (!process.stdin.isTTY) {
+    return Promise.reject(new Error(
+      'this window cannot hide typed input — double-click mini-pc\\rc-save-password.bat instead',
+    ));
+  }
+  return new Promise((res, rej) => {
+    process.stdout.write(prompt);
+    let buf = '';
+    const finish = (fn, v) => {
+      process.stdin.removeListener('data', onData);
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdout.write('\n');
+      fn(v);
+    };
+    const onData = (chunk) => {
+      // CHUNKS, NOT KEYSTROKES. A paste arrives as one buffer and so can fast typing, so
+      // every branch has to cope with more than a single character — the old code compared
+      // the whole chunk to '\r' and would have appended a pasted password's newline.
+      for (const c of String(chunk)) {
+        if (c === '\n' || c === '\r' || c === '\u0004') return finish(res, buf);
+        if (c === '\u0003') return finish(rej, new Error('cancelled'));
+        if (c === '\u007f' || c === '\b') { buf = buf.slice(0, -1); continue; }
+        // Drop control characters — arrow keys arrive as escape sequences, and letting
+        // them into the password makes it invisibly wrong.
+        if (c >= ' ') buf += c;
+      }
+    };
+    process.stdin.resume();
+    process.stdin.setRawMode(true);
+    process.stdin.on('data', onData);
+  });
+}
+
+/** Read one visible line. Opens and CLOSES its own readline — see readHidden. */
+async function readLine(prompt) {
+  const readline = await import('node:readline');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await new Promise((res) => rl.question(prompt, res));
+  } finally {
+    rl.close();
+  }
+}
+
+/**
  * Store the ReserveCalifornia password so the bot can sign itself in before a hold.
  *
  * TYPED, NOT PASTED INTO A FILE. The password goes straight into the same encrypted store
@@ -469,50 +538,141 @@ async function reportSession(state, renewalNote = '') {
  * read and which ends up in screenshots and pasted terminal output. This feature exists
  * to reduce risk, not to move it.
  *
- * Input is not echoed. Nothing is printed back but a confirmation.
+ * ASKED TWICE, because it is invisible. A silently mistyped password is not discovered
+ * until the auto-login fails at 07:45 on the one morning it mattered, and the message that
+ * produces ("check the password") is indistinguishable from a real password change.
  */
 async function saveLogin() {
   const { saveCreds } = await import('./credstore.mjs');
-  const readline = await import('node:readline');
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const ask = (q) => new Promise((res) => rl.question(q, res));
 
   log('Storing your ReserveCalifornia login, encrypted, on THIS machine only.');
   log('It is never sent to CampHawk and never written in plain text.');
-  const email = (await ask('  RC email: ')).trim();
+  const email = (await readLine('  RC email: ')).trim();
 
-  // Mute the echo for the password. Not cosmetic: the mini-PC is screen-shared over
-  // RustDesk, so an echoed password is a password on somebody's screen recording.
-  const pw = await new Promise((res) => {
-    process.stdout.write('  RC password (not shown): ');
-    const onData = (ch) => {
-      const s = String(ch);
-      if (s === '\n' || s === '\r' || s === '\u0004') {
-        process.stdin.removeListener('data', onData);
-        if (process.stdin.isTTY) process.stdin.setRawMode(false);
-        process.stdout.write('\n');
-        rl.close();
-        res(buf);
-      } else if (s === '\u0003') { process.exit(1); }
-      else if (s === '\u007f') { buf = buf.slice(0, -1); }
-      else buf += s;
-    };
-    let buf = '';
-    if (process.stdin.isTTY) process.stdin.setRawMode(true);
-    process.stdin.on('data', onData);
-  });
+  let pw;
+  try {
+    pw = await readHidden('  RC password (hidden as you type): ');
+    const again = await readHidden('  Type it once more to confirm: ');
+    if (pw !== again) {
+      log('✗ The two did not match. Nothing saved — run this again.');
+      return false;
+    }
+  } catch (err) {
+    log(`✗ ${err.message}`);
+    return false;
+  }
 
   if (!email || !pw) { log('✗ Nothing saved — both fields are required.'); return false; }
   try {
     saveCreds(PROFILE_DIR, email, pw);
     log(`✓ Saved, encrypted, in ${PROFILE_DIR}`);
     log('  The bot will now sign in by itself ~15 minutes before a hold needs it.');
+    log('  PROVE IT NOW, do not wait for 07:45:  mini-pc\\rc-test-login.bat');
     log('  To remove it later: delete .camphawk-creds from that folder.');
     return true;
   } catch (err) {
     log(`✗ Could not save: ${err.message}`);
     return false;
   }
+}
+
+/**
+ * PROVE THE UNATTENDED LOGIN WORKS — now, with hours to spare, not at 07:45.
+ *
+ * Everything about `maybeAutoLogin` is built to fire rarely and never retry, which is
+ * correct and also means the first time it runs for real is the morning it is load-bearing.
+ * That is the worst possible moment to discover a mistyped password. This runs the SAME
+ * `attemptLogin`, on the SAME profile, against the real RC.
+ *
+ * ## It signs you out first, and how it does that matters
+ *
+ * A login attempt against an already-signed-in session proves nothing — RC shows no sign-in
+ * form, `findIn` returns null, and you get "could not find the sign-in form" for a session
+ * that is perfectly healthy. So the token has to go.
+ *
+ * **It clears the localStorage token and NOTHING ELSE. It does not touch cookies, and you
+ * should not sign out through RC's own menu either.** `signin.reservecalifornia.com` holds
+ * a `DT` device cookie, and that is the one thing telling Okta this is a machine it has
+ * seen before. Repeated logins from FRESH profiles — i.e. without `DT` — is what got the
+ * household IP blocked for twelve hours on 2026-08-06 and put a reCAPTCHA in front of this
+ * browser on 08-07. Clearing cookies to "test properly" would recreate that exact shape.
+ * RC's SPA reads the token from localStorage to decide whether you are signed in, so
+ * dropping it is a real logout as far as the login flow is concerned, with the device
+ * identity intact.
+ *
+ * ## What it costs
+ *
+ * One extra real sign-in. That is the point — one now, deliberately, while there is time to
+ * recover, instead of finding out during the ninety seconds that decide a campsite.
+ */
+async function testLogin() {
+  if (!hasCredentials()) {
+    log('✗ No stored credentials. Run mini-pc\\rc-save-password.bat first.');
+    return false;
+  }
+  const result = await withProfile(async (ctx, page) => {
+    await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await primeToken(page).catch(() => {});
+
+    const before = await sessionLive(ctx, page);
+    log(`Session before the test: ${before.live === true ? 'ALIVE' : before.live === false ? 'DEAD' : 'UNKNOWN'} — ${before.why}`);
+
+    // The token only, never the cookies. See the header.
+    log('Dropping the stored token so RC treats this as signed out (cookies untouched)…');
+    await page.evaluate(() => {
+      try {
+        localStorage.removeItem('ssoAccessToken');
+        localStorage.removeItem('accessToken');
+        delete window.__camphawkRcToken;
+      } catch {}
+    }).catch(() => {});
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+
+    const gone = await sessionLive(ctx, page);
+    if (gone.live === true) {
+      log('⚠ RC still accepts a token after clearing it — the test cannot prove anything.');
+      log('  Not attempting a login. Nothing was changed; your session is intact.');
+      return 'inconclusive';
+    }
+
+    log('Signing in with the stored password, exactly as it would at 07:45…');
+    const r = await attemptLogin(ctx, page, {
+      homeUrl: RC_HOME,
+      isLive: async () => (await sessionLive(ctx, page)).live === true,
+    });
+    if (!r.ok) { log(`✗ ${r.reason}`); return 'failed'; }
+
+    const after = await sessionLive(ctx, page);
+    if (after.live !== true) { log(`✗ Signed in, but RC will not accept the session: ${after.why}`); return 'failed'; }
+    try { fs.writeFileSync(WARM_MARKER, new Date().toISOString()); } catch {}
+    log(`✓ ${after.why}`);
+    return 'ok';
+  }, { headless: false, waitMs: 60_000 });
+
+  if (result === BUSY) {
+    log('✗ The hold runner has the profile. Wait a minute and re-run — nothing was changed.');
+    return false;
+  }
+  if (result === 'ok') {
+    log('');
+    log('✓✓ THE BOT CAN SIGN ITSELF IN. Your stored password is correct and RC accepted it.');
+    log('   You are signed in right now, and it will do this again ~15 minutes before');
+    log('   each hold. You do not need to do anything in the morning.');
+    // Tell the server too — this IS a session-liveness measurement, and a green
+    // autocart.rc_session is what the 07:30 pre-flight reads.
+    await reportSession('warm', 'verified by --test-login');
+    return true;
+  }
+  if (result === 'inconclusive') return false;
+
+  log('');
+  log('✗✗ THE UNATTENDED LOGIN DOES NOT WORK, and you are now signed OUT.');
+  log('   Run mini-pc\\rc-login.bat NOW to sign in by hand — do not leave it.');
+  log('   Most likely: the password was mistyped when you saved it (it is hidden, so');
+  log('   there is nothing to notice), or RC is showing a CAPTCHA. The line above says');
+  log('   which. Re-save with mini-pc\\rc-save-password.bat if it is the password.');
+  await reportSession('dead', 'test login failed — a human must sign in');
+  return false;
 }
 
 /** The one human step. Opens the profile headful and waits for a real session. */
@@ -570,6 +730,9 @@ async function humanLogin() {
 // keep-warm loop on top of the sign-in it just did.
 if (SAVE_LOGIN) {
   const ok = await saveLogin();
+  exitWhenDrained(ok ? 0 : 1);
+} else if (TEST_LOGIN) {
+  const ok = await testLogin();
   exitWhenDrained(ok ? 0 : 1);
 } else if (LOGIN) {
   const ok = await humanLogin();

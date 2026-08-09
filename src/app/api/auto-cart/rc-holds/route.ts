@@ -1,11 +1,16 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, reportCartFailure, nextHoldRelease, type HoldRequest } from '@/lib/rc-holds';
+import { NextRequest, NextResponse, after } from 'next/server';
+import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, reportCartFailure, nextHoldRelease, holdAtRisk, type HoldRequest } from '@/lib/rc-holds';
+import { alarmCall } from '@/lib/notifications/voice';
 import { query, mutate } from '@/lib/db/client';
 import { notifyHoldMissed } from '@/lib/rc-holds-notify';
 import { manageTokenFor } from '@/lib/notifications/actions';
 import { dispatchNotifications } from '@/lib/notifications';
 
 export const dynamic = 'force-dynamic';
+// Long enough to cover the alarm's repeat call, which is scheduled with `after` and so
+// runs INSIDE this invocation's budget. At the default 15s the second call — the one that
+// actually pierces Do Not Disturb — would be cut off mid-sleep and never placed.
+export const maxDuration = 90;
 
 /**
  * The RC hold feed for the mini-PC bot.
@@ -107,11 +112,20 @@ export async function POST(req: NextRequest) {
   // profile and finds out the hard way. See migration 046: a runner that polls this feed
   // happily and cannot drive RC is the exact failure 045's heartbeat cannot see.
   if (body?.session && typeof body.session.live === 'boolean') {
+    const why = typeof body.session.why === 'string' ? body.session.why : null;
     await recordSessionHealth(
       body.session.live,
-      typeof body.session.why === 'string' ? body.session.why : null,
+      why,
       typeof body.source === 'string' ? body.source : 'unknown',
     );
+    // AND IF A SITE IS ABOUT TO BE LOST OVER IT, RING THE PHONE. Only here: a dead session
+    // is normally a fix-it-today problem, and it is already a red admin check and a 07:30
+    // pre-flight. It becomes an emergency exactly when a hold is minutes from releasing and
+    // only a human can sign in — which is the moment a push and a text are least likely to
+    // be seen, because it is early and the phone is asleep.
+    if (body.session.live === false) {
+      await alarmSessionDead(why).catch((e) => console.error('[rc-holds] alarm failed:', e));
+    }
     return NextResponse.json({ ok: true, state: 'session-recorded' });
   }
 
@@ -170,6 +184,49 @@ export async function POST(req: NextRequest) {
     await notifyHoldMissed(outcome.hold).catch((e) => console.error('[rc-holds] missed alert failed:', e));
   }
   return NextResponse.json({ ok: true, state: outcome.state });
+}
+
+/**
+ * The RC session is dead and a hold is about to release. Wake the owner up.
+ *
+ * `ALARM_LEAD_MIN` is wider than the auto-login's 15-minute lead deliberately: the
+ * auto-login reports its failure at T-15, and a person needs longer than that to surface,
+ * find a computer and sign in by hand. Anything outside the window is not an emergency and
+ * gets the ordinary treatment — a red admin check and the 07:30 pre-flight.
+ *
+ * `AUTOCART_ALARM_PHONE` overrides the destination. The person who has to fix this is
+ * whoever can reach the mini-PC, which is not necessarily the user whose hold it is; today
+ * they are the same person, and one day they will not be.
+ */
+const ALARM_LEAD_MIN = Number(process.env.AUTOCART_ALARM_LEAD_MIN || 45);
+
+async function alarmSessionDead(why: string | null): Promise<void> {
+  const at = await holdAtRisk(ALARM_LEAD_MIN);
+  if (!at) return;
+
+  const where = at.campground ?? 'a campground';
+  const site = at.hold.unit_name ? ` site ${at.hold.unit_name}` : '';
+  const time = at.hold.release_at.slice(11, 16);
+  // Written to be understood by someone who was asleep four seconds ago: what is wrong,
+  // what is at stake, what to do. No jargon, no hold ids, and the instruction LAST so it
+  // is the thing still in their ear when the message repeats.
+  const spoken =
+    `CampHawk alert. The Reserve California session is dead, and ${where}${site} releases at ${time}. ` +
+    `Nobody can hold it for you until someone signs in. ` +
+    `Go to the mini P C and run R C login dot bat.`;
+
+  const to = process.env.AUTOCART_ALARM_PHONE || at.phone;
+  // Keyed on the HOLD, not on this attempt — the keep-warm reports every pass, and a
+  // per-attempt key would give each report its own budget and defeat the rate limit
+  // entirely, turning one broken session into a call every twenty minutes all night.
+  // `after` and not a bare timer: on Vercel the invocation can be frozen the instant it
+  // responds, and a dropped repeat call is invisible — the first call still goes out and
+  // the log still reads as though the alarm worked.
+  const r = await alarmCall(to, spoken, `rc-session:${at.hold.id}`, (task) => after(task));
+  console.log(
+    `[rc-holds] session-dead alarm for hold ${at.hold.id} (releases ${at.hold.release_at}): ` +
+    `${r.placed ? 'calling' : `not called — ${r.error}`}${why ? ` | ${why}` : ''}`,
+  );
 }
 
 /**
