@@ -274,6 +274,10 @@ async function withProfile(fn, { headless = HEADLESS, waitMs = 15_000 } = {}) {
     // navigator.webdriver is set by --enable-automation and reCAPTCHA reads it. The
     // rec.gov bot strips it for exactly this reason; RC gates on the same signal.
     ignoreDefaultArgs: ['--enable-automation'],
+    // The profile is routinely closed by a force-kill (update.bat, rc-login.bat), so
+    // Chromium offers to restore pages on every launch. Harmless, but it covers the top
+    // of the very window a human is being asked to look at.
+    args: ['--hide-crash-restore-bubble'],
   }).catch((err) => {
     clearInterval(renew);
     releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
@@ -440,6 +444,8 @@ async function maybeAutoLogin(ctx, page) {
   } else {
     log(`  ✗ could not sign in: ${r.reason}`);
     log('    NOT retrying. Repeated logins are what got this address blocked before.');
+    // The real 07:45 failure is the one nobody is watching, so it gets the picture too.
+    await saveFailureShot(page, 'autologin');
     await reportSession('dead', `auto sign-in failed: ${r.reason}`);
   }
   return true;
@@ -577,6 +583,31 @@ async function saveLogin() {
 }
 
 /**
+ * Photograph a failed sign-in, because the alternative is photographing the screen.
+ *
+ * The first real `--test-login` failure (2026-08-09) was diagnosed from a phone picture of
+ * the mini-PC's monitor. The answer was right there — RC's button says "Log in / Sign up"
+ * and the selectors only knew "Sign In" — but nothing in the log said so, because "could
+ * not find the sign-in form" is equally true of a missed link and a redesigned Okta page.
+ *
+ * NOT A CREDENTIAL RISK: password fields render as dots, and the only other thing on screen
+ * is the account's own email address, on the owner's own machine. It overwrites one file
+ * rather than accumulating — the interesting one is always the most recent.
+ */
+async function saveFailureShot(page, tag) {
+  const dir = path.resolve(HERE, 'logs');
+  const file = path.join(dir, `rc-${tag}-failed.png`);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    await page.screenshot({ path: file, fullPage: false });
+    log(`  (screenshot of the failure: ${file})`);
+    log(`  (page was at: ${page.url().slice(0, 100)})`);
+  } catch {
+    // Never let a diagnostic break the thing it is diagnosing.
+  }
+}
+
+/**
  * PROVE THE UNATTENDED LOGIN WORKS — now, with hours to spare, not at 07:45.
  *
  * Everything about `maybeAutoLogin` is built to fire rarely and never retry, which is
@@ -640,7 +671,11 @@ async function testLogin() {
       homeUrl: RC_HOME,
       isLive: async () => (await sessionLive(ctx, page)).live === true,
     });
-    if (!r.ok) { log(`✗ ${r.reason}`); return 'failed'; }
+    if (!r.ok) {
+      log(`✗ ${r.reason}`);
+      await saveFailureShot(page, 'test-login');
+      return 'failed';
+    }
 
     const after = await sessionLive(ctx, page);
     if (after.live !== true) { log(`✗ Signed in, but RC will not accept the session: ${after.why}`); return 'failed'; }
@@ -791,6 +826,7 @@ async function warmResident() {
         // timer is a timer that does not fire, so the resident tab would sit there looking
         // healthy and renew exactly as little as the old eight-second visit did.
         args: [
+          '--hide-crash-restore-bubble',
           '--disable-background-timer-throttling',
           '--disable-backgrounding-occluded-windows',
           '--disable-renderer-backgrounding',

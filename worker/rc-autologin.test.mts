@@ -6,7 +6,28 @@
 // to make sure it happens a few times a month, never in a loop, and never on a timer.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hasCredentials } from '../scripts/auto-cart-bot/rc-autologin.mjs';
+import { hasCredentials, SIGNIN_LINK_SELECTORS } from '../scripts/auto-cart-bot/rc-autologin.mjs';
+
+test('the sign-in link selectors match what RC actually says', () => {
+  // THE BUG THIS EXISTS FOR (2026-08-09). RC's header button reads "Log in / Sign up".
+  // The selectors only had "Sign In" and "Sign in", and Playwright's :has-text() is a
+  // case-insensitive SUBSTRING match — "Log in / Sign up" does not contain "sign in". So
+  // nothing matched, the link was never clicked, the Okta form never loaded, and the first
+  // real --test-login died at "could not find the sign-in form" while still sitting on the
+  // home page. It took a photograph of the mini-PC's monitor to see it.
+  //
+  // Observed labels, newest first. Adding a label here is how a future RC rewording gets
+  // caught by a test run instead of by a lost campsite.
+  const LABELS = ['Log in / Sign up', 'Log In / Sign Up', 'Sign In'];
+  const hasText = SIGNIN_LINK_SELECTORS
+    .map((s: string) => s.match(/:has-text\("([^"]+)"\)/)?.[1])
+    .filter((s: string | undefined): s is string => Boolean(s));
+
+  for (const label of LABELS) {
+    const hit = hasText.some((needle) => label.toLowerCase().includes(needle.toLowerCase()));
+    assert.ok(hit, `no selector would match RC's "${label}" button`);
+  }
+});
 
 test('no credentials means no attempt, ever', () => {
   const before = { e: process.env.RC_EMAIL, p: process.env.RC_PASSWORD, d: process.env.RC_PROFILE_DIR };

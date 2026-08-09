@@ -65,6 +65,35 @@ function credentials() {
   return email && password ? { email, password } : null;
 }
 
+/**
+ * The link that gets us from RC's home page to the Okta form.
+ *
+ * **RC'S BUTTON SAYS "Log in / Sign up", NOT "Sign In"** — confirmed from a screenshot of
+ * the live site on 2026-08-09, and it is why the first real `--test-login` failed. The
+ * original list only had `Sign In`/`Sign in`, and Playwright's `:has-text()` is a
+ * case-insensitive SUBSTRING match: "Log in / Sign up" does not contain "sign in", so
+ * nothing matched, the link was never clicked, and the run died at "could not find the
+ * sign-in form" while still sitting on the home page.
+ *
+ * `Log in` first, because that is what the site actually says. The rest are kept for the
+ * day RC rewords it — this is exactly the kind of thing a redesign changes, and the cost of
+ * an extra selector is nothing next to the cost of finding out at 07:45.
+ *
+ * NOTE the ordering trap: "Log in / Sign up" contains BOTH "Log in" and "Sign up", so a
+ * `Sign up` selector in this list could match the same element — harmless here, but do not
+ * add one on the theory that it finds a different control.
+ */
+export const SIGNIN_LINK_SELECTORS = [
+  'a:has-text("Log in")',
+  'button:has-text("Log in")',
+  'a:has-text("Login")',
+  'button:has-text("Login")',
+  'a:has-text("Sign In")',
+  'button:has-text("Sign In")',
+  '[href*="signin" i]',
+  '[href*="sign-in" i]',
+];
+
 const EMAIL_SELECTORS = [
   'input[name="identifier"]',            // Okta Identity Engine
   'input[name="username"]',              // Okta Classic
@@ -149,10 +178,15 @@ export async function attemptLogin(ctx, page, { homeUrl, isLive }) {
 
     // Get to the Okta form. RC's sign-in is a link/button on its own header; going
     // straight at a guessed /Customers/SignIn path is how earlier attempts hit dead ends.
-    const signIn = page.locator('a:has-text("Sign In"), button:has-text("Sign In"), a:has-text("Sign in")').first();
-    if (await signIn.isVisible().catch(() => false)) {
+    const signIn = await findIn(page, SIGNIN_LINK_SELECTORS, 10_000);
+    if (signIn) {
       await signIn.click().catch(() => {});
-      await page.waitForTimeout(3000);
+      // Okta is a full navigation to signin.reservecalifornia.com, not an in-page modal.
+      // Waiting for the URL to change beats a fixed sleep: a slow redirect used to look
+      // exactly like a missing form.
+      await page.waitForURL(/signin\.reservecalifornia\.com|\/signin/i, { timeout: 20_000 })
+        .catch(() => {});
+      await page.waitForTimeout(1500);
     }
 
     // CHECK BEFORE TYPING. If the challenge is already up, we must not touch the form —
@@ -162,7 +196,19 @@ export async function attemptLogin(ctx, page, { homeUrl, isLive }) {
     }
 
     const emailField = await findIn(page, EMAIL_SELECTORS);
-    if (!emailField) return { ok: false, reason: 'could not find the sign-in form' };
+    if (!emailField) {
+      // SAY WHERE WE ENDED UP. "could not find the sign-in form" is true of both "the
+      // sign-in link was never clicked" and "Okta loaded and looks different now", and
+      // those have completely different fixes. The first failure of this cost a round trip
+      // to a screenshot to tell apart — the URL alone would have said it immediately.
+      const where = page.url().slice(0, 80);
+      return {
+        ok: false,
+        reason: signIn
+          ? `the sign-in form did not load (stuck at ${where})`
+          : `could not find the "Log in" link on ${where} — RC may have reworded it`,
+      };
+    }
     await emailField.fill(email);
 
     // Identifier-first: email, Next, then password on a second screen.
