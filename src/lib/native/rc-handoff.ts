@@ -126,6 +126,19 @@ export interface RcHandoff {
 }
 
 /**
+ * One thing the injected script (or the host) has to say about what happened.
+ *
+ * `n` is the page's own counter, from 1, so a gap identifies a DROPPED report rather than a
+ * step that never ran — the distinction that "did the cart fire?" keeps turning on. Host-
+ * side events (`loaderror`, `closed`) carry `n: 0` because the page cannot witness them.
+ *
+ * `detail` is deliberately loose: this is a diagnostic, and the day RC changes something
+ * the useful field will be one nobody predicted. Never carries a token or a cart key — see
+ * the route.
+ */
+export type RcReport = { n: number; stage: string; detail: Record<string, unknown> | null };
+
+/**
  * The `#camphawk-rc=` fragment the desktop extension reads.
  *
  * Inert everywhere else — a phone, a desktop without the extension, and RC itself all
@@ -223,7 +236,9 @@ export async function rcHandoffDiagnostics(): Promise<Record<string, string>> {
  * stays false on every older one still in the wild, with no web-side release needed to
  * tell them apart.
  */
-async function injectableWebView(): Promise<null | { open: (url: string, code: string) => Promise<void> }> {
+async function injectableWebView(): Promise<null | {
+  open: (url: string, code: string, onReport?: (r: RcReport) => void) => Promise<void>;
+}> {
   if (!isNativeShell()) return null;
   const w = window as unknown as {
     cordova?: { InAppBrowser?: { open: (url: string, target: string, opts: string) => unknown } };
@@ -231,7 +246,7 @@ async function injectableWebView(): Promise<null | { open: (url: string, code: s
   const iab = w.cordova?.InAppBrowser;
   if (!iab) return null;
   return {
-    async open(url: string, code: string) {
+    async open(url: string, code: string, onReport?: (r: RcReport) => void) {
       // `_blank` is the Cordova in-app webview (NOT a new tab). `location=yes` keeps the
       // URL bar visible, which matters here: the user is about to authenticate and pay on
       // reservecalifornia.com, and hiding the address bar while they do that is exactly
@@ -240,13 +255,33 @@ async function injectableWebView(): Promise<null | { open: (url: string, code: s
       // closing the webview on the first press — the same default that would have exited
       // the whole app before NativeBridge intercepted it.
       const ref = iab.open(url, '_blank', 'location=yes,hardwareback=no') as {
-        addEventListener: (e: string, cb: () => void) => void;
+        addEventListener: (e: string, cb: (ev?: unknown) => void) => void;
         executeScript: (d: { code: string }, cb?: (r: unknown) => void) => void;
       };
+      // THE REPORT CHANNEL, wired BEFORE the first injection — the plugin fires `message`
+      // for anything the page posts through `cordova_iab`, and the injected reporter's very
+      // first act is to announce itself. Registering after `loadstop` would miss it.
+      if (onReport) {
+        ref.addEventListener('message', (ev) => {
+          const data = (ev as { data?: Record<string, unknown> } | undefined)?.data;
+          if (data && data.camphawk === 'rc-precart') onReport(data as unknown as RcReport);
+        });
+        // Host-side facts the page cannot report about itself. `n: 0` marks them as ours;
+        // the page's own reports are numbered from 1, so a gap means a dropped message
+        // rather than a step that never ran.
+        ref.addEventListener('loaderror', (ev) => {
+          const e = ev as { message?: string; code?: number } | undefined;
+          onReport({ n: 0, stage: 'loaderror', detail: { message: e?.message ?? '', code: e?.code ?? null } });
+        });
+        ref.addEventListener('exit', () => onReport({ n: 0, stage: 'closed', detail: null }));
+      }
       // `loadstop`, not `loadstart` — RC is a SPA and its token only exists once the app
       // has booted and made its first API call. Injecting earlier reads an empty
       // localStorage and reports "not signed in" for a session that is fine, which is the
       // same mistake `attemptLogin` made on the bot side (2026-08-09).
+      //
+      // Fires again on every navigation, which is intended: RC's adopt path reloads, and a
+      // re-injected reporter re-announces without re-installing (see the route).
       ref.addEventListener('loadstop', () => ref.executeScript({ code }));
     },
   };
@@ -259,7 +294,10 @@ async function injectableWebView(): Promise<null | { open: (url: string, code: s
  * carting it for you" and "find the site and tap book" are different instructions and
  * showing the wrong one is worse than showing neither.
  */
-export async function openRcHandoff(h: RcHandoff): Promise<'injected' | 'in-app' | 'browser'> {
+export async function openRcHandoff(
+  h: RcHandoff,
+  opts?: { onReport?: (r: RcReport) => void },
+): Promise<'injected' | 'in-app' | 'browser'> {
   const url = rcHandoffUrl(h);
 
   const injectable = await injectableWebView().catch(() => null);
@@ -269,7 +307,7 @@ export async function openRcHandoff(h: RcHandoff): Promise<'injected' | 'in-app'
     // payload once (the `extraValues` requirement, 2026-08-06).
     const code = await rcInjectedPrecart();
     if (code) {
-      await injectable.open(url, code);
+      await injectable.open(url, code, opts?.onReport);
       return 'injected';
     }
   }

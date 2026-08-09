@@ -16,6 +16,7 @@ import MetricChart, {
 import type { CostItem, UsageCounts } from '@/lib/costs';
 import type { SmsDelivery } from '@/lib/health-thresholds';
 import type { PollerCapacity, ShardCoverage } from '@/lib/capacity';
+import type { RcReport } from '@/lib/native/rc-handoff';
 
 /**
  * Admin dashboard, in the redesign's ch-* system.
@@ -902,6 +903,10 @@ function AlarmTest() {
 function RcWebviewTest() {
   const [result, setResult] = useState<string | null>(null);
   const [diag, setDiag] = useState<Record<string, string> | null>(null);
+  // What the INJECTED script says about itself. Everything else on this panel is measured
+  // from outside the webview and so cannot distinguish "threw on line 1" from "ran and had
+  // nothing to do" — see lib/native/rc-handoff RcReport.
+  const [reports, setReports] = useState<RcReport[]>([]);
 
   // WHAT THIS RUNTIME HAS, shown BEFORE anything is opened. The first version reported
   // "not running inside the app, or no plugin" — two causes, two different fixes, one
@@ -914,6 +919,7 @@ function RcWebviewTest() {
   async function run() {
     await inspect();
     setResult('opening…');
+    setReports([]);
     const { openRcHandoff } = await import('@/lib/native/rc-handoff');
     // RC's HOME PAGE, deliberately — not a park deep-link. The unknown here is whether
     // Okta signs in inside our webview, and the home page reaches "Log in" in one tap
@@ -924,7 +930,10 @@ function RcWebviewTest() {
     // — RC's real deep link is `/park/<placeId>/<facilityId>`, built by lib/booking-url,
     // which is what the actual hand-off uses). A hardcoded RC URL in a test is a URL that
     // nothing keeps honest; the real flow's shape is covered by booking-url's own tests.
-    const how = await openRcHandoff({ url: 'https://www.reservecalifornia.com/' });
+    const how = await openRcHandoff(
+      { url: 'https://www.reservecalifornia.com/' },
+      { onReport: (r) => setReports((prev) => [...prev, r]) },
+    );
     setResult(
       how === 'injected'
         ? 'Opened in the in-app webview WITH injection — the plugin is present.'
@@ -944,7 +953,12 @@ function RcWebviewTest() {
         question is what the app&rsquo;s own webview does, and a browser tells you nothing.
         RC&rsquo;s home page opens; tap <strong>Log in</strong> there. If Okta loads and
         accepts your password inside that window, mobile auto-cart works. Read the line
-        below the button first: it says which kind of window you got.
+        below the button first: it says which kind of window you got.{' '}
+        <strong>From inside the webview</strong> is the injected script reporting on itself
+        — <code>injected</code> proves it ran at all, and <code>token captured</code> proves
+        it can read your live RC session, which is the hardest part of carting. Without a
+        real hold there is nothing to cart, so <code>idle</code> at the end is the expected
+        finish, not a failure.
       </p>
       <button
         type="button"
@@ -961,6 +975,28 @@ function RcWebviewTest() {
         What does this device have?
       </button>
       {result && <p className="mt-2 text-ch-fine leading-normal text-ch-muted">{result}</p>}
+      {reports.length > 0 && (
+        <div className="mt-3">
+          <p className="text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+            From inside the webview
+          </p>
+          <ol className="mt-1 space-y-0.5">
+            {reports.map((r, i) => (
+              <li key={`${r.n}-${r.stage}-${i}`} className="text-ch-fine text-ch-muted">
+                <span className="font-bold">{r.stage}</span>
+                {r.detail && (
+                  <span className="break-all">
+                    {' '}
+                    {Object.entries(r.detail)
+                      .map(([k, v]) => `${k}: ${String(v)}`)
+                      .join(' · ')}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
       {diag && (
         <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-ch-fine text-ch-muted">
           {Object.entries(diag).map(([k, v]) => (

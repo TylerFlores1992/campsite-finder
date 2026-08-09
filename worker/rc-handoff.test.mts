@@ -74,29 +74,81 @@ test('injection is not claimed until it can actually be done', () => {
   }
 });
 
-test('the served precart is the extension file, and it parses', async () => {
+test('the served precart is the extension file, and the REAL bytes parse', async () => {
   // ONE IMPLEMENTATION, TWO CONSUMERS. The extension keeps using its own copy (MV3 forbids
-  // remote code); the phone fetches the same bytes. If this route ever grew its own copy
-  // of the precart, RC's next schema change would fix one and leave the other broken —
-  // exactly what rc-cart.mjs exists to prevent between the probe and the runner.
-  const route = readFileSync('src/app/api/rc-precart/route.ts', 'utf8');
-  assert.match(route, /extension/, 'the route must read from extension/, not embed a copy');
+  // remote code); the phone fetches the same bytes. If this ever grew its own copy of the
+  // precart, RC's next schema change would fix one and leave the other broken — exactly
+  // what rc-cart.mjs exists to prevent between the probe and the runner.
+  const mod = readFileSync('src/lib/rc-precart-script.ts', 'utf8');
+  assert.match(mod, /extension/, 'must read from extension/, not embed a copy');
   assert.ok(
-    !/precartdataforbookingmodify/.test(route),
-    'the route must not contain precart logic of its own — serve the file',
+    !/submit\/precartdataforbookingmodify'/.test(mod),
+    'must not contain precart logic of its own — serve the file',
   );
 
-  // Build the same string the route builds and check it is valid JS. A syntax error here
-  // injects nothing, and an injection that runs nothing is indistinguishable from a cart
-  // that failed silently.
-  const inject = readFileSync('extension/rc-inject.js', 'utf8');
-  const content = readFileSync('extension/content-rc.js', 'utf8');
-  const shim = 'if (typeof chrome === "undefined") { var chrome = { storage: { local: { get: function (d, cb) { cb({}); } } } }; }';
-  const script = [shim, inject, content].join('\n');
+  // THE REAL BUILDER, not a hand-rebuilt approximation. This test used to reassemble the
+  // bundle itself, which meant the reporter and epilogue — added later — were covered by
+  // nothing. A syntax error in either injects NOTHING, and an injection that runs nothing
+  // is indistinguishable from a webview that refused us, which is the single failure this
+  // whole diagnostic exists to rule out.
+  const { buildPrecartScript } = await import('../src/lib/rc-precart-script');
+  const script = buildPrecartScript();
   new (await import('node:vm')).Script(script); // throws on a syntax error
 
   // The one string the handoff sanity-checks the response body for.
   assert.match(script, /precartdataforbookingmodify/);
+});
+
+test('the reporter announces itself, and survives having no bridge', async () => {
+  // The FIRST report is the whole point: it is the only evidence that separates "the script
+  // threw on line 1" from "the script ran and had nothing to cart". Both are silence.
+  const { buildPrecartScript } = await import('../src/lib/rc-precart-script');
+  const script = buildPrecartScript();
+  assert.match(script, /"injected"/, 'must announce execution before doing anything else');
+
+  // The reporter runs on RC's page in a plain browser too (the extension's users), where
+  // there is no cordova_iab. It must degrade to a no-op rather than throwing — a throw here
+  // would take the precart down with it on desktop, breaking a path that works today.
+  const vm = await import('node:vm');
+  const { reporter } = await import('../src/lib/rc-precart-script');
+  const code = reporter();
+
+  const world = (extra: Record<string, unknown> = {}) => {
+    const s: Record<string, unknown> = {
+      console: { log() {} },
+      location: { href: 'https://www.reservecalifornia.com/', hash: '', pathname: '/', search: '' },
+      sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+      addEventListener: () => {},
+      ...extra,
+    };
+    s.window = s;
+    return vm.createContext(s);
+  };
+
+  assert.doesNotThrow(() => new vm.Script(code).runInContext(world()), 'no bridge must be a no-op');
+
+  // With a bridge it must actually post — and post parseable JSON, because the Android side
+  // does `new JSONObject(data)` and silently drops anything else (see InAppBrowser.java).
+  const posted: string[] = [];
+  new vm.Script(code).runInContext(world({ cordova_iab: { postMessage: (s: string) => posted.push(s) } }));
+  assert.ok(posted.length > 0, 'must post once the bridge exists');
+  const first = JSON.parse(posted[0]);
+  assert.equal(first.camphawk, 'rc-precart');
+  assert.equal(first.stage, 'injected');
+  assert.equal(first.n, 1, 'the page numbers its own reports from 1 — 0 is reserved for host events');
+});
+
+test('a report can never carry the RC access token', () => {
+  // THE STANDING RULE: the RC token is full account access. It does not travel in an alert
+  // link and it must not travel in a diagnostic either. The token path reports a BOOLEAN and
+  // a length; scrub() is the second line of defence, not the first.
+  const mod = readFileSync('src/lib/rc-precart-script.ts', 'utf8');
+  assert.match(mod, /captured: true, length:/, 'the token is reported as presence + length only');
+  assert.ok(
+    !/__camphawk_token: *e\.data\.__camphawk_token|token: *String\(e\.data\.__camphawk_token\)(?!\.length)/.test(mod),
+    'the token value must never be placed in a report',
+  );
+  assert.match(mod, /function scrub/, 'a JWT-shaped string is redacted wherever text is forwarded');
 });
 
 test('no invented ReserveCalifornia URL shape anywhere in the app', () => {
