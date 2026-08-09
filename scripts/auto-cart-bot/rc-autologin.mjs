@@ -168,13 +168,20 @@ async function captchaChallenge(page) {
  * `reason` is written for the person who will read it in a push notification at 07:45,
  * so it says what to do, not what failed internally.
  */
-export async function attemptLogin(ctx, page, { homeUrl, isLive }) {
+export async function attemptLogin(ctx, page, { homeUrl, isLive, log = () => {} }) {
   const creds = credentials();
   if (!creds) return { ok: false, reason: 'no stored credentials' };
   const { email, password } = creds;
+  // NARRATE EVERY STEP. The second --test-login failure (2026-08-09) was reported as
+  // "email entered, then the window closed" — accurate, and not enough to act on: three
+  // different faults produce exactly that. Diagnosing it from the outside meant reasoning
+  // about which timeout the elapsed seconds matched. The log now says which step, so a
+  // failure is read rather than deduced. `log` never receives the password.
+  const step = (m) => log(`    → ${m}`);
 
   try {
     await page.goto(homeUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    step(`opened ${new URL(page.url()).host}`);
 
     // Get to the Okta form. RC's sign-in is a link/button on its own header; going
     // straight at a guessed /Customers/SignIn path is how earlier attempts hit dead ends.
@@ -187,6 +194,9 @@ export async function attemptLogin(ctx, page, { homeUrl, isLive }) {
       await page.waitForURL(/signin\.reservecalifornia\.com|\/signin/i, { timeout: 20_000 })
         .catch(() => {});
       await page.waitForTimeout(1500);
+      step(`clicked the sign-in link → ${new URL(page.url()).host}`);
+    } else {
+      step('no sign-in link found — already on a sign-in page?');
     }
 
     // CHECK BEFORE TYPING. If the challenge is already up, we must not touch the form —
@@ -210,20 +220,34 @@ export async function attemptLogin(ctx, page, { homeUrl, isLive }) {
       };
     }
     await emailField.fill(email);
+    step('email entered');
 
-    // Identifier-first: email, Next, then password on a second screen.
+    // Identifier-first: email, Next, then password on a SECOND screen.
     let pw = await findIn(page, PASSWORD_SELECTORS, 3000);
     if (!pw) {
       const next = await findIn(page, SUBMIT_SELECTORS, 5000);
+      if (!next) step('no Next button found — submitting with Enter instead');
       if (next) await next.click().catch(() => {});
+      else await emailField.press('Enter').catch(() => {});
+      step('submitted the email, waiting for the password screen…');
       await page.waitForTimeout(2500);
       if (await captchaChallenge(page)) {
         return { ok: false, reason: 'ReserveCalifornia is showing a CAPTCHA — it needs you to sign in by hand' };
       }
-      pw = await findIn(page, PASSWORD_SELECTORS, 12_000);
+      // THIRTY SECONDS, not twelve. Okta's password screen is a separate render after a
+      // round trip, and 12s was chosen by feel rather than measurement — the second
+      // --test-login failure spent its whole budget here. A slow screen and a missing one
+      // are not the same fault, and a too-short wait reports the second when it means the
+      // first. Overshooting costs nothing: this runs once, with a human watching, or once
+      // at 07:45 against an 08:00 release.
+      pw = await findIn(page, PASSWORD_SELECTORS, 30_000);
     }
-    if (!pw) return { ok: false, reason: 'the password field never appeared' };
+    if (!pw) {
+      const where = page.url().slice(0, 100);
+      return { ok: false, reason: `the password field never appeared (stuck at ${where})` };
+    }
     await pw.fill(password);
+    step('password entered, submitting');
 
     const submit = await findIn(page, SUBMIT_SELECTORS, 5000);
     if (submit) await submit.click().catch(() => {});
@@ -232,8 +256,11 @@ export async function attemptLogin(ctx, page, { homeUrl, isLive }) {
     // Wait for a session, checking for a challenge as we go. 90s is generous for a
     // redirect chain and still far short of anything that looks like a stuck retry.
     const deadline = Date.now() + 90_000;
+    let waited = 0;
     while (Date.now() < deadline) {
       await page.waitForTimeout(3000);
+      waited += 3;
+      if (waited % 15 === 0) step(`waiting for the session… ${waited}s`);
       if (await captchaChallenge(page)) {
         return { ok: false, reason: 'a CAPTCHA appeared during sign-in — it needs you to sign in by hand' };
       }

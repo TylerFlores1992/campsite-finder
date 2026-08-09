@@ -437,6 +437,7 @@ async function maybeAutoLogin(ctx, page) {
   const r = await attemptLogin(ctx, page, {
     homeUrl: RC_HOME,
     isLive: async () => (await sessionLive(ctx, page)).live === true,
+    log,
   });
   if (r.ok) {
     log('  ✓ signed in unattended — the hold is covered');
@@ -670,6 +671,7 @@ async function testLogin() {
     const r = await attemptLogin(ctx, page, {
       homeUrl: RC_HOME,
       isLive: async () => (await sessionLive(ctx, page)).live === true,
+      log,
     });
     if (!r.ok) {
       log(`✗ ${r.reason}`);

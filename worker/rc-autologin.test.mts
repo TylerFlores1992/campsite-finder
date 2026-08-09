@@ -78,6 +78,16 @@ test('the module never logs or exports a credential', async () => {
       || /^await pw\.fill\(password\);$/.test(line);
     assert.ok(ok, `password value used somewhere unexpected: ${line}`);
   }
+  // A HOLE THE STRIPPER ABOVE OPENS, and it matters more since attemptLogin gained a `log`
+  // callback that takes template strings. Stripping string literals also strips
+  // `${password}` INSIDE a template literal, so `step(`password is ${password}`)` would
+  // pass the check above while printing the credential to a log file. Interpolations are
+  // code, not text — check them separately.
+  const interpolations = [...src.matchAll(/\$\{([^}]*)\}/g)].map((m) => m[1]);
+  for (const expr of interpolations) {
+    assert.ok(!/\bpassword\b/.test(expr), `a template literal interpolates the password: \${${expr}}`);
+  }
+
   // `credentials()` returns the plaintext, so it must stay module-private — an export
   // would hand the password to anything that imports this file. Only the presence check
   // and the attempt itself are public.

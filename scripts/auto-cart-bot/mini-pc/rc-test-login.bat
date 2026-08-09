@@ -32,7 +32,14 @@ timeout /t 3 /nobreak >nul
 
 echo(
 echo === Testing the unattended sign-in ===
-node rc-keepwarm.mjs --test-login
+echo (this takes up to two minutes - the window driving itself is expected)
+REM Tee'd through PowerShell so the run is BOTH live on screen and saved to a file.
+REM "email entered, then the window closed" was an accurate report and still not enough to
+REM act on - three different faults produce exactly that, and the console had already gone.
+REM `exit $LASTEXITCODE` matters: without it PowerShell returns its own status and the
+REM PASSED/FAILED branch below reads the wrong outcome.
+if not exist "logs" mkdir "logs"
+powershell -NoProfile -Command "node rc-keepwarm.mjs --test-login 2>&1 | Tee-Object -FilePath logs\rc-test-login.log; exit $LASTEXITCODE"
 set RESULT=%errorlevel%
 
 echo(
@@ -61,8 +68,11 @@ echo *** FAILED - AND YOU ARE NOW SIGNED OUT OF RC. ***
 echo(
 echo Read the reason printed above, then:
 echo   - "check the password"  =^> re-run mini-pc\rc-save-password.bat. The password is
-echo     hidden as you type, so a typo leaves no trace. This is the likely one.
+echo     hidden as you type, so a typo leaves no trace.
 echo   - "CAPTCHA"             =^> nothing to fix in software. Sign in by hand.
+echo   - anything else         =^> send these two files, they say exactly which step:
+echo         logs\rc-test-login.log
+echo         logs\rc-test-login-failed.png
 echo(
 echo EITHER WAY, RUN mini-pc\rc-login.bat NOW to sign back in. Do not leave this.
 echo Alerts are unaffected - the poller detects from Fly, not from this box. It is
