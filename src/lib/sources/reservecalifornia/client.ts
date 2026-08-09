@@ -497,7 +497,19 @@ async function rdrFetch<T>(
   for (let attempt = 1; attempt <= UD_ATTEMPTS; attempt++) {
     const r = await rdrAttempt<T>(provider, base, path, opts);
     if (r.ok) {
-      if (attempt > 1) console.log(`[UseDirect ${provider.source}] ${path} OK on attempt ${attempt}`);
+      // NAME WHAT THE EARLIER ATTEMPT FAILED WITH. This logged a bare "OK on attempt 2",
+      // and on 2026-08-09 that turned out to be the ONLY line in the log for a condition
+      // where every single RC call was failing once and succeeding on the retry — ~2.5x
+      // the Vercel invocations, which is what Vercel's 502 and CPU-duration anomalies
+      // were both reporting. A 403 (the WAF metering our lambda IP) and a timeout (the
+      // batch outrunning its own deadline) produce an identical line and have completely
+      // different fixes, so the log said "something is retrying" and nothing more.
+      if (attempt > 1) {
+        console.log(
+          `[UseDirect ${provider.source}] ${path} OK on attempt ${attempt}` +
+          (last ? ` (attempt ${attempt - 1} failed: ${last.status ?? 'no status'} ${last.message})` : '')
+        );
+      }
       recordUseDirectOutcome(provider.source, false);
       return r.data;
     }
