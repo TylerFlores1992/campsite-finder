@@ -1037,16 +1037,16 @@ systems), Stripe checkout (demo account `trialing`, card attached), and
   values cannot exist unless both writes work. **Do NOT use `users.updated_at` as evidence
   here** — `syncUser` bumps it on every authenticated page load, so a fresh timestamp means
   somebody opened a page, not that they saved a setting.
-- **Only the admin menu item is still unverified, and it cannot be done from a web
-  session.** It is a `<UserButton.Action>` inside Clerk's `<UserButton.MenuItems>`, so it
-  needs `ClerkProvider`, a real session, and a click to open the menu; the `ch-nav-admin`
-  screenshot preset renders the header with no avatar at all for exactly that reason.
-  The SERVER half is already proven though: `/api/admin/status` calls the same
-  `currentUserIsAdmin()` that gates `/admin`, and the owner uses `/admin` daily — so what
-  is untested is only whether the item draws in the menu, and a missing link costs one
-  typed URL.
+- **The admin menu item is confirmed by the owner** (2026-08-09): it draws in the account
+  menu and opens `/admin`. That closes the last of the four. It needed a human because it
+  is a `<UserButton.Action>` inside Clerk's `<UserButton.MenuItems>` — `ClerkProvider`, a
+  real session, and a click to open the menu. **The `ch-nav-admin` screenshot preset does
+  NOT verify this**: with no provider, Clerk's `UserButton` renders nothing, so the preset
+  returns a header with no avatar at all and its label ("admin now lives in the account
+  menu") is showing something it cannot show. Don't read a green run of it as evidence.
 
-Revert of the whole swap is `git revert a029c27` if something is badly wrong.
+**So the whole front-end swap is now verified.** Revert is still `git revert a029c27` if
+something is badly wrong.
 
 ### Known, not urgent
 - **`campgrounds.photos`: RIDB ingest FIXED and backfilled 2026-07-27.** Cause:
