@@ -318,22 +318,31 @@ export async function primeToken(page, { timeoutMs = 15_000 } = {}) {
  *     nothing silent can work, and a human sign-in per hold morning is the honest answer.
  *
  * `/api/v1/sessions/me` is Okta's own endpoint for exactly this, answered from cookies
- * alone. Run from the page so it carries the profile's cookies; 404/401 means no session.
- * Returns `null` when we could not tell — never `false`, which would be a verdict.
+ * alone. 404/401 means no session. Returns `null` when we could not tell — never `false`,
+ * which would be a verdict.
  */
-export async function oktaSessionAlive(page) {
-  return page.evaluate(async () => {
-    try {
-      const r = await fetch('https://signin.reservecalifornia.com/api/v1/sessions/me', {
-        credentials: 'include',
-        headers: { accept: 'application/json' },
-      });
-      if (r.status === 404 || r.status === 401) return { alive: false, status: r.status, expiresAt: null };
-      if (!r.ok) return { alive: null, status: r.status, expiresAt: null };
-      const j = await r.json().catch(() => null);
-      return { alive: true, status: r.status, expiresAt: (j && j.expiresAt) || null };
-    } catch (e) {
-      return { alive: null, status: 0, expiresAt: null, why: String(e && e.message).slice(0, 120) };
-    }
-  });
+export async function oktaSessionAlive(ctx) {
+  try {
+    // ctx.request, NOT page.fetch. From RC's page this is a CROSS-ORIGIN call to
+    // signin.reservecalifornia.com, so the browser applies CORS and Okta — which only
+    // allows configured trusted origins — makes it throw. The first version did exactly
+    // that and reported `okta=unknown` on a perfectly healthy session: a measurement
+    // defeated by the browser rather than by the answer.
+    //
+    // Playwright's request context is a Node-side fetch that shares the browser's COOKIE
+    // JAR and is not subject to CORS, which is the same reason `sessionLive` uses it to
+    // call RC's API. Cookies are what this question is about, so sharing the jar is the
+    // only property that matters.
+    const r = await ctx.request.get(
+      'https://signin.reservecalifornia.com/api/v1/sessions/me',
+      { headers: { accept: 'application/json' }, timeout: 20_000, failOnStatusCode: false },
+    );
+    const status = r.status();
+    if (status === 404 || status === 401) return { alive: false, status, expiresAt: null };
+    if (!r.ok()) return { alive: null, status, expiresAt: null };
+    const j = await r.json().catch(() => null);
+    return { alive: true, status, expiresAt: (j && j.expiresAt) || null };
+  } catch (e) {
+    return { alive: null, status: 0, expiresAt: null, why: String(e && e.message).slice(0, 120) };
+  }
 }

@@ -579,7 +579,7 @@ async function checkAndReport(ctx, page) {
   // so a live session with a dead token means the silent exchange is being defeated
   // locally and IS fixable, while both dying together means nothing unattended can work.
   // See oktaSessionAlive.
-  const okta = await oktaSessionAlive(page).catch(() => null);
+  const okta = await oktaSessionAlive(ctx).catch(() => null);
   const oktaNote =
     okta?.alive === true ? `okta=ALIVE${okta.expiresAt ? ` (exp ${String(okta.expiresAt).slice(0, 19)})` : ''}`
       : okta?.alive === false ? `okta=GONE(${okta.status})`
@@ -631,7 +631,7 @@ async function checkAndReport(ctx, page) {
       // log: a live session with no token means RC's own silent renew is failing locally
       // and can be fixed; both gone means only a human can help. Without it, "signed out"
       // is a symptom with two completely different cures.
-      const okta = await oktaSessionAlive(page).catch(() => null);
+      const okta = await oktaSessionAlive(ctx).catch(() => null);
       const verdict = okta?.alive === true
         ? 'okta session STILL ALIVE — the silent renew is failing, not the login'
         : okta?.alive === false
