@@ -31,7 +31,7 @@ import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
   requestProfile, clearProfileRequest,
 } from './profile-lock.mjs';
-import { installTokenCapture, primeToken } from './rc-token.mjs';
+import { installTokenCapture, primeToken, tokenSecondsLeft } from './rc-token.mjs';
 import { loadEnv, envSource, looksLikePlaceholder } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 
@@ -251,12 +251,28 @@ async function withRCLocked(fn) {
     // A working token is worth reporting as loudly as a broken one: it is the only
     // positive confirmation that comes from actually doing the job rather than probing.
     //
-    // NOT AWAITED, and that is the point. This runs at 08:00:00.000 with a site about to
-    // free, or with someone watching a spinner over a hold we have not let go of yet.
-    // Awaiting a health report here would put a camphawk.app round trip in front of the
-    // precart — spending the very milliseconds the whole design exists to save, to record
-    // that things are fine. It reports when it reports.
-    void reportSession(true, null);
+    // BUT "A TOKEN EXISTS" IS NOT "THE SESSION IS LIVE", and reporting it as such was a
+    // FALSE GREEN — caught 2026-08-09 05:42:38Z. The access token had expired at ~05:36
+    // and okta-auth-js had not yet cleared it, so `primeToken` returned the dead one from
+    // localStorage and this line announced a healthy session. It overwrote keep-warm's
+    // correct "dead" verdict, moved `session_live_since` (corrupting the very lifetime
+    // measurement migration 047 exists to take), and would have told the 07:30 pre-flight
+    // that everything was fine 80 seconds before keep-warm said otherwise. That is the
+    // 2026-08-07 failure exactly: a green check over a dead session.
+    //
+    // Same family as `notifications.status = 'sent'` meaning only "Twilio returned 2xx",
+    // and `IsSuccess: true` on a cart that held nothing. Presence is not liveness.
+    //
+    // The fix is a LOCAL expiry check, not a network probe. `tokenSecondsLeft` decodes the
+    // JWT in memory — no round trip — because the reason this report is fire-and-forget
+    // stands: at 08:00:00.000 nothing may go in front of the precart. An expired token now
+    // reports what it is. `null` (undecodable) is NOT claimed as live either; keep-warm
+    // asks RC properly every pass and is the authority on a positive verdict.
+    const left = tokenSecondsLeft(token);
+    if (left != null && left > 0) void reportSession(true, null);
+    else if (left != null) void reportSession(false, `token expired ${Math.round(-left / 60)}m ago — the app has not renewed it`);
+    // left == null: say nothing. An undecodable token is not evidence either way, and a
+    // guess here overwrites a real measurement from keep-warm.
     return await fn(ctx, page, token);
   } finally {
     await ctx.close().catch(() => {});

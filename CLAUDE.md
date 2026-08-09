@@ -784,15 +784,21 @@ observing it occasionally and reporting a token nothing had ever extended.
   hand-rolled one never did — every previous session was established without "Keep me
   signed in", so of course Okta issued nothing persistent. The human `--login` path only
   *asks* a person to tick it.
-  **Do not rewrite the conclusion below yet.** One reading is not a lifetime, and the thing
-  that matters is not whether a session EXISTS but whether RC's `authorize?prompt=none`
-  now succeeds against it — that was never testable before, because there was nothing to
-  authenticate against. **The evidence arrives on its own:** watch `token exp in Xm;
-  renewed=` on `autocart.rc_session` across the 20-minute passes. Climbing back toward
-  ~60m ⇒ silent renewal works and the keep-warm becomes real again; counting to zero and
-  dying ⇒ the access token is still the whole session and the auto-login stays the answer.
-  Either way the 08:00 hold is now covered twice over: the Okta session outlives it
-  (expires 09:36 PT) and `maybeAutoLogin` is the backstop.
+  **ANSWERED THE SAME NIGHT — AN OKTA SESSION IS NOT ENOUGH.** Measured across four
+  20-minute passes: `exp in 60m → 40m → 20m → gone`, `renewed=no` throughout, a perfectly
+  linear countdown to the token's ~60-minute life. At 05:44Z keep-warm reported, in its own
+  words: **"no token at all — signed out; okta session STILL ALIVE — the silent renew is
+  failing, not the login"**. That branch re-primes before judging, so it is not the
+  stale-token mistake, and it asks Okta directly rather than inferring.
+  **So the conclusion below STANDS, but its REASON was wrong.** It said there was nothing
+  to renew against; there now demonstrably is — a live Okta session with a 12h rolling
+  expiry — and RC's app still fails to exchange it for a new access token, then deletes the
+  token it had. The blocker was never the missing session. That narrows the diagnosis
+  rather than reopening it: `prompt=none` fails for some other reason (origin, PKCE state,
+  third-party-cookie policy in an automated Chromium), and finding out is real work with no
+  guarantee. **`maybeAutoLogin` remains the mechanism, not a fallback.**
+  Caveat worth keeping: `oktaSessionAlive()` reads `/api/v1/sessions/me`, which itself
+  refreshes Okta's idle timer — so the rolling 12h window may be us extending it, not RC.
 - **`rc-autologin.mjs`'s sign-in is PORTED FROM `rc-probe.mjs`, and reinventing it cost two
   failed runs (2026-08-09).** The probe signed in unattended and carted on 08-06; the new
   module was then written from scratch, four hundred lines from a working implementation in
@@ -813,6 +819,19 @@ observing it occasionally and reporting a token nothing had ever extended.
   fresh profile, which is the exact shape that got the IP blocked. Then it runs the real
   `attemptLogin`. **A failure leaves you signed OUT**, and the script says so and points at
   `rc-login.bat`.
+- **THE HOLD RUNNER WAS REPORTING A FALSE GREEN (found 2026-08-09, fix needs `update.bat`).**
+  It called `reportSession(true)` whenever `primeToken` returned *a* token — presence, not
+  liveness. At 05:42:38Z the access token had expired six minutes earlier and okta-auth-js
+  had not yet cleared it, so the runner announced a healthy session, **overwrote keep-warm's
+  correct "dead" verdict 80 seconds before keep-warm could state it, and moved
+  `session_live_since`** — corrupting the lifetime measurement migration 047 exists to take.
+  A green `autocart.rc_session` over a dead session is the 2026-08-07 failure exactly, and
+  the **07:30 pre-flight reads that check.** Same family as `notifications.status = 'sent'`
+  meaning only "Twilio returned 2xx" and `IsSuccess: true` on a cart that held nothing.
+  Fixed with a **local** `tokenSecondsLeft` decode, never a network probe: the report is
+  fire-and-forget because at 08:00:00.000 nothing may go in front of the precart. An
+  undecodable token now reports NOTHING rather than guessing — keep-warm asks RC properly
+  every pass and is the authority on a positive verdict.
 - **A dead session with a hold <45 min out now RINGS THE PHONE** (`lib/notifications/voice.ts`,
   `holdAtRisk`). Not a louder push: iOS Critical Alerts needs an entitlement Apple grants to
   medical/public-safety apps, and Time Sensitive is a *native* entitlement that would cost
