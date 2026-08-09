@@ -882,6 +882,64 @@ function AlarmTest() {
   );
 }
 
+/**
+ * "Does ReserveCalifornia's sign-in work inside our in-app webview?"
+ *
+ * THE ONE QUESTION NO AMOUNT OF RESEARCH COULD SETTLE, and it needs a button for the same
+ * reason the alarm does: it cannot run itself. RC's Okta fingerprints aggressively — it is
+ * why the bot must run headful — and whether it accepts an Android WebView decides whether
+ * mobile auto-cart is possible at all.
+ *
+ * Reaching it through the real flow needs a live 8am hold, which happens a few times a
+ * month. This exercises the same `openRcHandoff` seam with no hold, so the answer is
+ * available in ten seconds instead of at the next release.
+ *
+ * It also reports WHICH path was taken, which answers a second question for free: whether
+ * the installed binary actually has the InAppBrowser plugin. 'browser' from inside the app
+ * means the capability probe found nothing — a build that shipped without it, which is
+ * exactly the silent failure the Codemagic assertion exists to prevent.
+ */
+function RcWebviewTest() {
+  const [result, setResult] = useState<string | null>(null);
+
+  async function run() {
+    setResult('opening…');
+    const { openRcHandoff } = await import('@/lib/native/rc-handoff');
+    // A real park loop, no unit — this tests the SIGN-IN, which is the unknown. Carting
+    // needs a genuine held site, and inventing one would fail for reasons that say nothing
+    // about the webview.
+    const how = await openRcHandoff({ url: 'https://www.reservecalifornia.com/Web/#!park/720/715' });
+    setResult(
+      how === 'injected'
+        ? 'Opened in the in-app webview WITH injection — the plugin is present.'
+        : how === 'in-app'
+          ? 'Opened in the system browser (SFSafariViewController / Custom Tabs). No injectable webview in this build.'
+          : 'Opened in the browser — not running inside the app, or no plugin.',
+    );
+  }
+
+  return (
+    <div className="mt-4 border-t border-ch-line pt-3">
+      <h3 className="mb-0.5 text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+        Can we sign in to RC in the app?
+      </h3>
+      <p className="mb-2 text-ch-fine text-ch-muted">
+        Open this <strong>from the phone app</strong>. If ReserveCalifornia&rsquo;s sign-in
+        loads and accepts your password inside the window that opens, mobile auto-cart
+        works. On desktop this just opens RC in a tab.
+      </p>
+      <button
+        type="button"
+        onClick={run}
+        className="rounded-ch border border-ch-line px-3 py-1.5 text-ch-meta font-bold text-ch-ink hover:bg-ch-surface"
+      >
+        Open ReserveCalifornia
+      </button>
+      {result && <p className="mt-2 text-ch-fine leading-normal text-ch-muted">{result}</p>}
+    </div>
+  );
+}
+
 function SystemHealthPanel({ data }: { data: AdminData }) {
   const { beat, workerHealthy, canaryRows, syncRows, shardCov, capacity } = data;
 
@@ -971,6 +1029,7 @@ function SystemHealthPanel({ data }: { data: AdminData }) {
         )}
 
         <AlarmTest />
+        <RcWebviewTest />
       </Panel>
 
       <Panel title="Poller capacity">
