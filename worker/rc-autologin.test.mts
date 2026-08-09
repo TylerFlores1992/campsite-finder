@@ -75,7 +75,7 @@ test('the module never logs or exports a credential', async () => {
     const ok = /^const password = process\.env\.RC_PASSWORD;$/.test(line)
       || /^return email && password \? \{ email, password \} : null;$/.test(line)
       || /^const \{ email, password \} = creds;$/.test(line)
-      || /^await pw\.fill\(password\);$/.test(line);
+      || /^await pw\.loc\.fill\(password\);$/.test(line);
     assert.ok(ok, `password value used somewhere unexpected: ${line}`);
   }
   // A HOLE THE STRIPPER ABOVE OPENS, and it matters more since attemptLogin gained a `log`
@@ -103,10 +103,46 @@ test('a CAPTCHA is checked BEFORE the form is touched', async () => {
   // visible and enabled. The check must come first, not after a failed submit.
   const src = await import('node:fs').then((fs) =>
     fs.readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8'));
-  const firstCaptcha = src.indexOf('captchaChallenge(page)');
-  const firstFill = src.indexOf('.fill(email)');
-  assert.ok(firstCaptcha > 0 && firstFill > 0);
-  assert.ok(firstCaptcha < firstFill, 'the CAPTCHA check must precede typing');
+  // WITHIN attemptLogin, not within the file. The old version compared the first mention
+  // anywhere, which after the helpers were extracted was comparing where the FUNCTIONS are
+  // DEFINED — an ordering that says nothing about what runs first. It passed while
+  // asserting nothing.
+  const body = src.slice(src.indexOf('export async function attemptLogin'));
+  const firstCaptcha = body.indexOf('await captchaChallenge(page)');
+  const firstType = body.indexOf('typeEmail(user.loc, email)');
+  assert.ok(firstCaptcha > 0 && firstType > 0, 'both steps must still exist');
+  assert.ok(firstCaptcha < firstType, 'the CAPTCHA check must precede typing');
+});
+
+test('the email is submitted with Enter BEFORE any button click', async () => {
+  // THE BUG THAT COST TWO FAILED TEST RUNS (2026-08-09). Okta disables the Next button
+  // while a transaction is in flight, so a click can report success and do nothing, or time
+  // out against a button that is visibly enabled. Enter submits the form the widget is
+  // actually listening to and needs no button to be hittable.
+  //
+  // rc-probe.mjs learned this months earlier and says so in a comment. This file was
+  // written from scratch anyway, clicked first, and pressed Enter only as a fallback —
+  // exactly backwards. The guard exists so the next rewrite cannot quietly re-invert it.
+  const src = await import('node:fs').then((fs) =>
+    fs.readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8'));
+  // Scope to the retry loop, and assert on SUBMIT_SELECTORS rather than a variable name.
+  // The first version of this test compared `press('Enter')` against `next.loc.click(` —
+  // and a sabotage that clicked first through a differently-named locator sailed straight
+  // past it. You cannot click a button you have not looked up, so the LOOKUP is the thing
+  // that cannot be renamed around.
+  const loop = src.slice(
+    src.indexOf('for (let attempt = 1'),
+    src.indexOf('if (!pw) return'),
+  );
+  assert.ok(loop.length > 200, 'the retry loop must still be there to check');
+  const enter = loop.indexOf("press('Enter')");
+  const lookup = loop.indexOf('SUBMIT_SELECTORS');
+  assert.ok(enter > 0, 'the email must still be submitted with Enter');
+  assert.ok(lookup > 0, 'the button click must survive as the fallback');
+  assert.ok(enter < lookup, 'Enter must come before the submit button is even looked up');
+  // And a failed click must fall through to a direct DOM click — that is what tells
+  // "Okta refused us" apart from "Playwright could not hit the button".
+  assert.match(loop, /\.evaluate\(\(el\) => el\.click\(\)\)/, 'DOM-click fallback missing');
 });
 
 test('the challenge check ignores the passive badge', async () => {
@@ -116,5 +152,10 @@ test('the challenge check ignores the passive badge', async () => {
   const src = await import('node:fs').then((fs) =>
     fs.readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8'));
   assert.match(src, /bframe/, 'only the blocking bframe counts');
-  assert.match(src, /width > 80 && r\.height > 80/, 'and it must be a real, sized box');
+  assert.match(src, /r\.width < 100 \|\| r\.height < 100/, 'and it must be a real, sized box');
+  // A sized bframe is still not a challenge if a WRAPPER above it is hidden — Okta toggles
+  // that wrapper between uses. Checking the iframe alone made the probe wait five minutes
+  // for a human who had nothing to solve, and that false reading was then repeated as fact.
+  assert.match(src, /for \(let el = f\.parentElement; el; el = el\.parentElement\)/,
+    'ancestors must be checked too');
 });

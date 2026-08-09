@@ -672,6 +672,10 @@ async function testLogin() {
       homeUrl: RC_HOME,
       isLive: async () => (await sessionLive(ctx, page)).live === true,
       log,
+      // Somebody is watching this one, so a CAPTCHA is worth waiting on rather than
+      // failing at — they can solve it and the run carries on. maybeAutoLogin deliberately
+      // does the opposite: unattended, a challenge is a full stop.
+      humanPresent: true,
     });
     if (!r.ok) {
       log(`✗ ${r.reason}`);
