@@ -7,6 +7,7 @@ import BrandMark from '@/components/v2/BrandMark';
 import AdminAutoRefresh from '@/components/AdminAutoRefresh';
 import AdminTabs, { type AdminData } from '@/components/admin/AdminTabs';
 import { query, queryOne } from '@/lib/db/client';
+import { getShardCoverage, getPollerCapacity, type PollerCapacity, type ShardCoverage } from '@/lib/capacity';
 import type { CostItem, UsageCounts } from '@/lib/costs';
 
 export const dynamic = 'force-dynamic';
@@ -267,6 +268,17 @@ export default async function AdminPage() {
       ),
     ]);
 
+  // CAPACITY, on the page whose job is "is anything broken?". It answers the question one
+  // step earlier than everything else here — not "is it broken" but "when will it be" —
+  // and it lived only in /api/health/status, so nobody saw it unless they curled for it.
+  // Same functions the pager uses, so the dashboard cannot quietly disagree with the page.
+  const shardCov = await getShardCoverage().catch(
+    (): ShardCoverage => ({ held: 0, expected: 0, missing: [], machines: 1, level: 'warn', detail: 'read failed' }),
+  );
+  const capacity = await getPollerCapacity(shardCov.machines).catch(
+    (): PollerCapacity => ({ demand: 0, capacity: 0, machines: shardCov.machines, free: 0, level: 'warn', detail: 'read failed' }),
+  );
+
   const mrr = await computeMrr().catch(() => null);
 
   // True signup count from Clerk (our users table only has rows for people who've
@@ -309,6 +321,8 @@ export default async function AdminPage() {
   const data: AdminData = {
     clerkTotal,
     usersAgg,
+    shardCov,
+    capacity,
     activeSub,
     subMap,
     watchAgg,

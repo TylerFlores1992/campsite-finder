@@ -15,6 +15,7 @@ import MetricChart, {
 } from '@/components/admin/MetricChart';
 import type { CostItem, UsageCounts } from '@/lib/costs';
 import type { SmsDelivery } from '@/lib/health-thresholds';
+import type { PollerCapacity, ShardCoverage } from '@/lib/capacity';
 
 /**
  * Admin dashboard, in the redesign's ch-* system.
@@ -56,6 +57,10 @@ type SyncRow = {
 
 export interface AdminData {
   clerkTotal: number | null;
+  /** Shard coverage + demand-vs-capacity. Computed by lib/capacity, same functions the
+   *  pager uses — see the note there about two copies of a rule. */
+  shardCov: ShardCoverage;
+  capacity: PollerCapacity;
   usersAgg: { total: number; new_7d: number; new_30d: number };
   activeSub: { n: number };
   subMap: Record<string, number>;
@@ -183,6 +188,21 @@ function overallStatus(data: AdminData): { level: Level; headline: string; detai
   // cause was fixed — every one of those drops was 2026-08-05, before the camphawk.app
   // link came out of SMS, and there have been none since. A banner that keeps shouting
   // about a solved problem is how the one person who reads it learns to scroll past it.
+  // CAPACITY IS A LEADING INDICATOR — the only one on this page. Everything else here
+  // reports a thing that has already broken; this reports one that is going to. It was
+  // computed in /api/health/status and shown NOWHERE, so the pager knew and the dashboard
+  // did not, and the person who has to clone the machine reads the dashboard.
+  if (data.shardCov.level === 'fail') {
+    problems.push(data.shardCov.detail);
+  }
+  if (data.capacity.level === 'fail') {
+    problems.push(`the poller is over capacity by ${-data.capacity.free} campground-months`);
+  } else if (data.capacity.level === 'warn') {
+    canaryWarnings.push(
+      `poller capacity — ${data.capacity.free} slot(s) free, clone a machine`,
+    );
+  }
+
   const sms = data.smsDelivery;
   const smsRecent = {
     delivered: sms.r_delivered, dropped: sms.r_dropped,
@@ -863,7 +883,7 @@ function AlarmTest() {
 }
 
 function SystemHealthPanel({ data }: { data: AdminData }) {
-  const { beat, workerHealthy, canaryRows, syncRows } = data;
+  const { beat, workerHealthy, canaryRows, syncRows, shardCov, capacity } = data;
 
   const detect = canaryRows.filter((c) => c.key.startsWith('detect:'));
   const delivery = canaryRows.filter((c) => c.key.startsWith('delivery:'));
@@ -951,6 +971,47 @@ function SystemHealthPanel({ data }: { data: AdminData }) {
         )}
 
         <AlarmTest />
+      </Panel>
+
+      <Panel title="Poller capacity">
+        <p className="text-ch-meta leading-normal text-ch-muted">
+          rec.gov rate-limits per egress IP, so capacity grows by adding MACHINES, not by
+          working the ones we have harder. This is the only number here that predicts a
+          problem instead of reporting one.
+        </p>
+        <ul className="mt-2">
+          <HealthRow
+            level={shardCov.level}
+            label="Shard coverage"
+            sub={shardCov.missing.length ? 'those campgrounds are polled by NOBODY' : 'every shard has a live machine'}
+            right={`${shardCov.held}/${shardCov.expected || 1}`}
+            title={shardCov.detail}
+          />
+          <HealthRow
+            level={capacity.level}
+            label="rec.gov demand"
+            sub={
+              capacity.level === 'fail'
+                ? `over by ${-capacity.free} — refresh is already slower than 15s`
+                : capacity.level === 'warn'
+                  ? `only ${capacity.free} free — clone a machine`
+                  : `${capacity.free} campground-months spare`
+            }
+            right={`${capacity.demand}/${capacity.capacity}`}
+            title={capacity.detail}
+          />
+        </ul>
+        {capacity.level !== 'ok' && (
+          <p className="mt-2 text-ch-fine leading-normal text-ch-muted">
+            {/* The ORDER is the whole instruction. Raising SHARD_COUNT first leaves the new
+                shard unheld, and its campgrounds polled by nobody, while every other check
+                stays green — the silent-blindness case this dashboard exists to prevent. */}
+            <strong>Clone first, then raise the count.</strong> <code>flyctl machine clone</code>,
+            then <code>SHARD_COUNT</code> and <code>min_machines_running</code> in{' '}
+            <code>worker/fly.toml</code>. Doing it the other way round leaves a shard unheld
+            and its campgrounds unpolled.
+          </p>
+        )}
       </Panel>
 
       <Panel title="Campground catalog">

@@ -61,6 +61,33 @@ export const DETECT_DEAD_MS = DETECT_STALE_MS;
  */
 export const RECGOV_MONTHS_PER_MACHINE = 4;
 
+/**
+ * Free campground-months below which the capacity gauge warns — an ABSOLUTE reserve,
+ * deliberately not a percentage.
+ *
+ * The old rule warned only at `demand === capacity`, i.e. the first signal was "the next
+ * watch degrades everyone" with zero lead time to clone a machine. The obvious fix is a
+ * percentage, and it is the wrong shape: a percentage measures the wrong quantity. The
+ * question this gauge answers is not "what fraction is used" but "are there enough free
+ * slots left to notice and act before demand lands", and that is a COUNT.
+ *
+ * The two behave very differently as the fleet grows. At 75%:
+ *   2 machines (capacity 8)  → warns with 2 free. Too late; a single 2-month watch on a
+ *                              new campground eats the whole margin.
+ *   10 machines (capacity 40) → warns with 10 free. Absurdly early — that is two and a
+ *                              half machines of runway, and it would sit amber for weeks.
+ * A fixed reserve warns at the same real headroom either way.
+ *
+ * 4 = one machine's worth. "Fewer than one machine of headroom left" is the moment to
+ * clone, because cloning is what fixes it and a human has to do it.
+ *
+ * THIS DOES NOT PROTECT AGAINST A DEMAND SPIKE, and it must not be read as though it
+ * does. Twenty users adding two 2-month watches each is ~80 campground-months arriving in
+ * an afternoon against a capacity of 8 — no warning threshold survives that, because the
+ * gap between warning and saturation is a human being awake. Only autoscaling does.
+ */
+export const RECGOV_CAPACITY_RESERVE = 4;
+
 /* ------------------------------------------------------------ SMS delivery */
 
 /** Carrier outcomes for SMS over a window — see migration 038 for each bucket. */

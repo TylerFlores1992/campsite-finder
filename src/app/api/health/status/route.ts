@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { query, queryOne } from '@/lib/db/client';
+import { getShardCoverage, getPollerCapacity } from '@/lib/capacity';
 import {
   DELIVERY_STALE_MS as SHARED_DELIVERY_STALE_MS,
   DETECT_STALE_MS as SHARED_DETECT_STALE_MS,
@@ -100,64 +101,18 @@ export async function GET() {
   //     exactly one machine is doing the work whether or not it has leased yet.
   let machines = 1;
   try {
-    const shards = await query<{ shard_index: number; shard_count: number; machine_id: string }>(
-      `SELECT shard_index, shard_count, machine_id FROM poller_shards WHERE leased_until > NOW()`
-    );
-    const expected = shards.reduce((m, r) => Math.max(m, r.shard_count), 0);
-    const live = shards.map((r) => r.shard_index);
-    const missing: number[] = [];
-    for (let i = 0; i < expected; i++) if (!live.includes(i)) missing.push(i);
-    checks.push({
-      name: 'poller.shards',
-      // No rows at all is a warn, not a fail: a worker predating the shard lease is a
-      // deploy-ordering artefact, not an outage.
-      level: expected === 0 ? 'warn' : missing.length > 0 ? 'fail' : 'ok',
-      detail:
-        expected === 0
-          ? 'no shard lease yet (worker may predate shard support)'
-          : missing.length > 0
-            ? `shard(s) ${missing.join(', ')} of ${expected} UNHELD — those campgrounds are not being polled`
-            : `${live.length}/${expected} shard(s) held`,
-    });
-    machines = Math.max(1, new Set(shards.map((r) => r.machine_id)).size);
+    const cov = await getShardCoverage();
+    machines = cov.machines;
+    checks.push({ name: 'poller.shards', level: cov.level, detail: cov.detail });
   } catch (err) {
     checks.push({ name: 'poller.shards', level: 'warn', detail: `read failed: ${(err as Error).message}` });
   }
 
-  // 1c. Capacity vs demand — the "never trail demand" gauge. rec.gov capacity is per
-  //     egress IP, so it grows only by adding machines; this check counts what the
-  //     active watches actually require (distinct campground-months, because the
-  //     scheduler dedups every watch on the same campground-month into one fetch
-  //     stream) and compares it with machines × RECGOV_MONTHS_PER_MACHINE.
-  //     AT capacity = warn: the next watch created will push refresh past 15s — clone
-  //     a machine now. OVER capacity = fail: the 15s promise is already broken, and
-  //     nothing else goes red for it (the poller keeps beating, canaries keep
-  //     passing — everything merely gets slower). Ops-only: the user-facing outage
-  //     banner reads detect:* checks alone.
+  // 1c. Capacity vs demand — the "never trail demand" gauge, shared with the admin
+  //     dashboard so the two can never disagree. See lib/capacity.ts.
   try {
-    const demand = await queryOne<{ n: number }>(
-      `SELECT COUNT(DISTINCT (w.campground_id, to_char(m, 'YYYY-MM')))::int AS n
-         FROM watches w
-         JOIN campgrounds c ON c.id = w.campground_id
-         CROSS JOIN LATERAL generate_series(
-           date_trunc('month', GREATEST(w.start_date, CURRENT_DATE)::timestamp),
-           date_trunc('month', w.end_date::timestamp),
-           interval '1 month') AS m
-        WHERE w.active = true AND w.end_date > CURRENT_DATE AND c.source = 'ridb'`
-    );
-    const n = demand?.n ?? 0;
-    const capacity = machines * RECGOV_MONTHS_PER_MACHINE;
-    checks.push({
-      name: 'poller.capacity',
-      level: n > capacity ? 'fail' : n === capacity ? 'warn' : 'ok',
-      detail:
-        `${n}/${capacity} rec.gov campground-months across ${machines} machine(s)` +
-        (n > capacity
-          ? ' — OVER capacity, refresh has fallen below 15s; raise SHARD_COUNT and clone a machine'
-          : n === capacity
-            ? ' — at capacity; the next watch degrades everyone. Clone a machine'
-            : ''),
-    });
+    const cap = await getPollerCapacity(machines);
+    checks.push({ name: 'poller.capacity', level: cap.level, detail: cap.detail });
   } catch (err) {
     checks.push({ name: 'poller.capacity', level: 'warn', detail: `read failed: ${(err as Error).message}` });
   }
