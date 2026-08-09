@@ -43,7 +43,7 @@ export interface PushResult {
  * fine eight seconds later. Two runtimes, one configured. A green canary in the wrong
  * process is not coverage.
  */
-export function pushConfigStatus(): { ok: boolean; detail: string } {
+export function pushConfigStatus(): { ok: boolean; detail: string; projectId?: string } {
   const raw = process.env.FCM_SERVICE_ACCOUNT;
   if (!raw) return { ok: false, detail: 'FCM_SERVICE_ACCOUNT is not set in this runtime' };
 
@@ -70,7 +70,7 @@ export function pushConfigStatus(): { ok: boolean; detail: string } {
   if (missing.length) {
     return { ok: false, detail: `FCM_SERVICE_ACCOUNT parses but is missing: ${missing.join(', ')}` };
   }
-  return { ok: true, detail: `FCM service account loads (project ${sa.project_id})` };
+  return { ok: true, detail: `FCM service account loads (project ${sa.project_id})`, projectId: sa.project_id };
 }
 
 function loadServiceAccount(): ServiceAccount | null {

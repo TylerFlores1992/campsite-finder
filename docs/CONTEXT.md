@@ -2947,7 +2947,21 @@ desktop `extension/content-rc.js` writes `localStorage["shoppingCartKey"]` and r
 its reservecalifornia.com webview. The human reviews and checks out. No payment
 automation.
 
-**THE ONE MAKE-OR-BREAK TEST, still unrun** (needs a real RC login, ~3 min, no bot):
+> **THIS TEST WAS RUN, AND CROSS-SESSION ADOPTION FAILED (2026-08-05/06).** Everything
+> above this line describes a design that the test below disproved, and it stayed here
+> unmarked long enough to be re-proposed. **A cart key does NOT hand over a cart.** A
+> second session on the same account — different token, fresh profile, same machine —
+> reads a cart made by the first as **0 entries**. The cart is bound to the originating
+> SESSION (Okta token + AWSALBAPP stickiness cookies), not to the key. See
+> `extension/content-rc.js`'s adopt path, which is kept only for the narrow case where
+> THIS browser made the cart, and commit `cfab07d`.
+>
+> What replaced it is **Path B**: the bot holds the site, releases on demand, and the
+> user's OWN session re-carts (~2.5s exposure, measured). The line below about "on mobile
+> the native app injects it into its reservecalifornia.com webview" is therefore about
+> injecting a PRECART, not a cart key.
+
+**THE MAKE-OR-BREAK TEST — RUN, and it came back negative** (kept for the method):
 in a browser logged into RC with a site in the cart, run in the console
 `localStorage.setItem("shoppingCartKey","00000000-0000-0000-0000-000000000000");location.reload()`
 → cart should read EMPTY (proves the app follows localStorage), then set it back to the

@@ -124,13 +124,38 @@ export async function GET() {
   //     2026-08-09 exactly one of them was configured — the cart alert's push failed while
   //     the worker's ordinary alert reached the same two devices seconds later.
   const pushCfg = pushConfigStatus();
+  // SAME PROJECT, NOT JUST A VALID FILE. FCM device tokens are scoped to a Firebase
+  // PROJECT: a token registered under project A cannot be messaged with project B's
+  // credentials, and the send fails per-token at delivery time — far from the paste that
+  // caused it. On 2026-08-09 a replacement key was valid JSON with every required field
+  // and belonged to a DIFFERENT project, so this check went green while push stayed just
+  // as broken. "Loads" is not "correct", which is the same mistake as a token that exists
+  // not meaning a session that works.
+  //
+  // The worker's canary is the reference because it is PROVEN: it pushes to the real
+  // devices and they receive. Comparing against it needs no new configuration and cannot
+  // drift from reality.
+  const workerProject = (await queryOne<{ detail: string | null }>(
+    `SELECT detail FROM alert_canary WHERE key = 'delivery:push'`,
+  ).catch(() => null))?.detail?.match(/project ([\w-]+)/)?.[1] ?? null;
+
+  const mismatch =
+    pushCfg.ok && pushCfg.projectId && workerProject && pushCfg.projectId !== workerProject;
+
   checks.push({
     name: 'delivery:push_web',
-    level: pushCfg.ok ? 'ok' : 'fail',
+    level: pushCfg.ok && !mismatch ? 'ok' : 'fail',
     // Not a pager: alerting from the worker is unaffected, and this is about the
     // auto-cart family. Same reasoning as autocart.* — see the `pages` field.
-    ...(pushCfg.ok ? {} : { pages: false }),
-    detail: pushCfg.ok ? pushCfg.detail : `${pushCfg.detail} — hold/claim pushes cannot send`,
+    ...(pushCfg.ok && !mismatch ? {} : { pages: false }),
+    detail: mismatch
+      ? `WRONG FIREBASE PROJECT — Vercel has "${pushCfg.projectId}", the app's devices are ` +
+        `registered under "${workerProject}" (which the worker pushes to successfully). ` +
+        `Generate the key from ${workerProject}; tokens are project-scoped, so this one ` +
+        `will be rejected at send time.`
+      : pushCfg.ok
+        ? `${pushCfg.detail}, matching the worker`
+        : `${pushCfg.detail} — hold/claim pushes cannot send`,
   });
 
   // 2. Alert-health canary rows (detection per source + delivery). Written by the
