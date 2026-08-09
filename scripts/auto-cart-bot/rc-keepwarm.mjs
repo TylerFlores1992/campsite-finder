@@ -61,7 +61,7 @@ import {
 } from './profile-lock.mjs';
 import {
   installTokenCapture, readLiveToken, primeToken, renewByReload, tokenSecondsLeft,
-  readAuthFacts, oktaSessionAlive,
+  readAuthFacts, oktaSessionAlive, authCookieSummary,
 } from './rc-token.mjs';
 import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
@@ -124,6 +124,8 @@ const LOGIN = args.has('--login');
 
 /** Log the app's own authorize URL once, not on every 20-minute pass. */
 let warmedAuthLogged = false;
+/** Same, for the cookie inventory — it does not change between passes. */
+let warmedCookiesLogged = false;
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -595,6 +597,19 @@ async function checkAndReport(ctx, page) {
   // refresh token would solve this outright via /oauth2/v1/token, no password and no
   // CAPTCHA; failing that, `authorize?prompt=none` needs the real client_id and
   // redirect_uri. Both cross the wire during `--login`. See rc-token's noteTokenCall.
+  // ONCE, next to the first auth facts: what cookies actually back this session. A 404
+  // from Okta means "no session" AND "you sent no cookie", and only this tells them
+  // apart — which is the difference between "fixable without a human" and "impossible".
+  if (!warmedCookiesLogged) {
+    warmedCookiesLogged = true;
+    const cookies = await authCookieSummary(ctx).catch(() => []);
+    const persistent = cookies.filter((c) => c.persistent);
+    log(`   cookies: ${cookies.length} total, ${persistent.length} persistent` +
+        (persistent.length ? ` → ${persistent.map((c) => `${c.name}@${c.domain}(${c.expiresInMin}m)`).slice(0, 6).join(', ')}` : ''));
+    const signin = cookies.filter((c) => String(c.domain).includes('signin.'));
+    log(`   signin.reservecalifornia.com: ${signin.length ? signin.map((c) => c.name).join(', ') : 'NONE — no Okta session cookie at all'}`);
+  }
+
   const facts = await readAuthFacts(page).catch(() => null);
   if (facts && (facts.authorizeUrl || facts.tokenCall) && !warmedAuthLogged) {
     warmedAuthLogged = true;

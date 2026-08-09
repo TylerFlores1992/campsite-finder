@@ -346,3 +346,42 @@ export async function oktaSessionAlive(ctx) {
     return { alive: null, status: 0, expiresAt: null, why: String(e && e.message).slice(0, 120) };
   }
 }
+
+
+/**
+ * Which auth cookies exist in this profile — NAMES ONLY, never values.
+ *
+ * DISTINGUISHES THE TWO READINGS OF A 404. Okta answers `/api/v1/sessions/me` with 404
+ * both when there is genuinely no session and when the request carried no session cookie,
+ * and those mean opposite things:
+ *   • a persistent Okta cookie present, far-future expiry → the session should exist and
+ *     OUR request is wrong; the silent renew is fixable and no human is needed;
+ *   • no cookie, or only a browser-session cookie that dies with the tab → RC never
+ *     established a persistent session, the access token IS the whole session, and no
+ *     amount of cleverness renews it. A human signs in per hold morning, full stop.
+ *
+ * That distinction decides whether unattended RC auto-cart is possible AT ALL, so it is
+ * worth one extra call rather than one more confident guess.
+ *
+ * Values are deliberately not read. A session cookie is the credential itself — logging
+ * it would put full account access in a plain-text file on the mini-PC, which is exactly
+ * the property the whole "no credentials on the box" design protects.
+ */
+export async function authCookieSummary(ctx) {
+  try {
+    const all = await ctx.cookies(['https://signin.reservecalifornia.com', 'https://www.reservecalifornia.com']);
+    return all.map((c) => ({
+      name: c.name,
+      domain: c.domain,
+      httpOnly: c.httpOnly,
+      // -1 (or absent) is a browser-SESSION cookie: it dies with the browser and can
+      // never outlive a restart, which is the whole question here.
+      persistent: typeof c.expires === 'number' && c.expires > 0,
+      expiresInMin: typeof c.expires === 'number' && c.expires > 0
+        ? Math.round((c.expires * 1000 - Date.now()) / 60000)
+        : null,
+    }));
+  } catch {
+    return [];
+  }
+}
