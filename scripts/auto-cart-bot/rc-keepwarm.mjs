@@ -63,6 +63,7 @@ import {
   installTokenCapture, readLiveToken, primeToken, renewByReload, tokenSecondsLeft,
   readAuthFacts, oktaSessionAlive, authCookieSummary,
 } from './rc-token.mjs';
+import { hasCredentials, attemptLogin } from './rc-autologin.mjs';
 import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 
@@ -101,6 +102,18 @@ const KEEPALIVE_MS = Number(process.env.RC_KEEPALIVE_MS || 20 * 60 * 1000);
 const RENEW_BEFORE_S = Number(process.env.RC_RENEW_BEFORE_S || 10 * 60);
 /** How often to look at the clock. Cheap — one page.evaluate against an open tab. */
 const EXPIRY_POLL_MS = 60_000;
+
+/**
+ * How long before a hold's release to make sure we have a token.
+ *
+ * 15 minutes against a ~60-minute token: late enough that the token comfortably outlives
+ * the 08:00 cart and the claim that follows it, early enough that a failed attempt still
+ * leaves time to wake a human. Signing in at 07:00 would risk the token lapsing before
+ * the release, which is the whole failure we are fixing.
+ */
+const AUTOLOGIN_LEAD_MIN = Number(process.env.RC_AUTOLOGIN_LEAD_MIN || 15);
+/** Minutes of token life below which a hold is NOT considered covered. */
+const AUTOLOGIN_MIN_TOKEN_MIN = Number(process.env.RC_AUTOLOGIN_MIN_TOKEN_MIN || 20);
 
 /** Headful by default. RC/Okta fingerprints headless Chromium — the same rule the
  *  rec.gov bot follows, and the reason its cart path is headed too. */
@@ -341,6 +354,86 @@ async function warmOnce() {
  * this recently. Same rule as `hasAvailabilityInRange` returning null — the absence of a
  * reading is not a negative reading.
  */
+/**
+ * Minutes until an RC-style Pacific wall-clock timestamp. Both sides are compared as
+ * wall-clock in the same zone, so the offset cancels; never `new Date()` on a zone-less
+ * string, which reads it in whatever zone this box happens to be in.
+ */
+function minutesUntil(releaseAt) {
+  try {
+    const p = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    }).formatToParts(new Date()).reduce((a, x) => ((a[x.type] = x.value), a), {});
+    const now = `${p.year}-${p.month}-${p.day}T${p.hour === '24' ? '00' : p.hour}:${p.minute}:${p.second}`;
+    return Math.round((Date.parse(`${releaseAt}Z`) - Date.parse(`${now}Z`)) / 60000);
+  } catch {
+    return null;
+  }
+}
+
+/** When the next hold releases, from the feed. Null if none, or if we cannot ask. */
+async function nextReleaseFromFeed() {
+  if (!TOKEN) return null;
+  try {
+    const res = await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    if (!res.ok) return null;
+    const j = await res.json();
+    return j?.nextRelease ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sign in ourselves, but ONLY in the narrow window where it is both necessary and worth
+ * the risk. Returns true if an attempt was made.
+ *
+ * There is no session to keep warm — RC issues no Okta session cookie, so the token IS the
+ * session and it lasts about an hour. That leaves exactly one unattended option: obtain a
+ * token shortly before a hold needs it.
+ *
+ * The guards are the whole design, because a login is the act that got the household IP
+ * blocked for twelve hours when it was done repeatedly (2026-08-06):
+ *   • a hold must actually be due within AUTOLOGIN_LEAD_MIN — a few times a month;
+ *   • the current token must be genuinely insufficient, not merely ageing;
+ *   • ONE attempt per release, tracked by release time, so a failure never becomes a loop;
+ *   • a CAPTCHA aborts and wakes a human rather than retrying (rc-autologin.mjs).
+ */
+let autoLoginTriedFor = null;
+async function maybeAutoLogin(ctx, page) {
+  if (!hasCredentials()) return false;
+  const release = await nextReleaseFromFeed();
+  if (!release || autoLoginTriedFor === release) return false;
+
+  const mins = minutesUntil(release);
+  if (mins == null || mins > AUTOLOGIN_LEAD_MIN || mins < -20) return false;
+
+  // Already covered? A token with plenty of life left needs no login, and logging in
+  // anyway would be exactly the needless repetition we are avoiding.
+  const { token } = await readLiveToken(page).catch(() => ({ token: null }));
+  const left = tokenSecondsLeft(token);
+  if (left != null && left > AUTOLOGIN_MIN_TOKEN_MIN * 60) return false;
+
+  autoLoginTriedFor = release;
+  log(`⏰ hold releases in ${mins}m and the session will not cover it — signing in ONCE`);
+  const r = await attemptLogin(ctx, page, {
+    homeUrl: RC_HOME,
+    isLive: async () => (await sessionLive(ctx, page)).live === true,
+  });
+  if (r.ok) {
+    log('  ✓ signed in unattended — the hold is covered');
+    await reportSession('warm', 'signed in automatically before a hold');
+  } else {
+    log(`  ✗ could not sign in: ${r.reason}`);
+    log('    NOT retrying. Repeated logins are what got this address blocked before.');
+    await reportSession('dead', `auto sign-in failed: ${r.reason}`);
+  }
+  return true;
+}
+
 async function reportSession(state, renewalNote = '') {
   if (state !== 'warm' && state !== 'dead') return;
   if (!TOKEN) return;
@@ -518,6 +611,10 @@ async function warmResident() {
         // the password form, not on a cookie exchange. See renewByReload.
         if (Date.now() - lastExpiryPoll >= EXPIRY_POLL_MS) {
           lastExpiryPoll = Date.now();
+          // Before anything else: is a hold about to need a session we do not have?
+          if (await maybeAutoLogin(ctx, page).catch((e) => { log(`auto-login error: ${e.message}`); return false; })) {
+            continue;
+          }
           const { token, source } = await readLiveToken(page).catch(() => ({ token: null, source: 'none' }));
           const left = tokenSecondsLeft(token);
           // `left === null` (no token, or one that will not decode) is NOT a reason to

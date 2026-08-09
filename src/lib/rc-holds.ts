@@ -158,6 +158,29 @@ export async function noteAttempt(ids: string[], note: string): Promise<void> {
 }
 
 /**
+ * When the next hold releases, as RC's zone-less Pacific wall-clock — or null.
+ *
+ * The keep-warm needs this and nothing else. There is no session to keep warm (RC issues
+ * no Okta session cookie; see rc-autologin.mjs), so the only way to hold a site at 08:00
+ * unattended is to sign in shortly beforehand — and signing in is exactly the act that
+ * got the household IP blocked when it was done repeatedly. Knowing the ONE moment it is
+ * worth doing is what keeps this to a few times a month instead of hourly.
+ *
+ * `carted` and `claiming` count as well as `requested`: a hold we already hold still needs
+ * a live session to be RELEASED to its owner, and losing the session between carting and
+ * claiming would strand the site in the bot's cart.
+ */
+export async function nextHoldRelease(): Promise<string | null> {
+  const [row] = await query<{ release_at: string }>(
+    `SELECT release_at FROM rc_hold_requests
+      WHERE status IN ('requested', 'carted', 'claiming')
+        AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+      ORDER BY release_at ASC LIMIT 1`,
+  ).catch(() => []);
+  return row?.release_at ?? null;
+}
+
+/**
  * The user pressed claim. Ask the bot to let go of THIS entry.
  *
  * Only a `carted` hold can be claimed — there is nothing to hand over otherwise — and
