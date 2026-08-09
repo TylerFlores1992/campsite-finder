@@ -80,6 +80,50 @@ export async function installTokenCapture(ctx) {
           keep(auth);
         } catch { /* never break the page */ }
       };
+      /**
+       * WHAT KIND OF AUTH DOES RC ACTUALLY USE? — recorded during a sign-in, so the next
+       * move is chosen from fact.
+       *
+       * Measured 2026-08-08: the access token lives ~40-60 min, is never renewed, and a
+       * reload returns the same cached value; when it expires the app holds nothing. So
+       * "keep the session warm" is finished, and exactly one of these is true:
+       *   • the app asked for `offline_access` and a REFRESH TOKEN is sitting in this
+       *     profile — then `/oauth2/v1/token` mints new access tokens with no password,
+       *     no CAPTCHA and no cookie, and the problem is solved outright;
+       *   • it did not, and the only silent path is `authorize?prompt=none` against a
+       *     persistent Okta session cookie;
+       *   • neither, and a human sign-in per hold morning is the honest answer.
+       *
+       * All three are distinguishable from what crosses the wire at sign-in. Recorded on
+       * `window` for the keep-warm to log LOCALLY; the token endpoint's response is
+       * summarised to booleans and lifetimes — never the credential itself, which must
+       * not travel anywhere.
+       */
+      const noteTokenCall = (url, init, res) => {
+        try {
+          if (!/\/oauth2\/[^/]*\/?v1\/token/i.test(String(url))) return;
+          const body = String((init && init.body) || '');
+          const params = new URLSearchParams(body);
+          const summary = {
+            grantType: params.get('grant_type'),
+            clientId: params.get('client_id'),
+            redirectUri: params.get('redirect_uri'),
+            scope: params.get('scope'),
+            usedPkce: params.has('code_verifier'),
+          };
+          window.__camphawkRcTokenCall = summary;
+          if (res && typeof res.clone === 'function') {
+            res.clone().json().then((j) => {
+              window.__camphawkRcTokenGrant = {
+                hasRefreshToken: Boolean(j && j.refresh_token),
+                expiresIn: j && j.expires_in,
+                scope: j && j.scope,
+              };
+            }).catch(() => {});
+          }
+        } catch { /* never break the page */ }
+      };
+
       // LEARN THE APP'S OWN OIDC CALL, in case we ever have to make it ourselves.
       // RC is on Okta's org auth server with PKCE/S256, so a hand-built
       // `authorize?prompt=none` needs the real client_id, redirect_uri and a code
@@ -113,6 +157,8 @@ export async function installTokenCapture(ctx) {
             readHeaders(init && init.headers);
             if (input && typeof input === 'object' && input.headers) readHeaders(input.headers);
           }
+          const u = url;
+          return of.apply(this, arguments).then((res) => { noteTokenCall(u, init, res); return res; });
         } catch { /* ignore */ }
         return of.apply(this, arguments);
       };
@@ -149,6 +195,25 @@ export async function readLiveToken(page) {
       return ls ? { token: ls, source: 'localStorage' } : { token: null, source: 'none' };
     } catch {
       return { token: null, source: 'none' };
+    }
+  });
+}
+
+/**
+ * Everything we learned about RC's auth during this page's life. Diagnostics only —
+ * logged locally on the mini-PC, never reported to the server. See noteTokenCall for why
+ * this decides the next move.
+ */
+export async function readAuthFacts(page) {
+  return page.evaluate(() => {
+    try {
+      return {
+        authorizeUrl: window.__camphawkRcAuthorize ?? null,
+        tokenCall: window.__camphawkRcTokenCall ?? null,
+        grant: window.__camphawkRcTokenGrant ?? null,
+      };
+    } catch {
+      return { authorizeUrl: null, tokenCall: null, grant: null };
     }
   });
 }

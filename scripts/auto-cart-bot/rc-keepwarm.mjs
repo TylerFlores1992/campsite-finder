@@ -61,7 +61,7 @@ import {
 } from './profile-lock.mjs';
 import {
   installTokenCapture, readLiveToken, primeToken, renewByReload, tokenSecondsLeft,
-  readAuthorizeUrl,
+  readAuthFacts,
 } from './rc-token.mjs';
 import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
@@ -377,6 +377,21 @@ async function humanLogin() {
         try { fs.writeFileSync(WARM_MARKER, new Date().toISOString()); } catch {}
         log('✓ Signed in. The keep-warm loop can take it from here.');
         log(`  Profile: ${PROFILE_DIR}  — do NOT delete this directory.`);
+        // THE ONE MOMENT THESE FACTS ARE VISIBLE. The token exchange happens once, at
+        // sign-in; after that the app just reuses what it has. Whether a refresh token
+        // came back decides whether RC auto-cart can ever be unattended — see
+        // rc-token's noteTokenCall. Printed here, and only here, because a keep-warm
+        // pass will never see it. Nothing below is a credential.
+        const facts = await readAuthFacts(page).catch(() => null);
+        if (facts) {
+          log('  ── RC AUTH FACTS (local only, no credentials) ──');
+          log(`  token call: ${JSON.stringify(facts.tokenCall)}`);
+          log(`  grant:      ${JSON.stringify(facts.grant)}`);
+          if (facts.authorizeUrl) log(`  authorize:  ${facts.authorizeUrl.slice(0, 240)}`);
+          log('  ──────────────────────────────────────────────');
+          log('  ^ Send these three lines to CampHawk — hasRefreshToken decides');
+          log('    whether the 8am hold can ever run without a human.');
+        }
         return true;
       }
     }
@@ -563,14 +578,20 @@ async function checkAndReport(ctx, page) {
     (exp ? `token exp in ${Math.round((exp - Date.now()) / 60000)}m` : 'token exp unknown') +
     `; renewed=${changed ? 'YES' : 'no'}; src=${source}`;
 
-  // One-off diagnostic, logged not reported: if the app ever makes its own
-  // `authorize?prompt=none` call we want the real client_id / redirect_uri / PKCE shape
-  // recorded, so an explicit silent-auth could be built from fact rather than guesswork.
-  // Not sent to the server — an authorize URL carries state and nonce.
-  const authUrl = await readAuthorizeUrl(page).catch(() => null);
-  if (authUrl && !warmedAuthLogged) {
+  // THE DIAGNOSTIC THAT DECIDES THE NEXT MOVE, logged locally and never reported.
+  // Keeping the session warm is finished — the token is never renewed and the app holds
+  // nothing once it expires. What remains depends on facts only a sign-in reveals: a
+  // refresh token would solve this outright via /oauth2/v1/token, no password and no
+  // CAPTCHA; failing that, `authorize?prompt=none` needs the real client_id and
+  // redirect_uri. Both cross the wire during `--login`. See rc-token's noteTokenCall.
+  const facts = await readAuthFacts(page).catch(() => null);
+  if (facts && (facts.authorizeUrl || facts.tokenCall) && !warmedAuthLogged) {
     warmedAuthLogged = true;
-    log(`   (app authorize URL seen: ${authUrl.slice(0, 200)})`);
+    log('   ── RC AUTH FACTS (local only, no credentials) ──');
+    if (facts.tokenCall) log(`   token call: ${JSON.stringify(facts.tokenCall)}`);
+    if (facts.grant) log(`   grant:      ${JSON.stringify(facts.grant)}`);
+    if (facts.authorizeUrl) log(`   authorize:  ${facts.authorizeUrl.slice(0, 240)}`);
+    log('   ────────────────────────────────────────────────');
   }
 
   // A FAILURE ON A localStorage TOKEN PROVES NOTHING. That copy is not what the app
