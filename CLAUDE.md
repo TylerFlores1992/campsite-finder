@@ -741,14 +741,32 @@ observing it occasionally and reporting a token nothing had ever extended.
   8-second visit did — launched with the three backgrounding flags disabled), and a
   **visible window gets closed** by anyone tidying up (it is headful because RC
   fingerprints headless Chromium; the loop now notices a dead context and reopens).
-- **VERDICT PENDING.** Watch `token exp in Xm; renewed=` in the keep-warm log and on
-  `autocart.rc_session`. `exp` climbing back toward ~60m = solved. Counting to zero and
-  dying = the renewal is not a background timer, and the next move is driving the OIDC
-  **silent-auth** endpoint (`/authorize?prompt=none`) against the persistent "Keep me
-  signed in" cookie — **no password and no CAPTCHA**, because the challenge lives on the
-  credential form, not on a cookie exchange. Stored-credential auto-relogin stays the last
-  resort: repeated Okta logins from one address is what we believe got the household IP
-  blocked for 12h on 08-06.
+- **VERDICT IN, 2026-08-09: THERE IS NOTHING TO KEEP WARM.** The resident tab did not save
+  it, and the silent-auth plan was built and then abandoned on the evidence. Three
+  instruments agreed: the profile holds **no Okta session cookie at all** —
+  `signin.reservecalifornia.com` carries only `DT` (device id), `ln` (remembered username),
+  `luf_*` (last factor) and a `JSESSIONID` that dies with the browser. **No `sid`, no
+  `idx`.** RC's own bundled `okta-auth-js` fires `authorize?prompt=none` on its autoRenew
+  timer, finds nothing to authenticate against, fails, and **deletes the tokens** — which is
+  precisely the log we captured. So `prompt=none` was never going to work for us either: the
+  challenge does live on the credential form and not on a cookie exchange, but there is no
+  cookie to exchange. **The access token IS the session, and it lasts ~60 minutes.**
+- **Therefore: obtain a token shortly before the hold.** `rc-autologin.mjs` +
+  `maybeAutoLogin` sign in ONCE, within `RC_AUTOLOGIN_LEAD_MIN` (15) of a real release,
+  only when the current token genuinely will not cover it, **one attempt per release
+  forever** (tracked by release time, so a failure can never become a loop), and a CAPTCHA
+  is a full stop that wakes a human rather than a slower retry. The guards are the design:
+  a login is the act that got the household IP blocked for 12h on 08-06 — but that was
+  repeated logins **from fresh profiles**, and the `DT` cookie in the persistent profile is
+  the thing that tells Okta this is a machine it has seen before. Every failure path reports
+  so the 07:30 pre-flight and a push tell the owner to sign in themselves; **losing a hold
+  because we did nothing is recoverable, losing the household IP is not.**
+- **The password lives in `credstore.mjs` (DPAPI, CurrentUser), NOT in `.env`.** Two more
+  lines beside `AUTOCART_TOKEN` was very nearly what shipped and would have been wrong: the
+  file is git-ignored but readable by every process on the box, and this machine is
+  routinely screen-shared. Saved once with `mini-pc\rc-save-password.bat` (echo muted for
+  the same reason). `credentials()` is not exported, and `worker/rc-autologin.test.mts`
+  asserts that plus every line the plaintext may appear on.
 
 ### A dead RC session is NOT "alerting is broken" (2026-08-08)
 `autocart.rc_session` went in as a plain `fail`, so it turned `/api/health/status` 503 and

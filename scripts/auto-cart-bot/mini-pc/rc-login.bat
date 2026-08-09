@@ -59,6 +59,11 @@ echo(
 echo Then confirm from anywhere:  curl -s https://camphawk.app/api/health/status
 echo   autocart.rc_session should read ok within ~20 minutes (one keep-warm pass).
 echo(
+echo TIRED OF RUNNING THIS? Run mini-pc\rc-save-password.bat once. It stores your
+echo RC password encrypted on this machine (DPAPI, this Windows account only) and
+echo the bot then signs itself in about 15 minutes before each hold. This script
+echo stays as the fallback for when it cannot - a CAPTCHA, or a changed password.
+echo(
 echo Done. You can close this window.
 pause
 exit /b 0

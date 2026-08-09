@@ -3803,15 +3803,36 @@ updates via `git push` + `update.bat` on the box.
 
 **The mini-PC now runs FIVE processes**, all launched by `mini-pc/start-all.bat`: the
 Cloudflare tunnel, the rec.gov bot, the sign-in broker, `rc-keepwarm.mjs` and
-`rc-hold-runner.mjs`. Two RC-specific helpers exist because a fresh PowerShell window
+`rc-hold-runner.mjs`. Three RC-specific helpers exist because a fresh PowerShell window
 opens in `C:\Users\<you>`, where `node rc-keepwarm.mjs` fails with `MODULE_NOT_FOUND` —
 which reads like a broken install rather than a wrong directory, and cost three rounds on
-2026-08-07. Both `cd` themselves:
-- **`mini-pc/rc-login.bat`** — the one human step. Closes anything holding the RC profile,
-  opens RC to sign in ("Keep me signed in"), relaunches both processes on success.
+2026-08-07. All three `cd` themselves:
+- **`mini-pc/rc-save-password.bat`** — run ONCE, and the morning sign-in goes away. Stores
+  the RC password so `maybeAutoLogin` can obtain a token ~15 minutes before a hold. Opens
+  no browser, touches no profile lock, stops nothing — so unlike `update.bat` it is safe
+  to run at 07:55.
+- **`mini-pc/rc-login.bat`** — the human fallback, for when the auto-login reports it could
+  not get in (a CAPTCHA, a changed password, an MFA prompt). Closes anything holding the RC
+  profile, opens RC to sign in ("Keep me signed in"), relaunches both processes on success.
 - **`mini-pc/rc-check.bat`** — "is RC auto-cart working?", answering the feed and the RC
   session **separately**, because they fail independently: the feed can be fine while the
   session is dead, and assuming one from the other is how a hold sits unclaimed at 8am.
+
+> **The password is stored ENCRYPTED, and the plaintext-`.env` version of this was very
+> nearly what shipped.** `scripts/auto-cart-bot/.env` already holds `AUTOCART_TOKEN` and is
+> git-ignored, so two more lines looked like the obvious home — but that is a password
+> every process on the box can read, and one that ends up in screenshots and in pasted
+> terminal output from a machine that is routinely screen-shared over RustDesk. The rec.gov
+> bot had already solved it: `credstore.mjs` encrypts with **Windows DPAPI at CurrentUser
+> scope**, so the blob is worthless on any other machine or under any other login, and the
+> plaintext is piped over stdin rather than sitting on a command line where a process
+> listing would show it. `rc-autologin.mjs` reads that store first; `RC_EMAIL`/`RC_PASSWORD`
+> remain only as a dev override for a box with no DPAPI. `--save-login` mutes the terminal
+> echo for the same screen-recording reason. `credentials()` is deliberately **not
+> exported** — it returns the plaintext, and an export would hand it to anything that
+> imports the file; `worker/rc-autologin.test.mts` asserts both that and every line the
+> value is allowed to appear on, verified by adding a `console.log(password)` and watching
+> it fail.
 
 > **NEVER `taskkill /FI "WINDOWTITLE eq …"` FOR THESE PROCESSES — it matches nothing
 > (found 2026-08-08).** `start-all.bat` launches them as `start "CampHawk RC keep-warm"
