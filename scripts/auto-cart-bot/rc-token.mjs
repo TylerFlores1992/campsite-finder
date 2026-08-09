@@ -291,3 +291,49 @@ export async function primeToken(page, { timeoutMs = 15_000 } = {}) {
     await page.waitForTimeout(500);
   }
 }
+
+
+/**
+ * Does an OKTA SESSION still exist in this profile?
+ *
+ * THIS IS THE QUESTION THE WHOLE DESIGN TURNS ON, and it is not the same question as
+ * "is the access token valid".
+ *
+ * RC bundles **okta-auth-js** (its source is in the app's Route chunk). That SDK's
+ * tokenManager has `autoRenew` ON by default and renews through `getWithoutPrompt` — a
+ * hidden-iframe `authorize?prompt=none` against the Okta session cookie. When that renew
+ * FAILS, the SDK removes the tokens from storage. Which is precisely the shape of what we
+ * measured on 2026-08-08: the token was never renewed, and the moment it expired the app
+ * held nothing at all.
+ *
+ * So the app is already attempting silent auth, unprompted, and failing. Reloading could
+ * never have helped — we were trying to trigger something that was already running.
+ *
+ * What decides whether ANY unattended fix is possible:
+ *   • session ACTIVE while the access token is dead → the cookie outlives the token, the
+ *     silent exchange is being defeated by something local (iframe/cookie policy,
+ *     third-party blocking), and driving `prompt=none` ourselves — or fixing the browser
+ *     flags — is a real fix;
+ *   • session GONE at the same moment → Okta is ending the org session on the same clock,
+ *     nothing silent can work, and a human sign-in per hold morning is the honest answer.
+ *
+ * `/api/v1/sessions/me` is Okta's own endpoint for exactly this, answered from cookies
+ * alone. Run from the page so it carries the profile's cookies; 404/401 means no session.
+ * Returns `null` when we could not tell — never `false`, which would be a verdict.
+ */
+export async function oktaSessionAlive(page) {
+  return page.evaluate(async () => {
+    try {
+      const r = await fetch('https://signin.reservecalifornia.com/api/v1/sessions/me', {
+        credentials: 'include',
+        headers: { accept: 'application/json' },
+      });
+      if (r.status === 404 || r.status === 401) return { alive: false, status: r.status, expiresAt: null };
+      if (!r.ok) return { alive: null, status: r.status, expiresAt: null };
+      const j = await r.json().catch(() => null);
+      return { alive: true, status: r.status, expiresAt: (j && j.expiresAt) || null };
+    } catch (e) {
+      return { alive: null, status: 0, expiresAt: null, why: String(e && e.message).slice(0, 120) };
+    }
+  });
+}

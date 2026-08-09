@@ -61,7 +61,7 @@ import {
 } from './profile-lock.mjs';
 import {
   installTokenCapture, readLiveToken, primeToken, renewByReload, tokenSecondsLeft,
-  readAuthFacts,
+  readAuthFacts, oktaSessionAlive,
 } from './rc-token.mjs';
 import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
@@ -574,9 +574,20 @@ async function checkAndReport(ctx, page) {
   const { live, why } = await sessionLive(ctx, page);
   const after = await readToken(page);
   const changed = before != null && after != null && before !== after;
+  // THE OKTA SESSION, separately from the access token. RC's own SDK renews via
+  // authorize?prompt=none against this cookie and deletes the tokens when that fails —
+  // so a live session with a dead token means the silent exchange is being defeated
+  // locally and IS fixable, while both dying together means nothing unattended can work.
+  // See oktaSessionAlive.
+  const okta = await oktaSessionAlive(page).catch(() => null);
+  const oktaNote =
+    okta?.alive === true ? `okta=ALIVE${okta.expiresAt ? ` (exp ${String(okta.expiresAt).slice(0, 19)})` : ''}`
+      : okta?.alive === false ? `okta=GONE(${okta.status})`
+      : 'okta=unknown';
+
   const note =
     (exp ? `token exp in ${Math.round((exp - Date.now()) / 60000)}m` : 'token exp unknown') +
-    `; renewed=${changed ? 'YES' : 'no'}; src=${source}`;
+    `; renewed=${changed ? 'YES' : 'no'}; src=${source}; ${oktaNote}`;
 
   // THE DIAGNOSTIC THAT DECIDES THE NEXT MOVE, logged locally and never reported.
   // Keeping the session warm is finished — the token is never renewed and the app holds
@@ -616,9 +627,20 @@ async function checkAndReport(ctx, page) {
   if (live === false && source === 'none') {
     const again = await primeToken(page, { timeoutMs: 10_000 }).catch(() => ({ source: 'none' }));
     if (again.source === 'none') {
+      // Ask Okta whether the SESSION is gone too. This is the most valuable line in the
+      // log: a live session with no token means RC's own silent renew is failing locally
+      // and can be fixed; both gone means only a human can help. Without it, "signed out"
+      // is a symptom with two completely different cures.
+      const okta = await oktaSessionAlive(page).catch(() => null);
+      const verdict = okta?.alive === true
+        ? 'okta session STILL ALIVE — the silent renew is failing, not the login'
+        : okta?.alive === false
+          ? `okta session GONE (${okta.status}) — only a human sign-in restores it`
+          : 'okta session unknown';
       log(`⚠ RC SESSION IS DEAD: the app holds no token at all — signed out`);
+      log(`  ${verdict}`);
       log('  A human must sign in once: node rc-keepwarm.mjs --login');
-      await reportSession('dead', 'no token at all — the app is signed out');
+      await reportSession('dead', `no token at all — signed out; ${verdict}`);
       return;
     }
     log(`… no token when first read, but one arrived on priming (${again.source}) — not reporting`);
