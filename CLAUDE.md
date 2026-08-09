@@ -1018,10 +1018,35 @@ Clerk empty, re-signup works), watch creation (18 active across two reservation
 systems), Stripe checkout (demo account `trialing`, card attached), and
 `GET /api/manage/<token>` returning the watch on production.
 
-**Still unverified — click through signed in:** the settings writes (phone save,
-auto-cart toggle), the campsite mute list on `/manage/<token>`, and the admin menu item
-for the owner. Revert of the whole swap is `git revert a029c27` if something is badly
-wrong.
+**Verified 2026-08-09 — three of the four are now closed:**
+- **The campsite mute list on `/manage/<token>` WORKS END TO END**, driven against
+  production. `/manage/<token>` is TOKEN-authed, not Clerk, so it is the one signed-in
+  surface an agent can actually exercise — remember that next time something here is
+  "unverifiable". Confirmed: the token resolves; `mute` persists (checked in the DB, not
+  just the response echo); a muted id **not** in the alert history is still listed, with
+  `name: null`, which is the documented behaviour and the part most likely to have rotted;
+  re-muting the same id does not duplicate (the `NOT ($2 = ANY(...))` guard holds); missing
+  `siteId` and an unknown `op` both 400; a bad token 404s. `stop`/`resume` verified on the
+  same trip. Tested with the sentinel id `__camphawk-verify-DO-NOT-USE__` on a watch with
+  no live RC hold, so no real alert could be suppressed, and the watch was restored to
+  `muted_site_ids = []`, `active = true`.
+- **Phone save and the auto-cart toggle are proven BY THE DATA, and the argument is the
+  single writer.** `users.phone` is written by exactly one route (`/api/user/phone`) and 8
+  accounts have one; `users.autocart_enabled` defaults to `false` (migration 010) and is
+  written by exactly one route (`/api/user/autocart`), and 4 accounts have it `true`. Those
+  values cannot exist unless both writes work. **Do NOT use `users.updated_at` as evidence
+  here** — `syncUser` bumps it on every authenticated page load, so a fresh timestamp means
+  somebody opened a page, not that they saved a setting.
+- **Only the admin menu item is still unverified, and it cannot be done from a web
+  session.** It is a `<UserButton.Action>` inside Clerk's `<UserButton.MenuItems>`, so it
+  needs `ClerkProvider`, a real session, and a click to open the menu; the `ch-nav-admin`
+  screenshot preset renders the header with no avatar at all for exactly that reason.
+  The SERVER half is already proven though: `/api/admin/status` calls the same
+  `currentUserIsAdmin()` that gates `/admin`, and the owner uses `/admin` daily — so what
+  is untested is only whether the item draws in the menu, and a missing link costs one
+  typed URL.
+
+Revert of the whole swap is `git revert a029c27` if something is badly wrong.
 
 ### Known, not urgent
 - **`campgrounds.photos`: RIDB ingest FIXED and backfilled 2026-07-27.** Cause:
