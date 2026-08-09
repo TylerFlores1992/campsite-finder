@@ -35,6 +35,34 @@
  * Custom Tabs on Android. Those are separate processes by design and can never be
  * injected into. That is the whole reason mobile re-cart is manual — not an oversight.
  *
+ * ## THE UNRESOLVED PROBLEM — settle this BEFORE writing any native code
+ *
+ * Injection and the user's SESSION are, on both platforms, mutually exclusive:
+ *
+ *   iOS      SFSafariViewController shares Safari's cookies — and cannot be injected.
+ *            WKWebView can be injected — and has its own isolated WKWebsiteDataStore.
+ *   Android  Custom Tabs share Chrome's cookies — and cannot be injected.
+ *            WebView can be injected — and has its own CookieManager.
+ *
+ * So the very property that makes injection possible is the property that loses the RC
+ * login. The desktop extension does not have this problem because it runs inside the
+ * user's real browser, in their real session — which is exactly why it works.
+ *
+ * The precart POSTs with the user's `ssoAccessToken` from RC's localStorage. In a fresh,
+ * isolated webview there is no token, because there is no session. Injecting into it would
+ * find nothing and cart nothing.
+ *
+ * The only way through is a one-time sign-in to RC INSIDE our webview, whose data store
+ * then persists for later claims. That has two costs worth weighing before building
+ * anything: a setup step users must complete before their first hold (and will not have
+ * completed on the morning it first matters), and asking someone to type a password into a
+ * webview inside a third-party app — which is the shape of a phishing flow and draws
+ * scrutiny in App Review even when the page is genuinely reservecalifornia.com.
+ *
+ * DO NOT START THE NATIVE WORK UNTIL THIS IS ANSWERED. It is a design question, not an
+ * implementation detail, and the answer may be that mobile auto-cart is not worth having
+ * on these terms.
+ *
  * ## The rule that keeps this shippable
  *
  * The web layer deploys continuously to apps that are ALREADY INSTALLED. A binary built
