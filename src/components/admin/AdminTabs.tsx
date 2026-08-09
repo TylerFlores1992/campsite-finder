@@ -915,10 +915,16 @@ function RcWebviewTest() {
     await inspect();
     setResult('opening…');
     const { openRcHandoff } = await import('@/lib/native/rc-handoff');
-    // A real park loop, no unit — this tests the SIGN-IN, which is the unknown. Carting
-    // needs a genuine held site, and inventing one would fail for reasons that say nothing
-    // about the webview.
-    const how = await openRcHandoff({ url: 'https://www.reservecalifornia.com/Web/#!park/720/715' });
+    // RC's HOME PAGE, deliberately — not a park deep-link. The unknown here is whether
+    // Okta signs in inside our webview, and the home page reaches "Log in" in one tap
+    // while being the only RC URL that cannot be wrong.
+    //
+    // It was `/Web/#!park/720/715` and that 404'd inside the app on 2026-08-09: a made-up
+    // URL shape, the SECOND time the same invention has cost a live test (see CONTEXT.md
+    // — RC's real deep link is `/park/<placeId>/<facilityId>`, built by lib/booking-url,
+    // which is what the actual hand-off uses). A hardcoded RC URL in a test is a URL that
+    // nothing keeps honest; the real flow's shape is covered by booking-url's own tests.
+    const how = await openRcHandoff({ url: 'https://www.reservecalifornia.com/' });
     setResult(
       how === 'injected'
         ? 'Opened in the in-app webview WITH injection — the plugin is present.'
@@ -936,9 +942,9 @@ function RcWebviewTest() {
       <p className="mb-2 text-ch-fine text-ch-muted">
         Open this <strong>from the CampHawk app</strong>, not from a browser — the whole
         question is what the app&rsquo;s own webview does, and a browser tells you nothing.
-        If ReserveCalifornia&rsquo;s sign-in loads and accepts your password inside the
-        window that opens, mobile auto-cart works. Read the line below the button first: it
-        says which kind of window you got.
+        RC&rsquo;s home page opens; tap <strong>Log in</strong> there. If Okta loads and
+        accepts your password inside that window, mobile auto-cart works. Read the line
+        below the button first: it says which kind of window you got.
       </p>
       <button
         type="button"

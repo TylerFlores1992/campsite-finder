@@ -99,6 +99,22 @@ test('the served precart is the extension file, and it parses', async () => {
   assert.match(script, /precartdataforbookingmodify/);
 });
 
+test('no invented ReserveCalifornia URL shape anywhere in the app', () => {
+  // `/Web/#!park/<place>/<facility>` LOOKS like a UseDirect URL and is not one. It has now
+  // been written from memory twice and both times RC answered with its own branded 404 —
+  // once in production copy, once in the admin webview test, where it burned a live
+  // sign-in experiment that needed a human, an emulator and a fresh build to set up.
+  //
+  // RC's real deep link is `/park/<placeId>/<facilityId>`, and the ONE place allowed to
+  // build it is lib/booking-url, which is host-gated and tested. Anything else hardcoding
+  // an RC path is a URL nothing keeps honest.
+  for (const f of ['src/components/admin/AdminTabs.tsx', 'src/lib/native/rc-handoff.ts']) {
+    const src = readFileSync(f, 'utf8');
+    const bad = [...src.matchAll(/^(?!\s*(?:\*|\/\/)).*reservecalifornia\.com\/Web\//gm)];
+    assert.equal(bad.length, 0, `${f}: '/Web/#!park/…' is not a real RC URL — use lib/booking-url`);
+  }
+});
+
 test('the precart route is reachable without a CampHawk session', () => {
   // Clerk's auth.protect() returns 404, not 401, for a route that is not public — so this
   // would fail as "not found" in a webview at 08:00:00 and read like a deploy problem.
