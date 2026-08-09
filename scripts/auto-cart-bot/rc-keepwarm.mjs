@@ -475,6 +475,8 @@ async function warmResident() {
       // in fact we just did, on the one dashboard that decides whether to wake someone.
       let lastCheck = 0;
       let lastExpiryPoll = 0;
+      /** The token we last tried to renew. Retrying the SAME one buys nothing — see below. */
+      let lastRenewAttemptFor = null;
       for (;;) {
         // Yield fast. The runner is asking because a site releases in seconds; making it
         // wait out a 60s lock timeout at 08:00:00 would lose exactly the thing we are
@@ -504,7 +506,16 @@ async function warmResident() {
           // `left === null` (no token, or one that will not decode) is NOT a reason to
           // reload on a loop — that would hammer RC every minute on a signed-out page.
           // The 20-minute check reports it; a human decides.
-          if (left != null && left < RENEW_BEFORE_S) {
+          //
+          // ONE ATTEMPT PER TOKEN, and never on an expired one. The first version retried
+          // every minute for as long as the token was under the threshold, which on
+          // 2026-08-08 meant SIXTEEN reloads between 21:24 and 21:40 — the last five
+          // against a token that had already expired, where there is nothing left to
+          // renew. That is the request storm the null-guard above was written to avoid,
+          // arriving through the other door: a residential address whose WAF has 403'd us
+          // before, reloading a site once a minute to no purpose.
+          if (left != null && left > 0 && left < RENEW_BEFORE_S && token !== lastRenewAttemptFor) {
+            lastRenewAttemptFor = token;
             log(`token has ${Math.round(left / 60)}m left (src=${source}) — renewing by reload`);
             const r = await renewByReload(page, RC_HOME).catch((e) => {
               log(`  renew failed: ${e.message}`);
@@ -566,8 +577,30 @@ async function checkAndReport(ctx, page) {
   // sends, so a 401 from it is our stale read, not RC's verdict — and reporting it as
   // `dead` sends the owner to do a human sign-in over a healthy session. Downgrade to
   // inconclusive, exactly like a 403 or a network error.
-  if (live === false && source !== 'live') {
+  if (live === false && source === 'localStorage') {
     log(`… RC rejected a ${source} token — INCONCLUSIVE, not a dead session (${why})`);
+    return;
+  }
+
+  // NO TOKEN AT ALL IS NOT "INCONCLUSIVE" — IT IS SIGNED OUT. This branch used to be
+  // folded in with the stale-token case above, and the cost was four hours of silence on
+  // 2026-08-08: once the session lapsed the app held no token, every 20-minute pass
+  // logged "RC rejected a none token — INCONCLUSIVE", and the dashboard was never told
+  // again. The last verdict it had was already `false`, so nothing was actively wrong —
+  // but a monitor that goes quiet at exactly the moment the thing it watches breaks is
+  // the failure mode this whole file exists to remove.
+  //
+  // Primed first, because a page mid-reload genuinely has nothing to capture yet, and
+  // reporting THAT as dead would be the stale-token mistake wearing a different hat.
+  if (live === false && source === 'none') {
+    const again = await primeToken(page, { timeoutMs: 10_000 }).catch(() => ({ source: 'none' }));
+    if (again.source === 'none') {
+      log(`⚠ RC SESSION IS DEAD: the app holds no token at all — signed out`);
+      log('  A human must sign in once: node rc-keepwarm.mjs --login');
+      await reportSession('dead', 'no token at all — the app is signed out');
+      return;
+    }
+    log(`… no token when first read, but one arrived on priming (${again.source}) — not reporting`);
     return;
   }
 

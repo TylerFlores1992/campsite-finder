@@ -312,39 +312,47 @@ async function getUserPushTokens(userId: string): Promise<string[]> {
  */
 export function pushBody(payload: NotificationPayload): { title: string; body: string } {
   const name = payload.campgroundName.replace(/\s+(campground|cg)\.?$/i, '');
-  const site = payload.campsiteName ? ` — Site ${payload.campsiteName}` : '';
+  /**
+   * What the BODY leads with. The title already names the campground, and repeating it
+   * costs most of a lock-screen line: "Opening soon: Pfeiffer Big Sur SP — South Camp
+   * (sites 1-78)" followed by "Pfeiffer Big Sur SP — South Camp (sites 1-78) — Site
+   * #SC29 releases…" pushes the only new fact — which site, and when — off the end.
+   * So the body leads with the SITE when we know it, and falls back to the campground
+   * only when we do not.
+   */
+  const subject = payload.campsiteName ? `Site ${payload.campsiteName}` : name;
 
   let title: string;
   let body: string;
   if (payload.kind === 'carted' && payload.holdUrl) {
     title = `🔒 Held for you: ${name}`;
-    body = `${name}${site} is held. Tap to claim it — we let go the moment you do.`;
+    body = `${subject} is held. Tap to claim it — we let go the moment you do.`;
   } else if (payload.kind === 'carted') {
     title = `✅ In your cart: ${name}`;
-    body = `${name}${site} is in your cart — check out now (held ~15 min).`;
+    body = `${subject} is in your cart — check out now (held ~15 min).`;
   } else if (payload.kind === 'hold_missed') {
     // Deliberately NOT dressed up as an opening. The user is owed the truth about a
     // promise we made, and the title is what they see on a lock screen.
     title = `⚠️ We couldn't hold ${name}`;
-    body = `Our bot missed the release for${site || ` ${name}`}. It may still be free — tap to check.`;
+    body = `Our bot missed the release for ${subject}. It may still be free — tap to check.`;
   } else if (payload.kind === 'coming_soon' && payload.holdUrl) {
     // THE OFFER BELONGS HERE, not only in the email. SMS genuinely cannot carry it — a
     // camphawk.app link is filtered (30007, 10 for 10) — but push has no such limit, and
     // it is the channel most likely to be seen, since these alerts land overnight for an
     // 8am release. Leaving it out meant an offer with a deadline sat unread in an inbox.
     title = `⏳ Opening soon: ${name}`;
-    body = `${name}${site} releases ${formatReleaseTime(payload.availableAt, true)}. Tap to have us hold it for you.`;
+    body = `${subject} releases ${formatReleaseTime(payload.availableAt, true)}. Tap to have us hold it for you.`;
   } else if (payload.kind === 'coming_soon') {
     title = `⏳ Opening soon: ${name}`;
-    body = `${name}${site} was just cancelled — we'll alert you when it's bookable.`;
+    body = `${subject} was just cancelled — we'll alert you when it's bookable.`;
   } else if (payload.kind === 'still_open') {
     const dates = formatStayDates(payload.availableDates);
     title = `⛺ Still available: ${name}`;
-    body = `${name}${site} is still open for ${dates}. Tap to book.`;
+    body = `${subject} is still open for ${dates}. Tap to book.`;
   } else {
     const dates = formatStayDates(payload.availableDates);
     title = `⛺ Available: ${name}`;
-    body = `${name}${site} open for ${dates}. Tap to book.`;
+    body = `${subject} open for ${dates}. Tap to book.`;
   }
 
   return { title, body };
@@ -399,6 +407,30 @@ async function dispatchPush(payload: NotificationPayload): Promise<void> {
   }
 }
 
+/**
+ * The watch's date window, as a human reads it.
+ *
+ * The email printed raw ISO — "Your watch: 2026-09-04 → 2026-09-05" — while every other
+ * surface says "Sep 4-5". `formatStayDates` exists precisely because a bare ISO date was
+ * misread as a timestamp in a live alert on 2026-08-06; the email simply never got
+ * converted. Dates are stepped in UTC and re-serialised, never `new Date(iso)` plus local
+ * arithmetic, because a bare date parses as midnight UTC and renders a day early for
+ * everyone west of Greenwich — which on an alert names the wrong night.
+ *
+ * `end_date` is the CHECKOUT day, so the nights run up to but not including it.
+ */
+function watchWindow(payload: NotificationPayload): string {
+  const start = Date.parse(`${payload.startDate}T00:00:00Z`);
+  const end = Date.parse(`${payload.endDate}T00:00:00Z`);
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
+    return `${payload.startDate} → ${payload.endDate}`;
+  }
+  const nights: string[] = [];
+  for (let t = start; t < end; t += 86_400_000) nights.push(new Date(t).toISOString().slice(0, 10));
+  const n = nights.length;
+  return `${formatStayDates(nights)} · ${n} night${n === 1 ? '' : 's'}`;
+}
+
 /** Exported for `scripts/alert-preview.mts` — see pushBody for why the copy is
  *  renderable without sending. */
 export function buildEmailHtml(payload: NotificationPayload): string {
@@ -423,7 +455,7 @@ export function buildEmailHtml(payload: NotificationPayload): string {
 
   <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:20px;margin:20px 0">
     <h3 style="margin:0 0 8px">${payload.campgroundName}${siteSuffix}</h3>
-    <p style="margin:0;color:#555"><strong>${payload.startDate}</strong> &rarr; <strong>${payload.endDate}</strong></p>
+    <p style="margin:0;color:#555"><strong>${watchWindow(payload)}</strong></p>
   </div>
 
   <p style="color:#555">Cancelled sites often sit for a while after they release, so it may well still be there. Worth a look right now:</p>
@@ -453,7 +485,7 @@ export function buildEmailHtml(payload: NotificationPayload): string {
 
   <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:20px;margin:20px 0">
     <h3 style="margin:0 0 8px">${payload.campgroundName}${siteSuffix}</h3>
-    <p style="margin:0;color:#555"><strong>${payload.startDate}</strong> → <strong>${payload.endDate}</strong></p>
+    <p style="margin:0;color:#555"><strong>${watchWindow(payload)}</strong></p>
   </div>
 
   <!-- "Sign in FIRST" is the whole ballgame: the swap opens a ~2.5s window in which the
@@ -484,7 +516,7 @@ export function buildEmailHtml(payload: NotificationPayload): string {
   <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:20px;margin:20px 0">
     <h3 style="margin:0 0 8px">${payload.campgroundName}${siteSuffix}</h3>
     <p style="margin:0;color:#555">
-      <strong>${payload.startDate}</strong> → <strong>${payload.endDate}</strong>
+      <strong>${watchWindow(payload)}</strong>
     </p>
   </div>
 
@@ -516,7 +548,7 @@ export function buildEmailHtml(payload: NotificationPayload): string {
   <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:20px;margin:20px 0">
     <h3 style="margin:0 0 8px">${payload.campgroundName}${siteSuffix}</h3>
     <p style="margin:0 0 12px;color:#555">
-      Your watch: <strong>${payload.startDate}</strong> → <strong>${payload.endDate}</strong>
+      Your watch: <strong>${watchWindow(payload)}</strong>
     </p>
     <p style="margin:0;font-size:18px;font-weight:700;color:#b45309">
       Becomes bookable: ${releaseAt}
@@ -574,7 +606,7 @@ export function buildEmailHtml(payload: NotificationPayload): string {
   <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:20px;margin:20px 0">
     <h3 style="margin:0 0 8px">${payload.campgroundName}${siteSuffix}</h3>
     <p style="margin:0 0 12px;color:#555">
-      Your watch: <strong>${payload.startDate}</strong> → <strong>${payload.endDate}</strong>
+      Your watch: <strong>${watchWindow(payload)}</strong>
     </p>
     <p style="margin:0 0 8px;font-weight:600">Available dates:</p>
     <ul style="margin:0;padding-left:20px">${dateList}</ul>
