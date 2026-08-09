@@ -793,6 +793,57 @@ function SmsDeliveryPanel({
   );
 }
 
+/**
+ * "Ring my phone" — the only canary that cannot be automated.
+ *
+ * The three delivery canaries above run themselves daily, because sending an email or a
+ * text to yourself is free and silent. A phone call is neither, so this one is a button.
+ *
+ * It is worth having a button for. The alarm only ever fires on a morning when something
+ * else is already broken, which is the worst possible moment to find out that the Twilio
+ * number is SMS-only (a 21210 at call time — not knowable from the code) or that the phone
+ * on file is wrong. It places a REAL call on the REAL path; only the words differ.
+ */
+function AlarmTest() {
+  const [state, setState] = useState<'idle' | 'calling' | 'done'>('idle');
+  const [detail, setDetail] = useState<string | null>(null);
+
+  async function ring() {
+    setState('calling');
+    setDetail(null);
+    try {
+      const res = await fetch('/api/admin/test-alarm', { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      setDetail(body?.detail ?? `Request failed (HTTP ${res.status}).`);
+    } catch (e) {
+      setDetail(`Could not reach the server: ${(e as Error).message}`);
+    }
+    setState('done');
+  }
+
+  return (
+    <div className="mt-4 border-t border-ch-line pt-3">
+      <h3 className="mb-0.5 text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+        Can we wake you up?
+      </h3>
+      <p className="mb-2 text-ch-fine text-ch-muted">
+        If the ReserveCalifornia session dies within 45 minutes of a hold releasing, CampHawk
+        phones you — twice, because a repeat call is what gets through Do Not Disturb. This is
+        the one delivery check that can&rsquo;t run itself.
+      </p>
+      <button
+        type="button"
+        onClick={ring}
+        disabled={state === 'calling'}
+        className="rounded-ch border border-ch-line px-3 py-1.5 text-ch-meta font-bold text-ch-ink hover:bg-ch-surface disabled:opacity-60"
+      >
+        {state === 'calling' ? 'Calling…' : 'Ring my phone now'}
+      </button>
+      {detail && <p className="mt-2 text-ch-fine leading-normal text-ch-muted">{detail}</p>}
+    </div>
+  );
+}
+
 function SystemHealthPanel({ data }: { data: AdminData }) {
   const { beat, workerHealthy, canaryRows, syncRows } = data;
 
@@ -880,6 +931,8 @@ function SystemHealthPanel({ data }: { data: AdminData }) {
         {canaryRows.length === 0 && (
           <p className="text-ch-fine text-ch-muted">No canary runs recorded.</p>
         )}
+
+        <AlarmTest />
       </Panel>
 
       <Panel title="Campground catalog">
