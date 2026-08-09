@@ -908,7 +908,7 @@ function RcWebviewTest() {
   // sentence — and it said that from inside the app, which told us nothing. Facts first.
   async function inspect() {
     const { rcHandoffDiagnostics } = await import('@/lib/native/rc-handoff');
-    setDiag(rcHandoffDiagnostics());
+    setDiag(await rcHandoffDiagnostics());
   }
 
   async function run() {

@@ -172,20 +172,46 @@ function isNativeShell(): boolean {
  * wearing one sentence — the same defect as `OK on attempt 2` not saying what failed, and
  * as "missing or unparseable" for a service account that was present.
  */
-export function rcHandoffDiagnostics(): Record<string, string> {
+export async function rcHandoffDiagnostics(): Promise<Record<string, string>> {
   if (typeof window === 'undefined') return { runtime: 'server' };
   const w = window as unknown as {
-    Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string };
-    cordova?: { InAppBrowser?: unknown };
+    Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string; Plugins?: object };
+    cordova?: { InAppBrowser?: { open?: unknown }; require?: (id: string) => unknown };
   };
+
+  // WHICH BINARY IS THIS? The single most decisive fact and the one I kept guessing at.
+  // The plugin only exists in builds made after 2026-08-09, so "is InAppBrowser missing
+  // because the build predates it, or because it failed to install?" is answered by the
+  // build number and by nothing else. @capacitor/app is already a dependency.
+  let build = 'unknown';
+  try {
+    const { App } = await import('@capacitor/app');
+    const info = await App.getInfo();
+    build = `${info.version} (${info.build})`;
+  } catch {
+    build = 'unavailable (not native, or plugin missing)';
+  }
+
+  // Cordova applies a plugin's `clobbers` during its own bootstrap, so probing the global
+  // can be a timing answer rather than an installation one. `cordova.require` asks the
+  // module loader directly, which does not depend on when we looked.
+  let module = 'not checked';
+  try {
+    module = w.cordova?.require ? (w.cordova.require('cordova-plugin-inappbrowser.inappbrowser') ? 'loadable' : 'MISSING') : 'no cordova.require';
+  } catch (e) {
+    module = `MISSING (${String((e as Error).message).slice(0, 60)})`;
+  }
+
   return {
+    appBuild: build,
     nativeShell: String(isNativeShell()),
     capacitor: w.Capacitor ? 'present' : 'ABSENT',
     platform: w.Capacitor?.getPlatform?.() ?? 'unknown',
-    uaMarker: navigator.userAgent.includes('CampHawkApp') ? 'present' : 'ABSENT',
+    capPlugins: w.Capacitor?.Plugins ? Object.keys(w.Capacitor.Plugins).join(', ') || '(none)' : 'ABSENT',
     cordova: w.cordova ? 'present' : 'ABSENT',
-    inAppBrowser: w.cordova?.InAppBrowser ? 'present' : 'ABSENT',
-    ua: navigator.userAgent.slice(0, 120),
+    inAppBrowser: w.cordova?.InAppBrowser?.open ? 'present' : 'ABSENT',
+    iabModule: module,
+    ua: navigator.userAgent.slice(0, 110),
   };
 }
 
