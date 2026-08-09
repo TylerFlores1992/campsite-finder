@@ -248,6 +248,24 @@ workflows:
         # URL, errorPath, and the newly added @capacitor/browser plugin. A web deploy
         # does NOT deliver any of those — only a rebuild does.
         script: npx cap sync android
+      - name: Assert the InAppBrowser plugin is actually installed
+        # `cap sync` installs Cordova plugins into the generated android/ project, and a
+        # plugin that silently fails to install produces an app that BUILDS, ships, and
+        # then has no window.cordova.InAppBrowser at runtime — where openRcHandoff's
+        # capability probe returns false and quietly falls back to the system browser.
+        # The mobile auto-cart would simply never happen, and nothing would say why.
+        # Same reasoning as "Verify the APK is actually signed": assert the thing you are
+        # relying on, at the one moment you can still see it.
+        script: |
+          set -e
+          if ! grep -rq "InAppBrowser" android/capacitor-cordova-android-plugins/ 2>/dev/null \
+             && ! grep -rq "InAppBrowser" android/app/src/main/ 2>/dev/null; then
+            echo "cordova-plugin-inappbrowser did NOT install into the Android project."
+            echo "Without it the RC hand-off silently falls back to the system browser."
+            exit 1
+          fi
+          echo "InAppBrowser present in the generated Android project."
+
       - name: Assert the Play target API level
         # Google Play requires apps to TARGET Android 16 (API 36) for new uploads and
         # updates from 2026-08-31 (extension available to 2026-11-01). android/ is

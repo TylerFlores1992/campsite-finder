@@ -94,11 +94,19 @@
  *   - A reCAPTCHA appearing is survivable here, unlike for the bot: a human is holding the
  *     phone and can solve it. The challenge only ever blocked us because nobody was there.
  *
- * **THE ONE CONCRETE MISTAKE TO AVOID, and it is already in our history.** Capacitor sets
- * `appendUserAgent: 'CampHawkApp'`, so our webview announces itself. Loading Okta from a
- * UA that names a third-party app is exactly the error that made `CampsiteFinder/1.0` one
- * of the four causes of the rec.gov 429 storm (see CLAUDE.md). The RC webview must present
- * a stock mobile Safari UA. Getting this wrong costs the household IP, not a retry.
+ * **THE USER-AGENT WORRY — CHECKED, AND IT DOES NOT APPLY HERE.** I flagged that
+ * `appendUserAgent: 'CampHawkApp'` would announce us to Okta, the way `CampsiteFinder/1.0`
+ * did to rec.gov. Right principle, wrong target: Capacitor applies that string in
+ * `Bridge.java`, to the BRIDGE's WebView. A Cordova InAppBrowser creates its own WebView,
+ * which gets the platform default — our marker never reaches RC.
+ *
+ * So the first build deliberately does NOT override the UA. The default Android WebView
+ * string does contain `; wv`, which identifies it as a webview and which RC could gate on
+ * — but that is the experiment. Overriding it at the same time would change two variables
+ * at once and make a failure unattributable, and a hardcoded Chrome version is its own
+ * fingerprint the moment it goes stale. If RC refuses the webview, the follow-up is one
+ * line: `cordova.preferences.OverrideUserAgent` in capacitor.config.ts, which the plugin
+ * reads (InAppBrowser.java does `settings.setUserAgentString`).
  *
  * ## The rule that keeps this shippable
  *
@@ -160,7 +168,10 @@ async function injectableWebView(): Promise<null | { open: (url: string, code: s
       // URL bar visible, which matters here: the user is about to authenticate and pay on
       // reservecalifornia.com, and hiding the address bar while they do that is exactly
       // the pattern a phishing page uses. They should be able to see whose site it is.
-      const ref = iab.open(url, '_blank', 'location=yes,beforeload=yes') as {
+      // `hardwareback=no` so Android's back button walks the RC history instead of
+      // closing the webview on the first press — the same default that would have exited
+      // the whole app before NativeBridge intercepted it.
+      const ref = iab.open(url, '_blank', 'location=yes,hardwareback=no') as {
         addEventListener: (e: string, cb: () => void) => void;
         executeScript: (d: { code: string }, cb?: (r: unknown) => void) => void;
       };
