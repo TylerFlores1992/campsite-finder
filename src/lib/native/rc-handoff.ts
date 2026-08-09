@@ -59,9 +59,46 @@
  * webview inside a third-party app — which is the shape of a phishing flow and draws
  * scrutiny in App Review even when the page is genuinely reservecalifornia.com.
  *
- * DO NOT START THE NATIVE WORK UNTIL THIS IS ANSWERED. It is a design question, not an
- * implementation detail, and the answer may be that mobile auto-cart is not worth having
- * on these terms.
+ * ...AND THE ANSWER IS PROBABLY "SIGN IN INSIDE THE WEBVIEW, AS STEP ONE OF THE CLAIM".
+ * The objection above treats the sign-in as an extra cost. It is not: the user must be
+ * signed in to RC to check out AT ALL, and today's manual flow already requires it. So the
+ * question was never whether they sign in, only WHERE the session lives. Put it in our
+ * webview and the isolated data store stops being a problem and becomes the point — it
+ * persists, so it is once, not once per claim.
+ *
+ * ## What the research settled (2026-08-09), and what it did not
+ *
+ * **App Review.** The risk is smaller than "password in a webview" sounds. Guideline 4.8
+ * (Login Services) governs third-party login TO YOUR APP — the user is not signing into
+ * CampHawk, so it does not apply. 4.2 (minimum functionality) is the usual webview-wrapper
+ * hazard and this app already cleared it. The real hazard is different and is GOOGLE's,
+ * not Apple's: Google has blocked its OAuth endpoint in embedded webviews since 2021, so
+ * if RC offers "Sign in with Google" that path dies with `disallowed_useragent` inside any
+ * WKWebView. **Check whether RC offers social login before building.** The username/
+ * password Okta form is unaffected.
+ *
+ * **Cordova plugins under Capacitor 8.** Supported — Capacitor 9 makes Cordova optional
+ * rather than removing it, and the compatibility breakage reported against 8 is
+ * SPM-specific. This build uses CocoaPods (forced, see docs/PLAY-STORE.md §0a), which is
+ * the unaffected path. `cordova-plugin-inappbrowser` is alive: published 2026-06-22. Note
+ * its `cordovaDependencies` gates 8.0.0 behind `cordova: >100`, the standard "not yet"
+ * marker, so 7.0.0 is what resolves. Still needs a real Codemagic build to confirm.
+ *
+ * **Does RC's Okta accept a WKWebView?** Untestable from a sandbox, but the evidence leans
+ * FAVOURABLE, and more so than the pessimism above implied:
+ *   - RC's edge does not gate on user agent: `signin.reservecalifornia.com` answers an
+ *     identical 302 to Safari, to a bare WKWebView UA, and to ours.
+ *   - Our own logs are the best evidence we have. The bot's Okta login fails HEADLESS and
+ *     works HEADFUL, every time (rc-probe.mjs). A WKWebView is real WebKit with a real
+ *     compositor — much closer to headful than to headless.
+ *   - A reCAPTCHA appearing is survivable here, unlike for the bot: a human is holding the
+ *     phone and can solve it. The challenge only ever blocked us because nobody was there.
+ *
+ * **THE ONE CONCRETE MISTAKE TO AVOID, and it is already in our history.** Capacitor sets
+ * `appendUserAgent: 'CampHawkApp'`, so our webview announces itself. Loading Okta from a
+ * UA that names a third-party app is exactly the error that made `CampsiteFinder/1.0` one
+ * of the four causes of the rec.gov 429 storm (see CLAUDE.md). The RC webview must present
+ * a stock mobile Safari UA. Getting this wrong costs the household IP, not a retry.
  *
  * ## The rule that keeps this shippable
  *
