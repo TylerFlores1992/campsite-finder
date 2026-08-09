@@ -89,6 +89,23 @@ Coalescing is client-side in `reservecalifornia/client.ts` (40ms window per RDR 
 deduped on method+path+body, below the retry loop so retries just rejoin a batch).
 Both wire shapes stay live in both directions because Vercel and Fly deploy from the
 same push. The proxy paces a batch at `FANOUT = 2`; **don't raise it**.
+- **THE PROXY HAD NO UPSTREAM TIMEOUT AT ALL, and that was the whole 502 story
+  (2026-08-09).** `forward()`'s fetch carried no `signal`, so one slow RDR request held its
+  fanout lane open indefinitely and the CALLER's flat 30s batch deadline
+  (`UD_TIMEOUT_MS * 2`) fired instead — **and an abort fails every request in the batch, so
+  all N retried together.** Eleven consecutive batches timed out in one sample, `batch(4)`
+  and `batch(2)` alike, and every RC call in the log was succeeding on attempt 2 or 3 and
+  never on attempt 1: ~2.5x the invocations, which is what Vercel's 502 **and**
+  CPU-duration anomalies were both reporting. Nothing cancels the function when the caller
+  gives up, so the lambda kept running and billing with nobody to answer.
+  **Vercel attributed the 5xx to "upstream 403 errors" and there were ZERO 403s** — do not
+  trust that attribution; it was reporting our own aborts.
+  Fixed with `RC_PROXY_UPSTREAM_TIMEOUT_MS` (12s). **12, not 15:** the proxy runs
+  `ceil(n / FANOUT)` rounds IN SERIES inside the caller's flat 30s, so at 15s a batch of 4
+  needed exactly 30s and had zero margin — which is why `batch(4)` sat permanently on the
+  edge. A timed-out request now fails as ONE item, which is the contract the route already
+  claimed ("one bad item never fails the other N-1") and that a hang was quietly violating.
+  `worker/rc-proxy-timeout.test.mts` guards both the missing signal and the arithmetic.
 - **The nightly catalog sync opts OUT** (`coalesce: false`). "Upstream load is
   unchanged" counted requests and missed per-IP RATE — one batch is N requests from a
   single Vercel lambda IP, and these WAFs meter per IP. The sync is a few hundred calls

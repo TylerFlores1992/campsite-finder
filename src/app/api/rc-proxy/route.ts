@@ -35,6 +35,34 @@ const MAX_BATCH = 40;
  */
 const FANOUT = 2;
 
+/**
+ * Bound on ONE upstream call. Without it a single hung RDR request stalls its whole
+ * batch — which is the exact opposite of what the header two lines up promises.
+ *
+ * THE BUG THIS FIXES (measured 2026-08-09). `forward()`'s fetch had no signal at all, so
+ * a slow upstream held its fanout lane open indefinitely. The caller gives the batch a
+ * flat 30s (`UD_TIMEOUT_MS * 2` in reservecalifornia/client.ts) and then aborts — and an
+ * abort fails EVERY request in the batch, so all N retry together. Eleven consecutive
+ * batches timed out that way in one sample, `batch(4)` and `batch(2)` alike, and every
+ * single RC call in the log was succeeding on attempt 2 or 3 and never on attempt 1.
+ * That is ~2.5x the invocations, which is what Vercel's 502 and CPU-duration anomalies
+ * were both reporting. Vercel attributed the 5xx to "upstream 403 errors"; there were
+ * ZERO 403s in the sample. They were our own aborts.
+ *
+ * Worse, nothing cancels the function when the caller gives up, so the lambda kept
+ * running and billing after there was no longer anyone to answer.
+ *
+ * 12s, not 15: it must be comfortably under the caller's per-round budget, since
+ * `ceil(n / FANOUT)` rounds happen in series inside that flat 30s. Two rounds of 12s
+ * leaves ~6s for overhead; two rounds of 15s leaves none, which is why `batch(4)` sat
+ * exactly on the edge.
+ *
+ * A timed-out request now fails as ONE item — `{ ok: false }` in its slot — which is the
+ * documented contract ("one bad item in a batch cannot fail the other N-1") that a hang
+ * was quietly violating. The caller retries just that one instead of all four.
+ */
+const UPSTREAM_TIMEOUT_MS = Number(process.env.RC_PROXY_UPSTREAM_TIMEOUT_MS ?? 12_000);
+
 export const dynamic = 'force-dynamic';
 
 interface ProxyRequest {
@@ -64,6 +92,8 @@ async function forward(base: string, host: string, req: ProxyRequest): Promise<P
       // proxy was the one sending the self-identifying CampsiteFinder/1.0 UA.
       headers: rdrRequestHeaders(base, Boolean(req.body)),
       ...(req.body ? { body: JSON.stringify(req.body) } : {}),
+      // See UPSTREAM_TIMEOUT_MS. A hang here used to take the whole batch with it.
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
 
     if (!res.ok) {
