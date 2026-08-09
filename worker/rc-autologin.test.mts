@@ -9,8 +9,12 @@ import assert from 'node:assert/strict';
 import { hasCredentials } from '../scripts/auto-cart-bot/rc-autologin.mjs';
 
 test('no credentials means no attempt, ever', () => {
-  const before = { e: process.env.RC_EMAIL, p: process.env.RC_PASSWORD };
+  const before = { e: process.env.RC_EMAIL, p: process.env.RC_PASSWORD, d: process.env.RC_PROFILE_DIR };
   try {
+    // Point the credential store at a directory that cannot exist, so this asserts the
+    // ENV path in isolation. Without it the test would pass or fail depending on whether
+    // the machine running it happens to have `--save-login` creds on disk.
+    process.env.RC_PROFILE_DIR = '.rc-bot-profile-test-does-not-exist';
     delete process.env.RC_EMAIL; delete process.env.RC_PASSWORD;
     assert.equal(hasCredentials(), false, 'absent');
     process.env.RC_EMAIL = 'a@b.c';
@@ -20,12 +24,14 @@ test('no credentials means no attempt, ever', () => {
   } finally {
     if (before.e) process.env.RC_EMAIL = before.e; else delete process.env.RC_EMAIL;
     if (before.p) process.env.RC_PASSWORD = before.p; else delete process.env.RC_PASSWORD;
+    if (before.d) process.env.RC_PROFILE_DIR = before.d; else delete process.env.RC_PROFILE_DIR;
   }
 });
 
 test('the module never logs or exports a credential', async () => {
-  // The credentials live in .env on the mini-PC and must stay there. A reason string is
-  // shown to the owner in a push notification, so it must never carry one either.
+  // The credentials live in the encrypted store on the mini-PC (DPAPI, CurrentUser) and
+  // must stay there. A reason string is shown to the owner in a push notification, so it
+  // must never carry one either.
   const src = await import('node:fs').then((fs) =>
     fs.readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8'));
   // Counting occurrences would be a brittle proxy — `hasCredentials` reads it for a
@@ -34,21 +40,28 @@ test('the module never logs or exports a credential', async () => {
   // Strip STRING LITERALS and comments first. `input[name="password"]` is a CSS selector,
   // not the credential, and a text search cannot tell them apart — the first version of
   // this test failed on exactly that.
-  const code = src
+  const uses = src
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/\/\/[^\n]*/g, ' ')
     .split('\n')
     .map((l) => l.replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, "''"))
     .filter((l) => /\bpassword\b/.test(l))
     .map((l) => l.trim());
-  const uses = code;
+  // Every line that touches the value, and the only shapes allowed: read it out of the
+  // store or the env override, hand it to `credentials()`'s caller inside this module,
+  // and type it into the field.
   for (const line of uses) {
-    const ok = /const password = process\.env\.RC_PASSWORD;/.test(line)
-      || /if \(!email \|\| !password\)/.test(line)
-      || /await pw\.fill\(password\);/.test(line)
-      || /RC_EMAIL && process\.env\.RC_PASSWORD/.test(line);
+    const ok = /^const password = process\.env\.RC_PASSWORD;$/.test(line)
+      || /^return email && password \? \{ email, password \} : null;$/.test(line)
+      || /^const \{ email, password \} = creds;$/.test(line)
+      || /^await pw\.fill\(password\);$/.test(line);
     assert.ok(ok, `password value used somewhere unexpected: ${line}`);
   }
+  // `credentials()` returns the plaintext, so it must stay module-private — an export
+  // would hand the password to anything that imports this file. Only the presence check
+  // and the attempt itself are public.
+  const exported = [...src.matchAll(/^export (?:async )?function (\w+)/gm)].map((m) => m[1]);
+  assert.deepEqual(exported.sort(), ['attemptLogin', 'hasCredentials']);
   // And the module must not be able to send anything anywhere by itself.
   assert.ok(!/\bfetch\s*\(/.test(src), 'rc-autologin makes no network calls of its own');
 });

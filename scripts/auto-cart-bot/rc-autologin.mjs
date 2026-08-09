@@ -33,10 +33,37 @@
  *    the push alert tell the owner to sign in themselves. Losing a hold because we did
  *    nothing is recoverable; losing the household IP is not.
  *
- * Credentials live in `scripts/auto-cart-bot/.env` on the mini-PC (gitignored, same place
- * the rec.gov bot's already are) and are read only here. They are never logged, never
- * reported, and never leave the box.
+ * ## Where the credentials live
+ *
+ * In the ENCRYPTED store the rec.gov bot already uses (`credstore.mjs`) — on Windows that
+ * is DPAPI at CurrentUser scope, so the blob can only be decrypted by the same Windows
+ * user on the same machine and is worthless if copied off the box. Not a plain `.env`
+ * line: a password sitting in a file that every process on the machine can read, and that
+ * gets pasted into terminals and screenshots, is a worse failure mode than the one this
+ * whole feature is trying to avoid.
+ *
+ * `RC_EMAIL`/`RC_PASSWORD` env vars still work as an override for a dev box that has no
+ * DPAPI, but the store is checked first and is what the mini-PC should use. Saved once
+ * with `node rc-keepwarm.mjs --save-login`, which prompts and never echoes.
+ *
+ * They are never logged, never reported, and never leave the box.
  */
+import { loadCreds, hasCreds } from './credstore.mjs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+/** The RC profile dir doubles as the credential dir — one account, one place. */
+const CRED_DIR = () => path.resolve(HERE, process.env.RC_PROFILE_DIR || '.rc-bot-profile');
+
+/** Stored (encrypted) creds, or the env override. Never both — the store wins. */
+function credentials() {
+  const stored = hasCreds(CRED_DIR()) ? loadCreds(CRED_DIR()) : null;
+  if (stored) return stored;
+  const email = process.env.RC_EMAIL;
+  const password = process.env.RC_PASSWORD;
+  return email && password ? { email, password } : null;
+}
 
 const EMAIL_SELECTORS = [
   'input[name="identifier"]',            // Okta Identity Engine
@@ -60,7 +87,7 @@ const SUBMIT_SELECTORS = [
 ];
 
 export function hasCredentials() {
-  return Boolean(process.env.RC_EMAIL && process.env.RC_PASSWORD);
+  return credentials() !== null;
 }
 
 /**
@@ -113,9 +140,9 @@ async function captchaChallenge(page) {
  * so it says what to do, not what failed internally.
  */
 export async function attemptLogin(ctx, page, { homeUrl, isLive }) {
-  const email = process.env.RC_EMAIL;
-  const password = process.env.RC_PASSWORD;
-  if (!email || !password) return { ok: false, reason: 'no stored credentials' };
+  const creds = credentials();
+  if (!creds) return { ok: false, reason: 'no stored credentials' };
+  const { email, password } = creds;
 
   try {
     await page.goto(homeUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });

@@ -44,6 +44,7 @@
  *   node rc-keepwarm.mjs                 # RESIDENT: holds RC open, yields to the runner
  *   node rc-keepwarm.mjs --once          # single pass, for a cron or a smoke test
  *   node rc-keepwarm.mjs --login         # headful, for the ONE human sign-in
+ *   node rc-keepwarm.mjs --save-login    # store the RC password, encrypted, once
  *
  * IT NEVER TYPES A PASSWORD. Deliberate: the only way in is `--login`, with a human at
  * the keyboard. That removes the pattern (repeated automated logins from one address)
@@ -134,6 +135,7 @@ const TOKEN = process.env.AUTOCART_TOKEN;
 const args = new Set(process.argv.slice(2));
 const ONCE = args.has('--once');
 const LOGIN = args.has('--login');
+const SAVE_LOGIN = args.has('--save-login');
 
 /** Log the app's own authorize URL once, not on every 20-minute pass. */
 let warmedAuthLogged = false;
@@ -457,6 +459,62 @@ async function reportSession(state, renewalNote = '') {
   }).catch((e) => log(`  (could not report session health: ${e.message})`));
 }
 
+/**
+ * Store the ReserveCalifornia password so the bot can sign itself in before a hold.
+ *
+ * TYPED, NOT PASTED INTO A FILE. The password goes straight into the same encrypted store
+ * the rec.gov bot uses — DPAPI at CurrentUser scope on Windows, so the blob is worthless
+ * on any other machine or under any other login. The alternative I very nearly shipped
+ * was two plaintext lines in `.env`, which is a password every process on the box can
+ * read and which ends up in screenshots and pasted terminal output. This feature exists
+ * to reduce risk, not to move it.
+ *
+ * Input is not echoed. Nothing is printed back but a confirmation.
+ */
+async function saveLogin() {
+  const { saveCreds } = await import('./credstore.mjs');
+  const readline = await import('node:readline');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q) => new Promise((res) => rl.question(q, res));
+
+  log('Storing your ReserveCalifornia login, encrypted, on THIS machine only.');
+  log('It is never sent to CampHawk and never written in plain text.');
+  const email = (await ask('  RC email: ')).trim();
+
+  // Mute the echo for the password. Not cosmetic: the mini-PC is screen-shared over
+  // RustDesk, so an echoed password is a password on somebody's screen recording.
+  const pw = await new Promise((res) => {
+    process.stdout.write('  RC password (not shown): ');
+    const onData = (ch) => {
+      const s = String(ch);
+      if (s === '\n' || s === '\r' || s === '\u0004') {
+        process.stdin.removeListener('data', onData);
+        if (process.stdin.isTTY) process.stdin.setRawMode(false);
+        process.stdout.write('\n');
+        rl.close();
+        res(buf);
+      } else if (s === '\u0003') { process.exit(1); }
+      else if (s === '\u007f') { buf = buf.slice(0, -1); }
+      else buf += s;
+    };
+    let buf = '';
+    if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    process.stdin.on('data', onData);
+  });
+
+  if (!email || !pw) { log('✗ Nothing saved — both fields are required.'); return false; }
+  try {
+    saveCreds(PROFILE_DIR, email, pw);
+    log(`✓ Saved, encrypted, in ${PROFILE_DIR}`);
+    log('  The bot will now sign in by itself ~15 minutes before a hold needs it.');
+    log('  To remove it later: delete .camphawk-creds from that folder.');
+    return true;
+  } catch (err) {
+    log(`✗ Could not save: ${err.message}`);
+    return false;
+  }
+}
+
 /** The one human step. Opens the profile headful and waits for a real session. */
 async function humanLogin() {
   log('Opening ReserveCalifornia for a ONE-TIME human sign-in.');
@@ -510,7 +568,10 @@ async function humanLogin() {
 // lets the loop finish — it does NOT stop execution the way process.exit() does — so a
 // `--login` run written as a bare `if` would fall straight through and start the
 // keep-warm loop on top of the sign-in it just did.
-if (LOGIN) {
+if (SAVE_LOGIN) {
+  const ok = await saveLogin();
+  exitWhenDrained(ok ? 0 : 1);
+} else if (LOGIN) {
   const ok = await humanLogin();
   exitWhenDrained(ok ? 0 : 1);
 } else if (!fs.existsSync(PROFILE_DIR)) {
