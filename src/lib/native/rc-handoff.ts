@@ -142,9 +142,51 @@ export function rcHandoffUrl(h: RcHandoff): string {
   return `${h.url.split('#')[0]}${rcFragment(h)}`;
 }
 
-/** Running inside the CampHawk native shell? Mirrors lib/native/context's UA marker. */
+/**
+ * Running inside the CampHawk native shell?
+ *
+ * ASKS CAPACITOR FIRST, falls back to the UA marker. `lib/native/context` uses the UA
+ * because it must answer during SSR and hydration, where `window.Capacitor` does not yet
+ * exist — a good reason there, and the wrong basis here. This runs on a tap, long after
+ * the bridge has booted, and `Capacitor.isNativePlatform()` is the platform's own answer
+ * rather than a string we hope survived.
+ *
+ * That distinction is not theoretical: on 2026-08-09 this returned false inside the app on
+ * an emulator, sending the hand-off to the external browser and reporting "not running
+ * inside the app, or no plugin" — a message that named two causes because I could not tell
+ * them apart. Asking the bridge removes the guess.
+ */
 function isNativeShell(): boolean {
+  if (typeof window === 'undefined') return false;
+  const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+  if (cap?.isNativePlatform?.()) return true;
   return typeof navigator !== 'undefined' && navigator.userAgent.includes('CampHawkApp');
+}
+
+/**
+ * What this runtime actually has — for the admin test, and for any future "why did it do
+ * that?".
+ *
+ * Every field is a fact, not a conclusion. The first version of the test button reported
+ * "not running inside the app, OR no plugin", which is two causes with two different fixes
+ * wearing one sentence — the same defect as `OK on attempt 2` not saying what failed, and
+ * as "missing or unparseable" for a service account that was present.
+ */
+export function rcHandoffDiagnostics(): Record<string, string> {
+  if (typeof window === 'undefined') return { runtime: 'server' };
+  const w = window as unknown as {
+    Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string };
+    cordova?: { InAppBrowser?: unknown };
+  };
+  return {
+    nativeShell: String(isNativeShell()),
+    capacitor: w.Capacitor ? 'present' : 'ABSENT',
+    platform: w.Capacitor?.getPlatform?.() ?? 'unknown',
+    uaMarker: navigator.userAgent.includes('CampHawkApp') ? 'present' : 'ABSENT',
+    cordova: w.cordova ? 'present' : 'ABSENT',
+    inAppBrowser: w.cordova?.InAppBrowser ? 'present' : 'ABSENT',
+    ua: navigator.userAgent.slice(0, 120),
+  };
 }
 
 /**

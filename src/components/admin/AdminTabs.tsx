@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ExternalLink, XCircle } from 'lucide-react';
 import BetaTesters from '@/components/BetaTesters';
 import CostsPanel from '@/components/admin/CostsPanel';
@@ -901,8 +901,18 @@ function AlarmTest() {
  */
 function RcWebviewTest() {
   const [result, setResult] = useState<string | null>(null);
+  const [diag, setDiag] = useState<Record<string, string> | null>(null);
+
+  // WHAT THIS RUNTIME HAS, shown BEFORE anything is opened. The first version reported
+  // "not running inside the app, or no plugin" — two causes, two different fixes, one
+  // sentence — and it said that from inside the app, which told us nothing. Facts first.
+  async function inspect() {
+    const { rcHandoffDiagnostics } = await import('@/lib/native/rc-handoff');
+    setDiag(rcHandoffDiagnostics());
+  }
 
   async function run() {
+    await inspect();
     setResult('opening…');
     const { openRcHandoff } = await import('@/lib/native/rc-handoff');
     // A real park loop, no unit — this tests the SIGN-IN, which is the unknown. Carting
@@ -937,7 +947,24 @@ function RcWebviewTest() {
       >
         Open ReserveCalifornia
       </button>
+      <button
+        type="button"
+        onClick={inspect}
+        className="mt-2 ml-2 rounded-ch border border-ch-line px-3 py-1.5 text-ch-meta font-bold text-ch-ink hover:bg-ch-surface"
+      >
+        What does this device have?
+      </button>
       {result && <p className="mt-2 text-ch-fine leading-normal text-ch-muted">{result}</p>}
+      {diag && (
+        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-ch-fine text-ch-muted">
+          {Object.entries(diag).map(([k, v]) => (
+            <Fragment key={k}>
+              <dt className="font-bold">{k}</dt>
+              <dd className="break-all">{v}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
     </div>
   );
 }
