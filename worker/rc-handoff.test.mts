@@ -138,6 +138,72 @@ test('the reporter announces itself, and survives having no bridge', async () =>
   assert.equal(first.n, 1, 'the page numbers its own reports from 1 — 0 is reserved for host events');
 });
 
+test('a reported URL never carries its query string', async () => {
+  // OKTA SIGNS IN INSIDE THIS WEBVIEW, so mid-flow the URL is `/login/callback?code=…` —
+  // an OAuth authorization code, exchangeable for the session. The first run of this
+  // diagnostic printed one (2026-08-09). scrub() knew JWT shapes and did not catch it,
+  // which is why the field is not collected rather than filtered.
+  const vm = await import('node:vm');
+  const { reporter } = await import('../src/lib/rc-precart-script');
+  const posted: string[] = [];
+  const s: Record<string, unknown> = {
+    console: { log() {} },
+    location: {
+      origin: 'https://signin.reservecalifornia.com',
+      pathname: '/login/callback',
+      href: 'https://signin.reservecalifornia.com/login/callback?code=AE8sNHc8w2BC54&state=cpphZ',
+      hash: '',
+      search: '?code=AE8sNHc8w2BC54&state=cpphZ',
+    },
+    sessionStorage: { getItem: () => null },
+    addEventListener: () => {},
+    cordova_iab: { postMessage: (m: string) => posted.push(m) },
+  };
+  s.window = s;
+  new vm.Script(reporter()).runInContext(vm.createContext(s));
+
+  const all = posted.join(' ');
+  assert.ok(!all.includes('code='), 'an OAuth authorization code must never be reported');
+  assert.ok(!all.includes('state='), 'nor the state parameter');
+  assert.match(JSON.parse(posted[0]).detail.href, /^https:\/\/signin\.reservecalifornia\.com\/login\/callback$/);
+});
+
+test('identical reports collapse instead of flooding', async () => {
+  // rc-inject.js rebroadcasts the token on EVERY RC API call. The first live run produced
+  // ~40 identical "token captured" lines, which is exactly the noise that would bury the
+  // cart's own status at 08:00:00 — the one line the whole channel exists to carry.
+  const vm = await import('node:vm');
+  const { reporter } = await import('../src/lib/rc-precart-script');
+  const posted: string[] = [];
+  const listeners: Record<string, ((e: unknown) => void)[]> = {};
+  const s: Record<string, unknown> = {
+    console: { log() {} },
+    location: { origin: 'https://www.reservecalifornia.com', pathname: '/', href: 'https://www.reservecalifornia.com/', hash: '' },
+    sessionStorage: { getItem: () => null },
+    addEventListener: (k: string, fn: (e: unknown) => void) => { (listeners[k] ??= []).push(fn); },
+    cordova_iab: { postMessage: (m: string) => posted.push(m) },
+  };
+  s.window = s;
+  vm.createContext(s);
+  new vm.Script(reporter()).runInContext(s);
+
+  const before = posted.length;
+  // `window` INSIDE the context is not the same reference as the sandbox object outside it,
+  // and the reporter's `e.source !== window` guard is real (it rejects messages posted by RC's
+  // own frames). Ask the context for its own window so the event looks like a genuine one.
+  const ctxWindow = vm.runInContext('window', s);
+  const evt = { source: ctxWindow, data: { __camphawk_token: 'x'.repeat(939) } };
+  for (let i = 0; i < 20; i++) listeners.message.forEach((fn) => fn(evt));
+  assert.equal(posted.length - before, 1, '20 identical captures must post once, not 20 times');
+
+  // The count is KEPT, not dropped: "seen 20 times" and "seen once" say different things
+  // about whether the session is actually being used.
+  listeners.pagehide.forEach((fn) => fn(undefined));
+  const last = JSON.parse(posted[posted.length - 1]);
+  assert.equal(last.stage, 'repeated');
+  assert.deepEqual(last.detail, { of: 'token', times: 19 });
+});
+
 test('a report can never carry the RC access token', () => {
   // THE STANDING RULE: the RC token is full account access. It does not travel in an alert
   // link and it must not travel in a diagnostic either. The token path reports a BOOLEAN and

@@ -133,8 +133,9 @@ export interface RcHandoff {
  * side events (`loaderror`, `closed`) carry `n: 0` because the page cannot witness them.
  *
  * `detail` is deliberately loose: this is a diagnostic, and the day RC changes something
- * the useful field will be one nobody predicted. Never carries a token or a cart key — see
- * the route.
+ * the useful field will be one nobody predicted. Never carries a token, a cart key, or a
+ * URL query string — the last because Okta's callback query is an OAuth authorization code.
+ * See lib/rc-precart-script.
  */
 export type RcReport = { n: number; stage: string; detail: Record<string, unknown> | null };
 

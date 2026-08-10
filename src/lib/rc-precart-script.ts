@@ -79,13 +79,19 @@ let cached: string | null = null;
  * password. The RC access token is full account access and does not travel, the same rule
  * that keeps it out of alert links. `scrub()` is a second line of defence, not the first:
  * nothing here is supposed to contain a JWT in the first place.
+ *
+ * **URLs are reported as origin + pathname, never with the query.** Okta signs in inside
+ * this webview, so mid-flow `location.href` is `/login/callback?code=…&state=…` — an OAuth
+ * authorization code, exchangeable for the session. The first run of this diagnostic put one
+ * on screen (2026-08-09). A `scrub()` that only knew JWT shapes did not save it, which is
+ * the argument for not collecting the field at all rather than filtering it afterwards.
  */
 export function reporter(): string {
   return [
     '(function () {',
     '  // Re-injected on every loadstop (RC is an SPA and the adopt path reloads). Install',
     '  // once: a second pass would re-wrap console.log around the already-wrapped copy.',
-    '  if (window.__camphawkRc) { window.__camphawkRc.send("reinjected", { href: location.href.split("#")[0] }); return; }',
+    '  if (window.__camphawkRc) { window.__camphawkRc.send("reinjected", { href: window.__camphawkRc.href() }); return; }',
     '  var bridge = null;',
     '  try {',
     '    bridge = (typeof cordova_iab !== "undefined" && cordova_iab && cordova_iab.postMessage)',
@@ -99,7 +105,13 @@ export function reporter(): string {
     '      .replace(/eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]*/g, "<token>")',
     '      .slice(0, 300);',
     '  }',
-    '  function send(stage, detail) {',
+    '  // ORIGIN + PATH ONLY, NEVER THE QUERY. RC signs in through Okta inside this webview,',
+    '  // so mid-flow the URL is `/login/callback?code=…&state=…` — an OAuth authorization',
+    '  // code, which is exchangeable for the session itself. Reporting `location.href` put',
+    '  // one on screen the first time this ran (2026-08-09). The path alone still says which',
+    '  // step we are on, which is the whole diagnostic value; the query never was.',
+    '  function href() { try { return location.origin + location.pathname; } catch (e) { return "?"; } }',
+    '  function post(stage, detail) {',
     '    if (!bridge || !bridge.postMessage) return;',
     '    try {',
     '      bridge.postMessage(JSON.stringify({',
@@ -107,8 +119,25 @@ export function reporter(): string {
     '      }));',
     '    } catch (e) {}',
     '  }',
+    '  // COLLAPSE CONSECUTIVE DUPLICATES. rc-inject.js rebroadcasts the token on every RC API',
+    '  // call, which is dozens of identical lines in a quiet minute — and at 08:00:00 that',
+    '  // would bury the one line anybody needs, which is what the cart did. The count is kept',
+    '  // and emitted rather than dropped: "token seen 31 times" and "token seen once" are',
+    '  // different facts about whether the session is being used.',
+    '  var lastKey = null, lastStage = null, dupes = 0;',
+    '  function flush() { if (dupes) { post("repeated", { of: lastStage, times: dupes }); dupes = 0; } }',
+    '  function send(stage, detail) {',
+    '    var key;',
+    '    try { key = stage + "|" + JSON.stringify(detail || null); } catch (e) { key = stage + "|?"; }',
+    '    if (key === lastKey) { dupes++; return; }',
+    '    flush();',
+    '    lastKey = key; lastStage = stage;',
+    '    post(stage, detail);',
+    '  }',
     '  function hasStash() { try { return !!sessionStorage.getItem("camphawk_rc"); } catch (e) { return false; } }',
-    '  window.__camphawkRc = { send: send, scrub: scrub, hasStash: hasStash, bridged: !!bridge };',
+    '  window.__camphawkRc = { send: send, scrub: scrub, hasStash: hasStash, href: href, bridged: !!bridge };',
+    '  // A run that ends on a repeat would otherwise lose the tail of the count.',
+    '  window.addEventListener("pagehide", flush);',
     '  window.addEventListener("error", function (e) { send("error", { message: scrub(e && e.message) }); });',
     '  // rc-inject.js broadcasts the live access token to the content script. Reporting that',
     '  // it was CAPTURED — never its value — proves the hardest link in the chain (we can read',
@@ -127,7 +156,7 @@ export function reporter(): string {
     '    } catch (e) {}',
     '    return log.apply(console, arguments);',
     '  };',
-    '  send("injected", { href: location.href.split("#")[0], job: /camphawk-rc=/.test(location.hash) || hasStash() });',
+    '  send("injected", { href: href(), job: /camphawk-rc=/.test(location.hash) || hasStash() });',
     '})();',
   ].join('\n');
 }
