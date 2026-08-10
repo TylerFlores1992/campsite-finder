@@ -286,9 +286,39 @@ needed no change.
   - **`force-cache` was serving the precart STALE FOREVER** (spec behaviour). That silently
     defeats the route's short `max-age`, which is the one property making a broken precart
     a push to master rather than an app release. `cache: 'default'` now.
-- **iOS is UNPROVEN and must not be assumed.** WKWebView has its own cookie store and its
-  own ITP rules, and the 1.0 build in review has no InAppBrowser plugin at all. Android
-  can ship this; iOS needs the plugin, a rebuild, and its own run of the three tests above.
+- **iOS PASSED THE SAME THREE TESTS, 2026-08-09, on TestFlight build 1.0 (21).** Okta
+  signs in inside the WKWebView (`injected` → `/oauth2/v1/authorize` → `/login/callback` →
+  `token captured · length: 939`, the identical chain and token length Android produced),
+  and the session survived both closing the webview and force-closing the app. It was
+  tested rather than assumed precisely because WKWebView has its own cookie store and its
+  own ITP rules, so Android's process-wide `CookieManager` argument does not transfer —
+  the expectation was right and the reason for it would not have been.
+  - The plugin reaches iOS through `npx cap sync ios` with no extra wiring; what was
+    missing was any check that it had. `codemagic.yaml` asserts it now, at
+    `ios/capacitor-cordova-ios-plugins` — NOT `ios/App/…`, and the Podfile names the pod
+    `CordovaPlugins`, so grepping it for "InAppBrowser" can never match. Both paths were
+    written from memory first and failed a build where `cap sync` had just logged
+    "Found 1 Cordova plugin for ios". Read `@capacitor/cli`, don't recall it.
+  - **Never widen that assertion to `grep -r ios/`** — `ios/App/App/public` contains our
+    own `cordova.InAppBrowser` probe, so it would pass with the plugin absent.
+  - The report channel works on BOTH platforms unchanged. On iOS `cordova_iab` is not a
+    global, so the reporter falls through to `window.webkit.messageHandlers.cordova_iab`,
+    registered at configuration time (no race, unlike Android's `onPageFinished` alias).
+    `CDVWKInAppBrowser.m`'s handler has two branches and only the SECOND is ours: a
+    dictionary body is the `executeScript` callback path and needs an `InAppBrowser<N>`
+    id; a **string** body is JSON-parsed into a `message` event. `JSON.stringify` is
+    therefore correct on both, matching Android's `postMessage(String)`.
+- **STILL UNPROVEN ON EITHER PLATFORM: the two RC cart POSTs.** Sign-in, session
+  persistence and token capture are measured; `load` + `submit` are not, because
+  exercising them needs a genuine held unit and a fake id could lock a real site. They
+  report themselves through `#camphawk-rc-status` on the next real hold.
+- **The claim screen still shows the MANUAL three-step copy to everyone**, including
+  clients that would cart automatically — and its "I'm signed in and looking at the site"
+  checkbox *gates the release button*, so an app user is blocked until they assert they
+  did work we were about to do for them. Deliberately not flipped yet: promising "we're
+  carting it for you" before the cart POSTs are proven is the failure `rc-handoff.test.mts`
+  already guards against, and it is worse than the manual flow because the user stops
+  watching. Prove the cart on a real hold, then branch the copy on capability.
 - **THE TEST HARNESS IS WHERE THE TIME WENT, NOT THE QUESTION.** Three consecutive runs
   were lost to identity confusion, and all three looked like RC rejecting us:
   a hand-written RC URL that 404'd (see below), the admin page opened in **Chrome**
