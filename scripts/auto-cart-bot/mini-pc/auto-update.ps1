@@ -1,0 +1,104 @@
+# Pull the latest bot code and restart, unattended — but only when it is safe.
+#
+# ── WHY IT IS GUARDED RATHER THAN JUST SCHEDULED ───────────────────────────────────────
+# An update force-kills every node process, which closes the Chromium the RC access token
+# lives in. Measured 2026-08-10: a hand sign-in at 16:15:06Z read "no token at all —
+# signed out" at 16:23:08Z, straight after an update. So an unattended update is a way to
+# destroy the session, and a naively scheduled one destroys it at the same time every day.
+#
+# The decision is NOT made here. `update-guard.mjs` owns it, in JavaScript, because it is
+# the part that can lose a campsite and PowerShell is the part nothing can test. It checks
+# a quiet window AND the real next release, and refuses when it cannot reach the feed —
+# unknown is not safe. See worker/update-guard.test.mts.
+#
+# ── AND WHY IT ROLLS BACK ──────────────────────────────────────────────────────────────
+# The failure this must not have is a silent one: pull a broken commit at 03:00, restart
+# into it, and find out at 08:00. After restarting it waits for the processes to check in
+# with the server. No check-in means the new code cannot do the job, and it goes back to
+# the commit that could.
+[CmdletBinding()]
+param([switch]$Force)
+
+$ErrorActionPreference = "Stop"
+$botDir = Split-Path -Parent $PSScriptRoot
+Set-Location $botDir
+if (-not (Test-Path "logs")) { New-Item -ItemType Directory -Path "logs" | Out-Null }
+$log = "logs\auto-update.log"
+
+function Write-Line($msg) {
+  $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [auto-update] $msg"
+  Write-Host $line
+  Add-Content -Path $log -Value $line
+}
+
+# ── 1. May we? ────────────────────────────────────────────────────────────────────────
+$guardArgs = @("update-guard.mjs")
+if ($Force) { $guardArgs += "--force" }
+& node @guardArgs 2>&1 | Tee-Object -FilePath $log -Append
+if ($LASTEXITCODE -ne 0) { Write-Line "skipping this run."; exit 0 }
+
+# ── 2. Is there anything to take? ─────────────────────────────────────────────────────
+$repoRoot = (& git rev-parse --show-toplevel) 2>$null
+if (-not $repoRoot) { Write-Line "not a git checkout — nothing to update."; exit 0 }
+Set-Location $repoRoot
+
+$before = (& git rev-parse HEAD).Trim()
+& git fetch --quiet origin master
+$after = (& git rev-parse origin/master).Trim()
+if ($before -eq $after) { Write-Line "already current at $($before.Substring(0,7))."; exit 0 }
+Write-Line "updating $($before.Substring(0,7)) -> $($after.Substring(0,7))"
+
+# ── 3. Stop, take, restart ────────────────────────────────────────────────────────────
+# Kill the SUPERVISORS first, or they would helpfully restart the children we are about to
+# replace — and we would end up running the old code under a new commit.
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -match 'supervise\.ps1' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -match 'rc-keepwarm\.mjs|rc-hold-runner\.mjs|broker|npm start' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 3
+# A hard kill never runs the lock's release, and a stale lock reads as HELD for ten
+# minutes — long enough to make the restarted processes skip their first passes.
+Remove-Item ".rc-bot-profile\.camphawk-profile-lock" -ErrorAction SilentlyContinue
+Remove-Item "profiles\*\.camphawk-profile-lock" -ErrorAction SilentlyContinue
+
+& git reset --hard $after 2>&1 | Tee-Object -FilePath $log -Append
+Set-Location $botDir
+& npm ci --omit=dev 2>&1 | Tee-Object -FilePath $log -Append
+
+Write-Line "relaunching"
+& "$PSScriptRoot\start-all.bat"
+
+# ── 4. Did it actually come back? ─────────────────────────────────────────────────────
+# THE POINT OF THE WHOLE SCRIPT. Restarting is not success; checking in is. The hold runner
+# polls the feed every 15s and that poll stamps a server-side heartbeat, so a fresh beat is
+# proof the new code can reach CampHawk and drive its own loop.
+Write-Line "waiting up to 4 min for the hold runner to check in..."
+$ok = $false
+foreach ($i in 1..24) {
+  Start-Sleep -Seconds 10
+  try {
+    $h = Invoke-RestMethod -Uri "https://camphawk.app/api/health/status" -TimeoutSec 15
+    $runner = $h.checks | Where-Object { $_.name -eq "autocart.rc_runner" }
+    if ($runner -and $runner.level -eq "ok") { $ok = $true; break }
+  } catch { }
+}
+
+if ($ok) {
+  Write-Line "OK — runner is checking in on $($after.Substring(0,7))."
+  exit 0
+}
+
+# ── 5. Roll back ──────────────────────────────────────────────────────────────────────
+Write-Line "NO CHECK-IN after 4 min. Rolling back to $($before.Substring(0,7))."
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -match 'supervise\.ps1|rc-keepwarm\.mjs|rc-hold-runner\.mjs' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Set-Location $repoRoot
+& git reset --hard $before 2>&1 | Tee-Object -FilePath $log -Append
+Set-Location $botDir
+& npm ci --omit=dev 2>&1 | Tee-Object -FilePath $log -Append
+& "$PSScriptRoot\start-all.bat"
+Write-Line "rolled back. The RC SESSION IS GONE either way — run mini-pc\rc-login.bat."
+exit 1

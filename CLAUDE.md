@@ -845,6 +845,32 @@ machinery worked — this was one command to diagnose, against six hours of gues
   unhandled rejection on a failed POST would do exactly this, and that would make ANY
   network blip fatal. Unproven either way; worth ruling out before blaming the process.
 
+### THE MINI-PC SUPERVISES AND UPDATES ITSELF NOW (2026-08-10) — needs ONE last update.bat
+Nothing restarted a dead process: `start-all.bat` opened bare `powershell -NoExit` windows,
+so a process that exited left a window with an error in it and its job stopped being done.
+That is why both missed mornings needed a human, and it is what multiplies per state.
+- **`supervise.ps1`** wraps every long-running bot process (bot, broker, keep-warm, hold
+  runner — NOT cloudflared, which reconnects itself). Restart on exit, exponential backoff
+  capped at 5 min, and it **stops loudly after 5 exits in 10 min**: a process that dies and
+  restarts instantly is a busy loop wearing a service's clothes, spending the RC login
+  budget while every dashboard stays green.
+- **IT IS WHAT COMPLETES THE KEEP-WARM WATCHDOG.** That watchdog deliberately EXITS on a
+  wedged loop so the Chromium profile frees for the hold runner — but unsupervised,
+  "released the profile and died" left the session unattended until morning. Supervised:
+  exit → restart → `maybeAutoLogin` re-establishes the session → 08:00 still fires.
+- **`auto-update.ps1` + `install-autoupdate.bat`** (run once, as admin) register an HOURLY
+  task that almost always does nothing. `update-guard.mjs` owns the decision — in JS,
+  because it is the part that can lose a campsite and PowerShell is the part nothing can
+  test (`worker/update-guard.test.mts`). It refuses outside **02:00–05:00 PT**, refuses
+  **within 6h of a real release**, and refuses outright **if it cannot reach the feed** —
+  unknown is not safe, and an update ends the RC session.
+- **It verifies rather than assumes:** after relaunching it waits up to 4 min for
+  `autocart.rc_runner` to go `ok`, and **rolls back to the previous commit** if it does
+  not. Same rule as the worker deploy Action failing unless a fresh heartbeat lands.
+- Supervisors are killed BEFORE the checkout moves, or they restart the children being
+  replaced and the box runs old code under a new commit.
+- `update.bat` stays as the manual path, and still ends the RC session — log in after.
+
 ### UNATTENDED LOGIN WORKS — first clean production run, 2026-08-10 18:35Z
 `rc-test-login.bat` ran the real `attemptLogin` from a genuinely signed-out state and got
 `token exp in 60m; okta=ALIVE (exp 2026-08-11T06:35:53)` — a full-life access token AND a
