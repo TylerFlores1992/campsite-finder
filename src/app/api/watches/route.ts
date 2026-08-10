@@ -58,6 +58,7 @@ export async function GET(request: NextRequest) {
       if (!o) continue;
       w.open_sites = o.open;
       w.pending_holds = o.holds;
+      w.carted_sites = o.carted;
     }
   } catch (err) {
     console.error('[watches] openings lookup failed:', (err as Error).message);

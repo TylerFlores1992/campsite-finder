@@ -51,6 +51,17 @@ export interface WatchOpenings {
   open: OpenSite[];
   /** Every site releasing on a schedule, soonest first. */
   holds: PendingHold[];
+  /**
+   * Sites the bot has ACTUALLY carted for this watch, recently.
+   *
+   * The card used to claim "In your cart" from `auto_cart && alerted recently`, which is
+   * an inference and was wrong in three ways at once: it never checked that a cart
+   * happened, it fired for ReserveCalifornia watches where `isAutocartLane` only ever
+   * matches `ridb` so no availability cart is even possible, and once the badge started
+   * keying off seen-open it fired for any open site rather than a recent alert. A user
+   * sent to an empty recreation.gov cart at 8am loses the site while they look for it.
+   */
+  carted: { campsiteId: string; at: string }[];
 }
 
 /**
@@ -63,7 +74,7 @@ export interface WatchOpenings {
 export async function watchOpenings(watchIds: string[]): Promise<Map<string, WatchOpenings>> {
   const out = new Map<string, WatchOpenings>();
   if (!watchIds.length) return out;
-  for (const id of watchIds) out.set(id, { open: [], holds: [] });
+  for (const id of watchIds) out.set(id, { open: [], holds: [], carted: [] });
 
   // SITE NAMES COME FROM THE ALERT HISTORY, exactly as /api/manage/[token] resolves them:
   // `watch_site_alerts` stores only a site_key, and the human label ("Campsite #38") lives
@@ -119,6 +130,27 @@ export async function watchOpenings(watchIds: string[]): Promise<Map<string, Wat
       releaseAt: r.release_at,
       status: r.status,
     });
+  }
+
+  // WHAT WAS ACTUALLY CARTED. `autocart_jobs` is the bot's own record, the same table
+  // `alreadyCartedForWatch` reads for the one-cart-per-site rule — so the badge and the
+  // rule cannot disagree about whether a site was taken.
+  //
+  // Windowed because a cart is only news while it is still in the cart: rec.gov holds one
+  // for about 15 minutes, so a badge that outlived that would send someone to an empty
+  // cart. Generous against the 15 to allow for a checkout in progress.
+  const cartedRows = await query<{ watch_id: string; campsite_id: string; at: string }>(
+    `SELECT watch_id, campsite_id, GREATEST(COALESCE(updated_at, created_at), created_at)::text AS at
+       FROM autocart_jobs
+      WHERE watch_id = ANY($1)
+        AND (resolution = 'carted' OR cart_outcome = 'carted')
+        AND GREATEST(COALESCE(updated_at, created_at), created_at) > NOW() - INTERVAL '30 minutes'
+      ORDER BY 3 DESC`,
+    [watchIds],
+  ).catch(() => []);
+
+  for (const r of cartedRows) {
+    out.get(r.watch_id)?.carted.push({ campsiteId: r.campsite_id, at: r.at });
   }
 
   return out;

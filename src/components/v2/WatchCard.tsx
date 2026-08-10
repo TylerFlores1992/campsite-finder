@@ -57,6 +57,8 @@ export interface WatchCardWatch {
   open_sites?: { id: string; name: string | null; seenSecondsAgo: number }[];
   /** Every site releasing on a schedule, soonest first. */
   pending_holds?: { unitId: string; unitName: string | null; releaseAt: string; status: string }[];
+  /** Sites the bot really did cart, recently — see lib/watch-openings. */
+  carted_sites?: { campsiteId: string; at: string }[];
 }
 
 export interface WatchCardProps {
@@ -181,14 +183,25 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
               </>
             );
           })()}
-          {/* Only claim the cart when auto-cart could actually have run. With a
-              stale session the poller falls back to a plain alert and nothing is
-              carted — telling the user it's waiting for them would send them to
-              an empty cart while the site goes to someone else. */}
-          {state === "hit" && watch.auto_cart && !sessionExpired && (
-            <Tag kind="cart">In your cart</Tag>
-          )}
-          {state === "hit" && watch.auto_cart && sessionExpired && (
+          {/* SAY IT ONLY WHEN IT HAPPENED. This used to render from
+              `auto_cart && alerted recently`, which asserted a cart nobody had checked
+              for — and was wrong three ways: it never read the cart record; it fired on
+              ReserveCalifornia watches, where `isAutocartLane` only matches `ridb` so an
+              availability cart cannot happen at all; and once the badge began keying off
+              seen-open it fired for any open site rather than a recent alert. Someone sent
+              to an empty recreation.gov cart at 8am loses the site while they look for it.
+
+              `carted_sites` is the bot's own record (autocart_jobs), the same table the
+              one-cart-per-site rule reads, windowed to roughly how long rec.gov holds a
+              cart. */}
+          {watch.carted_sites?.length ? (
+            <Tag kind="cart">
+              {watch.carted_sites.length === 1 ? "In your cart" : `${watch.carted_sites.length} in your cart`}
+            </Tag>
+          ) : null}
+          {/* Still worth saying when the session is the reason nothing was carted — that
+              is a thing the user can fix, unlike an opening the bot simply did not win. */}
+          {state === "hit" && watch.auto_cart && sessionExpired && watch.campground_source === "ridb" && (
             <Tag kind="paused">Not carted — reconnecting</Tag>
           )}
           {state === "watching" && <Tag kind="watch">Watching</Tag>}

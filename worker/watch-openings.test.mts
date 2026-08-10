@@ -104,3 +104,37 @@ test('the card prefers the measurement over the inference', () => {
   assert.ok(inferred >= 0, 'the alerted-recently guess must still exist as the fallback');
   assert.ok(measured < inferred, 'seen-open must be checked BEFORE the alerted-recently guess');
 });
+
+test('"In your cart" is read from the cart record, never inferred', () => {
+  // IT WAS INFERRED, AND WRONG THREE WAYS. `auto_cart && alerted recently` asserted a
+  // cart nobody had checked for; it fired on ReserveCalifornia watches where
+  // isAutocartLane only matches `ridb`, so an availability cart cannot happen at all; and
+  // once the badge keyed off seen-open it fired for any open site. Someone sent to an
+  // empty recreation.gov cart at 8am loses the site while they look for it.
+  const card = readFileSync('src/components/v2/WatchCard.tsx', 'utf8');
+  assert.match(card, /watch\.carted_sites\?\.length \? \(/, 'the badge renders from the record');
+  assert.ok(
+    !/state === "hit" && watch\.auto_cart && !sessionExpired/.test(card),
+    'the inferred condition must be gone — it claimed a cart that had not happened',
+  );
+
+  // And the record is the bot's own, so the badge and the one-cart-per-site rule read the
+  // same table and cannot disagree about whether a site was taken.
+  assert.match(src, /FROM autocart_jobs/, 'carts come from autocart_jobs');
+  assert.match(src, /resolution = 'carted' OR cart_outcome = 'carted'/,
+    'same predicate as alreadyCartedForWatch');
+});
+
+test('a cart badge expires with the cart it describes', () => {
+  // rec.gov holds a cart about 15 minutes. A badge that outlived it would send someone to
+  // an empty cart — the same class of false promise as the RC hold copy.
+  assert.match(src, /INTERVAL '30 minutes'/, 'the carted window is bounded');
+});
+
+test('the reconnecting badge is limited to the source that can actually cart', () => {
+  // 'Not carted — reconnecting' is about the rec.gov session. On an RC watch there is no
+  // availability cart to have missed, so it would name a fault that does not exist.
+  const card = readFileSync('src/components/v2/WatchCard.tsx', 'utf8');
+  const badge = card.slice(card.indexOf('Not carted — reconnecting') - 400, card.indexOf('Not carted — reconnecting'));
+  assert.match(badge, /campground_source === "ridb"/, 'gated to rec.gov watches');
+});
