@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { watchOpenings } from '@/lib/watch-openings';
 import { query, mutate } from '@/lib/db/client';
 import { resolveManageToken } from '@/lib/notifications/actions';
 
@@ -88,7 +89,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
     .map(([id, name]) => ({ id, name, muted: muted.has(id) }))
     .sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
 
-  return NextResponse.json({ watch, alerts, sites });
+  // WHICH OF THESE ARE OPEN RIGHT NOW. Same source as the watches list — the poller's
+  // own last-seen record, no provider call — so this screen and the card can never
+  // disagree about what is open. Best-effort: the mute list is the job here, and losing
+  // a decoration must not cost someone the ability to unmute a site.
+  const openings = await watchOpenings([watchId]).catch(() => null);
+  const open = openings?.get(watchId)?.open ?? [];
+
+  return NextResponse.json({ watch, alerts, sites, open, hold: openings?.get(watchId)?.hold ?? null });
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {

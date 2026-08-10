@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { watchOpenings } from '@/lib/watch-openings';
 import { query, queryOne, mutate } from '@/lib/db/client';
 import { requireAuth, syncUser, hasActiveSubscription } from '@/lib/auth';
 import { createAlert, cancelAlert } from '@/lib/campflare/client';
@@ -45,6 +46,22 @@ export async function GET(request: NextRequest) {
      ORDER BY w.active DESC, w.created_at DESC`,
     [userId, includeInactive]
   );
+
+  // WHAT IS OPEN RIGHT NOW, and what is queued to release — both read from tables the
+  // poller already maintains, so this costs one query and no provider traffic. See
+  // lib/watch-openings for why nothing is fetched live and why the window is 15 minutes.
+  // Best-effort: badges are decoration on top of a watch, never a reason to fail the list.
+  try {
+    const openings = await watchOpenings(rows.map((w) => String(w.id)));
+    for (const w of rows) {
+      const o = openings.get(String(w.id));
+      if (!o) continue;
+      w.open_sites = o.open;
+      w.pending_hold = o.hold;
+    }
+  } catch (err) {
+    console.error('[watches] openings lookup failed:', (err as Error).message);
+  }
 
   // Per-watch cancellation likelihood (feature E): "how often has this site had an
   // opening for a stay this far out?" — computed for THIS watch's lead time + nights,

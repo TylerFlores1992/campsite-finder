@@ -69,6 +69,17 @@ interface Site {
 }
 
 /** A row in the mute list: every site we can enumerate, plus the alerted ones. */
+/** A site the poller has seen open in the last few minutes. See lib/watch-openings for
+ *  why this is a last-seen record rather than a live check. */
+interface OpenSite { id: string; name: string | null; seenSecondsAgo: number }
+
+/** "just now" / "2 min ago". Deliberately coarse: the underlying figure is the age of a
+ *  poll, and a to-the-second reading would imply a precision this is not. */
+function seenLabel(secs: number): string {
+  if (secs < 90) return "just now";
+  return `${Math.round(secs / 60)} min ago`;
+}
+
 interface SiteRow {
   id: string;
   name: string | null;
@@ -85,6 +96,7 @@ export default function ManageWatch({ token }: { token: string }) {
   const [allSites, setAllSites] = useState<SiteRow[] | null>(null);
   const [siteFilter, setSiteFilter] = useState("");
   const [muted, setMuted] = useState<ReadonlySet<string>>(new Set());
+  const [open, setOpen] = useState<OpenSite[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState(false);
@@ -152,7 +164,8 @@ export default function ManageWatch({ token }: { token: string }) {
         );
         return;
       }
-      const d = (await r.json()) as { watch: Watch; alerts: Alert[]; sites: Site[] };
+      const d = (await r.json()) as { watch: Watch; alerts: Alert[]; sites: Site[]; open?: OpenSite[] };
+      setOpen(d.open ?? []);
       setWatch(d.watch);
       setAlerts(d.alerts ?? []);
       setMuted(new Set(d.watch.muted_site_ids ?? []));
@@ -242,6 +255,8 @@ export default function ManageWatch({ token }: { token: string }) {
 
   if (!watch) return null;
 
+  const openIds = new Set(open.map((o) => o.id));
+
   // Muted sites always stay visible regardless of the filter — a muted site you
   // can't find is a muted site you can't unmute.
   const q = siteFilter.trim().toLowerCase();
@@ -328,6 +343,30 @@ export default function ManageWatch({ token }: { token: string }) {
         </p>
       )}
 
+      {/* OPEN RIGHT NOW, above the mute list rather than inside it. The mute list is a
+          settings control sorted alphabetically over hundreds of rows; "what can I book
+          this second" is a different question and does not survive being a marker on row
+          214. Times are shown because this is a LAST-SEEN record, not a live check —
+          see lib/watch-openings. */}
+      {open.length > 0 && (
+        <section className="mt-4 rounded-xl border border-ch-green-deep/30 bg-ch-green-soft p-4">
+          <h2 className="text-ch-label font-bold tracking-[.1em] text-ch-ink uppercase">
+            {open.length} site{open.length === 1 ? "" : "s"} open now
+          </h2>
+          <ul className="mt-2 space-y-1">
+            {open.map((o) => (
+              <li key={o.id} className="flex items-baseline justify-between gap-3 text-ch-body">
+                <span className="min-w-0 truncate font-bold text-ch-ink">{o.name ?? o.id}</span>
+                <span className="shrink-0 text-ch-fine text-ch-muted">{seenLabel(o.seenSecondsAgo)}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-ch-fine text-ch-muted">
+            Last seen by our checks, not a live look — book from the provider to be sure.
+          </p>
+        </section>
+      )}
+
       {(allSites === null || allSites.length > 0 || muted.size > 0) && (
         <div className="mt-4">
           <Collapsible
@@ -372,9 +411,13 @@ export default function ManageWatch({ token }: { token: string }) {
                           <span className="block truncate text-ch-body font-bold">
                             {s.name ?? s.id}
                           </span>
-                          {(s.loop || s.alerted) && (
+                          {(s.loop || s.alerted || openIds.has(s.id)) && (
                             <span className="mt-0.5 block text-ch-fine text-ch-muted">
-                              {[s.loop, s.alerted ? "alerted before" : null]
+                              {[
+                                openIds.has(s.id) ? "open now" : null,
+                                s.loop,
+                                s.alerted ? "alerted before" : null,
+                              ]
                                 .filter(Boolean)
                                 .join(" · ")}
                             </span>

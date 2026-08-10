@@ -51,6 +51,12 @@ export interface WatchCardWatch {
       routes to its own screen so Manage doesn't leave the new UI. */
   manage_token?: string;
   likelihood?: { rate: number; samples: number };
+  /** Sites the poller has SEEN open in the last few minutes — see lib/watch-openings.
+   *  Absent for providers with no per-site id, which is why the count is optional
+   *  everywhere rather than defaulted to zero. */
+  open_sites?: { id: string; name: string | null; seenSecondsAgo: number }[];
+  /** A hold offered or requested for a release still ahead. */
+  pending_hold?: { unitName: string | null; releaseAt: string; status: string } | null;
 }
 
 export interface WatchCardProps {
@@ -84,11 +90,29 @@ export function watchState(
   if (w.active === false) return "paused";
   // Matches the poller's re-notify window: inside an hour of an alert, the
   // opening it found is probably still there.
+  // MEASURED BEATS INFERRED. `open_sites` is what the poller last SAW open; the
+  // notification window below is a guess that the opening it alerted on is probably still
+  // there. That guess got worse when alerting became transition-based (migration 039): a
+  // site that simply stays open no longer re-alerts, so notification_sent_at ages out and
+  // the card fell back to "Watching" while the site was still sitting there open.
+  if (w.open_sites?.length) return "hit";
   const alerted = w.notification_sent_at ? Date.parse(w.notification_sent_at) : NaN;
   if (Number.isFinite(alerted) && Date.now() - alerted < HOUR_MS) return "hit";
   if (sessionExpired && w.auto_cart && w.campground_source === "ridb") return "authexpired";
   if (w.campground_source && stalledSources?.has(w.campground_source)) return "stalled";
   return "watching";
+}
+
+/** "8:00 AM" from RC's zone-less Pacific wall-clock. SLICED, never parsed: `new Date` on
+ *  a string with no zone reads it as the viewer's local time and shifts the hour, which on
+ *  a badge about an 8am release would name the wrong hour. Same rule as HoldConfirm. */
+function releaseLabel(releaseAt: string): string {
+  const hhmm = (releaseAt.split("T")[1] ?? "").slice(0, 5);
+  const [h, m] = hhmm.split(":").map(Number);
+  if (!Number.isFinite(h)) return releaseAt;
+  const ampm = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return m ? `${h12}:${String(m).padStart(2, "0")} ${ampm}` : `${h12} ${ampm}`;
 }
 
 export default function WatchCard({ watch, stalledSources, sessionExpired }: WatchCardProps) {
@@ -118,7 +142,26 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
     <Card state={cardState} className="flex h-full flex-col">
       <div data-card-dim className="flex-1">
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          {state === "hit" && <Tag kind="open">Site open</Tag>}
+          {/* Say HOW MANY when we know. "Site open" on a campground with four free
+              sites undersells it, and the count is the thing that decides whether it is
+              worth opening the watch. Falls back to the bare label for providers with no
+              per-site id (ReserveAmerica, GoingToCamp, TN/SC), where a count would be
+              invented. */}
+          {state === "hit" && (
+            <Tag kind="open">
+              {watch.open_sites?.length
+                ? `${watch.open_sites.length} site${watch.open_sites.length === 1 ? "" : "s"} open`
+                : "Site open"}
+            </Tag>
+          )}
+          {/* A hold is a different promise from an opening — it is not bookable yet, and
+              saying "open" about it would send someone to a site they cannot take. */}
+          {watch.pending_hold && (
+            <Tag kind="cart">
+              {watch.pending_hold.status === "requested" ? "Holding" : "Can hold"}{" "}
+              {watch.pending_hold.unitName ?? "a site"} · {releaseLabel(watch.pending_hold.releaseAt)}
+            </Tag>
+          )}
           {/* Only claim the cart when auto-cart could actually have run. With a
               stale session the poller falls back to a plain alert and nothing is
               carted — telling the user it's waiting for them would send them to
