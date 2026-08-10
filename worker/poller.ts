@@ -33,6 +33,7 @@ import { getAvailabilityFromRecGov, hasAvailabilityInRange, recgovBreakerOpen } 
 import * as recgovScheduler from './recgov-scheduler';
 import { SHARD_COUNT, LEASE_RENEW_MS, claimOrRenewShard, heldShard, ownsCampground } from './shard';
 import { leadDaysUntil } from './lead-time';
+import { heldCheckDue, clampHeldInterval, RC_HELD_CHECK_DEFAULT_MS } from './held-cadence';
 import { startRateProfile } from './rate-profile';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
@@ -121,6 +122,32 @@ const RECGOV_SPREAD_MS = Number(process.env.RECGOV_SPREAD_MS ?? POLL_INTERVAL_MS
 // construction (the plan gate).
 const RECGOV_HOT_LEAD_DAYS = Number(process.env.RECGOV_HOT_LEAD_DAYS ?? 14);
 const RECGOV_COLD_MAX_AGE_MS = Number(process.env.RECGOV_COLD_MAX_AGE_MS ?? 60_000);
+
+/**
+ * How often to look for UseDirect sites that are LOCKED until a scheduled release.
+ *
+ * SPEED ONLY BUYS SOMETHING WHEN THE EVENT IS UNPREDICTABLE. A site that just became
+ * bookable is gone in minutes and the only defence is polling hard — that is
+ * `findRCOpenUnit`, and it stays on the 15s cycle. A site locked until 8am tomorrow is
+ * the opposite: the release time is PUBLISHED, we write it to `rc_hold_requests`, and the
+ * cart fires off that schedule. Learning about it at 14:00 or 14:05 changes nothing.
+ *
+ * So this is not lead-time tiering copied over from rec.gov. Tiering by lead-days would
+ * have slowed the OPEN check too, which is the one that must stay fast; the useful split
+ * here is by *what kind of event* is being watched, not by how far out the stay is.
+ *
+ * `findRCHeldUnit` does its own `fetchGrid` — there is no grid cache, and the two passes
+ * are far enough apart that the client's 40ms coalescing window never merges them — so
+ * this pass is roughly HALF of all UseDirect upstream traffic. At 5 minutes that is a 20x
+ * cut on it.
+ *
+ * The floor that keeps 5 minutes safe: `holdIsNewsworthy` already refuses anything with
+ * under an hour of lead, so a discovery delay only costs us something if it eats into
+ * that hour. Against a release typically ~18 hours out, five minutes is not close.
+ */
+const RC_HELD_CHECK_MS = clampHeldInterval(Number(process.env.RC_HELD_CHECK_MS ?? RC_HELD_CHECK_DEFAULT_MS));
+let rcHeldCheckedAt = 0;
+const rcHeldDue = () => heldCheckDue(rcHeldCheckedAt, Date.now(), RC_HELD_CHECK_MS);
 // Alert-health canary cadences. Detection is cheap (one fetch per source) so it
 // runs often; delivery actually SENDS (Resend/Twilio), so it's slow by default to
 // avoid spamming the canary sink — /api/health/status staleness thresholds track
@@ -847,15 +874,24 @@ async function cycle(): Promise<void> {
       // receive a coming-soon alert or an 8am hold offer. Unlike probeFlexStay this
       // costs no extra upstream calls: RC's grid is a full grid, so the run search is
       // in-memory over the one fetch.
-      await pMap(
-        rcWatches.filter((w) => !rcResults.has(w.id)),
-        async (w) => {
-          const required = Math.max(w.min_nights, nightsOfRange(w.start_date, w.end_date).length);
-          const held = await findRCHeldUnit(w.campground_id, w.start_date, w.end_date, required, flexOf(w));
-          if (held) rcHeld.set(w.id, { dates: held.dates, availableAt: held.availableAt, unitId: held.unitId, name: held.name });
-        },
-        RECGOV_CONCURRENCY
-      );
+      //
+      // ON ITS OWN SLOW CADENCE — see RC_HELD_CHECK_MS. A skipped cycle leaves `rcHeld`
+      // empty, which reads downstream as "nothing coming soon", and that is correct
+      // rather than merely tolerable: the alert is idempotent (`offerHold` upserts per
+      // watch+unit+arrival and will not walk a status backwards) and the cart runs off
+      // `release_at`, not off having seen the lock recently.
+      if (rcHeldDue()) {
+        rcHeldCheckedAt = Date.now();
+        await pMap(
+          rcWatches.filter((w) => !rcResults.has(w.id)),
+          async (w) => {
+            const required = Math.max(w.min_nights, nightsOfRange(w.start_date, w.end_date).length);
+            const held = await findRCHeldUnit(w.campground_id, w.start_date, w.end_date, required, flexOf(w));
+            if (held) rcHeld.set(w.id, { dates: held.dates, availableAt: held.availableAt, unitId: held.unitId, name: held.name });
+          },
+          RECGOV_CONCURRENCY
+        );
+      }
     })(),
 
     // ReserveAmerica: HTML-scrape check for a site bookable across the full stay.
