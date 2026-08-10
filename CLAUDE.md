@@ -845,6 +845,16 @@ machinery worked — this was one command to diagnose, against six hours of gues
   unhandled rejection on a failed POST would do exactly this, and that would make ANY
   network blip fatal. Unproven either way; worth ruling out before blaming the process.
 
+### UNATTENDED LOGIN WORKS — first clean production run, 2026-08-10 18:35Z
+`rc-test-login.bat` ran the real `attemptLogin` from a genuinely signed-out state and got
+`token exp in 60m; okta=ALIVE (exp 2026-08-11T06:35:53)` — a full-life access token AND a
+12-hour Okta session, i.e. `keepSignedIn()` ticked the box. `session_live_since` and
+`session_since` both moved, so it was a real transition, not a reconfirmation.
+**This is the first time the path has succeeded unattended.** The three "failures" on
+08-09 were the missing already-signed-in branch, not the login. A dead session is
+therefore no longer automatically a human errand — but `maybeAutoLogin` still gets ONE
+attempt per release and a CAPTCHA is still a full stop, so the human fallback stays.
+
 ### `update.bat` ENDS the RC session — update FIRST, log in AFTER (2026-08-10)
 `rc-login.bat` said *"your sign-in survives that — it lives in `.rc-bot-profile\`, which
 nothing deletes"*. The PROFILE survives; the SESSION does not. RC keeps no Okta session
