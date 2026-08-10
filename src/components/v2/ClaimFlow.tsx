@@ -4,6 +4,7 @@ import { openRcHandoff, rcHandoffUrl, type RcReport } from '@/lib/native/rc-hand
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Check, AlertTriangle, Tent } from 'lucide-react';
 import { formatStayDates } from '@/lib/notifications/dates';
+import { RC_CART_HOLD_MINUTES } from '@/lib/limits';
 
 /**
  * The hand-off, from the user's side.
@@ -34,6 +35,8 @@ interface HoldState {
   nights?: number;
   /** The park's own booking page — where the hand-off lands. */
   bookingUrl?: string;
+  /** When the bot got it into RC's cart. Drives the honest countdown below. */
+  cartedAt?: string | null;
 }
 
 export default function ClaimFlow({ holdId, token }: { holdId: string; token: string }) {
@@ -102,6 +105,32 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     window.addEventListener('pagehide', go);
     return () => { window.removeEventListener('pagehide', go); go(); };
   }, [flushReports]);
+
+  /**
+   * HOW LONG IS LEFT — because "We're holding it for you" was an open-ended promise we
+   * cannot keep. RC drops a cart after about 15 minutes and we do not extend it, while
+   * our own sweep waits 45; between those two numbers the screen was telling people we
+   * held a site that RC had already released.
+   *
+   * The fix is NOT to shorten the sweep. Releasing at minute 15 would throw away a hold
+   * whose owner is two minutes from claiming it. The fix is to stop claiming certainty:
+   * count down while we are confident, then say plainly that it MAY be gone — hedged,
+   * because RC_CART_HOLD_MINUTES is read off RC's bundle and has never been observed.
+   */
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (state?.status !== 'carted') return;
+    const t = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, [state?.status]);
+
+  const minsLeft = (() => {
+    if (!state?.cartedAt) return null;
+    const held = (now - new Date(state.cartedAt).getTime()) / 60_000;
+    if (!Number.isFinite(held)) return null;
+    return Math.ceil(RC_CART_HOLD_MINUTES - held);
+  })();
+  const maybeGone = minsLeft !== null && minsLeft <= 0;
 
   const load = useCallback(async () => {
     try {
@@ -178,10 +207,20 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     return (
       <Shell>
         <Tent className="text-ch-green-deep" size={32} />
-        <h1 className="text-2xl font-bold text-ch-ink mt-3">We&rsquo;re holding {site} for you</h1>
+        <h1 className="text-2xl font-bold text-ch-ink mt-3">
+          {maybeGone ? `${site} may already be gone` : `We’re holding ${site} for you`}
+        </h1>
         <p className="text-ch-muted mt-2">
           {stayLabel(state.arrivalDate, state.nights)}
         </p>
+        {/* The deadline, stated once, near the top, where a decision is being made. */}
+        {minsLeft !== null && (
+          <p className={`mt-3 rounded-xl px-4 py-2 text-sm font-semibold ${maybeGone ? 'bg-ch-sand text-ch-ink' : 'bg-ch-green-soft text-ch-ink'}`}>
+            {maybeGone
+              ? 'ReserveCalifornia drops a cart after about 15 minutes, and it has been longer than that. It may already be free again — worth trying anyway.'
+              : `ReserveCalifornia holds a cart about ${RC_CART_HOLD_MINUTES} minutes. About ${minsLeft} left.`}
+          </p>
+        )}
         <p className="text-ch-ink mt-5">
           When you tap below we let go and you take it — that swap takes a couple of
           seconds, and the site is open to anyone during it, so only tap when you&rsquo;re

@@ -89,6 +89,11 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     status: hold.status,
     stuck,
+    // WHEN THE BOT GOT IT — so the claim screen can say how long is left rather than
+    // implying the hold is open-ended. RC drops a cart after ~15 minutes (see
+    // RC_CART_HOLD_MINUTES) and we do not extend it, so "We're holding it for you" stops
+    // being true long before our own 45-minute sweep lets go.
+    cartedAt: (hold as unknown as { carted_at: string | null }).carted_at,
     unitId: hold.unit_id,
     unitName: hold.unit_name,
     arrivalDate: hold.arrival_date,

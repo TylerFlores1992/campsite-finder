@@ -326,7 +326,7 @@ export function pushBody(payload: NotificationPayload): { title: string; body: s
   let body: string;
   if (payload.kind === 'carted' && payload.holdUrl) {
     title = `🔒 Held for you: ${name}`;
-    body = `${subject} is held. Tap to claim it — we let go the moment you do.`;
+    body = `${subject} is held ~15 min. Tap to claim it — we let go the moment you do.`;
   } else if (payload.kind === 'carted') {
     title = `✅ In your cart: ${name}`;
     body = `${subject} is in your cart — check out now (held ~15 min).`;
@@ -481,7 +481,7 @@ export function buildEmailHtml(payload: NotificationPayload): string {
 <html>
 <body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#1a1a1a">
   <h2 style="color:#166534;margin-bottom:4px">🔒 We're holding it for you</h2>
-  <p style="margin-top:0;color:#555">You asked us to grab this one at release time. It's held in CampHawk's cart — nobody else can take it while we have it.</p>
+  <p style="margin-top:0;color:#555">You asked us to grab this one at release time. It's held in CampHawk's cart — nobody else can take it while we have it. <strong>ReserveCalifornia only keeps a cart about 15 minutes</strong>, so claim it now rather than later.</p>
 
   <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:20px;margin:20px 0">
     <h3 style="margin:0 0 8px">${payload.campgroundName}${siteSuffix}</h3>

@@ -79,3 +79,30 @@ test('the hold confirm has a way out', () => {
   assert.match(src, /href="\/"/, 'the brand mark links home');
   assert.match(src, /Logo/, 'and it is the CampHawk mark, as everywhere else in the app');
 });
+
+test('nothing promises an open-ended RC hold', () => {
+  // WHAT THIS PREVENTS. RC drops a cart after about 15 minutes and we do not extend it,
+  // while `expireStaleHolds` waits 45 — so for thirty minutes the product used to say
+  // "we're holding it for you" and "holds it until you claim it" about a site RC had
+  // already released. The sweep is deliberately NOT shortened to match (releasing at
+  // minute 15 would throw away a hold whose owner is two minutes away); instead every
+  // surface stops claiming certainty.
+  //
+  // The number is READ off RC's bundle and has never been observed, which is why the
+  // strings hedge — "about", "may already" — and why this asserts the hedge exists rather
+  // than asserting a deadline.
+  const claim = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  assert.match(claim, /RC_CART_HOLD_MINUTES/, 'the window comes from one shared constant');
+  assert.match(claim, /maybeGone/, 'past the window the screen says it may already be gone');
+  assert.ok(
+    !/We&rsquo;re holding \{site\} for you<\/h1>/.test(claim),
+    'the heading must not assert a hold unconditionally — it depends on how long it has been',
+  );
+
+  const offer = readFileSync('src/components/v2/HoldConfirm.tsx', 'utf8');
+  assert.ok(
+    !/holds it\s*\n?\s*until you claim it/.test(offer),
+    '"until you claim it" is a promise RC does not let us keep',
+  );
+  assert.match(offer, /RC_CART_HOLD_MINUTES/, 'the offer states the real window');
+});

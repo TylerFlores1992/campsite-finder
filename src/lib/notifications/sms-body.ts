@@ -48,7 +48,7 @@ export function smsBody(p: SmsBodyInput): string {
     // happened and points at a channel that works. A text that arrives beats a link
     // that doesn't.
     return fitOneSegment(
-      (n) => `CampHawk: ${n}${site} is HELD for you. Open your email or the CampHawk app to claim it.`,
+      (n) => `CampHawk: ${n}${site} is HELD ~15 min. Open your email or the CampHawk app to claim it.`,
       name,
     );
   }

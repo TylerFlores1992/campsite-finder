@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Check, ExternalLink, Loader2 } from 'lucide-react';
 import Logo from '@/components/Logo';
 import { formatStayDates } from '@/lib/notifications/dates';
+import { RC_CART_HOLD_MINUTES } from '@/lib/limits';
 import type { HoldPreview } from '@/lib/notifications/actions';
 
 /**
@@ -73,8 +74,9 @@ export default function HoldConfirm({ preview }: { preview: HoldPreview }) {
 
       <p className="mt-5 text-sm text-ch-ink">
         If you say yes, our bot carts this exact site the second it opens and holds it
-        until you claim it. Only say yes if you actually want it — while we&rsquo;re
-        holding it, nobody else can book it.
+        for you — but ReserveCalifornia only keeps a cart about {RC_CART_HOLD_MINUTES}{' '}
+        minutes, so claim it quickly when we tell you. Only say yes if you actually want
+        it: while we&rsquo;re holding it, nobody else can book it.
       </p>
 
       {/*
