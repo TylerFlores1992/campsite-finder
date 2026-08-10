@@ -34,6 +34,7 @@ import * as recgovScheduler from './recgov-scheduler';
 import { SHARD_COUNT, LEASE_RENEW_MS, claimOrRenewShard, heldShard, ownsCampground } from './shard';
 import { leadDaysUntil } from './lead-time';
 import { heldCheckDue, clampHeldInterval, RC_HELD_CHECK_DEFAULT_MS } from './held-cadence';
+import { DueTracker, intervalForLead } from './poll-cadence';
 import { startRateProfile } from './rate-profile';
 import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
@@ -148,6 +149,29 @@ const RECGOV_COLD_MAX_AGE_MS = Number(process.env.RECGOV_COLD_MAX_AGE_MS ?? 60_0
 const RC_HELD_CHECK_MS = clampHeldInterval(Number(process.env.RC_HELD_CHECK_MS ?? RC_HELD_CHECK_DEFAULT_MS));
 let rcHeldCheckedAt = 0;
 const rcHeldDue = () => heldCheckDue(rcHeldCheckedAt, Date.now(), RC_HELD_CHECK_MS);
+
+/**
+ * Lead-time tiering for the providers with no scheduler in front of them.
+ *
+ * rec.gov gets this from `recgov-scheduler.ts`'s cache; UseDirect, ReserveAmerica,
+ * GoingToCamp and TN/SC had nothing, and re-fetched every 15s whether the stay was this
+ * weekend or next April. One tracker per partition so a slow provider cannot shift
+ * another's schedule. See poll-cadence.ts for the measured survival rates this rests on,
+ * and for why Virginia is exempt.
+ */
+const rcDue = new DueTracker();
+const raDue = new DueTracker();
+const gtcDue = new DueTracker();
+const tnscDue = new DueTracker();
+
+/** Days until a watch's first night, in the shape DueTracker wants. */
+function withLead<T extends { id: string; campground_source: string; start_date: string }>(ws: readonly T[]) {
+  return ws.map((w) => ({
+    ...w,
+    source: w.campground_source,
+    leadDays: leadDaysUntil(w.start_date, w.start_date.slice(0, 7)),
+  }));
+}
 // Alert-health canary cadences. Detection is cheap (one fetch per source) so it
 // runs often; delivery actually SENDS (Resend/Twilio), so it's slow by default to
 // avoid spamming the canary sink — /api/health/status staleness thresholds track
@@ -805,6 +829,19 @@ async function cycle(): Promise<void> {
   const tnscResults = new Map<string, { dates: string[]; start: string; end: string }>();
   if (tnscWatches.length > 0) console.log(`[poller] checking ${tnscWatches.length} TN/SC watch(es)`);
 
+  // WHAT WE ACTUALLY FETCHED THIS CYCLE, not what we could have. The heartbeat used to
+  // print `${rcWatches.length} RC fetches`, which was true only while every watch was
+  // checked every cycle; with tiering it would keep printing the old number forever while
+  // the real rate fell, and a metric that cannot go down cannot report a problem. Same
+  // lesson as the rec.gov counters — nothing reporting our own request rate was the root
+  // cause of every wrong diagnosis in that episode.
+  const now = Date.now();
+  const rcOpenDue = rcDue.due(withLead(rcWatches), now);
+  const raDueNow = raDue.due(withLead(raWatches), now);
+  const gtcDueNow = gtcDue.due(withLead(gtcWatches), now);
+  const tnscDueNow = tnscDue.due(withLead(tnscWatches), now);
+  let rcHeldChecked = 0;
+
   // The per-source fetch phases run CONCURRENTLY. They're independent (each writes
   // its own result map from a disjoint set of watches), so running them in parallel
   // means a slow/throttled source (e.g. rec.gov under a 429 storm eating 10s
@@ -854,7 +891,7 @@ async function cycle(): Promise<void> {
     (async () => {
       // Find the specific open unit hosting the full stay.
       await pMap(
-        rcWatches,
+        rcOpenDue,
         async (w) => {
           const nights = nightsOfRange(w.start_date, w.end_date);
           const required = Math.max(w.min_nights, nights.length);
@@ -882,8 +919,10 @@ async function cycle(): Promise<void> {
       // `release_at`, not off having seen the lock recently.
       if (rcHeldDue()) {
         rcHeldCheckedAt = Date.now();
+        const heldTargets = rcWatches.filter((w) => !rcResults.has(w.id));
+        rcHeldChecked = heldTargets.length;
         await pMap(
-          rcWatches.filter((w) => !rcResults.has(w.id)),
+          heldTargets,
           async (w) => {
             const required = Math.max(w.min_nights, nightsOfRange(w.start_date, w.end_date).length);
             const held = await findRCHeldUnit(w.campground_id, w.start_date, w.end_date, required, flexOf(w));
@@ -896,7 +935,7 @@ async function cycle(): Promise<void> {
 
     // ReserveAmerica: HTML-scrape check for a site bookable across the full stay.
     pMap(
-      raWatches,
+      raDueNow,
       async (w) => {
         const m = await probeFlexStay(w, (s, e, required) => findReserveAmericaOpen(w.campground_id, s, e, required));
         if (m) raResults.set(w.id, { dates: m.dates, siteIds: m.result.siteIds, start: m.start, end: m.end });
@@ -906,7 +945,7 @@ async function cycle(): Promise<void> {
 
     // GoingToCamp: the Camis API answers whole-stay directly, so one call per watch.
     pMap(
-      gtcWatches,
+      gtcDueNow,
       async (w) => {
         const m = await probeFlexStay(w, (s, e, required) => findGoingToCampOpen(w.campground_id, s, e, required));
         if (m) gtcResults.set(w.id, { dates: m.dates, resourceIds: m.result.resourceIds, start: m.start, end: m.end });
@@ -920,7 +959,7 @@ async function cycle(): Promise<void> {
     // an unreachable portal simply never alerts rather than crashing the cycle. See
     // docs/CONTEXT.md.)
     pMap(
-      tnscWatches,
+      tnscDueNow,
       async (w) => {
         const m = await probeFlexStay(w, async (s, e, required) => {
           const open = await findTnscOpen(w.campground_id, s, e, required);
@@ -1157,7 +1196,12 @@ async function cycle(): Promise<void> {
   console.log(
     `[poller] heartbeat — ${mainWatches.length}${SHARD_COUNT > 1 ? `/${watches.length}` : ''} watches` +
       `${SHARD_COUNT > 1 ? ` (shard ${heldShard() ?? '-'}/${SHARD_COUNT})` : ''}` +
-      ` (${rcWatches.length} RC), ${pairs.size} recgov (${hotPairs} hot/${pairs.size - hotPairs} cold) + ${rcWatches.length} RC fetches, ${notified} notified` +
+      ` (${rcWatches.length} RC), ${pairs.size} recgov (${hotPairs} hot/${pairs.size - hotPairs} cold)` +
+      ` + UD ${rcOpenDue.length}/${rcWatches.length} open, ${rcHeldChecked} held` +
+      (raWatches.length || gtcWatches.length || tnscWatches.length
+        ? ` + RA ${raDueNow.length}/${raWatches.length}, GTC ${gtcDueNow.length}/${gtcWatches.length}, TN/SC ${tnscDueNow.length}/${tnscWatches.length}`
+        : '') +
+      `, ${notified} notified` +
       // Surface the rec.gov rate every cycle. Nothing reporting our own request rate is
       // the root cause of every wrong diagnosis this session — including a budget that
       // was blamed twice while the real constraint was the bucket's burst size. The
