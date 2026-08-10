@@ -33,6 +33,8 @@ export interface OpenSite {
   name: string | null;
   /** Seconds since the poller last saw this site open. */
   seenSecondsAgo: number;
+  /** Straight to the provider — as specific as that provider allows. See withBookLinks. */
+  bookUrl?: string | null;
 }
 
 export interface PendingHold {
@@ -176,4 +178,40 @@ export async function withHoldLinks(holds: PendingHold[], watchId: string): Prom
         : h,
     ),
   );
+}
+
+/**
+ * Point each open site at the provider, as precisely as the provider permits.
+ *
+ * HOW SPECIFIC THIS CAN BE IS NOT UP TO US, and the difference is worth knowing before
+ * promising anything in the copy:
+ *
+ *   • recreation.gov — a real per-CAMPSITE page. Exactly the site the row names.
+ *   • ReserveCalifornia — the LOOP (`/park/<placeId>/<facilityId>`) and no further. RC
+ *     has no per-site URL, and its dates are not URL-linkable either (see booking-url).
+ *     So an RC link lands on the right loop and the user picks the site and dates there.
+ *   • ReserveAmerica / GoingToCamp — campground plus the arrival date.
+ *
+ * Built HERE rather than in `watchOpenings` because it needs the campground's source and
+ * reservations_url, which the caller already has — and because a link is presentation,
+ * while watchOpenings answers a question about state.
+ */
+export async function withBookLinks(
+  open: OpenSite[],
+  campground: { source: string | null; reservationsUrl: string | null; campgroundId: string },
+  stay: { startDate: string; endDate: string },
+): Promise<OpenSite[]> {
+  const { bookingLink } = await import('@/lib/booking-url');
+  return open.map((o) => ({
+    ...o,
+    bookUrl:
+      bookingLink({
+        source: campground.source,
+        reservationsUrl: campground.reservationsUrl,
+        campgroundId: campground.campgroundId,
+        campsiteId: o.id,
+        date: stay.startDate,
+        endDate: stay.endDate,
+      }) ?? null,
+  }));
 }

@@ -138,3 +138,41 @@ test('the reconnecting badge is limited to the source that can actually cart', (
   const badge = card.slice(card.indexOf('Not carted — reconnecting') - 400, card.indexOf('Not carted — reconnecting'));
   assert.match(badge, /campground_source === "ridb"/, 'gated to rec.gov watches');
 });
+
+test('a book link is as specific as the provider allows, and no more', () => {
+  // HOW DEEP THE LINK GOES IS NOT UP TO US, and the row names a site — so promising a
+  // site page where only a loop exists spends the window hunting. booking-url already
+  // encodes the per-source ceiling; this just checks we route through it rather than
+  // assembling URLs here, which is how `/Web/#!park/...` got invented twice.
+  const src2 = readFileSync('src/lib/watch-openings.ts', 'utf8');
+  assert.match(src2, /await import\('@\/lib\/booking-url'\)/, 'links come from booking-url');
+  assert.ok(
+    !/https:\/\/www\.(recreation|reservecalifornia)/.test(src2),
+    'no hand-assembled provider URLs — lib/booking-url is the only place that builds them',
+  );
+
+  // And the copy must tell the user which they got.
+  const ui = readFileSync('src/components/v2/ManageWatch.tsx', 'utf8');
+  assert.match(ui, /Book goes straight to the site page/, 'rec.gov: per-campsite');
+  assert.match(ui, /Book opens the loop on the provider/, 'everything else: loop, say so');
+});
+
+test('booking-url really is per-campsite for rec.gov and loop-level for RC', async () => {
+  // Pinning the ceiling itself, so the copy above cannot quietly become a lie if
+  // booking-url changes.
+  const { bookingLink } = await import('../src/lib/booking-url');
+  assert.equal(
+    bookingLink({ source: 'ridb', reservationsUrl: null, campsiteId: '45741', campgroundId: 'rec-1' }),
+    'https://www.recreation.gov/camping/campsites/45741',
+  );
+  assert.equal(
+    bookingLink({
+      source: 'reservecalifornia',
+      reservationsUrl: 'https://www.reservecalifornia.com/park/720',
+      campsiteId: '45741',
+      campgroundId: 'rc-715',
+    }),
+    'https://www.reservecalifornia.com/park/720/715',
+    'RC stops at the loop — there is no per-site URL, and the campsiteId is ignored',
+  );
+});

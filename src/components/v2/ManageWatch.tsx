@@ -71,7 +71,7 @@ interface Site {
 /** A row in the mute list: every site we can enumerate, plus the alerted ones. */
 /** A site the poller has seen open in the last few minutes. See lib/watch-openings for
  *  why this is a last-seen record rather than a live check. */
-interface OpenSite { id: string; name: string | null; seenSecondsAgo: number }
+interface OpenSite { id: string; name: string | null; seenSecondsAgo: number; bookUrl?: string | null }
 
 /** A site locked until a scheduled release. `offered` is one tap from being held. */
 interface Hold {
@@ -281,6 +281,7 @@ export default function ManageWatch({ token }: { token: string }) {
   if (!watch) return null;
 
   const openIds = new Set(open.map((o) => o.id));
+  const isRecGov = watch?.source === "ridb";
 
   // Muted sites always stay visible regardless of the filter — a muted site you
   // can't find is a muted site you can't unmute.
@@ -378,16 +379,38 @@ export default function ManageWatch({ token }: { token: string }) {
           <h2 className="text-ch-label font-bold tracking-[.1em] text-ch-ink uppercase">
             {open.length} site{open.length === 1 ? "" : "s"} open now
           </h2>
-          <ul className="mt-2 space-y-1">
+          <ul className="mt-2 space-y-2">
             {open.map((o) => (
-              <li key={o.id} className="flex items-baseline justify-between gap-3 text-ch-body">
-                <span className="min-w-0 truncate font-bold text-ch-ink">{o.name ?? o.id}</span>
-                <span className="shrink-0 text-ch-fine text-ch-muted">{seenLabel(o.seenSecondsAgo)}</span>
+              <li key={o.id} className="flex items-center justify-between gap-3">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-ch-body font-bold text-ch-ink">
+                    {o.name ?? o.id}
+                  </span>
+                  <span className="block text-ch-fine text-ch-muted">{seenLabel(o.seenSecondsAgo)}</span>
+                </span>
+                {o.bookUrl && (
+                  <a
+                    href={o.bookUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 rounded-ch bg-ch-green-deep px-3 py-1.5 text-ch-meta font-bold text-white"
+                  >
+                    Book
+                  </a>
+                )}
               </li>
             ))}
           </ul>
+          {/* SAY WHERE THE LINK LANDS, because it differs by provider and the row names a
+              site. rec.gov has a real per-campsite page; ReserveCalifornia has no per-site
+              URL and no linkable dates, so the best that exists is the loop. Letting the
+              user expect a site page and land on a loop list is how the 8am window gets
+              spent hunting. */}
           <p className="mt-2 text-ch-fine text-ch-muted">
-            Last seen by our checks, not a live look — book from the provider to be sure.
+            Last seen by our checks, not a live look.{" "}
+            {isRecGov
+              ? "Book goes straight to the site page."
+              : "Book opens the loop on the provider — pick the site and dates there."}
           </p>
         </section>
       )}
