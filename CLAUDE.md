@@ -818,6 +818,33 @@ that is a different process.
   then `autocart.rc_session` reads "never reported" (a warn, so the banner is amber), which
   is correct: unknown is not healthy. **Done 2026-08-08; live and green.**
 
+### 2026-08-10 08:00 MISSED — a WEDGED keep-warm held the Chromium profile
+South Carlsbad `#42` was `requested` and never carted. The runner was alive, tried on
+every pass, and said exactly why: **`Chromium profile held by rc-keepwarm`**. The 046
+machinery worked — this was one command to diagnose, against six hours of guessing on
+08-07. Three of the four locked units were still free at 08:11 and were bookable by hand.
+- **The keep-warm hung at ~04:48 UTC and held the profile lock for ten hours** without
+  running its loop. `maybeAutoLogin` lives INSIDE the keep-warm, so no 07:45 sign-in
+  either; the Okta session had expired at 04:35 UTC.
+- **A STALE VERDICT IS NOT A DEAD ONE, and only dead rings the phone.**
+  `autocart.rc_session` read *"RC accepts the session for 10h23m, checked 37401s ago,
+  STALE"* — level `warn`. `holdAtRisk` fires on a session reported dead, so a verdict ten
+  hours old with a hold 45 minutes out rang nothing and the 07:30 pre-flight showed amber.
+  The "unknown is not healthy" rule was applied to the VERDICT and not to its AGE.
+- **Profile preemption is cooperative and a wedged holder never cooperates.** The runner
+  drops `.camphawk-profile-wanted` and waits 60s for the keep-warm's loop to notice; the
+  lock's staleness handling only covers a CRASHED holder, not a hung-but-alive one.
+- **`rc-check.bat` is reassuring in exactly the fatal case.** Its step 2 printed
+  *"profile busy (rc-keepwarm) — skipping this pass, NOT a dead session"*, which is true
+  and useless: it cannot tell "mid-pass, fine" from "wedged for ten hours". Only
+  `rc-login.bat` clears it (kills by command line, deletes the lock).
+- **Nothing watches the watcher.** Ten hours of silence from a process that reports every
+  20 minutes should be an alarm on its own, independent of its last verdict.
+- **Timing note, not a conclusion:** `bf271dd` deployed at 04:50:17Z, ~2 min after the
+  keep-warm's last report. A deploy blip should log and retry, not wedge a loop — but an
+  unhandled rejection on a failed POST would do exactly this, and that would make ANY
+  network blip fatal. Unproven either way; worth ruling out before blaming the process.
+
 ### Twilio A2P ticket #28871693 is OPEN (filed 2026-08-07 14:28 PT, P3)
 Asks two things: apply the sample/description/message-flow edit to the approved campaign
 (no "Edit Campaign" link exists — that surfaces on FAILED campaigns, and API edits are
