@@ -256,6 +256,36 @@ three questions were answered on a live emulator against production:
 credentials in the critical path** — which is a better story than the desktop extension,
 not a worse one. `ClaimFlow` already routes through `openRcHandoff`, so the plumbing
 needed no change.
+- **THE INJECTION REPORTS ON ITSELF NOW, and the chain is measured through the token.**
+  `executeScript` returns nothing useful, so "threw on line 1", "ran and found no hold" and
+  "carted" were the same silence — the family that gave us `status = 'sent'` meaning only
+  "Twilio returned 2xx". The bundle served by `/api/rc-precart` now speaks back over the
+  InAppBrowser `message` channel (`lib/rc-precart-script`, `RcReport`, rendered under the
+  admin test). First live run, 2026-08-09: `injected` → Okta's `/oauth2/v1/authorize` →
+  `/login/callback` → **`token captured · length: 939`**, i.e. it read a live RC access
+  token inside the app's webview. Only the two RC cart POSTs remain unproven, and they
+  report themselves via the status line on the next real hold.
+  - **Prefer the raw `cordova_iab` global over `window.webkit.messageHandlers`** — the
+    Android plugin aliases the latter in `onPageFinished` via an async
+    `evaluateJavascript`, which races the `loadstop` injection and drops the first report.
+  - **Status is OBSERVED off `#camphawk-rc-status`, not reimplemented**, so the diagnostic
+    and the user's own screen cannot disagree and `content-rc.js` stays byte-identical for
+    the extension.
+  - **A fake unit id was deliberately NOT used to exercise the cart.** An invented id can
+    collide with a real site and lock it, which is the "carting is harmful without a
+    hand-off" rule.
+  - **THE FIRST VERSION LEAKED AN OAUTH AUTHORIZATION CODE.** It reported `location.href`,
+    and Okta signs in *inside this webview*, so mid-flow that is
+    `/login/callback?code=…&state=…` — exchangeable for the session. The `scrub()` guarding
+    these reports knew JWT shapes and sailed straight past it. **Don't collect a field you
+    then have to filter**: URLs are `origin + pathname` now, which carried all the
+    diagnostic value anyway.
+  - `rc-inject.js` rebroadcasts the token on EVERY RC API call — ~40 identical lines in a
+    quiet minute. Consecutive duplicates collapse to one plus a count; at 08:00:00 the
+    flood would bury the cart's own status.
+  - **`force-cache` was serving the precart STALE FOREVER** (spec behaviour). That silently
+    defeats the route's short `max-age`, which is the one property making a broken precart
+    a push to master rather than an app release. `cache: 'default'` now.
 - **iOS is UNPROVEN and must not be assumed.** WKWebView has its own cookie store and its
   own ITP rules, and the 1.0 build in review has no InAppBrowser plugin at all. Android
   can ship this; iOS needs the plugin, a rebuild, and its own run of the three tests above.
