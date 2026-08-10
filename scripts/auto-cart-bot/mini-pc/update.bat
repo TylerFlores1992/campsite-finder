@@ -50,8 +50,19 @@ echo     Cloudflare tunnel, CampHawk bot, CampHawk broker,
 echo     CampHawk RC keep-warm, CampHawk RC holds.
 echo If you cannot see all five, something failed to start — do not assume it is fine.
 echo(
-echo Watch the "CampHawk RC keep-warm" window for one pass. If it says
-echo "RC SESSION IS DEAD", run mini-pc\rc-login.bat once, by hand.
+REM THIS SCRIPT ENDS THE RC SESSION. `taskkill /IM node.exe /F` takes Chromium down with
+REM the node process driving it, and the RC access token IS the session — it lives in the
+REM running browser, not in the profile. Measured 2026-08-10: a sign-in at 16:15 read
+REM "no token at all - signed out; okta session GONE (404)" eight minutes later, straight
+REM after an update. rc-login.bat's "your sign-in survives that" is WRONG and is corrected
+REM there too.
+REM
+REM So the order is UPDATE FIRST, THEN LOG IN. Doing it the other way throws away the
+REM sign-in you just made, and the loss is silent until the next 8am.
+echo(
+echo *** THIS ENDED THE RC SESSION. Run mini-pc\rc-login.bat now. ***
+echo     The RC token lives in the browser this script just killed, not in the
+echo     profile, so updating always costs the sign-in. Update first, log in after.
 echo You can close this window.
 pause
 exit /b 0

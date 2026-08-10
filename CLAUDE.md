@@ -845,6 +845,14 @@ machinery worked — this was one command to diagnose, against six hours of gues
   unhandled rejection on a failed POST would do exactly this, and that would make ANY
   network blip fatal. Unproven either way; worth ruling out before blaming the process.
 
+### `update.bat` ENDS the RC session — update FIRST, log in AFTER (2026-08-10)
+`rc-login.bat` said *"your sign-in survives that — it lives in `.rc-bot-profile\`, which
+nothing deletes"*. The PROFILE survives; the SESSION does not. RC keeps no Okta session
+cookie in the profile (the 2026-08-09 finding), so **the access token in the running
+browser IS the whole session** — and `update.bat`'s `taskkill /IM node.exe /F` closes that
+browser. Measured: a hand sign-in at 16:15:06Z read *"no token at all — signed out; okta
+session GONE (404)"* at **16:23:08Z**, straight after an update. Both scripts say so now.
+
 ### Twilio A2P ticket #28871693 is OPEN (filed 2026-08-07 14:28 PT, P3)
 Asks two things: apply the sample/description/message-flow edit to the approved campaign
 (no "Edit Campaign" link exists — that surfaces on FAILED campaigns, and API edits are

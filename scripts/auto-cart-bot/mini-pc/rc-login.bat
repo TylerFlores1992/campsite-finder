@@ -53,8 +53,14 @@ REM opened", i.e. success, unless you know otherwise.
 echo TWO new windows should have opened, both printing log lines within a minute.
 echo If either shows a red "cannot access the file ... because it is being used by
 echo another process" error, an old copy is still running: run mini-pc\update.bat,
-echo which force-kills every node process and relaunches all five cleanly. Your
-echo sign-in survives that — it lives in .rc-bot-profile\, which nothing deletes.
+echo which force-kills every node process and relaunches all five cleanly — and
+echo then run THIS script again, because update.bat ends the RC session.
+REM CORRECTED 2026-08-10. This used to say the sign-in survives an update because it
+REM "lives in .rc-bot-profile\, which nothing deletes". The PROFILE survives; the SESSION
+REM does not. RC keeps no Okta session cookie in the profile (see the 2026-08-09 finding),
+REM so the access token in the running browser is the whole session — and update.bat's
+REM `taskkill /IM node.exe /F` closes that browser. Acting on the old wording cost a
+REM freshly-made session eight minutes after it was created.
 echo(
 echo Then confirm from anywhere:  curl -s https://camphawk.app/api/health/status
 echo   autocart.rc_session should read ok within ~20 minutes (one keep-warm pass).
