@@ -28,11 +28,13 @@ const holds = await query<{
   offered_at: string; requested_at: string | null; carted_at: string | null;
   claim_started_at: string | null; released_at: string | null; claimed_at: string | null;
   last_attempt_at: string | null; last_attempt_note: string | null;
+  client_last_stage: string | null; client_last_note: string | null; client_reported_at: string | null;
 }>(
   `SELECT r.id, r.unit_id, r.unit_name, r.arrival_date::text AS arrival, r.nights,
           r.release_at, r.status, r.error, c.name, u.email,
           r.offered_at, r.requested_at, r.carted_at, r.claim_started_at, r.released_at, r.claimed_at,
-          r.last_attempt_at, r.last_attempt_note
+          r.last_attempt_at, r.last_attempt_note,
+          r.client_last_stage, r.client_last_note, r.client_reported_at::text
      FROM rc_hold_requests r
      JOIN campgrounds c ON c.id = r.campground_id
      JOIN users u ON u.id = r.user_id
@@ -123,6 +125,26 @@ console.table(holds.map((h) => ({
   carted: clock(h.carted_at),
   claimed: clock(h.claimed_at ?? h.released_at),
 })));
+
+// DID THE USER'S OWN DEVICE CART IT? The bot's half of the hand-off ends at `released`,
+// and until migration 050 that was the last word either way — a hold whose injected
+// precart carted the site and one whose injection threw on line 1 were the same row. The
+// two RC cart POSTs are the only link in the chain that has never been measured.
+const handed = holds.filter((h) => h.client_reported_at || ['released', 'claimed'].includes(h.status));
+if (handed.length) {
+  console.log('\nHAND-OFF — what the phone/desktop reported back:');
+  for (const h of handed) {
+    const who = h.unit_name ?? h.unit_id;
+    if (!h.client_reported_at) {
+      // NOT the same as a failure, and saying so matters: no extension and no app is the
+      // ordinary desktop case, where the user books by hand and that is a success.
+      console.log(`  • ${who}: nothing reported — no injectable client (plain browser), or it never ran.`);
+      continue;
+    }
+    console.log(`  • ${who}: ${h.client_last_note ?? h.client_last_stage} (${mins(h.client_reported_at)}m ago)`);
+  }
+  console.log("  '✓ Added to cart' is the one that proves the RC cart POSTs work on mobile.");
+}
 
 // The one state that is unambiguously broken: the user said yes, the moment came and
 // went, and nothing carted. Everything else has an innocent reading.

@@ -1,6 +1,6 @@
 'use client';
 
-import { openRcHandoff, rcHandoffUrl } from '@/lib/native/rc-handoff';
+import { openRcHandoff, rcHandoffUrl, type RcReport } from '@/lib/native/rc-handoff';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Check, AlertTriangle, Tent } from 'lucide-react';
 import { formatStayDates } from '@/lib/notifications/dates';
@@ -58,6 +58,51 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
   const [signedIn, setSignedIn] = useState(false);
   const redirected = useRef(false);
 
+  /**
+   * Ship what the injected precart says about itself back to the server.
+   *
+   * THE TWO RC CART POSTS ARE THE LAST UNMEASURED LINK. Sign-in, session persistence and
+   * token capture are all proven on both platforms; `load` + `submit` are not, because
+   * exercising them needs a genuine held unit. This is how the next real 8am hold answers
+   * that on its own instead of us inferring it from whether the user got the site.
+   *
+   * BUFFERED AND FIRE-AND-FORGET. At 08:00:00 nothing may go in front of the precart, and
+   * this runs on the same page as a user watching a clock — so reports accumulate and
+   * flush on a debounce, never blocking, never awaited, never surfacing an error. A
+   * diagnostic that can slow the thing it observes is not worth having.
+   */
+  const pending = useRef<RcReport[]>([]);
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushReports = useCallback(() => {
+    const batch = pending.current;
+    if (!batch.length) return;
+    pending.current = [];
+    // `keepalive` so a flush started as the tab is hidden or the webview closes still
+    // goes out — which is exactly when the LAST report, the one carrying the cart's
+    // verdict, would otherwise be lost.
+    void fetch('/api/rc-holds/report', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: holdId, token, reports: batch }),
+      keepalive: true,
+    }).catch(() => {});
+  }, [holdId, token]);
+
+  const onReport = useCallback((r: RcReport) => {
+    pending.current.push(r);
+    if (flushTimer.current) clearTimeout(flushTimer.current);
+    flushTimer.current = setTimeout(flushReports, 1500);
+  }, [flushReports]);
+
+  // The webview closing and the page going away are both "we are about to lose whatever
+  // has not been sent". `pagehide` fires in cases `beforeunload` does not on iOS.
+  useEffect(() => {
+    const go = () => flushReports();
+    window.addEventListener('pagehide', go);
+    return () => { window.removeEventListener('pagehide', go); go(); };
+  }, [flushReports]);
+
   const load = useCallback(async () => {
     try {
       const r = await fetch(`/api/rc-holds/claim?id=${encodeURIComponent(holdId)}&token=${encodeURIComponent(token)}`);
@@ -100,8 +145,8 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
       unitId: state.unitId,
       arrivalDate: state.arrivalDate,
       nights: state.nights,
-    });
-  }, [state]);
+    }, { onReport });
+  }, [state, onReport]);
 
   async function claim() {
     // Defensive: the button is disabled, but nothing else stops a stray call, and this
@@ -284,7 +329,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
               unitId: state.unitId,
               arrivalDate: state.arrivalDate,
               nights: state.nights,
-            });
+            }, { onReport });
           }}
           className="mt-6 inline-block rounded-xl bg-ch-green-deep px-6 py-4 font-bold text-white"
         >

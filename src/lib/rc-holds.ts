@@ -383,6 +383,60 @@ export async function reportCartFailure(
   return { state: rows[0].status === 'failed' ? 'failed' : 'retry', hold: rows[0] };
 }
 
+/** One line the user's device reported during the hand-off. Mirrors `RcReport`. */
+export interface ClientReport {
+  n: number;
+  stage: string;
+  detail: Record<string, unknown> | null;
+}
+
+/** Keep the tail, not the head. The interesting part of a hand-off is always the end —
+ *  "✓ Added to cart" or "RC declined" — and the token rebroadcasts at the start are the
+ *  bulkiest and least informative. */
+const CLIENT_REPORT_CAP = 40;
+
+/**
+ * Record what the USER'S DEVICE did during the hand-off.
+ *
+ * WHY THIS EXISTS. Everything else about a hold is our side of it. A hold that ends
+ * `released` is byte-identical whether the injected precart carted the site, threw on
+ * line 1, or never ran — and the reports that answer it currently live only in the claim
+ * screen's memory, which nobody is reading at 08:00. Same family as `status = 'sent'`
+ * meaning "Twilio returned 2xx".
+ *
+ * NEVER MOVES `status`, and never `updated_at`. This is an observation about the client,
+ * not a state change to the hold — conflating them would destroy the "unchanged since the
+ * tap" tell that exposed the 2026-08-07 outage, exactly as `noteAttempt` must not.
+ *
+ * Best-effort by construction: a failed write here must never surface to a user who is
+ * mid-claim with a clock running.
+ */
+export async function recordClientReports(id: string, reports: ClientReport[]): Promise<void> {
+  if (!reports.length) return;
+  // The last report that says something about the OUTCOME, for the denormalised columns.
+  // `token`/`reinjected` are progress, not verdicts; a readout that surfaced "token
+  // captured" as the final word would report a cart we never saw succeed.
+  const verdict = [...reports].reverse().find((r) => r.stage === 'status' || r.stage === 'banner' || r.stage === 'error');
+  const note = verdict
+    ? String((verdict.detail?.status ?? verdict.detail?.message ?? '') || verdict.stage).slice(0, 300)
+    : null;
+  await mutate(
+    `UPDATE rc_hold_requests
+        SET client_reports = (
+              SELECT COALESCE(jsonb_agg(x), '[]'::jsonb)
+                FROM (
+                  SELECT x FROM jsonb_array_elements(client_reports || $2::jsonb) AS t(x)
+                   OFFSET GREATEST(0, jsonb_array_length(client_reports || $2::jsonb) - $3)
+                ) s
+            ),
+            client_last_stage  = $4,
+            client_last_note   = COALESCE($5, client_last_note),
+            client_reported_at = NOW()
+      WHERE id = $1`,
+    [id, JSON.stringify(reports), CLIENT_REPORT_CAP, reports[reports.length - 1].stage, note],
+  ).catch((e) => console.error('[rc-holds] recordClientReports failed:', e.message));
+}
+
 export async function markFailed(id: string, error: string): Promise<void> {
   await mutate(
     `UPDATE rc_hold_requests SET status = 'failed', error = $2, updated_at = NOW() WHERE id = $1`,
