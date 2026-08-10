@@ -1,7 +1,9 @@
 'use client';
 
-import { useState } from 'react';
-import { Check, ExternalLink, Loader2, Tent } from 'lucide-react';
+import { useRef, useState } from 'react';
+import Link from 'next/link';
+import { Check, ExternalLink, Loader2 } from 'lucide-react';
+import Logo from '@/components/Logo';
 import { formatStayDates } from '@/lib/notifications/dates';
 import type { HoldPreview } from '@/lib/notifications/actions';
 
@@ -24,10 +26,13 @@ import type { HoldPreview } from '@/lib/notifications/actions';
  */
 export default function HoldConfirm({ preview }: { preview: HoldPreview }) {
   const [busy, setBusy] = useState(false);
+  // Guards a double submit WITHOUT making the control unclickable — see the form below.
+  const submitted = useRef(false);
 
   if (preview.alreadyRequested) {
     return (
       <Shell>
+        <HomeMark />
         <Check className="text-ch-green-deep" size={32} />
         <h1 className="mt-3 text-xl font-bold text-ch-ink">You&rsquo;re already down for this one</h1>
         <p className="mt-2 text-ch-muted">
@@ -43,7 +48,7 @@ export default function HoldConfirm({ preview }: { preview: HoldPreview }) {
 
   return (
     <Shell>
-      <Tent className="text-ch-green-deep" size={32} />
+      <HomeMark />
       <h1 className="mt-3 text-xl font-bold text-ch-ink">Hold this site for you?</h1>
 
       {/* The four facts the decision needs, at a size they can be read at on a phone. */}
@@ -72,13 +77,38 @@ export default function HoldConfirm({ preview }: { preview: HoldPreview }) {
         holding it, nobody else can book it.
       </p>
 
-      <form method="POST" action="/api/w/hold" className="w-full">
+      {/*
+        NEVER `disabled={busy}` ON A SUBMIT BUTTON WHOSE onClick SETS `busy`.
+
+        That is what this was, and it meant the button could not submit AT ALL: React
+        flushes state from a discrete click synchronously, so the re-render disabled the
+        button BEFORE the browser performed the form's default submit action — and a
+        disabled submit button cancels the submission. The spinner appeared, nothing was
+        sent, and it span forever. Reported on both the app and mobile web 2026-08-09, on
+        the one action the whole 8am flow depends on.
+
+        The endpoint was healthy throughout (400 and 303 in ~0.5s from curl), which is why
+        this looked like a server or network fault and was not one.
+
+        So: busy is set in the form's onSubmit, by which point the submission is already
+        in flight, and double-submits are stopped by a ref rather than by making the
+        control unclickable.
+      */}
+      <form
+        method="POST"
+        action="/api/w/hold"
+        className="w-full"
+        onSubmit={(e) => {
+          if (submitted.current) { e.preventDefault(); return; }
+          submitted.current = true;
+          setBusy(true);
+        }}
+      >
         <input type="hidden" name="token" value={preview.token} />
         <button
           type="submit"
-          disabled={busy}
-          onClick={() => setBusy(true)}
-          className="mt-4 w-full rounded-xl bg-ch-green-deep px-6 py-4 text-lg font-bold text-white disabled:opacity-60"
+          aria-busy={busy}
+          className={`mt-4 w-full rounded-xl bg-ch-green-deep px-6 py-4 text-lg font-bold text-white ${busy ? 'opacity-60' : ''}`}
         >
           {busy ? <Loader2 className="mx-auto animate-spin" size={20} /> : 'Yes — hold it for me'}
         </button>
@@ -127,6 +157,24 @@ function formatRelease(releaseAt: string): string {
     month: 'short', day: 'numeric', timeZone: 'UTC',
   });
   return `${label} at ${hhmm}`;
+}
+
+/**
+ * THE WAY OUT. This screen is reached from an email or a push notification, so it is
+ * often the first and only CampHawk page open — and it had no navigation at all: no nav
+ * bar (it is outside the (app) route group), no back target, nothing to tap. A decorative
+ * tent sat where every other page in the product puts the brand mark.
+ *
+ * The mark doubles as the exit, which is the convention the rest of the app already uses
+ * (/sources, /not-found). Deliberately NOT a browser-back link: arriving from a push
+ * notification there is no history to go back to.
+ */
+function HomeMark() {
+  return (
+    <Link href="/" aria-label="CampHawk home" className="mb-1 inline-block">
+      <Logo markSize={36} />
+    </Link>
+  );
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
