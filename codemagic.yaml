@@ -80,18 +80,35 @@ workflows:
         # it, so this assertion is currently the only thing standing between "the plugin is
         # in the build" and an assumption.
         #
-        # CocoaPods, not SPM (see `cap add ios --packagemanager cocoapods` above), so the
-        # plugin lands in the generated capacitor-cordova-ios-plugins pod.
+        # PATHS READ OFF @capacitor/cli, NOT REMEMBERED. The first version of this step
+        # checked ios/App/capacitor-cordova-ios-plugins and the Podfile for "InAppBrowser",
+        # and failed a build where `cap sync` had reported, in its own words, "Found 1
+        # Cordova plugin for ios: cordova-plugin-inappbrowser@7.0.0". Both branches were
+        # wrong: config.js puts the directory at ios/capacitor-cordova-ios-plugins (one
+        # level up — the Podfile's `:path` is '../capacitor-cordova-ios-plugins', relative
+        # to ios/App/), and update.js writes the pod as `CordovaPlugins`, so the plugin's
+        # own name never appears in the Podfile at all.
+        #
+        # DO NOT "simplify" this to `grep -r ios/`. The web bundle in ios/App/App/public
+        # contains our own `cordova.InAppBrowser` probe, so a whole-tree grep would pass
+        # with the plugin entirely absent — an assertion that cannot fail is worse than
+        # none, because it reads as proof.
         script: |
           set -e
-          if ! grep -rq "InAppBrowser" ios/App/capacitor-cordova-ios-plugins/ 2>/dev/null \
-             && ! grep -rq "InAppBrowser" ios/App/Podfile 2>/dev/null; then
+          DIR=ios/capacitor-cordova-ios-plugins
+          if [ ! -d "$DIR" ] || ! grep -rq "InAppBrowser" "$DIR"; then
             echo "cordova-plugin-inappbrowser did NOT install into the iOS project."
             echo "Without it the RC hand-off silently falls back to SFSafariViewController,"
             echo "which shares cookies but cannot be injected into — so no mobile auto-cart."
+            ls -la ios/ || true
             exit 1
           fi
-          echo "InAppBrowser present in the iOS project."
+          # The sources landing is not enough — unreferenced files compile into nothing.
+          grep -q "CordovaPlugins" ios/App/Podfile || {
+            echo "$DIR exists but ios/App/Podfile does not pull in the CordovaPlugins pod."
+            exit 1
+          }
+          echo "InAppBrowser present in $DIR and wired into the Podfile."
       - name: Declare export compliance
         # The app uses only standard HTTPS/TLS (camphawk.app, Clerk, Stripe) — exempt
         # encryption. Declaring this up front lets TestFlight accept the build without
