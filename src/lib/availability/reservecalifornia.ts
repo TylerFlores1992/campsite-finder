@@ -196,15 +196,49 @@ export function heldStayRun(
  * thirds of them. The run search is in-memory over one grid, so honouring flex costs
  * nothing: unlike a whole-stay source, we already have every night.
  */
+export type HeldUnit = { unitId: number; sleepingUnitId: number | null; dates: string[]; availableAt: string; name: string | null };
+
+/**
+ * How many held units we will surface for one watch.
+ *
+ * Not unbounded: a big campground on a cancellation-heavy weekend could hold a dozen, and
+ * every one we surface is a hold the user can tap — i.e. a real site the bot would take
+ * off the market at 08:00. A short list is a choice; a long one is an invitation to hoard.
+ */
+const MAX_HELD_UNITS = 8;
+
+/** The first held unit, for callers that only want to know whether there is one. */
 export async function findRCHeldUnit(
   campgroundId: string,
   startDate: string,
   endDate: string,
   minNights = 1,
   flex?: FlexSpec
-): Promise<{ unitId: number; sleepingUnitId: number | null; dates: string[]; availableAt: string; name: string | null } | null> {
+): Promise<HeldUnit | null> {
+  return (await findRCHeldUnits(campgroundId, startDate, endDate, minNights, flex))[0] ?? null;
+}
+
+/**
+ * EVERY unit locked for a scheduled release that covers this stay, not just the first.
+ *
+ * The single-unit version was what the poller used, so a campground with four sites
+ * releasing at 08:00 offered the user exactly one of them — whichever happened to be
+ * first in RC's grid — and the other three were invisible. On a contested morning that
+ * is the difference between a choice and a lottery ticket.
+ *
+ * Costs nothing extra upstream: it is the same one grid fetch, read to the end instead of
+ * returned from early.
+ */
+export async function findRCHeldUnits(
+  campgroundId: string,
+  startDate: string,
+  endDate: string,
+  minNights = 1,
+  flex?: FlexSpec
+): Promise<HeldUnit[]> {
   const provider = providerByCampgroundId(campgroundId);
-  if (!provider) return null;
+  if (!provider) return [];
+  const found: HeldUnit[] = [];
   try {
     const grid = await fetchGrid(provider, facilityIdFromCampgroundId(campgroundId), startDate, endDate);
     for (const unit of Object.values(grid.Facility?.Units ?? {})) {
@@ -222,13 +256,16 @@ export async function findRCHeldUnit(
         .sort((a, b) => a.Date.localeCompare(b.Date));
       const run = heldStayRun(held, minNights, flex);
       if (run) {
-        return { unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, ...run, name: unit.Name ?? null };
+        found.push({ unitId: unit.UnitId, sleepingUnitId: unit.SleepingUnitIds?.[0] ?? null, ...run, name: unit.Name ?? null });
+        if (found.length >= MAX_HELD_UNITS) break;
       }
     }
   } catch (err) {
-    console.warn(`[UseDirect availability] findRCHeldUnit failed for ${campgroundId}:`, (err as Error).message);
+    console.warn(`[UseDirect availability] findRCHeldUnits failed for ${campgroundId}:`, (err as Error).message);
   }
-  return null;
+  // Soonest release first: if two units free at different times, the earlier one is the
+  // one a user has least time to decide about.
+  return found.sort((a, b) => a.availableAt.localeCompare(b.availableAt));
 }
 
 /** Month calendar in the same shape the recgov module returns. */

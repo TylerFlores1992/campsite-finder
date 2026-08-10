@@ -73,8 +73,29 @@ interface Site {
  *  why this is a last-seen record rather than a live check. */
 interface OpenSite { id: string; name: string | null; seenSecondsAgo: number }
 
+/** A site locked until a scheduled release. `offered` is one tap from being held. */
+interface Hold {
+  unitId: string;
+  unitName: string | null;
+  arrivalDate: string;
+  nights: number;
+  releaseAt: string;
+  status: "offered" | "requested";
+  holdUrl?: string | null;
+}
+
 /** "just now" / "2 min ago". Deliberately coarse: the underlying figure is the age of a
  *  poll, and a to-the-second reading would imply a precision this is not. */
+/** "8 AM" from RC's zone-less Pacific wall-clock. Sliced, never parsed — see HoldConfirm. */
+function releaseLabel(releaseAt: string): string {
+  const hhmm = (releaseAt.split("T")[1] ?? "").slice(0, 5);
+  const [h, m] = hhmm.split(":").map(Number);
+  if (!Number.isFinite(h)) return releaseAt;
+  const ampm = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return m ? `${h12}:${String(m).padStart(2, "0")} ${ampm}` : `${h12} ${ampm}`;
+}
+
 function seenLabel(secs: number): string {
   if (secs < 90) return "just now";
   return `${Math.round(secs / 60)} min ago`;
@@ -97,6 +118,7 @@ export default function ManageWatch({ token }: { token: string }) {
   const [siteFilter, setSiteFilter] = useState("");
   const [muted, setMuted] = useState<ReadonlySet<string>>(new Set());
   const [open, setOpen] = useState<OpenSite[]>([]);
+  const [holds, setHolds] = useState<Hold[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState(false);
@@ -164,8 +186,11 @@ export default function ManageWatch({ token }: { token: string }) {
         );
         return;
       }
-      const d = (await r.json()) as { watch: Watch; alerts: Alert[]; sites: Site[]; open?: OpenSite[] };
+      const d = (await r.json()) as {
+        watch: Watch; alerts: Alert[]; sites: Site[]; open?: OpenSite[]; holds?: Hold[];
+      };
       setOpen(d.open ?? []);
+      setHolds(d.holds ?? []);
       setWatch(d.watch);
       setAlerts(d.alerts ?? []);
       setMuted(new Set(d.watch.muted_site_ids ?? []));
@@ -363,6 +388,66 @@ export default function ManageWatch({ token }: { token: string }) {
           </ul>
           <p className="mt-2 text-ch-fine text-ch-muted">
             Last seen by our checks, not a live look — book from the provider to be sure.
+          </p>
+        </section>
+      )}
+
+      {/* ALREADY YOURS, above the offers. This is a commitment the bot will act on at
+          08:00 and the one thing on this screen the user must be able to recognise in a
+          hurry; burying it under a list of things they could ALSO do inverts that. */}
+      {holds.some((h) => h.status === "requested") && (
+        <section className="mt-4 rounded-xl border border-ch-green-deep bg-ch-green-soft p-4">
+          <h2 className="text-ch-label font-bold tracking-[.1em] text-ch-ink uppercase">
+            We&rsquo;ll grab {holds.filter((h) => h.status === "requested").length === 1 ? "this" : "these"} for you
+          </h2>
+          <ul className="mt-2 space-y-1">
+            {holds.filter((h) => h.status === "requested").map((h) => (
+              <li key={h.unitId} className="flex items-baseline justify-between gap-3 text-ch-body">
+                <span className="min-w-0 truncate font-bold text-ch-ink">{h.unitName ?? h.unitId}</span>
+                <span className="shrink-0 text-ch-fine text-ch-muted">{releaseLabel(h.releaseAt)}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-ch-fine text-ch-muted">
+            You&rsquo;ll get an alert the moment it&rsquo;s in the cart, with a link to take it.
+          </p>
+        </section>
+      )}
+
+      {/* OPENING ON A SCHEDULE — each with its own one-tap hold. These are not bookable
+          yet, so they are deliberately styled as an offer rather than as availability;
+          calling them "open" would send someone at a site they cannot take. */}
+      {holds.some((h) => h.status === "offered") && (
+        <section className="mt-4 rounded-xl border border-ch-line p-4">
+          <h2 className="text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+            Opening {releaseLabel(holds.find((h) => h.status === "offered")!.releaseAt)}
+          </h2>
+          <ul className="mt-2 space-y-2">
+            {holds.filter((h) => h.status === "offered").map((h) => (
+              <li key={h.unitId} className="flex items-center justify-between gap-3">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-ch-body font-bold text-ch-ink">
+                    {h.unitName ?? h.unitId}
+                  </span>
+                  <span className="block text-ch-fine text-ch-muted">
+                    {h.nights} night{h.nights === 1 ? "" : "s"} from {h.arrivalDate}
+                  </span>
+                </span>
+                {h.holdUrl ? (
+                  <a
+                    href={h.holdUrl}
+                    className="shrink-0 rounded-ch bg-ch-green-deep px-3 py-1.5 text-ch-meta font-bold text-white"
+                  >
+                    Hold it
+                  </a>
+                ) : (
+                  <span className="shrink-0 text-ch-fine text-ch-muted">link unavailable</span>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-ch-fine text-ch-muted">
+            Only ask for one you actually want — while we hold it, nobody else can book it.
           </p>
         </section>
       )}

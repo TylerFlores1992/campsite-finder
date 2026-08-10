@@ -36,14 +36,21 @@ export interface OpenSite {
 }
 
 export interface PendingHold {
+  unitId: string;
   unitName: string | null;
+  arrivalDate: string;
+  nights: number;
   releaseAt: string;
-  status: string;
+  /** 'offered' = we can hold it, one tap away. 'requested' = you already asked. */
+  status: 'offered' | 'requested';
+  /** One-tap hold link. Only minted where it is rendered — see watchOpenings. */
+  holdUrl?: string | null;
 }
 
 export interface WatchOpenings {
   open: OpenSite[];
-  hold: PendingHold | null;
+  /** Every site releasing on a schedule, soonest first. */
+  holds: PendingHold[];
 }
 
 /**
@@ -56,7 +63,7 @@ export interface WatchOpenings {
 export async function watchOpenings(watchIds: string[]): Promise<Map<string, WatchOpenings>> {
   const out = new Map<string, WatchOpenings>();
   if (!watchIds.length) return out;
-  for (const id of watchIds) out.set(id, { open: [], hold: null });
+  for (const id of watchIds) out.set(id, { open: [], holds: [] });
 
   // SITE NAMES COME FROM THE ALERT HISTORY, exactly as /api/manage/[token] resolves them:
   // `watch_site_alerts` stores only a site_key, and the human label ("Campsite #38") lives
@@ -86,23 +93,55 @@ export async function watchOpenings(watchIds: string[]): Promise<Map<string, Wat
     out.get(r.watch_id)?.open.push({ id: r.site_key, name: r.name, seenSecondsAgo: Number(r.age) });
   }
 
-  // A hold the user has been offered or has already asked for, for a release still ahead.
-  // Deliberately NOT `carted` and beyond: once it is held the claim flow owns the story,
-  // and a badge on the list would be a second, staler place to learn it.
-  const holdRows = await query<{ watch_id: string; unit_name: string | null; release_at: string; status: string }>(
-    `SELECT DISTINCT ON (watch_id) watch_id, unit_name, release_at, status
+  // EVERY site releasing on a schedule, not just the soonest — the watch page lists them
+  // and each gets its own hold link. Deliberately NOT `carted` and beyond: once it is
+  // actually held the claim flow owns the story, and a second place to read it would be
+  // the staler one.
+  const holdRows = await query<{
+    watch_id: string; unit_id: string; unit_name: string | null;
+    arrival_date: string; nights: number; release_at: string; status: 'offered' | 'requested';
+  }>(
+    `SELECT watch_id, unit_id, unit_name, arrival_date::text AS arrival_date, nights, release_at, status
        FROM rc_hold_requests
       WHERE watch_id = ANY($1)
         AND status IN ('offered', 'requested')
         AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
-      ORDER BY watch_id, release_at ASC`,
+      ORDER BY release_at ASC, unit_name ASC`,
     [watchIds],
   ).catch(() => []);
 
   for (const r of holdRows) {
-    const w = out.get(r.watch_id);
-    if (w) w.hold = { unitName: r.unit_name, releaseAt: r.release_at, status: r.status };
+    out.get(r.watch_id)?.holds.push({
+      unitId: r.unit_id,
+      unitName: r.unit_name,
+      arrivalDate: r.arrival_date,
+      nights: Number(r.nights) || 1,
+      releaseAt: r.release_at,
+      status: r.status,
+    });
   }
 
   return out;
+}
+
+/**
+ * Attach a one-tap hold link to each OFFERED hold.
+ *
+ * Separate from `watchOpenings` and called only where the links are rendered, because
+ * minting writes a row. `mintActionToken` is idempotent per (watch, action, site) — it
+ * returns the token that already exists — so this hands back the very same link the alert
+ * sent rather than a second one competing with it.
+ *
+ * `requested` holds get no link on purpose: the user has already answered, and a button
+ * offering to do the thing they asked for reads as though the first tap failed.
+ */
+export async function withHoldLinks(holds: PendingHold[], watchId: string): Promise<PendingHold[]> {
+  const { actionUrlFor } = await import('@/lib/notifications/actions');
+  return Promise.all(
+    holds.map(async (h) =>
+      h.status === 'offered'
+        ? { ...h, holdUrl: await actionUrlFor(watchId, 'hold', h.unitId).catch(() => null) }
+        : h,
+    ),
+  );
 }

@@ -36,7 +36,7 @@ import { leadDaysUntil } from './lead-time';
 import { heldCheckDue, clampHeldInterval, RC_HELD_CHECK_DEFAULT_MS } from './held-cadence';
 import { DueTracker, intervalForLead } from './poll-cadence';
 import { startRateProfile } from './rate-profile';
-import { findRCOpenUnit, findRCHeldUnit } from '../src/lib/availability/reservecalifornia';
+import { findRCOpenUnit, findRCHeldUnits } from '../src/lib/availability/reservecalifornia';
 import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
 import { findGoingToCampOpen } from '../src/lib/availability/goingtocamp';
 import { isGoingToCampSource, GOINGTOCAMP_PROVIDERS } from '../src/lib/sources/goingtocamp/providers';
@@ -823,7 +823,7 @@ async function cycle(): Promise<void> {
 
   const monthData = new Map<string, Awaited<ReturnType<typeof getAvailabilityFromRecGov>>>();
   const rcResults = new Map<string, { dates: string[]; unitId: number; sleepingUnitId: number | null; name: string | null }>();
-  const rcHeld = new Map<string, { dates: string[]; availableAt: string; unitId: number | null; name: string | null }>();
+  const rcHeld = new Map<string, { dates: string[]; availableAt: string; unitId: number | null; name: string | null }[]>();
   const raResults = new Map<string, { dates: string[]; siteIds: number[]; start: string; end: string }>();
   const gtcResults = new Map<string, { dates: string[]; resourceIds: number[]; start: string; end: string }>();
   const tnscResults = new Map<string, { dates: string[]; start: string; end: string }>();
@@ -936,8 +936,9 @@ async function cycle(): Promise<void> {
           heldTargets,
           async (w) => {
             const required = Math.max(w.min_nights, nightsOfRange(w.start_date, w.end_date).length);
-            const held = await findRCHeldUnit(w.campground_id, w.start_date, w.end_date, required, flexOf(w));
-            if (held) rcHeld.set(w.id, { dates: held.dates, availableAt: held.availableAt, unitId: held.unitId, name: held.name });
+            // ALL of them — see findRCHeldUnits. One grid fetch either way.
+            const held = await findRCHeldUnits(w.campground_id, w.start_date, w.end_date, required, flexOf(w));
+            if (held.length) rcHeld.set(w.id, held.map((h) => ({ dates: h.dates, availableAt: h.availableAt, unitId: h.unitId, name: h.name })));
           },
           RECGOV_CONCURRENCY
         );
@@ -1132,8 +1133,27 @@ async function cycle(): Promise<void> {
     // dedup that matters is `claimHoldNotification`, which is keyed on the RELEASE TIME,
     // so a coming-soon heads-up still goes out at most once per release however many
     // ordinary availability alerts the same watch sends.
-    const held = rcHeld.get(w.id);
-    if (!held) continue;
+    const heldUnits = rcHeld.get(w.id);
+    if (!heldUnits?.length) continue;
+    // RECORD AN OFFER FOR EVERY held unit, so the watch page can list them all and each
+    // has its own one-tap hold link — but ALERT about only the soonest. A text per site
+    // on a four-cancellation morning is the notification flood migration 039 exists to
+    // prevent, and the extra offers are one tap away in the app either way.
+    for (const extra of heldUnits.slice(1)) {
+      if (extra.unitId == null || !holdIsNewsworthy(extra.availableAt)) continue;
+      if (!(await hasAutocartEntitlement(w.user_id).catch(() => false))) break;
+      await offerHold({
+        watchId: w.id,
+        userId: w.user_id,
+        campgroundId: w.campground_id,
+        unitId: String(extra.unitId),
+        unitName: rcSiteLabel(extra.name, extra.unitId),
+        arrivalDate: extra.dates[0] ?? w.start_date,
+        nights: extra.dates.length || 1,
+        releaseAt: extra.availableAt,
+      }).catch(() => null);
+    }
+    const held = heldUnits[0];
     // A lock expiring in minutes is not a cancellation heads-up — see holdIsNewsworthy.
     // The site becoming free will alert on its own within a cycle.
     if (!holdIsNewsworthy(held.availableAt)) {

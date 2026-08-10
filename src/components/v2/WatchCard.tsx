@@ -55,8 +55,8 @@ export interface WatchCardWatch {
    *  Absent for providers with no per-site id, which is why the count is optional
    *  everywhere rather than defaulted to zero. */
   open_sites?: { id: string; name: string | null; seenSecondsAgo: number }[];
-  /** A hold offered or requested for a release still ahead. */
-  pending_hold?: { unitName: string | null; releaseAt: string; status: string } | null;
+  /** Every site releasing on a schedule, soonest first. */
+  pending_holds?: { unitId: string; unitName: string | null; releaseAt: string; status: string }[];
 }
 
 export interface WatchCardProps {
@@ -156,12 +156,31 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
           )}
           {/* A hold is a different promise from an opening — it is not bookable yet, and
               saying "open" about it would send someone to a site they cannot take. */}
-          {watch.pending_hold && (
-            <Tag kind="cart">
-              {watch.pending_hold.status === "requested" ? "Holding" : "Can hold"}{" "}
-              {watch.pending_hold.unitName ?? "a site"} · {releaseLabel(watch.pending_hold.releaseAt)}
-            </Tag>
-          )}
+          {(() => {
+            const holds = watch.pending_holds ?? [];
+            if (!holds.length) return null;
+            const asked = holds.filter((h) => h.status === "requested");
+            const offered = holds.filter((h) => h.status === "offered");
+            const when = releaseLabel(holds[0].releaseAt);
+            return (
+              <>
+                {/* WHAT YOU ASKED FOR comes first and names the site: it is a commitment
+                    the bot will act on, and the user needs to recognise it at 08:00. */}
+                {asked.length > 0 && (
+                  <Tag kind="cart">
+                    Holding {asked.length === 1 ? (asked[0].unitName ?? "a site") : `${asked.length} sites`} · {when}
+                  </Tag>
+                )}
+                {/* The rest are a COUNT, not a list. Naming four sites in a badge is a
+                    paragraph; the number is what says "there is a choice to make". */}
+                {offered.length > 0 && (
+                  <Tag kind="watch">
+                    {offered.length} more open{offered.length === 1 ? "s" : ""} {when}
+                  </Tag>
+                )}
+              </>
+            );
+          })()}
           {/* Only claim the cart when auto-cart could actually have run. With a
               stale session the poller falls back to a plain alert and nothing is
               carted — telling the user it's waiting for them would send them to

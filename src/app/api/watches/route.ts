@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
       const o = openings.get(String(w.id));
       if (!o) continue;
       w.open_sites = o.open;
-      w.pending_hold = o.hold;
+      w.pending_holds = o.holds;
     }
   } catch (err) {
     console.error('[watches] openings lookup failed:', (err as Error).message);

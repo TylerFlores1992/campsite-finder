@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { watchOpenings } from '@/lib/watch-openings';
+import { watchOpenings, withHoldLinks } from '@/lib/watch-openings';
 import { query, mutate } from '@/lib/db/client';
 import { resolveManageToken } from '@/lib/notifications/actions';
 
@@ -95,8 +95,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
   // a decoration must not cost someone the ability to unmute a site.
   const openings = await watchOpenings([watchId]).catch(() => null);
   const open = openings?.get(watchId)?.open ?? [];
+  // Links minted HERE and not in the watches list: this is the screen that renders them,
+  // and minting writes a row. Idempotent per site, so it is the same link the alert sent.
+  const holds = await withHoldLinks(openings?.get(watchId)?.holds ?? [], watchId).catch(() => []);
 
-  return NextResponse.json({ watch, alerts, sites, open, hold: openings?.get(watchId)?.hold ?? null });
+  return NextResponse.json({ watch, alerts, sites, open, holds });
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {

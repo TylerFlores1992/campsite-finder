@@ -46,6 +46,39 @@ test('a batch, not a query per watch', () => {
   assert.match(src, /watch_id = ANY\(\$1\)/, 'openings are looked up for all watches in one go');
 });
 
+test('every held unit is offered, not just the first one found', () => {
+  // A campground with four sites releasing at 08:00 used to offer exactly one — whichever
+  // was first in RC's grid — and the other three were invisible. On a contested morning
+  // that is the difference between a choice and a lottery ticket.
+  const avail = readFileSync('src/lib/availability/reservecalifornia.ts', 'utf8');
+  assert.match(avail, /export async function findRCHeldUnits/, 'the plural finder exists');
+  assert.match(avail, /const MAX_HELD_UNITS = \d+/,
+    'and is capped — every surfaced hold is a site the bot would take off the market');
+  const poller = readFileSync('worker/poller.ts', 'utf8');
+  assert.match(poller, /findRCHeldUnits\(/, 'the poller records all of them');
+});
+
+test('extra holds are offered but NOT separately alerted', () => {
+  // One text per releasing site on a four-cancellation morning is the notification flood
+  // migration 039 exists to prevent. The extra offers are one tap away in the app, and
+  // claimHoldNotification still dedupes the alert on the release time.
+  const poller = readFileSync('worker/poller.ts', 'utf8');
+  const loop = poller.slice(poller.indexOf('for (const extra of heldUnits.slice(1))'));
+  assert.ok(loop.length > 0, 'the extras are recorded in their own loop');
+  const body = loop.slice(0, loop.indexOf('const held = heldUnits[0];'));
+  assert.ok(!/dispatchNotifications/.test(body), 'and that loop must not send notifications');
+  assert.match(body, /offerHold\(/, 'it records offers only');
+  assert.match(body, /hasAutocartEntitlement/, 'gated by the same entitlement as the primary offer');
+});
+
+test('a hold the user already asked for is never re-offered a button', () => {
+  // A button offering to do the thing they already asked for reads as though the first
+  // tap failed — and a second tap on a `requested` hold does nothing, so it would be a
+  // control that lies twice.
+  const src = readFileSync('src/lib/watch-openings.ts', 'utf8');
+  assert.match(src, /h\.status === 'offered'\s*\?/, 'only offered holds get a link');
+});
+
 test('only holds that are still ahead, and only before they are carted', () => {
   // A carted hold has its own screen and its own clock; a badge on the list would be a
   // second, staler place to learn about it — and the claim flow is where the ~15-minute
