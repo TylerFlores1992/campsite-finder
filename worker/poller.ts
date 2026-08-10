@@ -919,7 +919,18 @@ async function cycle(): Promise<void> {
       // `release_at`, not off having seen the lock recently.
       if (rcHeldDue()) {
         rcHeldCheckedAt = Date.now();
-        const heldTargets = rcWatches.filter((w) => !rcResults.has(w.id));
+        // EVERY WATCH, not just the ones with nothing bookable. This used to skip any
+        // watch that already had an open unit, on the reading that a user with a site
+        // available now does not need to hear about one releasing tomorrow. They are
+        // different offers and only one of them expires: "book this now" is a site that
+        // may suit or may not, and "we can hold #38 at 08:00" is the specific site the
+        // watch was set up for. Suppressing the second because of the first silently
+        // narrowed the product to whichever site happened to be free first.
+        //
+        // Cheap now in a way it was not before: the held pass runs every 5 minutes
+        // (RC_HELD_CHECK_MS), so covering every watch instead of a subset costs one grid
+        // fetch per watch per five minutes.
+        const heldTargets = rcWatches;
         rcHeldChecked = heldTargets.length;
         await pMap(
           heldTargets,
@@ -1117,7 +1128,10 @@ async function cycle(): Promise<void> {
   // and will release at a known time. Deduped per release time (separate from the
   // available claim, so the "now bookable" alert still fires when it opens).
   for (const w of rcWatches) {
-    if (rcResults.has(w.id)) continue; // already alerted as available above
+    // NOT skipped when something is already available — see the held pass above. The
+    // dedup that matters is `claimHoldNotification`, which is keyed on the RELEASE TIME,
+    // so a coming-soon heads-up still goes out at most once per release however many
+    // ordinary availability alerts the same watch sends.
     const held = rcHeld.get(w.id);
     if (!held) continue;
     // A lock expiring in minutes is not a cancellation heads-up — see holdIsNewsworthy.
