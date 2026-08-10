@@ -67,6 +67,31 @@ workflows:
         script: npm run cap:assets
       - name: Capacitor sync (copy config + plugins into ios/)
         script: npx cap sync ios
+      - name: Assert the InAppBrowser plugin is actually installed
+        # THE SAME ASSERTION THE ANDROID WORKFLOW MAKES, for the same reason: a Cordova
+        # plugin that silently fails to install produces an app that BUILDS, ships, passes
+        # review, and then has no window.cordova.InAppBrowser at runtime — where
+        # openRcHandoff's capability probe returns false and falls back to the system
+        # browser. Mobile auto-cart would simply never happen and nothing would say why.
+        #
+        # It matters MORE on iOS than on Android. Android was verified by hand on an
+        # emulator (2026-08-09: sign-in works, the session survives a force-close, the
+        # injection reads a live token). iOS has had none of those three tests run against
+        # it, so this assertion is currently the only thing standing between "the plugin is
+        # in the build" and an assumption.
+        #
+        # CocoaPods, not SPM (see `cap add ios --packagemanager cocoapods` above), so the
+        # plugin lands in the generated capacitor-cordova-ios-plugins pod.
+        script: |
+          set -e
+          if ! grep -rq "InAppBrowser" ios/App/capacitor-cordova-ios-plugins/ 2>/dev/null \
+             && ! grep -rq "InAppBrowser" ios/App/Podfile 2>/dev/null; then
+            echo "cordova-plugin-inappbrowser did NOT install into the iOS project."
+            echo "Without it the RC hand-off silently falls back to SFSafariViewController,"
+            echo "which shares cookies but cannot be injected into — so no mobile auto-cart."
+            exit 1
+          fi
+          echo "InAppBrowser present in the iOS project."
       - name: Declare export compliance
         # The app uses only standard HTTPS/TLS (camphawk.app, Clerk, Stripe) — exempt
         # encryption. Declaring this up front lets TestFlight accept the build without
