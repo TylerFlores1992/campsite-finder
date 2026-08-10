@@ -310,8 +310,23 @@ needed no change.
     therefore correct on both, matching Android's `postMessage(String)`.
 - **STILL UNPROVEN ON EITHER PLATFORM: the two RC cart POSTs.** Sign-in, session
   persistence and token capture are measured; `load` + `submit` are not, because
-  exercising them needs a genuine held unit and a fake id could lock a real site. They
-  report themselves through `#camphawk-rc-status` on the next real hold.
+  exercising them needs a genuine held unit and a fake id could lock a real site.
+  **The next real hold now answers this by itself (migration 050).** `ClaimFlow` passes
+  `onReport` into `openRcHandoff` and buffers to `POST /api/rc-holds/report`
+  (`keepalive`, 1.5s debounce, never awaited — a diagnostic that can slow the thing it
+  observes is not worth having), and `scripts/rc-holds-readout.mts` prints a **HAND-OFF**
+  section. `✓ Added to cart` there is the proof; **"nothing reported" is the ordinary
+  plain-browser case, not a failure.**
+  - `recordClientReports` never moves `status` and never `updated_at` — it is an
+    observation about the CLIENT, not a change to the hold, and conflating them would
+    destroy the "unchanged since the tap" tell that exposed 2026-08-07. Same rule as
+    `noteAttempt`. `worker/rc-client-reports.test.mts` fails against that mutation.
+  - The verdict column is taken from an OUTCOME line (`status`/`banner`/`error`), not
+    merely the last line — `token captured` as the final word would report a cart nobody
+    ever saw succeed.
+  - The report endpoint is authorised by hold id + manage token, i.e. **exactly the check
+    that authorises releasing the site** — never weaker, or a stranger could write onto
+    someone else's hold.
 - **The claim screen still shows the MANUAL three-step copy to everyone**, including
   clients that would cart automatically — and its "I'm signed in and looking at the site"
   checkbox *gates the release button*, so an app user is blocked until they assert they
