@@ -18,7 +18,21 @@ import { recordClientReports } from '../src/lib/rc-holds';
 const SENTINEL = '__camphawk-clientreport-test__';
 
 async function fixture() {
-  // Dated 2020 for the same reason the poller fixtures are: nothing live can ever see it.
+  /**
+   * DATED IN THE FUTURE, which is the OPPOSITE of the 2020 rule used for watch fixtures —
+   * do not "fix" it back.
+   *
+   * A watch is hidden from the poller by being in the past (`end_date > CURRENT_DATE`).
+   * A HOLD is the reverse: `expireStaleHolds` sweeps `status = 'offered' AND release_at <
+   * now` and rewrites status and updated_at — so a past-dated fixture is exactly what the
+   * production sweep on Fly eats, mid-test, an hour at a time. That is a flaky failure of
+   * the two assertions this file exists for, caused by the real system rather than by the
+   * code under test.
+   *
+   * `offered` in the future is invisible to everything: dueHolds, holdAtRisk,
+   * nextHoldRelease and pendingClaims all filter to requested/carted/claiming, so the
+   * runner can never be served it either.
+   */
   const [w] = await query<{ id: string; user_id: string; campground_id: string }>(
     `SELECT id, user_id, campground_id FROM watches ORDER BY created_at LIMIT 1`,
   );
@@ -26,7 +40,7 @@ async function fixture() {
   const [row] = await mutate<{ id: string }>(
     `INSERT INTO rc_hold_requests
        (watch_id, user_id, campground_id, unit_id, unit_name, arrival_date, nights, release_at)
-     VALUES ($1, $2, $3, $4, $5, '2020-01-02', 1, '2020-01-01T08:00:00')
+     VALUES ($1, $2, $3, $4, $5, '2099-01-02', 1, '2099-01-01T08:00:00')
      ON CONFLICT (watch_id, unit_id, arrival_date) DO UPDATE SET unit_name = EXCLUDED.unit_name
      RETURNING id`,
     [w.id, w.user_id, w.campground_id, SENTINEL, SENTINEL],
