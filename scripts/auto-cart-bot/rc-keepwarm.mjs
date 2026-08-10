@@ -251,6 +251,14 @@ export const BUSY = Symbol('rc-profile-busy');
 const LOCK_OWNER = 'rc-keepwarm';
 /** Comfortably inside STALE_MS, so a long sign-in never reads as abandoned. */
 const RENEW_MS = 2 * 60_000;
+/**
+ * How long the resident loop may go without advancing before we call it wedged.
+ *
+ * Generous on purpose: a pass includes a page load, a token read and a network probe, and
+ * the silent-auth path deliberately waits. 12 minutes is far longer than any healthy pass
+ * and far shorter than the ~45 minutes of lead a hold needs to be rescued.
+ */
+const HUNG_MS = Number(process.env.RC_KEEPWARM_HUNG_MS || 12 * 60_000);
 
 /**
  * `rc-hold-runner.mjs` drives the SAME profile directory, and two Chromium instances on
@@ -819,7 +827,39 @@ async function warmResident() {
       await sleep(30_000);
       continue;
     }
-    const renew = setInterval(() => renewProfileLock(PROFILE_DIR, LOCK_OWNER), RENEW_MS);
+    /**
+     * THE WATCHDOG, and why it lives in the renew timer.
+     *
+     * On 2026-08-10 this loop hung and the profile lock stayed held for TEN HOURS. The
+     * lock's own STALE_MS could not save it, because this very interval kept renewing:
+     * `setInterval` is independent of the `await` that was stuck, so the timer went on
+     * announcing "still working" for a loop that had stopped. The preemption flag could
+     * not save it either — `profileRequested` is only read INSIDE the hung loop, so the
+     * runner's request was never seen and the 08:00 cart failed against a lock nothing
+     * could take.
+     *
+     * The renew timer is therefore the only code proven to still be executing, which
+     * makes it the only place a watchdog can live. If the inner loop has not ticked in
+     * HUNG_MS, stop asserting liveness we do not have: release the profile and die, so
+     * the lock frees, the reports stop being fresh-looking, and the server-side
+     * dead-man's switch has something to notice.
+     *
+     * DYING IS THE POINT. There is no supervisor to restart this — but a dead process
+     * that has let go of the profile is strictly better than a live one that holds it
+     * and does nothing, and it turns a silent ten-hour failure into a visible one.
+     */
+    let lastTick = Date.now();
+    const tick = () => { lastTick = Date.now(); };
+    const renew = setInterval(() => {
+      if (Date.now() - lastTick > HUNG_MS) {
+        log(`✗ WEDGED — the keep-warm loop has not advanced in ${Math.round((Date.now() - lastTick) / 60_000)}m.`);
+        log('  Releasing the profile and exiting so the hold runner can use it.');
+        try { clearInterval(renew); } catch {}
+        releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
+        process.exit(1);
+      }
+      renewProfileLock(PROFILE_DIR, LOCK_OWNER);
+    }, RENEW_MS);
     let ctx = null;
     try {
       ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
@@ -854,6 +894,10 @@ async function warmResident() {
       /** The token we last tried to renew. Retrying the SAME one buys nothing — see below. */
       let lastRenewAttemptFor = null;
       for (;;) {
+        // The watchdog's heartbeat. Every path through this loop must reach here, so a
+        // stall anywhere below it — a Playwright call that never settles, a page that
+        // never loads — stops the clock and trips the watchdog above.
+        tick();
         // Yield fast. The runner is asking because a site releases in seconds; making it
         // wait out a 60s lock timeout at 08:00:00 would lose exactly the thing we are
         // keeping the session alive FOR.

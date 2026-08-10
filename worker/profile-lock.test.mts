@@ -15,7 +15,7 @@ import path from 'node:path';
 import {
   acquireProfileLock, releaseProfileLock, releaseProfileLockIfMine,
   renewProfileLock, profileLockHolder,
-  requestProfile, profileRequested, clearProfileRequest,
+  requestProfile, profileRequested, clearProfileRequest, forceProfileLock,
 } from '../scripts/auto-cart-bot/profile-lock.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ch-lock-'));
@@ -116,6 +116,45 @@ test('clearing a request is safe when there is none', () => {
     clearProfileRequest(dir);
     clearProfileRequest(dir);
     assert.equal(profileRequested(dir), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a holder that ignores the request is forced out, but only after the wait', () => {
+  // THE 2026-08-10 WEDGE. rc-keepwarm's loop hung while its renew setInterval kept
+  // running, so the lock never went stale and `profileRequested` was never read. A
+  // cooperative protocol cannot survive a partner that has stopped cooperating, and the
+  // 08:00 cart failed against a profile nothing could take.
+  const dir = tmp();
+  try {
+    // A live holder with a pid that is not us and does not exist — the safe stand-in for
+    // "wedged process": process.kill throws ESRCH, which forceProfileLock treats as
+    // already-gone and proceeds. A REAL pid must not be invented in a test.
+    fs.writeFileSync(path.join(dir, LOCK), JSON.stringify({
+      owner: 'rc-keepwarm', pid: 999_999_998, at: new Date().toISOString(),
+    }));
+
+    // Too soon: the holder must be given the whole wait before we kill anything.
+    assert.equal(forceProfileLock(dir, 'rc-hold-runner', Date.now(), 45_000), null,
+      'forcing before the wait has elapsed would break cooperative preemption for everyone');
+
+    const reason = forceProfileLock(dir, 'rc-hold-runner', Date.now() - 60_000, 45_000);
+    assert.ok(reason, 'after the wait, the profile is taken');
+    assert.match(String(reason), /rc-keepwarm/, 'and says who it was taken from');
+    assert.equal(profileLockHolder(dir)?.owner, 'rc-hold-runner');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('forcing never touches a free lock or our own', () => {
+  const dir = tmp();
+  try {
+    assert.equal(forceProfileLock(dir, 'rc-hold-runner', Date.now() - 60_000), null, 'nothing to force');
+    acquireProfileLock(dir, 'rc-hold-runner');
+    assert.equal(forceProfileLock(dir, 'rc-hold-runner', Date.now() - 60_000), null,
+      'our own lock is not something to kill ourselves over — literally');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

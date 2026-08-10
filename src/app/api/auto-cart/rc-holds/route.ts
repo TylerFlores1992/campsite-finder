@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, reportCartFailure, nextHoldRelease, holdAtRisk, type HoldRequest } from '@/lib/rc-holds';
 import { alarmCall } from '@/lib/notifications/voice';
+import { rcSessionFault, type RcSessionFault } from '@/lib/health-thresholds';
 import { query, mutate } from '@/lib/db/client';
 import { notifyHoldMissed } from '@/lib/rc-holds-notify';
 import { manageTokenFor } from '@/lib/notifications/actions';
@@ -83,6 +84,16 @@ export async function GET(req: NextRequest) {
   // before, so retrying every second for twenty minutes is how we lose the address.
   // With the runner now waiting out the lead, the first attempt should be correctly
   // timed anyway and this is the fallback, not the plan.
+  // THE DEAD-MAN'S SWITCH. Everything about the session alarm used to be driven by the
+  // keep-warm REPORTING — so a keep-warm that stops reporting silences the alarm that
+  // exists to catch it. This poll is the pull side: the runner hits this endpoint every
+  // 15s whatever the keep-warm is doing, so a verdict that has gone stale is noticed here
+  // even when nothing is left to notice it on the mini-PC.
+  //
+  // Fire-and-forget for the same reason the heartbeat write is: at 08:00:00 nothing may
+  // delay the response that carries a due cart.
+  void alarmIfSessionUnusable().catch((e) => console.error('[rc-holds] stale-session alarm failed:', e));
+
   return NextResponse.json({
     claim: claims.map(forBot),
     cart: cart.map(forBot),
@@ -217,22 +228,55 @@ const ALARM_LEAD_MIN = Number(process.env.AUTOCART_ALARM_LEAD_MIN || 45);
  */
 const ALARM_AFTER_MIN = Number(process.env.AUTOCART_ALARM_AFTER_MIN || 12);
 
-async function alarmSessionDead(why: string | null): Promise<void> {
+/**
+ * Is the session verdict itself unusable — and is a hold about to pay for it?
+ *
+ * Reads the heartbeat rather than waiting to be told. `alarmSessionDead` is called from
+ * the POST path, i.e. when the keep-warm reports; this is the case where it never does.
+ */
+async function alarmIfSessionUnusable(): Promise<void> {
+  const [row] = await query<{ session_ok: boolean | null; session_at: string | null; session_detail: string | null }>(
+    `SELECT session_ok, session_at, session_detail FROM rc_runner_heartbeat WHERE id = 1`,
+  ).catch(() => []);
+  const ageMs = row?.session_at ? Date.now() - new Date(row.session_at).getTime() : null;
+  const fault = rcSessionFault(row?.session_ok ?? null, ageMs);
+  // `dead` is already handled the moment it is reported, and re-alarming here would give
+  // it a second budget against the same rate limit. Only the silences belong to this path.
+  if (fault !== 'stale' && fault !== 'never-reported') return;
+  const mins = ageMs == null ? 'never' : `${Math.round(ageMs / 60_000)}m`;
+  await alarmSessionDead(`rc-keepwarm has not reported for ${mins} — the process is wedged or stopped`, 'stale');
+}
+
+async function alarmSessionDead(why: string | null, fault: RcSessionFault = 'dead'): Promise<void> {
   const at = await holdAtRisk(ALARM_LEAD_MIN);
   if (!at) return;
+
+  // A STALE VERDICT RINGS IMMEDIATELY — no waiting for a repair that cannot come.
+  //
+  // The gate below exists because `maybeAutoLogin` fixes a dead session at T-15 and a
+  // phone call before that is a call about a problem the machine is about to solve. That
+  // reasoning does NOT hold for staleness: `maybeAutoLogin` lives inside rc-keepwarm.mjs,
+  // and a stale verdict means rc-keepwarm is not reporting — so the repair mechanism is
+  // provably absent, and every minute spent waiting for it is a minute lost.
+  //
+  // 2026-08-10 is what this costs when it is missing: the keep-warm wedged at 04:48Z
+  // holding the Chromium profile, the verdict froze at `ok`, the check showed amber, the
+  // phone never rang, and the 08:00 cart failed against a lock nothing could take.
+  if (fault !== 'stale') {
 
   // RING ONLY IF THE REPAIR IS DONE FOR, one of two ways: the keep-warm has reported an
   // auto sign-in that actually failed (definitive — it tried, RC said no), or the login
   // window has closed with the session still dead. Anything earlier is a phone call about
   // a problem the machine is about to solve, and the cost of that is not the noise — it is
   // that the next real one gets skimmed.
-  const loginFailed = /auto sign-in failed/i.test(why ?? '');
-  if (!loginFailed && at.minutesAway > ALARM_AFTER_MIN) {
-    console.log(
-      `[rc-holds] session dead, hold ${at.hold.id} is ${Math.round(at.minutesAway)}m away — ` +
-      `NOT alarming yet; the auto-login has not had its turn`,
-    );
-    return;
+    const loginFailed = /auto sign-in failed/i.test(why ?? '');
+    if (!loginFailed && at.minutesAway > ALARM_AFTER_MIN) {
+      console.log(
+        `[rc-holds] session dead, hold ${at.hold.id} is ${Math.round(at.minutesAway)}m away — ` +
+        `NOT alarming yet; the auto-login has not had its turn`,
+      );
+      return;
+    }
   }
 
   const where = at.campground ?? 'a campground';
@@ -241,10 +285,17 @@ async function alarmSessionDead(why: string | null): Promise<void> {
   // Written to be understood by someone who was asleep four seconds ago: what is wrong,
   // what is at stake, what to do. No jargon, no hold ids, and the instruction LAST so it
   // is the thing still in their ear when the message repeats.
+  // Name the ACTUAL fault. "The session is dead" and "the bot has stopped reporting" send
+  // someone to different places — the second is a wedged process, and signing in without
+  // clearing it just hands the profile back to the thing that is stuck.
   const spoken =
-    `CampHawk alert. The Reserve California session is dead, and ${where}${site} releases at ${time}. ` +
-    `Nobody can hold it for you until someone signs in. ` +
-    `Go to the mini P C and run R C login dot bat.`;
+    fault === 'stale'
+      ? `CampHawk alert. The Reserve California bot has stopped responding, and ${where}${site} releases at ${time}. ` +
+        `Nothing can hold it for you until it is restarted. ` +
+        `Go to the mini P C and run R C login dot bat.`
+      : `CampHawk alert. The Reserve California session is dead, and ${where}${site} releases at ${time}. ` +
+        `Nobody can hold it for you until someone signs in. ` +
+        `Go to the mini P C and run R C login dot bat.`;
 
   const to = process.env.AUTOCART_ALARM_PHONE || at.phone;
   // Keyed on the HOLD, not on this attempt — the keep-warm reports every pass, and a

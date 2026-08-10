@@ -28,7 +28,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { precartInPage, findCartEntry, releaseEntry, NO_CART } from './rc-cart.mjs';
 import {
-  waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
+  waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder, forceProfileLock,
   requestProfile, clearProfileRequest,
 } from './profile-lock.mjs';
 import { installTokenCapture, primeToken, tokenSecondsLeft } from './rc-token.mjs';
@@ -205,8 +205,9 @@ async function withRC(fn) {
   // token while a page is loaded), so a plain wait would time out every single time, at
   // 08:00:00, on the one job that matters. The flag makes it stand down within a second.
   requestProfile(PROFILE_DIR, LOCK_OWNER);
+  const requestedAt = Date.now();
   try {
-    return await withRCLocked(fn);
+    return await withRCLocked(fn, requestedAt);
   } finally {
     // ALWAYS, including the failure paths — a request left behind keeps the keep-warm
     // stood down indefinitely, which would kill the session it exists to preserve.
@@ -214,11 +215,26 @@ async function withRC(fn) {
   }
 }
 
-async function withRCLocked(fn) {
+async function withRCLocked(fn, requestedAt = Date.now()) {
+  let forced = null;
   if (!(await waitForProfileLock(PROFILE_DIR, LOCK_OWNER, LOCK_WAIT_MS))) {
-    const held = profileLockHolder(PROFILE_DIR);
-    log(`⚠ profile held by ${held?.owner ?? 'another process'} — skipping this pass, work stays queued`);
-    return { skipped: `Chromium profile held by ${held?.owner ?? 'another process'}` };
+    // COOPERATIVE PREEMPTION HAS FAILED. The holder has had the standing request for the
+    // whole lock wait and has not stood down, which means its loop is not reading the flag
+    // — the 2026-08-10 wedge, where the keep-warm renewed the lock from a timer for ten
+    // hours while doing nothing. Take it by force: kill the recorded pid, then acquire.
+    // See forceProfileLock for why killing first is the SAFE order.
+    forced = forceProfileLock(PROFILE_DIR, LOCK_OWNER, requestedAt, LOCK_WAIT_MS);
+    if (!forced) {
+      const held = profileLockHolder(PROFILE_DIR);
+      log(`⚠ profile held by ${held?.owner ?? 'another process'} — skipping this pass, work stays queued`);
+      return { skipped: `Chromium profile held by ${held?.owner ?? 'another process'}` };
+    }
+    // LOUD IN THE LOG, and deliberately NOT posted: the feed has no wire shape for "a
+    // thing happened that was not about a hold", and inventing one that the server quietly
+    // ignores is the failure mode this whole morning was made of. The wedge that forces
+    // this is already alarmed server-side by the stale-verdict dead-man's switch, which is
+    // where it belongs — this line is for whoever reads the mini-PC log afterwards.
+    log(`⚠ ${forced}`);
   }
   const renew = setInterval(() => renewProfileLock(PROFILE_DIR, LOCK_OWNER), RENEW_MS);
   const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {

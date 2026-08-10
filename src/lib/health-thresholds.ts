@@ -137,3 +137,42 @@ export const DELIVERY_STALE_SECONDS = DELIVERY_STALE_MS / 1000;
 export const DETECT_STALE_SECONDS = DETECT_STALE_MS / 1000;
 export const DELIVERY_DEAD_SECONDS = DELIVERY_DEAD_MS / 1000;
 export const DETECT_DEAD_SECONDS = DETECT_DEAD_MS / 1000;
+
+/**
+ * How long the RC session verdict may go unrefreshed before it stops meaning anything.
+ *
+ * `rc-keepwarm.mjs` reports every ~20 minutes, so 45 is two missed passes plus slack —
+ * long enough that a slow pass or a reboot is not an alarm, short enough that a wedged
+ * keep-warm is caught inside one hold's lead time.
+ *
+ * MOVED HERE 2026-08-10 from a private const in the health route, for the reason stated
+ * at the top of this file: it now has three readers (the health check, the alarm gate and
+ * the readout) and a threshold with three copies is a threshold that will disagree.
+ */
+export const RC_SESSION_STALE_MS = 45 * 60 * 1000;
+
+/** Why the RC session cannot be relied on for an upcoming hold — or null if it can. */
+export type RcSessionFault = 'dead' | 'stale' | 'never-reported';
+
+/**
+ * Can we count on the bot's RC session right now?
+ *
+ * THE DISTINCTION THIS EXISTS TO MAKE (2026-08-10). A verdict of `ok` recorded ten hours
+ * ago is not an `ok` — the keep-warm that produced it had been wedged since, holding the
+ * Chromium profile and reporting nothing, so the 08:00 cart failed with the health check
+ * showing amber and the phone silent. `holdAtRisk` only ever fired on a session reported
+ * DEAD, and a stale verdict is not a dead one.
+ *
+ * It is the same rule this codebase already applies to `hasAvailabilityInRange` returning
+ * null and to `untracked` SMS rows: the absence of an answer is not a good answer. It had
+ * simply been applied to the VERDICT and never to its AGE.
+ *
+ * `stale` is treated as WORSE than `dead` for alarm timing, not better — see the gate in
+ * the hold feed. A dead session has a repair coming (`maybeAutoLogin` at T-15); a stale
+ * one means the process that would run that repair is not running.
+ */
+export function rcSessionFault(ok: boolean | null, ageMs: number | null): RcSessionFault | null {
+  if (ok == null || ageMs == null) return 'never-reported';
+  if (ageMs > RC_SESSION_STALE_MS) return 'stale';
+  return ok ? null : 'dead';
+}

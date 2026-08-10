@@ -6,6 +6,7 @@ import {
   DELIVERY_STALE_MS as SHARED_DELIVERY_STALE_MS,
   DETECT_STALE_MS as SHARED_DETECT_STALE_MS,
   RECGOV_MONTHS_PER_MACHINE,
+  RC_SESSION_STALE_MS,
 } from '@/lib/health-thresholds';
 
 // Machine-readable alert-health aggregate. Turns the "silent death" traps in
@@ -64,7 +65,6 @@ const RC_RUNNER_STALE_MS = 3 * 60 * 1000;
 // missed passes, which allows for one inconclusive result (a busy profile, a 403 from
 // RC's edge) without crying wolf — those report NOTHING rather than `false` on purpose,
 // so staleness is how "we could not tell for a while" surfaces at all.
-const RC_SESSION_STALE_MS = 45 * 60 * 1000;
 
 const ageMs = (ts: string | null | undefined) => (ts ? Date.now() - new Date(ts).getTime() : Infinity);
 const secs = (ms: number) => (Number.isFinite(ms) ? Math.round(ms / 1000) : undefined);
@@ -342,10 +342,23 @@ export async function GET() {
       // only a human can fix — that is the one that should shout. Dead with nothing
       // queued still warns: the fix needs lead time, so "nobody is affected yet" is
       // exactly when it is cheapest to act.
-      level: dead && ahead > 0 ? 'fail' : dead || sessionStale || beat?.session_ok == null ? 'warn' : 'ok',
+      // A STALE VERDICT WITH A HOLD AHEAD IS A FAILURE, not a warning. It was `warn` on
+      // 2026-08-10 while the keep-warm sat wedged for ten hours holding the Chromium
+      // profile, and the 08:00 cart failed with this check amber. Unusable is unusable:
+      // what the last reading SAID stops mattering once it is old enough that nothing is
+      // maintaining it.
+      level: (dead || sessionStale) && ahead > 0 ? 'fail' : dead || sessionStale || beat?.session_ok == null ? 'warn' : 'ok',
       detail:
         beat?.session_ok == null
           ? 'never reported — is rc-keepwarm.mjs running with AUTOCART_TOKEN set?'
+          // LEAD WITH THE AGE WHEN IT IS STALE. This used to open "RC accepts the session
+          // for 10h23m" and mention STALE eleven words later, so the sentence read as
+          // healthy at a glance — on the one page whose job is "is anything broken?".
+          : sessionStale
+          ? `rc-keepwarm has NOT REPORTED for ${secs(sessionAge)}s — the process is wedged or stopped, ` +
+            `so the last verdict (${beat.session_ok ? 'accepted' : 'REJECTED'}) means nothing now` +
+            (ahead > 0 ? ` — ${ahead} hold(s) ahead will fail` : '') +
+            '. On the mini-PC: mini-pc\\rc-login.bat'
           : (dead ? 'RC REJECTED the session — a human must run `node rc-keepwarm.mjs --login`' : 'RC accepts the session') +
             // "for 7h20m" is the number the design turns on: an RC session has died
             // ~8-9h after sign-in twice, with keep-warm running throughout, so how long

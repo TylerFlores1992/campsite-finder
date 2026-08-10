@@ -171,3 +171,52 @@ export function profileRequested(profileDir) {
 export function clearProfileRequest(profileDir) {
   try { fs.unlinkSync(requestPath(profileDir)); } catch { /* not there is the goal */ }
 }
+
+/**
+ * Take the profile from a holder that will not give it up.
+ *
+ * ── WHY THIS IS NEEDED AT ALL ───────────────────────────────────────────────────────
+ * Preemption is COOPERATIVE: the requester drops `.camphawk-profile-wanted` and the
+ * holder's loop is supposed to notice and stand down. On 2026-08-10 the keep-warm's loop
+ * hung while its renew `setInterval` kept running, so the lock never went stale, the
+ * request was never read, and the 08:00 hold failed against a profile nothing could take.
+ * A cooperative protocol cannot survive a partner that has stopped cooperating.
+ *
+ * ── WHY IT KILLS RATHER THAN JUST TAKING ────────────────────────────────────────────
+ * Two Chromium instances on one user-data-dir do not fail cleanly, they CORRUPT the
+ * session — the exact thing the lock exists to prevent, and the thing we would be here to
+ * rescue. So the only safe way to take a live holder's lock is to stop the holder first.
+ * The lock file records the pid precisely so this is possible.
+ *
+ * ── WHY IT IS SAFE ENOUGH ───────────────────────────────────────────────────────────
+ * It kills ONE recorded pid, only after the holder has ignored a standing request for
+ * `afterMs`, and only a pid we wrote ourselves. It never touches `node.exe` broadly —
+ * that would take the rec.gov bot and the broker down with it, which is the mistake
+ * rc-login.bat documents.
+ *
+ * Returns a short reason string when it acted, or null when it did nothing — the caller
+ * reports it, because a forced preemption is a fault that happened to be survivable and
+ * should not pass silently.
+ */
+export function forceProfileLock(profileDir, owner, requestedAtMs, afterMs = 45_000) {
+  if (Date.now() - requestedAtMs < afterMs) return null;
+  const held = profileLockHolder(profileDir);
+  if (!held) return null;                       // already free — nothing to force
+  if (held.owner === owner) return null;        // ours
+  if (!held.pid || held.pid === process.pid) return null;
+
+  let killed = false;
+  try {
+    process.kill(held.pid, 'SIGKILL');
+    killed = true;
+  } catch (err) {
+    // ESRCH = already gone, which is fine: the lock is simply stale and the release below
+    // clears it. Anything else (EPERM) means we must NOT proceed to take the profile,
+    // because the holder is still alive and a second Chromium would corrupt the session.
+    if (err && err.code !== 'ESRCH') return null;
+  }
+  releaseProfileLock(profileDir);
+  if (!acquireProfileLock(profileDir, owner)) return null;
+  return `forced the profile from ${held.owner} (pid ${held.pid}${killed ? ', killed' : ', already gone'}) ` +
+         `after it ignored the request for ${Math.round((Date.now() - requestedAtMs) / 1000)}s`;
+}
