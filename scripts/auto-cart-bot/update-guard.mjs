@@ -120,6 +120,18 @@ export function safeToUpdate(opts = {}) {
 // `node update-guard.mjs` → exit 0 to proceed, 1 to skip. Called by auto-update.ps1,
 // which has no way to reason about any of the above.
 if (process.argv[1] && process.argv[1].endsWith('update-guard.mjs')) {
+  // THE .env, OR THIS CAN ONLY EVER REFUSE. The token lives in
+  // scripts/auto-cart-bot/.env, not in the machine environment. The scheduled task runs
+  // this script with no parent to inherit from, so without loadEnv the feed answers 401,
+  // `feedReachable` stays false, and the guard skips EVERY run with "refusing to update
+  // blind" - correct behaviour for an unknown, reached for the wrong reason, and
+  // indistinguishable in the log from a genuine outage.
+  //
+  // load-env.mjs's own header records this exact bug hitting rc-hold-runner.mjs on
+  // 2026-08-07: "answered `feed 401`, which reads exactly like a wrong token". This was
+  // the only bot script still missing the call.
+  const { loadEnv } = await import('./load-env.mjs');
+  loadEnv(import.meta.url);
   const force = process.argv.includes('--force');
   const url = process.env.CAMPHAWK_URL || 'https://camphawk.app';
   const token = process.env.AUTOCART_TOKEN || '';

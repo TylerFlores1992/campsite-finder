@@ -64,3 +64,21 @@ export async function markBotUpdateApplied(sha: string | null, note: string | nu
     [sha ? sha.slice(0, 40) : null, note ? note.slice(0, 300) : null],
   ).catch((e) => console.error('[bot-update] markApplied failed:', e.message));
 }
+
+/**
+ * What the box's LAST ATTEMPT did, when it did not result in an update.
+ *
+ * WRITES `applied_note` AND NEVER `applied_at`, so the request stays pending and the box
+ * tries again. The distinction is the whole point: `applied_at` means "it landed",
+ * `applied_note` means "here is what happened last time somebody tried". Same split as
+ * `rc_hold_requests.last_attempt_note`, and for the same reason - on 2026-08-11 an
+ * on-demand update sat pending for ten minutes and there was no way to tell "the guard
+ * refused, and why" from "nothing has tried at all". Those are different faults with
+ * different fixes, and they were the same silence.
+ */
+export async function noteBotUpdateAttempt(note: string): Promise<void> {
+  await mutate(
+    `UPDATE bot_update_requests SET applied_note = $1 WHERE id = 1`,
+    [note.slice(0, 300)],
+  ).catch((e) => console.error('[bot-update] noteAttempt failed:', e.message));
+}

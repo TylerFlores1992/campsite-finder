@@ -64,7 +64,13 @@ const POLL_MS = Number(process.env.RC_HOLD_POLL_MS || 15_000);
 let nextPollMs = POLL_MS;
 /** One hand-off per process life. The updater restarts us; a second spawn would mean two
  *  updaters racing over the same checkout. */
-let updateStarted = false;
+let updateStartedAt = 0;
+// A HAND-OFF THAT ACHIEVED NOTHING MUST BE RETRIED. This was a boolean that latched for
+// the life of the process: auto-update.ps1 exits 0 when its guard refuses (too close to a
+// release, feed unreachable), nothing is applied, the request stays pending - and the
+// runner never tried again. Observed 2026-08-11. Long enough that two updaters can never
+// race over one checkout, short enough that "as soon as it is safe" means something.
+const UPDATE_RETRY_MS = 15 * 60_000;
 const HEADLESS = process.env.RC_HEADLESS === 'true';
 
 const args = new Set(process.argv.slice(2));
@@ -329,8 +335,8 @@ async function runPass() {
   // through, so waiting for it would be waiting to be killed. `detached` so being killed
   // does not take the updater down with us — the mistake that would leave the box halfway
   // between two commits.
-  if (updateRequested && !updateStarted) {
-    updateStarted = true;
+  if (updateRequested && Date.now() - updateStartedAt > UPDATE_RETRY_MS) {
+    updateStartedAt = Date.now();
     log('→ update requested from the admin page — handing off to auto-update.ps1');
     try {
       const ps = spawn('powershell', [
@@ -340,7 +346,7 @@ async function runPass() {
       ps.unref();
     } catch (err) {
       log(`  update hand-off failed: ${err.message}`);
-      updateStarted = false;
+      updateStartedAt = 0;
     }
   }
   // The server sets pollMs while anything is claimable. Somebody is watching a spinner

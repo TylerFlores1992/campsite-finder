@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, reportCartFailure, nextHoldRelease, holdAtRisk, type HoldRequest } from '@/lib/rc-holds';
 import { alarmCall } from '@/lib/notifications/voice';
 import { rcSessionFault, type RcSessionFault } from '@/lib/health-thresholds';
-import { botUpdateState, markBotUpdateApplied } from '@/lib/bot-update';
+import { botUpdateState, markBotUpdateApplied, noteBotUpdateAttempt } from '@/lib/bot-update';
 import { query, mutate } from '@/lib/db/client';
 import { notifyHoldMissed } from '@/lib/rc-holds-notify';
 import { manageTokenFor } from '@/lib/notifications/actions';
@@ -159,6 +159,16 @@ export async function POST(req: NextRequest) {
       typeof body.note === 'string' ? body.note : null,
     );
     return NextResponse.json({ ok: true, state: 'update-recorded' });
+  }
+
+  // AN UPDATE THAT WAS ASKED FOR AND DID NOT HAPPEN — the guard refused, and this is why.
+  // Deliberately NOT `markBotUpdateApplied`: the request stays pending so the box tries
+  // again when the reason clears. Before this, a refusal was indistinguishable from the
+  // box never having looked — the two faults have different fixes and were the same
+  // silence, exactly as `last_attempt_note` fixed for the holds themselves.
+  if (typeof body?.updateAttempt === 'string') {
+    await noteBotUpdateAttempt(body.updateAttempt);
+    return NextResponse.json({ ok: true, state: 'update-attempt-recorded' });
   }
 
   // A PASS THAT COULD NOT ACT. Records why against the holds it was about to touch and

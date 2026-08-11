@@ -49,6 +49,17 @@ function Report-Applied($sha, $note) {
   } catch { Write-Line "could not report the update: $($_.Exception.Message)" }
 }
 
+function Report-Attempt($note) {
+  # applied_note WITHOUT applied_at: "here is what happened last time somebody tried",
+  # never "it landed". See noteBotUpdateAttempt.
+  try {
+    $body = @{ updateAttempt = $note } | ConvertTo-Json -Compress
+    Invoke-RestMethod -Method Post -Uri "$env:CAMPHAWK_URL/api/auto-cart/rc-holds" `
+      -Headers @{ Authorization = "Bearer $env:AUTOCART_TOKEN"; "Content-Type" = "application/json" } `
+      -Body $body -TimeoutSec 15 | Out-Null
+  } catch { Write-Line "could not report the attempt: $($_.Exception.Message)" }
+}
+
 function Stop-Everything {
   & powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\stop-all.ps1" 2>&1 |
     Tee-Object -FilePath $log -Append
@@ -58,8 +69,18 @@ function Stop-Everything {
 # -- 1. May we? ------------------------------------------------------------------------
 $guardArgs = @("update-guard.mjs")
 if ($Force) { $guardArgs += "--force" }
-& node @guardArgs 2>&1 | Tee-Object -FilePath $log -Append
-if ($LASTEXITCODE -ne 0) { Write-Line "skipping this run."; exit 0 }
+$guardOut = & node @guardArgs 2>&1
+$guardOut | Tee-Object -FilePath $log -Append
+if ($LASTEXITCODE -ne 0) {
+  Write-Line "skipping this run."
+  # SAY SO SERVER-SIDE. A refusal used to live only in this log file, on a box nobody can
+  # reach - so an on-demand update that sat pending looked identical to a box that had
+  # never looked at the request. Reported as an ATTEMPT, which leaves the request pending
+  # on purpose: the guard refuses for reasons that clear (a release passes, the feed comes
+  # back), and the box must try again when they do.
+  Report-Attempt (($guardOut | Out-String).Trim())
+  exit 0
+}
 
 # -- 2. Is there anything to take? -----------------------------------------------------
 $repoRoot = (& git rev-parse --show-toplevel) 2>$null

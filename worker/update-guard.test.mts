@@ -302,3 +302,50 @@ test('the runner hands off once, detached', async () => {
   assert.match(runner, /detached: true/, 'survives being killed by the thing it started');
   assert.ok(!/await .*auto-update/.test(runner), 'never awaited — that would be waiting to be killed');
 });
+
+test('the guard loads the .env, or it can only ever refuse', async () => {
+  // THE TOKEN LIVES IN scripts/auto-cart-bot/.env, NOT IN THE MACHINE ENVIRONMENT. The
+  // scheduled task runs this with no parent to inherit from, so without loadEnv the feed
+  // answers 401, `feedReachable` stays false, and every single run skips with "refusing to
+  // update blind" — correct behaviour for an unknown, reached for the wrong reason, and
+  // indistinguishable in the log from a real outage.
+  //
+  // load-env.mjs's own header records this exact bug hitting rc-hold-runner.mjs on
+  // 2026-08-07. This was the last bot script still missing the call.
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const dir = 'scripts/auto-cart-bot';
+  const entry = readdirSync(dir).filter((f) => f.endsWith('.mjs'));
+  for (const f of ['update-guard.mjs', 'rc-hold-runner.mjs', 'rc-keepwarm.mjs', 'bot.mjs', 'broker.mjs']) {
+    assert.ok(entry.includes(f), `${f} must exist`);
+    assert.match(readFileSync(`${dir}/${f}`, 'utf8'), /loadEnv\(/,
+      `${f} reads config from .env and must load it`);
+  }
+});
+
+test('a hand-off that achieved nothing is retried', async () => {
+  // auto-update.ps1 exits 0 when its guard refuses — nothing applied, request still
+  // pending. `updateStarted` was a boolean that latched for the life of the process, so
+  // the runner never tried again and the request sat pending forever. Observed 2026-08-11.
+  const { readFileSync } = await import('node:fs');
+  const runner = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
+  assert.ok(!/let updateStarted = false;/.test(runner), 'the latching boolean must be gone');
+  assert.match(runner, /UPDATE_RETRY_MS/, 'a refused hand-off is retried after a cooldown');
+  const m = runner.match(/const UPDATE_RETRY_MS = (\d+) \* 60_000;/);
+  assert.ok(m && Number(m[1]) >= 5,
+    'but not so fast that two updaters could race over one checkout');
+});
+
+test('a refused update is visible from the server, and stays pending', async () => {
+  // A refusal used to live only in a log file on a box nobody can reach, so "the guard
+  // said no, and why" looked identical to "nothing ever looked at the request". Same
+  // distinction `last_attempt_note` draws for the holds themselves.
+  const { readFileSync } = await import('node:fs');
+  const up = readFileSync('scripts/auto-cart-bot/mini-pc/auto-update.ps1', 'utf8');
+  const lib = readFileSync('src/lib/bot-update.ts', 'utf8');
+  assert.match(up, /Report-Attempt \(\(\$guardOut/, 'the refusal reports the guard verdict');
+  assert.ok(up.indexOf('function Report-Attempt') < up.indexOf('Report-Attempt (('),
+    'defined before use — PowerShell runs top-down');
+  // It must NOT clear the request: the reasons the guard refuses are reasons that clear.
+  const fn = lib.slice(lib.indexOf('export async function noteBotUpdateAttempt'));
+  assert.ok(!/applied_at/.test(fn.slice(0, 400)), 'noteBotUpdateAttempt must never set applied_at');
+});
