@@ -21,6 +21,7 @@ import { noteReserveCalifornia } from './reservecalifornia.mjs';
 import { recgovLoginState } from './session.mjs';
 import { attemptLoginWithCreds } from './recgov-login.mjs';
 import { hasCreds, loadCreds, deleteCreds, bumpReloginFails, resetReloginFails } from './credstore.mjs';
+import { planRetry, retryDue } from './relogin-retry.mjs';
 import { acquireProfileLock, releaseProfileLock, profileLockHolder } from './profile-lock.mjs';
 import { loadEnv } from './load-env.mjs';
 
@@ -202,6 +203,29 @@ function stampWarmed(userId) {
 const isLoggedIn = (userId) => fs.existsSync(readyMarker(userId));
 const loggingIn = new Set();
 
+/**
+ * A pending auto-relogin: `{kind, attempts, nextAt}`, or null.
+ *
+ * SEPARATE FROM `.camphawk-ready` ON PURPOSE. That marker means "this profile has a live
+ * session", which the cart path reads — after a failed relogin it is honestly false. This
+ * one means "an automatic repair is still owed", which is honestly true. Conflating them
+ * is what broke: `keepSessionsWarm` gated on the session flag, so clearing it (correctly)
+ * also cancelled the retry (incorrectly), and the log line promising a retry was written
+ * three lines before the delete that made it impossible.
+ */
+const retryMarker = (userId) => path.join(profileDir(userId), '.camphawk-relogin');
+function readRetry(userId) {
+  try { return JSON.parse(fs.readFileSync(retryMarker(userId), 'utf8')); } catch { return null; }
+}
+function writeRetry(userId, state) {
+  try { fs.writeFileSync(retryMarker(userId), JSON.stringify(state)); } catch { /* best effort */ }
+}
+function clearRetry(userId) {
+  try { fs.unlinkSync(retryMarker(userId)); } catch { /* already gone */ }
+}
+/** Is an automatic repair still owed for this profile, whether or not it is due yet? */
+const reloginPending = (userId) => !!readRetry(userId);
+
 // Confirm a real recreation.gov session (DOM-based; see session.mjs). The old
 // URL check was fooled by rec.gov's modal login and false-reported logged-out as
 // logged-in.
@@ -213,6 +237,13 @@ async function ensureLogin(user) {
   const who = user.email || user.userId;
   if (LOGIN_MODE === 'remote') return; // sign-in handled by the web broker (broker.mjs)
   if (isLoggedIn(user.userId) || loggingIn.has(user.userId)) return;
+  // NOT WHILE AN AUTOMATIC REPAIR IS OWED. This opens an interactive window and, if nobody
+  // signs in within ten minutes, calls setEnrollment(false) - it turns the user's auto-cart
+  // OFF. Firing it during a pending auto-relogin would un-enrol somebody over a CAPTCHA the
+  // bot was already going to retry past, which is a far larger consequence than the missing
+  // retry that led here. keepSessionsWarm gives up loudly and clears the marker when the
+  // retries are exhausted; that is when this escalation is correct.
+  if (reloginPending(user.userId)) return;
   loggingIn.add(user.userId);
   log(`🔐 ${who}: opening a one-time recreation.gov sign-in window — sign in there and I finish automatically. (Closing it without signing in turns auto-cart back off; just toggle it on again to retry.)`);
   let ok = false;
@@ -256,7 +287,16 @@ async function keepSessionsWarm() {
   try { users = await fetchRoster(); } catch { return; }
   let warmedThisPass = 0;
   for (const user of users) {
-    if (!isLoggedIn(user.userId) || inUse.has(user.userId)) continue;
+    if (inUse.has(user.userId)) continue;
+    // A profile with no session is normally none of this pass's business. The ONE exception
+    // is a profile that owes an automatic relogin — and that exception is the whole fix:
+    // gating on the session flag alone is what made "will retry next cycle" a lie for
+    // twelve days. `retryDue` paces it, so a stuck account is not retried every 30 minutes
+    // forever from a residential IP.
+    if (!isLoggedIn(user.userId)) {
+      const pending = readRetry(user.userId);
+      if (!retryDue(pending, Date.now())) continue;
+    }
     // Still fresh — nothing to refresh, so don't open a browser at all. This is what
     // makes a restart nearly free instead of a burst.
     if (warmedRecently(user.userId)) continue;
@@ -327,6 +367,7 @@ async function keepSessionsWarm() {
             fs.writeFileSync(readyMarker(user.userId), new Date().toISOString());
             await reportConnected(user.userId, true);
             resetReloginFails(dir);
+            clearRetry(user.userId);
             log(`🔓 ${who}: session had expired — auto-relogin from saved login succeeded, session restored`);
             continue;
           }
@@ -338,17 +379,37 @@ async function keepSessionsWarm() {
           // that was never wrong, forcing the user through a manual reconnect and the
           // very CAPTCHA wall that blocked us. Back off and keep the credentials; the
           // challenge lifts on its own.
-          if (attempt.captcha) {
-            log(`  ${who}: auto-relogin blocked by a rec.gov CAPTCHA — keeping the saved login, will retry next cycle`);
+          // SCHEDULE THE RETRY THIS LINE PROMISES. It used to only log the promise, and
+          // the unconditional `unlinkSync(readyMarker)` below then disqualified this
+          // profile from every future pass — so the retry never came, for anyone, ever.
+          const kind = attempt.captcha ? 'captcha' : 'credentials';
+          const plan = planRetry({
+            kind, attempts: readRetry(user.userId)?.attempts ?? 0, now: Date.now(),
+          });
+          if (kind === 'credentials') bumpReloginFails(dir);
+          if (plan.giveUp) {
+            clearRetry(user.userId);
+            // A password rec.gov keeps rejecting will never fix itself; a CAPTCHA might,
+            // so its credentials are KEPT for the manual reconnect to reuse.
+            if (kind === 'credentials') deleteCreds(dir);
+            log(`  ${who}: giving up on auto-relogin — ${plan.why}. Manual reconnect needed.`);
           } else {
-            const fails = bumpReloginFails(dir);
-            if (fails >= 2) { deleteCreds(dir); log(`  ${who}: saved login failed ${fails}× (looks like a bad password) — cleared it; manual reconnect needed`); }
-            else log(`  ${who}: auto-relogin failed (attempt ${fails}) — will retry next cycle or on manual reconnect`);
+            writeRetry(user.userId, { kind, attempts: plan.attempts, nextAt: plan.nextAt });
+            log(`  ${who}: auto-relogin blocked by a rec.gov ${kind === 'captcha' ? 'CAPTCHA' : 'rejection'}` +
+                ` — keeping the saved login, ${plan.why}`);
           }
         }
+        // The session flag stays HONEST: it is false, and the cart path must see that.
+        // The retry lives in its own marker above precisely so this can be true without
+        // cancelling the repair.
         try { fs.unlinkSync(readyMarker(user.userId)); } catch {}
         await reportConnected(user.userId, false);
-        log(`⚠ ${who}: rec.gov session expired (idle, confirmed twice) — cleared login; they'll be asked to reconnect.`);
+        // Say which actually happened. This line claimed "cleared login" on EVERY path,
+        // including the CAPTCHA one that had just explicitly kept the credentials — so the
+        // log contradicted itself twice in one pass and read as a dead end either way.
+        log(reloginPending(user.userId)
+          ? `⚠ ${who}: rec.gov session expired — auto-relogin is still pending; they'll be asked to reconnect meanwhile.`
+          : `⚠ ${who}: rec.gov session expired (idle, confirmed twice) — cleared login; they'll be asked to reconnect.`);
       } else {
         log(`  ${who}: keepalive inconclusive — leaving session as-is.`);
       }
@@ -448,7 +509,9 @@ async function runMode() {
     try { users = await fetchRoster(); } catch (e) { log(`poll error: ${e.message}`); return; }
     for (const user of users) {
       // Newly enrolled + not signed in yet → auto-open a login window (non-blocking).
-      if (!isLoggedIn(user.userId)) ensureLogin(user);
+      // `ensureLogin` no-ops on a pending auto-relogin; the check is repeated here so the
+      // reason is visible at the call site too.
+      if (!isLoggedIn(user.userId) && !reloginPending(user.userId)) ensureLogin(user);
       for (const job of user.jobs || []) {
         if (handled.has(job.id)) continue;
         handled.set(job.id, Date.now());
