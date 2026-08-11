@@ -1,0 +1,108 @@
+name: Verify
+
+# ONE recipe — `npm run verify` — run here and by a human, so CI and a local run
+# cannot drift into checking different things. It is typecheck, then tests, then
+# build, cheapest first so the fastest signal fails first.
+#
+# Why each part is in it, and why that order:
+#
+#   1. `npm run typecheck` (~25s) runs BOTH tsconfigs. The root tsconfig.json
+#      EXCLUDES `worker` and `scripts`, so the poller — the most consequential
+#      code in the repo — was typechecked by nothing. That is not hypothetical:
+#      widening one return type once left a hard type error in worker/poller.ts
+#      while `tsc` AND `next build` both passed clean, and it would have shipped.
+#      Bare `tsc` is therefore NOT this project's typecheck; `npm run typecheck` is.
+#
+#   2. `npm test` (~87s, 329 tests) is node:test via tsx. 9 of the 40 test files
+#      hit the REAL database on purpose — the alerting claim's correctness lives
+#      inside one `INSERT .. ON CONFLICT .. WHERE`, and a mock would test a fake.
+#      That is why this job needs Supabase secrets (see "Require the database
+#      secrets" below).
+#
+#      It runs SERIALLY (`--test-concurrency=1`, added with this workflow) because
+#      node:test parallelises FILES and those nine suites share fixture rows: three
+#      parallel runs of an unchanged tree gave 329 pass, then 6 fail, then 3 fail,
+#      always in the suites asserting a row did NOT change while a sibling file was
+#      changing it. Serial gave three consecutive 329/329. Gating on a suite that
+#      fails 2 runs in 3 for reasons unrelated to the diff would have made this
+#      workflow noise on the day it landed. See docs/SETUP.md → Running the tests.
+#
+#   3. `npm run build` (~42s) last, because it is the slowest and the weakest
+#      signal — dynamic segments are not executed at build, so it cannot catch the
+#      request-time layout throw that cost a full production outage on 2026-07-24.
+#      It is still worth running: master AUTO-DEPLOYS to Vercel, so a build failure
+#      that reaches master is a failed production deploy. Catching it one branch
+#      earlier is the whole point. **`next build` passing is still NOT enough** for
+#      layout/rendering changes — smoke-test a real page after deploying.
+#
+# NOT in it: `npm run lint`. It currently reports 38 errors and 18 warnings of
+# accumulated debt (mostly no-unused-vars, no-html-link-for-pages, no-explicit-any,
+# and 3 react-hooks/exhaustive-deps). A gate that is red the day it lands is a gate
+# people learn to ignore, which is worse than no gate. Triage those first, THEN add
+# `lint` to the `verify` script — it costs 17s and belongs here once it is clean.
+#
+# Setup (one time): none. NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY
+# are already repo secrets (nightly-sync.yml and deadman.yml use them).
+
+on:
+  push:
+    branches:
+      - master
+      # Agent branches too. `vercel.json` disables Vercel deploys for `claude/*`
+      # (so an agent branch pushing the same SHA cannot shadow the master
+      # Production build and strand the domain), which means this workflow is the
+      # ONLY automated signal such a branch gets before it is merged.
+      - 'claude/**'
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# Cancel a superseded run. Deliberately the OPPOSITE of worker-deploy.yml, which
+# sets cancel-in-progress: false — a half-finished DEPLOY leaves the poller
+# stopped and alerting dead, whereas a half-finished verify changes nothing at all.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # The DB-backed tests read these through src/lib/db/.
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      # Harmless on a GitHub runner (nothing sets HTTP_PROXY there) and required
+      # when the same command is run from a proxied agent session, so the recipe
+      # stays identical in both places.
+      NODE_USE_ENV_PROXY: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Require the database secrets
+        # FAIL, never skip. 9 of the 40 test files need the real DB, and one of
+        # them is the alerting claim — the single piece of logic the entire product
+        # rests on. A run that quietly skipped them would report a green tick over
+        # a quarter of the suite never having executed, which is the same false
+        # green as `notifications.status = 'sent'` meaning only "Twilio returned
+        # 2xx", or `autocart.rc_runner` sitting green over a dead RC session.
+        # Unknown is not healthy.
+        run: |
+          missing=''
+          [ -n "${NEXT_PUBLIC_SUPABASE_URL:-}" ] || missing="$missing NEXT_PUBLIC_SUPABASE_URL"
+          [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ] || missing="$missing SUPABASE_SERVICE_ROLE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repo secret(s):$missing — the DB-backed tests (claim, shard lease, sync claim, rc-holds, expire-*) cannot run without them. Add them under Settings → Secrets and variables → Actions. Do NOT make the tests skip instead: a green tick over an unrun claim suite is worse than a red one."
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - name: Verify
+        # The one recipe. Run the identical command locally before pushing.
+        run: npm run verify
