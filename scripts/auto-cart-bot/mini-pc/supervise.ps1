@@ -67,7 +67,16 @@ while ($true) {
   # and its stdout/stderr are mirrored to the per-process log the same way start-all.bat
   # did - a cart outcome has to survive a window close, which is how 08-07 was diagnosed
   # at all.
-  & cmd /c "$Command" 2>&1 | Tee-Object -FilePath $LogFile -Append
+  # NOT Tee-Object: in Windows PowerShell 5.1 it writes UTF-16LE, so every one of these
+  # logs is a Unicode file that `findstr` refuses to search properly ("input file is in
+  # Unicode format") - which is exactly what happened while diagnosing a silent update on
+  # 2026-08-11. These files are the post-mortem record; a record you cannot grep is half a
+  # record. Write-Host keeps the live console, Add-Content -Encoding UTF8 keeps the file
+  # searchable by ordinary tools.
+  & cmd /c "$Command" 2>&1 | ForEach-Object {
+    Write-Host $_
+    Add-Content -Path $LogFile -Value $_ -Encoding UTF8
+  }
   $code = $LASTEXITCODE
   $ranFor = (New-TimeSpan -Start $started -End (Get-Date)).TotalSeconds
 

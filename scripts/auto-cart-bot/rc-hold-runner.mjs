@@ -337,12 +337,28 @@ async function runPass() {
   // between two commits.
   if (updateRequested && Date.now() - updateStartedAt > UPDATE_RETRY_MS) {
     updateStartedAt = Date.now();
-    log('→ update requested from the admin page — handing off to auto-update.ps1');
-    try {
+    // HERE (this file's own directory), NEVER process.cwd(). The two happen to agree when start-all launches us,
+    // and diverge the moment anything else does — and a wrong -File path makes PowerShell
+    // exit immediately with a message we throw away, so the symptom is total silence: no
+    // auto-update.log, no report, and this line still claiming the hand-off happened.
+    const script = path.join(HERE, 'mini-pc', 'auto-update.ps1');
+    log(`→ update requested — handing off to ${script}`);
+    // SAY IT IS MISSING RATHER THAN LAUNCHING AT NOTHING. Checked here because the failure
+    // is otherwise indistinguishable from the script running and doing nothing.
+    if (!fs.existsSync(script)) {
+      log(`  ✗ ${script} does not exist — cannot update`);
+      updateStartedAt = 0;
+    } else try {
       const ps = spawn('powershell', [
-        '-NoProfile', '-ExecutionPolicy', 'Bypass',
-        '-File', path.join(process.cwd(), 'mini-pc', 'auto-update.ps1'),
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script,
       ], { detached: true, stdio: 'ignore' });
+      // spawn() reports ENOENT via an 'error' EVENT, not by throwing — so the try/catch
+      // below never sees it, and an 'error' with no listener takes the whole runner down.
+      // Two failure modes, both invisible, both fixed by listening.
+      ps.on('error', (e) => {
+        log(`  ✗ could not start powershell: ${e.message}`);
+        updateStartedAt = 0;
+      });
       ps.unref();
     } catch (err) {
       log(`  update hand-off failed: ${err.message}`);

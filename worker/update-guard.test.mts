@@ -178,8 +178,17 @@ const miniPc = (f: string) =>
  * kill by image name — and the fix would be to delete the explanation. Same trap as the
  * test that matched `notification_sent_at` inside its own justifying comment.
  */
+/** The whole update hand-off branch, anchored on the branch and not on a string inside it. */
+function handoffBlock(runner: string): string {
+  const i = runner.indexOf('if (updateRequested');
+  assert.ok(i > 0, 'the hand-off branch must exist');
+  const block = runner.slice(i, i + 1800);
+  assert.ok(block.includes('spawn('), 'the slice must reach the spawn');
+  return block;
+}
+
 const code = (s: string) =>
-  s.split('\n').filter((l) => !/^\s*(REM\b|::|#)/i.test(l)).join('\n');
+  s.split('\n').filter((l) => !/^\s*(REM\b|::|#|\/\/|\*|\/\*)/i.test(l)).join('\n');
 
 test('the PowerShell scripts are pure ASCII', async () => {
   /**
@@ -392,4 +401,44 @@ test('the script says it started before anything can kill it', async () => {
   assert.ok(started > 0, 'it reports launch');
   assert.ok(started < up.indexOf('node @guardArgs'), 'before the guard runs');
   assert.ok(up.indexOf('function Report-Attempt') < started, 'and after its own definition');
+});
+
+test('the update hand-off resolves its script from THIS file, not the cwd', async () => {
+  // 2026-08-11: the runner logged "handing off to auto-update.ps1", the script never ran,
+  // and logs\auto-update.log did not exist — because a wrong `-File` path makes PowerShell
+  // exit immediately with a message thrown away by `stdio: 'ignore'`. process.cwd() happens
+  // to be right when start-all launches the runner and is wrong the moment anything else
+  // does, so the correctness of the path depended on who started us.
+  const { readFileSync } = await import('node:fs');
+  const runner = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
+  // `code()` because the comment right above the fix explains why NOT to use process.cwd()
+  // — matching the raw text would fail on the explanation. Third time tonight.
+  const block = code(handoffBlock(runner));
+  assert.ok(!/process\.cwd\(\)/.test(block), 'the script path must not depend on the working directory');
+  assert.match(block, /path\.join\(HERE, 'mini-pc', 'auto-update\.ps1'\)/);
+});
+
+test('a hand-off that cannot start says so', async () => {
+  // Two silent failures, both closed here. A missing script was launched at anyway; and
+  // spawn() reports ENOENT via an 'error' EVENT, not by throwing — so the try/catch never
+  // saw it, and an 'error' with no listener would take the whole runner down.
+  const { readFileSync } = await import('node:fs');
+  const runner = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
+  const block = handoffBlock(runner);
+  assert.match(block, /fs\.existsSync\(script\)/, 'a missing script is reported, not launched at');
+  assert.match(block, /ps\.on\('error'/, "spawn's error event has a listener");
+  // Both reset the retry clock — a hand-off that never started must be retried.
+  assert.ok((block.match(/updateStartedAt = 0;/g) ?? []).length >= 3,
+    'every failure path frees the retry');
+});
+
+test('the bot logs are searchable', async () => {
+  // findstr on rc-holds.log answered "input file is in Unicode format" while diagnosing a
+  // silent update, because PowerShell 5.1's Tee-Object writes UTF-16LE. These files are the
+  // post-mortem record, and a record you cannot grep is half a record.
+  const { readFileSync } = await import('node:fs');
+  const sup = readFileSync('scripts/auto-cart-bot/mini-pc/supervise.ps1', 'utf8');
+  assert.ok(!/Tee-Object -FilePath \$LogFile/.test(sup), 'Tee-Object writes UTF-16 — do not use it for the log');
+  assert.match(sup, /Add-Content -Path \$LogFile -Value \$_ -Encoding UTF8/);
+  assert.match(sup, /Write-Host \$_/, 'and the live console still shows the output');
 });
