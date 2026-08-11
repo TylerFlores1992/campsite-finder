@@ -51,8 +51,24 @@ export function makeControlChannel({ dir, actor, log, report }) {
       void (async () => {
         log(`? diagnostic ${c.kind}${c.arg ? ` ${c.arg}` : ''} (#${c.id})`);
         const r = await runCommand(c.kind, c.arg);
-        await report({ commandId: c.id, exitCode: r.ok ? 0 : 1, output: r.output, error: r.error })
-          .catch((e) => log(`  could not return diagnostic #${c.id}: ${e.message}`));
+        try {
+          await report({ commandId: c.id, exitCode: r.ok ? 0 : 1, output: r.output, error: r.error });
+        } catch (e) {
+          // ALWAYS CLOSE THE ROW. A report that fails leaves `finished_at` NULL for ever,
+          // which reads on the admin page as "the box picked it up, no answer yet" - the
+          // same silence as a wedged command, and indistinguishable from it. Observed
+          // 2026-08-11: `tail-log` was claimed twice and never returned, because the log was
+          // BOM-less UTF-16 and decoded to NULs that Postgres cannot store. The answer was
+          // unwritable, so nothing was written, so the failure looked like a hang.
+          //
+          // Retrying WITHOUT the output is the point: the payload is the only part that can
+          // be unstorable, and an error line that arrives beats a result that never does.
+          log(`  could not return diagnostic #${c.id}: ${e.message}`);
+          await report({
+            commandId: c.id, exitCode: 1, output: null,
+            error: `the answer could not be stored: ${String(e.message).slice(0, 200)}`,
+          }).catch((e2) => log(`  and the fallback report failed too: ${e2.message}`));
+        }
       })();
     }
 

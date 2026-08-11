@@ -13,9 +13,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { rejectReason, BOT_COMMAND_KINDS, MAX_PENDING, COMMAND_TTL_MS } from '../src/lib/bot-commands.js';
-import { COMMANDS, KINDS, LOGS, scrub, runCommand, MAX_OUTPUT } from '../scripts/auto-cart-bot/bot-commands.mjs';
+import { COMMANDS, KINDS, LOGS, scrub, runCommand, readTextFile, MAX_OUTPUT } from '../scripts/auto-cart-bot/bot-commands.mjs';
 
 const botFile = readFileSync('scripts/auto-cart-bot/bot-commands.mjs', 'utf8');
 const runner = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
@@ -148,4 +150,44 @@ test('the argument options match the logs the box will actually read', () => {
   // And every option must satisfy the pattern that guards the endpoint, or the UI offers
   // choices the server rejects.
   for (const o of opts) assert.equal(rejectReason('tail-log', o), null, `${o} must be accepted`);
+});
+
+test('a BOM-less UTF-16 log is decoded, not turned into NULs', () => {
+  // WHAT ACTUALLY BROKE tail-log (2026-08-11). Redirected PowerShell output is UTF-16 with
+  // NO BOM, so every BOM branch missed it, the file was decoded as UTF-8, and every second
+  // byte became a NUL. Postgres text cannot hold one - so the answer was unstorable, nothing
+  // was written, and the command sat at "picked up, never finished". Twice, identically,
+  // while `list-processes` in the same batch came back fine.
+  const dir = mkdtempSync(join(tmpdir(), 'ch-log-'));
+  const f = join(dir, 'utf16-no-bom.log');
+  writeFileSync(f, Buffer.from('hello from powershell\r\nsecond line\r\n', 'utf16le'));
+  const text = readTextFile(f);
+  assert.ok(!text.includes('\u0000'), 'no NULs may survive the decode');
+  assert.match(text, /hello from powershell/);
+  assert.match(text, /second line/);
+
+  // And ordinary UTF-8 must not be mistaken for it.
+  const g = join(dir, 'utf8.log');
+  writeFileSync(g, 'plain ascii log line\nanother\n');
+  assert.match(readTextFile(g), /plain ascii log line/);
+  assert.ok(!readTextFile(g).includes('\u0000'));
+});
+
+test('a NUL can never leave the machine, whatever produced it', () => {
+  // Belt as well as braces: the decoder above should stop producing them, but a single stray
+  // byte from any source makes the whole answer unwritable - an invisible failure, which is
+  // strictly worse than a garbled line.
+  assert.equal(scrub('before\u0000after'), 'beforeafter');
+});
+
+test('a report that cannot be stored still closes the row', () => {
+  // Otherwise `finished_at` stays NULL for ever and the admin page reads "picked up, no
+  // answer yet" - the same silence as a wedged command. Retrying WITHOUT the output is the
+  // point: the payload is the only part that can be unstorable.
+  const channel = readFileSync('scripts/auto-cart-bot/control-channel.mjs', 'utf8');
+  const block = channel.match(/for \(const c of commands\)[\s\S]*?\n    \}/)?.[0] ?? '';
+  assert.ok(block, 'could not find the diagnostics loop');
+  assert.match(block, /catch \(e\)/, 'a failed report must be caught, not left to reject');
+  assert.match(block, /output: null/, 'and retried without the payload');
+  assert.match(block, /could not be stored/);
 });

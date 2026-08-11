@@ -72,6 +72,12 @@ export const LOGS = {
  */
 export function scrub(text) {
   return String(text)
+    // NUL FIRST, unconditionally. A NUL is never legitimate output, and Postgres text
+    // cannot store one - so a single stray byte makes the whole answer unwritable and the
+    // command hangs forever as 'picked up, never finished'. The decoder above should stop
+    // producing them; this is the belt, because the cost of being wrong is an invisible
+    // failure rather than a garbled line.
+    .replace(/\u0000/g, '')
     // Authorization headers: EAT THE REST OF THE LINE. The first version matched
     // `(bearer|authorization:?)\s+\S+`, which on "authorization: Bearer abc123" consumed
     // the word "Bearer" as its one token and left the credential in place - a redaction
@@ -105,6 +111,18 @@ export function readTextFile(file) {
   if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return buf.toString('utf16le');
   if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) return buf.swap16().toString('utf16le');
   if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return buf.slice(3).toString('utf8');
+  // BOM-LESS UTF-16LE, which is what actually broke tail-log (2026-08-11). Redirected
+  // PowerShell output is UTF-16 with no BOM, so every branch above misses it and the file is
+  // decoded as UTF-8 - yielding a NUL between every character. Postgres text cannot hold
+  // \u0000, so the answer was unstorable and the command hung as 'picked up, never
+  // finished' - twice, identically, while list-processes in the same batch came back fine.
+  //
+  // ASCII text in UTF-16LE is 'X\0Y\0': NULs on odd offsets. Sampling the head is enough
+  // and cannot false-positive on real UTF-8, which never contains a NUL at all.
+  const head = buf.subarray(0, Math.min(buf.length, 512));
+  let odd = 0;
+  for (let i = 1; i < head.length; i += 2) if (head[i] === 0) odd++;
+  if (head.length >= 8 && odd > head.length / 4) return buf.toString('utf16le');
   return buf.toString('utf8');
 }
 
