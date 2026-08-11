@@ -31,6 +31,18 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+
+# READ THE CHILD'S OUTPUT AS UTF-8. Node always writes UTF-8; a Windows console defaults to
+# the OEM code page (437 here), so PowerShell decodes those bytes wrong and every em dash
+# in a log line arrives as "TCo". That is cosmetic on screen and NOT cosmetic in
+# logs\rc-keepwarm.log, which is what gets read at 07:30 and after a failure — the 08-10
+# post-mortem was done by reading exactly these files.
+#
+# This is the same UTF-8-vs-Windows-codepage mismatch that broke this script's own parsing
+# on 2026-08-11, arriving through the other door: there it was PowerShell READING a .ps1
+# as Windows-1252, here it is PowerShell reading a child's stdout as cp437.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+
 Set-Location (Split-Path -Parent $PSScriptRoot)
 if (-not (Test-Path "logs")) { New-Item -ItemType Directory -Path "logs" | Out-Null }
 if ([string]::IsNullOrWhiteSpace($LogFile)) {
