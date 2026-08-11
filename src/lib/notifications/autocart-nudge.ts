@@ -7,7 +7,7 @@ import { sendEmail } from './email';
  * copy already covers both): `/api/auto-cart/enrollment` fires it the moment the bot
  * reports a live connection going dead, and `/api/cron/autocart-nudge` fires it the
  * morning after someone enables auto-cart and never finishes /connect at all. See
- * migration 051 for the columns that dedupe both paths.
+ * migration 052 for the columns that dedupe both paths.
  *
  * Reuses the wording already on AutoCartSettings/`/connect` ("encrypted, on a private
  * machine we run... never on CampHawk's web servers or database") rather than writing

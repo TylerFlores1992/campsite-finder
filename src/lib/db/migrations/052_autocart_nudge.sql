@@ -1,3 +1,9 @@
+-- RENUMBERED 051 -> 052 on merge: 051 was already taken by bot_update_requests, which was
+-- applied to production on 2026-08-10. Two files claiming one number is not a cosmetic
+-- clash - a runner that tracks applied migrations by number would consider 052 already
+-- done, skip it silently, and /api/user/autocart would 500 on every toggle against
+-- columns that never got created.
+
 -- Tracking for the "finish connecting auto-cart" nudge email.
 --
 -- Two accounts sat with autocart_enabled=true and autocart_connected=false for days

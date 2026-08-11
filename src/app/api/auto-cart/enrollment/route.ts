@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   // Read the PRE-update state so a connected:true→false report can be told apart from
   // a connected:false→false one — the bot calls this on every keepalive pass a dead
   // session is confirmed on, and only the first one (the actual transition) should
-  // mail anyone. See migration 051.
+  // mail anyone. See migration 052.
   const before =
     connected === false
       ? await queryOne<{ autocart_connected: boolean; email: string }>(
@@ -44,6 +44,12 @@ export async function POST(req: NextRequest) {
        -- treats the auto-cart lane as usable only while this stays recent, so a
        -- session that silently dies between keepalives fails open to normal alerts.
        autocart_verified_at = CASE WHEN $2 IS TRUE THEN NOW() ELSE autocart_verified_at END,
+       -- RESET THE NUDGE ON A GENUINE RECONNECT. Without this the flag latches: one
+       -- email per account for life, so somebody who reconnects today and lapses again
+       -- in three months is never told a second time. Same rule as the claim's
+       -- nudged_at, which clears on a real re-open so each opening gets its own
+       -- follow-up rather than the first one silencing every later stay.
+       autocart_nudge_sent_at = CASE WHEN $2 IS TRUE THEN NULL ELSE autocart_nudge_sent_at END,
        updated_at = NOW()
      WHERE id = $3`,
     [typeof enabled === 'boolean' ? enabled : null, typeof connected === 'boolean' ? connected : null, userId]
