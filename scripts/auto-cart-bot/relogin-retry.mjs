@@ -88,7 +88,43 @@ export function planRetry({ kind, attempts = 0, now = 0 }) {
  * an unreadable state costs one extra attempt rather than the whole repair.
  */
 export function retryDue(state, now) {
-  if (!state) return false;
+  if (!state || state.givenUp) return false;
   const at = Number(state.nextAt);
   return !Number.isFinite(at) || now >= at;
+}
+
+/**
+ * Is an automatic repair still owed — i.e. should the human escalation stand down?
+ *
+ * DIFFERENT FROM `retryDue`. A retry scheduled two hours out is still owed even though it
+ * is not due yet, and `ensureLogin` must not un-enrol the user in the meantime. A retry
+ * that has been GIVEN UP is owed by nobody, and the escalation is then correct.
+ */
+export function repairOwed(state) {
+  return !!state && !state.givenUp;
+}
+
+/**
+ * The state to persist after giving up.
+ *
+ * KEPT, NOT DELETED. Deleting it would make the profile indistinguishable from one that
+ * has never been tried — and since a saved password is itself enough to start a repair
+ * (see `shouldBootstrapRepair`), an exhausted profile would immediately bootstrap a fresh
+ * ladder and loop forever. The tombstone is what makes "give up" mean give up.
+ */
+export function giveUpState({ kind, attempts, now }) {
+  return { kind, attempts, givenUp: true, at: now };
+}
+
+/**
+ * A profile with a saved password and no session, that nothing has tried yet.
+ *
+ * WHY THIS EXISTS. The retry state is only ever written by a FAILURE, so a profile whose
+ * session simply lapsed — or one stranded by the gate bug before it was fixed — has no
+ * state at all and would be escalated to a human despite the bot holding a working
+ * password. The credentials ARE the mandate: the user ticked "remember me" on /connect
+ * precisely so they would not have to do this again.
+ */
+export function shouldBootstrapRepair({ hasSession, hasCredentials, state }) {
+  return !hasSession && hasCredentials && !state;
 }

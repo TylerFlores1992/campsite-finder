@@ -81,7 +81,9 @@ test('keepSessionsWarm no longer skips a profile that owes a retry', () => {
     !/if \(!isLoggedIn\(user\.userId\) \|\| inUse\.has\(user\.userId\)\) continue;/.test(warm),
     'the original gate must be gone, not merely commented around',
   );
-  assert.match(warm, /retryDue\(pending, Date\.now\(\)\)/, 'a pending retry is admitted to the pass');
+  // Matched on the CALL, not on a local variable name — the point is that the pass
+  // consults the retry schedule at all, and renaming a binding must not read as a fix.
+  assert.match(warm, /retryDue\(\w+, Date\.now\(\)\)/, 'a pending retry is admitted to the pass');
 });
 
 test('the session flag stays honest and the retry lives apart from it', () => {
@@ -112,4 +114,60 @@ test('a successful relogin clears the pending retry', () => {
   const ok = bot.slice(bot.indexOf('auto-relogin from saved login succeeded') - 400,
                        bot.indexOf('auto-relogin from saved login succeeded'));
   assert.match(ok, /clearRetry\(user\.userId\)/);
+});
+
+/**
+ * ── BOOTSTRAP: the bot signs the user in, so the user does not have to ─────────────────
+ *
+ * The retry state is only ever written by a FAILURE. So a profile whose session simply
+ * lapsed — or one stranded before the gate bug was fixed — has no state at all, and the
+ * fix above still would not have touched it: `ensureLogin` escalates to a human despite
+ * the bot holding a password the user saved on /connect precisely so they would not be
+ * asked again. The credentials are the mandate.
+ */
+import { repairOwed, giveUpState, shouldBootstrapRepair } from '../scripts/auto-cart-bot/relogin-retry.mjs';
+
+test('a saved password with no session is enough to start a repair', () => {
+  assert.equal(
+    shouldBootstrapRepair({ hasSession: false, hasCredentials: true, state: null }), true,
+    'nothing has tried, and the bot can — so it must',
+  );
+  assert.equal(
+    shouldBootstrapRepair({ hasSession: false, hasCredentials: false, state: null }), false,
+    'with no saved password there is nothing the bot can do; /connect is the only path',
+  );
+  assert.equal(
+    shouldBootstrapRepair({ hasSession: true, hasCredentials: true, state: null }), false,
+    'a live session needs no repair',
+  );
+});
+
+test('giving up is a tombstone, not a delete — or it loops forever', () => {
+  // Saved credentials alone bootstrap a repair. If giving up ERASED the state, the very
+  // next pass would see "password, no session, nothing tried" and start a fresh ladder,
+  // retrying a CAPTCHA-walled account for the life of the profile.
+  const dead = giveUpState({ kind: 'captcha', attempts: 6, now: 1_000 });
+  assert.equal(shouldBootstrapRepair({ hasSession: false, hasCredentials: true, state: dead }), false);
+  assert.equal(retryDue(dead, 9_999_999), false, 'a given-up repair is never due again');
+});
+
+test('a scheduled-but-not-yet-due repair still holds off the human escalation', () => {
+  // These are DIFFERENT questions. `ensureLogin` un-enrols the user after ten minutes with
+  // nobody at the window, so it must stand down for the whole life of a pending repair —
+  // not merely at the instants the repair happens to be due.
+  const waiting = { kind: 'captcha', attempts: 2, nextAt: NOW + 2 * 3600_000 };
+  assert.equal(retryDue(waiting, NOW), false, 'not due yet');
+  assert.equal(repairOwed(waiting), true, 'but still owed, so nobody is un-enrolled');
+  assert.equal(repairOwed(giveUpState({ kind: 'captcha', attempts: 6, now: NOW })), false,
+    'once given up, escalating to a human is the correct move');
+});
+
+test('bot.mjs bootstraps from credentials and tombstones on give-up', () => {
+  const warm = bot.slice(bot.indexOf('async function keepSessionsWarm'));
+  assert.match(warm, /shouldBootstrapRepair\(\{/, 'the pass admits a credentialed profile with no state');
+  assert.match(warm, /writeRetry\(user\.userId, giveUpState\(/, 'and records giving up rather than erasing it');
+  assert.ok(!/plan\.giveUp\) \{\s*clearRetry/.test(warm), 'give-up must not clear the state');
+  // reloginPending is what ensureLogin consults; credentials alone must count.
+  assert.match(bot, /const reloginPending = \(userId\) => \{[\s\S]*?hasCreds\(profileDir\(userId\)\)/,
+    'a saved password counts as an owed repair');
 });

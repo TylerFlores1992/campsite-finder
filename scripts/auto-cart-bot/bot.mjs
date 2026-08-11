@@ -21,7 +21,7 @@ import { noteReserveCalifornia } from './reservecalifornia.mjs';
 import { recgovLoginState } from './session.mjs';
 import { attemptLoginWithCreds } from './recgov-login.mjs';
 import { hasCreds, loadCreds, deleteCreds, bumpReloginFails, resetReloginFails } from './credstore.mjs';
-import { planRetry, retryDue } from './relogin-retry.mjs';
+import { planRetry, retryDue, repairOwed, giveUpState, shouldBootstrapRepair } from './relogin-retry.mjs';
 import { acquireProfileLock, releaseProfileLock, profileLockHolder } from './profile-lock.mjs';
 import { loadEnv } from './load-env.mjs';
 
@@ -223,8 +223,19 @@ function writeRetry(userId, state) {
 function clearRetry(userId) {
   try { fs.unlinkSync(retryMarker(userId)); } catch { /* already gone */ }
 }
-/** Is an automatic repair still owed for this profile, whether or not it is due yet? */
-const reloginPending = (userId) => !!readRetry(userId);
+/**
+ * Is an automatic repair still owed for this profile, whether or not it is due yet?
+ *
+ * A saved password counts on its own. The retry state is only ever written by a FAILURE,
+ * so a profile whose session simply lapsed has none - and escalating that to a human, when
+ * the bot is holding a password the user saved so they would not be asked again, is the
+ * whole complaint. A GIVEN-UP repair is owed by nobody, and the escalation is correct then.
+ */
+const reloginPending = (userId) => {
+  const state = readRetry(userId);
+  if (state) return repairOwed(state);
+  return hasCreds(profileDir(userId));
+};
 
 // Confirm a real recreation.gov session (DOM-based; see session.mjs). The old
 // URL check was fooled by rec.gov's modal login and false-reported logged-out as
@@ -294,8 +305,11 @@ async function keepSessionsWarm() {
     // twelve days. `retryDue` paces it, so a stuck account is not retried every 30 minutes
     // forever from a residential IP.
     if (!isLoggedIn(user.userId)) {
-      const pending = readRetry(user.userId);
-      if (!retryDue(pending, Date.now())) continue;
+      const state = readRetry(user.userId);
+      const bootstrap = shouldBootstrapRepair({
+        hasSession: false, hasCredentials: hasCreds(profileDir(user.userId)), state,
+      });
+      if (!bootstrap && !retryDue(state, Date.now())) continue;
     }
     // Still fresh — nothing to refresh, so don't open a browser at all. This is what
     // makes a restart nearly free instead of a burst.
@@ -388,7 +402,10 @@ async function keepSessionsWarm() {
           });
           if (kind === 'credentials') bumpReloginFails(dir);
           if (plan.giveUp) {
-            clearRetry(user.userId);
+            // A TOMBSTONE, not a delete. Saved credentials are enough to start a repair on
+            // their own, so an erased state would bootstrap a fresh ladder on the very next
+            // pass and retry forever. This is what makes giving up mean giving up.
+            writeRetry(user.userId, giveUpState({ kind, attempts: plan.attempts, now: Date.now() }));
             // A password rec.gov keeps rejecting will never fix itself; a CAPTCHA might,
             // so its credentials are KEPT for the manual reconnect to reuse.
             if (kind === 'credentials') deleteCreds(dir);
