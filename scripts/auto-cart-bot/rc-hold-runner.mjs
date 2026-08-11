@@ -32,6 +32,7 @@ import {
   requestProfile, clearProfileRequest,
 } from './profile-lock.mjs';
 import { installTokenCapture, primeToken, tokenSecondsLeft } from './rc-token.mjs';
+import { spawn } from 'node:child_process';
 import { loadEnv, envSource, looksLikePlaceholder } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 
@@ -61,6 +62,9 @@ const TOKEN = process.env.AUTOCART_TOKEN;
 const POLL_MS = Number(process.env.RC_HOLD_POLL_MS || 15_000);
 /** Overridden by the feed's `pollMs` while a claim is outstanding. */
 let nextPollMs = POLL_MS;
+/** One hand-off per process life. The updater restarts us; a second spawn would mean two
+ *  updaters racing over the same checkout. */
+let updateStarted = false;
 const HEADLESS = process.env.RC_HEADLESS === 'true';
 
 const args = new Set(process.argv.slice(2));
@@ -314,7 +318,31 @@ async function runPass() {
     log(`feed error: ${err.message}`);
     return;
   }
-  const { claim = [], cart = [], release = [], expired = 0, pollMs } = work;
+  const { claim = [], cart = [], release = [], expired = 0, pollMs, updateRequested } = work;
+
+  // AN UPDATE ASKED FOR FROM THE ADMIN PAGE. The box has no inbound path, so the request
+  // rides this poll — see migration 051. All this does is hand off to auto-update.ps1,
+  // which re-checks the release guard itself: "now" means "as soon as it is safe", because
+  // an update ends the RC session and doing that minutes before a cart loses the site.
+  //
+  // Fire-and-forget and NOT awaited: the updater kills this very process on its way
+  // through, so waiting for it would be waiting to be killed. `detached` so being killed
+  // does not take the updater down with us — the mistake that would leave the box halfway
+  // between two commits.
+  if (updateRequested && !updateStarted) {
+    updateStarted = true;
+    log('→ update requested from the admin page — handing off to auto-update.ps1');
+    try {
+      const ps = spawn('powershell', [
+        '-NoProfile', '-ExecutionPolicy', 'Bypass',
+        '-File', path.join(process.cwd(), 'mini-pc', 'auto-update.ps1'),
+      ], { detached: true, stdio: 'ignore' });
+      ps.unref();
+    } catch (err) {
+      log(`  update hand-off failed: ${err.message}`);
+      updateStarted = false;
+    }
+  }
   // The server sets pollMs while anything is claimable. Somebody is watching a spinner
   // and the site is about to sit unheld — the exposure window is our poll interval plus
   // the release, so this is the one time to come back fast.

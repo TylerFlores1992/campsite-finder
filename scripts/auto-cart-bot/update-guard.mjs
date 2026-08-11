@@ -14,12 +14,16 @@
  * way to destroy it AT THE SAME TIME EVERY DAY. Two independent guards:
  *
  *   1. A QUIET WINDOW. Updates only in the small hours, so even a botched one has hours
- *      of daylight before an 08:00 release.
+ *      of daylight before an 08:00 release. **An explicit request lifts this one** — a
+ *      person asking for an update now has decided the staleness matters more than the
+ *      timing, and a schedule can only ever express an average.
  *   2. A LEAD CHECK against the real next release. The window alone is not enough: RC
  *      releases at 08:00 Pacific and a hold requested at 02:30 is inside the window and
  *      six hours from being carted.
  *
- * Both must pass. Either failing means "not now", never "probably fine".
+ * The RELEASE CHECK IS NOT LIFTABLE, by anything short of `--force` at a keyboard. An
+ * update requested by hand is still an update that ends the RC session, and doing it
+ * twenty minutes before a cart would lose the site the whole system exists to catch.
  *
  * ── AND WHY IT REFUSES WHEN IT CANNOT TELL ──────────────────────────────────────────
  * A feed that will not answer means we do not know whether a hold is due. The rule this
@@ -85,6 +89,7 @@ export function safeToUpdate(opts = {}) {
     windowStart = DEFAULTS.windowStart,
     windowEnd = DEFAULTS.windowEnd,
     minHoursToRelease = DEFAULTS.minHoursToRelease,
+    requested = false,
     force = false,
   } = opts;
 
@@ -96,8 +101,9 @@ export function safeToUpdate(opts = {}) {
     return { ok: false, reason: 'cannot reach CampHawk — refusing to update blind, a hold may be due' };
   }
 
+  // An explicit "update now" replaces the schedule, not the safety check below it.
   const hour = pacificHour(now);
-  if (hour < windowStart || hour >= windowEnd) {
+  if (!requested && (hour < windowStart || hour >= windowEnd)) {
     return { ok: false, reason: `outside the quiet window (${hour}:00 PT, allowed ${windowStart}:00-${windowEnd}:00)` };
   }
 
@@ -106,7 +112,8 @@ export function safeToUpdate(opts = {}) {
     return { ok: false, reason: `a hold releases in ${hrs.toFixed(1)}h — too close to take the session down` };
   }
 
-  return { ok: true, reason: hrs == null ? 'quiet window, no hold queued' : `quiet window, next release ${hrs.toFixed(1)}h away` };
+  const why = requested ? 'requested' : 'quiet window';
+  return { ok: true, reason: hrs == null ? `${why}, no hold queued` : `${why}, next release ${hrs.toFixed(1)}h away` };
 }
 
 // ── CLI ─────────────────────────────────────────────────────────────────────────────
@@ -117,6 +124,7 @@ if (process.argv[1] && process.argv[1].endsWith('update-guard.mjs')) {
   const url = process.env.CAMPHAWK_URL || 'https://camphawk.app';
   const token = process.env.AUTOCART_TOKEN || '';
   let nextRelease = null;
+  let requested = false;
   let feedReachable = false;
   try {
     const r = await fetch(`${url}/api/auto-cart/rc-holds?leadSeconds=0`, {
@@ -126,11 +134,12 @@ if (process.argv[1] && process.argv[1].endsWith('update-guard.mjs')) {
     if (r.ok) {
       const j = await r.json();
       nextRelease = j?.nextRelease ?? null;
+      requested = j?.updateRequested === true;
       feedReachable = true;
     }
   } catch { /* feedReachable stays false — see safeToUpdate */ }
 
-  const verdict = safeToUpdate({ nextRelease, feedReachable, force });
+  const verdict = safeToUpdate({ nextRelease, feedReachable, requested, force });
   console.log(`[update-guard] ${verdict.ok ? 'PROCEED' : 'SKIP'} — ${verdict.reason}`);
   process.exit(verdict.ok ? 0 : 1);
 }

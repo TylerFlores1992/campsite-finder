@@ -24,6 +24,7 @@ $botDir = Split-Path -Parent $PSScriptRoot
 Set-Location $botDir
 if (-not (Test-Path "logs")) { New-Item -ItemType Directory -Path "logs" | Out-Null }
 $log = "logs\auto-update.log"
+if (-not $env:CAMPHAWK_URL) { $env:CAMPHAWK_URL = "https://camphawk.app" }
 
 function Write-Line($msg) {
   $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [auto-update] $msg"
@@ -85,8 +86,21 @@ foreach ($i in 1..24) {
   } catch { }
 }
 
+function Report-Applied($sha, $note) {
+  # CLEARS THE REQUEST, whether it worked or not. An update that failed and left the flag
+  # pending would be retried on the runner's next 15-second poll — a rollback loop on the
+  # machine holding the RC session. Same reasoning as one auto-login attempt per release.
+  try {
+    $body = @{ updateApplied = $sha; note = $note } | ConvertTo-Json -Compress
+    Invoke-RestMethod -Method Post -Uri "$env:CAMPHAWK_URL/api/auto-cart/rc-holds" `
+      -Headers @{ Authorization = "Bearer $env:AUTOCART_TOKEN"; "Content-Type" = "application/json" } `
+      -Body $body -TimeoutSec 15 | Out-Null
+  } catch { Write-Line "could not report the update: $($_.Exception.Message)" }
+}
+
 if ($ok) {
   Write-Line "OK — runner is checking in on $($after.Substring(0,7))."
+  Report-Applied $after "updated and verified"
   exit 0
 }
 
@@ -100,5 +114,7 @@ Set-Location $repoRoot
 Set-Location $botDir
 & npm ci --omit=dev 2>&1 | Tee-Object -FilePath $log -Append
 & "$PSScriptRoot\start-all.bat"
-Write-Line "rolled back. The RC SESSION IS GONE either way — run mini-pc\rc-login.bat."
+Report-Applied $before "NEW CODE DID NOT CHECK IN — rolled back"
+Write-Line "rolled back. The RC session is gone either way — maybeAutoLogin will restore it"
+Write-Line "  before the next release; mini-pc\rc-login.bat if you want it back sooner."
 exit 1

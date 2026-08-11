@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ExternalLink, XCircle } from 'lucide-react';
 import BetaTesters from '@/components/BetaTesters';
 import CostsPanel from '@/components/admin/CostsPanel';
@@ -900,6 +900,64 @@ function AlarmTest() {
  * means the capability probe found nothing — a build that shipped without it, which is
  * exactly the silent failure the Codemagic assertion exists to prevent.
  */
+/**
+ * "Update the mini-PC now."
+ *
+ * WHY A BUTTON AND NOT JUST A SCHEDULE. Some days a fix needs to land in a minute; other
+ * weeks nothing should change. A cron can only express an average, and the 02:00-05:00
+ * window it was built around means a change made at noon waits fourteen hours.
+ *
+ * It only sets a flag. The box polls the hold feed every 15 seconds and applies the same
+ * release guard it always does — so "now" means "as soon as it is safe", which is the only
+ * kind of now worth offering when an update ends the RC session and a cart may be minutes
+ * away. That is stated on the button rather than left as a surprise.
+ */
+function BotUpdateButton() {
+  const [state, setState] = useState<{ pending: boolean; requestedAt: string | null; appliedAt: string | null; appliedNote: string | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    const r = await fetch('/api/admin/bot-update');
+    if (r.ok) setState(await r.json());
+  }
+  useEffect(() => { void load(); }, []);
+
+  async function ask() {
+    setBusy(true);
+    try {
+      const r = await fetch('/api/admin/bot-update', { method: 'POST' });
+      if (r.ok) setState(await r.json());
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="mt-4 border-t border-ch-line pt-3">
+      <h3 className="mb-0.5 text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+        Update the mini-PC
+      </h3>
+      <p className="mb-2 text-ch-fine text-ch-muted">
+        Takes the latest bot code and restarts everything. The box checks every 15 seconds,
+        then waits if a hold releases within 6 hours — an update ends the ReserveCalifornia
+        session, so it will not do it just before a cart. It rolls back on its own if the
+        new code does not check in.
+      </p>
+      <button
+        type="button"
+        onClick={ask}
+        disabled={busy || state?.pending === true}
+        className="rounded-ch border border-ch-line px-3 py-1.5 text-ch-meta font-bold text-ch-ink hover:bg-ch-surface disabled:opacity-60"
+      >
+        {state?.pending ? 'Update requested — waiting for the box' : busy ? 'Asking…' : 'Update now'}
+      </button>
+      {state && !state.pending && state.appliedAt && (
+        <p className="mt-2 text-ch-fine text-ch-muted">
+          Last update {new Date(state.appliedAt).toLocaleString()} — {state.appliedNote ?? 'no note'}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function RcWebviewTest() {
   const [result, setResult] = useState<string | null>(null);
   const [diag, setDiag] = useState<Record<string, string> | null>(null);
@@ -1101,6 +1159,7 @@ function SystemHealthPanel({ data }: { data: AdminData }) {
 
         <AlarmTest />
         <RcWebviewTest />
+        <BotUpdateButton />
       </Panel>
 
       <Panel title="Poller capacity">

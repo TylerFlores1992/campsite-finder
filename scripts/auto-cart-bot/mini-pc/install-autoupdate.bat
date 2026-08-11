@@ -23,7 +23,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
-schtasks /Create /TN "%TASK%" /SC HOURLY /RL HIGHEST /F ^
+REM EVERY 5 MINUTES, not hourly. The task is now the FALLBACK: the primary path is the
+REM "Update the mini-PC now" button on the admin page, which the hold runner sees on its
+REM next 15-second poll. A frequent, almost-always-refusing check is cheap (the guard exits
+REM in under a second) and means a requested update lands in minutes rather than at 2am.
+schtasks /Create /TN "%TASK%" /SC MINUTE /MO 5 /RL HIGHEST /F ^
   /TR "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%SCRIPT%\""
 if errorlevel 1 (
   echo(
@@ -33,10 +37,13 @@ if errorlevel 1 (
 )
 
 echo(
-echo Registered "%TASK%" — hourly, and it will refuse unless:
-echo   * the Pacific hour is between 02:00 and 05:00,
-echo   * no hold releases within 6 hours,
-echo   * and CampHawk is reachable to confirm both.
+echo Registered "%TASK%" — every 5 minutes, and it refuses unless:
+echo   * you asked for it on the admin page, OR the Pacific hour is 02:00-05:00,
+echo   * AND no hold releases within 6 hours,
+echo   * AND CampHawk is reachable to confirm both.
+echo(
+echo The RELEASE check is never lifted by asking. An update ends the RC session, and
+echo doing that minutes before a cart would lose the site.
 echo(
 echo It rolls back on its own if the new code does not check in within 4 minutes.
 echo Log: scripts\auto-cart-bot\logs\auto-update.log

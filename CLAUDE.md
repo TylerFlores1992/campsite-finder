@@ -869,7 +869,22 @@ That is why both missed mornings needed a human, and it is what multiplies per s
   not. Same rule as the worker deploy Action failing unless a fresh heartbeat lands.
 - Supervisors are killed BEFORE the checkout moves, or they restart the children being
   replaced and the box runs old code under a new commit.
-- `update.bat` stays as the manual path, and still ends the RC session — log in after.
+- `update.bat` stays as the manual path, and still ends the RC session.
+- **UPDATES ARE ON-DEMAND NOW (migration 051), and the timer is the FALLBACK.** Admin →
+  System Health → **"Update now"** sets a flag; the hold runner sees it on its next 15s
+  poll and hands off to `auto-update.ps1` (detached — the updater kills the runner on its
+  way through, and once per process life, because two updaters racing one checkout is
+  worse than a slow update). The scheduled task runs every 5 min and almost always
+  refuses. **A request lifts the quiet window and NEVER the release check** — an update
+  ends the RC session however it was triggered, so "I asked for it" must not override "a
+  cart is minutes away". Nothing connects INTO the box: it is behind a home router, and
+  opening a port on the machine holding the RC session to save a scheduled task is a poor
+  trade. The request is cleared whether the update succeeded or not, or a failure would be
+  retried every 15 seconds.
+- **A MANUAL RE-LOGIN AFTER AN UPDATE IS NOW OPTIONAL.** The update still ends the session
+  (the token lives in the Chromium it closes), but `maybeAutoLogin` restores it ~15 min
+  before the next real release, unattended, proven 2026-08-10. Expect
+  `autocart.rc_session` to read dead in between — that is correct, not a fault.
 
 ### UNATTENDED LOGIN WORKS — first clean production run, 2026-08-10 18:35Z
 `rc-test-login.bat` ran the real `attemptLogin` from a genuinely signed-out state and got

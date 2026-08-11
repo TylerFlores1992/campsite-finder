@@ -121,3 +121,41 @@ test('the auto-update verifies the new code works, and rolls back when it does n
   const resetIdx = up.indexOf('git reset --hard $after');
   assert.ok(killIdx > 0 && killIdx < resetIdx, 'supervisors are stopped before the checkout moves');
 });
+
+test('an explicit request lifts the quiet window but NEVER the release check', () => {
+  // THE WHOLE POINT OF THE BUTTON. A schedule can only express an average; some days a fix
+  // needs to land now. But an update ends the RC session however it was triggered, so
+  // "I asked for it" must not override "a cart is minutes away" — that would lose the site
+  // the system exists to catch.
+  assert.equal(safeToUpdate({ now: pt(14), requested: true }).ok, true, 'asked for at 2pm: allowed');
+  assert.match(safeToUpdate({ now: pt(14), requested: true }).reason, /requested/);
+
+  const blocked = safeToUpdate({ now: pt(14), requested: true, nextRelease: '2026-08-12T16:00:00' });
+  assert.equal(blocked.ok, false, 'asked for, but a hold releases in 2h');
+  assert.match(blocked.reason, /too close to take the session down/);
+
+  // And an unreachable feed still refuses, request or not — we cannot know whether a hold
+  // is due, and unknown is not safe for an action that ends the session.
+  assert.equal(safeToUpdate({ now: pt(14), requested: true, feedReachable: false }).ok, false);
+});
+
+test('the request is cleared whether the update worked or not', async () => {
+  // An update that failed and left the flag pending would be retried on the runner's next
+  // 15-second poll — a rollback loop on the machine holding the RC session.
+  const { readFileSync } = await import('node:fs');
+  const up = readFileSync('scripts/auto-cart-bot/mini-pc/auto-update.ps1', 'utf8');
+  const calls = up.split('Report-Applied').length - 1;
+  assert.ok(calls >= 3, `expected a definition plus a call on both paths, saw ${calls}`);
+  assert.match(up, /Report-Applied \$before "NEW CODE DID NOT CHECK IN/, 'the rollback path reports too');
+});
+
+test('the runner hands off once, detached', async () => {
+  // Detached because the updater kills this very process on its way through: a child tied
+  // to us would die with us and leave the box halfway between two commits. Once, because
+  // two updaters racing over one checkout is worse than a slow update.
+  const { readFileSync } = await import('node:fs');
+  const runner = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
+  assert.match(runner, /updateStarted/, 'guarded to one hand-off per process life');
+  assert.match(runner, /detached: true/, 'survives being killed by the thing it started');
+  assert.ok(!/await .*auto-update/.test(runner), 'never awaited — that would be waiting to be killed');
+});

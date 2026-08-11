@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, reportCartFailure, nextHoldRelease, holdAtRisk, type HoldRequest } from '@/lib/rc-holds';
 import { alarmCall } from '@/lib/notifications/voice';
 import { rcSessionFault, type RcSessionFault } from '@/lib/health-thresholds';
+import { botUpdateState, markBotUpdateApplied } from '@/lib/bot-update';
 import { query, mutate } from '@/lib/db/client';
 import { notifyHoldMissed } from '@/lib/rc-holds-notify';
 import { manageTokenFor } from '@/lib/notifications/actions';
@@ -63,11 +64,16 @@ export async function GET(req: NextRequest) {
   // Lead time on purpose: the bot should be mid-request when the site frees, not
   // starting to think about it a second late. RC releases on the exact minute.
   const lead = Math.min(600, Math.max(0, Number(req.nextUrl.searchParams.get('leadSeconds') ?? 90)));
-  const [cart, stale, claims, nextRelease] = await Promise.all([
+  const [cart, stale, claims, nextRelease, update] = await Promise.all([
     dueHolds(lead), expireStaleHolds(), pendingClaims(),
     // For the keep-warm, not the runner: it signs in shortly before this, because RC
     // issues no renewable session and a token only lasts an hour. See rc-autologin.mjs.
     nextHoldRelease(),
+    // ON-DEMAND UPDATES ride this poll. The box has no inbound path (it is behind a home
+    // router — cloudflared exists for the broker for that reason), and opening one on the
+    // machine holding the RC session to save a scheduled task would be a poor trade. It
+    // already asks us for work every 15s; this is one more field in the answer.
+    botUpdateState().catch(() => ({ pending: false })),
   ]);
 
   // `claim` is separated from `release` on purpose. A stale release is merely overdue;
@@ -101,6 +107,9 @@ export async function GET(req: NextRequest) {
     expired: stale.expired,
     pollMs: claims.length ? 1000 : cart.length ? 5000 : null,
     nextRelease,
+    // Read by update-guard.mjs, which still applies the release check on top: an update
+    // asked for by hand must not take the session down twenty minutes before a cart.
+    updateRequested: update.pending === true,
   });
 }
 
@@ -138,6 +147,18 @@ export async function POST(req: NextRequest) {
       await alarmSessionDead(why).catch((e) => console.error('[rc-holds] alarm failed:', e));
     }
     return NextResponse.json({ ok: true, state: 'session-recorded' });
+  }
+
+  // THE BOX REPORTING AN UPDATE, successful or not. Recorded either way — an update that
+  // failed and left the request pending would be retried on every 15s poll, which is a
+  // rollback loop on the machine holding the session. Same shape as one auto-login attempt
+  // per release.
+  if (body?.updateApplied === true || typeof body?.updateApplied === 'string') {
+    await markBotUpdateApplied(
+      typeof body.updateApplied === 'string' ? body.updateApplied : null,
+      typeof body.note === 'string' ? body.note : null,
+    );
+    return NextResponse.json({ ok: true, state: 'update-recorded' });
   }
 
   // A PASS THAT COULD NOT ACT. Records why against the holds it was about to touch and
