@@ -50,10 +50,36 @@ if ([string]::IsNullOrWhiteSpace($LogFile)) {
 }
 $restartLog = "logs\restarts.log"
 
+# THE SHARED LOG IS CONTENDED, AND LOSING LINES TO IT IS NOT ACCEPTABLE (2026-08-11).
+# Every supervisor appends to one restarts.log, so when several start or restart at the
+# same instant Windows file locking makes all but one fail with "the process cannot access
+# the file ... because it is being used by another process". Observed on all five at once
+# after an update.
+#
+# It is not fatal - $ErrorActionPreference is Continue, so the supervisor carried on and the
+# children ran. What it costs is the RECORD: lines go missing from restarts.log exactly when
+# several processes are restarting, which is the only time anyone reads it. A post-mortem
+# tool that drops writes under load is the same failure as a watchdog wired to the thing it
+# watches.
+#
+# Retry briefly, then give up SILENTLY rather than printing a wall of red that buries the
+# real message. The console line is written first and unconditionally, so the information is
+# never lost even when the file write is.
+#
+# -Encoding UTF8 to match the per-process log below. Without it this file takes the shell's
+# default, and a log the post-mortem depends on becomes mojibake - the same mismatch that
+# put "TCo" where every em dash should have been.
 function Write-Line($msg) {
   $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [supervise:$Name] $msg"
   Write-Host $line
-  Add-Content -Path $restartLog -Value $line
+  for ($i = 0; $i -lt 5; $i++) {
+    try {
+      Add-Content -Path $restartLog -Value $line -Encoding UTF8 -ErrorAction Stop
+      return
+    } catch {
+      Start-Sleep -Milliseconds (40 * ($i + 1))
+    }
+  }
 }
 
 Write-Line "starting: $Command"
