@@ -55,9 +55,16 @@ export async function POST(req: NextRequest) {
       { status: 403 }
     );
   }
-  await mutate('UPDATE users SET autocart_enabled = $1, updated_at = NOW() WHERE id = $2', [
-    !!enabled,
-    userId,
-  ]);
+  await mutate(
+    `UPDATE users SET
+       autocart_enabled = $1,
+       -- Stamped every time the toggle goes ON, not just the first time — re-enabling
+       -- after turning it off should reset the "next morning" clock the nudge cron
+       -- reads, same as flipping it on for the first time.
+       autocart_enabled_at = CASE WHEN $1 THEN NOW() ELSE autocart_enabled_at END,
+       updated_at = NOW()
+     WHERE id = $2`,
+    [!!enabled, userId]
+  );
   return NextResponse.json({ ok: true, enabled: !!enabled });
 }

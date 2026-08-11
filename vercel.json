@@ -9,6 +9,10 @@
     {
       "path": "/api/cron/sync-tnsc",
       "schedule": "30 9 * * *"
+    },
+    {
+      "path": "/api/cron/autocart-nudge",
+      "schedule": "0 15 * * *"
     }
   ]
 }
