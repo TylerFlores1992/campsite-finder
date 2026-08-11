@@ -328,6 +328,45 @@ export async function recordSessionHealth(
   ).catch((e) => console.error('[rc-holds] recordSessionHealth failed:', e.message));
 }
 
+export interface RehearsalRow {
+  ran_at: string | null;
+  ok: boolean | null;
+  ok_at: string | null;
+  detail: string | null;
+  skipped_why: string | null;
+}
+
+/**
+ * The nightly proof that the bot can still sign in — see migration 054.
+ *
+ * A SKIP AND A PASS ARE WRITTEN DIFFERENTLY, on purpose. `ok = NULL` with a reason is "we
+ * declined to test tonight"; `ok = true` is "we signed in". Recording a skip as a pass is
+ * how a fortnight of quiet evenings would read as a fortnight of proven mornings, and the
+ * whole point of this table is that the three failures it exists to catch all LOOKED fine
+ * until 07:30.
+ *
+ * `ok_at` is never cleared by a later failure — the health check needs to say "broken
+ * since", not merely "broken".
+ */
+export async function recordRehearsal(
+  ok: boolean | null, detail: string | null, skippedWhy: string | null,
+): Promise<void> {
+  await mutate(
+    `UPDATE rc_login_rehearsal
+        SET ran_at = NOW(), ok = $1, detail = $2, skipped_why = $3,
+            ok_at = CASE WHEN $1 IS TRUE THEN NOW() ELSE ok_at END
+      WHERE id = 1`,
+    [ok, detail ? detail.slice(0, 300) : null, skippedWhy ? skippedWhy.slice(0, 200) : null],
+  ).catch((e) => console.error('[rc-holds] recordRehearsal failed:', e.message));
+}
+
+export async function lastRehearsal(): Promise<RehearsalRow | null> {
+  const [row] = await query<RehearsalRow>(
+    `SELECT ran_at::text, ok, ok_at::text, detail, skipped_why FROM rc_login_rehearsal WHERE id = 1`,
+  ).catch(() => []);
+  return row ?? null;
+}
+
 export async function markClaimed(id: string): Promise<void> {
   await mutate(
     `UPDATE rc_hold_requests SET status = 'claimed', claimed_at = NOW(), updated_at = NOW() WHERE id = $1`,

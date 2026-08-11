@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server';
-import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, reportCartFailure, nextHoldRelease, holdAtRisk, type HoldRequest } from '@/lib/rc-holds';
+import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, recordRehearsal, lastRehearsal, reportCartFailure, nextHoldRelease, holdAtRisk, type HoldRequest } from '@/lib/rc-holds';
 import { alarmCall } from '@/lib/notifications/voice';
 import { rcSessionFault, type RcSessionFault } from '@/lib/health-thresholds';
 import { botUpdateState, markBotUpdateApplied, noteBotUpdateAttempt } from '@/lib/bot-update';
@@ -65,7 +65,13 @@ export async function GET(req: NextRequest) {
   // Lead time on purpose: the bot should be mid-request when the site frees, not
   // starting to think about it a second late. RC releases on the exact minute.
   const lead = Math.min(600, Math.max(0, Number(req.nextUrl.searchParams.get('leadSeconds') ?? 90)));
-  const [cart, stale, claims, nextRelease, update, commands] = await Promise.all([
+  // OPT-IN, because this is the 15-second hot path and only ONE caller wants it. The
+  // keep-warm asks once every twenty minutes to decide whether tonight's login rehearsal
+  // is due; the hold runner polls this same endpoint every 15s and would be paying for a
+  // row it never reads. At 08:00:00 the answer that carts a site is the only thing this
+  // response is for.
+  const wantRehearsal = req.nextUrl.searchParams.get('rehearsal') === '1';
+  const [cart, stale, claims, nextRelease, update, commands, rehearsal] = await Promise.all([
     dueHolds(lead), expireStaleHolds(), pendingClaims(),
     // For the keep-warm, not the runner: it signs in shortly before this, because RC
     // issues no renewable session and a token only lasts an hour. See rc-autologin.mjs.
@@ -80,6 +86,7 @@ export async function GET(req: NextRequest) {
     // KINDS are all the box is told - see scripts/auto-cart-bot/bot-commands.mjs, which
     // holds the authoritative allowlist and implements each one itself.
     claimBotCommands(),
+    wantRehearsal ? lastRehearsal() : Promise.resolve(null),
   ]);
 
   // `claim` is separated from `release` on purpose. A stale release is merely overdue;
@@ -117,6 +124,12 @@ export async function GET(req: NextRequest) {
     // asked for by hand must not take the session down twenty minutes before a cart.
     updateRequested: update.pending === true,
     commands,
+    // WHEN IT LAST RAN, not whether it passed. The bot's only question is "am I due?", and
+    // the once-a-day gate has to survive a restart — `supervise.ps1` restarts the keep-warm
+    // on exit and `update.bat` restarts everything, so a process-local timestamp would let
+    // a restart loop re-run the login as often as it crashed. That is the shape that cost
+    // twelve hours of IP block on 2026-08-06.
+    lastRehearsalAt: rehearsal?.ran_at ?? null,
   });
 }
 
@@ -154,6 +167,27 @@ export async function POST(req: NextRequest) {
       await alarmSessionDead(why).catch((e) => console.error('[rc-holds] alarm failed:', e));
     }
     return NextResponse.json({ ok: true, state: 'session-recorded' });
+  }
+
+  // THE NIGHTLY LOGIN REHEARSAL — see migration 054.
+  //
+  // NOT folded into the `session` branch above, though both are about the RC session, and
+  // the difference is the point. `session.live` says whether the CURRENT token is accepted;
+  // this says whether we can still MINT one. On 2026-08-11 those were opposite: the session
+  // was dead (correctly reported, correctly amber) and the sign-in was broken — and only
+  // one of those two facts loses a campsite at 08:00.
+  //
+  // A SKIP IS RECORDED, NOT DROPPED. `ok: null` with a reason is how "we declined to test
+  // tonight" stays distinguishable from "we tested and it passed"; letting a skip write
+  // nothing at all would leave the last real result sitting there looking current.
+  if (body?.rehearsal && typeof body.rehearsal === 'object') {
+    const r = body.rehearsal;
+    await recordRehearsal(
+      typeof r.ok === 'boolean' ? r.ok : null,
+      typeof r.detail === 'string' ? r.detail : null,
+      typeof r.skippedWhy === 'string' ? r.skippedWhy : null,
+    );
+    return NextResponse.json({ ok: true, state: 'rehearsal-recorded' });
   }
 
   // THE BOX REPORTING AN UPDATE, successful or not. Recorded either way — an update that
