@@ -221,10 +221,10 @@ export async function POST(req: NextRequest) {
 /**
  * The RC session is dead and a hold is about to release. Wake the owner up.
  *
- * `ALARM_LEAD_MIN` is wider than the auto-login's 15-minute lead deliberately: the
- * auto-login reports its failure at T-15, and a person needs longer than that to surface,
- * find a computer and sign in by hand. Anything outside the window is not an emergency and
- * gets the ordinary treatment — a red admin check and the 07:30 pre-flight.
+ * `ALARM_LEAD_MIN` is wider than the auto-login's lead deliberately: the auto-login reports
+ * its failure at T-30, and a person needs to surface, find a computer and sign in by hand.
+ * Anything outside the window is not an emergency and gets the ordinary treatment — a red
+ * admin check and the 07:30 pre-flight.
  *
  * `AUTOCART_ALARM_PHONE` overrides the destination. The person who has to fix this is
  * whoever can reach the mini-PC, which is not necessarily the user whose hold it is; today
@@ -244,10 +244,17 @@ const ALARM_LEAD_MIN = Number(process.env.AUTOCART_ALARM_LEAD_MIN || 45);
  *
  * A dead session at T-40 is not an emergency, it is a pending repair. It becomes an
  * emergency when the repair has been attempted and failed, or when there is no longer time
- * for it. 12 is just inside RC_AUTOLOGIN_LEAD_MIN (15), so the window has demonstrably
- * opened and passed without success.
+ * for it.
+ *
+ * IT MUST TRACK `RC_AUTOLOGIN_LEAD_MIN`, and sit JUST inside it. This is the fallback
+ * branch — the one that fires when the keep-warm reports nothing at all, because the
+ * process is wedged or stopped. (A login that fails and says so rings immediately, on the
+ * `auto sign-in failed` branch, at any distance.) Left at 12 when the lead moved from 15
+ * to 30 on 2026-08-11, it would still have been "inside the lead" and still passed a test
+ * asserting only that — while quietly buying an eighteen-minute silence in the one window
+ * where somebody can still act. 25 keeps the grace at five minutes, as 12-against-15 did.
  */
-const ALARM_AFTER_MIN = Number(process.env.AUTOCART_ALARM_AFTER_MIN || 12);
+const ALARM_AFTER_MIN = Number(process.env.AUTOCART_ALARM_AFTER_MIN || 25);
 
 /**
  * Is the session verdict itself unusable — and is a hold about to pay for it?

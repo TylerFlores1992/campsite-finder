@@ -113,16 +113,61 @@ const RENEW_BEFORE_S = Number(process.env.RC_RENEW_BEFORE_S || 10 * 60);
 const EXPIRY_POLL_MS = 60_000;
 
 /**
+ * How long RC holds a carted unit before it lapses back to the public.
+ *
+ * MIRRORS `RC_CART_HOLD_MINUTES` in src/lib/limits.ts, which cannot be imported here — the
+ * bot is plain .mjs and that is TypeScript. `worker/autologin-lead.test.mts` asserts the
+ * two agree, so a change on one side fails the build rather than drifting quietly.
+ */
+const CART_HOLD_MIN = 15;
+
+/**
  * How long before a hold's release to make sure we have a token.
  *
- * 15 minutes against a ~60-minute token: late enough that the token comfortably outlives
- * the 08:00 cart and the claim that follows it, early enough that a failed attempt still
- * leaves time to wake a human. Signing in at 07:00 would risk the token lapsing before
- * the release, which is the whole failure we are fixing.
+ * ── THE ARITHMETIC, because both directions cost something ─────────────────────────────
+ * A login at T−L mints a ~60-minute access token, so it dies at T−L+60. The bot needs that
+ * token not just to CART at T−0 but to RELEASE at up to T+CART_HOLD_MIN — the user has the
+ * full cart hold to tap claim, and `remove/cartentry` is run by the bot with its own
+ * session. So the hard ceiling is:
+ *
+ *     T − L + 60  ≥  T + CART_HOLD_MIN     →     L ≤ 45
+ *
+ * Below that the trade is: a bigger L buys a human more time to solve a CAPTCHA or run
+ * rc-login.bat, and spends token margin at the moment of the cart.
+ *
+ *   L = 15 (until 2026-08-11)  token has 45m left at the cart, human gets 15 minutes.
+ *   L = 30 (now)               token has 30m left at the cart — still twice the cart
+ *                              hold — and a human gets 30 minutes, which is the
+ *                              difference between "surface, find a computer, sign in"
+ *                              being possible and being a coin flip.
+ *
+ * THE EXTRA FIFTEEN MINUTES ARE FOR A HUMAN, NOT FOR US TO RETRY. One attempt per release
+ * still stands: repeated logins from this address are what got it blocked for 12h on
+ * 2026-08-06, and a wider window is not permission to spend it.
  */
-const AUTOLOGIN_LEAD_MIN = Number(process.env.RC_AUTOLOGIN_LEAD_MIN || 15);
-/** Minutes of token life below which a hold is NOT considered covered. */
-const AUTOLOGIN_MIN_TOKEN_MIN = Number(process.env.RC_AUTOLOGIN_MIN_TOKEN_MIN || 20);
+const AUTOLOGIN_LEAD_MIN = Number(process.env.RC_AUTOLOGIN_LEAD_MIN || 30);
+
+/**
+ * Minutes of token life below which a hold is NOT considered covered.
+ *
+ * DERIVED, NOT CHOSEN — and it was a flat 20 until 2026-08-11, which was already wrong at
+ * L = 15. "Covered" has to mean "will still be alive when we RELEASE the unit", i.e. for
+ * L + CART_HOLD_MIN minutes, not merely until the cart. At 20 the bot would look at a
+ * token with 21 minutes left, decide the hold was covered, skip its one login, cart at
+ * T−0 with ~6 minutes of token left, and then fail the claim — the user taps "I'm ready"
+ * and the site is released by nobody.
+ *
+ * Reachable, not theoretical: sign in by hand an hour before a release (say the 07:30
+ * pre-flight tells you to) and the token has exactly this much life left when the
+ * auto-login looks. Moving L to 30 without moving this would have made it worse — a
+ * 25-minute token at T−30 dies at T−5, before the cart itself.
+ *
+ * The +5 is margin for a login that takes a while and for the token's life being ~60
+ * rather than exactly 60.
+ */
+const AUTOLOGIN_MIN_TOKEN_MIN = Number(
+  process.env.RC_AUTOLOGIN_MIN_TOKEN_MIN || AUTOLOGIN_LEAD_MIN + CART_HOLD_MIN + 5,
+);
 
 /** Headful by default. RC/Okta fingerprints headless Chromium — the same rule the
  *  rec.gov bot follows, and the reason its cart path is headed too. */

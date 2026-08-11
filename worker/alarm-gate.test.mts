@@ -35,10 +35,18 @@ test('a dead session does NOT ring while the auto-login is still pending', () =>
   const leadMin = num(route, 'ALARM_LEAD_MIN');
   const autoLoginLead = num(keepwarm, 'AUTOLOGIN_LEAD_MIN');
 
-  // The exact scenario from 2026-08-09: dead session, hold 40 and then 20 minutes out.
-  // Both rang. Neither should.
+  // The scenario from 2026-08-09: dead session, hold 40 minutes out. It rang. It must not.
   assert.equal(shouldAlarm(40, 'RC rejected the session', afterMin), false, '40m out must be silent');
-  assert.equal(shouldAlarm(20, 'RC rejected the session', afterMin), false, '20m out must be silent');
+
+  // EXPRESSED AGAINST THE LEAD, not against a literal. This second case used to be a bare
+  // `shouldAlarm(20, ...) === false`, which was only meaningful while the lead was 15 —
+  // once the lead moved to 30 on 2026-08-11, T-20 was a login window that had opened ten
+  // minutes earlier and produced nothing, i.e. genuinely worth ringing. A test pinned to
+  // the old number reports the new behaviour as a regression.
+  assert.equal(
+    shouldAlarm(autoLoginLead + 5, 'RC rejected the session', afterMin), false,
+    'before the login has had its turn, a dead session is a pending repair',
+  );
 
   // The gate has to sit INSIDE the auto-login's lead, or the login never gets its turn.
   assert.ok(
