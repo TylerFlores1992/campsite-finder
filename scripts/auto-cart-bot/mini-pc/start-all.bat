@@ -14,14 +14,29 @@ REM the profile and died" left the RC session unattended until morning. Supervis
 REM same wedge is: exit, restart, auto-login re-establishes the session, 08:00 still fires.
 cd /d "%~dp0.."
 if not exist logs mkdir logs
-REM A power cut or a taskkill leaves the profile locks behind — the release never runs.
-REM They read as HELD for ten minutes, so the processes we are about to start would skip
-REM their first passes for no reason. At boot nothing is running, so clearing is safe.
-del /q "profiles\*\.camphawk-profile-lock" >nul 2>&1
-del /q ".rc-bot-profile\.camphawk-profile-lock" >nul 2>&1
+
+REM ── STOP BEFORE STARTING (2026-08-11) ─────────────────────────────────────────────────
+REM This is what makes "it just opened another five windows" structurally impossible. These
+REM windows are `powershell -NoExit`, so a dead process leaves its console behind — which
+REM means "is there a window?" was never evidence that anything was running, and starting
+REM again simply stacked a second set on top of the first. Two Chromium on one user-data-dir
+REM do not fail cleanly, they corrupt the session.
+REM
+REM At boot there is nothing to stop and this returns in well under a second. stop-all also
+REM clears the profile locks a hard kill leaves behind, which used to be done here.
+REM
+REM RUNNING THIS WHILE EVERYTHING IS HEALTHY WILL END THE RC SESSION — the access token
+REM lives in the Chromium being stopped. maybeAutoLogin restores it before the next
+REM release; that is the accepted cost of never running two copies.
+echo(
+echo === Making sure nothing is already running ===
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop-all.ps1"
+if errorlevel 1 goto :stuck
 
 REM The tunnel is cloudflared's own long-running process with its own reconnect logic, so
 REM it is left alone — wrapping it would supervise a thing that already supervises itself.
+REM It IS stopped by stop-all though: it is relaunched here on every update, and nothing
+REM stopping it is how a second tunnel window appeared after every one of them.
 start "Cloudflare tunnel" cmd /k "cloudflared tunnel run camphawk-broker"
 
 start "CampHawk bot"      powershell -NoExit -ExecutionPolicy Bypass -File "%~dp0supervise.ps1" -Name "bot"    -Command "npm start"
@@ -39,4 +54,13 @@ start "CampHawk RC keep-warm" powershell -NoExit -ExecutionPolicy Bypass -File "
 start "CampHawk RC holds"     powershell -NoExit -ExecutionPolicy Bypass -File "%~dp0supervise.ps1" -Name "rc-hold-runner" -Command "node rc-hold-runner.mjs"
 
 echo Launched tunnel + bot + broker + RC keep-warm + RC holds, all supervised.
-echo Logs in scripts\auto-cart-bot\logs\ ; restarts in logs\restarts.log
+echo FIVE windows, and only five. Logs in scripts\auto-cart-bot\logs\ ; restarts in
+echo logs\restarts.log
+exit /b 0
+
+:stuck
+echo(
+echo *** Something is still running and would not stop. NOTHING was launched. ***
+echo *** Starting on top of survivors is what put ten windows on this box.    ***
+echo *** The surviving process ids are listed above and in logs\restarts.log. ***
+exit /b 1

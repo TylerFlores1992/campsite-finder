@@ -32,6 +32,29 @@ function Write-Line($msg) {
   Add-Content -Path $log -Value $line
 }
 
+function Report-Applied($sha, $note) {
+  # CLEARS THE REQUEST, whether it worked or not. An update that failed and left the flag
+  # pending would be retried on the runner's next 15-second poll — a rollback loop on the
+  # machine holding the RC session. Same reasoning as one auto-login attempt per release.
+  #
+  # Defined up here, not beside its first success-path call: PowerShell runs top-down and a
+  # function is not callable before its definition, so the early refusal below would have
+  # died on "Report-Applied is not recognized" — leaving the request pending, which is the
+  # retry loop this exists to prevent.
+  try {
+    $body = @{ updateApplied = $sha; note = $note } | ConvertTo-Json -Compress
+    Invoke-RestMethod -Method Post -Uri "$env:CAMPHAWK_URL/api/auto-cart/rc-holds" `
+      -Headers @{ Authorization = "Bearer $env:AUTOCART_TOKEN"; "Content-Type" = "application/json" } `
+      -Body $body -TimeoutSec 15 | Out-Null
+  } catch { Write-Line "could not report the update: $($_.Exception.Message)" }
+}
+
+function Stop-Everything {
+  & powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\stop-all.ps1" 2>&1 |
+    Tee-Object -FilePath $log -Append
+  return ($LASTEXITCODE -eq 0)
+}
+
 # ── 1. May we? ────────────────────────────────────────────────────────────────────────
 $guardArgs = @("update-guard.mjs")
 if ($Force) { $guardArgs += "--force" }
@@ -50,19 +73,20 @@ if ($before -eq $after) { Write-Line "already current at $($before.Substring(0,7
 Write-Line "updating $($before.Substring(0,7)) -> $($after.Substring(0,7))"
 
 # ── 3. Stop, take, restart ────────────────────────────────────────────────────────────
-# Kill the SUPERVISORS first, or they would helpfully restart the children we are about to
-# replace — and we would end up running the old code under a new commit.
-Get-CimInstance Win32_Process |
-  Where-Object { $_.CommandLine -match 'supervise\.ps1' } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-Get-CimInstance Win32_Process |
-  Where-Object { $_.CommandLine -match 'rc-keepwarm\.mjs|rc-hold-runner\.mjs|broker|npm start' } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-Start-Sleep -Seconds 3
-# A hard kill never runs the lock's release, and a stale lock reads as HELD for ten
-# minutes — long enough to make the restarted processes skip their first passes.
-Remove-Item ".rc-bot-profile\.camphawk-profile-lock" -ErrorAction SilentlyContinue
-Remove-Item "profiles\*\.camphawk-profile-lock" -ErrorAction SilentlyContinue
+# Stopping is stop-all.ps1's job, and it kills the supervisors FIRST — otherwise they
+# helpfully restart the children we are about to replace, and the box ends up running old
+# code under a new commit.
+#
+# This block used to do its own killing and leaked three ways: it never stopped cloudflared
+# (which start-all relaunches, so every update added a tunnel window), its pattern missed
+# `bot.mjs` entirely, and it left orphaned Chromium holding the profile. stop-all also
+# VERIFIES, and a non-zero exit means we must not touch the checkout — a half-stopped box
+# updated underneath itself is worse than a stale one.
+if (-not (Stop-Everything)) {
+  Write-Line "could not stop everything — leaving the checkout alone."
+  Report-Applied $before "REFUSED — processes would not stop"
+  exit 1
+}
 
 & git reset --hard $after 2>&1 | Tee-Object -FilePath $log -Append
 Set-Location $botDir
@@ -86,18 +110,6 @@ foreach ($i in 1..24) {
   } catch { }
 }
 
-function Report-Applied($sha, $note) {
-  # CLEARS THE REQUEST, whether it worked or not. An update that failed and left the flag
-  # pending would be retried on the runner's next 15-second poll — a rollback loop on the
-  # machine holding the RC session. Same reasoning as one auto-login attempt per release.
-  try {
-    $body = @{ updateApplied = $sha; note = $note } | ConvertTo-Json -Compress
-    Invoke-RestMethod -Method Post -Uri "$env:CAMPHAWK_URL/api/auto-cart/rc-holds" `
-      -Headers @{ Authorization = "Bearer $env:AUTOCART_TOKEN"; "Content-Type" = "application/json" } `
-      -Body $body -TimeoutSec 15 | Out-Null
-  } catch { Write-Line "could not report the update: $($_.Exception.Message)" }
-}
-
 if ($ok) {
   Write-Line "OK — runner is checking in on $($after.Substring(0,7))."
   Report-Applied $after "updated and verified"
@@ -106,9 +118,10 @@ if ($ok) {
 
 # ── 5. Roll back ──────────────────────────────────────────────────────────────────────
 Write-Line "NO CHECK-IN after 4 min. Rolling back to $($before.Substring(0,7))."
-Get-CimInstance Win32_Process |
-  Where-Object { $_.CommandLine -match 'supervise\.ps1|rc-keepwarm\.mjs|rc-hold-runner\.mjs' } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+# Stop BEFORE the checkout moves, here too — start-all.bat stops as well, but that happens
+# after the reset, so relying on it would rewrite the working tree underneath live
+# processes. Its own stop then finds nothing and returns immediately.
+[void](Stop-Everything)
 Set-Location $repoRoot
 & git reset --hard $before 2>&1 | Tee-Object -FilePath $log -Append
 Set-Location $botDir

@@ -117,9 +117,10 @@ test('the auto-update verifies the new code works, and rolls back when it does n
   assert.match(up, /update-guard\.mjs/, 'the decision is delegated to the tested guard');
   // Killing the supervisors first is load-bearing: otherwise they restart the children we
   // are replacing, and the box ends up running old code under a new commit.
-  const killIdx = up.indexOf("supervise\\.ps1");
+  // Delegated to stop-all.ps1 since 2026-08-11, which is where the ordering now lives.
+  const killIdx = up.indexOf('Stop-Everything');
   const resetIdx = up.indexOf('git reset --hard $after');
-  assert.ok(killIdx > 0 && killIdx < resetIdx, 'supervisors are stopped before the checkout moves');
+  assert.ok(killIdx > 0 && killIdx < resetIdx, 'everything is stopped before the checkout moves');
 });
 
 test('an explicit request lifts the quiet window but NEVER the release check', () => {
@@ -147,6 +148,114 @@ test('the request is cleared whether the update worked or not', async () => {
   const calls = up.split('Report-Applied').length - 1;
   assert.ok(calls >= 3, `expected a definition plus a call on both paths, saw ${calls}`);
   assert.match(up, /Report-Applied \$before "NEW CODE DID NOT CHECK IN/, 'the rollback path reports too');
+});
+
+/**
+ * ── STOPPING BEFORE STARTING ───────────────────────────────────────────────────────────
+ *
+ * Reported 2026-08-11: an update "just adds another 5" windows. Four separate causes, all
+ * of the same shape — something that looked like it stopped the old processes and did not:
+ *
+ *  1. `start-all.bat` launches `powershell -NoExit`, so a dead process leaves its console
+ *     sitting there. "Is there a window?" was never evidence that anything was running.
+ *  2. `update.bat` killed by WINDOW TITLE, which matches nothing (PowerShell retitles its
+ *     own console) — the identical bug fixed in rc-login.bat on 08-08 and left here. It
+ *     survived on `taskkill /IM node.exe /F` until supervisors shipped, after which the
+ *     supervisors lived through it and RESTARTED the children.
+ *  3. `auto-update.ps1` never stopped cloudflared, which start-all relaunches every time.
+ *  4. Nothing stopped an orphaned Chromium, which holds the real lock on the profile.
+ *
+ * These assert the wiring, not the wording, because the wording is what drifted.
+ */
+const miniPc = (f: string) =>
+  import('node:fs').then(({ readFileSync }) =>
+    readFileSync(`scripts/auto-cart-bot/mini-pc/${f}`, 'utf8'));
+
+/**
+ * Strip comments before asserting that something is ABSENT.
+ *
+ * Without this, "must not kill by image name" fails on the comments explaining why not to
+ * kill by image name — and the fix would be to delete the explanation. Same trap as the
+ * test that matched `notification_sent_at` inside its own justifying comment.
+ */
+const code = (s: string) =>
+  s.split('\n').filter((l) => !/^\s*(REM\b|::|#)/i.test(l)).join('\n');
+
+test('every start path stops everything first, through the one script that verifies', async () => {
+  for (const f of ['update.bat', 'start-all.bat']) {
+    const s = await miniPc(f);
+    assert.match(s, /stop-all\.ps1/, `${f} must delegate stopping`);
+    const stopIdx = s.indexOf('stop-all.ps1');
+    const startIdx = s.search(/start "CampHawk bot"|start-all\.bat/);
+    assert.ok(stopIdx > 0 && stopIdx < startIdx, `${f} stops before it launches`);
+    // Launching on top of survivors is the bug. A stop that could not finish must abort
+    // the launch, not proceed and hope.
+    assert.match(s, /if errorlevel 1 goto :stuck/, `${f} refuses to launch on survivors`);
+  }
+});
+
+test('nothing kills by window title, or by image name', async () => {
+  for (const f of ['update.bat', 'start-all.bat', 'rc-login.bat', 'stop-all.ps1', 'auto-update.ps1']) {
+    const s = code(await miniPc(f));
+    assert.ok(!/WINDOWTITLE/.test(s), `${f} must not kill by window title — it matches nothing`);
+    // `taskkill /IM chrome.exe /F` was in update.bat. A person uses this machine and
+    // screen-shares it; that closes THEIR browser.
+    assert.ok(!/\/IM\s+(chrome|node)\.exe/.test(s), `${f} must not kill by image name`);
+  }
+});
+
+test('stop-all covers every process start-all launches, and proves they stopped', async () => {
+  // `code()` again: this file's own header explains each of these by name, so matching the
+  // raw text would pass with every pattern deleted.
+  const s = code(await miniPc('stop-all.ps1'));
+  // cloudflared is deliberately unsupervised, but start-all DOES relaunch it — so leaving
+  // it out is one duplicate tunnel window per update, accumulating forever.
+  for (const p of ['bot\\.mjs', 'broker\\.mjs', 'rc-keepwarm\\.mjs', 'rc-hold-runner\\.mjs', 'cloudflared', 'supervise\\.ps1']) {
+    assert.ok(s.includes(p), `stop-all must match ${p}`);
+  }
+  // Stop-Process does not kill a process TREE on Windows, which is why the payloads are
+  // named directly rather than trusting the `npm start` shim to take its child with it.
+  assert.match(s, /user-data-dir/, 'orphaned Playwright Chromium holds the profile lock');
+  assert.match(s, /\.rc-bot-profile/, 'and the Chromium match is scoped to our own profiles');
+  assert.ok(s.indexOf('$SUPERVISORS') < s.indexOf('$CHILDREN'),
+    'supervisors are stopped first, or they restart what we just killed');
+  assert.match(s, /SURVIVED/, 'it says so when something is still up');
+  assert.match(s, /exit 1/, 'and exits non-zero so callers do not launch on top');
+});
+
+test('auto-update stops before the checkout moves, on both paths', async () => {
+  const up = await miniPc('auto-update.ps1');
+  const guard = up.indexOf('if (-not (Stop-Everything))');
+  const forward = up.indexOf('git reset --hard $after');
+  const rollbackStop = up.indexOf('[void](Stop-Everything)');
+  const back = up.indexOf('git reset --hard $before');
+  assert.ok(guard > 0 && guard < forward, 'the update stops first');
+  assert.ok(rollbackStop > forward && rollbackStop < back, 'and so does the rollback');
+  // start-all.bat stops too, but that runs AFTER the reset — relying on it would rewrite
+  // the working tree underneath live processes.
+  assert.match(up, /REFUSED — processes would not stop/, 'a stop that fails aborts the update');
+});
+
+test('Report-Applied is defined before anything calls it', async () => {
+  // PowerShell runs top-down: a function is not callable above its definition. The early
+  // refusal path would have died on "not recognized" and left the request PENDING — which
+  // the runner retries every 15 seconds, the exact rollback loop this reporting prevents.
+  const up = await miniPc('auto-update.ps1');
+  const def = up.indexOf('function Report-Applied');
+  const firstCall = up.indexOf('Report-Applied $before');
+  assert.ok(def > 0 && def < firstCall, 'defined above its first call');
+});
+
+test('rc-login relaunches the RC pair supervised', async () => {
+  // A hand sign-in used to quietly downgrade the two processes it was fixing to bare
+  // `powershell -NoExit`. The keep-warm's wedge watchdog EXITS on purpose, expecting
+  // something to bring it back — unsupervised, that is the 08-10 ten-hour silence again.
+  const s = await miniPc('rc-login.bat');
+  for (const proc of ['rc-keepwarm', 'rc-hold-runner']) {
+    const line = s.split('\n').find((l) => l.startsWith('start ') && l.includes(proc));
+    assert.ok(line, `${proc} must still be relaunched`);
+    assert.match(line!, /supervise\.ps1/, `${proc} must be relaunched supervised`);
+  }
 });
 
 test('the runner hands off once, detached', async () => {

@@ -2,31 +2,20 @@
 REM One-click update for the mini PC: stop everything, pull latest code, relaunch.
 REM Double-click this after a CampHawk code change. (Local files — .env, profiles,
 REM logs, carted/handled.json — are git-ignored, so `git pull` won't touch them.)
+REM
+REM STOPPING IS DELEGATED TO stop-all.ps1 (2026-08-11). This script used to kill by window
+REM title, which matched NOTHING — PowerShell retitles its own console, the same bug found
+REM in rc-login.bat on 08-08. It survived on `taskkill /IM node.exe /F` until supervisors
+REM shipped; after that the supervisors lived through it and RESTARTED the children, so an
+REM update left five stale windows and opened five more. stop-all kills by command line
+REM and verifies, and nothing is relaunched unless it reports everything down.
 setlocal
 cd /d "%~dp0.."
 
 echo(
-echo === Stopping bot, broker, tunnel, and the RC processes ===
-taskkill /FI "WINDOWTITLE eq CampHawk bot*"     /T /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq CampHawk broker*"  /T /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq CampHawk RC keep-warm*" /T /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq CampHawk RC holds*"     /T /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq Cloudflare tunnel*" /T /F >nul 2>&1
-REM Dedicated bot host: node.exe is only the bot + broker, so clear any strays.
-taskkill /IM node.exe /F >nul 2>&1
-taskkill /IM cloudflared.exe /F >nul 2>&1
-REM Also kill any Chromium the bot/broker left behind, so a stale browser can't
-REM hold the profile or linger after an update.
-taskkill /IM chrome.exe /F >nul 2>&1
-taskkill /IM headless_shell.exe /F >nul 2>&1
-timeout /t 2 /nobreak >nul
-
-REM A hard kill never runs the lock's release, so the file survives and reads as HELD for
-REM ten minutes — during which the relaunched RC processes refuse to open the profile and
-REM skip their passes. An update at 07:55 would silently cost the 8am cart. Nothing is
-REM running at this point, so clearing it is safe by construction.
-del /q "profiles\*\.camphawk-profile-lock" >nul 2>&1
-del /q ".rc-bot-profile\.camphawk-profile-lock" >nul 2>&1
+echo === Stopping bot, broker, tunnel, RC processes and any bot Chromium ===
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop-all.ps1"
+if errorlevel 1 goto :stuck
 
 echo(
 echo === Pulling latest code ===
@@ -45,27 +34,35 @@ REM FIVE, not three. This said "Three new windows" from before the RC pair exist
 REM is the worst kind of stale: someone counting windows to check the update worked would
 REM see three, tick the box, and never notice the two RC processes had failed to start —
 REM and the RC ones are exactly the pair whose silent absence cost a hold on 2026-08-07.
-echo === Update complete. FIVE new windows should have opened: ===
+echo === Update complete. FIVE windows should be open, and ONLY five: ===
 echo     Cloudflare tunnel, CampHawk bot, CampHawk broker,
 echo     CampHawk RC keep-warm, CampHawk RC holds.
 echo If you cannot see all five, something failed to start — do not assume it is fine.
+echo If you can see TEN, stop-all did not do its job — say so, do not just close them.
 echo(
-REM THIS SCRIPT ENDS THE RC SESSION. `taskkill /IM node.exe /F` takes Chromium down with
-REM the node process driving it, and the RC access token IS the session — it lives in the
-REM running browser, not in the profile. Measured 2026-08-10: a sign-in at 16:15 read
-REM "no token at all - signed out; okta session GONE (404)" eight minutes later, straight
-REM after an update. rc-login.bat's "your sign-in survives that" is WRONG and is corrected
-REM there too.
+REM THIS SCRIPT ENDS THE RC SESSION. Stopping the RC processes takes Chromium down with
+REM them, and the RC access token IS the session — it lives in the running browser, not in
+REM the profile. Measured 2026-08-10: a sign-in at 16:15 read "no token at all - signed
+REM out; okta session GONE (404)" eight minutes later, straight after an update.
 REM
 REM So the order is UPDATE FIRST, THEN LOG IN. Doing it the other way throws away the
 REM sign-in you just made, and the loss is silent until the next 8am.
 echo(
-echo *** THIS ENDED THE RC SESSION. Run mini-pc\rc-login.bat now. ***
-echo     The RC token lives in the browser this script just killed, not in the
-echo     profile, so updating always costs the sign-in. Update first, log in after.
+echo *** THIS ENDED THE RC SESSION. ***
+echo     You do NOT have to fix that by hand — maybeAutoLogin signs itself back in
+echo     about 15 minutes before the next real release. Run mini-pc\rc-login.bat only
+echo     if you want the session back sooner, or if the 07:30 pre-flight complains.
 echo You can close this window.
 pause
 exit /b 0
+
+:stuck
+echo(
+echo *** Something would not stop. NOTHING was updated or relaunched — on purpose. ***
+echo *** Launching on top of survivors is what put ten windows on this box.        ***
+echo *** The surviving process ids are listed above and in logs\restarts.log.      ***
+pause
+exit /b 1
 
 :fail
 echo(

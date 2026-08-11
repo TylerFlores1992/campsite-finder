@@ -26,12 +26,24 @@ REM
 REM It failed SILENTLY at the only step that matters, and then failed loudly somewhere
 REM harmless: the relaunched windows died on `Tee-Object` because the survivors still held
 REM logs\rc-*.log open. A file-lock error is what you saw; a stale process is what it meant.
-REM Observed 2026-08-08. `update.bat` never hit this because it also runs
-REM `taskkill /IM node.exe /F`, which ignores titles — but THIS script must not do that,
-REM since it would take the rec.gov bot and the broker down with it.
+REM Observed 2026-08-08. `update.bat` masked the same bug for months by also running
+REM `taskkill /IM node.exe /F`, which ignores titles — until supervisors shipped and lived
+REM through it, at which point it started leaving five stale windows behind on every run.
+REM Both scripts kill by command line now; update.bat via mini-pc\stop-all.ps1. THIS one
+REM keeps its own narrower list on purpose — stop-all takes down the rec.gov bot and the
+REM broker too, and a ReserveCalifornia sign-in has no business doing that.
+REM The supervisor's own command line contains "rc-keepwarm.mjs", so this pattern takes the
+REM supervisor down with the child — which it must, or the supervisor would restart the
+REM process we are about to replace, five seconds into the sign-in.
+REM
+REM The Chromium match is scoped to .rc-bot-profile: Playwright's browser outlives a
+REM force-killed parent and keeps the real Chrome lock on the user-data-dir, so deleting our
+REM own lock file is not enough — and a blanket `taskkill /IM chrome.exe` would close the
+REM browser of whoever is sitting at this machine.
 powershell -NoProfile -Command ^
-  "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'rc-keepwarm\.mjs|rc-hold-runner\.mjs' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+  "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -match 'rc-keepwarm\.mjs|rc-hold-runner\.mjs' -or $_.CommandLine -match '--user-data-dir=[^\"]*\.rc-bot-profile') -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 del /q ".rc-bot-profile\.camphawk-profile-lock" >nul 2>&1
+del /q ".rc-bot-profile\.camphawk-profile-wanted" >nul 2>&1
 timeout /t 3 /nobreak >nul
 
 echo(
@@ -44,23 +56,27 @@ if errorlevel 1 goto :fail
 
 echo(
 echo === Signed in. Relaunching the RC processes ===
-start "CampHawk RC keep-warm" powershell -NoExit -Command "node rc-keepwarm.mjs 2>&1 | Tee-Object -FilePath logs\rc-keepwarm.log -Append"
-start "CampHawk RC holds"     powershell -NoExit -Command "node rc-hold-runner.mjs 2>&1 | Tee-Object -FilePath logs\rc-holds.log -Append"
+REM UNDER THE SUPERVISOR, like start-all.bat does. These were bare `powershell -NoExit`
+REM windows until 2026-08-11, which meant a hand sign-in quietly downgraded exactly the two
+REM processes it was fixing: whatever killed them next would not be restarted, and the
+REM keep-warm's wedge watchdog EXITS on purpose, expecting something to bring it back.
+start "CampHawk RC keep-warm" powershell -NoExit -ExecutionPolicy Bypass -File "%~dp0supervise.ps1" -Name "rc-keepwarm"   -Command "node rc-keepwarm.mjs"
+start "CampHawk RC holds"     powershell -NoExit -ExecutionPolicy Bypass -File "%~dp0supervise.ps1" -Name "rc-hold-runner" -Command "node rc-hold-runner.mjs"
 echo(
 REM Say what a FAILED relaunch looks like. The failure mode here is a window that opens,
 REM prints a red file-lock error and then just sits there — which reads as "a window
 REM opened", i.e. success, unless you know otherwise.
 echo TWO new windows should have opened, both printing log lines within a minute.
-echo If either shows a red "cannot access the file ... because it is being used by
-echo another process" error, an old copy is still running: run mini-pc\update.bat,
-echo which force-kills every node process and relaunches all five cleanly — and
-echo then run THIS script again, because update.bat ends the RC session.
+echo If you now have FOUR RC windows, or either shows a red "cannot access the file
+echo ... because it is being used by another process" error, an old copy survived:
+echo run mini-pc\stop-all.ps1 then mini-pc\start-all.bat, and then run THIS script
+echo again — stopping everything ends the RC session.
 REM CORRECTED 2026-08-10. This used to say the sign-in survives an update because it
 REM "lives in .rc-bot-profile\, which nothing deletes". The PROFILE survives; the SESSION
 REM does not. RC keeps no Okta session cookie in the profile (see the 2026-08-09 finding),
-REM so the access token in the running browser is the whole session — and update.bat's
-REM `taskkill /IM node.exe /F` closes that browser. Acting on the old wording cost a
-REM freshly-made session eight minutes after it was created.
+REM so the access token in the running browser is the whole session — and stopping the RC
+REM processes closes that browser. Acting on the old wording cost a freshly-made session
+REM eight minutes after it was created.
 echo(
 echo Then confirm from anywhere:  curl -s https://camphawk.app/api/health/status
 echo   autocart.rc_session should read ok within ~20 minutes (one keep-warm pass).

@@ -78,7 +78,7 @@ export const DEFAULTS = {
 /**
  * @param {{ now?: Date, nextRelease?: string|null, feedReachable?: boolean,
  *           windowStart?: number, windowEnd?: number, minHoursToRelease?: number,
- *           force?: boolean }} opts
+ *           requested?: boolean, force?: boolean }} opts
  * @returns {{ ok: boolean, reason: string }}
  */
 export function safeToUpdate(opts = {}) {
