@@ -92,7 +92,13 @@ test('the module never logs or exports a credential', async () => {
   // would hand the password to anything that imports this file. Only the presence check
   // and the attempt itself are public.
   const exported = [...src.matchAll(/^export (?:async )?function (\w+)/gm)].map((m) => m[1]);
-  assert.deepEqual(exported.sort(), ['attemptLogin', 'hasCredentials']);
+  // ADDING TO THIS LIST IS A DECISION, not a formality — that is why it is pinned exactly.
+  // `looksLikeAnotherAccount(pageText, ourEmail)` is a pure string comparison returning a
+  // boolean; it is handed the EMAIL (a username, not a secret), never the password, and
+  // returns neither. Exported so it can be tested directly, since the branch it guards -
+  // refusing to type our password at somebody else's remembered account - is one a browser
+  // test would reach only by chance.
+  assert.deepEqual(exported.sort(), ['attemptLogin', 'hasCredentials', 'looksLikeAnotherAccount']);
   // And the module must not be able to send anything anywhere by itself.
   assert.ok(!/\bfetch\s*\(/.test(src), 'rc-autologin makes no network calls of its own');
 });
@@ -158,4 +164,43 @@ test('the challenge check ignores the passive badge', async () => {
   // for a human who had nothing to solve, and that false reading was then repeated as fact.
   assert.match(src, /for \(let el = f\.parentElement; el; el = el\.parentElement\)/,
     'ancestors must be checked too');
+});
+
+/**
+ * ── OKTA CAN SKIP THE EMAIL STEP, AND THAT COST A CAMPSITE (2026-08-11) ────────────────
+ *
+ * The 07:30 auto-login reported "the sign-in form did not load" and both holds went
+ * uncarted. The form had loaded: RC's `ln` cookie remembers the username, so Okta served
+ * "Verify with your password" with no email field on the page at all. `attemptLogin`
+ * demanded EMAIL_SELECTORS and bailed when they were absent — two lines above a lookup
+ * that already knew the password could come first.
+ */
+test('the password field is looked for BEFORE the email step is called missing', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8');
+  const pwIdx = src.indexOf('let pw = await findIn(page, PASSWORD_SELECTORS');
+  const bail = src.indexOf("'neither an email nor a password field appeared'");
+  assert.ok(pwIdx > 0 && bail > pwIdx, 'the password lookup must precede the give-up');
+  // And giving up now requires BOTH to be absent, not just the email.
+  assert.match(src, /if \(!user && !pw\) \{/);
+  assert.ok(!/let user = await findIn\(page, EMAIL_SELECTORS\);\s*\n\s*if \(!user\) \{/.test(src),
+    'the email field must not be mandatory');
+});
+
+test('a remembered-account screen is only refused on POSITIVE evidence it is not ours', async () => {
+  const { looksLikeAnotherAccount } = await import('../scripts/auto-cart-bot/rc-autologin.mjs');
+  const ours = 'tylerflores1992@yahoo.com';
+  // The exact screen from 2026-08-11: Okta naming our own account.
+  assert.equal(looksLikeAnotherAccount('Verify with your password tylerflores1992@yahoo.com', ours), false);
+  assert.equal(looksLikeAnotherAccount('Verify with your password someoneelse@gmail.com', ours), true);
+  // UNKNOWN IS NOT A MISMATCH. Okta renders that line differently across widget versions,
+  // and treating "I cannot see an identity" as "wrong account" would send every login round
+  // the houses — or fail one outright when "Back to sign in" is absent. Same rule as
+  // hasAvailabilityInRange returning null.
+  assert.equal(looksLikeAnotherAccount('Verify with your password', ours), false);
+  assert.equal(looksLikeAnotherAccount('', ours), false);
+  assert.equal(looksLikeAnotherAccount('a@b.com and tylerflores1992@yahoo.com', ours), false,
+    'ours appearing anywhere on the page is enough');
+  // Case is not identity.
+  assert.equal(looksLikeAnotherAccount('TylerFlores1992@Yahoo.com', ours), false);
 });

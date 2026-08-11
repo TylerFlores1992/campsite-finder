@@ -107,6 +107,11 @@ const PASSWORD_SELECTORS = [
   '#okta-signin-password',
   'input[type="password"]',
 ];
+const BACK_TO_SIGNIN_SELECTORS = [
+  'a:has-text("Back to sign in")',
+  'a:has-text("Sign in with a different")',
+  'button:has-text("Back to sign in")',
+];
 const SUBMIT_SELECTORS = [
   'input[type="submit"]',
   'button[type="submit"]',
@@ -162,6 +167,27 @@ export function hasCredentials() {
  * it matched `input[type="email"]` rather than `input[name="identifier"]` is the difference
  * between "Okta swapped widgets" and "we are typing into the wrong box".
  */
+/**
+ * Is this remembered-account screen showing SOMEBODY ELSE?
+ *
+ * Only ever true on POSITIVE evidence of a different address. "I cannot see an identity"
+ * must not read as "wrong account": Okta renders that line differently across widget
+ * versions, and treating unknown as a mismatch would send every login round the houses -
+ * or, if "Back to sign in" is absent, fail one that would have worked. Same rule as
+ * `hasAvailabilityInRange` returning null.
+ *
+ * The cost of getting it wrong the other way is real, which is why it is checked at all:
+ * typing our password at another account spends a bad-password strike, and RC locks
+ * accounts.
+ */
+export function looksLikeAnotherAccount(pageText, ourEmail) {
+  const text = String(pageText ?? '');
+  const ours = String(ourEmail ?? '').toLowerCase();
+  const shown = text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g);
+  if (!shown || !ours) return false;
+  return !shown.some((a) => a.toLowerCase() === ours);
+}
+
 async function findIn(page, selectors, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -367,20 +393,47 @@ export async function attemptLogin(ctx, page, { homeUrl, isLive, log = () => {},
       if (!solved) return { ok: false, reason: 'the CAPTCHA was not solved in time' };
     }
 
-    let user = await findIn(page, EMAIL_SELECTORS);
-    if (!user) {
+    // ASK FOR THE PASSWORD FIRST. Okta may serve the password step with NO email field on
+    // the page at all: the `ln` cookie remembers the username, so Identity Engine skips the
+    // identifier screen entirely. Demanding the email field and bailing when it is absent
+    // is what failed the 2026-08-11 07:30 login with "the sign-in form did not load" — the
+    // form had loaded, it just was not the one this code insisted on, and the site was lost
+    // over a selector. The old code even knew the password could come first; it made that
+    // lookup two lines AFTER the check that had already returned.
+    let pw = await findIn(page, PASSWORD_SELECTORS, 3000);
+    let user = pw ? null : await findIn(page, EMAIL_SELECTORS);
+
+    // NEVER TYPE OUR PASSWORD AT SOMEBODY ELSE'S IDENTITY. A remembered-account screen names
+    // the account; a mismatch means going back to the email step rather than spending a
+    // bad-password strike on a profile RC can lock. Only a POSITIVE mismatch counts —
+    // see looksLikeAnotherAccount.
+    if (pw && looksLikeAnotherAccount(await page.content().catch(() => ''), email)) {
+      step('the remembered account is not ours — returning to the email step');
+      const back = await findIn(page, BACK_TO_SIGNIN_SELECTORS, 5_000);
+      if (back) {
+        await back.loc.click().catch(() => {});
+        await page.waitForTimeout(1500);
+      }
+      pw = null;
+      user = await findIn(page, EMAIL_SELECTORS);
+    }
+
+    if (!user && !pw) {
       return {
         ok: false,
-        reason: await withBanner(link ? 'the sign-in form did not load' : 'could not find the "Log in" link — RC may have reworded it'),
+        reason: await withBanner(link
+          ? 'neither an email nor a password field appeared'
+          : 'could not find the "Log in" link — RC may have reworded it'),
       };
     }
-    step(`email field: ${user.sel}`);
-    if (!(await typeEmail(user.loc, email))) step('⚠ the email field did not hold what we typed');
-    if (await keepSignedIn(page)) step('ticked "Keep me signed in"');
 
-    // Identifier-first: the password is on a SECOND screen. If a password field is already
-    // here (Classic one-page widget), this first lookup just finds it.
-    let pw = await findIn(page, PASSWORD_SELECTORS, 2000);
+    if (user) {
+      step(`email field: ${user.sel}`);
+      if (!(await typeEmail(user.loc, email))) step('⚠ the email field did not hold what we typed');
+    } else {
+      step('Okta skipped the email step — it remembers this account');
+    }
+    if (await keepSignedIn(page)) step('ticked "Keep me signed in"');
 
     // THREE ROUNDS, ENTER FIRST, RELOAD BETWEEN. See the header: Okta disables the button
     // mid-transaction, so this step is flaky rather than blocked, and a reload is what
