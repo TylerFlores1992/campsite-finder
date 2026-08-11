@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { currentUserIsAdmin, currentUserEmail } from '@/lib/admin';
-import { requestBotCommand, recentBotCommands, BOT_COMMAND_KINDS } from '@/lib/bot-commands';
+import { requestBotCommand, recentBotCommands, BOT_COMMAND_KINDS, RESTART_RC_BLACKOUT_MIN } from '@/lib/bot-commands';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +15,11 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   if (!(await currentUserIsAdmin())) return NextResponse.json({ error: 'not found' }, { status: 404 });
   return NextResponse.json({
+    // SERVED, not imported by the panel. `bot-commands.ts` reaches the database, so a
+    // client component importing a VALUE from it pulls `fs` into the browser bundle and
+    // fails the build — `import type` is erased and hides this until the moment you need a
+    // real constant. Caught by `next build` after typecheck and 396 tests were all green.
+    restartBlackoutMin: RESTART_RC_BLACKOUT_MIN,
     kinds: Object.entries(BOT_COMMAND_KINDS).map(([kind, s]) => ({
       kind, label: s.label, argHint: s.argHint, argOptions: s.argOptions ?? null,
     })),

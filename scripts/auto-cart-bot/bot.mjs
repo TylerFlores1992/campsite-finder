@@ -23,6 +23,7 @@ import { attemptLoginWithCreds } from './recgov-login.mjs';
 import { hasCreds, loadCreds, deleteCreds, bumpReloginFails, resetReloginFails } from './credstore.mjs';
 import { planRetry, retryDue, repairOwed, giveUpState, shouldBootstrapRepair } from './relogin-retry.mjs';
 import { acquireProfileLock, releaseProfileLock, profileLockHolder } from './profile-lock.mjs';
+import { makeControlChannel } from './control-channel.mjs';
 import { loadEnv } from './load-env.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -137,8 +138,34 @@ async function fetchRoster() {
     headers: { Authorization: `Bearer ${TOKEN}` },
   });
   if (!res.ok) throw new Error(`roster ${res.status}`);
-  return (await res.json()).users || [];
+  const body = await res.json();
+  return { users: body.users || [], control: body.control || null };
 }
+
+/**
+ * Report a diagnostic answer back. Shares the hold feed's POST because that is where
+ * `recordBotCommandResult` already lives — the channel moved because of WHICH PROCESS polls
+ * it, not which URL works, and this process can reach either.
+ */
+async function reportControl(body) {
+  const res = await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`report ${res.status}`);
+  return res.json().catch(() => ({}));
+}
+
+/**
+ * THE REMOTE LEVER THAT SURVIVES (2026-08-11). Same handler the RC hold runner uses — see
+ * control-channel.mjs. This process polls every ~2s and has stayed up through every outage
+ * the RC pair has had, including the one that made this necessary, so as long as the rec.gov
+ * bot is alive the box can be asked questions and told to update or restart the RC pair.
+ */
+const control = makeControlChannel({
+  dir: __dirname, actor: 'bot', log, report: reportControl,
+});
 
 // One browser per profile at a time — the persistent profile dir has a singleton
 // lock, so a keepalive refresh must never overlap a cart/login on the same user.
@@ -295,7 +322,7 @@ async function ensureLogin(user) {
 // day) instead of the user discovering it on a missed cancellation.
 async function keepSessionsWarm() {
   let users;
-  try { users = await fetchRoster(); } catch { return; }
+  try { ({ users } = await fetchRoster()); } catch { return; }
   let warmedThisPass = 0;
   for (const user of users) {
     if (inUse.has(user.userId)) continue;
@@ -486,7 +513,7 @@ async function processJob({ user, job }) {
 async function loginMode(target) {
   if (!TOKEN) { log('ERROR: AUTOCART_TOKEN (master) not set. See .env.example.'); process.exit(1); }
   let users = [];
-  try { users = await fetchRoster(); } catch (e) { log(`Could not reach roster: ${e.message}`); process.exit(1); }
+  try { ({ users } = await fetchRoster()); } catch (e) { log(`Could not reach roster: ${e.message}`); process.exit(1); }
   if (users.length === 0) {
     log('No enrolled users. Have each person toggle "Auto-cart" ON in the CampHawk app first.');
     process.exit(0);
@@ -522,8 +549,13 @@ async function runMode() {
   log(`Watching ${CAMPHAWK_URL} for all enrolled users, every ${POLL_MS / 1000}s (browsers open only on a hit; up to ${MAX_CONCURRENCY} at once). Ctrl+C to stop.`);
 
   async function tick() {
-    let users;
-    try { users = await fetchRoster(); } catch (e) { log(`poll error: ${e.message}`); return; }
+    let users, ctl;
+    try { ({ users, control: ctl } = await fetchRoster()); }
+    catch (e) { log(`poll error: ${e.message}`); return; }
+    // Before the carting work and never awaited by it. `handleControl` returns
+    // synchronously and fires its own background tasks, so a diagnostic — or an update
+    // hand-off — cannot delay a job that is a race by design.
+    if (ctl) control(ctl);
     for (const user of users) {
       // Newly enrolled + not signed in yet → auto-open a login window (non-blocking).
       // `ensureLogin` no-ops on a pending auto-relogin; the check is repeated here so the

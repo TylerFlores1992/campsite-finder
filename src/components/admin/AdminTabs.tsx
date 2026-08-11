@@ -979,6 +979,9 @@ function BotDiagnostics() {
   const [kinds, setKinds] = useState<Array<{ kind: string; label: string; argHint: string; argOptions: string[] | null }>>([]);
   const [recent, setRecent] = useState<BotCommandRow[]>([]);
   const [kind, setKind] = useState('tail-log');
+  // From the server, not an import — see the route. A client component importing a value
+  // from lib/bot-commands drags the database client into the browser bundle.
+  const [blackoutMin, setBlackoutMin] = useState<number | null>(null);
   const [arg, setArg] = useState('auto-update');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -992,6 +995,7 @@ function BotDiagnostics() {
     if (!r.ok) return;
     const j = await r.json();
     setKinds(j.kinds ?? []);
+    setBlackoutMin(j.restartBlackoutMin ?? null);
     setRecent(j.recent ?? []);
     if (waitingFor && (j.recent ?? []).some((c: BotCommandRow) => c.id === waitingFor && c.finished_at)) {
       setWaitingFor(null);
@@ -1012,6 +1016,17 @@ function BotDiagnostics() {
   const spec = kinds.find((k) => k.kind === kind);
 
   async function ask() {
+    // THE ONE COMMAND THAT CHANGES SOMETHING gets a confirm. Everything else here is a
+    // read, so a mis-click costs a log excerpt; this one ends the live RC session, and the
+    // session is what carts a campsite at 08:00. The server still refuses it near a release
+    // and the box still rate-limits it — this is the layer that stops an accident, not an
+    // attack, which is why it is allowed to live in the browser.
+    if (kind === 'restart-rc' && !window.confirm(
+      'Restart the ReserveCalifornia keep-warm and hold runner?\n\n' +
+      'This ENDS the current RC session. The bot signs back in by itself about 30 minutes ' +
+      'before the next release, but until then the session will read as dead.\n\n' +
+      'The rec.gov bot is not touched.',
+    )) return;
     setBusy(true);
     setError(null);
     try {
@@ -1032,9 +1047,12 @@ function BotDiagnostics() {
         Ask the mini-PC
       </h3>
       <p className="mb-2 text-ch-fine text-ch-muted">
-        Read-only diagnostics, answered on the box&rsquo;s next 15-second poll. The list is
-        fixed: the box implements each one itself and refuses anything else, so this can
-        never become a way to run commands on that machine.
+        Answered on the box&rsquo;s next poll. The list is fixed: the box implements each one
+        itself and refuses anything else, so this can never become a way to run commands on
+        that machine. All are read-only except <b>Restart the RC keep-warm + hold runner</b>,
+        which asks and is refused{blackoutMin ? ` within ${blackoutMin} minutes` : ''} of a release.
+        Questions ride whichever feed is alive &mdash; the rec.gov bot answers when the RC
+        runner is down, which is when you most need to ask.
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -1080,6 +1098,10 @@ function BotDiagnostics() {
                   : c.started_at
                     ? 'the box picked it up, no answer yet'
                     : 'queued — nothing has picked it up'}
+                {/* WHICH PROCESS ANSWERED is itself a finding, not bookkeeping: a reply
+                    from `bot` means the rec.gov bot took it, which proves the RC hold
+                    runner is not answering — in the same breath as the answer. */}
+                {c.claimed_by ? ` · via ${c.claimed_by}` : ''}
                 {c.requested_by ? ` · ${c.requested_by}` : ''}
               </summary>
               {c.error && <p className="mt-1 text-ch-fine text-ch-bad">{c.error}</p>}

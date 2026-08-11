@@ -2,8 +2,9 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, recordRehearsal, lastRehearsal, reportCartFailure, nextHoldRelease, holdAtRisk, type HoldRequest } from '@/lib/rc-holds';
 import { alarmCall } from '@/lib/notifications/voice';
 import { rcSessionFault, type RcSessionFault } from '@/lib/health-thresholds';
-import { botUpdateState, markBotUpdateApplied, noteBotUpdateAttempt } from '@/lib/bot-update';
-import { claimBotCommands, recordBotCommandResult } from '@/lib/bot-commands';
+import { markBotUpdateApplied, noteBotUpdateAttempt } from '@/lib/bot-update';
+import { recordBotCommandResult } from '@/lib/bot-commands';
+import { botControlFor } from '@/lib/bot-control';
 import { query, mutate } from '@/lib/db/client';
 import { notifyHoldMissed } from '@/lib/rc-holds-notify';
 import { manageTokenFor } from '@/lib/notifications/actions';
@@ -71,7 +72,7 @@ export async function GET(req: NextRequest) {
   // row it never reads. At 08:00:00 the answer that carts a site is the only thing this
   // response is for.
   const wantRehearsal = req.nextUrl.searchParams.get('rehearsal') === '1';
-  const [cart, stale, claims, nextRelease, update, commands, rehearsal] = await Promise.all([
+  const [cart, stale, claims, nextRelease, control, rehearsal] = await Promise.all([
     dueHolds(lead), expireStaleHolds(), pendingClaims(),
     // For the keep-warm, not the runner: it signs in shortly before this, because RC
     // issues no renewable session and a token only lasts an hour. See rc-autologin.mjs.
@@ -80,12 +81,16 @@ export async function GET(req: NextRequest) {
     // router — cloudflared exists for the broker for that reason), and opening one on the
     // machine holding the RC session to save a scheduled task would be a poor trade. It
     // already asks us for work every 15s; this is one more field in the answer.
-    botUpdateState().catch(() => ({ pending: false })),
-    // Diagnostics ride the same poll for the same reason the update flag does: the box has
-    // no inbound path, and this call is already authenticated and already happening. The
-    // KINDS are all the box is told - see scripts/auto-cart-bot/bot-commands.mjs, which
-    // holds the authoritative allowlist and implements each one itself.
-    claimBotCommands(),
+    // Diagnostics and the update flag ride the same poll: the box has no inbound path, and
+    // this call is already authenticated and already happening. The KINDS are all the box is
+    // told - see scripts/auto-cart-bot/bot-commands.mjs, which holds the authoritative
+    // allowlist and implements each one itself.
+    //
+    // THE SAME CHANNEL IS ON /api/auto-cart/roster, which the rec.gov bot polls. This
+    // process died at 09:36 PT on 2026-08-11 and took every remote lever with it; the
+    // duplication is the fix. `botControlFor` claims, so only one poller is ever granted an
+    // update. See lib/bot-control.
+    botControlFor('rc-hold-runner'),
     wantRehearsal ? lastRehearsal() : Promise.resolve(null),
   ]);
 
@@ -122,8 +127,8 @@ export async function GET(req: NextRequest) {
     nextRelease,
     // Read by update-guard.mjs, which still applies the release check on top: an update
     // asked for by hand must not take the session down twenty minutes before a cart.
-    updateRequested: update.pending === true,
-    commands,
+    updateRequested: control.updateRequested,
+    commands: control.commands,
     // WHEN IT LAST RAN, not whether it passed. The bot's only question is "am I due?", and
     // the once-a-day gate has to survive a restart — `supervise.ps1` restarts the keep-warm
     // on exit and `update.bat` restarts everything, so a process-local timestamp would let

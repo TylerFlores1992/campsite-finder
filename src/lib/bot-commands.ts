@@ -24,7 +24,38 @@ export const BOT_COMMAND_KINDS = {
   'list-processes': { label: 'Which of our processes are running', argPattern: null, argOptions: null, argHint: '' },
   'git-status': { label: 'What commit is the box on', argPattern: null, argOptions: null, argHint: '' },
   'disk-free': { label: 'Free disk space', argPattern: null, argOptions: null, argHint: '' },
+  /**
+   * THE FIRST COMMAND THAT IS NOT READ-ONLY, and it is here because of 2026-08-11: the RC
+   * hold runner died at 09:36 PT, the keep-warm came back by itself and the runner did not,
+   * and there was no way to restart it without a person at the keyboard. Everything else in
+   * this table could tell you that; none of it could fix it.
+   *
+   * It restarts ONLY the two RC processes — never the rec.gov bot, which is usually the
+   * process running this command, and never the whole box.
+   *
+   * THE BLAST RADIUS IF THE TOKEN LEAKS is a denial of service: repeated restarts drop the
+   * RC access token, and enough of them near a release could cost a hold. Two guards, split
+   * so neither depends on the other being honest — the server refuses to QUEUE one near a
+   * release (it is the side that knows when holds are due), and the box refuses to RUN one
+   * more often than RESTART_MIN_GAP_MS (it is the side that must hold even if the server is
+   * lying). The box's guard is the load-bearing one, exactly as this file's header says.
+   */
+  'restart-rc': {
+    label: 'Restart the RC keep-warm + hold runner',
+    argPattern: null, argOptions: null, argHint: '',
+  },
 } as const;
+
+/**
+ * Never restart the RC processes within this many minutes of a release.
+ *
+ * A restart drops the access token — the token IS the session — and `maybeAutoLogin` needs
+ * `RC_AUTOLOGIN_LEAD_MIN` (30) plus room to fail and wake a human. Ninety minutes leaves
+ * the repair a full lead time and still a margin. Same reasoning as the update guard's
+ * release check, and equally not liftable: the point of restarting the runner is to save a
+ * hold, so doing it in a way that loses one is self-defeating.
+ */
+export const RESTART_RC_BLACKOUT_MIN = 90;
 
 export type BotCommandKind = keyof typeof BOT_COMMAND_KINDS;
 
@@ -51,6 +82,30 @@ export interface BotCommand {
   exit_code: number | null;
   output: string | null;
   error: string | null;
+  /** Which mini-PC process ran it. See migration 055 — this is a diagnosis, not bookkeeping. */
+  claimed_by: string | null;
+}
+
+/**
+ * Minutes until a zone-less Pacific wall-clock release string, or null.
+ *
+ * NEVER `new Date(releaseAt)` on one of these: with no zone it is read as the server's
+ * local time, and this decision would then be wrong by the offset. Both sides are put into
+ * Pacific and compared as UTC so the offset cancels — the same discipline as the hold
+ * runner's `msUntilRelease` and the update guard's `hoursUntilRelease`.
+ */
+function minutesUntilPacific(releaseAt: string | null): number | null {
+  if (!releaseAt) return null;
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(new Date()).reduce((a, x) => ((a[x.type] = x.value), a), {} as Record<string, string>);
+  const hh = p.hour === '24' ? '00' : p.hour;
+  const now = Date.parse(`${p.year}-${p.month}-${p.day}T${hh}:${p.minute}:${p.second}Z`);
+  const rel = Date.parse(`${releaseAt.slice(0, 19)}Z`);
+  if (!Number.isFinite(now) || !Number.isFinite(rel)) return null;
+  return (rel - now) / 60_000;
 }
 
 /** Validate a request against the allowlist. Returns null when it is acceptable. */
@@ -67,6 +122,22 @@ export async function requestBotCommand(
 ): Promise<{ id: number } | { error: string }> {
   const bad = rejectReason(kind, arg);
   if (bad) return { error: bad };
+  // THE RELEASE GUARD, on the side that has the data. The box cannot see the hold table, so
+  // "is a cart imminent?" has to be answered here; the box answers the question it CAN
+  // answer on its own (how recently it last restarted). Splitting them means neither guard
+  // depends on the other side being honest.
+  if (kind === 'restart-rc') {
+    const { nextHoldRelease } = await import('@/lib/rc-holds');
+    const next = await nextHoldRelease().catch(() => null);
+    const mins = minutesUntilPacific(next);
+    if (mins != null && mins >= 0 && mins < RESTART_RC_BLACKOUT_MIN) {
+      return {
+        error:
+          `a hold releases in ${Math.round(mins)} min — restarting now would drop the RC session ` +
+          `with no time to sign back in. Wait until after the release.`,
+      };
+    }
+  }
   const [{ n }] = await query<{ n: number }>(
     `SELECT count(*)::int AS n FROM bot_commands
       WHERE finished_at IS NULL AND requested_at > NOW() - ($1 || ' milliseconds')::interval`,
@@ -87,9 +158,18 @@ export async function requestBotCommand(
  * returned nothing" stay distinguishable — the distinction that cost six round-trips on
  * 2026-08-11 and the reason this table exists at all.
  */
-export async function claimBotCommands(): Promise<Array<{ id: number; kind: string; arg: string | null }>> {
+export async function claimBotCommands(
+  actor = 'unknown',
+): Promise<Array<{ id: number; kind: string; arg: string | null }>> {
   return await query<{ id: number; kind: string; arg: string | null }>(
-    `UPDATE bot_commands SET started_at = NOW()
+    // TWO POLLERS NOW, so the claim carries who won. It was already atomic — one
+    // `UPDATE .. WHERE started_at IS NULL .. RETURNING` — which is why the rec.gov bot
+    // reading the same queue needs no locking: whichever process is alive answers, and
+    // exactly one of them does.
+    //
+    // `claimed_by` is not bookkeeping. A `list-processes` reply that came back from
+    // `bot.mjs` proves the RC runner is not answering, in the same breath as the answer.
+    `UPDATE bot_commands SET started_at = NOW(), claimed_by = $3
       WHERE id IN (
         SELECT id FROM bot_commands
          WHERE finished_at IS NULL AND started_at IS NULL
@@ -97,7 +177,7 @@ export async function claimBotCommands(): Promise<Array<{ id: number; kind: stri
          ORDER BY requested_at LIMIT $2
       )
       RETURNING id, kind, arg`,
-    [String(COMMAND_TTL_MS), String(MAX_PENDING)],
+    [String(COMMAND_TTL_MS), String(MAX_PENDING), actor.slice(0, 40)],
   ).catch(() => []);
 }
 
@@ -116,7 +196,7 @@ export async function recordBotCommandResult(
 export async function recentBotCommands(limit = 10): Promise<BotCommand[]> {
   return await query<BotCommand>(
     `SELECT id, kind, arg, requested_at::text, requested_by, started_at::text, finished_at::text,
-            exit_code, output, error
+            exit_code, output, error, claimed_by
        FROM bot_commands ORDER BY id DESC LIMIT $1`,
     [String(Math.min(50, limit))],
   ).catch(() => []);

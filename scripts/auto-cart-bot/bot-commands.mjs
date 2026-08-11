@@ -32,6 +32,20 @@ export const MAX_OUTPUT = 16_000;
 export const DEFAULT_TAIL = 80;
 
 /**
+ * The box's own floor on how often it will restart the RC processes.
+ *
+ * Every restart drops the RC access token, and the token IS the session. A restart loop is
+ * therefore a way to spend the one-login-per-release budget over and over from a residential
+ * address that Okta has already served a reCAPTCHA and blocked for twelve hours. Enforced
+ * HERE, on the machine, because this file is the security boundary - a rate limit that lives
+ * only on the server is a rate limit a leaked token bypasses.
+ *
+ * Ten minutes is long enough that a flap is not free, short enough that a genuine "that
+ * didn't work, try once more" is not an hour's wait.
+ */
+export const RESTART_MIN_GAP_MS = 10 * 60_000;
+
+/**
  * The logs that may be read, by NAME - never by path.
  *
  * A path parameter would be a directory traversal waiting to happen, and the interesting
@@ -138,6 +152,41 @@ export const COMMANDS = {
     const branch = await run('git', ['rev-parse', '--abbrev-ref', 'HEAD']);
     const dirty = await run('git', ['status', '--short']);
     return `HEAD ${head} on ${branch}\n${dirty || '(working tree clean)'}`;
+  },
+
+  /**
+   * THE ONE COMMAND THAT CHANGES SOMETHING, and the reason it is worth breaking this file's
+   * read-only posture: on 2026-08-11 the RC hold runner died at 09:36 PT and every other
+   * command here could only describe the problem.
+   *
+   * ── THE BOX'S HALF OF THE GUARD ──────────────────────────────────────────────────────
+   * The server refuses to QUEUE this near a release, because it is the side that knows when
+   * holds are due. This side refuses to RUN it more than once per RESTART_MIN_GAP_MS,
+   * because this is the side that must hold even if the server is lying or the token has
+   * leaked. Neither guard depends on the other being honest - that split is the whole
+   * design, and this file's header is why: a leaked feed token must not become a way to
+   * flap the RC session until the household IP is blocked again.
+   *
+   * The marker is a FILE, not a variable. The process running this is restarted by its own
+   * supervisor, and an in-memory timestamp would reset with it - so a crash loop would lift
+   * the rate limit exactly when it matters most.
+   */
+  'restart-rc': async () => {
+    const marker = path.join(HERE, 'logs', '.restart-rc-at');
+    const last = fs.existsSync(marker) ? Number(fs.readFileSync(marker, 'utf8')) : 0;
+    const since = Date.now() - last;
+    if (Number.isFinite(last) && last > 0 && since < RESTART_MIN_GAP_MS) {
+      return `refused: restarted ${Math.round(since / 60_000)} min ago, and the limit is one ` +
+        `per ${Math.round(RESTART_MIN_GAP_MS / 60_000)} min. Each restart drops the RC access token.`;
+    }
+    const script = path.join(HERE, 'mini-pc', 'restart-rc.ps1');
+    // SAY IT IS MISSING rather than reporting a silent success. A wrong path makes
+    // PowerShell exit immediately with a message nobody sees, which is indistinguishable
+    // from a restart that ran and did nothing - the exact ambiguity that cost a night.
+    if (!fs.existsSync(script)) throw new Error(`${script} does not exist - the box needs update.bat`);
+    try { fs.mkdirSync(path.dirname(marker), { recursive: true }); } catch { /* best effort */ }
+    fs.writeFileSync(marker, String(Date.now()));
+    return await run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script]);
   },
 
   /** Free space. "No space left on device" turns every other symptom into a mystery. */

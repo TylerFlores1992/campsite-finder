@@ -43,9 +43,55 @@ export async function botUpdateState(): Promise<BotUpdateState> {
 /** Ask the box to update on its next check, within ~15s of the poll plus the run itself. */
 export async function requestBotUpdate(by: string): Promise<void> {
   await mutate(
-    `UPDATE bot_update_requests SET requested_at = NOW(), requested_by = $1 WHERE id = 1`,
+    // CLEAR THE CLAIM. A new request must be claimable by whichever process is alive now —
+    // leaving a claim from a poller that has since died would make the request permanently
+    // unwinnable, which is the failure the TTL below also guards.
+    `UPDATE bot_update_requests
+        SET requested_at = NOW(), requested_by = $1, claimed_at = NULL, claimed_by = NULL
+      WHERE id = 1`,
     [by.slice(0, 80)],
   );
+}
+
+/**
+ * How long one poller's claim on an update lasts.
+ *
+ * Long enough that a slow `git fetch` on a bad uplink is not overtaken mid-update; short
+ * enough that a process which claimed and then died does not block updates for the rest of
+ * the day. The runner's own `UPDATE_RETRY_MS` is 15 minutes for the same reason and this
+ * must not be shorter than it, or the two would disagree about when a retry is due.
+ */
+export const UPDATE_CLAIM_TTL_MS = 20 * 60_000;
+
+/**
+ * May THIS process spawn the updater?
+ *
+ * TWO POLLERS NOW SEE THE SAME FLAG. The control channel moved onto the roster feed so the
+ * box stays reachable when the RC runner is dead (2026-08-11) — which means `bot.mjs` and
+ * `rc-hold-runner.mjs` can both read `updateRequested` on the same tick, and
+ * `auto-update.ps1` moves the git checkout out from under whatever is running. Two updaters
+ * racing one checkout is worse than a slow update; that rule predates this change and this
+ * is what keeps it true now that there are two readers.
+ *
+ * One conditional UPDATE decides it — the same shape as the alerting claim and the shard
+ * lease, and for the same reason: a read-then-write would let both callers read "unclaimed".
+ *
+ * NOT A COMPLETE MUTEX, and worth being honest about: the Windows scheduled task launches
+ * `auto-update.ps1` through `update-guard.mjs`, which does not pass through here. That path
+ * predates this and is unchanged. What this removes is the race THIS change introduces.
+ */
+export async function claimBotUpdate(actor: string): Promise<boolean> {
+  const rows = await query<{ id: number }>(
+    `UPDATE bot_update_requests
+        SET claimed_at = NOW(), claimed_by = $1
+      WHERE id = 1
+        AND requested_at IS NOT NULL
+        AND (applied_at IS NULL OR applied_at < requested_at)
+        AND (claimed_at IS NULL OR claimed_at < NOW() - ($2 || ' milliseconds')::interval)
+      RETURNING id`,
+    [actor.slice(0, 40), String(UPDATE_CLAIM_TTL_MS)],
+  ).catch(() => []);
+  return rows.length > 0;
 }
 
 /**
