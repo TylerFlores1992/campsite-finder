@@ -19,7 +19,18 @@
 [CmdletBinding()]
 param([switch]$Force)
 
-$ErrorActionPreference = "Stop"
+# CONTINUE, NOT STOP - and this is not a style choice.
+#
+# In Windows PowerShell 5.1, `2>&1` on a NATIVE command turns each stderr line into an
+# ErrorRecord, and under `Stop` the first one is a TERMINATING error. `node` writes to
+# stderr routinely (experimental-feature warnings, deprecations), so
+# `$guardOut = & node update-guard.mjs 2>&1` killed this script on its first real line -
+# before any report, every single run. Observed 2026-08-11: the runner logged the hand-off
+# at 03:37:27 and the server heard nothing at all, on a box carrying the newest code.
+#
+# `Stop` was buying nothing here anyway: every native call below checks $LASTEXITCODE
+# explicitly, which is the honest way to read a native exit status.
+$ErrorActionPreference = "Continue"
 $botDir = Split-Path -Parent $PSScriptRoot
 Set-Location $botDir
 if (-not (Test-Path "logs")) { New-Item -ItemType Directory -Path "logs" | Out-Null }
@@ -66,9 +77,17 @@ function Stop-Everything {
   return ($LASTEXITCODE -eq 0)
 }
 
+# SAY WE STARTED, BEFORE ANYTHING CAN GO WRONG. Diagnosing 2026-08-11 took three rounds
+# because "the script died on line 1", "the guard refused" and "the runner never handed
+# off" produced the identical silence server-side. From here, no report at all can only
+# mean the script never launched, which is a different fault with a different fix.
+Report-Attempt "started - checking the guard"
+
 # -- 1. May we? ------------------------------------------------------------------------
 $guardArgs = @("update-guard.mjs")
 if ($Force) { $guardArgs += "--force" }
+# stderr merged deliberately - the guard's verdict and any node warning both belong in the
+# log - which is safe now that ErrorActionPreference is Continue. See the header.
 $guardOut = & node @guardArgs 2>&1
 $guardOut | Tee-Object -FilePath $log -Append
 if ($LASTEXITCODE -ne 0) {

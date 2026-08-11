@@ -359,3 +359,37 @@ test('being already current satisfies the request', async () => {
   const branch = up.slice(up.indexOf('already current at'), up.indexOf('already current at') + 400);
   assert.match(branch, /Report-Applied \$before/, 'the current-already path clears the request');
 });
+
+test('auto-update survives node writing to stderr', async () => {
+  // WINDOWS POWERSHELL 5.1: `2>&1` on a NATIVE command turns each stderr line into an
+  // ErrorRecord, and under `$ErrorActionPreference = "Stop"` the first one is a
+  // TERMINATING error. node writes to stderr routinely (experimental warnings,
+  // deprecations), so `$guardOut = & node update-guard.mjs 2>&1` killed the script on its
+  // first real line — before any report — every single run. Observed 2026-08-11: the
+  // runner logged the hand-off at 03:37:27 and the server heard nothing at all.
+  //
+  // Same family as the em dash: a PowerShell-specific behaviour that makes correct-looking
+  // code fail silently, and can only be caught mechanically.
+  const { readFileSync } = await import('node:fs');
+  const up = readFileSync('scripts/auto-cart-bot/mini-pc/auto-update.ps1', 'utf8');
+  const usesNativeRedirect = /& node .*2>&1/.test(up) || /& git .*2>&1/.test(up);
+  if (usesNativeRedirect) {
+    assert.match(up, /\$ErrorActionPreference = "Continue"/,
+      'a script redirecting native stderr must not run under Stop');
+  }
+  // And $LASTEXITCODE is the honest way to read a native exit status, which is what makes
+  // Continue safe here rather than merely permissive.
+  assert.match(up, /if \(\$LASTEXITCODE -ne 0\)/, 'native exit codes are checked explicitly');
+});
+
+test('the script says it started before anything can kill it', async () => {
+  // Diagnosing the above took three rounds because "died on line 1", "the guard refused"
+  // and "the runner never handed off" were the same silence server-side. A launch report
+  // makes no-report-at-all mean exactly one thing.
+  const { readFileSync } = await import('node:fs');
+  const up = readFileSync('scripts/auto-cart-bot/mini-pc/auto-update.ps1', 'utf8');
+  const started = up.indexOf('Report-Attempt "started');
+  assert.ok(started > 0, 'it reports launch');
+  assert.ok(started < up.indexOf('node @guardArgs'), 'before the guard runs');
+  assert.ok(up.indexOf('function Report-Attempt') < started, 'and after its own definition');
+});
