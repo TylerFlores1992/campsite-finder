@@ -913,6 +913,33 @@ That is why both missed mornings needed a human, and it is what multiplies per s
   before the next real release, unattended, proven 2026-08-10. Expect
   `autocart.rc_session` to read dead in between — that is correct, not a fault.
 
+### The auto-login lead is T−30 now, and "covered" is DERIVED (2026-08-11)
+`RC_AUTOLOGIN_LEAD_MIN` 15 → **30**. The ceiling is arithmetic, not taste: a login at T−L
+mints a ~60-minute token, and the bot needs it to **RELEASE at up to T+15** (the user has
+the whole cart hold to tap claim, and `remove/cartentry` runs on the bot's session), so
+`T−L+60 ≥ T+15` → **L ≤ 45**. At 30 the token still has 30m at the cart — twice the cart
+hold — and a human gets 30 minutes to answer the phone, find a computer and sign in. **The
+extra fifteen minutes are for a HUMAN, not for the bot to retry**; one attempt per release
+stands, because repeated logins from this address are what cost 12h of IP block on 08-06.
+- **`AUTOLOGIN_MIN_TOKEN_MIN` was a flat 20 and that was ALREADY WRONG at L=15.** "Covered"
+  has to mean alive through the **release**, not through the cart: at 20 the bot sees a
+  token with 21 minutes left, calls the hold covered, skips its ONE login, carts at T−0
+  with ~6 minutes of token and then **fails the claim** — the user taps "I'm ready" and
+  nobody releases the unit. Reachable by signing in by hand an hour before a release, i.e.
+  exactly what the 07:30 pre-flight asks for. Now `LEAD + CART_HOLD_MIN + 5`.
+- **`ALARM_AFTER_MIN` 12 → 25 must move WITH the lead.** It is the fallback branch (the
+  keep-warm reporting nothing at all); a login that fails still rings at once on the
+  `auto sign-in failed` branch. At 12 against a lead of 30 it satisfies "inside the lead"
+  and buys an **18-minute silence** in the only window where someone can act — so the test
+  asserts *how far* inside (≤8m), not merely that it is.
+- **THE TWO HALVES DEPLOY BY DIFFERENT ROUTES**: `ALARM_AFTER_MIN` is on Vercel (instant on
+  a `master` push), `AUTOLOGIN_LEAD_MIN` is mini-PC code (needs `update.bat`). In the gap
+  the alarm fires at T−25 while the login still waits for T−15 — **the 2026-08-09 cry-wolf
+  bug exactly.** Land them together.
+- `worker/autologin-lead.test.mts` holds the inequality: the constants live in three files,
+  two languages, and `rc-keepwarm.mjs` cannot import `RC_CART_HOLD_MINUTES` from
+  `limits.ts`, so it carries a copy the test pins. Verified against five regressions.
+
 ### UNATTENDED LOGIN WORKS — first clean production run, 2026-08-10 18:35Z
 `rc-test-login.bat` ran the real `attemptLogin` from a genuinely signed-out state and got
 `token exp in 60m; okta=ALIVE (exp 2026-08-11T06:35:53)` — a full-life access token AND a
