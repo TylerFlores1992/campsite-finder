@@ -11,8 +11,11 @@
  * one and forget the other, and the copy that gets forgotten is by definition the one
  * running when the other is dead — which is the only time this code matters.
  *
- * The server decides who is granted an update (`claimBotUpdate`), so nothing here has to
- * coordinate; it just does what its own feed told it.
+ * The feed's `updateRequested` is INFORMATIONAL. A process that means to spawn the updater
+ * claims it first with a POST and is told yes or no — reading a feed is not intending to act
+ * on it, and only the caller knows which it is doing. An earlier version granted the update
+ * on read, which the rec.gov bot's two-second poll consumed and binned on any box too old to
+ * understand the control block.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -70,10 +73,9 @@ export function makeControlChannel({ dir, actor, log, report }) {
       }
       spawnUpdater();
     })();
-  };
+  }
 
   function spawnUpdater() {
-
     // AN UPDATE ASKED FOR FROM THE ADMIN PAGE. The box has no inbound path, so the request
     // rides this poll — see migration 051. All this does is hand off to auto-update.ps1,
     // which re-checks the release guard itself: "now" means "as soon as it is safe", because
