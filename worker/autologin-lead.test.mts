@@ -88,3 +88,14 @@ test('the alarm fallback stays just inside the login window', () => {
     'when the keep-warm reports nothing at all',
   );
 });
+
+test('the readout quotes the real lead, not a remembered one', () => {
+  // It said "~15 min" after the lead moved to 30, and it is read at 07:50 by somebody
+  // deciding whether to intervene — a stale figure there is worse than none. The readout
+  // cannot import rc-keepwarm.mjs from a web session, so it carries a mirror; this pins it.
+  const readout = readFileSync('scripts/rc-holds-readout.mts', 'utf8');
+  const m = readout.match(/const RC_AUTOLOGIN_LEAD_MIN = Number\(process\.env\.\w+ \|\| (\d+)\)/);
+  assert.ok(m, 'the readout must carry the lead as a named constant');
+  assert.equal(Number(m[1]), LEAD, 'and it must match rc-keepwarm.mjs');
+  assert.ok(!/~15 min before a hold/.test(readout), 'no hard-coded lead in the printed text');
+});

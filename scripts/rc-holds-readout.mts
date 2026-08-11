@@ -61,6 +61,9 @@ console.log(`RC holds offered in the last ${hours}h — ${holds.length} row(s). 
 // Printed BEFORE the table and even when there are no holds: a dead session with nothing
 // queued is the cheapest possible moment to fix it, and the only one where a human has
 // time. RC serves a reCAPTCHA on sign-in now, so this always needs a person.
+/** Mirrors RC_AUTOLOGIN_LEAD_MIN in rc-keepwarm.mjs; pinned by worker/autologin-lead.test.mts. */
+const RC_AUTOLOGIN_LEAD_MIN = Number(process.env.RC_AUTOLOGIN_LEAD_MIN || 30);
+
 const mins = (t: string | null) => (t ? Math.round((Date.now() - new Date(t).getTime()) / 60000) : null);
 /** "7h20m". These durations run to hours and the whole question is how many. */
 const hms = (t: string | null) => {
@@ -87,7 +90,11 @@ if (!session || session.session_ok == null) {
   console.log(`  IT LASTED ${lifetime(session.session_live_since, session.session_since)} after sign-in.`);
   console.log(`  ${session.session_detail ?? ''}`);
   console.log('  Nothing below can be carted until there is a session again. Since 2026-08-09');
-  console.log('  the bot can get one itself ~15 min before a hold, so this may fix itself —');
+  // DERIVED, not a remembered number. This said "~15 min" after the lead moved to 30 on
+  // 2026-08-11 - and it is read at 07:50 by someone deciding whether to intervene, so a
+  // stale figure here is worse than none. Same class as the hard-coded claims this
+  // readout's own comments warn about two lines up.
+  console.log(`  the bot can get one itself ~${RC_AUTOLOGIN_LEAD_MIN} min before a hold, so this may fix itself -`);
   console.log('  if it does not, on the mini-PC: mini-pc\\rc-login.bat\n');
 } else {
   const age = mins(session.session_at);
