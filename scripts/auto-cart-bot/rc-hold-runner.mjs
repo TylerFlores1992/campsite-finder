@@ -35,6 +35,7 @@ import { installTokenCapture, primeToken, tokenSecondsLeft } from './rc-token.mj
 import { spawn } from 'node:child_process';
 import { loadEnv, envSource, looksLikePlaceholder } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
+import { runCommand } from './bot-commands.mjs';
 
 // The token lives in scripts/auto-cart-bot/.env alongside the rec.gov bot's. Without
 // this the runner answered `feed 401` — which reads exactly like a wrong token, not a
@@ -324,7 +325,20 @@ async function runPass() {
     log(`feed error: ${err.message}`);
     return;
   }
-  const { claim = [], cart = [], release = [], expired = 0, pollMs, updateRequested } = work;
+  const { claim = [], cart = [], release = [], expired = 0, pollMs, updateRequested, commands = [] } = work;
+
+  // DIAGNOSTICS, and they run LAST-ish on purpose: never before the claim and cart work
+  // below, and never awaited by it. A question about a log file must not be able to delay
+  // a cart at 08:00:00. `runCommand` never throws, and the kind is looked up in this box's
+  // OWN table - the server can name a kind, it cannot send one.
+  for (const c of commands) {
+    void (async () => {
+      log(`? diagnostic ${c.kind}${c.arg ? ` ${c.arg}` : ''} (#${c.id})`);
+      const r = await runCommand(c.kind, c.arg);
+      await report({ commandId: c.id, exitCode: r.ok ? 0 : 1, output: r.output, error: r.error })
+        .catch((e) => log(`  could not return diagnostic #${c.id}: ${e.message}`));
+    })();
+  }
 
   // AN UPDATE ASKED FOR FROM THE ADMIN PAGE. The box has no inbound path, so the request
   // rides this poll — see migration 051. All this does is hand off to auto-update.ps1,

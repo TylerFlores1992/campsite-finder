@@ -3,6 +3,7 @@ import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendi
 import { alarmCall } from '@/lib/notifications/voice';
 import { rcSessionFault, type RcSessionFault } from '@/lib/health-thresholds';
 import { botUpdateState, markBotUpdateApplied, noteBotUpdateAttempt } from '@/lib/bot-update';
+import { claimBotCommands, recordBotCommandResult } from '@/lib/bot-commands';
 import { query, mutate } from '@/lib/db/client';
 import { notifyHoldMissed } from '@/lib/rc-holds-notify';
 import { manageTokenFor } from '@/lib/notifications/actions';
@@ -64,7 +65,7 @@ export async function GET(req: NextRequest) {
   // Lead time on purpose: the bot should be mid-request when the site frees, not
   // starting to think about it a second late. RC releases on the exact minute.
   const lead = Math.min(600, Math.max(0, Number(req.nextUrl.searchParams.get('leadSeconds') ?? 90)));
-  const [cart, stale, claims, nextRelease, update] = await Promise.all([
+  const [cart, stale, claims, nextRelease, update, commands] = await Promise.all([
     dueHolds(lead), expireStaleHolds(), pendingClaims(),
     // For the keep-warm, not the runner: it signs in shortly before this, because RC
     // issues no renewable session and a token only lasts an hour. See rc-autologin.mjs.
@@ -74,6 +75,11 @@ export async function GET(req: NextRequest) {
     // machine holding the RC session to save a scheduled task would be a poor trade. It
     // already asks us for work every 15s; this is one more field in the answer.
     botUpdateState().catch(() => ({ pending: false })),
+    // Diagnostics ride the same poll for the same reason the update flag does: the box has
+    // no inbound path, and this call is already authenticated and already happening. The
+    // KINDS are all the box is told - see scripts/auto-cart-bot/bot-commands.mjs, which
+    // holds the authoritative allowlist and implements each one itself.
+    claimBotCommands(),
   ]);
 
   // `claim` is separated from `release` on purpose. A stale release is merely overdue;
@@ -110,6 +116,7 @@ export async function GET(req: NextRequest) {
     // Read by update-guard.mjs, which still applies the release check on top: an update
     // asked for by hand must not take the session down twenty minutes before a cart.
     updateRequested: update.pending === true,
+    commands,
   });
 }
 
@@ -169,6 +176,18 @@ export async function POST(req: NextRequest) {
   if (typeof body?.updateAttempt === 'string') {
     await noteBotUpdateAttempt(body.updateAttempt);
     return NextResponse.json({ ok: true, state: 'update-attempt-recorded' });
+  }
+
+  // A DIAGNOSTIC ANSWER. Recorded whatever it says, including "that file does not exist" -
+  // which is an answer, and was the one that finally located the silent update.
+  if (typeof body?.commandId === 'number') {
+    await recordBotCommandResult(
+      body.commandId,
+      typeof body.exitCode === 'number' ? body.exitCode : 0,
+      typeof body.output === 'string' ? body.output : null,
+      typeof body.error === 'string' ? body.error : null,
+    );
+    return NextResponse.json({ ok: true, state: 'command-recorded' });
   }
 
   // A PASS THAT COULD NOT ACT. Records why against the holds it was about to touch and
