@@ -144,7 +144,10 @@ export async function requestBotCommand(
     [String(COMMAND_TTL_MS)],
   );
   if (n >= MAX_PENDING) return { error: `${n} commands already queued — wait for them to run` };
-  const [row] = await query<{ id: number }>(
+  // `mutate`, not `query` — see claimBotCommands below. This one had no catch at all, so
+  // the admin panel's "Ask" button would have 500'd rather than failing quietly. Neither is
+  // acceptable, but only one of them tells you.
+  const [row] = await mutate<{ id: number }>(
     `INSERT INTO bot_commands (kind, arg, requested_by) VALUES ($1, $2, $3) RETURNING id`,
     [kind, arg, by.slice(0, 80)],
   );
@@ -161,7 +164,12 @@ export async function requestBotCommand(
 export async function claimBotCommands(
   actor = 'unknown',
 ): Promise<Array<{ id: number; kind: string; arg: string | null }>> {
-  return await query<{ id: number; kind: string; arg: string | null }>(
+  // `mutate`, NEVER `query`. THIS IS WHY THE DIAGNOSTICS CHANNEL NEVER WORKED (found
+  // 2026-08-11, the first time a box was actually able to answer). `query` routes to the
+  // exec_select RPC, which cannot run an UPDATE — so every claim threw, `.catch(() => [])`
+  // returned an empty list, and the feed looked exactly as it does when nobody has asked a
+  // question. The box was blamed for two hours; the box was never sent anything.
+  return await mutate<{ id: number; kind: string; arg: string | null }>(
     // TWO POLLERS NOW, so the claim carries who won. It was already atomic — one
     // `UPDATE .. WHERE started_at IS NULL .. RETURNING` — which is why the rec.gov bot
     // reading the same queue needs no locking: whichever process is alive answers, and
@@ -178,7 +186,11 @@ export async function claimBotCommands(
       )
       RETURNING id, kind, arg`,
     [String(COMMAND_TTL_MS), String(MAX_PENDING), actor.slice(0, 40)],
-  ).catch(() => []);
+  ).catch((e) => {
+    // An empty queue and a broken claim must not look the same on the way out.
+    console.error('[bot-commands] claimBotCommands failed:', (e as Error).message);
+    return [];
+  });
 }
 
 /** The box reporting an answer. Output is already scrubbed and capped on its side. */

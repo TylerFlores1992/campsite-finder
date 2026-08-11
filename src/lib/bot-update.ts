@@ -81,7 +81,10 @@ export const UPDATE_CLAIM_TTL_MS = 20 * 60_000;
  * predates this and is unchanged. What this removes is the race THIS change introduces.
  */
 export async function claimBotUpdate(actor: string): Promise<boolean> {
-  const rows = await query<{ id: number }>(
+  // `mutate`, NEVER `query`. `query` routes to the exec_select RPC, which cannot run a
+  // data-modifying statement — so this threw on every call and `.catch(() => false)` turned
+  // it into "somebody else has the claim". Silent, and indistinguishable from working.
+  const rows = await mutate<{ id: number }>(
     `UPDATE bot_update_requests
         SET claimed_at = NOW(), claimed_by = $1
       WHERE id = 1
@@ -90,7 +93,12 @@ export async function claimBotUpdate(actor: string): Promise<boolean> {
         AND (claimed_at IS NULL OR claimed_at < NOW() - ($2 || ' milliseconds')::interval)
       RETURNING id`,
     [actor.slice(0, 40), String(UPDATE_CLAIM_TTL_MS)],
-  ).catch(() => []);
+  ).catch((e) => {
+    // SAY SO. A claim that could not be attempted is not a claim that was lost to another
+    // process, and swallowing the difference is what hid the bug above.
+    console.error('[bot-update] claimBotUpdate failed:', (e as Error).message);
+    return [];
+  });
   return rows.length > 0;
 }
 
