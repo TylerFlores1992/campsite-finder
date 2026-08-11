@@ -52,7 +52,7 @@ import { dispatchNotifications, type NotificationPayload } from '../src/lib/noti
 import { bookingLink } from '../src/lib/booking-url';
 import { runDetectionCanary, runDeliveryCanary } from './canary';
 import { claimNotification } from './claim';
-import { offerHold } from '../src/lib/rc-holds';
+import { offerHold, rcBotUsable } from '../src/lib/rc-holds';
 import { hasAutocartEntitlement } from '../src/lib/auth';
 import { actionUrlFor } from '../src/lib/notifications/actions';
 import { alreadyCartedForWatch } from './carted-history';
@@ -1178,7 +1178,27 @@ async function cycle(): Promise<void> {
       // or is_beta). Holding a site consumes the one bot account's capacity, so it is
       // plan work; and offering a button that then refuses on tap is worse than not
       // offering it. Checked here AND in the action, because a link outlives the alert.
-      const mayHold = held.unitId != null && (await hasAutocartEntitlement(w.user_id).catch(() => false));
+      //
+      // AND THE BOT HAS TO BE THERE. On 2026-08-11 the RC runner and keep-warm stopped at
+      // 09:36 PT and the poller went on offering hold buttons for hours — one of them eight
+      // minutes before this was written. A tap would have answered "we'll grab it the moment
+      // it opens" with nothing running to do it, and the user would have stopped watching.
+      // The alert still goes out with no button, which is the honest version of the same
+      // message: here is what opens tomorrow, book it yourself at 08:00.
+      //
+      // FAILS CLOSED. `rcBotUsable` returns ok:false when it cannot read the heartbeat at
+      // all, and that is the right way round: a hold nobody honours costs a campsite, a
+      // missing button costs a convenience. Same direction as the entitlement catch above.
+      const bot = await rcBotUsable();
+      if (!bot.ok && held.unitId != null) {
+        console.log(
+          `[poller] watch ${w.id}: NOT offering a hold — the RC runner is absent ` +
+          `(${bot.beatAgeMs == null ? 'never beat' : `last beat ${Math.round(bot.beatAgeMs / 1000)}s ago`}). ` +
+          'Sending the coming-soon alert without a hold link.'
+        );
+      }
+      const mayHold =
+        held.unitId != null && bot.ok && (await hasAutocartEntitlement(w.user_id).catch(() => false));
       if (mayHold && held.unitId != null) {
         const offered = await offerHold({
           watchId: w.id,

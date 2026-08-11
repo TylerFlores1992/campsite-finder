@@ -73,6 +73,11 @@ import {
   readAuthFacts, oktaSessionAlive, authCookieSummary,
 } from './rc-token.mjs';
 import { hasCredentials, attemptLogin } from './rc-autologin.mjs';
+import { shouldRehearse, REHEARSAL_HOUR } from './rehearsal.mjs';
+// The same two clock helpers the update guard decides with. Both are pure and both already
+// get the Pacific / zone-less-wall-clock handling right, which is the part that has been
+// got wrong before — a second implementation here would be a second chance to get it wrong.
+import { pacificHour, hoursUntilRelease } from './update-guard.mjs';
 import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 
@@ -440,18 +445,29 @@ function minutesUntil(releaseAt) {
   }
 }
 
-/** When the next hold releases, from the feed. Null if none, or if we cannot ask. */
-async function nextReleaseFromFeed() {
-  if (!TOKEN) return null;
+/**
+ * What the server knows that this process cannot: when the next hold releases, and when
+ * the login was last rehearsed. Null fields mean "we could not find out" — never a
+ * fabricated "none", which downstream would read as permission to act.
+ *
+ * `rehearsal=1` is opt-in because the hold runner polls this same endpoint every 15s and
+ * has no use for the extra row. See the route.
+ */
+async function feedFacts() {
+  if (!TOKEN) return { nextRelease: null, lastRehearsalAt: null, reachable: false };
   try {
-    const res = await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
+    const res = await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds?rehearsal=1`, {
       headers: { authorization: `Bearer ${TOKEN}` },
     });
-    if (!res.ok) return null;
+    if (!res.ok) return { nextRelease: null, lastRehearsalAt: null, reachable: false };
     const j = await res.json();
-    return j?.nextRelease ?? null;
+    return {
+      nextRelease: j?.nextRelease ?? null,
+      lastRehearsalAt: j?.lastRehearsalAt ?? null,
+      reachable: true,
+    };
   } catch {
-    return null;
+    return { nextRelease: null, lastRehearsalAt: null, reachable: false };
   }
 }
 
@@ -473,7 +489,7 @@ async function nextReleaseFromFeed() {
 let autoLoginTriedFor = null;
 async function maybeAutoLogin(ctx, page) {
   if (!hasCredentials()) return false;
-  const release = await nextReleaseFromFeed();
+  const { nextRelease: release } = await feedFacts();
   if (!release || autoLoginTriedFor === release) return false;
 
   const mins = minutesUntil(release);
@@ -503,6 +519,96 @@ async function maybeAutoLogin(ctx, page) {
     await reportSession('dead', `auto sign-in failed: ${r.reason}`);
   }
   return true;
+}
+
+/**
+ * REHEARSE THE SIGN-IN, once a night, hours before it is load-bearing.
+ *
+ * WHY. Three consecutive 08:00 holds failed and all three failed AT LOGIN — the runner was
+ * dead (08-07), the cart fired 85s early (08-08), and `attemptLogin` demanded an email field
+ * Okta had stopped showing (08-11). Each was discovered at 07:30 with twenty minutes to act,
+ * because the release was being used as the test. It is not the test; it is the exam.
+ *
+ * `--test-login` could always have proved this. It was never scheduled, so it only ever ran
+ * when somebody already suspected a problem — the missing thing was a cadence, not an
+ * ability, which is why this is thirty lines and not a new subsystem.
+ *
+ * The gates live in rehearsal.mjs, tested, because a login is not free: repeated sign-ins
+ * from this address cost twelve hours of IP block on 2026-08-06.
+ */
+let rehearsedThisHour = null;
+async function maybeRehearse(ctx, page) {
+  const hour = pacificHour();
+  const facts = await feedFacts();
+  // UNREACHABLE FEED MEANS NO REHEARSAL. We would not know whether a hold is due, and the
+  // rehearsal deliberately ENDS the current session on its way — the same reasoning as the
+  // update guard refusing to update blind, and for the same stakes.
+  if (!facts.reachable) return false;
+
+  const decision = shouldRehearse({
+    pacificHour: hour,
+    hoursToRelease: hoursUntilRelease(facts.nextRelease),
+    sessionLive: (await sessionLive(ctx, page)).live,
+    hoursSinceLastRun: facts.lastRehearsalAt
+      ? (Date.now() - Date.parse(facts.lastRehearsalAt)) / 3_600_000
+      : null,
+    hasCredentials: hasCredentials(),
+  });
+
+  if (!decision.run) {
+    // Only the ones that happen AT the rehearsal hour are worth recording — "not the
+    // rehearsal hour" is true for twenty-three hours a day and would overwrite last
+    // night's real result with noise every minute.
+    if (hour === REHEARSAL_HOUR && rehearsedThisHour !== hour) {
+      rehearsedThisHour = hour;
+      log(`skipping tonight's login rehearsal: ${decision.why}`);
+      await reportRehearsal(null, null, decision.why);
+    }
+    return false;
+  }
+
+  // STAMP `ran_at` BEFORE ATTEMPTING, and this is not defensive noise. The once-a-day gate
+  // is the only thing standing between a crash-loop and a login every time the supervisor
+  // restarts this process — and a login attempt is exactly what opens Chromium and posts
+  // credentials from the household IP. Recording afterwards would leave the gate open for
+  // the whole rehearsal hour if the attempt never returned. An interrupted rehearsal
+  // therefore reads as ran-but-unknown, which is `stale`: honest, and not a pass.
+  rehearsedThisHour = hour;
+  await reportRehearsal(null, 'rehearsal started', null);
+  log('── nightly login rehearsal: proving the bot can still sign itself in ──');
+  const { result, detail } = await runLoginRehearsal(ctx, page, {
+    // Nobody is watching at 20:00 either. A CAPTCHA here is a real finding, reported and
+    // acted on this evening, not something to sit in front of for five minutes.
+    humanPresent: false,
+    tag: 'rehearsal',
+  });
+
+  if (result === 'inconclusive') {
+    await reportRehearsal(null, null, detail);
+    return true;
+  }
+  await reportRehearsal(result === 'ok', detail, null);
+  // AND REPORT THE SESSION, because the rehearsal just changed it either way — it signed in
+  // (live) or it left us signed out (dead). Saying nothing would leave `autocart.rc_session`
+  // quoting a verdict this function has just invalidated.
+  //
+  // A dead verdict here cannot ring anyone's phone: `holdAtRisk` only fires within 45
+  // minutes of a release and the rehearsal refuses to run within six hours of one. That is
+  // the gate doing two jobs, and it is why the six hours is not negotiable.
+  await reportSession(result === 'ok' ? 'warm' : 'dead', `nightly rehearsal: ${detail}`);
+  log(result === 'ok'
+    ? '✓ the bot can still sign itself in — tomorrow morning has a session behind it'
+    : '✗✗ THE UNATTENDED LOGIN IS BROKEN, and there are hours to fix it. See admin → System Health.');
+  return true;
+}
+
+async function reportRehearsal(ok, detail, skippedWhy) {
+  if (!TOKEN) return;
+  await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ rehearsal: { ok, detail, skippedWhy } }),
+  }).catch((e) => log(`  (could not report the rehearsal: ${e.message})`));
 }
 
 async function reportSession(state, renewalNote = '') {
@@ -690,58 +796,76 @@ async function saveFailureShot(page, tag) {
  * One extra real sign-in. That is the point — one now, deliberately, while there is time to
  * recover, instead of finding out during the ninety seconds that decide a campsite.
  */
+/**
+ * The rehearsal itself, on a profile somebody else has already opened and locked.
+ *
+ * ONE BODY, TWO CALLERS — `--test-login` at a keyboard and the nightly `maybeRehearse`
+ * inside the resident loop. They must not drift: the entire claim being made is "this is
+ * the same thing that runs at 07:45", and two copies of it would be two things.
+ *
+ * @returns {Promise<{ result: 'ok'|'failed'|'inconclusive', detail: string }>}
+ */
+async function runLoginRehearsal(ctx, page, { humanPresent, tag }) {
+  await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await primeToken(page).catch(() => {});
+
+  const before = await sessionLive(ctx, page);
+  log(`Session before the test: ${before.live === true ? 'ALIVE' : before.live === false ? 'DEAD' : 'UNKNOWN'} — ${before.why}`);
+
+  // The token only, never the cookies. See the header.
+  log('Dropping the stored token so RC treats this as signed out (cookies untouched)…');
+  await page.evaluate(() => {
+    try {
+      localStorage.removeItem('ssoAccessToken');
+      localStorage.removeItem('accessToken');
+      delete window.__camphawkRcToken;
+    } catch {}
+  }).catch(() => {});
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+
+  const gone = await sessionLive(ctx, page);
+  if (gone.live === true) {
+    log('⚠ RC still accepts a token after clearing it — the test cannot prove anything.');
+    log('  Not attempting a login. Nothing was changed; your session is intact.');
+    return { result: 'inconclusive', detail: 'RC still accepted a session after clearing the token' };
+  }
+
+  log('Signing in with the stored password, exactly as it would at 07:45…');
+  const r = await attemptLogin(ctx, page, {
+    homeUrl: RC_HOME,
+    isLive: async () => (await sessionLive(ctx, page)).live === true,
+    log,
+    // `--test-login` has somebody watching, so a CAPTCHA is worth waiting on rather than
+    // failing at — they can solve it and the run carries on. The nightly rehearsal and
+    // maybeAutoLogin deliberately do the opposite: unattended, a challenge is a full stop.
+    humanPresent,
+  });
+  if (!r.ok) {
+    log(`✗ ${r.reason}`);
+    await saveFailureShot(page, tag);
+    return { result: 'failed', detail: r.reason };
+  }
+
+  const after = await sessionLive(ctx, page);
+  if (after.live !== true) {
+    log(`✗ Signed in, but RC will not accept the session: ${after.why}`);
+    return { result: 'failed', detail: `signed in, but RC will not accept the session: ${after.why}` };
+  }
+  try { fs.writeFileSync(WARM_MARKER, new Date().toISOString()); } catch {}
+  log(`✓ ${after.why}`);
+  return { result: 'ok', detail: after.why };
+}
+
 async function testLogin() {
   if (!hasCredentials()) {
     log('✗ No stored credentials. Run mini-pc\\rc-save-password.bat first.');
     return false;
   }
-  const result = await withProfile(async (ctx, page) => {
-    await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await primeToken(page).catch(() => {});
-
-    const before = await sessionLive(ctx, page);
-    log(`Session before the test: ${before.live === true ? 'ALIVE' : before.live === false ? 'DEAD' : 'UNKNOWN'} — ${before.why}`);
-
-    // The token only, never the cookies. See the header.
-    log('Dropping the stored token so RC treats this as signed out (cookies untouched)…');
-    await page.evaluate(() => {
-      try {
-        localStorage.removeItem('ssoAccessToken');
-        localStorage.removeItem('accessToken');
-        delete window.__camphawkRcToken;
-      } catch {}
-    }).catch(() => {});
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
-
-    const gone = await sessionLive(ctx, page);
-    if (gone.live === true) {
-      log('⚠ RC still accepts a token after clearing it — the test cannot prove anything.');
-      log('  Not attempting a login. Nothing was changed; your session is intact.');
-      return 'inconclusive';
-    }
-
-    log('Signing in with the stored password, exactly as it would at 07:45…');
-    const r = await attemptLogin(ctx, page, {
-      homeUrl: RC_HOME,
-      isLive: async () => (await sessionLive(ctx, page)).live === true,
-      log,
-      // Somebody is watching this one, so a CAPTCHA is worth waiting on rather than
-      // failing at — they can solve it and the run carries on. maybeAutoLogin deliberately
-      // does the opposite: unattended, a challenge is a full stop.
-      humanPresent: true,
-    });
-    if (!r.ok) {
-      log(`✗ ${r.reason}`);
-      await saveFailureShot(page, 'test-login');
-      return 'failed';
-    }
-
-    const after = await sessionLive(ctx, page);
-    if (after.live !== true) { log(`✗ Signed in, but RC will not accept the session: ${after.why}`); return 'failed'; }
-    try { fs.writeFileSync(WARM_MARKER, new Date().toISOString()); } catch {}
-    log(`✓ ${after.why}`);
-    return 'ok';
-  }, { headless: false, waitMs: 60_000 });
+  const outcome = await withProfile(
+    (ctx, page) => runLoginRehearsal(ctx, page, { humanPresent: true, tag: 'test-login' }),
+    { headless: false, waitMs: 60_000 },
+  );
+  const result = outcome === BUSY ? BUSY : outcome.result;
 
   if (result === BUSY) {
     log('✗ The hold runner has the profile. Wait a minute and re-run — nothing was changed.');
@@ -968,6 +1092,14 @@ async function warmResident() {
           lastExpiryPoll = Date.now();
           // Before anything else: is a hold about to need a session we do not have?
           if (await maybeAutoLogin(ctx, page).catch((e) => { log(`auto-login error: ${e.message}`); return false; })) {
+            continue;
+          }
+          // AFTER the auto-login, never before. If a hold is close enough that the bot is
+          // signing in for it, that login is the real thing and a rehearsal on top would be
+          // a second sign-in from this address for one release — which is the budget the
+          // one-attempt-per-release rule exists to protect. (rehearsal.mjs also refuses
+          // within six hours of a release, so this ordering is a belt on top of a brace.)
+          if (await maybeRehearse(ctx, page).catch((e) => { log(`rehearsal error: ${e.message}`); return false; })) {
             continue;
           }
           const { token, source } = await readLiveToken(page).catch(() => ({ token: null, source: 'none' }));

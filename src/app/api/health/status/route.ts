@@ -7,6 +7,8 @@ import {
   DETECT_STALE_MS as SHARED_DETECT_STALE_MS,
   RECGOV_MONTHS_PER_MACHINE,
   RC_SESSION_STALE_MS,
+  RC_RUNNER_STALE_MS,
+  rehearsalFault,
 } from '@/lib/health-thresholds';
 
 // Machine-readable alert-health aggregate. Turns the "silent death" traps in
@@ -56,11 +58,9 @@ const DETECT_STALE_MS = SHARED_DETECT_STALE_MS;
 const DELIVERY_STALE_MS = SHARED_DELIVERY_STALE_MS;
 const SYNC_STALE_MS = 48 * 60 * 60 * 1000; // catalog syncs are ~nightly/hourly
 const BOT_STALE_MS = 5 * 60 * 1000; // roster poll ~2s; matches poller's isBotOnline intent
-// The RC hold runner polls every ~20s (RC_HOLD_POLL_MS). Three minutes is nine missed
-// polls — comfortably past a transient network blip, and still well inside the ~21-minute
-// window a hold is reachable in, so a stale beat is actionable BEFORE the release is lost
-// rather than a post-mortem.
-const RC_RUNNER_STALE_MS = 3 * 60 * 1000;
+// RC_RUNNER_STALE_MS moved to lib/health-thresholds — `rcBotUsable` decides whether to
+// OFFER a hold with the same number this page judges the runner by, and two copies of
+// "is the runner there" would be two answers.
 // The session verdict comes from rc-keepwarm.mjs's 20-minute pass. 45 minutes is two
 // missed passes, which allows for one inconclusive result (a busy profile, a 403 from
 // RC's edge) without crying wolf — those report NOTHING rather than `false` on purpose,
@@ -372,6 +372,63 @@ export async function GET() {
     });
   } catch (err) {
     checks.push({ name: 'autocart.rc_runner', level: 'warn', pages: false, detail: `read failed: ${(err as Error).message}` });
+  }
+
+  // 4d. CAN THE BOT STILL SIGN IN? — one level deeper again, and the level that has failed
+  //     three times running.
+  //
+  //     4c reports whether RC accepts the token we HAVE. This reports whether we can still
+  //     MINT one, which is a different question and the one that decided 2026-08-07, 08-08
+  //     and 08-11. All three were found at 07:30 with twenty minutes to act, because the
+  //     08:00 release was being used as the test. `rc-keepwarm.mjs` rehearses the real
+  //     `attemptLogin` at 20:00 PT, far from any hold, and this is where the result lands.
+  //
+  //     ITS OWN try/catch, not folded into 4b/4c above. `rc_login_rehearsal` arrives in
+  //     migration 054 and Vercel deploys before a migration is applied, so for one window
+  //     this query fails — and it must not take the runner and session checks down with it
+  //     on the one page whose job is "is anything broken?".
+  try {
+    const [row, upcoming] = await Promise.all([
+      queryOne<{ ran_at: string | null; ok: boolean | null; ok_at: string | null; detail: string | null; skipped_why: string | null }>(
+        `SELECT ran_at::text, ok, ok_at::text, detail, skipped_why FROM rc_login_rehearsal WHERE id = 1`,
+      ),
+      queryOne<{ n: string }>(
+        `SELECT count(*) AS n FROM rc_hold_requests
+          WHERE status IN ('requested','carted','claiming')
+            AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`
+      ),
+    ]);
+    const age = ageMs(row?.ran_at);
+    const fault = rehearsalFault(row, Number.isFinite(age) ? age : null);
+    const ahead = Number(upcoming?.n ?? 0);
+    checks.push({
+      name: 'autocart.rc_login',
+      // Auto-cart, not alerting — see the `pages` field on Check.
+      pages: false,
+      // A PROVEN-BROKEN SIGN-IN WITH A HOLD AHEAD IS THE FAILURE. Everything else warns:
+      // a rehearsal that has never run, or has gone quiet, means we do not know — which is
+      // not healthy, but is also not the same as RC having refused us.
+      level: fault === 'failed' && ahead > 0 ? 'fail' : fault ? 'warn' : 'ok',
+      detail:
+        fault === 'never'
+          ? 'the sign-in has NEVER been rehearsed — is rc-keepwarm.mjs running, and has a password been saved with mini-pc\\rc-save-password.bat?'
+          : fault === 'failed'
+          ? `the bot COULD NOT SIGN IN at ${row!.ran_at!.slice(0, 16)}` +
+            (row!.detail ? `: ${row!.detail}` : '') +
+            (row!.ok_at ? ` (last worked ${row!.ok_at.slice(0, 10)})` : ' (it has never worked)') +
+            (ahead > 0 ? ` — ${ahead} hold(s) ahead will fail unless a human signs in` : '') +
+            '. On the mini-PC: mini-pc\\rc-test-login.bat'
+          : fault === 'stale'
+          // A SKIP IS NOT A PASS, and this is the sentence that keeps them apart. A run of
+          // quiet evenings must not read as a run of proven mornings.
+          ? `no rehearsal has PASSED in ${hms(age)}` +
+            (row?.skipped_why ? ` — last night was skipped: ${row.skipped_why}` : '') +
+            (row?.ok_at ? ` (last passed ${row.ok_at.slice(0, 10)})` : '')
+          : `the bot signed in unattended ${hms(age)} ago` + (row?.detail ? `: ${row.detail}` : ''),
+      ageSeconds: secs(age),
+    });
+  } catch (err) {
+    checks.push({ name: 'autocart.rc_login', level: 'warn', pages: false, detail: `read failed: ${(err as Error).message}` });
   }
 
   // `down`/503 means ALERTING is broken — the contract stated at the top of this file,

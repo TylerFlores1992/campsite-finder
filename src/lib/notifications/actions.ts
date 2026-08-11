@@ -265,7 +265,7 @@ export async function performAction(token: string): Promise<ActionResult> {
           message: 'Holding a site at release time is part of the Auto-Cart plan. Your alerts carry on as normal — you can still book it yourself the moment it opens.',
         };
       }
-      const { requestHold } = await import('@/lib/rc-holds');
+      const { requestHold, rcBotUsable } = await import('@/lib/rc-holds');
       const req = siteId ? await requestHold(watchId, siteId) : null;
       if (!req) {
         return {
@@ -274,9 +274,33 @@ export async function performAction(token: string): Promise<ActionResult> {
         };
       }
       const when = req.release_at.replace('T', ' ').slice(0, 16);
+      const site = `site ${req.unit_name ?? req.unit_id} at ${campgroundName ?? 'this campground'}`;
+
+      // THE THIRD ENFORCER, and the one that was missing on 2026-08-11. The offer is gated
+      // when the alert is built and the entitlement again here — but nothing asked whether
+      // there was a bot alive to do the carting, and for two hours that day there was not.
+      // A link is durable: this one may have been sent while the runner was healthy and
+      // tapped after it died.
+      //
+      // IT DOES NOT REFUSE, deliberately. A hold tapped the evening before an 08:00 release
+      // has all night to come good, and declining it over a runner that is down right now
+      // would throw away a hold that would probably have worked — the same mistake as the
+      // alarm that rang at T-45 about a session `maybeAutoLogin` was about to repair. What
+      // it must not do is repeat the flat promise, because a user who believes the site is
+      // handled stops watching, and that is how a recoverable morning becomes a lost one.
+      const bot = await rcBotUsable().catch(() => ({ ok: false, beatAgeMs: null }));
+      if (!bot.ok) {
+        return {
+          ok: true, action, changed: true, campgroundName, siteId,
+          message:
+            `Noted — we'll try for ${site} at ${when} PT. But our booking bot is offline right now, ` +
+            `so please plan to book it yourself the moment it opens. We'll text you either way, and ` +
+            `you'll get the usual alert the second the site frees up.`,
+        };
+      }
       return {
         ok: true, action, changed: true, campgroundName, siteId,
-        message: `We'll grab site ${req.unit_name ?? req.unit_id} at ${campgroundName ?? 'this campground'} the moment it opens (${when} PT). You'll get a text when it's in the cart.`,
+        message: `We'll grab ${site} the moment it opens (${when} PT). You'll get a text when it's in the cart.`,
       };
     }
     case 'mute_site': {

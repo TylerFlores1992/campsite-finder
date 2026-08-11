@@ -176,3 +176,53 @@ export function rcSessionFault(ok: boolean | null, ageMs: number | null): RcSess
   if (ageMs > RC_SESSION_STALE_MS) return 'stale';
   return ok ? null : 'dead';
 }
+
+/**
+ * How stale a login rehearsal may get before it stops being evidence.
+ *
+ * Two missed nights. ONE can be a legitimate skip — a hold was within six hours, or the
+ * session happened to be live at 20:00, and both of those are the rehearsal correctly
+ * declining to prove nothing. Two in a row means nothing has exercised the sign-in since
+ * before the last hold, which is exactly the state this whole mechanism exists to surface.
+ */
+export const REHEARSAL_STALE_MS = 48 * 60 * 60 * 1000;
+
+export type RehearsalFault = 'never' | 'failed' | 'stale';
+
+/**
+ * "Has the RC sign-in been proved to work recently?" — null when it has.
+ *
+ * WHY THERE IS A CHECK FOR THIS AT ALL. Three consecutive 08:00 holds failed and all three
+ * failed AT LOGIN, each discovered at 07:30 with twenty minutes to act. The login was
+ * testable at any hour the whole time; nothing was scheduled to test it. See migration 054
+ * and scripts/auto-cart-bot/rehearsal.mjs.
+ *
+ * `ok: null` IS NOT HEALTHY. It means the night was skipped, or nothing has ever run —
+ * the same rule as a null availability read and an `untracked` SMS row. A run of quiet
+ * skips must not read as a run of green nights, which is precisely what a naive
+ * "no failure recorded" check would report.
+ */
+export function rehearsalFault(
+  row: { ran_at?: string | null; ok?: boolean | null } | null | undefined,
+  ageMs: number | null,
+): RehearsalFault | null {
+  if (!row?.ran_at) return 'never';
+  if (row.ok === false) return 'failed';
+  if (row.ok !== true) return 'stale';
+  if (ageMs == null || ageMs > REHEARSAL_STALE_MS) return 'stale';
+  return null;
+}
+
+/**
+ * How long the RC hold runner may go without polling before it counts as absent.
+ *
+ * It polls every ~20s (RC_HOLD_POLL_MS), so three minutes is nine missed polls —
+ * comfortably past a transient network blip, and still well inside the ~21-minute window a
+ * hold is reachable in, so a stale beat is actionable BEFORE the release is lost rather
+ * than a post-mortem.
+ *
+ * Shared with `rcBotUsable`, which decides whether to OFFER a hold at all. The admin page
+ * judging the runner absent while the poller cheerfully offers to hold a site is exactly
+ * the disagreement this file exists to prevent.
+ */
+export const RC_RUNNER_STALE_MS = 3 * 60 * 1000;

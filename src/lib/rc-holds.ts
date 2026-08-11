@@ -9,6 +9,7 @@
 // inventory-grabbing this design exists to avoid.
 
 import { query, mutate } from '@/lib/db/client';
+import { RC_RUNNER_STALE_MS } from '@/lib/health-thresholds';
 
 export type HoldStatus =
   | 'offered' | 'requested' | 'carted' | 'claiming' | 'released' | 'claimed' | 'expired' | 'failed';
@@ -326,6 +327,76 @@ export async function recordSessionHealth(
       WHERE id = 1`,
     [ok, detail ? detail.slice(0, 300) : null, source.slice(0, 40)],
   ).catch((e) => console.error('[rc-holds] recordSessionHealth failed:', e.message));
+}
+
+/**
+ * Is there a bot alive to honour a hold at all?
+ *
+ * WHY THIS EXISTS (2026-08-11). The RC hold runner and keep-warm stopped at 09:36 PT and
+ * nothing noticed for over two hours — while the poller went on offering "Hold it for me"
+ * buttons, one of them eight minutes before this was written. Tapping one would have
+ * answered *"We'll grab site #P177 the moment it opens"*, which nothing on the mini-PC was
+ * running to do. That is the failure this codebase keeps finding in new clothes: a
+ * confident answer from a component that never asked whether the work could be done.
+ *
+ * OFFERING A HOLD WE CANNOT KEEP IS WORSE THAN OFFERING NOTHING, because the user stops
+ * watching. The same argument is already written on the claim screen, about promising an
+ * automatic cart before the cart POSTs were proven. They get the coming-soon alert either
+ * way and can book it themselves at 08:00 — which is the outcome a silent failure denies
+ * them.
+ *
+ * IT READS THE RUNNER'S HEARTBEAT AND NOT THE SESSION, deliberately. A dead session at
+ * 20:00 is a pending repair — `maybeAutoLogin` signs in at T-30 and the nightly rehearsal
+ * proves it can — and refusing on that would be the 2026-08-09 cry-wolf, which told the
+ * owner to sign in by hand over the session that carted a site fifteen minutes later. A
+ * missing runner is different: nothing is coming to fix it, and nothing will cart.
+ */
+export async function rcBotUsable(): Promise<{ ok: boolean; beatAgeMs: number | null }> {
+  const [row] = await query<{ beat_at: string | null }>(
+    `SELECT beat_at::text FROM rc_runner_heartbeat WHERE id = 1`,
+  ).catch(() => []);
+  if (!row?.beat_at) return { ok: false, beatAgeMs: null };
+  const beatAgeMs = Date.now() - new Date(row.beat_at).getTime();
+  return { ok: beatAgeMs <= RC_RUNNER_STALE_MS, beatAgeMs };
+}
+
+export interface RehearsalRow {
+  ran_at: string | null;
+  ok: boolean | null;
+  ok_at: string | null;
+  detail: string | null;
+  skipped_why: string | null;
+}
+
+/**
+ * The nightly proof that the bot can still sign in — see migration 054.
+ *
+ * A SKIP AND A PASS ARE WRITTEN DIFFERENTLY, on purpose. `ok = NULL` with a reason is "we
+ * declined to test tonight"; `ok = true` is "we signed in". Recording a skip as a pass is
+ * how a fortnight of quiet evenings would read as a fortnight of proven mornings, and the
+ * whole point of this table is that the three failures it exists to catch all LOOKED fine
+ * until 07:30.
+ *
+ * `ok_at` is never cleared by a later failure — the health check needs to say "broken
+ * since", not merely "broken".
+ */
+export async function recordRehearsal(
+  ok: boolean | null, detail: string | null, skippedWhy: string | null,
+): Promise<void> {
+  await mutate(
+    `UPDATE rc_login_rehearsal
+        SET ran_at = NOW(), ok = $1, detail = $2, skipped_why = $3,
+            ok_at = CASE WHEN $1 IS TRUE THEN NOW() ELSE ok_at END
+      WHERE id = 1`,
+    [ok, detail ? detail.slice(0, 300) : null, skippedWhy ? skippedWhy.slice(0, 200) : null],
+  ).catch((e) => console.error('[rc-holds] recordRehearsal failed:', e.message));
+}
+
+export async function lastRehearsal(): Promise<RehearsalRow | null> {
+  const [row] = await query<RehearsalRow>(
+    `SELECT ran_at::text, ok, ok_at::text, detail, skipped_why FROM rc_login_rehearsal WHERE id = 1`,
+  ).catch(() => []);
+  return row ?? null;
 }
 
 export async function markClaimed(id: string): Promise<void> {
