@@ -2498,6 +2498,46 @@ count); and the brand is the lowest-trust `SOLE_PROPRIETOR` tier with a blank tr
 score and "Other carriers: None specified" — not implicated by any evidence here, but
 the thing to look at first if filtering ever returns without a code change.
 
+## "Auto-cart is on but not connected" (migration 052, 2026-08-11)
+
+Auto-cart enabled with no working rec.gov connection behind it is invisible to the user:
+their watches silently fall back to normal alerts. One email
+(`src/lib/notifications/autocart-nudge.ts`) fired from **three** places, and the third is
+the one that mattered:
+
+1. `/api/auto-cart/enrollment` sends it the moment the bot reports a live connection
+   **dying** — a genuine `true → false` transition, not every repeat "still dead" keepalive.
+2. `/api/cron/autocart-nudge` (08:00 PT) catches **never connected at all**
+   (`autocart_verified_at IS NULL`), which has no event to hang off.
+3. The same cron also sweeps **connected once, dead ever since** — and neither of the other
+   two can ever reach that state. There is no future transition to fire on, because the
+   transition already happened unobserved, and the "never connected" predicate excludes
+   anyone with a `verified_at`. Found live on 2026-08-11: an account verified 2026-07-29,
+   `connected = false`, **thirteen days**, reachable by neither path. *The one account the
+   nudge was written for was the one account it could not reach.*
+
+(3) is also the backstop for (1)'s failure mode: `reportConnected` in `bot.mjs` is
+fire-and-forget with `.catch(() => {})`, so one network blip on the mini-PC loses the only
+signal for ever. An event with no reconciling sweep is the same trap as
+`notifications.status = 'sent'` — it records that we tried, not that it landed.
+
+- **`AUTOCART_LAPSED_HOURS` (48), not zero.** The keepalive runs every 30 minutes and can
+  now repair the session from a saved password by itself, so mailing on the first failed
+  check would tell somebody to fix a thing that fixes itself.
+- **`autocart_nudge_sent_at` resets on a genuine reconnect**, or the flag latches and the
+  email is once-per-account-for-life: reconnect today, lapse again in three months, hear
+  nothing. Same rule as the claim's `nudged_at` clearing on a real re-open.
+- Both paths check `hasAutocartEntitlement` first — a lapsed subscriber is never nagged
+  about a plan they no longer pay for.
+- The run reports the two shapes **separately**; a single total is how thirteen days of one
+  hid behind zero of the other.
+
+> **MIGRATION NUMBERING BIT US HERE.** This shipped from a parallel session as `051`, which
+> was already taken by `bot_update_requests` and already applied to production. Renumbered
+> to **052** on merge. Not cosmetic: a runner tracking applied migrations by number would
+> consider it done, skip it silently, and `/api/user/autocart` would 500 on every toggle
+> against columns that never got created.
+
 ## Expired watches close themselves (2026-08-05)
 
 `worker/expire-watches.ts`, hourly, under `withSyncClaim('expire-watches')`.
@@ -3073,6 +3113,38 @@ it. Stored-credential auto-relogin (the rec.gov shape) stays the last resort, be
 repeated Okta sign-ins from one address is the leading explanation for the household IP
 being blocked for twelve hours on 2026-08-06.
 
+## The auto-login lead is T-30, and "covered" is DERIVED (2026-08-11)
+
+`RC_AUTOLOGIN_LEAD_MIN` moved 15 → **30**. The ceiling is arithmetic, not taste: a login at
+T−L mints a ~60-minute token, and the bot needs it to **RELEASE at up to T+15** — the user
+has the whole cart hold to tap claim, and `remove/cartentry` runs on the bot's session. So
+`T−L+60 ≥ T+CART_HOLD` → **L ≤ 45**. At 30 the token still has 30m at the cart (twice the
+hold) and a human gets 30 minutes to answer the phone, find a computer and sign in. **The
+extra fifteen minutes are for a HUMAN, not for the bot to retry** — one attempt per release
+still stands, because repeated logins from this address cost 12h of IP block on 2026-08-06.
+
+**`AUTOLOGIN_MIN_TOKEN_MIN` was a flat 20 and that was ALREADY WRONG at L = 15.** "Covered"
+has to mean alive through the **release**, not through the cart: at 20 the bot sees a token
+with 21 minutes left, calls the hold covered, skips its ONE login, carts at T−0 with ~6
+minutes of token and then **fails the claim** — the user taps "I'm ready" and nobody
+releases the unit. Reachable by signing in by hand an hour before a release, which is
+exactly what the pre-flight asks for. It is `LEAD + CART_HOLD_MIN + 5` now.
+
+`AUTOCART_ALARM_AFTER_MIN` moved 12 → **25** with it. That is the fallback branch (the
+keep-warm reporting nothing at all); a login that fails still rings at once on the
+`auto sign-in failed` branch. At 12 against a lead of 30 it would satisfy "inside the lead"
+and still buy an **18-minute silence** in the only window where somebody can act, so
+`worker/autologin-lead.test.mts` asserts *how far* inside, not merely that it is.
+
+> **THE TWO HALVES DEPLOY BY DIFFERENT ROUTES.** `AUTOCART_ALARM_AFTER_MIN` is on Vercel
+> (instant on a `master` push); `RC_AUTOLOGIN_LEAD_MIN` is mini-PC code and needs an update.
+> In the gap the alarm fires at T−25 while the login still waits for T−15 — the 2026-08-09
+> cry-wolf bug exactly. Land them together.
+
+> **The pre-flight Routine moved 07:30 → 07:40 PT** (`trig_015nU7BciNU5GKimmgXjvAZG`). At
+> 07:30 it now collides with `maybeAutoLogin` and would report "dead" during the very repair
+> that fixes it. At 07:40 it reports the OUTCOME with 20 minutes to act.
+
 ## Day-before opt-in holds — the RC 8am flow (migrations 043 + 044, 2026-08-07)
 
 **The idea (owner's).** RC locks a cancelled site until a release time, and that time is
@@ -3558,6 +3630,47 @@ fourth surface now.
 - Enrollment/connection state: `users.autocart_enabled` + `users.autocart_connected`.
   The Watches toggle shows "paused — reconnect" when enabled but not connected.
 
+### The auto-relogin never retried — a log line that lied (2026-08-11)
+
+`keepSessionsWarm` skipped any profile with no `.camphawk-ready` marker
+(`if (!isLoggedIn(...) || inUse.has(...)) continue`), and a failed auto-relogin **deleted
+that marker unconditionally — three lines after logging "keeping the saved login, will retry
+next cycle"**. The pass that promised the retry switched off the gate it needed, so the
+FIRST failure disqualified that user from every future keepalive pass. One account sat 12
+days with nothing trying, and it read as a permanent rec.gov CAPTCHA: nothing was standing
+in the way, and nothing was attempting. The two-strike bad-password rule was dead code for
+the same reason — the second strike could never be thrown.
+
+**AND IT ESCALATED.** `LOGIN_MODE` defaults to `local`, where the main loop calls
+`ensureLogin()` on a missing marker: a 10-minute interactive window nobody is at, then
+`setEnrollment(false)` — it turns the user's auto-cart **off**. The missing marker did not
+merely stop the retry, it un-enrolled people over a CAPTCHA the bot had already decided to
+retry past.
+
+**THE FIX IS NOT "STOP DELETING THE MARKER".** `.camphawk-ready` is read by `processJob`,
+which must not cart against a session known to be dead. The marker carried two meanings that
+came apart when auto-relogin was added — "the session is live" and "this profile is eligible
+for a pass". They are separate now: the session flag stays honest, `.camphawk-relogin`
+carries the owed repair, and both `keepSessionsWarm` and `ensureLogin` honour it.
+
+**A SAVED PASSWORD IS ITSELF A MANDATE.** The retry state is only ever written by a FAILURE,
+so a profile whose session merely lapsed has none — and escalating that to a human while
+holding a password the user saved on `/connect` precisely so they would not be asked again
+is the whole complaint. `shouldBootstrapRepair` treats "saved password + no session +
+nothing tried" as an owed repair. **Giving up is therefore a TOMBSTONE, not a delete**: an
+erased state would look untried, bootstrap a fresh ladder on the next pass, and retry a
+CAPTCHA-walled account for ever.
+
+Bounded, because every attempt opens a headful browser and posts credentials from the
+household IP: a CAPTCHA gets 6 attempts on 30m/1h/2h/4h/6h (13.5h — crosses an overnight
+challenge, surfaces the same day) then gives up loudly **keeping the credentials**; a
+rejected password still gets 2 and then `deleteCreds`, because a wrong password never fixes
+itself. Decision logic is a pure module (`scripts/auto-cart-bot/relogin-retry.mjs`);
+`worker/relogin-retry.test.mts` was verified failing against the restored gate, against
+`ensureLogin` firing during a pending repair, and against a success that fails to clear the
+marker. **`/connect` was never affected** — that is `broker.mjs`, a separate flow that
+always attempts a fresh sign-in and hands a CAPTCHA to whoever is at the page.
+
 ### Hard-won gotchas (these cost real debugging time)
 
 - **Must run HEADED — *everywhere* that touches rec.gov, not just the cart.** rec.gov
@@ -3717,6 +3830,113 @@ and each is distinct.
   real variable cost; email/push default to $0 (plan/free). The Costs tab ALSO queries an
   unscoped all-time count for lifetime spend — don't confuse the two.
 
+## The on-demand update took FIVE bugs, and four produced identical silence (2026-08-11)
+
+Admin → System Health → **"Update now"** sets a flag (`bot_update_requests`, migration
+051); the hold runner sees it on its next 15-second poll and hands off to
+`mini-pc/auto-update.ps1`, which re-applies the release guard itself. Nothing connects INTO
+the box — it is behind a home router, and opening a port on the machine holding the RC
+session to save a scheduled task is a poor trade. **A request lifts the quiet window and
+NEVER the release check**: an update ends the RC session however it was triggered.
+
+It shipped 2026-08-10 and did not work once until 2026-08-11 04:53. Five distinct bugs,
+each masking the next, and the reason it took a night is that **four of them produced
+exactly the same symptom — the flag stayed pending and nothing anywhere said why.**
+
+1. **`update-guard.mjs` never called `loadEnv()`** — the only bot script missing it. The
+   token lives in `scripts/auto-cart-bot/.env`, not the machine environment, so the feed
+   answered 401, `feedReachable` stayed false, and the guard skipped every run with
+   "refusing to update blind": correct behaviour for an unknown, reached for the wrong
+   reason, indistinguishable in the log from a real outage. `load-env.mjs`'s own header
+   already recorded this exact bug hitting `rc-hold-runner.mjs` on 2026-08-07.
+2. **The hand-off latched for the process life.** `auto-update.ps1` exits 0 when its guard
+   refuses — nothing applied, request still pending — and the runner never tried again.
+   Now a 15-minute retry: the refusal reasons are ones that clear.
+3. **A refusal was invisible.** The verdict went only to a log file on a box nobody can
+   reach. `noteBotUpdateAttempt` writes `applied_note` **without** `applied_at`, so the
+   request deliberately stays pending — the same split as `last_attempt_note` on the holds.
+4. **node crashed on the way out of the guard.** `AbortSignal.timeout` leaves a libuv timer
+   handle and `process.exit()` tears the loop down under it:
+   `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c:94`, printed
+   AFTER the verdict. That replaced our exit status with the crash's, **so a PROCEED came
+   back non-zero and the update skipped anyway.** Fixed with a manual `AbortController`
+   cleared in `finally`, the body drained on the non-ok path, and `process.exitCode`.
+   `auto-update.ps1` now decides from the printed **verdict line** rather than the exit
+   code — a crash can corrupt an exit status, it cannot un-print a line — and anything that
+   is not an explicit `PROCEED` is a skip.
+5. **`detached: true` was why the script never ran at all.** On Windows that means
+   `DETACHED_PROCESS`: the child gets **no console**, and `powershell -File` started that
+   way produced literally nothing — no output, no error, no `auto-update.log` — while the
+   identical command by hand worked. It was never needed: killing a parent on Windows does
+   not kill its children, and `stop-all.ps1` matches the bot's own scripts, which
+   `auto-update.ps1` is not. `unref()` alone is what avoids waiting to be killed.
+
+**THE FIXES THAT MATTERED MOST WERE THE ONES THAT MADE FAILURES DISTINGUISHABLE**, not the
+ones that fixed a bug: the runner writes a marker to `logs/update-spawn.log` **before** the
+spawn (so "no file" has one meaning), the child's stdio goes to that file instead of
+`'ignore'` (so "started and died" stops looking like "never started"), `ps.on('exit')`
+records the status, and `auto-update.ps1` reports that it STARTED before anything can kill
+it. Also: **being already current now clears the request**, or a hand-run `update.bat`
+leaves the flag pending and the runner re-hands-off for ever.
+
+## Ask the mini-PC a question — `bot_commands`, migration 053 (2026-08-11)
+
+The five bugs above cost six round-trips of *"please open a terminal on the box and paste
+that file"*. Diagnostics now ride the same authenticated 15-second poll: Admin → System
+Health → **"Ask the mini-PC"**, or `scripts/bot-ask.mts` from anywhere with DB access.
+
+**IT IS NOT A SHELL, AND THAT IS THE DESIGN.** The server sends `{id, kind, arg}` and
+nothing else — never a command line, a path or a script. Every kind is implemented in
+`scripts/auto-cart-bot/bot-commands.mjs`, which keeps its **own** copy of the allowlist and
+refuses anything it does not recognise **by name**. So a wholly compromised server, or a
+leaked `AUTOCART_TOKEN`, can still only trigger the four read-only things the box already
+agreed to do. That matters more here than it usually would: this machine holds the live RC
+session, the DPAPI credential store, and a residential IP that rec.gov and RC have each
+blocked once. `src/lib/bot-commands.ts` mirrors the list so a typo fails at the point of
+asking; `worker/bot-commands.test.mts` pins the two together and fails if either drifts.
+
+- **Kinds:** `tail-log` (by NAME from a fixed set — a path parameter is a traversal, and
+  `.env` and the profile directories are exactly what an attacker would ask for),
+  `list-processes` (our own scripts only, from a fixed PowerShell string with **no**
+  interpolation), `git-status`, `disk-free`.
+- **Output is scrubbed ON THE BOX**, the only place where "not sent" is still true.
+  Authorization headers eat the rest of the line (the first version matched
+  `(bearer|authorization:?)\s+\S+`, which on `authorization: Bearer abc123` consumed the
+  word "Bearer" and left the credential — a redaction that reads as if it worked). Whole
+  query strings go, not named parameters: naming the dangerous ones is how you miss the
+  next one, and that is how the 2026-08-09 precart diagnostic shipped an OAuth code past a
+  scrubber that knew JWT shapes. Capped at 16KB keeping the **tail**.
+- **A missing file is an ANSWER, not an error.** "logs\auto-update.log does not exist" is
+  what finally proved the update script never ran.
+- **UTF-16 logs are decoded by BOM.** PowerShell 5.1's `Tee-Object` wrote every per-process
+  log as UTF-16LE, which is why `findstr` answered *"input file is in Unicode format"*
+  mid-diagnosis. `supervise.ps1` writes UTF-8 now; older files on the box still are not.
+- **`started_at` is stamped on pickup**, so "nobody looked at this" and "it ran and returned
+  nothing" stay distinguishable. The admin panel shows all three states and never two.
+- Never awaited by the runner — at 08:00:00 nothing may go in front of a precart. Queue
+  capped at 5; commands expire after 10 minutes, because one that surfaces an hour later
+  answers a question about a machine that no longer exists.
+
+## PowerShell on this box: three traps that all fail silently (2026-08-11)
+
+1. **A `.ps1` must be pure ASCII.** Windows PowerShell 5.1 reads a file **without a BOM as
+   Windows-1252**; an em dash is `E2 80 94`, byte `0x94` is `U+201D` (curly right double
+   quote), **and PowerShell accepts curly quotes as string delimiters**. One em dash inside
+   a `Write-Line "…"` closed the string mid-line and took **all four supervised processes**
+   down with "missing the terminator", reported six lines from the cause. The same bytes in
+   a COMMENT are harmless, which is why this needs checking mechanically — today's comment
+   is tomorrow's message string. **ASCII, not a BOM**: a BOM is invisible and any editor or
+   `git` normalisation can drop it. `worker/update-guard.test.mts` fails on any non-ASCII
+   byte in `mini-pc/*.ps1`.
+2. **`2>&1` on a NATIVE command under `$ErrorActionPreference = "Stop"` is a terminating
+   error.** Each stderr line becomes an `ErrorRecord` and the first one kills the script.
+   node writes to stderr routinely, so `$guardOut = & node update-guard.mjs 2>&1` died on
+   its first real line. `Stop` bought nothing there — every native call already checked
+   `$LASTEXITCODE`.
+3. **Node writes UTF-8; the console is cp437.** Without `[Console]::OutputEncoding`, every
+   em dash lands in `logs\rc-keepwarm.log` as `TCo` — cosmetic on screen and not cosmetic
+   in the files that are the post-mortem record.
+
 ## Environment variables (names only — values in `.env.local` / Vercel / Fly)
 
 GoingToCamp search (`GTC_AVAILABILITY_URL` on Vercel → the Fly worker endpoint;
@@ -3820,6 +4040,16 @@ while it works; a TTL sized to the longest run would strand the catalog for that
 after a crash); the RIDB catalog sync's `RIDB_CONCURRENCY` (8, was a hard-coded 15),
 `RIDB_ATTEMPTS` (4) and `RIDB_BACKOFF_MS` (2000); `AUTOCART_POLL_INTERVAL_MS` (6s — the
 RECONCILER cadence only; auto-cart detection lives in the main 15s cycle).
+**Auto-cart timing knobs, all with working defaults — set only to override.** On **Vercel**:
+`AUTOCART_ALARM_LEAD_MIN` (45, the outer window in which a dead session is an emergency),
+`AUTOCART_ALARM_AFTER_MIN` (**25** since 2026-08-11 — must track the mini-PC's login lead;
+see the T-30 section for why the two halves must land together), `AUTOCART_ALARM_PHONE`
+(overrides who the alarm calls), `AUTOCART_LAPSED_HOURS` (48, before the "not connected"
+email). On the **mini-PC** `.env`: `RC_AUTOLOGIN_LEAD_MIN` (**30**),
+`RC_AUTOLOGIN_MIN_TOKEN_MIN` (derived as `LEAD + CART_HOLD + 5` — override only with the
+arithmetic in front of you), `RC_HEADLESS` (false; RC fingerprints headless Chromium),
+`KEEPALIVE_MS`, `LOGIN_MODE`, `POLL_MS`, `PROFILES_DIR`, `CARTED_TTL_MS`.
+
 The mini-PC bot has its own `.env` (`AUTOCART_TOKEN`, `LOGIN_MODE=remote`,
 `BROKER_PORT`, `POLL_MS`) — **read by every process on the box via `load-env.mjs`**, and
 an already-exported shell variable beats it (see the bot section; that override is
@@ -3881,11 +4111,35 @@ shadow the master Production build and strand the domain — root-caused 2026-07
 SETUP.md); the Fly worker deploys via the **`worker-deploy.yml` GitHub Action** — which
 restarts the machine and verifies the heartbeat, because a by-hand `flyctl` deploy leaves
 it stopped and alerting silently dead (see the autostop note above); the mini-PC bot
-updates via `git push` + `update.bat` on the box.
+updates from `master` either **on demand** (Admin → System Health → "Update now", or
+`requestBotUpdate()`) or by a human running `mini-pc/update.bat`. The on-demand path was
+proven end to end 2026-08-11 04:53 UTC — `applied_sha` came back matching the commit — and
+took FIVE bugs to get there; see "The on-demand update took five bugs" below.
 
-**The mini-PC now runs FIVE processes**, all launched by `mini-pc/start-all.bat`: the
-Cloudflare tunnel, the rec.gov bot, the sign-in broker, `rc-keepwarm.mjs` and
-`rc-hold-runner.mjs`. Three RC-specific helpers exist because a fresh PowerShell window
+**The mini-PC runs FIVE processes**, all launched by `mini-pc/start-all.bat` and all
+except the tunnel wrapped in `mini-pc/supervise.ps1`: the Cloudflare tunnel, the rec.gov
+bot, the sign-in broker, `rc-keepwarm.mjs` and `rc-hold-runner.mjs`.
+
+> **STOPPING IS `mini-pc/stop-all.ps1`, AND EVERY START PATH CALLS IT (2026-08-11).** An
+> update used to "just add another five" windows, from four separate causes with one shape —
+> something that looked like it stopped the old processes and did not. (1) These are
+> `powershell -NoExit` windows, so a dead process leaves its console behind: **"is there a
+> window?" was never evidence anything was running.** (2) `update.bat` killed by WINDOW
+> TITLE, which matches nothing; it survived on `taskkill /IM node.exe /F` until supervisors
+> shipped, after which the supervisors lived through it and **restarted the children it had
+> just killed**. (3) `auto-update.ps1` never stopped cloudflared (which `start-all`
+> relaunches — one duplicate tunnel per update, forever) and its pattern missed `bot.mjs`
+> entirely; **`Stop-Process` does not kill a process TREE on Windows**, so killing the
+> `npm start` shim orphaned the rec.gov bot. (4) Nothing killed an orphaned **Chromium** —
+> Playwright's browser outlives a force-killed parent and holds the real Chrome lock on the
+> user-data-dir, which deleting our own lock file does not touch.
+>
+> stop-all kills supervisors → payloads by name → bot Chromium scoped to our profile dirs,
+> clears the profile locks, then **RE-CHECKS and exits non-zero**; callers refuse to launch
+> on a failed stop. **`start-all.bat` stopping first is what makes the duplicate
+> structurally impossible** rather than merely fixed in the update paths. **Never kill by
+> image name** — `taskkill /IM chrome.exe /F` was in `update.bat` and closes the browser of
+> whoever is sitting at the machine. Three RC-specific helpers exist because a fresh PowerShell window
 opens in `C:\Users\<you>`, where `node rc-keepwarm.mjs` fails with `MODULE_NOT_FOUND` —
 which reads like a broken install rather than a wrong directory, and cost three rounds on
 2026-08-07. All three `cd` themselves:
@@ -3942,8 +4196,14 @@ which reads like a broken install rather than a wrong directory, and cost three 
 >
 > Kill by COMMAND LINE instead (`Get-CimInstance Win32_Process | Where-Object
 > { $_.CommandLine -match 'rc-keepwarm\.mjs|rc-hold-runner\.mjs' -and $_.ProcessId -ne $PID }`).
-> **Not `taskkill /IM node.exe /F`** — that is precisely why `update.bat` was immune to
-> this bug, but in `rc-login.bat` it would take the rec.gov bot and the broker down too.
+> **Not `taskkill /IM node.exe /F`** — that masked the same bug in `update.bat` for months,
+> and in `rc-login.bat` it would take the rec.gov bot and the broker down too. **Corrected
+> 2026-08-11: `update.bat` is no longer immune and no longer needs to be** — it delegates to
+> `stop-all.ps1`, which kills by command line and verifies. `rc-login.bat` keeps its own
+> narrower list on purpose (an RC sign-in has no business stopping the rec.gov bot) and now
+> also clears orphaned Chromium on the RC profile, and relaunches the pair **supervised** —
+> until 2026-08-11 it relaunched them bare, so a hand sign-in quietly downgraded exactly the
+> two processes it was fixing.
 >
 > Same family: `update.bat` finished by saying **"Three new windows should have opened"**
 > long after there were five. Someone counting windows to confirm an update would see
