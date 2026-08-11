@@ -138,20 +138,42 @@ if (process.argv[1] && process.argv[1].endsWith('update-guard.mjs')) {
   let nextRelease = null;
   let requested = false;
   let feedReachable = false;
+  // A MANUAL CONTROLLER, NOT AbortSignal.timeout, AND THE BODY IS ALWAYS DRAINED.
+  //
+  // On Windows this exact call crashed node on the way out (observed 2026-08-11):
+  //   node.exe : Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
+  //              file src\win\async.c, line 94
+  // printed AFTER the verdict. `AbortSignal.timeout` leaves a libuv timer handle behind
+  // and `process.exit()` tears down the loop underneath it. The crash matters far more
+  // than it looks: it replaces our exit code with the crash's, so a PROCEED verdict became
+  // a non-zero status and auto-update.ps1 skipped anyway. The decision was right and the
+  // exit code lied about it.
+  //
+  // An unread body also keeps a socket alive, which is the other way this process fails to
+  // leave cleanly - so the non-ok path cancels it explicitly.
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 15_000);
   try {
     const r = await fetch(`${url}/api/auto-cart/rc-holds?leadSeconds=0`, {
       headers: { authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(15_000),
+      signal: ac.signal,
     });
     if (r.ok) {
       const j = await r.json();
       nextRelease = j?.nextRelease ?? null;
       requested = j?.updateRequested === true;
       feedReachable = true;
+    } else {
+      await r.body?.cancel?.().catch(() => {});
     }
   } catch { /* feedReachable stays false — see safeToUpdate */ }
+  finally { clearTimeout(timer); }
 
   const verdict = safeToUpdate({ nextRelease, feedReachable, requested, force });
-  console.log(`[update-guard] ${verdict.ok ? 'PROCEED' : 'SKIP'} — ${verdict.reason}`);
-  process.exit(verdict.ok ? 0 : 1);
+  // THE VERDICT LINE IS THE CONTRACT, not the exit code - auto-update.ps1 reads this text.
+  // A crash on the way out can corrupt an exit status; it cannot un-print a line.
+  console.log(`[update-guard] ${verdict.ok ? 'PROCEED' : 'SKIP'} - ${verdict.reason}`);
+  // exitCode rather than exit(): let the loop drain on its own instead of pulling it out
+  // from under whatever is still closing.
+  process.exitCode = verdict.ok ? 0 : 1;
 }

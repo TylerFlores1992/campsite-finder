@@ -90,7 +90,22 @@ if ($Force) { $guardArgs += "--force" }
 # log - which is safe now that ErrorActionPreference is Continue. See the header.
 $guardOut = & node @guardArgs 2>&1
 $guardOut | Tee-Object -FilePath $log -Append
-if ($LASTEXITCODE -ne 0) {
+
+# READ THE VERDICT LINE, NOT THE EXIT CODE. On 2026-08-11 node crashed on the way out of
+# this call - "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)" - AFTER printing its
+# verdict. That replaced our exit status with the crash's, so a PROCEED would have been
+# read as a refusal and the update skipped anyway, silently and forever. The guard is fixed,
+# but the reading should not have been that fragile: a crash can corrupt an exit code, it
+# cannot un-print a line.
+#
+# Fail-safe direction: anything that is not an explicit PROCEED is a skip. A guard that
+# crashes BEFORE deciding therefore stops the update, which is the correct answer when we
+# do not know whether a hold is due.
+$verdict = ($guardOut | Out-String)
+if ($verdict -notmatch '\[update-guard\] PROCEED') {
+  if ($verdict -notmatch '\[update-guard\] SKIP') {
+    Write-Line "the guard did not reach a verdict - treating as skip."
+  }
   Write-Line "skipping this run."
   # SAY SO SERVER-SIDE. A refusal used to live only in this log file, on a box nobody can
   # reach - so an on-demand update that sat pending looked identical to a box that had

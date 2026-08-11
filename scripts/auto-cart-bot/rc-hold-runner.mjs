@@ -349,9 +349,22 @@ async function runPass() {
       log(`  ✗ ${script} does not exist — cannot update`);
       updateStartedAt = 0;
     } else try {
+      // stdio TO A FILE, NEVER 'ignore'. With output discarded, a PowerShell that starts
+      // and dies immediately - a bad -File path, a policy refusal, a parse error - is
+      // indistinguishable from one that never started, and that ambiguity is what made
+      // this take all night. Whatever the child says now lands on disk.
+      //
+      // The marker is written BEFORE the spawn, so the file exists even if the launch
+      // itself is what fails. "No file" can then only mean the runner never got here.
+      const spawnLog = path.join(HERE, 'logs', 'update-spawn.log');
+      try {
+        fs.mkdirSync(path.dirname(spawnLog), { recursive: true });
+        fs.appendFileSync(spawnLog, `\n=== ${new Date().toISOString()} launching ${script}\n`);
+      } catch { /* best effort - never block the hand-off on logging it */ }
+      const out = fs.openSync(spawnLog, 'a');
       const ps = spawn('powershell', [
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script,
-      ], { detached: true, stdio: 'ignore' });
+      ], { detached: true, stdio: ['ignore', out, out], windowsHide: true });
       // spawn() reports ENOENT via an 'error' EVENT, not by throwing — so the try/catch
       // below never sees it, and an 'error' with no listener takes the whole runner down.
       // Two failure modes, both invisible, both fixed by listening.
@@ -360,6 +373,9 @@ async function runPass() {
         updateStartedAt = 0;
       });
       ps.unref();
+      // The parent's copy is closed straight away; the child keeps its own handles, which
+      // is what lets this survive the updater killing us.
+      try { fs.closeSync(out); } catch { /* the child owns it now */ }
     } catch (err) {
       log(`  update hand-off failed: ${err.message}`);
       updateStartedAt = 0;

@@ -182,8 +182,8 @@ const miniPc = (f: string) =>
 function handoffBlock(runner: string): string {
   const i = runner.indexOf('if (updateRequested');
   assert.ok(i > 0, 'the hand-off branch must exist');
-  const block = runner.slice(i, i + 1800);
-  assert.ok(block.includes('spawn('), 'the slice must reach the spawn');
+  const block = runner.slice(i, i + 3000);
+  assert.ok(block.includes('ps.unref()'), 'the slice must span the whole branch');
   return block;
 }
 
@@ -386,9 +386,11 @@ test('auto-update survives node writing to stderr', async () => {
     assert.match(up, /\$ErrorActionPreference = "Continue"/,
       'a script redirecting native stderr must not run under Stop');
   }
-  // And $LASTEXITCODE is the honest way to read a native exit status, which is what makes
-  // Continue safe here rather than merely permissive.
-  assert.match(up, /if \(\$LASTEXITCODE -ne 0\)/, 'native exit codes are checked explicitly');
+  // Native results are still read explicitly rather than left to PowerShell's error
+  // machinery — $LASTEXITCODE for stop-all, and the guard's printed verdict for the guard
+  // (an exit code a crash can corrupt is not a contract; see the verdict-line test).
+  assert.match(up, /\$LASTEXITCODE -eq 0/, 'stop-all is judged by its exit status');
+  assert.match(up, /\[update-guard\\\] PROCEED/, 'the guard is judged by its verdict line');
 });
 
 test('the script says it started before anything can kill it', async () => {
@@ -441,4 +443,47 @@ test('the bot logs are searchable', async () => {
   assert.ok(!/Tee-Object -FilePath \$LogFile/.test(sup), 'Tee-Object writes UTF-16 — do not use it for the log');
   assert.match(sup, /Add-Content -Path \$LogFile -Value \$_ -Encoding UTF8/);
   assert.match(sup, /Write-Host \$_/, 'and the live console still shows the output');
+});
+
+test('the guard exits cleanly, without pulling the loop out from under libuv', async () => {
+  // OBSERVED ON WINDOWS 2026-08-11, printed AFTER the verdict:
+  //   node.exe : Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c:94
+  // `AbortSignal.timeout` leaves a timer handle behind and `process.exit()` tears the loop
+  // down underneath it. The crash matters more than it looks: it replaces our exit code
+  // with the crash's, so a PROCEED verdict came back non-zero and the update was skipped
+  // anyway — the decision was right and the exit status lied about it.
+  const { readFileSync } = await import('node:fs');
+  const g = code(readFileSync('scripts/auto-cart-bot/update-guard.mjs', 'utf8'));
+  assert.ok(!/AbortSignal\.timeout/.test(g), 'use a controller we can clear, not a dangling timer');
+  assert.match(g, /clearTimeout\(timer\)/);
+  assert.ok(!/process\.exit\(/.test(g), 'set exitCode and let the loop drain');
+  assert.match(g, /process\.exitCode = verdict\.ok \? 0 : 1/);
+  // An unread body keeps a socket alive, which is the other way this fails to exit.
+  assert.match(g, /r\.body\?\.cancel/);
+});
+
+test('auto-update trusts the verdict LINE, not the exit code', async () => {
+  // A crash can corrupt an exit status; it cannot un-print a line. And the fallback
+  // direction is fail-safe: anything that is not an explicit PROCEED is a skip, so a guard
+  // that dies before deciding stops the update — the right answer when we do not know
+  // whether a hold is due.
+  const { readFileSync } = await import('node:fs');
+  const up = readFileSync('scripts/auto-cart-bot/mini-pc/auto-update.ps1', 'utf8');
+  assert.match(up, /\$verdict -notmatch '\\\[update-guard\\\] PROCEED'/,
+    'proceeding requires the guard to have said so in words');
+  assert.match(up, /did not reach a verdict/, 'and a crashed guard is called out as such');
+});
+
+test('a spawned hand-off cannot fail silently', async () => {
+  // `stdio: 'ignore'` made "started and died immediately" identical to "never started".
+  // That ambiguity is what made this take all night to find.
+  const { readFileSync } = await import('node:fs');
+  const runner = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
+  const block = handoffBlock(runner);
+  assert.ok(!/stdio: 'ignore'/.test(block), "the child's output must go somewhere readable");
+  assert.match(block, /update-spawn\.log/, 'and it goes to a named file');
+  // Written BEFORE the spawn, so the file exists even when the launch is what fails —
+  // which turns "no file" into a single unambiguous meaning.
+  const marker = block.indexOf('appendFileSync');
+  assert.ok(marker > 0 && marker < block.indexOf('spawn('), 'the marker precedes the spawn');
 });
