@@ -173,7 +173,19 @@ if (process.argv[1] && process.argv[1].endsWith('update-guard.mjs')) {
   // THE VERDICT LINE IS THE CONTRACT, not the exit code - auto-update.ps1 reads this text.
   // A crash on the way out can corrupt an exit status; it cannot un-print a line.
   console.log(`[update-guard] ${verdict.ok ? 'PROCEED' : 'SKIP'} - ${verdict.reason}`);
-  // exitCode rather than exit(): let the loop drain on its own instead of pulling it out
-  // from under whatever is still closing.
+  // AND EXIT EXPLICITLY. `process.exitCode` alone HUNG THE BOX on 2026-08-11: on the
+  // SUCCESS path undici keeps the socket in its connection pool, so the event loop never
+  // drains, node never exits, and `& node update-guard.mjs` in auto-update.ps1 waits for
+  // ever - the update sat at "started - checking the guard" for nine minutes and would have
+  // spawned another hung node every fifteen.
+  //
+  // MY LOCAL TEST COULD NOT SEE IT: with no token the fetch 401s, that path cancels the
+  // body, and the process exits fine. Only a SUCCESSFUL fetch leaves a pooled socket
+  // behind - so the test below serves one.
+  //
+  // The two fixes are complementary and I wrongly treated them as alternatives. The libuv
+  // assertion came from `AbortSignal.timeout` leaving a dangling handle for `exit()` to
+  // tear down; that timer is cleared in `finally` now, so exiting explicitly is safe again.
   process.exitCode = verdict.ok ? 0 : 1;
+  process.exit(process.exitCode);
 }

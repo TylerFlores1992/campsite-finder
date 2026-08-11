@@ -465,8 +465,12 @@ test('the guard exits cleanly, without pulling the loop out from under libuv', a
   const g = code(readFileSync('scripts/auto-cart-bot/update-guard.mjs', 'utf8'));
   assert.ok(!/AbortSignal\.timeout/.test(g), 'use a controller we can clear, not a dangling timer');
   assert.match(g, /clearTimeout\(timer\)/);
-  assert.ok(!/process\.exit\(/.test(g), 'set exitCode and let the loop drain');
+  // NOT "never call process.exit" — that was the wrong lesson, drawn on 2026-08-11 from
+  // the crash alone, and it hung the box within hours. What made exit() unsafe was the
+  // DANGLING TIMER, so clearing it is the invariant; exiting explicitly is then required,
+  // because on the success path undici's pooled socket keeps the loop alive for ever.
   assert.match(g, /process\.exitCode = verdict\.ok \? 0 : 1/);
+  assert.match(g, /process\.exit\(process\.exitCode\)/, 'and it must actually exit');
   // An unread body keeps a socket alive, which is the other way this fails to exit.
   assert.match(g, /r\.body\?\.cancel/);
 });
@@ -523,4 +527,54 @@ test('the child reports how it ended, to the file and not just the console', asy
   assert.match(block, /const note = \(line\) => \{[\s\S]*?appendFileSync\(spawnLog/,
     'the failure reporter writes to the file, not only the console');
   assert.match(block, /ps\.on\('error'/, 'as does a failure to start');
+});
+
+test('the guard terminates after a successful feed call', async () => {
+  // WHAT THIS DOES AND DOES NOT PROVE — read before trusting it.
+  //
+  // On 2026-08-11 an update sat at "started - checking the guard" for nine minutes with the
+  // runner still alive, i.e. it never reached stop-all. The suspected mechanism was
+  // `process.exitCode` without `process.exit()`: on the success path undici keeps a socket
+  // pooled, so the loop never drains and `& node update-guard.mjs` waits for ever.
+  //
+  // I COULD NOT REPRODUCE THAT. Against a local HTTP server the guard exits cleanly with
+  // the explicit exit removed, so either a pooled TLS socket to Vercel behaves differently
+  // or the stall was somewhere else entirely (`git fetch` is the other candidate, and it
+  // sits between the last report and stop-all). The explicit exit is therefore a DEFENSIVE
+  // fix for a mechanism that is plausible and unconfirmed — said plainly here rather than
+  // written up as a diagnosis.
+  //
+  // So this test catches an outright hang in the guard and nothing subtler. It is not
+  // evidence that the 08-11 stall is fixed.
+  const { createServer } = await import('node:http');
+  const { spawn } = await import('node:child_process');
+
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json', connection: 'keep-alive' });
+    res.end(JSON.stringify({ nextRelease: null, updateRequested: false }));
+  });
+  // HOLD THE SOCKET OPEN. node's http server closes an idle keep-alive connection after 5s
+  // by default, which frees the client's handle and lets a HUNG child exit anyway — the
+  // first version of this test passed with the hang restored, i.e. it tested nothing.
+  // Vercel holds it far longer, which is why the real failure was open-ended.
+  server.keepAliveTimeout = 60_000;
+  server.headersTimeout = 65_000;
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+  const port = (server.address() as { port: number }).port;
+
+  try {
+    const child = spawn(process.execPath, ['scripts/auto-cart-bot/update-guard.mjs'], {
+      env: { ...process.env, CAMPHAWK_URL: `http://127.0.0.1:${port}`, AUTOCART_TOKEN: 'test' },
+      stdio: 'ignore',
+    });
+    const exited = await new Promise<boolean>((resolve) => {
+      // Well under the server's keep-alive above: if the child is still running at 10s it
+      // is not slow, it is never leaving.
+      const t = setTimeout(() => { child.kill('SIGKILL'); resolve(false); }, 10_000);
+      child.on('exit', () => { clearTimeout(t); resolve(true); });
+    });
+    assert.ok(exited, 'update-guard must terminate — a hang blocks every update for ever');
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
 });
