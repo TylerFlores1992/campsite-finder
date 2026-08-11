@@ -89,7 +89,7 @@ test('the supervisor gives up rather than thrashing', async () => {
   const { readFileSync } = await import('node:fs');
   const sup = readFileSync('scripts/auto-cart-bot/mini-pc/supervise.ps1', 'utf8');
   assert.match(sup, /CrashLoopCount/, 'there is a crash-loop ceiling');
-  assert.match(sup, /STOPPING —/, 'and it stops loudly rather than silently continuing');
+  assert.match(sup, /STOPPING -/, 'and it stops loudly rather than silently continuing');
   assert.match(sup, /Math\]::Min\(\$backoff \* 2, \$MaxBackoffSec\)/, 'backoff is exponential and capped');
 });
 
@@ -181,6 +181,40 @@ const miniPc = (f: string) =>
 const code = (s: string) =>
   s.split('\n').filter((l) => !/^\s*(REM\b|::|#)/i.test(l)).join('\n');
 
+test('the PowerShell scripts are pure ASCII', async () => {
+  /**
+   * AN EM DASH TOOK ALL FOUR SUPERVISED PROCESSES DOWN (2026-08-11).
+   *
+   * `Write-Line "STOPPING — $($recent.Count) exits..."` in supervise.ps1. The mini-PC runs
+   * Windows PowerShell 5.1, which reads a .ps1 file WITHOUT A BOM as Windows-1252, not
+   * UTF-8. The em dash is E2 80 94; byte 0x94 in cp1252 is U+201D, a curly right double
+   * quote — and PowerShell accepts curly quotes as string delimiters. So the string closed
+   * mid-line, the parse cascaded, and every `powershell -File supervise.ps1` window died
+   * with "The string is missing the terminator".
+   *
+   * In a COMMENT the same bytes are harmless, which is exactly why this must be checked
+   * mechanically: today's comment is tomorrow's message string, and the repo's house style
+   * is full of em dashes.
+   *
+   * ASCII rather than a BOM on purpose. A BOM is invisible, and any editor, `git`
+   * normalisation or copy-paste can drop it — reintroducing a failure whose symptom is a
+   * syntax error hundreds of characters away from its cause.
+   */
+  const { readdirSync } = await import('node:fs');
+  const dir = 'scripts/auto-cart-bot/mini-pc';
+  const files = readdirSync(dir).filter((f) => f.endsWith('.ps1'));
+  assert.ok(files.length >= 3, 'expected the mini-PC PowerShell scripts to be found');
+  for (const f of files) {
+    const s = await miniPc(f);
+    const bad = [...s].filter((c) => c.charCodeAt(0) > 127);
+    assert.equal(
+      bad.length, 0,
+      `${f} contains non-ASCII (${[...new Set(bad)].join(' ')}) — PowerShell 5.1 reads this ` +
+      'file as Windows-1252 and a curly quote there ends a string early',
+    );
+  }
+});
+
 test('every start path stops everything first, through the one script that verifies', async () => {
   for (const f of ['update.bat', 'start-all.bat']) {
     const s = await miniPc(f);
@@ -233,7 +267,7 @@ test('auto-update stops before the checkout moves, on both paths', async () => {
   assert.ok(rollbackStop > forward && rollbackStop < back, 'and so does the rollback');
   // start-all.bat stops too, but that runs AFTER the reset — relying on it would rewrite
   // the working tree underneath live processes.
-  assert.match(up, /REFUSED — processes would not stop/, 'a stop that fails aborts the update');
+  assert.match(up, /REFUSED - processes would not stop/, 'a stop that fails aborts the update');
 });
 
 test('Report-Applied is defined before anything calls it', async () => {
