@@ -9,6 +9,7 @@
 // inventory-grabbing this design exists to avoid.
 
 import { query, mutate } from '@/lib/db/client';
+import { RC_RUNNER_STALE_MS } from '@/lib/health-thresholds';
 
 export type HoldStatus =
   | 'offered' | 'requested' | 'carted' | 'claiming' | 'released' | 'claimed' | 'expired' | 'failed';
@@ -326,6 +327,37 @@ export async function recordSessionHealth(
       WHERE id = 1`,
     [ok, detail ? detail.slice(0, 300) : null, source.slice(0, 40)],
   ).catch((e) => console.error('[rc-holds] recordSessionHealth failed:', e.message));
+}
+
+/**
+ * Is there a bot alive to honour a hold at all?
+ *
+ * WHY THIS EXISTS (2026-08-11). The RC hold runner and keep-warm stopped at 09:36 PT and
+ * nothing noticed for over two hours — while the poller went on offering "Hold it for me"
+ * buttons, one of them eight minutes before this was written. Tapping one would have
+ * answered *"We'll grab site #P177 the moment it opens"*, which nothing on the mini-PC was
+ * running to do. That is the failure this codebase keeps finding in new clothes: a
+ * confident answer from a component that never asked whether the work could be done.
+ *
+ * OFFERING A HOLD WE CANNOT KEEP IS WORSE THAN OFFERING NOTHING, because the user stops
+ * watching. The same argument is already written on the claim screen, about promising an
+ * automatic cart before the cart POSTs were proven. They get the coming-soon alert either
+ * way and can book it themselves at 08:00 — which is the outcome a silent failure denies
+ * them.
+ *
+ * IT READS THE RUNNER'S HEARTBEAT AND NOT THE SESSION, deliberately. A dead session at
+ * 20:00 is a pending repair — `maybeAutoLogin` signs in at T-30 and the nightly rehearsal
+ * proves it can — and refusing on that would be the 2026-08-09 cry-wolf, which told the
+ * owner to sign in by hand over the session that carted a site fifteen minutes later. A
+ * missing runner is different: nothing is coming to fix it, and nothing will cart.
+ */
+export async function rcBotUsable(): Promise<{ ok: boolean; beatAgeMs: number | null }> {
+  const [row] = await query<{ beat_at: string | null }>(
+    `SELECT beat_at::text FROM rc_runner_heartbeat WHERE id = 1`,
+  ).catch(() => []);
+  if (!row?.beat_at) return { ok: false, beatAgeMs: null };
+  const beatAgeMs = Date.now() - new Date(row.beat_at).getTime();
+  return { ok: beatAgeMs <= RC_RUNNER_STALE_MS, beatAgeMs };
 }
 
 export interface RehearsalRow {

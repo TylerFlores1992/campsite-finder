@@ -212,3 +212,17 @@ export function rehearsalFault(
   if (ageMs == null || ageMs > REHEARSAL_STALE_MS) return 'stale';
   return null;
 }
+
+/**
+ * How long the RC hold runner may go without polling before it counts as absent.
+ *
+ * It polls every ~20s (RC_HOLD_POLL_MS), so three minutes is nine missed polls —
+ * comfortably past a transient network blip, and still well inside the ~21-minute window a
+ * hold is reachable in, so a stale beat is actionable BEFORE the release is lost rather
+ * than a post-mortem.
+ *
+ * Shared with `rcBotUsable`, which decides whether to OFFER a hold at all. The admin page
+ * judging the runner absent while the poller cheerfully offers to hold a site is exactly
+ * the disagreement this file exists to prevent.
+ */
+export const RC_RUNNER_STALE_MS = 3 * 60 * 1000;

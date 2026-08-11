@@ -7,6 +7,7 @@ import {
   DETECT_STALE_MS as SHARED_DETECT_STALE_MS,
   RECGOV_MONTHS_PER_MACHINE,
   RC_SESSION_STALE_MS,
+  RC_RUNNER_STALE_MS,
   rehearsalFault,
 } from '@/lib/health-thresholds';
 
@@ -57,11 +58,9 @@ const DETECT_STALE_MS = SHARED_DETECT_STALE_MS;
 const DELIVERY_STALE_MS = SHARED_DELIVERY_STALE_MS;
 const SYNC_STALE_MS = 48 * 60 * 60 * 1000; // catalog syncs are ~nightly/hourly
 const BOT_STALE_MS = 5 * 60 * 1000; // roster poll ~2s; matches poller's isBotOnline intent
-// The RC hold runner polls every ~20s (RC_HOLD_POLL_MS). Three minutes is nine missed
-// polls — comfortably past a transient network blip, and still well inside the ~21-minute
-// window a hold is reachable in, so a stale beat is actionable BEFORE the release is lost
-// rather than a post-mortem.
-const RC_RUNNER_STALE_MS = 3 * 60 * 1000;
+// RC_RUNNER_STALE_MS moved to lib/health-thresholds — `rcBotUsable` decides whether to
+// OFFER a hold with the same number this page judges the runner by, and two copies of
+// "is the runner there" would be two answers.
 // The session verdict comes from rc-keepwarm.mjs's 20-minute pass. 45 minutes is two
 // missed passes, which allows for one inconclusive result (a busy profile, a 403 from
 // RC's edge) without crying wolf — those report NOTHING rather than `false` on purpose,
