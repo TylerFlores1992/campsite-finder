@@ -349,3 +349,13 @@ test('a refused update is visible from the server, and stays pending', async () 
   const fn = lib.slice(lib.indexOf('export async function noteBotUpdateAttempt'));
   assert.ok(!/applied_at/.test(fn.slice(0, 400)), 'noteBotUpdateAttempt must never set applied_at');
 });
+
+test('being already current satisfies the request', async () => {
+  // Otherwise the flag stays pending after a hand-update, the runner re-hands-off every
+  // retry interval forever, and each pass takes the RC session down for nothing. "Get
+  // current" is the ask; being current is the ask being met.
+  const { readFileSync } = await import('node:fs');
+  const up = readFileSync('scripts/auto-cart-bot/mini-pc/auto-update.ps1', 'utf8');
+  const branch = up.slice(up.indexOf('already current at'), up.indexOf('already current at') + 400);
+  assert.match(branch, /Report-Applied \$before/, 'the current-already path clears the request');
+});

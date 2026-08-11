@@ -90,7 +90,14 @@ Set-Location $repoRoot
 $before = (& git rev-parse HEAD).Trim()
 & git fetch --quiet origin master
 $after = (& git rev-parse origin/master).Trim()
-if ($before -eq $after) { Write-Line "already current at $($before.Substring(0,7))."; exit 0 }
+if ($before -eq $after) {
+  Write-Line "already current at $($before.Substring(0,7))."
+  # A REQUEST IS SATISFIED BY BEING CURRENT. Without this the flag stays pending after a
+  # hand-update, the runner re-hands-off every retry interval forever, and each pass takes
+  # the RC session down for nothing. "Get current" is the ask; we are current.
+  Report-Applied $before "already current - nothing to pull"
+  exit 0
+}
 Write-Line "updating $($before.Substring(0,7)) -> $($after.Substring(0,7))"
 
 # -- 3. Stop, take, restart ------------------------------------------------------------
