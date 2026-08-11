@@ -869,6 +869,33 @@ That is why both missed mornings needed a human, and it is what multiplies per s
   not. Same rule as the worker deploy Action failing unless a fresh heartbeat lands.
 - Supervisors are killed BEFORE the checkout moves, or they restart the children being
   replaced and the box runs old code under a new commit.
+- **STOPPING IS `mini-pc\stop-all.ps1`, AND EVERY START PATH CALLS IT (2026-08-11).**
+  An update "just added another 5" windows. Four causes, one shape — something that looked
+  like it stopped the old processes and didn't. (1) These windows are `powershell -NoExit`,
+  so a dead process leaves its console behind: **"is there a window?" was never evidence
+  anything was running.** (2) `update.bat` killed by WINDOW TITLE, which matches nothing —
+  the identical bug fixed in `rc-login.bat` on 08-08 and left here; it survived on
+  `taskkill /IM node.exe /F` until supervisors shipped, after which the supervisors lived
+  through it and **restarted the children it had just killed**. (3) `auto-update.ps1` never
+  stopped cloudflared (which `start-all` relaunches — one duplicate tunnel per update,
+  forever) and its pattern missed `bot.mjs` entirely; **`Stop-Process` does not kill a
+  process TREE on Windows**, so killing the `npm start` shim left the rec.gov bot orphaned.
+  (4) Nothing killed an orphaned **Chromium** — Playwright's browser outlives a force-killed
+  parent and holds the real Chrome lock on the user-data-dir, which deleting our own lock
+  file does not touch. stop-all kills supervisors → payloads by name → bot Chromium scoped
+  to our profile dirs, then **RE-CHECKS and exits non-zero**; callers refuse to launch on a
+  failed stop. **`start-all.bat` stopping first is what makes the duplicate structurally
+  impossible** rather than merely fixed in the update paths.
+  **Never kill by image name:** `taskkill /IM chrome.exe /F` was in `update.bat` and closes
+  the browser of whoever is sitting at this machine.
+  Two more found the same read: `rc-login.bat` relaunched the RC pair **unsupervised**, so
+  a hand sign-in quietly downgraded the two processes it was fixing (the keep-warm's wedge
+  watchdog exits on purpose expecting a restart — that is the 08-10 ten-hour silence); and
+  `auto-update.ps1` called `Report-Applied` above its definition on the new refusal path —
+  **PowerShell runs top-down**, so it would have died on "not recognized" and left the
+  request PENDING, i.e. retried every 15s.
+  Tests strip comment lines before asserting a pattern is ABSENT, or "must not kill by
+  image name" fails on the comment explaining why not to.
 - `update.bat` stays as the manual path, and still ends the RC session.
 - **UPDATES ARE ON-DEMAND NOW (migration 051), and the timer is the FALLBACK.** Admin →
   System Health → **"Update now"** sets a flag; the hold runner sees it on its next 15s
