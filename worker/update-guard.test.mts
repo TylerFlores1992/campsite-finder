@@ -182,7 +182,9 @@ const miniPc = (f: string) =>
 function handoffBlock(runner: string): string {
   const i = runner.indexOf('if (updateRequested');
   assert.ok(i > 0, 'the hand-off branch must exist');
-  const block = runner.slice(i, i + 3000);
+  const end = runner.indexOf('nextPollMs =', i);
+  assert.ok(end > i, 'the branch must be followed by the poll-interval line');
+  const block = runner.slice(i, end);
   assert.ok(block.includes('ps.unref()'), 'the slice must span the whole branch');
   return block;
 }
@@ -301,14 +303,21 @@ test('rc-login relaunches the RC pair supervised', async () => {
   }
 });
 
-test('the runner hands off once, detached', async () => {
+test('the runner hands off once, and survives being killed by it', async () => {
   // Detached because the updater kills this very process on its way through: a child tied
   // to us would die with us and leave the box halfway between two commits. Once, because
   // two updaters racing over one checkout is worse than a slow update.
   const { readFileSync } = await import('node:fs');
   const runner = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
   assert.match(runner, /updateStarted/, 'guarded to one hand-off per process life');
-  assert.match(runner, /detached: true/, 'survives being killed by the thing it started');
+  // NOT `detached: true` any more. On Windows that meant DETACHED_PROCESS, the child got
+  // no console, and the script did not run at all. Survival never depended on it: killing
+  // a parent on Windows does not kill its children, and stop-all.ps1 matches the bot's own
+  // scripts, which auto-update.ps1 is not. `unref()` is what avoids waiting to be killed.
+  assert.match(runner, /ps\.unref\(\)/, 'not awaited — that would be waiting to be killed');
+  const stopAll = readFileSync('scripts/auto-cart-bot/mini-pc/stop-all.ps1', 'utf8');
+  assert.ok(!/auto-update/.test(stopAll.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n')),
+    'stop-all must not match the updater, or the update would kill itself');
   assert.ok(!/await .*auto-update/.test(runner), 'never awaited — that would be waiting to be killed');
 });
 
@@ -486,4 +495,32 @@ test('a spawned hand-off cannot fail silently', async () => {
   // which turns "no file" into a single unambiguous meaning.
   const marker = block.indexOf('appendFileSync');
   assert.ok(marker > 0 && marker < block.indexOf('spawn('), 'the marker precedes the spawn');
+});
+
+test('the hand-off does not detach the child on Windows', async () => {
+  // `detached: true` means DETACHED_PROCESS on Windows — the child gets no console — and a
+  // `powershell -File` started that way produced literally nothing on 2026-08-11: no
+  // output, no error, no auto-update.log, while the identical command by hand ran fine. It
+  // was the one constant across every failed attempt.
+  //
+  // It was never needed either: killing a parent on Windows does not kill its children,
+  // and stop-all.ps1 matches the bot's own scripts, which auto-update.ps1 is not.
+  const { readFileSync } = await import('node:fs');
+  const block = code(handoffBlock(readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8')));
+  assert.ok(!/detached: true/.test(block), 'a detached child has no console and may not run');
+  assert.match(block, /ps\.unref\(\)/, 'unref is what lets the runner exit without waiting');
+});
+
+test('the child reports how it ended, to the file and not just the console', async () => {
+  // "Ran and died silently" and "never ran" are identical without an exit status, and a
+  // failure reported only to a console nobody can copy is how this stayed invisible for
+  // several rounds.
+  const { readFileSync } = await import('node:fs');
+  const block = handoffBlock(readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8'));
+  assert.match(block, /ps\.on\('exit'/, 'the exit status is recorded');
+  // Match the REPORTER, not merely the string: the pre-spawn marker also calls
+  // appendFileSync(spawnLog, ...), so a looser assertion passed with the reporter gutted.
+  assert.match(block, /const note = \(line\) => \{[\s\S]*?appendFileSync\(spawnLog/,
+    'the failure reporter writes to the file, not only the console');
+  assert.match(block, /ps\.on\('error'/, 'as does a failure to start');
 });

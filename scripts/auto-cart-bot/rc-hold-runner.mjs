@@ -332,9 +332,9 @@ async function runPass() {
   // an update ends the RC session and doing that minutes before a cart loses the site.
   //
   // Fire-and-forget and NOT awaited: the updater kills this very process on its way
-  // through, so waiting for it would be waiting to be killed. `detached` so being killed
-  // does not take the updater down with us — the mistake that would leave the box halfway
-  // between two commits.
+  // through, so waiting for it would be waiting to be killed. `unref()` is what lets us
+  // exit without it — NOT `detached`, which on Windows costs the child its console and
+  // stopped the script running at all (see the spawn below).
   if (updateRequested && Date.now() - updateStartedAt > UPDATE_RETRY_MS) {
     updateStartedAt = Date.now();
     // HERE (this file's own directory), NEVER process.cwd(). The two happen to agree when start-all launches us,
@@ -364,13 +364,34 @@ async function runPass() {
       const out = fs.openSync(spawnLog, 'a');
       const ps = spawn('powershell', [
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script,
-      ], { detached: true, stdio: ['ignore', out, out], windowsHide: true });
+      // NOT `detached`. On Windows that means DETACHED_PROCESS - the child gets NO
+      // console - and a `powershell -File` started that way produced literally nothing
+      // here on 2026-08-11: no output, no error, no auto-update.log, while the same
+      // command by hand ran fine. It was the one constant across every failed attempt.
+      //
+      // It was never needed. Killing a parent on Windows does NOT kill its children, and
+      // stop-all.ps1 matches on the bot's own scripts, which auto-update.ps1 is not - so
+      // the updater still survives killing the runner. `unref()` alone is what lets us
+      // exit without waiting for it.
+      ], { stdio: ['ignore', out, out], windowsHide: true });
       // spawn() reports ENOENT via an 'error' EVENT, not by throwing — so the try/catch
       // below never sees it, and an 'error' with no listener takes the whole runner down.
       // Two failure modes, both invisible, both fixed by listening.
+      // BOTH OUTCOMES GO TO THE SPAWN LOG, not just the runner's console. A failure to
+      // start reported only to a console nobody can copy is how this stayed invisible.
+      const note = (line) => {
+        log(`  ${line}`);
+        try { fs.appendFileSync(spawnLog, `${line}\n`); } catch { /* best effort */ }
+      };
       ps.on('error', (e) => {
-        log(`  ✗ could not start powershell: ${e.message}`);
+        note(`✗ could not start powershell: ${e.message}`);
         updateStartedAt = 0;
+      });
+      // The exit STATUS is the missing fact: a child that runs and dies silently and a
+      // child that never ran look identical without it.
+      ps.on('exit', (code, signal) => {
+        note(`auto-update.ps1 exited code=${code} signal=${signal}`);
+        if (code !== 0) updateStartedAt = 0;
       });
       ps.unref();
       // The parent's copy is closed straight away; the child keeps its own handles, which
