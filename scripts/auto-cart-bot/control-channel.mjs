@@ -37,7 +37,7 @@ export function makeControlChannel({ dir, actor, log, report }) {
   let updateStartedAt = 0;
 
   /** @param {{commands?: Array<{id:number,kind:string,arg:string|null}>, updateRequested?: boolean}} control */
-  return function handleControl(control) {
+  function handleControl(control) {
     const { commands = [], updateRequested = false } = control ?? {};
 
     // DIAGNOSTICS NEVER BLOCK THE CALLER. Not awaited, on purpose: a question about a log
@@ -55,6 +55,24 @@ export function makeControlChannel({ dir, actor, log, report }) {
 
     if (!updateRequested || Date.now() - updateStartedAt <= UPDATE_RETRY_MS) return;
     updateStartedAt = Date.now();
+    // CLAIM BEFORE SPAWNING. Both feeds carry the flag, so two of our processes can see it
+    // on the same tick and `auto-update.ps1` moves one git checkout. The server grants it to
+    // exactly one caller. A claim that cannot be reached is a NO: an update is not urgent
+    // enough to risk two of them, and the flag stays pending for the next poll.
+    void (async () => {
+      const granted = await report({ updateClaim: actor })
+        .then((r) => r?.granted === true)
+        .catch(() => false);
+      if (!granted) {
+        log('→ update requested, but another process has the claim (or we could not ask) — standing down');
+        updateStartedAt = 0;
+        return;
+      }
+      spawnUpdater();
+    })();
+  };
+
+  function spawnUpdater() {
 
     // AN UPDATE ASKED FOR FROM THE ADMIN PAGE. The box has no inbound path, so the request
     // rides this poll — see migration 051. All this does is hand off to auto-update.ps1,
@@ -121,5 +139,7 @@ export function makeControlChannel({ dir, actor, log, report }) {
       log(`  update hand-off failed: ${err.message}`);
       updateStartedAt = 0;
     }
-  };
+  }
+
+  return handleControl;
 }

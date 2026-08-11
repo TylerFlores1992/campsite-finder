@@ -143,3 +143,40 @@ test('an unknown kind is still refused on both sides', () => {
   assert.equal(rejectReason('restart-rc', null), null);
   assert.match(rejectReason('restart-rc', 'now') ?? '', /takes no argument/);
 });
+
+
+test('the flag is informational; the claim happens at the point of USE', () => {
+  // THE BUG THIS EXISTS FOR, found while about to rely on it (2026-08-11). The first version
+  // granted the update on READ, inside botControlFor. The roster feed is polled every TWO
+  // SECONDS by the rec.gov bot, and a box on code older than the control channel ignores the
+  // block entirely — so that box consumed the grant instantly and the Windows scheduled task,
+  // the only thing that can update a stale checkout, read `false`. The lever disarmed itself
+  // on precisely the boxes that needed it.
+  const control = readFileSync('src/lib/bot-control.ts', 'utf8');
+  assert.ok(!/claimBotUpdate/.test(code(control)),
+    'reading the feed must not consume the grant');
+  assert.match(control, /botUpdateState/, 'the flag is read, not claimed');
+
+  // And the claim is a separate, explicit act by the process that will spawn the updater.
+  const route = readFileSync('src/app/api/auto-cart/rc-holds/route.ts', 'utf8');
+  assert.match(route, /body\?\.updateClaim/, 'there must be a claim endpoint');
+  assert.match(route, /claimBotUpdate\(body\.updateClaim\)/);
+
+  const channel = readFileSync('scripts/auto-cart-bot/control-channel.mjs', 'utf8');
+  const claim = channel.indexOf('updateClaim');
+  const spawn = channel.indexOf("spawn('powershell'");
+  assert.ok(claim !== -1 && spawn !== -1 && claim < spawn, 'the box claims before it spawns');
+  // A claim it cannot reach is a NO. An update is never urgent enough to risk two of them,
+  // and the flag stays pending for the next poll.
+  assert.match(channel, /\.catch\(\(\) => false\)/, 'an unreachable claim must not read as granted');
+});
+
+test('a box on OLD code is unaffected by the claim', () => {
+  // update-guard.mjs reads `updateRequested` off the GET and never posts a claim. That is the
+  // path the Windows scheduled task takes, and it is the ONLY way a stale checkout can ever
+  // update itself — so the claim must not be a precondition for it. This is the compatibility
+  // that the grant-on-read version silently broke.
+  const guard = readFileSync('scripts/auto-cart-bot/update-guard.mjs', 'utf8');
+  assert.match(guard, /j\?\.updateRequested === true/, 'the guard reads the flag directly');
+  assert.ok(!/updateClaim/.test(guard), 'and must not need to claim anything');
+});

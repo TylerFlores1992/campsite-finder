@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, recordRehearsal, lastRehearsal, reportCartFailure, nextHoldRelease, holdAtRisk, type HoldRequest } from '@/lib/rc-holds';
 import { alarmCall } from '@/lib/notifications/voice';
 import { rcSessionFault, type RcSessionFault } from '@/lib/health-thresholds';
-import { markBotUpdateApplied, noteBotUpdateAttempt } from '@/lib/bot-update';
+import { markBotUpdateApplied, noteBotUpdateAttempt, claimBotUpdate } from '@/lib/bot-update';
 import { recordBotCommandResult } from '@/lib/bot-commands';
 import { botControlFor } from '@/lib/bot-control';
 import { query, mutate } from '@/lib/db/client';
@@ -88,8 +88,9 @@ export async function GET(req: NextRequest) {
     //
     // THE SAME CHANNEL IS ON /api/auto-cart/roster, which the rec.gov bot polls. This
     // process died at 09:36 PT on 2026-08-11 and took every remote lever with it; the
-    // duplication is the fix. `botControlFor` claims, so only one poller is ever granted an
-    // update. See lib/bot-control.
+    // duplication is the fix. The flag here is INFORMATIONAL - a poller that means to spawn
+    // the updater claims it with a POST first, because reading a feed is not intending to
+    // act on it. See lib/bot-control.
     botControlFor('rc-hold-runner'),
     wantRehearsal ? lastRehearsal() : Promise.resolve(null),
   ]);
@@ -193,6 +194,21 @@ export async function POST(req: NextRequest) {
       typeof r.skippedWhy === 'string' ? r.skippedWhy : null,
     );
     return NextResponse.json({ ok: true, state: 'rehearsal-recorded' });
+  }
+
+  // MAY THIS PROCESS SPAWN THE UPDATER? Claimed at the point of USE, never granted on read.
+  //
+  // Both feeds carry `updateRequested` so the box stays reachable when the RC runner is dead
+  // — but the roster feed is polled every TWO SECONDS, and a box on code older than the
+  // control channel ignores the block entirely. Granting on read meant that box consumed the
+  // grant instantly and the Windows scheduled task, the only thing that could update a stale
+  // checkout, read `false`. The lever disarmed itself on exactly the boxes that needed it.
+  //
+  // Reading a feed is not intending to act on it. Only the caller knows which it is doing,
+  // so only the caller can claim.
+  if (typeof body?.updateClaim === 'string') {
+    const granted = await claimBotUpdate(body.updateClaim).catch(() => false);
+    return NextResponse.json({ ok: true, state: 'update-claim', granted });
   }
 
   // THE BOX REPORTING AN UPDATE, successful or not. Recorded either way — an update that

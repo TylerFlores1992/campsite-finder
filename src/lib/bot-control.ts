@@ -1,4 +1,4 @@
-import { claimBotUpdate } from '@/lib/bot-update';
+import { botUpdateState } from '@/lib/bot-update';
 import { claimBotCommands } from '@/lib/bot-commands';
 
 /**
@@ -17,12 +17,25 @@ import { claimBotCommands } from '@/lib/bot-commands';
  * The channel now rides whichever feed is being polled. The box stays reachable as long as
  * ANY of its processes is alive, which is the property that was missing.
  *
- * ── THE FLAG IS THE CLAIM ──────────────────────────────────────────────────────────────
- * `updateRequested: true` is not a question, it is a grant, and exactly one caller gets it.
- * Two processes spawning `auto-update.ps1` would move one git checkout out from under each
- * other — worse than a slow update, which is the rule that already governed this before
- * there were two readers. The commands queue needed no such change: its claim was already
- * one atomic `UPDATE .. WHERE started_at IS NULL .. RETURNING`.
+ * ── THE FLAG IS INFORMATIONAL; THE CLAIM IS A SEPARATE POST ────────────────────────────
+ * `updateRequested: true` only means "an update is wanted". A poller that intends to spawn
+ * `auto-update.ps1` must first POST `{updateClaim: <actor>}` and be told `granted: true` —
+ * exactly one caller ever is.
+ *
+ * THE FIRST VERSION GRANTED IT ON READ, AND THAT WAS WRONG IN THE ONE CASE IT HAD TO WORK.
+ * The roster feed is polled every TWO SECONDS by the rec.gov bot, and a box running code
+ * older than this change ignores `control` entirely — so the grant was consumed instantly by
+ * the one process that could not act on it, and the Windows scheduled task (the only thing
+ * that CAN update a stale box) would read `false` until the claim expired. A lever that
+ * silently disarms itself on precisely the boxes that need it.
+ *
+ * Granting on read cannot be right in general: reading a feed is not the same as intending
+ * to act on it, and only the actor knows which it is doing. Claiming at the point of USE is
+ * the same rule as the auto-cart entitlement being checked where it would be spent, and as
+ * `claimNotification` being called on the cycle that acts.
+ *
+ * The commands queue needed no such change: it is already claimed at the point of use — the
+ * poller that receives a command is the one that runs it, in the same tick.
  *
  * Both sides swallow their failures. These feeds exist to cart campsites; a diagnostics
  * table that cannot be read must never take the roster or the hold feed down with it.
@@ -33,9 +46,9 @@ export interface BotControl {
 }
 
 export async function botControlFor(actor: string): Promise<BotControl> {
-  const [updateRequested, commands] = await Promise.all([
-    claimBotUpdate(actor).catch(() => false),
+  const [update, commands] = await Promise.all([
+    botUpdateState().catch(() => ({ pending: false })),
     claimBotCommands(actor).catch(() => []),
   ]);
-  return { updateRequested, commands };
+  return { updateRequested: update.pending === true, commands };
 }
