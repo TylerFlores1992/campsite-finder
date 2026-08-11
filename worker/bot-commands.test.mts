@@ -124,7 +124,10 @@ test('the queue is bounded and expires', () => {
 
 test('diagnostics never delay a cart', () => {
   // At 08:00:00 nothing may go in front of the precart. Fire-and-forget, not awaited.
-  const block = runner.slice(runner.indexOf('for (const c of commands)'), runner.indexOf('for (const c of commands)') + 600);
+  // In control-channel.mjs now, shared by the hold runner and the rec.gov bot — see the
+  // header there for why the channel stopped riding one process.
+  const channel = readFileSync('scripts/auto-cart-bot/control-channel.mjs', 'utf8');
+  const block = channel.slice(channel.indexOf('for (const c of commands)'), channel.indexOf('for (const c of commands)') + 600);
   assert.match(block, /void \(async \(\) => \{/, 'launched, not awaited');
   assert.ok(!/await runCommand/.test(block.split('void (async')[0]), 'nothing awaits a diagnostic inline');
 });

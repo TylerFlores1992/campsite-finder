@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query, mutate } from '@/lib/db/client';
+import { botControlFor } from '@/lib/bot-control';
 import type { NotificationPayload } from '@/lib/notifications';
 
 export const dynamic = 'force-dynamic';
@@ -70,5 +71,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ users: [...byUser.values()] });
+  return NextResponse.json({ users: [...byUser.values()], control: await botControlFor('bot') });
 }

@@ -179,12 +179,19 @@ const miniPc = (f: string) =>
  * test that matched `notification_sent_at` inside its own justifying comment.
  */
 /** The whole update hand-off branch, anchored on the branch and not on a string inside it. */
-function handoffBlock(runner: string): string {
-  const i = runner.indexOf('if (updateRequested');
+/**
+ * THE HAND-OFF MOVED (2026-08-11) out of rc-hold-runner.mjs and into control-channel.mjs,
+ * shared with bot.mjs. It had to: the runner was the only process reading the update flag,
+ * it died at 09:36 PT, and the box went dark with a healthy rec.gov bot polling throughout.
+ * These assertions follow the code — every hard-won Windows detail below is the same one,
+ * in its new home.
+ */
+const HANDOFF = 'scripts/auto-cart-bot/control-channel.mjs';
+
+function handoffBlock(src: string): string {
+  const i = src.indexOf('if (!updateRequested');
   assert.ok(i > 0, 'the hand-off branch must exist');
-  const end = runner.indexOf('nextPollMs =', i);
-  assert.ok(end > i, 'the branch must be followed by the poll-interval line');
-  const block = runner.slice(i, end);
+  const block = src.slice(i);
   assert.ok(block.includes('ps.unref()'), 'the slice must span the whole branch');
   return block;
 }
@@ -308,7 +315,7 @@ test('the runner hands off once, and survives being killed by it', async () => {
   // to us would die with us and leave the box halfway between two commits. Once, because
   // two updaters racing over one checkout is worse than a slow update.
   const { readFileSync } = await import('node:fs');
-  const runner = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
+  const runner = readFileSync(HANDOFF, 'utf8');
   assert.match(runner, /updateStarted/, 'guarded to one hand-off per process life');
   // NOT `detached: true` any more. On Windows that meant DETACHED_PROCESS, the child got
   // no console, and the script did not run at all. Survival never depended on it: killing
@@ -345,7 +352,7 @@ test('a hand-off that achieved nothing is retried', async () => {
   // pending. `updateStarted` was a boolean that latched for the life of the process, so
   // the runner never tried again and the request sat pending forever. Observed 2026-08-11.
   const { readFileSync } = await import('node:fs');
-  const runner = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
+  const runner = readFileSync(HANDOFF, 'utf8');
   assert.ok(!/let updateStarted = false;/.test(runner), 'the latching boolean must be gone');
   assert.match(runner, /UPDATE_RETRY_MS/, 'a refused hand-off is retried after a cooldown');
   const m = runner.match(/const UPDATE_RETRY_MS = (\d+) \* 60_000;/);
@@ -421,12 +428,47 @@ test('the update hand-off resolves its script from THIS file, not the cwd', asyn
   // to be right when start-all launches the runner and is wrong the moment anything else
   // does, so the correctness of the path depended on who started us.
   const { readFileSync } = await import('node:fs');
-  const runner = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
+  const runner = readFileSync(HANDOFF, 'utf8');
   // `code()` because the comment right above the fix explains why NOT to use process.cwd()
   // — matching the raw text would fail on the explanation. Third time tonight.
   const block = code(handoffBlock(runner));
   assert.ok(!/process\.cwd\(\)/.test(block), 'the script path must not depend on the working directory');
-  assert.match(block, /path\.join\(HERE, 'mini-pc', 'auto-update\.ps1'\)/);
+  // The shared module takes the directory from its caller, so the assertion has to follow
+  // it there: BOTH pollers must pass their own module directory, and neither may pass a cwd.
+  assert.match(block, /path\.join\(dir, 'mini-pc', 'auto-update\.ps1'\)/);
+  for (const [f, expected] of [
+    ['scripts/auto-cart-bot/rc-hold-runner.mjs', 'HERE'],
+    ['scripts/auto-cart-bot/bot.mjs', '__dirname'],
+  ] as const) {
+    const src = code(readFileSync(f, 'utf8'));
+    const call = src.match(/makeControlChannel\(\{[\s\S]*?\}\)/)?.[0];
+    assert.ok(call, `${f} must build the control channel`);
+    assert.match(call, new RegExp(`dir:\\s*${expected}\\b`), `${f} must pass its own module directory`);
+    assert.ok(!/process\.cwd\(\)/.test(call), `${f} must not pass a cwd`);
+  }
+});
+
+test('BOTH feeds carry the control channel, and both pollers read it', async () => {
+  // THE POINT OF THE WHOLE CHANGE (2026-08-11). The update flag and the diagnostics queue
+  // were read only by rc-hold-runner.mjs. It died at 09:36 PT and took every remote lever
+  // with it — no update, no diagnostics, no way to ask the box a question — while bot.mjs
+  // polled the roster feed every two seconds throughout, healthy the entire time. "The box
+  // is unreachable" and "the RC runner is down" must never be the same event again.
+  const { readFileSync } = await import('node:fs');
+  for (const f of ['scripts/auto-cart-bot/rc-hold-runner.mjs', 'scripts/auto-cart-bot/bot.mjs']) {
+    assert.match(readFileSync(f, 'utf8'), /makeControlChannel/, `${f} must read the control channel`);
+  }
+  for (const r of ['src/app/api/auto-cart/roster/route.ts', 'src/app/api/auto-cart/rc-holds/route.ts']) {
+    assert.match(readFileSync(r, 'utf8'), /botControlFor\(/, `${r} must serve the control channel`);
+  }
+  // ONE implementation. Two copies would be two chances to fix one and forget the other,
+  // and the forgotten copy is by definition the one running when the other is dead.
+  const channel = readFileSync(HANDOFF, 'utf8');
+  assert.equal((channel.match(/spawn\('powershell'/g) ?? []).length, 1);
+  for (const f of ['scripts/auto-cart-bot/rc-hold-runner.mjs', 'scripts/auto-cart-bot/bot.mjs']) {
+    assert.ok(!/auto-update\.ps1/.test(code(readFileSync(f, 'utf8'))),
+      `${f} must hand off through the shared module, not spawn the updater itself`);
+  }
 });
 
 test('a hand-off that cannot start says so', async () => {
@@ -434,7 +476,7 @@ test('a hand-off that cannot start says so', async () => {
   // spawn() reports ENOENT via an 'error' EVENT, not by throwing — so the try/catch never
   // saw it, and an 'error' with no listener would take the whole runner down.
   const { readFileSync } = await import('node:fs');
-  const runner = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
+  const runner = readFileSync(HANDOFF, 'utf8');
   const block = handoffBlock(runner);
   assert.match(block, /fs\.existsSync\(script\)/, 'a missing script is reported, not launched at');
   assert.match(block, /ps\.on\('error'/, "spawn's error event has a listener");
@@ -491,7 +533,7 @@ test('a spawned hand-off cannot fail silently', async () => {
   // `stdio: 'ignore'` made "started and died immediately" identical to "never started".
   // That ambiguity is what made this take all night to find.
   const { readFileSync } = await import('node:fs');
-  const runner = readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8');
+  const runner = readFileSync(HANDOFF, 'utf8');
   const block = handoffBlock(runner);
   assert.ok(!/stdio: 'ignore'/.test(block), "the child's output must go somewhere readable");
   assert.match(block, /update-spawn\.log/, 'and it goes to a named file');
@@ -510,7 +552,7 @@ test('the hand-off does not detach the child on Windows', async () => {
   // It was never needed either: killing a parent on Windows does not kill its children,
   // and stop-all.ps1 matches the bot's own scripts, which auto-update.ps1 is not.
   const { readFileSync } = await import('node:fs');
-  const block = code(handoffBlock(readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8')));
+  const block = code(handoffBlock(readFileSync(HANDOFF, 'utf8')));
   assert.ok(!/detached: true/.test(block), 'a detached child has no console and may not run');
   assert.match(block, /ps\.unref\(\)/, 'unref is what lets the runner exit without waiting');
 });
@@ -520,7 +562,7 @@ test('the child reports how it ended, to the file and not just the console', asy
   // failure reported only to a console nobody can copy is how this stayed invisible for
   // several rounds.
   const { readFileSync } = await import('node:fs');
-  const block = handoffBlock(readFileSync('scripts/auto-cart-bot/rc-hold-runner.mjs', 'utf8'));
+  const block = handoffBlock(readFileSync(HANDOFF, 'utf8'));
   assert.match(block, /ps\.on\('exit'/, 'the exit status is recorded');
   // Match the REPORTER, not merely the string: the pre-spawn marker also calls
   // appendFileSync(spawnLog, ...), so a looser assertion passed with the reporter gutted.

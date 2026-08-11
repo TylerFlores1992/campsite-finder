@@ -35,7 +35,7 @@ import { installTokenCapture, primeToken, tokenSecondsLeft } from './rc-token.mj
 import { spawn } from 'node:child_process';
 import { loadEnv, envSource, looksLikePlaceholder } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
-import { runCommand } from './bot-commands.mjs';
+import { makeControlChannel } from './control-channel.mjs';
 
 // The token lives in scripts/auto-cart-bot/.env alongside the rec.gov bot's. Without
 // this the runner answered `feed 401` — which reads exactly like a wrong token, not a
@@ -63,15 +63,8 @@ const TOKEN = process.env.AUTOCART_TOKEN;
 const POLL_MS = Number(process.env.RC_HOLD_POLL_MS || 15_000);
 /** Overridden by the feed's `pollMs` while a claim is outstanding. */
 let nextPollMs = POLL_MS;
-/** One hand-off per process life. The updater restarts us; a second spawn would mean two
- *  updaters racing over the same checkout. */
-let updateStartedAt = 0;
-// A HAND-OFF THAT ACHIEVED NOTHING MUST BE RETRIED. This was a boolean that latched for
-// the life of the process: auto-update.ps1 exits 0 when its guard refuses (too close to a
-// release, feed unreachable), nothing is applied, the request stays pending - and the
-// runner never tried again. Observed 2026-08-11. Long enough that two updaters can never
-// race over one checkout, short enough that "as soon as it is safe" means something.
-const UPDATE_RETRY_MS = 15 * 60_000;
+// The update hand-off and the diagnostics queue live in control-channel.mjs, shared with
+// bot.mjs. The retry window and the spawn's hard-won Windows details went with them.
 const HEADLESS = process.env.RC_HEADLESS === 'true';
 
 const args = new Set(process.argv.slice(2));
@@ -166,6 +159,11 @@ async function feed() {
   if (!res.ok) throw new Error(`feed ${res.status}`);
   return res.json();
 }
+
+/** The shared control handler — same code bot.mjs runs off the roster feed. */
+const control = makeControlChannel({
+  dir: HERE, actor: 'rc-hold-runner', log, report: (body) => report(body),
+});
 
 async function report(body) {
   await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
@@ -327,95 +325,15 @@ async function runPass() {
   }
   const { claim = [], cart = [], release = [], expired = 0, pollMs, updateRequested, commands = [] } = work;
 
-  // DIAGNOSTICS, and they run LAST-ish on purpose: never before the claim and cart work
-  // below, and never awaited by it. A question about a log file must not be able to delay
-  // a cart at 08:00:00. `runCommand` never throws, and the kind is looked up in this box's
-  // OWN table - the server can name a kind, it cannot send one.
-  for (const c of commands) {
-    void (async () => {
-      log(`? diagnostic ${c.kind}${c.arg ? ` ${c.arg}` : ''} (#${c.id})`);
-      const r = await runCommand(c.kind, c.arg);
-      await report({ commandId: c.id, exitCode: r.ok ? 0 : 1, output: r.output, error: r.error })
-        .catch((e) => log(`  could not return diagnostic #${c.id}: ${e.message}`));
-    })();
-  }
-
-  // AN UPDATE ASKED FOR FROM THE ADMIN PAGE. The box has no inbound path, so the request
-  // rides this poll — see migration 051. All this does is hand off to auto-update.ps1,
-  // which re-checks the release guard itself: "now" means "as soon as it is safe", because
-  // an update ends the RC session and doing that minutes before a cart loses the site.
+  // DIAGNOSTICS AND THE UPDATE FLAG, in the shared handler. Never awaited: a question
+  // about a log file must not be able to delay a cart at 08:00:00.
   //
-  // Fire-and-forget and NOT awaited: the updater kills this very process on its way
-  // through, so waiting for it would be waiting to be killed. `unref()` is what lets us
-  // exit without it — NOT `detached`, which on Windows costs the child its console and
-  // stopped the script running at all (see the spawn below).
-  if (updateRequested && Date.now() - updateStartedAt > UPDATE_RETRY_MS) {
-    updateStartedAt = Date.now();
-    // HERE (this file's own directory), NEVER process.cwd(). The two happen to agree when start-all launches us,
-    // and diverge the moment anything else does — and a wrong -File path makes PowerShell
-    // exit immediately with a message we throw away, so the symptom is total silence: no
-    // auto-update.log, no report, and this line still claiming the hand-off happened.
-    const script = path.join(HERE, 'mini-pc', 'auto-update.ps1');
-    log(`→ update requested — handing off to ${script}`);
-    // SAY IT IS MISSING RATHER THAN LAUNCHING AT NOTHING. Checked here because the failure
-    // is otherwise indistinguishable from the script running and doing nothing.
-    if (!fs.existsSync(script)) {
-      log(`  ✗ ${script} does not exist — cannot update`);
-      updateStartedAt = 0;
-    } else try {
-      // stdio TO A FILE, NEVER 'ignore'. With output discarded, a PowerShell that starts
-      // and dies immediately - a bad -File path, a policy refusal, a parse error - is
-      // indistinguishable from one that never started, and that ambiguity is what made
-      // this take all night. Whatever the child says now lands on disk.
-      //
-      // The marker is written BEFORE the spawn, so the file exists even if the launch
-      // itself is what fails. "No file" can then only mean the runner never got here.
-      const spawnLog = path.join(HERE, 'logs', 'update-spawn.log');
-      try {
-        fs.mkdirSync(path.dirname(spawnLog), { recursive: true });
-        fs.appendFileSync(spawnLog, `\n=== ${new Date().toISOString()} launching ${script}\n`);
-      } catch { /* best effort - never block the hand-off on logging it */ }
-      const out = fs.openSync(spawnLog, 'a');
-      const ps = spawn('powershell', [
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script,
-      // NOT `detached`. On Windows that means DETACHED_PROCESS - the child gets NO
-      // console - and a `powershell -File` started that way produced literally nothing
-      // here on 2026-08-11: no output, no error, no auto-update.log, while the same
-      // command by hand ran fine. It was the one constant across every failed attempt.
-      //
-      // It was never needed. Killing a parent on Windows does NOT kill its children, and
-      // stop-all.ps1 matches on the bot's own scripts, which auto-update.ps1 is not - so
-      // the updater still survives killing the runner. `unref()` alone is what lets us
-      // exit without waiting for it.
-      ], { stdio: ['ignore', out, out], windowsHide: true });
-      // spawn() reports ENOENT via an 'error' EVENT, not by throwing — so the try/catch
-      // below never sees it, and an 'error' with no listener takes the whole runner down.
-      // Two failure modes, both invisible, both fixed by listening.
-      // BOTH OUTCOMES GO TO THE SPAWN LOG, not just the runner's console. A failure to
-      // start reported only to a console nobody can copy is how this stayed invisible.
-      const note = (line) => {
-        log(`  ${line}`);
-        try { fs.appendFileSync(spawnLog, `${line}\n`); } catch { /* best effort */ }
-      };
-      ps.on('error', (e) => {
-        note(`✗ could not start powershell: ${e.message}`);
-        updateStartedAt = 0;
-      });
-      // The exit STATUS is the missing fact: a child that runs and dies silently and a
-      // child that never ran look identical without it.
-      ps.on('exit', (code, signal) => {
-        note(`auto-update.ps1 exited code=${code} signal=${signal}`);
-        if (code !== 0) updateStartedAt = 0;
-      });
-      ps.unref();
-      // The parent's copy is closed straight away; the child keeps its own handles, which
-      // is what lets this survive the updater killing us.
-      try { fs.closeSync(out); } catch { /* the child owns it now */ }
-    } catch (err) {
-      log(`  update hand-off failed: ${err.message}`);
-      updateStartedAt = 0;
-    }
-  }
+  // THE SAME BLOCK IS READ BY bot.mjs OFF THE ROSTER FEED. This process died at 09:36 PT on
+  // 2026-08-11 and took every remote lever with it, while the rec.gov bot polled on quite
+  // happily — so the channel now rides whichever feed is alive. One module, because the copy
+  // that gets forgotten is by definition the one running when the other is dead.
+  control({ commands, updateRequested });
+
   // The server sets pollMs while anything is claimable. Somebody is watching a spinner
   // and the site is about to sit unheld — the exposure window is our poll interval plus
   // the release, so this is the one time to come back fast.
