@@ -913,6 +913,56 @@ That is why both missed mornings needed a human, and it is what multiplies per s
   before the next real release, unattended, proven 2026-08-10. Expect
   `autocart.rc_session` to read dead in between — that is correct, not a fault.
 
+### The rec.gov auto-relogin never retried — a log line that lied (2026-08-11)
+`keepSessionsWarm` skipped any profile with no `.camphawk-ready` marker
+(`if (!isLoggedIn(...) || inUse.has(...)) continue`), and a failed auto-relogin **deleted
+that marker unconditionally — three lines after logging "keeping the saved login, will
+retry next cycle"**. The pass that promised the retry switched off the gate the retry
+needed, so the FIRST failure (CAPTCHA or not) disqualified that user from every future
+keepalive pass, forever. One account sat 12 days with nothing trying.
+- **It read as a permanent rec.gov CAPTCHA and was not.** Nothing was standing in the way;
+  nothing was attempting. Don't infer a live challenge from a stalled retry.
+- The two-strike bad-password rule was **dead code** for the same reason — the second
+  strike could never be thrown.
+- **AND IT ESCALATED.** `LOGIN_MODE` defaults to `local`, where the main loop calls
+  `ensureLogin()` on a missing marker: a 10-minute interactive window nobody is at, then
+  `setEnrollment(false)` — it turns the user's auto-cart **off**. So the missing marker
+  didn't just stop the retry, it un-enrolled people over a CAPTCHA the bot had already
+  decided to retry past.
+- **THE FIX IS NOT "STOP DELETING THE MARKER".** `.camphawk-ready` is read by `processJob`,
+  which must not cart against a session known to be dead. The marker was carrying two
+  meanings that came apart when auto-relogin was added — "the session is live" and "this
+  profile is eligible for a pass". Separate now: the session flag stays honest,
+  `.camphawk-relogin` carries the owed repair, and both `keepSessionsWarm` and
+  `ensureLogin` honour it.
+- **BOUNDED, because the naive fix is an unbounded loop.** Every attempt opens a headful
+  browser and posts credentials from the household IP. CAPTCHA: 6 attempts on 30m/1h/2h/
+  4h/6h (13.5h — crosses an overnight challenge, surfaces the same day), then gives up
+  loudly into manual reconnect **keeping the credentials**. Rejected password: still 2, and
+  `deleteCreds` — a wrong password never fixes itself and hammering it risks a lockout.
+- Decision logic is a pure module (`scripts/auto-cart-bot/relogin-retry.mjs`);
+  `worker/relogin-retry.test.mts` verified failing against the restored gate, against
+  `ensureLogin` firing during a pending repair, and against a success that fails to clear
+  the marker.
+- **`/connect` was never affected** — that is `broker.mjs`, a separate flow that always
+  attempts a fresh sign-in and hands a CAPTCHA to whoever is at the page.
+
+### PowerShell scripts must be pure ASCII (2026-08-11)
+An em dash inside a double-quoted string took **all four supervised processes** down.
+Windows PowerShell 5.1 reads a `.ps1` **without a BOM as Windows-1252**; the em dash is
+`E2 80 94`, byte `0x94` is `U+201D` (curly right double quote), **and PowerShell accepts
+curly quotes as string delimiters**. The string closed mid-line and the parse cascaded into
+"missing the terminator", reported six lines from the cause. The same bytes in a COMMENT
+are harmless, which is why it needs checking mechanically — today's comment is tomorrow's
+message string. **ASCII, not a BOM**: a BOM is invisible and any editor or `git`
+normalisation can drop it. `worker/update-guard.test.mts` fails on any non-ASCII byte.
+- Same mismatch through the other door: Node writes UTF-8 and the console is cp437, so
+  `supervise.ps1` sets `[Console]::OutputEncoding` — otherwise every em dash lands in
+  `logs\rc-keepwarm.log` as `TCo`, and those files are the post-mortem record.
+- **The pre-flight Routine moved 07:30 → 07:40 PT** (`trig_015nU7BciNU5GKimmgXjvAZG`). At
+  07:30 it now collides with `maybeAutoLogin` and would report "dead" during the repair —
+  the 08-09 cry-wolf exactly. At 07:40 it reports the outcome with 20 minutes to act.
+
 ### The auto-login lead is T−30 now, and "covered" is DERIVED (2026-08-11)
 `RC_AUTOLOGIN_LEAD_MIN` 15 → **30**. The ceiling is arithmetic, not taste: a login at T−L
 mints a ~60-minute token, and the bot needs it to **RELEASE at up to T+15** (the user has
