@@ -879,6 +879,13 @@ async function testLogin() {
     // Tell the server too — this IS a session-liveness measurement, and a green
     // autocart.rc_session is what the 07:30 pre-flight reads.
     await reportSession('warm', 'verified by --test-login');
+    // AND RECORD IT AS A REHEARSAL, because that is exactly what it was: the same
+    // `runLoginRehearsal` body the nightly one runs, on the same profile, against the real
+    // RC. Only `maybeRehearse` reported it at first, which left the two paths running one
+    // test and recording half of it — so a login proved by hand at 16:00 did not stop the
+    // 20:00 rehearsal spending a SECOND login on the same question, from an address that
+    // has been blocked for twelve hours before over exactly that.
+    await reportRehearsal(true, 'verified by --test-login', null);
     return true;
   }
   if (result === 'inconclusive') return false;
@@ -890,6 +897,9 @@ async function testLogin() {
   log('   there is nothing to notice), or RC is showing a CAPTCHA. The line above says');
   log('   which. Re-save with mini-pc\\rc-save-password.bat if it is the password.');
   await reportSession('dead', 'test login failed — a human must sign in');
+  // A FAILURE IS THE MORE IMPORTANT ONE TO RECORD. It is the state `autocart.rc_login`
+  // exists to shout about, and a hand-run failure is no less real than a scheduled one.
+  await reportRehearsal(false, 'test login failed — a human must sign in', null);
   return false;
 }
 
