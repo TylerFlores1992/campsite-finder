@@ -134,3 +134,15 @@ test('every kind is implemented', () => {
     assert.equal(typeof (COMMANDS as Record<string, unknown>)[k], 'function', `${k} must be implemented on the box`);
   }
 });
+
+test('the argument options match the logs the box will actually read', () => {
+  // The admin dropdown is built from `argOptions`. If a log is added to the box's LOGS
+  // table and not here, it is unreachable from the UI; if one is listed here and not there,
+  // the box refuses it and the option looks broken. Neither is visible by reading either
+  // file alone.
+  const opts = BOT_COMMAND_KINDS['tail-log'].argOptions as readonly string[];
+  assert.deepEqual([...opts].sort(), Object.keys(LOGS).sort());
+  // And every option must satisfy the pattern that guards the endpoint, or the UI offers
+  // choices the server rejects.
+  for (const o of opts) assert.equal(rejectReason('tail-log', o), null, `${o} must be accepted`);
+});

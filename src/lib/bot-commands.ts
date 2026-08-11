@@ -14,11 +14,16 @@ export const BOT_COMMAND_KINDS = {
     label: 'Read a log',
     /** `<name>` or `<name>:<lines>`. Names only — a path parameter is a traversal. */
     argPattern: /^(rc-holds|rc-keepwarm|bot|broker|auto-update|update-spawn|restarts)(:\d{1,3})?$/,
-    argHint: 'rc-holds | rc-keepwarm | bot | broker | auto-update | update-spawn | restarts (optionally :lines)',
+    // DATA, not prose. The first version had the UI parse the option list back out of a
+    // human-readable hint, which reads fine and breaks silently the first time somebody
+    // rewords the sentence. `worker/bot-commands.test.mts` pins these against the box's own
+    // LOGS table, so a log added there and forgotten here fails the build.
+    argOptions: ['rc-holds', 'rc-keepwarm', 'bot', 'broker', 'auto-update', 'update-spawn', 'restarts'] as const,
+    argHint: 'a log name, optionally :lines',
   },
-  'list-processes': { label: 'Which of our processes are running', argPattern: null, argHint: '' },
-  'git-status': { label: 'What commit is the box on', argPattern: null, argHint: '' },
-  'disk-free': { label: 'Free disk space', argPattern: null, argHint: '' },
+  'list-processes': { label: 'Which of our processes are running', argPattern: null, argOptions: null, argHint: '' },
+  'git-status': { label: 'What commit is the box on', argPattern: null, argOptions: null, argHint: '' },
+  'disk-free': { label: 'Free disk space', argPattern: null, argOptions: null, argHint: '' },
 } as const;
 
 export type BotCommandKind = keyof typeof BOT_COMMAND_KINDS;

@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ExternalLink, XCircle } from 'lucide-react';
 import BetaTesters from '@/components/BetaTesters';
 import CostsPanel from '@/components/admin/CostsPanel';
@@ -17,6 +17,9 @@ import type { CostItem, UsageCounts } from '@/lib/costs';
 import type { SmsDelivery } from '@/lib/health-thresholds';
 import type { PollerCapacity, ShardCoverage } from '@/lib/capacity';
 import type { RcReport } from '@/lib/native/rc-handoff';
+// The row shape the diagnostics panel renders. Imported rather than restated so a
+// column added server-side cannot quietly go unrendered here.
+import type { BotCommand as BotCommandRow } from '@/lib/bot-commands';
 
 /**
  * Admin dashboard, in the redesign's ch-* system.
@@ -958,6 +961,143 @@ function BotUpdateButton() {
   );
 }
 
+/**
+ * Ask the mini-PC a question and read the answer.
+ *
+ * WHY THIS PANEL EXISTS. Diagnosing a broken update on 2026-08-11 took six round-trips of
+ * "please open a terminal on the box and paste that file", because the machine sits behind
+ * a home router with no inbound path. The answers now ride the hold runner's existing
+ * 15-second poll.
+ *
+ * WHAT IT DELIBERATELY IS NOT. There is no free-text command box, and there will not be
+ * one. `scripts/auto-cart-bot/bot-commands.mjs` holds the authoritative allowlist and
+ * implements each kind itself, so the server can only NAME a diagnostic — it cannot send
+ * one. This dropdown is populated from the server's mirror of that list; if the two ever
+ * disagree the box wins, and worker/bot-commands.test.mts fails.
+ */
+function BotDiagnostics() {
+  const [kinds, setKinds] = useState<Array<{ kind: string; label: string; argHint: string; argOptions: string[] | null }>>([]);
+  const [recent, setRecent] = useState<BotCommandRow[]>([]);
+  const [kind, setKind] = useState('tail-log');
+  const [arg, setArg] = useState('auto-update');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Set while a question is outstanding, so the panel polls for the answer instead of
+  // making someone press refresh — the answer arrives ~15s later, which is exactly long
+  // enough to walk away from.
+  const [waitingFor, setWaitingFor] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    const r = await fetch('/api/admin/bot-command');
+    if (!r.ok) return;
+    const j = await r.json();
+    setKinds(j.kinds ?? []);
+    setRecent(j.recent ?? []);
+    if (waitingFor && (j.recent ?? []).some((c: BotCommandRow) => c.id === waitingFor && c.finished_at)) {
+      setWaitingFor(null);
+    }
+  }, [waitingFor]);
+
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!waitingFor) return;
+    const t = setInterval(() => { void load(); }, 3000);
+    // Give up after two minutes rather than polling for ever. A question nobody answered is
+    // itself the finding — it means the runner is not picking work up — so the row stays
+    // visible with no finished_at rather than being cleared away.
+    const stop = setTimeout(() => setWaitingFor(null), 120_000);
+    return () => { clearInterval(t); clearTimeout(stop); };
+  }, [waitingFor, load]);
+
+  const spec = kinds.find((k) => k.kind === kind);
+
+  async function ask() {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await fetch('/api/admin/bot-command', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ kind, arg: spec?.argOptions?.length ? arg : null }),
+      });
+      const j = await r.json();
+      if (!r.ok) setError(j?.error ?? 'refused');
+      else { setWaitingFor(j.id); await load(); }
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="mt-4 border-t border-ch-line pt-3">
+      <h3 className="mb-0.5 text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+        Ask the mini-PC
+      </h3>
+      <p className="mb-2 text-ch-fine text-ch-muted">
+        Read-only diagnostics, answered on the box&rsquo;s next 15-second poll. The list is
+        fixed: the box implements each one itself and refuses anything else, so this can
+        never become a way to run commands on that machine.
+      </p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={kind}
+          onChange={(e) => { setKind(e.target.value); setError(null); }}
+          className="rounded-ch border border-ch-line bg-ch-bg px-2 py-1.5 text-ch-meta text-ch-ink"
+        >
+          {kinds.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
+        </select>
+        {spec?.argOptions?.length ? (
+          <select
+            value={arg}
+            onChange={(e) => setArg(e.target.value)}
+            className="rounded-ch border border-ch-line bg-ch-bg px-2 py-1.5 text-ch-meta text-ch-ink"
+          >
+            {spec.argOptions.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        ) : null}
+        <button
+          type="button"
+          onClick={ask}
+          disabled={busy || waitingFor !== null}
+          className="rounded-ch border border-ch-line px-3 py-1.5 text-ch-meta font-bold text-ch-ink hover:bg-ch-surface disabled:opacity-60"
+        >
+          {waitingFor ? 'Waiting for the box…' : busy ? 'Asking…' : 'Ask'}
+        </button>
+      </div>
+      {error && <p className="mt-2 text-ch-fine text-ch-bad">{error}</p>}
+
+      {recent.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {recent.slice(0, 4).map((c) => (
+            <details key={c.id} open={c.id === recent[0].id} className="rounded-ch border border-ch-line p-2">
+              <summary className="cursor-pointer text-ch-fine text-ch-muted">
+                <span className="font-bold text-ch-ink">{c.kind}{c.arg ? ` ${c.arg}` : ''}</span>
+                {' — '}
+                {/* THREE STATES, NEVER TWO. "asked and nobody picked it up" is a different
+                    fault from "ran and returned nothing", and collapsing them is the exact
+                    ambiguity this whole channel was built to remove. */}
+                {c.finished_at
+                  ? `answered ${new Date(c.finished_at).toLocaleTimeString()}`
+                  : c.started_at
+                    ? 'the box picked it up, no answer yet'
+                    : 'queued — nothing has picked it up'}
+                {c.requested_by ? ` · ${c.requested_by}` : ''}
+              </summary>
+              {c.error && <p className="mt-1 text-ch-fine text-ch-bad">{c.error}</p>}
+              {c.output ? (
+                <pre className="mt-1 max-h-80 overflow-auto rounded-ch bg-ch-surface p-2 text-ch-fine leading-snug whitespace-pre-wrap text-ch-ink">
+                  {c.output}
+                </pre>
+              ) : c.finished_at && !c.error ? (
+                <p className="mt-1 text-ch-fine text-ch-muted">(no output)</p>
+              ) : null}
+            </details>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RcWebviewTest() {
   const [result, setResult] = useState<string | null>(null);
   const [diag, setDiag] = useState<Record<string, string> | null>(null);
@@ -1160,6 +1300,7 @@ function SystemHealthPanel({ data }: { data: AdminData }) {
         <AlarmTest />
         <RcWebviewTest />
         <BotUpdateButton />
+        <BotDiagnostics />
       </Panel>
 
       <Panel title="Poller capacity">

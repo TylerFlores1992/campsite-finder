@@ -16,7 +16,7 @@ export async function GET() {
   if (!(await currentUserIsAdmin())) return NextResponse.json({ error: 'not found' }, { status: 404 });
   return NextResponse.json({
     kinds: Object.entries(BOT_COMMAND_KINDS).map(([kind, s]) => ({
-      kind, label: s.label, argHint: s.argHint,
+      kind, label: s.label, argHint: s.argHint, argOptions: s.argOptions ?? null,
     })),
     recent: await recentBotCommands(10),
   });
