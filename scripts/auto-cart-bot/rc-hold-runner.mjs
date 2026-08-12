@@ -315,6 +315,79 @@ async function reportSession(live, why) {
   }).catch(() => {});
 }
 
+/**
+ * `--once` WITH NOTHING QUEUED USED TO PROVE ALMOST NOTHING, AND SAID OTHERWISE.
+ *
+ * The line it printed was:
+ *
+ *     nothing to hand over, cart, or release. Feed reachable, token accepted.
+ *
+ * "Feed reachable" was true. **"token accepted" was never tested.** That message sat above
+ * the early return, so on the quiet path — which is nearly every path, since holds are due
+ * for about ninety seconds a day — `withRC` was never called: no profile opened, no browser
+ * launched, no token read, no request made to RC. It asserted the one fact it had not
+ * checked, which is `notifications.status = 'sent'` meaning only "Twilio returned 2xx", in
+ * the diagnostic somebody runs BECAUSE they are worried.
+ *
+ * `rc-check.bat` runs exactly this as its step 1. Its step 2 (`rc-keepwarm --once`) does ask
+ * RC a real question, so the whole check was never worthless — but step 2 is also the one
+ * CLAUDE.md already records as reassuring in the fatal case, because "profile busy" reads as
+ * fine. Two steps that can both look healthy while nothing was proven is how 2026-08-07
+ * happened, and it is worth one browser launch to close.
+ *
+ * SO THE QUIET PASS NOW EXERCISES THE SESSION, which is the only part it leaves untested.
+ * `withRC` already does the whole job — takes the profile (preempting the resident keep-warm,
+ * cooperatively, or forcing a wedged one), launches Chromium, primes the real in-page token,
+ * decodes its expiry locally and reports the verdict. A no-op callback is therefore a
+ * complete rehearsal of everything up to the two cart POSTs, and those cannot be rehearsed:
+ * exercising them needs a genuine held unit, and an invented one can collide with a real site
+ * and lock it.
+ *
+ * IT MAY TAKE THE PROFILE FOR A FEW SECONDS, AND THAT IS ACCEPTABLE HERE because `--once` is
+ * only ever run by a human — the 20-second loop never reaches this branch with `ONCE` set.
+ * The hand-off is the same mechanism a real cart uses and the keep-warm reopens straight
+ * after; a person asking "is this working?" is accepting that trade by asking.
+ *
+ * THREE OUTCOMES, KEPT APART. A pass, a dead session, and "could not get the profile" are
+ * different facts with different next moves, and collapsing the third into either of the
+ * others is the whole bug being fixed.
+ */
+async function smokeTest() {
+  log('nothing to hand over, cart, or release — feed reachable.');
+  log('Exercising the RC session, which is the only part a quiet pass leaves untested...');
+
+  const out = await withRC(async (_ctx, _page, token) => ({
+    left: tokenSecondsLeft(token),
+  })).catch((err) => ({ error: err.message }));
+
+  if (out?.error) {
+    log(`✗ could not open the RC profile: ${out.error}`);
+    log('  The SESSION was not tested. This is not a verdict on it either way.');
+    return;
+  }
+  if (out?.skipped) {
+    // withRC returns this for BOTH a dead session and a profile we could not take, and its
+    // own strings already say which. Passing the reason through verbatim beats matching on
+    // it here and getting the two backwards.
+    log(`✗ ${out.skipped}`);
+    return;
+  }
+  const left = out?.left;
+  if (left == null) {
+    // An undecodable token is not evidence either way — the same rule withRC applies before
+    // it declines to report one. Do not round it up to a pass.
+    log('? a token was acquired but will not decode — nothing proven. rc-keepwarm --once asks RC directly.');
+    return;
+  }
+  if (left <= 0) {
+    log(`✗ the token expired ${Math.round(-left / 60)}m ago — the app has not renewed it.`);
+    log('  A hold due now would not cart. Run rc-login.bat.');
+    return;
+  }
+  log(`✓ RC session works: token valid for ${Math.round(left / 60)}m, profile opened, feed reachable.`);
+  log('  NOT tested: the two cart POSTs. Those need a real held unit and cannot be rehearsed.');
+}
+
 async function runPass() {
   let work;
   try {
@@ -343,7 +416,7 @@ async function runPass() {
     // Silence is right on the 20s loop and wrong for a smoke test: with nothing to do and
     // nothing printed, a successful pass looks exactly like a crash — which is how the
     // libuv exit assertion read on 2026-08-07.
-    if (ONCE) log('nothing to hand over, cart, or release. Feed reachable, token accepted.');
+    if (ONCE) await smokeTest();
     return;
   }
 
