@@ -135,9 +135,18 @@ $guardOut | Tee-Utf8
 # READ THE VERDICT LINE, NOT THE EXIT CODE. On 2026-08-11 node crashed on the way out of
 # this call - "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)" - AFTER printing its
 # verdict. That replaced our exit status with the crash's, so a PROCEED would have been
-# read as a refusal and the update skipped anyway, silently and forever. The guard is fixed,
-# but the reading should not have been that fragile: a crash can corrupt an exit code, it
-# cannot un-print a line.
+# read as a refusal and the update skipped anyway, silently and forever.
+#
+# THE GUARD IS *NOT* FIXED - this comment used to claim it was, and the box's own log
+# disproved it on 2026-08-11 at 17:01, still crashing on a commit whose comments say the
+# cause was removed. Swapping AbortSignal.timeout for a manual controller did not do it.
+# The likeliest remaining cause is the keep-alive socket undici leaves in its pool: exiting
+# explicitly tears the loop out from under it (this assertion), and NOT exiting risks the
+# process never draining at all. Both symptoms, one cause - the real fix is a request that
+# does not keep the connection alive, and that is not a change to make untested at midnight.
+#
+# So this reading is not belt-and-braces, it is THE mechanism that keeps updates working
+# today: a crash can corrupt an exit code, it cannot un-print a line.
 #
 # Fail-safe direction: anything that is not an explicit PROCEED is a skip. A guard that
 # crashes BEFORE deciding therefore stops the update, which is the correct answer when we
