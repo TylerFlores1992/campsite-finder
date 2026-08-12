@@ -833,12 +833,47 @@ never scheduled, so it only ever ran when somebody already suspected a problem.
   minutes later). `attemptLogin` re-asked `isLive()` after the page load for exactly this
   reason; it just did not ask again at the OTHER exit — the one a mid-flight
   re-authentication lands on. It now returns `provedNothing` → recorded as **inconclusive**.
-- **THAT RE-AUTHENTICATION IS ITSELF A LOOSE END.** "THERE IS NOTHING TO KEEP WARM" (below)
-  is built on RC's SPA being unable to exchange the Okta session for a new access token.
-  Here it did exactly that, silently, within seconds of the token being cleared. One
-  observation, not a measurement, and not enough to reopen the conclusion — but it is the
-  first evidence pointing the other way, and it wants a deliberate look before anyone
-  builds on the old finding.
+- **THAT RE-AUTHENTICATION IS ITSELF A LOOSE END — and pulling it found a real bug.**
+  See "THE RENEWAL WAS MEASURING ITSELF" immediately below.
+
+### THE RENEWAL WAS MEASURING ITSELF (2026-08-12) — the keep-warm question is REOPENED
+`renewByReload` has been reporting "RC will not renew" since it shipped, and **it was never
+asking RC anything.** From the box's own log:
+```
+00:06:09 token has 10m left (src=live) — renewing by reload
+00:06:10   ✗ reload did NOT mint a fresher token (575s → 575s)
+```
+**One second, and `before === after` to the second.** A navigation plus an SPA bootstrap
+plus an OIDC round trip cannot happen in a second, and a real failure does not hand back the
+identical number — that is the same token being read straight back.
+- **Mechanism, established from the code, not guessed:** the function deleted
+  `window.__camphawkRcToken` (our own captured copy) and left **localStorage** alone. That
+  is the copy okta-auth-js decides from, so with a still-valid token there the SDK issues no
+  `/authorize` at all; the app then makes its first API call with that same token, the
+  capture hook records it as `source: 'live'`, and `primeToken` returns it instantly. **The
+  renewal was measured against the very token it was supposed to replace.**
+- **The counter-evidence was in the same night's log.** The login rehearsal clears
+  `ssoAccessToken`/`accessToken` and reloads — and RC re-minted a token from the live Okta
+  session within seconds, **no credential typed**. So the BOOTSTRAP path works; it is the
+  SDK's background `autoRenew` that does not. Clearing storage is what chooses between them.
+- **`idx` IS in the profile now** — `DT, ln, [opaque], luf_*, idx, JSESSIONID`. That is
+  Okta Identity Engine's session cookie, and "no `sid`, no `idx`" is what the whole
+  "nothing to keep warm" verdict was built on. It appeared once `keepSignedIn()` started
+  being ticked. The failure line meanwhile blamed *"the Okta cookie may be gone"* with
+  `okta=ALIVE` on the adjacent line — **a diagnosis contradicted by the field next to it.**
+- **What is now true:** the evidence for "RC will not renew" was worthless, and there is one
+  positive observation that it will. That is **not** a solved keep-warm — one observation is
+  not a measurement, and this file has been burned twice by treating one for the other. The
+  fixed code makes the next attempt a real test and reports honestly either way; it should
+  answer within a token lifetime of reaching the box.
+- **`maybeAutoLogin` stays exactly as it is** until renewal is *proven*. A renewal that
+  works is what would retire it; a renewal that is merely plausible is not.
+- **The clear is DESTRUCTIVE, so the fix is guarded three ways** — never on an explicit
+  `alive: false` from Okta (`null` is "we could not tell" and still attempts, or one hiccup
+  disables renewal forever), judge on a token that is genuinely *different* rather than
+  merely live, and **restore the exact keys that were emptied and reload** if nothing
+  fresher arrives, so the worst case is no worse than doing nothing.
+  `worker/rc-token-renew.test.mts` was verified failing against all four regressions.
 
 ### Never offer a hold when there is no bot to honour it (2026-08-11)
 The RC pair stopped at 09:36 PT and nothing noticed for over two hours — `autocart.bot`
@@ -1267,6 +1302,14 @@ observing it occasionally and reporting a token nothing had ever extended.
   precisely the log we captured. So `prompt=none` was never going to work for us either: the
   challenge does live on the credential form and not on a cookie exchange, but there is no
   cookie to exchange. **The access token IS the session, and it lasts ~60 minutes.**
+  > **BOTH LEGS OF THIS HAVE NOW FAILED (2026-08-12).** The premise is false — `idx` is in
+  > the profile, and has been since `keepSignedIn()` started being ticked. And the
+  > corroborating evidence, `renewByReload` never producing a fresher token, was a broken
+  > measurement that never cleared the storage the SDK reads. **Do not cite this paragraph
+  > as settled** — see "THE RENEWAL WAS MEASURING ITSELF" above. What survives is the
+  > narrower, still-true finding: the SDK's background `autoRenew` fails and deletes the
+  > tokens. What is now open is whether a BOOTSTRAP with empty storage renews, which is a
+  > different code path and the one observation we have says yes.
 - **Therefore: obtain a token shortly before the hold.** `rc-autologin.mjs` +
   `maybeAutoLogin` sign in ONCE, within `RC_AUTOLOGIN_LEAD_MIN` (15) of a real release,
   only when the current token genuinely will not cover it, **one attempt per release

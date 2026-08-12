@@ -4266,14 +4266,89 @@ on. It now returns `provedNothing` rather than a plain `ok`, and the rehearsal r
 The stored row was corrected by hand from `ok=false` to `ok=NULL`, because it was not true
 and it would have paged every two hours overnight.
 
-### An open contradiction worth a deliberate look
+### An open contradiction — and pulling on it found the bug (2026-08-12)
 
-"THERE IS NOTHING TO KEEP WARM" (see the keep-warm section) rests on RC's SPA being unable to
-exchange the Okta session for a fresh access token — `authorize?prompt=none` failing and then
-deleting the tokens it had. **Here it silently minted one within seconds of the token being
-cleared.** That is one observation, not a measurement, and it is not enough to reopen the
-conclusion. It is, however, the first evidence pointing the other way, and anyone about to
-build on the old finding should measure this first.
+"THERE IS NOTHING TO KEEP WARM" rests on RC's SPA being unable to exchange the Okta session
+for a fresh access token. **Here it silently minted one within seconds of the token being
+cleared**, with no credential typed. That was one observation, so the next move was to check
+the instrument that had been saying the opposite — and the instrument was broken.
+
+## The renewal was measuring itself (2026-08-12)
+
+`renewByReload` has reported "RC will not renew" since it shipped, and **it was never asking
+RC anything.** From the box's own `rc-keepwarm.log`:
+
+```
+00:06:09 token has 10m left (src=live) — renewing by reload
+00:06:10   ✗ reload did NOT mint a fresher token (575s → 575s)
+```
+
+**One second, and `before === after` to the second.** A navigation plus an SPA bootstrap plus
+an OIDC round trip cannot happen in a second, and a genuine failure does not hand back the
+identical number. **That is the same token being read straight back**, and the duration is
+the diagnosis — the same tell as the iOS build that "compiled" in 0.8s.
+
+### The mechanism, from the code rather than from a guess
+
+The function deleted `window.__camphawkRcToken` — the page-scoped copy `rc-token.mjs`
+captures — and left **localStorage** untouched. That is the copy okta-auth-js decides from:
+
+1. bootstrap finds a still-valid `ssoAccessToken` in storage, so the SDK issues no
+   `/authorize` at all;
+2. the app makes its first API call with that same token;
+3. the capture hook records it, so `readLiveToken` reports `source: 'live'`;
+4. `primeToken` returns the moment it sees a live token — which is the old one.
+
+**The renewal was measured against the very token it was supposed to replace.** Every
+"renewed=no" in three days of logs is that, not RC refusing.
+
+### Two more facts that contradicted the printed diagnosis
+
+- The failure line said *"the Okta cookie may be gone"* while **`okta=ALIVE` sat on the
+  adjacent line**, from a probe in the same pass.
+- **`idx` is in the profile** — `DT, ln, [opaque], luf_-599724491, idx, JSESSIONID`. `idx` is
+  Okta Identity Engine's session cookie, and **"no `sid`, no `idx`" is the observation the
+  whole "nothing to keep warm" verdict was built on.** It appeared once the ported login
+  started ticking "Keep me signed in".
+
+### What is actually known now
+
+The evidence for "RC will not renew" was worthless, and there is **one** positive observation
+that it will — the rehearsal's clear-and-reload. That is not a solved keep-warm. One
+observation is not a measurement, and this project has twice been burned by treating one for
+the other (the "~8 hour session cap", and "headless vs headful"). The fixed code makes the
+next attempt a real test and reports honestly either way; it answers itself within a token
+lifetime of reaching the box.
+
+**`maybeAutoLogin` is unchanged and stays the mechanism.** A renewal that works is what would
+retire it. A renewal that is merely plausible is not, and swapping a proven credentialed
+sign-in for an unproven silent one, in the code path that decides a campsite at 08:00, is the
+trade this file exists to refuse.
+
+### The fix is guarded, because the clear is destructive
+
+Dropping the stored token to force a bootstrap risks a session that had ten minutes left.
+Four rules, each pinned by `worker/rc-token-renew.test.mts` and each verified failing:
+
+- **Never on an explicit `alive: false` from Okta.** No session, no chance, and the clear is
+  pure loss. **`null` still attempts** — that is "we could not tell", and refusing on unknown
+  would disable renewal permanently the first time the probe timed out. Same rule as
+  `hasAvailabilityInRange` returning null, applied to the code that ACTS rather than the code
+  that reports.
+- **Judge on a token that is genuinely different** (`primeToken({ notToken })`), not merely a
+  live one. Without this, "wait for a fresh token" and "wait for a token" are the same call —
+  which is exactly how this came to measure itself.
+- **`isRenewal` is pure and rejects an identical string** however good its clock looks. The
+  old code compared seconds alone, so reading the same token back gave `after === before` and
+  was reported as RC refusing, when nothing had been asked of RC at all.
+- **Restore the exact keys that were emptied, then reload**, so a failed attempt leaves the
+  app signed in on the old token instead of parked on a logged-out page beside a perfectly
+  good credential. The worst case is then no worse than doing nothing.
+
+The existing loop guards still stand and are what keep this from becoming a request storm
+against a residential address RC's WAF has 403'd before: one attempt per token, never on an
+expired one, only under `RC_RENEW_BEFORE_S` (10m), and `maybeAutoLogin` runs first in the
+same block so a release close enough to need a sign-in gets the real thing.
 
 ## PowerShell on this box: four traps that all fail silently (2026-08-11)
 

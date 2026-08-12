@@ -1135,14 +1135,27 @@ async function warmResident() {
           if (left != null && left > 0 && left < RENEW_BEFORE_S && token !== lastRenewAttemptFor) {
             lastRenewAttemptFor = token;
             log(`token has ${Math.round(left / 60)}m left (src=${source}) — renewing by reload`);
-            const r = await renewByReload(page, RC_HOME).catch((e) => {
+            // ASKED FIRST, BECAUSE THE RENEWAL IS DESTRUCTIVE. It clears the stored token to
+            // force the app's bootstrap to re-authorize, and with no Okta session behind it
+            // that trades a token with minutes left for nothing at all. A probe that errors
+            // returns null, which is "we could not tell" and does NOT refuse — refusing on
+            // unknown would switch renewal off for good the first time Okta hiccuped.
+            const okta = await oktaSessionAlive(ctx).catch(() => null);
+            const r = await renewByReload(page, RC_HOME, { oktaAlive: okta?.alive ?? null }).catch((e) => {
               log(`  renew failed: ${e.message}`);
               return null;
             });
-            if (r) {
+            if (r?.skipped) {
+              log(`  · skipped: ${r.skipped} — the token is untouched`);
+            } else if (r) {
               log(r.renewed
                 ? `  ✓ renewed: ${Math.round((r.before ?? 0) / 60)}m → ${Math.round((r.after ?? 0) / 60)}m`
-                : `  ✗ reload did NOT mint a fresher token (${r.before}s → ${r.after}s) — the Okta cookie may be gone`);
+                // NOT "the Okta cookie may be gone" — that was printed for three days with
+                // `okta=ALIVE` on the very next line, and the real cause was this function
+                // reading its own token back. Say what happened and leave the diagnosis to
+                // the fields that actually carry it.
+                : `  ✗ no fresher token after the reload (${r.before}s → ${r.after}s)`
+                  + `${r.restored ? ' — the previous token was put back' : ''}`);
             }
             // Report immediately either way: this is the event worth seeing on the
             // dashboard, not something to sit on until the next 20-minute tick.

@@ -264,15 +264,111 @@ export function tokenSecondsLeft(token) {
  * resident tab never reloads at all, so if the app's in-page renewal timer does not fire
  * the token simply runs down. This watches the clock and acts on it.
  *
- * Returns `{ renewed, before, after }` in seconds — `after > before` is the proof.
+ * ## IT NEVER RENEWED ANYTHING, AND THE LOG SAID SO FOR THREE DAYS (found 2026-08-12)
+ *
+ *     00:06:09 token has 10m left (src=live) — renewing by reload
+ *     00:06:10   ✗ reload did NOT mint a fresher token (575s → 575s)
+ *
+ * **One second, and `before === after` to the second.** A navigation plus an SPA bootstrap
+ * plus an OIDC round trip cannot happen in a second, and a failed renewal does not return
+ * the identical number — that is the same token being read straight back.
+ *
+ * The first version deleted `window.__camphawkRcToken` — the page-scoped copy this file
+ * captures — and left **`localStorage`** alone. That is the copy okta-auth-js decides from:
+ * finding a still-valid token in storage at bootstrap, the SDK has nothing to do, so no
+ * `/authorize` is ever issued. The app then makes its first API call with that same token,
+ * the capture hook records it as `source: 'live'`, and `primeToken` returns it instantly.
+ * **The renewal was measured against the very token it was supposed to replace.**
+ *
+ * The counter-evidence was in the same night's log. The login rehearsal clears
+ * `ssoAccessToken`/`accessToken` from localStorage and reloads — and RC re-minted a token
+ * from the live Okta session within seconds, with no credential typed. So the BOOTSTRAP
+ * path works; it is the SDK's background `autoRenew` that does not. Clearing storage is
+ * what makes a reload take the working path instead of the broken one.
+ *
+ * (The old failure line blamed "the Okta cookie may be gone" while `okta=ALIVE` sat on the
+ * adjacent line, and `idx` — Okta Identity Engine's session cookie — is present in the
+ * profile. Both facts contradicted the diagnosis being printed.)
+ *
+ * ## The clear is destructive, so the failure path must put it back
+ *
+ * Dropping the token to force a bootstrap risks a session that had ten minutes left. Three
+ * rules make the worst case no worse than doing nothing:
+ *   - **Never without a live Okta session.** No `idx`, no chance, and the clear is pure loss.
+ *   - **Judge on a DIFFERENT token**, not merely on a live one, or this reintroduces the bug.
+ *   - **Restore the exact keys** we emptied and reload, so the app ends up signed in on the
+ *     old token rather than sitting on a signed-out page.
+ *
+ * Returns `{ renewed, before, after, restored, skipped }` in seconds — a token that is both
+ * NEW and further from expiry is the only thing counted as a renewal.
  */
-export async function renewByReload(page, url) {
-  const before = tokenSecondsLeft((await readLiveToken(page)).token);
-  await page.evaluate(() => { try { delete window.__camphawkRcToken; } catch { /* ignore */ } });
+export async function renewByReload(page, url, { oktaAlive = null } = {}) {
+  const stored = await page.evaluate(() => {
+    try {
+      return {
+        sso: localStorage.getItem('ssoAccessToken'),
+        acc: localStorage.getItem('accessToken'),
+      };
+    } catch { return { sso: null, acc: null }; }
+  }).catch(() => ({ sso: null, acc: null }));
+
+  const previous = (await readLiveToken(page)).token;
+  const before = tokenSecondsLeft(previous);
+
+  // An explicit NO from the caller only. `null` means nobody asked, and refusing on an
+  // unknown would switch this off permanently the first time the probe errored — the
+  // "unknown is not dead" rule, applied to the thing that acts rather than the report.
+  if (oktaAlive === false) {
+    return { renewed: false, before, after: before, restored: false,
+      skipped: 'no Okta session to renew against' };
+  }
+
+  await page.evaluate(() => {
+    try {
+      localStorage.removeItem('ssoAccessToken');
+      localStorage.removeItem('accessToken');
+      delete window.__camphawkRcToken;
+    } catch { /* ignore */ }
+  }).catch(() => {});
+
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-  const { token } = await primeToken(page, { timeoutMs: 20_000 });
+  const { token } = await primeToken(page, { timeoutMs: 25_000, notToken: previous });
   const after = tokenSecondsLeft(token);
-  return { renewed: after != null && (before == null || after > before), before, after };
+  const renewed = isRenewal({ previous, next: token, before, after });
+
+  let restored = false;
+  if (!renewed && (stored.sso || stored.acc)) {
+    await page.evaluate((s) => {
+      try {
+        if (s.sso) localStorage.setItem('ssoAccessToken', s.sso);
+        if (s.acc) localStorage.setItem('accessToken', s.acc);
+      } catch { /* ignore */ }
+    }, stored).catch(() => {});
+    // The bootstrap above decided this profile was signed out. Load once more so the app
+    // reads the restored token and comes back up signed in, instead of leaving the resident
+    // tab on a logged-out page with a perfectly good token sitting beside it.
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+    restored = true;
+  }
+
+  return { renewed, before, after, restored, skipped: null };
+}
+
+/**
+ * Is this actually a renewal? Pure, because the bug it guards was a wrong answer to exactly
+ * this question and nothing else about the reload was wrong.
+ *
+ * **A token identical to the one we started with is never a renewal, whatever its clock
+ * says.** That is the case the old code got wrong: it compared only the seconds remaining,
+ * and reading the same token back gives `after === before`, which is not `>` — so it
+ * reported failure rather than reporting that it had not looked properly. The distinction
+ * matters because those two produce different next moves.
+ */
+export function isRenewal({ previous, next, before, after }) {
+  if (!next) return false;
+  if (previous != null && next === previous) return false;
+  if (after == null) return false;
+  return before == null || after > before;
 }
 
 /**
@@ -281,12 +377,18 @@ export async function renewByReload(page, url) {
  * A page that has finished loading and is sitting idle makes no requests, so a freshly
  * opened tab can genuinely have nothing to catch yet. Reloading is the cheap, honest way
  * to produce traffic — it is what the app does on any navigation anyway.
+ *
+ * `notToken` is for the renewal path: after clearing storage we are waiting for a token
+ * that is not the one we just dropped, and accepting any live token would accept the old
+ * one back if the app happens to replay it. Without this, "wait for a fresh token" and
+ * "wait for a token" are the same call — which is how the renewal came to be measured
+ * against itself.
  */
-export async function primeToken(page, { timeoutMs = 15_000 } = {}) {
+export async function primeToken(page, { timeoutMs = 15_000, notToken = null } = {}) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const { token, source } = await readLiveToken(page);
-    if (source === 'live') return { token, source };
+    if (source === 'live' && (notToken == null || token !== notToken)) return { token, source };
     if (Date.now() >= deadline) return { token, source };
     await page.waitForTimeout(500);
   }
