@@ -5,6 +5,7 @@ import { randomBytes } from 'crypto';
 import { query, mutate } from '@/lib/db/client';
 import { sendEmail } from './email';
 import { sendSms } from './sms';
+import { twilioAccountSid } from './twilio-env';
 
 export type WatchAction = 'stop' | 'reopen' | 'mute_site' | 'keep' | 'cancel' | 'book' | 'manage' | 'hold';
 
@@ -338,7 +339,7 @@ async function sendStopConfirmation(watchId: string, campgroundName: string | un
     // No link: a camphawk.app URL in an SMS is filtered by the carrier and the text
     // never arrives (see sendSms). The reopen link lives in the email above, which is
     // where it always worked.
-    u.phone && process.env.TWILIO_ACCOUNT_SID
+    u.phone && twilioAccountSid()
       ? sendSms({ to: u.phone, body: `CampHawk: stopped watching ${name}. Check your email to reopen it.` })
       : Promise.resolve(),
   ]);

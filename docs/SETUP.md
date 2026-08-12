@@ -1277,6 +1277,27 @@ NODE_USE_ENV_PROXY=1 npx tsx scripts/sms-link-test.mts --read
 **`--read` needs only the database**, so results can be pulled from any session. Only
 `--send` needs Twilio.
 
+### The 2026-08-12 run — 4 of 4 delivered, and therefore inconclusive
+
+Provider-only, bare `camphawk.app`, `camphawk.app/manage/<token>` and the `/b/<token>`
+positive control **all delivered**, no error codes. The control is the reading: `/b/` was
+filtered 13 for 13 on 08-05 and it arrived, so **filtering is simply not being applied
+right now** and the run cannot rank shapes. This is the confound `--with-redirect` exists
+to catch, and it is consistent with Twilio's "no filtering since August 5th".
+
+Do not quote it as "our links are safe now" — it supports "our domain was not filtered on
+2026-08-12", a claim about the day, not the shape. Choose the sample shape on the
+documented rule instead (T-Mobile §4.8 names redirects): `/manage/<token>` in, `/b/` out.
+
+**The run also found the instrument broken three ways**, none of which had ever been
+exercised because the script had never run with real credentials: a **leading space** on
+the Twilio credentials (all four sends rejected as `Authentication Error - invalid
+username`); `notifications.user_id` **NOT NULL**, so all four rows failed *after* the texts
+were sent while the summary read `Sent 4 of 4`; and `channel = 'sms_test'` **rejected by
+the CHECK constraint**, so the isolation the script documents was never possible. Fixed by
+`lib/notifications/twilio-env.ts` (+ `worker/twilio-env.test.mts`), a pre-flight on the
+row, and **migration 057**. The results were recovered from Twilio's Messages API.
+
 ### What it needs, and what it refuses without
 
 | Variable | Where |

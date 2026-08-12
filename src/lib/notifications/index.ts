@@ -1,6 +1,7 @@
 import { query, mutate } from '@/lib/db/client';
 import { sendEmail } from './email';
 import { sendSms } from './sms';
+import { twilioAccountSid } from './twilio-env';
 import { sendPush } from './push';
 import { actionUrlFor } from './actions';
 import { formatStayDates } from './dates';
@@ -227,7 +228,7 @@ async function dispatchEmail(payload: NotificationPayload, links: ActionLinks): 
 }
 
 async function dispatchSms(payload: NotificationPayload): Promise<void> {
-  if (!process.env.TWILIO_ACCOUNT_SID) return;
+  if (!twilioAccountSid()) return;
 
   const phone = await getUserPhone(payload.userId);
   if (!phone) return; // no phone on file — email-only user

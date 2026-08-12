@@ -1,5 +1,11 @@
 // SMS delivery via Twilio. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
 // TWILIO_FROM_NUMBER in the environment to enable.
+import {
+  twilioAccountSid,
+  twilioAuthToken,
+  twilioFromNumber,
+  twilioMessagingServiceSid,
+} from './twilio-env';
 
 /** Where Twilio should report the real outcome. Must be publicly reachable — Twilio
  *  calls it from its own network, so localhost is silently never called (the message
@@ -67,10 +73,10 @@ export async function sendSms(params: SmsParams): Promise<SmsResult> {
     );
   }
 
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const from = process.env.TWILIO_FROM_NUMBER;
-  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
+  const accountSid = twilioAccountSid();
+  const authToken = twilioAuthToken();
+  const from = twilioFromNumber();
+  const messagingServiceSid = twilioMessagingServiceSid();
 
   if (!accountSid || !authToken || (!from && !messagingServiceSid)) {
     console.log('[sms] Twilio not configured — would have sent:');

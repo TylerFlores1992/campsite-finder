@@ -1,3 +1,4 @@
+import { twilioAccountSid, twilioAuthToken, twilioFromNumber } from './twilio-env';
 /**
  * A PHONE CALL, for the handful of things that must not be slept through.
  *
@@ -56,9 +57,10 @@ const REPEAT_GAP_MS = 45_000;
 const RING_SECONDS = 25;
 
 /** Twilio's outbound-call price is per minute; these calls are ~20 seconds. */
-const ACCOUNT_SID = () => process.env.TWILIO_ACCOUNT_SID;
-const AUTH_TOKEN = () => process.env.TWILIO_AUTH_TOKEN;
-const FROM = () => process.env.TWILIO_FROM_NUMBER;
+
+const ACCOUNT_SID = twilioAccountSid;
+const AUTH_TOKEN = twilioAuthToken;
+const FROM = twilioFromNumber;
 
 export interface CallResult {
   sid: string | null;

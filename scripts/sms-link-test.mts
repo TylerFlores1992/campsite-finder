@@ -44,6 +44,15 @@
  */
 import { randomUUID } from 'node:crypto';
 import { query, mutate } from '../src/lib/db/client.js';
+// Trimmed reads. A leading space on TWILIO_ACCOUNT_SID failed all four sends on
+// 2026-08-12 with `Authentication Error - invalid username`, which reads exactly like a
+// wrong credential. See lib/notifications/twilio-env.
+import {
+  twilioAccountSid,
+  twilioAuthToken,
+  twilioFromNumber,
+  twilioMessagingServiceSid,
+} from '../src/lib/notifications/twilio-env.js';
 
 const args = new Set(process.argv.slice(2));
 const SEND = args.has('--send');
@@ -66,17 +75,24 @@ type Variant = { key: string; note: string; body: (link: string | null) => strin
  * those would stop or mute a real watch, and losing a user's alerts to measure a link shape
  * is not a trade worth making.
  */
-async function manageLink(): Promise<string | null> {
-  const rows = await query(`SELECT id FROM watches WHERE active = true ORDER BY created_at DESC LIMIT 1`);
-  const id = (rows as { id: string }[])[0]?.id;
-  if (!id) return null;
+/** The watch the manage link points at — and the row identity every log needs. */
+type Subject = { watchId: string; userId: string; campgroundId: string; link: string | null };
+
+async function subject(): Promise<Subject | null> {
+  // `user_id` is selected because `notifications.user_id` is NOT NULL. Discovering that at
+  // INSERT time is what cost the first real run — see the pre-flight below.
+  const rows = await query(
+    `SELECT id, user_id, campground_id FROM watches WHERE active = true ORDER BY created_at DESC LIMIT 1`,
+  );
+  const w = (rows as { id: string; user_id: string; campground_id: string }[])[0];
+  if (!w) return null;
   // `manageUrlFor`, NOT `actionUrlFor`. The latter returns `/w/<token>` — the ONE-TAP
   // ACTION link — and a scanner following one of those acts on the watch. `manageUrlFor`
   // returns `/manage/<token>`, the page. Getting this backwards would have made the test
   // both dangerous and wrong: `/w/` is short and opaque, which is a third link shape, not
   // the plain-page shape this experiment exists to isolate.
   const { manageUrlFor } = await import('../src/lib/notifications/actions.js');
-  return manageUrlFor(id);
+  return { watchId: w.id, userId: w.user_id, campgroundId: w.campground_id, link: await manageUrlFor(w.id) };
 }
 
 function variants(link: string | null): Variant[] {
@@ -116,10 +132,10 @@ function variants(link: string | null): Variant[] {
 
 /** Same call `sendSms` makes internally — see the header for why this is not `sendSms`. */
 async function twilioSend(body: string): Promise<{ sid: string | null; status: string | null; error?: string }> {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const from = process.env.TWILIO_FROM_NUMBER;
-  const svc = process.env.TWILIO_MESSAGING_SERVICE_SID;
+  const accountSid = twilioAccountSid();
+  const authToken = twilioAuthToken();
+  const from = twilioFromNumber();
+  const svc = twilioMessagingServiceSid();
   if (!accountSid || !authToken || (!from && !svc)) return { sid: null, status: null, error: 'Twilio not configured' };
 
   const form = new URLSearchParams({ To: TO, Body: body });
@@ -148,7 +164,17 @@ async function readResults() {
        FROM notifications WHERE channel = 'sms_test' ORDER BY created_at DESC LIMIT 20`,
   );
   const list = rows as { p: unknown; sid: string; ds: string | null; de: string | null; at: string }[];
-  if (!list.length) return console.log('No sms_test rows yet. Run with --send first.');
+  // NOT just "run with --send first". On 2026-08-12 that sentence was printed after four
+  // texts had genuinely been sent and every row insert had failed — so the one message that
+  // means "you have not run the experiment" was shown to someone who just had. Name the
+  // other possibility, because the two are indistinguishable from this table alone.
+  if (!list.length) {
+    return console.log(
+      'No sms_test rows.\n' +
+      '  Either nothing has been sent, OR a send succeeded and its rows failed to insert.\n' +
+      "  Check Twilio's Messages log for the destination number before concluding the first.",
+    );
+  }
   console.log(`\n${'variant'.padEnd(20)} ${'sent'.padEnd(20)} ${'delivery'.padEnd(14)} error`);
   console.log('-'.repeat(72));
   for (const r of list) {
@@ -166,9 +192,9 @@ async function readResults() {
 async function main() {
   if (READ) return readResults();
 
-  const link = await manageLink().catch(() => null);
-  const vs = variants(link);
-  if (!link) console.log('! No active watch with a manage token — skipping the camphawk-page variant,\n  which is the one worth measuring.\n');
+  const subj = await subject().catch(() => null);
+  const vs = variants(subj?.link ?? null);
+  if (!subj?.link) console.log('! No active watch with a manage token — skipping the camphawk-page variant,\n  which is the one worth measuring.\n');
 
   console.log(`To: ${TO}`);
   console.log(`${vs.length} variant(s)${WITH_REDIRECT ? '' : '  (add --with-redirect for the known-bad positive control)'}\n`);
@@ -182,8 +208,8 @@ async function main() {
   // CHECKED BEFORE ANYTHING IS PROMISED. The first version discovered the missing
   // credentials one variant at a time, after printing four messages it was about to send —
   // and then still printed "Sent." at the end. See the counter below for why that matters.
-  const hasAuth = !!process.env.TWILIO_ACCOUNT_SID && !!process.env.TWILIO_AUTH_TOKEN;
-  const svcSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
+  const hasAuth = !!twilioAccountSid() && !!twilioAuthToken();
+  const svcSid = twilioMessagingServiceSid();
 
   if (SEND && !hasAuth) {
     console.log('*** CANNOT SEND: no Twilio credentials in this environment. ***');
@@ -208,6 +234,30 @@ async function main() {
     return;
   }
 
+  // THE ROW IS THE MEASUREMENT, SO IT IS CHECKED BEFORE THE FIRST TEXT GOES OUT.
+  //
+  // The first real run (2026-08-12) sent all four texts and then failed EVERY insert:
+  // `notifications.user_id` is NOT NULL and this script never supplied one. It printed
+  // "Sent 4 of 4" — true — and `--read` then said "No sms_test rows yet. Run with --send
+  // first.", which is the sentence you get when you have sent NOTHING. Four real texts to
+  // a real handset, the carrier receipts arriving at a webhook with no row to match, and
+  // an instrument reporting the state that means "you have not run the experiment".
+  //
+  // That is the house failure mode exactly — two different faults with one output, like
+  // `claimBotCommands` returning `[]` for both "the query threw" and "nobody asked", and
+  // like `notifications.status = 'sent'` meaning only "Twilio returned 2xx". The credential
+  // checks above already establish the rule: verify what the run DEPENDS ON before
+  // promising anything. A logging failure is not a side issue here — without the row there
+  // is no result, so sending would spend four texts to learn nothing.
+  if (SEND && !subj) {
+    console.log('*** REFUSING: no active watch, so there is no user_id to log against. ***');
+    console.log('    `notifications.user_id` is NOT NULL. Without a row, `--read` reports');
+    console.log('    nothing and the carrier receipts match nothing — the texts would be');
+    console.log('    sent and the measurement lost. Nothing was sent.');
+    process.exitCode = 1;
+    return;
+  }
+
   if (!SEND) {
     console.log('DRY RUN — nothing sent. Re-run with --send to send these for real.');
     console.log('Each is one real SMS to the number above, and some are EXPECTED to be filtered.');
@@ -215,15 +265,25 @@ async function main() {
   }
 
   let sent = 0;
+  let logged = 0;
   for (const v of vs) {
     const body = v.body(v.link);
     const r = await twilioSend(body);
     if (r.error) { console.log(`  ✗ ${v.key}: ${r.error}`); continue; }
-    await mutate(
-      `INSERT INTO notifications (channel, status, provider_id, payload) VALUES ('sms_test', $1, $2, $3::jsonb)`,
-      [r.sid ? 'sent' : 'failed', r.sid, JSON.stringify({ variant: v.key, body, link: v.link })],
-    ).catch((e) => console.log(`  (row insert failed: ${(e as Error).message})`));
     sent++;
+    const ok = await mutate(
+      `INSERT INTO notifications (user_id, watch_id, campground_id, channel, status, provider_id, payload)
+       VALUES ($1, $2, $3, 'sms_test', $4, $5, $6::jsonb)`,
+      [
+        subj!.userId,
+        subj!.watchId,
+        subj!.campgroundId,
+        r.sid ? 'sent' : 'failed',
+        r.sid,
+        JSON.stringify({ variant: v.key, body, link: v.link }),
+      ],
+    ).then(() => true).catch((e) => { console.log(`  ! ${v.key} row NOT logged: ${(e as Error).message}`); return false; });
+    if (ok) logged++;
     console.log(`  → ${v.key}: ${r.sid ?? 'no sid'} (${r.status ?? '?'})`);
     // Spaced so a burst is not itself the variable being measured.
     await new Promise((s) => setTimeout(s, 4000));
@@ -239,6 +299,17 @@ async function main() {
   }
   console.log(`\nSent ${sent} of ${vs.length}. Twilio's status is \`queued\`/\`accepted\` — NOT delivery.`);
   if (sent < vs.length) console.log(`${vs.length - sent} variant(s) failed to send; those are missing from the comparison.`);
+  // A sent text with no row is a text spent for nothing: `--read` cannot see it and the
+  // carrier receipt arrives at the webhook with nothing to match. Say so at the end, where
+  // the summary is read, and not only as a line that scrolls past mid-run.
+  if (logged < sent) {
+    console.log(
+      `\n*** ${sent - logged} of ${sent} sent message(s) were NOT logged. Those texts went out but\n` +
+      `    cannot be read back — \`--read\` will not show them and their receipts match no row.\n` +
+      `    Recover from Twilio's own Messages API before re-sending, or the run is wasted. ***`,
+    );
+    process.exitCode = 1;
+  }
   console.log('Wait ~1 minute, then:  NODE_USE_ENV_PROXY=1 npx tsx scripts/sms-link-test.mts --read');
 }
 
