@@ -906,6 +906,27 @@ one stored payload built by `autocartPayload()`, and that payload **never includ
   tell that this was an omission — and no type caught it because the fields that matter on
   `NotificationPayload` are all optional. `worker/autocart-payload.test.mts` pins the full set.
 
+### "The auto-login has had its turn" was said 15 minutes early (2026-08-12)
+`autocart.rc_session` read **fail** at **T−34** with *"the auto-login has had its turn — run
+mini-pc\rc-login.bat"*, while `maybeAutoLogin` had not run at all. It ran at ~T−31 and signed
+in unattended. **Anyone acting on that sentence would have driven to the box over a session
+that repaired itself four minutes later** — the 08-09 cry-wolf, a second time, in the one
+check the 07:40 pre-flight reads.
+- **ONE CONSTANT WAS DOING TWO JOBS.** `RC_SESSION_CRITICAL_MIN` (45) is when a dead session
+  starts to MATTER; it is not when the repair is spent, which cannot be sooner than the login
+  runs (`RC_AUTOLOGIN_LEAD_MIN`, 30). The alarm gate learned this on 08-09 and gates on
+  `ALARM_AFTER_MIN` (25) plus a definitive `auto sign-in failed`; the health check kept the
+  naive version, **directly beneath the long comment explaining the lesson it was breaking**.
+- `RC_SESSION_REPAIR_SPENT_MIN` is that number, **shared with the alarm** so the page and the
+  phone cannot disagree about whether a repair is pending. A reported failure outranks the
+  clock, as it does for the alarm.
+- Also replaced a bare `30` in the message string with `RC_AUTOLOGIN_LEAD_MIN` on the web
+  side. That sentence is read by a human deciding whether to intervene.
+- `worker/autologin-lead.test.mts` pins the two windows apart and requires the spent window to
+  equal the alarm's; verified failing against both the 45-minute constant and the old
+  expression. **Ruled out first:** `d1ab782` already carried lead 30, so this was NOT the
+  two-halves-deploy-by-different-routes gap.
+
 ### Health severity — two false alarms that would have paged all night (2026-08-11)
 Now that the health Routine notifies, a wrong `fail` is a phone call every two hours.
 - **`autocart.rc_session` failed on ANY hold ahead.** Tapping a hold at 18:34 turned it red
@@ -996,6 +1017,89 @@ only when a human **asks**; this is the passive version.
   (stale + `beat_at` is readable; NULL is not), and the header is validated as 7–40 hex
   before storage — any holder of `AUTOCART_TOKEN` sets it and it renders on the admin page.
 - `worker/bot-version.test.mts`, verified failing against three regressions.
+
+### THE ON-DEMAND UPDATE DEADLOCKED ITSELF (2026-08-12) — read before pressing "Update now"
+`7193c21` taught `update-guard.mjs` to claim, to close the Windows task's race. But the
+guard runs on **TWO** paths and only one is the task: the pollers claim FIRST and then spawn
+`auto-update.ps1`, which runs the guard too — so it claimed again and **lost to its own
+parent's claim, taken one second earlier**. Every on-demand update refused itself with
+*"another process holds the update claim (or we could not ask)"*.
+- **It could never drain.** A standing request is re-claimed on every poll, so the 20-minute
+  TTL just produced another SKIP. Reproduced three times, ~20 min apart.
+- **And the fix could only be delivered by the mechanism it fixes.** The one remaining way
+  in was a human at the box running `update.bat`.
+- **The tell was that the same path WORKED at 15:53 and failed from 15:56 on.** Nothing about
+  the request changed; the BOX moved `d1ab782 → 21dcc4e` in between, and that was `7193c21`'s
+  first production run. Its own commit message says it could not reach the box before the
+  08:00 cart — which is exactly why it had never been exercised. **A commit that cannot reach
+  the box before a release is a commit nothing has run.**
+- Fixed with `--claimed`: the spawner saying "I already hold it, do not ask". Passed by
+  `control-channel.mjs`, forwarded by `auto-update.ps1`'s new `-Claimed` switch, honoured by
+  the guard. **The Scheduled Task does NOT pass it** — it claims nothing and the guard is its
+  only gate — so 7193c21's race stays closed, and the test asserts that too.
+- `worker/update-guard.test.mts` verified failing against BOTH regressions: the guard ignoring
+  `--claimed`, and **the poller not passing it** — the fix present but inert, which is the
+  version that looks right in review and changes nothing.
+- **THE ESCAPE HATCHES, while a box still runs the deadlocked code:** `update.bat` by hand, or
+  a quiet-window run with **no request pending** (the guard claims only when `requested`).
+  Cancel the request first or the quiet-window path claims too. **`nextHoldRelease` counts
+  only `requested`/`carted`/`claiming`, NOT `offered`** — so untapped offers do not block the
+  02:00–05:00 window, but tapping one does, and the 6h release check is not liftable.
+
+### A Chromium ate 41 GB of COMMIT, and nothing could kill it remotely (2026-08-12)
+The first real `memory` reading answered the question `fix-pagefile` was waiting on, and the
+answer was **consumption, not the ceiling**: one `chrome.exe` on our profiles at **9.4 GB**,
+growing **~395 MB/min**, with COMMIT at **99% of 50 GB**. Killing that single pid took commit
+to **21% of 35 GB** and freed ~41 GB — Windows then shrank the lazily-grown pagefile back.
+- **It reached 7.9 GB in 46 seconds** of the keep-warm starting. That is not ordinary growth.
+- **`restart-rc` could not clear it** — it killed 2 of the instance's 9 processes. So the one
+  remote lever for a runaway browser did not reach it, and it took a person typing `taskkill`
+  into a phone. Hence **`kill-chrome`** (`rc` / `recgov` / `all`), which kills by profile
+  family, re-checks, names survivors and clears the RC profile lock.
+- **STILL UNDIAGNOSED, and I twice guessed the profile wrong.** The RC profile path is
+  `…\auto-cart-bot\.rc-bot-profile`, so it contains BOTH patterns `memory` and `restart-rc`
+  match on — the two cannot be compared that way. Attribute it on the next occurrence with
+  evidence, not by reading regexes.
+- `fix-pagefile` is **not** the fix and would have masked this. Pagefile peak was 0.4 GB
+  against 34 GB allocated: commit was going to reservations, not paging.
+
+### THREE DIAGNOSTICS LIED AT ONCE, AND THE HEARTBEAT WAS RIGHT (2026-08-12)
+I told the owner the RC pair was dead and to go to the box. **It was running the whole time.**
+- **`list-processes` showed only the PowerShell wrappers**, no `node` — by construction, it
+  matches a pattern the relaunched processes did not.
+- **The keep-warm log froze at 15:56:38** while the process kept reporting to the server —
+  Windows file locking, the same family as `rc-login.bat`'s relaunched windows dying on
+  `Tee-Object` because the survivors held the logs open.
+- **My own 30-line tail cut the `restart-rc` lines**, and I blamed `restarts.log`'s known
+  contention bug. It had written them correctly.
+- **`rc_runner_heartbeat` was accurate throughout** and would have settled it in one query.
+  **Check the thing that reports to the SERVER before believing two local diagnostics.**
+- Also corrected: **`stop-all` DOES kill orphaned Chromium** (it killed two during the update).
+  I said it did not.
+
+### Front-of-flow: sign in to RC BEFORE the release (2026-08-12)
+`rc-handoff.ts` had already concluded "SIGN IN INSIDE THE WEBVIEW, **AS STEP ONE OF THE
+CLAIM**" and it was never built — every `openRcHandoff` call sat on the far side of the
+release, so the injectable webview did not exist until the drop had happened. The old step 1
+opened the SYSTEM browser, whose cookie jar the injection can never read.
+- Measured on the 08-12 hold: first injection reported *"Couldn't read your RC login"*, the
+  user signed in mid-window, and a LATER injection captured a 939-char token — so the data
+  store persists across separate opens. The mechanism was right; the ORDERING was wrong.
+- Step one opens the webview with **no `unitId`**, so the script finds no job, reports `idle`
+  and still captures the token — a rehearsal of everything except the cart.
+- `token captured` is now the gate, replacing the self-assertion checkbox. **Verification is a
+  fast path, NEVER a new blocker**: unconfirmed falls back to the checkbox, because "we could
+  not confirm" and "there is no session" are different facts.
+- **THE COPY MUST NOT PROMISE A CART** until a real hold reports `✓ Added to cart`. My first
+  draft did exactly that; `rc-handoff.test.mts` guards it now. **The first version of that
+  guard was worthless** — it matched raw JSX with a class excluding `<`, so the tag in
+  `add <strong>{site}</strong> to your cart` interrupted the phrase and the mutation passed.
+- **The two RC cart POSTs are STILL unproven.** The 08-12 hold carted at 08:00:02, released at
+  08:05:24, and reported `token captured` with no cart outcome — and the report channel was
+  demonstrably working either side of it.
+- **The app session does NOT survive days.** The 08-09 tests proved it survives closing the
+  webview and force-closing the app — same day. Nothing measured longer, and RC's own session
+  lifetime (~1h token, ~12h Okta) applies inside the app too. Sign in shortly before a release.
 
 ### Stripe is constructed lazily, in ONE place (2026-08-12)
 Five routes did `new Stripe(process.env.STRIPE_SECRET_KEY!.trim())` at **module scope**.
@@ -1434,6 +1538,24 @@ to `recreation.gov` and `reservecalifornia.com`.
 delivery panel is the regression detector and would go red within hours.
 Full text, replacement copy and the Console path stay in `docs/a2p-campaign.md`.
 
+> **THE SAMPLES ARE GENERATED AND WAITING (2026-08-12 evening).** `docs/a2p-campaign.md` now
+> carries all nine bodies from `scripts/a2p-samples.mts` — the seven we send today plus the
+> two that need `camphawk.app` registered first (the RC hold-secured and hold-offered
+> messages, which say *"open your email or the app"* precisely because they cannot carry a
+> link). Generated from the dispatcher's own `smsBody()`, so they cannot drift the way the
+> 7/7/2026 set did. `--check` exits 1 if any body exceeds one segment.
+> Three caveats recorded with them, each a way this gets misquoted later:
+> - **The measured shape is not the proposed shape.** The 08-12 test sent
+>   `camphawk.app/manage/<8-char-token>`; the samples carry
+>   `camphawk.app/claim/<uuid>?t=<token>` — longer, UUID path, query string. Both are real
+>   pages rather than redirects, so both satisfy T-Mobile §4.8, but the claim shape is
+>   unmeasured. **Do not cite the link test as evidence for it.**
+> - **155 and 154 chars against a 160 budget**, already after `fitOneSegment` trims the name.
+>   Five characters of margin, and a 2-segment alert is the shape that was being filtered.
+> - Delivery has been **77 for 77 since 08-06**, and `no-receipt` is 0 — which independently
+>   proves the Twilio webhook is verifying signatures, i.e. the credential trim did not break
+>   the callback path.
+
 ### The 8am flow could never have worked — the cart fired BEFORE the release (2026-08-08)
 The second hold (South Carlsbad `#41`) failed with RC's own words: *"The unit is not
 available for the date(s) specified."* Exact times: **attempt 14:58:35 UTC, release
@@ -1628,12 +1750,15 @@ act). A non-paging failure reads `degraded`, so nothing is hidden. The cost of c
 is not the noise, it is that the next real page gets skimmed.
 
 ### If a hold is queued: did the 8am cart fire? (the daily check)
-The second attempt is queued: **South Carlsbad SB — Northern End, unit 45725 `#41`,
-arrival 2026-09-13, releases 2026-08-08T08:00 PT**, status `requested`. (The first — Leo
-Carrillo `#L108`, 2026-08-07 — FAILED; see the runner section above.) Verified green at
-05:20 UTC on 08-08 across every link that broke last time: `autocart.rc_session` ok
-(`load/shoppingcart → HTTP 200`), `autocart.rc_runner` polling, hand-off landing on
-`/park/720/715`.
+**2026-08-12 WORKED END TO END.** Elk Prairie `#33`: offered 01:15Z, tapped 01:34Z,
+**carted 15:00:02Z — two seconds after the release** — `claiming`, then **released
+15:05:24Z**. `maybeAutoLogin` signed in unattended at ~07:29 PT with no human involved, which
+is the link that broke on 08-07 and 08-08. **Two holds are queued for 2026-08-13 08:00 PT:
+South Carlsbad `#76` and Elk Prairie `#60`, both `offered` (untapped).** Note untapped offers
+do NOT block the 02:00–05:00 update window; tapping one does.
+
+*(Historical: South Carlsbad `#41` 08-08; Leo Carrillo `#L108` 08-07 FAILED — see the runner
+section above.)*
 
 ```
 NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
@@ -1659,6 +1784,12 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
+**Docs current to 2026-08-12 (evening).** The later session added, in CLAUDE.md: the
+**update-guard deadlock** (and its two escape hatches), the **41 GB Chromium** +
+`kill-chrome`, the **three diagnostics that lied while the heartbeat was right**, the
+**claim-flow sign-in step**, and the **repair-spent threshold**. `docs/a2p-campaign.md`
+carries the **generated replacement samples** and the three caveats on them.
+
 **Both docs are current to 2026-08-12.** `docs/CONTEXT.md` carries the hold flow, the
 reCAPTCHA/keep-warm design, the mini-PC's five processes, migrations
 039/040/043/044/046/**053/054/055/056**, the `rc-login.bat` window-title bug, the corrected
