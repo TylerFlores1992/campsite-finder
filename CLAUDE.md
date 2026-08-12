@@ -968,6 +968,55 @@ All three had the same shape: **the failure produced the same output as the heal
   did not work is worse than no comment**, same as `6006428` claiming to fix the RC URL while
   only touching the copy.
 
+### `autocart.bot_version` — does the box run the code master has? (migration 056, 2026-08-12)
+`autocart.rc_runner` proves the box can reach camphawk.app; `autocart.rc_session` proves RC
+accepts its token. **Neither said which CHECKOUT was doing either**, and "the halves deploy
+by different routes" is the most expensive recurring failure in this log — it caused the
+T−30/T−25 alarm gap on 08-11, and an evening of reading "37e1527, REFUSED" on the admin page
+while the box happily ran `d1ab782`. `git-status` via `bot_commands` could answer it, but
+only when a human **asks**; this is the passive version.
+- Runner computes `git rev-parse HEAD` + `git log -1 --format=%cI` **once at startup** (the
+  checkout cannot change under a running process — the updater stops it first) and sends
+  them as headers on the feed poll it already makes. A git failure omits the headers; it
+  must never take down the runner.
+- **TWO columns, because a sha alone cannot answer the question.** A sha says the box
+  *differs*; it cannot say what is missing, because a server with no checkout cannot compute
+  ancestry. Master is linear, so a box whose HEAD **predates the last commit touching
+  `scripts/auto-cart-bot/`** is missing bot-side code. `next.config.ts` bakes the deploy sha,
+  its date, and that bot-code date at build time.
+- **The severity is the part that needed thinking.** Drift is NORMAL for part of every day
+  (Vercel deploys on push; the box waits for 02:00–05:00 or a human), so failing on
+  "different shas" would be red most mornings — the cry-wolf failure already fixed twice.
+  **`fail` only for missing bot-side code AND a hold queued**; that is the one configuration
+  where the halves can disagree at a release. `pages: false`.
+- **Every unknown is a warn, never an ok** — an old runner, no git on the box, or a shallow
+  Vercel clone that cannot find the last bot-side commit. The detail names which evidence is
+  missing.
+- `COALESCE` on the UPDATE so an old runner cannot **erase** a commit a current one reported
+  (stale + `beat_at` is readable; NULL is not), and the header is validated as 7–40 hex
+  before storage — any holder of `AUTOCART_TOKEN` sets it and it renders on the admin page.
+- `worker/bot-version.test.mts`, verified failing against three regressions.
+
+### Stripe is constructed lazily, in ONE place (2026-08-12)
+Five routes did `new Stripe(process.env.STRIPE_SECRET_KEY!.trim())` at **module scope**.
+`!` is a promise you cannot keep about an env var: if the key ever went missing, `.trim()`
+throws *while the module is being evaluated*, so the route never reaches its handler at all
+— **dead, not degraded** — across checkout, plan, portal, account deletion and the
+**webhook**. A dead webhook is silent by construction: Stripe retries for days while
+subscription rows quietly stop matching what people pay.
+- `lib/stripe-client.getStripe()` moves the throw to the first request that needs Stripe,
+  caches on success, and names the variable *and* where it is configured.
+- **Six sites, not five** — `admin/page.tsx` had one too. It was already safe (guarded,
+  returns `null`) and keeps that posture via `stripeConfigured()`: a dashboard tile should
+  say "no figure", which is the opposite call from a billing route.
+- **Typecheck caught what the edit missed**: three module-scope helpers outside the handlers
+  also used the client. That is the case for a typecheck gate in miniature.
+- Deliberately **not** `import 'server-only'` — it resolves to a throwing stub outside a
+  server bundle, including `node:test`, which would make the missing-key behaviour
+  untestable. The property is asserted mechanically instead.
+- `worker/stripe-init.test.mts` scans the whole `src` tree, because the point is that the
+  *sixth* route somebody adds cannot reintroduce it.
+
 ### The box ran out of COMMIT, and both diagnostics looked the other way (2026-08-12)
 `supervise.ps1` could not start a shell at all — *"the paging file is too small"*, then an
 `OutOfMemoryException`. **A supervisor that cannot launch a shell cannot restart anything**,
