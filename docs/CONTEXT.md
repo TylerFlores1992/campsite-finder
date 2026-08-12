@@ -4371,6 +4371,56 @@ against a residential address RC's WAF has 403'd before: one attempt per token, 
 expired one, only under `RC_RENEW_BEFORE_S` (10m), and `maybeAutoLogin` runs first in the
 same block so a release close enough to need a sign-in gets the real thing.
 
+## The nightly "502 spike on /api/rc-proxy" Vercel alert is EXPECTED (2026-08-12)
+
+Vercel's anomaly detector fires most nights: *"5xx increased — /api/rc-proxy, past 24h
+average 1 failed request, last 5 minutes 47"*. It is almost always the **UseDirect catalog
+sync**, and it is not an incident.
+
+**Why it looks like a spike by construction.** The sync deliberately opts OUT of coalescing
+(`coalesce: false`) — one batch would be N requests from a single Vercel IP and these WAFs
+meter per IP — so it makes hundreds of INDIVIDUAL `/api/rc-proxy` invocations inside one
+hour, once a day. The poller, which coalesces, contributes almost none. A rolling-24h
+average of ~1 against a once-nightly burst will read as an anomaly forever; that is the
+detector working as designed on a workload it cannot model.
+
+**The window.** The worker's UseDirect chain runs roughly **05:50–07:00 UTC**, source by
+source in one long series — reservecalifornia, then arizona, minnesota, missouri, florida,
+nevada, ohio, wyoming, illinois, virginia. (The GitHub `nightly-sync.yml` Action is a
+DIFFERENT job at 09:00 UTC.) A 502 spike timestamped inside that window is this.
+
+**The evidence that it cost nothing — check this, not the error count.** `sync_log` records
+`facilities_synced` per source, and it is IDENTICAL every night while errors swing wildly:
+
+```
+illinoisstateparks    282 facilities every night; errors  5, 0, 141, 75, 3, 11
+minnesotastateparks   306 facilities every night; errors  7, 9,  21,  9, 0, 70
+ohiostateparks        478 facilities every night; errors  0,10,   1, 11, 0,  2
+reservecalifornia     392 facilities every night; errors  0, 0,   0,  1, 0,  0
+```
+
+**The error count is not a data-loss figure.** Those are upstream 403s and timeouts that
+`UD_ATTEMPTS` retried successfully — the documented "a 403 from these WAFs means *slow
+down*, not *never*". The number to watch is `facilities_synced`, and a real regression looks
+like Illinois's 2026-07-30 failure: **0 sites, 281 errors**, not 282 sites and 141 errors.
+
+### Telling a REAL rc-proxy problem from this one
+
+Treat it as real if ANY of these hold:
+
+- **The 5xx are OUTSIDE ~05:50–07:00 UTC**, or sustained for hours rather than an hour.
+- **`detect:reservecalifornia` is failing** in `/api/health/status`. During this alert it
+  stays green, because the poller's coalesced path is unaffected.
+- **The worker log shows batch timeouts or an open UseDirect breaker.** The 2026-08-09
+  incident — the proxy having no upstream timeout at all — looked like this: every RC call
+  succeeding on attempt 2 or 3 and never on attempt 1. Healthy heartbeats read
+  `UD n/6 open` with no breaker line.
+- **`facilities_synced` dropped** for a source in `sync_log`.
+
+> **Do not trust Vercel's attribution.** On 2026-08-09 it reported the 5xx as "upstream 403
+> errors" and there were **ZERO** 403s — it was reporting our own aborts. The 502 is what
+> `/api/rc-proxy` returns when an upstream request fails, whatever the reason.
+
 ## The box ran out of COMMIT, and the supervisor could not start (2026-08-12)
 
 `supervise.ps1` failed to launch a shell at all:

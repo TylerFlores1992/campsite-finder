@@ -1324,16 +1324,33 @@ browser IS the whole session** — and `update.bat`'s `taskkill /IM node.exe /F`
 browser. Measured: a hand sign-in at 16:15:06Z read *"no token at all — signed out; okta
 session GONE (404)"* at **16:23:08Z**, straight after an update. Both scripts say so now.
 
-### Twilio A2P ticket #28871693 is OPEN (filed 2026-08-07 14:28 PT, P3)
-Asks two things: apply the sample/description/message-flow edit to the approved campaign
-(no "Edit Campaign" link exists — that surfaces on FAILED campaigns, and API edits are
-Private Beta), and confirm whether Twilio or the carrier filtered four 30007 SIDs.
-**The reply decides the work:** carrier → do the edit; Twilio-side → the edit would not
-have fixed it, so do NOT re-trigger vetting on a campaign that is currently delivering.
-Full text, replacement copy and the Console path in `docs/a2p-campaign.md`; samples are
-generated from the dispatcher by `scripts/a2p-samples.mts`.
-**Not urgent:** all twelve recorded 30007s are from 2026-08-05, before the
-`camphawk.app/b/<token>` link came out of SMS. None since.
+### Twilio A2P ticket #28871693 — ANSWERED 2026-08-11, and the answer is DON'T EDIT
+Twilio (Christian M.) replied. Two things, and together they retire the work rather than
+authorise it.
+- **"No filtering has occurred since August 5th."** Our own receipts say it harder:
+  **08-06 → 08-12 is 71 sent, 71 delivered, 0 undelivered.** The one bad day is 08-05
+  (27 sent, 9 delivered, 13 undelivered, all `30007`) — before `camphawk.app/b/<token>`
+  came out of SMS. *(08-03/08-04 read 0/0 because they predate migration 038's receipt
+  tracking — `untracked`, not failures. Do not count them as either.)*
+- **He offers to escalate for API campaign edits** (up to a week). He first says an
+  approved campaign "cannot be edited", which contradicts Twilio's own rectifying-campaigns
+  doc — the correction already recorded here — and then concedes the API path himself.
+  Not worth arguing; take the capability.
+
+**THE DECISION: accept the escalation, do NOT submit an edit.** The edit's only purpose was
+ever to make `camphawk.app` links legal in SMS, and we removed those links instead — which
+is what fixed delivery. Submitting an edit **re-triggers vetting on a campaign that is
+currently delivering 100%**, to buy something we are not using. Enabling the API permission
+is an account flag and costs nothing; making an edit is the risky act. Keep the option,
+don't spend it.
+
+**What would change this:** wanting the `Manage:` link back in SMS. That is the one reason
+to spend the edit — and it needs the samples updated FIRST (`scripts/a2p-samples.mts`
+generates them from the dispatcher), because the current registration's samples link only
+to `recreation.gov` and `reservecalifornia.com`.
+**Do not reintroduce a camphawk.app link in SMS before that edit is approved.** The
+delivery panel is the regression detector and would go red within hours.
+Full text, replacement copy and the Console path stay in `docs/a2p-campaign.md`.
 
 ### The 8am flow could never have worked — the cart fired BEFORE the release (2026-08-08)
 The second hold (South Carlsbad `#41`) failed with RC's own words: *"The unit is not
