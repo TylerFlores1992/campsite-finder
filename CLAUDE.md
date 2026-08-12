@@ -1359,6 +1359,54 @@ authorise it.
 > **Run it before spending the edit** — the samples should show the shape that actually
 > delivers.
 >
+> **IT HAS BEEN RUN — 2026-08-12, 4 of 4 DELIVERED, AND THE RESULT IS INCONCLUSIVE BY
+> DESIGN.** Provider-only, bare `camphawk.app`, `camphawk.app/manage/<token>` **and the
+> `/b/<token>` positive control** all came back `delivered` with no error code. The control
+> is the whole reading: `/b/` is the exact shape filtered **13 for 13 on 08-05**, and it
+> arrived. **So nothing is being filtered right now, and this run cannot rank link shapes** —
+> it has no discriminating power when every arm passes. That is precisely the confound
+> `--with-redirect` exists to expose, and it matches Twilio's "no filtering has occurred
+> since August 5th" rather than contradicting it.
+> - **Do NOT read this as "camphawk.app links are safe again."** What it licenses is
+>   "our domain was not filtered on 2026-08-12", which is a statement about the day, not
+>   about the shape. Filtering is carrier-side and can resume without notice; the 08-05
+>   evidence that `/b/` gets filtered *when filtering is on* is untouched by this run.
+> - **The unknown-token `/b/` link still 302s** (it redirects to `/`), so the control really
+>   was a redirect and not an accidental 404 — checked, because a 404 would have made it no
+>   control at all.
+> - **What this DOES settle for the samples:** shape cannot be chosen on evidence, so choose
+>   it on the documented rule instead — T-Mobile §4.8 names redirects, so put
+>   `camphawk.app/manage/<token>` in the samples and keep `/b/` out of SMS. That was already
+>   the standing instruction below; the measurement neither strengthens nor weakens it.
+> - **To get a real answer the run must land while filtering is ON**, which is not something
+>   we can schedule. The cheaper path is to reintroduce the non-redirect link behind the
+>   delivery panel (migration 038) and let it be the detector, exactly as it was for the
+>   regression it already caught.
+>
+> **BOTH HALVES OF THE INSTRUMENT WERE BROKEN, AND THE FIRST RUN IS WHAT FOUND OUT.** The
+> script had never executed with real credentials, so nothing had ever exercised its write
+> path. Three defects, each hiding the next:
+> 1. **A leading space on `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`** failed all four sends
+>    with `Authentication Error - invalid username` — which names the *username* and so
+>    reads as a wrong or revoked SID. Nothing in the repo trimmed. Now `lib/notifications/
+>    twilio-env.ts`, one trimmed reader, six call sites, guarded by a tree scan in
+>    `worker/twilio-env.test.mts`. **The expensive site was never this script**: the same
+>    untrimmed read guarded `/api/webhooks/twilio`, which verifies receipts and **fails
+>    CLOSED** — a padded token there 403s 100% of carrier callbacks and every message sits
+>    `sent` with no `delivery_status` forever, i.e. it silently disables migration 038.
+> 2. **`notifications.user_id` is NOT NULL** and the script supplied none, so all four
+>    inserts failed *after* the texts went out. It printed `Sent 4 of 4` (true) and `--read`
+>    then said *"No sms_test rows yet. Run with --send first."* — the sentence meaning **you
+>    have not run the experiment**, shown to someone who just had. Two faults, one output;
+>    the house failure mode. The row is now pre-flighted before the first text, and both
+>    messages name the other possibility.
+> 3. **`channel = 'sms_test'` was rejected by `notifications_channel_check` outright.** The
+>    isolation the header documents at length — never `'sms'`, so the experiment cannot turn
+>    the admin panel red — was never once possible. **Migration 057** adds the value;
+>    applied to prod 2026-08-12.
+> The 08-12 run was recovered from Twilio's own Messages API rather than re-sent, so the
+> four rows in `notifications` are the real receipts, marked `backfilled` in their payload.
+>
 > **MEASURE FIRST, and test the SHAPE not just the domain.** Every filtered message carried
 > `camphawk.app/b/<token>`, and `/b/` is a **302 redirect** — T-Mobile's Code of Conduct
 > §4.8 is literally "URL Redirects/Forwarding" and §3.3 "Use One Recognizable Domain Name".

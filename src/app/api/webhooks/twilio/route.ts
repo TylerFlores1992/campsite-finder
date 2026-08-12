@@ -19,6 +19,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { mutate } from '@/lib/db/client';
 import { verifyTwilioSignature } from '@/lib/notifications/twilio-signature';
+import { twilioAuthToken } from '@/lib/notifications/twilio-env';
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://camphawk.app').replace(/\/$/, '');
 
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const header = req.headers.get('x-twilio-signature');
   const verified = candidateUrls(req).some((url) =>
-    verifyTwilioSignature(url, params, header, process.env.TWILIO_AUTH_TOKEN)
+    verifyTwilioSignature(url, params, header, twilioAuthToken())
   );
   if (!verified) {
     console.warn('[twilio] rejected a status callback with a bad or missing signature');

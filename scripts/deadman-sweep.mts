@@ -21,10 +21,11 @@ const { query, mutate } = await import('../src/lib/db/client');
 const { actionUrlFor } = await import('../src/lib/notifications/actions');
 const { sendEmail } = await import('../src/lib/notifications/email');
 const { sendSms } = await import('../src/lib/notifications/sms');
+const { twilioAccountSid } = await import('../src/lib/notifications/twilio-env');
 
 const STALE_DAYS = Number(process.env.DEADMAN_STALE_DAYS ?? 21);
 const GRACE_DAYS = Number(process.env.DEADMAN_GRACE_DAYS ?? 7);
-const smsOk = !!process.env.TWILIO_ACCOUNT_SID;
+const smsOk = !!twilioAccountSid();
 
 interface Row { id: string; email: string | null; phone: string | null; name: string; start_date: string; end_date: string }
 
