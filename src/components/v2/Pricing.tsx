@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 
 import { useState, type ReactNode } from "react";
 import { Check, Loader2 } from "lucide-react";
@@ -131,12 +132,12 @@ export default function Pricing() {
   if (subscribed) {
     return (
       <div className="flex flex-wrap gap-2">
-        <a href="/search" className={buttonClasses({ className: "px-5" })}>
+        <Link href="/search" className={buttonClasses({ className: "px-5" })}>
           Start searching
-        </a>
-        <a href="/new" className={buttonClasses({ variant: "quiet", className: "px-5" })}>
+        </Link>
+        <Link href="/new" className={buttonClasses({ variant: "quiet", className: "px-5" })}>
           Create a watch
-        </a>
+        </Link>
       </div>
     );
   }
@@ -172,9 +173,9 @@ export default function Pricing() {
           features={BASE_FEATURES}
           cta={
             signedOut ? (
-              <a href="/sign-up" className={buttonClasses({ variant: "quiet", size: "sm" })}>
+              <Link href="/sign-up" className={buttonClasses({ variant: "quiet", size: "sm" })}>
                 Start 7-day free trial
-              </a>
+              </Link>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {checkoutBtn("base", "monthly", "$2.50 / month", false)}
@@ -192,9 +193,9 @@ export default function Pricing() {
             highlight
             cta={
               signedOut ? (
-                <a href="/sign-up" className={buttonClasses({ size: "sm" })}>
+                <Link href="/sign-up" className={buttonClasses({ size: "sm" })}>
                   Start 7-day free trial
-                </a>
+                </Link>
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {checkoutBtn("autocart", "monthly", "$10 / month", true)}

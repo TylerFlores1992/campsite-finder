@@ -36,6 +36,15 @@ export default function Error({
         >
           Try again
         </button>
+        {/*
+          A HARD NAVIGATION ON PURPOSE, not an oversight. This is the global error
+          boundary: it renders precisely when the client has already failed, so the
+          router this page would need to do a soft navigation is the thing that may be
+          broken. `<a href>` tears the app down and rebuilds it, which is the recovery
+          the button is offering. `<Link>` here can leave someone stuck on the error
+          screen it was supposed to get them off.
+        */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a
           href="/"
           className="px-6 py-3 rounded-2xl bg-white border border-ch-line text-ch-ink-2 font-ch-display font-semibold hover:bg-ch-paper transition-colors"

@@ -223,14 +223,14 @@ function AccountWall() {
         ))}
       </ol>
       <div className="mt-4 grid gap-2">
-        <a href="/sign-up" className={buttonClasses({ fullWidth: true })}>
+        <Link href="/sign-up" className={buttonClasses({ fullWidth: true })}>
           Start 7-day free trial
-        </a>
+        </Link>
         {/* Between the trial and Sign in, same size as both — see PlanOptionsButton. */}
         <PlanOptionsButton fullWidth />
-        <a href="/sign-in" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
+        <Link href="/sign-in" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
           Sign in
-        </a>
+        </Link>
         <Link href="/search" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
           Keep exploring without an account
         </Link>

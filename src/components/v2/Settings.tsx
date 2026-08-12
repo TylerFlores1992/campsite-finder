@@ -54,9 +54,9 @@ export default function Settings() {
           Searching stays free either way.
         </p>
         <div className="mt-4 grid gap-2">
-          <a href="/sign-in" className={buttonClasses({ fullWidth: true })}>
+          <Link href="/sign-in" className={buttonClasses({ fullWidth: true })}>
             Sign in
-          </a>
+          </Link>
           <Link href="/search" className={buttonClasses({ variant: "quiet", fullWidth: true })}>
             Back to Explore
           </Link>
@@ -141,9 +141,9 @@ export default function Settings() {
                   a subscription.
                 </p>
               </div>
-              <a href="/" className={buttonClasses({ size: "sm" })}>
+              <Link href="/" className={buttonClasses({ size: "sm" })}>
                 {everSubscribed ? "Resubscribe" : "Start free trial"}
-              </a>
+              </Link>
             </div>
           )}
         </Section>

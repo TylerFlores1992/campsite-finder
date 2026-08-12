@@ -47,9 +47,6 @@ import { join } from 'node:path';
  * device. Public so the webview can fetch it without an auth dance at 08:00:00.
  */
 
-/** Cache for the process's life. The files cannot change without a redeploy. */
-let cached: string | null = null;
-
 /**
  * The report channel — how we find out what happened INSIDE the webview.
  *

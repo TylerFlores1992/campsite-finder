@@ -1,4 +1,5 @@
 'use client';
+import Link from "next/link";
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, CheckCircle2, ShieldCheck, AlertTriangle } from 'lucide-react';
@@ -355,9 +356,9 @@ export default function ConnectPage() {
               Auto-cart is now active. When a site you&apos;re watching opens, it&apos;s added to your
               recreation.gov cart automatically — just finish checkout on your phone.
             </p>
-            <a href="/" className="mt-4 inline-block rounded-ch-btn bg-ch-green px-5 py-2.5 text-ch-body font-bold text-white hover:bg-ch-green-deep">
+            <Link href="/" className="mt-4 inline-block rounded-ch-btn bg-ch-green px-5 py-2.5 text-ch-body font-bold text-white hover:bg-ch-green-deep">
               Done
-            </a>
+            </Link>
           </div>
         )}
 

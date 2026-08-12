@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -586,9 +587,9 @@ export default function NewWatch({
         {signedOut && (
           <p role="alert" className="mt-2.5 text-ch-fine leading-normal text-ch-alert">
             Your session expired before we could save this.{" "}
-            <a className="font-bold underline" href="/sign-in">
+            <Link className="font-bold underline" href="/sign-in">
               Sign in
-            </a>{" "}
+            </Link>{" "}
             and press Start watching again — nothing you&apos;ve entered is lost.
           </p>
         )}

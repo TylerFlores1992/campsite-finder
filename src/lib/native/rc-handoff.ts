@@ -209,11 +209,13 @@ export async function rcHandoffDiagnostics(): Promise<Record<string, string>> {
   // Cordova applies a plugin's `clobbers` during its own bootstrap, so probing the global
   // can be a timing answer rather than an installation one. `cordova.require` asks the
   // module loader directly, which does not depend on when we looked.
-  let module = 'not checked';
+  // NOT named `module`: assigning that identifier can shadow the CommonJS wrapper, which
+  // Next flags as an error. This is only a diagnostic string.
+  let pluginModule = 'not checked';
   try {
-    module = w.cordova?.require ? (w.cordova.require('cordova-plugin-inappbrowser.inappbrowser') ? 'loadable' : 'MISSING') : 'no cordova.require';
+    pluginModule = w.cordova?.require ? (w.cordova.require('cordova-plugin-inappbrowser.inappbrowser') ? 'loadable' : 'MISSING') : 'no cordova.require';
   } catch (e) {
-    module = `MISSING (${String((e as Error).message).slice(0, 60)})`;
+    pluginModule = `MISSING (${String((e as Error).message).slice(0, 60)})`;
   }
 
   return {
@@ -224,7 +226,7 @@ export async function rcHandoffDiagnostics(): Promise<Record<string, string>> {
     capPlugins: w.Capacitor?.Plugins ? Object.keys(w.Capacitor.Plugins).join(', ') || '(none)' : 'ABSENT',
     cordova: w.cordova ? 'present' : 'ABSENT',
     inAppBrowser: w.cordova?.InAppBrowser?.open ? 'present' : 'ABSENT',
-    iabModule: module,
+    iabModule: pluginModule,
     ua: navigator.userAgent.slice(0, 110),
   };
 }

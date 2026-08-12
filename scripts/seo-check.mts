@@ -194,16 +194,22 @@ check('every payload is valid JSON', unparseable === 0, `${unparseable} broken`)
 
 console.log('\nState landing pages');
 {
-  const { min, rows } = await states();
+  // Named rather than nine inline `any`s. `states()` is local to this script and this is
+  // the only consumer, so the shape belongs here where a change to it fails loudly.
+  type StateRow = {
+    code: string; slug: string; title: string; desc: string;
+    count: number; roundTrips: boolean;
+  };
+  const { min, rows }: { min: number; rows: StateRow[] } = await states();
   console.log(`  ${rows.length} states qualify (>= ${min} campgrounds), ` +
-    `${rows.reduce((a: number, r: any) => a + r.count, 0).toLocaleString()} campgrounds linked`);
-  check('every slug round-trips back to its code', rows.every((r: any) => r.roundTrips),
-    rows.filter((r: any) => !r.roundTrips).map((r: any) => r.code).join(' '));
-  check('no state is below the threshold', rows.every((r: any) => r.count >= min));
-  check('titles are unique', new Set(rows.map((r: any) => r.title)).size === rows.length);
-  check('descriptions are unique', new Set(rows.map((r: any) => r.desc)).size === rows.length);
-  check('no description over 160 chars', rows.every((r: any) => r.desc.length <= 160),
-    `longest ${Math.max(...rows.map((r: any) => r.desc.length))}`);
+    `${rows.reduce((a: number, r: StateRow) => a + r.count, 0).toLocaleString()} campgrounds linked`);
+  check('every slug round-trips back to its code', rows.every((r: StateRow) => r.roundTrips),
+    rows.filter((r: StateRow) => !r.roundTrips).map((r: StateRow) => r.code).join(' '));
+  check('no state is below the threshold', rows.every((r: StateRow) => r.count >= min));
+  check('titles are unique', new Set(rows.map((r: StateRow) => r.title)).size === rows.length);
+  check('descriptions are unique', new Set(rows.map((r: StateRow) => r.desc)).size === rows.length);
+  check('no description over 160 chars', rows.every((r: StateRow) => r.desc.length <= 160),
+    `longest ${Math.max(...rows.map((r: StateRow) => r.desc.length))}`);
   const eg = rows[0];
   console.log(`  e.g. /camping/${eg.slug} — ${eg.count.toLocaleString()} campgrounds`);
   console.log(`       ${eg.title}`);
