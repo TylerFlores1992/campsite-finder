@@ -182,14 +182,28 @@ async function main() {
   // CHECKED BEFORE ANYTHING IS PROMISED. The first version discovered the missing
   // credentials one variant at a time, after printing four messages it was about to send —
   // and then still printed "Sent." at the end. See the counter below for why that matters.
-  const configured = !!process.env.TWILIO_ACCOUNT_SID && !!process.env.TWILIO_AUTH_TOKEN
-    && (!!process.env.TWILIO_FROM_NUMBER || !!process.env.TWILIO_MESSAGING_SERVICE_SID);
+  const hasAuth = !!process.env.TWILIO_ACCOUNT_SID && !!process.env.TWILIO_AUTH_TOKEN;
+  const svcSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
 
-  if (SEND && !configured) {
+  if (SEND && !hasAuth) {
     console.log('*** CANNOT SEND: no Twilio credentials in this environment. ***');
-    console.log('    Needs TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and one of');
-    console.log('    TWILIO_FROM_NUMBER / TWILIO_MESSAGING_SERVICE_SID.');
+    console.log('    Needs TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.');
     console.log('    Nothing was sent. Run this where those are set.');
+    process.exitCode = 1;
+    return;
+  }
+
+  // THE MESSAGING SERVICE IS NOT OPTIONAL FOR THIS EXPERIMENT, even though `sendSms` will
+  // fall back to a bare From number. The A2P campaign — the registration whose samples this
+  // whole question is about — hangs off the Messaging Service. Sending from a bare number
+  // routes under different campaign context, so a "delivered" would say nothing about
+  // whether our link shape survives the campaign we actually send under. An uninterpretable
+  // result is worse than no result: it would be quoted later as evidence.
+  if (SEND && !svcSid) {
+    console.log('*** REFUSING: TWILIO_MESSAGING_SERVICE_SID is not set. ***');
+    console.log('    A bare From number sends under different A2P campaign context, so the');
+    console.log('    result would not be comparable to production and could not settle');
+    console.log('    anything. Nothing was sent.');
     process.exitCode = 1;
     return;
   }
