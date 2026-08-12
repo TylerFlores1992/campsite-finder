@@ -146,7 +146,7 @@ export default function BetaTesters() {
           Add
         </button>
       </form>
-      {error && <p className="mb-3 text-xs text-red-600">{error}</p>}
+      {error && <p className="mb-3 text-xs text-ch-bad">{error}</p>}
       {note && <p className="mb-3 text-xs text-ch-ink-2">{note}</p>}
 
       {!loading && testers.length > 0 && (
@@ -220,7 +220,7 @@ export default function BetaTesters() {
               </button>
               <button
                 onClick={() => remove(t.email)}
-                className="text-ch-faint hover:text-red-500 transition-colors"
+                className="text-ch-faint hover:text-ch-alert transition-colors"
                 title="Remove beta access"
               >
                 <Trash2 size={16} />

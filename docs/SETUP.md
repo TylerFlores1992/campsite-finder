@@ -1175,3 +1175,60 @@ vars, and a setup-script field.
   fire?" — `requested` with the release time already past means the runner is down.
 
 See `docs/CONTEXT.md` for architecture and the decisions/gotchas behind the code.
+
+## Repo tooling for agent sessions (added 2026-08-12)
+
+Four small things, none of which touch runtime code. They exist because the same handful of
+mistakes kept recurring and none of them was mechanically caught.
+
+### `.claude/hooks/stop-typecheck.sh` — typecheck on Stop
+
+Runs `npm run typecheck` (~25s, BOTH tsconfigs) when a turn ends and prints the failure.
+**It always exits 0** — it reports, it does not gate. A hook that can refuse to end a turn
+will eventually be in the way during an incident.
+
+Not the full `npm run verify`: the tests hit the production database on purpose and two
+minutes per Stop is too heavy. CI carries the full recipe. It has already earned its keep
+twice — an invented `isAdmin`, and three module-scope Stripe helpers an edit left behind
+that `npm test` alone would have waved through as a runtime error on the billing path.
+
+**Do not over-trust it.** The same week it passed clean on a file `next build` rejected
+(backticks inside a template literal), and `next build` passing is itself not enough for
+layout changes.
+
+### `scripts/deploy-scope.mts` — which of the three routes does this change need?
+
+```bash
+npx tsx scripts/deploy-scope.mts                    # working tree
+npx tsx scripts/deploy-scope.mts origin/master..HEAD
+```
+
+Web is instant (Vercel), the worker is minutes (Fly), the mini-PC is **hours** and refuses
+within six hours of a release. A change spanning web + mini-PC is live on one half and not
+the other for that whole window — which is what produced the T−30/T−25 alarm gap on
+2026-08-11. Run it against `bb426bd` to see it flag exactly that commit.
+
+**Informational only; exit code is always 0.** A `Deploy-Targets:` commit trailer enforced
+in CI was considered and rejected — it is a process gate a human has to remember, and it
+would be forgotten in precisely the rushed commit that needs it. `autocart.bot_version`
+catches the drift mechanically after the fact; this answers the question before the push.
+
+### `.claude/skills/rc-status/` — the daily RC check
+
+Encodes the reading rules, which is the part that goes wrong: `offered` is not a fault,
+`requested` with the release past is the one broken state, a **stale** session verdict is not
+a **dead** one, and `autocart.bot` being green says nothing about RC. The two Routines cover
+the scheduled cases; this covers the ad-hoc one.
+
+### `.mcp.json` — Sentry and Vercel only
+
+Two servers, deliberately not five. Skipped: Supabase MCP (redundant with the interpreted
+`tsx` readouts, and it tempts ad-hoc SQL that skips the judgment those scripts encode), Fly
+(the session hook already installs `flyctl`), GitHub (already wired), and Playwright /
+Chrome DevTools MCP (useless for portal debugging from a web session — the agent proxy
+resets headless-Chromium TLS; fine against localhost or from your own CLI).
+
+> **Confirm the two URLs on first connect.** They are the documented hosted endpoints, but
+> they were written here without a way to reach them from this environment, and this project
+> has been bitten twice by a URL recalled rather than read. A wrong one fails to connect and
+> costs nothing else.
