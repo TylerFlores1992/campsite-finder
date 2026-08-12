@@ -1560,12 +1560,17 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs are current to 2026-08-12** — `docs/CONTEXT.md` carries the hold flow, the
+**Both docs are current to 2026-08-12.** `docs/CONTEXT.md` carries the hold flow, the
 reCAPTCHA/keep-warm design, the mini-PC's five processes, migrations
-039/040/043/044/046/**053/054/055**, the `rc-login.bat` window-title bug, the corrected A2P
-facts, and this session's control channel, login rehearsal, `query()` routing class, alert
-payload omission, health-severity split and DB retry. `docs/SETUP.md` is current to
-2026-08-11.
+039/040/043/044/046/**053/054/055/056**, the `rc-login.bat` window-title bug, the corrected
+A2P facts, and this session's control channel, login rehearsal, `query()` routing class,
+alert payload omission, health-severity split, DB retry, renewal-measuring-itself,
+COMMIT exhaustion + `fix-pagefile`, the `memory`/`restart-rc` commands, the `--once` smoke
+test, `autocart.bot_version` (incl. the shallow-clone trap) and the lazy Stripe client.
+`docs/SETUP.md` carries the same, plus the `verify` recipe, the lint triage and the four
+repo-tooling additions (Stop hook, `deploy-scope.mts`, `/rc-status`, `.mcp.json`).
+**`CH_DEPLOY_SHA` / `CH_DEPLOY_AT` / `CH_BOT_CODE_AT` are DERIVED at build time — never set
+them by hand;** see the env-var section in CONTEXT.
 
 ### iOS 1.0 IS SUBMITTED — "Waiting for Review", and DON'T PULL IT (2026-08-08)
 Confirmed from App Store Connect: the version reads **Waiting for Review**, so it was

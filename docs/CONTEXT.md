@@ -4100,7 +4100,28 @@ asking; `worker/bot-commands.test.mts` pins the two together and fails if either
 - **Kinds:** `tail-log` (by NAME from a fixed set — a path parameter is a traversal, and
   `.env` and the profile directories are exactly what an attacker would ask for),
   `list-processes` (our own scripts only, from a fixed PowerShell string with **no**
-  interpolation), `git-status`, `disk-free`.
+  interpolation), `git-status`, `disk-free`, `memory`, and `restart-rc`.
+- **`memory` exists because the other two looked the wrong way (2026-08-12).** `disk-free`
+  answered 404 GB on the night `supervise.ps1` could not start a shell at all — the limit
+  that ran out was **COMMIT** (RAM + page file), not disk. And `list-processes` matches our
+  node and PowerShell scripts only, so **every Chromium is invisible to it** — the resident
+  RC keep-warm tab, the rec.gov per-user profiles, and any orphan a force-kill left behind,
+  which are the largest consumers by a wide margin. `memory` reports RAM, commit against the
+  commit limit, page-file allocated/peak and whether it is system-managed, our Chromium
+  count and private total, and the top twelve processes by private bytes. Ours is matched on
+  our own profile directories — the same rule `stop-all.ps1` kills by — so a person's own
+  browser on this machine is only ever a count, never named. Commit comes from
+  `Win32_OperatingSystem`'s *Virtual* figures rather than a performance counter: counter
+  names are localised and the classes can be disabled outright, and a diagnostic that
+  returns nothing on some machines is the failure mode this whole file exists to remove.
+- **`restart-rc` is the one command that CHANGES something**, and it restarts the RC pair
+  only — never `bot.mjs`, which is usually the process running the command and is the one
+  carrying the control channel. Guarded on both sides independently: the server refuses to
+  QUEUE it near a release (it knows when holds are due), the box refuses to RUN it more
+  often than `RESTART_MIN_GAP_MS` (it must hold even if the server is lying or the token
+  leaked), and the box's marker is a FILE, not a variable, because the process running it is
+  restarted by its own supervisor and an in-memory timestamp would reset with it — lifting
+  the rate limit exactly when a crash loop makes it matter most.
 - **Output is scrubbed ON THE BOX**, the only place where "not sent" is still true.
   Authorization headers eat the rest of the line (the first version matched
   `(bearer|authorization:?)\s+\S+`, which on `authorization: Bearer abc123` consumed the
@@ -4350,7 +4371,54 @@ against a residential address RC's WAF has 403'd before: one attempt per token, 
 expired one, only under `RC_RENEW_BEFORE_S` (10m), and `maybeAutoLogin` runs first in the
 same block so a release close enough to need a sign-in gets the real thing.
 
-## PowerShell on this box: four traps that all fail silently (2026-08-11)
+## The box ran out of COMMIT, and the supervisor could not start (2026-08-12)
+
+`supervise.ps1` failed to launch a shell at all:
+
+```
+Starting the CLR failed with HRESULT 80004005.
+Could not load file or assembly 'System.Management.Automation' ...
+The paging file is too small for this operation to complete. (0x800705AF)
+Exception of type 'System.OutOfMemoryException' was thrown.
+```
+
+**A supervisor that cannot launch a shell cannot restart anything.** That is the process
+whose entire job is bringing the keep-warm and the hold runner back, so it failed exactly
+where its job begins — and silently, because the supervisor is the thing that would have
+reported. Same shape as a watchdog wired to the thing it watches.
+
+**It is COMMIT, not disk.** `disk-free` said 404 GB the same night, which reads as "not a
+space problem" and sends the question the wrong way. "The paging file is too small" means
+Windows could not *grow* the page file to satisfy an allocation. Commit limit = RAM + page
+file, and a **system-managed page file grows lazily**, so a burst — four Chromium instances
+waking at once, an `npm ci`, an update — can outrun the growth and be refused while the disk
+is nearly empty.
+
+### `mini-pc\fix-pagefile.bat` — raise the ceiling
+
+Run as Administrator. The `.ps1` behind it **reports by default and changes nothing**;
+`-Apply` writes the setting. That posture is deliberate: it edits system configuration on
+the machine holding the RC session, and it should never happen because somebody
+double-clicked a file to have a look.
+
+- **Sizes derive from the box's own RAM**, not a number somebody remembered: initial
+  `max(1.5 × RAM, 16 GB)`, max `max(4 × RAM, 32 GB)`. It refuses if the drive lacks the
+  headroom plus a 20 GB margin — that drive also holds the Chromium profiles, the logs, and
+  a checkout an update doubles.
+- **Automatic management is turned off FIRST.** It overrides an explicit setting, so writing
+  the size without clearing it is accepted and then quietly ignored — a change that reports
+  success and does nothing.
+- **It reads the setting back** and fails loudly if it is not what was asked for. A setting
+  that did not take is the same silence as one that did.
+- **It never reboots, and never will.** The change is not live until a restart, and a
+  restart ends the RC session exactly like `update.bat` — so time it the same way: not
+  within six hours of a release.
+
+**This raises the ceiling; it does not reduce what sits under it.** "Chromium is the biggest
+consumer" is an inference from what runs, not a measurement — the first `memory` reading is
+what decides whether consumption also has to come down.
+
+## PowerShell on this box: five traps that all fail silently (2026-08-11)
 
 1. **A `.ps1` must be pure ASCII.** Windows PowerShell 5.1 reads a file **without a BOM as
    Windows-1252**; an em dash is `E2 80 94`, byte `0x94` is `U+201D` (curly right double
@@ -4382,6 +4450,104 @@ same block so a release close enough to need a sign-in gets the real thing.
    the **console before the file** so the line survives even when the write does not. The
    test asserts this across the whole directory — `supervise.ps1` was fixed for it hours
    before its siblings were, which is how it recurred within a day.
+5. **A backtick continues a line ONLY as the last character before the newline.** One
+   trailing space and it escapes the space instead: the statement ends there, the next line
+   parses as a new statement, and the error surfaces well below the cause — the same injury
+   as the em dash, through a different door, and **invisible in every editor**. This needs
+   checking mechanically because there is no PowerShell on the machine these files are
+   written from, so a bad `.ps1` is only ever discovered by the box.
+   `worker/update-guard.test.mts` fails on any such line across the directory. Prefer
+   writing the statement out over continuing it at all — `fix-pagefile.ps1` spells its
+   admin check across three plain lines for exactly this reason.
+
+## Does the mini-PC run the code master has? (migration 056, 2026-08-12)
+
+`autocart.rc_runner` proves the box can reach camphawk.app; `autocart.rc_session` proves RC
+accepts its token. **Neither says which CHECKOUT is doing either** — and "the halves deploy
+by different routes" is the most expensive recurring failure in this log. `bot_commands`'
+`git-status` can answer it, but only when a human ASKS; a health check is passive and
+continuous, which is strictly better for a fact that goes wrong while nobody is looking.
+
+**The wire.** Migration 056 adds `bot_commit` + `bot_commit_at` to `rc_runner_heartbeat`.
+The hold runner computes `git rev-parse HEAD` and `git log -1 --format=%cI` **once at
+startup** — the checkout cannot change under a running process, because the updater stops it
+first — and sends them as headers on the feed poll it already makes. The route extends the
+`UPDATE` that already stamps `beat_at`. A git failure omits the headers; it must never take
+down the runner.
+
+**Two columns, because a sha alone cannot answer the question.** A sha says the box
+*differs*; it cannot say what is missing, because a server with no checkout cannot compute
+ancestry. Master is linear, so a box whose HEAD **predates the last commit touching
+`scripts/auto-cart-bot/`** is missing bot-side code. `next.config.ts` bakes the deploy sha,
+its date, and that bot-code date at build time.
+
+**The severity is the part that needed thinking** (`botVersionVerdict` in
+`lib/health-thresholds`). Drift is NORMAL for part of every day — Vercel deploys on push,
+the box waits for the quiet window or a human — so failing on "different shas" would be red
+most mornings, which is the cry-wolf failure this project has already had to fix twice.
+`fail` is reserved for **missing bot-side code AND a hold queued**: the one configuration
+where the halves can disagree at a release. `pages: false`.
+
+**Every unknown is a warn, never an ok** — an old runner, no git on the box, or a build that
+could not read its own sha. The detail names which evidence is missing.
+
+Two smaller things that would each have been a silent wrong answer: the `UPDATE` uses
+`COALESCE` so an old runner cannot **erase** a commit a current one reported (a stale value
+plus `beat_at` is readable; a NULL destroys the only record), and the header is validated as
+7–40 hex before storage, since any holder of `AUTOCART_TOKEN` sets it and it renders on the
+admin page.
+
+### A shallow clone does not say "unknown" — it LIES, in the dangerous direction
+
+Measured by cloning the repo at both depths:
+
+```
+depth=1   HEAD 05:16:01   log -1 -- scripts/auto-cart-bot -> 05:16:01   WRONG (that is HEAD)
+depth=10  HEAD 05:16:01   log -1 -- scripts/auto-cart-bot -> 05:14:34   right
+```
+
+Git treats a shallow **boundary** commit as parentless, so every file looks added in it and a
+path filter matches it unconditionally. `CH_BOT_CODE_AT` would then always equal
+`CH_DEPLOY_AT` — and the check asks `boxCommitAt < botCodeAt`, which is TRUE for a box behind
+by even one commit. Every ordinary drift would read "missing bot-side changes" and, with a
+hold queued, **fail**: the cry-wolf failure walked back in through the build environment
+rather than the logic.
+
+So the bot-code commit is trusted only when it is **not a root of the available history** —
+in a shallow clone the boundary reports as a root; in a full clone the only root is the
+initial commit, and bot code was not added there. Untrusted **omits** the variable, which the
+check renders as a warn naming the gap. **Vercel and `actions/checkout@v4` both clone
+shallowly**, so this is the normal case, not an edge one.
+
+## Stripe is constructed lazily, in ONE place (2026-08-12)
+
+Five routes each did `new Stripe(process.env.STRIPE_SECRET_KEY!.trim())` at **module scope**.
+`!` is a promise you cannot keep about an environment variable: if the key ever went missing
+— deleted, renamed, scoped to the wrong environment, absent on a preview — `.trim()` throws
+*while the module is being evaluated*. A module that fails to evaluate does not give you a
+500 from the handler; **the route never reaches the handler at all**, and every request fails
+identically whatever it asked for. Dead, not degraded.
+
+The blast radius was the whole billing surface: checkout, plan change, portal, account
+deletion, and the **webhook**. A dead webhook is silent by construction — Stripe retries for
+days while our subscription rows quietly stop matching what people actually pay.
+
+`lib/stripe-client.getStripe()` moves the throw to the first request that needs Stripe,
+caches on success, and names the variable **and where it is configured** — a bare "missing
+key" at 2am is the difference between a one-minute fix and an evening.
+
+- **Six sites, not five.** `admin/page.tsx` had one too. It was already safe (guarded,
+  returns `null`) and keeps that posture via `stripeConfigured()`: a dashboard tile should
+  say "no figure" rather than take the page down, which is the opposite call from a billing
+  route where a caller needs to hear that Stripe is unreachable.
+- **Three module-scope helpers outside the handlers also used the client** —
+  `hasHadTrialInStripe`, `findCustomerId`, `tierOfSubscription`. Typecheck caught them; the
+  tests would not have.
+- Deliberately **not** `import 'server-only'`: it resolves to a throwing stub outside a
+  server bundle, including `node:test`, which would make the missing-key behaviour
+  untestable. `worker/stripe-init.test.mts` asserts the same property by failing if any
+  `'use client'` file imports it, and scans the whole tree so the *sixth* route somebody adds
+  cannot reintroduce this.
 
 ## Environment variables (names only — values in `.env.local` / Vercel / Fly)
 
@@ -4412,6 +4578,16 @@ Resend (`RESEND_API_KEY`, `EMAIL_FROM`), Twilio (`TWILIO_*`), Mapbox
 receipts arriving at `/api/webhooks/twilio`. It must be present **on Vercel** for that
 (the worker only needs it to send). Unset there → every callback 403s and every text
 sits `pending` forever, which the admin panel reports as "No delivery receipts yet".
+
+**`CH_DEPLOY_SHA`, `CH_DEPLOY_AT` and `CH_BOT_CODE_AT` are DERIVED, not configured — do
+not set them anywhere** (added 2026-08-12). `next.config.ts` computes them from git at
+build time and injects them via the `env` key, so they are baked into the deployment and
+read by `autocart.bot_version`. `CH_DEPLOY_SHA` prefers Vercel's own
+`VERCEL_GIT_COMMIT_SHA` and falls back to `git rev-parse HEAD`. Setting any of them by
+hand would pin the check to a stale answer, and a wrong one here is worse than none: the
+check's whole contract is that a missing value reads as "unknown → warn" while a present
+one is trusted. Every failure path in `gitFacts()` is silent and simply omits the
+variable — a build must never fail because a diagnostic could not run.
 `NEXT_PUBLIC_APP_URL` likewise now has to match on **both** Vercel and Fly: the worker
 builds the `StatusCallback` URL from it and Vercel signs against the same string, so a
 mismatch rejects 100% of receipts. Both default to `https://camphawk.app`, so leaving
@@ -4607,6 +4783,27 @@ which reads like a broken install rather than a wrong directory, and cost three 
 - **`mini-pc/rc-check.bat`** — "is RC auto-cart working?", answering the feed and the RC
   session **separately**, because they fail independently: the feed can be fine while the
   session is dead, and assuming one from the other is how a hold sits unclaimed at 8am.
+  - **Its step 1 used to assert the one thing it never checked (fixed 2026-08-12).**
+    `rc-hold-runner.mjs --once` with nothing queued printed *"Feed reachable, token
+    accepted"* — and that line sat **above** the early return, so `withRC` was never
+    reached: no profile opened, no browser launched, no token read, nothing sent to RC.
+    Since holds are due for about ninety seconds a day, that was very nearly every run —
+    and it is the message somebody sees when they are WORRIED. Same family as
+    `notifications.status = 'sent'` meaning only "Twilio returned 2xx".
+  - **The quiet pass now exercises the session.** `withRC` with a no-op callback already
+    does the whole job — take the profile (preempting the resident keep-warm, or forcing a
+    wedged one), launch Chromium, prime the real in-page token, decode its expiry — so it
+    is a full rehearsal of everything up to the two cart POSTs. Those **cannot** be
+    rehearsed: exercising them needs a genuine held unit, and an invented id can collide
+    with a real site and lock it. The success line says so rather than implying otherwise.
+  - **Three outcomes kept apart**, which is the actual fix: a pass; a dead session or a
+    profile it could not take (`withRC`'s own reason verbatim, plus an explicit "the
+    SESSION was not tested — this is not a verdict"); and an expired or undecodable token,
+    never rounded up to a pass — `primeToken` returns the stale localStorage copy when
+    okta-auth-js has not cleared it yet, which is the 2026-08-09 false green.
+  - It may take the profile for a few seconds. Acceptable **here and nowhere else**:
+    `--once` is only ever run by a human, the 20-second loop never reaches that branch, and
+    the hand-off is the same mechanism a real cart uses.
 
 > **The password is stored ENCRYPTED, and the plaintext-`.env` version of this was very
 > nearly what shipped.** `scripts/auto-cart-bot/.env` already holds `AUTOCART_TOKEN` and is
