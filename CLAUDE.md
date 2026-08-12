@@ -1348,6 +1348,17 @@ authorise it.
 > domain" — **there is no declared-link-domain field**, only that boolean and the samples.
 > Whether the carrier keys on samples is INFERENCE; do not promise it.
 >
+> **THE MEASUREMENT IS BUILT: `scripts/sms-link-test.mts`** (2026-08-12). Dry-run by
+> default; `--with-redirect --send` sends four variants — provider-only control, bare
+> domain, `/manage/<token>` (the untested one), and `/b/<token>` as the positive control —
+> then `--read` prints the carrier receipts. **`--read` needs only the DB**, so results can
+> be pulled from any session; only `--send` needs Twilio. It refuses without
+> `TWILIO_MESSAGING_SERVICE_SID` (`MG7bf4f78c06ea99f61efcbccd8fe47b5b`, recorded in
+> `docs/a2p-campaign.md`) because the A2P campaign hangs off the Messaging Service and a
+> bare From number would make the result uninterpretable. Full notes in `docs/SETUP.md`.
+> **Run it before spending the edit** — the samples should show the shape that actually
+> delivers.
+>
 > **MEASURE FIRST, and test the SHAPE not just the domain.** Every filtered message carried
 > `camphawk.app/b/<token>`, and `/b/` is a **302 redirect** — T-Mobile's Code of Conduct
 > §4.8 is literally "URL Redirects/Forwarding" and §3.3 "Use One Recognizable Domain Name".

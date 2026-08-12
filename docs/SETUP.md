@@ -1249,3 +1249,74 @@ resets headless-Chromium TLS; fine against localhost or from your own CLI).
 > they were written here without a way to reach them from this environment, and this project
 > has been bitten twice by a URL recalled rather than read. A wrong one fails to connect and
 > costs nothing else.
+
+## Testing which SMS link shapes survive the carrier — `scripts/sms-link-test.mts`
+
+**Why it exists.** `camphawk.app` came out of every SMS on 2026-08-05 to stop losing texts
+(27 sent / 13 undelivered that day, then 71 sent / 71 delivered over the next week). That
+was a **stopgap**, not the design — managing a watch, stopping alerts and claiming a hold
+only exist on our own site, so the links have to come back. The question is not "does our
+domain get filtered" but **which SHAPE of our link gets filtered**, and that was never
+measured.
+
+Every filtered message carried `camphawk.app/b/<token>`, and `/b/` is a **302 redirect**.
+T-Mobile's Code of Conduct §4.8 is literally "URL Redirects/Forwarding" — the only
+*documented* violation anywhere in this picture. The 08-05 experiment kept that link and
+dropped `Manage:`, so **a plain non-redirecting URL on our domain has never been sent.**
+`camphawk.app/manage/<token>` may deliver today with no campaign edit at all.
+
+### Running it
+
+```bash
+npx tsx scripts/sms-link-test.mts                                  # DRY RUN, sends nothing
+NODE_USE_ENV_PROXY=1 npx tsx scripts/sms-link-test.mts --with-redirect --send
+# wait ~1 minute for the carrier receipts
+NODE_USE_ENV_PROXY=1 npx tsx scripts/sms-link-test.mts --read
+```
+
+**`--read` needs only the database**, so results can be pulled from any session. Only
+`--send` needs Twilio.
+
+### What it needs, and what it refuses without
+
+| Variable | Where |
+| --- | --- |
+| `TWILIO_ACCOUNT_SID` | Twilio Console home — `AC` + 32 hex |
+| `TWILIO_AUTH_TOKEN` | Same page, behind the "show" toggle |
+| `TWILIO_MESSAGING_SERVICE_SID` | **Already in `docs/a2p-campaign.md`** — `MG7bf4f78c06ea99f61efcbccd8fe47b5b` ("Camp Hawk Alerts") |
+
+**It REFUSES to send without the Messaging Service**, even though `sendSms` would fall back
+to a bare `From` number. The A2P campaign hangs off the Messaging Service, so a bare number
+sends under different campaign context and "delivered" would say nothing about the campaign
+we actually send under. An uninterpretable result is worse than none: a number in a table
+gets quoted later without its caveat.
+
+**`--with-redirect` is not optional in practice.** It adds the `/b/<token>` positive
+control. Without it, an all-delivered run cannot distinguish "the shape matters" from "the
+filter is no longer being applied" — and Twilio has said no filtering has occurred since
+08-05, so that confound is live.
+
+### Two deliberate departures from the production path
+
+1. **It posts to Twilio directly rather than through `sendSms`.** `sendSms` *refuses* any
+   body containing an APP_HOST link — that guard is the regression detector standing between
+   us and silently reintroducing the 08-05 bug, and a test flag through it would be a hole
+   in the one thing that works.
+2. **Rows are written `channel = 'sms_test'`, never `'sms'`.** The admin "Did the texts
+   arrive?" panel counts `channel = 'sms'`, and this deliberately sends messages some of
+   which are *expected* to be filtered — logging them normally would turn the regression
+   detector red by running the experiment. The Twilio webhook matches on `provider_id` with
+   no channel filter, so the receipts still land.
+
+### Safety notes
+
+- It sends to `SMS_TEST_TO`, defaulting to the owner's handset (`+18058235957`), the same
+  number the daily delivery canary already texts.
+- **No state-changing action link is ever sent.** The manage URL is minted with
+  `manageUrlFor()` (`/manage/<token>`, a page), NOT `actionUrlFor()` — the latter returns
+  `/w/<token>`, the one-tap action link, and a link scanner following one of those would
+  stop or mute a real watch. The first draft of this script had that wrong.
+- **`TWILIO_AUTH_TOKEN` is full account access** — send to any number, read every message
+  body ever sent, spend money. If it was added to an agent environment for this one-off,
+  remove it afterwards, or use a scoped `SK…` API key instead (revocable in one click, and
+  not the token that signs the delivery webhooks).
