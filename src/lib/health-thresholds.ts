@@ -246,6 +246,49 @@ export const RC_RUNNER_STALE_MS = 3 * 60 * 1000;
  */
 export const RC_SESSION_CRITICAL_MIN = Number(process.env.AUTOCART_ALARM_LEAD_MIN || 45);
 
+/**
+ * WHEN HAS THE AUTO-LOGIN ACTUALLY HAD ITS TURN?
+ *
+ * `RC_SESSION_CRITICAL_MIN` (45) is when a dead session starts to MATTER. It is not when
+ * the repair is spent, and using it for both is a bug that shipped and was caught live on
+ * 2026-08-12: at T-34 the check read `fail` and said "the auto-login has had its turn —
+ * run mini-pc\rc-login.bat", while `maybeAutoLogin` had not run at all. It then ran at
+ * ~T-31 and signed in unattended. Had anyone followed that instruction they would have
+ * gone to the box over a session that repaired itself four minutes later.
+ *
+ * That is the 2026-08-09 cry-wolf, arriving at the detail line a second time. The comment
+ * directly above the message in the health route already explains why not to do this; the
+ * severity beneath it did it anyway, because the two thresholds were the same constant.
+ *
+ * The repair runs at `RC_AUTOLOGIN_LEAD_MIN` (30), so it is spent only INSIDE that. This is
+ * the same number and the same env var the phone alarm already gates on — the alarm learned
+ * it on 08-09 and the health check kept the naive version. One definition now, read by
+ * both, so they cannot drift apart again and disagree about whether a repair is pending.
+ *
+ * Five minutes of grace inside the lead, exactly as `ALARM_AFTER_MIN` reasons: enough for
+ * the login to be attempted and reported before we call it failed. **It must move with
+ * `RC_AUTOLOGIN_LEAD_MIN`** — `worker/autologin-lead.test.mts` holds that inequality.
+ *
+ * A REPORTED FAILURE OUTRANKS THE CLOCK. If the keep-warm says the sign-in was attempted
+ * and refused, the turn is spent whatever the distance — same as the alarm's `loginFailed`
+ * branch. Waiting out a window for a repair that has already failed is pure delay.
+ */
+export const RC_SESSION_REPAIR_SPENT_MIN = Number(process.env.AUTOCART_ALARM_AFTER_MIN || 25);
+
+/**
+ * How long before a release `maybeAutoLogin` signs in — the WEB SIDE's copy of a number
+ * that lives on the mini-PC (`RC_AUTOLOGIN_LEAD_MIN` in `scripts/auto-cart-bot/
+ * rc-keepwarm.mjs`).
+ *
+ * It is a copy because the two halves deploy by different routes and cannot import from
+ * each other — which is exactly why it is dangerous, and exactly why
+ * `worker/autologin-lead.test.mts` pins every copy together. It was a bare `30` written
+ * into a message string here, i.e. the same fact with nothing keeping it honest; if the box
+ * ever moves its lead, that sentence would confidently state the old number to whoever is
+ * deciding whether to drive to the machine.
+ */
+export const RC_AUTOLOGIN_LEAD_MIN = Number(process.env.RC_AUTOLOGIN_LEAD_MIN || 30);
+
 // ── Is the mini-PC running the code master has? (migration 056) ───────────────────────
 /**
  * `autocart.rc_runner` proves the box can reach camphawk.app; `autocart.rc_session` proves

@@ -9,6 +9,8 @@ import {
   RC_SESSION_STALE_MS,
   RC_RUNNER_STALE_MS,
   RC_SESSION_CRITICAL_MIN,
+  RC_SESSION_REPAIR_SPENT_MIN,
+  RC_AUTOLOGIN_LEAD_MIN,
   rehearsalFault,
   botVersionVerdict,
 } from '@/lib/health-thresholds';
@@ -314,7 +316,7 @@ export async function GET() {
           WHERE status IN ('requested','carted','claiming')
             AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
             AND release_at <= to_char((NOW() + ($1 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`,
-        [String(RC_SESSION_CRITICAL_MIN)],
+        [String(RC_SESSION_REPAIR_SPENT_MIN)],
       ),
     ]);
     const age = ageMs(beat?.beat_at);
@@ -348,6 +350,12 @@ export async function GET() {
     const ahead = Number(upcoming?.n ?? 0);
     const soon = Number(imminent?.n ?? 0);
     const dead = beat?.session_ok === false;
+    // THE REPAIR IS SPENT TWO WAYS, and the clock is the weaker one. The keep-warm saying
+    // the sign-in was attempted and refused is definitive at any distance; otherwise we
+    // wait until inside RC_SESSION_REPAIR_SPENT_MIN. Mirrors the alarm gate exactly — see
+    // `loginFailed` in the hold feed, which has gated on this since 2026-08-09.
+    const loginFailed = /auto sign-in failed/i.test(beat?.session_detail ?? '');
+    const repairSpent = dead && (loginFailed || soon > 0);
     checks.push({
       name: 'autocart.rc_session',
       // Auto-cart, not alerting — see the `pages` field on Check. The 07:30 PT pre-flight
@@ -378,7 +386,7 @@ export async function GET() {
       // mechanism is provably absent, not merely pending. That is 2026-08-10, where a wedged
       // keep-warm sat amber for ten hours and the 08:00 cart failed.
       level: sessionStale && ahead > 0 ? 'fail'
-        : dead && soon > 0 ? 'fail'
+        : repairSpent ? 'fail'
         : dead || sessionStale || beat?.session_ok == null ? 'warn' : 'ok',
       detail:
         beat?.session_ok == null
@@ -399,7 +407,7 @@ export async function GET() {
           // it and did tell them to sign in by hand, over the session that carted the site
           // fifteen minutes later.
           : (dead
-              ? soon > 0
+              ? repairSpent
                 ? 'RC REJECTED the session and the auto-login has had its turn — run mini-pc\\rc-login.bat'
                 : 'RC rejects the current token — normal between releases, the token only lives ~1h'
               : 'RC accepts the session') +
@@ -412,9 +420,11 @@ export async function GET() {
             // Say WHICH it is. "will fail" on a hold that is thirteen hours away is simply
             // untrue, and a check that overstates is a check that gets ignored.
             (dead && ahead > 0
-              ? soon > 0
-                ? ` — ${ahead} hold(s) ahead and the next is within ${RC_SESSION_CRITICAL_MIN} min: the auto-login has had its turn`
-                : ` — ${ahead} hold(s) ahead; the bot signs itself in 30 min before the first release`
+              ? repairSpent
+                ? loginFailed
+                  ? ` — ${ahead} hold(s) ahead and the keep-warm reports the sign-in was REFUSED: the auto-login has had its turn`
+                  : ` — ${ahead} hold(s) ahead and the next is within ${RC_SESSION_REPAIR_SPENT_MIN} min: the auto-login has had its turn`
+                : ` — ${ahead} hold(s) ahead; the bot signs itself in ${RC_AUTOLOGIN_LEAD_MIN} min before the first release`
               : '') +
             (beat.session_detail ? `: ${beat.session_detail}` : ''),
       ageSeconds: secs(sessionAge),

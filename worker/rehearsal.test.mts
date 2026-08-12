@@ -197,7 +197,18 @@ test('a dead session hours before a release is not a failure', () => {
   // That is the 2026-08-09 alarm-gate lesson, which arrived here two days late: the alarm
   // waits for the repair to have had its turn, and so must this.
   const route = readFileSync('src/app/api/health/status/route.ts', 'utf8');
-  assert.match(route, /dead && soon > 0 \? 'fail'/, 'dead only fails once the release is close');
+  // The severity now reads `repairSpent`, which is `dead && (loginFailed || soon > 0)` —
+  // same property, one threshold further corrected. It used to be spelled `dead && soon > 0`
+  // with `soon` counting holds within 45 minutes; that window was ALSO being used to mean
+  // "the auto-login has had its turn", which it is not, and the check told the owner to go
+  // to the box at T-34 over a repair that ran at T-31. See
+  // worker/autologin-lead.test.mts, which pins the two windows apart.
+  assert.match(route, /repairSpent \? 'fail'/, 'dead only fails once the repair has had its turn');
+  assert.match(
+    route,
+    /const repairSpent = dead && \(loginFailed \|\| soon > 0\)/,
+    'and "spent" must still require the session to be dead AND the release to be close',
+  );
   assert.ok(!/\(dead \|\| sessionStale\) && ahead > 0 \? 'fail'/.test(route),
     'the old any-hold-ahead rule must be gone');
 });
