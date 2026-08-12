@@ -17,7 +17,7 @@
 # with the server. No check-in means the new code cannot do the job, and it goes back to
 # the commit that could.
 [CmdletBinding()]
-param([switch]$Force)
+param([switch]$Force, [switch]$Claimed)
 
 # CONTINUE, NOT STOP - and this is not a style choice.
 #
@@ -127,6 +127,10 @@ Report-Attempt "started - checking the guard"
 # -- 1. May we? ------------------------------------------------------------------------
 $guardArgs = @("update-guard.mjs")
 if ($Force) { $guardArgs += "--force" }
+# -Claimed: our SPAWNER already holds the update claim, so the guard must not ask for it
+# again and lose to the process that started us. Passed by the pollers, never by the
+# Windows Scheduled Task, which claims nothing and still needs the guard to claim.
+if ($Claimed) { $guardArgs += "--claimed" }
 # stderr merged deliberately - the guard's verdict and any node warning both belong in the
 # log - which is safe now that ErrorActionPreference is Continue. See the header.
 $guardOut = & node @guardArgs 2>&1
