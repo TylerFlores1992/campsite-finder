@@ -1337,7 +1337,30 @@ authorise it.
   doc — the correction already recorded here — and then concedes the API path himself.
   Not worth arguing; take the capability.
 
-**THE DECISION: accept the escalation, do NOT submit an edit.** The edit's only purpose was
+> **SUPERSEDED 2026-08-12 BY THE OWNER: WE NEED THE camphawk.app LINK BACK.** Removing it
+> was a stopgap to stop losing texts, not the design. So the edit IS wanted, and the
+> paragraph below is kept only because its RISK analysis still stands — read it as "why to
+> get the samples right before spending the edit", not as "do not edit".
+>
+> **What the edit can and cannot do.** It CAN change `message_samples`, `description` and
+> `message_flow` on an approved campaign; only the four booleans are frozen, and
+> `HasEmbeddedLinks` is already `Yes`, so nothing blocks us. It CANNOT "register the
+> domain" — **there is no declared-link-domain field**, only that boolean and the samples.
+> Whether the carrier keys on samples is INFERENCE; do not promise it.
+>
+> **MEASURE FIRST, and test the SHAPE not just the domain.** Every filtered message carried
+> `camphawk.app/b/<token>`, and `/b/` is a **302 redirect** — T-Mobile's Code of Conduct
+> §4.8 is literally "URL Redirects/Forwarding" and §3.3 "Use One Recognizable Domain Name".
+> That is the only DOCUMENTED violation in the whole picture. The discriminating experiment
+> dropped `Manage:` and kept the `/b/` link — still filtered — so **a non-redirect
+> camphawk.app URL has never been tested.** `camphawk.app/manage/<token>` may well deliver
+> today with no edit at all. Use the delivery receipts (migration 038) to find out, the same
+> way domain-vs-length was settled.
+>
+> **When the links do come back, do NOT use `/b/` in SMS.** Link to the real destination.
+> Then put THAT shape in the samples.
+
+**THE ORIGINAL DECISION (now superseded): accept the escalation, do NOT submit an edit.** The edit's only purpose was
 ever to make `camphawk.app` links legal in SMS, and we removed those links instead — which
 is what fixed delivery. Submitting an edit **re-triggers vetting on a campaign that is
 currently delivering 100%**, to buy something we are not using. Enabling the API permission
