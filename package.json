@@ -12,7 +12,8 @@
     "cap:assets": "npx --yes @capacitor/assets generate --assetPath assets",
     "cap:ios": "cap open ios",
     "cap:android": "cap open android",
-    "test": "tsx --test \"worker/**/*.test.mts\" \"src/**/*.test.mts\""
+    "test": "tsx --test --test-concurrency=1 \"worker/**/*.test.mts\" \"src/**/*.test.mts\"",
+    "verify": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.107.0",

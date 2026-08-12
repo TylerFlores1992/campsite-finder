@@ -754,6 +754,32 @@ Three traps, all of which produced a bad screenshot before being fixed:
 Full submission reference — privacy answers, review notes, listing copy — is in
 `docs/APP-STORE.md`.
 
+## Verifying a change — `npm run verify`
+
+```
+npm run verify           # typecheck (both configs) → tests → build. ~2.5 min.
+```
+
+**One recipe, run locally and in CI**, so the two cannot drift into checking different
+things. `.github/workflows/verify.yml` runs this exact command on every push to `master`
+and to `claude/**`, and on PRs. Cheapest check first, so the fastest signal fails first.
+
+Before 2026-08-11 nothing ran `typecheck` or `test` automatically — all five workflows
+were ops (canary, watchdog, deadman, nightly sync, worker deploy). `worker-deploy.yml`
+verifies the poller's heartbeat after deploying, which catches **dead** but not **wrong**,
+and the worker deploys on a push to `master` with no test gate at all.
+
+**`npm run lint` is deliberately NOT in it** — it reports 38 errors and 18 warnings of
+accumulated debt (`no-unused-vars`, `no-html-link-for-pages`, `no-explicit-any`, and 3
+`react-hooks/exhaustive-deps`). A gate that is red the day it lands is one people learn
+to ignore. Triage those, then add `lint` to the `verify` script; it costs 17s.
+
+`npm run build` is last because it is the slowest and the **weakest** signal — dynamic
+segments are not executed at build, so it cannot catch the request-time layout throw that
+cost a production outage on 2026-07-24. It earns its place because **`master`
+auto-deploys to Vercel**, so a build break reaching `master` is a failed production
+deploy. It is still not a substitute for smoke-testing a real page after deploying.
+
 ## Typechecking
 
 ```
@@ -782,7 +808,29 @@ npm test
 **`node:test` via tsx — no test framework dependency.** Files are `*.test.mts` under
 **`worker/` AND `src/`** — the script globs both, so a suite next to the code it covers
 (`src/lib/notifications/*.test.mts`) is picked up too. Added 2026-07-30; before that the
-repo had no test script, no framework and no test files. 183 tests as of 2026-08-07.
+repo had no test script, no framework and no test files. **329 tests as of 2026-08-11.**
+
+> **`--test-concurrency=1` IS LOAD-BEARING — do not "speed this up" by removing it
+> (2026-08-11).** `node:test` runs test FILES in parallel by default, and the nine
+> DB-backed suites share fixture rows in the one real database, so they race each
+> other. Measured over three parallel runs of an unchanged tree: **329 pass, then 6
+> fail, then 3 fail** — `rc-client-reports` ("reports append, and never move status or
+> updated_at") and `sync-claim` ("renew extends OUR claim and refuses someone else's"),
+> i.e. suites asserting that a row did NOT change while another file was changing it.
+> Serial: **three consecutive 329/329 runs.** The cost is 36s → 87s, which is the right
+> trade — a suite that fails 2 runs in 3 for reasons unrelated to the code teaches you
+> to ignore it, and these are the suites guarding the alerting claim.
+>
+> The better fix is per-file fixture namespacing so parallelism is safe again (it buys
+> back ~50s), and it is real work rather than a drive-by: it touches the most
+> load-bearing test code in the repo, so it needs the usual validation — break the
+> code, watch the suite fail. Until then, serial.
+>
+> Residual risk worth knowing: `sync-claim` and `shard-lease` write tables the two
+> **live** Fly machines are actively renewing. Serial execution removes the
+> test-vs-test race, not a test-vs-production one. `shard-lease` already dodges this by
+> using indices ~9000; the fixture-namespacing work should give the others the same
+> property.
 
 The suites, chosen because a silent wrong answer in each is expensive:
 `worker/claim.test.mts` (the alerting claim — where a bug costs a user a campsite),
