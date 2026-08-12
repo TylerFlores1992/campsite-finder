@@ -37,10 +37,51 @@ if (-not (Test-Path "logs")) { New-Item -ItemType Directory -Path "logs" | Out-N
 $log = "logs\auto-update.log"
 if (-not $env:CAMPHAWK_URL) { $env:CAMPHAWK_URL = "https://camphawk.app" }
 
+# THE TOKEN LIVES IN scripts\auto-cart-bot\.env, NOT IN THE MACHINE ENVIRONMENT - and a
+# Scheduled Task has no parent to inherit from. Every report from this script was answered
+# 401 Unauthorized (observed in its own log, 2026-08-11 17:01), so the box was faithfully
+# telling us what it had done and being rejected at the door. That looked exactly like a task
+# that had never been registered, and I read it that way for hours.
+#
+# This is the SAME trap update-guard.mjs was fixed for with loadEnv, in the same file's
+# sibling, and this half was missed - the fix went to the thing that reads the answer and not
+# to the thing that reports it.
+#
+# Anything already set in the process environment WINS, so a human running this by hand with
+# an explicit token is never overridden.
+function Import-BotEnv {
+  $envFile = Join-Path $botDir ".env"
+  if (-not (Test-Path $envFile)) { return }
+  foreach ($line in (Get-Content $envFile)) {
+    if ($line -match '^\s*(#|$)') { continue }
+    if ($line -notmatch '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') { continue }
+    $name = $Matches[1]
+    $value = $Matches[2].Trim()
+    # Strip one layer of surrounding quotes. NOTE this overwrites $Matches, which is why the
+    # name and value are captured above first.
+    if ($value -match '^"(.*)"$') { $value = $Matches[1] }
+    elseif ($value -match "^'(.*)'$") { $value = $Matches[1] }
+    if (-not [Environment]::GetEnvironmentVariable($name, 'Process')) {
+      [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+    }
+  }
+}
+Import-BotEnv
+
+# UTF-8, EVERYWHERE. PowerShell 5.1's Tee-Object writes UTF-16LE while Add-Content defaults
+# to the shell's codepage, so this one log ended up HALF UTF-16 and half UTF-8 - unreadable
+# as a whole by any single decoder, which is how the 401 above stayed hidden inside mojibake.
+# `[Console]::OutputEncoding` makes captured node output land as UTF-8 too.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+filter Tee-Utf8 {
+  Write-Host $_
+  Add-Content -Path $log -Value $_ -Encoding UTF8
+}
+
 function Write-Line($msg) {
   $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [auto-update] $msg"
   Write-Host $line
-  Add-Content -Path $log -Value $line
+  Add-Content -Path $log -Value $line -Encoding UTF8
 }
 
 function Report-Applied($sha, $note) {
@@ -73,7 +114,7 @@ function Report-Attempt($note) {
 
 function Stop-Everything {
   & powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\stop-all.ps1" 2>&1 |
-    Tee-Object -FilePath $log -Append
+    Tee-Utf8
   return ($LASTEXITCODE -eq 0)
 }
 
@@ -89,7 +130,7 @@ if ($Force) { $guardArgs += "--force" }
 # stderr merged deliberately - the guard's verdict and any node warning both belong in the
 # log - which is safe now that ErrorActionPreference is Continue. See the header.
 $guardOut = & node @guardArgs 2>&1
-$guardOut | Tee-Object -FilePath $log -Append
+$guardOut | Tee-Utf8
 
 # READ THE VERDICT LINE, NOT THE EXIT CODE. On 2026-08-11 node crashed on the way out of
 # this call - "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)" - AFTER printing its
@@ -150,9 +191,9 @@ if (-not (Stop-Everything)) {
   exit 1
 }
 
-& git reset --hard $after 2>&1 | Tee-Object -FilePath $log -Append
+& git reset --hard $after 2>&1 | Tee-Utf8
 Set-Location $botDir
-& npm ci --omit=dev 2>&1 | Tee-Object -FilePath $log -Append
+& npm ci --omit=dev 2>&1 | Tee-Utf8
 
 Write-Line "relaunching"
 & "$PSScriptRoot\start-all.bat"
@@ -185,9 +226,9 @@ Write-Line "NO CHECK-IN after 4 min. Rolling back to $($before.Substring(0,7))."
 # processes. Its own stop then finds nothing and returns immediately.
 [void](Stop-Everything)
 Set-Location $repoRoot
-& git reset --hard $before 2>&1 | Tee-Object -FilePath $log -Append
+& git reset --hard $before 2>&1 | Tee-Utf8
 Set-Location $botDir
-& npm ci --omit=dev 2>&1 | Tee-Object -FilePath $log -Append
+& npm ci --omit=dev 2>&1 | Tee-Utf8
 & "$PSScriptRoot\start-all.bat"
 Report-Applied $before "NEW CODE DID NOT CHECK IN - rolled back"
 Write-Line "rolled back. The RC session is gone either way - maybeAutoLogin will restore it"

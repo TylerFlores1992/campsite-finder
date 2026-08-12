@@ -620,3 +620,41 @@ test('the guard terminates after a successful feed call', async () => {
     await new Promise<void>((r) => server.close(() => r()));
   }
 });
+
+
+test('auto-update.ps1 loads the .env BEFORE it reports anything', async () => {
+  const { readFileSync } = await import('node:fs');
+  // WHY (2026-08-11). Every report this script made was answered 401 Unauthorized, in its
+  // own log, for hours. The token lives in scripts/auto-cart-bot/.env and a Scheduled Task
+  // has no parent environment to inherit from - so `$env:AUTOCART_TOKEN` was empty and the
+  // box was faithfully telling us what it had done while being rejected at the door.
+  //
+  // That is indistinguishable from a task that was never registered, and I read it that way
+  // for hours. It is the SAME trap update-guard.mjs was fixed for with loadEnv; the fix went
+  // to the thing that reads the answer and not to the thing that reports it.
+  const up = readFileSync('scripts/auto-cart-bot/mini-pc/auto-update.ps1', 'utf8');
+  assert.match(up, /function Import-BotEnv/, 'it must read the .env itself');
+  assert.match(up, /Join-Path \$botDir "\.env"/, 'and from the bot directory, not the cwd');
+
+  // ORDER IS LOAD-BEARING: PowerShell runs top-down, so a call above its definition dies
+  // with "not recognized" - the exact bug that left an update request pending on 2026-08-11.
+  const define = up.indexOf('function Import-BotEnv');
+  const call = up.indexOf('\nImport-BotEnv');
+  const firstReport = up.indexOf('Report-Attempt "started');
+  assert.ok(define !== -1 && call !== -1 && firstReport !== -1);
+  assert.ok(define < call, 'defined before it is called');
+  assert.ok(call < firstReport, 'and called before the first report, or the token is empty');
+});
+
+test('auto-update.ps1 writes ONE encoding', async () => {
+  const { readFileSync } = await import('node:fs');
+  // Its log was half UTF-16 and half UTF-8: Tee-Object writes UTF-16LE in PowerShell 5.1
+  // while Add-Content takes the shell codepage. No single decoder can read such a file, and
+  // that is how the 401 above stayed hidden inside mojibake for hours.
+  const up = readFileSync('scripts/auto-cart-bot/mini-pc/auto-update.ps1', 'utf8');
+  const body = up.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  assert.ok(!/Tee-Object/.test(body), 'Tee-Object writes UTF-16LE - use the Tee-Utf8 filter');
+  for (const m of body.match(/Add-Content[^\n]*/g) ?? []) {
+    assert.match(m, /-Encoding UTF8/, `Add-Content must state its encoding: ${m.trim()}`);
+  }
+});
