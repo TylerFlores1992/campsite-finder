@@ -231,3 +231,36 @@ test('a routine dead session does not send anyone to the mini-PC', () => {
   assert.match(route, /normal between releases/, 'the routine case must say so');
   assert.match(route, /the auto-login has had its turn/, 'and the urgent case must be distinct');
 });
+
+// ── "NO FORM APPEARED" MEANS TWO OPPOSITE THINGS ────────────────────────────────────────
+
+test('an already-signed-in page is inconclusive, never a failure', () => {
+  // THE FIRST PRODUCTION REHEARSAL FAILED THIS WAY (2026-08-11 20:02). It cleared the token,
+  // reloaded, saw "not live", went hunting for a sign-in form — and RC's SPA re-authenticated
+  // from the live Okta session in between, so there was no form to find. It reported a
+  // FAILURE, quoting RC's own banner: "You have a reservation arriving on today's date".
+  //
+  // That banner is only ever rendered to a SIGNED-IN user. It is evidence of success, and
+  // this is the SECOND time it has been read as the obstacle — the first cost a morning on
+  // 2026-08-09, when the owner was sent to sign in by hand over the session that carted a
+  // site fifteen minutes later.
+  const login = readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8');
+  const branch = login.match(/if \(!user && !pw\) \{[\s\S]*?\n    \}/)?.[0] ?? '';
+  assert.ok(branch, 'could not find the no-form branch');
+  assert.match(branch, /await isLive\(\)\) === true/,
+    'it must re-ask whether we are signed in before declaring failure');
+  const live = branch.indexOf('isLive()');
+  const fail = branch.indexOf('ok: false');
+  assert.ok(live !== -1 && fail !== -1 && live < fail, 'and ask BEFORE returning the failure');
+});
+
+test('and it is not recorded as a pass either', () => {
+  // Nothing was typed and no sign-in was exercised. A green mark for a test that did not run
+  // is the failure mode this whole file exists to prevent — the same rule as skipping when
+  // the session is live: a pass that proved nothing reads as evidence.
+  const login = readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8');
+  assert.match(login, /provedNothing: true/, 'the caller must be told nothing was exercised');
+  const kw = readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8');
+  assert.match(kw, /r\.provedNothing[\s\S]{0,220}result: 'inconclusive'/,
+    'and the rehearsal must record it as inconclusive, not ok');
+});

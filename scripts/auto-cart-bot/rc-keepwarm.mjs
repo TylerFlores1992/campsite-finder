@@ -845,6 +845,13 @@ async function runLoginRehearsal(ctx, page, { humanPresent, tag }) {
     await saveFailureShot(page, tag);
     return { result: 'failed', detail: r.reason };
   }
+  // SIGNED IN, BUT NOTHING WAS PROVED. RC re-authenticated from the live Okta session before
+  // a form appeared, so no credential was ever submitted. Recording that as a pass would put
+  // a green mark against a test that did not run — see rehearsal.mjs.
+  if (r.provedNothing) {
+    log(`… ${r.reason}`);
+    return { result: 'inconclusive', detail: r.reason };
+  }
 
   const after = await sessionLive(ctx, page);
   if (after.live !== true) {

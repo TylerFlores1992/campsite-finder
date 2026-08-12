@@ -419,6 +419,32 @@ export async function attemptLogin(ctx, page, { homeUrl, isLive, log = () => {},
     }
 
     if (!user && !pw) {
+      // ASK AGAIN BEFORE CALLING THIS A FAILURE.
+      //
+      // "No form appeared" has TWO meanings and they are opposites: RC refused us, or we
+      // are already signed in and there is nothing to fill. The `isLive()` check above runs
+      // right after the page load, but RC's SPA re-authenticates from a live Okta session
+      // and can finish AFTER it — so a session that was dead when we looked is live by the
+      // time we hunt for the form.
+      //
+      // The nightly rehearsal hit exactly this on 2026-08-11 and reported a FAILURE for a
+      // perfectly healthy session, quoting RC's own banner: "You have a reservation arriving
+      // on today's date". That banner is only ever rendered to a SIGNED-IN user. It is
+      // evidence of success, and this is the second time it has been read as the obstacle —
+      // the first cost a morning on 2026-08-09 and sent the owner to sign in by hand over
+      // the session that carted a site fifteen minutes later.
+      //
+      // `provedNothing` and NOT a plain ok: nothing was typed and no sign-in was exercised,
+      // so recording it as a pass would be a green mark for a test that never ran. That is
+      // the rule rehearsal.mjs already states — a pass that proved nothing is worse than a
+      // skip, because it reads as evidence.
+      if ((await isLive()) === true) {
+        return {
+          ok: true,
+          provedNothing: true,
+          reason: 'already signed in — RC re-authenticated before any form appeared, so no sign-in was exercised',
+        };
+      }
       return {
         ok: false,
         reason: await withBanner(link
