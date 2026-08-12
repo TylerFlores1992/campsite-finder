@@ -8,6 +8,7 @@ import {
   RECGOV_MONTHS_PER_MACHINE,
   RC_SESSION_STALE_MS,
   RC_RUNNER_STALE_MS,
+  RC_SESSION_CRITICAL_MIN,
   rehearsalFault,
 } from '@/lib/health-thresholds';
 
@@ -279,7 +280,7 @@ export async function GET() {
   //     they were promised. Same principle as `poller.shards`: the alarming state is
   //     silent blindness, not idleness.
   try {
-    const [beat, due, upcoming] = await Promise.all([
+    const [beat, due, upcoming, imminent] = await Promise.all([
       queryOne<{
         beat_at: string | null; session_ok: boolean | null;
         session_at: string | null; session_detail: string | null; session_source: string | null;
@@ -301,6 +302,17 @@ export async function GET() {
         `SELECT count(*) AS n FROM rc_hold_requests
           WHERE status IN ('requested','carted','claiming')
             AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`
+      ),
+      // AND HOW MANY ARE IMMINENT. A hold thirteen hours out is not evidence of anything:
+      // the token only lives ~60 minutes, so the session is legitimately dead for most of
+      // the day and `maybeAutoLogin` signs in at T-30. Counting any hold at all made this
+      // check FAIL every single night between tapping a hold and the morning it releases.
+      queryOne<{ n: string }>(
+        `SELECT count(*) AS n FROM rc_hold_requests
+          WHERE status IN ('requested','carted','claiming')
+            AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+            AND release_at <= to_char((NOW() + ($1 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`,
+        [String(RC_SESSION_CRITICAL_MIN)],
       ),
     ]);
     const age = ageMs(beat?.beat_at);
@@ -332,6 +344,7 @@ export async function GET() {
     const sessionAge = ageMs(beat?.session_at);
     const sessionStale = !beat?.session_at || sessionAge > RC_SESSION_STALE_MS;
     const ahead = Number(upcoming?.n ?? 0);
+    const soon = Number(imminent?.n ?? 0);
     const dead = beat?.session_ok === false;
     checks.push({
       name: 'autocart.rc_session',
@@ -347,7 +360,24 @@ export async function GET() {
       // profile, and the 08:00 cart failed with this check amber. Unusable is unusable:
       // what the last reading SAID stops mattering once it is old enough that nothing is
       // maintaining it.
-      level: (dead || sessionStale) && ahead > 0 ? 'fail' : dead || sessionStale || beat?.session_ok == null ? 'warn' : 'ok',
+      // DEAD AND STALE ARE NOT THE SAME FAULT, and this is where they part.
+      //
+      // A DEAD verdict means the keep-warm is alive and reporting honestly that RC will not
+      // accept the current token. That is the NORMAL state for most of the day - the token
+      // lives about an hour - and the repair is scheduled: `maybeAutoLogin` signs in at
+      // T-30, unattended, proven 2026-08-11. So it only becomes a failure once that repair
+      // has had its turn, i.e. inside RC_SESSION_CRITICAL_MIN of the release. Failing on any
+      // hold at all meant every night between tapping a hold and its morning was spent RED,
+      // pushing every two hours, over a system behaving exactly as designed. That is the
+      // 2026-08-09 alarm-gate lesson arriving at the health check a day late.
+      //
+      // A STALE verdict is different and keeps the old severity: it means the keep-warm is
+      // not reporting, and `maybeAutoLogin` lives INSIDE the keep-warm - so the repair
+      // mechanism is provably absent, not merely pending. That is 2026-08-10, where a wedged
+      // keep-warm sat amber for ten hours and the 08:00 cart failed.
+      level: sessionStale && ahead > 0 ? 'fail'
+        : dead && soon > 0 ? 'fail'
+        : dead || sessionStale || beat?.session_ok == null ? 'warn' : 'ok',
       detail:
         beat?.session_ok == null
           ? 'never reported — is rc-keepwarm.mjs running with AUTOCART_TOKEN set?'
@@ -366,7 +396,13 @@ export async function GET() {
             ` for ${hms(ageMs(beat.session_since))}` +
             ` (${beat.session_source ?? 'unknown'}, checked ${secs(sessionAge)}s ago` +
             (sessionStale ? ', STALE' : '') + ')' +
-            (dead && ahead > 0 ? ` — ${ahead} hold(s) still ahead will fail` : '') +
+            // Say WHICH it is. "will fail" on a hold that is thirteen hours away is simply
+            // untrue, and a check that overstates is a check that gets ignored.
+            (dead && ahead > 0
+              ? soon > 0
+                ? ` — ${ahead} hold(s) ahead and the next is within ${RC_SESSION_CRITICAL_MIN} min: the auto-login has had its turn`
+                : ` — ${ahead} hold(s) ahead; the bot signs itself in 30 min before the first release`
+              : '') +
             (beat.session_detail ? `: ${beat.session_detail}` : ''),
       ageSeconds: secs(sessionAge),
     });
@@ -396,6 +432,17 @@ export async function GET() {
         `SELECT count(*) AS n FROM rc_hold_requests
           WHERE status IN ('requested','carted','claiming')
             AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`
+      ),
+      // AND HOW MANY ARE IMMINENT. A hold thirteen hours out is not evidence of anything:
+      // the token only lives ~60 minutes, so the session is legitimately dead for most of
+      // the day and `maybeAutoLogin` signs in at T-30. Counting any hold at all made this
+      // check FAIL every single night between tapping a hold and the morning it releases.
+      queryOne<{ n: string }>(
+        `SELECT count(*) AS n FROM rc_hold_requests
+          WHERE status IN ('requested','carted','claiming')
+            AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+            AND release_at <= to_char((NOW() + ($1 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`,
+        [String(RC_SESSION_CRITICAL_MIN)],
       ),
     ]);
     const age = ageMs(row?.ran_at);

@@ -226,3 +226,22 @@ export function rehearsalFault(
  * the disagreement this file exists to prevent.
  */
 export const RC_RUNNER_STALE_MS = 3 * 60 * 1000;
+
+/**
+ * How close a release has to be before a DEAD RC session counts as a failure.
+ *
+ * The access token lives about an hour, so the session is legitimately dead for most of the
+ * day and `maybeAutoLogin` signs in at T-30 without anyone's help. A dead session thirteen
+ * hours before a release is therefore the system working, not a fault — and failing on it
+ * meant every night between tapping a hold and its morning was spent red, notifying every
+ * two hours, over nothing.
+ *
+ * Matched to `AUTOCART_ALARM_LEAD_MIN`: the point at which the phone alarm decides a human
+ * is the fallback is exactly the point at which this stops being routine. The alarm gate
+ * learned this on 2026-08-09 after ringing twice about a session that carted a site fifteen
+ * minutes later; the health check kept the naive version for two more days.
+ *
+ * A STALE verdict is NOT covered by this and still fails on any hold ahead — see the check.
+ * Dead means the repair is pending; stale means the thing that would repair it is absent.
+ */
+export const RC_SESSION_CRITICAL_MIN = Number(process.env.AUTOCART_ALARM_LEAD_MIN || 45);

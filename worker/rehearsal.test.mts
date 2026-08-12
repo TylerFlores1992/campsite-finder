@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import {
   shouldRehearse, REHEARSAL_HOUR, REHEARSAL_MIN_HOURS_TO_RELEASE, REHEARSAL_MIN_GAP_H,
 } from '../scripts/auto-cart-bot/rehearsal.mjs';
-import { rehearsalFault, REHEARSAL_STALE_MS } from '../src/lib/health-thresholds.js';
+import { rehearsalFault, REHEARSAL_STALE_MS, RC_SESSION_CRITICAL_MIN } from '../src/lib/health-thresholds.js';
 
 /** A night with nothing in the way: the rehearsal should run. */
 const ready = {
@@ -183,4 +183,40 @@ test('an unreachable feed cancels the rehearsal', () => {
   // refusing to update blind, with the same thing at stake.
   const fn = keepwarm.match(/async function maybeRehearse\([\s\S]*?\n}/)?.[0] ?? '';
   assert.match(code(fn), /!facts\.reachable[\s\S]{0,40}return false/);
+});
+
+// ── THE SESSION CHECK'S SEVERITY ────────────────────────────────────────────────────────
+
+test('a dead session hours before a release is not a failure', () => {
+  // 2026-08-11: tapping a hold at 18:34 turned `autocart.rc_session` RED for the whole night
+  // — 13 hours before the release — because the check failed on ANY hold ahead. The token
+  // lives about an hour, so the session is legitimately dead most of the day, and
+  // `maybeAutoLogin` signs in at T-30 unattended. Nothing was wrong; the check simply had no
+  // notion of "how soon".
+  //
+  // That is the 2026-08-09 alarm-gate lesson, which arrived here two days late: the alarm
+  // waits for the repair to have had its turn, and so must this.
+  const route = readFileSync('src/app/api/health/status/route.ts', 'utf8');
+  assert.match(route, /dead && soon > 0 \? 'fail'/, 'dead only fails once the release is close');
+  assert.ok(!/\(dead \|\| sessionStale\) && ahead > 0 \? 'fail'/.test(route),
+    'the old any-hold-ahead rule must be gone');
+});
+
+test('but a STALE verdict still fails on any hold ahead', () => {
+  // Dead and stale are different faults. Dead means the keep-warm is alive and reporting
+  // honestly, with a scheduled repair. STALE means the keep-warm is not reporting at all —
+  // and `maybeAutoLogin` lives inside it, so the repair mechanism is absent rather than
+  // pending. That is 2026-08-10: a wedged keep-warm sat amber for ten hours and the 08:00
+  // cart failed. Relaxing this one would re-open it.
+  const route = readFileSync('src/app/api/health/status/route.ts', 'utf8');
+  assert.match(route, /sessionStale && ahead > 0 \? 'fail'/, 'stale keeps the stricter rule');
+});
+
+test('the critical window matches the alarm lead', () => {
+  // The moment the phone alarm decides a human is the fallback is exactly the moment this
+  // stops being routine. Two different numbers here would mean the page and the dashboard
+  // disagreed about whether anyone needed to act.
+  assert.equal(RC_SESSION_CRITICAL_MIN, 45);
+  assert.ok(RC_SESSION_CRITICAL_MIN > 30,
+    'it must exceed RC_AUTOLOGIN_LEAD_MIN, or it fails before the repair has even run');
 });
