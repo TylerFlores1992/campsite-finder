@@ -2086,6 +2086,48 @@ Two rules that are load-bearing rather than stylistic:
   point there is a ~2.5s window where anyone can take it. The RC copy says so rather than
   pretending the swap is instant.
 
+### The auto-cart lane replays ONE stored payload — and it was missing two fields (2026-08-11)
+
+Reported as *"a bunch of duplicate texts for the same site"*. Silver Lake site 044, all on
+2026-08-11:
+
+```
+06:32  kind=available    id=85946     <- the main lane, correct
+08:08  kind=undefined    id=undefined
+13:08  kind=undefined    id=undefined
+15:13  kind=undefined    id=undefined
+17:07  kind=carted       id=undefined
+```
+
+Every alert the auto-cart lane produces is replayed from the payload `autocartPayload()`
+stored on the job, and that payload **never included `campsiteId`**. The reconciler's
+fallback then dispatched it bare, so `kind` was undefined too.
+
+Three consequences, and the third is why it read as duplication:
+
+- **The booking link degrades to the whole CAMPGROUND** when there is no site id, so alerts
+  for different sites arrive looking identical.
+- **`campsiteId` is the MUTE TARGET** — `lib/notifications` builds the mute link from it
+  alone (`payload.campsiteId ? actionUrlFor(…, 'mute_site') : …`). The one control that
+  would stop a noisy site was missing from precisely the alerts causing the noise, so 044
+  could not be muted from any of those three texts.
+- **The stored row cannot be attributed to a site afterwards**, which is why "am I getting
+  duplicates?" could not be answered from the notifications table. My first pass at that
+  question partitioned on `campsiteId` and silently excluded every one of these rows — the
+  analysis missed the bug for the same reason the alert was broken.
+
+The job row has carried `campsite_id` in its own column the whole time. **Only the payload
+lost it**, which is the tell that this was an omission rather than a decision — and no type
+caught it because the fields that matter on `NotificationPayload` are all optional.
+
+The fallback now states `kind: 'available'`. It **is** an availability alert arriving by a
+slower road because the bot could not cart, and every wording branch keys off `kind`, so the
+alert that arrives late was getting the least specific text we send.
+
+**NOT a dedupe failure:** the per-site claim held throughout, and no two texts for one site
+landed inside the one-hour window in the preceding 48 hours.
+`worker/autocart-payload.test.mts` pins the full field set.
+
 ## The alarm call — `lib/notifications/voice.ts` (2026-08-09)
 
 **One condition only:** the RC session is reported dead AND a hold releases within
@@ -2641,6 +2683,37 @@ Files are `*.test.mts` under `worker/`. What is covered, and why these first:
 > by reverting `claim.ts` to the pre-026 per-watch logic: 4 of 9 failed, including the
 > one that names the bug. A test that also passes on the broken version is decoration.
 
+### A flaky DB test is a transport error, and it is now handled (2026-08-12)
+
+Two real-DB tests failed under parallel load with `DB mutate error: DNS resolution
+failure`, and both times the response was to re-run and shrug. That habit is how a genuine
+regression gets waved through, so the retry lives in `src/lib/db/client.ts` rather than in
+the reader's head: **3 attempts, 200ms doubling**, and `isRetryableDbError` is exported and
+pure so `worker/db-retry.test.mts` can pin the split.
+
+**The split is by what the message PROVES, not by how transient it feels**, because a retry
+is only free for something that can be done twice:
+
+| class | examples | retried |
+| --- | --- | --- |
+| never sent | `DNS resolution failure`, `getaddrinfo`, `EAI_AGAIN`, `ENOTFOUND`, `ECONNREFUSED` | reads **and** writes |
+| may have run | `fetch failed`, `ECONNRESET`, `ETIMEDOUT`, `socket hang up`, `timed out` | **reads only** |
+| real DB error | syntax, constraint, permission | never |
+
+`query()` goes to `exec_select`, which refuses anything data-modifying, so a read may be
+repeated after any network failure. `mutate()` may not: if the statement reached Postgres
+and only the ANSWER was lost, a repeat is a duplicate row or a double increment, and
+neither announces itself.
+
+**`fetch failed` is the one worth arguing about.** Undici raises it for DNS failures too,
+but supabase-js hands us `error.message` alone with the `cause` already discarded, so it
+cannot be told apart from a socket that died mid-statement — the ambiguous case is treated
+as the dangerous one. Real database errors are not retried at all: they fail identically
+three times and retrying only makes a broken query look like a slow one. For the same
+reason the transport patterns are anchored to transport wording — the message can carry
+text from the row being written, so it matches `timed out` and not `timeout`, which would
+also have matched a constraint named `sms_timeout_idx`.
+
 ## ReserveCalifornia auto-cart — the key hand-off is DEAD; cart is session-bound (2026-08-05)
 
 **Verdict first, because an earlier commit in this session overclaimed it as "plausible":
@@ -3145,6 +3218,34 @@ and still buy an **18-minute silence** in the only window where somebody can act
 > 07:30 it now collides with `maybeAutoLogin` and would report "dead" during the very repair
 > that fixes it. At 07:40 it reports the OUTCOME with 20 minutes to act.
 
+### The auto-login demanded an email field Okta had stopped showing (2026-08-11)
+
+08:00 PT, neither hold carted. The 07:30 auto-login reported *"the sign-in form did not
+load"* and the runner then correctly refused to cart against a dead session.
+
+**The form HAD loaded.** A RustDesk screenshot at 07:54 shows RC serving Okta's "Verify with
+your password" **with the username already filled in** — the `ln` cookie remembers it, so
+Identity Engine skips the identifier screen entirely. There is no email input on that page.
+
+```js
+let user = await findIn(page, EMAIL_SELECTORS);
+if (!user) return { ok: false, reason: 'the sign-in form did not load' };
+
+// Identifier-first: ... If a password field is already here, this
+// first lookup just finds it.
+let pw = await findIn(page, PASSWORD_SELECTORS, 2000);
+```
+
+**The code already knew the password could come first.** That lookup was two lines BELOW the
+check that had already returned. A campsite was lost to the order of two statements, and the
+error message pointed at the site rather than at us — which is why the previous day's read
+of it was wrong. It now asks for the password first and gives up only when NEITHER field is
+present, saying which.
+
+**And a guard the old shape never needed:** a remembered-account screen names an account, so
+we refuse to type our password at one that is not ours. A wrong password spends a strike and
+Okta locks accounts.
+
 ## Day-before opt-in holds — the RC 8am flow (migrations 043 + 044, 2026-08-07)
 
 **The idea (owner's).** RC locks a cancelled site until a release time, and that time is
@@ -3256,9 +3357,9 @@ Two additions, and the split matters:
   authenticated session can answer, every 20 minutes, and thrown the answer away into a
   console on a box nobody watches. It POSTs it now. The value is **lead time**: RC serves a
   reCAPTCHA on sign-in, so a dead session needs a human, and a human needs notice. Learning
-  at 21:00 that tomorrow's 08:00 hold has nothing behind it is a fixable evening. `fail`
-  only when dead AND a hold is still ahead of it; `warn` when dead with nothing queued,
-  because that is when the fix is cheapest.
+  at 21:00 that tomorrow's 08:00 hold has nothing behind it is a fixable evening.
+  **Its severity was rewritten on 2026-08-11 — see below; the "fail on any hold ahead" rule
+  it shipped with was a nightly false alarm.**
 - **`rc_hold_requests.last_attempt_note`** — a skipped pass records WHY against the holds
   it was about to touch, **without moving status** (they must retry; `failed` would close a
   live hold and fire the missed-hold alert for nothing) and **without touching
@@ -3271,6 +3372,36 @@ blip all mean "we could not tell"; recording those as `false` would send the own
 human sign-in over a perfectly healthy session. Keep-warm posts nothing, the previous
 verdict goes stale, and staleness is how "we have not confirmed this recently" surfaces.
 Same rule as `hasAvailabilityInRange` returning null and `untracked` SMS rows.
+
+### DEAD and STALE are different faults (2026-08-11)
+
+Tapping a hold at 18:34 turned `autocart.rc_session` red for the whole night — thirteen
+hours before the release — and, now that the health Routine notifies, would have pushed
+every two hours until morning over a system behaving **exactly as designed**. The access
+token lives about an hour, so the session is legitimately dead for most of the day, and
+`maybeAutoLogin` signs in at T−30 unattended. The check simply had no notion of *how soon*:
+it failed on ANY hold ahead, so every night between tapping a hold and its morning was red.
+
+That is the 2026-08-09 alarm-gate lesson arriving two days late. The phone alarm already
+waits for the repair to have had its turn, precisely because it rang twice about a session
+that carted a site fifteen minutes later; the dashboard kept the naive version.
+
+- **`dead`** = the keep-warm is alive and reporting honestly that RC will not accept the
+  current token. **The repair is SCHEDULED.** Fails only within `RC_SESSION_CRITICAL_MIN`
+  of the release, i.e. once the auto-login has had its chance.
+- **`stale`** = the keep-warm is not reporting at all — and `maybeAutoLogin` lives INSIDE
+  the keep-warm, so the repair mechanism is **absent** rather than pending. Unchanged: fails
+  on any hold ahead. That is 2026-08-10, where a wedged keep-warm sat amber for ten hours
+  and the 08:00 cart failed against a lock nothing could take.
+
+**And the detail line asked a human to do what the bot does at 07:30.** It said *"a human
+must run `node rc-keepwarm.mjs --login`"* on every dead verdict — which is most of the day.
+On 2026-08-09 I read that line and told the owner to go and sign in by hand, over the
+session that carted a site fifteen minutes later. **The instruction is part of the check:
+one that asks for work the machine is about to do itself trains people to ignore the one
+that matters.** It now reads "RC rejects the current token — normal between releases, the
+token only lives ~1h", and the manual instruction survives only for the case where it is
+true: the auto-login has had its turn and the session is still dead.
 
 **The success-path report is deliberately NOT awaited.** It runs at 08:00:00.000 with a
 site about to free; awaiting a camphawk.app round trip in front of the precart would spend
@@ -3329,6 +3460,32 @@ a web deploy**. The ordering fix above is the mitigation, not a substitute.
 **Entitlement is checked TWICE** — when the offer is built and again when the `hold`
 action fires. Not a duplicate: an email link is durable, so a lapsed Auto-Cart subscriber
 can tap one sent while they were paying. Entitlement is checked where it would be spent.
+
+### Never offer a hold when there is no bot to honour it (2026-08-11)
+
+The RC hold runner and keep-warm stopped at 09:36 PT and nothing noticed for over two hours
+— the rec.gov bot kept beating, so `autocart.bot` stayed green, the same trap as 2026-08-07
+where a *different* process being healthy read as reassurance. Meanwhile the poller went on
+offering "Hold it for me"; the most recent went out at 11:33 PT, two hours into the outage.
+Tapping it would have answered *"We'll grab site #P177 the moment it opens"* with nothing
+running to do it.
+
+**The cost is not the failed cart. It is that a user who believes the site is handled STOPS
+WATCHING**, so a morning they could have won by setting an alarm is lost instead. That is
+the same argument already written on the claim screen about promising an automatic cart
+before the cart POSTs were proven — one step earlier.
+
+`rcBotUsable()` reads the **runner heartbeat** against `RC_RUNNER_STALE_MS`, which moved
+into `lib/health-thresholds` so the admin page and the offer decide by one number. It reads
+the RUNNER and **not the SESSION** deliberately: a dead session is a pending repair
+(`maybeAutoLogin` at T−30) and refusing on it would be the 2026-08-09 cry-wolf. A missing
+runner is different — nothing is coming to fix it.
+
+**Two enforcers, because a link outlives the alert that carried it:** the poller withholds
+the BUTTON and still sends the coming-soon alert (the heads-up is what the user can act on,
+and it is what makes booking by hand at 08:00 possible at all), and the `hold` action
+refuses too. Same shape as the auto-cart entitlement being checked at the action and not
+only at the offer.
 
 ### Where the offer appears — and where it deliberately does not
 
@@ -3864,6 +4021,17 @@ exactly the same symptom — the flag stayed pending and nothing anywhere said w
    `auto-update.ps1` now decides from the printed **verdict line** rather than the exit
    code — a crash can corrupt an exit status, it cannot un-print a line — and anything that
    is not an explicit `PROCEED` is a skip.
+   **STILL NOT FIXED, whatever the comment said (2026-08-11).** Running a commit whose
+   comments claim the cause was removed, node crashed with the identical assertion on the
+   way out of the guard at 17:01 — the manual `AbortController` did not do it. It is
+   harmless **today only** because `auto-update.ps1` reads the verdict line and never the
+   exit code, so that reading is the mechanism keeping updates working, not
+   belt-and-braces. Likeliest remaining cause is the **keep-alive socket undici leaves
+   pooled**: exiting explicitly tears the loop out from under it (this assertion), and not
+   exiting risks never draining (the earlier stall) — two symptoms, one cause, and the real
+   fix is a request that does not keep the connection alive. **A comment asserting a fix
+   that did not work is worse than no comment**, the same trap as `6006428` claiming to fix
+   the RC URL while only touching the instructional copy.
 5. **`detached: true` was why the script never ran at all.** On Windows that means
    `DETACHED_PROCESS`: the child gets **no console**, and `powershell -File` started that
    way produced literally nothing — no output, no error, no `auto-update.log` — while the
@@ -3878,6 +4046,40 @@ spawn (so "no file" has one meaning), the child's stdio goes to that file instea
 records the status, and `auto-update.ps1` reports that it STARTED before anything can kill
 it. Also: **being already current now clears the request**, or a hand-run `update.bat`
 leaves the flag pending and the runner re-hands-off for ever.
+
+### A sixth: the scheduled task WAS running, and every report was answered 401
+
+Found 2026-08-11, after an hour of watching a flag that never moved. The Windows task is
+registered and firing — its own log says so, and says in the same breath that every report
+it made was rejected:
+
+```
+17:01:03 [auto-update] skipping this run.
+         [auto-update] could not report the attempt: The remote server
+                       returned an error: (401) Unauthorized.
+```
+
+`AUTOCART_TOKEN` lives in `scripts/auto-cart-bot/.env`, and **a Scheduled Task has no parent
+environment to inherit from**, so `$env:AUTOCART_TOKEN` was empty. The box was faithfully
+telling us what it had done while being turned away at the door.
+
+**That is indistinguishable from a task that was never registered, and I read it exactly
+that way** — concluded "no scheduled task, no overnight self-heal" from an absence that was
+really a rejection. It is bug 1 in this same list, in a sibling file: **the fix went to the
+thing that READS the answer (`loadEnv` in `update-guard.mjs`) and not to the thing that
+REPORTS it.** `Import-BotEnv` parses the `.env` from `$botDir` and never the cwd, and
+anything already in the process environment wins so a human running it by hand with an
+explicit token is never overridden. It is defined at the top and called **before the first
+`Report-Attempt`** — PowerShell runs top-down, and a call above its definition dies with
+"not recognized", which is how a request sat pending earlier the same day.
+
+**`update.bat` also never reported what it landed on.** `auto-update.ps1` reports through
+`Report-Applied`; the manual path did not, so the admin panel kept showing the last
+*unattended* result — "37e1527, REFUSED — processes would not stop" — while the box was
+happily running `d1ab782`. That is not cosmetic: it is the field you check to find out
+whether a fix arrived, and it misled me twice in one evening. `report-applied.mjs` reports
+the real `git rev-parse HEAD`, and always exits 0 — a reporting failure must not fail the
+update that succeeded.
 
 ## Ask the mini-PC a question — `bot_commands`, migration 053 (2026-08-11)
 
@@ -3908,16 +4110,172 @@ asking; `worker/bot-commands.test.mts` pins the two together and fails if either
   scrubber that knew JWT shapes. Capped at 16KB keeping the **tail**.
 - **A missing file is an ANSWER, not an error.** "logs\auto-update.log does not exist" is
   what finally proved the update script never ran.
-- **UTF-16 logs are decoded by BOM.** PowerShell 5.1's `Tee-Object` wrote every per-process
-  log as UTF-16LE, which is why `findstr` answered *"input file is in Unicode format"*
-  mid-diagnosis. `supervise.ps1` writes UTF-8 now; older files on the box still are not.
+- **UTF-16 logs are decoded by BOM — AND BY SHAPE, which is what the first version missed.**
+  PowerShell 5.1's `Tee-Object` wrote every per-process log as UTF-16LE, which is why
+  `findstr` answered *"input file is in Unicode format"* mid-diagnosis. `supervise.ps1`
+  writes UTF-8 now; older files on the box still are not. **Redirected output is UTF-16LE
+  with NO BOM**, so every BOM branch missed it and the file was decoded as UTF-8, putting a
+  NUL between every character — and **Postgres text cannot hold a NUL**, so the answer was
+  unstorable, nothing was written, and `finished_at` stayed NULL. On the admin page that
+  reads as "picked up, no answer yet": the same silence as a wedged command. Three fixes,
+  because any one alone still fails invisibly — `readTextFile` samples NULs on odd offsets
+  (it cannot false-positive; real UTF-8 never contains a NUL), `scrub` strips NULs
+  unconditionally (a NUL is never legitimate output), and **a report that throws is retried
+  WITHOUT the output** so the row always closes. An error line that arrives beats a result
+  that never does; without it, "picked up, never finished" stays ambiguous forever — the
+  exact distinction this channel exists to remove.
 - **`started_at` is stamped on pickup**, so "nobody looked at this" and "it ran and returned
   nothing" stay distinguishable. The admin panel shows all three states and never two.
 - Never awaited by the runner — at 08:00:00 nothing may go in front of a precart. Queue
   capped at 5; commands expire after 10 minutes, because one that surfaces an hour later
   answers a question about a machine that no longer exists.
 
-## PowerShell on this box: three traps that all fail silently (2026-08-11)
+## The control channel rides BOTH feeds — `lib/bot-control`, migration 055 (2026-08-11)
+
+The update flag and the command queue were served only to the **RC hold runner**. On
+2026-08-11 that process died at 09:36 PT and the whole box went dark — no update, no
+diagnostics, no way to ask it a single question — while `bot.mjs` polled the roster feed
+every two seconds throughout, healthy and reachable the entire time.
+
+**So "the box is unreachable" and "the RC runner is down" were the same event.** They are
+different problems, and the second is the one you most want a remote lever for, because it
+is the process that carts campsites. The channel had been hung on the component most likely
+to be dead when you need it.
+
+- `src/lib/bot-control.ts` builds one `control` block; both `/api/autocart/*` feeds carry it.
+- **Both pollers read it through ONE shared module** — `scripts/auto-cart-bot/control-channel.mjs`,
+  imported by `rc-hold-runner.mjs` and `bot.mjs`. Two copies would be two chances to fix one
+  and forget the other, and **the forgotten copy is by definition the one running when the
+  other is dead.** Every hard-won Windows detail moved with it: not `detached` (that costs
+  the child its console), stdio to a file and never `'ignore'`, the marker written before
+  the spawn, both `'error'` and `'exit'` listeners.
+
+### The flag is INFORMATIONAL; the grant is a separate POST
+
+Two readers introduce two risks. The second is subtle and shipped for a few hours:
+**`botControlFor` granted the update on read.** The roster feed is polled every two seconds,
+and a box running code older than the control channel ignores the `control` block entirely
+— so that box would consume the grant within two seconds and discard it, and the Windows
+scheduled task (the only thing that can update a stale checkout) would read
+`updateRequested: false` until the claim expired twenty minutes later. **The lever disarmed
+itself on precisely the boxes that need it**, and setting the flag would have looked like a
+dead scheduled task rather than one that was never offered the work.
+
+Granting on read cannot be right in general: reading a feed is not the same as intending to
+act on it, and only the caller knows which it is doing. A poller that means to spawn
+`auto-update.ps1` POSTs `{updateClaim: <actor>}` and is told `granted` true or false —
+`claimBotUpdate`, one conditional `UPDATE`, the same shape as the alerting claim and the
+shard lease. It **expires** so a claimer that dies cannot wedge updates forever, and never
+sooner than the box's own retry window or the expiry would recreate the race through the
+other door. Same rule as the auto-cart entitlement being checked where it would be spent,
+and as `claimNotification` being called on the cycle that acts.
+
+**An unreachable claim is a NO.** An update is never urgent enough to risk two of them over
+one git checkout; the flag simply stays pending.
+
+**All four spawn paths claim**, including the Windows scheduled task, which was the last one
+that read the flag and went. It fires every five minutes and `npm ci` outlasts that, so a
+second updater could move the checkout out from under the first. It claims **only when
+`requested`, and never under `--force`**: a quiet-window update has no request to claim
+(`claimBotUpdate` requires a pending one) and nothing contends for it, so claiming
+unconditionally would refuse *every* scheduled update — the precise failure that file exists
+to avoid. Driven against a local feed in all four combinations.
+
+The **commands** queue needed no equivalent change: it was already claimed at the point of
+use, since the poller that receives a command runs it in the same tick.
+
+### `query()` cannot write — and that is invisible at the call site
+
+The channel did not work at all on its first real use. Two commands sat at "queued — nothing
+has picked it up" while the box polled happily twelve seconds ago.
+
+`query()` routes to the `exec_select` RPC and `mutate()` to `exec_dml`. `claimBotCommands`
+was written with `query()` and does `UPDATE .. RETURNING`, so it **threw on every call** —
+and its `.catch(() => [])` turned that into an empty list, **which is exactly what the feed
+returns when nobody has asked a question.** Two failure modes, one output.
+
+The same defect was in two more places: `claimBotUpdate` (which would have made the update
+grant permanently unwinnable — added the same afternoon while fixing a *different* way that
+grant could be lost) and `requestBotCommand`, which had no catch at all, so the admin "Ask"
+button would have 500'd rather than failing quietly. Neither is acceptable, but only one of
+them tells you.
+
+Both claims now report the failure instead of swallowing it. **"We could not ask" and
+"somebody else won the race" are different facts**, and collapsing them is what hid this —
+the same mistake as `notifications.status = 'sent'` meaning only that Twilio returned 2xx.
+
+**Nothing about the call site looks wrong**: the two functions take the same arguments,
+return the same shape, and differ only in an RPC name three files away, so TypeScript cannot
+tell them apart — the difference lives in a string. `worker/sql-routing.test.mts` scans
+`src/lib` and `src/app` for data-modifying SQL handed to `query()`, because this is
+undetectable by reading either file alone.
+
+`mini-pc\restart-rc.ps1` is the RC-pair-only restart the channel makes useful: it never
+touches `bot.mjs`, which is the process carrying the channel.
+
+## The nightly RC login rehearsal — `rc_login_rehearsal`, migration 054 (2026-08-11)
+
+Three consecutive 08:00 holds failed and **all three failed at login** — the runner was dead
+(08-07), the cart fired 85s early (08-08), and `attemptLogin` demanded an email field Okta
+had stopped showing (08-11). Every one was found at 07:30 with twenty minutes to act,
+because the release was being used as the test. **It is not the test; it is the exam.**
+
+`node rc-keepwarm.mjs --test-login` could always have proved this. It was never scheduled,
+so it only ever ran when somebody already suspected a problem. This is a missing cadence,
+not a missing ability — which is why it is one decision module, one table and a health check
+rather than a new subsystem.
+
+At 20:00 PT the keep-warm drops its token — **never the cookies**; the `DT` device cookie is
+what stops a login looking like a fresh profile, and that is what cost twelve hours of IP
+block on 08-06 — and runs the same body as `--test-login`, extracted into `runLoginRehearsal`
+so the two cannot drift. The result lands in `rc_login_rehearsal` and surfaces as
+`autocart.rc_login`.
+
+**The gates are the design**, because a login is not free — repeated sign-ins from this
+address are what got the household IP blocked. `scripts/auto-cart-bot/rehearsal.mjs` is a
+pure decision module (`shouldRehearse`) so all of it is testable:
+
+- the rehearsal hour only, at most once per 20h;
+- **never within six hours of a release** — the profile lock and the login both belong to
+  the cart;
+- **never when the session is LIVE.** `attemptLogin` short-circuits on `isLive()`, so it
+  would return ok without exercising one line of the sign-in: **a pass that proved nothing,
+  which is worse than a skip because it reads as evidence.** In practice the token lasts
+  ~60 minutes, so the session is dead ~23 hours a day and the evening slot is nearly always
+  a real rehearsal;
+- **never when the feed is unreachable** — we would not know whether a hold is due.
+
+### It walked into the signed-in banner on its first night
+
+The first production run reported a FAILURE for a perfectly healthy session. It cleared the
+token, reloaded, asked `isLive()` and got "not live", then went hunting for a sign-in form.
+**RC's SPA re-authenticated in between**, so by the time it looked there was no form — and it
+reported that as the login being broken, quoting RC's own words: *"You have a reservation
+arriving on today's date."*
+
+**That banner is only ever rendered to a SIGNED-IN user.** It is evidence of success, and
+this is the **second** time it has been read as the obstacle. The first was 2026-08-09, when
+it drove a dead-session verdict, two alarm calls, and telling the owner to sign in by hand —
+over the session that carted a site fifteen minutes later. CLAUDE.md records that lesson and
+the rehearsal walked straight into it the next day.
+
+`attemptLogin` already re-asks `isLive()` after the page load for exactly this reason. It
+just did not ask again at the **other** exit — the one a mid-flight re-authentication lands
+on. It now returns `provedNothing` rather than a plain `ok`, and the rehearsal records
+**inconclusive**: nothing was typed, so a green mark would be against a test that never ran.
+The stored row was corrected by hand from `ok=false` to `ok=NULL`, because it was not true
+and it would have paged every two hours overnight.
+
+### An open contradiction worth a deliberate look
+
+"THERE IS NOTHING TO KEEP WARM" (see the keep-warm section) rests on RC's SPA being unable to
+exchange the Okta session for a fresh access token — `authorize?prompt=none` failing and then
+deleting the tokens it had. **Here it silently minted one within seconds of the token being
+cleared.** That is one observation, not a measurement, and it is not enough to reopen the
+conclusion. It is, however, the first evidence pointing the other way, and anyone about to
+build on the old finding should measure this first.
+
+## PowerShell on this box: four traps that all fail silently (2026-08-11)
 
 1. **A `.ps1` must be pure ASCII.** Windows PowerShell 5.1 reads a file **without a BOM as
    Windows-1252**; an em dash is `E2 80 94`, byte `0x94` is `U+201D` (curly right double
@@ -3936,6 +4294,19 @@ asking; `worker/bot-commands.test.mts` pins the two together and fails if either
 3. **Node writes UTF-8; the console is cp437.** Without `[Console]::OutputEncoding`, every
    em dash lands in `logs\rc-keepwarm.log` as `TCo` — cosmetic on screen and not cosmetic
    in the files that are the post-mortem record.
+4. **One shared log file drops lines exactly when you need them.** A remote update reported
+   *"REFUSED — processes would not stop"* and `restarts.log` contained the opening line and
+   nothing else, so the one question worth answering — **what** would not stop — was
+   unanswerable. `stop-all` re-checks properly (10 × 500ms, then logs every surviving pid)
+   and it ran; not one of those lines reached the file. Every supervisor and every stop path
+   appends to that one file, and **Windows file locking makes all but one writer fail while
+   the file is held** — contention PEAKS during a stop, because four supervisors are writing
+   their own "exited code=" lines at that same moment. So the log is least reliable at the
+   only time anyone reads it: the same shape as a watchdog wired to the thing it watches.
+   Any `.ps1` writing `restarts.log` must **retry**, must **state UTF8**, and must write to
+   the **console before the file** so the line survives even when the write does not. The
+   test asserts this across the whole directory — `supervise.ps1` was fixed for it hours
+   before its siblings were, which is how it recurred within a day.
 
 ## Environment variables (names only — values in `.env.local` / Vercel / Fly)
 

@@ -758,6 +758,198 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
 
 ## Open / next session
 
+### `query()` CANNOT WRITE — the routing bug class (2026-08-11)
+`query()` goes to the `exec_select` RPC and `mutate()` to `exec_dml`, so **any
+data-modifying SQL passed to `query()` throws, every time, forever.** Nothing about the
+call site looks wrong: the two take the same arguments, return the same shape, and differ
+only in an RPC name three files away — **TypeScript cannot tell them apart because the
+difference lives in a string.**
+- It shipped in three places at once and was found the first time a box could actually
+  answer: `claimBotCommands` (`UPDATE .. RETURNING` through `query()`) threw on every call
+  and its `.catch(() => [])` turned that into an empty list — **which is exactly what the
+  feed returns when nobody has asked a question.** Two failure modes, one output.
+  `claimBotUpdate` had it too, which would have made the update grant *permanently
+  unwinnable*; `requestBotCommand` had it with no catch at all, so the admin "Ask" button
+  would have 500'd. Only one of those three tells you.
+- Both claims now report the failure instead of swallowing it. **"We could not ask" and
+  "somebody else won the race" are different facts** — same family as
+  `notifications.status = 'sent'` meaning only "Twilio returned 2xx".
+- **`worker/sql-routing.test.mts` scans `src/lib` and `src/app`** for data-modifying SQL
+  handed to `query()`. This is invisible by reading either file alone, so it is guarded
+  mechanically or not at all.
+
+### The control channel rides the ROSTER feed (migration 055, 2026-08-11)
+On 2026-08-11 the RC hold runner died at 09:36 PT. It was the only process reading the
+update flag and the diagnostics queue, so **the whole box went dark** — no update, no
+diagnostics, no way to ask it one question — while `bot.mjs` polled the roster feed every
+two seconds throughout, healthy and reachable the whole time. "The box is unreachable" and
+"the RC runner is down" were the same event, and the second is the one you most want a
+remote lever for, because it is the process that carts campsites.
+- Both feeds carry it (`src/lib/bot-control.ts`), and both pollers read it through **one
+  shared module** (`scripts/auto-cart-bot/control-channel.mjs`) — two copies would be two
+  chances to fix one and forget the other, and the forgotten copy is by definition the one
+  running when the other is dead.
+- **THE UPDATE FLAG IS A CLAIM, NEVER GRANTED ON READ.** It briefly was granted inside
+  `botControlFor`, i.e. on any GET — and the roster feed is polled every two seconds by a
+  bot that, if it predates the control channel, ignores the `control` block entirely. That
+  box would consume the grant within two seconds and throw it away, and the Windows
+  scheduled task (the only thing that can update a stale checkout) would read
+  `updateRequested: false` until the claim expired. **The lever disarmed itself on exactly
+  the boxes that need it.** A poller that means to spawn the updater POSTs
+  `{updateClaim: <actor>}` and is told granted or not. Same rule as the auto-cart
+  entitlement being checked where it would be spent.
+- **An unreachable claim is a NO.** An update is never urgent enough to risk two of them
+  over one git checkout.
+- **All four spawn paths claim now**, including the Windows scheduled task — it fires every
+  5 minutes and `npm ci` outlasts that, so a second updater could move the checkout out
+  from under the first. It claims **only when `requested` and never under `--force`**: a
+  quiet-window update has no request to claim, so claiming unconditionally would refuse
+  *every* scheduled update, which is the precise failure that file exists to avoid.
+- `mini-pc\restart-rc.ps1` restarts the RC pair **only** — never `bot.mjs`, which is the
+  process carrying the channel.
+
+### The nightly RC login rehearsal (migration 054, 2026-08-11)
+Three consecutive 08:00 holds failed and **all three failed AT LOGIN**. Every one was found
+at 07:30 with twenty minutes to act, because the release was being used as the test. **It
+is not the test; it is the exam.** `--test-login` could always have proved this — it was
+never scheduled, so it only ever ran when somebody already suspected a problem.
+- At 20:00 PT the keep-warm drops its **token only** (never the cookies — the `DT` device
+  cookie is what stops a login looking like a fresh profile, and losing it is what cost 12h
+  of IP block on 08-06) and runs the SAME body as `--test-login`, extracted into
+  `runLoginRehearsal` so the two cannot drift. Result → `rc_login_rehearsal` →
+  `autocart.rc_login`.
+- **The gates are the design**, in `scripts/auto-cart-bot/rehearsal.mjs`: the rehearsal
+  hour only, once per 20h, never within 6h of a release, never when the feed is
+  unreachable, and **never when the session is LIVE** — `attemptLogin` short-circuits on
+  `isLive()`, so it would return ok without exercising one line of the sign-in. **A pass
+  that proved nothing is worse than a skip, because it reads as evidence.**
+- **AND IT WALKED INTO THE BANNER TRAP ON ITS FIRST NIGHT.** It cleared the token, reloaded,
+  got "not live", went hunting for a sign-in form — and RC's SPA re-authenticated in
+  between, so there was no form and it reported the login as broken, quoting RC's *"You
+  have a reservation arriving on today's date"*. **That banner is only ever rendered to a
+  SIGNED-IN user.** It is evidence of success, and that is the SECOND time it has been read
+  as the obstacle (the first, 2026-08-09, drove a dead-session verdict, two alarm calls and
+  my telling the owner to sign in by hand over the session that carted a site fifteen
+  minutes later). `attemptLogin` re-asked `isLive()` after the page load for exactly this
+  reason; it just did not ask again at the OTHER exit — the one a mid-flight
+  re-authentication lands on. It now returns `provedNothing` → recorded as **inconclusive**.
+- **THAT RE-AUTHENTICATION IS ITSELF A LOOSE END.** "THERE IS NOTHING TO KEEP WARM" (below)
+  is built on RC's SPA being unable to exchange the Okta session for a new access token.
+  Here it did exactly that, silently, within seconds of the token being cleared. One
+  observation, not a measurement, and not enough to reopen the conclusion — but it is the
+  first evidence pointing the other way, and it wants a deliberate look before anyone
+  builds on the old finding.
+
+### Never offer a hold when there is no bot to honour it (2026-08-11)
+The RC pair stopped at 09:36 PT and nothing noticed for over two hours — `autocart.bot`
+stayed green because the rec.gov bot kept beating, the same trap as 08-07. Meanwhile the
+poller went on offering "Hold it for me"; the last went out **two hours into the outage**.
+**The cost is not the failed cart — it is that a user who believes the site is handled
+STOPS WATCHING**, so a morning they could have won with an alarm clock is lost instead.
+`rcBotUsable()` reads the **runner heartbeat**, not the session: a dead session is a
+pending repair (`maybeAutoLogin` at T−30) and refusing on it would be the 08-09 cry-wolf;
+a missing runner is different, nothing is coming to fix it. Two enforcers — the poller
+withholds the BUTTON (still sends the coming-soon alert, which is the part the user can
+act on) and the `hold` action refuses too, because a link outlives the alert that carried it.
+
+### Auto-cart alerts lost the site id and the kind (2026-08-11)
+Reported as *"a bunch of duplicate texts for the same site"*. Silver Lake 044:
+`06:32 kind=available id=85946` (the main lane, correct), then **08:08, 13:08, 15:13 all
+`kind=undefined id=undefined`**. Every alert the auto-cart lane produces is replayed from
+one stored payload built by `autocartPayload()`, and that payload **never included
+`campsiteId`**; the reconciler's fallback then dispatched it bare, so `kind` was undefined too.
+- The booking link degrades to the whole **campground** with no site id, so alerts for
+  different sites arrive looking identical — that is the "duplicate" appearance.
+- **`campsiteId` is the MUTE TARGET.** `lib/notifications` builds the mute link from it
+  alone, so the one control that would stop a noisy site was missing from precisely the
+  alerts causing the noise.
+- The row cannot be attributed to a site afterwards — **my first pass at "am I getting
+  duplicates?" partitioned on `campsiteId` and silently excluded every broken row.** The
+  analysis missed the bug for the same reason the alert was broken.
+- **NOT a dedupe failure**: the per-site claim held throughout. The job row has carried
+  `campsite_id` in its own column the whole time; only the payload lost it, which is the
+  tell that this was an omission — and no type caught it because the fields that matter on
+  `NotificationPayload` are all optional. `worker/autocart-payload.test.mts` pins the full set.
+
+### Health severity — two false alarms that would have paged all night (2026-08-11)
+Now that the health Routine notifies, a wrong `fail` is a phone call every two hours.
+- **`autocart.rc_session` failed on ANY hold ahead.** Tapping a hold at 18:34 turned it red
+  for thirteen hours before the release, over a system behaving exactly as designed: the
+  token lives ~1h, so the session is legitimately dead most of the day, and
+  `maybeAutoLogin` signs in at T−30 unattended. **Dead and stale are now different faults**
+  — `dead` = the keep-warm is alive and reporting honestly, repair SCHEDULED, fails only
+  within `RC_SESSION_CRITICAL_MIN` of the release; `stale` = the keep-warm is not reporting,
+  and `maybeAutoLogin` lives INSIDE it, so the repair is *absent* rather than pending —
+  unchanged, fails on any hold ahead. That is 2026-08-10 exactly.
+- **The detail line asked a human to do what the bot does at 07:30.** It said *"a human must
+  run `rc-keepwarm.mjs --login`"* on every dead verdict. On 08-09 I read that line and told
+  the owner to sign in by hand, over the session that carted a site fifteen minutes later.
+  **A check that asks for work the machine is about to do itself trains people to ignore the
+  one that matters.** The manual instruction survives only for the case where it is true.
+
+### Diagnostics that fail invisibly — three from one evening (2026-08-11)
+All three had the same shape: **the failure produced the same output as the healthy case.**
+- **`tail-log` hung on a BOM-less UTF-16 log.** Redirected PowerShell output is UTF-16LE
+  with **no BOM**, so every branch of `readTextFile` missed it and decoded as UTF-8, putting
+  a NUL between every character. **Postgres text cannot hold a NUL**, so the answer was
+  unstorable, nothing was written, and `finished_at` stayed NULL — which reads on the admin
+  page as "picked up, no answer yet", indistinguishable from a wedged command. Three fixes,
+  because any one alone still fails invisibly: detect BOM-less UTF-16LE by sampling NULs on
+  odd offsets (cannot false-positive — real UTF-8 never contains a NUL), strip NULs in
+  `scrub` unconditionally, and **retry a failed report WITHOUT the output** so the row always
+  closes. An error line that arrives beats a result that never does.
+- **`auto-update.ps1` reported every run and was answered 401.** The task IS registered and
+  IS firing; its own log said so, and said in the same breath that every report was
+  rejected. `AUTOCART_TOKEN` lives in `scripts/auto-cart-bot/.env` and **a Windows Scheduled
+  Task has no parent environment to inherit from.** That is indistinguishable from a task
+  that was never registered, and **I read it exactly that way for hours** — concluded "no
+  scheduled task, no overnight self-heal" from an absence that was really a rejection. Same
+  trap `update-guard.mjs` was fixed for with `loadEnv`, in a sibling file: the fix went to
+  the thing that READS the answer and not to the thing that REPORTS it. `Import-BotEnv` is
+  defined at the top and called **before the first `Report-Attempt`** — PowerShell runs
+  top-down, and a call above its definition dies with "not recognized".
+- **`restarts.log` drops its lines exactly when a stop fails.** A remote update reported
+  "REFUSED — processes would not stop" and the log held the opening line and nothing else.
+  Every supervisor and every stop path appends to one file, and Windows file locking makes
+  all but one writer fail while it is held — **contention PEAKS during a stop**, because
+  four supervisors write their own "exited" lines at that same moment. So the log is least
+  reliable at the only time anyone reads it. `supervise.ps1` was fixed hours earlier and its
+  siblings were not, so the test now asserts across the **directory**: any `.ps1` writing
+  `restarts.log` must retry, must state UTF8, and must write to the console BEFORE the file.
+
+### `update.bat` reported the wrong commit, and node still crashes on the way out
+- **`update.bat` never reported what it landed on.** `auto-update.ps1` reports through
+  `Report-Applied`; the manual path did not, so the admin panel kept showing the last
+  *unattended* result — "37e1527, REFUSED" — while the box was happily running `d1ab782`.
+  That is the field you check to find out whether a fix arrived, and it misled me twice in
+  one evening. `report-applied.mjs` now reports the real `git rev-parse HEAD`.
+- **The libuv crash is NOT fixed, whatever the comment said.** `update-guard.mjs` still exits
+  with `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`; swapping
+  `AbortSignal.timeout` for a manual `AbortController` did not do it. Harmless **today only**
+  because `auto-update.ps1` reads the verdict LINE and never the exit code — that reading is
+  the mechanism keeping updates working, not belt-and-braces. Likeliest cause is the
+  keep-alive socket undici leaves pooled (exiting tears the loop out from under it; not
+  exiting risks never draining — two symptoms, one cause). **A comment asserting a fix that
+  did not work is worse than no comment**, same as `6006428` claiming to fix the RC URL while
+  only touching the copy.
+
+### Retry a DB call only when it never left (2026-08-12)
+Two real-DB tests flaked with `DB mutate error: DNS resolution failure`, and both times I
+re-ran and shrugged — which is how a real regression gets waved through. `client.ts` now
+retries (3 attempts, 200ms doubling), split by **what the message proves, not how transient
+it feels**: DNS/`ECONNREFUSED`-class errors prove nothing was sent and are retried for reads
+**and** writes; `fetch failed`/`ECONNRESET`/`timed out` may have executed and are retried
+for **reads only** (`query` goes to `exec_select`, which refuses anything data-modifying).
+`fetch failed` sits on the dangerous side deliberately: undici raises it for DNS failures
+too, but supabase-js hands us `error.message` with the `cause` already discarded. Real
+database errors are never retried — that only makes a broken query look like a slow one.
+
+### Supabase's "CRITICAL" RLS email was a false positive (2026-08-11)
+`rls_disabled_in_public` on **`spatial_ref_sys`** — a table PostGIS creates and owns. It is
+not ours, it holds published coordinate-system definitions, and it cannot have RLS enabled
+by us anyway. Nothing to do. Real RLS coverage is migration 027 plus `action_tokens` and
+`alert_canary`; if a future alert names one of ours, that one is real.
+
 ### The first 8am hold FAILED — and the recovery worked (2026-08-07)
 Offered 05:26, tapped 06:00, site released at 08:00 exactly as predicted (the poller saw
 it and sent a normal `available` alert at 08:00:10) — and **the mini-PC runner never
@@ -1236,10 +1428,12 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs are current as of this session** — `docs/CONTEXT.md` and `docs/SETUP.md` were both
-brought up to date with the hold flow, the reCAPTCHA/keep-warm design, the mini-PC's five
-processes, migrations 039/040/043/044/**046**, the `rc-login.bat` window-title bug, and
-the corrected A2P facts.
+**Docs are current to 2026-08-12** — `docs/CONTEXT.md` carries the hold flow, the
+reCAPTCHA/keep-warm design, the mini-PC's five processes, migrations
+039/040/043/044/046/**053/054/055**, the `rc-login.bat` window-title bug, the corrected A2P
+facts, and this session's control channel, login rehearsal, `query()` routing class, alert
+payload omission, health-severity split and DB retry. `docs/SETUP.md` is current to
+2026-08-11.
 
 ### iOS 1.0 IS SUBMITTED — "Waiting for Review", and DON'T PULL IT (2026-08-08)
 Confirmed from App Store Connect: the version reads **Waiting for Review**, so it was
