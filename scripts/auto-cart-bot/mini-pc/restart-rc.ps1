@@ -22,10 +22,20 @@ $ErrorActionPreference = "Continue"
 Set-Location (Join-Path $PSScriptRoot "..")
 if (-not (Test-Path "logs")) { New-Item -ItemType Directory -Path "logs" | Out-Null }
 
+# Retried, for the same reason as stop-all.ps1: the shared log is contended and drops
+# writes exactly when several processes are stopping. Console first, so the line survives
+# even when the file write does not.
 function Write-Line($msg) {
   $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg
   Write-Output $line
-  Add-Content -Path "logs\restarts.log" -Value $line -Encoding UTF8
+  for ($i = 0; $i -lt 5; $i++) {
+    try {
+      Add-Content -Path "logs\restarts.log" -Value $line -Encoding UTF8 -ErrorAction Stop
+      break
+    } catch {
+      Start-Sleep -Milliseconds (40 * ($i + 1))
+    }
+  }
 }
 
 # The RC pair and their supervisors, and NOTHING else. Matched on the command line, never on

@@ -37,10 +37,30 @@ $botDir = Split-Path -Parent $PSScriptRoot
 Set-Location $botDir
 if (-not (Test-Path "logs")) { New-Item -ItemType Directory -Path "logs" | Out-Null }
 
+# RETRY THE SHARED LOG. Every supervisor and every stop path appends to one restarts.log,
+# and Windows file locking makes all but one writer fail while a file is held. Contention
+# PEAKS during a stop - four supervisors are writing their own "exited code=" lines at the
+# same moment - so this log drops exactly the lines that explain a stop, which is the only
+# time anyone reads it.
+#
+# Observed 2026-08-11: a remote update reported "REFUSED - processes would not stop" and the
+# log contained the opening "stopping 18 process(es)" and NOTHING else. The re-check ran and
+# named every survivor; not one of those lines survived the write. Same defect fixed in
+# supervise.ps1 hours earlier and left here.
+#
+# Console first and unconditionally, so the information is never lost even when the file
+# write is. -Encoding UTF8 to match every other writer, or the post-mortem file is mojibake.
 function Write-Line($msg) {
   $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [stop-all] $msg"
   if (-not $Quiet) { Write-Host $line }
-  Add-Content -Path "logs\restarts.log" -Value $line
+  for ($i = 0; $i -lt 5; $i++) {
+    try {
+      Add-Content -Path "logs\restarts.log" -Value $line -Encoding UTF8 -ErrorAction Stop
+      break
+    } catch {
+      Start-Sleep -Milliseconds (40 * ($i + 1))
+    }
+  }
 }
 
 # The supervisors, killed FIRST and alone. If a child died while its supervisor was still

@@ -658,3 +658,33 @@ test('auto-update.ps1 writes ONE encoding', async () => {
     assert.match(m, /-Encoding UTF8/, `Add-Content must state its encoding: ${m.trim()}`);
   }
 });
+
+
+test('every writer to the shared restart log survives contention', async () => {
+  // ALL of them append to logs/restarts.log, and Windows file locking makes all but one
+  // writer fail while the file is held. Contention PEAKS during a stop - four supervisors
+  // are writing their own "exited code=" lines at that moment - so this log drops exactly
+  // the lines that explain a stop, which is the only time anyone reads it.
+  //
+  // Observed 2026-08-11: a remote update reported "REFUSED - processes would not stop" and
+  // the log held the opening "stopping 18 process(es)" and nothing else. The re-check ran
+  // and named every survivor; not one of those lines reached the file. supervise.ps1 was
+  // fixed hours earlier and its siblings were not - which is precisely why this asserts
+  // across the DIRECTORY rather than against one file.
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const dir = 'scripts/auto-cart-bot/mini-pc';
+  for (const f of readdirSync(dir).filter((x) => x.endsWith('.ps1'))) {
+    const src = readFileSync(`${dir}/${f}`, 'utf8');
+    const body = src.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+    if (!/restarts\.log/.test(body)) continue;
+    const fn = body.match(/function Write-Line[\s\S]*?\n}/)?.[0] ?? '';
+    assert.ok(fn, `${f}: writes restarts.log but has no Write-Line to check`);
+    assert.match(fn, /-Encoding UTF8/, `${f}: the shared log must state its encoding`);
+    assert.match(fn, /try \{/, `${f}: the shared-log write must be retried, not fire-and-hope`);
+    // The console line must come FIRST, so the information survives a failed file write.
+    const console_ = fn.search(/Write-(Host|Output)/);
+    const file_ = fn.indexOf('Add-Content');
+    assert.ok(console_ !== -1 && file_ !== -1 && console_ < file_,
+      `${f}: write to the console before the file, or a locked file loses the line entirely`);
+  }
+});
