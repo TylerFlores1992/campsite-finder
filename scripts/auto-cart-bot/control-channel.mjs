@@ -124,7 +124,14 @@ export function makeControlChannel({ dir, actor, log, report }) {
       } catch { /* best effort — never block the hand-off on logging it */ }
       const out = fs.openSync(spawnLog, 'a');
       const ps = spawn('powershell', [
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script,
+        // `-Claimed`: WE ALREADY HOLD THE CLAIM. `claimUpdate` above ran before we got here,
+        // so the guard inside this script must not ask for it a second time — it would be
+        // competing with us and would lose, every time, to a claim taken a second earlier.
+        // That is exactly what deadlocked on-demand updates on 2026-08-12, and because a
+        // standing request is re-claimed every 20 minutes it could never drain: the fix had
+        // to be delivered by the mechanism it fixes. The Windows Scheduled Task does NOT
+        // pass this, because it claims nothing and the guard is its only gate.
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Claimed',
       // NOT `detached`. On Windows that means DETACHED_PROCESS — the child gets NO console —
       // and a `powershell -File` started that way produced literally nothing on 2026-08-11:
       // no output, no error, no auto-update.log, while the same command by hand ran fine. It

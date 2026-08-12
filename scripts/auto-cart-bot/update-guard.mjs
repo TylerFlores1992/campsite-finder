@@ -201,8 +201,26 @@ if (process.argv[1] && process.argv[1].endsWith('update-guard.mjs')) {
   //
   // A claim we cannot reach is a NO, exactly as it is on the box side: an update is never
   // urgent enough to risk two of them, and the request simply stays pending.
+  //
+  // ...BUT NOT WHEN OUR SPAWNER ALREADY HOLDS IT. This file runs on TWO paths, and the
+  // paragraph above only describes one of them. The Windows task runs it directly; the
+  // pollers claim FIRST and then spawn `auto-update.ps1`, which runs it too. Claiming again
+  // on that second path means competing with the process that started us — and losing,
+  // every time, to a claim taken one second earlier.
+  //
+  // That deadlocked on-demand updates the moment this code reached the box (2026-08-12):
+  // "Update now" set the flag, `bot` claimed it and spawned the updater, and the updater
+  // refused itself with "another process holds the update claim". Worse, it self-renews —
+  // while a request stands, a poller reclaims every 20 minutes and SKIPs again, so the
+  // request can never be satisfied and the only remaining way in is a human running
+  // update.bat. A fix that can only be delivered by the mechanism it fixes.
+  //
+  // `--claimed` is the spawner saying "I already hold it, do not ask". It is passed only by
+  // the paths that genuinely claimed, so the Windows task — which claims nothing — still
+  // takes the branch below, and the race that commit closed stays closed.
+  const preClaimed = process.argv.includes('--claimed');
   let claimed = true;
-  if (requested && !force) {
+  if (requested && !force && !preClaimed) {
     claimed = await postJson(`${url}/api/auto-cart/rc-holds`, token, { updateClaim: 'scheduled-task' })
       .then((j) => j?.granted === true)
       .catch(() => false);

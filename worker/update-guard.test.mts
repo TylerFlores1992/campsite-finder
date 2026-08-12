@@ -728,10 +728,14 @@ test('a REQUESTED update is claimed; a quiet-window one is not', async () => {
   // ONLY when requested. A quiet-window update has no request to claim - claimBotUpdate
   // requires a pending one - so claiming unconditionally would refuse EVERY scheduled
   // update, which is the exact failure this file exists to avoid.
-  assert.match(guard, /if \(requested && !force\)/, 'claim only a requested update, and never under --force');
+  // `!preClaimed` joined this condition on 2026-08-12: the pollers claim before spawning
+  // auto-update.ps1, so on that path the guard was competing with its own spawner and
+  // losing. The property this line has always asserted — claim only a REQUESTED update,
+  // never under --force — is unchanged. See the deadlock test below.
+  assert.match(guard, /if \(requested && !force && !preClaimed\)/, 'claim only a requested update, and never under --force');
 
   // A claim it cannot reach is a NO, matching the box side.
-  const block = guard.match(/if \(requested && !force\)[\s\S]*?\n  \}/)?.[0] ?? '';
+  const block = guard.match(/if \(requested && !force && !preClaimed\)[\s\S]*?\n  \}/)?.[0] ?? '';
   assert.ok(block, 'could not find the claim block');
   assert.match(block, /\.catch\(\(\) => false\)/, 'unreachable claim must not read as granted');
 });
@@ -752,4 +756,42 @@ test('update.bat records what it landed on', async () => {
   // file is a sha nobody checked.
   assert.match(rep, /rev-parse', 'HEAD'/, 'the commit must come from git itself');
   assert.match(rep, /process\.exit\(0\)/, 'a failed report must never fail the update');
+});
+
+test('the updater does not compete with the spawner that already claimed', async () => {
+  const { readFileSync } = await import('node:fs');
+  // THE DEADLOCK, 2026-08-12. `update-guard.mjs` runs on TWO paths: the Windows Scheduled
+  // Task runs it directly, and the pollers claim FIRST and then spawn `auto-update.ps1`,
+  // which runs it too. When the guard learned to claim (7193c21, to close the task's race),
+  // it started claiming on BOTH — so on the poller path it competed with the process that
+  // spawned it and lost to a claim taken one second earlier.
+  //
+  // "Update now" therefore refused itself with "another process holds the update claim",
+  // and because a standing request is re-claimed every 20 minutes it could never drain. The
+  // only way in became a human running update.bat: a fix deliverable solely by the mechanism
+  // it fixes. That is why this is a test and not a comment.
+  const guard = readFileSync('scripts/auto-cart-bot/update-guard.mjs', 'utf8');
+  const ps1 = readFileSync('scripts/auto-cart-bot/mini-pc/auto-update.ps1', 'utf8');
+  const chan = readFileSync('scripts/auto-cart-bot/control-channel.mjs', 'utf8');
+
+  // The guard must honour a spawner that says it already holds the claim...
+  assert.match(guard, /--claimed/, 'the guard must accept --claimed');
+  assert.match(
+    guard,
+    /if \(requested && !force && !preClaimed\)/,
+    'the claim must be skipped when the spawner already holds it',
+  );
+
+  // ...auto-update.ps1 must be able to pass it through...
+  assert.match(ps1, /\[switch\]\$Claimed/, 'auto-update.ps1 needs a -Claimed switch');
+  assert.match(ps1, /if \(\$Claimed\) \{ \$guardArgs \+= "--claimed" \}/, 'and must forward it');
+
+  // ...and the poller, which claims before spawning, must actually pass it. Without this
+  // line the other two are inert and the deadlock is exactly as it was.
+  assert.match(chan, /'-File', script, '-Claimed'/, 'the poller must spawn with -Claimed');
+
+  // THE RACE THAT COMMIT CLOSED MUST STAY CLOSED. The scheduled task claims nothing, so the
+  // guard is its only gate — if it ever stopped claiming outright, two tasks five minutes
+  // apart could move one checkout, which is what 7193c21 existed to prevent.
+  assert.match(guard, /updateClaim: 'scheduled-task'/, 'the task path must still claim');
 });
