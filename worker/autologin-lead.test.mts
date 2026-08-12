@@ -99,3 +99,45 @@ test('the readout quotes the real lead, not a remembered one', () => {
   assert.equal(Number(m[1]), LEAD, 'and it must match rc-keepwarm.mjs');
   assert.ok(!/~15 min before a hold/.test(readout), 'no hard-coded lead in the printed text');
 });
+
+test('the health check does not declare the repair spent before it has run', () => {
+  // THE BUG THIS PINS, caught live at T-34 on 2026-08-12. `autocart.rc_session` read `fail`
+  // and said "the auto-login has had its turn — run mini-pc\rc-login.bat" while
+  // `maybeAutoLogin` had not run at all; it then ran at ~T-31 and signed in unattended.
+  // Anyone acting on that sentence would have driven to the box over a session that
+  // repaired itself four minutes later — the 2026-08-09 cry-wolf, a second time, in the
+  // one check the 07:40 pre-flight reads.
+  //
+  // Cause: ONE constant was doing two jobs. RC_SESSION_CRITICAL_MIN (45) is when a dead
+  // session starts to MATTER; it is not when the repair is spent, which cannot be sooner
+  // than the login actually runs (LEAD, 30). The alarm gate learned this and the health
+  // check kept the naive version.
+  const th = readFileSync('src/lib/health-thresholds.ts', 'utf8');
+  const spent = num(th, 'RC_SESSION_REPAIR_SPENT_MIN');
+
+  assert.ok(
+    spent < LEAD,
+    `the repair cannot be "spent" at T-${spent} when the login does not run until T-${LEAD}`,
+  );
+  assert.ok(
+    LEAD - spent <= 8,
+    `spent (${spent}) sits ${LEAD - spent}m inside the lead — too long to keep calling a dead ` +
+    'session routine once the repair has had its chance',
+  );
+
+  // One definition, shared with the phone alarm. Two numbers for "has the repair had its
+  // turn" is how the page and the phone come to disagree about the same session.
+  assert.equal(spent, num(route, 'ALARM_AFTER_MIN'), 'must be the same number the alarm gates on');
+
+  // And the web side's mirror of the lead must track the box's, since it is printed in the
+  // sentence a human reads while deciding whether to intervene.
+  assert.equal(num(th, 'RC_AUTOLOGIN_LEAD_MIN'), LEAD, 'web-side lead mirror must match rc-keepwarm.mjs');
+
+  // The severity must be driven by the spent window, not by the "matters" window.
+  const health = readFileSync('src/app/api/health/status/route.ts', 'utf8');
+  assert.match(health, /repairSpent \? 'fail'/, 'severity must gate on repairSpent');
+  assert.ok(
+    !/dead && soon > 0 \? 'fail'/.test(health),
+    'the 45-minute window must not decide that the auto-login has had its turn',
+  );
+});

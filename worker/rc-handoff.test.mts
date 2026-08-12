@@ -247,3 +247,38 @@ test('extension/ is included in the deployment', () => {
   assert.match(cfg, /outputFileTracingIncludes/);
   assert.match(cfg, /extension\/content-rc\.js/);
 });
+
+test('the claim screen never promises a cart the POSTs have not earned', () => {
+  // THE STANDING RULE, NOW ENFORCED. `docs`/CLAUDE.md have said since 2026-08-09 that the
+  // claim copy must not say "we're carting it for you" until a real hold reports
+  // `✓ Added to cart` — because a user who believes the site is handled STOPS WATCHING, and
+  // the exposure window is then spent on nobody. The 2026-08-12 hold is the reason this is
+  // a test rather than a paragraph: it captured a 939-char token and reported no cart at
+  // all, and the very next edit to this screen promised one anyway.
+  //
+  // Scoped to the PRE-RELEASE instructions, which is where the promise would change what
+  // the user does. Post-release copy may describe a cart, because by then it either
+  // happened or it did not and the screen is reporting rather than predicting.
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+
+  // READ THE RENDERED SENTENCE, NOT THE SOURCE LINE. The first version of this test matched
+  // on raw JSX with a character class that excluded `<`, so `We let go and add <strong>{site}
+  // </strong> to your cart.` — the precise string that prompted the test — sailed straight
+  // through, because the tag interrupts the phrase. Verified by restoring that copy and
+  // watching this pass. Strip the markup, then read the prose the user actually sees.
+  const prose = src
+    .split('\n')
+    .filter((l) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(l))
+    .join('\n')
+    .replace(/<[^>]*>/g, '')      // JSX tags
+    .replace(/\{[^{}]*\}/g, ' '); // interpolations: {site} is a name, not a claim
+
+  // "we … cart" as a FUTURE promise by us. The honest forms — "check your cart", "it may
+  // already be in there" — are about the user looking, and say nothing about what we will do.
+  const promises = [...prose.matchAll(/\bwe(?:'|’)?(?:ll| will)?\b[^.!?]{0,60}?\b(?:add[^.!?]{0,30}?cart|cart(?:ing)? it)\b/gi)];
+  assert.deepEqual(
+    promises.map((m) => m[0].trim()),
+    [],
+    'the claim screen must not promise a cart until a real hold reports "Added to cart"',
+  );
+});

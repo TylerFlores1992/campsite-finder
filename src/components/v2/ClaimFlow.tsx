@@ -1,6 +1,6 @@
 'use client';
 
-import { openRcHandoff, rcHandoffUrl, type RcReport } from '@/lib/native/rc-handoff';
+import { openRcHandoff, rcHandoffUrl, rcHandoffDiagnostics, type RcReport } from '@/lib/native/rc-handoff';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Check, AlertTriangle, Tent } from 'lucide-react';
 import { formatStayDates } from '@/lib/notifications/dates';
@@ -62,6 +62,45 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
   const redirected = useRef(false);
 
   /**
+   * STEP ONE OF THE CLAIM: sign in to RC *inside our own webview*, before the release.
+   *
+   * `lib/native/rc-handoff` worked this out and then it was never built: "the only way
+   * through is a one-time sign-in to RC INSIDE our webview, whose data store then persists
+   * for later claims... the answer is probably SIGN IN INSIDE THE WEBVIEW, AS STEP ONE OF
+   * THE CLAIM". Every call to `openRcHandoff` was still on the far side of the release, so
+   * there was no step one — the injectable webview did not exist until the drop had already
+   * happened.
+   *
+   * That is not a cosmetic ordering problem. The webview we can inject into has its OWN
+   * cookie jar (WKWebsiteDataStore on iOS, a separate CookieManager on Android), so signing
+   * in via the system browser — which is what the old step 1 link opened — puts the session
+   * somewhere the injection can never read. The only session that counts is one established
+   * inside this webview, and the only chance to establish it was after the clock started.
+   *
+   * Measured on the 2026-08-12 hold, which is what forced this: the first injection reported
+   * "Couldn't read your RC login", the user signed in mid-window, and a LATER injection then
+   * captured a 939-char token. So the data store does persist across separate opens — the
+   * mechanism was fine, only the ordering was wrong.
+   *
+   * OPENED WITHOUT A `unitId`, which is what makes this safe to do early: `rcFragment`
+   * returns '' with no unit, the injected script finds no job and reports `idle` ("nothing
+   * to cart"), and still captures the token on its way past. A rehearsal of everything
+   * except the cart — the same shape as `rc-hold-runner --once` going through `withRC` with
+   * a no-op callback rather than asserting from above an early return.
+   */
+  const [rcCheck, setRcCheck] = useState<'idle' | 'opening' | 'verified' | 'unconfirmed'>('idle');
+  /** Does THIS binary have an injectable webview? Probed without opening one. */
+  const [canInject, setCanInject] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    void rcHandoffDiagnostics()
+      .then((d) => { if (live) setCanInject(d.inAppBrowser === 'present'); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+
+  /**
    * Ship what the injected precart says about itself back to the server.
    *
    * THE TWO RC CART POSTS ARE THE LAST UNMEASURED LINK. Sign-in, session persistence and
@@ -96,7 +135,35 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     pending.current.push(r);
     if (flushTimer.current) clearTimeout(flushTimer.current);
     flushTimer.current = setTimeout(flushReports, 1500);
+
+    // THE VERIFICATION IS THE REPORT, not a second probe. `token captured` is the injected
+    // script telling us it read a live RC access token out of THIS webview's storage —
+    // which is the exact fact the release needs and the exact fact the checkbox could only
+    // ever guess at. Read from the same channel the diagnostics use, so the thing gating
+    // the button and the thing recorded on the hold can never disagree.
+    if (r.stage === 'token' && (r.detail as { captured?: boolean } | null)?.captured) {
+      setRcCheck('verified');
+    }
+    // The webview closed. If nothing announced a token before it went, we did not confirm
+    // a session — which is NOT the same as knowing there isn't one, and is treated that way
+    // below: it downgrades to the checkbox rather than blocking the release.
+    if (r.stage === 'closed') {
+      setRcCheck((prev) => (prev === 'verified' ? prev : 'unconfirmed'));
+    }
   }, [flushReports]);
+
+  /**
+   * Open RC in the injectable webview so the user can sign in BEFORE anything is released.
+   * No `unitId` — see the note on `rcCheck`; this must not be able to cart.
+   */
+  async function prepareRc() {
+    setRcCheck('opening');
+    try {
+      await openRcHandoff({ url: bookingUrl.current }, { onReport });
+    } catch {
+      setRcCheck('unconfirmed');
+    }
+  }
 
   // The webview closing and the page going away are both "we are about to lose whatever
   // has not been sent". `pagehide` fires in cases `beforeunload` does not on iOS.
@@ -177,10 +244,23 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     }, { onReport });
   }, [state, onReport]);
 
+  /**
+   * May we let go?
+   *
+   * VERIFICATION IS A FAST PATH, NEVER A NEW BLOCKER. A confirmed token is strictly better
+   * evidence than a ticked box, so it stands on its own — but "we could not confirm a
+   * session" and "there is no session" are different facts, and only the second would
+   * justify refusing. An unconfirmed check therefore falls back to the checkbox exactly as
+   * before rather than locking the user out of a hold they waited all morning for. Same rule
+   * as `unknown` never being reported as a dead RC session, and as the availability read
+   * returning null instead of "fully booked".
+   */
+  const mayRelease = rcCheck === 'verified' || signedIn;
+
   async function claim() {
     // Defensive: the button is disabled, but nothing else stops a stray call, and this
     // one is not undoable — the bot lets go and the site is on the open market.
-    if (!signedIn) return;
+    if (!mayRelease) return;
     setBusy(true);
     setError('');
     try {
@@ -246,57 +326,108 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
           NEW TAB on purpose: navigating away would lose this page, and the hold id and
           token live only in its URL.
         */}
-        <ol className="mt-5 w-full space-y-3 text-left text-sm text-ch-ink">
-          <li className="flex gap-3">
-            <span className="font-bold text-ch-green-deep">1.</span>
-            <span>
-              <a
-                href={rcHandoffUrl({ url: bookingUrl.current })}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-semibold text-ch-green-deep underline"
-              >
-                Open ReserveCalifornia in another tab
-              </a>{' '}
-              and sign in. Find <strong>{site}</strong> and get as far as you can without
-              booking — the site will look taken, because we&rsquo;re the ones holding it.
-            </span>
-          </li>
-          <li className="flex gap-3">
-            <span className="font-bold text-ch-green-deep">2.</span>
-            <span>Come back here and tap the button. We let go.</span>
-          </li>
-          <li className="flex gap-3">
-            <span className="font-bold text-ch-green-deep">3.</span>
-            <span>Switch to that tab and book <strong>{site}</strong> straight away.</span>
-          </li>
-        </ol>
+        {/*
+          TWO FLOWS, BECAUSE THE APP CAN DO SOMETHING THE BROWSER CANNOT.
 
-        <label className="mt-5 flex w-full cursor-pointer items-start gap-3 rounded-xl border border-ch-line p-4 text-left">
-          <input
-            type="checkbox"
-            checked={signedIn}
-            onChange={(e) => setSignedIn(e.target.checked)}
-            className="mt-0.5 size-5 shrink-0 accent-ch-green-deep"
-          />
-          <span className="text-sm text-ch-ink">
-            I&rsquo;m signed in to ReserveCalifornia and looking at {site}
-          </span>
-        </label>
+          In a binary with an injectable webview, signing in happens INSIDE that webview and
+          the session it leaves behind is the one the precart will read. That is the whole
+          point of doing it first: the system browser's session — which is what the tab link
+          below opens — lives in a different cookie jar and is invisible to the injection.
+        */}
+        {canInject ? (
+          <ol className="mt-5 w-full space-y-3 text-left text-sm text-ch-ink">
+            <li className="flex gap-3">
+              <span className="font-bold text-ch-green-deep">1.</span>
+              <span>
+                <button onClick={prepareRc} className="font-semibold text-ch-green-deep underline">
+                  Open ReserveCalifornia and sign in
+                </button>{' '}
+                {rcCheck === 'verified'
+                  ? '— done, we can see your session.'
+                  : 'Sign in, then close it and come back. Nothing is released yet, so there is no rush.'}
+              </span>
+            </li>
+            {/*
+              DO NOT PROMISE THE CART HERE. The two RC cart POSTs are still unproven — the
+              2026-08-12 hold captured a token and never reported a cart — and telling the
+              user "we'll add it for you" before that is settled is worse than the manual
+              flow, because they stop watching and the window is spent. Say what we KNOW we
+              do (let go, and land them on the site), and let a cart that does fire be a
+              bonus they can see for themselves. Flip this only when a real hold reports
+              `✓ Added to cart`.
+            */}
+            <li className="flex gap-3">
+              <span className="font-bold text-ch-green-deep">2.</span>
+              <span>Tap the button. We let go and take you straight to <strong>{site}</strong>.</span>
+            </li>
+            <li className="flex gap-3">
+              <span className="font-bold text-ch-green-deep">3.</span>
+              <span>Book it straight away — check your cart first, it may already be in there.</span>
+            </li>
+          </ol>
+        ) : (
+          <ol className="mt-5 w-full space-y-3 text-left text-sm text-ch-ink">
+            <li className="flex gap-3">
+              <span className="font-bold text-ch-green-deep">1.</span>
+              <span>
+                <a
+                  href={rcHandoffUrl({ url: bookingUrl.current })}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold text-ch-green-deep underline"
+                >
+                  Open ReserveCalifornia in another tab
+                </a>{' '}
+                and sign in. Find <strong>{site}</strong> and get as far as you can without
+                booking — the site will look taken, because we&rsquo;re the ones holding it.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="font-bold text-ch-green-deep">2.</span>
+              <span>Come back here and tap the button. We let go.</span>
+            </li>
+            <li className="flex gap-3">
+              <span className="font-bold text-ch-green-deep">3.</span>
+              <span>Switch to that tab and book <strong>{site}</strong> straight away.</span>
+            </li>
+          </ol>
+        )}
+
+        {/* Confirmed evidence replaces the self-assertion. Shown only when we HAVE it —
+            an unconfirmed check must not read as a failure, because most of the time it
+            just means the user has not opened the sign-in step yet. */}
+        {rcCheck === 'verified' ? (
+          <p className="mt-5 w-full rounded-xl border border-ch-line bg-ch-green-soft p-4 text-left text-sm font-semibold text-ch-ink">
+            Signed in to ReserveCalifornia — ready to hand over.
+          </p>
+        ) : (
+          <label className="mt-5 flex w-full cursor-pointer items-start gap-3 rounded-xl border border-ch-line p-4 text-left">
+            <input
+              type="checkbox"
+              checked={signedIn}
+              onChange={(e) => setSignedIn(e.target.checked)}
+              className="mt-0.5 size-5 shrink-0 accent-ch-green-deep"
+            />
+            <span className="text-sm text-ch-ink">
+              I&rsquo;m signed in to ReserveCalifornia and looking at {site}
+            </span>
+          </label>
+        )}
 
         <button
           onClick={claim}
-          disabled={busy || !signedIn}
+          disabled={busy || !mayRelease}
           className="mt-4 w-full rounded-xl bg-ch-green-deep px-6 py-4 text-lg font-bold text-white disabled:opacity-60"
         >
           {busy ? 'Releasing…' : "It's mine — hand it over"}
         </button>
         {/* Say WHY it is disabled. A dead button with no explanation reads as broken,
             and this one is the last step of a flow they have already waited hours for. */}
-        {!signedIn && (
+        {!mayRelease && (
           <p className="mt-3 text-sm text-ch-muted">
-            Tick the box once you&rsquo;re signed in and on the page — we won&rsquo;t let
-            go until then.
+            {canInject
+              ? 'Sign in above, or tick the box, and we’ll let go.'
+              : 'Tick the box once you’re signed in and on the page — we won’t let go until then.'}
           </p>
         )}
       </Shell>
