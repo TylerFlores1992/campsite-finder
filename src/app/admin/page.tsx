@@ -2,7 +2,7 @@ import { clerkClient } from '@clerk/nextjs/server';
 import { currentUserIsAdmin } from '@/lib/admin';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import Stripe from 'stripe';
+import { getStripe, stripeConfigured } from '@/lib/stripe-client';
 import BrandMark from '@/components/v2/BrandMark';
 import AdminAutoRefresh from '@/components/AdminAutoRefresh';
 import AdminTabs, { type AdminData } from '@/components/admin/AdminTabs';
@@ -49,9 +49,12 @@ async function safe<T>(p: Promise<T | null>, fallback: T): Promise<T> {
 /** Realized MRR from Stripe: sum active subscriptions, normalized to monthly.
  *  (Trialing subs aren't paying yet, so they're excluded.) Returns null on error. */
 async function computeMrr(): Promise<{ monthly: number; activeCount: number } | null> {
-  const key = process.env.STRIPE_SECRET_KEY;
-  if (!key) return null;
-  const stripe = new Stripe(key.trim());
+  // Through the shared client, not a sixth construction. The null-on-missing posture is
+  // kept on purpose: a dashboard tile should say "no figure" rather than take the page
+  // down, which is the opposite call from the billing routes, where a caller needs to
+  // hear that Stripe is unreachable.
+  if (!stripeConfigured()) return null;
+  const stripe = getStripe();
   let cents = 0;
   let activeCount = 0;
   for await (const sub of stripe.subscriptions.list({

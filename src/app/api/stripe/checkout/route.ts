@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Stripe from 'stripe';
+import { getStripe } from '@/lib/stripe-client';
 import { requireAuth, syncUser } from '@/lib/auth';
 import { queryOne } from '@/lib/db/client';
 import { autocartPlanConfigured, isBillingInterval, isPlanTier, priceIdFor } from '@/lib/stripe-plans';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!.trim());
-
 export async function POST(req: NextRequest) {
+  const stripe = getStripe();
   const userId = await requireAuth();
   await syncUser(userId);
 
@@ -88,6 +87,7 @@ export async function POST(req: NextRequest) {
 
 /** Most recent Stripe customer for this email, or null. */
 async function findCustomerId(email: string): Promise<string | null> {
+  const stripe = getStripe();
   try {
     const { data } = await stripe.customers.list({ email, limit: 100 });
     if (data.length === 0) return null;
@@ -111,6 +111,7 @@ async function findCustomerId(email: string): Promise<string | null> {
  */
 async function hasHadTrialInStripe(email: string | undefined): Promise<boolean> {
   if (!email) return false;
+  const stripe = getStripe();
   try {
     const { data: customers } = await stripe.customers.list({ email, limit: 100 });
     for (const c of customers) {

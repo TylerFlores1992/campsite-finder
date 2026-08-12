@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
+import { getStripe } from '@/lib/stripe-client';
 import { clerkClient } from '@clerk/nextjs/server';
 import { requireAuth } from '@/lib/auth';
 import { query, mutate } from '@/lib/db/client';
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!.trim());
 
 /**
  * Delete the signed-in user's account, for real.
@@ -35,6 +34,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!.trim());
  * words before the button is pressed — see v2/DeleteAccount.tsx.
  */
 export async function POST() {
+  const stripe = getStripe();
   const userId = await requireAuth();
 
   // ── 1. Stop the billing ────────────────────────────────────────────────────

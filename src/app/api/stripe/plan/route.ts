@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Stripe from 'stripe';
+import { getStripe } from '@/lib/stripe-client';
 import { requireAuth } from '@/lib/auth';
 import { mutate, queryOne } from '@/lib/db/client';
 import { autocartPlanConfigured, isPlanTier, priceIdFor, tierForPriceId } from '@/lib/stripe-plans';
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!.trim());
 
 /**
  * Change an EXISTING subscription's plan in place (base <-> autocart), keeping the
@@ -16,6 +14,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!.trim());
  * a plan. This route requires a live subscription and 409s without one.
  */
 export async function POST(req: NextRequest) {
+  const stripe = getStripe();
   const userId = await requireAuth();
 
   const body = (await req.json().catch(() => ({}))) as { plan?: unknown };

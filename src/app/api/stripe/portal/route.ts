@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
+import { getStripe } from '@/lib/stripe-client';
 import { requireAuth } from '@/lib/auth';
 import { queryOne } from '@/lib/db/client';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!.trim());
-
 export async function POST() {
+  const stripe = getStripe();
   const userId = await requireAuth();
 
   const sub = await queryOne<{ stripe_customer_id: string }>(

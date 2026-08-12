@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
+import { getStripe } from '@/lib/stripe-client';
 import { mutate } from '@/lib/db/client';
 import { tierForPriceId, type PlanTier } from '@/lib/stripe-plans';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!.trim());
-
 export async function POST(req: NextRequest) {
+  const stripe = getStripe();
   const body = await req.text();
   const sig = req.headers.get('stripe-signature');
 
@@ -70,6 +70,7 @@ export async function POST(req: NextRequest) {
 /** Tier implied by a subscription's current price. 'base' when it can't be read —
  *  see the caller for why that failure mode is the right one. */
 async function tierOfSubscription(subscriptionId: string): Promise<PlanTier> {
+  const stripe = getStripe();
   try {
     const sub = await stripe.subscriptions.retrieve(subscriptionId);
     return tierForPriceId(sub.items?.data?.[0]?.price?.id);
