@@ -231,6 +231,84 @@ export const COMMANDS = {
     return await run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps]);
   },
 
+  /**
+   * KILL OUR CHROMIUM, by profile family.
+   *
+   * 2026-08-12: a browser on our profiles reached 9.4 GB and drove COMMIT to 99% of 50 GB,
+   * growing ~395 MB/min. `restart-rc` killed two of that instance's nine processes and left
+   * the rest - correctly, because it scopes to `.rc-bot-profile` and this one was on a
+   * rec.gov profile. There was no remote way to end it; a person had to type `taskkill` into
+   * a phone. At 99% commit `supervise.ps1` cannot start a shell, so the recovery path was
+   * about to disappear too.
+   *
+   * WHY A WHOLE FAMILY AND NOT A PID. A pid from a `memory` reading is already stale by the
+   * time anyone acts on it, and one Chromium is nine processes - killing "the big one" leaves
+   * eight holding the profile lock, which is the failure `restart-rc` just demonstrated. The
+   * profile dir is the identity that survives both problems.
+   *
+   * Matched on `--user-data-dir`, the same rule `memory` counts by and stop-all kills by, so
+   * the owner's own browser is never in range. NEVER by image name.
+   */
+  'kill-chrome': async (arg) => {
+    // The families, as regex alternatives against the command line. `rc` is the keep-warm and
+    // hold-runner profile; `recgov` is the per-user auto-cart profiles under auto-cart-bot.
+    //
+    // FIXED LINES, SELECTED BY THE ARG - never built from it. `worker/bot-commands.test.mts`
+    // caught the first draft interpolating `arg` into the script, and it was right to: the
+    // server validates the arg, and the box must not depend on that being true. The arg
+    // chooses which of three constant strings to use and contributes not one character.
+    const PAT = {
+      rc: "$pat = '--user-data-dir=\\S*\\.rc-bot-profile';",
+      recgov: "$pat = '--user-data-dir=\\S*auto-cart-bot';",
+      all: "$pat = '--user-data-dir=\\S*(\\.rc-bot-profile|auto-cart-bot)';",
+    };
+    const patLine = PAT[arg];
+    // Defence in depth: this must not fall through to "kill everything" if that validation is
+    // ever loosened. An unknown scope kills nothing.
+    // The scope is NOT echoed back. `worker/bot-commands.test.mts` forbids `${arg}` anywhere
+    // in these handlers, and that bluntness is the point — it cannot tell a harmless error
+    // string from a command line, so the rule is "the arg never appears", full stop. Working
+    // around it with string concatenation would satisfy the regex and defeat the test.
+    if (!patLine) return 'unknown scope - expected rc, recgov or all. Nothing was killed.';
+    const clearsRcLock = arg === 'rc' || arg === 'all';
+
+    const ps = [
+      patLine,
+      "$ours = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -match $pat });",
+      "'BEFORE   {0} chrome.exe matched' -f $ours.Count;",
+      // Report the sizes we are about to reclaim, so the answer says what it achieved rather
+      // than merely that it ran - the `status = 'sent'` lesson.
+      '$sum = 0; foreach ($o in $ours) { $q = Get-Process -Id $o.ProcessId -ErrorAction SilentlyContinue; if ($q) { $sum += $q.PrivateMemorySize64 } };',
+      "'         {0:N1} GB private across them' -f ($sum/1GB);",
+      'foreach ($o in $ours) { Stop-Process -Id $o.ProcessId -Force -ErrorAction SilentlyContinue };',
+      // Chromium takes a moment to actually go, and a kill that is merely ISSUED is not a
+      // kill that happened - the same reason restart-rc re-checks before relaunching.
+      'Start-Sleep -Seconds 3;',
+      "$left = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -match $pat });",
+      "'AFTER    {0} still running' -f $left.Count;",
+      "foreach ($l in $left) { '  SURVIVED pid {0}' -f $l.ProcessId };",
+      // A force kill never runs the profile lock's release, so the file survives and the
+      // restarted keep-warm reads it as another process holding the profile - then waits 60s
+      // and gives up, every pass, for ever. Same cleanup restart-rc does, for the same reason.
+      ...(clearsRcLock
+        ? [
+            "Remove-Item '.rc-bot-profile\\.camphawk-profile-lock' -Force -ErrorAction SilentlyContinue;",
+            "Remove-Item '.rc-bot-profile\\.camphawk-profile-wanted' -Force -ErrorAction SilentlyContinue;",
+            "'cleared the RC profile lock so the keep-warm can reopen';",
+          ]
+        : []),
+      '$os = Get-CimInstance Win32_OperatingSystem;',
+      '$cLim = [double]$os.TotalVirtualMemorySize * 1KB; $cFree = [double]$os.FreeVirtualMemory * 1KB;',
+      "'COMMIT   {0:N1} GB used of {1:N1} GB limit ({2:N0}%)' -f (($cLim-$cFree)/1GB), ($cLim/1GB), (100*($cLim-$cFree)/[Math]::Max($cLim,1));",
+      // The processes are gone; nothing here restarts them. Say so, because a silent recovery
+      // that did not happen is exactly the assumption that cost the 08-10 morning.
+      "'';",
+      "'Nothing was restarted. The supervisors should bring the payloads back; if they do not,';",
+      "'run restart-rc.'",
+    ].join(' ');
+    return await run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps]);
+  },
+
   /** What commit is the box actually on - the question behind half of tonight. */
   'git-status': async () => {
     const head = await run('git', ['rev-parse', '--short', 'HEAD']);

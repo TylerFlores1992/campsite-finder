@@ -41,7 +41,17 @@ test('an unknown kind is refused on BOTH sides', async () => {
 test('the box never executes anything the server sends', () => {
   // THE WHOLE DESIGN. `kind` selects a function; `arg` is data that each handler validates.
   // If an argument ever reaches a command line, this stops being an allowlist.
-  const listing = botFile.slice(botFile.indexOf("'list-processes'"), botFile.indexOf("'git-status'"));
+  // COMMENTS STRIPPED FIRST. This is an ABSENCE assertion, and an absence assertion that
+  // reads comments fails on the note explaining the rule — so the only way to document why
+  // a handler must not interpolate is to not mention the thing it must not do. That trap is
+  // already recorded for the .ps1 tests ("must not kill by image name" failing on the comment
+  // saying not to); this test had the same hole and `kill-chrome` was the first handler whose
+  // comment tripped it.
+  const listing = botFile
+    .slice(botFile.indexOf("'list-processes'"), botFile.indexOf("'git-status'"))
+    .split('\n')
+    .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join('\n');
   assert.ok(!/\$\{arg\}/.test(listing), 'no interpolation of arg into the PowerShell script');
   // execFile, never exec/shell: no shell means no metacharacters to escape.
   assert.match(botFile, /execFile/);

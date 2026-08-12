@@ -29,6 +29,36 @@ export const BOT_COMMAND_KINDS = {
    * the same night, which made it look like anything but a memory problem.
    */
   'memory': { label: 'Memory, commit and the browsers we are running', argPattern: null, argOptions: null, argHint: '' },
+  /**
+   * KILL OUR CHROMIUM. Added 2026-08-12, when a browser on our profiles leaked to 9.4 GB and
+   * took COMMIT to 99% of 50 GB — and there was NO REMOTE REMEDY for it.
+   *
+   * `restart-rc` could not clear it and was right not to: it matches
+   * `--user-data-dir=…\.rc-bot-profile`, i.e. the RC profile only, deliberately leaving the
+   * rec.gov bot alone. The leaking process was on a rec.gov profile, so the one lever that
+   * exists for a runaway browser does not reach the family it actually came from. It took a
+   * person typing `taskkill` into a phone to end it.
+   *
+   * That is the same shape as 2026-08-11's control channel: the thing you most need a remote
+   * lever for is the thing whose absence removes the lever. A supervisor that cannot start a
+   * shell because commit is exhausted cannot restart anything, so this has to be reachable
+   * BEFORE the box gets there.
+   *
+   * SCOPED, NEVER BY IMAGE NAME. `taskkill /IM chrome.exe /F` was in update.bat once and
+   * closes the browser of whoever is sitting at this machine — which is somebody's home PC.
+   * The scopes match the same `--user-data-dir` families `memory` counts and stop-all kills
+   * by, so a person's own browser can never be in range.
+   *
+   * The arg is REQUIRED and has no default. "Kill our browsers" reads as harmless until it
+   * ends a rec.gov keepalive session mid-morning and the user has to sign in again; whoever
+   * runs it should have to say which family they mean.
+   */
+  'kill-chrome': {
+    label: 'Kill our Chromium (runaway memory)',
+    argPattern: /^(rc|recgov|all)$/,
+    argOptions: ['rc', 'recgov', 'all'] as const,
+    argHint: 'which profiles: rc, recgov or all',
+  },
   'git-status': { label: 'What commit is the box on', argPattern: null, argOptions: null, argHint: '' },
   'disk-free': { label: 'Free disk space', argPattern: null, argOptions: null, argHint: '' },
   /**
