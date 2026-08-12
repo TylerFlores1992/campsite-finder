@@ -220,3 +220,14 @@ test('the critical window matches the alarm lead', () => {
   assert.ok(RC_SESSION_CRITICAL_MIN > 30,
     'it must exceed RC_AUTOLOGIN_LEAD_MIN, or it fails before the repair has even run');
 });
+
+test('a routine dead session does not send anyone to the mini-PC', () => {
+  // The detail said "a human must run `node rc-keepwarm.mjs --login`" on EVERY dead verdict,
+  // which is most of the day. On 2026-08-09 I read exactly that and told the owner to sign in
+  // by hand — over the session that carted a site fifteen minutes later. Instructions are
+  // part of the check: one that asks for work the machine is about to do itself trains people
+  // to ignore it.
+  const route = readFileSync('src/app/api/health/status/route.ts', 'utf8');
+  assert.match(route, /normal between releases/, 'the routine case must say so');
+  assert.match(route, /the auto-login has had its turn/, 'and the urgent case must be distinct');
+});

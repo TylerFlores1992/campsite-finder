@@ -389,7 +389,18 @@ export async function GET() {
             `so the last verdict (${beat.session_ok ? 'accepted' : 'REJECTED'}) means nothing now` +
             (ahead > 0 ? ` — ${ahead} hold(s) ahead will fail` : '') +
             '. On the mini-PC: mini-pc\\rc-login.bat'
-          : (dead ? 'RC REJECTED the session — a human must run `node rc-keepwarm.mjs --login`' : 'RC accepts the session') +
+          // DON'T SEND SOMEBODY TO THE BOX FOR A REPAIR THE MACHINE IS ABOUT TO DO. This
+          // said "a human must run --login" on every dead verdict, which is most of the day:
+          // the token lives about an hour and `maybeAutoLogin` signs in at T-30 unattended.
+          // Telling the owner to intervene at 6am over a session that will fix itself at
+          // 07:30 is the 2026-08-09 cry-wolf in written form - and that morning I did read
+          // it and did tell them to sign in by hand, over the session that carted the site
+          // fifteen minutes later.
+          : (dead
+              ? soon > 0
+                ? 'RC REJECTED the session and the auto-login has had its turn — run mini-pc\\rc-login.bat'
+                : 'RC rejects the current token — normal between releases, the token only lives ~1h'
+              : 'RC accepts the session') +
             // "for 7h20m" is the number the design turns on: an RC session has died
             // ~8-9h after sign-in twice, with keep-warm running throughout, so how long
             // this one has survived is the live measurement — not a footnote. See 047.
