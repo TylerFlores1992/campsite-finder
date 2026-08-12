@@ -1293,6 +1293,22 @@ function autocartPayload(watch: WatchRow, result: WatchResult): NotificationPayl
       ? `https://www.recreation.gov/camping/campsites/${result.campsiteId}#camphawk=${watch.start_date}_${watch.end_date}`
       : `https://www.recreation.gov/camping/campgrounds/${watch.campground_id}`,
     campsiteName: result.campsiteName,
+    // THE SITE ID, which this dropped for as long as the auto-cart lane has existed.
+    //
+    // Every alert the lane produces is replayed from this payload - the `carted` one from
+    // /api/auto-cart/result, and the fallback below when the bot did not cart. Without it:
+    //   - the booking link degrades to the whole CAMPGROUND instead of the site, so three
+    //     alerts for three different sites read as three identical texts;
+    //   - `campsiteId` is the MUTE TARGET (lib/notifications: `payload.campsiteId ?
+    //     actionUrlFor(... 'mute_site' ...) : null`), so the one control that would stop a
+    //     noisy site is silently absent from exactly the alerts you would want it on;
+    //   - and the stored notification row cannot be attributed to a site afterwards, which
+    //     is why "am I getting duplicates?" could not be answered from the data.
+    //
+    // Observed 2026-08-11: Silver Lake site 044 sent at 08:08, 13:08 and 15:13, all three
+    // with id=undefined and no mute link. The job row has carried `campsite_id` in its own
+    // column the whole time - only the payload lost it.
+    campsiteId: result.campsiteId,
     startDate: watch.start_date,
     endDate: watch.end_date,
   };
@@ -1354,7 +1370,11 @@ async function reconcileAutocartJobs(): Promise<void> {
     if (claimed.length === 0) continue;
     if (stillOpen) {
       console.log(`[poller] autocart fallback: ${p.campgroundName} still open (cart_outcome=${job.cart_outcome ?? 'none'}) — sending normal alert (job ${job.id})`);
-      await dispatchNotifications(p).catch((e) => console.error(`[poller] autocart fallback dispatch failed for ${job.id}:`, e));
+      // `kind` EXPLICITLY. Dispatching the bare payload left it undefined, and every
+      // wording branch in lib/notifications keys off it - so the one alert that arrives
+      // LATE, because the bot could not cart, was the one that got the least specific text.
+      // It is an availability alert, arriving by a slower road; say so.
+      await dispatchNotifications({ ...p, kind: 'available' }).catch((e) => console.error(`[poller] autocart fallback dispatch failed for ${job.id}:`, e));
     } else {
       console.log(`[poller] autocart fallback: ${p.campgroundName} gone (cart_outcome=${job.cart_outcome ?? 'none'}) — staying silent (job ${job.id})`);
     }
