@@ -20,6 +20,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { botVersionVerdict } from '../src/lib/health-thresholds';
 
 const DEPLOY = 'aaaaaaa1111111111111111111111111111111111';
@@ -124,6 +125,39 @@ test('an unknown bot-code date never escalates, and says so', () => {
   });
   assert.equal(v.level, 'warn');
   assert.match(v.detail, /could not read when bot code last changed/);
+});
+
+test('the build refuses to trust a bot-code date from a shallow boundary', () => {
+  /**
+   * A SHALLOW CLONE DOES NOT RETURN "UNKNOWN" — IT RETURNS A WRONG ANSWER, in the dangerous
+   * direction. Measured by cloning this repo at both depths on 2026-08-12:
+   *
+   *   depth=1   HEAD 05:16:01   log -1 -- scripts/auto-cart-bot -> 05:16:01  (HEAD: wrong)
+   *   depth=10  HEAD 05:16:01   log -1 -- scripts/auto-cart-bot -> 05:14:34  (right)
+   *
+   * Git treats a shallow BOUNDARY commit as parentless, so every file looks added there and
+   * the path filter matches it unconditionally. CH_BOT_CODE_AT would then always equal
+   * CH_DEPLOY_AT — and `boxCommitAt < botCodeAt` is true for a box behind by even one
+   * commit, so EVERY ordinary drift would read "missing bot-side changes" and, with a hold
+   * queued, FAIL. That is the cry-wolf failure this file's severity rules exist to prevent,
+   * walked back in through the build environment rather than the logic.
+   *
+   * This is a source assertion because it cannot be exercised here: CI itself checks out at
+   * depth 1, so a clone-based test would take a different branch in CI than locally — which
+   * is precisely the class of test that passes where it does not matter.
+   */
+  const cfg = readFileSync('next.config.ts', 'utf8')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  assert.match(cfg, /rev-list["'],\s*["']--max-parents=0/,
+    'the build must find the roots of the available history');
+  assert.match(cfg, /!roots\.includes\(botSha\)/,
+    'a bot-code commit that is a root is a shallow boundary and must not be trusted');
+  // And the untrusted path must OMIT the variable rather than fall back to something —
+  // the check renders a missing value as a warn that names the gap, which is the only
+  // honest reading.
+  const trustBlock = cfg.slice(cfg.indexOf('const botSha'));
+  assert.ok(!/CH_BOT_CODE_AT\s*=\s*(at|sha)\b/.test(trustBlock),
+    'never substitute the deploy date for an unknown bot-code date');
 });
 
 test('the detail always names both commits', () => {

@@ -32,10 +32,36 @@ function gitFacts(): Record<string, string> {
   const out: Record<string, string> = {};
   const sha = process.env.VERCEL_GIT_COMMIT_SHA || git("rev-parse", "HEAD");
   const at = git("log", "-1", "--format=%cI");
-  const botAt = git("log", "-1", "--format=%cI", "--", "scripts/auto-cart-bot");
   if (sha) out.CH_DEPLOY_SHA = sha;
   if (at) out.CH_DEPLOY_AT = at;
-  if (botAt) out.CH_BOT_CODE_AT = botAt;
+
+  /**
+   * A SHALLOW CLONE DOES NOT SAY "I DON'T KNOW" — IT LIES, and the lie is the dangerous
+   * direction. Measured on 2026-08-12 by cloning this repo at both depths:
+   *
+   *   depth=1   HEAD 05:16:01   log -1 -- scripts/auto-cart-bot -> 05:16:01  (WRONG: HEAD)
+   *   depth=10  HEAD 05:16:01   log -1 -- scripts/auto-cart-bot -> 05:14:34  (right)
+   *
+   * Git treats a shallow BOUNDARY commit as parentless, so every file looks like it was
+   * added there and the path filter matches it unconditionally. `CH_BOT_CODE_AT` would then
+   * always equal `CH_DEPLOY_AT` — and since the check asks `boxCommitAt < botCodeAt`, that
+   * is TRUE for any box behind by even one commit. Every ordinary drift would report
+   * "MISSING bot-side changes", and with a hold queued that is a FAIL: exactly the
+   * cry-wolf failure botVersionVerdict's severity rules exist to prevent, walked back in
+   * through the build environment instead of the logic.
+   *
+   * So the commit is only trusted when it is NOT a root of the available history. In a
+   * shallow clone the boundary reports as a root; in a full clone the only root is the
+   * repo's initial commit, and bot code was not added there. Untrusted means the variable
+   * is OMITTED, which the check already renders as "could not read when bot code last
+   * changed" — a warn that names the missing evidence rather than a fail built on it.
+   */
+  const botSha = git("log", "-1", "--format=%H", "--", "scripts/auto-cart-bot");
+  const roots = git("rev-list", "--max-parents=0", "HEAD").split("\n").filter(Boolean);
+  if (botSha && !roots.includes(botSha)) {
+    const botAt = git("log", "-1", "--format=%cI", "--", "scripts/auto-cart-bot");
+    if (botAt) out.CH_BOT_CODE_AT = botAt;
+  }
   return out;
 }
 
