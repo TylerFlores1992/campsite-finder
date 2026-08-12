@@ -29,6 +29,72 @@ export function sqlit(val: unknown): string {
   return `'${String(val).replace(/'/g, "''")}'`;
 }
 
+/**
+ * Transport failures that PROVABLY happened before the statement reached Postgres.
+ *
+ * These are the only errors a non-idempotent statement may be repeated after: if the name
+ * never resolved, or the connection was refused, no server ever saw the SQL. Repeating is
+ * then indistinguishable from the first attempt having been made a moment later.
+ */
+const NEVER_SENT = [
+  /dns resolution failure/i,
+  /getaddrinfo/i,
+  /\bEAI_AGAIN\b/,
+  /\bENOTFOUND\b/,
+  /\bECONNREFUSED\b/,
+];
+
+/**
+ * Transport failures where the statement MAY have executed — the connection was made and
+ * then died, or timed out with no answer. Safe to repeat only for a read.
+ *
+ * `fetch failed` belongs here and not above even though a DNS failure often produces it:
+ * supabase-js surfaces only `error.message`, so undici's generic wrapper reaches us with
+ * its `cause` already discarded and cannot be told apart from a socket that died
+ * mid-statement. The ambiguous case has to be treated as the dangerous one.
+ */
+const MAYBE_SENT = [
+  /fetch failed/i,
+  /\bECONNRESET\b/,
+  /\bETIMEDOUT\b/,
+  /socket hang up/i,
+  /network error/i,
+  // `timed out`, not `timeout` — the message can carry text from the row being written,
+  // and an index called `sms_timeout_idx` in a constraint violation must not look transient.
+  /\btimed out\b/i,
+];
+
+/**
+ * May a failed statement be retried? `idempotent` is the caller's promise that running it
+ * twice is the same as running it once — true for `query` (exec_select refuses anything
+ * data-modifying), false for `mutate`.
+ *
+ * Everything not listed is NOT retried: a syntax error, a constraint violation or a
+ * permission failure will fail identically three times and only slow the report down.
+ */
+export function isRetryableDbError(message: string, opts: { idempotent: boolean }): boolean {
+  if (NEVER_SENT.some((re) => re.test(message))) return true;
+  return opts.idempotent && MAYBE_SENT.some((re) => re.test(message));
+}
+
+const DB_RETRY_ATTEMPTS = 3;
+const DB_RETRY_BASE_MS = 200;
+
+async function withDbRetry<T>(
+  idempotent: boolean,
+  run: () => PromiseLike<{ data: unknown; error: { message: string } | null }>
+): Promise<T[]> {
+  let last = '';
+  for (let attempt = 1; attempt <= DB_RETRY_ATTEMPTS; attempt++) {
+    const { data, error } = await run();
+    if (!error) return (data as T[]) ?? [];
+    last = error.message;
+    if (attempt === DB_RETRY_ATTEMPTS || !isRetryableDbError(last, { idempotent })) break;
+    await new Promise((r) => setTimeout(r, DB_RETRY_BASE_MS * 2 ** (attempt - 1)));
+  }
+  throw new Error(last);
+}
+
 /** Run a SELECT query via Supabase RPC. Params replace $1..$N placeholders. */
 export async function query<T = Record<string, unknown>>(
   sql: string,
@@ -36,9 +102,13 @@ export async function query<T = Record<string, unknown>>(
 ): Promise<T[]> {
   const finalSql = params ? interpolate(sql, params) : sql;
   const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase.rpc('exec_select', { query_text: finalSql });
-  if (error) throw new Error(`DB query error: ${error.message}\nSQL: ${finalSql}`);
-  return (data as T[]) ?? [];
+  try {
+    return await withDbRetry<T>(true, () =>
+      supabase.rpc('exec_select', { query_text: finalSql })
+    );
+  } catch (e) {
+    throw new Error(`DB query error: ${(e as Error).message}\nSQL: ${finalSql}`);
+  }
 }
 
 /** Run a SELECT and return the first row (or null). */
@@ -68,12 +138,16 @@ export async function mutate<T = Record<string, unknown>>(
   // not just written the comment.
   const hasReturning = /\breturning\b/i.test(stripSqlComments(sql));
   const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase.rpc('exec_dml', {
-    query_text: finalSql,
-    with_result: hasReturning,
-  });
-  if (error) throw new Error(`DB mutate error: ${error.message}\nSQL: ${finalSql}`);
-  return (data as T[]) ?? [];
+  try {
+    // NOT idempotent: only errors that prove the statement never left this process are
+    // retried. A repeated INSERT is a duplicate row, and a repeated `UPDATE .. SET x = x+1`
+    // is a wrong number — neither announces itself.
+    return await withDbRetry<T>(false, () =>
+      supabase.rpc('exec_dml', { query_text: finalSql, with_result: hasReturning })
+    );
+  } catch (e) {
+    throw new Error(`DB mutate error: ${(e as Error).message}\nSQL: ${finalSql}`);
+  }
 }
 
 /**
