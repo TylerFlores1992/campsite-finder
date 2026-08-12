@@ -968,6 +968,46 @@ All three had the same shape: **the failure produced the same output as the heal
   did not work is worse than no comment**, same as `6006428` claiming to fix the RC URL while
   only touching the copy.
 
+### The box ran out of COMMIT, and both diagnostics looked the other way (2026-08-12)
+`supervise.ps1` could not start a shell at all — *"the paging file is too small"*, then an
+`OutOfMemoryException`. **A supervisor that cannot launch a shell cannot restart anything**,
+so the process whose whole job is bringing the keep-warm and hold runner back failed at the
+one moment it exists for, and silently, because it is the thing that would have reported.
+- **It is COMMIT (RAM + page file), not disk.** `disk-free` answered 404 GB the same night,
+  which reads as "not a space problem" and sends the question the wrong way. Windows could
+  not *grow* a system-managed page file fast enough for a burst.
+- **`list-processes` cannot see the culprit by construction** — it matches our node and
+  PowerShell scripts only, so every Chromium (resident RC tab, rec.gov per-user profiles,
+  any orphan a force-kill left) is invisible. Those are the large ones.
+- **`memory`** reports RAM, commit against the limit, page file allocated/peak + whether it
+  is system-managed, our Chromium count and private total, and the top 12 by private bytes.
+  Ours is matched on our profile dirs — the same rule `stop-all` kills by — so the owner's
+  own browser is only ever a count. Commit comes from `Win32_OperatingSystem`'s *Virtual*
+  figures, not a perf counter: counter names are localised and the classes can be disabled.
+- **`mini-pc\fix-pagefile.ps1`** reports by default, `-Apply` writes. Sizes derive from the
+  box's own RAM (initial 1.5x floor 16 GB, max 4x floor 32 GB), it turns automatic
+  management off FIRST (it otherwise overrides the write and ignores it silently), and it
+  **reads the setting back**. It never reboots — the change is not live until one, and a
+  restart ends the RC session exactly like `update.bat`.
+- **Raising the ceiling is not reducing what sits under it.** "Chromium is the biggest
+  consumer" is an inference from what runs, not a measurement; the first `memory` reading
+  decides whether consumption also has to come down.
+- **A `.ps1` trap now guarded mechanically:** a backtick continues a line only as the LAST
+  character before the newline — one trailing space and it escapes the space, the statement
+  ends there, and the parse error surfaces well below the cause. Invisible in every editor,
+  and there is no PowerShell on the machine these files are written from.
+
+### `--once` asserted the one thing it never checked (2026-08-12)
+`rc-hold-runner.mjs --once` with nothing queued printed *"Feed reachable, token accepted"* —
+and that line sat **above** the early return, so `withRC` was never reached: no profile, no
+browser, no token, nothing sent to RC. `rc-check.bat` runs it as step 1, so **the message
+somebody sees when they are worried was the one least entitled to reassure them.** The quiet
+pass now goes through `withRC` with a no-op callback — a full rehearsal of everything except
+the two cart POSTs, which cannot be rehearsed without a real held unit. Three outcomes kept
+apart: pass, dead session / profile-not-taken (`withRC`'s own reason verbatim, plus "the
+SESSION was not tested"), and expired/undecodable — never rounded up to a pass, which is the
+2026-08-09 false green. `worker/rc-runner-smoke.test.mts`.
+
 ### Retry a DB call only when it never left (2026-08-12)
 Two real-DB tests flaked with `DB mutate error: DNS resolution failure`, and both times I
 re-ran and shrugged — which is how a real regression gets waved through. `client.ts` now
