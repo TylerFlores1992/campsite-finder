@@ -179,12 +179,28 @@ async function main() {
     console.log(`    ${body}\n`);
   }
 
+  // CHECKED BEFORE ANYTHING IS PROMISED. The first version discovered the missing
+  // credentials one variant at a time, after printing four messages it was about to send —
+  // and then still printed "Sent." at the end. See the counter below for why that matters.
+  const configured = !!process.env.TWILIO_ACCOUNT_SID && !!process.env.TWILIO_AUTH_TOKEN
+    && (!!process.env.TWILIO_FROM_NUMBER || !!process.env.TWILIO_MESSAGING_SERVICE_SID);
+
+  if (SEND && !configured) {
+    console.log('*** CANNOT SEND: no Twilio credentials in this environment. ***');
+    console.log('    Needs TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and one of');
+    console.log('    TWILIO_FROM_NUMBER / TWILIO_MESSAGING_SERVICE_SID.');
+    console.log('    Nothing was sent. Run this where those are set.');
+    process.exitCode = 1;
+    return;
+  }
+
   if (!SEND) {
     console.log('DRY RUN — nothing sent. Re-run with --send to send these for real.');
     console.log('Each is one real SMS to the number above, and some are EXPECTED to be filtered.');
     return;
   }
 
+  let sent = 0;
   for (const v of vs) {
     const body = v.body(v.link);
     const r = await twilioSend(body);
@@ -193,11 +209,22 @@ async function main() {
       `INSERT INTO notifications (channel, status, provider_id, payload) VALUES ('sms_test', $1, $2, $3::jsonb)`,
       [r.sid ? 'sent' : 'failed', r.sid, JSON.stringify({ variant: v.key, body, link: v.link })],
     ).catch((e) => console.log(`  (row insert failed: ${(e as Error).message})`));
+    sent++;
     console.log(`  → ${v.key}: ${r.sid ?? 'no sid'} (${r.status ?? '?'})`);
     // Spaced so a burst is not itself the variable being measured.
     await new Promise((s) => setTimeout(s, 4000));
   }
-  console.log('\nSent. Twilio\'s status is `queued`/`accepted` — NOT delivery.');
+  // NEVER "Sent." UNCONDITIONALLY. The first version printed it after all four sends had
+  // failed — the same defect as `rc-hold-runner --once` claiming "token accepted" above an
+  // early return, and as `notifications.status = 'sent'` meaning only that Twilio returned
+  // 2xx. A summary line must be a fact about what happened, not about what was attempted.
+  if (sent === 0) {
+    console.log(`\n*** NOTHING WAS SENT (0 of ${vs.length}). There is no result to read. ***`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`\nSent ${sent} of ${vs.length}. Twilio's status is \`queued\`/\`accepted\` — NOT delivery.`);
+  if (sent < vs.length) console.log(`${vs.length - sent} variant(s) failed to send; those are missing from the comparison.`);
   console.log('Wait ~1 minute, then:  NODE_USE_ENV_PROXY=1 npx tsx scripts/sms-link-test.mts --read');
 }
 
