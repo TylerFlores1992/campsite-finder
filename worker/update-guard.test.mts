@@ -688,3 +688,43 @@ test('every writer to the shared restart log survives contention', async () => {
       `${f}: write to the console before the file, or a locked file loses the line entirely`);
   }
 });
+
+
+test('a REQUESTED update is claimed; a quiet-window one is not', async () => {
+  // The scheduled task was the last path that spawned the updater without claiming, leaving
+  // the one race the claim exists to prevent still open: it fires every five minutes, and
+  // `npm ci` outlasts that, so a second updater could move the checkout under the first.
+  // Mitigated by hand on 2026-08-11 (set the flag, clear it the instant somebody claimed) -
+  // a workaround, not a fix.
+  const { readFileSync } = await import('node:fs');
+  const guard = readFileSync('scripts/auto-cart-bot/update-guard.mjs', 'utf8');
+  assert.match(guard, /updateClaim: 'scheduled-task'/, 'the task must claim before proceeding');
+
+  // ONLY when requested. A quiet-window update has no request to claim - claimBotUpdate
+  // requires a pending one - so claiming unconditionally would refuse EVERY scheduled
+  // update, which is the exact failure this file exists to avoid.
+  assert.match(guard, /if \(requested && !force\)/, 'claim only a requested update, and never under --force');
+
+  // A claim it cannot reach is a NO, matching the box side.
+  const block = guard.match(/if \(requested && !force\)[\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.ok(block, 'could not find the claim block');
+  assert.match(block, /\.catch\(\(\) => false\)/, 'unreachable claim must not read as granted');
+});
+
+test('update.bat records what it landed on', async () => {
+  // auto-update.ps1 reports; the MANUAL path did not, so the admin panel showed the last
+  // unattended result - "37e1527, REFUSED" - while the box ran d1ab782. It misled me twice
+  // in one evening, the second time with a git-status answer on screen contradicting it.
+  const { readFileSync } = await import('node:fs');
+  const bat = readFileSync('scripts/auto-cart-bot/mini-pc/update.bat', 'utf8');
+  assert.match(bat, /report-applied\.mjs/, 'update.bat must report the applied commit');
+
+  const rep = readFileSync('scripts/auto-cart-bot/mini-pc/report-applied.mjs', 'utf8');
+  // The token lives in .env, not the machine environment - the trap that made every
+  // auto-update.ps1 report 401 for hours.
+  assert.match(rep, /loadEnv\(/, 'it must load the .env like every other bot script');
+  // The commit is READ FROM GIT, never taken from the caller: a sha passed in by a batch
+  // file is a sha nobody checked.
+  assert.match(rep, /rev-parse', 'HEAD'/, 'the commit must come from git itself');
+  assert.match(rep, /process\.exit\(0\)/, 'a failed report must never fail the update');
+});

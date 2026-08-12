@@ -151,6 +151,22 @@ if (process.argv[1] && process.argv[1].endsWith('update-guard.mjs')) {
   //
   // An unread body also keeps a socket alive, which is the other way this process fails to
   // leave cleanly - so the non-ok path cancels it explicitly.
+  /** One short POST, same timeout discipline as the GET below. Returns the parsed body. */
+  const postJson = async (u, tok, body) => {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 15_000);
+    try {
+      const r = await fetch(u, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: c.signal,
+      });
+      if (!r.ok) { await r.body?.cancel?.().catch(() => {}); return null; }
+      return await r.json();
+    } finally { clearTimeout(t); }
+  };
+
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 15_000);
   try {
@@ -168,6 +184,34 @@ if (process.argv[1] && process.argv[1].endsWith('update-guard.mjs')) {
     }
   } catch { /* feedReachable stays false — see safeToUpdate */ }
   finally { clearTimeout(timer); }
+
+  // CLAIM A REQUESTED UPDATE, or stand down.
+  //
+  // Both the hold runner and the rec.gov bot claim through a POST before spawning the
+  // updater, so exactly one of them ever proceeds. This path - the Windows Scheduled Task -
+  // did not, which left the one race the claim exists to prevent still open: the task fires
+  // every five minutes, and `npm ci` can easily outlast that, so a second updater could move
+  // the checkout out from under the first. It was mitigated by hand on 2026-08-11 (set the
+  // flag, clear it the moment somebody claimed) and that is a workaround, not a fix.
+  //
+  // ONLY when `requested`. A quiet-window update has no request to claim - `claimBotUpdate`
+  // requires a pending one - and nothing else contends for it, because the runner and the bot
+  // act on the flag alone. Claiming unconditionally would therefore refuse every scheduled
+  // update, which is the failure this whole file exists to avoid.
+  //
+  // A claim we cannot reach is a NO, exactly as it is on the box side: an update is never
+  // urgent enough to risk two of them, and the request simply stays pending.
+  let claimed = true;
+  if (requested && !force) {
+    claimed = await postJson(`${url}/api/auto-cart/rc-holds`, token, { updateClaim: 'scheduled-task' })
+      .then((j) => j?.granted === true)
+      .catch(() => false);
+    if (!claimed) {
+      console.log('[update-guard] SKIP - another process holds the update claim (or we could not ask)');
+      process.exitCode = 1;
+      process.exit(1);
+    }
+  }
 
   const verdict = safeToUpdate({ nextRelease, feedReachable, requested, force });
   // THE VERDICT LINE IS THE CONTRACT, not the exit code - auto-update.ps1 reads this text.

@@ -172,11 +172,18 @@ test('the flag is informational; the claim happens at the point of USE', () => {
 });
 
 test('a box on OLD code is unaffected by the claim', () => {
-  // update-guard.mjs reads `updateRequested` off the GET and never posts a claim. That is the
-  // path the Windows scheduled task takes, and it is the ONLY way a stale checkout can ever
-  // update itself — so the claim must not be a precondition for it. This is the compatibility
-  // that the grant-on-read version silently broke.
+  // THE FLAG STAYS INFORMATIONAL ON THE FEED. That is the compatibility the grant-on-read
+  // version silently broke, and it is what lets a stale checkout - running a guard that
+  // predates the claim entirely - still be told an update is wanted. The scheduled task is
+  // the ONLY way such a box can ever update itself.
   const guard = readFileSync('scripts/auto-cart-bot/update-guard.mjs', 'utf8');
   assert.match(guard, /j\?\.updateRequested === true/, 'the guard reads the flag directly');
-  assert.ok(!/updateClaim/.test(guard), 'and must not need to claim anything');
+
+  // The current guard DOES claim, deliberately (2026-08-11) - it was the last path that
+  // spawned the updater without one. This assertion used to read "must not claim anything",
+  // which encoded the old design; it is REPLACED rather than deleted, because the property
+  // worth protecting was never "nobody claims", it was "the GET alone still tells you".
+  const server = readFileSync('src/lib/bot-control.ts', 'utf8');
+  assert.ok(!/claimBotUpdate/.test(code(server)),
+    'serving the flag must never consume the grant - an old box would get nothing');
 });
