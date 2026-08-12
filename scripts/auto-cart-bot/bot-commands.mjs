@@ -164,6 +164,73 @@ export const COMMANDS = {
     return await run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps]);
   },
 
+  /**
+   * WHY THE BOX RAN OUT, and the blind spot it was hiding behind (2026-08-12).
+   *
+   * `supervise.ps1` could not start a shell at all:
+   *
+   *     Starting the CLR failed with HRESULT 80004005.
+   *     Could not load file or assembly 'System.Management.Automation' ...
+   *     The paging file is too small for this operation to complete. (0x800705AF)
+   *     Exception of type 'System.OutOfMemoryException' was thrown.
+   *
+   * A supervisor that cannot launch a shell cannot restart anything, so this fails exactly
+   * when its whole job begins - the same shape as `restarts.log` dropping its lines during
+   * a stop.
+   *
+   * THE NUMBER THAT RAN OUT IS **COMMIT**, NOT DISK AND NOT FREE RAM. `disk-free` answered
+   * 404 GB the same night, which reads as "not a space problem" and sent the question the
+   * wrong way. "The paging file is too small" means Windows could not grow the page file to
+   * cover a commit request, so the figure to watch is committed bytes against the commit
+   * limit (RAM + page file), which nothing here reported.
+   *
+   * AND `list-processes` CANNOT SEE THE CULPRIT BY CONSTRUCTION. It matches our node and
+   * PowerShell scripts only, so every Chromium on the box - the resident RC keep-warm tab,
+   * the rec.gov per-user profiles, and any orphan a force-kill left behind - is invisible to
+   * it. Those are the largest consumers by a wide margin, and a memory question answered
+   * without them is answered about the wrong processes.
+   *
+   * Chromium is matched on OUR profile directories, the same rule stop-all.ps1 kills by, so
+   * a person's own browser on this machine is never counted as ours. Every other chrome.exe
+   * is reported as a COUNT and nothing else - enough to say "something else is using this
+   * machine", never what they have open.
+   */
+  'memory': async () => {
+    // A FIXED script, no interpolation - same rule as list-processes.
+    //
+    // Commit comes from Win32_OperatingSystem's *Virtual* figures rather than a performance
+    // counter: perf-counter names are localised and the classes can be disabled outright, and
+    // a diagnostic that returns nothing on some machines is the failure mode this whole file
+    // exists to remove. The regex uses \S* rather than a character class over a quote, so no
+    // double quote has to survive Node -> execFile -> powershell.exe.
+    const ps = [
+      '$os = Get-CimInstance Win32_OperatingSystem;',
+      '$ramTot = [double]$os.TotalVisibleMemorySize * 1KB;',
+      '$ramFree = [double]$os.FreePhysicalMemory * 1KB;',
+      '$cLim = [double]$os.TotalVirtualMemorySize * 1KB;',
+      '$cFree = [double]$os.FreeVirtualMemory * 1KB;',
+      '$cUsed = $cLim - $cFree;',
+      "'RAM      {0:N1} GB total, {1:N1} GB free' -f ($ramTot/1GB), ($ramFree/1GB);",
+      "'COMMIT   {0:N1} GB used of {1:N1} GB limit ({2:N0}%) <- this is what ran out' -f ($cUsed/1GB), ($cLim/1GB), (100*$cUsed/[Math]::Max($cLim,1));",
+      '$pf = @(Get-CimInstance Win32_PageFileUsage);',
+      "foreach ($p in $pf) { 'PAGEFILE {0} - {1:N1} GB allocated, peak {2:N1} GB' -f $p.Name, ($p.AllocatedBaseSize/1024), ($p.PeakUsage/1024) };",
+      "if ($pf.Count -eq 0) { 'PAGEFILE none in use' };",
+      '$st = @(Get-CimInstance Win32_PageFileSetting);',
+      "foreach ($s in $st) { 'PAGEFILE setting {0} - initial {1} MB, max {2} MB' -f $s.Name, $s.InitialSize, $s.MaximumSize };",
+      "if ($st.Count -eq 0) { 'PAGEFILE setting - system managed (Windows grows it lazily, which is what loses a burst)' };",
+      "$ours = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -match '--user-data-dir=\\S*(\\.rc-bot-profile|auto-cart-bot)' });",
+      '$sum = 0; foreach ($o in $ours) { $q = Get-Process -Id $o.ProcessId -ErrorAction SilentlyContinue; if ($q) { $sum += $q.PrivateMemorySize64 } };',
+      "'OURS     {0} chrome.exe on our profiles, {1:N1} GB private total' -f $ours.Count, ($sum/1GB);",
+      '$allC = @(Get-Process chrome -ErrorAction SilentlyContinue).Count;',
+      "'CHROME   {0} chrome.exe on the box in total (the rest are somebody using this machine)' -f $allC;",
+      "'';",
+      "'Top 12 by private bytes (private is what counts against the commit limit):';",
+      '$top = Get-Process | Sort-Object -Property PrivateMemorySize64 -Descending | Select-Object -First 12;',
+      "foreach ($t in $top) { '  {0,-20} {1,7:N0} MB  pid {2}' -f $t.ProcessName, ($t.PrivateMemorySize64/1MB), $t.Id };",
+    ].join(' ');
+    return await run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps]);
+  },
+
   /** What commit is the box actually on - the question behind half of tonight. */
   'git-status': async () => {
     const head = await run('git', ['rev-parse', '--short', 'HEAD']);

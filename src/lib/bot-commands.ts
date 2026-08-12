@@ -22,6 +22,13 @@ export const BOT_COMMAND_KINDS = {
     argHint: 'a log name, optionally :lines',
   },
   'list-processes': { label: 'Which of our processes are running', argPattern: null, argOptions: null, argHint: '' },
+  /**
+   * RAM, COMMIT and the browsers `list-processes` cannot see. Added 2026-08-12 after
+   * supervise.ps1 failed to start a shell at all with "the paging file is too small" — a
+   * supervisor that cannot launch cannot restart anything, and `disk-free` answered 404 GB
+   * the same night, which made it look like anything but a memory problem.
+   */
+  'memory': { label: 'Memory, commit and the browsers we are running', argPattern: null, argOptions: null, argHint: '' },
   'git-status': { label: 'What commit is the box on', argPattern: null, argOptions: null, argHint: '' },
   'disk-free': { label: 'Free disk space', argPattern: null, argOptions: null, argHint: '' },
   /**

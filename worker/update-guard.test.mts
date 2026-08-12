@@ -233,6 +233,31 @@ test('the PowerShell scripts are pure ASCII', async () => {
   }
 });
 
+test('no PowerShell line continuation has trailing whitespace after the backtick', async () => {
+  /**
+   * THE SAME INJURY AS THE EM DASH, through a different door — and there is no PowerShell
+   * on the machine these files are written from, so it cannot be caught by running them.
+   *
+   * A backtick continues a line ONLY when it is the last character before the newline. One
+   * trailing space and it becomes an escape of that space: the statement ends there, the
+   * next line is parsed as a new statement, and the error surfaces well below the cause —
+   * exactly how the em dash reported "missing the terminator" six lines from the em dash.
+   * Trailing whitespace is invisible in every editor and survives review perfectly.
+   */
+  const { readdirSync } = await import('node:fs');
+  const dir = 'scripts/auto-cart-bot/mini-pc';
+  for (const f of readdirSync(dir).filter((n) => n.endsWith('.ps1'))) {
+    const lines = (await miniPc(f)).split('\n');
+    lines.forEach((line, i) => {
+      assert.ok(
+        !/`[ \t]+\r?$/.test(line),
+        `${f}:${i + 1} ends with a backtick followed by whitespace — that is not a line ` +
+        'continuation, and the parse error will point somewhere else entirely',
+      );
+    });
+  }
+});
+
 test('every start path stops everything first, through the one script that verifies', async () => {
   for (const f of ['update.bat', 'start-all.bat']) {
     const s = await miniPc(f);
