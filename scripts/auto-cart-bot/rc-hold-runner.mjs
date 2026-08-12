@@ -32,7 +32,7 @@ import {
   requestProfile, clearProfileRequest,
 } from './profile-lock.mjs';
 import { installTokenCapture, primeToken, tokenSecondsLeft } from './rc-token.mjs';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { loadEnv, envSource, looksLikePlaceholder } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 import { makeControlChannel } from './control-channel.mjs';
@@ -66,6 +66,38 @@ let nextPollMs = POLL_MS;
 // The update hand-off and the diagnostics queue live in control-channel.mjs, shared with
 // bot.mjs. The retry window and the spawn's hard-won Windows details went with them.
 const HEADLESS = process.env.RC_HEADLESS === 'true';
+
+/**
+ * WHAT CODE IS THIS BOX RUNNING? Reported on every feed poll so the server can answer it
+ * without anybody asking.
+ *
+ * `autocart.rc_runner` proves this process can reach camphawk.app and `autocart.rc_session`
+ * proves RC accepts our token. Neither says whether the checkout is current — and the
+ * halves of this system deploy by different routes, which is the most expensive recurring
+ * failure in the log. `bot_commands`' `git-status` can answer it, but only when somebody
+ * asks; a header on a poll that already happens is passive and continuous.
+ *
+ * COMPUTED ONCE, AT STARTUP, NOT PER POLL. This loop runs every 15 seconds and spawning
+ * two git processes each time would be pure waste on the hot path that carts a site. It is
+ * also CORRECT to cache: the checkout cannot change under a running process without the
+ * updater stopping it first — that is what auto-update.ps1 does, and the restart is what
+ * re-reads this.
+ *
+ * A FAILURE HERE IS SILENT AND MUST BE. git missing, a shallow clone, a detached HEAD, no
+ * repo at all: every one of those leaves the headers off, the server records NULL, and the
+ * check says "we do not know what code the box runs". That is a warn. What it must never
+ * do is take down the runner — a diagnostic that can stop a cart is not worth having, the
+ * same rule the report channel and the diagnostics queue already follow.
+ */
+function botCommit() {
+  const git = (...a) => execFileSync('git', a, { cwd: HERE, encoding: 'utf8', timeout: 5_000 }).trim();
+  try {
+    return { sha: git('rev-parse', 'HEAD'), at: git('log', '-1', '--format=%cI') };
+  } catch {
+    return { sha: null, at: null };
+  }
+}
+const BOT_COMMIT = botCommit();
 
 const args = new Set(process.argv.slice(2));
 const ONCE = args.has('--once');
@@ -142,7 +174,14 @@ if (!fs.existsSync(PROFILE_DIR)) {
 
 async function feed() {
   const res = await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
-    headers: { authorization: `Bearer ${TOKEN}` },
+    headers: {
+      authorization: `Bearer ${TOKEN}`,
+      // Omitted entirely when unknown, rather than sent as a string saying so. An absent
+      // header and a header reading "unknown" would both have to be handled server-side,
+      // and only one of them cannot be mistaken for a value.
+      ...(BOT_COMMIT.sha ? { 'x-bot-commit': BOT_COMMIT.sha } : {}),
+      ...(BOT_COMMIT.at ? { 'x-bot-commit-at': BOT_COMMIT.at } : {}),
+    },
   });
   // A bare `feed 401` says the token is wrong and nothing about WHICH token — and the
   // shell silently outranks .env, so the one you would go and check is not the one in

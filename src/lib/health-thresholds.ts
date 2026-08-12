@@ -245,3 +245,99 @@ export const RC_RUNNER_STALE_MS = 3 * 60 * 1000;
  * Dead means the repair is pending; stale means the thing that would repair it is absent.
  */
 export const RC_SESSION_CRITICAL_MIN = Number(process.env.AUTOCART_ALARM_LEAD_MIN || 45);
+
+// ── Is the mini-PC running the code master has? (migration 056) ───────────────────────
+/**
+ * `autocart.rc_runner` proves the box can reach camphawk.app; `autocart.rc_session` proves
+ * RC accepts its token. Neither says whether the CHECKOUT is current, and the halves of
+ * this system deploy by different routes — Vercel auto-deploys on a push to master, the box
+ * waits for a quiet window or a human. Drift is therefore the normal state for part of
+ * every day, which is exactly why the severity has to be thought about rather than assumed.
+ *
+ * THE EXPENSIVE CASE IS NOT "DIFFERENT SHAS", IT IS "THE BOX IS MISSING BOT-SIDE CODE".
+ * 2026-08-11: `AUTOCART_ALARM_AFTER_MIN` reached Vercel instantly while
+ * `RC_AUTOLOGIN_LEAD_MIN` needed a human-run `update.bat`, and in the gap the alarm fires
+ * at T-25 while the login still waits for T-15 — the 2026-08-09 cry-wolf bug exactly.
+ *
+ * Master is linear, so a box whose HEAD commit is OLDER than the last commit touching
+ * `scripts/auto-cart-bot/` is missing bot-side code. That comparison needs no git ancestry
+ * on the server, which is the only reason this is computable at all from Vercel.
+ *
+ * WHY FAIL IS GATED ON A QUEUED HOLD. A box a few commits behind with nothing due is the
+ * ordinary state between an update and the next quiet window; failing on it would be red
+ * most mornings, which is the cry-wolf failure this file has already had to fix twice
+ * (`autocart.rc_session` on any hold ahead, and the alarm gate firing before the repair).
+ * Missing bot-side code WITH a hold queued is different: that is the configuration where
+ * the two halves can disagree at 08:00.
+ */
+export type BotVersionState = 'current' | 'unknown' | 'behind' | 'behind-bot-code';
+
+export type BotVersionVerdict = {
+  level: 'ok' | 'warn' | 'fail';
+  state: BotVersionState;
+  detail: string;
+};
+
+/** Whole days, floored, for a human-readable gap. */
+function agoDays(fromIso: string, toIso: string): number {
+  return Math.floor((Date.parse(toIso) - Date.parse(fromIso)) / 86_400_000);
+}
+
+export function botVersionVerdict(o: {
+  boxSha: string | null;
+  boxCommitAt: string | null;
+  deploySha: string | null;
+  deployCommitAt: string | null;
+  botCodeAt: string | null;
+  holdsAhead: number;
+}): BotVersionVerdict {
+  const short = (s: string | null) => (s ? s.slice(0, 7) : '?');
+
+  // UNKNOWN IS A WARN, NEVER AN OK. A runner too old to send the header, a box with no git,
+  // or a build that could not read its own sha all land here — and "we cannot tell" is
+  // itself a drift signal, since the first thing that fixes it is an update. Same rule as
+  // `untracked` SMS rows and a null availability reading.
+  if (!o.boxSha) {
+    return {
+      level: 'warn', state: 'unknown',
+      detail: 'the mini-PC has not reported a commit — it is running code from before this ' +
+        'check existed, or git is unavailable there',
+    };
+  }
+  if (!o.deploySha) {
+    return {
+      level: 'warn', state: 'unknown',
+      detail: `mini-PC is on ${short(o.boxSha)}, but this deploy does not know its own ` +
+        'commit, so they cannot be compared',
+    };
+  }
+  if (o.boxSha === o.deploySha) {
+    return { level: 'ok', state: 'current', detail: `mini-PC and web are both on ${short(o.boxSha)}` };
+  }
+
+  const gap = o.boxCommitAt && o.deployCommitAt ? agoDays(o.boxCommitAt, o.deployCommitAt) : null;
+  const behindBy = gap == null ? '' : gap > 0 ? `, ${gap}d behind` : '';
+  const base = `mini-PC is on ${short(o.boxSha)}${behindBy}; web is on ${short(o.deploySha)}`;
+
+  // The one that matters. Strictly older than the last bot-side change means the box does
+  // not have it — and `<` rather than `<=` because the box being ON that commit is current
+  // for our purposes.
+  const missesBotCode =
+    !!o.botCodeAt && !!o.boxCommitAt && Date.parse(o.boxCommitAt) < Date.parse(o.botCodeAt);
+
+  if (missesBotCode) {
+    return {
+      level: o.holdsAhead > 0 ? 'fail' : 'warn',
+      state: 'behind-bot-code',
+      detail: `${base} — and it is MISSING bot-side changes` +
+        (o.holdsAhead > 0
+          ? `, with ${o.holdsAhead} hold(s) queued. The two halves can disagree at the release.`
+          : '. Nothing is queued, so this is the ordinary wait for a quiet window.'),
+    };
+  }
+  return {
+    level: 'warn', state: 'behind',
+    detail: `${base}. No bot-side code in the gap` +
+      (o.botCodeAt ? '' : ' (though this build could not read when bot code last changed)') + '.',
+  };
+}

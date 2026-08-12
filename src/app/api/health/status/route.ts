@@ -10,6 +10,7 @@ import {
   RC_RUNNER_STALE_MS,
   RC_SESSION_CRITICAL_MIN,
   rehearsalFault,
+  botVersionVerdict,
 } from '@/lib/health-thresholds';
 
 // Machine-readable alert-health aggregate. Turns the "silent death" traps in
@@ -285,9 +286,10 @@ export async function GET() {
         beat_at: string | null; session_ok: boolean | null;
         session_at: string | null; session_detail: string | null; session_source: string | null;
         session_since: string | null;
+        bot_commit: string | null; bot_commit_at: string | null;
       }>(
         `SELECT beat_at::text, session_ok, session_at::text, session_detail, session_source,
-                session_since::text
+                session_since::text, bot_commit, bot_commit_at::text
            FROM rc_runner_heartbeat WHERE id = 1`,
       ),
       queryOne<{ n: string }>(
@@ -416,6 +418,37 @@ export async function GET() {
               : '') +
             (beat.session_detail ? `: ${beat.session_detail}` : ''),
       ageSeconds: secs(sessionAge),
+    });
+
+    // 4c-bis. DOES THE BOX RUN THE CODE MASTER HAS? (migration 056)
+    //
+    //   4b proves the runner can reach us. 4c proves RC accepts its token. Neither says a
+    //   word about WHICH CHECKOUT is doing either — and "the halves deploy by different
+    //   routes" is the most expensive recurring failure in this project's log. It cost the
+    //   T-30/T-25 alarm gap on 2026-08-11, and an evening of reading "37e1527, REFUSED" on
+    //   the admin page while the box was happily running d1ab782.
+    //
+    //   `bot_commands`' `git-status` can answer this, but only when a human asks. This is
+    //   the passive version, and it is deliberately quiet: drift is NORMAL for part of
+    //   every day, because Vercel deploys on push and the box waits for a quiet window.
+    //   The severity lives in botVersionVerdict — see there for why only "missing bot-side
+    //   code WITH a hold queued" earns a fail.
+    const version = botVersionVerdict({
+      boxSha: beat?.bot_commit ?? null,
+      boxCommitAt: beat?.bot_commit_at ?? null,
+      deploySha: process.env.CH_DEPLOY_SHA ?? null,
+      deployCommitAt: process.env.CH_DEPLOY_AT ?? null,
+      botCodeAt: process.env.CH_BOT_CODE_AT ?? null,
+      holdsAhead: ahead,
+    });
+    checks.push({
+      name: 'autocart.bot_version',
+      // Auto-cart family: red on the admin page, never a page. A commit gap is not an
+      // alerting outage, and the 2026-08-08 lesson was that crying wolf costs the next
+      // real page its attention.
+      pages: false,
+      level: version.level,
+      detail: version.detail,
     });
   } catch (err) {
     checks.push({ name: 'autocart.rc_runner', level: 'warn', pages: false, detail: `read failed: ${(err as Error).message}` });

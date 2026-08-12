@@ -61,7 +61,28 @@ export async function GET(req: NextRequest) {
   // failed — and `autocart.bot` stayed green throughout, because that is a DIFFERENT
   // process which was genuinely fine. Fire-and-forget: a heartbeat write must never be
   // able to fail the request that carts a site.
-  mutate(`UPDATE rc_runner_heartbeat SET beat_at = NOW() WHERE id = 1`).catch(() => {});
+  // AND WHAT CODE IT IS RUNNING (migration 056). The same poll already proves the box can
+  // reach us; these two headers make it prove which checkout is doing the reaching, which
+  // nothing else could answer without a human asking `git-status` through bot_commands.
+  //
+  // COALESCE, never a bare assignment: a runner too old to send the headers must not
+  // ERASE a commit an up-to-date one reported. The columns are meant to go stale, not
+  // blank — a stale value plus `beat_at` is readable ("this is what it said, N ago"),
+  // whereas a NULL written over a real value destroys the only record we had.
+  const commit = req.headers.get('x-bot-commit');
+  const commitAt = req.headers.get('x-bot-commit-at');
+  mutate(
+    `UPDATE rc_runner_heartbeat
+        SET beat_at       = NOW(),
+            bot_commit    = COALESCE($1, bot_commit),
+            bot_commit_at = COALESCE($2::timestamptz, bot_commit_at)
+      WHERE id = 1`,
+    // Bounded before they reach SQL. These are attacker-controllable in the sense that any
+    // holder of AUTOCART_TOKEN sets them, and a sha is 40 hex characters — anything else is
+    // not a sha and is dropped rather than stored and rendered on the admin page.
+    [/^[0-9a-f]{7,40}$/i.test(commit ?? '') ? commit : null,
+     commitAt && !Number.isNaN(Date.parse(commitAt)) ? commitAt : null],
+  ).catch(() => {});
 
   // Lead time on purpose: the bot should be mid-request when the site frees, not
   // starting to think about it a second late. RC releases on the exact minute.
