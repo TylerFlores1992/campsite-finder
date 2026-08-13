@@ -29,6 +29,11 @@
   // back 200-but-IsSuccess:false complaining about a field we never had the chance to see.
   const LOAD_ENDPOINT = 'https://rdapi.reservecalifornia.com/api/webaccessfacility/load/precartdataforbookingmodify';
   const ENDPOINT = 'https://rdapi.reservecalifornia.com/api/webaccessfacility/submit/precartdataforbookingmodify';
+  // RC'S OWN "no cart yet" SENTINEL — the same constant the bot sends
+  // (scripts/auto-cart-bot/rc-cart.mjs, NO_CART). An EMPTY string is not equivalent: it
+  // fails .NET model validation with a ValidationProblemDetails on `shoppingCartKey`,
+  // which is what the probe's first --cart run hit and read as a CAPTCHA.
+  const NO_CART = '00000000-0000-0000-0000-000000000000';
 
   // -------------------------------------------------------------------------
   // ADOPT-CART PATH (2026-08-05). The one below builds a cart in the user's own
@@ -84,18 +89,18 @@
 
   // The page-world grabber (rc-inject.js) posts the live token here. RC's token
   // is Okta-encrypted in localStorage, so this capture is the only way to read it.
+  // The cart key is CAPTURED but never WAITED ON. Nothing blocks on it any more: a session
+  // with no cart gets one from RC's own `load` (see addToCart), so a key caught off RC's
+  // traffic is now a preference, not a precondition.
   let capturedToken = null, capturedCartKey = null;
-  const tokenWaiters = [], cartKeyWaiters = [];
+  const tokenWaiters = [];
   window.addEventListener('message', (e) => {
     if (e.source !== window || !e.data) return;
     if (e.data.__camphawk_token) {
       capturedToken = e.data.__camphawk_token;
       tokenWaiters.splice(0).forEach((fn) => fn(capturedToken));
     }
-    if (e.data.__camphawk_cartkey) {
-      capturedCartKey = e.data.__camphawk_cartkey;
-      cartKeyWaiters.splice(0).forEach((fn) => fn(capturedCartKey));
-    }
+    if (e.data.__camphawk_cartkey) capturedCartKey = e.data.__camphawk_cartkey;
   });
   function waitFor(getVal, waiters, timeoutMs) {
     const v = getVal();
@@ -106,7 +111,6 @@
     });
   }
   const getToken = (ms = 12000) => waitFor(() => capturedToken, tokenWaiters, ms);
-  const getCartKey = (ms = 12000) => waitFor(() => capturedCartKey, cartKeyWaiters, ms);
 
   function occupantName() {
     const direct = ls('customerName') || ls('ssoCustomerName');
@@ -202,12 +206,33 @@
 
   async function addToCart() {
     setStatus('Reading your session…');
-    // Both required: token (auth) and the session's REAL cart key (a minted one
-    // creates a separate phantom cart the UI never shows).
-    const [token, cartKey] = await Promise.all([getToken(), getCartKey(5000)]);
+    // ONLY THE TOKEN IS A PRECONDITION. A cart key is not — see below.
+    const token = await getToken();
     if (!token) { setStatus('Couldn’t read your RC login — sign in, then click Add to cart.'); return; }
-    if (!cartKey) { setStatus('Click the 🛒 cart icon once (to start your cart), then click Add to cart.'); return; }
-    _cartKey = cartKey;
+
+    // WHERE THE CART KEY COMES FROM — and why not having one is no longer a dead end.
+    //
+    // This used to REFUSE without a key caught off RC's own traffic, telling the user to
+    // "click the 🛒 cart icon once (to start your cart)". A fresh session never has one, so
+    // on 2026-08-13 a real hold produced a full client_reports trace with no `load`, no
+    // `submit` and no error — the two cart POSTs were not failing, they were never tried,
+    // and the user spent the ~2.5s hand-off window tapping Add to cart by hand.
+    //
+    // THE BOT HAS NEVER HAD A CART KEY EITHER. `rc-hold-runner` passes `existing || NO_CART`
+    // and `precartInPage` adopts whatever `load` hands back — "that is how a fresh session is
+    // supposed to acquire one". So the step this refused to reach IS the step that mints the
+    // key. Same contract, same order, now on both sides.
+    //
+    // The "a minted one creates a phantom cart" warning this replaces was about a
+    // CLIENT-INVENTED GUID, which is a different thing: nothing on RC's side ever heard of
+    // it. NO_CART is RC's own sentinel for "I have no cart", answered with a real key that we
+    // then adopt — including into localStorage, below, which is the app's sole source of
+    // truth for which cart it is showing.
+    //
+    // NO WAITING. localStorage is that source of truth and reading it is synchronous; the
+    // 5-second wait for a broadcast was affordable only while it gated the whole attempt.
+    // At 08:00:00 five seconds is twice the entire exposure window.
+    _cartKey = capturedCartKey || ls('shoppingCartKey') || NO_CART;
     setStatus('Adding to your cart…');
     // RC's rdApi wants the same token in BOTH accesstoken and authorization, plus two
     // constant headers (installationsidentity=cali, storeid=111).
@@ -228,7 +253,16 @@
           body: JSON.stringify(buildPayload()),
         });
         const lj = JSON.parse(await lr.text());
-        _extraValues = buildExtraValues(lj && lj.Result ? lj.Result : lj);
+        const lres = lj && lj.Result ? lj.Result : lj;
+        _extraValues = buildExtraValues(lres);
+        // ADOPT THE KEY `load` HANDS BACK. This is the line that makes a session with no
+        // cart able to cart at all, and it is the bot's own behaviour verbatim. Read
+        // BEFORE the submit, which is the call that needs it.
+        if (lres && lres.ShoppingCartKey) _cartKey = lres.ShoppingCartKey;
+        // Reported through the status channel as a fact, never the key itself — a cart key
+        // authorises the cart and travels no further than this page.
+        console.log('[CampHawk RC] precart load ok — cart key ' +
+          (_cartKey === NO_CART ? 'STILL MISSING (RC returned none)' : 'in hand'));
       } catch (e) {
         console.log('[CampHawk RC] precart load failed, submitting without extras:', e);
       }
@@ -240,30 +274,40 @@
         headers: rcHeaders,
         body: JSON.stringify(buildPayload()),
       });
+      // READ THE BODY ONCE. It used to be `res.clone().text()` on the success path and
+      // `res.text()` on the failure path, which is two ways to consume one stream and one
+      // more thing to get wrong now that the success path also needs a field out of it.
+      const raw = await res.text();
+      let result = null;
+      try { const j = JSON.parse(raw); result = j && j.Result ? j.Result : j; } catch { /* HTML error page */ }
       // RC ANSWERS HTTP 200 WITH IsSuccess:false. Judging by status code reports a failed
       // cart as a success — the same trap as "an empty grid means fully booked". The one
       // promise auto-cart makes is that "it's in your cart" is true, so read the payload.
       let ok = res.ok;
       let apiError = '';
-      if (ok) {
-        try {
-          const j = JSON.parse(await res.clone().text());
-          const r = j && j.Result ? j.Result : j;
-          if (r && r.IsSuccess === false) { ok = false; apiError = r.ErrorMessage || 'RC declined'; }
-        } catch { /* unparseable — fall back to the status code */ }
+      if (ok && result && result.IsSuccess === false) {
+        ok = false;
+        apiError = result.ErrorMessage || 'RC declined';
       }
       if (ok) {
+        // ADOPT THE CART WE JUST MADE, or RC's own page shows EMPTY and a working cart
+        // reads as a failure. The submit happened over HTTP and the SPA never heard about
+        // it: `localStorage["shoppingCartKey"]` is still whatever it was — on a session
+        // that started with none, still nothing. This is the same write the bot does at
+        // the end of `precartInPage`, and it is only correct because it is the SAME
+        // session that made the cart (cross-session adoption was tested and fails).
+        const newKey = (result && result.ShoppingCartKey) || (_cartKey === NO_CART ? '' : _cartKey);
+        if (newKey) { try { localStorage.setItem('shoppingCartKey', newKey); } catch {} }
         setStatus('✓ Added to cart — review & check out on ReserveCalifornia.');
       } else {
         let detail = apiError;
-        try {
-          const raw = await res.text();
-          console.log('[CampHawk RC] full error body:', raw);
-          if (!detail) {
+        console.log('[CampHawk RC] full error body:', raw);
+        if (!detail) {
+          try {
             const j = JSON.parse(raw);
             detail = j.errors ? Object.keys(j.errors).join(', ') : (j.title || raw.slice(0, 160));
-          }
-        } catch {}
+          } catch { detail = raw.slice(0, 160); }
+        }
         setStatus(`RC declined (${res.status}) — ${(detail || 'see console').replace(/<br\/?>/g, ' ')}`);
       }
     } catch (e) {

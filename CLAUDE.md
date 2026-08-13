@@ -1222,12 +1222,44 @@ status  "Click the cart icon once (to start your cart), then click Add to cart."
   has one on its side (it carted twice that morning, 1.9s and 5.3s after release); the user's
   own session does not.
 - **So the open question changes shape.** It was never "do the POSTs work?" — it is **"how
-  does the user's session get a cart key without them clicking the cart icon?"** Answer that
-  and mobile auto-cart works; until then the hand-off is manual by construction, whatever the
-  screen implies.
+  does the user's session get a cart key without them clicking the cart icon?"**
 - The `session` stage also reported `opens:4, marker:present, storedToken:jwt,
   storedExpiresInSec:3381` — migration 058's probe working, and the app session surviving
   four separate opens.
+
+#### ANSWERED: `load` MINTS THE CART KEY, AND THE BOT HAS NEVER HAD ONE EITHER (2026-08-13)
+The precondition was ours, not RC's. `rc-hold-runner` passes `existing || NO_CART` —
+`00000000-0000-0000-0000-000000000000`, **RC's own sentinel for "I have no cart"** — and
+`precartInPage` then adopts the `ShoppingCartKey` that `load` hands back, under a comment
+saying in as many words "that is how a fresh session is supposed to acquire one". **The step
+`content-rc.js` refused to reach IS the step that mints the key.** It carted twice that
+morning through exactly this path.
+- **The fix is convergence, not a new precart.** `content-rc.js` now does what
+  `rc-cart.mjs` does: send `NO_CART` when there is no key, adopt `Result.ShoppingCartKey`
+  off `load` before the submit, and **write the final key into
+  `localStorage["shoppingCartKey"]`** — RC's SPA never hears about an HTTP submit, so
+  without that write a successful cart shows the user an EMPTY cart, which is a working
+  hand-off that reads as a broken one.
+- **Two divergences, not one.** It also never read `localStorage["shoppingCartKey"]` at all
+  — only a key broadcast by `rc-inject.js` off RC's live traffic — so even a user who
+  *had* a cart was told to go and click the cart icon.
+- **The "a minted key makes a phantom cart" warning it replaces was about a CLIENT-INVENTED
+  GUID**, which RC has never heard of. `NO_CART` is RC's own sentinel and comes back
+  answered. Do not read the old comment as forbidding this.
+- **The 5-second wait for a broadcast key is GONE.** It was affordable only while it gated
+  the whole attempt; five seconds is twice the entire ~2.5s exposure window.
+- **STILL UNPROVEN: that RC answers the USER's session the way it answers the bot's.** What
+  is proven is the bot's path in production and that the script now takes it. The next real
+  hold says so by itself — the `log` stage now carries `precart load ok — cart key in hand`,
+  and `✓ Added to cart` on the status line is the outcome. `RC declined (…)` with RC's own
+  words is the honest failure, and either beats the old silence.
+- **THE CLAIM SCREEN COPY IS DELIBERATELY UNCHANGED.** It still never promises a cart —
+  `rc-handoff.test.mts` guards that, and the promise is only earned once a real hold reports
+  one added. Branch the copy on capability *after* that, not before.
+- `worker/rc-precart-cart-key.test.mts` runs the **real served bundle** in a stub page and
+  watches `fetch` — the first test to exercise the precart rather than syntax-check it.
+  Verified failing against four regressions: the restored bail-out, not adopting `load`'s
+  key, not writing it back, and judging the submit by status code alone.
 
 ### RESERVECALIFORNIA CAPS THE BOT'S CART AT 2 (2026-08-13)
 Three holds were queued for one 08:00 release. Two carted within seconds; the third came back
