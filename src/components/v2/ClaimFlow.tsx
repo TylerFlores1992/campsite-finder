@@ -327,107 +327,133 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
           token live only in its URL.
         */}
         {/*
-          TWO FLOWS, BECAUSE THE APP CAN DO SOMETHING THE BROWSER CANNOT.
+          ONE THING TO DO AT A TIME.
 
-          In a binary with an injectable webview, signing in happens INSIDE that webview and
-          the session it leaves behind is the one the precart will read. That is the whole
-          point of doing it first: the system browser's session — which is what the tab link
-          below opens — lives in a different cookie jar and is invisible to the injection.
+          The screen used to show three numbered steps, a checkbox asserting "I'm signed in
+          and looking at the site", and a release button that stayed dead until it was
+          ticked. Every one of those is a thing to read at 8am, and the checkbox was the
+          worst of them: it asked the user to promise something we could not check, gating
+          the release on a claim rather than a fact.
+
+          Now the app knows. `token captured` is the injected script reporting that it read a
+          live RC session out of THIS webview, so the screen can simply advance: open RC ->
+          wait -> let go. One button, whichever one is next.
+
+          THE FINAL PRESS STAYS, deliberately. Releasing starts the ~2.5s window where the
+          site belongs to nobody, and signing in is not the same intent as "I am ready now" —
+          somebody can sign in and put the phone down. Auto-releasing on the token would hand
+          the site to whoever else is watching while its owner is not looking, which is the
+          exact failure this screen exists to prevent. What is removed is the busywork, not
+          the decision.
+
+          The browser path keeps the old three steps: without an injectable webview there is
+          nothing to observe, so the checkbox is still the only thing standing between a
+          signed-out user and a released site.
         */}
         {canInject ? (
-          <ol className="mt-5 w-full space-y-3 text-left text-sm text-ch-ink">
-            <li className="flex gap-3">
-              <span className="font-bold text-ch-green-deep">1.</span>
-              <span>
-                <button onClick={prepareRc} className="font-semibold text-ch-green-deep underline">
-                  Open ReserveCalifornia and sign in
-                </button>{' '}
-                {rcCheck === 'verified'
-                  ? '— done, we can see your session.'
-                  : 'Sign in, then close it and come back. Nothing is released yet, so there is no rush.'}
-              </span>
-            </li>
-            {/*
-              DO NOT PROMISE THE CART HERE. The two RC cart POSTs are still unproven — the
-              2026-08-12 hold captured a token and never reported a cart — and telling the
-              user "we'll add it for you" before that is settled is worse than the manual
-              flow, because they stop watching and the window is spent. Say what we KNOW we
-              do (let go, and land them on the site), and let a cart that does fire be a
-              bonus they can see for themselves. Flip this only when a real hold reports
-              `✓ Added to cart`.
-            */}
-            <li className="flex gap-3">
-              <span className="font-bold text-ch-green-deep">2.</span>
-              <span>Tap the button. We let go and take you straight to <strong>{site}</strong>.</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="font-bold text-ch-green-deep">3.</span>
-              <span>Book it straight away — check your cart first, it may already be in there.</span>
-            </li>
-          </ol>
-        ) : (
-          <ol className="mt-5 w-full space-y-3 text-left text-sm text-ch-ink">
-            <li className="flex gap-3">
-              <span className="font-bold text-ch-green-deep">1.</span>
-              <span>
-                <a
-                  href={rcHandoffUrl({ url: bookingUrl.current })}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-semibold text-ch-green-deep underline"
+          <div className="mt-5 w-full">
+            {rcCheck === 'verified' ? (
+              <p className="rounded-xl border border-ch-line bg-ch-green-soft p-4 text-left text-sm font-semibold text-ch-ink">
+                Signed in to ReserveCalifornia. Tap below and it&rsquo;s yours.
+              </p>
+            ) : rcCheck === 'opening' ? (
+              <p className="rounded-xl border border-ch-line p-4 text-left text-sm text-ch-ink">
+                Waiting for you to sign in to ReserveCalifornia&hellip;
+                <span className="mt-1 block text-ch-muted">
+                  Sign in in that window, then come back here. Nothing has been released yet.
+                </span>
+              </p>
+            ) : (
+              <>
+                <button
+                  onClick={prepareRc}
+                  className="w-full rounded-xl bg-ch-green-deep px-6 py-4 text-lg font-bold text-white"
                 >
-                  Open ReserveCalifornia in another tab
-                </a>{' '}
-                and sign in. Find <strong>{site}</strong> and get as far as you can without
-                booking — the site will look taken, because we&rsquo;re the ones holding it.
-              </span>
-            </li>
-            <li className="flex gap-3">
-              <span className="font-bold text-ch-green-deep">2.</span>
-              <span>Come back here and tap the button. We let go.</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="font-bold text-ch-green-deep">3.</span>
-              <span>Switch to that tab and book <strong>{site}</strong> straight away.</span>
-            </li>
-          </ol>
-        )}
-
-        {/* Confirmed evidence replaces the self-assertion. Shown only when we HAVE it —
-            an unconfirmed check must not read as a failure, because most of the time it
-            just means the user has not opened the sign-in step yet. */}
-        {rcCheck === 'verified' ? (
-          <p className="mt-5 w-full rounded-xl border border-ch-line bg-ch-green-soft p-4 text-left text-sm font-semibold text-ch-ink">
-            Signed in to ReserveCalifornia — ready to hand over.
-          </p>
+                  Start hand-off
+                </button>
+                <p className="mt-2 text-sm text-ch-muted">
+                  Opens ReserveCalifornia so you can sign in. We keep holding{' '}
+                  <strong>{site}</strong> until you say go.
+                </p>
+              </>
+            )}
+            {/* UNCONFIRMED IS NOT A REFUSAL. The webview closed without announcing a token,
+                which may mean no session — or may mean we simply could not see one. Those
+                are different facts and only the first would justify blocking, so the old
+                checkbox comes back as the way through rather than a dead end. */}
+            {rcCheck === 'unconfirmed' && !signedIn && (
+              <label className="mt-3 flex w-full cursor-pointer items-start gap-3 rounded-xl border border-ch-line p-4 text-left">
+                <input
+                  type="checkbox"
+                  checked={signedIn}
+                  onChange={(e) => setSignedIn(e.target.checked)}
+                  className="mt-0.5 size-5 shrink-0 accent-ch-green-deep"
+                />
+                <span className="text-sm text-ch-ink">
+                  We couldn&rsquo;t confirm your ReserveCalifornia sign-in. Tick this if
+                  you&rsquo;re signed in and we&rsquo;ll hand over anyway.
+                </span>
+              </label>
+            )}
+          </div>
         ) : (
-          <label className="mt-5 flex w-full cursor-pointer items-start gap-3 rounded-xl border border-ch-line p-4 text-left">
-            <input
-              type="checkbox"
-              checked={signedIn}
-              onChange={(e) => setSignedIn(e.target.checked)}
-              className="mt-0.5 size-5 shrink-0 accent-ch-green-deep"
-            />
-            <span className="text-sm text-ch-ink">
-              I&rsquo;m signed in to ReserveCalifornia and looking at {site}
-            </span>
-          </label>
+          <>
+            <ol className="mt-5 w-full space-y-3 text-left text-sm text-ch-ink">
+              <li className="flex gap-3">
+                <span className="font-bold text-ch-green-deep">1.</span>
+                <span>
+                  <a
+                    href={rcHandoffUrl({ url: bookingUrl.current })}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-ch-green-deep underline"
+                  >
+                    Open ReserveCalifornia in another tab
+                  </a>{' '}
+                  and sign in. Find <strong>{site}</strong> and get as far as you can without
+                  booking — the site will look taken, because we&rsquo;re the ones holding it.
+                </span>
+              </li>
+              <li className="flex gap-3">
+                <span className="font-bold text-ch-green-deep">2.</span>
+                <span>Come back here and tap the button. We let go.</span>
+              </li>
+              <li className="flex gap-3">
+                <span className="font-bold text-ch-green-deep">3.</span>
+                <span>Switch to that tab and book <strong>{site}</strong> straight away.</span>
+              </li>
+            </ol>
+            <label className="mt-5 flex w-full cursor-pointer items-start gap-3 rounded-xl border border-ch-line p-4 text-left">
+              <input
+                type="checkbox"
+                checked={signedIn}
+                onChange={(e) => setSignedIn(e.target.checked)}
+                className="mt-0.5 size-5 shrink-0 accent-ch-green-deep"
+              />
+              <span className="text-sm text-ch-ink">
+                I&rsquo;m signed in to ReserveCalifornia and looking at {site}
+              </span>
+            </label>
+          </>
         )}
 
-        <button
-          onClick={claim}
-          disabled={busy || !mayRelease}
-          className="mt-4 w-full rounded-xl bg-ch-green-deep px-6 py-4 text-lg font-bold text-white disabled:opacity-60"
-        >
-          {busy ? 'Releasing…' : "It's mine — hand it over"}
-        </button>
-        {/* Say WHY it is disabled. A dead button with no explanation reads as broken,
-            and this one is the last step of a flow they have already waited hours for. */}
-        {!mayRelease && (
+        {/* THE RELEASE, shown only once it can actually be pressed. A dead button with an
+            explanation underneath was still a dead button competing for attention with the
+            step that would enable it; on the app path there is now exactly one live control
+            on screen at a time. */}
+        {mayRelease && (
+          <button
+            onClick={claim}
+            disabled={busy}
+            className="mt-4 w-full rounded-xl bg-ch-green-deep px-6 py-4 text-lg font-bold text-white disabled:opacity-60"
+          >
+            {busy ? 'Releasing…' : "It's mine — hand it over"}
+          </button>
+        )}
+        {!mayRelease && !canInject && (
           <p className="mt-3 text-sm text-ch-muted">
-            {canInject
-              ? 'Sign in above, or tick the box, and we’ll let go.'
-              : 'Tick the box once you’re signed in and on the page — we won’t let go until then.'}
+            Tick the box once you&rsquo;re signed in and on the page — we won&rsquo;t let go
+            until then.
           </p>
         )}
       </Shell>
