@@ -75,6 +75,47 @@ export async function offerHold(input: {
 }
 
 /**
+ * How many sites are already spoken for at this release — the capacity question.
+ *
+ * Counts every hold for the same release window that is still on its way to a cart or
+ * already in one. `offered` COUNTS: the button is in an email we cannot retract, so it is
+ * a promise whether or not anyone has tapped it yet. Terminal states (`released`,
+ * `claimed`, `expired`, `failed`) do not — those seats are back.
+ *
+ * The triple is EXCLUDED rather than the count being taken raw, so this answers "is there
+ * room for this one" and not "is the window busy". Without that, a re-alert for a hold
+ * already offered would be judged against its own row and quietly lose its button.
+ *
+ * Not a lock. Two poller shards could both read `capacity - 1` and both offer; at a
+ * handful of holds a day that is a fair trade against a transaction, and the failure is
+ * one offer over, not a wrong cart.
+ */
+export async function holdWindowLoad(
+  releaseAt: string,
+  exclude?: { watchId: string; unitId: string; arrivalDate: string },
+): Promise<number> {
+  try {
+    const [row] = await query<{ n: string }>(
+      `SELECT COUNT(*) AS n FROM rc_hold_requests
+        WHERE release_at = $1
+          AND status IN ('offered', 'requested', 'carted', 'claiming')
+          AND NOT ($2 IS NOT NULL AND watch_id = $2 AND unit_id = $3 AND arrival_date = $4::date)`,
+      // `watch_id`/`unit_id`/`release_at` are all TEXT (release_at is RC's zone-less
+      // Pacific wall-clock, which is why it is never a timestamp). Only `arrival_date` is a
+      // real date, and it is cast so a malformed one fails loudly here rather than matching
+      // nothing and silently reporting an empty window as room to spare.
+      [releaseAt, exclude?.watchId ?? null, exclude?.unitId ?? '', exclude?.arrivalDate ?? '1970-01-01'],
+    );
+    return Number(row?.n ?? 0);
+  } catch (err) {
+    console.error('[rc-holds] holdWindowLoad failed:', (err as Error).message);
+    // FAIL CLOSED, like `rcBotUsable`. If we cannot tell how full the window is, do not
+    // offer — a hold nobody honours costs a campsite, a missing button costs a convenience.
+    return Number.MAX_SAFE_INTEGER;
+  }
+}
+
+/**
  * The user tapped "hold it for me".
  *
  * Matches the newest un-answered offer for this (watch, unit) whose release is still in

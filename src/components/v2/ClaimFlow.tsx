@@ -563,8 +563,13 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
       <p className="text-ch-ink">
         {/* Every remaining status means there is nothing to hand over, and saying which
             beats a generic error: expired and failed have different next steps. */}
+        {/* NOT "so we released the site" any more. A hold can also expire because we
+            carted it and then could NOT let go — the RC session dies most of the day, and
+            the release loop needs it — in which case RC dropped the cart on its own timer
+            and we never touched it. Both endings put the site back on the open market,
+            which is the part the reader needs; only one of them is us doing it. */}
         {state.status === 'expired'
-          ? 'That hold expired — nobody claimed it, so we released the site.'
+          ? 'That hold expired — nobody claimed it, so the site is back on the open market.'
           : state.status === 'failed'
             ? "We couldn't hold that site. Your alerts carry on as normal."
             : 'Nothing is being held for you right now.'}

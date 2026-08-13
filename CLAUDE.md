@@ -1304,6 +1304,58 @@ runner was there, the session was live, the timing was right.
   Corrected the next day; the original sentence is kept because it is how a self-inflicted
   limit gets recorded as a law of nature. See directly below before planning around a 2.
 
+#### THE SEATS LEAK, AND NOTHING RECLAIMED THEM (2026-08-13, found the same day)
+Two holds carted at 08:00 were still `carted` at **09:40**, with `last_attempt_note` =
+*"RC session is dead — needs a human sign-in"*. Both had a valid `cart_key` and
+`cart_entry_key`; nothing had gone wrong with the cart.
+- **The release loop lives INSIDE `withRC`.** A dead RC session skips the whole callback,
+  so nothing releases — and `expireStaleHolds` only *hands the runner a list*, it never
+  moves a status. **Another watchdog wired to the thing it watches**, which is the exact
+  failure `worker/expire-holds.ts`'s own header was written about, one level down.
+- **The session is legitimately dead most of the day** (`maybeAutoLogin` signs in at T−30
+  of the next release), so those rows would have sat until the following morning.
+- **With a ceiling of two, two stuck holds ARE the entire fleet** — held for users who had
+  already gone, while every later offer is refused against seats nobody occupies. That is
+  the "several users have holds we cannot all claim" failure, arriving from the other end.
+- `reclaimLapsedHolds` (in `expire-holds.ts`, on **Fly**, so it does not depend on the bot)
+  marks a `carted` hold `expired` after `HOLD_LAPSE_MIN` (180 — far past RC's ~15-minute
+  cart even if that unobserved figure is several times wrong). **`cart_key` is KEPT**: we
+  did not release it, RC lapsed it, so the evidence stays and a later healthy pass could
+  still try. The claim screen no longer says *"so we released the site"* — it says the site
+  is back on the open market, which is true whichever way it ended.
+
+#### CAPACITY IS ENFORCED NOW, IN TWO PLACES (2026-08-13)
+`RC_HOLD_CAPACITY` = `RC_SITES_PER_CART` (2, **RC's, measured**) × `RC_MAX_CARTS` (1,
+**ours, and 1 only because that is all we can prove** — raise it after `--cart-cap`).
+- **The poller withholds the BUTTON** when the release window is full, and sends the
+  ordinary coming-soon alert instead — same posture as `rcBotUsable`.
+- **The `hold` action checks again**, because a link outlives the alert and two other
+  people can tap in between. **It does not refuse**: a full window can empty (on 08-13 the
+  third hold went in once one of the other two was claimed), so it accepts and says the
+  site is *next in line rather than secured*. Refusing would throw away a hold that may
+  well come good; repeating the flat promise is what makes a user stop watching.
+- **`offered` counts.** The button is in an email we cannot retract, so it is a promise
+  whether or not anyone tapped. Counting only taps is how three people end up on two seats.
+- **A failed count fails CLOSED** (`MAX_SAFE_INTEGER`), like `rcBotUsable`.
+- Not a lock — two shards could both see room. At a handful of holds a day that beats a
+  transaction, and the failure is one offer over, never a wrong cart.
+- `worker/rc-hold-capacity.test.mts`, verified failing against seven regressions.
+
+#### TESTING THE HAND-OFF WITHOUT WAITING FOR 08:00 (2026-08-13)
+`dueHolds` never cared what time the release is — it selects `requested` rows within
+`leadSeconds` ahead and `graceMinutes` (20) behind, and the runner's `msUntilRelease` wait
+is already clamped at zero for a time that has passed. So a hold with `release_at` two
+minutes out is carted on the next 15s poll. **`scripts/rc-test-hold.mts`** queues one and
+prints the claim URL.
+- **A REAL numeric unit id exercises the whole chain** — precart, `load` + `submit`, the
+  cart read-back, the claim screen, `token captured`, the release. It also **LOCKS A REAL
+  SITE** until the claim releases it or RC drops the cart, so: far-future midweek date,
+  unpopular loop, and never an invented id. The sentinel unit tests the screen only.
+- It **refuses while a real hold is live**, because a test cart takes a seat that user's
+  site needs — and that refusal is what surfaced the leak above on its first run.
+- **Open the claim URL IN THE APP.** From a browser `canInject` is false and the injected
+  precart is never exercised, which is the whole thing being tested.
+
 #### THE CAP SAYS *CART*, AND WE PUT EVERY HOLD IN ONE CART (2026-08-13)
 `rc-hold-runner` reads `localStorage["shoppingCartKey"]` and passes `existing || NO_CART`,
 and `precartInPage` writes each winning key straight back — so the first hold of the

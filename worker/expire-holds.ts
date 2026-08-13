@@ -72,6 +72,56 @@ export async function failMissedHolds(onlyIds?: string[]): Promise<MissedHold[]>
   });
 }
 
+/**
+ * Minutes after carting at which we stop believing we still hold the site.
+ *
+ * RC drops a cart after about 15 minutes (`RC_CART_HOLD_MINUTES`, read off its bundle and
+ * never observed), and our own sweep asks the bot to let go at 45. Three hours is far
+ * enough past both that "RC has released this by itself" is safe to act on even if the
+ * real number is several times what the bundle claims.
+ */
+export const HOLD_LAPSE_MIN = Number(process.env.HOLD_LAPSE_MIN ?? 180);
+
+/**
+ * Reclaim seats from holds that were carted and could never be released.
+ *
+ * THE SAME BUG THIS FILE'S HEADER DESCRIBES, ONE LEVEL DOWN. `expireStaleHolds` finds
+ * `carted` holds past the sweep window and hands them to the runner — but it does not
+ * change their status, and the runner's release loop lives inside `withRC`. So when the RC
+ * session is dead the loop never runs, nothing is released, and the row stays `carted`
+ * **forever**. Another watchdog wired to the thing it watches.
+ *
+ * Observed 2026-08-13: two holds carted at 08:00 were still `carted` at 09:40 with
+ * `last_attempt_note` = "RC session is dead — needs a human sign-in". The session is
+ * legitimately dead most of the day (`maybeAutoLogin` signs in at T−30 of the next
+ * release), so those rows would have sat there until the following morning.
+ *
+ * THAT IS A CAPACITY LEAK, NOT AN UNTIDY ROW. RC caps a cart at two sites, so two stuck
+ * holds are the entire fleet, and every later offer is refused against seats held by
+ * nobody. It is exactly the "several users have holds we cannot all claim" failure, with
+ * the twist that the users in question had already gone.
+ *
+ * WHAT IT DOES NOT CLAIM. We did not release these — RC did, by lapsing. `cart_key` and
+ * `cart_entry_key` are deliberately KEPT, both as forensics and so a later healthy pass
+ * could still try; and the note says the site was assumed released rather than seen to be.
+ * That is why the claim screen's expired copy no longer says "so we released the site".
+ */
+export async function reclaimLapsedHolds(): Promise<{ id: string; unit_name: string | null }[]> {
+  return mutate<{ id: string; unit_name: string | null }>(
+    `UPDATE rc_hold_requests
+        SET status = 'expired',
+            error = 'not claimed, and we could not release it — assuming RC dropped the cart',
+            updated_at = NOW()
+      WHERE status = 'carted'
+        AND carted_at < NOW() - ($1 || ' minutes')::interval
+      RETURNING id, unit_name`,
+    [String(HOLD_LAPSE_MIN)],
+  ).catch((err) => {
+    console.error('[expire-holds] lapse sweep failed:', (err as Error).message);
+    return [];
+  });
+}
+
 export async function sweepMissedHolds(): Promise<number> {
   const missed = await failMissedHolds();
   for (const h of missed) {
@@ -80,6 +130,17 @@ export async function sweepMissedHolds(): Promise<number> {
         `and was never carted — the mini-PC runner was not reachable.`,
     );
     await notifyHoldMissed(h).catch((e) => console.error('[expire-holds] notify failed:', e));
+  }
+
+  // DELIBERATELY SILENT to the user. A missed hold is a promise we broke and is worth a
+  // text; a carted hold nobody came back for is the user's own choice not to claim, and
+  // telling them hours later that the thing they ignored has gone is noise.
+  const lapsed = await reclaimLapsedHolds();
+  for (const h of lapsed) {
+    console.log(
+      `[expire-holds] LAPSED: hold ${h.id} (${h.unit_name ?? 'a site'}) was carted over ` +
+        `${HOLD_LAPSE_MIN} min ago and never released — freeing its seat.`,
+    );
   }
   return missed.length;
 }

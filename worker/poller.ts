@@ -52,7 +52,8 @@ import { dispatchNotifications, type NotificationPayload } from '../src/lib/noti
 import { bookingLink } from '../src/lib/booking-url';
 import { runDetectionCanary, runDeliveryCanary } from './canary';
 import { claimNotification } from './claim';
-import { offerHold, rcBotUsable } from '../src/lib/rc-holds';
+import { offerHold, rcBotUsable, holdWindowLoad } from '../src/lib/rc-holds';
+import { RC_HOLD_CAPACITY } from '../src/lib/limits';
 import { hasAutocartEntitlement } from '../src/lib/auth';
 import { actionUrlFor } from '../src/lib/notifications/actions';
 import { alreadyCartedForWatch } from './carted-history';
@@ -1197,8 +1198,27 @@ async function cycle(): Promise<void> {
           'Sending the coming-soon alert without a hold link.'
         );
       }
+      // AND THERE HAS TO BE ROOM. RC caps a cart at two sites and every hold we make goes
+      // into one cart, so a third offer for the same release is a promise we cannot keep.
+      // On 2026-08-13 three holds were queued for one 08:00 and the third was refused by RC
+      // in its own words. Withholding the button sends the ordinary coming-soon alert
+      // instead, which is what that user would have had anyway — and unlike a dead hold, it
+      // leaves them expecting to book it themselves.
+      const arrivalDate = held.dates[0] ?? w.start_date;
+      const load = held.unitId == null ? 0 : await holdWindowLoad(held.availableAt, {
+        watchId: w.id, unitId: String(held.unitId), arrivalDate,
+      });
+      const roomToHold = load < RC_HOLD_CAPACITY;
+      if (!roomToHold && held.unitId != null) {
+        console.log(
+          `[poller] watch ${w.id}: NOT offering a hold — ${load} site(s) already spoken for at ` +
+          `${held.availableAt} and we can hold ${RC_HOLD_CAPACITY}. Sending the coming-soon alert ` +
+          'without a hold link.'
+        );
+      }
       const mayHold =
-        held.unitId != null && bot.ok && (await hasAutocartEntitlement(w.user_id).catch(() => false));
+        held.unitId != null && bot.ok && roomToHold &&
+        (await hasAutocartEntitlement(w.user_id).catch(() => false));
       if (mayHold && held.unitId != null) {
         const offered = await offerHold({
           watchId: w.id,
@@ -1206,7 +1226,7 @@ async function cycle(): Promise<void> {
           campgroundId: w.campground_id,
           unitId: String(held.unitId),
           unitName: rcSiteLabel(held.name, held.unitId),
-          arrivalDate: held.dates[0] ?? w.start_date,
+          arrivalDate,
           nights: held.dates.length || 1,
           releaseAt: held.availableAt,
         }).catch(() => null);

@@ -277,6 +277,32 @@ export async function performAction(token: string): Promise<ActionResult> {
       const when = req.release_at.replace('T', ' ').slice(0, 16);
       const site = `site ${req.unit_name ?? req.unit_id} at ${campgroundName ?? 'this campground'}`;
 
+      // CAPACITY, checked here as well as at the offer — and this one is not a duplicate,
+      // for the usual reason: a link is durable. The button was gated against a window that
+      // had room when the alert was built, and two other people can have tapped since.
+      //
+      // IT DOES NOT REFUSE. A full window can empty — on 2026-08-13 the third hold went in
+      // on a later pass once one of the other two was claimed — so declining outright would
+      // throw away a hold that may well come good. What it must not do is repeat the flat
+      // promise, because a user who believes the site is handled stops watching, and that
+      // is how a recoverable morning becomes a lost one. Same call as the offline-bot branch
+      // below, and the same wording discipline.
+      const { holdWindowLoad } = await import('@/lib/rc-holds');
+      const { RC_HOLD_CAPACITY } = await import('@/lib/limits');
+      const load = await holdWindowLoad(req.release_at, {
+        watchId, unitId: String(req.unit_id), arrivalDate: req.arrival_date,
+      }).catch(() => 0);
+      if (load >= RC_HOLD_CAPACITY) {
+        return {
+          ok: true, action, changed: true, campgroundName, siteId,
+          message:
+            `Noted — but ${load} other site${load === 1 ? ' is' : 's are'} already queued for ${when} PT and we ` +
+            `can hold ${RC_HOLD_CAPACITY} at once, so ${site} is next in line rather than secured. ` +
+            `We'll take it if a slot frees. Plan to book it yourself the moment it opens — ` +
+            `you'll get the usual alert the second it does.`,
+        };
+      }
+
       // THE THIRD ENFORCER, and the one that was missing on 2026-08-11. The offer is gated
       // when the alert is built and the entitlement again here — but nothing asked whether
       // there was a bot alive to do the carting, and for two hours that day there was not.

@@ -27,3 +27,26 @@ export const WATCH_LIMIT = 6;
  * copy now admits to instead of papering over.
  */
 export const RC_CART_HOLD_MINUTES = 15;
+
+/**
+ * How many sites we can actually be holding at one release — the number the offer copy
+ * has to be able to stand behind.
+ *
+ * `RC_SITES_PER_CART` is RC's, and it is measured: a third add to one cart on 2026-08-13
+ * came back *"the maximum number of reservations allowed in the cart is '2'"*.
+ *
+ * `RC_MAX_CARTS` is OURS, and it is 1 because that is all we can prove. The hold runner
+ * reuses `localStorage["shoppingCartKey"]` for every hold, so every hold the system has
+ * ever made went into one of two carts. Whether one RC session may hold several carts at
+ * once is unmeasured — `rc-probe.mjs --cart-cap` settles it, and this is the constant to
+ * raise afterwards. Raising it before is promising capacity nobody has seen.
+ *
+ * WHY A CAP AT ALL, rather than offering and hoping. Offering a third hold for a release
+ * we can only take two of is a promise that cannot be kept, and the cost is not the failed
+ * cart — it is that a user who believes the site is handled STOPS WATCHING, and loses a
+ * morning they could have won with an alarm clock. Same reasoning as withholding the
+ * button when the runner is absent.
+ */
+export const RC_SITES_PER_CART = 2;
+export const RC_MAX_CARTS = 1;
+export const RC_HOLD_CAPACITY = RC_SITES_PER_CART * RC_MAX_CARTS;
