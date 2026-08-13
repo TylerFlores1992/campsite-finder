@@ -218,6 +218,84 @@ test('identical reports collapse instead of flooding', async () => {
   assert.deepEqual(last.detail, { of: 'token', times: 218 });
 });
 
+test('an INTERLEAVED token/cartkey flood collapses too', async () => {
+  // THE DOOR THE CONSECUTIVE COLLAPSE LEFT OPEN, and it cost the proof of the thing this
+  // whole channel exists to prove. `rc-inject.js` rebroadcasts the token AND the cart key on
+  // every RC API call, so the real stream is `token, cartkey, token, cartkey, …` — no two
+  // NEIGHBOURS are ever identical, so nothing collapsed at all.
+  //
+  // Measured on the two hand-offs of 2026-08-13 that settled the cart POSTs: both stored
+  // forty reports, thirty-nine of them that pair, and because `recordClientReports` keeps
+  // the TAIL the `✓ Added to cart` line was trimmed off the front of both. The readout then
+  // reported the LAST thing said — `RC declined (200) — cart is already added`, which is a
+  // re-injection submitting over an entry we already hold, i.e. evidence the cart SURVIVED —
+  // as though it were the verdict. The success lived on in a screenshot and nowhere else.
+  const vm = await import('node:vm');
+  const { reporter } = await import('../src/lib/rc-precart-script');
+  const posted: string[] = [];
+  const listeners: Record<string, ((e: unknown) => void)[]> = {};
+  const s: Record<string, unknown> = {
+    console: { log() {} },
+    location: { origin: 'https://www.reservecalifornia.com', pathname: '/', href: 'https://www.reservecalifornia.com/', hash: '' },
+    sessionStorage: { getItem: () => null },
+    addEventListener: (k: string, fn: (e: unknown) => void) => { (listeners[k] ??= []).push(fn); },
+    cordova_iab: { postMessage: (m: string) => posted.push(m) },
+  };
+  s.window = s;
+  vm.createContext(s);
+  new vm.Script(reporter()).runInContext(s);
+  const ctxWindow = vm.runInContext('window', s);
+
+  const before = posted.length;
+  const token = { source: ctxWindow, data: { __camphawk_token: 'x'.repeat(939) } };
+  const cartkey = { source: ctxWindow, data: { __camphawk_cartkey: 'k' } };
+  const flood = (n: number) => {
+    for (let i = 0; i < n; i++) {
+      listeners.message.forEach((fn) => fn(token));
+      listeners.message.forEach((fn) => fn(cartkey));
+    }
+  };
+
+  // THREE, AND IT STAYS THREE. The first sighting of a distinct token carries its clock and
+  // the second reports presence only, so the token legitimately costs two payloads; the cart
+  // key costs one. Everything after that is the same key again and folds.
+  //
+  // The property pinned is O(1), not the constant: 100 pairs and 1,100 pairs cost the same.
+  // A magic number only says what today's code happens to do, and this is a bound the stored
+  // report cap (40, tail-kept) has to live inside — at three, a hand-off's own status lines
+  // and the cart's verdict all fit with room to spare.
+  flood(100);
+  const emitted = posted.slice(before).map((p) => JSON.parse(p).stage);
+  assert.deepEqual(emitted, ['token', 'cartkey', 'token'], 'an interleaved flood must cost 3 reports');
+  flood(1000);
+  assert.equal(
+    posted.slice(before).length, emitted.length,
+    '1,000 further pairs must cost nothing — the collapse cannot be consecutive-only',
+  );
+
+  // AND A REAL STATUS STILL GETS THROUGH — including one that repeats a value seen earlier.
+  // RC's own text can go A → B → A, and suppressing that would spend the fix on the thing it
+  // is meant to protect. This is why the global dedupe is scoped to the mechanical stages.
+  const R = vm.runInContext('window.__camphawkRc', s);
+  R.send('status', { status: 'Adding to your cart…' });
+  R.send('status', { status: '✓ Added to cart' });
+  R.send('status', { status: 'Adding to your cart…' });
+  const stages = posted.slice(before).map((p) => JSON.parse(p));
+  const statuses = stages.filter((x) => x.stage === 'status').map((x) => x.detail.status);
+  assert.deepEqual(statuses, ['Adding to your cart…', '✓ Added to cart', 'Adding to your cart…']);
+
+  // AND THE COUNT SURVIVES THE SUPPRESSION. Folding a flood is only acceptable because the
+  // number is kept: "the token was seen 2,199 times" says the session is being used hard,
+  // "seen once" says something opened a page. Dropping it would trade one silent fact for
+  // another, which is the trade this codebase keeps losing.
+  const repeated = stages.filter((x) => x.stage === 'repeated');
+  assert.ok(repeated.length > 0, 'the suppressed repeats must still be counted, not discarded');
+  assert.ok(
+    repeated.reduce((n, x) => n + x.detail.times, 0) > 2000,
+    'the count must cover the whole flood, not just the consecutive part',
+  );
+});
+
 test('a report can never carry the RC access token', () => {
   // THE STANDING RULE: the RC token is full account access. It does not travel in an alert
   // link and it must not travel in a diagnostic either. The token path reports a BOOLEAN and

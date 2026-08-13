@@ -42,12 +42,14 @@ const holds = await query<{
   claim_started_at: string | null; released_at: string | null; claimed_at: string | null;
   last_attempt_at: string | null; last_attempt_note: string | null;
   client_last_stage: string | null; client_last_note: string | null; client_reported_at: string | null;
+  client_reports: Array<{ stage: string; detail: Record<string, unknown> | null }> | null;
 }>(
   `SELECT r.id, r.unit_id, r.unit_name, r.arrival_date::text AS arrival, r.nights,
           r.release_at, r.status, r.error, c.name, u.email,
           r.offered_at, r.requested_at, r.carted_at, r.claim_started_at, r.released_at, r.claimed_at,
           r.last_attempt_at, r.last_attempt_note,
-          r.client_last_stage, r.client_last_note, r.client_reported_at::text
+          r.client_last_stage, r.client_last_note, r.client_reported_at::text,
+          r.client_reports
      FROM rc_hold_requests r
      JOIN campgrounds c ON c.id = r.campground_id
      JOIN users u ON u.id = r.user_id
@@ -164,9 +166,38 @@ if (handed.length) {
       console.log(`  • ${who}: nothing reported — no injectable client (plain browser), or it never ran.`);
       continue;
     }
-    console.log(`  • ${who}: ${h.client_last_note ?? h.client_last_stage} (${mins(h.client_reported_at)}m ago)`);
+    // WHICH PLATFORM. Stamped by ClaimFlow before anything opens, because the cart POSTs
+    // were proven on 2026-08-13 and `client_reports` carried no platform at all — the
+    // write-up was one edit from saying "Android" out of habit, and the real answer (iOS)
+    // came from the status bar of a screenshot. That is luck, not instrumentation, and the
+    // two platforms are exactly where this feature differs: WKWebView has its own cookie
+    // store and its own ITP rules. A result on one is not a result on both, so a trace that
+    // cannot say which it was cannot settle either.
+    const plat = h.client_reports?.find((r) => r.stage === 'platform')?.detail as
+      | { platform?: string; appBuild?: string } | undefined;
+    const where = plat?.platform
+      ? `${plat.platform}${plat.appBuild ? ` build ${plat.appBuild}` : ''}`
+      : 'platform not reported (an older build, or a plain browser)';
+
+    // THE OUTCOME, NOT THE LAST LINE — and the difference is not cosmetic. On both proven
+    // holds `client_last_note` reads `RC declined (200) - cart is already added`, because
+    // RC's SPA navigates after a successful cart, the script is re-injected, and it submits
+    // again over an entry we already hold. **That refusal is proof the cart SURVIVED**, and
+    // this readout was reporting it as the verdict on the two runs that settled the
+    // question. A success anywhere in the run outranks it.
+    const said = (h.client_reports ?? [])
+      .map((r) => String(r.detail?.status ?? r.detail?.message ?? ''))
+      .filter(Boolean);
+    const carted = said.find((s) => s.includes('Added to cart'));
+    const already = said.some((s) => /already added/i.test(s));
+    const outcome = carted
+      ? `${carted}${already ? '  (and a later re-injection got "already added", which confirms it stuck)' : ''}`
+      : (h.client_last_note ?? h.client_last_stage);
+
+    console.log(`  • ${who} [${where}]: ${outcome} (${mins(h.client_reported_at)}m ago)`);
   }
   console.log("  '✓ Added to cart' is the one that proves the RC cart POSTs work on mobile.");
+  console.log('  PROVEN on iOS (twice, 2026-08-13). NOT yet on Android — read the platform tag.');
 }
 
 // The one state that is unambiguously broken: the user said yes, the moment came and

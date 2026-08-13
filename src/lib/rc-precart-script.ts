@@ -121,14 +121,29 @@ export function reporter(): string {
     '  // would bury the one line anybody needs, which is what the cart did. The count is kept',
     '  // and emitted rather than dropped: "token seen 31 times" and "token seen once" are',
     '  // different facts about whether the session is being used.',
-    '  var lastKey = null, lastStage = null, dupes = 0;',
+    // ...AND CONSECUTIVE WAS NOT ENOUGH. Read off two real hand-offs on 2026-08-13, and it
+    // is the failure this collapse was written to prevent, arriving through the one door it
+    // left open: rc-inject.js broadcasts the token AND the cart key on every RC call, so the
+    // stream is `token, cartkey, token, cartkey, …` and **no two neighbours are ever
+    // identical**. Nothing collapsed. Both runs stored forty reports of which thirty-nine
+    // were that pair, `recordClientReports` keeps the TAIL, and the `✓ Added to cart` line —
+    // the entire point of the channel, on the two holds that settled the question — was
+    // trimmed off the front. The proof survived in a screenshot and not in the instrument.
+    //
+    // So the mechanical rebroadcasts are deduped against everything already sent this run,
+    // not merely against the previous line. Scoped to `token` and `cartkey` deliberately: a
+    // repeated `status` may be real news (RC's own text can go A → B → A), and swallowing
+    // one of those would cost exactly what this is trying to save.
+    '  var NOISY = { token: 1, cartkey: 1 };',
+    '  var lastKey = null, lastStage = null, dupes = 0, sent = {};',
     '  function flush() { if (dupes) { post("repeated", { of: lastStage, times: dupes }); dupes = 0; } }',
     '  function send(stage, detail) {',
     '    var key;',
     '    try { key = stage + "|" + JSON.stringify(detail || null); } catch (e) { key = stage + "|?"; }',
     '    if (key === lastKey) { dupes++; return; }',
+    '    if (NOISY[stage] && sent[key]) { lastStage = stage; dupes++; return; }',
     '    flush();',
-    '    lastKey = key; lastStage = stage;',
+    '    lastKey = key; lastStage = stage; sent[key] = 1;',
     '    post(stage, detail);',
     '  }',
     '  function hasStash() { try { return !!sessionStorage.getItem("camphawk_rc"); } catch (e) { return false; } }',
