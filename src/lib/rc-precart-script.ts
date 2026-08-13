@@ -351,6 +351,53 @@ export function sessionProbe(): string {
   ].join('\n');
 }
 
+/**
+ * PUT RC'S PAGE BACK AT THE TOP — where its Sign In control is.
+ *
+ * Reported from two real hand-offs (2026-08-13): "tapping Start hand-off scrolls you down
+ * to the calendar; it should stay at the top so the RC sign-in button is easy to find."
+ *
+ * The cause is RC's own SPA. `/park/<place>/<facility>` boots, then scrolls its availability
+ * grid into view — which is the right thing to do for somebody browsing and the wrong thing
+ * for somebody we have just sent to sign in, because RC's account control lives in the
+ * header, now off screen. The first step of the claim is the sign-in, so the first thing on
+ * screen has to be the way to do it.
+ *
+ * ## Why a short repeating nudge and not one scrollTo
+ *
+ * We are injected at `loadstop`, and RC scrolls AFTER that — asynchronously, from its own
+ * framework, at a time nothing here can observe. A single `scrollTo(0, 0)` at injection is
+ * therefore a race we lose most of the time, and the failure is silent.
+ *
+ * ## AND WHY IT STOPS THE INSTANT THE USER TOUCHES IT
+ *
+ * Fighting a user for the scroll position is worse than the problem: someone who has
+ * deliberately scrolled down to check their dates and gets yanked back to the top twice will
+ * not trust the next thing this screen tells them. Any real gesture — a touch, a wheel, a
+ * key — ends it immediately and permanently, and it gives up on its own after 1.8s whatever
+ * happens. `scrollTo` is called with no smooth behaviour so it cannot itself look like a
+ * gesture, and a page already at the top is left alone entirely.
+ */
+export function scrollToTop(): string {
+  return [
+    '(function () {',
+    '  try {',
+    '    var until = Date.now() + 1800, stop = false;',
+    '    function done() { stop = true; }',
+    // `passive` so listening can never delay RC's own scrolling, and capture so a gesture
+    // handled inside RC's grid still reaches us.
+    '    ["touchstart", "wheel", "keydown", "pointerdown"].forEach(function (k) {',
+    '      try { window.addEventListener(k, done, { passive: true, capture: true, once: true }); } catch (e) {}',
+    '    });',
+    '    var t = setInterval(function () {',
+    '      if (stop || Date.now() > until) { clearInterval(t); return; }',
+    '      try { if ((window.scrollY || 0) > 4) window.scrollTo(0, 0); } catch (e) {}',
+    '    }, 200);',
+    '  } catch (e) {}',
+    '})();',
+  ].join('\n');
+}
+
 export function buildPrecartScript(): string {
   const dir = join(process.cwd(), 'extension');
   const inject = readFileSync(join(dir, 'rc-inject.js'), 'utf8');
@@ -368,6 +415,9 @@ export function buildPrecartScript(): string {
     // ARRIVED in, and every line below it is a chance for RC's SPA to change that state.
     // It needs the reporter's channel and JWT decoder, so it cannot go first.
     sessionProbe(),
+    // Before the precart, because RC's scroll happens on its own clock and the nudge is a
+    // 1.8s window that starts here. It touches nothing the cart depends on.
+    scrollToTop(),
     '(function () {',
     '  // The user tapped claim; that is the opt-in. See the route for why this is shimmed',
     '  // rather than the extension file being edited.',

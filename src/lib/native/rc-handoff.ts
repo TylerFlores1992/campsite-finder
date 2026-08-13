@@ -239,6 +239,49 @@ export async function rcHandoffDiagnostics(): Promise<Record<string, string>> {
  * stays false on every older one still in the wild, with no web-side release needed to
  * tell them apart.
  */
+/**
+ * How the ReserveCalifornia window is presented — and why each flag is here.
+ *
+ * `_blank` (passed separately) is the Cordova in-app webview, NOT a new tab.
+ *
+ * **`location=yes` STAYS, permanently.** The user is about to authenticate and pay on
+ * reservecalifornia.com, and hiding the address bar while they do that is precisely the
+ * pattern a phishing page uses. They must be able to see whose site this is.
+ *
+ * `hardwareback=no` so Android's back button walks RC's history instead of closing the
+ * webview on the first press — the same default that would have exited the whole app
+ * before NativeBridge intercepted it.
+ *
+ * `toolbarposition=top` — the bar was at the bottom, where it sat ON TOP of the page's own
+ * content and rendered as a truncated URL between two dead arrows. RC's booking pages put
+ * their controls at the bottom, so the two fought.
+ *
+ * **`presentationstyle=fullscreen` is owner note 5**, reported from two real iOS hand-offs:
+ * "seeing the page behind the webview at the top looks choppy". That is the plugin's iOS
+ * default, `pagesheet` — a card presentation that deliberately leaves the presenting screen
+ * visible above it. Two pages layered at the top of a phone, one of them ours and one of
+ * them RC's, at the moment somebody is deciding whether to trust this with a campsite. It
+ * also stops a swipe-down dismissing the window, which on the cart path would kill the
+ * webview mid-POST. Android ignores the flag; its InAppBrowser is already full-height.
+ *
+ * The toolbar colours are the app's own (`--color-ch-green-deep` on `--color-ch-paper`),
+ * so the seam that remains reads as CampHawk chrome around RC's page rather than as an
+ * unstyled system bar between two apps. Hex, uppercase, `#RRGGBB` — the plugin parses these
+ * itself and silently ignores anything else, which would leave the default grey with no
+ * error anywhere.
+ */
+const IAB_OPTIONS = [
+  'location=yes',
+  'hardwareback=no',
+  'toolbarposition=top',
+  'presentationstyle=fullscreen',
+  'toolbartranslucent=no',
+  'toolbarcolor=#16603B',
+  'closebuttoncolor=#FAF7F2',
+  'navigationbuttoncolor=#FAF7F2',
+  'closebuttoncaption=Done',
+].join(',');
+
 async function injectableWebView(): Promise<null | {
   open: (url: string, code: string, onReport?: (r: RcReport) => void, closeOnToken?: boolean) => Promise<void>;
 }> {
@@ -250,18 +293,7 @@ async function injectableWebView(): Promise<null | {
   if (!iab) return null;
   return {
     async open(url: string, code: string, onReport?: (r: RcReport) => void, closeOnToken = false) {
-      // `_blank` is the Cordova in-app webview (NOT a new tab). `location=yes` keeps the
-      // URL bar visible, which matters here: the user is about to authenticate and pay on
-      // reservecalifornia.com, and hiding the address bar while they do that is exactly
-      // the pattern a phishing page uses. They should be able to see whose site it is.
-      // `hardwareback=no` so Android's back button walks the RC history instead of
-      // closing the webview on the first press — the same default that would have exited
-      // the whole app before NativeBridge intercepted it.
-      // `toolbarposition=top` — the bar was at the bottom, where it sat ON TOP of the page's
-      // own content and rendered as a truncated URL between two dead arrows. RC's booking
-      // pages put their controls at the bottom, so the two fought; at the top it reads as a
-      // browser chrome, which is what it is.
-      const ref = iab.open(url, '_blank', 'location=yes,hardwareback=no,toolbarposition=top') as {
+      const ref = iab.open(url, '_blank', IAB_OPTIONS) as {
         addEventListener: (e: string, cb: (ev?: unknown) => void) => void;
         executeScript: (d: { code: string }, cb?: (r: unknown) => void) => void;
         close?: () => void;

@@ -93,12 +93,19 @@
   // with no cart gets one from RC's own `load` (see addToCart), so a key caught off RC's
   // traffic is now a preference, not a precondition.
   let capturedToken = null, capturedCartKey = null;
+  /** Set when we gave up waiting for a token and asked the user to sign in. See addToCart. */
+  let awaitingSignIn = false;
   const tokenWaiters = [];
   window.addEventListener('message', (e) => {
     if (e.source !== window || !e.data) return;
     if (e.data.__camphawk_token) {
       capturedToken = e.data.__camphawk_token;
       tokenWaiters.splice(0).forEach((fn) => fn(capturedToken));
+      // SIGNING IN IS THE BUTTON PRESS. RC's app broadcasts this token on its first
+      // authenticated call, so it arrives within a second of the sign-in completing — long
+      // before anybody could read a banner and find a control. Retrying here turns "sign in,
+      // then come back and tap Add to cart" into "sign in", which is the whole of note 4.
+      if (awaitingSignIn) { awaitingSignIn = false; addToCart(); }
     }
     if (e.data.__camphawk_cartkey) capturedCartKey = e.data.__camphawk_cartkey;
   });
@@ -204,11 +211,42 @@
     };
   }
 
+  // ONE ATTEMPT AT A TIME, AND NEVER A SECOND AFTER A GOOD ONE.
+  //
+  // The banner used to leave a live "Add to cart" button sitting beside "✓ Added to cart",
+  // which is what the owner saw on the 2026-08-13 hand-off. Hiding the button is most of
+  // the fix, but the guard belongs here too: `addToCart` is also reached from the auto-retry
+  // below and from a re-injection on RC's next SPA navigation, neither of which involves a
+  // button. A second submit on a site we already hold comes back "cart is already added",
+  // which is a REJECTION — so it would overwrite a true success with a failure message.
+  let carting = false, carted = false;
+
   async function addToCart() {
+    if (carting || carted) return;
+    carting = true;
+    try { await runAddToCart(); } finally { carting = false; }
+  }
+
+  async function runAddToCart() {
+    setState('working');
     setStatus('Reading your session…');
     // ONLY THE TOKEN IS A PRECONDITION. A cart key is not — see below.
     const token = await getToken();
-    if (!token) { setStatus('Couldn’t read your RC login — sign in, then click Add to cart.'); return; }
+    if (!token) {
+      // THE USER'S JOB HERE IS TO SIGN IN, so say that and nothing else (owner note 4).
+      // This used to read "Couldn't read your RC login — sign in, then click Add to cart"
+      // in small grey type beside a large orange Add-to-cart button, i.e. the loudest thing
+      // on screen was the one action that cannot possibly work yet.
+      //
+      // There is no button in this state at all. `rc-inject.js` broadcasts the access token
+      // the moment RC's app makes its first authenticated call, so signing in is itself the
+      // trigger — see the waiter below. Making somebody find and press a button after that
+      // spends the exposure window on a tap we can do for them.
+      awaitingSignIn = true;
+      setState('signin');
+      setStatus('Sign in above, and we’ll add it the moment you’re through.');
+      return;
+    }
 
     // WHERE THE CART KEY COMES FROM — and why not having one is no longer a dead end.
     //
@@ -298,7 +336,14 @@
         // session that made the cart (cross-session adoption was tested and fails).
         const newKey = (result && result.ShoppingCartKey) || (_cartKey === NO_CART ? '' : _cartKey);
         if (newKey) { try { localStorage.setItem('shoppingCartKey', newKey); } catch {} }
-        setStatus('✓ Added to cart — review & check out on ReserveCalifornia.');
+        carted = true;
+        setState('carted');
+        // OWNER NOTE 6, and the exact words matter. "Review & check out on
+        // ReserveCalifornia" is a description of a place, not an instruction — the user is
+        // standing ON ReserveCalifornia. What they need is the ONE control that gets them
+        // to checkout, named. `✓ Added to cart` stays as the leading token because it is
+        // what `client_reports` is read for and what proves the two POSTs fired.
+        setStatus('✓ Added to cart — tap the cart icon at the top of this page to check out.');
       } else {
         let detail = apiError;
         console.log('[CampHawk RC] full error body:', raw);
@@ -308,38 +353,102 @@
             detail = j.errors ? Object.keys(j.errors).join(', ') : (j.title || raw.slice(0, 160));
           } catch { detail = raw.slice(0, 160); }
         }
+        setState('failed');
         setStatus(`RC declined (${res.status}) — ${(detail || 'see console').replace(/<br\/?>/g, ' ')}`);
       }
     } catch (e) {
+      setState('failed');
       setStatus('Couldn’t reach RC — book manually.');
     }
   }
 
   // --- banner ----------------------------------------------------------------
-  let statusEl;
+  //
+  // THREE STATES, AND THEY MUST NOT BLUR (reported from two real iOS hand-offs,
+  // 2026-08-13). This bar showed "✓ Added to cart" next to a still-live orange "Add to
+  // cart" button, sitting over RC's own Sub Total row — so the moment it succeeded it
+  // invited a second tap, and a second submit on a held site comes back "cart is already
+  // added", i.e. a rejection printed over a success. Before that, when there was no session
+  // yet, the loudest control on screen was the one action that could not possibly work.
+  //
+  //   signin  → the user must sign in. NO button: the token broadcast does the retry.
+  //   working → we are mid-POST. No control at all; nothing to press and nothing to undo.
+  //   carted  → done. The only control is the way to checkout.
+  //
+  // RESTRAINED ON PURPOSE. This is injected into ReserveCalifornia's own page, so heavy
+  // chrome reads as an ad or a phishing overlay, and it renders inside the ~2.5s exposure
+  // window where a thrown exception costs a campsite. Bigger type and one control at a
+  // time, not a redesign.
+  const CART_URL = 'https://www.reservecalifornia.com/Customers/ShoppingCart';
+  const BAR_CSS =
+    'position:fixed;z-index:2147483647;left:50%;bottom:20px;transform:translateX(-50%);' +
+    'background:#1F3D2E;color:#FAF7F2;font:14px system-ui,sans-serif;padding:12px 16px;border-radius:14px;' +
+    'box-shadow:0 6px 24px rgba(0,0,0,.28);display:flex;align-items:center;gap:12px;max-width:92vw';
+  const ACTION_CSS =
+    'background:#E8873A;color:#fff;border:0;border-radius:10px;padding:9px 13px;font:600 14px system-ui,sans-serif;' +
+    'cursor:pointer;white-space:nowrap;text-decoration:none;display:inline-block';
+
+  let statusEl, headlineEl, actionEl;
   function setStatus(t) { if (statusEl) statusEl.textContent = t; }
+
+  /**
+   * Which of the three (plus two ordinary ones) the bar is in.
+   *
+   * The STATUS LINE is untouched by this — `#camphawk-rc-status` still carries whatever
+   * `setStatus` wrote, verbatim, because `lib/rc-precart-script`'s epilogue observes that
+   * element and forwards it as the hand-off's verdict. The diagnostic and the user's own
+   * screen must never be able to disagree, so this changes the frame around the sentence
+   * and never the sentence.
+   */
+  function setState(name) {
+    if (!headlineEl || !actionEl) return;
+    const big = name === 'signin';
+    headlineEl.textContent =
+      name === 'signin' ? 'Sign in to ReserveCalifornia' :
+      name === 'working' ? 'Adding your site…' :
+      name === 'carted' ? '✓ It’s in your cart' :
+      name === 'failed' ? 'We couldn’t add it' :
+      'CampHawk';
+    headlineEl.style.fontSize = big ? '17px' : '14px';
+    actionEl.textContent = '';
+    if (name === 'carted') {
+      const a = document.createElement('a');
+      a.textContent = 'Open cart';
+      a.href = CART_URL;
+      a.style.cssText = ACTION_CSS;
+      actionEl.appendChild(a);
+    } else if (name === 'idle' || name === 'failed') {
+      // The manual escape hatch, and the only two states it belongs in. Never in `signin`
+      // (it cannot work), never in `working` (it would double-submit), never in `carted`
+      // (that is the bug this rewrite is for).
+      const b = document.createElement('button');
+      b.textContent = name === 'failed' ? 'Try again' : 'Add to cart';
+      b.style.cssText = ACTION_CSS;
+      b.onclick = () => { carted = false; addToCart(); };
+      actionEl.appendChild(b);
+    }
+  }
 
   function banner() {
     const bar = document.createElement('div');
-    bar.style.cssText =
-      'position:fixed;z-index:2147483647;left:50%;bottom:20px;transform:translateX(-50%);' +
-      'background:#1F3D2E;color:#FAF7F2;font:14px system-ui,sans-serif;padding:12px 16px;border-radius:14px;' +
-      'box-shadow:0 6px 24px rgba(0,0,0,.28);display:flex;align-items:center;gap:12px;max-width:92vw';
+    bar.style.cssText = BAR_CSS;
     bar.innerHTML =
       '<span style="font-size:18px">🦅</span>' +
-      `<span><strong>CampHawk</strong> · CA State Parks · ${job.arrivalDate} (${job.nights} night${job.nights > 1 ? 's' : ''})<br>` +
-      '<span id="camphawk-rc-status" style="opacity:.85"></span></span>';
-    const btn = document.createElement('button');
-    btn.textContent = 'Add to cart';
-    btn.style.cssText = 'background:#E8873A;color:#fff;border:0;border-radius:10px;padding:8px 12px;font-weight:600;cursor:pointer;white-space:nowrap';
-    btn.onclick = addToCart;
+      '<span style="min-width:0">' +
+      '<span id="camphawk-rc-head" style="font-weight:700;display:block;line-height:1.25"></span>' +
+      `<span style="opacity:.7;font-size:12px">CA State Parks · ${job.arrivalDate} (${job.nights} night${job.nights > 1 ? 's' : ''})</span><br>` +
+      '<span id="camphawk-rc-status" style="opacity:.85"></span></span>' +
+      '<span id="camphawk-rc-action"></span>';
     const close = document.createElement('button');
     close.textContent = '✕';
     close.style.cssText = 'background:transparent;color:#FAF7F2;border:0;font-size:16px;cursor:pointer;opacity:.7';
     close.onclick = () => { try { sessionStorage.removeItem(STASH); } catch {} bar.remove(); };
-    bar.appendChild(btn); bar.appendChild(close);
+    bar.appendChild(close);
     document.body.appendChild(bar);
     statusEl = bar.querySelector('#camphawk-rc-status');
+    headlineEl = bar.querySelector('#camphawk-rc-head');
+    actionEl = bar.querySelector('#camphawk-rc-action');
+    setState('idle');
   }
   banner();
 
