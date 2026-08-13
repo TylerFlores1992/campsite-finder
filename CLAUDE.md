@@ -2096,6 +2096,14 @@ why the tapped/untapped distinction has to be re-read rather than remembered.
 *(Historical: South Carlsbad `#41` 08-08; Leo Carrillo `#L108` 08-07 FAILED — see the runner
 section above.)*
 
+**THE READOUT HIDES A HOLD THAT IS ABOUT TO RELEASE (found 2026-08-13, NOT FIXED).**
+It windows on **`offered_at`** — "offered in the last 24h" — so a hold that is still
+`requested` and minutes from its release drops off the list if the OFFER was made more than
+a day earlier. That is precisely the row the readout exists to surface. Caught on 08-13 when
+it showed two of three queued holds and the owner corrected it from the app's watches screen,
+which had them all. **Window on `release_at`, not `offered_at`.** Until then, cross-check
+against the app or query `rc_hold_requests` directly before believing a hold is absent.
+
 ```
 NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
 ```
