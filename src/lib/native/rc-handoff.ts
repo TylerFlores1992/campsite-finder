@@ -240,7 +240,7 @@ export async function rcHandoffDiagnostics(): Promise<Record<string, string>> {
  * tell them apart.
  */
 async function injectableWebView(): Promise<null | {
-  open: (url: string, code: string, onReport?: (r: RcReport) => void) => Promise<void>;
+  open: (url: string, code: string, onReport?: (r: RcReport) => void, closeOnToken?: boolean) => Promise<void>;
 }> {
   if (!isNativeShell()) return null;
   const w = window as unknown as {
@@ -249,7 +249,7 @@ async function injectableWebView(): Promise<null | {
   const iab = w.cordova?.InAppBrowser;
   if (!iab) return null;
   return {
-    async open(url: string, code: string, onReport?: (r: RcReport) => void) {
+    async open(url: string, code: string, onReport?: (r: RcReport) => void, closeOnToken = false) {
       // `_blank` is the Cordova in-app webview (NOT a new tab). `location=yes` keeps the
       // URL bar visible, which matters here: the user is about to authenticate and pay on
       // reservecalifornia.com, and hiding the address bar while they do that is exactly
@@ -257,9 +257,14 @@ async function injectableWebView(): Promise<null | {
       // `hardwareback=no` so Android's back button walks the RC history instead of
       // closing the webview on the first press — the same default that would have exited
       // the whole app before NativeBridge intercepted it.
-      const ref = iab.open(url, '_blank', 'location=yes,hardwareback=no') as {
+      // `toolbarposition=top` — the bar was at the bottom, where it sat ON TOP of the page's
+      // own content and rendered as a truncated URL between two dead arrows. RC's booking
+      // pages put their controls at the bottom, so the two fought; at the top it reads as a
+      // browser chrome, which is what it is.
+      const ref = iab.open(url, '_blank', 'location=yes,hardwareback=no,toolbarposition=top') as {
         addEventListener: (e: string, cb: (ev?: unknown) => void) => void;
         executeScript: (d: { code: string }, cb?: (r: unknown) => void) => void;
+        close?: () => void;
       };
       // THE REPORT CHANNEL, wired BEFORE the first injection — the plugin fires `message`
       // for anything the page posts through `cordova_iab`, and the injected reporter's very
@@ -267,7 +272,23 @@ async function injectableWebView(): Promise<null | {
       if (onReport) {
         ref.addEventListener('message', (ev) => {
           const data = (ev as { data?: Record<string, unknown> } | undefined)?.data;
-          if (data && data.camphawk === 'rc-precart') onReport(data as unknown as RcReport);
+          if (!data || data.camphawk !== 'rc-precart') return;
+          const r = data as unknown as RcReport;
+          onReport(r);
+          // CLOSE ONCE WE HAVE WHAT WE CAME FOR — sign-in only.
+          //
+          // The caller's screen is UNDERNEATH this webview, so a user who was already signed
+          // in got a token captured instantly, the gate flipped, and they saw none of it:
+          // they were left sitting on RC's home page with nothing telling them to go back.
+          // Observed 2026-08-12 on the first real run. The state changed correctly and the
+          // interface never said so, which is indistinguishable from it not working.
+          //
+          // NEVER on the cart path. There `closeOnToken` is false, because the token is the
+          // MIDDLE of that job — closing on it would kill the webview before the two cart
+          // POSTs it exists to make.
+          if (closeOnToken && r.stage === 'token' && (r.detail as { captured?: boolean } | null)?.captured) {
+            try { ref.close?.(); } catch { /* the user can close it themselves */ }
+          }
         });
         // Host-side facts the page cannot report about itself. `n: 0` marks them as ours;
         // the page's own reports are numbered from 1, so a gap means a dropped message
@@ -299,7 +320,7 @@ async function injectableWebView(): Promise<null | {
  */
 export async function openRcHandoff(
   h: RcHandoff,
-  opts?: { onReport?: (r: RcReport) => void },
+  opts?: { onReport?: (r: RcReport) => void; closeOnToken?: boolean },
 ): Promise<'injected' | 'in-app' | 'browser'> {
   const url = rcHandoffUrl(h);
 
@@ -310,7 +331,7 @@ export async function openRcHandoff(
     // payload once (the `extraValues` requirement, 2026-08-06).
     const code = await rcInjectedPrecart();
     if (code) {
-      await injectable.open(url, code, opts?.onReport);
+      await injectable.open(url, code, opts?.onReport, opts?.closeOnToken === true);
       return 'injected';
     }
   }

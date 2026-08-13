@@ -159,7 +159,11 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
   async function prepareRc() {
     setRcCheck('opening');
     try {
-      await openRcHandoff({ url: bookingUrl.current }, { onReport });
+      // `closeOnToken`: this window's only job is the sign-in, and the claim screen is
+      // UNDERNEATH it. A user who was already signed in gets a token instantly, the gate
+      // flips, and they see none of it — stranded on RC's home page with nothing saying to
+      // go back. Closing on the token puts them in front of the one button left to press.
+      await openRcHandoff({ url: bookingUrl.current }, { onReport, closeOnToken: true });
     } catch {
       setRcCheck('unconfirmed');
     }
