@@ -1040,6 +1040,31 @@ a missing runner is different, nothing is coming to fix it. Two enforcers — th
 withholds the BUTTON (still sends the coming-soon alert, which is the part the user can
 act on) and the `hold` action refuses too, because a link outlives the alert that carried it.
 
+### MUTING A SITE DID NOTHING TO ITS COMING-SOON ALERTS (2026-08-13)
+Reported as *"I got an alert for a muted site at Carpinteria."* `findRCOpenUnit` has taken
+an exclusion list since site-mute shipped; **`findRCHeldUnits` — the coming-soon path, which
+announces a unit the night before it releases — never did**, and the poller never passed
+one. So a mute silenced the availability alerts and did nothing whatever to the coming-soon
+alerts for the same site.
+- The data: watch `768b5c36` (Carpinteria Santa Cruz), unit **4667 (`#C218`)**, one of 41
+  muted ids, sent push + SMS + email as `kind=coming_soon` at 19:43:37. `#C203` did the same
+  on 08-12.
+- **The half that silently did nothing was the half that mattered more.** Coming-soon is the
+  noisier path — a held unit re-announces itself ahead of every release — which is why the
+  user noticed the mute "not working" rather than "working for some alerts".
+- **THIS IS WHY THE 2026-08-09 VERIFICATION MISSED IT.** That check proved the WRITE
+  persisted and that `/manage/<token>` listed the mute back. **Nothing checked that a reader
+  honoured it**, and a feature whose write half works and whose read half is absent is
+  indistinguishable from a working feature until somebody gets the alert. When verifying a
+  feature end to end, the end is the CONSUMER, not the round-trip through the API that set it.
+- `worker/site-mute.test.mts` holds both finders and the poller's call sites. It is scoped to
+  **watch-scoped** calls: `findRCOpenUnit` is also called from the plain "is anything free in
+  this range?" helper, which has no watch and correctly has no mute list. **The first version
+  of that test failed at baseline on exactly that call** — a guard written from the shape of
+  the bug can be wrong about the rule.
+- It also pins `String(unit.UnitId)`: the id is a NUMBER and `muted_site_ids` is `text[]`, so
+  an unstringified compare silently never matches and reads as "no mutes are set".
+
 ### Auto-cart alerts lost the site id and the kind (2026-08-11)
 Reported as *"a bunch of duplicate texts for the same site"*. Silver Lake 044:
 `06:32 kind=available id=85946` (the main lane, correct), then **08:08, 13:08, 15:13 all
@@ -1204,6 +1229,19 @@ parent's claim, taken one second earlier**. Every on-demand update refused itsel
 - **A HEALTH READING GOES STALE FASTER THAN A CONCLUSION DRAWN FROM IT.** I reported the box
   stuck at 21:12 and it updated at 21:21 — the reading was right when taken and wrong by the
   time it was quoted. Re-read before acting on anything older than a few minutes.
+- **AND IT HAPPENED AGAIN ON 2026-08-13 — "Update now" TAKES ~20 MINUTES, NOT ~2.** An
+  update requested at 19:57 landed at **20:21**. I watched for 16 minutes, saw
+  `SKIP - another process holds the update claim (or we could not ask)` with `claimed_at`
+  NULL, and reported the 08-12 deadlock had recurred. **It had not.** That SKIP is a
+  TRANSIENT state during a normal update, and the timing is structural: a poller spawns the
+  updater only **once per process life**, so the retry that actually lands is the Windows
+  scheduled task, which fires **every 5 minutes**. Budget twenty minutes before concluding
+  anything, and confirm with `autocart.bot_version` rather than with the note.
+- **`appliedNote` and `appliedSha` DO NOT DESCRIBE THE SAME EVENT.** `Report-Applied` sends
+  the current `git rev-parse HEAD` alongside whatever verdict that run reached — so after a
+  successful update, the next scheduled run writes `SKIP - outside the quiet window` next to
+  the NEW sha. Reading them as one record makes a completed update look like a refused one.
+  **`autocart.bot_version` is the field that answers "did it land?"**
 - **THE ESCAPE HATCHES, while a box still runs the deadlocked code:** `update.bat` by hand, or
   a quiet-window run with **no request pending** (the guard claims only when `requested`).
   Cancel the request first or the quiet-window path claims too. **`nextHoldRelease` counts
@@ -2191,6 +2229,12 @@ is not the noise, it is that the next real page gets skimmed.
 **carted 15:00:02Z — two seconds after the release** — `claiming`, then **released
 15:05:24Z**. `maybeAutoLogin` signed in unattended at ~07:29 PT with no human involved, which
 is the link that broke on 08-07 and 08-08.
+
+**TWO SYNTHETIC HOLDS PROVED THE HAND-OFF ON 2026-08-13** (12:31 and 12:47 PT, both
+`✓ Added to cart`, the first confirmed on RC's own cart page). Queued with
+`scripts/rc-test-hold.mts`, South Carlsbad #35 and #37, arrival 2026-12-01 — the reproduction
+recipe, and the second run is what makes "`submit` mints the key, not `load`" a finding
+rather than a one-off.
 
 **2026-08-13 RESOLVED (read 12:30 PT).** All three tapped holds acted on: Elk Prairie `#60`
 carted 15:00:05Z and **released** 15:07:13Z; South Carlsbad `#102` carted 15:00:01Z and

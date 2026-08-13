@@ -107,8 +107,12 @@ web-side, so a push to `master` is enough, but check `CH_DEPLOY_SHA`.
 RC's, measured) × `RC_MAX_CARTS` (**1, ours, and 1 only because that is all we can prove**).
 
 The probe exists: `scripts/auto-cart-bot/rc-probe.mjs --cart-cap`. Its header explains the
-four steps and why step 3 is the control. **It is bot-side code, so it only runs once the
-mini-PC has updated** — `autocart.bot_version` says whether it has arrived.
+four steps and why step 3 is the control.
+
+**IT IS ON THE BOX AS OF 2026-08-13 20:21 UTC** — `autocart.bot_version` read "mini-PC and
+web are both on c682aa8". Nothing blocks this but a human at the machine, because it is
+headful and RC serves a reCAPTCHA on sign-in. Re-check `bot_version` before running, since
+master will have moved.
 
 ```
 cd scripts\auto-cart-bot
@@ -137,6 +141,21 @@ was the ROW count — only four rows were ever carted. But the runner *did* mint
 on 08-13 without being asked to, so **obtaining a second cart is already observed**; what is
 unproven is whether two can be live AT ONCE.
 
+### 4. Loose end: one diagnostics command never got picked up
+
+`tail-log auto-update` was queued as command **#36** at 20:18 UTC on 2026-08-13 and was
+still unclaimed fifteen minutes later, while #31–#35 had all finished in 2–6 seconds that
+morning and both pollers were heartbeating throughout. `botControlFor` returned
+`commands: []`.
+
+**Do not call this a bug yet.** The mini-PC updated at 20:21, which restarts the pollers, so
+#36 may simply have been orphaned mid-flight. **Issue one fresh command and see.** If it
+also stalls, the suspicion is `botControlFor`: both of its reads are `.catch(() => …)`, so
+"the query threw" and "nobody asked" produce the identical output — the exact failure
+`worker/sql-routing.test.mts` exists for, one level up. The swallowing is deliberate (a
+broken diagnostics table must not take the roster feed down) but it means the channel can
+fail completely and silently.
+
 ## Traps that cost time this session
 
 - **`rc-test-hold.mts` creates a `requested` hold, which blocks the update window** while it
@@ -149,6 +168,13 @@ unproven is whether two can be live AT ONCE.
   cosmetic changes between test runs, not during one.
 - **Adding any test under `worker/` triggers the worker-deploy Action**, restarting the
   poller. Harmless (the Action fails unless a fresh heartbeat lands) but not free.
+- **"Update now" takes ~20 minutes, not ~2**, and shows
+  `SKIP - another process holds the update claim` in the meantime. That is TRANSIENT. A
+  poller spawns the updater once per process life, so the retry that lands is the Windows
+  task on its 5-minute tick. I called it a recurrence of the 08-12 deadlock at minute 16 and
+  it landed at minute 24. **`autocart.bot_version` answers "did it land?"** — not
+  `appliedNote`, which carries the newest sha beside whatever verdict the latest run reached,
+  so a finished update can read as a refused one.
 - **Tests hit the real DB**, so a CI run briefly injects hold rows visible in the readout.
   Fixtures must be `offered` with a non-numeric sentinel unit id: `dueHolds` does not check
   whether a watch is active, so a `requested` fixture minutes from release would have the
@@ -163,8 +189,9 @@ CampHawk — RC hand-off: cosmetics, then the multi-cart question.
 
 Read CLAUDE.md, then docs/NEXT-SESSION.md, then docs/CONTEXT.md as needed.
 
-The two RC cart POSTs are PROVEN as of 2026-08-13 (iOS, real hold, confirmed on RC's
-own cart page). That question is closed. Three things are open.
+The two RC cart POSTs are PROVEN as of 2026-08-13 — twice, on iOS, confirmed on RC's
+own cart page. That question is closed. Four things are open, and TASK 1 is the big
+one.
 
 TASK 1 — REDESIGN THE CLAIM + HAND-OFF UI. I ran it twice on iOS and it is not clean
 or appealing. A complete overhaul is fine if it makes sense to you. It must hold the
@@ -194,17 +221,25 @@ of it was broken.
 Test with a real hold via scripts/rc-test-hold.mts --find, opened IN THE APP. Do not
 deploy to master while I am mid-test — it swaps the bundle under me.
 
-TASK 2 — CAN ONE SESSION HOLD MORE THAN ONE CART? RC_HOLD_CAPACITY is 2 sites x 1
-cart and the 1 is there only because that is all we can prove. rc-probe.mjs
---cart-cap settles it; it is bot-side, so check autocart.bot_version first and press
-"Update now" if the box is behind. BEFORE running it, both the bot's cart AND my
-phone's RC cart must be empty — the claim flow now carts on my own session, probably
+TASK 2 — CAN ONE SESSION HOLD MORE THAN ONE CART? This is the one that changes
+capacity. RC_HOLD_CAPACITY is 2 sites x 1 cart and the 1 is there only because that
+is all we can prove. rc-probe.mjs --cart-cap settles it and is already on the box.
+It is headful and RC serves a reCAPTCHA, so I have to run it — give me the exact
+command and tell me how to read the verdict. BEFORE I run it, both the bot's cart AND
+my phone's RC cart must be empty: the claim flow now carts on my own session, probably
 the same RC account, so a leftover site there would fake a per-account refusal.
 Do not raise RC_HOLD_CAPACITY on reasoning alone.
 
-TASK 3 — ANDROID. The cart POSTs are proven on iOS only. Android has had sign-in,
-persistence and token capture measured, never load+submit. ClaimFlow now stamps the
-platform into client_reports, so one Android hand-off answers it — tell me what to run.
+TASK 3 — ANDROID. The cart POSTs are proven on iOS only (twice, 2026-08-13). Android
+has had sign-in, persistence and token capture measured, never load+submit. ClaimFlow
+now stamps the platform into client_reports, so one Android hand-off answers it — tell
+me what to run.
+
+TASK 4 (small) — a diagnostics command (tail-log) sat unclaimed for 15 minutes on
+08-13 while both pollers were heartbeating. Probably orphaned by an update that
+restarted them. Issue one fresh command; if it also stalls, suspect botControlFor,
+whose two reads both .catch(() => ...) so a thrown query and an empty queue give the
+identical answer.
 
 WORKING RULES: branch, npm run verify + CI green, merge to master (auto-deploys).
 Mutation-test any regression test before trusting it. Prefer small scripts that print
