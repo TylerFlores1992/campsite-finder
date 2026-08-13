@@ -1040,10 +1040,17 @@ parent's claim, taken one second earlier**. Every on-demand update refused itsel
 - `worker/update-guard.test.mts` verified failing against BOTH regressions: the guard ignoring
   `--claimed`, and **the poller not passing it** — the fix present but inert, which is the
   version that looks right in review and changes nothing.
-- **THE BOX IS STILL ON `21dcc4e` AS OF 2026-08-12 EVENING**, so `kill-chrome` and this very
-  fix are NOT live on it. An `update.bat` run was reported and **did not land** — `bot_commit`
-  never moved and `applied_sha` never changed, while the runner kept beating normally. Why is
-  unknown; **`tail-log auto-update` is the first thing to read next session.**
+- **RESOLVED THE SAME NIGHT: the box is on `bbe87e9`**, applied 2026-08-12 21:21 PT, so
+  `kill-chrome` and this fix ARE live and `autocart.bot_version` reads "mini-PC and web are
+  both on bbe87e9". An earlier `update.bat` run genuinely did not land (`bot_commit` never
+  moved for ~5h while the runner kept beating), and **why that one failed was never
+  established** — worth knowing it can happen silently. The later update landed despite three
+  holds being `requested` for the next 08:00, which the 6h release check should have blocked,
+  so **the interaction between the manual path and that check is not fully understood either.**
+  Read `tail-log auto-update` before trusting either the manual path or the quiet window.
+- **A HEALTH READING GOES STALE FASTER THAN A CONCLUSION DRAWN FROM IT.** I reported the box
+  stuck at 21:12 and it updated at 21:21 — the reading was right when taken and wrong by the
+  time it was quoted. Re-read before acting on anything older than a few minutes.
 - **THE ESCAPE HATCHES, while a box still runs the deadlocked code:** `update.bat` by hand, or
   a quiet-window run with **no request pending** (the guard claims only when `requested`).
   Cancel the request first or the quiet-window path claims too. **`nextHoldRelease` counts
