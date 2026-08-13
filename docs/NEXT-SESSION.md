@@ -27,27 +27,63 @@ before building on them:
 
 ## The three items
 
-### 1. Cosmetics on the claim + hand-off flow (the owner has notes)
+### 1. The claim + hand-off UI (the owner's notes, from two real runs on 2026-08-13)
 
-The owner ran two real hand-offs on 2026-08-13 and found the flow "not very clean or
-appealing". **Their notes are the input; ask for them first and do not guess.** Two known
-from the screenshot, which are examples of the class rather than the whole list:
+The owner ran the flow twice on iOS and found it "not very clean or appealing", and has
+**explicitly said a complete overhaul is fine if it makes sense** — this is not a
+constrained tidy-up. The target: *hold the same style as the app, very user friendly and
+appealing.* Their six notes, verbatim in substance:
 
-- The CampHawk banner renders its **"Add to cart" button beside "✓ Added to cart"**, and
-  overlaps RC's Sub Total row. It invites a second tap on a cart that is already correct.
-- Same family as the 2026-08-12 fix where the InAppBrowser toolbar sat on the content.
+1. **Holds should appear in the Watches tab**, so they can be found and started without
+   relying on the notification or the email.
+2. **Replace the tent glyph with a proper CampHawk logo**, decently sized, that links back
+   to the app/site when tapped. (Today it is a lucide `Tent` icon in `ClaimFlow.tsx`.)
+3. **Tapping "Start hand-off" scrolls you down to the calendar.** It should stay at the top
+   so the RC sign-in button is easy to find.
+4. **Replace the "Add to cart" box with a large, clear "sign in" instruction** at that
+   stage — the user's job there is to sign in, and the UI is offering a cart button.
+5. **Seeing the page behind the webview at the top looks choppy.** Make that seam clean.
+6. **Once carted, say so plainly** — that it is in the cart, and to tap the 🛒 to check out.
 
-**The banner is `extension/content-rc.js`, served to the app by `/api/rc-precart`.** It is
-byte-identical for the desktop extension on purpose, so a change there lands in both — check
-the extension still reads right. The claim screen itself is `src/components/v2/ClaimFlow.tsx`.
+**Notes 4 and 6 are one thing: the banner has three states and currently blurs them.**
+*needs sign-in* → *working* → *carted, go check out*. The screenshots show `✓ Added to
+cart` rendered **beside a still-live "Add to cart" button**, which invites a second tap on
+a cart that is already correct.
 
-**THE COPY RULE STILL BINDS, and it is now a judgement call rather than a prohibition.**
-`worker/rc-handoff.test.mts` fails if the claim copy promises a cart. One hold has now
-reported one added, which *earns* the branch on capability — it does not perform it. If you
-change that copy, change the test deliberately and say why in the commit; do not let it
-happen as a side effect of a cosmetic pass. Note also the first version of that guard was
-worthless (it matched raw JSX with a class excluding `<`, so a `<strong>` tag interrupted
-the phrase) — mutate it before trusting it.
+**WHERE THE CODE IS, and the constraint that shapes how far to go:**
+- The claim screen is `src/components/v2/ClaimFlow.tsx` — ours, on the `--ch-*` tokens,
+  and the right place to be ambitious.
+- **The banner is `extension/content-rc.js`, served to the app by `/api/rc-precart`, and
+  byte-identical for the desktop Chrome extension by design.** A redesign lands in both.
+  It is also injected into *RC's own page*, so heavy styling risks colliding with their CSS
+  and reads like an ad or a phishing overlay. **Recommendation: overhaul the CampHawk-owned
+  screen, but keep the banner restrained** — three unmistakable states, big type, minimal
+  chrome. It also runs inside the ~2.5s exposure window, where a bug costs a campsite.
+- Note 5 is the InAppBrowser presentation (`src/lib/native/rc-handoff.ts`). `location=yes`
+  **must stay** — hiding whose site you are authenticating on is the shape of a phishing
+  page — so solve the seam with the toolbar's own styling, not by removing it.
+- Note 3: RC's SPA does the scrolling after load. The injected script already runs at
+  `loadstop`, so scrolling to top there is the cheap fix; `lib/booking-url` is the only
+  place allowed to build the `/park/<placeId>/<facilityId>` URL.
+- Note 1 is a **feature, not cosmetics** — the Watches screen needs a live-holds surface
+  and a way into the claim screen. Today `/claim/<id>?t=<token>` is token-authed and
+  `noindex, nocache` precisely because the token authorises the release. From the Watches
+  tab the user is already signed in, so mint the entry server-side for the owner rather
+  than putting a token in client state. **It must open in-app**, or `canInject` is false
+  and the automatic cart silently degrades to the manual path.
+
+**THE COPY RULE — note 6 is exactly the change it has been guarding against, so read this.**
+`worker/rc-handoff.test.mts` fails if the claim copy promises a cart, because promising one
+before the cart POSTs were proven would have had users stop watching a site nobody had
+secured. **TWO holds have now reported `✓ Added to cart` (12:31 and 12:47 on 2026-08-13),
+which earns the branch** — so note 6 is legitimate, and the guard must be updated
+*deliberately*, in its own commit, saying what changed and why. Do not let it fall over as
+a side effect of a redesign.
+- **Branch on capability, not on hope.** `canInject` false (any plain browser) still gets
+  the manual copy; the promise is only honest where the injected precart actually runs.
+- The first version of that guard was **worthless** — it matched raw JSX with a character
+  class excluding `<`, so the tag in `add <strong>{site}</strong> to your cart` interrupted
+  the phrase and the mutation passed. **Mutate it before trusting it.**
 
 **Test with a real hold, not by reading.** `scripts/rc-test-hold.mts --find` prints
 bookable far-future midweek units; queue one with `--watch <id> --unit <id> --arrival
@@ -130,15 +166,31 @@ Read CLAUDE.md, then docs/NEXT-SESSION.md, then docs/CONTEXT.md as needed.
 The two RC cart POSTs are PROVEN as of 2026-08-13 (iOS, real hold, confirmed on RC's
 own cart page). That question is closed. Three things are open.
 
-TASK 1 — COSMETICS. I ran the claim + hand-off flow twice and it does not look clean
-or appealing. I have notes; ask me for them before changing anything. Known: the
-CampHawk banner shows an "Add to cart" button next to "✓ Added to cart" and overlaps
-RC's Sub Total row. The banner is extension/content-rc.js (served by /api/rc-precart,
-byte-identical for the desktop extension — check both). The screen is
-src/components/v2/ClaimFlow.tsx.
-Do not let the claim copy start promising a cart as a side effect;
-worker/rc-handoff.test.mts guards it, that guard was itself broken once, and the
-branch-on-capability is a deliberate change of its own.
+TASK 1 — REDESIGN THE CLAIM + HAND-OFF UI. I ran it twice on iOS and it is not clean
+or appealing. A complete overhaul is fine if it makes sense to you. It must hold the
+same style as the app, and be user friendly and appealing. My six notes:
+  1. Holds should appear in the Watches tab, findable and startable without the
+     notification or email.
+  2. Replace the tent glyph with a decent-size CampHawk logo that links back to the
+     app/site.
+  3. "Start hand-off" scrolls down to the calendar — keep it at the top so the RC
+     sign-in button is easy to find.
+  4. At that point, replace the "Add to cart" box with a large clear instruction to
+     SIGN IN.
+  5. Seeing the page behind the webview at the top looks choppy — make it clean.
+  6. Once carted, say plainly that it is carted and to tap the cart icon to check out.
+Notes 4 and 6 are one thing: the banner has three states (needs sign-in / working /
+carted) and currently blurs them — it shows "Added to cart" next to a live "Add to
+cart" button.
+Screen: src/components/v2/ClaimFlow.tsx. Banner: extension/content-rc.js, served by
+/api/rc-precart and byte-identical for the desktop Chrome extension — a change lands
+in both, it is injected into RC's own page, and it runs inside the ~2.5s exposure
+window. Note 1 is a feature, not cosmetics. Note 5 is the InAppBrowser; location=yes
+must stay.
+Note 6 is the change worker/rc-handoff.test.mts exists to block. Two holds have now
+reported "Added to cart", so it is earned — update that guard deliberately, in its
+own commit, branching on canInject. Mutate it before trusting it; the first version
+of it was broken.
 Test with a real hold via scripts/rc-test-hold.mts --find, opened IN THE APP. Do not
 deploy to master while I am mid-test — it swaps the bundle under me.
 
