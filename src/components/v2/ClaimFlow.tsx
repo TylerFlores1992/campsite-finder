@@ -473,9 +473,22 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
             second the user has to load the target into their head before they act, and
             the previous screen's copy has already scrolled out of mind. */}
         <p className="mt-3 rounded-xl bg-ch-green-soft px-5 py-2 text-xl font-bold text-ch-ink">{site}</p>
+        {/*
+          THERE IS NO TAB IN THE APP. This told everyone to "switch to your ReserveCalifornia
+          tab", which is true on a desktop where step one opened one — and meaningless on a
+          phone, where the sign-in window has just closed itself and the user is looking at
+          this screen with nothing to switch to. Reported from the app on 2026-08-12: "you
+          can't get there".
+
+          Instructions the reader cannot follow are worse than none: they read as a step
+          missed, at the one moment the design is asking them to sit still for two seconds.
+          On the app path we reopen RC ourselves the instant the bot lets go, so say that.
+        */}
         <p className="text-ch-muted mt-2">
-          Switch to your ReserveCalifornia tab and book it — we&rsquo;ll also send you
-          there if you stay here.
+          {canInject
+            ? <>Stay here — we&rsquo;ll open ReserveCalifornia the moment it&rsquo;s yours.</>
+            : <>Switch to your ReserveCalifornia tab and book it — we&rsquo;ll also send you
+              there if you stay here.</>}
         </p>
         {state.stuck && (
           <p className="mt-4 flex items-start gap-2 text-sm text-ch-ink">
