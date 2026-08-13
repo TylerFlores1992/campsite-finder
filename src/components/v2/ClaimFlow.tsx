@@ -83,6 +83,8 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
    */
   const [signedIn, setSignedIn] = useState(false);
   const redirected = useRef(false);
+  /** Was the hold ALREADY released when this screen first loaded? See the redirect effect. */
+  const arrivedReleased = useRef<boolean | null>(null);
 
   /**
    * STEP ONE OF THE CLAIM: sign in to RC *inside our own webview*, before the release.
@@ -278,6 +280,12 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
       if (!r.ok) { setError('This link is no longer valid.'); return null; }
       const j = (await r.json()) as HoldState;
       if (j.bookingUrl) bookingUrl.current = j.bookingUrl;
+      // FIRST LOAD ONLY (`null` means we have not looked yet). This records whether the
+      // hold was ALREADY released when we arrived, which is what separates "the bot just
+      // let go, go now" from "this released an hour ago and the user tapped Open the
+      // hand-off again". The redirect effect reads it; without this assignment the ref
+      // stays null, the effect never sees it, and the fix is present but inert.
+      if (arrivedReleased.current === null) arrivedReleased.current = j.status === 'released';
       setState(j);
       return j;
     } catch {
@@ -298,6 +306,19 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
   // The moment it is ours to take, go. Any pause here is pure exposure.
   useEffect(() => {
     if (state?.status !== 'released' || redirected.current) return;
+    // ONLY ON A TRANSITION WE WATCHED, never on arrival at an old one.
+    //
+    // Going straight to RC is right at 08:00: the bot has just let go and every pause is
+    // exposure. It is wrong when the hold released an hour ago and the user has tapped
+    // "Open the hand-off again" from the Watches tab — they are thrown into ReserveCalifornia
+    // before they can read which site it is or what to do. Reported from the app on
+    // 2026-08-13, and the effect had no way to tell the two apart because it only ever saw
+    // the CURRENT status.
+    //
+    // `arrivedReleased` is set from the FIRST load. If it was already released when we got
+    // here, this is a revisit: render the screen and let them press something. The button on
+    // it opens RC through the same seam, so nothing is lost — it just stops happening TO them.
+    if (arrivedReleased.current) return;
     redirected.current = true;
     // THE PARK'S OWN BOOKING PAGE, not reservecalifornia.com's homepage — which is where
     // this used to land, under a comment claiming otherwise. The fragment is read by the
