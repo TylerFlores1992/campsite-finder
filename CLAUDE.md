@@ -1579,6 +1579,13 @@ authorise it.
   approved campaign "cannot be edited", which contradicts Twilio's own rectifying-campaigns
   doc — the correction already recorded here — and then concedes the API path himself.
   Not worth arguing; take the capability.
+- **THE OWNER REPLIED 2026-08-13 AND WE ARE WAITING ON TWILIO.** The ball is in their court;
+  do not draft another reply, and do not submit an edit until the capability is confirmed
+  enabled on the account. **The replacement samples are already generated and waiting** in
+  `docs/a2p-campaign.md` (from `scripts/a2p-samples.mts`) with three caveats recorded beside
+  them — read those before acting on whatever Twilio says, particularly that the 08-12 link
+  test cannot rank link shapes and that the measured shape (`/manage/<token>`) is not the
+  proposed one (`/claim/<uuid>?t=`).
 
 > **SUPERSEDED 2026-08-12 BY THE OWNER: WE NEED THE camphawk.app LINK BACK.** Removing it
 > was a stopgap to stop losing texts, not the design. So the edit IS wanted, and the
