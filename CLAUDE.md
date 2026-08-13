@@ -809,6 +809,22 @@ token, ~12h Okta session) apply inside the app exactly as they do to the bot.
   inside the app* (from a browser `canInject` is false and it tests nothing). **Once a day**;
   the answer is a shape over days, not a press. The claim screen records the same facts
   against a real hold for free (the `session` stage rides `client_reports`).
+- **NOBODY CAN RUN THE PROBE REMOTELY — not an agent, not a Routine, not the mini-PC.** It
+  measures the storage inside the OWNER'S PHONE's in-app webview; a scheduled session has no
+  injectable webview, so it would degrade to the browser path and measure nothing. The tap is
+  human by construction. What is automatable is the READING:
+  `NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-app-session-readout.mts`.
+- **THE READOUT REFUSES A VERDICT IT HAS NOT EARNED.** It counts only the probes that
+  actually TESTED renewal — the ones that arrived with a dead or missing token — because a
+  probe that found a healthy session asked RC nothing, and counting those is precisely how a
+  working system gets mistaken for a self-renewing one. Under `MIN_RENEWAL_TESTS` (2) it
+  reports NOT ENOUGH DATA and stops. Same posture as `recgov-429-profile.mts` refusing until
+  all 24 hours have data.
+- **PROBE AFTER A LONG GAP OR IT MEASURES NOTHING.** Two probes twenty minutes apart cannot
+  test renewal at all — the token is still alive, so the answer is `live` and the question is
+  untouched. Overnight is the discriminating one: the Okta session is ~12h, so gaps either
+  side of that should split cleanly. The readout prints the longest gap survived and warns at
+  36h of silence, because a hole in the series is a cost, not a neutral absence.
 - `worker/rc-session-verdict.test.mts`, verified failing against 13 regressions — including
   a stored token accepted as live, a renewal claimed from any live token, `unknown` rounded
   to `signed-out`, and the classifier reading the LAST `session` report (which is this run's
