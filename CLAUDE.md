@@ -908,6 +908,24 @@ never scheduled, so it only ever ran when somebody already suspected a problem.
 - **THAT RE-AUTHENTICATION IS ITSELF A LOOSE END — and pulling it found a real bug.**
   See "THE RENEWAL WAS MEASURING ITSELF" immediately below.
 
+### THE LOGIN REHEARSAL HAS NEVER PASSED, AND IT DID NOT FIRE ON 08-12
+Observed 2026-08-12 22:29 PT, with three holds queued for the next morning.
+`rc_login_rehearsal` holds **one row**: `ran_at` 2026-08-11 20:02 PT, **`ok` NULL**,
+`skipped_why` = *"inconclusive — RC re-authenticated from the live Okta session before the
+form hunt"*. So the instrument has produced exactly one verdict in its life and that verdict
+was "I proved nothing" — which is the banner trap being caught correctly, not a fault.
+- **Tonight's 20:00 PT window then passed with `ran_at` unmoved**, i.e. nothing attempted it.
+  Cause NOT established, and do not guess one into this file — the four gates (the 20:00
+  hour, once per 20h, never within 6h of a release, never when the session is live) all look
+  satisfiable at 20:00 on 08-12, so the answer is somewhere else.
+- **IT IS NOT THE 2026-08-10 WEDGE, and that is the distinction that matters at 07:30.** That
+  failure was the keep-warm going silent for ten hours and taking `maybeAutoLogin` down with
+  it. Here the keep-warm reported **45 seconds** before the reading, so the loop is alive and
+  the 07:30 sign-in still runs. A missing rehearsal costs the ADVANCE WARNING, not the repair
+  — check the keep-warm's report age before treating the two as the same event.
+- The health line reads *"no rehearsal has PASSED in 26h27m"*, which is accurate and easy to
+  misread as a regression: nothing has ever passed, so there is no green to have lost.
+
 ### THE RENEWAL WAS MEASURING ITSELF (2026-08-12) — the keep-warm question is REOPENED
 `renewByReload` has been reporting "RC will not renew" since it shipped, and **it was never
 asking RC anything.** From the box's own log:
@@ -1874,9 +1892,16 @@ is not the noise, it is that the next real page gets skimmed.
 **2026-08-12 WORKED END TO END.** Elk Prairie `#33`: offered 01:15Z, tapped 01:34Z,
 **carted 15:00:02Z — two seconds after the release** — `claiming`, then **released
 15:05:24Z**. `maybeAutoLogin` signed in unattended at ~07:29 PT with no human involved, which
-is the link that broke on 08-07 and 08-08. **Two holds are queued for 2026-08-13 08:00 PT:
-South Carlsbad `#76` and Elk Prairie `#60`, both `offered` (untapped).** Note untapped offers
-do NOT block the 02:00–05:00 update window; tapping one does.
+is the link that broke on 08-07 and 08-08.
+
+**THREE holds are queued for 2026-08-13 08:00 PT, and ALL THREE ARE TAPPED** (verified
+2026-08-12 22:29 PT): South Carlsbad `#76` and `#102`, Elk Prairie `#60`, every one
+`requested`. This entry said "two, both `offered` (untapped)" for a day and **that reading
+now inverts a decision**: untapped offers do not block the 02:00–05:00 update window, but
+`requested` does, so **the quiet-window update path is shut until after 08:00** and the
+escape hatch of "run it in the quiet window with no request pending" is not available.
+`nextHoldRelease` counts `requested`/`carted`/`claiming`, never `offered` — which is exactly
+why the tapped/untapped distinction has to be re-read rather than remembered.
 
 *(Historical: South Carlsbad `#41` 08-08; Leo Carrillo `#L108` 08-07 FAILED — see the runner
 section above.)*
@@ -1912,8 +1937,11 @@ one with time to spare.
 carries the **generated replacement samples** and the three caveats on them.
 
 **Both docs are current to 2026-08-13**, including the **app RC session probe**
-(migration 058) — the marker, why the previous open's token is the evidence, and why a
-purge can only be told from a first run by the server. `docs/CONTEXT.md` carries the hold flow, the
+(migration 058) — the marker, why the previous open's token is the evidence, why a purge can
+only be told from a first run by the server, `scripts/rc-app-session-readout.mts` and the
+rule that **nobody can run the probe remotely**. Also corrected here: the 08-13 hold count
+(THREE, all tapped, so the quiet-window update path is shut) and the fact that the **login
+rehearsal has never passed and did not fire on 08-12**. `docs/CONTEXT.md` carries the hold flow, the
 reCAPTCHA/keep-warm design, the mini-PC's five processes, migrations
 039/040/043/044/046/**053/054/055/056**, the `rc-login.bat` window-title bug, the corrected
 A2P facts, and this session's control channel, login rehearsal, `query()` routing class,

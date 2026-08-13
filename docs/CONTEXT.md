@@ -4470,6 +4470,32 @@ hold records the same facts for free: the `session` stage rides `client_reports`
 Entirely web-side — the script is served by `/api/rc-precart` and the panel is web, so a push
 to `master` reaches already-installed apps with no rebuild and no review.
 
+**Reading the series from anywhere:**
+
+```
+NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-app-session-readout.mts
+```
+
+It prints the probes, the longest gap the session has been observed to survive, and a
+renewal verdict — but **only counts probes that actually TESTED renewal**, i.e. the ones
+that arrived with a dead or missing token. A probe that found a live session asked RC
+nothing, and counting those is precisely how a working system gets mistaken for a
+self-renewing one. Under `MIN_RENEWAL_TESTS` (2) it reports NOT ENOUGH DATA and stops, the
+same posture as `recgov-429-profile.mts` refusing a verdict until all 24 hours have data.
+
+**NOBODY CAN RUN THE PROBE REMOTELY — not an agent, not a Routine, not the mini-PC.** It
+reads storage inside the owner's phone, and a scheduled session has no injectable webview,
+so it would take the browser path and record a reading that measured nothing. The tap is
+human by construction; only the reading above is automatable. A daily reminder Routine is
+the sensible pairing and was not created — the call needs an approval a headless session
+cannot display.
+
+**Probe after a LONG gap or it measures nothing.** Two probes twenty minutes apart both
+return `live`, because the token is still alive either way and the question is untouched.
+Overnight is the discriminating one: the Okta session is ~12h, so readings either side of
+that should split cleanly. The readout warns after 36h of silence, because a hole in the
+series is a cost rather than a neutral absence.
+
 ### What is still open
 
 Whether the app renews. The instrument exists and is honest either way; it needs readings.
