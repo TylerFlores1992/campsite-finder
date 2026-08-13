@@ -1040,6 +1040,10 @@ parent's claim, taken one second earlier**. Every on-demand update refused itsel
 - `worker/update-guard.test.mts` verified failing against BOTH regressions: the guard ignoring
   `--claimed`, and **the poller not passing it** — the fix present but inert, which is the
   version that looks right in review and changes nothing.
+- **THE BOX IS STILL ON `21dcc4e` AS OF 2026-08-12 EVENING**, so `kill-chrome` and this very
+  fix are NOT live on it. An `update.bat` run was reported and **did not land** — `bot_commit`
+  never moved and `applied_sha` never changed, while the runner kept beating normally. Why is
+  unknown; **`tail-log auto-update` is the first thing to read next session.**
 - **THE ESCAPE HATCHES, while a box still runs the deadlocked code:** `update.bat` by hand, or
   a quiet-window run with **no request pending** (the guard claims only when `requested`).
   Cancel the request first or the quiet-window path claims too. **`nextHoldRelease` counts
@@ -1100,6 +1104,36 @@ opened the SYSTEM browser, whose cookie jar the injection can never read.
 - **The app session does NOT survive days.** The 08-09 tests proved it survives closing the
   webview and force-closing the app — same day. Nothing measured longer, and RC's own session
   lifetime (~1h token, ~12h Okta) applies inside the app too. Sign in shortly before a release.
+
+**THE CLAIM SCREEN IS NOW ONE BUTTON AT A TIME (2026-08-12 evening).** Three numbered steps, a
+checkbox and a dead button became `Start hand-off` → `Waiting for you to sign in…` →
+`Signed in — it's mine, hand it over`. **The final press STAYS** — signing in is not the same
+intent as "I am ready now", and auto-releasing on the token would hand the site to whoever else
+is watching while its owner put the phone down. What was removed is the busywork, not the
+decision. Unconfirmed still falls back to the checkbox; the browser path is unchanged.
+- **`/api/admin/test-claim` + the "Open the claim screen" button** make the whole flow testable
+  without waiting for 08:00. It MUST be an in-app link: the same URL from Mail or Messages
+  opens the system browser, where `canInject` is false and the flow degrades to the checkbox,
+  testing nothing. Push carries a url and works too, but only from a runtime with FCM.
+- **THREE BUGS FOUND ON THE FIRST REAL RUN, ALL THE SAME SHAPE — the app doing the right thing
+  while the screen described a different product.** None would have surfaced before 8am.
+  1. **Stranded when it WORKED.** Already-signed-in user → token captured instantly → gate
+     flipped → and they saw none of it, because the claim screen is UNDERNEATH the webview.
+     The green release button was rendered one layer down the whole time. `closeOnToken` closes
+     the sign-in window on capture. **NEVER on the cart path** — there the token is the MIDDLE
+     of the job and closing would kill the webview before the two cart POSTs.
+  2. **The IAB toolbar sat ON the content** and read as a truncated URL between two dead
+     arrows. `toolbarposition=top`. `location=yes` STAYS — hiding whose site you are
+     authenticating on is the shape of a phishing page.
+  3. **"Switch to your ReserveCalifornia tab" — there is no tab in the app.** An instruction
+     the reader cannot follow is worse than none: it reads as a missed step at the one moment
+     the design wants them to sit still. Branched on `canInject`.
+- **A SAFE WAY TO FABRICATE A TEST HOLD.** `unit_id` is NOT NULL and an invented one can
+  collide with a real site and lock it — so use a **non-numeric sentinel**
+  (`__camphawk-verify-DO-NOT-USE__`; real RC unit ids are numeric), and set `release_at` months
+  out. `nextHoldRelease` counts `carted`, so a near date would put a real release on the books
+  and block the 02:00–05:00 update window. One is parked now: hold `06febc63-6c84-49ac-bf53-
+  0123d9bb7e81`, Carpinteria, releasing 2026-12-20. **Delete it once the flow is proven.**
 
 ### Stripe is constructed lazily, in ONE place (2026-08-12)
 Five routes did `new Stripe(process.env.STRIPE_SECRET_KEY!.trim())` at **module scope**.
