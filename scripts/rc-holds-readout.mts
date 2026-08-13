@@ -13,6 +13,19 @@
  * NOT a failure: an unanswered offer must never authorise a cart, which is the whole
  * point of the opt-in. A hold stuck in `requested` past its release time IS a failure —
  * that is the runner being down or unable to reach RC.
+ *
+ * IT WINDOWS ON `release_at`, NOT `offered_at`, and that is the whole point of the window.
+ * It used to ask "offered in the last 24h", which drops a hold that is still `requested`
+ * and MINUTES from releasing, purely because the offer went out more than a day earlier —
+ * i.e. it hid exactly the row it exists to surface. Caught 2026-08-13, when it showed two
+ * of the three holds queued for that morning and the owner corrected it from the app's
+ * watches screen. A window on `release_at` cannot do that: a release in the future is
+ * always in range, so a hold can only leave the list once its moment has passed.
+ *
+ * `release_at` is RC's own zone-less Pacific wall-clock TEXT, so the bound is built with
+ * `to_char(... AT TIME ZONE 'America/Los_Angeles')` like every other call site. Comparing
+ * it against a bare `NOW()` would be seven hours wrong — which at a 24h window is a whole
+ * extra morning of holds, silently.
  */
 import { query } from '../src/lib/db/client';
 
@@ -38,7 +51,8 @@ const holds = await query<{
      FROM rc_hold_requests r
      JOIN campgrounds c ON c.id = r.campground_id
      JOIN users u ON u.id = r.user_id
-    WHERE r.offered_at > NOW() - ($1 || ' hours')::interval
+    WHERE r.release_at > to_char((NOW() - ($1 || ' hours')::interval)
+                                 AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
     ORDER BY r.release_at DESC, r.offered_at DESC`,
   [String(hours)],
 );
@@ -56,7 +70,8 @@ const [session] = await query<{
      FROM rc_runner_heartbeat WHERE id = 1`,
 ).catch(() => []);
 
-console.log(`RC holds offered in the last ${hours}h — ${holds.length} row(s). Now: ${pacificNow} PT\n`);
+console.log(`RC holds releasing since ${hours}h ago (and every one still ahead) — ` +
+  `${holds.length} row(s). Now: ${pacificNow} PT\n`);
 
 // Printed BEFORE the table and even when there are no holds: a dead session with nothing
 // queued is the cheapest possible moment to fix it, and the only one where a human has
@@ -113,7 +128,8 @@ if (!session || session.session_ok == null) {
 }
 
 if (!holds.length) {
-  console.log('Nothing offered. That is the normal state: it needs a watched RC site to be');
+  console.log('No holds released in that window and none queued ahead. That is the normal');
+  console.log('state: a hold needs a watched RC site to be');
   console.log('cancelled-but-held, for an entitled subscriber, with ≥1h before it releases.');
   process.exit(0);
 }

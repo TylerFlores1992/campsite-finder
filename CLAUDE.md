@@ -1347,6 +1347,20 @@ Two holds carted at 08:00 were still `carted` at **09:40**, with `last_attempt_n
 is already clamped at zero for a time that has passed. So a hold with `release_at` two
 minutes out is carted on the next 15s poll. **`scripts/rc-test-hold.mts`** queues one and
 prints the claim URL.
+- **IT COULD NOT RUN AT ALL, AND THE REFUSAL IS WHY NOBODY KNEW (found 2026-08-13).** The
+  default watch lookup ordered by `w.updated_at` and **`watches` has no such column** — it
+  has `created_at` — so every run that reached that line died on `column w.updated_at does
+  not exist`. The only previous run had a live hold and exited at the refusal ONE STEP
+  EARLIER, so the first line of the script's actual job had never executed. **A guard that
+  fires on the first run postpones the first real test of everything behind it**; the
+  refusal looked like the script working.
+- **`--find` asks RC which units are genuinely bookable** on far-future midweek nights, per
+  watched campground, and prints the `--unit`/`--arrival`/`--watch` triple ready to paste.
+  "Never invent a unit id" was the one instruction here whose failure mode is locking a
+  stranger's campsite, and it was left to a human with no tool to obey it.
+  **Slices are keyed `2026-12-01T00:00:00`, not `2026-12-01`** — index by the bare date and
+  every unit reads as booked, which looks exactly like a sold-out season. Read `slice.Date`,
+  as `lib/availability/reservecalifornia.ts` does.
 - **A REAL numeric unit id exercises the whole chain** — precart, `load` + `submit`, the
   cart read-back, the claim screen, `token captured`, the release. It also **LOCKS A REAL
   SITE** until the claim releases it or RC drops the cart, so: far-future midweek date,
@@ -1360,9 +1374,22 @@ prints the claim URL.
 `rc-hold-runner` reads `localStorage["shoppingCartKey"]` and passes `existing || NO_CART`,
 and `precartInPage` writes each winning key straight back — so the first hold of the
 system's life minted a cart and **every hold since has been funnelled into that same one.**
-The database says it plainly: **15 holds ever, TWO distinct cart keys**, and all three of
-the 08-13 holds on one. The third hold did not hit RC's ceiling; it hit the second seat of
-the only cart we have ever used.
+The third hold did not hit RC's ceiling; it hit the second seat of the cart it was put in.
+
+**THE "15 HOLDS, TWO CART KEYS" EVIDENCE WAS MINE AND IT IS MISLEADING (checked 2026-08-13).**
+15 is the row count of `rc_hold_requests`; **only FOUR of those rows were ever carted**
+(10 `expired` unanswered, 2 `failed`, 1 still `offered`). So the reuse evidence is not
+"15 holds funnelled into 2 carts" — it is **three holds in one cart on one morning**, plus
+one hold in one cart the morning before. Quoting the row count made a single day's
+behaviour look like a long-standing pattern.
+- **AND THE RUNNER DID NOT REUSE 08-12's CART.** `13d0e605…` took `#33` on 08-12 and
+  `5b23626e…` took all three on 08-13 — a *fresh* key the next morning, without anyone
+  changing the code. So `existing || NO_CART` does not funnel forever; `load` handed back a
+  new cart once the old one was stale. **Minting a second cart is therefore not the
+  unproven part** — obtaining one is already observed. What is unproven is whether TWO can
+  be LIVE AT ONCE on one session, which is the only thing that raises capacity.
+- The three 08-13 rows also show the cap releasing a seat exactly as expected: `#60` freed
+  at 15:07:13 and `#76` carted into the same cart at **15:07:14**.
 - **Why that is plausibly free to fix:** the cart is a free-floating GUID-keyed object with
   `CustomerId: 0`, and `load` mints a fresh one for the asking (that is the same finding
   that made the injected precart work). N carts of 2, one session, one account, **no new
@@ -1370,6 +1397,10 @@ the only cart we have ever used.
 - **UNPROVEN, and do not act on it before it is measured.** Nobody has asked RC whether one
   session may hold two carts at once. Cross-session adoption, the keep-warm and
   `renewByReload` were all this plausible and all false.
+- **`--cart-cap` IS BOT-SIDE CODE, so it cannot run until the box updates.** It shipped in
+  `bf387c8` inside `rc-probe.mjs`, and the mini-PC only moves on `update.bat`, "Update now"
+  or a quiet-window run — `autocart.bot_version` is what says whether it has arrived. A
+  probe that is not on the box looks identical to a probe nobody has bothered to run.
 - **`rc-probe.mjs --cart-cap` settles it** — cart A into a fresh cart, B into the same cart,
   C into the same cart (**the control: it must be refused with RC's own cap wording, or step
   4 succeeding proves nothing**), then C into a fresh cart. It releases only the entries it
@@ -2096,13 +2127,25 @@ why the tapped/untapped distinction has to be re-read rather than remembered.
 *(Historical: South Carlsbad `#41` 08-08; Leo Carrillo `#L108` 08-07 FAILED — see the runner
 section above.)*
 
-**THE READOUT HIDES A HOLD THAT IS ABOUT TO RELEASE (found 2026-08-13, NOT FIXED).**
-It windows on **`offered_at`** — "offered in the last 24h" — so a hold that is still
-`requested` and minutes from its release drops off the list if the OFFER was made more than
-a day earlier. That is precisely the row the readout exists to surface. Caught on 08-13 when
-it showed two of three queued holds and the owner corrected it from the app's watches screen,
-which had them all. **Window on `release_at`, not `offered_at`.** Until then, cross-check
-against the app or query `rc_hold_requests` directly before believing a hold is absent.
+**THE READOUT HID A HOLD THAT WAS ABOUT TO RELEASE — FIXED 2026-08-13.**
+It windowed on **`offered_at`** — "offered in the last 24h" — so a hold that is still
+`requested` and minutes from its release dropped off the list if the OFFER was made more
+than a day earlier. That is precisely the row the readout exists to surface. Caught on
+08-13 when it showed two of three queued holds and the owner corrected it from the app's
+watches screen, which had them all. It windows on **`release_at`** now, so a release in
+the future is always in range and a hold can only leave the list once its moment has
+passed.
+- The bound is built with `to_char(… AT TIME ZONE 'America/Los_Angeles')` like every other
+  `release_at` call site — it is zone-less Pacific TEXT, and a bare `NOW()` is seven hours
+  adrift, which silently amputates the oldest seven hours of the window.
+- `worker/rc-holds-readout.test.mts` runs the **real script** against three fixtures and
+  reads its stdout, because the defect was one column name in one WHERE clause and a test
+  asserting against a copy of that clause would assert the copy. Verified failing against
+  all three regressions: the restored `offered_at`, the dropped time zone (the −20h fixture
+  is the only one that catches it — the ±3-day fixtures cannot), and no window at all.
+- The fixtures are `offered` with a non-numeric sentinel unit id, two independent reasons
+  the production runner cannot cart one: **`dueHolds` does not care whether the watch is
+  active**, so a careless `requested` fixture minutes from release would cart a real site.
 
 ```
 NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts

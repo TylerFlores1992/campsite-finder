@@ -36,13 +36,21 @@
  * It refuses to run while a REAL hold is queued, because a test cart consumes a seat in the
  * cart the bot would otherwise hold that user's site with.
  *
+ *   NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts --find
  *   NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts --list
  *   NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts \
  *     --unit 45725 --arrival 2026-12-15 --nights 1
  *   NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts --delete <id>
+ *
+ * `--find` exists because "never invent a unit id" is the one instruction here whose
+ * failure mode is locking a stranger's campsite, and it was left to a human with no tool
+ * to obey it. It asks RC's own grid which units are genuinely bookable on a far-future
+ * midweek night, so the id is copied rather than guessed.
  */
 import { query, mutate } from '@/lib/db/client';
 import { manageTokenFor } from '@/lib/notifications/actions';
+import { fetchGrid, USEDIRECT_PROVIDERS, facilityIdFromCampgroundId }
+  from '@/lib/sources/reservecalifornia/client';
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://camphawk.app').replace(/\/$/, '');
 /** Marks a row as ours, so `--list` and `--delete` can never touch a real user's hold. */
@@ -79,8 +87,63 @@ async function list() {
   }
 }
 
+/**
+ * Which units are actually bookable, for each RC campground we watch?
+ *
+ * Deliberately far-future and midweek: a site nobody is competing for is one whose loss
+ * for the length of a test costs nobody anything. It prints the `--unit`/`--arrival` pair
+ * ready to paste, and the watch id, because a unit only means anything inside the
+ * campground its watch points at.
+ *
+ * SLICES ARE KEYED "2026-12-01T00:00:00", NOT "2026-12-01". Indexing the map by the bare
+ * date silently matches nothing, and "no availability anywhere in California in December"
+ * looks enough like a sold-out season to be believed — it was, for a few minutes, while
+ * writing this. Read `slice.Date`, exactly as `lib/availability/reservecalifornia.ts` does.
+ */
+async function find() {
+  const rc = USEDIRECT_PROVIDERS.find((p) => p.idPrefix === 'rc')!;
+  const dates = (flag('dates') ?? '2026-12-01,2026-12-08,2027-01-12').split(',');
+  const watches = await query<{ watch_id: string; cg_id: string; name: string }>(
+    `SELECT DISTINCT ON (c.id) w.id AS watch_id, c.id AS cg_id, c.name
+       FROM watches w JOIN campgrounds c ON c.id = w.campground_id
+      WHERE w.active AND c.source = 'reservecalifornia'
+      ORDER BY c.id, w.created_at DESC`,
+  );
+  if (!watches.length) return console.log('No active ReserveCalifornia watches.');
+
+  for (const w of watches) {
+    for (const date of dates) {
+      const end = new Date(new Date(`${date}T00:00:00Z`).getTime() + 86_400_000).toISOString().slice(0, 10);
+      let grid;
+      try {
+        grid = await fetchGrid(rc, facilityIdFromCampgroundId(w.cg_id), date, end);
+      } catch (err) {
+        console.log(`  ! ${w.name.slice(0, 32)} ${date}: ${(err as Error).message.slice(0, 60)}`);
+        continue;
+      }
+      const free = Object.values(grid.Facility?.Units ?? {}).filter((u) => {
+        if (!u.AllowWebBooking || !u.IsWebViewable) return false;
+        const s = Object.values(u.Slices ?? {}).find((x) => x.Date === date);
+        // `Lock` set means cancelled-but-held — the very thing the 8am flow races for, so
+        // the worst possible choice for a test that must disturb nobody.
+        return !!s && s.IsFree && !s.IsBlocked && !s.IsWalkin && !s.Lock
+          && !s.ReservationId && (s.MinStay ?? 1) <= 1;
+      });
+      if (!free.length) continue;
+      console.log(`\n${w.name}`);
+      console.log(`  --watch ${w.watch_id}   (${free.length} bookable on ${date})`);
+      for (const u of free.slice(0, 4)) {
+        console.log(`    --unit ${String(u.UnitId).padEnd(7)} --arrival ${date}    ${u.Name}`);
+      }
+      break;
+    }
+  }
+  console.log('\nPrefer a campground with MANY free — locking one of fifty disturbs nobody.');
+}
+
 async function main() {
   if (has('list')) return list();
+  if (has('find')) return find();
 
   const del = flag('delete');
   if (del) {
@@ -121,9 +184,14 @@ async function main() {
     return;
   }
 
+  // `watches` HAS NO `updated_at` — it has `created_at`. Ordering by the former threw
+  // `column w.updated_at does not exist` on every run that reached here, which is to say
+  // every run that was not refused first. The refusal above is why it shipped unnoticed:
+  // the only previous run had a live hold and exited one step earlier, so the first line
+  // of this script's actual job had never executed.
   const watchId = flag('watch') ?? (await query<{ id: string }>(
     `SELECT w.id FROM watches w JOIN campgrounds c ON c.id = w.campground_id
-      WHERE w.active AND c.source = 'reservecalifornia' ORDER BY w.updated_at DESC LIMIT 1`,
+      WHERE w.active AND c.source = 'reservecalifornia' ORDER BY w.created_at DESC LIMIT 1`,
   ))[0]?.id;
   if (!watchId) {
     console.error('No active ReserveCalifornia watch to hang a test hold off. Pass --watch <id>.');
