@@ -616,7 +616,17 @@ function SiteCard({
   return (
     <section className={`rounded-ch-card border-2 p-5 shadow-ch-card ${ring}`}>
       <p className="text-ch-meta font-bold uppercase tracking-[.08em] text-ch-muted">{heading}</p>
-      <p className="mt-2 font-ch-display text-[34px] font-extrabold leading-none tracking-[-.03em] text-ch-ink">
+      {/* STEP THE SIZE DOWN FOR A LONG NAME. `rcSiteLabel` prefers RC's short human token
+          (`#L006`) and that is what almost every hold carries — but the fallback is RC's
+          full description ("Hook Up (E/W/S) Campsite #R306"), and at 34px that wraps to
+          three lines and pushes the actual instruction off a phone screen. The point of
+          setting this large was that it is read at a glance under a clock; a headline that
+          costs half the viewport stops serving that. */}
+      <p
+        className={`mt-2 font-ch-display font-extrabold leading-[1.05] tracking-[-.03em] text-ch-ink ${
+          site.length > 22 ? 'text-[22px]' : site.length > 12 ? 'text-[27px]' : 'text-[34px]'
+        }`}
+      >
         {site}
       </p>
       {stay && <p className="mt-2 text-ch-body text-ch-ink-2">{stay}</p>}
