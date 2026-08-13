@@ -771,6 +771,12 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
 
 ## Open / next session
 
+> **START AT `docs/NEXT-SESSION.md`** (written 2026-08-13). Three open items — claim-flow
+> cosmetics (the owner has notes; ask, don't guess), the one-session-multiple-carts probe,
+> and the cart POSTs on Android — plus the opening prompt to paste. **Delete that file once
+> the three are done**; it is a handover, not a permanent doc, and a stale one would read
+> like current state.
+
 ### THE APP'S RC SESSION IS BEING MEASURED NOW — no renewal built yet (migration 058, 2026-08-13)
 The mobile claim flow needs a live RC session inside the InAppBrowser data store, and the
 owner has had to sign in on every claim — on 2026-08-12 that happened **inside the 08:00
@@ -1433,6 +1439,11 @@ prints the claim URL.
   unpopular loop, and never an invented id. The sentinel unit tests the screen only.
 - It **refuses while a real hold is live**, because a test cart takes a seat that user's
   site needs — and that refusal is what surfaced the leak above on its first run.
+- **A TEST HOLD BLOCKS THE UPDATE WINDOW while it is live.** It inserts as `requested`,
+  which `nextHoldRelease` counts, so the guard's 6h release check refuses an update for as
+  long as the release is still ahead. Self-clearing the moment that time passes — but an
+  "Update now" pressed in the same minute as queueing a test will refuse, and the reason
+  will look like the 08-12 deadlock rather than the thing you just did.
 - **Open the claim URL IN THE APP.** From a browser `canInject` is false and the injected
   precart is never exercised, which is the whole thing being tested.
 

@@ -153,10 +153,55 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
   }, [flushReports]);
 
   /**
+   * WHICH PLATFORM, AND WHICH BINARY — stamped once per claim, before anything opens.
+   *
+   * The two RC cart POSTs were proven on 2026-08-13, and the write-up of that run very
+   * nearly said "Android" out of pure habit: `client_reports` carried no platform at all,
+   * and the real answer (iOS) came from the status bar of a screenshot the owner happened
+   * to send. That is luck, not instrumentation.
+   *
+   * It matters because the platforms differ exactly where this feature lives — WKWebView
+   * has its own cookie store and its own ITP rules, which is why the 08-09 sign-in tests
+   * were repeated on iOS rather than inferred from Android. **A result on one is not a
+   * result on both**, so a trace that cannot say which it was cannot settle either.
+   *
+   * `appBuild` rides along because it is the only fact that settles which binary answered
+   * — the question that cost an evening on 2026-08-09 to three different wrong guesses.
+   *
+   * It goes through `onReport`, so it travels the buffered path already built for this and
+   * needs no schema change. ONCE: the platform cannot change mid-flow, and a repeat would
+   * push the cart's own verdict further from the end of a capped list. Nothing here is
+   * sensitive — no token, no cart key, no URL — which matters because this does NOT pass
+   * through the injected script's `scrub()`.
+   */
+  const platformNoted = useRef(false);
+  const notePlatform = useCallback(() => {
+    if (platformNoted.current) return;
+    platformNoted.current = true;
+    void rcHandoffDiagnostics()
+      .then((d) => {
+        onReport({
+          n: 0,
+          stage: 'platform',
+          detail: {
+            platform: d.platform ?? 'unknown',
+            appBuild: d.appBuild ?? 'unknown',
+            nativeShell: d.nativeShell ?? 'unknown',
+            ua: d.ua ?? '',
+          },
+        });
+      })
+      // Never surface this. A diagnostic that can break the claim is worse than no
+      // diagnostic, and `rcHandoffDiagnostics` dynamically imports a native plugin.
+      .catch(() => {});
+  }, [onReport]);
+
+  /**
    * Open RC in the injectable webview so the user can sign in BEFORE anything is released.
    * No `unitId` — see the note on `rcCheck`; this must not be able to cart.
    */
   async function prepareRc() {
+    notePlatform();
     setRcCheck('opening');
     try {
       // `closeOnToken`: this window's only job is the sign-in, and the claim screen is
@@ -240,13 +285,14 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     // Routed through openRcHandoff so the day an injectable in-app webview exists, the
     // phone gets the same automatic cart the desktop extension already does — and it
     // changes in ONE place rather than in the three exits this screen has.
+    notePlatform();
     void openRcHandoff({
       url: bookingUrl.current,
       unitId: state.unitId,
       arrivalDate: state.arrivalDate,
       nights: state.nights,
     }, { onReport });
-  }, [state, onReport]);
+  }, [state, onReport, notePlatform]);
 
   /**
    * May we let go?
@@ -537,6 +583,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
             // link" all still work, and it degrades if JS is broken. The handler only
             // takes over when there is something better to do than follow it.
             e.preventDefault();
+            notePlatform();
             void openRcHandoff({
               url: bookingUrl.current,
               unitId: state.unitId,
