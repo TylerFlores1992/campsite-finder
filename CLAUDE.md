@@ -758,6 +758,62 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
 
 ## Open / next session
 
+### THE APP'S RC SESSION IS BEING MEASURED NOW — no renewal built yet (migration 058, 2026-08-13)
+The mobile claim flow needs a live RC session inside the InAppBrowser data store, and the
+owner has had to sign in on every claim — on 2026-08-12 that happened **inside the 08:00
+window**, the moment the design exists to protect. **"Sign in once and it persists" was
+over-claimed:** the 08-09 tests measured persistence across closing the webview and
+force-closing the app, SAME DAY. Nothing measured days, and RC's own lifetimes (~1h access
+token, ~12h Okta session) apply inside the app exactly as they do to the bot.
+- **THREE CAUSES LOOK IDENTICAL FROM OUTSIDE** — the user is asked to sign in, and that is
+  all anyone sees: (1) the token expired but the Okta session is alive, so the SPA can
+  re-mint silently and the real cost is one sign-in per ~12h; (2) the Okta session expired
+  too; (3) iOS ITP purged the webview's storage (~7 days without interaction). Building a
+  renewal before those can be told apart is shipping a fix for the wrong one, so **this
+  change measures and deliberately renews nothing.** Nothing is cleared and nothing is
+  carted.
+- **`openRcHandoff` with no `unitId` WAS ALREADY THE PROBE** — it opens RC, injects, reports
+  `idle` and captures a token, and `rcFragment` returns '' without a unit so it *cannot*
+  cart. What was missing was the part that makes a series out of it.
+- **THE PREVIOUS OPEN'S TOKEN IS THE PRIMARY EVIDENCE, and this is the whole trick.**
+  Injection happens at `loadstop`, by which time RC's SPA has booted — so a token found in
+  storage NOW may be one the SDK minted seconds ago, and reading it proves nothing. That is
+  `renewByReload` measuring the renewal against the token it meant to replace, one week
+  later and in a new file. So `sessionProbe()` writes a marker (`camphawk_rc_probe`, RC's
+  own localStorage inside our isolated store) recording the token's EXPIRY at the end of
+  each open. **Arrived with that expiry in the past and a live token turns up anyway ⇒ RC
+  re-minted from the Okta cookie with no credential typed.** That is `renewed`, and it is
+  the answer to the open question — obtained non-destructively.
+- **The marker's ABSENCE is the only way to see an ITP purge**: a wipe takes RC's tokens and
+  our marker together, so "no marker" = store emptied, "marker, no token" = storage survived
+  and the session ran out. Different fixes; previously the same event.
+- **A PURGE AND A FIRST RUN CANNOT BE TOLD APART BY THE DEVICE — the SERVER does it.** From
+  inside the webview both are the same silence. `deviceKey` lives in **our own origin's**
+  localStorage, which the RC-origin wipe does not touch, so prior probes from that device
+  are what separate them. If it is lost too, a purge degrades to `first-open` — never claim
+  a purge you cannot prove.
+- **`live` PROVES NOTHING ABOUT RENEWAL and says so** (`proves_renewal`). Ten working
+  sessions are not ten pieces of evidence; that is how one observation has twice become "a
+  measurement" in this file. A renewal is also refused when the token's own `iat` says it
+  was minted long before this open — a replay is not a re-mint.
+- **Never presence, always liveness.** `token captured` gained `expiresInSec`/`ageSec`,
+  decoded locally, never the token. The timings ride **only the first sighting of each
+  distinct token**: `expiresInSec` counts down, so on every rebroadcast it would defeat the
+  duplicate collapse and bury the cart's own status at 08:00:00.
+- **NO HEALTH CHECK, deliberately.** It only runs when a human presses the button, so a
+  check would go stale within a day and read `fail` over a system behaving correctly — the
+  cry-wolf failure already fixed three times. The panel shows the series; nothing pages.
+- **Entirely WEB-SIDE — no rebuild, no review.** The script is served by `/api/rc-precart`,
+  the panel and the claim screen are web. It reaches already-installed apps on a push.
+- **HOW TO USE IT:** Admin → System Health → Alerting → **"Open ReserveCalifornia"**, *from
+  inside the app* (from a browser `canInject` is false and it tests nothing). **Once a day**;
+  the answer is a shape over days, not a press. The claim screen records the same facts
+  against a real hold for free (the `session` stage rides `client_reports`).
+- `worker/rc-session-verdict.test.mts`, verified failing against 13 regressions — including
+  a stored token accepted as live, a renewal claimed from any live token, `unknown` rounded
+  to `signed-out`, and the classifier reading the LAST `session` report (which is this run's
+  own marker write) instead of the first.
+
 ### `query()` CANNOT WRITE — the routing bug class (2026-08-11)
 `query()` goes to the `exec_select` RPC and `mutate()` to `exec_dml`, so **any
 data-modifying SQL passed to `query()` throws, every time, forever.** Nothing about the
@@ -1833,13 +1889,15 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs current to 2026-08-12 (evening).** The later session added, in CLAUDE.md: the
+**Docs current to 2026-08-13.** The later session added, in CLAUDE.md: the
 **update-guard deadlock** (and its two escape hatches), the **41 GB Chromium** +
 `kill-chrome`, the **three diagnostics that lied while the heartbeat was right**, the
 **claim-flow sign-in step**, and the **repair-spent threshold**. `docs/a2p-campaign.md`
 carries the **generated replacement samples** and the three caveats on them.
 
-**Both docs are current to 2026-08-12.** `docs/CONTEXT.md` carries the hold flow, the
+**Both docs are current to 2026-08-13**, including the **app RC session probe**
+(migration 058) — the marker, why the previous open's token is the evidence, and why a
+purge can only be told from a first run by the server. `docs/CONTEXT.md` carries the hold flow, the
 reCAPTCHA/keep-warm design, the mini-PC's five processes, migrations
 039/040/043/044/046/**053/054/055/056**, the `rc-login.bat` window-title bug, the corrected
 A2P facts, and this session's control channel, login rehearsal, `query()` routing class,

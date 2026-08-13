@@ -194,14 +194,27 @@ test('identical reports collapse instead of flooding', async () => {
   const ctxWindow = vm.runInContext('window', s);
   const evt = { source: ctxWindow, data: { __camphawk_token: 'x'.repeat(939) } };
   for (let i = 0; i < 20; i++) listeners.message.forEach((fn) => fn(evt));
-  assert.equal(posted.length - before, 1, '20 identical captures must post once, not 20 times');
 
-  // The count is KEPT, not dropped: "seen 20 times" and "seen once" say different things
+  // TWO, AND IT STAYS TWO. This asserted a literal 1 until the session probe gave the first
+  // sighting of each distinct token its clock (`expiresInSec`, `ageSec`) — a countdown, so
+  // it cannot ride the repeats without making every replay a different payload and undoing
+  // this collapse entirely. The first capture therefore posts its timings, the second posts
+  // presence only, and every one after that folds into the count.
+  //
+  // The property worth pinning was never the constant: it is that a flood of N captures
+  // costs O(1) reports. Asserting that at 20 AND at 200 says so, where a magic number only
+  // says what today's code happens to do.
+  const posts20 = posted.length - before;
+  assert.equal(posts20, 2, 'the first capture carries its clock, the rest collapse');
+  for (let i = 0; i < 200; i++) listeners.message.forEach((fn) => fn(evt));
+  assert.equal(posted.length - before, posts20, '200 more identical captures cost nothing further');
+
+  // The count is KEPT, not dropped: "seen 220 times" and "seen once" say different things
   // about whether the session is actually being used.
   listeners.pagehide.forEach((fn) => fn(undefined));
   const last = JSON.parse(posted[posted.length - 1]);
   assert.equal(last.stage, 'repeated');
-  assert.deepEqual(last.detail, { of: 'token', times: 19 });
+  assert.deepEqual(last.detail, { of: 'token', times: 218 });
 });
 
 test('a report can never carry the RC access token', () => {

@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ExternalLink, XCircle } from 'lucide-react';
 import BetaTesters from '@/components/BetaTesters';
 import CostsPanel from '@/components/admin/CostsPanel';
@@ -1120,6 +1120,47 @@ function BotDiagnostics() {
   );
 }
 
+/**
+ * A stable id for THIS INSTALL, kept in our own origin's storage.
+ *
+ * IT MUST NOT LIVE WHERE THE THING IT MEASURES LIVES. The probe's marker sits in
+ * ReserveCalifornia's storage inside the in-app webview, which is precisely what an iOS ITP
+ * purge empties — so from inside that webview a purge and a first-ever run are the same
+ * silence. This id survives that wipe (different origin, and one the user interacts with
+ * constantly), which is what lets the server say "this device has probed before, so the
+ * missing marker means the store was cleared" rather than guessing.
+ *
+ * If it is ever lost too, a purge degrades to "first-open" — the conservative direction.
+ * Never claim a purge you cannot prove.
+ */
+function deviceKey(): string | null {
+  try {
+    const k = 'camphawk_rc_device';
+    let v = localStorage.getItem(k);
+    if (!v) {
+      v = (crypto.randomUUID?.() ?? String(Date.now()) + Math.random().toString(36).slice(2));
+      localStorage.setItem(k, v);
+    }
+    return v;
+  } catch {
+    return null;
+  }
+}
+
+interface ProbeRow {
+  probe_id: string;
+  verdict: string;
+  detail: string | null;
+  proves_renewal: boolean;
+  marker: string | null;
+  opens: number | null;
+  last_open_ago_sec: number | null;
+  prev_token_expires_in_sec: number | null;
+  live_token_expires_in_sec: number | null;
+  platform: string | null;
+  created_at: string;
+}
+
 function RcWebviewTest() {
   const [result, setResult] = useState<string | null>(null);
   const [diag, setDiag] = useState<Record<string, string> | null>(null);
@@ -1127,6 +1168,52 @@ function RcWebviewTest() {
   // from outside the webview and so cannot distinguish "threw on line 1" from "ran and had
   // nothing to do" — see lib/native/rc-handoff RcReport.
   const [reports, setReports] = useState<RcReport[]>([]);
+  const [reading, setReading] = useState<{ verdict: string; detail: string; stored?: boolean } | null>(null);
+  const [probes, setProbes] = useState<ProbeRow[]>([]);
+
+  /**
+   * Ship the run to the server, which classifies it and writes it down.
+   *
+   * THE WHOLE RUN, EVERY TIME, under one `probeId`. The route upserts, so last write wins
+   * and is by construction the most complete — no merge to get wrong, and a webview the
+   * user closes early still leaves the reading it had reached. Debounced because reports
+   * arrive in bursts and this is a diagnostic: it must never be in front of anything.
+   */
+  const runId = useRef<string>('');
+  const collected = useRef<RcReport[]>([]);
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const record = useCallback(async () => {
+    if (!runId.current) return;
+    const { rcHandoffDiagnostics } = await import('@/lib/native/rc-handoff');
+    const d = await rcHandoffDiagnostics().catch(() => ({}) as Record<string, string>);
+    const r = await fetch('/api/admin/rc-session-probe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        probeId: runId.current,
+        deviceKey: deviceKey(),
+        platform: d.platform,
+        appBuild: d.appBuild,
+        reports: collected.current,
+      }),
+      keepalive: true,
+    }).catch(() => null);
+    if (!r?.ok) return;
+    const j = await r.json();
+    setReading({ verdict: j.verdict, detail: j.detail, stored: j.stored });
+    setProbes(j.probes ?? []);
+  }, []);
+
+  // The series so far, before anything is opened — the panel's job is to show a SHAPE over
+  // days, and a shape that only appears after you press the button is one nobody consults.
+  useEffect(() => {
+    const dk = deviceKey();
+    void fetch(`/api/admin/rc-session-probe${dk ? `?device=${encodeURIComponent(dk)}` : ''}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j?.probes) setProbes(j.probes); })
+      .catch(() => {});
+  }, []);
 
   // WHAT THIS RUNTIME HAS, shown BEFORE anything is opened. The first version reported
   // "not running inside the app, or no plugin" — two causes, two different fixes, one
@@ -1151,10 +1238,21 @@ function RcWebviewTest() {
     }
   }
 
+  /** Accumulate, mirror into the panel, and flush on a debounce. */
+  function onReport(r: RcReport) {
+    collected.current = [...collected.current, r];
+    setReports(collected.current);
+    if (flushTimer.current) clearTimeout(flushTimer.current);
+    flushTimer.current = setTimeout(() => { void record(); }, 2000);
+  }
+
   async function run() {
     await inspect();
     setResult('opening…');
     setReports([]);
+    setReading(null);
+    collected.current = [];
+    runId.current = crypto.randomUUID?.() ?? `probe-${Date.now()}`;
     const { openRcHandoff } = await import('@/lib/native/rc-handoff');
     // RC's HOME PAGE, deliberately — not a park deep-link. The unknown here is whether
     // Okta signs in inside our webview, and the home page reaches "Log in" in one tap
@@ -1165,9 +1263,13 @@ function RcWebviewTest() {
     // — RC's real deep link is `/park/<placeId>/<facilityId>`, built by lib/booking-url,
     // which is what the actual hand-off uses). A hardcoded RC URL in a test is a URL that
     // nothing keeps honest; the real flow's shape is covered by booking-url's own tests.
+    // NO `unitId`, and that is the safety property, not a shortcut: `rcFragment` returns ''
+    // without one, so the injected script finds no job, reports `idle` and cannot cart. The
+    // two RC cart POSTs are still unproven and an invented unit id can collide with a real
+    // site and lock it — the standing rule that carting is harmful without a hand-off.
     const how = await openRcHandoff(
       { url: 'https://www.reservecalifornia.com/' },
-      { onReport: (r) => setReports((prev) => [...prev, r]) },
+      { onReport },
     );
     setResult(
       how === 'injected'
@@ -1194,6 +1296,22 @@ function RcWebviewTest() {
         it can read your live RC session, which is the hardest part of carting. Without a
         real hold there is nothing to cart, so <code>idle</code> at the end is the expected
         finish, not a failure.
+      </p>
+      {/*
+        WHAT THE PROBE IS FOR NOW. The button used to answer one yes/no question — does
+        Okta sign in inside our webview — and that has been answered on both platforms. The
+        open one is how long the session it establishes SURVIVES, which is a shape over days
+        and cannot be read off a single press. Say what to do with it, or it reads as a
+        button somebody already pressed.
+      */}
+      <p className="mb-2 text-ch-fine text-ch-muted">
+        <strong>Run it once a day and leave the history alone.</strong> Each press records
+        what state we arrived in. <code>renewed</code> is the finding worth waiting for —
+        we arrived with no usable token and RC minted one anyway, which means the sign-in is
+        about once every 12 hours rather than once per claim. <code>live</code> is a working
+        session that proves nothing about renewal. <code>purged</code> means the webview&rsquo;s
+        storage was emptied (iOS caps it around 7 days without interaction), which renewing
+        cannot fix. Nothing here carts anything.
       </p>
       <button
         type="button"
@@ -1228,6 +1346,21 @@ function RcWebviewTest() {
         Open the claim screen
       </button>
       {result && <p className="mt-2 text-ch-fine leading-normal text-ch-muted">{result}</p>}
+      {/*
+        THE VERDICT, computed on the server from the reported facts (lib/rc-session-verdict).
+        `renewed` is the one worth waiting for: it means we arrived with no usable token and
+        RC minted one anyway, i.e. the Okta cookie survived and the sign-in is roughly once
+        every 12 hours rather than once per claim. `live` is a working session that PROVED
+        NOTHING about renewal, and says so — ten of those are not evidence.
+      */}
+      {reading && (
+        <p className="mt-2 rounded-ch border border-ch-line p-2 text-ch-fine leading-normal text-ch-ink">
+          <span className="font-bold uppercase">{reading.verdict}</span> — {reading.detail}
+          {reading.stored === false && (
+            <span className="text-ch-alert"> (this reading was NOT recorded — the write failed)</span>
+          )}
+        </p>
+      )}
       {reports.length > 0 && (
         <div className="mt-3">
           <p className="text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
@@ -1260,8 +1393,46 @@ function RcWebviewTest() {
           ))}
         </dl>
       )}
+      {/*
+        THE SERIES IS THE MEASUREMENT. A single probe answers "right now"; the question is a
+        shape over days — does the app's RC session survive one, or seven? — and this file
+        has twice been burned by treating one observation as a measurement (the "~8 hour
+        session cap", the "keep-warm never renews"). `away` is the gap since the previous
+        open, which is the axis the whole question is asked along.
+      */}
+      {probes.length > 0 && (
+        <div className="mt-3">
+          <p className="text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+            Probe history ({probes.length})
+          </p>
+          <ol className="mt-1 space-y-0.5">
+            {probes.map((p) => (
+              <li key={p.probe_id} className="text-ch-fine text-ch-muted">
+                <span className="font-bold text-ch-ink">{p.verdict}</span>
+                {p.proves_renewal && <span className="text-ch-green-deep"> ✓ proves renewal</span>}
+                {' · '}
+                {new Date(p.created_at).toLocaleString()}
+                {p.last_open_ago_sec !== null && ` · away ${dur(p.last_open_ago_sec)}`}
+                {p.live_token_expires_in_sec !== null && ` · token ${dur(p.live_token_expires_in_sec)} left`}
+                {p.platform ? ` · ${p.platform}` : ''}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
     </div>
   );
+}
+
+/** "3h 20m" / "45m" / "12s" — a duration read without arithmetic. */
+function dur(sec: number): string {
+  const s = Math.max(0, Math.round(sec));
+  if (s < 90) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 90) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+  return `${Math.round(h / 24)}d`;
 }
 
 function SystemHealthPanel({ data }: { data: AdminData }) {

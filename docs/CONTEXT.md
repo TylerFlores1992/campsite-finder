@@ -4371,6 +4371,111 @@ against a residential address RC's WAF has 403'd before: one attempt per token, 
 expired one, only under `RC_RENEW_BEFORE_S` (10m), and `maybeAutoLogin` runs first in the
 same block so a release close enough to need a sign-in gets the real thing.
 
+## The APP's RC session — measured, not renewed (migration 058, 2026-08-13)
+
+The section above is about the BOT's session, on the mini-PC. The phone has the same question
+and none of the same tools, and it is now the binding constraint on the mobile claim flow:
+the injected precart reads the RC session out of the in-app webview's data store, and the
+owner has had to sign in on every claim. On 2026-08-12 that sign-in happened **inside the
+08:00 window** — the moment the whole hand-off exists to protect.
+
+**"Sign in once and it persists" was over-claimed.** The 2026-08-09 tests proved the session
+survives closing the webview and force-closing the app, and both were measured the SAME DAY.
+Nothing has ever measured days, and RC's own lifetimes (~1h access token, ~12h Okta session)
+apply inside the app exactly as they do to the bot.
+
+### Why this is a measurement and not a fix
+
+Three causes produce one symptom — the user is asked to sign in — and they need different
+responses:
+
+| what happened | the fix |
+|---|---|
+| access token expired, Okta session alive | nothing: the SPA re-mints silently, ~one sign-in per 12h |
+| Okta session expired too | a credential, per hold morning |
+| iOS ITP purged the webview's storage (~7 days idle) | a credential, and renewal can never help |
+
+Building a renewal before those can be told apart is shipping a fix for the wrong one. So
+**nothing is cleared, nothing is carted, and no renewal was written.**
+
+The probe itself needed no new mechanism: `openRcHandoff` with no `unitId` already opens RC
+in the injectable webview, injects, reports `idle` and captures a token if one exists —
+and `rcFragment` returns `''` without a unit, so it *cannot* cart. What was missing was
+everything that turns a press into a series.
+
+### The marker, and why the PREVIOUS open's token is the evidence
+
+Injection happens at `loadstop`, by which time RC's SPA has booted. **A token found in
+storage at that moment may be one the SDK minted seconds ago**, so reading it proves nothing
+about what we arrived to — which is `renewByReload` measuring the renewal against the token
+it meant to replace, a week later and in a different file.
+
+`sessionProbe()` (in `lib/rc-precart-script`) therefore writes `camphawk_rc_probe` into RC's
+own localStorage inside our isolated store, recording the token's **expiry at the end of each
+open**. On the next open we know what the store held before RC touched anything:
+
+- recorded expiry already in the past **and** a live token turns up anyway ⇒ **`renewed`** —
+  RC re-minted from the Okta cookie with no credential typed. *That is the answer to the open
+  question, and it costs nothing to obtain.*
+- recorded expiry still in the future ⇒ **`live`**. The session persisted, and that is ALL it
+  shows; `proves_renewal` is false and the panel says so. Ten of these are not evidence.
+- marker present, no token at all ⇒ **`signed-out`**. okta-auth-js deletes the tokens when its
+  silent renew fails, so that failure is what an empty store beside an intact marker means.
+- marker **absent** ⇒ the store was emptied. A wipe takes RC's tokens and our marker together,
+  which is the only way an ITP purge is visible at all.
+
+### A purge and a first run cannot be told apart by the device
+
+From inside the webview both are the same silence — the thing that would remember is the
+thing that was deleted. The server separates them: `deviceKey` lives in **our own origin's**
+localStorage, which the RC-origin wipe does not touch, so "this device has probed before"
+is what turns a missing marker into `purged` rather than `first-open`. If that key is lost
+too, a purge degrades to `first-open` — the conservative direction. **Never claim a purge you
+cannot prove.**
+
+### The rules carried over from every previous version of this mistake
+
+- **Presence is not liveness.** `token captured` gained `expiresInSec` and `ageSec`, decoded
+  locally, never the token itself. `live` requires a token caught off RC's OWN requests with
+  an expiry in the future; a stored copy alone is at best `inconclusive`, because that copy
+  has twice reported a dead session as healthy.
+- **A replay is not a re-mint.** A renewal is refused when the token's `iat` says it was
+  minted long before this open. An *unknown* age does not veto it — unknown is not a no.
+- **The timings ride only the FIRST sighting of each distinct token.** `expiresInSec` counts
+  down, so on every rebroadcast it would make each of rc-inject's ~20 replays a different
+  payload, defeat the duplicate collapse, and bury the cart's own status at 08:00:00. Keyed
+  on the token's value, so a genuine mid-session renewal still reports afresh.
+- **The verdict is computed on the SERVER** (`lib/rc-session-verdict`), from facts the script
+  reports. A conclusion reached inside a string of injected JavaScript can only be checked by
+  running a phone. `worker/rc-session-verdict.test.mts` was verified failing against 13
+  regressions.
+- **No credential travels.** Stage names, counters and expiries as integers. URLs stay
+  origin+pathname because Okta signs in *inside this webview*, so its callback query is an
+  exchangeable authorization code.
+
+### No health check, deliberately
+
+It only runs when a human presses a button, so a check would go stale within a day and read
+`fail` over a system behaving exactly as designed — the cry-wolf failure already fixed for
+`autocart.rc_session` twice. The panel shows the series; nothing pages.
+
+### Running it
+
+Admin → System Health → Alerting → **"Open ReserveCalifornia"**, **from inside the app** —
+from a browser `canInject` is false and it tests nothing. **Once a day.** The answer is a
+shape over days, not a press, and the panel renders the history for that device. A real 8am
+hold records the same facts for free: the `session` stage rides `client_reports` through
+`/api/rc-holds/report` unchanged.
+
+Entirely web-side — the script is served by `/api/rc-precart` and the panel is web, so a push
+to `master` reaches already-installed apps with no rebuild and no review.
+
+### What is still open
+
+Whether the app renews. The instrument exists and is honest either way; it needs readings.
+Until `renewed` shows up more than once, **assume a sign-in shortly before each release** —
+the same posture `maybeAutoLogin` holds on the bot, and for the same reason.
+
 ## The nightly "502 spike on /api/rc-proxy" Vercel alert is EXPECTED (2026-08-12)
 
 Vercel's anomaly detector fires most nights: *"5xx increased — /api/rc-proxy, past 24h

@@ -214,6 +214,13 @@ Supabase first (by hand, like 020/021). Devices register their token via
 > `autocart_nudge_sent_at`) and **`053_bot_commands`** (2026-08-11 — the mini-PC
 > diagnostics queue). **All applied to prod on the day.**
 >
+> **`058_rc_app_session_probes`** (2026-08-13 — one row per run of the in-app RC session
+> probe, so "how long does the app's ReserveCalifornia session survive?" is a series rather
+> than a memory. **Applied to prod 2026-08-13**, before the route that writes it, and the
+> UPSERT was exercised end-to-end against prod with a sentinel `probe_id` that was deleted
+> afterwards.) It needs no worker deploy and no app rebuild — the probe script is served by
+> `/api/rc-precart` and the panel is web-side, so a push to `master` reaches installed apps.
+>
 > **052 SHIPPED FROM A PARALLEL SESSION AS `051` AND HAD TO BE RENUMBERED ON MERGE.** That
 > number was already taken and already applied. It is not a cosmetic clash: a runner
 > tracking applied migrations by number would treat it as done, skip it silently, and

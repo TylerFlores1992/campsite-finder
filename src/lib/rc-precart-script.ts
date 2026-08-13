@@ -132,7 +132,33 @@ export function reporter(): string {
     '    post(stage, detail);',
     '  }',
     '  function hasStash() { try { return !!sessionStorage.getItem("camphawk_rc"); } catch (e) { return false; } }',
-    '  window.__camphawkRc = { send: send, scrub: scrub, hasStash: hasStash, href: href, bridged: !!bridge };',
+    // WHAT THE TOKEN SAYS ABOUT ITSELF — never what it is.
+    //
+    // `captured: true` was PRESENCE, and presence is the exact conflation that produced a
+    // false green over a dead session on 2026-08-09: the hold runner announced a healthy
+    // session because *a* token existed, six minutes after it had expired. `exp` is the
+    // liveness the report is entitled to claim, and `iat` is what separates "the session
+    // was already working" from "RC just minted this one" — the whole open question about
+    // whether the app can renew silently.
+    //
+    // Decoded LOCALLY, exactly like the bot's `tokenSecondsLeft`, and only the two numbers
+    // travel. A network probe would be the wrong instrument anyway: at 08:00:00 nothing may
+    // go in front of the precart.
+    '  function jwtFacts(t) {',
+    '    var out = { decodable: false, expiresInSec: null, ageSec: null };',
+    '    try {',
+    '      var p = String(t).split(".")[1];',
+    '      if (!p) return out;',
+    '      var b = p.replace(/-/g, "+").replace(/_/g, "/");',
+    '      while (b.length % 4) b += "=";',
+    '      var j = JSON.parse(atob(b));',
+    '      out.decodable = true;',
+    '      if (typeof j.exp === "number") out.expiresInSec = Math.round(j.exp - Date.now() / 1000);',
+    '      if (typeof j.iat === "number") out.ageSec = Math.round(Date.now() / 1000 - j.iat);',
+    '    } catch (e) {}',
+    '    return out;',
+    '  }',
+    '  window.__camphawkRc = { send: send, scrub: scrub, hasStash: hasStash, href: href, jwtFacts: jwtFacts, onToken: null, bridged: !!bridge };',
     '  // A run that ends on a repeat would otherwise lose the tail of the count.',
     '  window.addEventListener("pagehide", flush);',
     '  window.addEventListener("error", function (e) { send("error", { message: scrub(e && e.message) }); });',
@@ -140,9 +166,28 @@ export function reporter(): string {
     '  // it was CAPTURED — never its value — proves the hardest link in the chain (we can read',
     '  // an authenticated RC session inside this webview) without carting anything, which',
     '  // would lock a real unit and take it off the market.',
+    // THE TIMING FACTS RIDE ONLY THE FIRST SIGHTING OF EACH DISTINCT TOKEN, and that is not
+    // tidiness. `expiresInSec` counts down, so putting it on every rebroadcast would make
+    // each of rc-inject's ~20 replays a DIFFERENT payload — defeating the duplicate collapse
+    // directly above and burying the cart's own status under a flood at 08:00:00, which is
+    // the failure that collapse was added for. A repeat reports presence only and folds.
+    //
+    // Keyed on the token's VALUE, so a genuine mid-session renewal reports its facts again
+    // rather than being swallowed as a repeat — that event is the measurement, not noise.
+    '  var seenToken = null;',
     '  window.addEventListener("message", function (e) {',
     '    if (e.source !== window || !e.data) return;',
-    '    if (e.data.__camphawk_token) send("token", { captured: true, length: String(e.data.__camphawk_token).length });',
+    '    if (e.data.__camphawk_token) {',
+    '      var t = String(e.data.__camphawk_token);',
+    '      if (t !== seenToken) {',
+    '        seenToken = t;',
+    '        var f = jwtFacts(t);',
+    '        try { if (window.__camphawkRc && window.__camphawkRc.onToken) window.__camphawkRc.onToken(f); } catch (err) {}',
+    '        send("token", { captured: true, length: t.length, decodable: f.decodable, expiresInSec: f.expiresInSec, ageSec: f.ageSec });',
+    '      } else {',
+    '        send("token", { captured: true, length: t.length });',
+    '      }',
+    '    }',
     '    if (e.data.__camphawk_cartkey) send("cartkey", { captured: true });',
     '  });',
     '  var log = console.log;',
@@ -192,6 +237,120 @@ export function epilogue(): string {
   ].join('\n');
 }
 
+/**
+ * THE SESSION PROBE — what state did we ARRIVE in, and what does that prove?
+ *
+ * ## The question
+ *
+ * The mobile claim flow needs a live RC session inside this webview's data store, and the
+ * owner has had to sign in again on every claim — once, on 2026-08-12, INSIDE the 08:00
+ * window this whole design exists to protect. "Sign in once and it persists" was
+ * over-claimed: the 2026-08-09 tests measured persistence across closing the webview and
+ * force-closing the app, on the SAME DAY. Nothing measured days, and RC's own lifetimes
+ * (~1h access token, ~12h Okta session) apply inside the app exactly as they do to the bot.
+ *
+ * Three states look identical from outside — the user is asked to sign in, and that is all
+ * anybody sees:
+ *
+ *   1. the access token expired, but the Okta session cookie is alive → the SPA can
+ *      re-mint silently, so signing in is about once every 12 hours, not once per claim;
+ *   2. the Okta session expired too → a credential is genuinely required;
+ *   3. the webview's storage was PURGED (iOS ITP caps script-writable storage at ~7 days
+ *      without interaction) → also a credential, but nothing about renewal is wrong and
+ *      no amount of renewing fixes it.
+ *
+ * Building a renewal before those can be told apart is how you ship a fix for the wrong
+ * one. So this measures, and it is deliberately non-destructive: nothing is cleared,
+ * nothing is carted.
+ *
+ * ## Why a marker, and why the PREVIOUS open's token is the primary evidence
+ *
+ * Injection happens at `loadstop`, by which time RC's SPA has already booted — so a token
+ * found in storage NOW may be one the SDK minted seconds ago, and reading it proves
+ * nothing about what we arrived to. That is the same shape as `renewByReload` measuring
+ * the renewal against the very token it meant to replace (found 2026-08-12), and it would
+ * be an easy mistake to repeat here.
+ *
+ * The marker fixes it by writing down the token's expiry AT THE END OF EACH OPEN. On the
+ * next open we therefore know what the storage held before RC touched anything. If that
+ * recorded expiry is already in the past and a live token nonetheless turns up, the SPA
+ * re-minted it from the Okta session cookie with no credential typed — which is the answer
+ * to the open question, obtained without clearing anybody's storage.
+ *
+ * The marker's ABSENCE is the second measurement, and it is the only way to see an ITP
+ * purge at all: a wipe takes RC's tokens and our marker together, so "no marker" means the
+ * data store was emptied, while "marker, no token" means storage survived and the session
+ * merely ran out. Those two need different fixes and were previously the same event.
+ *
+ * ## What it writes, and what it may say
+ *
+ * `camphawk_rc_probe` in RC's own localStorage, inside our isolated webview store: a
+ * version, two timestamps, a counter, and the token's expiry as a NUMBER. **Never a token,
+ * never a cart key, never a URL query.** Everything reported is a fact — the verdict is
+ * computed on the server (lib/rc-session-verdict), where it can be tested; a script that
+ * both gathers evidence and reaches a conclusion is one that cannot be checked.
+ *
+ * The marker is evidence about SCRIPT-WRITABLE storage, not about the HttpOnly Okta
+ * cookies, which nothing on this origin can see. A purge takes both together, so it is a
+ * good proxy — but it is a proxy, and the verdict says so rather than claiming to have
+ * read a cookie it cannot read.
+ */
+export function sessionProbe(): string {
+  return [
+    '(function () {',
+    '  var R = window.__camphawkRc; if (!R) return;',
+    // Once per document. `loadstop` fires again on every navigation inside the webview, and
+    // a second pass would count another "open" seconds after the first — turning the gap
+    // between opens, which is the whole days-long measurement, into zero.
+    '  if (window.__camphawkRcProbed) return;',
+    '  window.__camphawkRcProbed = true;',
+    '  var KEY = "camphawk_rc_probe";',
+    '  var now = Date.now();',
+    '  function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }',
+    '  var prev = null;',
+    '  try { var raw = get(KEY); prev = raw ? JSON.parse(raw) : null; } catch (e) { prev = null; }',
+    '  if (prev && prev.v !== 1) prev = null;',
+    '  function save(tokenExp) {',
+    '    try {',
+    '      localStorage.setItem(KEY, JSON.stringify({',
+    '        v: 1,',
+    '        first: (prev && prev.first) || now,',
+    '        last: now,',
+    '        opens: ((prev && prev.opens) || 0) + 1,',
+    '        tokenExp: typeof tokenExp === "number" ? tokenExp : (prev ? prev.tokenExp : null),',
+    '      }));',
+    '    } catch (e) {}',
+    '  }',
+    // WRITTEN BEFORE ANY TOKEN ARRIVES, so an open that finds nothing still records that it
+    // happened. Without that, a run of signed-out opens would be invisible and the next
+    // successful one would compare itself against a stale expiry from days earlier.
+    '  save(null);',
+    // The stored copy is the WEAKER evidence — see the header — but "there was nothing here
+    // at all" is still worth having: it agrees with an expired marker and disagrees with a
+    // silent re-mint that beat us to the injection.
+    '  var stored = get("ssoAccessToken") || get("accessToken");',
+    '  var sf = stored ? R.jwtFacts(stored) : null;',
+    '  var secs = function (ms) { return Math.round(ms / 1000); };',
+    '  R.send("session", {',
+    '    marker: prev ? "present" : "absent",',
+    '    opens: (prev && prev.opens) || 0,',
+    '    lastOpenAgoSec: prev && prev.last ? secs(now - prev.last) : null,',
+    '    firstOpenAgoSec: prev && prev.first ? secs(now - prev.first) : null,',
+    '    prevTokenExpiresInSec: prev && typeof prev.tokenExp === "number" ? Math.round(prev.tokenExp - now / 1000) : null,',
+    '    storedToken: !stored ? "none" : (sf && sf.decodable ? "jwt" : "opaque"),',
+    '    storedExpiresInSec: sf ? sf.expiresInSec : null,',
+    '  });',
+    // The LIVE token is the one RC actually sends, caught off its own requests by
+    // rc-inject.js. Recording its expiry — never the token — is what gives the NEXT open
+    // something true to compare against; the localStorage copy is the one the bot has twice
+    // been misled by (rc-token.mjs).
+    '  R.onToken = function (f) {',
+    '    if (f && typeof f.expiresInSec === "number") save(Math.round(Date.now() / 1000 + f.expiresInSec));',
+    '  };',
+    '})();',
+  ].join('\n');
+}
+
 export function buildPrecartScript(): string {
   const dir = join(process.cwd(), 'extension');
   const inject = readFileSync(join(dir, 'rc-inject.js'), 'utf8');
@@ -205,6 +364,10 @@ export function buildPrecartScript(): string {
     // FIRST, so an exception anywhere below is still reported. The reporter is also what
     // turns "nothing happened" into a fact — see its header.
     reporter(),
+    // IMMEDIATELY AFTER THE REPORTER, and before anything else runs. It reads the state we
+    // ARRIVED in, and every line below it is a chance for RC's SPA to change that state.
+    // It needs the reporter's channel and JWT decoder, so it cannot go first.
+    sessionProbe(),
     '(function () {',
     '  // The user tapped claim; that is the opt-in. See the route for why this is shimmed',
     '  // rather than the extension file being edited.',
