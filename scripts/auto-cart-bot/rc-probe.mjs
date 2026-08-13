@@ -68,6 +68,7 @@ const RC_HOME = 'https://www.reservecalifornia.com/';
 // them back to back (a big `load` response, then a small `submit`). Calling only
 // `submit` is what made the first --cart run fail.
 import { precartInPage, findCartEntry, releaseEntry, PRECART_LOAD, PRECART_SUBMIT, NO_CART } from './rc-cart.mjs';
+import { hasCreds, loadCreds } from './credstore.mjs';
 const RC_CART_PAGE = 'https://www.reservecalifornia.com/Customers/ShoppingCart';
 /** Reads a cart's CONTENTS by key. This is how "is it really in the cart?" is answered
  *  with evidence rather than with RC's own IsSuccess flag. */
@@ -180,10 +181,32 @@ const CART_CAP = args.has('--cart-cap');
 const CART_REMOVE_ENTRY = 'https://rdapi.reservecalifornia.com/api/webaccesscustomer/remove/cartentry';
 const CART_EMPTY = 'https://rdapi.reservecalifornia.com/api/webaccesscustomer/empty/shoppingcart';
 
-const EMAIL = process.env.RC_EMAIL;
-const PASSWORD = process.env.RC_PASSWORD;
+/**
+ * THE ENCRYPTED STORE FIRST, the env vars second — the same order `rc-autologin.mjs` uses.
+ *
+ * This read env vars only, so running the probe on the mini-PC meant typing a live RC
+ * password into a cmd window: it lands in the console scrollback and in the shell history,
+ * on a machine that is routinely screen-shared. `rc-save-password.bat` exists precisely so
+ * that never has to happen, and the password has been in the DPAPI store since 2026-08-09.
+ *
+ * The creds come out of `.rc-bot-profile` — the ACCOUNT's directory — while the browser
+ * still runs on `.rc-probe-profile`. That separation is the whole point of the probe (a
+ * second session on one account), so the credential dir must not follow the browser dir.
+ *
+ * The env vars stay as the override for a dev box that has no DPAPI, which is the case the
+ * header's usage line was written for.
+ */
+const CRED_DIR = path.resolve(HERE, '.rc-bot-profile');
+const stored = (() => {
+  try { return hasCreds(CRED_DIR) ? loadCreds(CRED_DIR) : null; } catch { return null; }
+})();
+const EMAIL = stored?.email || process.env.RC_EMAIL;
+const PASSWORD = stored?.password || process.env.RC_PASSWORD;
 if (!EMAIL || !PASSWORD) {
-  console.error('Set RC_EMAIL and RC_PASSWORD. See the header of this file.');
+  console.error(
+    'No RC credentials. On the mini-PC run mini-pc\\rc-save-password.bat once;\n' +
+    'elsewhere set RC_EMAIL and RC_PASSWORD. See the header of this file.',
+  );
   process.exit(2);
 }
 
