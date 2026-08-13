@@ -234,15 +234,35 @@ export async function findRCHeldUnits(
   startDate: string,
   endDate: string,
   minNights = 1,
-  flex?: FlexSpec
+  flex?: FlexSpec,
+  /**
+   * MUTED UNITS, and this parameter is the whole bug (2026-08-13).
+   *
+   * `findRCOpenUnit` has taken an exclusion list since site-mute shipped; this function
+   * never did. So muting a site silenced its *availability* alerts and did nothing at all
+   * to the coming-soon alerts for the same site — and coming-soon is the noisier of the
+   * two, because a held unit re-announces itself the night before every release.
+   *
+   * Reported by the owner as "an alert for a muted site at Carpinteria": unit 4667
+   * (#C218) was one of 41 muted on that watch and still sent push, SMS and email.
+   *
+   * The 2026-08-09 verification of the mute list checked that the WRITE persisted and
+   * that `/manage/<token>` listed it back. It never checked that anything read it, which
+   * is why a half-honoured mute passed as working.
+   */
+  excludeUnitIds?: string[]
 ): Promise<HeldUnit[]> {
   const provider = providerByCampgroundId(campgroundId);
   if (!provider) return [];
+  const muted = new Set(excludeUnitIds ?? []);
   const found: HeldUnit[] = [];
   try {
     const grid = await fetchGrid(provider, facilityIdFromCampgroundId(campgroundId), startDate, endDate);
     for (const unit of Object.values(grid.Facility?.Units ?? {})) {
       if (!unit.AllowWebBooking) continue;
+      // `String(...)`: muted_site_ids is text[] and UnitId is a number. Comparing them
+      // without this silently never matches, which looks exactly like no mutes being set.
+      if (muted.has(String(unit.UnitId))) continue;
       const held = Object.values(unit.Slices ?? {})
         .filter(
           (s) =>

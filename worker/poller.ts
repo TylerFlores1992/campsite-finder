@@ -938,7 +938,8 @@ async function cycle(): Promise<void> {
           async (w) => {
             const required = Math.max(w.min_nights, nightsOfRange(w.start_date, w.end_date).length);
             // ALL of them — see findRCHeldUnits. One grid fetch either way.
-            const held = await findRCHeldUnits(w.campground_id, w.start_date, w.end_date, required, flexOf(w));
+            const held = await findRCHeldUnits(
+              w.campground_id, w.start_date, w.end_date, required, flexOf(w), w.muted_site_ids);
             if (held.length) rcHeld.set(w.id, held.map((h) => ({ dates: h.dates, availableAt: h.availableAt, unitId: h.unitId, name: h.name })));
           },
           RECGOV_CONCURRENCY
