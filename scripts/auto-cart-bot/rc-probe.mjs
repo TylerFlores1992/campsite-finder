@@ -67,7 +67,7 @@ const RC_HOME = 'https://www.reservecalifornia.com/';
 // RC does precart in TWO steps — its own bundle exposes both, and a live trace shows
 // them back to back (a big `load` response, then a small `submit`). Calling only
 // `submit` is what made the first --cart run fail.
-import { precartInPage, PRECART_LOAD, PRECART_SUBMIT, NO_CART } from './rc-cart.mjs';
+import { precartInPage, findCartEntry, releaseEntry, PRECART_LOAD, PRECART_SUBMIT, NO_CART } from './rc-cart.mjs';
 const RC_CART_PAGE = 'https://www.reservecalifornia.com/Customers/ShoppingCart';
 /** Reads a cart's CONTENTS by key. This is how "is it really in the cart?" is answered
  *  with evidence rather than with RC's own IsSuccess flag. */
@@ -120,6 +120,61 @@ const HANDOFF = args.has('--handoff');
  * the site was exposed.
  */
 const RELEASE = args.has('--release');
+/**
+ * --cart-cap: is the "maximum 2" a limit on the CART, or on the ACCOUNT?
+ *
+ * On 2026-08-13 a third hold for one 08:00 release came back in RC's own words: *"Your
+ * request violates the 'Maximum Reservations in Cart' restriction. The maximum number of
+ * reservations allowed in the cart is '2'."* That was read as a hard ceiling of two sites
+ * per release — which would make the bot's single RC account the thing that caps growth,
+ * and it is why "should we collect users' RC logins?" came up at all.
+ *
+ * BUT THE MESSAGE SAYS *CART*, AND WE ONLY EVER USE ONE. `rc-hold-runner` reads
+ * `localStorage["shoppingCartKey"]` and passes `existing || NO_CART`, and `precartInPage`
+ * writes each successful key straight back — so the first hold mints a cart and every hold
+ * after it is funnelled into that same cart, forever. The database agrees: 15 holds in the
+ * system's life, **two distinct cart keys**, and all three of the 08-13 holds on one.
+ *
+ * The cart is a free-floating GUID-keyed object with `CustomerId: 0` (docs/CONTEXT.md), and
+ * `load` mints a fresh one for the asking. So there is an obvious cheap possibility — N
+ * carts of 2, one session, one account, no new login and no new credential anywhere — and
+ * no evidence either way. That is exactly the shape of thing this file exists to settle:
+ * cross-session adoption, the keep-warm, and `renewByReload` were all plausible and all
+ * false, and each cost more by being assumed than it would have to measure.
+ *
+ * THE EXPERIMENT, and the third step is the whole point:
+ *   1. cart unit A into a FRESH cart      → expect ok, key K1
+ *   2. cart unit B into K1                → expect ok, K1 now holds two
+ *   3. cart unit C into K1                → expect RC's cap refusal. The control: without
+ *                                           it, step 4 succeeding proves nothing, because
+ *                                           we would not know the cap was live right now.
+ *   4. cart unit C into a FRESH cart      → THE ANSWER.
+ *
+ *   ok  → the ceiling is per cart and self-inflicted. One line in the hold runner.
+ *   no  → the ceiling is the ACCOUNT, and only more identities can lift it.
+ *
+ * SAFETY — it locks three real campsites for the length of the run:
+ *   • It only ever removes entry keys it created, and NEVER `empty/shoppingcart`. A real
+ *     hold sitting in the bot's own cart is untouched, because step 1 starts a new one.
+ *   • `localStorage["shoppingCartKey"]` is saved and restored. `precartInPage` repoints it
+ *     on every success, so without that the hold runner's next `existing` read would find
+ *     the probe's cart.
+ *   • Everything is released in a `finally`, including on a throw.
+ *   • Still: pick sites nobody wants — far-future dates, midweek, off-peak — and do not run
+ *     it near 08:00 or with a hold queued. Three locks is three sites off the market.
+ *
+ * THE CONFOUND TO CLEAR FIRST, because it can fake the pessimistic answer: this probe signs
+ * in as `RC_EMAIL`, which is almost certainly the SAME RC account the hold runner uses, from
+ * a different session (`.rc-probe-profile`). If the cap turns out to be per ACCOUNT, then a
+ * real hold already sitting in the bot's cart counts against it — and step 4 would be
+ * refused for a reason that has nothing to do with the cart it was asked about. **Run this
+ * with the bot's cart empty**, i.e. no hold in `carted`/`claiming`, or a "not per cart"
+ * verdict is not one. `scripts/rc-holds-readout.mts` says which.
+ *
+ *   RC_CAP_UNITS=111,222,333 RC_ARRIVAL=2026-12-15 RC_NIGHTS=1 \
+ *     node rc-probe.mjs --cart-cap --headful
+ */
+const CART_CAP = args.has('--cart-cap');
 /** Releases ONE entry, leaving the rest of the cart alone — what a bot holding several
  *  sites needs. Both shapes read out of RC's bundle (2026-08-06). */
 const CART_REMOVE_ENTRY = 'https://rdapi.reservecalifornia.com/api/webaccesscustomer/remove/cartentry';
@@ -1124,6 +1179,133 @@ try {
         }
       } finally {
         await ctxB.close();
+      }
+    }
+  }
+
+  if (signedIn && CART_CAP) {
+    const units = String(process.env.RC_CAP_UNITS || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const arrival = process.env.RC_ARRIVAL;
+    const nights = Number(process.env.RC_NIGHTS ?? 1);
+    if (units.length !== 3 || !arrival) {
+      log('\nSkipping --cart-cap: set RC_CAP_UNITS=a,b,c and RC_ARRIVAL (see the header).');
+    } else {
+      step(6, 'Is the cap on the CART or on the ACCOUNT?');
+      log('   This locks three real campsites for the length of the run and releases them');
+      log('   again. Do not run it near a release, or with a hold queued.\n');
+
+      // SAVE THE CART POINTER. `precartInPage` writes the winning key into localStorage on
+      // every success, and this run makes several — so without this the profile is left
+      // aimed at whichever probe cart happened to be last.
+      //
+      // This is `.rc-probe-profile`, NOT the hold runner's `.rc-bot-profile`, so nothing
+      // here can repoint production. Restored anyway: the next `--cart` run reads it, and
+      // a probe that quietly changes the state it measures is the shape of bug this file
+      // has caught three times in other people's code.
+      const savedKey = await page.evaluate(() => {
+        try { return localStorage.getItem('shoppingCartKey'); } catch { return null; }
+      });
+      log(`   saved the probe profile's cart pointer: ${savedKey ? 'present' : '(none)'}`);
+
+      /** Everything we lock, so the finally can let go of precisely that and nothing else. */
+      const made = [];
+      let headers = null;
+
+      // ONE CART ATTEMPT, judged the way the runner judges it: never on `IsSuccess`, always
+      // by reading the cart back. "cart is already added" is a REJECTED submit on top of a
+      // site we already hold, so the flag and the truth disagree in both directions.
+      const attempt = async (unitId, cartKey, label) => {
+        const r = await precartInPage(page, { unitId: Number(unitId), arrival, nights, cartKey });
+        headers ??= r?.replay?.headers ?? null;
+        const key = r?.submitted?.v?.cartKey || r?.finalKey || (cartKey === NO_CART ? null : cartKey);
+        const locked = (() => {
+          try { return (JSON.parse(r.loadedFull)?.Result ?? {}).LockedShoppingCart ?? null; }
+          catch { return null; }
+        })();
+        const found = key && r?.replay?.headers
+          ? await findCartEntry(ctx.request, r.replay.headers, key, {
+              placeId: locked?.placeId, facilityId: locked?.facilityId, unitId,
+            })
+          : { found: false, entryKey: null, count: 0 };
+        const err = r?.submitted?.v?.error || (r?.submitted?.status ? `HTTP ${r.submitted.status}` : '');
+        if (found.found) made.push({ unitId, cartKey: key, entryKey: found.entryKey });
+        log(`   ${label}`);
+        log(`     asked with ${cartKey === NO_CART ? 'a FRESH cart' : `cart ${String(cartKey).slice(0, 8)}…`}` +
+            ` → in cart: ${found.found ? 'YES' : 'no'}, cart now holds ${found.count}` +
+            `${key ? `, key ${String(key).slice(0, 8)}…` : ''}`);
+        if (!found.found && err) log(`     RC said: ${String(err).replace(/<br\/?>/g, ' ').slice(0, 160)}`);
+        return { ok: found.found, key, count: found.count, err };
+      };
+
+      /** RC's own wording for the cap, so a DIFFERENT refusal is never read as this one. */
+      const isCapRefusal = (e) => /Maximum Reservations in Cart|maximum number of reservations/i.test(String(e || ''));
+
+      try {
+        const a = await attempt(units[0], NO_CART, `1. unit ${units[0]} → a fresh cart`);
+        if (!a.ok) {
+          log('\n   ✗ INCONCLUSIVE — the first cart failed, so nothing below was ever tested.');
+          log('     That is a plain carting problem, not an answer about the cap. Check the');
+          log('     unit is genuinely available on that date before reading anything into it.');
+        } else {
+          const b = await attempt(units[1], a.key, `2. unit ${units[1]} → the SAME cart`);
+          const c1 = await attempt(units[2], a.key, `3. unit ${units[2]} → the same cart again (the control)`);
+
+          if (!b.ok) {
+            log('\n   ✗ INCONCLUSIVE — the second site never went in, so the cart never reached');
+            log('     two and step 3 was not a test of the cap at all.');
+          } else if (c1.ok) {
+            log('\n   ! THE CAP DID NOT FIRE at three in one cart. Either it is not 2, or it is');
+            log('     not applied here. Re-read the 08-13 hold that reported it before acting');
+            log('     — this run did not reproduce the thing it exists to work around.');
+          } else if (!isCapRefusal(c1.err)) {
+            log('\n   ✗ INCONCLUSIVE — the third add was refused, but NOT with the cap message.');
+            log('     Some other rejection (availability, a required extra) is not evidence');
+            log('     about the cap, and counting it as such is how a wrong ceiling gets');
+            log('     written down as measured.');
+          } else {
+            // THE QUESTION. The cap is live, the cart is full, and the only thing that
+            // changes is which cart we ask for.
+            const c2 = await attempt(units[2], NO_CART, `4. unit ${units[2]} → a FRESH cart (the question)`);
+            log('');
+            if (c2.ok && c2.key && c2.key !== a.key) {
+              log('   ✓ THE CAP IS PER CART, AND ONE SESSION MAY HOLD MORE THAN ONE.');
+              log(`     Two carts live at once on this account: ${String(a.key).slice(0, 8)}… and ${String(c2.key).slice(0, 8)}….`);
+              log('     So the ceiling is ours, not RC\'s: the hold runner reuses one cart key');
+              log('     and need not. Give each hold its own cart and the limit stops being 2.');
+              log('     NOT yet proven: how many carts a session may hold. This showed two.');
+            } else if (c2.ok && c2.key === a.key) {
+              log('   ? RC PUT IT BACK IN THE SAME CART — asking for a fresh one did not make');
+              log('     one. A second cart is not obtainable this way; treat the cap as binding');
+              log('     until some other route to a second cart is found.');
+            } else {
+              log('   ✗ THE CAP IS NOT PER CART. A fresh cart was refused too, so the limit');
+              log('     lives on the SESSION or the ACCOUNT and no amount of cart juggling');
+              log('     lifts it. More concurrent holds then means more identities — which is');
+              log('     a much more expensive answer, and now an evidenced one.');
+              if (c2.err) log(`     RC said: ${String(c2.err).replace(/<br\/?>/g, ' ').slice(0, 160)}`);
+            }
+          }
+        }
+      } finally {
+        // LET GO OF EXACTLY WHAT WE TOOK. Never empty/shoppingcart — the bot's own cart may
+        // be holding a site somebody is on their way to claim, and emptying it would hand
+        // that site to whoever else is watching.
+        log('');
+        for (const m of made) {
+          try {
+            const r = await releaseEntry(ctx.request, headers, m.cartKey, m.entryKey);
+            log(`   released unit ${m.unitId} from ${String(m.cartKey).slice(0, 8)}… → HTTP ${r.status}`);
+          } catch (err) {
+            log(`   ✗ COULD NOT RELEASE unit ${m.unitId}: ${err.message}`);
+            log(`     Remove it by hand — cart ${m.cartKey}, entry ${m.entryKey} — or it sits`);
+            log('     locked until RC drops the cart (~15 min).');
+          }
+        }
+        await page.evaluate((k) => {
+          try { if (k) localStorage.setItem('shoppingCartKey', k); else localStorage.removeItem('shoppingCartKey'); }
+          catch { /* the runner falls back to NO_CART, which is the safe direction */ }
+        }, savedKey);
+        log(`   restored the session's cart pointer${savedKey ? '' : ' (there was none)'}.`);
       }
     }
   }

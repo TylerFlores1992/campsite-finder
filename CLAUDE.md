@@ -1300,9 +1300,38 @@ The maximum number of reservations allowed in the cart is '2'."* Nothing of ours
 runner was there, the session was live, the timing was right.
 - `#76` correctly stayed `requested` (retryable while its window is open), so claiming one of
   the other two frees a slot and it can go in on a later pass.
-- **This is a hard capacity ceiling, not a bug.** Offering a user three holds for the same
-  release is a promise that cannot be kept. The poller should stop offering beyond two for a
-  given release window, or the copy must stop implying all of them will be held.
+- **"This is a hard capacity ceiling, not a bug" — WRITTEN HERE, AND PROBABLY WRONG.**
+  Corrected the next day; the original sentence is kept because it is how a self-inflicted
+  limit gets recorded as a law of nature. See directly below before planning around a 2.
+
+#### THE CAP SAYS *CART*, AND WE PUT EVERY HOLD IN ONE CART (2026-08-13)
+`rc-hold-runner` reads `localStorage["shoppingCartKey"]` and passes `existing || NO_CART`,
+and `precartInPage` writes each winning key straight back — so the first hold of the
+system's life minted a cart and **every hold since has been funnelled into that same one.**
+The database says it plainly: **15 holds ever, TWO distinct cart keys**, and all three of
+the 08-13 holds on one. The third hold did not hit RC's ceiling; it hit the second seat of
+the only cart we have ever used.
+- **Why that is plausibly free to fix:** the cart is a free-floating GUID-keyed object with
+  `CustomerId: 0`, and `load` mints a fresh one for the asking (that is the same finding
+  that made the injected precart work). N carts of 2, one session, one account, **no new
+  login, no new credential, no second identity.**
+- **UNPROVEN, and do not act on it before it is measured.** Nobody has asked RC whether one
+  session may hold two carts at once. Cross-session adoption, the keep-warm and
+  `renewByReload` were all this plausible and all false.
+- **`rc-probe.mjs --cart-cap` settles it** — cart A into a fresh cart, B into the same cart,
+  C into the same cart (**the control: it must be refused with RC's own cap wording, or step
+  4 succeeding proves nothing**), then C into a fresh cart. It releases only the entries it
+  created, never `empty/shoppingcart`, and restores the profile's cart pointer.
+  **Run it with the bot's cart EMPTY** — the probe signs in as the same RC account from a
+  different session, so a real hold already in the bot's cart counts against any per-ACCOUNT
+  cap and would fake the pessimistic answer.
+- **If it comes back per-cart**, the fix is that the runner must stop reusing the key. Note
+  the one retry case that gets harder: a hold that carted but whose read-back failed stays
+  `requested`, and a retry into a *new* cart would not find the old entry — check both
+  candidate keys, the way `rc-probe` already does.
+- **If it comes back per-account**, then concurrency really does cost identities, and the
+  poller must stop offering a third hold for a release window rather than promising one it
+  cannot keep.
 
 **THE CLAIM SCREEN IS NOW ONE BUTTON AT A TIME (2026-08-12 evening).** Three numbered steps, a
 checkbox and a dead button became `Start hand-off` → `Waiting for you to sign in…` →
