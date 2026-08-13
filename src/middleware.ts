@@ -68,7 +68,14 @@ const isPublicRoute = createRouteMatcher([
   // would spend the very seconds the hold exists to save. Both halves are unguessable
   // and the route checks them; Clerk would 404 it otherwise.
   '/claim/(.*)',
-  '/api/rc-holds/(.*)',
+  // ENUMERATED, NOT `/api/rc-holds/(.*)`. The wildcard was written when every route under
+  // it was token-authed, so it read as a description of the whole family — and then
+  // `/api/rc-holds/mine` arrived, which is Clerk-authed and lists a user's own holds. A
+  // blanket public matcher would have quietly opted it out of middleware protection, and
+  // nothing about adding a file makes that visible. Naming the two token-authed routes
+  // means the next one has to be added deliberately.
+  '/api/rc-holds/claim',
+  '/api/rc-holds/report',
   '/api/rc-proxy',
   '/api/tnsc-availability',
   // Vercel Cron entry points. Vercel invokes these unauthenticated as far as Clerk

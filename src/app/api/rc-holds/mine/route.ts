@@ -1,0 +1,120 @@
+import { NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
+import { query } from '@/lib/db/client';
+import { manageTokenFor, mintActionToken } from '@/lib/notifications/actions';
+
+export const dynamic = 'force-dynamic';
+
+/**
+ * The signed-in user's live ReserveCalifornia holds.
+ *
+ * ## Why this exists
+ *
+ * Until now the ONLY way to a hold was the alert that announced it — an email or a push
+ * notification, tapped once, on one device. Miss it, clear it, read it on the wrong phone,
+ * and there was no route back to a site CampHawk was physically holding in a cart. The
+ * claim URL carries a token, so it could not be guessed or reconstructed, and nothing in
+ * the app listed it.
+ *
+ * That is a bad shape for the single most time-critical object in the product. The Watches
+ * tab is where somebody looks when they think "what is happening with my sites", so the
+ * holds belong there.
+ *
+ * ## The token, and why minting it here is not a leak
+ *
+ * `/claim/<id>?t=<token>` is authorised by possession of the hold id plus the watch's
+ * `manage` token — deliberately not by a login, because the claim happens on a phone at 8am
+ * from an email link and a sign-in wall would spend the seconds the hold exists to save.
+ *
+ * This route is the other door: the caller has already proved who they are to Clerk, so the
+ * token is minted for THEIR OWN watches and handed back over an authenticated response. It
+ * is the same stable token the alert already emailed them (`mintActionToken` reuses the row
+ * on conflict), not a new capability — and every row is scoped `user_id = $1`, so the id
+ * being a UUID is not what is doing the work.
+ *
+ * ## Which holds count as live
+ *
+ * Anything the bot is holding or has just let go of (`carted`, `claiming`, `released`) is
+ * actionable NOW regardless of when its release was — that is exactly the 2026-08-13 leak,
+ * where two carted holds sat unclaimed until a sweep expired them. Everything else only
+ * matters while its release is still ahead: an offer nobody answered before 08:00 is a
+ * moment that has passed, not a task.
+ *
+ * Terminal states are excluded. `claimed`/`expired`/`failed` have nothing left to do, and a
+ * list that keeps them is a list nobody reads.
+ */
+export interface MyHold {
+  id: string;
+  status: string;
+  /** What to call the site on screen — RC's human `#L006`, never its internal key. */
+  unitLabel: string;
+  campgroundName: string | null;
+  arrivalDate: string;
+  nights: number;
+  /** RC's zone-less Pacific wall-clock. Never parse this with `new Date`. */
+  releaseAt: string;
+  cartedAt: string | null;
+  /** The hand-off screen. Present once there is something to hand over. */
+  claimUrl?: string;
+  /** "Hold it for me" — the same confirm page the coming-soon alert links to. */
+  holdUrl?: string;
+}
+
+export async function GET() {
+  // A PLAIN 401, not `requireAuth`'s throw. The Watches panel polls this every 20 seconds
+  // and treats any non-2xx as "nothing to show", so a signed-out caller should cost one
+  // status line rather than a stack trace in the logs at the rate of three a minute.
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+
+  const rows = await query<{
+    id: string; watch_id: string; status: string; unit_id: string; unit_name: string | null;
+    arrival_date: string; nights: number; release_at: string; carted_at: string | null;
+    campground_name: string | null;
+  }>(
+    `SELECT h.id, h.watch_id, h.status, h.unit_id, h.unit_name,
+            h.arrival_date::text AS arrival_date, h.nights, h.release_at,
+            h.carted_at::text AS carted_at, c.name AS campground_name
+       FROM rc_hold_requests h
+       LEFT JOIN campgrounds c ON c.id = h.campground_id
+      WHERE h.user_id = $1
+        AND h.status IN ('offered', 'requested', 'carted', 'claiming', 'released')
+        AND (
+          h.status IN ('carted', 'claiming', 'released')
+          OR h.release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+        )
+      ORDER BY h.release_at ASC
+      LIMIT 20`,
+    [userId],
+  ).catch((e) => {
+    console.error('[rc-holds/mine] query failed:', (e as Error).message);
+    return [];
+  });
+
+  const holds: MyHold[] = [];
+  for (const r of rows) {
+    const base: MyHold = {
+      id: r.id,
+      status: r.status,
+      unitLabel: r.unit_name ?? r.unit_id,
+      campgroundName: r.campground_name,
+      arrivalDate: r.arrival_date,
+      nights: Number(r.nights),
+      releaseAt: r.release_at,
+      cartedAt: r.carted_at,
+    };
+    // A LINK IS ONLY OFFERED WHERE IT LEADS SOMEWHERE. The claim screen tells a user with
+    // an `offered` hold that "nothing is being held for you right now", which is true and
+    // reads as a fault; the hold confirm page is the one that can act on it.
+    if (r.status === 'offered') {
+      const t = await mintActionToken(r.watch_id, 'hold', r.unit_id);
+      if (t) base.holdUrl = `/w/${t}`;
+    } else if (r.status !== 'requested') {
+      const t = await manageTokenFor(r.watch_id);
+      if (t) base.claimUrl = `/claim/${r.id}?t=${encodeURIComponent(t)}`;
+    }
+    holds.push(base);
+  }
+
+  return NextResponse.json({ holds });
+}

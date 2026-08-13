@@ -1,0 +1,104 @@
+/**
+ * What the claim screen is allowed to say, and on what evidence.
+ *
+ * ## Why the words live in a module of their own
+ *
+ * One sentence on this screen has been governed by a written rule since 2026-08-09 and by a
+ * test since 2026-08-12: **the claim copy must not promise a cart.** The reasoning is not
+ * about tone. A user who believes the site is handled STOPS WATCHING — and the ~2.5s window
+ * between the bot letting go and somebody re-taking the site is then spent by nobody. A
+ * manual flow that a user follows beats an automatic one that does not run.
+ *
+ * That rule was enforced by a regular expression over `ClaimFlow.tsx`'s JSX. It caught the
+ * mistake it was written for, and it could only ever answer "is the phrase anywhere in the
+ * file?" — which is the wrong question now that the answer depends on the runtime. The
+ * promise is honest on a client that can actually inject the precart and dishonest on one
+ * that cannot, and both branches live in the same file.
+ *
+ * So the copy is a function of the capability, the capability is its argument, and the test
+ * calls it rather than reading it. `worker/rc-handoff.test.mts` exercises both branches.
+ *
+ * ## What earned the promise
+ *
+ * The two RC cart POSTs were unproven for four days and are now measured: two synthetic
+ * holds on 2026-08-13 (12:31 and 12:47 PT) both reported `✓ Added to cart` through the
+ * client report channel, and the first was confirmed by eye on ReserveCalifornia's own cart
+ * page — the right unit, the right dates. That is what makes `canInject === true` copy
+ * allowed to describe a cart.
+ *
+ * **It is measured on iOS only.** Android has sign-in, session persistence and token
+ * capture; it has never run `load` + `submit`. The promise is therefore still a claim about
+ * a capability rather than about a platform, which is the honest shape either way: if the
+ * Android POSTs turn out to fail, the report channel says so on the first real hold, and
+ * this is the one place the wording has to change.
+ */
+
+export interface HandoffCopy {
+  /** Heading over the sign-in step, before anything is released. */
+  prepareTitle: string;
+  prepareBody: string;
+  prepareCta: string;
+  /** Shown while the RC window is open and no token has been seen yet. */
+  waitingTitle: string;
+  waitingBody: string;
+  /** A live RC session was confirmed (or asserted). */
+  readyTitle: string;
+  releaseCta: string;
+  /** Mid-release, while the bot lets go. */
+  releasingBody: string;
+  /** After the release — the only place a cart may be described. */
+  afterBody: string;
+  afterCta: string;
+}
+
+/**
+ * @param canInject Does THIS client have an injectable in-app webview? Probed at runtime
+ *   in `lib/native/rc-handoff`, never assumed from the user agent or the platform.
+ */
+export function handoffCopy(canInject: boolean): HandoffCopy {
+  if (!canInject) {
+    // THE PLAIN-BROWSER PATH — a phone browser, a desktop, an older app binary. Nothing
+    // here can cart, so nothing here says we will. A desktop user with the CampHawk
+    // extension installed WILL be carted for automatically, and we still do not promise it:
+    // we cannot detect the extension from this page, so the promise would be a guess, and a
+    // pleasant surprise is a much better failure than a broken one.
+    return {
+      prepareTitle: 'Open ReserveCalifornia and sign in',
+      prepareBody:
+        'Do this first, in another tab. Find your site and get as far as you can without booking — it will look taken, because we are the ones holding it.',
+      prepareCta: 'Open ReserveCalifornia in another tab',
+      waitingTitle: 'Sign in over there, then come back',
+      waitingBody: 'Nothing has been released yet. We keep holding it until you say go.',
+      readyTitle: 'Ready when you are',
+      releaseCta: "It's mine — hand it over",
+      releasingBody:
+        'Switch to your ReserveCalifornia tab and book it — we will also send you there if you stay here.',
+      afterBody: 'Book it on ReserveCalifornia now — it is open to anyone until you do.',
+      afterCta: 'Book it on ReserveCalifornia',
+    };
+  }
+
+  // THE INJECTED PATH. `canInject` is true only when a Cordova InAppBrowser with
+  // `executeScript` answered the runtime probe, which is the same capability that carries
+  // the precart. Proven end to end on 2026-08-13 — see the header.
+  return {
+    prepareTitle: 'First, sign in to ReserveCalifornia',
+    prepareBody:
+      'We open ReserveCalifornia right here. Sign in, then come back — nothing is released until you tap the button yourself.',
+    prepareCta: 'Sign in to ReserveCalifornia',
+    waitingTitle: 'Waiting for you to sign in',
+    waitingBody:
+      'Sign in in that window, then close it. Nothing has been released yet — your site is still ours.',
+    readyTitle: "Signed in. It's yours whenever you're ready",
+    releaseCta: "It's mine — hand it over",
+    releasingBody: "Stay on this screen — we'll open ReserveCalifornia the moment it's yours.",
+    // THE SENTENCE THE GUARD EXISTS FOR, and it is deliberately still the cautious one.
+    // Moving this copy out of ClaimFlow.tsx must not be the thing that changes what may be
+    // said — that would be the rule lapsing as a side effect of a refactor, which is the
+    // failure mode the rule is about. Earning the promise is its own change, with the guard
+    // rewritten in the same breath.
+    afterBody:
+      "ReserveCalifornia is opening now. Check your cart — if the site isn't in it, book it straight away.",
+    afterCta: 'Finish on ReserveCalifornia',
+  };
+}

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { buttonClasses } from "@/components/ui/Button";
 import Collapsible from "@/components/ui/Collapsible";
 import WatchCard, { type WatchCardWatch } from "./WatchCard";
+import HoldsPanel from "./HoldsPanel";
 import WatchCta from "./WatchCta";
 import { PlanOptionsButton } from "./SubscribeCta";
 import SetupNudges from "./SetupNudges";
@@ -131,15 +132,30 @@ export default function WatchesList() {
 
   if (signedOut) return <AccountWall />;
 
+  // THE HOLDS PANEL SITS ABOVE BOTH REMAINING EXITS, on purpose. A hold is a real campsite
+  // locked in ReserveCalifornia's cart with a ~15-minute fuse; a failed watch-list fetch is
+  // a page to reload, and "no watches yet" is a state a hold contradicts rather than
+  // precludes (a deleted watch leaves its hold behind). If this page half-breaks at 08:00,
+  // the one thing on it that cannot wait must still be reachable.
   if (error) {
     return (
-      <p role="alert" className="text-ch-body text-ch-alert">
-        {error}
-      </p>
+      <>
+        <HoldsPanel className="mb-3.5" />
+        <p role="alert" className="text-ch-body text-ch-alert">
+          {error}
+        </p>
+      </>
     );
   }
 
-  if (!watches || watches.length === 0) return <FirstRun />;
+  if (!watches || watches.length === 0) {
+    return (
+      <>
+        <HoldsPanel className="mb-3.5" />
+        <FirstRun />
+      </>
+    );
+  }
 
   const stalledCount = watches.filter(
     (w) => w.campground_source && stalledSources.has(w.campground_source),
@@ -150,6 +166,11 @@ export default function WatchesList() {
 
   return (
     <>
+      {/* FIRST. At 08:00 a site sitting in our cart outranks every other thing on this
+          page, including a provider outage banner — the outage cannot be acted on and the
+          hold has minutes left. */}
+      <HoldsPanel className="mb-3.5" />
+
       {stalledCount > 0 && stalledName?.campground_source && (
         <div className="mb-3.5 rounded-[13px] border border-[#E7C98C] bg-ch-ochre-soft px-3.5 py-3">
           <p className="text-ch-body font-bold">

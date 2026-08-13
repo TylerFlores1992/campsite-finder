@@ -269,22 +269,34 @@ test('the claim screen never promises a cart the POSTs have not earned', () => {
   // a test rather than a paragraph: it captured a 939-char token and reported no cart at
   // all, and the very next edit to this screen promised one anyway.
   //
-  // Scoped to the PRE-RELEASE instructions, which is where the promise would change what
-  // the user does. Post-release copy may describe a cart, because by then it either
-  // happened or it did not and the screen is reporting rather than predicting.
-  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  // BOTH FILES, because the copy moved. The 2026-08-13 redesign lifted the branchy
+  // sentences out of ClaimFlow.tsx into lib/claim-copy.ts, and this test — which named one
+  // file — went on passing while the phrase it exists to catch was one import away. A rule
+  // that a refactor can step out from under is not a rule.
+  const strip = (f: string) =>
+    readFileSync(f, 'utf8')
+      .split('\n')
+      .filter((l) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(l))
+      .join('\n');
 
   // READ THE RENDERED SENTENCE, NOT THE SOURCE LINE. The first version of this test matched
   // on raw JSX with a character class that excluded `<`, so `We let go and add <strong>{site}
   // </strong> to your cart.` — the precise string that prompted the test — sailed straight
   // through, because the tag interrupts the phrase. Verified by restoring that copy and
   // watching this pass. Strip the markup, then read the prose the user actually sees.
-  const prose = src
-    .split('\n')
-    .filter((l) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(l))
-    .join('\n')
-    .replace(/<[^>]*>/g, '')      // JSX tags
-    .replace(/\{[^{}]*\}/g, ' '); // interpolations: {site} is a name, not a claim
+  //
+  // THE BRACE STRIP IS APPLIED TO THE .tsx ONLY, and that is not a detail. In JSX `{site}`
+  // is an interpolated name and not a claim, so it is blanked — but claim-copy.ts is a
+  // plain object literal whose OUTERMOST braces contain no nested ones, so the same rule
+  // would delete every sentence in the file in one match and the test would pass on an
+  // empty string. Checked by mutation, because a guard that silently scans nothing is
+  // exactly the failure this test's own history is about.
+  const prose =
+    strip('src/components/v2/ClaimFlow.tsx')
+      .replace(/<[^>]*>/g, '')       // JSX tags
+      .replace(/\{[^{}]*\}/g, ' ') + // interpolations: {site} is a name, not a claim
+    '\n' +
+    strip('src/lib/claim-copy.ts');
 
   // "we … cart" as a FUTURE promise by us. The honest forms — "check your cart", "it may
   // already be in there" — are about the user looking, and say nothing about what we will do.

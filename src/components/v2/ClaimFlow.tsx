@@ -2,8 +2,13 @@
 
 import { openRcHandoff, rcHandoffUrl, rcHandoffDiagnostics, type RcReport } from '@/lib/native/rc-handoff';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Check, AlertTriangle, Tent } from 'lucide-react';
-import { formatStayDates } from '@/lib/notifications/dates';
+import Link from 'next/link';
+import { Loader2, AlertTriangle } from 'lucide-react';
+import BrandMark from '@/components/v2/BrandMark';
+import { buttonClasses } from '@/components/ui/Button';
+import { useIsNativeApp } from '@/lib/native/context';
+import { stayLabel } from '@/lib/hold-labels';
+import { handoffCopy } from '@/lib/claim-copy';
 import { RC_CART_HOLD_MINUTES } from '@/lib/limits';
 
 /**
@@ -25,6 +30,24 @@ import { RC_CART_HOLD_MINUTES } from '@/lib/limits';
  * The fallback is deliberately not a failure. If the recapture does not happen the site
  * is simply free and they can book it — exactly where an ordinary alert would leave
  * them — so the copy says that plainly rather than implying something broke.
+ *
+ * ## THE 2026-08-13 REDESIGN — what changed and why
+ *
+ * Run twice on a real iOS hold, this screen read as an unstyled document: a lucide tent
+ * glyph, centred prose, and no way back into the app. Everything it said was accurate and
+ * none of it looked like the product it belongs to, at the one moment somebody is being
+ * asked to trust it with a campsite. Three structural changes came out of that:
+ *
+ *   • **One card carries the site.** Campground, site number, dates, and the deadline, in
+ *     that order, at the top. The site number is the single fact the user must hold in
+ *     their head while they act, so it is set at display size and never buried in a
+ *     sentence — this was already true on two of the four states and not on the others.
+ *   • **The brand mark is a link.** The claim page lives outside the `(app)` route group,
+ *     so it has no nav, no backdrop and no way home. A user who arrives here from an email
+ *     and wants their watches had to type the URL.
+ *   • **The words are a function of the capability** (`lib/claim-copy`). What this screen
+ *     may promise depends on whether the client can actually run the precart, and having
+ *     both branches spelled out inline is how the wrong one gets edited.
  */
 interface HoldState {
   status: string;
@@ -103,10 +126,11 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
   /**
    * Ship what the injected precart says about itself back to the server.
    *
-   * THE TWO RC CART POSTS ARE THE LAST UNMEASURED LINK. Sign-in, session persistence and
-   * token capture are all proven on both platforms; `load` + `submit` are not, because
-   * exercising them needs a genuine held unit. This is how the next real 8am hold answers
-   * that on its own instead of us inferring it from whether the user got the site.
+   * THE TWO RC CART POSTS WERE THE LAST UNMEASURED LINK, and this is what closed it: two
+   * synthetic holds on 2026-08-13 reported `✓ Added to cart` through this channel, the
+   * first confirmed by eye on RC's own cart page. It stays because the question is only
+   * settled on iOS — Android has never run `load` + `submit` — and because RC changes this
+   * payload without telling anyone.
    *
    * BUFFERED AND FIRE-AND-FORGET. At 08:00:00 nothing may go in front of the precart, and
    * this runs on the same page as a user watching a clock — so reports accumulate and
@@ -328,54 +352,49 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     }
   }
 
-  if (error) return <Shell><p className="text-ch-ink">{error}</p></Shell>;
-  if (!state) return <Shell><Loader2 className="animate-spin text-ch-muted" /></Shell>;
+  if (error) {
+    return (
+      <Shell>
+        <Notice>{error}</Notice>
+      </Shell>
+    );
+  }
+  if (!state) {
+    return (
+      <Shell>
+        <div className="flex justify-center py-10">
+          <Loader2 className="animate-spin text-ch-muted" />
+        </div>
+      </Shell>
+    );
+  }
 
   const site = state.unitName ?? state.unitId ?? 'your site';
+  const copy = handoffCopy(canInject);
 
   if (state.status === 'carted') {
     return (
       <Shell>
-        <Tent className="text-ch-green-deep" size={32} />
-        <h1 className="text-2xl font-bold text-ch-ink mt-3">
-          {maybeGone ? `${site} may already be gone` : `We’re holding ${site} for you`}
-        </h1>
-        <p className="text-ch-muted mt-2">
-          {stayLabel(state.arrivalDate, state.nights)}
+        <SiteCard
+          site={site}
+          stay={stayLabel(state.arrivalDate, state.nights)}
+          heading={maybeGone ? 'This may already be gone' : "We're holding this for you"}
+          tone={maybeGone ? 'warn' : 'hold'}
+          footer={
+            minsLeft !== null
+              ? maybeGone
+                ? 'ReserveCalifornia drops a cart after about 15 minutes, and it has been longer than that. It may already be free again — worth trying anyway.'
+                : `ReserveCalifornia holds a cart about ${RC_CART_HOLD_MINUTES} minutes. About ${minsLeft} left.`
+              : null
+          }
+        />
+
+        <p className="mt-4 text-ch-body leading-relaxed text-ch-ink-2">
+          When you tap the green button we let go and you take it. That swap takes a couple
+          of seconds, and the site is open to anyone during it — so only tap when
+          you&rsquo;re ready to finish.
         </p>
-        {/* The deadline, stated once, near the top, where a decision is being made. */}
-        {minsLeft !== null && (
-          <p className={`mt-3 rounded-xl px-4 py-2 text-sm font-semibold ${maybeGone ? 'bg-ch-sand text-ch-ink' : 'bg-ch-green-soft text-ch-ink'}`}>
-            {maybeGone
-              ? 'ReserveCalifornia drops a cart after about 15 minutes, and it has been longer than that. It may already be free again — worth trying anyway.'
-              : `ReserveCalifornia holds a cart about ${RC_CART_HOLD_MINUTES} minutes. About ${minsLeft} left.`}
-          </p>
-        )}
-        <p className="text-ch-ink mt-5">
-          When you tap below we let go and you take it — that swap takes a couple of
-          seconds, and the site is open to anyone during it, so only tap when you&rsquo;re
-          ready to finish.
-        </p>
 
-        {/*
-          ORDER THE STEPS, DON'T JUST MENTION THEM.
-
-          The old screen offered a sign-in link and a checkbox, then released and sent the
-          user to RC to *start* looking. On a desktop with the extension that is fine —
-          it carts for them. On a PHONE nothing consumes the fragment, so the release
-          started a clock and only THEN did the user begin navigating, signing in and
-          hunting for the site. The claim link is tapped on a phone at 8am; that is the
-          normal case, not the edge case.
-
-          So the navigation now happens BEFORE the release. Open the loop in another tab,
-          find the site, come back, hand over. The exposure becomes "tap over and press
-          book", not "tap over, sign in, search, scroll, press book". Nothing here is
-          clever — it just stops spending the window on work that could have been done
-          while the bot was still holding it.
-
-          NEW TAB on purpose: navigating away would lose this page, and the hold id and
-          token live only in its URL.
-        */}
         {/*
           ONE THING TO DO AT A TIME.
 
@@ -395,116 +414,72 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
           the site to whoever else is watching while its owner is not looking, which is the
           exact failure this screen exists to prevent. What is removed is the busywork, not
           the decision.
-
-          The browser path keeps the old three steps: without an injectable webview there is
-          nothing to observe, so the checkbox is still the only thing standing between a
-          signed-out user and a released site.
         */}
-        {canInject ? (
-          <div className="mt-5 w-full">
-            {rcCheck === 'verified' ? (
-              <p className="rounded-xl border border-ch-line bg-ch-green-soft p-4 text-left text-sm font-semibold text-ch-ink">
-                Signed in to ReserveCalifornia. Tap below and it&rsquo;s yours.
-              </p>
-            ) : rcCheck === 'opening' ? (
-              <p className="rounded-xl border border-ch-line p-4 text-left text-sm text-ch-ink">
-                Waiting for you to sign in to ReserveCalifornia&hellip;
-                <span className="mt-1 block text-ch-muted">
-                  Sign in in that window, then come back here. Nothing has been released yet.
-                </span>
-              </p>
-            ) : (
-              <>
-                <button
-                  onClick={prepareRc}
-                  className="w-full rounded-xl bg-ch-green-deep px-6 py-4 text-lg font-bold text-white"
-                >
-                  Start hand-off
-                </button>
-                <p className="mt-2 text-sm text-ch-muted">
-                  Opens ReserveCalifornia so you can sign in. We keep holding{' '}
-                  <strong>{site}</strong> until you say go.
-                </p>
-              </>
-            )}
-            {/* UNCONFIRMED IS NOT A REFUSAL. The webview closed without announcing a token,
-                which may mean no session — or may mean we simply could not see one. Those
-                are different facts and only the first would justify blocking, so the old
-                checkbox comes back as the way through rather than a dead end. */}
-            {rcCheck === 'unconfirmed' && !signedIn && (
-              <label className="mt-3 flex w-full cursor-pointer items-start gap-3 rounded-xl border border-ch-line p-4 text-left">
-                <input
-                  type="checkbox"
-                  checked={signedIn}
-                  onChange={(e) => setSignedIn(e.target.checked)}
-                  className="mt-0.5 size-5 shrink-0 accent-ch-green-deep"
-                />
-                <span className="text-sm text-ch-ink">
-                  We couldn&rsquo;t confirm your ReserveCalifornia sign-in. Tick this if
-                  you&rsquo;re signed in and we&rsquo;ll hand over anyway.
-                </span>
-              </label>
-            )}
-          </div>
-        ) : (
-          <>
-            <ol className="mt-5 w-full space-y-3 text-left text-sm text-ch-ink">
-              <li className="flex gap-3">
-                <span className="font-bold text-ch-green-deep">1.</span>
-                <span>
-                  <a
-                    href={rcHandoffUrl({ url: bookingUrl.current })}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-semibold text-ch-green-deep underline"
-                  >
-                    Open ReserveCalifornia in another tab
-                  </a>{' '}
-                  and sign in. Find <strong>{site}</strong> and get as far as you can without
-                  booking — the site will look taken, because we&rsquo;re the ones holding it.
-                </span>
-              </li>
-              <li className="flex gap-3">
-                <span className="font-bold text-ch-green-deep">2.</span>
-                <span>Come back here and tap the button. We let go.</span>
-              </li>
-              <li className="flex gap-3">
-                <span className="font-bold text-ch-green-deep">3.</span>
-                <span>Switch to that tab and book <strong>{site}</strong> straight away.</span>
-              </li>
-            </ol>
-            <label className="mt-5 flex w-full cursor-pointer items-start gap-3 rounded-xl border border-ch-line p-4 text-left">
+        <div className="mt-4">
+          {rcCheck === 'verified' || signedIn ? (
+            <Step tone="done" title={copy.readyTitle} />
+          ) : rcCheck === 'opening' ? (
+            <Step tone="busy" title={copy.waitingTitle} body={copy.waitingBody} />
+          ) : (
+            /*
+              THE SIGN-IN IS THE WHOLE STEP, AT THE SIZE OF THE WHOLE STEP (owner note 4).
+              This used to read "Start hand-off", which names our internal process rather
+              than the user's job, and then explained the actual instruction in grey text
+              underneath. At 8am on a phone the instruction has to BE the button.
+            */
+            <>
+              <Step tone="todo" title={copy.prepareTitle} body={copy.prepareBody} />
+              <button
+                onClick={prepareRc}
+                className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-3' })}
+              >
+                {copy.prepareCta}
+              </button>
+            </>
+          )}
+
+          {/* UNCONFIRMED IS NOT A REFUSAL. The webview closed without announcing a token,
+              which may mean no session — or may mean we simply could not see one. Those
+              are different facts and only the first would justify blocking, so the old
+              checkbox comes back as the way through rather than a dead end.
+
+              On the plain-browser path there is nothing to observe, so it is the only gate
+              there is and shows from the start. */}
+          {(rcCheck === 'unconfirmed' || !canInject) && !signedIn && (
+            <label className="mt-3 flex w-full cursor-pointer items-start gap-3 rounded-ch-card border border-ch-line bg-ch-card p-4 text-left">
               <input
                 type="checkbox"
                 checked={signedIn}
                 onChange={(e) => setSignedIn(e.target.checked)}
-                className="mt-0.5 size-5 shrink-0 accent-ch-green-deep"
+                className="mt-0.5 size-5 shrink-0 accent-ch-green"
               />
-              <span className="text-sm text-ch-ink">
-                I&rsquo;m signed in to ReserveCalifornia and looking at {site}
+              <span className="text-ch-body leading-normal text-ch-ink">
+                {canInject
+                  ? "We couldn't confirm your ReserveCalifornia sign-in. Tick this if you're signed in and we'll hand over anyway."
+                  : `I'm signed in to ReserveCalifornia and looking at ${site}`}
               </span>
             </label>
-          </>
-        )}
+          )}
+        </div>
 
         {/* THE RELEASE, shown only once it can actually be pressed. A dead button with an
             explanation underneath was still a dead button competing for attention with the
-            step that would enable it; on the app path there is now exactly one live control
-            on screen at a time. */}
-        {mayRelease && (
+            step that would enable it; there is now exactly one live control on screen. */}
+        {mayRelease ? (
           <button
             onClick={claim}
             disabled={busy}
-            className="mt-4 w-full rounded-xl bg-ch-green-deep px-6 py-4 text-lg font-bold text-white disabled:opacity-60"
+            className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-4' })}
           >
-            {busy ? 'Releasing…' : "It's mine — hand it over"}
+            {busy ? 'Releasing…' : copy.releaseCta}
           </button>
-        )}
-        {!mayRelease && !canInject && (
-          <p className="mt-3 text-sm text-ch-muted">
-            Tick the box once you&rsquo;re signed in and on the page — we won&rsquo;t let go
-            until then.
-          </p>
+        ) : (
+          !canInject && (
+            <p className="mt-3 text-ch-meta text-ch-muted">
+              Tick the box once you&rsquo;re signed in and on the page — we won&rsquo;t let
+              go until then.
+            </p>
+          )
         )}
       </Shell>
     );
@@ -513,12 +488,12 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
   if (state.status === 'claiming') {
     return (
       <Shell>
-        <Loader2 className="animate-spin text-ch-green-deep" size={32} />
-        <h1 className="text-xl font-bold text-ch-ink mt-3">Letting go of {site}…</h1>
-        {/* Name the site again, here, at the size it needs to be read at. This is the one
-            second the user has to load the target into their head before they act, and
-            the previous screen's copy has already scrolled out of mind. */}
-        <p className="mt-3 rounded-xl bg-ch-green-soft px-5 py-2 text-xl font-bold text-ch-ink">{site}</p>
+        <SiteCard
+          site={site}
+          stay={stayLabel(state.arrivalDate, state.nights)}
+          heading="Letting go — grab it now"
+          tone="hold"
+        />
         {/*
           THERE IS NO TAB IN THE APP. This told everyone to "switch to your ReserveCalifornia
           tab", which is true on a desktop where step one opened one — and meaningless on a
@@ -530,22 +505,18 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
           missed, at the one moment the design is asking them to sit still for two seconds.
           On the app path we reopen RC ourselves the instant the bot lets go, so say that.
         */}
-        <p className="text-ch-muted mt-2">
-          {canInject
-            ? <>Stay here — we&rsquo;ll open ReserveCalifornia the moment it&rsquo;s yours.</>
-            : <>Switch to your ReserveCalifornia tab and book it — we&rsquo;ll also send you
-              there if you stay here.</>}
-        </p>
+        <div className="mt-4 flex items-start gap-3 rounded-ch-card border border-ch-line bg-ch-card p-4">
+          <Loader2 className="mt-0.5 size-5 shrink-0 animate-spin text-ch-green" />
+          <p className="text-ch-body leading-normal text-ch-ink">{copy.releasingBody}</p>
+        </div>
         {state.stuck && (
-          <p className="mt-4 flex items-start gap-2 text-sm text-ch-ink">
-            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+          <Notice tone="warn">
             {/* A spinner that never resolves is worse than bad news. If the runner is
                 down, say so and point at the thing that still works. */}
-            <span>
-              This is taking longer than it should — our bot may be offline. The site is still held, so
-              nothing is lost. Try again in a minute, or open ReserveCalifornia and search for {site}.
-            </span>
-          </p>
+            This is taking longer than it should — our bot may be offline. The site is still
+            held, so nothing is lost. Try again in a minute, or open ReserveCalifornia and
+            search for {site}.
+          </Notice>
         )}
       </Shell>
     );
@@ -554,17 +525,13 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
   if (state.status === 'released' || state.status === 'claimed') {
     return (
       <Shell>
-        <Check className="text-ch-green-deep" size={32} />
-        <h1 className="text-xl font-bold text-ch-ink mt-3">{site} is yours to book</h1>
-        {/* THE SITE NUMBER, BIG. This screen is read in a hurry while a clock the user
-            can feel is running, and the single fact they need is which site to tap on a
-            grid of dozens. Burying it in a sentence is how you spend the window
-            re-reading the sentence. */}
-        <p className="mt-4 rounded-xl bg-ch-green-soft px-5 py-3 text-2xl font-bold text-ch-ink">{site}</p>
-        <p className="text-ch-muted mt-2">
-          {stayLabel(state.arrivalDate, state.nights)} — we&rsquo;ve let go. If you already
-          have ReserveCalifornia open, switch to it and book now.
-        </p>
+        <SiteCard
+          site={site}
+          stay={stayLabel(state.arrivalDate, state.nights)}
+          heading={`${site} is yours to book`}
+          tone="done"
+        />
+        <p className="mt-4 text-ch-body leading-relaxed text-ch-ink">{copy.afterBody}</p>
         {/* The LOOP page (see bookingUrlFor), not the park and not the cart. The cart is
             only populated for desktop users whose extension caught the release; on a
             phone it is empty, and sending someone to an empty cart to explain a site they
@@ -591,15 +558,15 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
               nights: state.nights,
             }, { onReport });
           }}
-          className="mt-6 inline-block rounded-xl bg-ch-green-deep px-6 py-4 font-bold text-white"
+          className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-4' })}
         >
-          Book {site} on ReserveCalifornia →
+          {copy.afterCta}
         </a>
         <a
           href="https://www.reservecalifornia.com/Customers/ShoppingCart"
-          className="mt-4 block text-sm text-ch-muted underline"
+          className="mt-3 block text-center text-ch-meta text-ch-muted underline"
         >
-          Already in your cart? Go to checkout
+          Go straight to your ReserveCalifornia cart
         </a>
       </Shell>
     );
@@ -607,7 +574,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
 
   return (
     <Shell>
-      <p className="text-ch-ink">
+      <Notice>
         {/* Every remaining status means there is nothing to hand over, and saying which
             beats a generic error: expired and failed have different next steps. */}
         {/* NOT "so we released the site" any more. A hold can also expire because we
@@ -620,34 +587,120 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
           : state.status === 'failed'
             ? "We couldn't hold that site. Your alerts carry on as normal."
             : 'Nothing is being held for you right now.'}
-      </p>
+      </Notice>
     </Shell>
   );
 }
 
 /**
- * "Sep 4-6 · 3 nights", not "2026-09-04".
+ * The site, at the size it has to be read at.
  *
- * Same rule as the alert copy (lib/notifications/dates.ts): a bare ISO date is read as a
- * timestamp rather than a stay, and it was mis-read exactly that way in a real alert on
- * 2026-08-06. Days are stepped in UTC and re-serialised, never via `new Date(iso)` plus
- * local arithmetic — a bare date parses as midnight UTC and renders a day early for
- * everyone west of Greenwich, which on this screen would name the wrong night.
+ * The unit number is the one fact the user must carry into ReserveCalifornia's grid of
+ * dozens, under a clock they can feel. Two of the four states already promoted it to
+ * display size and the other two buried it in a sentence, which is exactly how the window
+ * gets spent re-reading the sentence.
  */
-function stayLabel(arrival?: string, nights?: number): string {
-  if (!arrival) return '';
-  const n = Math.max(1, nights ?? 1);
-  const start = Date.parse(`${arrival}T00:00:00Z`);
-  if (Number.isNaN(start)) return arrival;
-  const dates = Array.from({ length: n }, (_, i) =>
-    new Date(start + i * 86_400_000).toISOString().slice(0, 10),
+function SiteCard({
+  site, stay, heading, tone, footer,
+}: {
+  site: string;
+  stay: string;
+  heading: string;
+  tone: 'hold' | 'done' | 'warn';
+  footer?: string | null;
+}) {
+  const ring =
+    tone === 'warn' ? 'border-ch-line bg-ch-ochre-soft' :
+    tone === 'done' ? 'border-ch-green bg-ch-green-soft' :
+    'border-ch-line bg-ch-card';
+  return (
+    <section className={`rounded-ch-card border-2 p-5 shadow-ch-card ${ring}`}>
+      <p className="text-ch-meta font-bold uppercase tracking-[.08em] text-ch-muted">{heading}</p>
+      <p className="mt-2 font-ch-display text-[34px] font-extrabold leading-none tracking-[-.03em] text-ch-ink">
+        {site}
+      </p>
+      {stay && <p className="mt-2 text-ch-body text-ch-ink-2">{stay}</p>}
+      {footer && (
+        <p className="mt-3 border-t border-ch-line/70 pt-3 text-ch-meta leading-normal text-ch-ink-2">
+          {footer}
+        </p>
+      )}
+    </section>
   );
-  return `${formatStayDates(dates)} · ${n} night${n === 1 ? '' : 's'}`;
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+/** One step of the hand-off, in the state it is currently in. */
+function Step({
+  tone, title, body,
+}: { tone: 'todo' | 'busy' | 'done'; title: string; body?: string }) {
   return (
-    <main className="mx-auto flex min-h-[70vh] max-w-md flex-col items-center justify-center px-6 text-center">
+    <div
+      className={`flex items-start gap-3 rounded-ch-card border p-4 ${
+        tone === 'done' ? 'border-ch-green bg-ch-green-soft' : 'border-ch-line bg-ch-card'
+      }`}
+    >
+      {/* A SHAPE AND A WORD, NEVER A COLOUR ALONE — the same rule the admin dashboard's
+          StatusMark enforces, for the same reason: the owner is colour-blind, and a green
+          tick and an amber dot are two grey dots to a deuteranope. */}
+      <span className="mt-0.5 shrink-0">
+        {tone === 'busy' ? (
+          <Loader2 className="size-5 animate-spin text-ch-green" />
+        ) : tone === 'done' ? (
+          <span className="grid size-5 place-items-center rounded-full bg-ch-green text-[12px] font-bold text-white">
+            ✓
+          </span>
+        ) : (
+          <span className="grid size-5 place-items-center rounded-full bg-ch-ochre-soft text-[12px] font-bold text-ch-ochre-ink">
+            1
+          </span>
+        )}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-ch-body font-bold text-ch-ink">{title}</span>
+        {body && <span className="mt-1 block text-ch-meta leading-normal text-ch-ink-2">{body}</span>}
+      </span>
+    </div>
+  );
+}
+
+function Notice({ children, tone = 'plain' }: { children: React.ReactNode; tone?: 'plain' | 'warn' }) {
+  return (
+    <div
+      className={`mt-4 flex items-start gap-3 rounded-ch-card border p-4 ${
+        tone === 'warn' ? 'border-ch-line bg-ch-ochre-soft' : 'border-ch-line bg-ch-card'
+      }`}
+    >
+      {tone === 'warn' && <AlertTriangle size={18} className="mt-0.5 shrink-0 text-ch-ochre-ink" />}
+      <p className="text-ch-body leading-normal text-ch-ink">{children}</p>
+    </div>
+  );
+}
+
+/**
+ * The page frame — and the way back into the app.
+ *
+ * `/claim/<id>` lives OUTSIDE the `(app)` route group, deliberately: it is reached from an
+ * email or a push by somebody who may not be signed in, and it carries a token in its URL.
+ * The cost of that was no nav, no backdrop and no exit — a user who finished a hand-off and
+ * wanted their watches had nowhere to press. The brand mark is that exit as well as the
+ * only thing on the page that says whose screen this is.
+ *
+ * Native goes to /search rather than / for the same reason V2Nav does: the marketing home
+ * page carries prices and Stripe checkout, which must never be reachable inside the app.
+ */
+function Shell({ children }: { children: React.ReactNode }) {
+  const isNative = useIsNativeApp();
+  return (
+    <main className="mx-auto w-full max-w-md px-5 pb-16 pt-6">
+      <Link
+        href={isNative ? '/search' : '/'}
+        className="mb-5 inline-flex items-center gap-2.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green"
+      >
+        <BrandMark size={40} />
+        <span className="font-ch-display text-[22px] font-extrabold tracking-[-.025em] text-ch-ink">
+          CampHawk
+        </span>
+      </Link>
       {children}
     </main>
   );
