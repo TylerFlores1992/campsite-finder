@@ -805,6 +805,11 @@ token, ~12h Okta session) apply inside the app exactly as they do to the bot.
   cry-wolf failure already fixed three times. The panel shows the series; nothing pages.
 - **Entirely WEB-SIDE — no rebuild, no review.** The script is served by `/api/rc-precart`,
   the panel and the claim screen are web. It reaches already-installed apps on a push.
+- **STILL ZERO READINGS as of 2026-08-13 05:40Z** (readout run; "No probes recorded"). The
+  series cannot start without the owner tapping the button in the app, so this is the one
+  open item here that no agent can advance — ask, don't investigate. And **do not read the
+  empty readout as a broken write**: the panel says "this reading was NOT recorded" in that
+  case, and nobody has pressed it yet.
 - **HOW TO USE IT:** Admin → System Health → Alerting → **"Open ReserveCalifornia"**, *from
   inside the app* (from a browser `canInject` is false and it tests nothing). **Once a day**;
   the answer is a shape over days, not a press. The claim screen records the same facts
@@ -918,6 +923,33 @@ was "I proved nothing" — which is the banner trap being caught correctly, not 
   Cause NOT established, and do not guess one into this file — the four gates (the 20:00
   hour, once per 20h, never within 6h of a release, never when the session is live) all look
   satisfiable at 20:00 on 08-12, so the answer is somewhere else.
+  **Two of those four are now arithmetically ruled out (2026-08-13):** the last run was
+  08-11 20:02 PT so the gap at 20:00 on 08-12 was ~24h against a 20h minimum, and the
+  release was 12h out against a 6h minimum. Only `sessionLive === true`, an unreachable
+  feed, or the process not being alive during hour 20 remain.
+
+- **AND THE REASON IS UNRECOVERABLE, BY A BUG IN THE INSTRUMENT'S OWN BOOKKEEPING
+  (found + fixed 2026-08-13).** `maybeRehearse` gates its skip-record on one variable so a
+  skip is written once a night instead of on every poll through the hour. That variable
+  held the **hour number** (`rehearsedThisHour = hour`) and was **never reset** — so it
+  latched at 20 for the life of the process, and the first night the hour was reached was
+  the *only* night that could record anything. Every night after it, a skip wrote nothing
+  and logged nothing.
+  - So **"a gate stood it down, and here is which one" and "the process never reached
+    20:00" produce the identical evidence: silence.** That is the house failure shape
+    (`status = 'sent'` meaning only "Twilio returned 2xx"; `claimBotCommands` returning
+    `[]` for both "nobody asked" and "the query threw") — this time inside the watchdog's
+    own watchdog, which is why 08-12 cannot be diagnosed retroactively and 08-14 onward can.
+  - Fixed with `rehearsalSlot()` in `rehearsal.mjs` — a **Pacific date**, null outside the
+    rehearsal hour. A date cannot latch: tomorrow's window has a different key. Keyed on
+    Pacific and not UTC deliberately, or the slot would roll at 17:00 PT, mid-evening, and
+    disagree with `pacificHour()` across a DST boundary.
+  - `worker/rehearsal.test.mts` verified failing against **both** halves: a latching slot,
+    and the caller reverting to the bare-hour comparison — *the fix present but inert*,
+    which is `6006428` and the `--claimed` omission, and the version that passes review.
+  - **This is bot-side code, so it needs an `update.bat` or a quiet-window update to reach
+    the box** — and the 02:00–05:00 window is shut while holds are `requested`. It changes
+    nothing about whether a cart fires; it only makes the next silent night explain itself.
 - **IT IS NOT THE 2026-08-10 WEDGE, and that is the distinction that matters at 07:30.** That
   failure was the keep-warm going silent for ten hours and taking `maybeAutoLogin` down with
   it. Here the keep-warm reported **45 seconds** before the reading, so the loop is alive and

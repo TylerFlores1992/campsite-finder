@@ -16,7 +16,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  shouldRehearse, REHEARSAL_HOUR, REHEARSAL_MIN_HOURS_TO_RELEASE, REHEARSAL_MIN_GAP_H,
+  shouldRehearse, rehearsalSlot,
+  REHEARSAL_HOUR, REHEARSAL_MIN_HOURS_TO_RELEASE, REHEARSAL_MIN_GAP_H,
 } from '../scripts/auto-cart-bot/rehearsal.mjs';
 import { rehearsalFault, REHEARSAL_STALE_MS, RC_SESSION_CRITICAL_MIN } from '../src/lib/health-thresholds.js';
 
@@ -136,6 +137,57 @@ test('a pass expires', () => {
   assert.ok(REHEARSAL_STALE_MS <= 72 * 3600_000, 'three quiet nights is no longer a signal');
 });
 
+// ── RECORDING THE SKIP ──────────────────────────────────────────────────────────────────
+//
+// 2026-08-12: the rehearsal did not run and left NO reason behind. `rc_login_rehearsal`
+// still held the 08-11 row, so "a gate stood it down" and "the process never reached 20:00"
+// were the same evidence — silence — from the one instrument whose entire job is telling a
+// human the evening BEFORE a cart that the login is broken.
+//
+// The caller keeps one variable so the skip is written once a night rather than on every
+// poll through the hour. It held the HOUR NUMBER and was never reset, so it latched at 20
+// for the life of the process and silenced every night after the first.
+
+/** 20:05 PT on the given Pacific date. PDT is UTC-7, so 20:00 PT is 03:00Z the next day. */
+const at2005PT = (utcDay: string) => new Date(`${utcDay}T03:05:00Z`);
+
+test('a skip is recordable again every night — the slot cannot latch', () => {
+  // THE REGRESSION. With the old hour-number latch both nights were `20`, so the second
+  // night compared equal to the first and wrote nothing at all.
+  const night1 = rehearsalSlot(at2005PT('2026-08-13')); // 2026-08-12 20:05 PT
+  const night2 = rehearsalSlot(at2005PT('2026-08-14')); // 2026-08-13 20:05 PT
+  assert.ok(night1 && night2, 'both instants are inside the rehearsal hour');
+  assert.notEqual(night1, night2, 'consecutive nights must not share a slot key');
+});
+
+test('but only once within the same night', () => {
+  // The other half. The keep-warm polls through the whole hour; without a stable key it
+  // would overwrite the row on every tick, and a late tick's reason would bury the real one.
+  const early = rehearsalSlot(new Date('2026-08-13T03:01:00Z')); // 20:01 PT
+  const late = rehearsalSlot(new Date('2026-08-13T03:58:00Z')); // 20:58 PT
+  assert.equal(early, late);
+});
+
+test('the slot is null outside the rehearsal hour', () => {
+  // It is the caller's only test for "are we in the window?" now — the bare
+  // `hour === REHEARSAL_HOUR` comparison is gone, so a slot that answered outside the hour
+  // would record a skip at every hour of the day and overwrite last night's real result.
+  assert.equal(rehearsalSlot(new Date('2026-08-13T02:59:00Z')), null, '19:59 PT');
+  assert.equal(rehearsalSlot(new Date('2026-08-13T04:00:00Z')), null, '21:00 PT');
+  assert.equal(rehearsalSlot(new Date('2026-08-13T07:00:00Z')), null, 'midnight PT');
+  assert.equal(rehearsalSlot(new Date('2026-08-13T15:00:00Z')), null, '08:00 PT — release');
+});
+
+test('the slot follows Pacific, not UTC', () => {
+  // 20:00 PT is the NEXT UTC day. Keying on the UTC date would roll the slot over at 17:00
+  // PT — mid-evening — and on the DST boundary it would disagree with `pacificHour`, which
+  // is what actually decides whether the rehearsal runs.
+  assert.equal(rehearsalSlot(at2005PT('2026-08-13')), '2026-08-12');
+  // Pacific Standard Time (UTC-8): 20:05 PST is 04:05Z the next day.
+  assert.equal(rehearsalSlot(new Date('2026-12-13T04:05:00Z')), '2026-12-12');
+  assert.equal(rehearsalSlot(new Date('2026-12-13T03:05:00Z')), null, '19:05 PST is not the hour');
+});
+
 // ── THE WIRING ──────────────────────────────────────────────────────────────────────────
 
 const keepwarm = readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8');
@@ -175,6 +227,25 @@ test('the run is recorded BEFORE the attempt, not after', () => {
   assert.ok(stamped !== -1, 'the rehearsal must stamp ran_at before attempting');
   assert.ok(attempted !== -1);
   assert.ok(stamped < attempted, 'ran_at must be stamped before the login is attempted');
+});
+
+test('the keep-warm gates its skip-record on the slot, not on a bare hour', () => {
+  // THE INERT-FIX GUARD. `rehearsalSlot` can be correct and imported and still change
+  // nothing if the caller keeps comparing hour numbers — the shape of `6006428`, which
+  // claimed to fix the RC URL and only touched the copy, and of the update-guard fix that
+  // was present but never passed `--claimed`. The defect lived in the CALLER, so that is
+  // where it has to be asserted.
+  const fn = code(keepwarm.match(/async function maybeRehearse\([\s\S]*?\n}/)?.[0] ?? '');
+  assert.ok(fn, 'could not find maybeRehearse');
+  assert.match(fn, /rehearsalSlot\(\)/, 'maybeRehearse must derive its slot from rehearsalSlot');
+  // The latch it replaced, in either spelling: a variable compared against the hour.
+  assert.doesNotMatch(fn, /rehearsedThisHour/, 'the hour-number latch must be gone');
+  assert.doesNotMatch(
+    fn, /\w+\s*!==\s*hour\b/,
+    'a skip must not be gated on an hour number — that is the latch that silenced 08-12',
+  );
+  // And the skip has to still be recorded, or the slot is just bookkeeping.
+  assert.match(fn, /recordedSlot\s*!==\s*slot[\s\S]{0,300}reportRehearsal\(null,\s*null,/);
 });
 
 test('an unreachable feed cancels the rehearsal', () => {
