@@ -308,7 +308,17 @@ needed no change.
     dictionary body is the `executeScript` callback path and needs an `InAppBrowser<N>`
     id; a **string** body is JSON-parsed into a `message` event. `JSON.stringify` is
     therefore correct on both, matching Android's `postMessage(String)`.
-- **STILL UNPROVEN ON EITHER PLATFORM: the two RC cart POSTs.** Sign-in, session
+- **PROVEN 2026-08-13 12:31 PT — the two RC cart POSTs fire and RC accepts them**
+  (`✓ Added to cart`, confirmed in RC's cart by eye; full trace under "THE CART POSTS NEVER
+  FIRE" below).
+  **WHICH PLATFORM IS NOT RECORDED, so do not write one down.** `client_reports` carries no
+  OS or app-build field, and I very nearly filed this as "proven on Android" from nothing
+  but habit. It matters because iOS has its own WKWebView cookie store and its own ITP
+  rules — the precise reason the 08-09 sign-in tests were repeated there instead of
+  inferred — so a result on one platform is not a result on both. **Worth adding the
+  platform to the report envelope**; until then the honest claim is "proven on the owner's
+  device". The paragraph below is the state as it stood before that run:
+- ~~**STILL UNPROVEN ON EITHER PLATFORM: the two RC cart POSTs.**~~ Sign-in, session
   persistence and token capture are measured; `load` + `submit` are not, because
   exercising them needs a genuine held unit and a fake id could lock a real site.
   **The next real hold now answers this by itself (migration 050).** `ClaimFlow` passes
@@ -810,6 +820,18 @@ token, ~12h Okta session) apply inside the app exactly as they do to the bot.
   open item here that no agent can advance — ask, don't investigate. And **do not read the
   empty readout as a broken write**: the panel says "this reading was NOT recorded" in that
   case, and nobody has pressed it yet.
+- **FIRST DISCRIMINATING READING, 2026-08-13 12:31 PT — and it came from the CLAIM SCREEN,
+  not the button.** The test hand-off's first `session` report read `opens:6,
+  marker:"present", storedToken:"none", prevTokenExpiresInSec:-12316` — the app arrived
+  **3h25m past the previous open's token expiry, with the marker intact**, and a live
+  939-char token turned up seconds later with **no credential typed**. That is the
+  `renewed` shape the marker exists to catch: RC re-minted from the Okta cookie. The
+  marker's presence is what rules out an ITP purge.
+  **It is ONE observation and the readout will refuse a verdict on it** (`MIN_RENEWAL_TESTS`
+  is 2) — which is correct, and is the discipline this file has twice failed. Do not quote
+  it as "renewal is proven"; quote it as the first probe that actually tested renewal.
+  Worth knowing the claim screen produces these for free, so the series need not wait on
+  somebody remembering a daily button.
 - **HOW TO USE IT:** Admin → System Health → Alerting → **"Open ReserveCalifornia"**, *from
   inside the app* (from a browser `canInject` is false and it tests nothing). **Once a day**;
   the answer is a shape over days, not a press. The claim screen records the same facts
@@ -1227,14 +1249,16 @@ opened the SYSTEM browser, whose cookie jar the injection can never read.
   draft did exactly that; `rc-handoff.test.mts` guards it now. **The first version of that
   guard was worthless** — it matched raw JSX with a class excluding `<`, so the tag in
   `add <strong>{site}</strong> to your cart` interrupted the phrase and the mutation passed.
-- **The two RC cart POSTs are STILL unproven.** The 08-12 hold carted at 08:00:02, released at
+- **The two RC cart POSTs were proven on 2026-08-13 12:31 PT** — see the trace under "THE
+  CART POSTS NEVER FIRE" below. As of the 08-12 hold described next they were not:
+- ~~**The two RC cart POSTs are STILL unproven.**~~ The 08-12 hold carted at 08:00:02, released at
   08:05:24, and reported `token captured` with no cart outcome — and the report channel was
   demonstrably working either side of it.
 - **The app session does NOT survive days.** The 08-09 tests proved it survives closing the
   webview and force-closing the app — same day. Nothing measured longer, and RC's own session
   lifetime (~1h token, ~12h Okta) applies inside the app too. Sign in shortly before a release.
 
-### THE CART POSTS NEVER FIRE — AND IT IS NOT THE TOKEN (2026-08-13)
+### THE CART POSTS NEVER FIRE — AND IT IS NOT THE TOKEN (2026-08-13; FIXED AND PROVEN THE SAME DAY — see the sub-section two below)
 The first hand-off on the new flow produced a full `client_reports` trace, and it settles a
 question open since 08-09. `#60`, released 08:00:05, claimed, injected on `/park/696/631`:
 ```
@@ -1280,14 +1304,42 @@ morning through exactly this path.
   answered. Do not read the old comment as forbidding this.
 - **The 5-second wait for a broadcast key is GONE.** It was affordable only while it gated
   the whole attempt; five seconds is twice the entire ~2.5s exposure window.
-- **STILL UNPROVEN: that RC answers the USER's session the way it answers the bot's.** What
-  is proven is the bot's path in production and that the script now takes it. The next real
-  hold says so by itself — the `log` stage now carries `precart load ok — cart key in hand`,
-  and `✓ Added to cart` on the status line is the outcome. `RC declined (…)` with RC's own
-  words is the honest failure, and either beats the old silence.
 - **THE CLAIM SCREEN COPY IS DELIBERATELY UNCHANGED.** It still never promises a cart —
   `rc-handoff.test.mts` guards that, and the promise is only earned once a real hold reports
   one added. Branch the copy on capability *after* that, not before.
+
+##### PROVEN 2026-08-13 12:31 PT — THE CART POSTS FIRE, AND `submit` MINTS THE KEY, NOT `load`
+A synthetic hold from `rc-test-hold.mts` (South Carlsbad #35, unit 45719, arrival
+2026-12-01) carted at **12:31:12, 1.8s after its release**, was released by the bot at
+12:32:24, and the owner's own phone took it. The trace, from `client_reports`:
+```
+injected  job:true  href=https://www.reservecalifornia.com/park/720/715
+session   opens:7 marker:present storedToken:jwt storedExpiresInSec:3586
+token     captured:true length:939 decodable:true expiresInSec:3586
+status    "Adding to your cart..."
+log       "precart load ok - cart key STILL MISSING (RC returned none)"
+status    "✓ Added to cart - review & check out on ReserveCalifornia."
+```
+**The owner confirmed the site in RC's cart by eye**, which is the read-back the injected
+script does not do — it judges on the response payload (`IsSuccess` not false), one step
+weaker than `rc-cart.mjs`, which reads the cart back. Ask for that confirmation on any
+future run rather than treating the status line as the whole proof.
+- **THE MECHANISM IS NOT WHAT THE HEADING ABOVE SAYS, and the heading is left standing so
+  the correction is visible.** `load` returned **no `ShoppingCartKey` at all** — the `log`
+  line says so in its own words — and the **`submit` carrying the `NO_CART` sentinel
+  succeeded anyway.** So the fix works, and it works because RC will open a cart on the
+  submit; "the step `content-rc.js` refused to reach IS the step that mints the key" was
+  right about the remedy and wrong about which call does the minting. A right-for-the-
+  wrong-reason explanation is exactly what hardens into the next false premise.
+- **`capturedCartKey` and `localStorage` were BOTH empty at the moment it mattered**, even
+  though `cartkey captured:true` reports appear before and after — which is why the
+  `|| NO_CART` fallback is load-bearing and not a defensive nicety.
+- **The claim copy is now unblocked but STILL UNCHANGED.** One hold has reported a cart;
+  that earns the branch, it does not perform it. Do it as its own change, with
+  `rc-handoff.test.mts` updated deliberately rather than in passing.
+- **This says nothing about the multi-cart question.** The bot's cart key here was a THIRD
+  distinct one (`a6c5420d…`) minted while the earlier carts had already lapsed — sequential
+  again, so `RC_HOLD_CAPACITY` still rests on nothing new. See `--cart-cap`.
 - `worker/rc-precart-cart-key.test.mts` runs the **real served bundle** in a stub page and
   watches `fetch` — the first test to exercise the precart rather than syntax-check it.
   Verified failing against four regressions: the restored bail-out, not adopting `load`'s
@@ -2115,14 +2167,21 @@ is not the noise, it is that the next real page gets skimmed.
 15:05:24Z**. `maybeAutoLogin` signed in unattended at ~07:29 PT with no human involved, which
 is the link that broke on 08-07 and 08-08.
 
-**THREE holds are queued for 2026-08-13 08:00 PT, and ALL THREE ARE TAPPED** (verified
-2026-08-12 22:29 PT): South Carlsbad `#76` and `#102`, Elk Prairie `#60`, every one
-`requested`. This entry said "two, both `offered` (untapped)" for a day and **that reading
-now inverts a decision**: untapped offers do not block the 02:00–05:00 update window, but
-`requested` does, so **the quiet-window update path is shut until after 08:00** and the
-escape hatch of "run it in the quiet window with no request pending" is not available.
-`nextHoldRelease` counts `requested`/`carted`/`claiming`, never `offered` — which is exactly
-why the tapped/untapped distinction has to be re-read rather than remembered.
+**2026-08-13 RESOLVED (read 12:30 PT).** All three tapped holds acted on: Elk Prairie `#60`
+carted 15:00:05Z and **released** 15:07:13Z; South Carlsbad `#102` carted 15:00:01Z and
+`#76` at 15:07:14Z — one second after `#60` freed a seat — and **both then leaked, sitting
+`carted` with nobody coming for them until `reclaimLapsedHolds` marked them `expired`.**
+That sweep is the 44ae4b7 fix working on its first morning. `#60`'s hand-off still reported
+the OLD "click the cart icon" banner, which is what confirmed the 09:11 precart fix had
+never run against a real hold.
+
+**ONE hold is queued for 2026-08-14 08:00 PT and it is UNTAPPED** — Elk Prairie `#29`,
+status `offered` (read 12:30 PT 08-13). `nextHoldRelease` counts `requested`/`carted`/
+`claiming` and never `offered`, so **the 02:00–05:00 quiet-window update path is OPEN
+tonight unless it gets tapped** — which matters, because the mini-PC is missing
+`rc-probe.mjs` and therefore `--cart-cap`. Re-read this rather than remembering it: the
+tapped/untapped distinction inverts the decision, and this entry was wrong about it for a
+day once already.
 
 *(Historical: South Carlsbad `#41` 08-08; Leo Carrillo `#L108` 08-07 FAILED — see the runner
 section above.)*
