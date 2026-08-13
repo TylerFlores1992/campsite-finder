@@ -311,13 +311,16 @@ needed no change.
 - **PROVEN 2026-08-13 12:31 PT — the two RC cart POSTs fire and RC accepts them**
   (`✓ Added to cart`, confirmed in RC's cart by eye; full trace under "THE CART POSTS NEVER
   FIRE" below).
-  **WHICH PLATFORM IS NOT RECORDED, so do not write one down.** `client_reports` carries no
-  OS or app-build field, and I very nearly filed this as "proven on Android" from nothing
-  but habit. It matters because iOS has its own WKWebView cookie store and its own ITP
-  rules — the precise reason the 08-09 sign-in tests were repeated there instead of
-  inferred — so a result on one platform is not a result on both. **Worth adding the
-  platform to the report envelope**; until then the honest claim is "proven on the owner's
-  device". The paragraph below is the state as it stood before that run:
+  **IT WAS iOS** — established from the status bar in the owner's screenshot (carrier,
+  centred clock, alarm glyph), not from the report channel. That is the platform whose own
+  WKWebView cookie store and ITP rules are the reason the 08-09 sign-in tests were repeated
+  there rather than inferred, so it is the more valuable of the two to have proven.
+  **ANDROID IS NOW THE UNPROVEN ONE for the cart POSTs** (its 08-09 tests covered sign-in,
+  persistence and token capture only).
+  **`client_reports` STILL CARRIES NO PLATFORM**, and this was one edit away from being
+  filed as "proven on Android" out of habit — the right answer arrived from a screenshot,
+  which is luck, not instrumentation. **Put the platform in the report envelope**, or the
+  next run's write-up is another coin toss.
 - ~~**STILL UNPROVEN ON EITHER PLATFORM: the two RC cart POSTs.**~~ Sign-in, session
   persistence and token capture are measured; `load` + `submit` are not, because
   exercising them needs a genuine held unit and a fake id could lock a real site.
@@ -1320,10 +1323,21 @@ status    "Adding to your cart..."
 log       "precart load ok - cart key STILL MISSING (RC returned none)"
 status    "✓ Added to cart - review & check out on ReserveCalifornia."
 ```
-**The owner confirmed the site in RC's cart by eye**, which is the read-back the injected
+**The owner confirmed it in RC's own cart page**, which is the read-back the injected
 script does not do — it judges on the response payload (`IsSuccess` not false), one step
-weaker than `rc-cart.mjs`, which reads the cart back. Ask for that confirmation on any
-future run rather than treating the status line as the whole proof.
+weaker than `rc-cart.mjs`, which re-reads the cart. Ask for that confirmation on any future
+run rather than treating the status line as the whole proof. RC's page showed
+*"South Carlsbad SB - Northern End (sites 35-102) - Premium Campsite - 035"*, *"Tue
+12/01/2026 - Wed 12/02/2026 (1 night)"* — the exact unit and dates asked for, so this is a
+match on identity and not merely a non-empty cart.
+- **Sub Total read $78.25 against an $8.25 line**, which is consistent with one site plus
+  RC's reservation fee (the $8.25 sits under *Reservation Fees*) and NOT read as a second
+  item. Nobody verified that, and it is the sort of arithmetic that later gets quoted as
+  evidence about cart contents — **if it matters to the cap question, re-read the cart
+  rather than this sentence.**
+- **The CampHawk banner still renders its "Add to cart" button next to "✓ Added to cart"**,
+  and sits over the Sub Total row. Cosmetic, but it invites a second tap on a cart that is
+  already correct — the same family as the toolbar-overlapping-content fix on 08-12.
 - **THE MECHANISM IS NOT WHAT THE HEADING ABOVE SAYS, and the heading is left standing so
   the correction is visible.** `load` returned **no `ShoppingCartKey` at all** — the `log`
   line says so in its own words — and the **`submit` carrying the `NO_CART` sentinel
