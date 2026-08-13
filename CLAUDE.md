@@ -1531,6 +1531,49 @@ behaviour look like a long-standing pattern.
   poller must stop offering a third hold for a release window rather than promising one it
   cannot keep.
 
+### THE HAND-OFF UI OVERHAUL, AND TWO BUGS IN THE INSTRUMENT (2026-08-13 evening)
+Six notes from two real iOS hand-offs. All six shipped, plus two defects the work exposed.
+- **A HOLD NOW HAS A HOME SCREEN** (`v2/HoldsPanel` + `GET /api/rc-holds/mine`). The only
+  route to a site sitting in RC's cart was the alert that announced it — one email, one
+  push, one device, and a token that cannot be reconstructed. Swipe the notification away
+  and a campsite with a fifteen-minute fuse was unreachable. It renders at the TOP of
+  Watches and **above both early exits**, so a watch-list error at 08:00 cannot hide it.
+  Plain `<Link>`s on purpose: `Browser.open` or `target="_blank"` would drop the user in the
+  system browser where `canInject` is false and the automatic cart silently degrades.
+- **`/api/rc-holds/(.*)` IS ENUMERATED NOW.** The wildcard read as a description of the
+  family because every route under it was token-authed; a Clerk-authed route arriving
+  inside it is opted out of middleware protection *by the act of creating the file*.
+- **THE CLAIM COPY IS A FUNCTION OF THE CAPABILITY** (`lib/claim-copy.handoffCopy`), and
+  **the promise is EARNED and now allowed** — `canInject` only, post-release only, because
+  two holds reported `✓ Added to cart`. Branch on CAPABILITY, never platform: the POSTs are
+  measured on iOS and have never run on Android. `worker/rc-handoff.test.mts` now CALLS the
+  function instead of reading a file; the pre-release exclusion is a denylist so a new field
+  is covered by default. **The old regex was narrower than its own comment** — it demanded
+  `add …cart` or `cart it`, and *"We're putting it in your cart"* walked straight through.
+  First version defeated by a `<strong>` tag, second by a synonym.
+- **THE INJECTED BANNER HAS THREE STATES** (`extension/content-rc.js`): `signin` has NO
+  button at all — `rc-inject.js` broadcasts the token on RC's first authenticated call, so
+  signing in IS the trigger and the retry is automatic; `working` has no control; `carted`
+  offers only the way to checkout, and the sentence names the cart icon. `carting`/`carted`
+  guard `addToCart` itself, not the button — it is also reached from the auto-retry and from
+  a re-injection. **`#camphawk-rc-status` is untouched**: the epilogue observes it, so the
+  frame changed and never the sentence.
+- **RC scrolled the user PAST its own sign-in control**, and `presentationstyle=fullscreen`
+  answers the choppy seam (the plugin's iOS default is `pagesheet`, a card that deliberately
+  shows the presenting screen above it). `location=yes` stays, permanently.
+- **THE REPORT COLLAPSE ONLY LOOKED AT THE PREVIOUS LINE, AND IT COST THE PROOF.**
+  `rc-inject.js` rebroadcasts the token AND the cart key on every RC call, so the stream is
+  `token, cartkey, token, cartkey…` — **no two neighbours are ever identical and nothing
+  collapsed.** Both 08-13 hand-offs stored 40 reports, 39 of them that pair, and
+  `recordClientReports` keeps the TAIL — so `✓ Added to cart` was trimmed off the front of
+  both. The proof of the whole channel's purpose survived in a screenshot. Fixed by deduping
+  the mechanical stages against the whole run; scoped to `token`/`cartkey` because RC's own
+  status text can go A → B → A.
+- **AND THE READOUT QUOTED THE WRONG LINE.** It printed `RC declined (200) — cart is already
+  added` as the verdict on both proven holds. That is a **re-injection submitting over an
+  entry we already hold, i.e. evidence the cart SURVIVED.** It scans the whole run now, and
+  prints the PLATFORM per hand-off — which is what makes one Android run self-answering.
+
 **THE CLAIM SCREEN IS NOW ONE BUTTON AT A TIME (2026-08-12 evening).** Three numbered steps, a
 checkbox and a dead button became `Start hand-off` → `Waiting for you to sign in…` →
 `Signed in — it's mine, hand it over`. **The final press STAYS** — signing in is not the same
