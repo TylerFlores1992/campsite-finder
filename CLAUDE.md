@@ -1202,6 +1202,44 @@ opened the SYSTEM browser, whose cookie jar the injection can never read.
   webview and force-closing the app — same day. Nothing measured longer, and RC's own session
   lifetime (~1h token, ~12h Okta) applies inside the app too. Sign in shortly before a release.
 
+### THE CART POSTS NEVER FIRE — AND IT IS NOT THE TOKEN (2026-08-13)
+The first hand-off on the new flow produced a full `client_reports` trace, and it settles a
+question open since 08-09. `#60`, released 08:00:05, claimed, injected on `/park/696/631`:
+```
+token   captured:true length:939 decodable:true expiresInSec:3381   (~56 min of life)
+status  "Reading your session..."
+status  "Click the cart icon once (to start your cart), then click Add to cart."
+        ...cycling between those two, ~27 reports
+```
+- **THE TOKEN IS FINE.** A live, decodable, 56-minute RC access token, read out of the
+  webview. Every "it cannot read the session" reading of this — including two I gave the
+  owner the same morning — is WRONG.
+- **THERE IS NO `load`, NO `submit`, AND NO ERROR STAGE.** The script never attempts the two
+  cart POSTs. It goes straight to the manual banner. So they are not failing; they are not
+  being tried.
+- **The banner names the precondition:** RC's precart needs an EXISTING cart — a cart key you
+  only get once a cart has been started — and the injected script cannot create one. The BOT
+  has one on its side (it carted twice that morning, 1.9s and 5.3s after release); the user's
+  own session does not.
+- **So the open question changes shape.** It was never "do the POSTs work?" — it is **"how
+  does the user's session get a cart key without them clicking the cart icon?"** Answer that
+  and mobile auto-cart works; until then the hand-off is manual by construction, whatever the
+  screen implies.
+- The `session` stage also reported `opens:4, marker:present, storedToken:jwt,
+  storedExpiresInSec:3381` — migration 058's probe working, and the app session surviving
+  four separate opens.
+
+### RESERVECALIFORNIA CAPS THE BOT'S CART AT 2 (2026-08-13)
+Three holds were queued for one 08:00 release. Two carted within seconds; the third came back
+with RC's own words: *"Your request violates the 'Maximum Reservations in Cart' restriction.
+The maximum number of reservations allowed in the cart is '2'."* Nothing of ours failed — the
+runner was there, the session was live, the timing was right.
+- `#76` correctly stayed `requested` (retryable while its window is open), so claiming one of
+  the other two frees a slot and it can go in on a later pass.
+- **This is a hard capacity ceiling, not a bug.** Offering a user three holds for the same
+  release is a promise that cannot be kept. The poller should stop offering beyond two for a
+  given release window, or the copy must stop implying all of them will be held.
+
 **THE CLAIM SCREEN IS NOW ONE BUTTON AT A TIME (2026-08-12 evening).** Three numbered steps, a
 checkbox and a dead button became `Start hand-off` → `Waiting for you to sign in…` →
 `Signed in — it's mine, hand it over`. **The final press STAYS** — signing in is not the same
