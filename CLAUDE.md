@@ -1128,12 +1128,20 @@ decision. Unconfirmed still falls back to the checkbox; the browser path is unch
   3. **"Switch to your ReserveCalifornia tab" — there is no tab in the app.** An instruction
      the reader cannot follow is worse than none: it reads as a missed step at the one moment
      the design wants them to sit still. Branched on `canInject`.
+- **STEP ONE IS PROVEN IN THE APP, 2026-08-12 evening.** The synthetic hold captured 17
+  client reports on a real run: `injected` on `/park/6/358` (the real URL shape, from
+  `lib/booking-url`) → `idle` → Okta `/authorize` → `/login/callback` → **`token captured ·
+  939`**, then two further captures on the park page, then `closed` — which is `closeOnToken`
+  working. So the webview opens, the script injects, RC signs in INSIDE it, and the gate's
+  signal arrives. Same 939 length the 08-09 emulator tests produced.
+  **`job:false` throughout is correct** — step one passes no `unitId` precisely so it cannot
+  cart. **The two cart POSTs remain unproven** and still need a real held unit.
 - **A SAFE WAY TO FABRICATE A TEST HOLD.** `unit_id` is NOT NULL and an invented one can
   collide with a real site and lock it — so use a **non-numeric sentinel**
   (`__camphawk-verify-DO-NOT-USE__`; real RC unit ids are numeric), and set `release_at` months
   out. `nextHoldRelease` counts `carted`, so a near date would put a real release on the books
   and block the 02:00–05:00 update window. One is parked now: hold `06febc63-6c84-49ac-bf53-
-  0123d9bb7e81`, Carpinteria, releasing 2026-12-20. **Delete it once the flow is proven.**
+  0123d9bb7e81`, Carpinteria, releasing 2026-12-20 — **deleted 2026-08-12 once it had answered.**
 
 ### Stripe is constructed lazily, in ONE place (2026-08-12)
 Five routes did `new Stripe(process.env.STRIPE_SECRET_KEY!.trim())` at **module scope**.
