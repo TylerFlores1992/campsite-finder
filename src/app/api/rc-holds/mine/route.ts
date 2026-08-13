@@ -61,9 +61,12 @@ export interface MyHold {
 }
 
 export async function GET() {
-  // A PLAIN 401, not `requireAuth`'s throw. The Watches panel polls this every 20 seconds
-  // and treats any non-2xx as "nothing to show", so a signed-out caller should cost one
-  // status line rather than a stack trace in the logs at the rate of three a minute.
+  // THE SECOND GATE, and it is not a duplicate. Clerk's middleware already refuses this
+  // route (with a 404, not a 401 — `auth.protect()` hides the existence of what it
+  // guards), so in normal operation nothing signed-out reaches here. This is what holds if
+  // the matcher is ever widened back to `/api/rc-holds/(.*)`, which is exactly the edit
+  // that would silently expose it. A plain 401 rather than `requireAuth`'s throw because
+  // the Watches panel polls every 20 seconds and treats any non-2xx as "nothing to show".
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
