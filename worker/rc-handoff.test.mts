@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { rcFragment, rcHandoffUrl } from '../src/lib/native/rc-handoff';
+import { handoffCopy } from '../src/lib/claim-copy';
 
 test('the fragment matches what the extension actually parses', () => {
   // extension/content-rc.js is the consumer. If the shape here drifts from the regex
@@ -261,49 +262,102 @@ test('extension/ is included in the deployment', () => {
   assert.match(cfg, /extension\/content-rc\.js/);
 });
 
-test('the claim screen never promises a cart the POSTs have not earned', () => {
-  // THE STANDING RULE, NOW ENFORCED. `docs`/CLAUDE.md have said since 2026-08-09 that the
-  // claim copy must not say "we're carting it for you" until a real hold reports
-  // `✓ Added to cart` — because a user who believes the site is handled STOPS WATCHING, and
-  // the exposure window is then spent on nobody. The 2026-08-12 hold is the reason this is
-  // a test rather than a paragraph: it captured a 939-char token and reported no cart at
-  // all, and the very next edit to this screen promised one anyway.
-  //
-  // BOTH FILES, because the copy moved. The 2026-08-13 redesign lifted the branchy
-  // sentences out of ClaimFlow.tsx into lib/claim-copy.ts, and this test — which named one
-  // file — went on passing while the phrase it exists to catch was one import away. A rule
-  // that a refactor can step out from under is not a rule.
-  const strip = (f: string) =>
-    readFileSync(f, 'utf8')
-      .split('\n')
-      .filter((l) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(l))
-      .join('\n');
+/**
+ * "We are putting it in your cart" — the sentence this whole family of tests is about.
+ *
+ * A first-person subject and the word `cart` inside ONE sentence. Bounded on `.!?` so it
+ * cannot join two clauses that are separately harmless, which is what keeps the honest
+ * forms legal: "Check your cart", "tap the cart icon", "ReserveCalifornia holds a cart
+ * about 15 minutes" are all statements about the reader or about RC, with no promise by us.
+ *
+ * DELIBERATELY BROADER THAN THE ONE IT REPLACES. That one demanded the literal shapes
+ * `add …cart` or `cart it`, and I found by mutation that **"We're putting it in your cart"
+ * sailed straight through it** — a sentence three words from the one it was written for.
+ * The first version of the guard was defeated by a `<strong>` tag; the second by a synonym.
+ * The property is "we, and a cart, in the same breath", so that is what it now matches.
+ */
+const CART_PROMISE = /\bwe(?:'|’)?(?:re|ll|\s+are|\s+will)?\b[^.!?]{0,60}?\bcart\b/i;
 
-  // READ THE RENDERED SENTENCE, NOT THE SOURCE LINE. The first version of this test matched
-  // on raw JSX with a character class that excluded `<`, so `We let go and add <strong>{site}
-  // </strong> to your cart.` — the precise string that prompted the test — sailed straight
-  // through, because the tag interrupts the phrase. Verified by restoring that copy and
-  // watching this pass. Strip the markup, then read the prose the user actually sees.
-  //
-  // THE BRACE STRIP IS APPLIED TO THE .tsx ONLY, and that is not a detail. In JSX `{site}`
-  // is an interpolated name and not a claim, so it is blanked — but claim-copy.ts is a
-  // plain object literal whose OUTERMOST braces contain no nested ones, so the same rule
-  // would delete every sentence in the file in one match and the test would pass on an
-  // empty string. Checked by mutation, because a guard that silently scans nothing is
-  // exactly the failure this test's own history is about.
-  const prose =
-    strip('src/components/v2/ClaimFlow.tsx')
-      .replace(/<[^>]*>/g, '')       // JSX tags
-      .replace(/\{[^{}]*\}/g, ' ') + // interpolations: {site} is a name, not a claim
-    '\n' +
-    strip('src/lib/claim-copy.ts');
+/** Fields the user reads only AFTER the release, when the cart either happened or did not. */
+const POST_RELEASE = new Set(['afterBody', 'afterCta']);
 
-  // "we … cart" as a FUTURE promise by us. The honest forms — "check your cart", "it may
-  // already be in there" — are about the user looking, and say nothing about what we will do.
-  const promises = [...prose.matchAll(/\bwe(?:'|’)?(?:ll| will)?\b[^.!?]{0,60}?\b(?:add[^.!?]{0,30}?cart|cart(?:ing)? it)\b/gi)];
+test('the plain-browser claim copy never promises a cart', () => {
+  // THE STANDING RULE, AND THIS IS THE HALF OF IT THAT NEVER EXPIRES. `docs`/CLAUDE.md have
+  // said since 2026-08-09 that the claim copy must not say "we're carting it for you"
+  // unless it is true, because a user who believes the site is handled STOPS WATCHING and
+  // the ~2.5s exposure window is then spent by nobody. A manual flow somebody follows beats
+  // an automatic one that does not run.
+  //
+  // With no injectable webview there is no precart, on any of these clients, ever. A
+  // desktop user with the CampHawk extension WILL be carted for automatically and still
+  // gets this copy: we cannot detect the extension from the page, so the promise would be a
+  // guess, and a pleasant surprise is a far better failure than a broken one.
+  const copy = handoffCopy(false) as unknown as Record<string, string>;
+  for (const [field, text] of Object.entries(copy)) {
+    assert.ok(
+      !CART_PROMISE.test(text),
+      `claim-copy.handoffCopy(false).${field} promises a cart that cannot happen: ${text}`,
+    );
+  }
+});
+
+test('the injected claim copy may promise a cart — but only after the release', () => {
+  // WHAT EARNED THIS, and it is the only thing that could have. Two synthetic holds on
+  // 2026-08-13 (12:31 and 12:47 PT) reported `✓ Added to cart` through the client report
+  // channel, and the first was confirmed by eye on ReserveCalifornia's own cart page — the
+  // right unit, the right dates. Before that the promise was a hypothesis, and the 08-12
+  // hold is what a hypothesis looks like when it is wrong: a 939-char token captured, and
+  // no cart outcome at all.
+  //
+  // BRANCHED ON CAPABILITY, NOT ON PLATFORM. `canInject` is a runtime probe for a Cordova
+  // InAppBrowser with `executeScript`, which is the same capability that carries the
+  // precart. The cart POSTs are measured on iOS and NOT on Android, so a platform-shaped
+  // promise would be half unearned; a capability-shaped one is exactly as true as the
+  // mechanism is.
+  const copy = handoffCopy(true) as unknown as Record<string, string>;
+
+  // Everything the user reads BEFORE pressing the release button is still a prediction, and
+  // a prediction is the thing that changes what they do. The exclusion list is a denylist on
+  // purpose: a field added later is covered by default, and has to be argued into
+  // POST_RELEASE rather than out of it.
+  for (const [field, text] of Object.entries(copy)) {
+    if (POST_RELEASE.has(field)) continue;
+    assert.ok(
+      !CART_PROMISE.test(text),
+      `claim-copy.handoffCopy(true).${field} is read before the release — it may not promise a cart: ${text}`,
+    );
+  }
+
+  // OWNER NOTE 6, pinned as behaviour rather than as wording. "Once carted, say plainly that
+  // it is carted and to tap the cart icon to check out." The old copy — "review & check out
+  // on ReserveCalifornia" — describes a place the reader is already standing in; what they
+  // need is the ONE control that gets them to checkout, named.
+  assert.match(
+    copy.afterBody, /cart icon/i,
+    'after the release the copy must name the control that reaches checkout',
+  );
+});
+
+test('no cart promise is written inline into the claim screen', () => {
+  // The copy module is the sanctioned place, and this is what stops the next edit routing
+  // around it. Without this the two tests above are satisfied by a `handoffCopy` nobody
+  // renders.
+  //
+  // READ THE RENDERED SENTENCE, NOT THE SOURCE LINE. The first version of this matched raw
+  // JSX with a character class that excluded `<`, so `We let go and add <strong>{site}
+  // </strong> to your cart.` — the precise string that prompted it — passed, because the tag
+  // interrupts the phrase. Strip the markup, then read the prose the user actually sees.
+  const prose = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8')
+    .split('\n')
+    .filter((l) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(l))
+    .join('\n')
+    .replace(/<[^>]*>/g, '')      // JSX tags
+    .replace(/\{[^{}]*\}/g, ' '); // interpolations: {site} is a name, not a claim
+
+  const promises = [...prose.matchAll(new RegExp(CART_PROMISE.source, 'gi'))];
   assert.deepEqual(
     promises.map((m) => m[0].trim()),
     [],
-    'the claim screen must not promise a cart until a real hold reports "Added to cart"',
+    'route claim copy through lib/claim-copy, where the capability branch is enforced',
   );
 });

@@ -92,13 +92,12 @@ export function handoffCopy(canInject: boolean): HandoffCopy {
     readyTitle: "Signed in. It's yours whenever you're ready",
     releaseCta: "It's mine — hand it over",
     releasingBody: "Stay on this screen — we'll open ReserveCalifornia the moment it's yours.",
-    // THE SENTENCE THE GUARD EXISTS FOR, and it is deliberately still the cautious one.
-    // Moving this copy out of ClaimFlow.tsx must not be the thing that changes what may be
-    // said — that would be the rule lapsing as a side effect of a refactor, which is the
-    // failure mode the rule is about. Earning the promise is its own change, with the guard
-    // rewritten in the same breath.
+    // THE SENTENCE THE GUARD EXISTS FOR, and the one two real holds earned. Reachable only
+    // with an injectable webview, and only after the release — so it reports what the
+    // precart is doing rather than predicting what we might manage. Owner note 6 in
+    // substance: say plainly that it is carted, and name the control that reaches checkout.
     afterBody:
-      "ReserveCalifornia is opening now. Check your cart — if the site isn't in it, book it straight away.",
+      "We're putting it in your cart. When ReserveCalifornia opens, tap the cart icon at the top to check out.",
     afterCta: 'Finish on ReserveCalifornia',
   };
 }
