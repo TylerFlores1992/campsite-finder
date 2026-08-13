@@ -1136,6 +1136,21 @@ function RcWebviewTest() {
     setDiag(await rcHandoffDiagnostics());
   }
 
+  /** Go to the live claim screen for whatever hold is carted, in THIS window. */
+  async function openClaim() {
+    setResult('Looking for a carted hold…');
+    try {
+      const r = await fetch('/api/admin/test-claim');
+      const j = (await r.json()) as { url?: string | null; detail?: string };
+      // SAY WHY when there is nothing to open. A button that does nothing reads as broken,
+      // and "no hold is carted" is an ordinary state, not a fault.
+      if (!j.url) { setResult(j.detail ?? 'Nothing to claim right now.'); return; }
+      window.location.href = j.url;
+    } catch {
+      setResult('Could not reach the server.');
+    }
+  }
+
   async function run() {
     await inspect();
     setResult('opening…');
@@ -1193,6 +1208,24 @@ function RcWebviewTest() {
         className="mt-2 ml-2 rounded-ch border border-ch-line px-3 py-1.5 text-ch-meta font-bold text-ch-ink hover:bg-ch-surface"
       >
         What does this device have?
+      </button>
+      {/*
+        THE WHOLE CLAIM SCREEN, not just the webview. The button above proves RC's sign-in
+        works inside our webview; it never renders the screen where that session is USED —
+        step one, the `token captured` gate, the release. Those were reachable only from a
+        real 8am hold, i.e. the worst moment to find a problem.
+
+        SAME-TAB NAVIGATION ON PURPOSE. Inside the native shell this keeps the claim screen
+        in the injectable webview, which is the entire point: a claim URL opened any other
+        way lands in the system browser, where the session the precart needs does not exist
+        and the flow silently degrades to the checkbox path.
+      */}
+      <button
+        type="button"
+        onClick={openClaim}
+        className="mt-2 ml-2 rounded-ch border border-ch-line px-3 py-1.5 text-ch-meta font-bold text-ch-ink hover:bg-ch-surface"
+      >
+        Open the claim screen
       </button>
       {result && <p className="mt-2 text-ch-fine leading-normal text-ch-muted">{result}</p>}
       {reports.length > 0 && (
