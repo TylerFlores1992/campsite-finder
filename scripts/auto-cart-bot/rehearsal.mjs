@@ -35,6 +35,40 @@ export const REHEARSAL_MIN_HOURS_TO_RELEASE = 6;
 export const REHEARSAL_MIN_GAP_H = 20;
 
 /**
+ * The identity of tonight's rehearsal window — a Pacific date — or null outside the hour.
+ *
+ * ── WHY THIS EXISTS (2026-08-12) ───────────────────────────────────────────────────────
+ * The caller keeps ONE variable so a skip is written down once a night instead of on every
+ * poll through the hour. That variable held the HOUR NUMBER and was never reset, so it
+ * latched at 20 for the life of the process: the first night the hour was reached recorded
+ * its outcome, and **every night after it was silent**.
+ *
+ * The cost is not a missing log line. `rc_login_rehearsal` holds one row, and on 2026-08-12
+ * the rehearsal did not run and left NOTHING behind — the row still read 08-11. So "the
+ * gates stood it down, and here is which one" and "the process never reached 20:00 at all"
+ * produced the identical evidence: silence. Those are different faults with different
+ * fixes, and telling them apart is the entire job of an instrument that exists to warn
+ * somebody the evening BEFORE a cart.
+ *
+ * That is this codebase's oldest failure shape — `notifications.status = 'sent'` meaning
+ * only "Twilio returned 2xx", `claimBotCommands` returning `[]` for both "nobody asked" and
+ * "the query threw". Here it had eaten the watchdog's own watchdog.
+ *
+ * A DATE CANNOT LATCH: tomorrow's window has a different key, so the skip is recorded again
+ * — once — every night, for as long as the process lives.
+ */
+export function rehearsalSlot(now = new Date()) {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false,
+  }).formatToParts(now).reduce((a, x) => ((a[x.type] = x.value), a), {});
+  // `hour12: false` yields '24' for midnight in some ICU builds; % 24 normalises it. It can
+  // never equal REHEARSAL_HOUR either way, but a bare Number() would leave a 24 in play.
+  if (Number(p.hour) % 24 !== REHEARSAL_HOUR) return null;
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+/**
  * @param {{ pacificHour: number, hoursToRelease: number|null, sessionLive: boolean|null,
  *           hoursSinceLastRun: number|null, hasCredentials: boolean }} s
  * @returns {{ run: boolean, why: string }}

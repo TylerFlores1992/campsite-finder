@@ -73,7 +73,7 @@ import {
   readAuthFacts, oktaSessionAlive, authCookieSummary,
 } from './rc-token.mjs';
 import { hasCredentials, attemptLogin } from './rc-autologin.mjs';
-import { shouldRehearse, REHEARSAL_HOUR } from './rehearsal.mjs';
+import { shouldRehearse, rehearsalSlot } from './rehearsal.mjs';
 // The same two clock helpers the update guard decides with. Both are pure and both already
 // get the Pacific / zone-less-wall-clock handling right, which is the part that has been
 // got wrong before — a second implementation here would be a second chance to get it wrong.
@@ -536,9 +536,13 @@ async function maybeAutoLogin(ctx, page) {
  * The gates live in rehearsal.mjs, tested, because a login is not free: repeated sign-ins
  * from this address cost twelve hours of IP block on 2026-08-06.
  */
-let rehearsedThisHour = null;
+let recordedSlot = null;
 async function maybeRehearse(ctx, page) {
   const hour = pacificHour();
+  // A PACIFIC DATE, NOT AN HOUR NUMBER. This used to hold `hour` and was never reset, so it
+  // latched at 20 for the life of the process and every night after the first recorded its
+  // skip SILENTLY — see rehearsalSlot. Null outside the rehearsal hour.
+  const slot = rehearsalSlot();
   const facts = await feedFacts();
   // UNREACHABLE FEED MEANS NO REHEARSAL. We would not know whether a hold is due, and the
   // rehearsal deliberately ENDS the current session on its way — the same reasoning as the
@@ -559,8 +563,8 @@ async function maybeRehearse(ctx, page) {
     // Only the ones that happen AT the rehearsal hour are worth recording — "not the
     // rehearsal hour" is true for twenty-three hours a day and would overwrite last
     // night's real result with noise every minute.
-    if (hour === REHEARSAL_HOUR && rehearsedThisHour !== hour) {
-      rehearsedThisHour = hour;
+    if (slot && recordedSlot !== slot) {
+      recordedSlot = slot;
       log(`skipping tonight's login rehearsal: ${decision.why}`);
       await reportRehearsal(null, null, decision.why);
     }
@@ -573,7 +577,7 @@ async function maybeRehearse(ctx, page) {
   // credentials from the household IP. Recording afterwards would leave the gate open for
   // the whole rehearsal hour if the attempt never returned. An interrupted rehearsal
   // therefore reads as ran-but-unknown, which is `stale`: honest, and not a pass.
-  rehearsedThisHour = hour;
+  recordedSlot = slot;
   await reportRehearsal(null, 'rehearsal started', null);
   log('── nightly login rehearsal: proving the bot can still sign itself in ──');
   const { result, detail } = await runLoginRehearsal(ctx, page, {
