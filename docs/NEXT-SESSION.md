@@ -72,6 +72,28 @@ do not redo them. These are new:
 
 **The leak is still unattributed. Nothing in this session measured it.**
 
+### A HYPOTHESIS, LABELLED AS ONE — read before interpreting a long quiet series
+
+**The RC Chromium profile was REPLACED on 2026-08-14**, because something in it made RC's SPA
+spin for ever (the blank-page bug). *What* in it did that is recorded as UNKNOWN. Separately,
+the 08-12 leak note says the process *"reached 7.9 GB in 46 seconds of the keep-warm
+starting"* — and that sentence is already flagged here as ambiguous between `rc-keepwarm.mjs`
+(the RC profile) and `keepSessionsWarm()` in `bot.mjs` (rec.gov).
+
+So there are two unexplained failures, in the same week, both around a Chromium profile, and
+one of them was fixed by throwing that profile away. **A corrupted profile driving a renderer
+loop would produce both.** That is a hypothesis and nothing more — it is exactly the kind of
+tidy story this log has twice recorded as fact and had to retract, so do not promote it.
+
+**Why it matters anyway, and the discriminating test:** if it IS the profile, the leak may
+simply never recur, and the series will read `NO LEAK IN THIS WINDOW` indefinitely. **Do not
+read that as the instrument being broken** — the readout says so itself, and now also reports
+`OVERSIZED PROCESS` and a stopped series, so it has more ways to speak than it did. The
+counter-evidence would be a recurrence on a fresh profile, which kills the hypothesis outright.
+
+**`rc-profile-old/` is still on the box** — confirmed 2026-08-14 in `git-status`, which lists
+it as untracked. It is the only copy of the evidence for both questions. Do not delete it.
+
 ---
 
 ## THE PROMPT — paste this to open the session
