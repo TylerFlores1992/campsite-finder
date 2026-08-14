@@ -388,7 +388,45 @@
     'background:#E8873A;color:#fff;border:0;border-radius:10px;padding:9px 13px;font:600 14px system-ui,sans-serif;' +
     'cursor:pointer;white-space:nowrap;text-decoration:none;display:inline-block';
 
-  let statusEl, headlineEl, actionEl;
+  let statusEl, headlineEl, actionEl, subEl;
+
+  /**
+   * RC's own sign-in control, or null.
+   *
+   * Matched on the ACCESSIBLE NAME rather than a class or a path: RC ships a new bundle
+   * whenever it likes and its class names are generated, but the words a user reads to log
+   * in are the stable part. Anchors and buttons only — clicking a random <div> whose text
+   * happens to say "sign in" is how an injected script starts pressing things nobody meant.
+   *
+   * Deliberately narrow. Returning null is a fine outcome; the caller says so and stops.
+   */
+  function findSignIn() {
+    const wants = /^(log ?in|sign ?in|login|signin)$/i;
+    for (const el of document.querySelectorAll('a,button')) {
+      const t = (el.textContent || '').trim();
+      if (t && wants.test(t) && el.offsetParent !== null) return el;
+    }
+    // Second pass: some builds label it only for screen readers.
+    for (const el of document.querySelectorAll('a[aria-label],button[aria-label]')) {
+      if (wants.test((el.getAttribute('aria-label') || '').trim())) return el;
+    }
+    return null;
+  }
+
+  /**
+   * Put the top of RC's page on screen.
+   *
+   * RC restores a scroll position and lands the user down at the availability calendar, with
+   * its own sign-in control off screen above them — so "Sign in to ReserveCalifornia" was an
+   * instruction pointing at something they could not see. Reported from a real hand-off.
+   *
+   * Only ever called for the sign-in state. Scrolling the page under somebody who is mid-cart
+   * would be its own bug, and this is the one moment where what they need is definitely at
+   * the top.
+   */
+  function scrollToTop() {
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { try { window.scrollTo(0, 0); } catch {} }
+  }
   function setStatus(t) { if (statusEl) statusEl.textContent = t; }
 
   /**
@@ -403,6 +441,21 @@
   function setState(name) {
     if (!headlineEl || !actionEl) return;
     const big = name === 'signin';
+    // WHEN IT IS DONE, SAY ONE THING. Reported from a real hand-off: the finished banner
+    // carried an eagle, a headline, "CA State Parks - <date> (1 night)", a status sentence
+    // AND a button — four lines to say "it worked", stacked over RC's own checkout controls.
+    // The headline already says it, so `carted` drops the subtitle and the status line and
+    // keeps the one thing left to do.
+    //
+    // The status ELEMENT stays in the DOM and `setStatus` keeps writing to it. It is hidden,
+    // never removed: `lib/rc-precart-script`'s epilogue reads `#camphawk-rc-status` to
+    // report the hand-off's verdict, so removing it would blind the diagnostic at the exact
+    // moment it has something worth saying.
+    // The instruction is useless if its target is off screen — see scrollToTop.
+    if (name === 'signin') scrollToTop();
+    const done = name === 'carted';
+    if (subEl) subEl.style.display = done ? 'none' : '';
+    if (statusEl) statusEl.style.display = done ? 'none' : '';
     headlineEl.textContent =
       name === 'signin' ? 'Sign in to ReserveCalifornia' :
       name === 'working' ? 'Adding your site…' :
@@ -417,6 +470,30 @@
       a.href = CART_URL;
       a.style.cssText = ACTION_CSS;
       actionEl.appendChild(a);
+    } else if (name === 'signin') {
+      // A WAY TO THE LOGIN FORM — not a retry of the cart.
+      //
+      // This state deliberately had no control, on the reasoning that signing in is itself
+      // the trigger (rc-inject.js broadcasts the token on RC's first authenticated call), so
+      // a button would only duplicate an automatic retry. That reasoning holds for the CART
+      // and misses what the user actually needs, reported from a real hand-off: RC lands
+      // them scrolled down its own page with the sign-in control off screen, so the thing
+      // they are being told to do has no visible affordance at all.
+      //
+      // So this button does not touch the cart. It finds RC's own sign-in control and
+      // presses it, which is exactly what the user would do if they could see it.
+      const b = document.createElement('button');
+      b.textContent = 'Log in';
+      b.style.cssText = ACTION_CSS;
+      b.onclick = () => {
+        const el = findSignIn();
+        // NEVER NAVIGATE ON A GUESS. A hardcoded sign-in URL is a URL nothing keeps honest,
+        // and RC drives its own OIDC redirect from JS — so if the control is not found, say
+        // so and leave the page alone rather than sending them somewhere invented.
+        if (el) { el.click(); setStatus('Opening the sign-in form…'); }
+        else setStatus('Use the menu at the top right to log in, then come back.');
+      };
+      actionEl.appendChild(b);
     } else if (name === 'idle' || name === 'failed') {
       // The manual escape hatch, and the only two states it belongs in. Never in `signin`
       // (it cannot work), never in `working` (it would double-submit), never in `carted`
@@ -436,7 +513,7 @@
       '<span style="font-size:18px">🦅</span>' +
       '<span style="min-width:0">' +
       '<span id="camphawk-rc-head" style="font-weight:700;display:block;line-height:1.25"></span>' +
-      `<span style="opacity:.7;font-size:12px">CA State Parks · ${job.arrivalDate} (${job.nights} night${job.nights > 1 ? 's' : ''})</span><br>` +
+      `<span id="camphawk-rc-sub" style="opacity:.7;font-size:12px">CA State Parks · ${job.arrivalDate} (${job.nights} night${job.nights > 1 ? 's' : ''})</span><br>` +
       '<span id="camphawk-rc-status" style="opacity:.85"></span></span>' +
       '<span id="camphawk-rc-action"></span>';
     const close = document.createElement('button');
@@ -448,6 +525,7 @@
     statusEl = bar.querySelector('#camphawk-rc-status');
     headlineEl = bar.querySelector('#camphawk-rc-head');
     actionEl = bar.querySelector('#camphawk-rc-action');
+    subEl = bar.querySelector('#camphawk-rc-sub');
     setState('idle');
   }
   banner();
