@@ -1342,6 +1342,71 @@ working task, which is always.
 - `worker/runner-heartbeat.test.mts`, verified failing against three regressions including
   the runner-only rule (which is the tempting version, and the one that cries wolf).
 
+### RC WENT BLANK IN THE BOT'S BROWSER, AND IT WAS THE CHROMIUM PROFILE (2026-08-14)
+Reported as *"RC login isn't working"* and *"white screen"*. ReserveCalifornia's app mounted,
+showed its own spinner, and never finished — in the bot's Playwright Chromium only. The
+owner's normal Chrome, **same machine, same IP**, loaded it fine. `rc-autologin` reported
+*"could not find the Log in link — RC may have reworded it"*, which is a CONSEQUENCE: a page
+that never renders has no link in the DOM. It cost most of a day.
+- **THE ANSWER: the `.rc-bot-profile` directory.** Renaming it and letting the keep-warm
+  build a fresh one rendered RC completely, with **"Log in / Sign up"** present in the header
+  — which is what `a:has-text("Log in")` matches, so the auto-login's selector was never
+  wrong either. **WHAT in that profile did it is UNKNOWN**: it survived deleting `Cache`,
+  `Code Cache`, `Service Worker` and `Local Storage`. The old directory is kept as
+  `rc-profile-old` and is the only copy of the evidence — do not delete it without looking.
+- **SIX THEORIES DIED FIRST, and they are worth keeping so they are not re-run.**
+  NOT RC redeploying (their bundle's `last-modified` is 12 Aug and the bot carted against
+  that exact build on 13 Aug). NOT a service worker (`/service-worker.js` and `/sw.js` both
+  404→403; there isn't one). NOT the JS syntax (the most modern feature in the bundle is
+  `Object.hasOwn`, Chrome 93+). NOT Playwright moving (the lockfile pins 1.61.1 both sides of
+  the update that straddles the last working cart). NOT the WAF (the failure screenshot is
+  RC's own spinner, not an Access Denied page or a challenge). NOT the token-capture hook.
+- **`scripts/auto-cart-bot/rc-diag.mjs` IS WHAT SETTLED IT**, and the reason is the 2x2. Its
+  first version launched a throwaway profile with NO capture hook and rendered perfectly —
+  which read as proof the profile was guilty and **proved nothing**, because it differed from
+  the bot in TWO ways at once. Same confound as "2-segment messages get filtered" when the
+  real variable was the link domain. `--capture` and `--real-profile` change one thing each.
+- **THREE OF MY OWN CONCLUSIONS WERE WRONG ALONG THE WAY**, all from evidence that looked
+  solid:
+  1. *"A fresh profile is still white."* **That test never ran.** Every
+     `ren .rc-bot-profile rc-profile-old` was typed from `C:\Users\Tyler` and answered
+     *"The system cannot find the file specified"*, so the "fresh" profile was the old one.
+     **Use absolute paths on that box; a failed `cd` is silent and the next command lies.**
+  2. *"`RC loaded and STAYING OPEN` proves the page is fine."* It means **navigation
+     resolved**, nothing more. I reversed a correct diagnosis on it.
+  3. *"Seven chrome.exe with two unquoted = two instances, so an orphan holds the lock."*
+     `kill-chrome` cleared all seven, the keep-warm reopened ONE browser, and the shape came
+     back **identical**. Seven processes with two unquoted entries is simply what a single
+     healthy Chromium looks like.
+- **`exitCode=21` from `launchPersistentContext` means PROFILE IN USE**, not a crash. It is
+  the correct answer when the keep-warm holds the profile, and `--real-profile` needs the
+  pair stopped. **The watchdog fights that** — it restarts the RC pair within 5 minutes, so a
+  test that needs them down needs the task disabled (`schtasks /Change /TN "CampHawk
+  watchdog" /DISABLE`, which needs an ELEVATED prompt), or an approach that does not hold
+  them down at all. Renaming the profile and letting `start-all` rebuild it is that approach.
+
+### THE STOP SCRIPTS COULD NEVER KILL CHROME'S CHILD PROCESSES (2026-08-14)
+Found while chasing the blank page above. **It is a real bug and it was NOT the blank page** —
+that distinction is recorded because I wrote the wrong version into the source first.
+- `stop-rc.ps1` and `stop-all.ps1` matched `--user-data-dir=[^"]*\.rc-bot-profile`. Playwright
+  launches the PARENT with the path unquoted; **Chrome re-quotes it for its own renderer/GPU/
+  utility children**, and `[^"]*` cannot cross that opening quote. So every stop killed the
+  parent and left the children alive, holding the real Chrome lock on the user-data-dir —
+  which deleting our own lock file does not touch.
+- **`kill-chrome` used `\S*` and was correct the whole time**, which is exactly why that lever
+  worked when `stop-rc` did not: a difference invisible in either file, decided by one
+  character three files apart. Same family as `\"` not being a cmd escape.
+- `worker/chromium-attribution.test.mts` now asserts every `--user-data-dir` kill pattern — in
+  every mini-PC `.ps1` and in `bot-commands.mjs` — matches BOTH the unquoted parent and the
+  quoted child. It reads **assignments only**, because the new comments quote the broken
+  pattern to explain it and a test that failed on its own explanation would be "fixed" by
+  deleting the explanation.
+- **`kill-chrome`'s "SURVIVED" report is misleading and still is.** It kills, sleeps 3s, and
+  re-counts — and it clears the profile lock *so the keep-warm can reopen*, which it does
+  inside those 3 seconds. `BEFORE` prints only a COUNT, so "7 before, 7 after" cannot tell a
+  failed kill from a fresh browser. Compare the **pids**: they were entirely different every
+  time, i.e. the kill worked. Fix it to print pids and diff the sets.
+
 ### THE WATCHDOG ASKED "IS ANYTHING RUNNING?" — RESTARTS THE BOTS, NEVER THE PC
 `mini-pc\watchdog.ps1` + `install-watchdog.bat` (2026-08-14): a Windows Scheduled Task, every
 5 minutes, run by **Windows and not by our code**, so it survives everything short of the
