@@ -143,7 +143,7 @@ it as untracked. It is the only copy of the evidence for both questions. Do not 
 
 ## THE PROMPT — paste this to open the session
 
-> Read `docs/NEXT-SESSION.md` first, then CLAUDE.md.
+> Read `docs/NEXT-SESSION.md` first — the STOP section at the top — then CLAUDE.md.
 >
 > **This session is for the Chromium memory leak on the mini-PC.** It is the only failure left
 > that has ever required physically power-cycling the box: it exhausts Windows COMMIT, which
@@ -151,29 +151,47 @@ it as untracked. It is the only copy of the evidence for both questions. Do not 
 > takes every remote lever down with it — the watchdog, `kill-chrome` and `bot_commands` all
 > ride processes on that machine.
 >
-> **Attribution is the blocking step, not a fix.** One measurement exists (9.4 GB private,
-> ~395 MB/min, COMMIT 99% of 50 GB) and the profile family was never established — I guessed it
-> wrong twice from regexes, which is why `memory` now prints the full `--user-data-dir` per
-> process. Get two readings five minutes apart: the growth RATE is the signature, not any single
-> number. **Do not read "no leak observed" as "no leak"** — it did not reproduce on 08-14.
+> **DO NOT take manual `memory` readings to find it. That approach has produced three
+> non-answers and cannot work.** `keepSessionsWarm()` in `bot.mjs` opens a rec.gov Chromium per
+> enrolled user every 30 minutes and closes it, so the family that has never been ruled out
+> exists only in bursts — a five-minute window has roughly one chance in ten of containing one.
+> The series is recorded every two minutes instead (migration 059). Read it:
 >
-> The other levers are ready and should not be rebuilt: `kill-chrome rc|recgov|all` kills by
-> profile family and is the remote remedy; `memory` is the reading; `mini-pc\fix-pagefile.ps1`
-> raises the COMMIT ceiling and is explicitly NOT the fix (pagefile peak was 0.4 GB against
-> 34 GB allocated — commit was going to reservations, not paging).
+> ```
+> NODE_USE_ENV_PROXY=1 npx tsx scripts/chromium-memory-readout.mts
+> ```
 >
+> **THE ONE ACTION THAT UNBLOCKS EVERYTHING: get the box past `60d9b98`.** The sampler recorded
+> `rc 0 procs, 0 MB` while `memory`, run seconds apart through a byte-identical filter, saw NINE
+> processes on that profile. Fixed — counts start `null`, PowerShell emits `C|<count>` before the
+> loop so "found none" and "never ran" stop being the same evidence, and stderr is logged — but
+> it is BOT-SIDE, so it takes an update. **Use `update.bat` or the 02:00–05:00 PT quiet window;
+> "Update now" is broken and will just bounce every process.** Confirm with **`git-status`**, not
+> `autocart.bot_version` — that field held a stale sha next to a live heartbeat for 90 seconds
+> and made the box look like it rolled backwards.
 >
-> ~~Two known instrument bugs to fix while you are in there~~ — **both were already fixed in
-> `a57f6e7`** (the `SURVIVED` pid diff and the `op_Addition` rollup). Confirmed by reading the
-> code, not the commit message. Do not redo them. **Confirmed live on 2026-08-14 that the BOX
-> is still running the broken rollup** — a `memory` reading came back with
-> `FAMILY rc 0 process(es), 0 MB` over a profile holding 264 MB, plus the `op_Addition` error,
-> because the box has not taken the update. That is a demonstration of the update problem, not
-> of the fix being wrong.
+> Until that lands the series reads `NOT ENOUGH DATA` and says no `rc` process was observed.
+> **That is the guard working. Do not read those rows as evidence about any family**, and do not
+> theorise about why the scan was empty ahead of the `C|` line, which is what will answer it.
+>
+> **Read the HYPOTHESIS section before interpreting a quiet series.** The RC profile was replaced
+> on 08-14 to fix a different bug; if that profile was also the leak, the series may read
+> `NO LEAK IN THIS WINDOW` for ever and that is a real answer, not a broken instrument. It is a
+> hypothesis and must not be promoted. `rc-profile-old/` on the box is the only copy of the
+> evidence — do not delete it.
+>
+> Levers already built, do not rebuild: `kill-chrome rc|recgov|all` (the remote remedy),
+> `memory` (a spot reading, with the full `--user-data-dir` per process), and
+> `mini-pc\fix-pagefile.ps1`, which raises the COMMIT ceiling and is explicitly **NOT** the fix —
+> pagefile peak was 0.4 GB against 34 GB allocated, so commit was going to reservations, not
+> paging. The two instrument bugs the older prompt asked for were fixed in `a57f6e7`; the box
+> may still be running the broken ones, which is the update problem, not a failed fix.
 >
 > Working rules: push to a branch, let `npm run verify` and CI go green, then merge to master.
 > Mutation-test any regression test — break the code, watch it fail — before trusting it.
-> `autocart.rc_session` reading dead between releases is CORRECT, not a fault.
+> `autocart.rc_session` reading dead between releases is CORRECT, not a fault. Use ABSOLUTE
+> paths for anything run on the mini-PC: a failed `cd` is silent there, and the next command
+> then reports a confident result about the wrong thing.
 
 ---
 
