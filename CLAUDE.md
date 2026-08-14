@@ -738,6 +738,18 @@ on purpose** (the claim's correctness lives inside one `INSERT .. ON CONFLICT ..
 WHERE`; a mock would test a fake). The fixture watch is dated 2020 so the poller's
 `end_date > CURRENT_DATE` filter can never see it. Before trusting a regression test,
 break the code and watch it fail — that's how the claim suite was validated.
+- **A REAL-DB TEST MUST SAY WHICH THING IT OBSERVED (2026-08-14).**
+  `worker/sync-claim.test.mts` failed CI on `ba63dca`, a commit touching two `.md` files and a
+  `.ps1`, twenty minutes after the identical code passed. `claimSyncJob` fails CLOSED on a DB
+  error and returns `false` — correct, and it stays, because a doubled catalog sync is the bug
+  that module exists to prevent — so a blip and "another machine holds it" are the same
+  `false`, `withSyncClaim` returns without running the body, and a bare `assert.rejects`
+  reported **`Missing expected rejection`**, which reads as *the release is broken*. Same shape
+  as `claimBotCommands` returning `[]` for both "nobody asked" and "the query threw". The body
+  now records that it RAN and that is asserted first, so the honest sentence is the one that
+  fires. It still fails on a blip — a green that proved nothing is worse — but it names which
+  of the two happened. **The fault was never in the claim; it was that the test could not say
+  what it had actually observed.**
 
 ## Reservation-provider resilience (2026-07-30)
 Both rec.gov and UseDirect now have a throttle breaker; **UseDirect had nothing** until
@@ -1529,6 +1541,32 @@ readings, 312 MB → 264 MB, about **−9 MB/min**, COMMIT 16% of 57.7 GB.
 - **A GAP IS THE SIGNATURE, NEVER A ZERO.** Sampling spawns PowerShell, and spawning is exactly
   what fails at 99% commit — the `supervise.ps1` failure IS that failure — so the series ENDS
   rather than peaking. And "NO LEAK IN THIS WINDOW" never becomes "there is no leak".
+  - **AND THE GAP AT THE END WAS THE ONE IT COULD NOT SEE (fixed 2026-08-14).** `worstGapMin`
+    measured the longest hole BETWEEN two samples, so a series that simply STOPS — which is
+    exactly the shape above — had no gap at all: every sample a tidy two minutes apart, and a
+    box that died mid-ramp at 03:00 printing the same `NO LEAK IN THIS WINDOW` as a box sitting
+    idle. The house shape, inside the instrument written to catch it. `seriesEnded` is measured
+    against `now` (injected, so the function stays pure), and **`lastCommitPct` is what tells a
+    crash from a bot that was merely stopped** — ending at ~16% is an update or a switched-off
+    box, ending at 90% is the crash. It is ADDITIVE: "it climbed AND THEN the series stopped"
+    is the strongest reading this table can produce, and overwriting the growth verdict with
+    the silence would discard the half that names the family.
+- **SIZE IS A SECOND QUESTION, AND THE RATE RULE CANNOT ANSWER IT (2026-08-14).** The 08-12
+  process reached 7.9 GB in **46 seconds** — faster than the 2-minute cadence — so that ramp is
+  invisible here: it appears as a pid that did not exist last time, already enormous, and the
+  `max_pid` pairing rule correctly refuses to call it a rate. So the readout could print
+  `NO LEAK IN THIS WINDOW`, or `NOT ENOUGH DATA`, over a 7.9 GB browser **sitting in its own
+  table**. `BIG_PROCESS_MB` (1500, against measured normals of 40-114 MB) reports it as
+  `OVERSIZED PROCESS`. A measured rate still leads — two readings of one process is the
+  stronger evidence — and size corroborates it. **Size is deliberately NOT gated on
+  `MIN_COMPARABLE_PAIRS`**: that threshold gates a RATE, and refusing to name a multi-GB
+  browser for want of pairs would be the instrument declining to report what it exists to find.
+  The peak is the LARGEST reading in the window and never the newest, so a spike `kill-chrome`
+  or a closing keepalive browser has already cleared is still attributed.
+  - **That last rule survived its first mutation test.** Every fixture happened to put its
+    biggest process in the final row, so "largest" and "last" were indistinguishable and the
+    mutation passed the whole suite. A guard written from the shape of the bug can be wrong
+    about the rule — same lesson as `site-mute.test.mts` failing at baseline.
 - **No alarm on it, deliberately.** A warn at ~70% COMMIT (while `kill-chrome` still works and the
   box is still reachable) is the obvious next step and should be decided on the series, not before.
 - **TWO INSTRUMENTS WERE LYING, both the house shape.** `memory`'s per-family rollup kept
