@@ -2501,6 +2501,10 @@ one with time to spare.
 profile, and the **watchdog** — including the fact that it restarts PROCESSES and never
 reboots Windows, and that it shipped asking "is anything running?" and had to be fixed to
 check each payload by name. All three are in `docs/CONTEXT.md` under the mini-PC section.
+**OPEN: whether the bots start at Windows login.** The owner believes they do (08-14);
+nothing in the repo establishes it, and a desktop shortcut is not a startup entry. Confirming
+it makes a **last-resort** reboot tier defensible — and it would still not have helped 08-12,
+where a Scheduled Task could not have fired at all. Checks in `docs/NEXT-SESSION.md`.
 
 **Docs current to 2026-08-13.** The later session added, in CLAUDE.md: the
 **update-guard deadlock** (and its two escape hatches), the **41 GB Chromium** +

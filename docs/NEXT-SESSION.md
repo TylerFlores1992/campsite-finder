@@ -7,6 +7,35 @@ file once the leak is diagnosed.***
 
 ---
 
+## THE PROMPT — paste this to open the session
+
+> Read `docs/NEXT-SESSION.md` first, then CLAUDE.md.
+>
+> **The big push this session is the Chromium memory leak on the mini-PC.** It is the only
+> failure in this system that has ever required somebody to physically power-cycle the box —
+> it exhausts Windows COMMIT, which kills `supervise.ps1` (a supervisor that cannot start a
+> shell cannot restart anything) and kills every remote lever at the same time, so the
+> watchdog, `kill-chrome` and `bot_commands` are all gone exactly when they are needed.
+>
+> Start by separating what is measured from what is guessed — NEXT-SESSION has both, and the
+> profile family is the guessed part. **I got that wrong twice**; the RC profile path contains
+> both substrings the candidate diagnostics match on, so it cannot be settled by reading the
+> regexes. Get a reading with the FULL `--user-data-dir`, twice, five minutes apart, because
+> the growth RATE (~320-395 MB/min) is the signature and not the absolute number.
+>
+> **Also settle this, because it decides whether the watchdog may reboot:** the owner believes
+> the bots already start themselves at Windows login. That is UNVERIFIED. See "Do the bots
+> start at login?" in NEXT-SESSION for the exact checks and for what it does and does not
+> unlock — in particular it does NOT fix the 08-12 wedge, and saying otherwise is the trap.
+>
+> Then: `mini-pc\rc-cart-cap.bat` (needs a human at the box) and the Android cart POSTs.
+>
+> Working rules: push to a branch, let `npm run verify` and CI go green, then merge to master.
+> Mutation-test any regression test — break the code and watch it fail — before trusting it.
+> `autocart.rc_session` reading dead between releases is CORRECT, not a fault.
+
+---
+
 ## THE BIG PUSH — a Chromium eats COMMIT until the box is unreachable
 
 ### What is actually known (and what is guessed — the two have been mixed up twice)
@@ -83,6 +112,52 @@ this one ends with somebody driving to the machine.
   was running the whole time, and the heartbeat would have settled it in one query.
 
 ---
+
+## Do the bots start at Windows login? — UNVERIFIED, and it gates the reboot tier
+
+**The owner believes they do** (2026-08-14). Nothing in the repo establishes it, and
+`watchdog.ps1`'s header currently says the opposite — *"a reboot is only safe at all if the
+bots start themselves at login, which is not something this script can assume"*. That
+sentence is the reason there is no reboot tier, so **the belief is worth converting into a
+fact or a correction, and it is a five-minute check.**
+
+**How to check, on the box.** There are four places it could be wired, and "I see a shortcut
+on the desktop" is not one of them — a desktop shortcut starts nothing:
+
+```
+dir "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
+dir "%ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup"
+reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+reg query HKLM\Software\Microsoft\Windows\CurrentVersion\Run
+schtasks /query /fo LIST /v | findstr /i "TaskName Logon"
+```
+
+There is a `mini-pc - Shortcut` on the desktop and an untracked
+`"mini-pc - Shortcut (2).lnk"` inside `scripts/auto-cart-bot/` — **neither of those runs at
+login**, and the second one is loose in the repo working tree. Worth tidying either way.
+
+**This cannot be checked remotely.** `bot_commands` has a fixed allowlist (`tail-log`,
+`list-processes`, `memory`, `kill-chrome`, `git-status`, `disk-free`, `restart-rc`) and
+deliberately no arbitrary shell. Adding a `startup-check` command is itself bot-side code
+needing an update, so for one question it is cheaper to ask the owner to paste the five
+lines above.
+
+**IF IT IS CONFIRMED, here is exactly what it does and does not buy.**
+- ✅ It makes a **reboot tier defensible** as a last resort in `watchdog.ps1` — the case where
+  processes are dead, `start-all.bat` has failed repeatedly, and there is nothing left to try.
+- ❌ **It does NOT fix the 2026-08-12 wedge**, and this is the trap to avoid writing down. That
+  box was wedged badly enough that RustDesk could not connect; **a Scheduled Task cannot fire
+  on a Windows that is not scheduling**, so the tier would not have run. A reboot tier
+  addresses "our processes cannot be revived", not "Windows is unresponsive". The remedy for
+  the second one is still the leak.
+- ⚠️ **A reboot ends the RC session regardless** (the token lives in the Chromium it closes),
+  so any tier must carry the same release guard the updater does — never within 6h of a
+  release — and must be a last resort after `start-all.bat` has genuinely failed, not a
+  second lever tried in parallel.
+- The check to update either way: `update-guard.test.mts` currently fails on any
+  `Restart-Computer` / `shutdown /r` in `mini-pc/`. If a tier is added, that assertion becomes
+  "only inside the last-resort branch, and only with the release guard" — **do not simply
+  delete it**, or the next careless edit reboots the box mid-release.
 
 ## Done 2026-08-14 — do not re-do these
 

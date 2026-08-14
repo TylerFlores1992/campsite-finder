@@ -21,8 +21,16 @@
 # WHAT IT DOES NOT DO: reboot. In all three outages so far Windows was fine and only our
 # processes had died - and a reboot ENDS THE RC SESSION, because the access token lives in
 # the Chromium it would close. It is a bigger hammer than any observed failure needs, and it
-# is only safe at all if the bots start themselves at login, which is not something this
-# script can assume. If that is ever established, a reboot tier belongs here and not before.
+# is only safe at all if the bots start themselves at login.
+#
+# THE OWNER BELIEVES THEY DO (2026-08-14) AND IT IS UNVERIFIED - a desktop shortcut is not a
+# startup entry, and nothing in this repo wires one. Checks are in docs/NEXT-SESSION.md.
+# Confirming it would make a LAST-RESORT reboot tier defensible: processes dead, start-all
+# failed repeatedly, nothing left to try. It would NOT have helped 2026-08-12, when the box
+# was wedged badly enough that RustDesk could not connect - a Scheduled Task cannot fire on a
+# Windows that is not scheduling, so the tier would never have run. That case is the memory
+# leak, not this file. Any tier must also carry the updater's release guard, since a reboot
+# ends the session however it was triggered.
 #
 # PURE ASCII. Windows PowerShell 5.1 reads a .ps1 without a BOM as Windows-1252, where an em
 # dash's third byte is a curly quote - which PowerShell accepts as a string delimiter. One

@@ -3768,6 +3768,16 @@ fourth surface now.
 >   power-cycled by hand. A Scheduled Task cannot run on a Windows that is not scheduling.
 >   The remedy for that is the Chromium memory leak, not a bigger hammer here.
 >   `update-guard.test.mts` fails on any `Restart-Computer` / `shutdown /r`.
+> - **OPEN, and it gates the above: do the bots start at Windows login?** The owner believes
+>   they do (2026-08-14) and nothing in the repo establishes it — a desktop shortcut is not a
+>   startup entry, and the loose `"mini-pc - Shortcut (2).lnk"` in the working tree runs
+>   nothing. Confirming it would make a **last-resort** reboot tier defensible (processes
+>   dead, `start-all.bat` failed repeatedly, nothing left to try). **It would still not have
+>   helped 08-12** — that box was wedged past RustDesk, and a Scheduled Task cannot fire on a
+>   Windows that is not scheduling, so the tier would never have run; that case is the leak.
+>   Any tier must carry the updater's release guard, because a reboot ends the RC session
+>   however it was triggered. The checks are in `docs/NEXT-SESSION.md`; `bot_commands` has a
+>   fixed allowlist and no arbitrary shell, so this needs a human at the box.
 > - **It shipped asking "is ANYTHING running?" and was fixed hours later** — the house
 >   failure, inside the watchdog. The rec.gov bot and the RC pair are different processes;
 >   `autocart.bot` stayed green through the RC runner's death on both 08-07 and 08-11 for
