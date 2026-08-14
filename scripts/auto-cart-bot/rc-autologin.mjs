@@ -438,12 +438,33 @@ export async function attemptLogin(ctx, page, { homeUrl, isLive, log = () => {},
       // so recording it as a pass would be a green mark for a test that never ran. That is
       // the rule rehearsal.mjs already states — a pass that proved nothing is worse than a
       // skip, because it reads as evidence.
-      if ((await isLive()) === true) {
-        return {
-          ok: true,
-          provedNothing: true,
-          reason: 'already signed in — RC re-authenticated before any form appeared, so no sign-in was exercised',
-        };
+      // ASKED REPEATEDLY, NOT ONCE — the re-authentication finishes AFTER the banner.
+      //
+      // 2026-08-14 03:01, the third time this trap has been sprung: the rehearsal recorded a
+      // FAILURE quoting RC's "You have a reservation arriving on today's date ... Pre Check
+      // In", which RC renders only to a SIGNED-IN user. So the session was fine and the one
+      // question this test exists to answer was reported backwards, on the check the 07:40
+      // pre-flight reads.
+      //
+      // The single `isLive()` above was already the fix for the same trap, and it was not
+      // enough: RC's SPA paints that banner as soon as it knows who you are, and stores the
+      // access token a moment later. Asking once lands in the gap. Nothing has been typed at
+      // this point and no credential is at risk, so the only cost of waiting is a few seconds
+      // on a path that is about to report a failure — and the cost of not waiting is a false
+      // alarm that sends somebody to the box at 07:40.
+      //
+      // Deliberately NOT matched on the banner's words: RC rewords its own copy whenever it
+      // likes, and a rule built on that sentence would fail silently the day they change it.
+      // A live token is the fact; the banner is only what tipped us off.
+      for (let i = 0; i < 8; i++) {
+        if ((await isLive()) === true) {
+          return {
+            ok: true,
+            provedNothing: true,
+            reason: 'already signed in — RC re-authenticated before any form appeared, so no sign-in was exercised',
+          };
+        }
+        await page.waitForTimeout(1000);
       }
       return {
         ok: false,

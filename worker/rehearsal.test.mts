@@ -346,3 +346,38 @@ test('and it is not recorded as a pass either', () => {
   assert.match(kw, /r\.provedNothing[\s\S]{0,220}result: 'inconclusive'/,
     'and the rehearsal must record it as inconclusive, not ok');
 });
+
+test('a re-authenticating session is never recorded as a failed login', () => {
+  // THE BANNER TRAP, THIRD OCCURRENCE (2026-08-14 03:01). The rehearsal recorded a FAILURE
+  // quoting RC's own "You have a reservation arriving on today's date ... Pre Check In" —
+  // which RC renders only to a SIGNED-IN user. The session was healthy and the one question
+  // this test exists to answer was reported backwards, on the check the 07:40 pre-flight
+  // reads. The first occurrence (2026-08-09) sent the owner to sign in by hand over the
+  // session that carted a site fifteen minutes later.
+  //
+  // A single `isLive()` at the form-hunt exit was already the fix for occurrences one and
+  // two, and it was not enough: RC paints the banner as soon as it knows who you are and
+  // stores the token a moment later, so asking once lands in the gap. It must ask REPEATEDLY.
+  const src = readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8');
+  const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+  // The retry loop, and that provedNothing is what it returns.
+  assert.match(
+    code,
+    /for \(let i = 0; i < \d+; i\+\+\) \{[\s\S]{0,400}?isLive\(\)\) === true[\s\S]{0,300}?provedNothing: true/,
+    'the form-hunt exit must poll isLive() before calling it a failure',
+  );
+  assert.match(code, /await page\.waitForTimeout\(\d+\)/, 'and must actually wait between asks');
+
+  // NOT matched on RC's copy. A rule built on the banner's wording fails silently the day
+  // RC rewords it, and the fact that matters is a live token, not a sentence.
+  assert.ok(
+    !/reservation arriving on today/i.test(code),
+    'do not classify on RC banner text — a live token is the fact, the banner is only the tell',
+  );
+
+  // And the mapping that makes it inconclusive rather than a pass must survive.
+  const kw = readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8');
+  assert.match(kw, /provedNothing[\s\S]{0,200}?result: 'inconclusive'/,
+    'proved-nothing must record as inconclusive — never a pass, never a failure');
+});
