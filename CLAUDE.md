@@ -1305,6 +1305,35 @@ opened the SYSTEM browser, whose cookie jar the injection can never read.
   webview and force-closing the app — same day. Nothing measured longer, and RC's own session
   lifetime (~1h token, ~12h Okta) applies inside the app too. Sign in shortly before a release.
 
+### THE RELEASED SCREEN HAS NO SIGN-IN STEP (2026-08-13 evening, OPEN)
+Step one — the in-webview RC sign-in that `prepareRc` performs — is wired into the
+PRE-RELEASE state only. In the ordinary 08:00 flow that is fine: the user signs in, then
+presses "hand it over". **On a REVISIT it is not**, and revisits became reachable the same
+evening (see below), so a user landing on the released screen has never run step one in that
+webview. "Finish on ReserveCalifornia" then runs the precart against a signed-out webview and
+hangs on *"Reading your session…"* forever — the identical symptom as the morning's hold, and
+the identical cause: **the precart needs a session in THAT webview and nothing on this screen
+establishes one.**
+- **The fix is small and already half-built:** gate the primary action on
+  `rcCheck === 'verified'` the way the pre-release screen does, and fall back to a sign-in
+  button that calls the existing `prepareRc` (which closes on token capture) before offering
+  the cart. No new mechanism.
+- **It is the third UI bug in two days found by running the real flow on a phone**, after the
+  stranding-when-it-worked and the toolbar-over-content. None was reachable by reasoning, and
+  all three were the app doing the right thing while the screen described a different product.
+
+### DON'T THROW A REVISITING USER INTO RC (2026-08-13 evening)
+"Open the hand-off again" on the Watches panel jumped straight out to ReserveCalifornia with
+no chance to read which site it was. The redirect effect fires on `status === 'released'` and
+only ever saw the CURRENT status, so it could not tell "the bot has just let go, every pause
+is exposure" from "this released an hour ago and somebody came back to look". At 08:00 going
+immediately is right and stays; on a revisit it is the screen acting ON the user.
+`arrivedReleased` is recorded on the FIRST load and read by the effect.
+- **The ref is ASSIGNED in `load`, not merely declared.** Declared-and-read would leave it
+  null, always falsy, behaviour unchanged and the diff looking correct — the "fix present but
+  inert" shape that has already cost this codebase two commits (`6006428`, the `--claimed`
+  poller omission). Nearly shipped that way.
+
 ### THE CART POSTS NEVER FIRE — AND IT IS NOT THE TOKEN (2026-08-13; FIXED AND PROVEN THE SAME DAY — see the sub-section two below)
 The first hand-off on the new flow produced a full `client_reports` trace, and it settles a
 question open since 08-09. `#60`, released 08:00:05, claimed, injected on `/park/696/631`:
