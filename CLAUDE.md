@@ -1248,6 +1248,74 @@ parent's claim, taken one second earlier**. Every on-demand update refused itsel
   only `requested`/`carted`/`claiming`, NOT `offered`** — so untapped offers do not block the
   02:00–05:00 window, but tapping one does, and the 6h release check is not liftable.
 
+### `rc-login.bat`'s KILL HAD NEVER RUN — `\"` IS NOT A CMD ESCAPE (2026-08-14)
+Reported as *"RC login isn't working"*: the script printed `=== Closing anything holding the
+RC profile ===` and then died with **`'ForEach-Object' is not recognized as an internal or
+external command`**. The kill was inline PowerShell whose regex contained `[^\"]`.
+**`\"` is PowerShell's escape and cmd has no backslash escape**, so that quote CLOSED the
+string, everything after it was unquoted, and the very next `|` became a **cmd PIPE** — cmd
+then tried to run `ForEach-Object` as a program.
+- **So the kill has never run once, on any invocation, since the file was written.** The
+  script announced the stop, stopped nothing, and went on to open a **second Chromium on a
+  profile the first still held** — which is the corruption every comment in that file warns
+  about. Exactly the shape of the WINDOWTITLE filter that matched nothing (08-08): a step
+  that fails silently at the one thing it exists for, then fails loudly somewhere harmless.
+- **THE NEAR MISS IS THE ARGUMENT FOR THE FIX.** `rc-test-login.bat` carried a line that
+  *looks identical* and worked — because only `rc-login.bat` had the Chromium arm with the
+  `\"` in it. Same-looking code, opposite behaviour, decided by a language boundary invisible
+  at the call site. The remedy is not better quoting, it is **having no quoting to get
+  wrong**.
+- **`mini-pc\stop-rc.ps1` is now the ONE way to free the RC profile**: the pair, their
+  supervisors, the Chromium scoped to `.rc-bot-profile`, the stale lock file — then it
+  **RE-CHECKS and exits non-zero naming the survivors**. Never by image name.
+  `rc-login.bat` and `rc-test-login.bat` call it with **`-File`** (no code crosses cmd) and
+  jump to a `:busy` branch on survivors rather than signing in on top of them.
+  `restart-rc.ps1` delegates to it too — one stop, not three.
+- **THE GUARDS HAD TO FOLLOW THE BEHAVIOUR INTO THE NEW FILE.** `control-channel.test.mts`
+  asserted "never kills the rec.gov bot" and "re-checks rather than trusting the kill"
+  against `restart-rc.ps1`'s own body; after the extraction every one of them would have
+  **passed on a file that no longer killed anything at all**. They read both files now, and
+  `restart-rc` is separately pinned to ABORT on `$LASTEXITCODE` — an extracted check whose
+  caller drops the exit code is no check at all.
+- **`rc-test-login.bat` was ALSO still relaunching the pair unsupervised** — the downgrade
+  fixed in `rc-login.bat` on 08-11 and left standing in the second copy, which is what a
+  second copy always costs. One test pins both files now.
+- Guarded mechanically: **no `.bat` may contain `\"` inside a `powershell -Command` string**.
+  Scoped to `-Command` on purpose — `install-autoupdate.bat`/`install-watchdog.bat` pass `\"`
+  to `schtasks /TR`, where it is the documented nesting and where there is no `|` for a
+  broken quote to expose.
+
+### THE WATCHDOG ASKED "IS ANYTHING RUNNING?" — RESTARTS THE BOTS, NEVER THE PC
+`mini-pc\watchdog.ps1` + `install-watchdog.bat` (2026-08-14): a Windows Scheduled Task, every
+5 minutes, run by **Windows and not by our code**, so it survives everything short of the
+machine being off. It exists because every remote lever rides a poller ON the box — when the
+pollers are dead there is nothing left to receive a command, which is structural and has now
+bitten three times.
+- **IT RESTARTS PROCESSES. IT DOES NOT REBOOT WINDOWS, deliberately** — and that is the
+  answer to "will it fix a crashed PC?": **no.** In every outage so far Windows was fine and
+  only our processes had died, a reboot ENDS the RC session (the token lives in the Chromium
+  it would close), and a reboot tier is only safe if the bots start themselves at login,
+  which is not established. It is also **no help in the case that actually needed a human**:
+  when the box wedged on 08-12 RustDesk could not connect and the machine had to be power-
+  cycled by hand — a Scheduled Task cannot run on a Windows that is not scheduling. The fix
+  for that is the memory leak below, not a bigger hammer here. `update-guard.test.mts` fails
+  on any `Restart-Computer`/`shutdown /r`.
+- **IT SHIPPED ASKING "IS ANYTHING RUNNING?" AND WAS FIXED HOURS LATER — the house failure,
+  in the watchdog itself.** The rec.gov bot and the RC pair are different processes;
+  `autocart.bot` stayed green through the RC runner's death on **both** 08-07 and 08-11 for
+  exactly this reason. A union count would have read the very outage it was written for —
+  `bot.mjs` up, keep-warm and hold runner dead, holds queued for 08:00 — as **healthy**, and
+  exited silently every five minutes all night. Each payload is checked **by name** now.
+- **THE LEVER IS CHOSEN TO MATCH THE GAP.** `start-all.bat` stops everything first, which is
+  what makes a duplicate structurally impossible **and** what closes the Chromium holding the
+  RC token — so it is only for a genuinely dark box. The RC pair alone goes through
+  `restart-rc.ps1`, which costs no session that is not already gone. **Bot or broker down
+  while the RC pair is UP is a deliberate, NAMED hole**: it says so and exits non-zero rather
+  than spending a live session on a process whose own supervisor should have restarted it.
+- **The update stand-down HAS AN EXPIRY (15 min)**, because on 08-14 the updater itself was
+  what died — still holding everything down. A stand-down with no expiry protects the broken
+  thing.
+
 ### A Chromium ate 41 GB of COMMIT, and nothing could kill it remotely (2026-08-12)
 The first real `memory` reading answered the question `fix-pagefile` was waiting on, and the
 answer was **consumption, not the ceiling**: one `chrome.exe` on our profiles at **9.4 GB**,
@@ -2371,16 +2439,15 @@ That sweep is the 44ae4b7 fix working on its first morning. `#60`'s hand-off sti
 the OLD "click the cart icon" banner, which is what confirmed the 09:11 precart fix had
 never run against a real hold.
 
-**THREE holds are offered for 2026-08-14 08:00 PT and ALL THREE ARE UNTAPPED** — South
-Carlsbad `#55` and `#95`, Carpinteria `#C218` (read 17:27 PT 08-13; Elk Prairie `#29` is
-gone from the window, so the earlier "ONE hold" reading is superseded rather than wrong).
+**TWO holds are TAPPED for 2026-08-14 08:00 PT** — South Carlsbad `#55` and Carpinteria
+`#C218`, both `requested` since 03:00Z (read 21:55 PT 08-13). `#95` is `offered` and
+untapped, so it does not compete. **Two tapped is exactly `RC_HOLD_CAPACITY`**, so this is
+the first morning the ceiling is met rather than exceeded.
 `nextHoldRelease` counts `requested`/`carted`/`claiming` and never `offered`, so **the
-02:00–05:00 quiet-window update path is OPEN tonight unless one gets tapped** — which
-matters, because the box is on `c682aa8` and therefore missing `3ce77d9`, the commit that
-lets `--cart-cap` read the stored password instead of having one typed into a cmd window.
-`autocart.bot_version` agrees in its own words: *"Nothing is queued, so this is the ordinary
-wait for a quiet window."* Re-read this rather than remembering it: the tapped/untapped
-distinction inverts the decision, and this entry was wrong about it for a day once already.
+02:00–05:00 quiet-window update path is SHUT tonight** — 02:00 is exactly 6h from the
+release and the check is not liftable. Re-read this rather than remembering it: the
+tapped/untapped distinction inverts the decision, and this entry was wrong about it for a
+day once already (it said all three were untapped, hours after two had been tapped).
 
 *(Historical: South Carlsbad `#41` 08-08; Leo Carrillo `#L108` 08-07 FAILED — see the runner
 section above.)*
@@ -2429,6 +2496,12 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
+**Docs current to 2026-08-14.** That session added the **`\"` cmd-escape bug** that meant
+`rc-login.bat`'s kill had never run, **`mini-pc\stop-rc.ps1`** as the one way to free the RC
+profile, and the **watchdog** — including the fact that it restarts PROCESSES and never
+reboots Windows, and that it shipped asking "is anything running?" and had to be fixed to
+check each payload by name. All three are in `docs/CONTEXT.md` under the mini-PC section.
+
 **Docs current to 2026-08-13.** The later session added, in CLAUDE.md: the
 **update-guard deadlock** (and its two escape hatches), the **41 GB Chromium** +
 `kill-chrome`, the **three diagnostics that lied while the heartbeat was right**, the

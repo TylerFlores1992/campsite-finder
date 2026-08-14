@@ -3706,6 +3706,86 @@ fourth surface now.
 
 ### The mini-PC bot
 
+> **STOPPING THE RC PAIR IS `mini-pc\stop-rc.ps1`, AND ONLY THAT (2026-08-14).** Three
+> callers needed a "free the RC Chromium profile" step — `rc-login.bat`, `rc-test-login.bat`
+> and `restart-rc.ps1` — and each carried its own copy. Two were **inline PowerShell inside a
+> `.bat`**, and one of those had been failing since the day it was written:
+>
+> ```
+> powershell -NoProfile -Command ^
+>   "... -match '--user-data-dir=[^\"]*\.rc-bot-profile' ... | ForEach-Object { ... }"
+> ```
+>
+> **`\"` is PowerShell's escape. CMD HAS NO BACKSLASH ESCAPE**, so that quote closed the
+> string, everything after it was unquoted, and the next `|` became a **cmd pipe** — cmd then
+> ran `ForEach-Object` as a program and said `'ForEach-Object' is not recognized`. The script
+> printed *"Closing anything holding the RC profile"*, closed **nothing**, and went on to
+> open a second Chromium on a profile the first still held. Two Chromium on one
+> `user-data-dir` corrupt the session the script exists to restore, so the profile lock was
+> the only thing standing between this and real damage — the same near-miss as the
+> WINDOWTITLE bug of 08-08.
+>
+> **`rc-test-login.bat` had a line that LOOKED IDENTICAL and worked**, because only
+> `rc-login.bat` carried the Chromium arm with the `\"` in it. That is the whole argument for
+> the extraction: the fix is not better quoting, it is having no quoting to get wrong. The
+> batch files call `stop-rc.ps1` with **`-File`**, so no code crosses cmd, and jump to a
+> `:busy` branch when it reports survivors instead of signing in on top of them.
+>
+> `stop-rc.ps1` kills the pair, their supervisors and the Chromium scoped to
+> `.rc-bot-profile`; clears `.camphawk-profile-lock` and `.camphawk-profile-wanted` (a force
+> kill never runs the lock's release, and a stale one blocks the RC processes for 10
+> minutes); then **re-checks and exits non-zero naming the survivors**. Never by image name —
+> `/IM node.exe` takes the rec.gov bot, `/IM chrome.exe` closes the browser of whoever is
+> sitting at the machine.
+>
+> **When the kill moved, the GUARDS had to move with it.** `worker/control-channel.test.mts`
+> asserted "never kills the rec.gov bot" and "re-checks rather than trusting the kill"
+> against `restart-rc.ps1`'s own body; after the extraction every one of them would have
+> passed on a file that no longer killed anything. They read both files now, and `restart-rc`
+> is separately pinned to abort on `$LASTEXITCODE` — an extracted check whose caller drops
+> the exit code is no check at all. `worker/update-guard.test.mts` also forbids `\"` inside
+> any `.bat`'s `powershell -Command` (scoped to `-Command`: the `schtasks /TR` lines in
+> `install-autoupdate.bat`/`install-watchdog.bat` use `\"` legitimately and demonstrably
+> fire), and pins the supervised relaunch across **both** sign-in scripts — `rc-test-login.bat`
+> was still relaunching the pair bare, the downgrade fixed in `rc-login.bat` on 08-11 and
+> left standing in the second copy.
+
+> **`mini-pc\watchdog.ps1` — RESTARTS PROCESSES, NEVER REBOOTS WINDOWS (2026-08-14).** A
+> Windows Scheduled Task on a 5-minute tick, registered once by `install-watchdog.bat` as
+> admin. It exists because **every remote lever rides a poller ON the box** — `bot_commands`,
+> `restart-rc`, the "Update now" flag — so when the pollers are dead there is nothing left to
+> receive a command. That is structural, not a gap a better button fills, and it has bitten
+> three times (08-11 the RC runner died and took the diagnostics queue with it; 08-14 an
+> update stopped everything to move the checkout and never brought it back, 45 minutes dark
+> with holds queued). Windows runs the task, not our code, so it survives everything short of
+> the machine being off.
+>
+> - **It does NOT reboot, deliberately.** In every outage so far Windows was fine and only
+>   our processes had died; a reboot ENDS the RC session because the token lives in the
+>   Chromium it would close; and a reboot tier is only safe if the bots start themselves at
+>   login, which is not established. **It is also no help in the one case that genuinely
+>   needed a human** — on 08-12 the box wedged, RustDesk could not connect, and it had to be
+>   power-cycled by hand. A Scheduled Task cannot run on a Windows that is not scheduling.
+>   The remedy for that is the Chromium memory leak, not a bigger hammer here.
+>   `update-guard.test.mts` fails on any `Restart-Computer` / `shutdown /r`.
+> - **It shipped asking "is ANYTHING running?" and was fixed hours later** — the house
+>   failure, inside the watchdog. The rec.gov bot and the RC pair are different processes;
+>   `autocart.bot` stayed green through the RC runner's death on both 08-07 and 08-11 for
+>   exactly that reason. A union count would have read the very outage it was written for
+>   (`bot.mjs` up, keep-warm and hold runner dead, holds queued for 08:00) as **healthy** and
+>   exited silently every five minutes all night. Each of the four payloads is now checked by
+>   name.
+> - **The lever matches the gap.** `start-all.bat` (which stops everything first, and so also
+>   closes the RC Chromium) is only for a genuinely dark box. The RC pair alone goes through
+>   `restart-rc.ps1`, which costs no session that is not already gone. **Bot or broker down
+>   while the RC pair is up is a deliberate, NAMED hole** — it logs that start-all would end a
+>   live session and exits non-zero, rather than spending one on a process whose own
+>   supervisor should have restarted it.
+> - **The update stand-down expires after 15 minutes.** On 08-14 the updater itself was what
+>   died, still holding everything down; a stand-down with no expiry protects the broken thing.
+> - The ordinary run is **silent** — it fires every five minutes forever, and a line per run
+>   would bury the `restarts.log` entries that matter under thousands that do not.
+
 - `bot.mjs` — watches the roster, carts openings, reports outcomes; a **keepalive**
   loads an authenticated rec.gov page every **30m** (`KEEPALIVE_MS`) so the session
   never dies from idle. Stepped down 4h → 90m → 30m as rec.gov's idle TTL kept
