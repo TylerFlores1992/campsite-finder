@@ -103,3 +103,68 @@ test('memory still refuses to print a whole Chromium command line', () => {
   assert.ok(!/\$o\.CommandLine'/.test(code) && !/-f .*CommandLine/.test(code),
     'the command line must never be formatted into the answer');
 });
+
+test('every Chromium kill pattern matches Chrome\'s QUOTED child processes', async () => {
+  /**
+   * THE BUG THIS EXISTS FOR (2026-08-14), and it cost an entire night.
+   *
+   * Playwright launches the PARENT Chromium with the profile path unquoted. Chrome then
+   * re-quotes it when it spawns its own renderer/GPU/utility children:
+   *
+   *   parent:  --user-data-dir=C:\…\.rc-bot-profile
+   *   child:   --user-data-dir="C:\…\.rc-bot-profile"
+   *
+   * stop-rc.ps1 and stop-all.ps1 matched with `[^"]*`, which CANNOT cross that opening
+   * quote — so every stop killed the parent and left every child alive, still holding the
+   * real Chrome lock on the user-data-dir. Deleting our own lock file does not touch that
+   * lock. The orphans accumulated (seven were found on one profile), and the next browser
+   * to open it met a LOCKED profile and rendered a BLANK PAGE — which is the white
+   * ReserveCalifornia page that was blamed, in turn, on RC, the WAF, a service worker, the
+   * JS bundle, Playwright's version, the profile data and the token-capture hook.
+   *
+   * `kill-chrome` used `\S*` and was right the whole time, which is exactly why that lever
+   * worked when stop-rc did not — a difference nobody could see by reading either file.
+   * Guarded mechanically or not at all.
+   */
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const dir = 'scripts/auto-cart-bot/mini-pc';
+  const PROFILE = 'C:\\Users\\Tyler\\campsite-finder\\scripts\\auto-cart-bot\\.rc-bot-profile';
+  const parent = `--user-data-dir=${PROFILE}`;
+  const child = `--user-data-dir="${PROFILE}"`;
+
+  const sources: [string, string][] = readdirSync(dir)
+    .filter((f) => f.endsWith('.ps1'))
+    .map((f) => [`${dir}/${f}`, readFileSync(`${dir}/${f}`, 'utf8')]);
+  sources.push(['scripts/auto-cart-bot/bot-commands.mjs',
+    readFileSync('scripts/auto-cart-bot/bot-commands.mjs', 'utf8')]);
+
+  let checked = 0;
+  for (const [file, src] of sources) {
+    for (const line of src.split('\n')) {
+      // Assignments only — the header comments quote the BROKEN pattern deliberately, to
+      // explain it, and a test that failed on its own explanation would be fixed by deleting
+      // the explanation. Same trap as `code()` stripping comments elsewhere in this suite.
+      const m = /^\s*\$[A-Za-z_]\w*\s*=\s*'(--user-data-dir=[^']+)'/.exec(line)
+        ?? /^\s*(?:rc|recgov|all):\s*"\$pat = '(--user-data-dir=[^']+)'/.exec(line);
+      if (!m) continue;
+      checked++;
+      // Unescape the JS-string doubling used in bot-commands.mjs (\\S* in source is \S*).
+      const pattern = m[1].replace(/\\\\/g, '\\');
+      let re: RegExp;
+      try { re = new RegExp(pattern); } catch { continue; }
+      // recgov deliberately EXCLUDES the RC profile via a negative lookahead, so it is
+      // asserted on its own directory instead of on the one it is built to skip.
+      const subject = /\(\?!/.test(pattern)
+        ? [parent, child].map((s) => s.replace('.rc-bot-profile', 'profiles\\u1'))
+        : [parent, child];
+      assert.ok(re.test(subject[0]), `${file}: ${pattern} misses the UNQUOTED parent`);
+      assert.ok(
+        re.test(subject[1]),
+        `${file}: ${pattern} misses Chrome's QUOTED child processes. ` +
+        'Killing the parent then leaves them holding the profile lock, and the next ' +
+        'browser to open that profile renders a blank page. Use \\S*, never [^"]*.',
+      );
+    }
+  }
+  assert.ok(checked >= 3, `expected to find the kill patterns, checked only ${checked}`);
+});

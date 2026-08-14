@@ -65,7 +65,21 @@ $RC = 'rc-keepwarm\.mjs|rc-hold-runner\.mjs|supervise\.ps1 -Name "?(rc-keepwarm|
 # Playwright's Chromium on the RC profile. A force-killed parent leaves the browser holding
 # the real Chrome lock on the user-data-dir, which deleting our own lock file does not touch
 # - and the next keep-warm then meets a profile it cannot open.
-$RC_BROWSER = '--user-data-dir=[^"]*\.rc-bot-profile'
+#
+# `\S*`, NOT `[^"]*` - THE PATTERN USED TO MISS EVERY CHILD PROCESS (2026-08-14).
+# Playwright launches the PARENT with the path unquoted; Chrome then re-quotes it for its own
+# renderer/GPU/utility children:
+#     parent:  --user-data-dir=C:\...\.rc-bot-profile
+#     child:   --user-data-dir="C:\...\.rc-bot-profile"
+# `[^"]*` cannot cross that opening quote, so it matched the parent and NOTHING else. Every
+# stop killed the parent and left the children alive, still holding the real Chrome lock on
+# the user-data-dir - so they accumulated (seven were found on one profile), and the next
+# browser to open it got a LOCKED profile and rendered a BLANK PAGE. That is the white
+# ReserveCalifornia page that cost a whole night: not RC, not the WAF, not the profile data,
+# not the token-capture hook. Us, failing to kill our own orphans.
+# `kill-chrome` had it right with `\S*` the whole time, which is why that lever worked when
+# this one did not.
+$RC_BROWSER = '--user-data-dir=\S*\.rc-bot-profile'
 
 function Get-Matching($pattern) {
   Get-CimInstance Win32_Process |

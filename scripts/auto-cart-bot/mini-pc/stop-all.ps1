@@ -75,7 +75,11 @@ $CHILDREN = 'supervise\.ps1|bot\.mjs|broker\.mjs|rc-keepwarm\.mjs|rc-hold-runner
 
 # Playwright's Chromium, matched on OUR profile directories so a person's own browser on
 # this machine is never in scope.
-$BROWSERS = '--user-data-dir=[^"]*(\.rc-bot-profile|auto-cart-bot)'
+# `\S*`, NOT `[^"]*` - see stop-rc.ps1 for the full story. Chrome re-quotes --user-data-dir
+# for its child processes, and `[^"]*` cannot cross the opening quote, so this matched the
+# parent and left every child alive holding the profile lock. Orphans then accumulate and the
+# next browser opens a locked profile and renders blank.
+$BROWSERS = '--user-data-dir=\S*(\.rc-bot-profile|auto-cart-bot)'
 
 function Stop-Matching($pattern, $label) {
   $procs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
