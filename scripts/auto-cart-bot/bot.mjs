@@ -24,6 +24,7 @@ import { hasCreds, loadCreds, deleteCreds, bumpReloginFails, resetReloginFails }
 import { planRetry, retryDue, repairOwed, giveUpState, shouldBootstrapRepair } from './relogin-retry.mjs';
 import { acquireProfileLock, releaseProfileLock, profileLockHolder } from './profile-lock.mjs';
 import { makeControlChannel } from './control-channel.mjs';
+import { createSampler } from './memory-sample.mjs';
 import { loadEnv } from './load-env.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -156,6 +157,17 @@ async function reportControl(body) {
   if (!res.ok) throw new Error(`report ${res.status}`);
   return res.json().catch(() => ({}));
 }
+
+/**
+ * Chromium memory sampling — see memory-sample.mjs for why this is recorded rather than
+ * asked for. It rides `reportControl`, i.e. the POST this process already makes, so a sample
+ * costs one PowerShell spawn every two minutes and no new plumbing, no new credential and no
+ * new endpoint.
+ */
+const sampleMemory = createSampler({
+  post: (memory) => reportControl({ memory, source: 'bot' }),
+  log,
+});
 
 /**
  * THE REMOTE LEVER THAT SURVIVES (2026-08-11). Same handler the RC hold runner uses — see
@@ -556,6 +568,15 @@ async function runMode() {
     // synchronously and fires its own background tasks, so a diagnostic — or an update
     // hand-off — cannot delay a job that is a race by design.
     if (ctl) control(ctl);
+    // Record what Chromium is costing this box. Not awaited, for the same reason as the line
+    // above: a measurement that can delay a cart is not worth taking. Self-throttled to
+    // SAMPLE_EVERY_MS, so calling it on a 2s tick is free.
+    //
+    // IT LIVES HERE, IN bot.mjs, DELIBERATELY. The RC pair have died twice while this process
+    // stayed healthy and polling — 2026-08-11, and the 08-14 morning when restart-rc had
+    // launched them as bare Node REPLs — and a series with a hole in it at the interesting
+    // moment is the thing this whole exercise is trying to stop being.
+    void sampleMemory();
     for (const user of users) {
       // Newly enrolled + not signed in yet → auto-open a login window (non-blocking).
       // `ensureLogin` no-ops on a pending auto-relogin; the check is repeated here so the

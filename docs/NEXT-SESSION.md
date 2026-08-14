@@ -38,6 +38,71 @@ healthy on `7780c32`. **Delete this file once the leak is diagnosed.***
 
 ---
 
+## 2026-08-14, later: THE READINGS WERE TAKEN, AND THEY COULD NOT HAVE ANSWERED IT
+
+**The prescribed two readings were run, five and a half minutes apart, and the result is a
+clean negative rate that means nothing.** Both readings, and the reason, are why the recorder
+below now exists.
+
+| pid | 19:27:31Z | 19:33:01Z |
+|---|---|---|
+| 2976 | 44 MB | 40 MB |
+| 10820 | 114 MB | 93 MB |
+| 15392 | 84 MB | 66 MB |
+| 16244 / 7720 | 17 / 19 | 14 / 17 |
+| 2632 / 7148 / 16316 | 21 / 11 / 2 | 21 / 11 / 2 |
+
+**The same 8 pids in both** — so the browser was never restarted and the numbers are a real
+before/after on one process set: 312 MB → 264 MB, about **−9 MB/min**. COMMIT 16% of 57.7 GB.
+
+**And every one of them was on `.rc-bot-profile`. Not a single rec.gov process existed.**
+`CHROME 8` equalled `OURS 8`, so there was no other Chromium on the box at all.
+
+**That is structural, not luck.** `keepSessionsWarm` in `bot.mjs` opens a rec.gov Chromium per
+enrolled user **every 30 minutes** (`KEEPALIVE_MS`) and closes it again. So the family that has
+never been ruled out exists in bursts, and a five-minute window has roughly **one chance in ten**
+of containing one. Two manual readings do not merely risk missing it — they are structurally
+unlikely to sample it, which is why three attempts have now produced three non-answers.
+
+> **A family with no processes running has been ruled out of NOTHING.** The reading above is
+> evidence about the RC keep-warm's resident tab (which looks healthy and flat) and is evidence
+> about nothing else. Do not let it be quoted as "the leak did not reproduce".
+
+**Also worth knowing: "keep-warm" names TWO different things**, and that ambiguity is a plausible
+part of why the family was guessed wrong twice. `rc-keepwarm.mjs` is the RC session holder;
+`keepSessionsWarm()` inside `bot.mjs` is the rec.gov keepalive. The 08-12 note *"it reached
+7.9 GB in 46 seconds of the keep-warm starting"* does not say which — and they are different
+profile families.
+
+## THE SERIES IS RECORDED NOW (migration 059) — read it, do not re-take readings by hand
+
+```
+NODE_USE_ENV_PROXY=1 npx tsx scripts/chromium-memory-readout.mts [--hours 24] [--all]
+```
+
+`bot.mjs` samples every two minutes and POSTs it on the roster/feed POST it already makes —
+per-family totals, and **the largest single process with its pid**, because the 08-12 event was
+ONE process and a family total cannot tell that from thirty ordinary ones.
+
+- **It is hosted in `bot.mjs` deliberately.** The RC pair have died twice while that process
+  stayed healthy and polling (2026-08-11, and the 08-14 morning when they were bare Node REPLs).
+- **The verdict pairs on `max_pid`.** A rec.gov family total going 0 → 900 MB is usually a browser
+  that did not exist in the first sample; subtracting those is not a rate, and without this rule
+  it would report a leak on every keepalive pass for ever.
+- **It refuses a verdict under 10 comparable pairs**, counting pairs it could actually compare
+  rather than rows it fetched. Same posture as `recgov-429-profile.mts`.
+- **A GAP IN THE SERIES IS THE SIGNATURE, NOT AN ABSENCE.** Taking a sample spawns PowerShell, and
+  spawning is exactly what fails at 99% commit — the `supervise.ps1` failure IS that failure. So
+  the samples nearest a crash are the ones most likely to be missing and the series will **end**
+  rather than peak. The readout says so; never read the gap as a reading of zero.
+- **It needs BOT-SIDE code on the box.** Until `autocart.bot_version` shows the box past `a57f6e7`
+  the readout correctly says `NO DATA` — that is not a broken write.
+
+**Still not built, deliberately: any alarm on this.** Every added alarm in this log that was not
+carefully justified cried wolf. A warn when COMMIT crosses ~70% — the window where `kill-chrome`
+still works and the box is still reachable — is defensible and is the obvious next step, but it
+should be decided on the series once there is one, not before.
+
 ## The leak — what is measured, and what is still guessed
 
 **Measured (2026-08-12, from the box's own `memory` command):**
@@ -66,16 +131,23 @@ healthy on `7780c32`. **Delete this file once the leak is diagnosed.***
 - **It did not reproduce on 08-14.** Every reading that day was healthy: COMMIT 15–16% of
   57.7 GB, all our Chromium 0.2–0.4 GB total.
 
-**Where to start**
-1. Two `memory` readings five minutes apart. Rate, not absolute.
+**Where to start** *(rewritten 2026-08-14 evening — step 1 used to be "take two readings", and
+that is now known not to work; see the section at the top of this file.)*
+1. Read the recorded series. It samples the episodic rec.gov browsers that a manual pair misses.
    ```
-   NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-command-probe.mts memory
+   NODE_USE_ENV_PROXY=1 npx tsx scripts/chromium-memory-readout.mts --hours 48
    ```
-2. Settle the family from the full `--user-data-dir`, never a substring.
+   If it says `NO DATA`, check `autocart.bot_version` — the sampler is bot-side and reaches the
+   box only on `update.bat`, "Update now", or a quiet-window run.
+2. A single `memory` reading is still the right tool for "what is it doing RIGHT NOW", and it now
+   prints the full `--user-data-dir`, a box-side timestamp, and per-family totals that are no
+   longer always zero.
 3. Only then decide the fix. A periodic recycle is NOT obviously right: the RC keep-warm tab is
    resident **on purpose** (an 8-second visit every 20 minutes renewed nothing), so recycling it
    trades a proven mechanism for an unproven one. If the leak is on a **rec.gov** profile, the
-   keep-warm is not implicated and a recycle there is cheap.
+   keep-warm is not implicated and a recycle there is cheap — and a rec.gov browser is opened and
+   closed every 30 minutes anyway, so the recycle already exists and the leak would have to be
+   *within* one keepalive pass.
 
 **Traps**
 - `restart-rc` deliberately does not touch rec.gov Chromium. If the leak is there, the obvious
@@ -88,6 +160,21 @@ healthy on `7780c32`. **Delete this file once the leak is diagnosed.***
   diagnostics.** On 08-12 I told the owner the RC pair was dead; it was running the whole time.
 
 ---
+
+## Two other things this session turned up
+
+- **The 08-14 08:00 holds ALL EXPIRED UNCARTED.** `#55` and `#C218` were both tapped at 03:00Z
+  and neither was carted; `#95` was never tapped; `#L9003` reads *"no cart at release time — the
+  hold runner did not pick it up"*. That is consistent with the RC pair having been bare Node
+  REPLs that morning (fixed later the same day), and it was **not** re-investigated here. The
+  next real hold is what confirms the repair — do not record the REPL bug as proven fixed until
+  one carts.
+- **`worker/sync-claim.test.mts` flakes in CI**, and it failed on `ba63dca`, a commit touching
+  only two `.md` files and a `.ps1` — the identical code had passed 20 minutes earlier. The
+  mechanism is the house shape again: `claimSyncJob` catches any DB error and returns `false`, so
+  a transient blip is indistinguishable from "another machine holds it", and the test then fails
+  with `Missing expected rejection` — which reads as "the release is broken" and is not. Left
+  alone as out of scope; worth fixing before it trains somebody to re-run CI without looking.
 
 ## Done 2026-08-14 — do not re-do these
 

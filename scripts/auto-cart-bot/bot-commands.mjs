@@ -210,6 +210,10 @@ export const COMMANDS = {
       '$cLim = [double]$os.TotalVirtualMemorySize * 1KB;',
       '$cFree = [double]$os.FreeVirtualMemory * 1KB;',
       '$cUsed = $cLim - $cFree;',
+      // The BOX's own clock, because a rate is a difference over a time and the only honest
+      // denominator is the interval between the two samples - not the interval between the two
+      // moments an agent happened to read the answers back.
+      "'TIME     {0:yyyy-MM-dd HH:mm:ss} box local / {1:HH:mm:ss} UTC' -f (Get-Date), (Get-Date).ToUniversalTime();",
       "'RAM      {0:N1} GB total, {1:N1} GB free' -f ($ramTot/1GB), ($ramFree/1GB);",
       "'COMMIT   {0:N1} GB used of {1:N1} GB limit ({2:N0}%) <- this is what ran out' -f ($cUsed/1GB), ($cLim/1GB), (100*$cUsed/[Math]::Max($cLim,1));",
       '$pf = @(Get-CimInstance Win32_PageFileUsage);',
@@ -242,18 +246,43 @@ export const COMMANDS = {
       "'';",
       "'Our Chromium by profile (the growth RATE across two readings is the signature,';",
       "'  not the absolute number - take a second reading about five minutes later):';",
-      '$byFam = @{};',
+      // THE ROLLUP ACCUMULATES IN SCALARS, NEVER AN ARRAY IN A HASHTABLE (fixed 2026-08-14).
+      // It used to keep `@(count, mb)` per family and rewrite it as
+      //     $byFam[$fam] = @($byFam[$fam][0] + 1, $byFam[$fam][1] + $mb)
+      // which threw `[System.Object[]] does not contain a method named 'op_Addition'` once per
+      // process, on every run since it shipped - so every FAMILY line read `0 process(es),
+      // 0 MB` while the per-process list above it was perfectly correct. A reading that prints
+      // a plausible zero is worse than one that prints nothing: the family totals are the line
+      // you compare across two readings, and `rc 0 MB` reads as "the RC profile is innocent".
+      //
+      // The replacement is the idiom three lines above (`$sum += ...` for the OURS total),
+      // which has always worked in this same script - so it is the evidenced choice rather
+      // than a second guess at PowerShell's array semantics. There is no PowerShell on the
+      // machine this file is written from, so the guard is `worker/chromium-attribution.test.mts`
+      // forbidding the shape, and the proof is running `memory` on the box afterwards.
+      '$rows = @();',
       'foreach ($o in $ours) {',
       "  $dir = ''; if ($o.CommandLine -match '--user-data-dir=(\\S+)') { $dir = $Matches[1] };",
+      // Chrome re-quotes the path for its renderer/GPU children, so the captured directory
+      // arrives as `"C:\...\.rc-bot-profile"` for most processes. Trim the quotes, or two
+      // readings of the same profile look like two different profiles when they are compared.
+      '  $dir = $dir.Trim([char]34);',
       "  $fam = 'other'; if ($dir -match '\\.rc-bot-profile') { $fam = 'rc' } elseif ($dir -match 'auto-cart-bot') { $fam = 'recgov' };",
       '  $q = Get-Process -Id $o.ProcessId -ErrorAction SilentlyContinue;',
-      '  $mb = 0; if ($q) { $mb = $q.PrivateMemorySize64/1MB };',
-      '  if (-not $byFam.ContainsKey($fam)) { $byFam[$fam] = @(0, 0) };',
-      '  $byFam[$fam] = @($byFam[$fam][0] + 1, $byFam[$fam][1] + $mb);',
-      "  '  {0,-7} {1,7:N0} MB  pid {2,-6} {3}' -f $fam, $mb, $o.ProcessId, $dir;",
+      '  $mb = 0; if ($q) { $mb = [double]$q.PrivateMemorySize64/1MB };',
+      '  $rows += [pscustomobject]@{ Fam = $fam; Mb = $mb; Ppid = $o.ProcessId; Dir = $dir };',
       '};',
+      "foreach ($r in $rows) { '  {0,-7} {1,7:N0} MB  pid {2,-6} {3}' -f $r.Fam, $r.Mb, $r.Ppid, $r.Dir };",
       "if ($ours.Count -eq 0) { '  (none - no Chromium of ours is running)' };",
-      "foreach ($k in $byFam.Keys) { 'FAMILY   {0,-7} {1} process(es), {2:N0} MB private' -f $k, $byFam[$k][0], $byFam[$k][1] };",
+      // A FIXED family order, not $hash.Keys: hashtable enumeration order is unspecified, and
+      // these lines exist to be diffed against a reading taken five minutes later.
+      "foreach ($k in @('rc', 'recgov', 'other')) {",
+      '  $g = @($rows | Where-Object { $_.Fam -eq $k });',
+      '  if ($g.Count -gt 0) {',
+      '    $fsum = 0; foreach ($x in $g) { $fsum += $x.Mb };',
+      "    'FAMILY   {0,-7} {1} process(es), {2:N0} MB private' -f $k, $g.Count, $fsum;",
+      '  }',
+      '};',
       '$allC = @(Get-Process chrome -ErrorAction SilentlyContinue).Count;',
       "'CHROME   {0} chrome.exe on the box in total (the rest are somebody using this machine)' -f $allC;",
       "'';",
@@ -319,7 +348,12 @@ export const COMMANDS = {
     const ps = [
       patLine,
       "$ours = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -match $pat });",
+      // THE PIDS, NOT JUST A COUNT (2026-08-14). See the AFTER block below: a count cannot tell
+      // a kill that failed from a kill that worked and was followed by a fresh browser, and
+      // that is the entire difference between "go to the box" and "nothing to do".
       "'BEFORE   {0} chrome.exe matched' -f $ours.Count;",
+      '$beforeIds = @($ours | ForEach-Object { $_.ProcessId });',
+      "if ($beforeIds.Count -gt 0) { '         pids ' + ($beforeIds -join ', ') };",
       // Report the sizes we are about to reclaim, so the answer says what it achieved rather
       // than merely that it ran - the `status = 'sent'` lesson.
       '$sum = 0; foreach ($o in $ours) { $q = Get-Process -Id $o.ProcessId -ErrorAction SilentlyContinue; if ($q) { $sum += $q.PrivateMemorySize64 } };',
@@ -329,8 +363,25 @@ export const COMMANDS = {
       // kill that happened - the same reason restart-rc re-checks before relaunching.
       'Start-Sleep -Seconds 3;',
       "$left = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -match $pat });",
-      "'AFTER    {0} still running' -f $left.Count;",
-      "foreach ($l in $left) { '  SURVIVED pid {0}' -f $l.ProcessId };",
+      // ── "SURVIVED" USED TO MEAN TWO OPPOSITE THINGS ───────────────────────────────────────
+      // This re-check runs three seconds after the kill, and three seconds is long enough for
+      // the keep-warm's supervisor to have opened a NEW browser on the same profile - which is
+      // the system recovering exactly as designed. The old code matched the profile again and
+      // called everything it found `SURVIVED`, so a clean kill followed by a healthy restart
+      // printed the same words as a kill that reached nothing. On 2026-08-12 that read as
+      // "7 before, 7 after, the lever is broken"; the pids were entirely different every time,
+      // i.e. the kill had worked.
+      //
+      // A pid is what separates them, so the two sets are diffed rather than counted. Same
+      // family as `status = 'sent'` meaning only "Twilio returned 2xx" - the fix is to report
+      // the fact that distinguishes the outcomes, not a louder version of the ambiguous one.
+      '$leftIds = @($left | ForEach-Object { $_.ProcessId });',
+      '$surv = @($leftIds | Where-Object { $beforeIds -contains $_ });',
+      '$fresh = @($leftIds | Where-Object { $beforeIds -notcontains $_ });',
+      "'AFTER    {0} on this profile - {1} survived the kill, {2} started after it' -f $leftIds.Count, $surv.Count, $fresh.Count;",
+      "foreach ($s in $surv) { '  SURVIVED pid {0} - the kill did NOT reach this one' -f $s };",
+      "foreach ($f in $fresh) { '  fresh    pid {0} - opened after the kill; this is the supervisor reopening, NOT a failure' -f $f };",
+      "if ($surv.Count -eq 0) { '  every process the kill targeted is gone' };",
       // A force kill never runs the profile lock's release, so the file survives and the
       // restarted keep-warm reads it as another process holding the profile - then waits 60s
       // and gives up, every pass, for ever. Same cleanup restart-rc does, for the same reason.
@@ -347,8 +398,8 @@ export const COMMANDS = {
       // The processes are gone; nothing here restarts them. Say so, because a silent recovery
       // that did not happen is exactly the assumption that cost the 08-10 morning.
       "'';",
-      "'Nothing was restarted. The supervisors should bring the payloads back; if they do not,';",
-      "'run restart-rc.'",
+      "'This command restarted nothing itself. The supervisors should bring the payloads back -';",
+      "'any pid listed as `fresh` above IS that happening. If none appears, run restart-rc.'",
     ].join(' ');
     return await run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps]);
   },

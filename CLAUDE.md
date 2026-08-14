@@ -1476,6 +1476,45 @@ to **21% of 35 GB** and freed ~41 GB — Windows then shrank the lazily-grown pa
   **Do not read "no leak observed" as "no leak"** — the growth RATE across two readings is
   still the signature, and it still needs an occurrence.
 
+### THE CHROMIUM LEAK IS RECORDED NOW, BECAUSE IT CANNOT BE CAUGHT BY HAND (migration 059, 2026-08-14)
+The prescribed remedy — two `memory` readings five minutes apart, because the growth RATE is the
+signature — was run and produced a clean, confident, **useless** answer: the same 8 pids in both
+readings, 312 MB → 264 MB, about **−9 MB/min**, COMMIT 16% of 57.7 GB.
+- **Every process sampled was on `.rc-bot-profile`, and NO rec.gov process existed at all**
+  (`CHROME 8` = `OURS 8`). `keepSessionsWarm` in `bot.mjs` opens a rec.gov Chromium per enrolled
+  user **every 30 minutes** and closes it, so the family that has never been ruled out is
+  **EPISODIC** and a five-minute window has ~1 chance in 10 of containing one. Two manual readings
+  are not merely risky here, they are structurally unlikely to sample it — which is why three
+  attempts have produced three non-answers. **A family with no processes running has been ruled
+  out of NOTHING**, and reading that reading as "it did not reproduce" is the whole trap.
+- **"Keep-warm" NAMES TWO DIFFERENT THINGS**, and that is a plausible part of why the family was
+  guessed wrong twice: `rc-keepwarm.mjs` (RC session) vs `keepSessionsWarm()` inside `bot.mjs`
+  (rec.gov keepalive). The 08-12 note *"7.9 GB in 46 seconds of the keep-warm starting"* does not
+  say which, and they are different profile families.
+- **So `bot.mjs` samples every 2 min and POSTs it** on the feed POST it already makes →
+  `chromium_memory_samples`. Readout `scripts/chromium-memory-readout.mts`. Hosted in `bot.mjs`
+  because the RC pair have died twice while it stayed healthy (08-11; the 08-14 REPL morning).
+  **Server-side and not a log file, by measurement:** on 08-12 the keep-warm's log FROZE through
+  Windows file locking while the process went on reporting to the server perfectly.
+- **The verdict pairs on `max_pid`.** A rec.gov family total going 0 → 900 MB is usually a browser
+  that did not exist in the first sample; subtracting those is a coincidence with units on it, and
+  without the rule it would report a leak on every keepalive pass for ever. **Refuses a verdict
+  under 10 comparable pairs**, counting pairs it could compare rather than rows fetched.
+- **A GAP IS THE SIGNATURE, NEVER A ZERO.** Sampling spawns PowerShell, and spawning is exactly
+  what fails at 99% commit — the `supervise.ps1` failure IS that failure — so the series ENDS
+  rather than peaking. And "NO LEAK IN THIS WINDOW" never becomes "there is no leak".
+- **No alarm on it, deliberately.** A warn at ~70% COMMIT (while `kill-chrome` still works and the
+  box is still reachable) is the obvious next step and should be decided on the series, not before.
+- **TWO INSTRUMENTS WERE LYING, both the house shape.** `memory`'s per-family rollup kept
+  `@(count, mb)` in a hashtable and threw `op_Addition` once per process on **every run it ever
+  made** — printing `FAMILY rc 0 process(es), 0 MB` over a profile holding 312 MB, while the
+  per-process list above it was correct. `rc 0 MB` reads as the RC family being innocent, on the
+  one line you compare across two readings. And `kill-chrome` called everything it found after its
+  3-second re-check `SURVIVED` — long enough for the supervisor to have opened a NEW browser, so a
+  clean kill plus healthy recovery printed the same words as a kill that reached nothing (the
+  08-12 "7 before, 7 after"; the pids were different every time, i.e. it had worked). It diffs pid
+  sets now. Both fixed by the idiom already working three lines away, not by a second guess.
+
 ### THREE DIAGNOSTICS LIED AT ONCE, AND THE HEARTBEAT WAS RIGHT (2026-08-12)
 I told the owner the RC pair was dead and to go to the box. **It was running the whole time.**
 - **`list-processes` showed only the PowerShell wrappers**, no `node` — by construction, it
