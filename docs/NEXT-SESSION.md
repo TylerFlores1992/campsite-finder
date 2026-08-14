@@ -7,9 +7,38 @@ healthy on `7780c32`. **Delete this file once the leak is diagnosed.***
 
 ## STOP — READ THIS FIRST (added 2026-08-14, later still)
 
-**THE SAMPLER IS STILL NOT ON THE BOX, AND THAT IS THE ONLY THING BLOCKING THE LEAK.**
-`chromium-memory-readout.mts` correctly says `NO DATA`. The box is on `7780c32`;
-the sampler shipped in `a57f6e7`. Nothing can be attributed until it updates.
+### THE BOX UPDATED, THE SERIES STARTED, AND THE SAMPLER'S FIRST ROWS WERE A LIE
+
+The mini-PC reached **`60d9b98`** (owner ran `update.bat`) and samples began arriving every
+two minutes exactly as designed. **Every one of them recorded `rc 0 procs, 0 MB`** — while the
+`memory` command, interleaved with those samples *seconds apart on the same box through a
+byte-identical filter*, reported **NINE Chromium processes on `.rc-bot-profile`**. The commit
+figures in the same rows were correct (`10277 MB` against the command's `10.0 GB`), so
+PowerShell ran and **only the process scan came back empty**.
+
+**The empty scan is not the bug — the ZERO is.** `memory-sample.mjs`'s own header states the
+rule it broke: an absent reading returns nulls, never zeros, because a plausible zero is worse
+than a blank. It had been applied to the `M|` line and not to the scan. That is the same
+half-application that let the sibling `memory` rollup print `FAMILY rc 0 MB` over a profile
+holding 312 MB — **twice now, in the two instruments built to attribute this leak.**
+
+**Fixed and merged, but it is BOT-SIDE, so it needs one more update to take effect:**
+- the family counts start `null`, and a zero is written only when the scan proves it ran;
+- PowerShell emits **`C|<count>` before the loop**, because "the scan found none of ours" and
+  "the scan never completed" were the same evidence and **both are real** (08-14 had a window
+  with genuinely zero of our browsers running). It also **localises the failure**: `C|9` with
+  no `P|` lines means the loop broke; no `C|` at all means PowerShell stopped before it;
+- stderr is read and logged — it was discarded, so the one line explaining the empty scan was
+  thrown away where it was produced.
+
+**WHY the scan returns nothing is NOT established, and is deliberately not guessed here.** The
+filters are identical, so it is something about how the sampler invokes PowerShell rather than
+what it asks. The `C|` line is what will answer it on the next reading — do not theorise ahead
+of it, and note the same failure would be invisible again if anyone reinstates the zeros.
+
+**Until that update lands the series is worthless but not misleading:** with counts at 0 the
+readout reports `NOT ENOUGH DATA` and warns that no `rc` process was observed, which is the
+guard doing its job. **Do not read those rows as evidence about any family.**
 
 **THE ON-DEMAND UPDATE PATH IS BROKEN — do not spend the session pressing "Update now".**
 It was tried twice (20:48Z and 21:08Z). Both times the box claimed the request within
@@ -33,12 +62,19 @@ understood:
 re-spawns the updater every ~15 minutes and each attempt bounces every process on the box.
 Leaving it set would have churned all night.
 
-### The one action that unblocks everything
+### The one action that unblocks everything — STILL ONE MORE UPDATE
 
-**A human runs `update.bat` on the mini-PC**, or the **02:00–05:00 PT quiet window** lands
-it via the scheduled-task path — the path that has always worked. Nothing is queued, so the
-window is open. Once `autocart.bot_version` shows the box past `a57f6e7`, samples arrive
-every two minutes and the readout starts answering.
+**DONE ONCE ALREADY** (box reached `60d9b98`), which is what exposed the false zeros above.
+The sampler fix is bot-side too, so it needs **one more `update.bat`**, or the
+**02:00-05:00 PT quiet window**, which uses the scheduled-task path that has always worked.
+Nothing is queued, so the window is open.
+
+**Confirm with `autocart.bot_version`, never with `applied_note`** — the two describe
+different events. The box must show a commit at or past the sampler fix; then the `C|` line
+answers why the scan was empty.
+
+**Do NOT use "Update now" for this.** That path is the broken one (see below); the manual and
+timer paths both work.
 
 ### Fixed this session (instruments only — the leak itself is untouched)
 

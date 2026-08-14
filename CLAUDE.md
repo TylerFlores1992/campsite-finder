@@ -1619,6 +1619,30 @@ readings, 312 MB → 264 MB, about **−9 MB/min**, COMMIT 16% of 57.7 GB.
     about the rule — same lesson as `site-mute.test.mts` failing at baseline.
 - **No alarm on it, deliberately.** A warn at ~70% COMMIT (while `kill-chrome` still works and the
   box is still reachable) is the obvious next step and should be decided on the series, not before.
+- **THE SAMPLER RECORDED A ZERO IT HAD NOT MEASURED, ON ITS FIRST DAY (2026-08-14).** The box
+  reached `60d9b98` and samples began every two minutes exactly as designed — **and every row
+  said `rc 0 procs, 0 MB` while the `memory` command, interleaved seconds apart on the same box
+  through a BYTE-IDENTICAL filter, reported NINE Chromium on `.rc-bot-profile`.** The commit
+  figures in those same rows were right (`10277 MB` against the command's `10.0 GB`), so
+  PowerShell ran and only the process scan came back empty.
+  **The empty scan is not the bug; the ZERO is.** `memory-sample.mjs`'s own header states the
+  rule it broke — an absent reading returns nulls, never zeros — and it had been applied to the
+  `M|` line and not to the scan. That is the SAME half-application as the `op_Addition` rollup
+  below: **twice, in the two instruments built to attribute this one leak.**
+  - Counts start `null`; a zero is written only when the scan proves it ran.
+  - PowerShell emits **`C|<count>` BEFORE the loop**, because "found none of ours" and "never
+    completed" were the same evidence and **both are real** (08-14 had a window with genuinely
+    zero of our browsers). It also localises the failure: `C|9` with no `P|` means the loop
+    broke, no `C|` at all means PowerShell stopped before it.
+  - **stderr is read and logged.** It was discarded, so the one line explaining the empty scan
+    was thrown away at the point it was produced.
+  - **WHY the scan returns nothing is NOT established — do not guess it into this file.** The
+    filters are identical, so it is about how the sampler invokes PowerShell rather than what
+    it asks. The `C|` line answers it on the next reading.
+  - **Two mutations survived the first round**: deleting the `C|` line from the PowerShell, and
+    emitting it after the loop. Every parse test feeds `parseSample` a hand-written string, so
+    the parser and the thing producing its input could drift apart silently — and there is no
+    PowerShell on the machine this repo is written from. Guarded mechanically now.
 - **TWO INSTRUMENTS WERE LYING, both the house shape.** `memory`'s per-family rollup kept
   `@(count, mb)` in a hashtable and threw `op_Addition` once per process on **every run it ever
   made** — printing `FAMILY rc 0 process(es), 0 MB` over a profile holding 312 MB, while the
