@@ -99,8 +99,37 @@ test('withSyncClaim does NOT run the body when another machine holds the job', a
 
 test('withSyncClaim releases the claim even when the sync THROWS', async () => {
   // A crashed sync that kept its claim would block the catalog until the TTL expired.
+  //
+  // ── WHY THIS IS NOT A BARE assert.rejects (2026-08-14) ─────────────────────────────
+  // It used to be, and it flaked — failing on `ba63dca`, a commit touching two .md files
+  // and a .ps1, twenty minutes after the identical code passed.
+  //
+  // `claimSyncJob` fails CLOSED on a DB error and returns false, which is correct and must
+  // stay: a doubled catalog sync is the bug this whole module exists to prevent, and a
+  // missed nightly sync costs one day of freshness against a 403 storm. But it means a
+  // transient blip and "another machine holds it" are the same `false`, `withSyncClaim`
+  // then returns without running the body, and `assert.rejects` reports
+  // `Missing expected rejection` — which reads as THE RELEASE IS BROKEN. It is not, and
+  // nothing about that message says so. The same shape as `claimBotCommands` returning []
+  // for both "nobody asked" and "the query threw".
+  //
+  // So the body records that it ran, and THAT is asserted first. The test still fails on a
+  // blip — a green that proved nothing would be worse — but it fails saying which of the
+  // two happened, which is the whole distinction.
   await mutate(`DELETE FROM sync_claims WHERE job = $1`, [JOB]);
-  await assert.rejects(withSyncClaim(JOB, async () => { throw new Error('sync blew up'); }));
+  let ran = 0;
+  const outcome = await withSyncClaim(JOB, async () => {
+    ran++;
+    throw new Error('sync blew up');
+  }).then((v) => v as unknown, (e: unknown) => e);
+
+  assert.equal(ran, 1,
+    'the body never ran, so the claim was not won and the RELEASE WAS NEVER EXERCISED. ' +
+    'That is a transient DB error (claimSyncJob fails closed by design), not a broken ' +
+    'release — re-run it, and do not "fix" the release on the strength of this.');
+  assert.ok(outcome instanceof Error && /sync blew up/.test(outcome.message),
+    `the sync's own error must propagate to the caller, got ${String(outcome)}`);
+
   const rows = await query(`SELECT job FROM sync_claims WHERE job = $1`, [JOB]);
   assert.equal(rows.length, 0, 'a throwing sync must still release');
 });
