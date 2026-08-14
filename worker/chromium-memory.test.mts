@@ -15,7 +15,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { classifyProfile, parseSample, createSampler, SAMPLE_EVERY_MS } from '../scripts/auto-cart-bot/memory-sample.mjs';
+import {
+  classifyProfile, parseSample, createSampler, takeSample, SAMPLE_EVERY_MS,
+} from '../scripts/auto-cart-bot/memory-sample.mjs';
 import {
   readMemoryVerdict, MIN_COMPARABLE_PAIRS, LEAK_MB_PER_MIN, BIG_PROCESS_MB,
   type MemorySampleRow,
@@ -360,4 +362,112 @@ test('the peak is the LARGEST process seen, not the most recent one', () => {
   assert.equal(v.peak!.family, 'recgov');
   assert.match(v.verdict, /OVERSIZED PROCESS/,
     'a spike that has since been killed is still the attribution');
+});
+
+/**
+ * ── THE SCAN THAT DID NOT REPORT ────────────────────────────────────────────────────────────
+ * The sampler's first day in production, 2026-08-14: every row recorded `rc 0 procs, 0 MB`
+ * while the `memory` command — interleaved with it, seconds apart, on the same box, through a
+ * BYTE-IDENTICAL filter — reported NINE Chromium processes on `.rc-bot-profile`. The commit
+ * figures in the same rows were correct, so PowerShell ran and only the process scan came back
+ * empty.
+ *
+ * The zero is the bug, not the empty scan. This file's own header says an absent reading
+ * returns nulls rather than zeros because a plausible zero is worse than a blank — and that
+ * rule had been applied to the `M|` line and not to the scan. Exactly the half-application
+ * that let the sibling `memory` rollup print `FAMILY rc 0 MB` over a profile holding 312 MB.
+ */
+test('a scan that never reports is null, not zero', () => {
+  // Commit figures present, no C| and no P| — the shape observed in production.
+  const s = parseSample('M|10277|59134|8629');
+  assert.equal(s.commitUsedMb, 10277, 'the half that worked must still be recorded');
+  assert.equal(s.scanned, false);
+  assert.equal(s.rcProcs, null, 'NOT 0 — nothing was learned about the rc family');
+  assert.equal(s.rcMb, null);
+  assert.equal(s.recgovProcs, null);
+  assert.equal(s.otherProcs, null);
+});
+
+test('a scan that reports zero IS zero — that is a real reading', () => {
+  // 2026-08-14 genuinely had a window with none of our browsers running (CHROME 0 = OURS 0).
+  // Collapsing that into "unknown" would be the opposite error and would erase real evidence.
+  const s = parseSample('M|9000|57700|8000\nC|0');
+  assert.equal(s.scanned, true);
+  assert.equal(s.rcProcs, 0, 'the scan ran and found none: a measured zero');
+  assert.equal(s.recgovProcs, 0);
+  assert.equal(s.otherProcs, 0);
+});
+
+test('C| baselines every family, so an absent family reads as measured zero', () => {
+  const s = parseSample([
+    'M|9000|57700|8000',
+    'C|1',
+    String.raw`P|4242|900|C:\Users\Tyler\campsite-finder\scripts\auto-cart-bot\.rc-bot-profile`,
+  ].join('\n'));
+  assert.equal(s.rcProcs, 1);
+  assert.equal(s.rcMb, 900);
+  // The scan ran and found no rec.gov browser. That is evidence, and must not read as a gap.
+  assert.equal(s.recgovProcs, 0);
+  assert.equal(s.recgovMb, 0);
+});
+
+test('a P| without its C| still counts — losing a real process is the worse mistake', () => {
+  const s = parseSample([
+    'M|9000|57700|8000',
+    String.raw`P|4242|7900|C:\Users\Tyler\campsite-finder\scripts\auto-cart-bot\profiles\user_42`,
+  ].join('\n'));
+  assert.equal(s.recgovProcs, 1);
+  assert.equal(s.recgovMb, 7900);
+  assert.equal(s.maxMb, 7900);
+  // The families the scan said nothing about stay unknown rather than being invented as 0.
+  assert.equal(s.rcProcs, null);
+});
+
+test('takeSample says out loud when the scan did not report', async () => {
+  // THE REASON WAS BEING THROWN AWAY AT THE POINT IT WAS PRODUCED. stderr was discarded, so
+  // when the scan came back empty on a box with nine of our browsers running, the one line
+  // that could explain it was dropped and a `0` was stored instead.
+  const said: string[] = [];
+  const sample = await takeSample({
+    platform: 'win32',
+    log: (m: string) => said.push(m),
+    exec: ((_f: unknown, _a: unknown, _o: unknown, cb: Function) =>
+      cb(null, 'M|10277|59134|8629\n', 'Get-CimInstance : Access denied')) as never,
+  });
+  assert.equal(sample!.scanned, false);
+  assert.equal(said.length, 1, 'it must report the failed scan exactly once');
+  assert.match(said[0]!, /scan did not report/);
+  assert.match(said[0]!, /Access denied/, "and must carry PowerShell's own words");
+});
+
+test('a healthy scan says nothing', async () => {
+  const said: string[] = [];
+  const sample = await takeSample({
+    platform: 'win32',
+    log: (m: string) => said.push(m),
+    exec: ((_f: unknown, _a: unknown, _o: unknown, cb: Function) =>
+      cb(null, 'M|9000|57700|8000\nC|0\n', '')) as never,
+  });
+  assert.equal(sample!.scanned, true);
+  assert.deepEqual(said, [], 'a working instrument must not narrate');
+});
+
+test('the PowerShell emits the scan count, and BEFORE the per-process loop', () => {
+  // WRITTEN AFTER A MUTATION SURVIVED. Deleting the `C|` line from the PowerShell broke
+  // nothing in the suite, because every parse test feeds `parseSample` a hand-written string —
+  // so the parser and the thing that produces its input could drift apart silently. There is
+  // no PowerShell on the machine this repo is written from, which is exactly why the last
+  // three PowerShell bugs here ran broken for weeks; the guard has to be mechanical.
+  const src = readFileSync('scripts/auto-cart-bot/memory-sample.mjs', 'utf8');
+  const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+  const count = code.indexOf("'C|{0}' -f $ours.Count");
+  assert.ok(count > 0, 'the PowerShell must report how many processes the scan matched');
+
+  // ORDER IS THE POINT. Emitted before the loop, a `C|9` with no `P|` lines localises the
+  // failure to the loop; emitted after, a loop that throws takes the count down with it and
+  // the reading is ambiguous again — which is the bug this line exists to end.
+  const loop = code.indexOf('foreach ($o in $ours)');
+  assert.ok(loop > 0, 'the per-process loop must still be there');
+  assert.ok(count < loop, 'the count must be emitted BEFORE the loop that can fail');
 });

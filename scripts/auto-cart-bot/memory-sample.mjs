@@ -86,6 +86,18 @@ const PS = [
   '$ramFree = [double]$os.FreePhysicalMemory / 1024;',
   "'M|{0}|{1}|{2}' -f [int]($cLim - $cFree), [int]$cLim, [int]$ramFree;",
   "$ours = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -match '--user-data-dir=\\S*(\\.rc-bot-profile|auto-cart-bot)' });",
+  // HOW MANY THE SCAN MATCHED, emitted BEFORE the per-process loop.
+  //
+  // Without this, "the scan completed and found no Chromium of ours" and "the scan never
+  // completed" are the same evidence: no `P|` lines. Both are real - 2026-08-14 had a reading
+  // with genuinely zero of our browsers running - so the absence cannot be interpreted, and
+  // `parseSample` was resolving the ambiguity by assuming the happy one and recording 0.
+  //
+  // It also localises the failure. A `C|9` with no `P|` lines means the loop is what broke; no
+  // `C|` at all means PowerShell stopped before reaching it. Same idea as the RcReport channel
+  // and as `--once` being made to go through `withRC`: an instrument that cannot say which of
+  // two things happened is only half an instrument.
+  "'C|{0}' -f $ours.Count;",
   'foreach ($o in $ours) {',
   "  $dir = ''; if ($o.CommandLine -match '--user-data-dir=(\\S+)') { $dir = $Matches[1] };",
   // Chrome re-quotes the path for its renderer/GPU/utility children, so most processes report
@@ -109,14 +121,36 @@ const PS = [
  * lesson of the family rollup printing `rc 0 MB` while the RC profile held 312 MB.
  */
 export function parseSample(text) {
+  // THE FAMILY COUNTS START AS null, NOT 0 (2026-08-14).
+  //
+  // They started at 0, and that made the sampler lie on its first day in production. Every
+  // sample recorded `rc 0 procs, 0 MB` while the `memory` command - interleaved with it,
+  // seconds apart, on the same box, through a BYTE-IDENTICAL filter - was reporting NINE
+  // Chromium processes on `.rc-bot-profile`. The commit figures in the same rows were correct,
+  // so PowerShell was running and only the process scan was coming back empty.
+  //
+  // The header of this file already states the rule those zeros broke: an absent reading
+  // returns nulls rather than zeros, because a plausible zero is worse than a blank. It was
+  // applied to the `M|` line and not to the scan - the same half-application that let the
+  // sibling `memory` rollup print `FAMILY rc 0 MB` over a profile holding 312 MB.
+  //
+  // A zero is only written when the `C|` line proves the scan actually ran. See PS above.
   const out = {
     commitUsedMb: null,
     commitLimitMb: null,
     ramFreeMb: null,
-    rcProcs: 0, rcMb: 0,
-    recgovProcs: 0, recgovMb: 0,
-    otherProcs: 0, otherMb: 0,
+    rcProcs: null, rcMb: null,
+    recgovProcs: null, recgovMb: null,
+    otherProcs: null, otherMb: null,
     maxPid: null, maxMb: null, maxFamily: null,
+    /**
+     * Did the scan report a count? Only then is "no processes" a reading rather than a gap.
+     *
+     * NOT a column - `recordMemorySample` reads named fields and ignores this. It exists so
+     * the caller can say out loud that the scan did not report, which is the difference
+     * between a quiet box and a broken instrument.
+     */
+    scanned: false,
   };
   const num = (s) => {
     const n = Number(s);
@@ -130,6 +164,16 @@ export function parseSample(text) {
       out.commitUsedMb = num(used);
       out.commitLimitMb = num(limit);
       out.ramFreeMb = num(ramFree);
+    } else if (line.startsWith('C|')) {
+      // THE SCAN COMPLETED. From here a family with no processes is a measured zero rather
+      // than an absence, so the counters are baselined - including for families the scan
+      // legitimately found none of, which is the common and healthy case.
+      if (num(line.split('|')[1]) === null) continue;
+      out.scanned = true;
+      for (const f of FAMILIES) {
+        out[`${f}Procs`] ??= 0;
+        out[`${f}Mb`] ??= 0;
+      }
     } else if (line.startsWith('P|')) {
       // The directory may itself be empty if the match failed; split with a limit so a path
       // is never truncated at a character it cannot contain anyway.
@@ -139,8 +183,10 @@ export function parseSample(text) {
       const dir = parts.slice(3).join('|');
       if (pid === null || mb === null) continue;
       const fam = classifyProfile(dir);
-      out[`${fam}Procs`] += 1;
-      out[`${fam}Mb`] += mb;
+      // A `P|` without its `C|` still counts - losing a real process because the count line
+      // went missing would be the opposite mistake, and worse.
+      out[`${fam}Procs`] = (out[`${fam}Procs`] ?? 0) + 1;
+      out[`${fam}Mb`] = (out[`${fam}Mb`] ?? 0) + mb;
       // The largest single process, because the 08-12 event was ONE process at 9.4 GB and a
       // family total cannot tell that apart from thirty ordinary ones.
       if (out.maxMb === null || mb > out.maxMb) {
@@ -153,21 +199,43 @@ export function parseSample(text) {
   return out;
 }
 
-/** Take one reading. Resolves to null if PowerShell could not be run at all. */
-export async function takeSample({ exec = execFile, platform = process.platform } = {}) {
+/**
+ * Take one reading. Resolves to null if PowerShell could not be run at all.
+ *
+ * STDERR IS READ NOW, and only to be logged (2026-08-14). It was discarded, so when the
+ * process scan came back empty on a box with nine of our browsers running, the reason was
+ * thrown away at the point it was produced - and the row that got stored said `0`. A
+ * diagnostic that drops the one line explaining itself is the failure this whole table
+ * exists to stop happening elsewhere.
+ */
+/**
+ * @param {{ exec?: Function, platform?: string, log?: (msg: string) => void }} [opts]
+ */
+export async function takeSample(opts = {}) {
+  const { exec = execFile, platform = process.platform, log = () => {} } = opts;
   if (platform !== 'win32') return null;
-  const text = await new Promise((resolve) => {
+  const { text, errText } = await new Promise((resolve) => {
     exec(
       'powershell',
       ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', PS],
       { timeout: 20_000, maxBuffer: 2 * 1024 * 1024 },
       // A failure to read memory must never become a failure of the bot. An empty string
       // parses to nulls, which the readout shows as "not reported".
-      (err, stdout) => resolve(err && !stdout ? '' : String(stdout || '')),
+      (err, stdout, stderr) => resolve({
+        text: err && !stdout ? '' : String(stdout || ''),
+        errText: `${String(stderr || '')}${err ? ` [${err.message}]` : ''}`.trim(),
+      }),
     );
   });
   if (!text.includes('M|')) return null;
-  return parseSample(text);
+  const sample = parseSample(text);
+  // SAY SO. `scanned === false` means the reading carries commit figures and no process
+  // evidence at all, which the row now records as null rather than as zero - and this is the
+  // only place the reason is still in hand.
+  if (!sample.scanned) {
+    log(`  (memory sample: the Chromium scan did not report${errText ? ` - ${errText.slice(0, 300)}` : ' and PowerShell printed nothing'})`);
+  }
+  return sample;
 }
 
 /**
@@ -179,7 +247,7 @@ export async function takeSample({ exec = execFile, platform = process.platform 
  * ITS limit resetting is an RC login from an address that has already been blocked once.
  * Match the guard to what a mistake costs.
  *
- * @typedef {Record<string, number | string | null>} MemorySample
+ * @typedef {Record<string, number | string | boolean | null>} MemorySample
  * @param {{
  *   post: (sample: MemorySample) => Promise<unknown>,
  *   log?: (msg: string) => void,
@@ -187,7 +255,10 @@ export async function takeSample({ exec = execFile, platform = process.platform 
  *   take?: () => Promise<MemorySample | null>,
  * }} opts
  */
-export function createSampler({ post, log = () => {}, now = () => Date.now(), take = takeSample }) {
+export function createSampler({ post, log = () => {}, now = () => Date.now(), take }) {
+  // The default reader gets THIS sampler's log, so a scan that does not report has somewhere
+  // to say so. Tests pass their own `take` and are unaffected.
+  const readOne = take ?? (() => takeSample({ log }));
   // -Infinity, not 0, so the FIRST tick always samples whatever the clock reads. With 0 the
   // behaviour depended on the epoch being far from zero, which is true of Date.now() and of
   // nothing else - so the series would have started an interval late, or not at all under a
@@ -199,7 +270,7 @@ export function createSampler({ post, log = () => {}, now = () => Date.now(), ta
     inFlight = true;
     last = now();
     try {
-      const sample = await take();
+      const sample = await readOne();
       if (!sample) return false;
       await post(sample);
       return true;
