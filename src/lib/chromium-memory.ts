@@ -128,6 +128,12 @@ export interface MemoryVerdict {
   /** Families that were observed at all. A family never seen has been RULED OUT OF NOTHING. */
   familiesSeen: string[];
   worst: GrowthFinding | null;
+  /** How long since the NEWEST sample. A trailing gap is a gap; see `seriesEnded`. */
+  lastSampleAgeMin: number | null;
+  /** COMMIT% at the last sample — what the box was doing when it stopped reporting. */
+  lastCommitPct: number | null;
+  /** The series has gone silent. This is the crash shape, and it has no internal gap. */
+  seriesEnded: boolean;
   verdict: string;
 }
 
@@ -145,6 +151,22 @@ export const MIN_COMPARABLE_PAIRS = 10;
 export const LEAK_MB_PER_MIN = 100;
 
 /**
+ * How long the series may be silent before it counts as ENDED rather than merely current.
+ *
+ * Five sample intervals. One or two missed samples is an ordinary PowerShell hiccup and must
+ * not read as a crash — the cost of crying wolf here is that the next real one gets skimmed,
+ * which this log has already paid three times.
+ */
+export const SERIES_SILENT_MIN = 10;
+
+/**
+ * COMMIT% at or above which a series that stops looks like the box going down rather than the
+ * bot being switched off. 70% is where `kill-chrome` still works and the box is still
+ * reachable — the window in which a human could still act.
+ */
+export const COMMIT_HOT_PCT = 70;
+
+/**
  * Read a verdict out of the series.
  *
  * ── WHY IT PAIRS ON `max_pid` ──────────────────────────────────────────────────────────────
@@ -158,8 +180,21 @@ export const LEAK_MB_PER_MIN = 100;
  * unlikely, and the failure it would cause is one overstated rate in a series, not a wrong
  * family — so it is accepted rather than defended against with machinery that would itself
  * need testing.
+ *
+ * ── WHY THE TRAILING GAP IS COMPUTED SEPARATELY ────────────────────────────────────────────
+ * `worstGapMin` is the longest hole BETWEEN two samples, and for a while that was the whole
+ * gap story — which missed the one shape this table was built to catch. Sampling spawns
+ * PowerShell, and spawning is exactly what fails at 99% commit, so the box does not record a
+ * peak and then recover: THE SERIES STOPS. A series that stops has no internal gap at all, so
+ * a box that died mid-ramp at 03:00 and a box sitting quietly idle produced the identical
+ * `NO LEAK IN THIS WINDOW` — a failure and a success printing the same thing, in the
+ * instrument built to tell them apart.
+ *
+ * `now` is injected so this stays a pure function of its inputs; the readout passes nothing.
  */
-export function readMemoryVerdict(rows: MemorySampleRow[]): MemoryVerdict {
+export function readMemoryVerdict(
+  rows: MemorySampleRow[], { now = Date.now() }: { now?: number } = {},
+): MemoryVerdict {
   const familiesSeen = new Set<string>();
   for (const r of rows) {
     if ((r.rc_procs ?? 0) > 0) familiesSeen.add('rc');
@@ -204,6 +239,24 @@ export function readMemoryVerdict(rows: MemorySampleRow[]): MemoryVerdict {
     if (peakCommitPct === null || pct > peakCommitPct) peakCommitPct = pct;
   }
 
+  // THE TRAILING GAP. Scanned backwards for the last row that actually reported a commit
+  // figure: a null reading is "we could not tell", and letting it erase the last real one
+  // would throw away the single most useful fact about how the series ended.
+  let lastSampleAgeMin: number | null = null;
+  let lastCommitPct: number | null = null;
+  const newest = rows[rows.length - 1];
+  if (newest) {
+    const t = Date.parse(newest.taken_at);
+    if (Number.isFinite(t)) lastSampleAgeMin = Math.max(0, (now - t) / 60_000);
+  }
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i]!;
+    if (r.commit_used_mb === null || !r.commit_limit_mb) continue;
+    lastCommitPct = (Number(r.commit_used_mb) / Number(r.commit_limit_mb)) * 100;
+    break;
+  }
+  const seriesEnded = lastSampleAgeMin !== null && lastSampleAgeMin > SERIES_SILENT_MIN;
+
   const enough = comparablePairs >= MIN_COMPARABLE_PAIRS;
   let verdict: string;
   if (rows.length === 0) {
@@ -223,6 +276,29 @@ export function readMemoryVerdict(rows: MemorySampleRow[]): MemoryVerdict {
       'it means the window did not contain one.';
   }
 
+  // ADDITIVE, NEVER A REPLACEMENT. "It climbed AND THEN the series stopped" is the strongest
+  // reading this table can produce, and a branch that overwrote the growth verdict with the
+  // silence would throw away the half that names the family.
+  if (seriesEnded && lastSampleAgeMin !== null) {
+    const hot = lastCommitPct !== null && lastCommitPct >= COMMIT_HOT_PCT;
+    const commitSays = lastCommitPct === null
+      ? 'the last sample reported no commit figure'
+      : `last COMMIT ${Math.round(lastCommitPct)}%`;
+    verdict += ` — AND THE SERIES HAS STOPPED: nothing sampled for ` +
+      `${Math.round(lastSampleAgeMin)} min (${commitSays}). ` +
+      (hot
+        // At high commit, spawning is the first thing to fail — and taking a sample IS a
+        // spawn. So the series ending here is not an absence of data, it is the reading.
+        ? 'It stopped while commit was already high, which is what the crash looks like from ' +
+          'here: sampling spawns PowerShell, and spawning is what fails first. Treat the end ' +
+          'of the series as where the box got to, NOT as a quiet box.'
+        // Do not cry wolf. A box switched off, a bot stopped for an update, and a crash all
+        // end the series; only the commit figure tells them apart, and at a normal figure the
+        // dull explanation is the likely one.
+        : 'Commit was NOT high at the last reading, so the likelier cause is the bot being ' +
+          'stopped (an update, a reboot, the box switched off) rather than the leak.');
+  }
+
   return {
     samples: rows.length,
     comparablePairs,
@@ -231,6 +307,9 @@ export function readMemoryVerdict(rows: MemorySampleRow[]): MemoryVerdict {
     peakCommitPct,
     familiesSeen: [...familiesSeen],
     worst,
+    lastSampleAgeMin,
+    lastCommitPct,
+    seriesEnded,
     verdict,
   };
 }

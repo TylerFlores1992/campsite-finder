@@ -64,6 +64,19 @@ if (v.worstGapMin > 10) {
   console.log('    peaking. Check what the box was doing either side of the gap.');
 }
 
+// AND THE GAP AT THE END, which for a while was the one shape this could not see. A series
+// that stops has no INTERNAL gap, so a box that died mid-ramp printed the same line as a box
+// sitting quietly idle — a failure and a success looking identical, in the instrument built to
+// separate them. `lastCommitPct` is what distinguishes a crash from a bot that was stopped.
+if (v.seriesEnded && v.lastSampleAgeMin !== null) {
+  console.log(`\n  ⚠ THE SERIES HAS STOPPED — nothing sampled for ${Math.round(v.lastSampleAgeMin)} min.`);
+  console.log(`    Last COMMIT reading: ${v.lastCommitPct === null ? 'not reported' : `${v.lastCommitPct.toFixed(0)}%`}`);
+  console.log('    Sampling spawns PowerShell, and spawning is the first thing that fails at');
+  console.log('    high commit — so the END of the series is where the box got to. Read it as a');
+  console.log('    reading, never as zero. At a NORMAL commit figure the dull explanation (the');
+  console.log('    bot stopped, an update, the box off) is the likely one.');
+}
+
 if (v.worst) {
   const w = v.worst;
   console.log(`\nSteepest climb on one process:`);

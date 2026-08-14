@@ -37,6 +37,19 @@ function row(over: Partial<MemorySampleRow> & { taken_at: string }): MemorySampl
 /** n samples two minutes apart, from a fixed start. */
 const at = (i: number) => new Date(Date.UTC(2026, 7, 14, 12, 0, 0) + i * 2 * 60_000).toISOString();
 
+/**
+ * "Now" for a case that is NOT about the series having stopped — one minute after its last
+ * sample, i.e. a series that is still running.
+ *
+ * PINNED RATHER THAN LEFT TO `Date.now()`. The fixtures carry fixed 2026-08-14 dates, so a
+ * default of the real clock would make every one of these a series that stopped months ago,
+ * and each test would then be asserting against a verdict with the trailing-gap sentence
+ * stapled to it — passing today, for a reason that has nothing to do with what it checks, and
+ * drifting as the wall clock moves. That is the `sync-claim` flake shape, bought cheaply.
+ */
+const justAfter = (rows: MemorySampleRow[]) =>
+  Date.parse(rows[rows.length - 1]!.taken_at) + 60_000;
+
 test('the family classifier puts the RC profile in rc, not rec.gov', () => {
   // ORDER IS THE BUG. `.rc-bot-profile` lives INSIDE the directory the rec.gov test matches,
   // so a classifier that checks `auto-cart-bot` first files every RC process under rec.gov —
@@ -127,7 +140,7 @@ test('the sampler throttles, and a failure never escapes it', async () => {
 test('a verdict is refused until enough pairs can actually be compared', () => {
   // Same discipline as MIN_RENEWAL_TESTS: rows fetched is not evidence gathered.
   const rows = Array.from({ length: 4 }, (_, i) => row({ taken_at: at(i) }));
-  const v = readMemoryVerdict(rows);
+  const v = readMemoryVerdict(rows, { now: justAfter(rows) });
   assert.equal(v.enough, false);
   assert.match(v.verdict, /NOT ENOUGH DATA/);
   assert.ok(v.comparablePairs < MIN_COMPARABLE_PAIRS);
@@ -138,7 +151,7 @@ test('a family that never appeared is reported as unobserved, not as clean', () 
   // browser existed at any point, and the result was read as evidence about the leak. It could
   // not be. A family with no processes has been ruled out of nothing.
   const rows = Array.from({ length: 20 }, (_, i) => row({ taken_at: at(i) }));
-  const v = readMemoryVerdict(rows);
+  const v = readMemoryVerdict(rows, { now: justAfter(rows) });
   assert.deepEqual(v.familiesSeen, ['rc']);
   assert.ok(!v.familiesSeen.includes('recgov'));
 });
@@ -155,7 +168,7 @@ test('growth is only counted between two samples of the SAME process', () => {
     // A DIFFERENT pid: a new browser, not growth. Must contribute no rate at all.
     row({ taken_at: at(1), max_pid: 222, max_mb: 4000, max_family: 'recgov' }),
   ];
-  const v = readMemoryVerdict(rows);
+  const v = readMemoryVerdict(rows, { now: justAfter(rows) });
   assert.equal(v.comparablePairs, 0, 'two different processes are not a pair');
   assert.equal(v.worst, null, 'and must produce no growth finding');
 });
@@ -171,7 +184,7 @@ test('a real climb on one pid is found, named, and called a leak', () => {
     max_mb: 500 + i * 800,
     max_family: 'recgov',
   }));
-  const v = readMemoryVerdict(rows);
+  const v = readMemoryVerdict(rows, { now: justAfter(rows) });
   assert.equal(v.enough, true);
   assert.ok(v.worst, 'a climb this steep must be found');
   assert.equal(v.worst!.family, 'recgov');
@@ -189,7 +202,7 @@ test('a quiet window is never reported as "there is no leak"', () => {
   const rows = Array.from({ length: 20 }, (_, i) => row({
     taken_at: at(i), max_pid: 100, max_mb: 300 - i, // flat-to-shrinking, like the real reading
   }));
-  const v = readMemoryVerdict(rows);
+  const v = readMemoryVerdict(rows, { now: justAfter(rows) });
   assert.equal(v.enough, true);
   assert.match(v.verdict, /NO LEAK IN THIS WINDOW/);
   assert.match(v.verdict, /does NOT mean there is no leak/);
@@ -203,6 +216,75 @@ test('a hole in the series is measured, because that is where a crash looks like
     row({ taken_at: at(0) }),
     row({ taken_at: new Date(Date.parse(at(0)) + 47 * 60_000).toISOString() }),
   ];
-  const v = readMemoryVerdict(rows);
+  const v = readMemoryVerdict(rows, { now: justAfter(rows) });
   assert.equal(Math.round(v.worstGapMin), 47);
+});
+
+/**
+ * ── THE GAP AT THE END ──────────────────────────────────────────────────────────────────────
+ * `worstGapMin` measures the longest hole BETWEEN two samples, and for a while that was the
+ * whole gap story. It missed the one shape this table was built to catch.
+ *
+ * Sampling spawns PowerShell, and spawning is exactly what fails at 99% commit — the
+ * `supervise.ps1` failure IS this failure. So the box does not record a peak and then recover:
+ * THE SERIES STOPS. And a series that stops has no internal gap at all, so a box that died
+ * mid-ramp at 03:00 and a box sitting quietly idle produced the identical
+ * `NO LEAK IN THIS WINDOW` — a failure and a success printing the same thing, in the very
+ * instrument built to tell them apart.
+ */
+test('a series that STOPS is reported as stopped, not as a quiet window', () => {
+  const rows = Array.from({ length: 20 }, (_, i) => row({
+    taken_at: at(i), max_pid: 100, max_mb: 300, commit_used_mb: 52000, // 90% of 57700
+  }));
+  // Three hours after the last sample: the box went silent and never came back.
+  const v = readMemoryVerdict(rows, { now: Date.parse(at(19)) + 180 * 60_000 });
+
+  assert.equal(v.seriesEnded, true);
+  assert.equal(Math.round(v.lastSampleAgeMin!), 180);
+  assert.equal(Math.round(v.lastCommitPct!), 90);
+  // There is NO internal gap here — every sample is two minutes apart. That is the point: the
+  // old worstGapMin could not see this at all.
+  assert.equal(Math.round(v.worstGapMin), 2);
+  assert.match(v.verdict, /THE SERIES HAS STOPPED/);
+  assert.match(v.verdict, /what the crash looks like/);
+});
+
+test('a series that stops at NORMAL commit is not called a crash', () => {
+  // DO NOT CRY WOLF. A box switched off, a bot stopped for an update and a crash all end the
+  // series; only the commit figure tells them apart. Every alarm in this log that was not
+  // carefully justified cried wolf, and the cost is that the next real one gets skimmed.
+  const rows = Array.from({ length: 20 }, (_, i) => row({
+    taken_at: at(i), commit_used_mb: 9000, // ~16%, the healthy 08-14 reading
+  }));
+  const v = readMemoryVerdict(rows, { now: Date.parse(at(19)) + 180 * 60_000 });
+
+  assert.equal(v.seriesEnded, true);
+  assert.match(v.verdict, /THE SERIES HAS STOPPED/);
+  assert.match(v.verdict, /likelier cause is the bot being stopped/);
+  assert.doesNotMatch(v.verdict, /what the crash looks like/,
+    'a normal commit figure must not be dressed up as the crash');
+});
+
+test('the series stopping is ADDITIVE — it never overwrites the family it found', () => {
+  // "It climbed AND THEN the series stopped" is the strongest reading this table can produce:
+  // the ramp names the family and the silence is where it got to. A branch that replaced the
+  // growth verdict with the silence would throw away the half that answers the question.
+  const rows = Array.from({ length: 12 }, (_, i) => row({
+    taken_at: at(i),
+    recgov_procs: 1, recgov_mb: 500 + i * 800,
+    max_pid: 4242, max_mb: 500 + i * 800, max_family: 'recgov',
+    commit_used_mb: 40000 + i * 1000,
+  }));
+  const v = readMemoryVerdict(rows, { now: Date.parse(at(11)) + 60 * 60_000 });
+
+  assert.match(v.verdict, /LEAK OBSERVED/, 'the growth verdict must survive');
+  assert.match(v.verdict, /recgov/, 'and must still name the family');
+  assert.match(v.verdict, /THE SERIES HAS STOPPED/, 'and the silence must be reported too');
+});
+
+test('a series still running is not reported as stopped', () => {
+  const rows = Array.from({ length: 20 }, (_, i) => row({ taken_at: at(i) }));
+  const v = readMemoryVerdict(rows, { now: justAfter(rows) });
+  assert.equal(v.seriesEnded, false);
+  assert.doesNotMatch(v.verdict, /THE SERIES HAS STOPPED/);
 });
