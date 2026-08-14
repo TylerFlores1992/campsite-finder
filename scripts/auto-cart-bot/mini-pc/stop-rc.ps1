@@ -71,14 +71,20 @@ $RC = 'rc-keepwarm\.mjs|rc-hold-runner\.mjs|supervise\.ps1 -Name "?(rc-keepwarm|
 # renderer/GPU/utility children:
 #     parent:  --user-data-dir=C:\...\.rc-bot-profile
 #     child:   --user-data-dir="C:\...\.rc-bot-profile"
-# `[^"]*` cannot cross that opening quote, so it matched the parent and NOTHING else. Every
+# `[^"]*` cannot cross that opening quote, so it matched the parent and NOTHING else - every
 # stop killed the parent and left the children alive, still holding the real Chrome lock on
-# the user-data-dir - so they accumulated (seven were found on one profile), and the next
-# browser to open it got a LOCKED profile and rendered a BLANK PAGE. That is the white
-# ReserveCalifornia page that cost a whole night: not RC, not the WAF, not the profile data,
-# not the token-capture hook. Us, failing to kill our own orphans.
+# the user-data-dir that deleting our own lock file does not touch.
 # `kill-chrome` had it right with `\S*` the whole time, which is why that lever worked when
-# this one did not.
+# this one did not - a difference invisible in either file, decided by one character.
+#
+# THIS IS A REAL BUG AND IT IS *NOT* KNOWN TO BE THE BLANK-PAGE CAUSE. I wrote exactly that
+# claim here an hour after finding it, on the strength of "seven chrome.exe on one profile,
+# two of them unquoted, so two instances". Then `kill-chrome` cleared all seven, the keep-warm
+# reopened ONE browser, and the shape came back IDENTICAL - two unquoted plus five quoted. So
+# seven processes and two unquoted entries are simply what a single healthy Chromium looks
+# like (the parent plus a helper), the orphan-pile reading was wrong, and RC was blank again
+# on a browser seconds old. Fix the kill because it is broken; do not let it inherit a
+# diagnosis it never earned. The blank page is still open - see rc-diag.mjs.
 $RC_BROWSER = '--user-data-dir=\S*\.rc-bot-profile'
 
 function Get-Matching($pattern) {
