@@ -9,6 +9,7 @@ import { buttonClasses } from '@/components/ui/Button';
 import { useIsNativeApp } from '@/lib/native/context';
 import { stayLabel } from '@/lib/hold-labels';
 import { handoffCopy } from '@/lib/claim-copy';
+import { rcHandoffStep, type RcCheck } from '@/lib/claim-gate';
 import { RC_CART_HOLD_MINUTES } from '@/lib/limits';
 
 /**
@@ -113,7 +114,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
    * except the cart — the same shape as `rc-hold-runner --once` going through `withRC` with
    * a no-op callback rather than asserting from above an early return.
    */
-  const [rcCheck, setRcCheck] = useState<'idle' | 'opening' | 'verified' | 'unconfirmed'>('idle');
+  const [rcCheck, setRcCheck] = useState<RcCheck>('idle');
   /** Does THIS binary have an injectable webview? Probed without opening one. */
   const [canInject, setCanInject] = useState(false);
 
@@ -544,6 +545,25 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
   }
 
   if (state.status === 'released' || state.status === 'claimed') {
+    /*
+      STEP ONE BELONGS ON THIS SCREEN TOO — the ordinary flow is not the only way in.
+
+      Reached from the 08:00 redirect, the user has already run `prepareRc` (it is what let
+      them press the release button), so `rcCheck` is still 'verified' and this is exactly
+      the screen it always was. Reached from "Open the hand-off again" on the Watches panel,
+      the component has just mounted: `rcCheck` is 'idle' and there is no RC session in this
+      webview, because nothing on this path ever asked for one.
+
+      "Finish on ReserveCalifornia" runs the precart in that webview. With no session it
+      spends `getToken`'s twelve-second wait on "Reading your session…" and then can only ask
+      the user to sign in on RC's own page — which RC scrolls past its own sign-in control.
+      Same symptom as the morning hold that started all this, same cause: the precart needs a
+      session HERE and nothing on this screen established one.
+
+      No new mechanism. The gate is `rcHandoffStep`, and the way through it is `prepareRc`,
+      both already built for the pre-release screen.
+    */
+    const step = rcHandoffStep(canInject, rcCheck);
     return (
       <Shell>
         <SiteCard
@@ -552,37 +572,58 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
           heading={`${site} is yours to book`}
           tone="done"
         />
-        <p className="mt-4 text-ch-body leading-relaxed text-ch-ink">{copy.afterBody}</p>
-        {/* The LOOP page (see bookingUrlFor), not the park and not the cart. The cart is
-            only populated for desktop users whose extension caught the release; on a
-            phone it is empty, and sending someone to an empty cart to explain a site they
-            are trying to book is the worst of both. The fragment is carried so an
-            extension user who lands here rather than via the auto-redirect still gets the
-            autofill — it is inert everywhere else. */}
-        <a
-          href={rcHandoffUrl({
-            url: bookingUrl.current,
-            unitId: state.unitId,
-            arrivalDate: state.arrivalDate,
-            nights: state.nights,
-          })}
-          onClick={(e) => {
-            // Kept as a real <a> with a real href — middle-click, long-press and "copy
-            // link" all still work, and it degrades if JS is broken. The handler only
-            // takes over when there is something better to do than follow it.
-            e.preventDefault();
-            notePlatform();
-            void openRcHandoff({
-              url: bookingUrl.current,
-              unitId: state.unitId,
-              arrivalDate: state.arrivalDate,
-              nights: state.nights,
-            }, { onReport });
-          }}
-          className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-4' })}
-        >
-          {copy.afterCta}
-        </a>
+        {step === 'finish' ? (
+          <>
+            <p className="mt-4 text-ch-body leading-relaxed text-ch-ink">{copy.afterBody}</p>
+            {/* The LOOP page (see bookingUrlFor), not the park and not the cart. The cart is
+                only populated for desktop users whose extension caught the release; on a
+                phone it is empty, and sending someone to an empty cart to explain a site they
+                are trying to book is the worst of both. The fragment is carried so an
+                extension user who lands here rather than via the auto-redirect still gets the
+                autofill — it is inert everywhere else. */}
+            <a
+              href={rcHandoffUrl({
+                url: bookingUrl.current,
+                unitId: state.unitId,
+                arrivalDate: state.arrivalDate,
+                nights: state.nights,
+              })}
+              onClick={(e) => {
+                // Kept as a real <a> with a real href — middle-click, long-press and "copy
+                // link" all still work, and it degrades if JS is broken. The handler only
+                // takes over when there is something better to do than follow it.
+                e.preventDefault();
+                notePlatform();
+                void openRcHandoff({
+                  url: bookingUrl.current,
+                  unitId: state.unitId,
+                  arrivalDate: state.arrivalDate,
+                  nights: state.nights,
+                }, { onReport });
+              }}
+              className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-4' })}
+            >
+              {copy.afterCta}
+            </a>
+          </>
+        ) : step === 'waiting' ? (
+          <div className="mt-4">
+            {/* No body text. The pre-release version of this says "nothing has been released
+                yet — your site is still ours", which is the one thing that is no longer true
+                here, and a reassurance that is false is worse than none. */}
+            <Step tone="busy" title={copy.waitingTitle} />
+          </div>
+        ) : (
+          <div className="mt-4">
+            <Step tone="todo" title={copy.prepareTitle} body={copy.afterSignInBody} />
+            <button
+              onClick={prepareRc}
+              className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-3' })}
+            >
+              {copy.prepareCta}
+            </button>
+          </div>
+        )}
         <a
           href="https://www.reservecalifornia.com/Customers/ShoppingCart"
           className="mt-3 block text-center text-ch-meta text-ch-muted underline"

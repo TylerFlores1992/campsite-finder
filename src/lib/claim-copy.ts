@@ -46,6 +46,13 @@ export interface HandoffCopy {
   releaseCta: string;
   /** Mid-release, while the bot lets go. */
   releasingBody: string;
+  /**
+   * Step one, arrived at from the OTHER side — a user who reopened a hand-off that had
+   * already released, and so has never signed in inside this webview. Rendered instead of
+   * `afterBody`, so it must not promise a cart: at this point we have not tried one, and the
+   * whole reason this text exists is that we cannot yet.
+   */
+  afterSignInBody: string;
   /** After the release — the only place a cart may be described. */
   afterBody: string;
   afterCta: string;
@@ -73,6 +80,13 @@ export function handoffCopy(canInject: boolean): HandoffCopy {
       releaseCta: "It's mine — hand it over",
       releasingBody:
         'Switch to your ReserveCalifornia tab and book it — we will also send you there if you stay here.',
+      // UNREACHABLE ON THIS BRANCH, and kept honest anyway. `rcHandoffStep` returns 'finish'
+      // whenever there is no injectable webview, because the hand-off then opens the system
+      // browser where the user's own session already lives — there is nothing for us to
+      // establish. The field stays because a copy branch that returns a partial object is how
+      // the wrong one gets rendered later.
+      afterSignInBody:
+        'Sign in to ReserveCalifornia first, then book it — it is open to anyone until you do.',
       afterBody: 'Book it on ReserveCalifornia now — it is open to anyone until you do.',
       afterCta: 'Book it on ReserveCalifornia',
     };
@@ -92,6 +106,12 @@ export function handoffCopy(canInject: boolean): HandoffCopy {
     readyTitle: "Signed in. It's yours whenever you're ready",
     releaseCta: "It's mine — hand it over",
     releasingBody: "Stay on this screen — we'll open ReserveCalifornia the moment it's yours.",
+    // THE REVISIT. The site is already free, so there is no exposure window left to protect
+    // and no urgency to manufacture — the honest thing is to say why we are asking for a
+    // sign-in before sending them on. Deliberately promises nothing about a cart: the precart
+    // has not run, and it is precisely the missing session that stops it running.
+    afterSignInBody:
+      "It's free for anyone now, so grab it. We can't see a ReserveCalifornia sign-in in this app — sign in first and we'll take you straight to the site.",
     // THE SENTENCE THE GUARD EXISTS FOR, and the one two real holds earned. Reachable only
     // with an injectable webview, and only after the release — so it reports what the
     // precart is doing rather than predicting what we might manage. Owner note 6 in

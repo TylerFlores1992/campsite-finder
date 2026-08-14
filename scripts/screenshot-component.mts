@@ -197,6 +197,24 @@ const PRESETS: Record<string, Preset> = {
       export const node = <ClaimFlow holdId="demo" token="demo" />;`,
     frame: 'max-w-md w-full mx-auto',
   },
+  'ch-claim-revisit': {
+    label: 'ClaimFlow — an ALREADY-RELEASED hold reopened in the app (step one, from the other side)',
+    // THE REVISIT. Reached from "Open the hand-off again" on the Watches panel, not from the
+    // 08:00 redirect — so `rcCheck` is 'idle' and there is no RC session in this webview.
+    // The stubbed `cordova.InAppBrowser` is what makes `canInject` true, which is the whole
+    // point: without it this preset renders the plain-browser screen and shows nothing.
+    entry: `import ClaimFlow from '@/components/v2/ClaimFlow';
+      if (typeof window !== 'undefined') {
+        window.cordova = { InAppBrowser: { open() {} }, require: () => ({}) };
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({
+          status: 'released', unitId: '42558', unitName: '#L108',
+          arrivalDate: '2026-09-04', nights: 1,
+          bookingUrl: 'https://www.reservecalifornia.com/park/665/539',
+        }) });
+      }
+      export const node = <ClaimFlow holdId="demo" token="demo" />;`,
+    frame: 'max-w-md w-full mx-auto',
+  },
   'ch-pricing': {
     label: 'PricingSection — signed-out two-plan comparison (the homepage funnel)',
     entry: `import PricingSection from '@/components/v2/PricingSection';

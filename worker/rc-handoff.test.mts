@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { rcFragment, rcHandoffUrl } from '../src/lib/native/rc-handoff';
 import { handoffCopy } from '../src/lib/claim-copy';
+import { rcHandoffStep } from '../src/lib/claim-gate';
 
 test('the fragment matches what the extension actually parses', () => {
   // extension/content-rc.js is the consumer. If the shape here drifts from the regex
@@ -414,6 +415,45 @@ test('the injected claim copy may promise a cart — but only after the release'
     copy.afterBody, /cart icon/i,
     'after the release the copy must name the control that reaches checkout',
   );
+});
+
+test('the precart is never run before a session exists in the webview', () => {
+  // THE REVISIT BUG. `prepareRc` — the in-webview RC sign-in — was wired into the
+  // PRE-RELEASE screen only, which is invisible in the 08:00 flow (sign in, then release,
+  // then redirect) and wrong the moment "Open the hand-off again" made the RELEASED screen
+  // reachable on its own. A user landing there has never signed in inside this webview, so
+  // the precart spends its twelve-second token wait on "Reading your session…" and can only
+  // end by asking them to sign in on RC's own page — with the release already spent.
+  assert.equal(rcHandoffStep(true, 'idle'), 'sign-in', 'a fresh mount must sign in first');
+  assert.equal(rcHandoffStep(true, 'opening'), 'waiting');
+  assert.equal(rcHandoffStep(true, 'verified'), 'finish', 'the ordinary flow is unchanged');
+
+  // UNCONFIRMED IS NOT A REFUSAL, and this is the edge an inline copy of the rule would get
+  // wrong. The webview closed without announcing a token, which may mean no session or may
+  // mean we never got to look; only the first would justify standing between a user and a
+  // site that is already free for anyone. Same rule as `unknown` never being reported as a
+  // dead RC session.
+  assert.equal(rcHandoffStep(true, 'unconfirmed'), 'finish', 'unknown must not become a blocker');
+
+  // NOTHING TO ESTABLISH WITHOUT AN INJECTABLE WEBVIEW. The hand-off then opens the SYSTEM
+  // browser, which already carries the user's own RC session — and a "sign in" button there
+  // would navigate away from this screen and report nothing back, so the gate could never
+  // lift. Every rcCheck must go straight through.
+  for (const check of ['idle', 'opening', 'verified', 'unconfirmed'] as const) {
+    assert.equal(rcHandoffStep(false, check), 'finish', `plain browser must never be gated (${check})`);
+  }
+});
+
+test('the released screen actually uses the gate', () => {
+  // THE FIX PRESENT BUT INERT is the shape that has cost this codebase two commits (6006428
+  // claiming to fix an RC URL while only touching the copy; the poller not passing
+  // `--claimed`). A gate nothing calls passes the test above and changes nothing on a phone,
+  // so read the branch that had the bug and require both halves of the way through it.
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  const released = src.slice(src.indexOf("state.status === 'released'"));
+  assert.ok(released.length > 0, "the released branch must still exist");
+  assert.match(released, /rcHandoffStep\(canInject, rcCheck\)/, 'the released screen must consult the gate');
+  assert.match(released, /onClick=\{prepareRc\}/, 'and must offer the sign-in that lifts it');
 });
 
 test('no cart promise is written inline into the claim screen', () => {
