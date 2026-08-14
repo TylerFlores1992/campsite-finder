@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server';
-import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, recordRehearsal, lastRehearsal, reportCartFailure, nextHoldRelease, holdAtRisk, type HoldRequest } from '@/lib/rc-holds';
+import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, recordRehearsal, lastRehearsal, reportCartFailure, nextHoldRelease, holdAtRisk, beatIsFromRunner, type HoldRequest } from '@/lib/rc-holds';
 import { alarmCall } from '@/lib/notifications/voice';
 import { rcSessionFault, type RcSessionFault } from '@/lib/health-thresholds';
 import { markBotUpdateApplied, noteBotUpdateAttempt, claimBotUpdate } from '@/lib/bot-update';
@@ -71,9 +71,37 @@ export async function GET(req: NextRequest) {
   // whereas a NULL written over a real value destroys the only record we had.
   const commit = req.headers.get('x-bot-commit');
   const commitAt = req.headers.get('x-bot-commit-at');
+
+  // ── ONLY THE RUNNER MAY STAMP THE RUNNER'S HEARTBEAT (2026-08-14) ────────────────────
+  // `beat_at` is the sole evidence behind `rcBotUsable()` and `autocart.rc_runner`, and its
+  // stated meaning is "there is a bot alive that will cart this". It was stamped on EVERY
+  // authorized GET of this feed, and three different processes make one:
+  //
+  //   rc-hold-runner.mjs   every 15s   <- the only one the field is about
+  //   rc-keepwarm.mjs      every 20m   (?rehearsal=1)
+  //   update-guard.mjs     every 5m    (the Windows scheduled task, ?leadSeconds=0)
+  //
+  // So the heartbeat could not go stale while the box had a working scheduled task - which
+  // is always. MEASURED on 2026-08-14: the hold runner was dead for hours and `beat_at`
+  // advanced every 301 seconds, exactly the updater's tick, while the health check read OK
+  // and the poller went on offering "Hold it for me" buttons nothing would honour. That is
+  // precisely the failure `rcBotUsable` was written to prevent, arriving through the
+  // instrument instead of around it.
+  //
+  // THE TEST IS "SAYS IT IS SOMETHING ELSE", NOT "SAYS IT IS THE RUNNER". A runner too old
+  // to send the header must keep stamping, or this change turns a healthy box red the
+  // moment it deploys and stays red until a human runs update.bat - the two-halves-deploy
+  // gap that caused the T-30/T-25 alarm hole on 08-11. Unknown callers therefore stamp, as
+  // they always did; only a caller that positively identifies as NOT the runner is skipped.
+  // The failure direction is the status quo, never a new false alarm.
+  //
+  // The rule itself lives in `beatIsFromRunner` so it can be tested without standing up a
+  // route, and so the two bot-side callers can be pinned against the same constant.
+  const isRunner = beatIsFromRunner(req.headers.get('x-bot-role'));
+
   mutate(
     `UPDATE rc_runner_heartbeat
-        SET beat_at       = NOW(),
+        SET beat_at       = CASE WHEN $3 THEN NOW() ELSE beat_at END,
             bot_commit    = COALESCE($1, bot_commit),
             bot_commit_at = COALESCE($2::timestamptz, bot_commit_at)
       WHERE id = 1`,
@@ -81,7 +109,8 @@ export async function GET(req: NextRequest) {
     // holder of AUTOCART_TOKEN sets them, and a sha is 40 hex characters — anything else is
     // not a sha and is dropped rather than stored and rendered on the admin page.
     [/^[0-9a-f]{7,40}$/i.test(commit ?? '') ? commit : null,
-     commitAt && !Number.isNaN(Date.parse(commitAt)) ? commitAt : null],
+     commitAt && !Number.isNaN(Date.parse(commitAt)) ? commitAt : null,
+     isRunner],
   ).catch(() => {});
 
   // Lead time on purpose: the bot should be mid-request when the site frees, not

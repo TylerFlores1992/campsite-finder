@@ -1285,6 +1285,63 @@ then tried to run `ForEach-Object` as a program.
   to `schtasks /TR`, where it is the documented nesting and where there is no `|` for a
   broken quote to expose.
 
+### `restart-rc` RELAUNCHED THE RC PAIR AS BARE `node` REPLs (2026-08-14)
+The one remote lever for the RC pair has been starting **Node REPLs instead of the bots**,
+and four independent safeguards read that as healthy. Found by reading `restarts.log`, where
+the same `supervise.ps1` logs `starting: $Command` and its two callers disagreed:
+```
+21:46:47 [supervise:rc-keepwarm] starting: node rc-keepwarm.mjs   <- start-all.bat
+21:48:48 [supervise:rc-keepwarm] starting: node                   <- restart-rc.ps1
+```
+- **`Start-Process -ArgumentList @(...)` JOINS WITH SPACES AND QUOTES NOTHING.** The child
+  got `-Command node rc-keepwarm.mjs`, bound `-Command` to `node`, and `supervise.ps1` ran
+  `cmd /c "node"`. `start-all.bat`, `rc-login.bat` and `rc-test-login.bat` were always right
+  because **cmd passes their quotes through verbatim** — `restart-rc.ps1` was the only
+  launcher using the array form, and the only one broken. Fixed by building the whole command
+  line as ONE already-quoted string, which does not depend on how any PowerShell version
+  chooses to join an array. The `-File` path is quoted too: a profile path with a space would
+  break identically and just as silently.
+- **A REPL NEVER EXITS, WHICH IS WHY NOTHING NOTICED.** `supervise.ps1` only speaks when a
+  child exits, so `restarts.log` simply went quiet — indistinguishable from a healthy night.
+  Same shape as `status = 'sent'` meaning only "Twilio returned 2xx".
+- **THE WATCHDOG COULD NOT SEE IT EITHER**, and this is the sharper half. `Get-Missing`
+  matched `rc-keepwarm\.mjs` against every command line — and the *broken supervisor's own*
+  command line ends `-Command node rc-keepwarm.mjs`, so the string was present while nothing
+  was running it. It now excludes `supervise.ps1` processes. **That is the union-count bug it
+  shipped with, in new clothes: healthy by construction in the outage it exists for.**
+- **AND `autocart.rc_runner` STAYED GREEN — see the entry below.**
+- `worker/supervised-launch.test.mts` forbids the array form, requires every `-Command` to be
+  followed by a quoted argument, and pins the watchdog's exclusion. Verified failing against
+  both restored bugs.
+- **`list-processes` carries the tell if you read it closely**: a healthy launch shows
+  `supervise.ps1" -Name "bot" -Command "npm start"` (quotes present), a broken one shows a
+  bare trailing `rc-keepwarm.mjs` with no closing quote.
+
+### THE RUNNER HEARTBEAT WAS KEPT GREEN BY THE UPDATER (2026-08-14)
+`rc_runner_heartbeat.beat_at` is the entire evidence base for `rcBotUsable()` and
+`autocart.rc_runner`, and it claims to mean "the process that carts sites is alive". It was
+stamped on **every authorized GET** of the hold feed — and three processes make one:
+`rc-hold-runner` (15s), `rc-keepwarm` (20m, `?rehearsal=1`), and **`update-guard.mjs` every 5
+minutes from the Windows scheduled task**. So it could not go stale while the box had a
+working task, which is always.
+- **MEASURED, and the number is the proof**: with the runner dead as a REPL, `beat_at`
+  advanced every **301 seconds** — the updater's tick, to the second, not the runner's 15s.
+  Sampled seven times over two minutes rather than inferred from one reading.
+- The cost is not the wrong dashboard: `rcBotUsable` gates the **"Hold it for me" button**,
+  so the poller goes on promising carts nothing will perform — the exact failure that check
+  was written to prevent on 08-11, defeated through its own instrument.
+- **THE RULE IS "SAYS IT IS SOMETHING ELSE", NEVER "PROVED IT IS THE RUNNER"**
+  (`beatIsFromRunner` in `lib/rc-holds.ts`). The server half deploys on push; the bot half
+  waits for `update.bat`. "Only an identified runner counts" would read every healthy box as
+  a dead runner for that whole gap — the two-halves-deploy trap that opened the T−30/T−25
+  alarm hole. An unidentified caller therefore stamps exactly as before; only a caller that
+  positively identifies as NOT the runner is skipped. **The failure direction is the status
+  quo, never a new false alarm.**
+- `bot_commit` stays unconditional — "what code is this box running?" is a different question
+  and the keep-warm and updater are just as entitled to answer it.
+- `worker/runner-heartbeat.test.mts`, verified failing against three regressions including
+  the runner-only rule (which is the tempting version, and the one that cries wolf).
+
 ### THE WATCHDOG ASKED "IS ANYTHING RUNNING?" — RESTARTS THE BOTS, NEVER THE PC
 `mini-pc\watchdog.ps1` + `install-watchdog.bat` (2026-08-14): a Windows Scheduled Task, every
 5 minutes, run by **Windows and not by our code**, so it survives everything short of the
@@ -1332,6 +1389,27 @@ to **21% of 35 GB** and freed ~41 GB — Windows then shrank the lazily-grown pa
   evidence, not by reading regexes.
 - `fix-pagefile` is **not** the fix and would have masked this. Pagefile peak was 0.4 GB
   against 34 GB allocated: commit was going to reservations, not paging.
+- **`memory` CAN ATTRIBUTE IT NOW (2026-08-14), which it could not before.** It reported a
+  count and a total and nothing else, so the leak was unattributable *by construction* — the
+  guessing above was the only option the tool left. It now prints, per Chromium, the
+  **`--user-data-dir` in full** plus pid and private MB, and totals per family. **Order is
+  load-bearing:** `.rc-bot-profile` is tested BEFORE `auto-cart-bot` because it sits inside
+  it, and the general test first would file every RC process under rec.gov — the exact
+  misattribution being fixed. The directory only, never the command line: Chromium argv
+  carries URLs, and a field you would have to filter is better not collected.
+- **AND `kill-chrome recgov` WAS KILLING THE RC PROFILE TOO.** `--user-data-dir=\S*auto-cart-bot`
+  matches `…\auto-cart-bot\.rc-bot-profile`, so the lever you reach for *precisely because*
+  `restart-rc` leaves rec.gov alone would have ended the live RC session. Negative lookahead
+  now, rather than matching the `profiles\` subdirectory, so an overridden `PROFILES_DIR`
+  cannot quietly turn it back into "everything". Having three scopes is only worth something
+  if two of them are survivable at 07:50. `worker/chromium-attribution.test.mts` pins both,
+  verified failing against the restored scope and against the reversed family order.
+- **NOT REPRODUCED THIS SESSION, and the readings say why.** 2026-08-14 05:06Z: COMMIT **13%
+  of 57.7 GB**, `OURS 0`, **`CHROME 0` — no Chromium on the box at all**, because the RC pair
+  were REPLs and never launched one (see the `restart-rc` entry). So there was nothing to
+  measure, and a second reading five minutes later would have measured the same nothing.
+  **Do not read "no leak observed" as "no leak"** — the growth RATE across two readings is
+  still the signature, and it still needs an occurrence.
 
 ### THREE DIAGNOSTICS LIED AT ONCE, AND THE HEARTBEAT WAS RIGHT (2026-08-12)
 I told the owner the RC pair was dead and to go to the box. **It was running the whole time.**

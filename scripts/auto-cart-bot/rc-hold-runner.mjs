@@ -176,6 +176,11 @@ async function feed() {
   const res = await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
     headers: {
       authorization: `Bearer ${TOKEN}`,
+      // THIS is the poll `beat_at` is about, and saying so explicitly is what lets the other
+      // callers of this feed be excluded. Stated rather than assumed: the server still
+      // stamps for an unidentified caller, so an older runner keeps working, but a box
+      // running this code makes the heartbeat mean what it claims to.
+      'x-bot-role': 'rc-hold-runner',
       // Omitted entirely when unknown, rather than sent as a string saying so. An absent
       // header and a header reading "unknown" would both have to be handled server-side,
       // and only one of them cannot be mistaken for a value.

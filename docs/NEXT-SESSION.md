@@ -79,18 +79,30 @@ this one ends with somebody driving to the machine.
 
 ### Where to start
 
-1. **Get an occurrence with evidence.** `memory` reports the top 12 by private bytes and
-   counts our Chromium by the same `--user-data-dir` families `stop-all` kills by. Take a
-   reading, then take another five minutes later — the growth RATE is the signature
-   (~320–395 MB/min in the three sightings), not the absolute number.
+**Step 2 below is DONE — `memory` can attribute it now (2026-08-14).** It printed only a
+count and a total, so the leak was unattributable *by construction*; the two wrong guesses
+were the only thing the tool allowed. It now prints the full `--user-data-dir`, pid and
+private MB per Chromium, and a per-family total. `kill-chrome recgov` was fixed at the same
+time: it matched `auto-cart-bot` and so also matched `…\auto-cart-bot\.rc-bot-profile`, i.e.
+the lever for a runaway rec.gov browser would have killed the RC session.
+Both pinned by `worker/chromium-attribution.test.mts`. **Still needs the box to update.**
+
+**The leak was NOT reproduced.** 2026-08-14 05:06Z read COMMIT **13% of 57.7 GB**, `OURS 0`,
+and **`CHROME 0` — no Chromium on the box at all**, because the RC pair were REPLs and never
+launched one. A second reading would have measured the same nothing. That is an absence of
+evidence, not evidence of absence: take the two readings once the box is genuinely running.
+
+1. **Get an occurrence with evidence.** Take a reading, then another five minutes later — the
+   growth RATE is the signature (~320–395 MB/min in the three sightings), not the absolute
+   number. Pair the two by **pid**, which the reading now prints.
    ```
    # via Admin -> System Health -> Ask the box, or:
    NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-command-probe.mts memory
    ```
-2. **Settle the profile family with the FULL command line**, not a substring. The reading
-   must name the `--user-data-dir` in full. If `memory` cannot show it, that is the first
-   fix — a diagnostic that cannot distinguish the two candidate causes is not yet a
-   diagnostic.
+   Read `CHROME` first: if it is 0 there is nothing to measure and the question is why
+   nothing is running, not where the memory went.
+2. ~~Settle the profile family with the FULL command line.~~ Done — see above. What remains
+   is to *use* it on a live occurrence.
 3. **Then consider whether a periodic recycle is the answer at all.** The RC keep-warm tab is
    resident *on purpose* (a tab open for 8s every 20min renewed nothing — see CLAUDE.md), so
    "just restart it hourly" trades a proven mechanism for an unproven one. If the leak is on
@@ -102,7 +114,9 @@ this one ends with somebody driving to the machine.
 
 - **`restart-rc` deliberately does not touch rec.gov Chromium**, and was right not to. If the
   leak is on a rec.gov profile, the one lever that exists for a runaway browser does not
-  reach the family it came from. `kill-chrome recgov` is the one that does.
+  reach the family it came from. `kill-chrome recgov` is the one that does — **and until the
+  box updates, that scope also kills the RC profile**, so on an un-updated box it costs the
+  session. `kill-chrome rc` was always correctly scoped.
 - **Never kill by image name.** `taskkill /IM chrome.exe /F` closes the browser of whoever is
   sitting at that machine — it is somebody's home PC.
 - **`list-processes` cannot see any Chromium by construction** — it matches our node and
@@ -136,11 +150,17 @@ There is a `mini-pc - Shortcut` on the desktop and an untracked
 `"mini-pc - Shortcut (2).lnk"` inside `scripts/auto-cart-bot/` — **neither of those runs at
 login**, and the second one is loose in the repo working tree. Worth tidying either way.
 
-**This cannot be checked remotely.** `bot_commands` has a fixed allowlist (`tail-log`,
-`list-processes`, `memory`, `kill-chrome`, `git-status`, `disk-free`, `restart-rc`) and
-deliberately no arbitrary shell. Adding a `startup-check` command is itself bot-side code
-needing an update, so for one question it is cheaper to ask the owner to paste the five
-lines above.
+**This cannot be checked remotely, and it was NOT checked on 2026-08-14 — still open.**
+`bot_commands` has a fixed allowlist (`tail-log`, `list-processes`, `memory`, `kill-chrome`,
+`git-status`, `disk-free`, `restart-rc`) and deliberately no arbitrary shell. Adding a
+`startup-check` command is itself bot-side code needing an update, so for one question it is
+cheaper to ask the owner to paste the five lines above. **Ask; do not investigate.**
+
+One thing the 08-14 session DID settle about the reboot tier, from the other direction: a
+reboot tier would not have helped that morning either. Both RC processes were "running" as
+far as Windows was concerned — they were REPLs — so `Get-Missing` saw nothing missing and no
+tier of any kind would have fired. **The gap that morning was detection, not the size of the
+hammer**, which is the same conclusion the 08-12 wedge reaches by a different route.
 
 **IF IT IS CONFIRMED, here is exactly what it does and does not buy.**
 - ✅ It makes a **reboot tier defensible** as a last resort in `watchdog.ps1` — the case where
@@ -159,6 +179,55 @@ lines above.
   "only inside the last-resort branch, and only with the release guard" — **do not simply
   delete it**, or the next careless edit reboots the box mid-release.
 
+## READ FIRST — the RC pair were NOT RUNNING, and every instrument said they were
+
+Found 2026-08-14 while taking the first memory reading. `restart-rc.ps1` relaunches the
+keep-warm and hold runner through `Start-Process -ArgumentList @(...)`, which **joins with
+spaces and quotes nothing** — so `supervise.ps1` bound `-Command` to `node` alone and ran the
+**Node REPL**. Both RC processes sat idle from `2026-08-14 04:48:48Z` onward with two holds
+tapped for that morning's 08:00 release. `maybeAutoLogin` lives inside the keep-warm, so the
+T−30 sign-in was down too — both halves of the 08:00 flow, from one quoting bug.
+
+**Fixed in this branch, plus the three things that hid it.** What is NOT fixed is the box:
+this is bot-side code, so it needs to reach the mini-PC.
+
+- **The immediate lever needs no update at all: `mini-pc\start-all.bat` at the box.** It
+  quotes correctly and always has — it stops everything first, then relaunches properly.
+  `restart-rc` is the one thing NOT to use until the box updates, because it is the bug.
+- **Do not trust `restarts.log` going quiet.** A REPL never exits, and `supervise.ps1` only
+  speaks when a child exits, so silence is what both a healthy night and this look like.
+- **`autocart.rc_runner` cannot fail this way** — `beat_at` was stamped by any authorized GET
+  of the hold feed, and `update-guard.mjs` makes one every 5 minutes. Measured: the heartbeat
+  advanced every **301s** with the runner dead. Fixed server-side (`beatIsFromRunner`), and
+  the rule is deliberately "says it is something else", not "proved it is the runner", so an
+  un-updated box behaves exactly as it does today rather than going red.
+
+### THE BOX'S CHECKOUT IS DIRTY — and the previous handover said it was clean
+`git-status` via `bot_commands`, 2026-08-14 05:08Z:
+```
+HEAD c7ade45 on master
+ M rc-hold-runner.mjs
+ M rc-keepwarm.mjs
+?? "mini-pc - Shortcut (2).lnk"
+```
+**Both RC payload files are modified on the box and nobody knows what is in the diff.** It
+cannot be read remotely — `tail-log` is restricted to `logs/` by name, and `bot_commands` has
+no arbitrary shell. A human at the box running `git diff` is the only way.
+- There is evidence at least one of them was **corrupted** at some point: `logs\rc-keepwarm.log`
+  holds `SyntaxError: Unexpected identifier 'to'` at `rc-keepwarm.mjs:1308` with the source
+  line reading `Welcome to Node.js v24.18.0.` — the Node REPL banner, in the source file, one
+  line past the 1307 that git has. That crash-looped until `supervise.ps1` gave up at
+  21:19:01 on 08-13. It parses now, so it was partially repaired; it is still `M`.
+- **THE TWO UPDATE PATHS DISAGREE ABOUT THIS, and the difference matters.** `update.bat` runs
+  `git pull || goto :fail`, which **refuses outright** on a dirty tree. `auto-update.ps1` runs
+  `git reset --hard`, which **discards the local edits silently**. So "Update now" would fix
+  the box and destroy those changes; the manual path would do neither and look like a hang.
+  Worth knowing this is a candidate explanation for the 08-12 `update.bat` run that "genuinely
+  did not land" and was never explained — candidate, not established, since the tree may have
+  become dirty later.
+- **Look at the diff before choosing.** If the edits are wanted, commit them; if they are the
+  corruption, `git checkout -- rc-keepwarm.mjs rc-hold-runner.mjs` first.
+
 ## Done 2026-08-14 — do not re-do these
 
 - **`rc-login.bat`'s kill had never run.** `\"` is PowerShell's escape and cmd has no
@@ -170,9 +239,13 @@ lines above.
 - **The watchdog checks each payload by name**, and restarts processes only — it never
   reboots. It shipped counting the union, which would have read the outage it was written
   for as healthy.
-- **The box is on `c7ade45` and its checkout is clean.** `autocart.bot_version` read a stale
-  `c682aa8` FAIL only because the runner computes its sha once at startup; a `restart-rc`
-  cleared it. **`git-status` via `bot_commands` is how to check this without a human.**
+- ~~**The box is on `c7ade45` and its checkout is clean.**~~ It is on `c7ade45`, and the
+  checkout is **NOT clean** — see the section above. Left struck through rather than deleted
+  because "clean" was recorded as a fact and then read as one, and the correction is the
+  useful part. `autocart.bot_version` read a stale `c682aa8` FAIL only because the runner
+  computes its sha once at startup; a `restart-rc` cleared it. **`git-status` via
+  `bot_commands` is how to check this without a human** — and it is worth running, because
+  it is the only thing that reports a dirty tree at all.
 
 ## Still open from the previous handover
 

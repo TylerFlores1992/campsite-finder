@@ -392,6 +392,39 @@ export async function recordSessionHealth(
  * owner to sign in by hand over the session that carted a site fifteen minutes later. A
  * missing runner is different: nothing is coming to fix it, and nothing will cart.
  */
+/**
+ * May this caller stamp the hold runner's heartbeat?
+ *
+ * `beat_at` is the entire evidence base for `rcBotUsable()` above and for the
+ * `autocart.rc_runner` health check, and what it claims to mean is "the process that carts
+ * sites is alive". It was stamped on EVERY authorized GET of the hold feed, and three
+ * different processes on the mini-PC make one:
+ *
+ *   rc-hold-runner.mjs   every 15s   <- the only one this field is about
+ *   rc-keepwarm.mjs      every 20m   (?rehearsal=1)
+ *   update-guard.mjs     every 5m    (the Windows scheduled task)
+ *
+ * So the heartbeat could not go stale while the box had a working scheduled task, which is
+ * always. MEASURED on 2026-08-14: the hold runner was dead for hours - relaunched as a bare
+ * `node` REPL by a quoting bug in restart-rc.ps1 - and `beat_at` advanced every 301 seconds,
+ * exactly the updater's tick. `autocart.rc_runner` read OK throughout, and the poller went
+ * on offering "Hold it for me" buttons that nothing would honour. That is the precise
+ * failure rcBotUsable was written to prevent, defeated through its own instrument.
+ *
+ * THE TEST IS "SAYS IT IS SOMETHING ELSE", NOT "SAYS IT IS THE RUNNER, and the asymmetry is
+ * the whole design. A runner too old to send the header must keep stamping: the server half
+ * of this lands on Vercel the moment it is pushed, while the bot half waits for update.bat
+ * or a quiet window, and a rule of "only an identified runner counts" would turn a healthy
+ * box red for that entire gap. That is the two-halves-deploy trap that opened the T-30/T-25
+ * alarm hole on 08-11. Unknown callers therefore behave exactly as they always did; only a
+ * caller that positively identifies as NOT the runner is skipped, so the failure direction
+ * is the status quo and never a new false alarm.
+ */
+export const HEARTBEAT_ROLE = 'rc-hold-runner';
+export function beatIsFromRunner(role: string | null | undefined): boolean {
+  return !role || role === HEARTBEAT_ROLE;
+}
+
 export async function rcBotUsable(): Promise<{ ok: boolean; beatAgeMs: number | null }> {
   const [row] = await query<{ beat_at: string | null }>(
     `SELECT beat_at::text FROM rc_runner_heartbeat WHERE id = 1`,

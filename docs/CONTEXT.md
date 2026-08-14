@@ -3795,6 +3795,73 @@ fourth surface now.
 >   died, still holding everything down; a stand-down with no expiry protects the broken thing.
 > - The ordinary run is **silent** — it fires every five minutes forever, and a line per run
 >   would bury the `restarts.log` entries that matter under thousands that do not.
+> - **AND IT COULD NOT SEE A SUPERVISOR WHOSE PAYLOAD NEVER STARTED (fixed 2026-08-14).**
+>   `Get-Missing` matched `rc-keepwarm\.mjs` against every command line, and `supervise.ps1`
+>   is launched as `... -Name rc-keepwarm -Command "node rc-keepwarm.mjs"` — so the string is
+>   in the **supervisor's own** command line whether or not anything is running it. When
+>   `restart-rc.ps1` was handing the supervisor an unquoted `-Command` (below), the payload
+>   was a bare `node` REPL and this watchdog read the pair as UP for hours. That is the union
+>   count all over again: healthy by construction, in the one outage it exists for. It now
+>   excludes processes whose command line contains `supervise.ps1`; `bot`/`broker` detection
+>   is unaffected, because their supervisors' command lines say `npm start`, not `bot.mjs`.
+
+> **`restart-rc.ps1` STARTED NODE REPLs, NOT THE BOTS (2026-08-14).** The one remote lever for
+> the RC pair relaunched both processes through
+> `Start-Process -FilePath powershell -ArgumentList @("-Command", "node rc-keepwarm.mjs", ...)`.
+> **Start-Process joins an array with spaces and quotes nothing**, so the child received
+> `-Command node rc-keepwarm.mjs`, PowerShell bound `-Command` to `node` alone, and
+> `supervise.ps1` ran `cmd /c "node"` — the REPL. Both RC processes sat idle from
+> `2026-08-14 04:48:48Z` with two holds tapped for that morning's 08:00 release, and
+> `maybeAutoLogin` lives inside the keep-warm, so the T−30 sign-in was gone too.
+>
+> - **THE EVIDENCE IS IN `restarts.log`,** where the same `supervise.ps1` logs
+>   `starting: $Command` and its two callers disagree:
+>   ```
+>   21:46:47 [supervise:rc-keepwarm] starting: node rc-keepwarm.mjs   <- start-all.bat
+>   21:48:48 [supervise:rc-keepwarm] starting: node                   <- restart-rc.ps1
+>   ```
+>   `start-all.bat`, `rc-login.bat` and `rc-test-login.bat` were always correct because **cmd
+>   passes their quotes through verbatim**. `restart-rc.ps1` was the only launcher using the
+>   array form and the only one broken — the same shape as the `\"` cmd-escape bug five
+>   commits earlier: a quoting boundary that fails silently at the one thing the file is for.
+> - **Fixed by building the whole command line as ONE already-quoted string**, so it does not
+>   depend on how any PowerShell version chooses to join an array. The `-File` path is quoted
+>   too — not needed today, but a profile path containing a space breaks identically.
+> - **NOTHING NOTICED BECAUSE A REPL NEVER EXITS.** `supervise.ps1` speaks only when a child
+>   exits, so `restarts.log` went quiet — which is also what a healthy night looks like. Four
+>   safeguards were defeated at once: the supervisor (nothing to restart), the log (nothing to
+>   say), the watchdog (above), and `autocart.rc_runner` (below).
+> - **`list-processes` carries the tell**, faintly: a healthy launch renders as
+>   `supervise.ps1" -Name "bot" -Command "npm start"` with its quotes, a broken one as a bare
+>   trailing `rc-keepwarm.mjs` with none.
+> - `worker/supervised-launch.test.mts` forbids `-ArgumentList @(` in any mini-pc `.ps1` that
+>   launches the supervisor, requires every `-Command` to be followed by a quoted argument,
+>   and pins the watchdog exclusion. Verified failing against both restored bugs.
+> - **The recovery lever needs no update: `start-all.bat` at the box.** `restart-rc` is the
+>   one thing not to use until the box has this commit.
+
+> **`rc_runner_heartbeat.beat_at` WAS STAMPED BY THE UPDATER (2026-08-14).** The field behind
+> `rcBotUsable()` and `autocart.rc_runner` means "the process that carts sites is alive", and
+> it was written on **every authorized GET** of `/api/auto-cart/rc-holds`. Three processes make
+> one: the hold runner (15s), the keep-warm (20m, `?rehearsal=1`) and **`update-guard.mjs`
+> every 5 minutes from the Windows scheduled task**. So it could not go stale while the box had
+> a working task, which is always.
+>
+> - **MEASURED:** with the runner dead as a REPL, `beat_at` advanced every **301 seconds** —
+>   the updater's tick to the second, not the runner's 15s. Sampled seven times over two
+>   minutes; one reading could not have told the difference.
+> - The cost is not a wrong dashboard. `rcBotUsable` gates the **"Hold it for me" button**, so
+>   the poller kept promising carts nothing would perform — the exact failure that function was
+>   written to prevent on 08-11, arriving through its own instrument.
+> - **The rule is `beatIsFromRunner` in `lib/rc-holds.ts`, and it asks "did you say you were
+>   something else?", never "did you prove you are the runner".** The server half deploys on
+>   push and the bot half waits for `update.bat`; a runner-only rule would read every healthy
+>   box as dead for that whole gap — the two-halves-deploy trap that opened the T−30/T−25 alarm
+>   hole. An unidentified caller stamps exactly as before. `bot_commit` stays unconditional:
+>   "what code is this box running?" is a different question, and `COALESCE` already stops a
+>   caller erasing it.
+> - `worker/runner-heartbeat.test.mts`, verified failing against three regressions including
+>   the runner-only rule — which is the tempting version, and the one that cries wolf.
 
 - `bot.mjs` — watches the roster, carts openings, reports outcomes; a **keepalive**
   loads an authenticated rec.gov page every **30m** (`KEEPALIVE_MS`) so the session

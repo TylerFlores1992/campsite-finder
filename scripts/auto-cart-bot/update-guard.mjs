@@ -171,7 +171,12 @@ if (process.argv[1] && process.argv[1].endsWith('update-guard.mjs')) {
   const timer = setTimeout(() => ac.abort(), 15_000);
   try {
     const r = await fetch(`${url}/api/auto-cart/rc-holds?leadSeconds=0`, {
-      headers: { authorization: `Bearer ${token}` },
+      // I AM NOT THE HOLD RUNNER, so this read must not stamp its heartbeat. This scheduled
+      // task runs every 5 minutes, and `beat_at` is the only evidence that anything is alive
+      // to cart a site - so without this header the updater keeps `autocart.rc_runner` green
+      // over a dead runner, for ever. Measured on 2026-08-14: the runner was down for hours
+      // and the heartbeat advanced every 301s, which is this fetch and nothing else.
+      headers: { authorization: `Bearer ${token}`, 'x-bot-role': 'update-guard' },
       signal: ac.signal,
     });
     if (r.ok) {

@@ -457,7 +457,11 @@ async function feedFacts() {
   if (!TOKEN) return { nextRelease: null, lastRehearsalAt: null, reachable: false };
   try {
     const res = await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds?rehearsal=1`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
+      // NOT the hold runner: this GET must not stamp `beat_at`. The keep-warm and the runner
+      // are separate processes and die separately - that separation is the whole reason
+      // `autocart.rc_runner` exists next to `autocart.rc_session` - so a keep-warm polling
+      // every 20 minutes would mask a dead runner exactly when a hold is due.
+      headers: { authorization: `Bearer ${TOKEN}`, 'x-bot-role': 'rc-keepwarm' },
     });
     if (!res.ok) return { nextRelease: null, lastRehearsalAt: null, reachable: false };
     const j = await res.json();

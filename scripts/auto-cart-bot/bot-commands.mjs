@@ -221,6 +221,39 @@ export const COMMANDS = {
       "$ours = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -match '--user-data-dir=\\S*(\\.rc-bot-profile|auto-cart-bot)' });",
       '$sum = 0; foreach ($o in $ours) { $q = Get-Process -Id $o.ProcessId -ErrorAction SilentlyContinue; if ($q) { $sum += $q.PrivateMemorySize64 } };',
       "'OURS     {0} chrome.exe on our profiles, {1:N1} GB private total' -f $ours.Count, ($sum/1GB);",
+      // ── WHICH PROFILE, NAMED, PER PROCESS ────────────────────────────────────────────
+      // A COUNT AND A TOTAL CANNOT ATTRIBUTE A LEAK, and this diagnostic reported nothing
+      // else. The runaway Chromium of 2026-08-12 was guessed onto the wrong profile family
+      // TWICE, and it could not have been settled by reading the regexes: the RC profile is
+      //     ...\scripts\auto-cart-bot\.rc-bot-profile
+      // and the rec.gov profiles are
+      //     ...\scripts\auto-cart-bot\profiles\<userId>
+      // so BOTH contain the substring `auto-cart-bot`. The only thing that separates them is
+      // the tail of the path, which was never printed. A diagnostic that cannot tell apart
+      // the two candidate causes of the failure it was written for is not yet a diagnostic.
+      //
+      // The family is decided by `.rc-bot-profile` FIRST, because it is the specific one;
+      // testing `auto-cart-bot` first would classify every RC process as rec.gov, which is
+      // exactly the mistake being fixed.
+      //
+      // The profile DIRECTORY is printed, never the whole command line: Chromium's argv
+      // carries flags and occasionally URLs, and the rule this file is built on is that a
+      // field you would have to filter is better not collected.
+      "'';",
+      "'Our Chromium by profile (the growth RATE across two readings is the signature,';",
+      "'  not the absolute number - take a second reading about five minutes later):';",
+      '$byFam = @{};',
+      'foreach ($o in $ours) {',
+      "  $dir = ''; if ($o.CommandLine -match '--user-data-dir=(\\S+)') { $dir = $Matches[1] };",
+      "  $fam = 'other'; if ($dir -match '\\.rc-bot-profile') { $fam = 'rc' } elseif ($dir -match 'auto-cart-bot') { $fam = 'recgov' };",
+      '  $q = Get-Process -Id $o.ProcessId -ErrorAction SilentlyContinue;',
+      '  $mb = 0; if ($q) { $mb = $q.PrivateMemorySize64/1MB };',
+      '  if (-not $byFam.ContainsKey($fam)) { $byFam[$fam] = @(0, 0) };',
+      '  $byFam[$fam] = @($byFam[$fam][0] + 1, $byFam[$fam][1] + $mb);',
+      "  '  {0,-7} {1,7:N0} MB  pid {2,-6} {3}' -f $fam, $mb, $o.ProcessId, $dir;",
+      '};',
+      "if ($ours.Count -eq 0) { '  (none - no Chromium of ours is running)' };",
+      "foreach ($k in $byFam.Keys) { 'FAMILY   {0,-7} {1} process(es), {2:N0} MB private' -f $k, $byFam[$k][0], $byFam[$k][1] };",
       '$allC = @(Get-Process chrome -ErrorAction SilentlyContinue).Count;',
       "'CHROME   {0} chrome.exe on the box in total (the rest are somebody using this machine)' -f $allC;",
       "'';",
@@ -257,9 +290,20 @@ export const COMMANDS = {
     // caught the first draft interpolating `arg` into the script, and it was right to: the
     // server validates the arg, and the box must not depend on that being true. The arg
     // chooses which of three constant strings to use and contributes not one character.
+    // `recgov` EXCLUDES THE RC PROFILE EXPLICITLY, and must (2026-08-14). Both families live
+    // under the same directory:
+    //     RC       ...\scripts\auto-cart-bot\.rc-bot-profile
+    //     rec.gov  ...\scripts\auto-cart-bot\profiles\<userId>
+    // so the old `--user-data-dir=\S*auto-cart-bot` matched the RC profile too, and
+    // `kill-chrome recgov` - the lever you reach for precisely BECAUSE restart-rc leaves
+    // rec.gov alone - would have taken the live RC session down with it. The whole point of
+    // having three scopes is that two of them are survivable at 07:50.
+    //
+    // A negative lookahead rather than matching the `profiles\` subdirectory, so an
+    // overridden PROFILES_DIR cannot quietly turn this back into "everything".
     const PAT = {
       rc: "$pat = '--user-data-dir=\\S*\\.rc-bot-profile';",
-      recgov: "$pat = '--user-data-dir=\\S*auto-cart-bot';",
+      recgov: "$pat = '--user-data-dir=(?!\\S*\\.rc-bot-profile)\\S*auto-cart-bot';",
       all: "$pat = '--user-data-dir=\\S*(\\.rc-bot-profile|auto-cart-bot)';",
     };
     const patLine = PAT[arg];

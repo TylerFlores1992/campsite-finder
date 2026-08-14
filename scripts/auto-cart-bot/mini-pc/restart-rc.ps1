@@ -58,12 +58,43 @@ if ($LASTEXITCODE -ne 0) {
 # SUPERVISED, not bare. rc-login.bat used to relaunch this pair unsupervised, which quietly
 # downgraded the two processes it was fixing: the keep-warm's wedge watchdog EXITS on
 # purpose expecting a restart, and unsupervised that is a ten-hour silence (2026-08-10).
-Start-Process -FilePath "powershell" -ArgumentList @(
-  "-NoExit", "-ExecutionPolicy", "Bypass", "-File", "$PSScriptRoot\supervise.ps1",
-  "-Name", "rc-keepwarm", "-Command", "node rc-keepwarm.mjs")
-Start-Process -FilePath "powershell" -ArgumentList @(
-  "-NoExit", "-ExecutionPolicy", "Bypass", "-File", "$PSScriptRoot\supervise.ps1",
-  "-Name", "rc-hold-runner", "-Command", "node rc-hold-runner.mjs")
+#
+# -- ONE STRING, WITH ITS OWN QUOTES - NEVER AN ARRAY (2026-08-14) -------------------------
+# This was `Start-Process -ArgumentList @("-Command", "node rc-keepwarm.mjs")`.
+# Start-Process JOINS AN ARRAY WITH SPACES AND QUOTES NOTHING, so the child powershell was
+# handed
+#     -Command node rc-keepwarm.mjs
+# and bound -Command to `node` alone, with the script name left over. supervise.ps1 then ran
+# `cmd /c "node"` - the Node REPL. It starts, prints its banner and SITS THERE FOR EVER.
+#
+# THAT IS WHY NOTHING NOTICED. A REPL never exits, so the supervisor never restarts it and
+# never writes a line: restarts.log simply goes quiet, which is exactly what a healthy box
+# looks like. Four separate safeguards were defeated by this one quoting bug - the
+# supervisor (nothing to restart), restarts.log (nothing to say), watchdog.ps1 (it matched
+# the string `rc-keepwarm.mjs` in THIS command line and read the outage as healthy), and
+# `autocart.rc_runner` (the heartbeat was kept green by update-guard's 5-minute tick).
+#
+# MEASURED, from this box's own restarts.log. supervise.ps1 logs `starting: $Command`, and
+# the two callers disagreed about what it got:
+#     21:46:47 [supervise:rc-keepwarm] starting: node rc-keepwarm.mjs   <- start-all.bat
+#     21:48:48 [supervise:rc-keepwarm] starting: node                   <- this file
+# The RC pair were idle REPLs from 21:48 until a human intervened, with two holds queued for
+# the next 08:00 release.
+#
+# start-all.bat has always been right because cmd passes its quotes through verbatim.
+# Building the whole command line here as ONE already-quoted string is the same thing done
+# on purpose, and it does not depend on how any PowerShell version chooses to join an array.
+# The -File path is quoted too: it is not needed today, but a profile path with a space in
+# it would break the same way and just as silently.
+function Start-Supervised($name, $command) {
+  # No backtick line-continuation anywhere in this file: it only continues a line when it is
+  # the LAST character before the newline, so one trailing space silently ends the statement
+  # and the parse error surfaces well below the cause. Invisible in every editor.
+  $fmt = '-NoExit -ExecutionPolicy Bypass -File "{0}\supervise.ps1" -Name {1} -Command "{2}"'
+  Start-Process -FilePath "powershell" -ArgumentList ($fmt -f $PSScriptRoot, $name, $command)
+}
+Start-Supervised "rc-keepwarm"    "node rc-keepwarm.mjs"
+Start-Supervised "rc-hold-runner" "node rc-hold-runner.mjs"
 
 Write-Line "restart-rc: relaunched rc-keepwarm and rc-hold-runner, both supervised"
 Write-Line "restart-rc: the RC session is GONE until maybeAutoLogin runs before the next release"

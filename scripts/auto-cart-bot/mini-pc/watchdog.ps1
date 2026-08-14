@@ -75,9 +75,23 @@ $PAYLOADS = @{
   'rc-hold-runner' = 'rc-hold-runner\.mjs'
 }
 
+# A SUPERVISOR IS NOT ITS PAYLOAD, AND ITS COMMAND LINE CONTAINS THE PAYLOAD'S NAME
+# (2026-08-14). supervise.ps1 is launched as
+#     powershell -File ...\supervise.ps1 -Name rc-keepwarm -Command "node rc-keepwarm.mjs"
+# so the string `rc-keepwarm.mjs` appears in the SUPERVISOR's own command line. Matching it
+# there means a supervisor whose payload never started - or died and was never brought back -
+# reads as a running payload.
+#
+# That is not hypothetical. restart-rc.ps1 was launching these supervisors with an unquoted
+# -Command, so the payload was a bare `node` REPL while the supervisor's command line still
+# carried `rc-keepwarm.mjs` in full. This watchdog would have reported the RC pair UP for as
+# long as that lasted, which is the same failure as the union count it replaced: healthy by
+# construction, in the one outage it exists for.
+$SUPERVISOR = 'supervise\.ps1'
+
 function Get-Missing {
   $procs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.ProcessId -ne $PID })
+    Where-Object { $_.CommandLine -and $_.ProcessId -ne $PID -and $_.CommandLine -notmatch $SUPERVISOR })
   $missing = @()
   foreach ($name in $PAYLOADS.Keys) {
     $pattern = $PAYLOADS[$name]

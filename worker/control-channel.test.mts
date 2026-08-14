@@ -121,7 +121,18 @@ test('restart-rc re-checks, and relaunches supervised', () => {
   // Unsupervised relaunch quietly downgrades the two processes it is fixing: the keep-warm's
   // wedge watchdog exits on purpose EXPECTING a restart, and without a supervisor that is
   // the 2026-08-10 ten-hour silence.
-  assert.equal((body.match(/supervise\.ps1/g) ?? []).length >= 2, true, 'both are relaunched supervised');
+  //
+  // ASSERTED BY NAME, NOT BY COUNTING THE STRING `supervise.ps1` (2026-08-14). The count was
+  // two because the launch was written out twice; once both went through one helper it fell
+  // to one and this failed, over a file that had just been made MORE correct. A test that
+  // counts occurrences is measuring how the code is spelled, not what it does - and the
+  // duplication it was quietly requiring is what let restart-rc carry a broken -Command in
+  // both copies at once. What matters is that each process is relaunched under the
+  // supervisor; worker/supervised-launch.test.mts pins the argument quoting.
+  assert.match(code(restartPs), /supervise\.ps1/, 'the relaunch goes through the supervisor');
+  for (const name of ['rc-keepwarm', 'rc-hold-runner']) {
+    assert.match(code(restartPs), new RegExp(`Start-Supervised\\s+"${name}"`), `${name} is relaunched`);
+  }
   // The lock file survives a force kill and would otherwise read as another process holding
   // the profile — for ever.
   assert.match(body, /camphawk-profile-lock/, 'the stale profile lock is cleared');
