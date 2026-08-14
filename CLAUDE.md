@@ -1606,6 +1606,23 @@ Six notes from two real iOS hand-offs. All six shipped, plus two defects the wor
   guard `addToCart` itself, not the button — it is also reached from the auto-retry and from
   a re-injection. **`#camphawk-rc-status` is untouched**: the epilogue observes it, so the
   frame changed and never the sentence.
+- **THE SIGNIN STATE NOW HAS A BUTTON, AND IT IS NOT A RETRY (2026-08-13 evening).** "No
+  button" was right about the CART — signing in is itself the trigger — and wrong about what
+  the user needs: RC lands them scrolled down at the availability calendar with its own
+  sign-in control off screen, so the instruction pointed at something invisible. `signin` now
+  **scrolls to the top** (that state only; moving the page under someone mid-cart is its own
+  bug) and offers a **Log in** button that finds RC's own control and presses it. Matched on
+  the ACCESSIBLE NAME, never a class — RC's class names are generated and the words a user
+  reads are the stable part — and restricted to `a`/`button`, because an injected script
+  clicking any div whose text says "sign in" is how it starts pressing things nobody meant.
+  **Not found is a fine outcome:** it says so and leaves the page alone rather than
+  navigating to a sign-in URL nobody keeps honest.
+- **`carted` SAYS ONE THING NOW.** It carried an eagle, a headline, `CA State Parks · <date>
+  (1 night)`, a status sentence AND a button — four lines to say "it worked", stacked over
+  RC's own checkout controls. The subtitle and status line are hidden in that state. **The
+  status ELEMENT stays in the DOM and `setStatus` keeps writing to it** — hidden, never
+  removed, because the epilogue reads `#camphawk-rc-status` for the hand-off's verdict and
+  removing it would blind the diagnostic at the moment it finally has something to say.
 - **RC scrolled the user PAST its own sign-in control**, and `presentationstyle=fullscreen`
   answers the choppy seam (the plugin's iOS default is `pagesheet`, a card that deliberately
   shows the presenting screen above it). `location=yes` stays, permanently.
@@ -1999,6 +2016,25 @@ authorise it.
   approved campaign "cannot be edited", which contradicts Twilio's own rectifying-campaigns
   doc — the correction already recorded here — and then concedes the API path himself.
   Not worth arguing; take the capability.
+- **TWILIO REPLIED AGAIN 2026-08-13 16:42 PT.** Four points. Two are pending escalations —
+  the filtered-message examples went to the Carrier Partner, and **API campaign edits are
+  still being enabled**, which remains the blocker for putting `camphawk.app` back into SMS.
+  One is closed: **the sender identifier "CampHawk" is compliant**; non-compliance would mean
+  a real brand discrepancy (his example: "Camp Walk").
+- **THE FOURTH — OPT-OUT LANGUAGE — WAS CONSIDERED AND DELIBERATELY NOT BUILT.** Twilio
+  recommends `Reply STOP` in the first message and every third message or monthly, and warns
+  that missing it "can significantly increase the risk of filtering". **We carry none, in any
+  message, ever — and our own data rules it out as a cause of anything we have seen.** 08-05
+  was a controlled comparison: same handset, same day, same segment count, and NEITHER arm had
+  opt-out language, so it cannot explain why the recgov link delivered and the camphawk.app
+  link did not, 10 for 10. And 77+ for 77 have delivered since 08-06, still with none. **STOP
+  already works** regardless — Twilio's Messaging Service handles the keyword at the platform
+  level whether or not we advertise it, so users can opt out today; the gap is only that we
+  do not TELL them.
+  The cost is real: per-user tracking, a dispatcher branch, and ~21 characters against a
+  **5-character** one-segment margin. **Revisit it as part of reintroducing the camphawk.app
+  link**, which is the change that already spends risk and the one moment where stacking a
+  second documented factor would be a bad trade. Not before.
 - **THE OWNER REPLIED 2026-08-13 AND WE ARE WAITING ON TWILIO.** The ball is in their court;
   do not draft another reply, and do not submit an edit until the capability is confirmed
   enabled on the account. **The replacement samples are already generated and waiting** in
