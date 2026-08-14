@@ -69,9 +69,18 @@ The sampler fix is bot-side too, so it needs **one more `update.bat`**, or the
 **02:00-05:00 PT quiet window**, which uses the scheduled-task path that has always worked.
 Nothing is queued, so the window is open.
 
-**Confirm with `autocart.bot_version`, never with `applied_note`** — the two describe
-different events. The box must show a commit at or past the sampler fix; then the `C|` line
-answers why the scan was empty.
+**CONFIRM WITH `git-status`, NOT with `autocart.bot_version`.** Measured 2026-08-14:
+`git-status` said `HEAD 60d9b98 on master` while `bot_commit` sat at the pre-update `7780c32`
+**steadily**, sampled eight times over 90 seconds, with `beat_at` advancing every 15s
+throughout. A poller that cannot compute its own sha omits the header, COALESCE preserves the
+last value anyone reported, and a stale sha sits next to a live heartbeat looking current.
+It made the box appear to roll BACKWARDS; it never did. Ask the box directly:
+
+```
+requestBotCommand('git-status', null, 'you')   # or the admin diagnostics panel
+```
+
+Then the `C|` line answers why the scan was empty.
 
 **Do NOT use "Update now" for this.** That path is the broken one (see below); the manual and
 timer paths both work.

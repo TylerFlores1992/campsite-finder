@@ -1232,6 +1232,26 @@ only when a human **asks**; this is the passive version.
 - `COALESCE` on the UPDATE so an old runner cannot **erase** a commit a current one reported
   (stale + `beat_at` is readable; NULL is not), and the header is validated as 7–40 hex
   before storage — any holder of `AUTOCART_TOKEN` sets it and it renders on the admin page.
+- **AND THAT COALESCE IS WHY `autocart.bot_version` CANNOT BE TRUSTED TO ANSWER "DID IT
+  LAND?" (2026-08-14).** Measured: `git-status` reported `HEAD 60d9b98 on master` while
+  `bot_commit` sat at **`7780c32`** — the pre-update commit — **steadily**, sampled eight
+  times over 90 seconds, with `beat_at` advancing every 15s the whole time. A poller that
+  cannot compute its own sha omits the header (by design, so a git failure never takes the
+  runner down), COALESCE then preserves the last value anyone did report, and the result is a
+  **stale sha sitting next to a live heartbeat, which reads as current.** Exactly the shape
+  this file keeps recording: two facts of different ages presented as one record, like
+  `appliedNote` and `appliedSha`.
+  - **The authoritative answer is `git-status` through `bot_commands`**, which runs
+    `git rev-parse HEAD` on the box at the moment you ask. Use that to confirm an update;
+    `autocart.bot_version` is a hint, and a warn from it may mean "nobody reported" rather
+    than "the box is behind".
+  - It cost real confusion here: the field read `60d9b98` right after one update and
+    `7780c32` afterwards, which looked like the box rolling BACKWARDS. It had not — the
+    checkout never moved from `60d9b98`.
+  - **Do not "fix" this by dropping the COALESCE.** That trades a stale reading for a NULL
+    one, and the entry above explains why NULL is worse. What is missing is an AGE on the
+    commit field — `bot_commit_at` is the commit's own date, not when it was reported, so
+    there is currently nothing that can say "this sha is older than the heartbeat beside it".
 - `worker/bot-version.test.mts`, verified failing against three regressions.
 
 ### THE ON-DEMAND UPDATE DEADLOCKED ITSELF (2026-08-12) — read before pressing "Update now"
