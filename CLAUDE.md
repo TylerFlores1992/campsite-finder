@@ -2644,14 +2644,18 @@ one with time to spare.
 profile, and the **watchdog** — including the fact that it restarts PROCESSES and never
 reboots Windows, and that it shipped asking "is anything running?" and had to be fixed to
 check each payload by name. All three are in `docs/CONTEXT.md` under the mini-PC section.
-**OPEN: whether the bots start at Windows login.** The owner believes they do (08-14);
-nothing in the repo establishes it, and a desktop shortcut is not a startup entry. Confirming
-it makes a **last-resort** reboot tier defensible — and it would still not have helped 08-12,
-where a Scheduled Task could not have fired at all. Checks in `docs/NEXT-SESSION.md`.
-**OPEN: whether the bots start at Windows login.** The owner believes they do (08-14);
-nothing in the repo establishes it, and a desktop shortcut is not a startup entry. Confirming
-it makes a **last-resort** reboot tier defensible — and it would still not have helped 08-12,
-where a Scheduled Task could not have fired at all. Checks in `docs/NEXT-SESSION.md`.
+**THE BOTS DO START AT WINDOWS LOGIN — owner-confirmed 2026-08-14.** That is what a
+last-resort reboot tier was waiting on, and `watchdog.ps1`'s header said the opposite. **It is
+still not verified from the repo**, and the ROUTE is unknown — `shell:startup`, a Run key or a
+logon-triggered task — which matters, because it is machine-local config nothing here creates,
+so it can vanish without a commit and without a symptom until the one night it is needed. Worth
+five commands (in `docs/NEXT-SESSION.md`) to record which one it is.
+**A reboot tier is now defensible; it is still NOT the 08-12 fix.** That box was wedged badly
+enough that RustDesk could not connect, and **a Scheduled Task cannot fire on a Windows that is
+not scheduling** — the tier would never have run. That case is the Chromium leak. Any tier
+belongs behind repeated `start-all` failures, must carry the updater's release check (a reboot
+ends the RC session however it is triggered), and the assertion in `update-guard.test.mts`
+banning `Restart-Computer` must be NARROWED to that branch, never deleted.
 
 **Docs current to 2026-08-13.** The later session added, in CLAUDE.md: the
 **update-guard deadlock** (and its two escape hatches), the **41 GB Chromium** +
