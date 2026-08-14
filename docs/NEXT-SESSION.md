@@ -5,6 +5,75 @@ healthy on `7780c32`. **Delete this file once the leak is diagnosed.***
 
 ---
 
+## STOP — READ THIS FIRST (added 2026-08-14, later still)
+
+**THE SAMPLER IS STILL NOT ON THE BOX, AND THAT IS THE ONLY THING BLOCKING THE LEAK.**
+`chromium-memory-readout.mts` correctly says `NO DATA`. The box is on `7780c32`;
+the sampler shipped in `a57f6e7`. Nothing can be attributed until it updates.
+
+**THE ON-DEMAND UPDATE PATH IS BROKEN — do not spend the session pressing "Update now".**
+It was tried twice (20:48Z and 21:08Z). Both times the box claimed the request within
+seconds, spawned `auto-update.ps1`, ran `stop-all` — stopping every process — and left
+`HEAD` at `7780c32`. **Neither attempt logged a single word about why**, and that is now
+understood:
+
+- `auto-update.ps1` built `$log` as the RELATIVE path `logs\auto-update.log`. The Windows
+  Scheduled Task starts in the bot directory so the TIMER path writes correctly; `bot.mjs`
+  spawns the updater with **no `cwd`**, so the on-demand path resolved it to
+  `C:\Users\Tyler\campsite-finder\logs\` — a directory that does not exist — and every
+  `Add-Content` failed. **Fixed** (absolute, anchored to `$PSScriptRoot`), guarded in
+  `update-guard.test.mts`. *Why the directories diverge despite `Set-Location $botDir` two
+  lines above is NOT established — the fix removes the question rather than answering it.*
+- It compounds: the updater's stdout goes to `logs\update-spawn.log`, written by `bot.mjs`
+  — **a process `stop-all` kills on the way through** — so that log necessarily ENDS at the
+  stop. Between the two, an on-demand update had no durable record anywhere. That is why
+  "Update now takes ~20 minutes" had to be inferred rather than read.
+
+**The request has been WITHDRAWN** (`requested_at = NULL`), because a pending request
+re-spawns the updater every ~15 minutes and each attempt bounces every process on the box.
+Leaving it set would have churned all night.
+
+### The one action that unblocks everything
+
+**A human runs `update.bat` on the mini-PC**, or the **02:00–05:00 PT quiet window** lands
+it via the scheduled-task path — the path that has always worked. Nothing is queued, so the
+window is open. Once `autocart.bot_version` shows the box past `a57f6e7`, samples arrive
+every two minutes and the readout starts answering.
+
+### Fixed this session (instruments only — the leak itself is untouched)
+
+The two instrument bugs the old prompt below asks for were **already fixed in `a57f6e7`**;
+do not redo them. These are new:
+
+1. **The readout could not see its own crash signature.** `worstGapMin` measured holes
+   *between* samples, so a series that simply STOPS — which is exactly what a commit-
+   exhaustion crash produces — had no gap at all, and a box that died mid-ramp printed the
+   same `NO LEAK IN THIS WINDOW` as an idle one. `seriesEnded` + `lastCommitPct` now tell a
+   crash (ends at 90%) from a bot that was merely stopped (ends at ~16%). Additive, never
+   replacing the growth verdict.
+2. **Size is a second question the rate rule cannot answer.** The 08-12 process reached
+   7.9 GB in **46 seconds** — faster than the 2-minute cadence — so the ramp leaves no
+   comparable pair and the readout could print `NO LEAK IN THIS WINDOW` over a 7.9 GB
+   browser in its own table. `BIG_PROCESS_MB` (1500) reports `OVERSIZED PROCESS`, and is
+   deliberately NOT gated on the pair count.
+3. **`tail-log` returned the newest lines as mojibake, every time.** These logs are
+   append-only and outlived an encoding change, so ONE FILE holds UTF-16LE at the front and
+   UTF-8 at the back; the heuristic sampled the head and mis-decoded the tail, which is the
+   only part `tail-log` returns. Now split at the last NUL. **This is what made the update
+   diagnosis expensive** — the log had to be recovered by hand.
+4. **The sync-claim CI flake** blamed the release for a DB blip. The body now records that
+   it ran and that is asserted first, so the honest sentence fires instead of
+   `Missing expected rejection`.
+5. **A doc correction with teeth:** `src/lib/bot-commands.ts` asserted *"The leaking process
+   was on a rec.gov profile"* as fact. That is the guess CLAUDE.md records as having been
+   made twice, wrongly. Its inference is also undermined by the 08-14 finding that the stop
+   patterns could not match Chrome's quoted child processes — which explains "restart-rc
+   could not clear it" without saying anything about the family.
+
+**The leak is still unattributed. Nothing in this session measured it.**
+
+---
+
 ## THE PROMPT — paste this to open the session
 
 > Read `docs/NEXT-SESSION.md` first, then CLAUDE.md.
@@ -26,11 +95,14 @@ healthy on `7780c32`. **Delete this file once the leak is diagnosed.***
 > raises the COMMIT ceiling and is explicitly NOT the fix (pagefile peak was 0.4 GB against
 > 34 GB allocated — commit was going to reservations, not paging).
 >
-> **Two known instrument bugs to fix while you are in there**, both of the house shape where a
-> failure and a success print the same thing: `kill-chrome` reports "SURVIVED" for processes
-> that are actually a *fresh* browser the keep-warm opened inside its own 3-second re-check
-> (print pids and diff the sets), and `memory`'s per-family rollup prints `0` because its
-> PowerShell array arithmetic throws (`op_Addition`) while the per-process list is correct.
+>
+> ~~Two known instrument bugs to fix while you are in there~~ — **both were already fixed in
+> `a57f6e7`** (the `SURVIVED` pid diff and the `op_Addition` rollup). Confirmed by reading the
+> code, not the commit message. Do not redo them. **Confirmed live on 2026-08-14 that the BOX
+> is still running the broken rollup** — a `memory` reading came back with
+> `FAMILY rc 0 process(es), 0 MB` over a profile holding 264 MB, plus the `op_Addition` error,
+> because the box has not taken the update. That is a demonstration of the update problem, not
+> of the fix being wrong.
 >
 > Working rules: push to a branch, let `npm run verify` and CI go green, then merge to master.
 > Mutation-test any regression test — break the code, watch it fail — before trusting it.
