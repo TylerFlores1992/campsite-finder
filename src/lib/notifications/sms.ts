@@ -52,9 +52,26 @@ export interface SmsResult {
  * either way, and the failed traffic counts against our sender reputation. So this
  * throws rather than trying. Callers see a real error instead of a silent nothing.
  *
- * To put a link back in an SMS, the domain must first be registered on a NEW A2P
- * campaign — samples are not editable after approval. Until then, put the link in the
- * email and make the text point at it.
+ * ── TWO CORRECTIONS TO THE PARAGRAPH THAT USED TO BE HERE ────────────────────────────
+ * It said: "the domain must first be registered on a NEW A2P campaign — samples are not
+ * editable after approval". Both halves are wrong, and together they made the fix look far
+ * more expensive than it is.
+ *
+ *   1. SAMPLES *ARE* EDITABLE after approval (Twilio's rectifying-campaigns doc). Only the
+ *      four booleans are frozen, and `HasEmbeddedLinks` is already Yes on our campaign. No
+ *      new campaign is needed. What is missing is the API edit PERMISSION, still pending
+ *      with Twilio on ticket #28871693.
+ *   2. THE CARRIER SAYS THE SAMPLES WERE NEVER THE MECHANISM (2026-08-14). Their partner
+ *      found our URL had been "mistakenly classified as potential spam due to an error
+ *      which affected the Carrier Partner's filtering mechanisms", and says corrections
+ *      have been applied. A bug on their side, not a policy we tripped.
+ *
+ * THIS GUARD IS DELIBERATELY STILL HERE ANYWAY. The 08-05 filtering was real and silent,
+ * the correction is an assurance we cannot verify from here, and the cost of being wrong is
+ * an alert nobody receives. Lifting it is a product decision — see
+ * docs/a2p-campaign.md, which carries the carrier's exact words and what the two link tests
+ * do and do not prove (both had a PASSING positive control, so neither can rank link
+ * shapes). Until then, put the link in the email and make the text point at it.
  */
 const APP_HOST = APP_URL.replace(/^https?:\/\//, '');
 export function findAppLink(body: string): string | null {

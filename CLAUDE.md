@@ -466,6 +466,32 @@ from the registration.
   opaque PATH is itself a trigger — don't repeat that as fact. And there is **no
   "declared link domain"** to have gotten wrong: Twilio's campaign API has only the
   boolean `HasEmbeddedLinks` and `MessageSamples`.
+- **ANSWERED 2026-08-14, AND THE INFERENCE ABOVE WAS WRONG.** Twilio's Carrier Partner
+  found our URL was *"mistakenly classified as potential spam due to an error which
+  affected the Carrier Partner's filtering mechanisms"* and has *"applied the necessary
+  corrections in order to remediate the false positives."* **So the DOMAIN finding is
+  confirmed by the party doing the filtering — and the MECHANISM is a bug on their side,
+  not a policy we tripped.** Neither §4.8, nor the redirect shape, nor the stale samples
+  explains what happened to us; all three were inference, correctly labelled as such, and
+  all three are now unsupported as the cause. **Stop citing them as the reason.** The
+  guard in `sendSms` is still there deliberately (an unverifiable assurance about
+  invisible infrastructure, against a silent failure on the core alert path) — lifting it
+  is a product decision. Full quote, the 08-14 four-variant test and its limits, in
+  `docs/a2p-campaign.md`.
+- **A SECOND LINK TEST RAN 2026-08-14 02:48 UTC: 4 of 4 DELIVERED**, including both
+  camphawk.app shapes and the `/b/<token>` positive control that was filtered 13-for-13 on
+  08-05. **A passing control means filtering was not being applied, so this run — like
+  08-12's — CANNOT rank link shapes.** It licenses "nothing of ours was filtered that day".
+- **AND IT FOUND A HOLE IN THE REGRESSION DETECTOR.** `camphawk-page` reads `delivered` at
+  Twilio and `delivery_status = NULL` here: `sms-link-test.mts` INSERTs the row **after**
+  `twilioSend` returns and the webhook matches on `provider_id`, so a callback landing in
+  that window matches nothing and is dropped for ever (Twilio does not resend). **A lost
+  receipt reads as "pending" — which the panel treats as a broken callback URL, not as a
+  delivery failure.** Production is 104/104 since 08-06 (it inserts from Vercel, beside the
+  DB, not from a remote script), so it has not bitten a real alert — but the ordering is
+  the same. Fix is a per-message `StatusCallback` carrying our own row id, so matching
+  never races a write. **NOT BUILT** — recorded rather than fixed, because the detector is
+  the safety net for any decision to put the link back and should be trustworthy first.
 - **CORRECTED 2026-08-07: campaign SAMPLES *are* editable after approval.** The earlier
   note here ("samples + `HasEmbeddedLinks` are NOT editable, you need a NEW campaign")
   was wrong and made the fix look far more expensive than it is. Twilio's rectifying-

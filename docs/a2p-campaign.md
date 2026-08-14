@@ -1,5 +1,77 @@
 # A2P 10DLC campaign text — paste-ready
 
+> ## THE CARRIER SAYS IT WAS A FILTERING BUG ON THEIR SIDE, AND IT IS FIXED (2026-08-14)
+>
+> Twilio (Christian M., ticket #28871693) relayed the Carrier Partner's finding. Quoting the
+> two sentences that matter:
+>
+> > *"they were able to determine that the issue is indeed related to the URL included in the
+> > messages (https://camphawk.app). The URL was mistakenly classified as potential spam due
+> > to an error which affected the Carrier Partner's filtering mechanisms."*
+> >
+> > *"The Carrier Partner has applied the necessary corrections in order to remediate the
+> > false positives."*
+>
+> **WHAT THIS CONFIRMS.** The domain was the cause. That was already the conclusion here — it
+> was reached by dropping `Manage:` to get a 1-segment message that was still filtered, which
+> separated domain from length — and it is now confirmed by the party doing the filtering.
+> The confounded "2 segments get filtered" theory stays dead.
+>
+> **WHAT THIS OVERTURNS, and it is the more useful half.** This file and CLAUDE.md both carry
+> an INFERRED mechanism: T-Mobile's Code of Conduct §4.8 "URL Redirects/Forwarding" and §3.3
+> "Use One Recognizable Domain Name", with `/b/<token>` fitting §4.8 because it is a
+> destination-hiding redirect. Both were explicitly labelled INFERENCE, and the carrier's
+> answer is a **different mechanism entirely: a misclassification, i.e. a bug on their side.**
+> Not a policy we tripped. Two consequences:
+>   * **The shape of the URL was probably never the point.** The 08-05 evidence stands (that
+>     traffic really was filtered), but "a short opaque path is a trigger" and "a redirect is
+>     a trigger" are now unsupported as explanations of what happened to us. Do not keep
+>     citing §4.8 as the reason; cite it, if at all, as a rule worth respecting anyway.
+>   * **The registered samples were probably never the point either.** The whole "the samples
+>     don't mention camphawk.app, so the carrier keys on that" story was inference too, and
+>     the carrier did not say it.
+>
+> **WHAT IT DOES NOT DO.** It is an assurance about a correction we cannot verify from here,
+> about a mechanism we cannot see, on infrastructure that can change without telling us. It
+> is good evidence and it is not a guarantee. `sendSms` still throws on our own domain — see
+> "The two that need `camphawk.app` registered FIRST" below — and lifting that guard is a
+> product decision, not a documentation change.
+>
+> **The API campaign-edit permission is STILL not enabled** — Christian is waiting on Twilio's
+> internal team. So the samples below still cannot be submitted, and that is now the only
+> thing the ticket is still for.
+>
+> ### The second link test, 2026-08-14 02:48 UTC — 4 of 4 delivered
+>
+> Run against the real handset through the Messaging Service, one segment each, ~4s apart:
+>
+> | variant | link | our receipt | Twilio's API |
+> |---|---|---|---|
+> | `control-provider` | `recreation.gov/camping/campgrounds/232447` | delivered | `delivered` |
+> | `camphawk-root` | `https://camphawk.app` | delivered | `delivered` |
+> | `camphawk-page` | `camphawk.app/manage/EQO2oXcQ` | **no receipt** | `delivered` |
+> | `camphawk-redirect` | `camphawk.app/b/9dc97c…` | delivered | `delivered` |
+>
+> **This has the same limitation as the 08-12 run and it must not be over-read.** The
+> `/b/<token>` arm is the positive control — the exact shape filtered **13 for 13** on 08-05 —
+> and it arrived. A control that passes means filtering is not being applied, so the run
+> **cannot rank link shapes**. What it licenses is "nothing of ours was filtered on
+> 2026-08-14", which is consistent with the carrier's correction and is not proof of it.
+>
+> **AND IT EXPOSED A HOLE IN THE REGRESSION DETECTOR.** `camphawk-page` is `delivered` at
+> Twilio and has `delivery_status = NULL` here. Cause: `sms-link-test.mts` INSERTs the row
+> **after** `twilioSend` returns, and `/api/webhooks/twilio` matches on `provider_id` — so any
+> status callback that lands before that INSERT commits matches nothing and is dropped, for
+> ever, because Twilio does not resend. **A lost receipt reads as "pending, no answer yet",
+> which the admin panel treats as a broken callback URL — not as a delivery failure.** Two
+> different faults, one output, in the instrument whose whole job is to catch this domain
+> going bad again. Production has 104/104 receipts since 08-06 so the race has not bitten a
+> real alert (`src/lib/notifications/index.ts` inserts from Vercel, next to the database,
+> rather than from a remote script), but the same ordering is there. **The robust fix is a
+> per-message `StatusCallback` URL carrying our own row id**, so matching never depends on a
+> write that races the callback — and the signature check must sign that exact URL, which it
+> already does by construction.
+
 Brand **Camp Hawk** (`BNb2dc221e086e621a5d4afdb77c387d7e`), campaign on messaging service
 **Camp Hawk Alerts** (`MG7bf4f78c06ea99f61efcbccd8fe47b5b`), tier `SOLE_PROPRIETOR`.
 
