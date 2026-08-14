@@ -38,39 +38,19 @@ function Write-Line($msg) {
   }
 }
 
-# The RC pair and their supervisors, and NOTHING else. Matched on the command line, never on
-# the image name: taskkill /IM node.exe would take the rec.gov bot down with it, and
-# /IM chrome.exe closes the browser of whoever is sitting at this machine.
-$RC = 'rc-keepwarm\.mjs|rc-hold-runner\.mjs|supervise\.ps1 -Name "?(rc-keepwarm|rc-hold-runner)'
-# Playwright's Chromium on the RC profile. A force-killed parent leaves the browser holding
-# the real Chrome lock on the user-data-dir, which deleting our own lock file does not touch
-# - and the restarted keep-warm then meets a profile it cannot open.
-$RC_BROWSER = '--user-data-dir=[^"]*\.rc-bot-profile'
-
-function Get-Matching($pattern) {
-  Get-CimInstance Win32_Process |
-    Where-Object { $_.CommandLine -and $_.CommandLine -match $pattern -and $_.ProcessId -ne $PID }
-}
-
-Write-Line "restart-rc: stopping the ReserveCalifornia processes (rec.gov bot untouched)"
-foreach ($p in @(Get-Matching $RC) + @(Get-Matching $RC_BROWSER)) {
-  Write-Line ("  stopping pid {0} ({1})" -f $p.ProcessId, $p.Name)
-  Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
-}
-
-# A force kill never runs the profile lock's release, so the file survives and the restarted
-# keep-warm reads it as another process holding the profile - then waits 60s and gives up,
-# every pass, for ever.
-Remove-Item ".rc-bot-profile\.camphawk-profile-lock" -Force -ErrorAction SilentlyContinue
-Remove-Item ".rc-bot-profile\.camphawk-profile-wanted" -Force -ErrorAction SilentlyContinue
-
-# Chromium takes a moment to actually go. RE-CHECK rather than trust the kill: starting a
-# second keep-warm on a profile the first still holds corrupts the session this exists to
-# protect, which is worse than not restarting at all.
-Start-Sleep -Seconds 3
-$left = @(Get-Matching $RC) + @(Get-Matching $RC_BROWSER)
-if ($left.Count -gt 0) {
-  foreach ($p in $left) { Write-Line ("  STILL RUNNING: pid {0} ({1})" -f $p.ProcessId, $p.Name) }
+# THE STOP LIVES IN stop-rc.ps1, and this file must not grow its own copy back. Three
+# callers needed it and each carried one; two of the three were inline PowerShell in a .bat,
+# and one of those had been failing on a cmd quoting bug since the day it was written
+# without anybody noticing (2026-08-14 - see the header of stop-rc.ps1). Two copies are two
+# chances to fix one and forget the other, and the forgotten copy is by definition the one
+# running when the other is dead. Same rule as control-channel.mjs.
+#
+# It stops the RC pair, their supervisors and the Chromium on the RC profile; it clears the
+# profile lock; and it RE-CHECKS, exiting non-zero with the surviving pids named. A non-zero
+# here MUST abort: starting a second keep-warm on a profile the first still holds corrupts
+# the session this exists to protect, which is worse than not restarting at all.
+& "$PSScriptRoot\stop-rc.ps1"
+if ($LASTEXITCODE -ne 0) {
   Write-Line "restart-rc: ABORTED - something would not stop. Nothing was launched."
   exit 1
 }

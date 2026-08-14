@@ -323,16 +323,112 @@ test('Report-Applied is defined before anything calls it', async () => {
   assert.ok(def > 0 && def < firstCall, 'defined above its first call');
 });
 
-test('rc-login relaunches the RC pair supervised', async () => {
+test('the RC sign-in scripts relaunch the pair supervised', async () => {
   // A hand sign-in used to quietly downgrade the two processes it was fixing to bare
   // `powershell -NoExit`. The keep-warm's wedge watchdog EXITS on purpose, expecting
   // something to bring it back — unsupervised, that is the 08-10 ten-hour silence again.
-  const s = await miniPc('rc-login.bat');
-  for (const proc of ['rc-keepwarm', 'rc-hold-runner']) {
-    const line = s.split('\n').find((l) => l.startsWith('start ') && l.includes(proc));
-    assert.ok(line, `${proc} must still be relaunched`);
-    assert.match(line!, /supervise\.ps1/, `${proc} must be relaunched supervised`);
+  //
+  // BOTH FILES, because that is how it survived: it was fixed in rc-login.bat on 2026-08-11
+  // and left standing in rc-test-login.bat, which relaunches the identical pair.
+  for (const f of ['rc-login.bat', 'rc-test-login.bat']) {
+    const s = await miniPc(f);
+    for (const proc of ['rc-keepwarm', 'rc-hold-runner']) {
+      const line = s.split('\n').find((l) => l.startsWith('start ') && l.includes(proc));
+      assert.ok(line, `${f}: ${proc} must still be relaunched`);
+      assert.match(line!, /supervise\.ps1/, `${f}: ${proc} must be relaunched supervised`);
+    }
   }
+});
+
+test('no batch file escapes a quote PowerShell-style inside -Command', async () => {
+  /**
+   * THE BUG THIS EXISTS FOR (2026-08-14). rc-login.bat carried its process kill as inline
+   * PowerShell, and the regex contained `[^\"]`:
+   *
+   *   powershell -NoProfile -Command ^
+   *     "... -match '--user-data-dir=[^\"]*\.rc-bot-profile' ... | ForEach-Object { ... }"
+   *
+   * `\"` is PowerShell's escape. CMD HAS NO BACKSLASH ESCAPE — so that quote CLOSED the
+   * string, everything after it was unquoted, and the very next `|` became a cmd PIPE. cmd
+   * then tried to run `ForEach-Object` as a program:
+   *
+   *   'ForEach-Object' is not recognized as an internal or external command
+   *
+   * So the kill had never run once, on any invocation, since the file was written. It
+   * printed "Closing anything holding the RC profile", closed nothing, and went on to open
+   * a second Chromium on a profile the first still held.
+   *
+   * Note the near miss: rc-test-login.bat had a line that LOOKS identical and was fine,
+   * because only rc-login.bat carried the Chromium arm with the `\"` in it. Same-looking
+   * code, opposite behaviour — which is the argument for having none of it in a .bat.
+   *
+   * Scoped to `-Command` on purpose: install-autoupdate.bat and install-watchdog.bat pass
+   * `\"` to `schtasks /TR`, where it is the documented way to nest quotes and where there
+   * is no `|` for a broken quote to expose. Those tasks demonstrably fire.
+   */
+  const { readdirSync } = await import('node:fs');
+  const dir = 'scripts/auto-cart-bot/mini-pc';
+  for (const f of readdirSync(dir).filter((n) => n.endsWith('.bat'))) {
+    (await miniPc(f)).split('\n').forEach((line, i) => {
+      if (/^\s*(REM\b|::)/i.test(line)) return;
+      if (!/powershell/i.test(line) || !/-Command/i.test(line)) return;
+      assert.ok(
+        !line.includes('\\"'),
+        `${f}:${i + 1} escapes a quote as \\" inside a powershell -Command string. cmd has ` +
+        'no backslash escape, so that ends the string and the next | becomes a cmd pipe. ' +
+        'Put the code in a .ps1 and call it with -File.',
+      );
+    });
+  }
+});
+
+test('every caller that frees the RC profile goes through stop-rc.ps1', async () => {
+  /**
+   * ONE STOP, not three. Each of these had its own copy, two of them inline in a .bat, and
+   * one of those had been failing silently since the day it was written. Two copies are two
+   * chances to fix one and forget the other — and the forgotten copy is by definition the
+   * one running when the other is dead. Same rule that put the control channel in a shared
+   * module, and the same rule that the unsupervised relaunch above broke.
+   */
+  for (const f of ['rc-login.bat', 'rc-test-login.bat']) {
+    const s = await miniPc(f);
+    assert.match(s, /stop-rc\.ps1/, `${f} must delegate freeing the profile`);
+    // -File, not -Command: the whole point is that no code crosses cmd.
+    assert.match(s, /-File "%~dp0stop-rc\.ps1"/, `${f} must call it with -File`);
+    // A stop that could not finish must abort, not sign in on top of the survivors. Two
+    // Chromium on one user-data-dir corrupt the session these scripts exist to restore.
+    const stopIdx = s.indexOf('stop-rc.ps1');
+    assert.match(s.slice(stopIdx, stopIdx + 200), /if errorlevel 1 goto :busy/,
+      `${f} must refuse to continue when the profile is still held`);
+    assert.match(s, /^:busy$/m, `${f} must define the :busy label it jumps to`);
+  }
+
+  const restart = code(await miniPc('restart-rc.ps1'));
+  assert.match(restart, /stop-rc\.ps1/, 'restart-rc must delegate too');
+  assert.ok(!/Stop-Process/.test(restart), 'restart-rc must not grow its own kill back');
+  assert.match(restart, /LASTEXITCODE -ne 0/, 'and must abort when the stop failed');
+});
+
+test('stop-rc frees the whole profile and proves it did', async () => {
+  // `code()` because the header explains each of these by name — matching the raw text
+  // would pass with every pattern deleted.
+  const s = code(await miniPc('stop-rc.ps1'));
+  for (const p of ['rc-keepwarm\\.mjs', 'rc-hold-runner\\.mjs', 'supervise\\.ps1']) {
+    assert.ok(s.includes(p), `stop-rc must match ${p}`);
+  }
+  // Playwright's Chromium outlives a force-killed parent and holds the REAL Chrome lock on
+  // the user-data-dir, which deleting our own lock file does not touch.
+  assert.match(s, /user-data-dir/, 'orphaned Chromium holds the profile lock');
+  assert.match(s, /\.rc-bot-profile/, 'and the match is scoped to our own profile');
+  assert.match(s, /camphawk-profile-lock/, 'a force kill never releases our lock file');
+  // Never by image name: /IM node.exe takes the rec.gov bot down, /IM chrome.exe closes the
+  // browser of whoever is sitting at this machine.
+  assert.ok(!/\/IM\s+(chrome|node)\.exe/.test(s), 'stop-rc must not kill by image name');
+  assert.ok(!/\bbot\\?\.mjs|broker\\?\.mjs|cloudflared/.test(s),
+    'stop-rc must leave the rec.gov bot, the broker and the tunnel alone');
+  // RE-CHECK, then say so. Trusting the kill is how a second browser lands on a held profile.
+  assert.match(s, /STILL RUNNING/, 'it names the survivors');
+  assert.match(s, /exit 1/, 'and exits non-zero so callers do not launch on top');
 });
 
 test('the runner hands off once, and survives being killed by it', async () => {
@@ -812,13 +908,39 @@ test('the watchdog recovers a dark box, and cannot be talked out of it forever',
   assert.match(code, /UPDATE_DEAD_AFTER_MIN\s*=\s*\d+/, 'the update stand-down must have an expiry');
   assert.match(code, /\$age\s*-lt\s*\$UPDATE_DEAD_AFTER_MIN/, 'and it must actually be compared against');
 
-  // It must go through start-all.bat, which stops first — that is what makes a duplicate
-  // structurally impossible rather than merely unlikely.
-  assert.match(code, /start-all\.bat/, 'recovery must go through start-all.bat');
+  // It must go through the two scripts that own the stop-then-start order, never launch a
+  // payload itself: start-all.bat for a dark box, restart-rc.ps1 for the RC pair alone.
+  assert.match(code, /start-all\.bat/, 'a dark box must be recovered through start-all.bat');
+  assert.match(code, /restart-rc\.ps1/, 'the RC pair alone must go through restart-rc.ps1');
   assert.ok(
     !/\bnpm start\b|supervise\.ps1/.test(code),
-    'never launch the payloads directly — start-all.bat owns the stop-then-start order',
+    'never launch the payloads directly — those two scripts own the stop-then-start order',
   );
+
+  /**
+   * EACH PAYLOAD SEPARATELY. This asked "is ANYTHING running?" for the first hours of its
+   * life, which is the exact failure it was written to end: the rec.gov bot and the RC pair
+   * are different processes, and `autocart.bot` stayed green through the RC runner's death
+   * on both 08-07 and 08-11 for precisely that reason. A union count would have read the
+   * outage this script exists for — bot.mjs up, keep-warm and hold runner dead, three holds
+   * queued for 08:00 — as healthy, and exited silently every five minutes all night.
+   */
+  for (const p of ['bot\\.mjs', 'broker\\.mjs', 'rc-keepwarm\\.mjs', 'rc-hold-runner\\.mjs']) {
+    assert.ok(code.includes(p), `the watchdog must look for ${p} by name`);
+  }
+  assert.match(code, /foreach\s*\(\$name in \$PAYLOADS\.Keys\)/i,
+    'each payload must be checked on its own, not counted into a union');
+  assert.match(code, /\$missing\.Count -eq 0[\s\S]{0,400}?exit 0/,
+    'and the silent-healthy exit must require NOTHING missing');
+
+  // START-ALL IS NOT THE ANSWER TO EVERY GAP. It stops everything first, which closes the
+  // Chromium the RC token lives in — so it is for a dark box, and the targeted lever is for
+  // the RC pair. Spending a live session to restart a dead broker is a bad trade at 03:00
+  // and a terrible one at 07:50.
+  const dark = code.indexOf('$missing.Count -eq $PAYLOADS.Count');
+  assert.ok(dark > 0, 'the blunt lever must be gated on the box being genuinely dark');
+  assert.ok(dark < code.indexOf('start-all.bat', dark - 1) + 400,
+    'and start-all must sit inside that branch');
 
   // NO REBOOT. In every outage so far Windows was fine and only our processes had died, and
   // a reboot ends the RC session because the token lives in the Chromium it closes.

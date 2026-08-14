@@ -40,11 +40,17 @@ REM The Chromium match is scoped to .rc-bot-profile: Playwright's browser outliv
 REM force-killed parent and keeps the real Chrome lock on the user-data-dir, so deleting our
 REM own lock file is not enough — and a blanket `taskkill /IM chrome.exe` would close the
 REM browser of whoever is sitting at this machine.
-powershell -NoProfile -Command ^
-  "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -match 'rc-keepwarm\.mjs|rc-hold-runner\.mjs' -or $_.CommandLine -match '--user-data-dir=[^\"]*\.rc-bot-profile') -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
-del /q ".rc-bot-profile\.camphawk-profile-lock" >nul 2>&1
-del /q ".rc-bot-profile\.camphawk-profile-wanted" >nul 2>&1
-timeout /t 3 /nobreak >nul
+REM
+REM CALLED WITH -File, NOT -Command. This was inline PowerShell until 2026-08-14, and it had
+REM NEVER RUN ONCE: the regex contained `\"`, which is PowerShell's escape and not cmd's, so
+REM that quote CLOSED the string, everything after it was unquoted, and the very next `|`
+REM became a cmd PIPE. Every invocation printed the heading above and then died with
+REM   'ForEach-Object' is not recognized as an internal or external command
+REM having killed nothing - and then opened a second Chromium on a profile the first still
+REM held, which is the corruption every comment above warns about. The fix is not better
+REM quoting, it is having no quoting to get wrong: -File passes no code through cmd at all.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop-rc.ps1"
+if errorlevel 1 goto :busy
 
 echo(
 echo === Opening ReserveCalifornia ===
@@ -89,6 +95,18 @@ echo(
 echo Done. You can close this window.
 pause
 exit /b 0
+
+:busy
+echo(
+echo *** Something is still holding the RC profile. Nothing was opened. ***
+echo(
+echo stop-rc.ps1 named the surviving process ids above. Two Chromium on one
+echo user-data-dir corrupt the session this script exists to restore, so it
+echo stops here rather than signing in on top of them.
+echo(
+echo Run mini-pc\stop-all.ps1, then mini-pc\start-all.bat, then this again.
+pause
+exit /b 1
 
 :fail
 echo(

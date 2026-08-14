@@ -23,6 +23,20 @@ import { UPDATE_RETRY_MS } from '../scripts/auto-cart-bot/control-channel.mjs';
 const code = (s: string) => s.split('\n').filter((l) => !/^\s*(#|\/\/|\*|\/\*|REM\b)/i.test(l)).join('\n');
 const botUpdate = readFileSync('src/lib/bot-update.ts', 'utf8');
 const restartPs = readFileSync('scripts/auto-cart-bot/mini-pc/restart-rc.ps1', 'utf8');
+/**
+ * THE KILL MOVED TO stop-rc.ps1 (2026-08-14), so these guards follow it there.
+ *
+ * They were asserted against restart-rc.ps1's own body, and extracting the kill left them
+ * watching an empty room — every one of them would have passed on a file that no longer
+ * killed anything at all. That is the failure mode the extraction itself was fixing, one
+ * level up: a step that looks present and does nothing. The properties are unchanged; only
+ * the file that has to hold them has.
+ *
+ * `restartBody` is BOTH files concatenated on purpose. A property that must not appear
+ * (the rec.gov bot in a kill pattern) must not appear in either, and a property that must
+ * appear may legitimately live in whichever of the two owns it.
+ */
+const stopRcPs = readFileSync('scripts/auto-cart-bot/mini-pc/stop-rc.ps1', 'utf8');
 const botCommands = readFileSync('scripts/auto-cart-bot/bot-commands.mjs', 'utf8');
 
 test('exactly one poller is granted an update', () => {
@@ -82,7 +96,7 @@ test('restart-rc never kills the process that asked for it', () => {
   // The rec.gov bot is usually the caller — that is the entire point of moving the channel.
   // stop-all.ps1 would kill it mid-command and the reply would never be sent: an operation
   // that destroys the channel that requested it can never report whether it worked.
-  const body = code(restartPs);
+  const body = code(restartPs) + '\n' + code(stopRcPs);
   // `bot\.mjs` with the backslash, because every pattern in that file is regex-escaped —
   // asserting on the unescaped spelling looked right and matched nothing, so the mutation
   // that added the rec.gov bot to the kill list passed cleanly.
@@ -95,7 +109,11 @@ test('restart-rc never kills the process that asked for it', () => {
 });
 
 test('restart-rc re-checks, and relaunches supervised', () => {
-  const body = code(restartPs);
+  const body = code(restartPs) + '\n' + code(stopRcPs);
+  // The re-check lives in stop-rc now, and restart-rc must ABORT on its verdict rather than
+  // ignoring it — an extracted check whose caller drops the exit code is no check at all.
+  assert.match(code(restartPs), /LASTEXITCODE -ne 0[\s\S]{0,200}?exit 1/,
+    'restart-rc must abort when the stop reported survivors');
   // Two Chromium on one user-data-dir corrupt the session this exists to protect, so a kill
   // that did not take must ABORT rather than launch on top of a survivor.
   assert.match(body, /STILL RUNNING/, 'it re-checks rather than trusting the kill');

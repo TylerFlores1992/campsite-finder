@@ -21,14 +21,19 @@ cd /d "%~dp0.."
 
 echo(
 echo === Making the RC profile available ===
-REM Same reasoning as rc-login.bat: two Chromium on one user-data-dir corrupt the profile.
-REM Kill by COMMAND LINE - powershell -NoExit retitles its own console, so a WINDOWTITLE
-REM filter matches nothing and silently leaves the old processes running. And never
-REM taskkill /IM node.exe here, which would take the rec.gov bot and the broker down too.
-powershell -NoProfile -Command ^
-  "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'rc-keepwarm\.mjs|rc-hold-runner\.mjs' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
-del /q ".rc-bot-profile\.camphawk-profile-lock" >nul 2>&1
-timeout /t 3 /nobreak >nul
+REM Same reasoning as rc-login.bat, and the same file does it now: two Chromium on one
+REM user-data-dir corrupt the profile. Kill by COMMAND LINE - powershell -NoExit retitles its
+REM own console, so a WINDOWTITLE filter matches nothing and silently leaves the old
+REM processes running. Never taskkill /IM node.exe here, which would take the rec.gov bot and
+REM the broker down too.
+REM
+REM This was inline PowerShell until 2026-08-14. It happened to work HERE and not in
+REM rc-login.bat, because only that copy carried the Chromium arm whose `[^\"]` closed the
+REM cmd string - so a line that looks identical was fine in one file and silently dead in
+REM the other. That is the argument for having none of it in a .bat: -File passes no code
+REM through cmd.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop-rc.ps1"
+if errorlevel 1 goto :busy
 
 echo(
 echo === Testing the unattended sign-in ===
@@ -44,8 +49,13 @@ set RESULT=%errorlevel%
 
 echo(
 echo === Relaunching the RC processes ===
-start "CampHawk RC keep-warm" powershell -NoExit -Command "node rc-keepwarm.mjs 2>&1 | Tee-Object -FilePath logs\rc-keepwarm.log -Append"
-start "CampHawk RC holds"     powershell -NoExit -Command "node rc-hold-runner.mjs 2>&1 | Tee-Object -FilePath logs\rc-holds.log -Append"
+REM UNDER THE SUPERVISOR, like start-all.bat and rc-login.bat. These were bare
+REM `powershell -NoExit` windows until 2026-08-14 - the same downgrade that was fixed in
+REM rc-login.bat on 08-11 and left standing here, which is what a second copy always costs.
+REM The keep-warm's wedge watchdog EXITS on purpose expecting a restart; unsupervised, that
+REM is the ten-hour silence of 2026-08-10.
+start "CampHawk RC keep-warm" powershell -NoExit -ExecutionPolicy Bypass -File "%~dp0supervise.ps1" -Name "rc-keepwarm"   -Command "node rc-keepwarm.mjs"
+start "CampHawk RC holds"     powershell -NoExit -ExecutionPolicy Bypass -File "%~dp0supervise.ps1" -Name "rc-hold-runner" -Command "node rc-hold-runner.mjs"
 timeout /t 2 /nobreak >nul
 
 if not "%RESULT%"=="0" goto :fail
@@ -61,6 +71,17 @@ echo(
 echo Done. You can close this window.
 pause
 exit /b 0
+
+:busy
+echo(
+echo *** Something is still holding the RC profile. Nothing was tested. ***
+echo(
+echo stop-rc.ps1 named the surviving process ids above. You are still signed in -
+echo this stopped BEFORE dropping the token, so nothing was lost.
+echo(
+echo Run mini-pc\stop-all.ps1, then mini-pc\start-all.bat, then this again.
+pause
+exit /b 1
 
 :fail
 echo(

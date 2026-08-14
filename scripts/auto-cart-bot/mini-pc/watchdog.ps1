@@ -49,24 +49,44 @@ function Write-Line($msg) {
   }
 }
 
-# The four long-running payloads. Matched on the command line, the same way stop-all.ps1
-# decides what is ours - never on image name, which would sweep in the browser of whoever is
-# sitting at this machine.
-$PAYLOADS = 'bot\.mjs|broker\.mjs|rc-keepwarm\.mjs|rc-hold-runner\.mjs'
-
-function Count-Ours {
-  @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine -match $PAYLOADS -and $_.ProcessId -ne $PID }).Count
+# The four long-running payloads, checked ONE BY ONE.
+#
+# THIS WAS "IS ANYTHING RUNNING?" AND THAT IS THE HOUSE FAILURE (fixed 2026-08-14, hours
+# after it shipped). The rec.gov bot and the RC pair are different processes; `autocart.bot`
+# stayed green through the RC runner's death on 08-07 and again on 08-11 for exactly this
+# reason. A watchdog counting the union would have read the very outage it was written for -
+# bot.mjs alive, keep-warm and hold runner dead, three holds queued for 08:00 - as HEALTHY,
+# and exited silently every five minutes all night.
+#
+# Matched on the command line, the same way stop-all.ps1 decides what is ours - never on
+# image name, which would sweep in the browser of whoever is sitting at this machine.
+$PAYLOADS = @{
+  'bot'            = 'bot\.mjs'
+  'broker'         = 'broker\.mjs'
+  'rc-keepwarm'    = 'rc-keepwarm\.mjs'
+  'rc-hold-runner' = 'rc-hold-runner\.mjs'
 }
 
-$running = Count-Ours
-if ($running -gt 0) {
+function Get-Missing {
+  $procs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -and $_.ProcessId -ne $PID })
+  $missing = @()
+  foreach ($name in $PAYLOADS.Keys) {
+    $pattern = $PAYLOADS[$name]
+    if (-not ($procs | Where-Object { $_.CommandLine -match $pattern })) { $missing += $name }
+  }
+  # Sorted so the log line is stable run to run and two nights can be compared by eye.
+  , ($missing | Sort-Object)
+}
+
+$missing = Get-Missing
+if ($missing.Count -eq 0) {
   # THE ORDINARY CASE, AND IT MUST BE SILENT. This fires every few minutes forever; a line
   # per run would bury the restarts.log entries that matter under thousands that do not.
   exit 0
 }
 
-# NOTHING IS RUNNING. Before restarting, find out whether that is because an update is
+# SOMETHING IS MISSING. Before restarting, find out whether that is because an update is
 # legitimately in flight - moving the git checkout out from under a restart is how one bad
 # night becomes two.
 #
@@ -91,36 +111,64 @@ if ($updater.Count -gt 0) {
   # An updater whose start time we cannot read is treated as RUNNING, not as dead. Killing a
   # live update to be safe is the one mistake here with no recovery.
   if (-not $oldest) {
-    Write-Line "nothing running, but auto-update.ps1 is alive and its start time is unreadable - standing down"
+    Write-Line "$($missing -join ', ') down, but auto-update.ps1 is alive and its start time is unreadable - standing down"
     exit 0
   }
   $age = [int]((Get-Date) - $oldest).TotalMinutes
   if ($age -lt $UPDATE_DEAD_AFTER_MIN) {
-    Write-Line "nothing running, but an update has been going $age min - that is normal, standing down"
+    Write-Line "$($missing -join ', ') down, but an update has been going $age min - that is normal, standing down"
     exit 0
   }
-  Write-Line "an update has been going $age min with nothing running - treating it as DEAD and recovering"
+  Write-Line "an update has been going $age min with $($missing -join ', ') down - treating it as DEAD and recovering"
 }
 
-Write-Line "NOTHING IS RUNNING - starting everything (start-all.bat stops first, so no duplicates)"
-try {
-  # start-all.bat calls stop-all first by design, which is what makes a duplicate structurally
-  # impossible rather than merely unlikely. Never launch the payloads directly from here.
-  & "$PSScriptRoot\start-all.bat" | Out-Null
-} catch {
-  Write-Line "start-all.bat threw: $($_.Exception.Message)"
+# WHICH LEVER, AND WHY IT IS NOT ALWAYS start-all.
+#
+# start-all.bat stops EVERYTHING first, which is what makes a duplicate structurally
+# impossible - and which also closes the Chromium the RC access token lives in. Spending a
+# live RC session to restart a dead broker is a bad trade at 03:00 and a terrible one at
+# 07:50. So the blunt lever is only for a genuinely dark box.
+$rcDown = @($missing | Where-Object { $_ -like 'rc-*' })
+$otherDown = @($missing | Where-Object { $_ -notlike 'rc-*' })
+
+if ($missing.Count -eq $PAYLOADS.Count) {
+  Write-Line "NOTHING IS RUNNING - starting everything (start-all.bat stops first, so no duplicates)"
+  try {
+    & "$PSScriptRoot\start-all.bat" | Out-Null
+  } catch {
+    Write-Line "start-all.bat threw: $($_.Exception.Message)"
+    exit 1
+  }
+} elseif ($rcDown.Count -gt 0) {
+  # The RC pair specifically. restart-rc.ps1 is the targeted lever: it leaves the rec.gov
+  # bot, the broker and the tunnel alone, and it costs no session that is not already gone -
+  # if the keep-warm is dead, so is the token it was holding.
+  Write-Line "$($rcDown -join ', ') down (rest of the box is up) - running restart-rc.ps1"
+  try {
+    & "$PSScriptRoot\restart-rc.ps1" | Out-Null
+  } catch {
+    Write-Line "restart-rc.ps1 threw: $($_.Exception.Message)"
+    exit 1
+  }
+} else {
+  # SAY IT, DO NOT FIX IT. The only lever that reaches these is start-all, and that would end
+  # a live RC session for a process whose own supervisor is meant to restart it. This is a
+  # deliberate hole, and a NAMED one - the version of this script that reported "healthy"
+  # here is the bug being fixed. If it recurs, the fix is a per-payload relaunch, not a
+  # blanket restart.
+  Write-Line "$($otherDown -join ', ') down, but the RC pair is UP - not restarting: start-all would end a live RC session. A human is needed."
   exit 1
 }
 
 Start-Sleep -Seconds 20
-$after = Count-Ours
-if ($after -gt 0) {
-  Write-Line "recovered - $after of our processes are up"
+$still = Get-Missing
+if ($still.Count -eq 0) {
+  Write-Line "recovered - all four payloads are up"
   exit 0
 }
 
 # SAY SO LOUDLY AND DO NOT LOOP. The task fires again in a few minutes and will try again;
 # what must not happen is this exiting 0 on a failure, because then the only record of a
 # box that cannot be restarted is a log nobody reads.
-Write-Line "START FAILED - still nothing running after start-all.bat. A human is needed."
+Write-Line "START FAILED - still down: $($still -join ', '). A human is needed."
 exit 1
