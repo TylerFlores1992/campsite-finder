@@ -33,8 +33,32 @@ param([switch]$Force, [switch]$Claimed)
 $ErrorActionPreference = "Continue"
 $botDir = Split-Path -Parent $PSScriptRoot
 Set-Location $botDir
-if (-not (Test-Path "logs")) { New-Item -ItemType Directory -Path "logs" | Out-Null }
-$log = "logs\auto-update.log"
+# ABSOLUTE, ANCHORED TO THE SCRIPT - NEVER RELATIVE TO THE WORKING DIRECTORY (2026-08-14).
+#
+# These were "logs\auto-update.log", i.e. relative to wherever the process happened to be.
+# The Windows Scheduled Task starts in the bot directory, so it wrote correctly and this
+# looked fine for weeks. `bot.mjs` spawns the updater with NO `cwd` option, so the on-demand
+# path inherits the poller's directory instead - and every single Add-Content failed with
+#
+#   Could not find a part of the path 'C:\Users\Tyler\campsite-finder\logs\auto-update.log'
+#
+# i.e. the repo root, whose `logs` directory does not exist. So AN UPDATE ASKED FOR FROM THE
+# ADMIN PAGE WROTE NO LOG AT ALL, in the file CLAUDE.md tells you to read before trusting the
+# update path - while the timer-driven path, which is the one that already works, logged
+# perfectly. Observed on 2026-08-14: the request stopped every process and left the checkout
+# untouched, and the only trace of why was absent.
+#
+# It compounds: the updater's stdout goes to `logs\update-spawn.log`, which is written by
+# `bot.mjs` - a process `stop-all` KILLS on the way through. So that log necessarily ends at
+# the stop, and between the two of them the on-demand update had no durable record anywhere.
+# That is why "Update now" has twice had to be diagnosed by inference.
+#
+# WHY THE DIRECTORIES DIVERGE IS NOT ESTABLISHED - `Set-Location $botDir` above should have
+# made the relative path resolve correctly, and evidently did not. An absolute path does not
+# depend on knowing: it removes the question rather than answering it.
+$logDir = Join-Path $botDir "logs"
+if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+$log = Join-Path $logDir "auto-update.log"
 if (-not $env:CAMPHAWK_URL) { $env:CAMPHAWK_URL = "https://camphawk.app" }
 
 # THE TOKEN LIVES IN scripts\auto-cart-bot\.env, NOT IN THE MACHINE ENVIRONMENT - and a

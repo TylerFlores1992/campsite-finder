@@ -957,3 +957,45 @@ test('the watchdog recovers a dark box, and cannot be talked out of it forever',
   // box that cannot be restarted in a log nobody reads.
   assert.match(code, /START FAILED[\s\S]{0,200}?exit 1/, 'a failed start must exit non-zero');
 });
+
+test('auto-update.ps1 writes its log to an ABSOLUTE path, not one relative to the cwd', async () => {
+  /**
+   * THE ON-DEMAND UPDATE WROTE NO LOG AT ALL (2026-08-14).
+   *
+   * `$log` was "logs\auto-update.log" — relative to whatever directory the process happened
+   * to be in. The Windows Scheduled Task starts in the bot directory, so the timer-driven
+   * path wrote correctly and this looked healthy for weeks. `bot.mjs` spawns the updater with
+   * NO `cwd` option, so the ON-DEMAND path inherited the poller's directory and every
+   * Add-Content failed with
+   *
+   *   Could not find a part of the path 'C:\Users\Tyler\campsite-finder\logs\auto-update.log'
+   *
+   * Observed live: an update requested from the admin page stopped every process on the box,
+   * left the checkout untouched, and recorded not one word about why — in the log CLAUDE.md
+   * names as the thing to read before trusting the update path.
+   *
+   * It compounds, which is why this matters more than one missing file: the updater's stdout
+   * goes to logs\update-spawn.log, written by `bot.mjs` — a process `stop-all` KILLS on its
+   * way through — so that log necessarily ends at the stop. Between the two, the on-demand
+   * update had no durable record anywhere, and it has twice had to be diagnosed by inference.
+   *
+   * The two paths are the two-halves trap again: the one that works is not the one that
+   * carries the diagnostics.
+   */
+  const up = await miniPc('auto-update.ps1');
+
+  // The log must be anchored to the script's own location, which cannot move under it.
+  assert.match(up, /\$logDir\s*=\s*Join-Path\s+\$botDir\s+"logs"/,
+    'the log directory must be derived from $botDir, which comes from $PSScriptRoot');
+  assert.match(up, /\$log\s*=\s*Join-Path\s+\$logDir\s+"auto-update\.log"/,
+    '$log must be an absolute path built from that directory');
+
+  // And no assignment may go back to a bare relative path. Comments are stripped first: the
+  // one above quotes the broken form to explain it, and a test that failed on its own
+  // explanation would be "fixed" by deleting the explanation.
+  const code = up.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  assert.ok(!/\$log\s*=\s*"logs\\/.test(code),
+    '$log must never be relative to the working directory again');
+  assert.ok(!/New-Item[^\n]*-Path\s+"logs"/.test(code),
+    'the logs directory must be created by absolute path too');
+});
