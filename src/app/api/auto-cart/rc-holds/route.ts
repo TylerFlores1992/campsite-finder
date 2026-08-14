@@ -5,6 +5,7 @@ import { rcSessionFault, type RcSessionFault } from '@/lib/health-thresholds';
 import { markBotUpdateApplied, noteBotUpdateAttempt, claimBotUpdate } from '@/lib/bot-update';
 import { recordBotCommandResult } from '@/lib/bot-commands';
 import { botControlFor } from '@/lib/bot-control';
+import { recordMemorySample } from '@/lib/chromium-memory';
 import { query, mutate } from '@/lib/db/client';
 import { notifyHoldMissed } from '@/lib/rc-holds-notify';
 import { manageTokenFor } from '@/lib/notifications/actions';
@@ -244,6 +245,22 @@ export async function POST(req: NextRequest) {
       typeof r.skippedWhy === 'string' ? r.skippedWhy : null,
     );
     return NextResponse.json({ ok: true, state: 'rehearsal-recorded' });
+  }
+
+  // ── ONE CHROMIUM MEMORY SAMPLE (migration 059) ───────────────────────────────────────
+  // The leak that has needed a power cycle is on a profile family nobody has identified,
+  // and one of the two candidates exists only in ~30-minute bursts — so it cannot be
+  // attributed by a human taking two readings, which is what has been tried three times.
+  // This rides a POST the box already makes; see scripts/auto-cart-bot/memory-sample.mjs.
+  //
+  // It returns before the hold work below deliberately: this is not a hold report and must
+  // never be mistaken for one, and at 08:00:00 nothing may go in front of a cart.
+  if (body?.memory && typeof body.memory === 'object') {
+    await recordMemorySample(
+      body.memory,
+      typeof body.source === 'string' ? body.source : null,
+    );
+    return NextResponse.json({ ok: true, state: 'memory-recorded' });
   }
 
   // MAY THIS PROCESS SPAWN THE UPDATER? Claimed at the point of USE, never granted on read.
