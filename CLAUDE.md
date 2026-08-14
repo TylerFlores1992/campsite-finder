@@ -1305,20 +1305,39 @@ opened the SYSTEM browser, whose cookie jar the injection can never read.
   webview and force-closing the app — same day. Nothing measured longer, and RC's own session
   lifetime (~1h token, ~12h Okta) applies inside the app too. Sign in shortly before a release.
 
-### THE RELEASED SCREEN HAS NO SIGN-IN STEP (2026-08-13 evening, OPEN)
-Step one — the in-webview RC sign-in that `prepareRc` performs — is wired into the
+### THE RELEASED SCREEN HAD NO SIGN-IN STEP — FIXED 2026-08-13 evening
+Step one — the in-webview RC sign-in that `prepareRc` performs — was wired into the
 PRE-RELEASE state only. In the ordinary 08:00 flow that is fine: the user signs in, then
 presses "hand it over". **On a REVISIT it is not**, and revisits became reachable the same
 evening (see below), so a user landing on the released screen has never run step one in that
-webview. "Finish on ReserveCalifornia" then runs the precart against a signed-out webview and
-hangs on *"Reading your session…"* forever — the identical symptom as the morning's hold, and
-the identical cause: **the precart needs a session in THAT webview and nothing on this screen
-establishes one.**
-- **The fix is small and already half-built:** gate the primary action on
-  `rcCheck === 'verified'` the way the pre-release screen does, and fall back to a sign-in
-  button that calls the existing `prepareRc` (which closes on token capture) before offering
-  the cart. No new mechanism.
-- **It is the third UI bug in two days found by running the real flow on a phone**, after the
+webview. "Finish on ReserveCalifornia" then ran the precart against a signed-out webview,
+which sits on *"Reading your session…"* for `getToken`'s twelve-second wait and can only end
+by asking the user to sign in on RC's own page — which RC scrolls past its own sign-in
+control. The release is spent by then. Identical cause to the morning's hold: **the precart
+needs a session in THAT webview and nothing on this screen established one.**
+- **CONFIRMED IN PRODUCTION DATA, not only from the report.** Hold `45719` — the synthetic
+  one that PROVED the cart POSTs at 12:31 — was reopened twice at ~17:11 PT and its
+  `client_reports` tail holds both attempts, identical: `injected {job:true}` →
+  `session {opens:19, marker:"present", storedToken:"none"}` → `banner "Reading your
+  session…"` → `closed`. **No token, no `load`, no `submit`.** Compare the same hold's
+  successful run five hours earlier: `token captured` → `Adding to your cart…` → `load ok` →
+  `✓ Added to cart`. `marker:"present"` with `storedToken:"none"` is the migration-058 shape
+  for "the store survived and the session ran out" — not an ITP purge.
+- **The fix is `rcHandoffStep` in `lib/claim-gate.ts`, and `prepareRc` is the way through
+  it.** No new mechanism; both halves already existed for the pre-release screen. It is a
+  function rather than two `&&`s in the JSX because **its edges are the interesting part**
+  and an inline copy on a third screen would get them wrong quietly:
+  **`unconfirmed` PROCEEDS** (the webview closed without announcing a token, which may
+  equally mean we never got to look — same rule as `unknown` never being reported as a dead
+  RC session), and **`canInject === false` always proceeds** (the hand-off opens the SYSTEM
+  browser, which carries the user's own real session; a sign-in button there would navigate
+  away from this screen and report nothing back, so the gate could never lift).
+- The revisit copy (`afterSignInBody`) **promises nothing about a cart** — the precart has
+  not run, and the missing session is exactly what stops it — so it stays OUT of
+  `POST_RELEASE` and the existing denylist covers it by default.
+- Preset `ch-claim-revisit` renders it (the stubbed `cordova.InAppBrowser` is what makes
+  `canInject` true; without it the preset shows the plain-browser screen and proves nothing).
+- **It was the third UI bug in two days found by running the real flow on a phone**, after the
   stranding-when-it-worked and the toolbar-over-content. None was reachable by reasoning, and
   all three were the app doing the right thing while the screen described a different product.
 
@@ -2316,13 +2335,16 @@ That sweep is the 44ae4b7 fix working on its first morning. `#60`'s hand-off sti
 the OLD "click the cart icon" banner, which is what confirmed the 09:11 precart fix had
 never run against a real hold.
 
-**ONE hold is queued for 2026-08-14 08:00 PT and it is UNTAPPED** — Elk Prairie `#29`,
-status `offered` (read 12:30 PT 08-13). `nextHoldRelease` counts `requested`/`carted`/
-`claiming` and never `offered`, so **the 02:00–05:00 quiet-window update path is OPEN
-tonight unless it gets tapped** — which matters, because the mini-PC is missing
-`rc-probe.mjs` and therefore `--cart-cap`. Re-read this rather than remembering it: the
-tapped/untapped distinction inverts the decision, and this entry was wrong about it for a
-day once already.
+**THREE holds are offered for 2026-08-14 08:00 PT and ALL THREE ARE UNTAPPED** — South
+Carlsbad `#55` and `#95`, Carpinteria `#C218` (read 17:27 PT 08-13; Elk Prairie `#29` is
+gone from the window, so the earlier "ONE hold" reading is superseded rather than wrong).
+`nextHoldRelease` counts `requested`/`carted`/`claiming` and never `offered`, so **the
+02:00–05:00 quiet-window update path is OPEN tonight unless one gets tapped** — which
+matters, because the box is on `c682aa8` and therefore missing `3ce77d9`, the commit that
+lets `--cart-cap` read the stored password instead of having one typed into a cmd window.
+`autocart.bot_version` agrees in its own words: *"Nothing is queued, so this is the ordinary
+wait for a quiet window."* Re-read this rather than remembering it: the tapped/untapped
+distinction inverts the decision, and this entry was wrong about it for a day once already.
 
 *(Historical: South Carlsbad `#41` 08-08; Leo Carrillo `#L108` 08-07 FAILED — see the runner
 section above.)*

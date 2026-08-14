@@ -16,6 +16,13 @@ items that need somebody at a keyboard remain. **Delete this file once both are 
   in CLAUDE.md under "THE HAND-OFF UI OVERHAUL".
 - **The cart promise is earned and allowed**, on `canInject` only and post-release only.
   `worker/rc-handoff.test.mts` now calls `handoffCopy` instead of reading a file.
+- **The released screen has a sign-in step now** (`lib/claim-gate.rcHandoffStep`). A REVISIT
+  — "Open the hand-off again" from the Watches tab — had never run step one in that webview,
+  so "Finish on ReserveCalifornia" fired the precart against a signed-out one. Confirmed in
+  `client_reports`, not just from the report: hold `45719` was reopened twice at ~17:11 PT on
+  08-13 and both attempts read `session {marker:"present", storedToken:"none"}` → banner
+  *"Reading your session…"* → `closed`, with no `load` and no `submit`. Full write-up in
+  CLAUDE.md.
 - **The diagnostics channel is fine.** Command #37 was claimed in 2 seconds by `bot` and
   answered in 3.9. #36 was orphaned by the 20:21 update, not swallowed by `botControlFor`.
   `scripts/bot-command-probe.mts` is the tool if it ever needs re-asking.
