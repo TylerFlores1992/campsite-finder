@@ -194,6 +194,12 @@ this is bot-side code, so it needs to reach the mini-PC.
 - **The immediate lever needs no update at all: `mini-pc\start-all.bat` at the box.** It
   quotes correctly and always has — it stops everything first, then relaunches properly.
   `restart-rc` is the one thing NOT to use until the box updates, because it is the bug.
+  It costs the RC session, which `maybeAutoLogin` re-establishes at T−30 unattended.
+- **"Update now" also fixes it**, because `auto-update.ps1` relaunches through the same
+  `start-all.bat` — but it `git reset --hard`s the dirty checkout below, and **the release
+  guard shuts the door at T−6h**: with holds at 08:00 PT that is **02:00 PT**, which is also
+  when the quiet window opens, so the quiet-window path is shut for that night entirely. An
+  on-demand press before 02:00 PT is the only update route on a night with holds queued.
 - **Do not trust `restarts.log` going quiet.** A REPL never exits, and `supervise.ps1` only
   speaks when a child exits, so silence is what both a healthy night and this look like.
 - **`autocart.rc_runner` cannot fail this way** — `beat_at` was stamped by any authorized GET
