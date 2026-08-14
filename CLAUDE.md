@@ -1286,6 +1286,56 @@ parent's claim, taken one second earlier**. Every on-demand update refused itsel
   only `requested`/`carted`/`claiming`, NOT `offered`** — so untapped offers do not block the
   02:00–05:00 window, but tapping one does, and the 6h release check is not liftable.
 
+### THE ON-DEMAND UPDATE WROTE NO LOG AT ALL, AND NEITHER DID ITS SPAWNER (2026-08-14)
+Two "Update now" requests (20:48Z, 21:08Z). Both times the box claimed within **seconds**,
+spawned `auto-update.ps1`, ran `stop-all` — stopping every process — and left `HEAD` at
+`7780c32`. **Neither logged one word about why.**
+- **`$log` WAS RELATIVE** (`logs\auto-update.log`). The Windows Scheduled Task starts in the
+  bot directory, so the TIMER path writes correctly and this looked healthy for weeks;
+  `bot.mjs` spawns the updater with **no `cwd` option**, so the ON-DEMAND path inherited the
+  poller's directory and every `Add-Content` failed with *"Could not find a part of the path
+  `C:\Users\Tyler\campsite-finder\logs\auto-update.log`"* — the repo root, whose `logs`
+  directory does not exist. **The two-halves trap again: the path that works is not the path
+  that carries the diagnostics.** Now absolute, anchored to `$PSScriptRoot`; guarded in
+  `update-guard.test.mts`, which strips comment lines first because the new comment quotes
+  the broken form. **WHY the directories diverge despite `Set-Location $botDir` two lines
+  above is NOT established** — an absolute path removes the question rather than answering
+  it, and the guess is deliberately not written here.
+- **IT COMPOUNDS, and that is the real finding.** The updater's stdout goes to
+  `logs\update-spawn.log`, which is written by **`bot.mjs` — a process `stop-all` KILLS on
+  the way through** — so that log necessarily ENDS at the stop, every time, by construction.
+  Between the two, an on-demand update had **no durable record anywhere**. That is why it has
+  twice been diagnosed by inference, and why "Update now takes ~20 minutes" was inferred
+  rather than read.
+- **A PENDING REQUEST CHURNS THE BOX.** `UPDATE_RETRY_MS` is 15 min and the claim TTL is 20,
+  so a request that never lands re-spawns the updater indefinitely and each attempt bounces
+  every process. Withdraw it (`requested_at = NULL`) rather than leaving it set — do NOT
+  mark it applied, which asserts something untrue.
+- **`tail-log auto-update` COULD NOT BE READ EITHER** during this, because the mixed-encoding
+  bug below returned the newest lines as mojibake. Three diagnostics failing at once around
+  one event is the recurring shape here, not bad luck.
+
+### `tail-log` RETURNED THE NEWEST LINES AS MOJIBAKE, EVERY TIME (2026-08-14)
+Asked for `auto-update` mid-diagnosis, the box answered with solid CJK — every line.
+**These logs are append-only and have outlived an encoding change**, so ONE FILE holds
+UTF-16LE at the front (PowerShell 5.1's `Tee-Object`) and UTF-8 at the back (everything
+appended once `supervise.ps1` started setting `[Console]::OutputEncoding`). The BOM-less
+heuristic sampled the first 512 bytes, chose UTF-16LE for the whole file, and mis-decoded the
+back — **which is the only part `tail-log` ever returns.** The comment claiming it "cannot
+false-positive on real UTF-8" was true of the test and false of the file: it never asked
+whether one file could be two things.
+- Fixed by splitting at the **last NUL** — UTF-8 cannot contain one, so that byte is exactly
+  the end of the UTF-16LE region. Exact, not estimated, and alignment falls out for free.
+- **Sampling the tail instead of the head was the first fix and was only mostly right** (a
+  fixed window still straddles the join while the UTF-8 part is shorter than the window). Its
+  own regression test caught it. Tuning the window is a smaller version of the same guess.
+- **VERIFIED AGAINST THE REAL BYTES off the box** — 332 log lines recovered where the box had
+  returned none. That check **falsified an earlier version of the fix first**: the recovered
+  buffer appeared to hold NULs at the END, which would have made the split catastrophic. They
+  turned out to be the box's own `(truncated to the last 16000 characters)` notice, appended
+  as ASCII AFTER the mis-decode and turned back into `X\0` pairs by the reconstruction — **an
+  artifact of measuring, not of the file. Reconstructed evidence needs its own audit.**
+
 ### `rc-login.bat`'s KILL HAD NEVER RUN — `\"` IS NOT A CMD ESCAPE (2026-08-14)
 Reported as *"RC login isn't working"*: the script printed `=== Closing anything holding the
 RC profile ===` and then died with **`'ForEach-Object' is not recognized as an internal or
