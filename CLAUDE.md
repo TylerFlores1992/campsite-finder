@@ -2452,9 +2452,52 @@ repo-tooling additions (Stop hook, `deploy-scope.mts`, `/rc-status`, `.mcp.json`
 **`CH_DEPLOY_SHA` / `CH_DEPLOY_AT` / `CH_BOT_CODE_AT` are DERIVED at build time — never set
 them by hand;** see the env-var section in CONTEXT.
 
-### iOS 1.0 IS SUBMITTED — "Waiting for Review", and DON'T PULL IT (2026-08-08)
-Confirmed from App Store Connect: the version reads **Waiting for Review**, so it was
-submitted and is genuinely queued. (This heading briefly said the opposite — I inferred
+### iOS 1.0 WAS REJECTED 2026-08-14 — GUIDELINE 2.1, AND THE REVIEWER NEVER GOT IN
+Reviewed 2026-08-13 on an iPhone 17 Pro Max, rejected the next morning. **One item, and
+it is not 3.1.3(b):** *"We were unable to sign in with the following demo account
+credentials … Unable to sign in (and Yahoo Mail)."* ASC files it as *2.1.0 Performance:
+App Completeness*.
+- **The business-model defence was never reached, let alone tested.** Nobody disputed the
+  notes, the price-free rendering or the absence of a purchase mechanism — the reviewer
+  could not open the app, so §2's 1,992 characters went unread. Do NOT record this as
+  "3.1.3(b) survived review"; it was not adjudicated.
+- **TWO independent causes, and fixing either one alone leaves the app rejected.**
+  1. **The password in the Sign-In Information field is WRONG.** Apple quoted
+     `TFlof12345!`; Clerk's `POST /v1/users/<id>/verify_password` answers **422
+     `incorrect_password`** for that string. So "unable to sign in" is literally true at
+     the password step, and this was checkable from a web session at any point in the
+     sixteen days the version sat in the queue — with the secret key we already have.
+     **§5's "VERIFIED DONE 2026-08-08" checked that the field was POPULATED, never that
+     its contents WORK.** Same shape as the site-mute bug (the write half verified, the
+     read half never exercised) and as `status = 'sent'` meaning only "Twilio returned
+     2xx": presence is not liveness, and the check that felt done was measuring the
+     cheaper half.
+  2. **Clerk Device Trust emails a one-time code on any password sign-in from a new
+     device.** Formerly "Client Trust"; the API status is still `needs_client_trust`
+     (`node_modules/@clerk/shared/dist/types/signInFuture.d.ts`). It fires when the user
+     enters a valid password, has no MFA, and the device is unrecognised — **which is
+     every App Review device, every time, by construction.** The code goes to the Yahoo
+     inbox, and the reviewer says in as many words that they could not get into that
+     either. The demo account is `password_enabled=true`, `two_factor_enabled=false`, so
+     it is squarely in scope.
+- **THE FIX IS CONFIGURATION, NOT CODE, AND NEEDS NO NEW BINARY.** Clerk Dashboard →
+  **Protect → Rules → Device Trust → Manage → toggle off Enable → Save** (instance-wide;
+  Clerk documents no per-user exemption), then reset the demo password and paste the real
+  one into Sign-In Information. The version is already Rejected, so **the queue position
+  is spent and resubmitting the same build costs nothing** — do not let "a rebuild loses
+  our place" argue for a native change that is not needed. Nothing in `src/` changes.
+- **Device Trust is instance-wide, so turning it off is a real trade** — it is what stops
+  a stolen password being enough from an unknown device, for all 8 accounts. Accepted here
+  because no card data is reachable in-app (Stripe holds it) and a second rejection is the
+  larger cost. The keep-it-on alternative is to enable TOTP on the demo account and hand
+  Apple backup codes; rejected as more moving parts in front of a reviewer who has already
+  failed to sign in once. **If it is ever switched back on, the NEXT review hits this
+  again** — it is a permanent property of reviewing a password-only app, not a one-off.
+- Reply text and the resubmit sequence are in `docs/APP-STORE.md` §2a.
+
+### iOS 1.0 was SUBMITTED — the queue, for the record (2026-08-08)
+Confirmed from App Store Connect: the version read **Waiting for Review**, so it was
+submitted and was genuinely queued. (This heading briefly said the opposite — I inferred
 from §5's stale checklist that it had never gone in. The console is the source of truth;
 §5's "Left, and only a human can do it" list was simply never ticked off.)
 **Waiting for Review is the QUEUE, not the review.** The "median ~24h" figure people

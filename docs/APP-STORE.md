@@ -124,6 +124,109 @@ leaves search fully usable — the user types a place name instead.
 
 ---
 
+## 2a. REJECTED 2026-08-14 — Guideline 2.1, the reviewer could not sign in
+
+Submission `243b36c7-27e1-42e8-9ffa-7f19d98a6ed2`, reviewed 2026-08-13 on an iPhone 17
+Pro Max. Apple's words: *"We were unable to sign in with the following demo account
+credentials … Unable to sign in (and Yahoo Mail). Please provide a new instruction."*
+
+**Nothing about the business model was raised.** The 3.1.3(b) notes in §2 were never
+tested, because the app was never opened. Leave them exactly as they are.
+
+### The two causes
+
+**1. The password in Sign-In Information does not work.** Proven, not inferred — Clerk's
+backend API answers `422 incorrect_password` for the string Apple quoted:
+
+```
+NODE_USE_ENV_PROXY=1 npx tsx - <<'EOF'
+const H = { Authorization: `Bearer ${process.env.CLERK_SECRET_KEY}`,
+            'Content-Type': 'application/json' };
+const [u] = await (await fetch(
+  'https://api.clerk.com/v1/users?email_address=tylerflores1992%40yahoo.com',
+  { headers: H })).json();
+const v = await fetch(`https://api.clerk.com/v1/users/${u.id}/verify_password`,
+  { method: 'POST', headers: H, body: JSON.stringify({ password: process.env.DEMO_PW }) });
+console.log(v.status, v.ok ? 'CORRECT' : await v.text());
+EOF
+```
+
+> **Run that before every submission.** §5 recorded the credentials as "VERIFIED DONE
+> 2026-08-08" on the strength of the field being *populated*. Populated is not correct,
+> and the difference cost the whole review cycle. This is the same failure as verifying
+> the site-mute write and never the read.
+
+**2. Clerk Device Trust challenges every new device.** Previously "Client Trust"; the
+status is still `needs_client_trust` in `@clerk/shared`. Per Clerk's docs it triggers when
+*"the user enters a valid password"*, has not enabled MFA, and is *"signing in from a new
+device"* — so it fires for an App Review device 100% of the time. It sends a six-digit
+code to the account's email; the reviewer has no access to that inbox and said so.
+
+The demo account is `password_enabled=true`, `two_factor_enabled=false`, `totp_enabled=false`
+— exactly the shape Device Trust applies to. It does **not** apply to passwordless
+sign-ins, which is no help here: every passwordless route also needs the inbox.
+
+### The fix — configuration only, no rebuild
+
+1. **Clerk Dashboard → Protect → Rules → Device Trust → Manage → toggle off Enable → Save.**
+   Instance-wide; Clerk documents no per-user exemption.
+2. **Reset the demo account password** and paste the real one into the version's
+   *App Review Information → Sign-In Information*. Then re-run the check above and confirm
+   it prints `CORRECT`.
+3. **Sign in once from a private window** on a device that has never touched the account,
+   and confirm no code is asked for. That is the actual reviewer experience; the API check
+   only covers cause 1.
+4. Reply in Resolution Center (text below), then **Resubmit to App Review**.
+
+**The same build is fine.** The version is already Rejected, so the queue position is
+spent — there is nothing left to protect by avoiding a resubmit, and equally no reason to
+attach a new binary. `src/` does not change. ITMS-90683 remains a warning, not a blocker.
+
+**Cost of turning Device Trust off:** all accounts lose the new-device email check on
+password sign-in. Accepted — no card data is reachable in-app (Stripe holds it), and a
+second rejection costs more. The alternative that keeps it on is TOTP on the demo account
+plus backup codes pasted into the notes; rejected as more steps in front of a reviewer who
+has already failed once. **Switching it back on after approval re-breaks the next review.**
+
+### Resolution Center reply
+
+Send only after steps 1–3 are actually done — the second paragraph is a claim about the
+world, and a reviewer who hits a code prompt anyway will reject again and trust nothing.
+
+```
+Hello,
+
+Thank you for the review, and apologies for the trouble signing in. You were right
+that the credentials did not work. There were two separate problems and both are now
+fixed:
+
+1. The password in the Sign-In Information field was incorrect. It has been corrected,
+   and we have confirmed the new password signs in successfully.
+
+2. Our authentication provider was sending a one-time verification code by email on the
+   first sign-in from an unrecognized device. Your review device is new to this account,
+   so that challenge appeared every time, and the code was delivered to the account's
+   email inbox, which you do not have access to. We have turned that new-device challenge
+   off. Signing in now requires only the username and password — no verification code,
+   and no access to the email inbox.
+
+The corrected credentials are in the Sign-In Information fields for this version:
+
+  User name: tylerflores1992@yahoo.com
+  Password:  <paste the new password here>
+
+This account has an active subscription, so all functionality is available, including
+creating campground watches and receiving alerts. Searching campgrounds is free and
+works without signing in at all.
+
+If anything still blocks you, please reply here and we will respond immediately.
+
+Thank you,
+Tyler Flores
+```
+
+---
+
 ## 3. Listing fields
 
 | Field | Value |
@@ -184,6 +287,11 @@ Also done 2026-07-29:
 - **Pricing and Availability:** free, **United States only** — which is what keeps
   `NATIVE_LINKOUT` legally usable. See the store-billing note in `docs/CONTEXT.md`.
 
+> **SUPERSEDED 2026-08-14: the version was REJECTED under Guideline 2.1** — the reviewer
+> could not sign in with the demo account. Everything below about protecting the queue
+> position is now moot (the position is spent), and the "editable in place" reasoning
+> applies to the resubmit rather than to a waiting version. **Read §2a first.**
+
 **SUBMITTED 2026-07-30ish — version 1.0 is "Waiting for Review" (confirmed 2026-08-08).**
 The checklist below was never ticked off, which made this file read as though nothing had
 been submitted. It had. **Trust App Store Connect over this section**; the items are kept
@@ -197,9 +305,12 @@ longest. Long ≠ stuck, and there is nothing in the repo to change.
 *"You can edit some information while your version is waiting for review. To submit a new
 build, you must remove this version from review."* So metadata and **App Review
 Information** can be fixed in place — only a BUILD swap costs the place in line.
-- ~~Fill the demo account password~~ — **VERIFIED DONE 2026-08-08.** Sign-in required is
-  ticked, username + password are present, contact info is filled and the notes field
-  holds 1,992 characters. Nothing to fix; stop re-flagging §2's `<fill in>`.
+- ~~Fill the demo account password~~ — **THIS "VERIFIED DONE 2026-08-08" WAS WRONG, and it
+  is what got the app rejected on 2026-08-14.** What was checked is that Sign-in required
+  is ticked, that a username and password are *present*, and that the notes field holds
+  1,992 characters. **Nothing checked that the password WORKS** — Clerk answers
+  `422 incorrect_password` for it. See §2a for the one-command check that settles it, and
+  run that instead of eyeballing the field. §2's `<fill in>` is still not the defect.
 - Confirm the §6 metadata and screenshots are what you want; also editable in place.
 
 **What NOT to do:** don't remove from review to attach a newer build. The app is a webview
