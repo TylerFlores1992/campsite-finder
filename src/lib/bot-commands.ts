@@ -33,11 +33,26 @@ export const BOT_COMMAND_KINDS = {
    * KILL OUR CHROMIUM. Added 2026-08-12, when a browser on our profiles leaked to 9.4 GB and
    * took COMMIT to 99% of 50 GB — and there was NO REMOTE REMEDY for it.
    *
-   * `restart-rc` could not clear it and was right not to: it matches
-   * `--user-data-dir=…\.rc-bot-profile`, i.e. the RC profile only, deliberately leaving the
-   * rec.gov bot alone. The leaking process was on a rec.gov profile, so the one lever that
-   * exists for a runaway browser does not reach the family it actually came from. It took a
-   * person typing `taskkill` into a phone to end it.
+   * `restart-rc` could not clear it: it matches `--user-data-dir=…\.rc-bot-profile`, i.e. the
+   * RC profile only, deliberately leaving the rec.gov bot alone. It took a person typing
+   * `taskkill` into a phone to end it.
+   *
+   * ── THIS USED TO SAY "THE LEAKING PROCESS WAS ON A REC.GOV PROFILE". IT IS NOT KNOWN, AND
+   *    THAT SENTENCE WAS THE GUESS CLAUDE.md RECORDS AS HAVING BEEN MADE TWICE, WRONGLY
+   *    (corrected 2026-08-14). The inference was: restart-rc did not clear it, restart-rc
+   *    only matches the RC profile, therefore it was rec.gov. Both steps fail.
+   *
+   *    1. `.rc-bot-profile` lives INSIDE `…\auto-cart-bot\`, so the RC profile matches BOTH
+   *       candidate patterns and the families cannot be told apart by comparing regexes —
+   *       which is the entire reason `memory` was changed to print the full `--user-data-dir`.
+   *    2. There is now an explanation for "restart-rc could not clear it" that says nothing
+   *       about the family at all: until 2026-08-14 the stop patterns used `[^"]*`, which
+   *       cannot cross the quote Chrome adds when it re-quotes the path for its renderer/GPU
+   *       children — so every stop killed the parent and left the children alive. That is why
+   *       it reached 2 of 9 processes.
+   *
+   *    Attribution is what migration 059's series exists to establish. Until it does, do not
+   *    let this comment be quoted as the answer.
    *
    * That is the same shape as 2026-08-11's control channel: the thing you most need a remote
    * lever for is the thing whose absence removes the lever. A supervisor that cannot start a

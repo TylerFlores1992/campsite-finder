@@ -117,13 +117,46 @@ export function readTextFile(file) {
   // \u0000, so the answer was unstorable and the command hung as 'picked up, never
   // finished' - twice, identically, while list-processes in the same batch came back fine.
   //
-  // ASCII text in UTF-16LE is 'X\0Y\0': NULs on odd offsets. Sampling the head is enough
-  // and cannot false-positive on real UTF-8, which never contains a NUL at all.
-  const head = buf.subarray(0, Math.min(buf.length, 512));
-  let odd = 0;
-  for (let i = 1; i < head.length; i += 2) if (head[i] === 0) odd++;
-  if (head.length >= 8 && odd > head.length / 4) return buf.toString('utf16le');
-  return buf.toString('utf8');
+  // ASCII text in UTF-16LE is 'X\0Y\0': NULs on odd offsets. Real UTF-8 never contains a NUL
+  // at all, so the test itself cannot false-positive.
+  //
+  // ── BUT IT SAMPLED THE HEAD, AND THESE LOGS ARE MIXED (fixed 2026-08-14) ───────────────
+  // A log on this box is APPEND-ONLY and has outlived an encoding change: PowerShell 5.1's
+  // Tee-Object wrote UTF-16LE for months, and everything appended after `supervise.ps1`
+  // started setting [Console]::OutputEncoding is UTF-8. So one file holds BOTH — UTF-16LE
+  // at the front, UTF-8 at the back — and a whole-file decision made from the head decodes
+  // the back wrongly.
+  //
+  // That is the worst possible half to lose, because `tail-log` returns ONLY the back. Asked
+  // for `auto-update` on 2026-08-14 while diagnosing a stuck update, it came back as solid
+  // CJK mojibake — every line of it — which reads as a corrupted log rather than as an
+  // encoding bug, on the one diagnostic CLAUDE.md says to consult before trusting the update
+  // path. A confident wrong answer, in the house shape.
+  //
+  // SO THE FILE IS SPLIT AT THE BOUNDARY RATHER THAN DECODED AS ONE THING. Sampling the tail
+  // instead of the head was the first attempt and is only mostly right: a fixed window still
+  // straddles the join while the UTF-8 part is shorter than the window, so a log that changed
+  // encoding a few lines ago still comes back wrong. Guessing at a better window size is not
+  // an answer, it is a smaller version of the same guess.
+  //
+  // UTF-8 CANNOT CONTAIN A NUL AT ALL. So the last NUL in the file is the last byte of the
+  // UTF-16LE region, and everything after it is UTF-8 — which makes the boundary exact rather
+  // than estimated, and needs no threshold:
+  //
+  //   * no NUL anywhere      -> the whole file is UTF-8 (the common case now)
+  //   * NUL at/near the end  -> the whole file is UTF-16LE (an old, untouched log)
+  //   * NUL in the middle    -> mixed; decode each side in its own encoding
+  //
+  // Alignment falls out of this for free: ASCII in UTF-16LE puts its NULs on ODD offsets, so
+  // splitting just after one leaves an even-length head, which is what utf16le requires. A
+  // fixed-offset window had to reason about parity separately and got it wrong on a file of
+  // odd length — the original bug wearing a hat.
+  //
+  // A stray NUL in a genuinely UTF-8 file (a truncated write) mis-decodes the part BEFORE it
+  // and still returns the tail correctly, so the failure stays in the half nobody is reading.
+  const lastNul = buf.lastIndexOf(0);
+  if (lastNul === -1) return buf.toString('utf8');
+  return buf.subarray(0, lastNul + 1).toString('utf16le') + buf.subarray(lastNul + 1).toString('utf8');
 }
 
 const tail = (text, n) => text.replace(/\r\n/g, '\n').split('\n').slice(-n).join('\n');

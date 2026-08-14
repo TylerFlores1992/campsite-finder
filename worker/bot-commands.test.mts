@@ -201,3 +201,46 @@ test('a report that cannot be stored still closes the row', () => {
   assert.match(block, /output: null/, 'and retried without the payload');
   assert.match(block, /could not be stored/);
 });
+
+test('a MIXED-encoding log decodes the end, which is the only part tail-log returns', () => {
+  /**
+   * THE REAL auto-update.log, 2026-08-14. These logs are append-only and have outlived an
+   * encoding change: PowerShell 5.1's Tee-Object wrote UTF-16LE for months, and everything
+   * appended after supervise.ps1 started setting [Console]::OutputEncoding is UTF-8. So one
+   * file holds BOTH.
+   *
+   * The BOM-less heuristic sampled the HEAD, so it chose UTF-16LE for the whole file and
+   * mis-decoded the UTF-8 back - and the back is the only part `tail-log` ever returns.
+   * Asked for `auto-update` while diagnosing a stuck update, it came back as solid CJK
+   * mojibake, every line of it, which reads as a corrupted log rather than an encoding bug.
+   */
+  const dir = mkdtempSync(join(tmpdir(), 'ch-mixed-'));
+  const f = join(dir, 'auto-update.log');
+  writeFileSync(f, Buffer.concat([
+    Buffer.from('2026-08-11 02:01:02 [auto-update] old line\r\n'.repeat(24), 'utf16le'),
+    // The em dash is deliberate: that is the byte sequence which becomes CJK when UTF-8 is
+    // read as UTF-16LE, and the real log is full of them.
+    Buffer.from('2026-08-14 13:46:02 [update-guard] SKIP - a hold releases in 5.9h — too close\r\n', 'utf8'),
+  ]));
+
+  const text = readTextFile(f);
+  assert.match(text, /update-guard\] SKIP - a hold releases in 5\.9h/,
+    'the most recent lines are the ones being asked for and must be readable');
+  assert.ok(!text.includes('\u0000'), 'no NULs may survive the decode');
+});
+
+test('a wholly UTF-16LE log of ODD byte length still decodes', () => {
+  // ALIGNMENT. UTF-16LE code units are two bytes, so "NUL on an odd offset" has to mean odd
+  // relative to the START OF THE FILE. Sampling from an arbitrary tail offset inverts that
+  // parity on a file whose length is odd, and the check then reads the high bytes instead of
+  // the NULs - reporting genuine UTF-16LE as UTF-8, which is the original bug wearing a hat.
+  const dir = mkdtempSync(join(tmpdir(), 'ch-odd-'));
+  const f = join(dir, 'odd.log');
+  const body = Buffer.from('supervisor restarted rc-keepwarm\r\n'.repeat(30), 'utf16le');
+  // One trailing byte makes the total length odd, as a truncated write would.
+  writeFileSync(f, Buffer.concat([body, Buffer.from([0x0a])]));
+
+  const text = readTextFile(f);
+  assert.match(text, /supervisor restarted rc-keepwarm/);
+  assert.ok(!text.includes('\u0000'), 'no NULs may survive the decode');
+});
