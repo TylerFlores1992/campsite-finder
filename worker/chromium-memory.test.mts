@@ -17,7 +17,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { classifyProfile, parseSample, createSampler, SAMPLE_EVERY_MS } from '../scripts/auto-cart-bot/memory-sample.mjs';
 import {
-  readMemoryVerdict, MIN_COMPARABLE_PAIRS, LEAK_MB_PER_MIN, type MemorySampleRow,
+  readMemoryVerdict, MIN_COMPARABLE_PAIRS, LEAK_MB_PER_MIN, BIG_PROCESS_MB,
+  type MemorySampleRow,
 } from '../src/lib/chromium-memory';
 
 const RC = String.raw`C:\Users\Tyler\campsite-finder\scripts\auto-cart-bot\.rc-bot-profile`;
@@ -287,4 +288,76 @@ test('a series still running is not reported as stopped', () => {
   const v = readMemoryVerdict(rows, { now: justAfter(rows) });
   assert.equal(v.seriesEnded, false);
   assert.doesNotMatch(v.verdict, /THE SERIES HAS STOPPED/);
+});
+
+/**
+ * ── SIZE, NOT ONLY RATE ─────────────────────────────────────────────────────────────────────
+ * The 08-12 process reached 7.9 GB in FORTY-SIX SECONDS — faster than this samples. Such a
+ * climb is invisible to a two-minute cadence: it appears as a pid that did not exist last
+ * time, already enormous, and the pairing rule correctly declines to call that a rate. So a
+ * verdict keyed only on rate can print NO LEAK IN THIS WINDOW over a 7.9 GB browser sitting in
+ * its own table.
+ */
+test('an enormous process is named even when nothing could be called a rate', () => {
+  const rows = [
+    row({ taken_at: at(0), max_pid: 100, max_mb: 90, max_family: 'rc' }),
+    // A NEW pid, already huge: the 46-second ramp, entirely between two samples.
+    row({ taken_at: at(1), max_pid: 4242, max_mb: 7900, max_family: 'recgov', recgov_procs: 1 }),
+  ];
+  const v = readMemoryVerdict(rows, { now: justAfter(rows) });
+
+  assert.equal(v.comparablePairs, 0, 'two different pids are correctly not a pair');
+  assert.equal(v.worst, null, 'and so there is no rate to report');
+  assert.ok(v.peak, 'but the largest process must still be found');
+  assert.equal(v.peak!.family, 'recgov');
+  assert.equal(v.peak!.pid, 4242);
+  assert.equal(v.peak!.mb, 7900);
+  assert.match(v.verdict, /OVERSIZED PROCESS/);
+  assert.match(v.verdict, /recgov/, 'the verdict must name the family — that is the question');
+  assert.doesNotMatch(v.verdict, /NO LEAK IN THIS WINDOW/);
+  assert.doesNotMatch(v.verdict, /NOT ENOUGH DATA/,
+    'a process this size is evidence with no pairing at all; the pair count gates a RATE');
+});
+
+test('an ordinary browser is never called oversized', () => {
+  // The measured healthy shape: 40-114 MB per process on these profiles.
+  const rows = Array.from({ length: 20 }, (_, i) => row({ taken_at: at(i), max_mb: 114 }));
+  const v = readMemoryVerdict(rows, { now: justAfter(rows) });
+  assert.ok(v.peak!.mb < BIG_PROCESS_MB);
+  assert.doesNotMatch(v.verdict, /OVERSIZED/);
+  assert.match(v.verdict, /NO LEAK IN THIS WINDOW/);
+});
+
+test('when size AND rate agree, the verdict says both', () => {
+  const rows = Array.from({ length: 12 }, (_, i) => row({
+    taken_at: at(i),
+    recgov_procs: 1, recgov_mb: 2000 + i * 800,
+    max_pid: 4242, max_mb: 2000 + i * 800, max_family: 'recgov',
+  }));
+  const v = readMemoryVerdict(rows, { now: justAfter(rows) });
+  // The RATE leads — it is two readings of one process, the stronger evidence — and the size
+  // corroborates it rather than displacing it.
+  assert.match(v.verdict, /LEAK OBSERVED/);
+  assert.match(v.verdict, /400 MB\/min/);
+  assert.match(v.verdict, /size and rate agree/);
+});
+
+test('the peak is the LARGEST process seen, not the most recent one', () => {
+  // WRITTEN AFTER A MUTATION SURVIVED. Every earlier fixture happened to put its biggest
+  // process in the last row, so "largest" and "last" were indistinguishable and a peak that
+  // simply took the newest row passed the whole suite. The spike has to be in the MIDDLE, and
+  // the box has to have recovered afterwards — which is exactly the shape a `kill-chrome` (or
+  // the keepalive browser closing) leaves behind, so it is also the realistic case.
+  const rows = [
+    row({ taken_at: at(0), max_pid: 100, max_mb: 90, max_family: 'rc' }),
+    row({ taken_at: at(1), max_pid: 4242, max_mb: 7900, max_family: 'recgov', recgov_procs: 1 }),
+    row({ taken_at: at(2), max_pid: 100, max_mb: 95, max_family: 'rc' }),
+  ];
+  const v = readMemoryVerdict(rows, { now: justAfter(rows) });
+
+  assert.equal(v.peak!.mb, 7900, 'the spike must survive the box recovering from it');
+  assert.equal(v.peak!.pid, 4242);
+  assert.equal(v.peak!.family, 'recgov');
+  assert.match(v.verdict, /OVERSIZED PROCESS/,
+    'a spike that has since been killed is still the attribution');
 });

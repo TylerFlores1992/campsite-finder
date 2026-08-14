@@ -13,7 +13,9 @@
  * a restart is two different browsers subtracted from each other. Same posture as
  * `recgov-429-profile.mts` refusing until all 24 UTC hours have data.
  */
-import { recentMemorySamples, readMemoryVerdict, MIN_COMPARABLE_PAIRS } from '../src/lib/chromium-memory';
+import {
+  recentMemorySamples, readMemoryVerdict, MIN_COMPARABLE_PAIRS, BIG_PROCESS_MB,
+} from '../src/lib/chromium-memory';
 
 const arg = (name: string, dflt: string): string => {
   const i = process.argv.indexOf(`--${name}`);
@@ -75,6 +77,19 @@ if (v.seriesEnded && v.lastSampleAgeMin !== null) {
   console.log('    high commit — so the END of the series is where the box got to. Read it as a');
   console.log('    reading, never as zero. At a NORMAL commit figure the dull explanation (the');
   console.log('    bot stopped, an update, the box off) is the likely one.');
+}
+
+// THE LARGEST PROCESS EVER SEEN, printed whether or not a rate corroborated it. A climb that
+// outran the two-minute cadence (08-12 did: 7.9 GB in 46 seconds) leaves no comparable pair at
+// all, so a readout that only ever printed rates could stay silent about a 7.9 GB browser
+// sitting in its own table.
+if (v.peak) {
+  console.log(`\nLargest single process seen:`);
+  console.log(`  ${v.peak.family} pid ${v.peak.pid}: ${Math.round(v.peak.mb)} MB at ${v.peak.at.slice(0, 19)}`);
+  if (v.peak.mb >= BIG_PROCESS_MB) {
+    console.log(`  ⚠ over the ${BIG_PROCESS_MB} MB line — normal on these profiles is 40-114 MB.`);
+    console.log('    This is the attribution: that family, that pid, measured.');
+  }
 }
 
 if (v.worst) {

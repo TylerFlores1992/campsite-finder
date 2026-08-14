@@ -128,6 +128,8 @@ export interface MemoryVerdict {
   /** Families that were observed at all. A family never seen has been RULED OUT OF NOTHING. */
   familiesSeen: string[];
   worst: GrowthFinding | null;
+  /** The largest single process ever seen. Attribution even when the ramp outran the cadence. */
+  peak: { family: string; pid: number; mb: number; at: string } | null;
   /** How long since the NEWEST sample. A trailing gap is a gap; see `seriesEnded`. */
   lastSampleAgeMin: number | null;
   /** COMMIT% at the last sample — what the box was doing when it stopped reporting. */
@@ -165,6 +167,25 @@ export const SERIES_SILENT_MIN = 10;
  * reachable — the window in which a human could still act.
  */
 export const COMMIT_HOT_PCT = 70;
+
+/**
+ * A single Chromium process this large is the event, whatever rate was observed.
+ *
+ * ── WHY SIZE AND NOT ONLY RATE ─────────────────────────────────────────────────────────────
+ * The 08-12 process reached 7.9 GB in FORTY-SIX SECONDS, which is faster than this samples.
+ * A climb that fast is invisible to a two-minute cadence: it shows up as a pid that did not
+ * exist last time, already huge — and the pairing rule (same pid, two samples) correctly
+ * refuses to call that a rate, because for a rec.gov browser it usually is not one.
+ *
+ * So a verdict keyed only on rate can read `NO LEAK IN THIS WINDOW` over a sample containing a
+ * 7.9 GB browser. The rate rule is right and stays; this is the second question, asked
+ * separately: not "did anything climb?" but "was anything ENORMOUS?"
+ *
+ * 1.5 GB, against measured normals of 40-114 MB per process on these profiles. Far enough
+ * above ordinary that a busy browser does not trip it, far enough below 7.9 GB that the event
+ * is caught long before commit is gone.
+ */
+export const BIG_PROCESS_MB = 1500;
 
 /**
  * Read a verdict out of the series.
@@ -239,6 +260,17 @@ export function readMemoryVerdict(
     if (peakCommitPct === null || pct > peakCommitPct) peakCommitPct = pct;
   }
 
+  // THE BIGGEST SINGLE PROCESS EVER SEEN — asked over the rows themselves, with no pairing at
+  // all, because this is the question the pairing rule cannot answer. See BIG_PROCESS_MB.
+  let peak: MemoryVerdict['peak'] = null;
+  for (const r of rows) {
+    if (r.max_mb === null || r.max_pid === null) continue;
+    const mb = Number(r.max_mb);
+    if (peak === null || mb > peak.mb) {
+      peak = { family: r.max_family ?? 'unknown', pid: r.max_pid, mb, at: r.taken_at };
+    }
+  }
+
   // THE TRAILING GAP. Scanned backwards for the last row that actually reported a commit
   // figure: a null reading is "we could not tell", and letting it erase the last real one
   // would throw away the single most useful fact about how the series ended.
@@ -258,16 +290,30 @@ export function readMemoryVerdict(
   const seriesEnded = lastSampleAgeMin !== null && lastSampleAgeMin > SERIES_SILENT_MIN;
 
   const enough = comparablePairs >= MIN_COMPARABLE_PAIRS;
+  const big = peak && peak.mb >= BIG_PROCESS_MB ? peak : null;
   let verdict: string;
   if (rows.length === 0) {
     verdict = 'NO DATA — nothing has been sampled. The sampler runs inside bot.mjs; if that ' +
       'is not running on the box, nothing here can fill in.';
+  // A MEASURED RATE LEADS. It is the stronger evidence — two readings of one process — so it
+  // keeps the headline it has always had, and the size becomes a corroborating clause.
+  } else if (enough && worst && worst.mbPerMin >= LEAK_MB_PER_MIN) {
+    verdict = `LEAK OBSERVED — ${worst.family} pid ${worst.pid} grew ` +
+      `${Math.round(worst.mbPerMin)} MB/min. That is the family, measured, not guessed.` +
+      (big ? ` It reached ${Math.round(big.mb)} MB, so size and rate agree.` : '');
+  // SIZE ALONE, AND AHEAD OF THE PAIR COUNT DELIBERATELY. `MIN_COMPARABLE_PAIRS` gates a RATE,
+  // which needs two samples of one process. A browser sitting at several GB needs no pairing to
+  // be evidence, and declining to name it for want of pairs would be the instrument refusing to
+  // report the very thing it was built to find.
+  } else if (big) {
+    verdict = `OVERSIZED PROCESS — ${big.family} pid ${big.pid} reached ` +
+      `${Math.round(big.mb)} MB at ${big.at.slice(0, 19)}. That is the family, measured, ` +
+      'not guessed. No comparable climb was caught, and that does NOT weaken it: 08-12 ' +
+      'reached 7.9 GB in 46 seconds, faster than this samples, so the ramp can pass entirely ' +
+      'between two readings and leave only its result.';
   } else if (!enough) {
     verdict = `NOT ENOUGH DATA — ${comparablePairs} comparable pair(s), and this refuses a ` +
       `verdict under ${MIN_COMPARABLE_PAIRS}.`;
-  } else if (worst && worst.mbPerMin >= LEAK_MB_PER_MIN) {
-    verdict = `LEAK OBSERVED — ${worst.family} pid ${worst.pid} grew ` +
-      `${Math.round(worst.mbPerMin)} MB/min. That is the family, measured, not guessed.`;
   } else {
     // NEVER "there is no leak". The 08-12 event was minutes long on a family that exists in
     // bursts; a quiet window is a quiet window.
@@ -307,6 +353,7 @@ export function readMemoryVerdict(
     peakCommitPct,
     familiesSeen: [...familiesSeen],
     worst,
+    peak,
     lastSampleAgeMin,
     lastCommitPct,
     seriesEnded,
