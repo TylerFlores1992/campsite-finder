@@ -795,3 +795,43 @@ test('the updater does not compete with the spawner that already claimed', async
   // apart could move one checkout, which is what 7193c21 existed to prevent.
   assert.match(guard, /updateClaim: 'scheduled-task'/, 'the task path must still claim');
 });
+
+test('the watchdog recovers a dark box, and cannot be talked out of it forever', async () => {
+  // WHY A WATCHDOG AT ALL. Every remote lever rides a poller ON the box, so when all the
+  // pollers die there is nothing left to receive a command — the one situation that most
+  // needs a remote fix is the one in which none can arrive. 2026-08-11 (the RC runner died
+  // and took the diagnostics with it) and 2026-08-14 (an update stopped everything to move
+  // the checkout and never brought it back — 45 minutes dark with three holds queued).
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync('scripts/auto-cart-bot/mini-pc/watchdog.ps1', 'utf8');
+  const code = src.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+
+  // THE TIMEOUT IS THE POINT. A naive "never touch it during an update" guard would have
+  // refused for the rest of 08-14, because the updater was itself what died — still holding
+  // every process down. A stand-down with no expiry protects the broken thing.
+  assert.match(code, /UPDATE_DEAD_AFTER_MIN\s*=\s*\d+/, 'the update stand-down must have an expiry');
+  assert.match(code, /\$age\s*-lt\s*\$UPDATE_DEAD_AFTER_MIN/, 'and it must actually be compared against');
+
+  // It must go through start-all.bat, which stops first — that is what makes a duplicate
+  // structurally impossible rather than merely unlikely.
+  assert.match(code, /start-all\.bat/, 'recovery must go through start-all.bat');
+  assert.ok(
+    !/\bnpm start\b|supervise\.ps1/.test(code),
+    'never launch the payloads directly — start-all.bat owns the stop-then-start order',
+  );
+
+  // NO REBOOT. In every outage so far Windows was fine and only our processes had died, and
+  // a reboot ends the RC session because the token lives in the Chromium it closes.
+  assert.ok(
+    !/Restart-Computer|shutdown(\.exe)?\s+\/r/i.test(code),
+    'the watchdog must not reboot the machine',
+  );
+
+  // Ours is decided by COMMAND LINE, never image name — `taskkill /IM` style matching is how
+  // a script starts touching the browser of whoever is sitting at this machine.
+  assert.match(code, /CommandLine/, 'match our processes on the command line');
+
+  // A failed recovery must exit non-zero. Exiting 0 on failure leaves the only record of a
+  // box that cannot be restarted in a log nobody reads.
+  assert.match(code, /START FAILED[\s\S]{0,200}?exit 1/, 'a failed start must exit non-zero');
+});
