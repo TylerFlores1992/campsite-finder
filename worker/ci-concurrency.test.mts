@@ -30,18 +30,27 @@ test('verify is serialised per BRANCH, so a PR does not race its own push', () =
   assert.ok(m, 'verify.yml must declare a concurrency group');
   const group = m![1].trim();
 
-  // The fix: fall back to github.ref, but prefer the PR's HEAD BRANCH so the
-  // pull_request run lands in the same group as the push run for that branch.
-  assert.match(
-    group,
-    /github\.event\.pull_request\.head\.ref/,
-    'the group must key on the PR head branch, or a pull_request run gets its own ' +
-    'group and executes alongside the push run for the identical commit — two ' +
-    'suites at once against the production DB',
+  // BOTH SIDES MUST YIELD THE BARE BRANCH NAME, or they are still two strings and
+  // therefore still two groups. The first attempt at this fix used
+  // `github.event.pull_request.head.ref || github.ref` and CI still ran twice:
+  // those give `claude/foo` and `refs/heads/claude/foo`. The expression got longer
+  // and the bug did not move.
+  //
+  // `github.head_ref` is set ONLY on pull_request events and is already bare;
+  // `github.ref_name` is the bare name on a push. Only that pair collides.
+  assert.match(group, /github\.head_ref/,
+    'the group must use github.head_ref, which is the BARE branch on a pull_request');
+  assert.match(group, /github\.ref_name/,
+    'and github.ref_name, which is the BARE branch on a push');
+  assert.ok(
+    !/github\.ref\s*\}\}/.test(group),
+    'github.ref is refs/heads/<branch> on a push and refs/pull/<n>/merge on a ' +
+    'pull_request — it can never collide with the PR side, which is the whole bug',
   );
   assert.ok(
-    !/^verify-\$\{\{\s*github\.ref\s*\}\}$/.test(group),
-    'keying on github.ref ALONE is the bug: it differs between push and pull_request',
+    !/pull_request\.head\.ref/.test(group),
+    'pull_request.head.ref is bare while github.ref is not; pairing them looks ' +
+    'like a fix and still produces two groups',
   );
 });
 
