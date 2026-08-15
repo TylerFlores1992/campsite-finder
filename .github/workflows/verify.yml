@@ -60,8 +60,25 @@ on:
 # Cancel a superseded run. Deliberately the OPPOSITE of worker-deploy.yml, which
 # sets cancel-in-progress: false — a half-finished DEPLOY leaves the poller
 # stopped and alerting dead, whereas a half-finished verify changes nothing at all.
+#
+# KEYED ON THE BRANCH, NOT `github.ref` (fixed 2026-08-15). On a `pull_request`
+# event `github.ref` is `refs/pull/<n>/merge`, while the `push` event for the very
+# same commit is `refs/heads/claude/…`. Two different strings mean two different
+# concurrency groups, so opening a PR ran a SECOND verify alongside the branch's
+# own — and these tests hit the REAL database on purpose.
+#
+# Measured on PR #44: two runs started 18 seconds apart on one commit; one passed
+# and one failed in `worker/ridb-photos.test.mts` asserting a row it had queried
+# was empty (`undefined !== 0`) while the sibling run was writing that fixture.
+# That is the identical failure mode `--test-concurrency=1` exists to prevent
+# WITHIN a run — the reasoning simply had not been applied ACROSS runs.
+#
+# A flake that is indistinguishable from a regression is worse than a slow queue:
+# it teaches everyone to re-run CI without reading it, which is precisely how a
+# real failure gets waved through. docs/LANES.md says the same thing about two
+# agent sessions running `npm test` at once, for the same reason.
 concurrency:
-  group: verify-${{ github.ref }}
+  group: verify-${{ github.event.pull_request.head.ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
