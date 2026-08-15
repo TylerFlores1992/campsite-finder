@@ -69,6 +69,21 @@ user could see. **THREE switches, all must flip to bring it back:**
 3. `SHOW_LIKELIHOOD = true` in `src/components/v2/likelihood.ts` for the UI.
 Accrual needs weeks of lead time before the buckets are honest again — turn it on well
 before you plan to show anything. The 137k observations collected so far are untouched.
+
+**CORRECTION 2026-08-15: "nothing is being recorded" is WRONG for the watch-driven half.**
+The three switches above only stop the dedicated PROBE ROSTER (`probeRosterIfDue`, gated on
+`PROBE_ENABLED` at `worker/poller.ts:357`) — the expensive part, 327 extra UseDirect targets.
+`recordObservations()` (`worker/poller.ts:274`, called unconditionally at line 1266) writes an
+`availability_observations` row for every ACTIVE WATCH's own cycle, throttled to one row per
+(campground, arrival, nights) per hour, and has never been gated by any of the three switches.
+It piggybacks on data the poller already fetched for alerting, so it costs no extra API calls
+— but it means accrual never actually stopped. Measured: 137k rows on 07-30 → 144k on 08-15
+(~19/hour, tracking the ~20 active watches), still growing at the moment this was found.
+Harmless (no cost, no display — `SHOW_LIKELIHOOD` is still false), but do not read
+`scripts/likelihood-readout.mts` showing fresh rows as "the probe roster restarted" — check
+`probe_targets.active` (still all `false`) and `PROBE_ENABLED` (still `"false"`) before
+concluding that. If the watch-driven recorder should also stop, it needs its own gate;
+none exists today.
 - **Recorder + probe roster** in `worker/poller.ts` → `availability_observations`
   (migration 020) + `probe_targets` (021). Roster = 502 rows, now all inactive
   (150 rec.gov + 120 ReserveCalifornia + ~207 across 9 other UseDirect states + 25
