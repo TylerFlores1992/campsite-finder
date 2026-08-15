@@ -905,6 +905,54 @@ token, ~12h Okta session) apply inside the app exactly as they do to the bot.
   to `signed-out`, and the classifier reading the LAST `session` report (which is this run's
   own marker write) instead of the first.
 
+### "What counts as a match" DID NOT COUNT FOR ANYTHING (2026-08-15)
+The New watch screen rendered a fieldset with exactly that legend, offering Site type
+(Tent/RV/Cabin/Group) and a rig-length picker. **`grep -rn "site_type\|siteType" worker/`
+returns ZERO hits and `loadWatches` does not even SELECT the column.** So a user picked RV and
+we alerted them for tent sites, through a control whose own legend promised otherwise. Of the
+five inputs only `siteType` was ever transmitted — `rvLength`, `electric`, `showers` and `pets`
+were collected in the UI and dropped on submit.
+- **Second offence, same file.** `NewWatch.tsx` already carried a comment recording that its
+  auto-cart toggle was "PURELY DECORATIVE until 2026-08-01".
+- **DECISION: remove the promise, do not implement it — for now.** Implementing is what users
+  would prefer and is a bigger job than it looks: four buckets have to map onto rec.gov's
+  `campsite_type` vocabulary AND ReserveCalifornia's AND UseDirect's AND GoingToCamp's, and
+  every source whose site records carry no type needs a deliberate include-or-exclude answer —
+  the same question the rig-length filter already answers by EXCLUDING campgrounds with no
+  length on file. **Wrong in the strict direction and alerting stops silently, with no error
+  anywhere.** A filter that works on rec.gov and quietly does not elsewhere is worse than none,
+  because nothing tells the user which they got.
+- **What replaces it is better and already works: PER-SITE MUTING** — explicit, source-agnostic,
+  and honoured by both RC finders since 08-13.
+- **THE PANEL WAS NEVER THE DEFECT, so the scope is surgical.** It STAYS on Explore, where
+  search resolves it to `p_site_type = ANY(c.site_types)` and it genuinely filters. Removing it
+  there would have deleted a working feature in the name of fixing a broken one.
+- **The column and the `/api/watches` field stay.** Campflare's `campsite_kinds` is a real
+  consumer; with the picker gone the value is simply absent, which is exactly what a user who
+  left it blank already produced. **`CAMPFLARE_API_KEY`'s presence in production was NOT
+  confirmed** — Vercel's env is authoritative and was not readable — which is a reason to leave
+  the path intact rather than reason it away.
+- `worker/watch-filters.test.mts` is **BIDIRECTIONAL**: it fails if the promise returns without
+  the implementation, AND it tells you to restore the control if `worker/` ever starts reading
+  `site_type`, so the decision is re-taken deliberately rather than by whoever notices first.
+
+### `npm run verify` GATES ON jsx-spacing NOW (2026-08-15)
+An HTML entity anywhere in a JSX text node makes SWC drop that node's leading whitespace, and
+this repo escapes entities everywhere (`react/no-unescaped-entities` pushes you there), so every
+such node is a place it recurs — it silently broke four user-visible strings.
+- **Placed BEFORE `npm test`.** It is a source scan that finishes in under a second; the test
+  suite hits the production DB and takes ~2 minutes. Cheap gates first.
+- **Only the unambiguous tier exits non-zero.** The "to eyeball" tier (an element is involved,
+  so a flex gap may already cover it) prints and passes — that is what makes it safe to gate on,
+  and it is the same reasoning that keeps `lint` OUT of verify.
+- **CONFIRM A NEW GATE CAN ACTUALLY FAIL BEFORE TRUSTING IT.** Three attempts to provoke the
+  hard tier produced nothing; the shape that works is two adjacent non-element children where an
+  entity ate the leading whitespace. **And the first probe's exit 1 was an `ENOENT`** from a path
+  outside the repo root — a crash read as the check firing, which is one keystroke from being
+  written up as proof.
+- `worker/verify-gates.test.mts` pins the membership and the ordering, because a gate quietly
+  dropped from `verify` stops existing with no test failing and nothing to notice.
+
 ### "ALREADY SIGNED IN" IS NOT "COVERED" — the 08:00 cart lost to a one-line short-circuit (2026-08-15)
 A queued hold released at 08:00:40 PT and was never carted. The runner was alive, the feed was
 right, the hold was `requested`, and the auto-login fired **correctly and on time**:
@@ -1243,24 +1291,41 @@ identical number — that is the same token being read straight back.
   not a measurement, and this file has been burned twice by treating one for the other. The
   fixed code makes the next attempt a real test and reports honestly either way; it should
   answer within a token lifetime of reaching the box.
-- **IT ANSWERED ON 2026-08-15, AND THE ANSWER IS NO.** The fixed `renewByReload` ran properly
-  on the box, against a live Okta session, and did not renew:
+- ~~**IT ANSWERED ON 2026-08-15, AND THE ANSWER IS NO.**~~ It ran and it failed:
   ```
   14:43:53 token has 10m left (src=live) — renewing by reload
   14:44:19   ✗ no fresher token after the reload (578s → 552s) — the previous token was put back
   ```
-  **This is a real test where the 08-12 one was not.** 26 seconds elapsed and the token only
-  AGED — no new token, and the restore guard did its job. `okta=ALIVE (exp 2026-08-16T02:44)`
-  sat on the adjacent line, so this is not "no Okta session to renew against".
-- **So the two clears now DISAGREE, and that contradiction is the whole open question.** The
-  login rehearsal clears `ssoAccessToken`/`accessToken` and reloads, and RC re-minted within
-  seconds with no credential typed (08-11, and the app probe saw the same shape on 08-13).
-  `renewByReload` clears what reads like the same thing and gets nothing. Both are in this
-  repo, one works and one does not, and **nobody has diffed them line by line** — that is the
-  cheapest remaining path to a bot that never needs a credential, and it should be the next
-  thing anyone does on this. Do NOT record "RC will not renew" as settled on the strength of
-  this one reading; record that OUR renewal path does not, while a different one in the same
-  codebase does.
+  **It was NOT a real test either, and the heading above is left struck through because
+  believing it was is the mistake.** `after` is not null — a token came BACK, 26 seconds older
+  than the one dropped, i.e. the same token. A navigation wipes JS memory and
+  `window.__camphawkRcToken` was deleted, so **it can only have come from another PERSISTED
+  copy**. That is forced by the measurement, not inferred.
+- **THE CAUSE: `ssoAccessToken`/`accessToken` ARE RC'S OWN COPIES, NOT THE SDK'S.** okta-auth-js
+  namespaces its own store under `okta-` and that is what it decides from on boot, so clearing
+  two keys of the blob left the SDK holding the token and handing it straight back — no
+  `/authorize`, nothing asked of RC at all. `rc-probe.mjs` had recorded the same fact from the
+  other end months earlier: *"the whole session lives in localStorage, and copying that blob
+  DOES carry the login"*. **The clear was reasoning about two keys of a session that lives in
+  many.**
+- **SO THE TWO CLEARS NEVER DISAGREED — THEY WERE THE SAME INCOMPLETE CLEAR.** This entry
+  previously called the disagreement "the whole open question" and said nobody had diffed them.
+  Diffed 2026-08-15: the rehearsal's clear was a THIRD hand-rolled copy of the identical two
+  `removeItem` calls. **So the 08-11 "RC re-minted from the live Okta session with no credential
+  typed" observation is CONFOUNDED** — an incomplete clear produces exactly that appearance,
+  because the app comes back signed in on a token that never actually left. Nobody recorded
+  whether it had a FRESH expiry, so it cannot be told apart after the fact.
+- **THAT IS THE 08-12 BUG IN A SECOND COSTUME**, and it is the reason to be careful here: the
+  original was "the renewal measured itself against the token it meant to replace", and this is
+  "the evidence FOR renewal was produced by the same failure to delete it". Two of the three
+  observations this file has treated as proof that RC will renew are now unusable. The third
+  (the mobile app probe, 08-13) went through a different code path and is untouched.
+- **WHAT IS ACTUALLY KNOWN: nothing either way.** Do NOT record "RC will not renew" — no clear
+  that reached the SDK's storage has ever been tested. Do NOT record that it will. The clear is
+  correct now (`dropStoredToken` covers `okta-` too, with an exact-restore snapshot) and it
+  **reports the key names it emptied**, so the next run on the box is the first real reading.
+  If a failure ever lists only the two RC keys again, the `okta-` prefix assumption is what
+  needs revisiting.
 - **`maybeAutoLogin` stays exactly as it is** until renewal is *proven*. A renewal that
   works is what would retire it; a renewal that is merely plausible is not. (Reinforced
   2026-08-15: it is now the ONLY thing standing between a queued hold and a missed cart.)
@@ -3139,6 +3204,18 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
+**Docs current to 2026-08-15 (second pass).** The later session resolved the renewal question at
+the code level — **`renewByReload` was clearing RC's OWN two token keys and not okta-auth-js's
+`okta-` store**, so the SDK handed the same token back and nothing was ever asked of RC. That
+also **CONFOUNDS the 08-11 "RC re-minted with no credential typed" evidence**, since the
+rehearsal's clear was a third copy of the same two keys — so "RC will renew" and "RC will not
+renew" are BOTH unsupported, and the next run on the box is the first real reading. Also added:
+**"What counts as a match" DID NOT COUNT FOR ANYTHING** (site_type removed from New watch; the
+panel stays on Explore where it works) and **jsx-spacing as a verify gate**.
+`docs/NEXT-SESSION.md` is retargeted again — its subject is now **site muting on the New watch
+screen**, the owner's one outstanding feature ask.
+**Everything bot-side from 08-15 is merged and STILL NOT ON THE MINI-PC.**
+
 **Docs current to 2026-08-15.** That session added, in CLAUDE.md: **"ALREADY SIGNED IN" IS NOT
 "COVERED"** (the 08:00 cart lost to a one-line short-circuit, the profile-contention death
 spiral, and the five fixes for both), **`npm test` TOLD THE PRODUCTION BOT TO CART A REAL
