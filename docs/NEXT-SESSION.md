@@ -1,30 +1,82 @@
-# Next session — make the RC session renew itself
+# Next session — site muting on New watch, and the first real renewal reading
 
-*Retargeted 2026-08-15. **The subject of this file has changed** and the old title said "fix
-the Chromium memory leak"; that work is now largely answered (see below) and the owner's
-stated priority is a bot that never needs a human to sign it in.*
+*Retargeted 2026-08-15 (second time today). The renewal question it previously opened on has
+been ANSWERED at the code level; what is left is one reading from the box and one feature.*
 
-> **THE ONE THING TO DO NEXT — option 6 from the 08-15 automation review.**
+> ## THE ONE FEATURE TO BUILD: site muting on the New watch screen
 >
-> `renewByReload` was fixed on 08-12 and finally ran for real on 08-15. **It did not renew**,
-> against a live Okta session: `578s → 552s`, the token only aged, the restore guard put it
-> back. But the **login rehearsal's clear of the same two keys DOES re-mint**, within seconds,
-> with no credential typed — observed 08-11, and the app probe saw the same shape on 08-13.
+> The owner's words: *"Most people won't know there is a mute section in manage watches, so if
+> it is here also it will be more used."*
 >
-> **Two clears in this repo, apparently of the same thing, and one works. Nobody has diffed
-> them line by line.** That is the cheapest remaining path to a bot that never needs a
-> credential, and it is where to start. Full context: CLAUDE.md → "THE RENEWAL WAS MEASURING
-> ITSELF", which now carries the 08-15 answer.
+> - Per-site muting in the **New watch** flow.
+> - A **mute-all / unmute-all toggle**, so muting all but one or two is easy.
+> - **The toggle must exist everywhere per-site muting lives** — including the existing
+>   `/manage/<token>` surface, not just the new one.
+>
+> This matters more than it looks: it is now the ONLY working way for a user to say "not that
+> kind of site", because the decorative Site-type filter was removed on 08-15 (below). Muting is
+> explicit, source-agnostic, and honoured by both RC finders since 08-13.
+>
+> **VERIFY AT THE CONSUMER.** Muting was silently half-broken once because the WRITE persisted
+> and a READER never honoured it — `findRCHeldUnits` had no exclusion list, so a mute silenced
+> availability alerts and did nothing to coming-soon alerts for the same site. The end is the
+> consumer, not the round-trip through the API that set it. `muted_site_ids` is `text[]` and RC
+> unit ids are NUMBERS: `String(unit.UnitId)`, or the compare silently never matches and reads
+> as "no mutes are set".
 
-**Where the Chromium leak got to** (it is no longer the headline, and the STOP sections below
-are both CLEARED): the box self-healed via a quiet-window update at ~09:00 UTC on 08-15, the
-forced keepalive sample now works, and **the rec.gov family has a baseline for the first
-time — 7-9 processes, 134-145 MB, flat across nine cycles.** So the ordinary keepalive browser
-does not leak. The 7.9-GB-in-46-seconds event from 08-12 is still unattributed and still
-cannot be caught by a 2-minute cadence; `OVERSIZED PROCESS` is the only thing that would
-report a recurrence. Downgraded, not closed.
+## THE RENEWAL — answered in code, awaiting one reading from the box
 
-***Delete this file once the renewal question is answered.***
+`renewByReload` was clearing `ssoAccessToken`/`accessToken` — **RC's own copies**. okta-auth-js
+keeps its own store under `okta-` and decides from that on boot, so the SDK handed the same
+token straight back. Forced by the measurement: `578s → 552s` means a token *came back*, 26
+seconds older, and a navigation wipes JS memory, so a persisted copy survived.
+
+**The 08-11 "RC re-minted with no credential typed" evidence is confounded by the same bug** —
+the rehearsal's clear was a third hand-rolled copy of the identical two keys, so the app came
+back signed in on a token that never left. Full write-up in CLAUDE.md under "THE RENEWAL WAS
+MEASURING ITSELF", which now carries the resolution.
+
+**So: nothing is known either way, and the next run on the box is the first real reading.** The
+clear now covers `okta-` with an exact-restore snapshot and **logs the key names it emptied**.
+- If it renews → the keep-warm can stop needing credentials, and `maybeAutoLogin` becomes a
+  fallback rather than the mechanism.
+- If it does not, and the log lists MORE than the two RC keys → that is the first honest
+  negative, and the answer really is "a login per hold morning".
+- If it does not and lists ONLY the two RC keys → the `okta-` prefix assumption is wrong and
+  the SDK's storage is somewhere else.
+
+**This is bot-side, so it needs an `update.bat`, "Update now", or a quiet window before it can
+happen at all.**
+
+## Done 2026-08-15 — do not redo
+
+- **The five auto-login fixes** (sufficiency not liveness, refunded no-op attempts, requirement
+  computed from where we stand, two-attempt budget, named gates) and the **hold-runner
+  stand-off** that breaks the profile-contention death spiral. Merged; **not yet on the box.**
+- **The renewal clear**, above. Merged; not yet on the box.
+- **site_type removed from New watch.** It was dead code in the poller — zero hits in `worker/`.
+  The panel STAYS on Explore where it genuinely filters. Decision and reasoning in CLAUDE.md.
+- **`jsx-spacing` is a verify gate**, before the slow suites.
+- **verify.yml racing itself is FIXED** — the concurrency group is
+  `verify-${{ github.head_ref || github.ref_name }}`. A `cancelled` run beside each `success`
+  is the fix working. The side-lane note describing this as open is STALE.
+- **Hold-test fixtures can no longer tell the production bot to cart a real campsite**
+  (non-numeric sentinel unit ids + `worker/hold-fixture-safety.test.mts`).
+
+## Still open
+
+1. **Site muting on New watch** — above. The one feature ask.
+2. **The renewal reading** — needs the box updated; nothing to build until then.
+3. **The Chromium leak** — downgraded. rec.gov has a flat 134-145 MB baseline across nine
+   cycles, so the ordinary keepalive browser does not leak. The unattributed 08-12 event
+   (7.9 GB in 46s) cannot be caught by a 2-minute cadence; `OVERSIZED PROCESS` is the only
+   reporter. Wait for a recurrence rather than hunting it. `rc-profile-old/` on the box is the
+   only copy of the evidence — do not delete it.
+4. **`TWILIO_AUTH_TOKEN` should be removed from the agent environment** — full account access,
+   also signs the delivery webhooks, added for a one-off. Only the owner can do it.
+5. **The A2P campaign edit** is blocked on Twilio enabling API campaign edits (#28871693).
+
+***Delete this file once the mute feature ships and the renewal has had its reading.***
 
 ---
 
