@@ -997,6 +997,67 @@ user to say "not that kind of site".
   matched by content, because its first version anchored on the array's opening tokens and went
   quiet the moment divisions added two deps in front.
 
+### ONE WATCH CAN COVER A WHOLE PARK (migration 070, 2026-08-15) — DORMANT UNTIL SOMEONE MAKES ONE
+Carpinteria SB's four divisions were being watched as four separate watches, Pfeiffer Big
+Sur as three — so one park ate most of a 6-watch allowance. A park watch now counts ONCE.
+Side-lane work, crossing into `worker/` and `src/lib` with the owner's authorisation, and
+reviewed here because those are the main lane's files.
+- **`watch_campgrounds` (070) IS EMPTY, AND THAT IS THE ENTIRE SAFETY ARGUMENT.**
+  `loadWatches` now emits ONE ROW PER (watch, campground) via `CROSS JOIN LATERAL`, with
+  `COALESCE(..., ARRAY[w.campground_id])` falling back for any watch with no rows. **Verified
+  against prod independently of the PR's own claim**: the new expansion and the old query
+  return the byte-identical set — 20 pairs, 20 distinct watches, zero multi. Migration 070 is
+  genuinely applied (TEXT `watch_id`, both indexes, RLS on, 0 rows). `watches.campground_id`
+  stays as the REPRESENTATIVE division.
+- **TWO PLACES COLLAPSED PER-WATCH STATE, and both were caught by the author.**
+  `claimNotification` keyed on `campsiteId ?? '*'` — and that sentinel is PER WATCH, so
+  ReserveAmerica / GoingToCamp / TN-SC divisions of one park would collapse onto
+  `(watch_id, '*')` and the first to open would silence the rest for an hour, which is
+  migration 026's bug one level up. `rc_hold_notified_for` is ONE column and had the same
+  collapse, its CLEAR included. Both namespaced `<campgroundId>::<siteKey>` **only when the
+  watch is multi** — unconditional namespacing would rewrite every stored key and re-alert
+  every currently-open site once on deploy.
+- **THE THIRD CONSUMER WAS MISSED, AND THE AUTHOR PREDICTED IT IN THE SAME BREATH** — "if any
+  of those key on watch id in a way that assumes one campground, it will be wrong the same
+  silent way the two claims were." `watchOpenings` is that consumer, and it was wrong in
+  exactly that way, three times at once and only for a park watch:
+  1. **`AND a.site_key <> '*'` STOPPED EXCLUDING THE SENTINEL**, because a park watch's is
+     `<campgroundId>::*`. Proved by EXECUTION, not by reading the regex —
+     `siteKeyFor(null, {multi:true, campgroundId:'720'})` returns `720::*`. That filter's own
+     comment says surfacing it would report "a number we made up" as an open SITE, and that
+     is what it would have done.
+  2. The name subquery joins `payload->>'campsiteId'`, which stores the BARE id, so every
+     open site on a park watch came back unnamed.
+  3. The id feeds `withBookLinks`, so the booking deep link named a site id that does not
+     exist.
+  Fixed by stripping the namespace IN SQL (everything after the first `::`, which is the
+  campsite id on both shapes) **and testing the sentinel filter against the STRIPPED key**.
+- **`worker/park-watch-openings.test.mts` IS REAL-DB** because the fix is a SQL expression and
+  a test asserting a copy of it would assert the copy. Mutation-tested against all three
+  reverts plus taking the wrong `::` segment. **Its first version proved NOTHING about defect
+  2** — it only asserted ids, and a missing name is `null` either way, so the mutation passed;
+  a notification fixture now exercises the join. Same shape as the memory readout's fixtures
+  making "largest" and "last" indistinguishable.
+- **`beat()` takes DISTINCT watches.** `watches` is one row per pair now, and that number
+  renders as "Checking N watches every 15 seconds" on the admin page. Nothing gates on it,
+  which is precisely why the human reading it should get the number its label promises.
+- **KNOWN GAPS, not bugs to hunt.** No multi-campground watch has EVER run a real poller
+  cycle — the first park watch is the first exercise of the path. The watches list does not
+  show a park watch's parts (`GET /api/watches` returns `divisions`; nothing renders it), and
+  `/manage/<token>` can only enumerate the REPRESENTATIVE division's inventory, so a sibling
+  division's site cannot be muted from there. **`muted_site_ids` being watch-wide is CORRECT
+  for a park watch** — campsite ids were measured unique within a park (10,757 sampled, zero
+  collisions) — so this is a display gap, not corruption. Do not advertise park watches until
+  one has been observed through a cycle.
+- **`MAX_DIVISIONS_PER_WATCH = 10`** replaces the bound the watch cap used to provide; covers
+  298 of the 321 multi-division parks whole. This is **UseDirect** load, NOT rec.gov — zero
+  multi-division parks are rec.gov rows, so `poller.capacity` was never threatened by it,
+  though it counts expanded campgrounds correctly now.
+- **NO BACKTICKS IN A SQL COMMENT IN THESE FILES.** The queries are template literals, so a
+  backtick terminates the string and the parse error surfaces somewhere unrelated. The author
+  warned about this in the same message that asked for the review, having hit it twice — and
+  it still cost a build here, in a comment quoting the very key shape being fixed.
+
 ### `npm run verify` GATES ON jsx-spacing NOW (2026-08-15)
 An HTML entity anywhere in a JSX text node makes SWC drop that node's leading whitespace, and
 this repo escapes entities everywhere (`react/no-unescaped-entities` pushes you there), so every
