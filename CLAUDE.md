@@ -1698,11 +1698,20 @@ work, and the reason is arithmetic, not luck.**
 - **THE STRUCTURAL HALF DOES NOT DEPEND ON THAT ESTIMATE, and it is the finding.** A verdict
   needs a RATE, the rate rule pairs two samples **of the same `max_pid`**, and the cadence is
   two minutes — so a rate requires the process to live longer than two minutes. **These live
-  about five seconds.** A rec.gov leak therefore cannot produce a rate verdict from this
-  instrument *rarely*; it cannot produce one **at all**. The recorder built precisely because
-  "the rec.gov family is episodic and manual readings miss it" has the same blind spot it was
-  built to remove — narrowed from a five-minute window to a two-minute one, and the family is
-  five seconds wide.
+  about five seconds.** A NORMAL keepalive browser therefore cannot produce a rate verdict
+  from this instrument *rarely*; it cannot produce one **at all**. The recorder built precisely
+  because "the rec.gov family is episodic and manual readings miss it" has the same blind spot
+  it was built to remove — narrowed from a five-minute window to a two-minute one, and the
+  family is five seconds wide.
+- **THAT IS NARROWER THAN IT READS, AND THE FIRST DRAFT OF THIS ENTRY OVERSTATED IT.** It said
+  "a rec.gov LEAK cannot produce a rate verdict at all", and that does not follow: a process
+  that is actually leaking **persists** — the 08-12 one grew for minutes and reached 9.4 GB —
+  and a browser that lives minutes gets sampled and paired like any other. **The periodic
+  series is NOT blind to a sustained runaway.** What it cannot see is the family's **normal
+  baseline** (still unknown, and abnormal is not recognisable without it) and a ramp that
+  begins and ends inside one short life. The correction is left visible rather than quietly
+  rewritten, because "the instrument is blind to rec.gov" is exactly the tidy sentence that
+  gets quoted later as a reason to stop looking.
 - **`OVERSIZED PROCESS` is the one thing that could still speak**, because it is a single
   reading and is deliberately not gated on the pair count. That is a real partial answer: the
   08-12 event held 7.9 GB, so a recurrence would be reported *if a sample happened to land on
@@ -1721,8 +1730,27 @@ work, and the reason is arithmetic, not luck.**
   catches it every time, at two samples per cycle instead of a 1-in-100 chance, and needs no
   new cadence and no extra PowerShell on an idle box. Same rule as `rc-keepwarm` posting its own
   verdict instead of a watcher inferring it, and as the RcReport channel: the process that knows
-  is the process that reports. **NOT BUILT YET** — recorded first, because a fix written before
-  the measurement is how the family got guessed wrong twice.
+  is the process that reports.
+- **BUILT 2026-08-15.** `createSampler`'s returned function takes `{ force, source }`;
+  `keepSessionsWarm` calls it with `source: 'bot-keepalive'` inside its `withBrowser` callback.
+  Two readings per cycle instead of ~0. Three properties are load-bearing and each is pinned by
+  a test verified failing:
+  - **It is AWAITED.** The scan runs in a separate PowerShell process, so an unawaited call
+    lets `withBrowser` close the context first and the sample measures the absence it was
+    added to see. `void` instead of `await` is a one-character version of this fix that looks
+    right and records nothing.
+  - **It is INSIDE the browser block.** Moved after it, same result.
+  - **A forced sample does NOT reset the interval clock.** If it did, a keepalive would push
+    the periodic series out by two minutes twice an hour — and a periodic sample landing just
+    after a forced one is the ONLY way this instrument ever pairs two readings of a keepalive
+    browser, which happens exactly when that browser failed to close, i.e. the runaway case.
+    Resetting the clock would delete the case worth catching.
+  - A forced sample lost to an in-flight read **says so in the log**: the interval can afford a
+    skipped tick, but a forced one is the only sighting of a five-second browser and a silent
+    miss reads as "the family was not running".
+  - **`bot.mjs`'s `post()` had `source: 'bot'` bound as a constant**, so forwarding the source
+    was part of the change; left alone, every forced reading would land in the series it exists
+    to be told apart from. Pinned too — it is the third inert-fix shape here.
 - **A DIAGNOSTIC CAN BE MARKED STARTED AND NEVER ARRIVE.** Three `memory` commands were stamped
   `started_at = 04:01:24.014` — all three identical, i.e. one hand-out — and **the box's log
   shows no `? diagnostic` line for any of them** while the same log shows #87, #88 and the
