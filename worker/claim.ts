@@ -90,11 +90,46 @@ export interface ClaimResult {
   reason: ClaimReason | null;
 }
 
+/**
+ * Where this opening was seen. Only supplied by callers that can be watching SEVERAL
+ * campgrounds under one watch (migration 070).
+ */
+export interface ClaimScope {
+  campgroundId?: string | null;
+  /** Does the watch cover more than one campground? */
+  multi?: boolean;
+}
+
+/**
+ * Namespace the site key by campground — but ONLY for a watch that covers more than one.
+ *
+ * `campsiteId ?? '*'` was the whole key, and that sentinel is PER WATCH. Sources with no
+ * per-site id (ReserveAmerica, GoingToCamp, TN/SC) therefore collapse every campground of
+ * a multi-campground watch onto `(watch_id, '*')`, so the first division to open would
+ * silence the others for an hour. That is exactly the bug migration 026 fixed at the
+ * site level, reappearing one level up.
+ *
+ * It is scoped to `multi` on purpose. Namespacing unconditionally would change the stored
+ * key for every existing row, and each currently-open site would re-alert once on deploy —
+ * a real cost for no benefit to watches that only ever had one campground. Single-campground
+ * watches keep byte-identical keys.
+ *
+ * Campsite ids were MEASURED unique within a park (10,757 sampled across ReserveCalifornia,
+ * Ohio and Minnesota multi-division parks, zero collisions), so this is belt-and-braces for
+ * the id path and load-bearing for the sentinel path.
+ */
+export function siteKeyFor(campsiteId: string | null | undefined, scope?: ClaimScope): string {
+  const base = campsiteId ?? WHOLE_CAMPGROUND_SITE_KEY;
+  if (!scope?.multi || !scope.campgroundId) return base;
+  return `${scope.campgroundId}::${base}`;
+}
+
 export async function claimNotification(
   watchId: string,
-  campsiteId?: string | null
+  campsiteId?: string | null,
+  scope?: ClaimScope
 ): Promise<ClaimResult> {
-  const siteKey = campsiteId ?? WHOLE_CAMPGROUND_SITE_KEY;
+  const siteKey = siteKeyFor(campsiteId, scope);
   // Named once, used three times — the two paths to a claim, and the reason we report.
   const REOPENED = `watch_site_alerts.last_alert_at < NOW() - ${RENOTIFY_WINDOW}
       AND COALESCE(watch_site_alerts.last_seen_open_at, '-infinity'::timestamptz)

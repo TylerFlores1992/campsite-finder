@@ -428,6 +428,8 @@ interface WatchRow {
   campground_source: string;
   reservations_url: string | null;
   rc_hold_notified_for: string | null;
+  /** True when this watch covers several campgrounds — see loadWatches. */
+  multi_campground: boolean;
   muted_site_ids: string[];
   flex_nights: number | null;
   flex_days: string | null;
@@ -584,7 +586,12 @@ function pacedForEach<T>(tasks: T[], spreadMs: number, limit: number, fn: (t: T)
 
 async function loadWatches(): Promise<WatchRow[]> {
   return query<WatchRow>(
-    `SELECT w.id, w.user_id, w.campground_id,
+    `SELECT w.id, w.user_id, c.id AS campground_id,
+            -- Does this watch cover more than one campground? Computed HERE, beside the
+            -- expansion that knows, rather than left to each call site to remember —
+            -- it decides whether the alert claim is namespaced per campground, and a
+            -- forgotten flag would silently make two divisions share one claim.
+            (COALESCE(array_length(e.ids, 1), 1) > 1) AS multi_campground,
             w.start_date::text, w.end_date::text, w.min_nights,
             w.rc_hold_notified_for, w.muted_site_ids, w.flex_nights, w.flex_days,
             COALESCE(w.auto_cart, false) AS auto_cart,
@@ -600,7 +607,20 @@ async function loadWatches(): Promise<WatchRow[]> {
                   AND (s.tier = 'autocart' OR s.grandfathered)
             )) AS autocart_entitled
      FROM watches w
-     JOIN campgrounds c ON c.id = w.campground_id
+     -- ONE ROW PER (watch, campground). A watch can cover several divisions of a park
+     -- since migration 070. watch_campgrounds is EMPTY for every watch created before
+     -- that, and the COALESCE below falls back to w.campground_id, so an ordinary
+     -- watch produces exactly one row here and takes byte-identical code downstream.
+     -- (No backticks in this comment on purpose: the whole query is a template literal.)
+     CROSS JOIN LATERAL (
+       SELECT COALESCE(
+         (SELECT array_agg(wc.campground_id ORDER BY wc.campground_id)
+            FROM watch_campgrounds wc WHERE wc.watch_id = w.id),
+         ARRAY[w.campground_id]
+       ) AS ids
+     ) e
+     CROSS JOIN LATERAL unnest(e.ids) AS pair(campground_id)
+     JOIN campgrounds c ON c.id = pair.campground_id
      JOIN users u ON u.id = w.user_id
      WHERE w.active = true
        AND w.end_date > CURRENT_DATE
@@ -659,11 +679,22 @@ export function holdIsNewsworthy(availableAt: string, now = new Date()): boolean
  * user cannot act on minute-level precision in a release that is at least an hour away,
  * so the hour is the honest granularity.
  */
-async function claimHoldNotification(watchId: string, releaseAt: string): Promise<boolean> {
+async function claimHoldNotification(
+  watchId: string,
+  releaseAt: string,
+  scope?: { campgroundId?: string | null; multi?: boolean }
+): Promise<boolean> {
   const bucket = new Date(releaseAt);
-  const key = Number.isFinite(bucket.getTime())
+  const hour = Number.isFinite(bucket.getTime())
     ? `${bucket.getFullYear()}-${bucket.getMonth() + 1}-${bucket.getDate()}T${bucket.getHours()}`
     : releaseAt;
+  // SECOND COLLAPSE POINT, and it needed the same treatment as the alert claim.
+  // `rc_hold_notified_for` is ONE column on the watch, so two divisions of one park with
+  // units releasing in the same hour would share it and only the first would be
+  // announced. Prefixing with the campground keeps them apart. Scoped to `multi` for the
+  // same reason as the site key: an ordinary watch's stored value is unchanged, so
+  // nothing re-announces on deploy.
+  const key = scope?.multi && scope.campgroundId ? `${scope.campgroundId}|${hour}` : hour;
   const rows = await mutate<{ id: string }>(
     `UPDATE watches SET rc_hold_notified_for = $2
      WHERE id = $1 AND active = true AND rc_hold_notified_for IS DISTINCT FROM $2
@@ -1019,7 +1050,10 @@ async function cycle(): Promise<void> {
     // Also the "still open" observation — see claimNotification. A quiet answer here
     // usually means the site has been open continuously since we alerted, which is not
     // news; it is the same opening we already reported.
-    const claim = await claimNotification(watch.id, result.campsiteId);
+    const claim = await claimNotification(watch.id, result.campsiteId, {
+      campgroundId: watch.campground_id,
+      multi: watch.multi_campground,
+    });
     if (!claim.won) {
       console.log(
         `[poller] watch ${watch.id}: ${result.campsiteId ?? 'campground'} still open, already alerted — staying quiet`
@@ -1120,7 +1154,16 @@ async function cycle(): Promise<void> {
       // A held site that just went live: clear the held marker so a future
       // cancellation of the same site alerts again.
       if (isUseDirectSource(watch.campground_source) && watch.rc_hold_notified_for) {
-        await mutate(`UPDATE watches SET rc_hold_notified_for = NULL WHERE id = $1`, [watch.id]).catch(() => {});
+        // Clear only what THIS campground claimed. A blanket NULL would let a division
+        // with nothing held wipe the claim a sibling division just made, and the
+        // sibling would then re-announce the same release on the next cycle.
+        await mutate(
+          watch.multi_campground
+            ? `UPDATE watches SET rc_hold_notified_for = NULL
+                WHERE id = $1 AND rc_hold_notified_for LIKE $2 || '|%'`
+            : `UPDATE watches SET rc_hold_notified_for = NULL WHERE id = $1`,
+          watch.multi_campground ? [watch.id, watch.campground_id] : [watch.id],
+        ).catch(() => {});
       }
     } catch (err) {
       console.error(`[poller] notification failed for watch ${watch.id}:`, err);
@@ -1164,7 +1207,10 @@ async function cycle(): Promise<void> {
       );
       continue;
     }
-    if (!(await claimHoldNotification(w.id, held.availableAt))) continue;
+    if (!(await claimHoldNotification(w.id, held.availableAt, {
+      campgroundId: w.campground_id,
+      multi: w.multi_campground,
+    }))) continue;
 
     console.log(
       `[poller] COMING SOON: ${w.campground_name} (${w.campground_id}) — releases ${held.availableAt} — notifying watch ${w.id}`

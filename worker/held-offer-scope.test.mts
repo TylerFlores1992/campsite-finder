@@ -46,6 +46,17 @@ test('the release-time dedup is still what stops repeats', () => {
   // availability alerts a watch sends, the coming-soon heads-up still goes out at most
   // once per release. Without this the change would trade a missed alert for a repeated
   // one — the 16-alerts-in-a-day shape from migration 039.
-  assert.match(src, /claimHoldNotification\(w\.id, held\.availableAt\)/,
+  //
+  // The call gained a THIRD argument with migration 070 (the campground scope), so this
+  // matches the first two rather than the whole call — the property being guarded is
+  // "keyed on the release time", not "takes exactly two arguments". Loosening it to
+  // /claimHoldNotification\(/ would have kept it passing while letting the release key
+  // disappear entirely, which is the thing it exists to catch.
+  assert.match(src, /claimHoldNotification\(\s*w\.id,\s*held\.availableAt\b/,
     'the per-release claim is what makes the un-suppressed loop safe');
+
+  // And the scope must actually be passed, or two divisions of one park sharing the
+  // single rc_hold_notified_for column would silence each other's coming-soon alert.
+  assert.match(src, /claimHoldNotification\([\s\S]{0,120}multi:\s*w\.multi_campground/,
+    'the hold claim is scoped per campground for a multi-campground watch');
 });
