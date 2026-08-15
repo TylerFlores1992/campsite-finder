@@ -905,6 +905,82 @@ token, ~12h Okta session) apply inside the app exactly as they do to the bot.
   to `signed-out`, and the classifier reading the LAST `session` report (which is this run's
   own marker write) instead of the first.
 
+### "ALREADY SIGNED IN" IS NOT "COVERED" — the 08:00 cart lost to a one-line short-circuit (2026-08-15)
+A queued hold released at 08:00:40 PT and was never carted. The runner was alive, the feed was
+right, the hold was `requested`, and the auto-login fired **correctly and on time**:
+```
+14:30:42 ⏰ hold releases in 30m and the session will not cover it — signing in ONCE
+14:30:47     → already signed in — nothing to do
+14:30:47   ✓ signed in unattended — the hold is covered
+```
+`maybeAutoLogin` computed that the token would NOT last, called `attemptLogin` to fix it, and
+`attemptLogin` short-circuited on `isLive()` — **a question about whether a session EXISTS,
+never about whether it will still exist when it is needed.** The token had 23 minutes, needed
+50, expired at 07:53, and the cart failed at 08:00 with the release's one attempt already
+spent on a no-op. The log line "the hold is covered" was a restatement of the INTENT, not a
+reading of the result, and it made the next thirty minutes look healthy.
+- **THIS IS THE 2026-08-09 LESSON RUNNING BACKWARDS.** `isLive()` was ADDED to `attemptLogin`
+  *because* it reported failure over a healthy session. Nobody checked the other direction,
+  and the opposite error is worse: a false failure wakes a human, a false success does not.
+- **AND IT WAS ALREADY WRITTEN DOWN, ABOUT A DIFFERENT CALLER.** `rehearsal.mjs` documents
+  this exact short-circuit — *"`attemptLogin` short-circuits on `isLive()`, so it would return
+  ok without exercising one line of the sign-in. A pass that proved nothing is worse than a
+  skip"* — and gates the nightly rehearsal on it. The same line sits in the RELEASE-CRITICAL
+  path and the two were never connected. **A hazard recorded for one caller is not recorded.**
+- **Five fixes, and the ordering of the first two matters.** (1) `attemptLogin` takes an
+  optional `sufficient` deadline and BOTH already-signed-in returns go through it — the
+  retry-loop one too, or the bug simply moves there. (2) A live-but-short session has its
+  token dropped (**cookies untouched**, so `DT` survives) to reach a state it can sign in
+  from; without that the form hunt finds no form and reports the 08-09 false alarm.
+  (3) `provedNothing` is REFUNDED — no credential was submitted, so counting it spends the
+  ration on a no-op. (4) The requirement is computed from where we STAND
+  (`requiredTokenSeconds`), not from the lead: `AUTOLOGIN_MIN_TOKEN_MIN` is derived for the
+  moment the lead opens and was applied at every moment inside it, so at T−5 it demanded 50
+  minutes of token to cover 20 minutes of work. (5) The budget is **two attempts with an
+  8-minute gap**, because one makes the first answer the only answer — deliberately not a
+  retry loop, since repeated logins from this address cost 12h of IP block on 08-06.
+- **`sessionAcceptable`'s THREE-VALUED coverage is the guard that matters.** `null` (an
+  undecodable token) ACCEPTS. Rejecting would force a sign-in, and a sign-in first DROPS the
+  stored token — a destructive act taken on an unknown, against a session that may be fine.
+  Same rule as `hasAvailabilityInRange` returning null and `oktaSessionAlive`'s unknown never
+  being reported as dead.
+- **THE PROFILE-CONTENTION DEATH SPIRAL, found in the same log and fixed alongside.** One
+  Chromium profile, two processes: the keep-warm OWNS the session (renewal, auto-login and
+  measurement all live inside its **60-second** expiry poll) and the hold runner CONSUMES it,
+  preempting cooperatively. A hold stuck `requested` with a dead session made the runner ask
+  every **15 seconds**, so for twenty unbroken minutes:
+  ```
+  15:01:34 RC loaded and STAYING OPEN — token source: none
+  15:01:34 → hold runner wants the profile — closing and standing down
+  ```
+  **The keep-warm never survived 35 seconds, so the repair could never complete** — the
+  component that fixes the session was starved by the component that needs it, and it
+  sustains itself (dead session → cart fails → hold stays `requested` → runner keeps asking).
+  Two strikes then a 3-minute stand-off; **shorter than the 20-minute cart grace window on
+  purpose**, so it can never trade a repairable session for a guaranteed miss.
+- **Five silent `return false` gates are now six named sentences**, consecutive repeats
+  collapsed (asked every 60s — 1,440 identical lines a day hides the answer as well as
+  printing nothing). Diagnosing this took a `tail-log` off the box and 120 lines of
+  scrollback, for the most release-critical decision the bot makes.
+- **The two decisions are a pure module** (`scripts/auto-cart-bot/session-coverage.mjs`)
+  because both were wrong in production and neither could be tested where it lived — one
+  inside a Playwright call chain, one inside a loop that starts on import. Same reasoning as
+  `relogin-retry.mjs` and `rehearsal.mjs`.
+- `worker/session-coverage.test.mts`, **10 mutations, each asserting the mutation applied**.
+  Half the guards are structural, because the pure functions can be perfect while nothing
+  calls them — M4 (`maybeAutoLogin` stops passing `sufficient`) and M8 (the stand-off checked
+  AFTER `requestProfile`) are that shape, which this repo has paid for three times.
+- **THREE EXISTING GUARDS FAILED AND WERE UPDATED, NOT RELAXED.** `rc-token-renew.test.mts`
+  and two in `rehearsal.test.mts` pinned `isLive()` and `removeItem(...)` **by name**; after
+  the extraction into `acceptable()` and `dropStoredToken()` they would have gone green
+  against code that no longer did either. They pin BOTH halves now — the helper does the
+  work, and the caller still calls it. Same trap as `control-channel.test.mts` passing
+  against a `restart-rc.ps1` that had stopped killing anything.
+- **A CONTRIBUTING CAUSE WAS THE LEAKED TEST FIXTURES BELOW.** One of them fired
+  `maybeAutoLogin` at 06:53 for a phantom hold "releasing in 1m", minting the short token
+  that was still alive at 07:30 — which is exactly what triggered the short-circuit. Without
+  them there would have been no token, no short-circuit, and a real sign-in.
+
 ### `npm test` TOLD THE PRODUCTION BOT TO CART A REAL CAMPSITE (2026-08-15)
 An aborted real-DB test run left four `requested` holds with **numeric** unit ids on a real
 ReserveCalifornia campground, and the mini-PC's hold runner spent fifteen minutes trying to
@@ -1167,8 +1243,27 @@ identical number — that is the same token being read straight back.
   not a measurement, and this file has been burned twice by treating one for the other. The
   fixed code makes the next attempt a real test and reports honestly either way; it should
   answer within a token lifetime of reaching the box.
+- **IT ANSWERED ON 2026-08-15, AND THE ANSWER IS NO.** The fixed `renewByReload` ran properly
+  on the box, against a live Okta session, and did not renew:
+  ```
+  14:43:53 token has 10m left (src=live) — renewing by reload
+  14:44:19   ✗ no fresher token after the reload (578s → 552s) — the previous token was put back
+  ```
+  **This is a real test where the 08-12 one was not.** 26 seconds elapsed and the token only
+  AGED — no new token, and the restore guard did its job. `okta=ALIVE (exp 2026-08-16T02:44)`
+  sat on the adjacent line, so this is not "no Okta session to renew against".
+- **So the two clears now DISAGREE, and that contradiction is the whole open question.** The
+  login rehearsal clears `ssoAccessToken`/`accessToken` and reloads, and RC re-minted within
+  seconds with no credential typed (08-11, and the app probe saw the same shape on 08-13).
+  `renewByReload` clears what reads like the same thing and gets nothing. Both are in this
+  repo, one works and one does not, and **nobody has diffed them line by line** — that is the
+  cheapest remaining path to a bot that never needs a credential, and it should be the next
+  thing anyone does on this. Do NOT record "RC will not renew" as settled on the strength of
+  this one reading; record that OUR renewal path does not, while a different one in the same
+  codebase does.
 - **`maybeAutoLogin` stays exactly as it is** until renewal is *proven*. A renewal that
-  works is what would retire it; a renewal that is merely plausible is not.
+  works is what would retire it; a renewal that is merely plausible is not. (Reinforced
+  2026-08-15: it is now the ONLY thing standing between a queued hold and a missed cart.)
 - **The clear is DESTRUCTIVE, so the fix is guarded three ways** — never on an explicit
   `alive: false` from Okta (`null` is "we could not tell" and still attempts, or one hiccup
   disables renewal forever), judge on a token that is genuinely *different* rather than
@@ -1860,6 +1955,18 @@ work, and the reason is arithmetic, not luck.**
   - **`bot.mjs`'s `post()` had `source: 'bot'` bound as a constant**, so forwarding the source
     was part of the change; left alone, every forced reading would land in the series it exists
     to be told apart from. Pinned too — it is the third inert-fix shape here.
+- **IT WORKS, AND THE REC.GOV FAMILY HAS A BASELINE FOR THE FIRST TIME (2026-08-15).** After a
+  quiet-window update reached the box at ~09:00 UTC, `chromium_memory_samples` carries rows
+  with `source = 'bot-keepalive'` — **two per 30-minute cycle**, at off-beat timestamps
+  (13:01:19 and 13:01:48 against a periodic series on :07 and :35), which is the 15-45s stagger
+  between the two enrolled users. `families observed` finally reads `rc, recgov`.
+  **rec.gov: 7-9 processes, 134-145 MB, FLAT across nine consecutive cycles.** That is the
+  number 175 consecutive `recgov 0` rows could not produce, and it is the first evidence about
+  the family the 08-12 event pointed at.
+  **It is a baseline, NOT an exoneration.** A steady ~140 MB says the ordinary keepalive
+  browser does not leak; it says nothing about the 7.9-GB-in-46-seconds event, which by
+  construction still cannot be caught by a 2-minute cadence unless a sample happens to land on
+  it. `OVERSIZED PROCESS` remains the only thing that would report that.
 - **A DIAGNOSTIC CAN BE MARKED STARTED AND NEVER ARRIVE.** Three `memory` commands were stamped
   `started_at = 04:01:24.014` — all three identical, i.e. one hand-out — and **the box's log
   shows no `? diagnostic` line for any of them** while the same log shows #87, #88 and the
@@ -3032,6 +3139,17 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
+**Docs current to 2026-08-15.** That session added, in CLAUDE.md: **"ALREADY SIGNED IN" IS NOT
+"COVERED"** (the 08:00 cart lost to a one-line short-circuit, the profile-contention death
+spiral, and the five fixes for both), **`npm test` TOLD THE PRODUCTION BOT TO CART A REAL
+CAMPSITE**, the **08-15 answer folded into "THE RENEWAL WAS MEASURING ITSELF"** (our renewal
+path does not re-mint; the rehearsal's does — that contradiction is the open question), and the
+**first-ever rec.gov memory baseline** (134-145 MB, flat). `docs/NEXT-SESSION.md` is retargeted:
+its subject is now **making the RC session renew itself**, both STOP sections are CLEARED, and
+the Chromium leak is downgraded rather than closed.
+**The 08-15 bot-side fixes are merged and NOT yet on the mini-PC** — they need an `update.bat`,
+"Update now", or a quiet window before the next release depends on them.
+
 **Docs current to 2026-08-14.** That session added the **`\"` cmd-escape bug** that meant
 `rc-login.bat`'s kill had never run, **`mini-pc\stop-rc.ps1`** as the one way to free the RC
 profile, and the **watchdog** — including the fact that it restarts PROCESSES and never

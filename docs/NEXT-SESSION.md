@@ -1,7 +1,30 @@
-# Next session — fix the Chromium memory leak
+# Next session — make the RC session renew itself
 
-*Rewritten 2026-08-14 evening, after the day that ended with RC rendering again and the box
-healthy on `7780c32`. **Delete this file once the leak is diagnosed.***
+*Retargeted 2026-08-15. **The subject of this file has changed** and the old title said "fix
+the Chromium memory leak"; that work is now largely answered (see below) and the owner's
+stated priority is a bot that never needs a human to sign it in.*
+
+> **THE ONE THING TO DO NEXT — option 6 from the 08-15 automation review.**
+>
+> `renewByReload` was fixed on 08-12 and finally ran for real on 08-15. **It did not renew**,
+> against a live Okta session: `578s → 552s`, the token only aged, the restore guard put it
+> back. But the **login rehearsal's clear of the same two keys DOES re-mint**, within seconds,
+> with no credential typed — observed 08-11, and the app probe saw the same shape on 08-13.
+>
+> **Two clears in this repo, apparently of the same thing, and one works. Nobody has diffed
+> them line by line.** That is the cheapest remaining path to a bot that never needs a
+> credential, and it is where to start. Full context: CLAUDE.md → "THE RENEWAL WAS MEASURING
+> ITSELF", which now carries the 08-15 answer.
+
+**Where the Chromium leak got to** (it is no longer the headline, and the STOP sections below
+are both CLEARED): the box self-healed via a quiet-window update at ~09:00 UTC on 08-15, the
+forced keepalive sample now works, and **the rec.gov family has a baseline for the first
+time — 7-9 processes, 134-145 MB, flat across nine cycles.** So the ordinary keepalive browser
+does not leak. The 7.9-GB-in-46-seconds event from 08-12 is still unattributed and still
+cannot be caught by a 2-minute cadence; `OVERSIZED PROCESS` is the only thing that would
+report a recurrence. Downgraded, not closed.
+
+***Delete this file once the renewal question is answered.***
 
 ---
 
@@ -66,7 +89,12 @@ paragraph.
 
 ---
 
-## STOP — READ THIS FIRST (added 2026-08-14, later still)
+## ~~STOP — READ THIS FIRST (added 2026-08-14, later still)~~ — CLEARED 2026-08-15
+
+*The sampler's false zeros were fixed and the fix reached the box in the 09:00 UTC quiet-window
+update. The series is honest now and the rec.gov family has a baseline. Kept for the reasoning,
+which is the house failure shape in its purest form: an instrument recording a zero it had not
+measured. **Nothing here needs doing.***
 
 ### THE BOX UPDATED, THE SERIES STARTED, AND THE SAMPLER'S FIRST ROWS WERE A LIE
 
@@ -281,60 +309,53 @@ it as untracked. It is the only copy of the evidence for both questions. Do not 
 
 ## THE PROMPT — paste this to open the session
 
-*Current as of 2026-08-15 06:00 UTC. The leak work is BLOCKED on one human action at the box
-(see the STOP section at the very top). Everything else in the queue is unblocked.*
+*Current as of 2026-08-15 evening. Nothing is blocked on a human; the box is healthy and on
+current code. The 08-15 auto-login fixes are merged but have NOT yet reached the box.*
 
-> Read `docs/NEXT-SESSION.md` first — the STOP section at the top — then CLAUDE.md.
+> Read `docs/NEXT-SESSION.md` first — the block at the very top — then CLAUDE.md.
 >
-> **FIRST, CHECK WHETHER THE BOX HAS BEEN FIXED**, because the Chromium-leak work cannot
-> advance until it has and there is nothing an agent can do about it:
+> **This session is for making the RC session renew itself: option 6 of the 08-15 automation
+> review.** It is the only remaining option that removes the human from the loop permanently.
+> Everything shipped on 08-15 makes the auto-login reliable; this would make it unnecessary.
 >
-> ```
-> NODE_USE_ENV_PROXY=1 npx tsx scripts/chromium-memory-readout.mts
-> ```
+> **The discriminating fact is already measured.** `renewByReload` ran properly on the box on
+> 08-15, against a live Okta session, and did NOT renew — `578s → 552s`, the token only aged
+> and the restore guard put it back. But the **login rehearsal clears the same two localStorage
+> keys and RC re-mints within seconds, no credential typed** (observed 08-11; the mobile app
+> probe saw the same shape on 08-13). Two clears in this repo, apparently of the same thing,
+> and only one works.
 >
-> If the samples still carry no `source = 'bot-keepalive'` rows, the box is still running
-> `e6a7ebf` while its checkout says `c1bd875` — an elevated process generation that every
-> unelevated `stop-all` counts as ZERO. It needs a person at the keyboard: an **elevated**
-> `stop-all.ps1`, then `start-all.bat` **unelevated**. Ask; do not burn the session on it.
-> `autocart.bot_version` going `ok` is the confirmation, and `git-status` alone is not — it
-> proves the checkout moved, not that the running code did.
+> **Start by diffing them line by line** — `renewByReload` in `scripts/auto-cart-bot/rc-token.mjs`
+> against the rehearsal path in `rc-keepwarm.mjs` / `rehearsal.mjs`. If the clears really are
+> equivalent, the difference is in the reload, the wait, or what is asked afterwards, not the
+> clear. Do not start by rewriting the renewal.
 >
-> **While that is outstanding, take item 2 in "Still open": the New-watch Filters control is
-> decorative.** `NewWatch.tsx` discards `rvLength`/`electric`/`showers`/`pets` on submit, and
-> `worker/` never reads `site_type` at all — `grep -rn "site_type\|siteType" worker/` returns
-> zero hits. So a user picks RV and we alert them for tent sites, on a control that looks like
-> it works. **The owner asked for a DECISION, not a patch**: thread it into detection, persist
-> the rest properly, or drop the panel and say a watch covers the whole campground. Read the
-> queue entry — it has the file/line evidence and the one inference in it is labelled.
-> Recommend, with the trade-offs, before writing code.
+> **Do not record "RC will not renew" as settled.** One reading of OUR path failing, beside a
+> different path in the same codebase succeeding, is not that conclusion — and this file has
+> twice hardened a single observation into a fact and paid for it.
 >
-> Do NOT take manual `memory` readings to hunt the leak. Three attempts produced three
-> non-answers: `keepSessionsWarm()` opens a rec.gov Chromium for a few seconds twice per
-> 30-minute cycle, so a five-minute window has ~1 chance in 10 of containing one. That is
-> why the forced sample and the 2-minute series exist.
+> **The 08-15 fixes are merged and NOT on the box.** `attemptLogin` now proves the session will
+> COVER the release rather than merely exist; the budget is two attempts, not one; every gate
+> names itself; the hold runner stands off the Chromium profile after two dead-session passes.
+> All bot-side, so they need an `update.bat`, "Update now", or a quiet window. `autocart.bot_version`
+> is a hint, not proof — `git-status` through `bot_commands` is what actually answers "did it land?".
 >
-> Read a quiet series correctly. Under 10 comparable pairs the readout refuses a verdict, and
-> a family with no processes running has been ruled out of NOTHING. The RC profile was
-> REPLACED on 08-14 to fix a different bug, so if that profile was also the leak the series may
-> read `NO LEAK IN THIS WINDOW` for ever — a real answer, not a broken instrument. That is a
-> HYPOTHESIS and must not be promoted. `rc-profile-old/` on the box is the only copy of the
-> evidence; do not delete it.
->
-> Levers already built, do not rebuild: `kill-chrome rc|recgov|all`, `memory` (spot reading,
-> full `--user-data-dir` per process), and `mini-pc\fix-pagefile.ps1`, which raises the COMMIT
-> ceiling and is explicitly **NOT** the fix — pagefile peak was 0.4 GB against 34 GB allocated,
-> so commit was going to reservations, not paging.
+> **A real test hold is how you prove any of this**, and `scripts/rc-test-hold.mts --find` picks
+> a genuinely bookable unit rather than an invented one. Queue it with plenty of lead, not
+> minutes before the release, and only when the owner is free to watch — it locks a real site.
+> Read the outcome with `scripts/rc-holds-readout.mts`, and `mini-pc\rc-check.bat` is the box-side
+> equivalent.
 >
 > Working rules: **push to a branch, then open a PR** — a hook blocks pushing to master and
 > `docs/LANES.md` makes the PR the only merge path. `npm run verify` and CI green first.
 > **Squash-merging leaves your branch and master with divergent histories for identical
-> content**, so after a merge, reset the branch to `origin/master` rather than fighting a
+> content**, so after a merge reset the branch to `origin/master` rather than fighting a
 > conflict. Mutation-test every regression test — break the code, watch it fail — and **assert
-> the mutation actually applied**, because one that silently fails to apply is a green proving
-> nothing. `autocart.rc_session` reading dead between releases is CORRECT, not a fault. Use
-> ABSOLUTE paths on the mini-PC: a failed `cd` there is silent, and the next command then
-> reports a confident result about the wrong thing.
+> the mutation actually applied**. When you extract behaviour into a new function or file,
+> **check whether an existing guard pinned it by name**: three did on 08-15 and would have gone
+> green against code that no longer did the thing. `autocart.rc_session` reading dead between
+> releases is CORRECT, not a fault. Use ABSOLUTE paths on the mini-PC, and put nothing in a
+> fenced code block that a human should not paste verbatim.
 
 ## 2026-08-14, later: THE READINGS WERE TAKEN, AND THEY COULD NOT HAVE ANSWERED IT
 
@@ -495,7 +516,18 @@ that is now known not to work; see the section at the top of this file.)*
 
 ## Still open, in rough priority
 
-1. **The Chromium leak** — above.
+1. **MAKE THE RC SESSION RENEW ITSELF** — the headline, see the top of this file. The
+   discriminating experiment is a line-by-line diff of the login rehearsal's storage clear
+   (which re-mints) against `renewByReload`'s (which does not, measured 08-15). If they really
+   are equivalent, the difference is in the reload or the wait, not the clear.
+   **Why it is worth a whole session:** it is the only option that removes the human from the
+   loop permanently. Everything shipped on 08-15 makes the auto-login reliable; this would make
+   it unnecessary.
+2. **The Chromium leak** — downgraded 2026-08-15. The rec.gov family now has a flat 134-145 MB
+   baseline across nine cycles, so the ordinary keepalive browser does not leak. What remains
+   unattributed is the 08-12 event (7.9 GB in 46 seconds), which a 2-minute cadence cannot
+   catch by construction — `OVERSIZED PROCESS` is the only reporter. Wait for a recurrence
+   rather than hunting it; `rc-profile-old/` on the box is still the only copy of the evidence.
 2. **THE NEW-WATCH FILTERS CONTROL IS DECORATIVE, and this one is a DECISION, not a patch.**
    Measured by the side lane 2026-08-15 (`docs/NOTES-claude-side-lane-setup-f7bpe2.md`
    finding 1) and recorded here because a notes file is not where a user-facing defect
