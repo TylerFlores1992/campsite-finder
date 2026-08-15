@@ -111,9 +111,10 @@ test('mutes ride only the campground they were loaded for', () => {
    * reaches the database.
    */
   assert.ok(
-    /muted\.size && t\.id === campgroundId \? \{ mutedSiteIds/.test(newWatch),
-    'the POST body sends mutedSiteIds to every target in the divisions loop, not only ' +
-      'to the campground the list was loaded from',
+    /muted\.size && targets\.length === 1 \? \{ mutedSiteIds/.test(newWatch),
+    'the POST body attaches mutedSiteIds to a watch covering several campgrounds. The ' +
+      'list was loaded for ONE of them, and rec.gov site ids are global, so the others ' +
+      'could have a real site muted that the user never saw.',
   );
   assert.ok(
     /\{campgroundId && divisions\.length <= 1 && \(/.test(newWatch),

@@ -1312,7 +1312,11 @@ async function cycle(): Promise<void> {
   await recordObservations(observed);
   await pruneObservationsIfDue();
 
-  await beat(watches.length);
+  // DISTINCT WATCHES, because `watches` is now one row per (watch, campground) and this
+  // number is rendered as "Checking N watches every 15 seconds" on the admin page. A park
+  // watch would otherwise make that read 22 for 20 watches — small, but it is a named
+  // number, and nothing gates on it precisely because it is only ever read by a human.
+  await beat(new Set(watches.map((w) => w.id)).size);
 
   console.log(
     `[poller] heartbeat — ${mainWatches.length}${SHARD_COUNT > 1 ? `/${watches.length}` : ''} watches` +

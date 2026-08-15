@@ -83,11 +83,31 @@ export async function watchOpenings(watchIds: string[]): Promise<Map<string, Wat
   // in the notification payload we already sent. A site open for the first time therefore
   // has no name yet and renders as its id — the same honest gap the mute list has, rather
   // than inventing a label.
+  // A PARK WATCH'S SITE KEY CARRIES ITS CAMPGROUND, and this reader has to strip it.
+  //
+  // Since migration 070 a watch can cover several divisions, and `siteKeyFor` in
+  // worker/claim.ts namespaces the key as `<campgroundId>::<campsiteId>` for those
+  // watches — it has to, or the per-watch `*` sentinel would collapse every division
+  // onto one claim and the first to open would silence the rest.
+  //
+  // That broke three things HERE, all silently, and only for a park watch:
+  //   1. `site_key <> '*'` stopped excluding the sentinel, because a park watch's is
+  //      `<campgroundId>::*`. The very thing this filter exists to hide would have been
+  //      reported as an open SITE — "a number we made up", in the words below.
+  //   2. The name lookup compares against `payload->>'campsiteId'`, which stores the
+  //      BARE id, so a namespaced key matched nothing and every site came back unnamed.
+  //   3. The id is handed to `withBookLinks`, so the deep link pointed at a site id that
+  //      does not exist.
+  //
+  // `bare` is everything after the FIRST `::`, so it is the campsite id on both shapes.
+  const BARE_KEY = `CASE WHEN a.site_key LIKE '%::%'
+                         THEN substring(a.site_key from position('::' in a.site_key) + 2)
+                         ELSE a.site_key END`;
   const openRows = await query<{ watch_id: string; site_key: string; name: string | null; age: number }>(
-    `SELECT a.watch_id, a.site_key,
+    `SELECT a.watch_id, ${BARE_KEY} AS site_key,
             (SELECT n.payload->>'campsiteName'
                FROM notifications n
-              WHERE n.watch_id = a.watch_id AND n.payload->>'campsiteId' = a.site_key
+              WHERE n.watch_id = a.watch_id AND n.payload->>'campsiteId' = ${BARE_KEY}
               ORDER BY n.created_at DESC LIMIT 1) AS name,
             EXTRACT(EPOCH FROM (NOW() - a.last_seen_open_at))::int AS age
        FROM watch_site_alerts a
@@ -97,7 +117,9 @@ export async function watchOpenings(watchIds: string[]): Promise<Map<string, Wat
         -- The '*' sentinel is what sources with no per-site id collapse onto
         -- (ReserveAmerica, GoingToCamp, TN/SC). Counting it as "1 site open" would be a
         -- number we made up: it means "something on this campground", not one site.
-        AND a.site_key <> '*'
+        -- Tested on the STRIPPED key so a park watch's campgroundId::* is caught too.
+        -- (No backticks in this comment: the whole query is a template literal.)
+        AND ${BARE_KEY} <> '*'
       ORDER BY a.last_seen_open_at DESC`,
     [watchIds, String(OPEN_WINDOW_MS)],
   ).catch(() => []);
