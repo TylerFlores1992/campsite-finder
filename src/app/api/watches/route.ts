@@ -6,6 +6,7 @@ import { createAlert, cancelAlert } from '@/lib/campflare/client';
 import { getOpeningRate } from '@/lib/likelihood';
 import { manageTokenFor, manageLink } from '@/lib/notifications/actions';
 import { WATCH_LIMIT } from '@/lib/limits';
+import { cleanSiteIds } from '@/lib/watch-mutes';
 import { currentUserIsAdmin } from '@/lib/admin';
 import type { CampflareDateRange } from '@/lib/campflare/types';
 
@@ -150,7 +151,28 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { campgroundId, startDate, endDate, minNights = 1, siteType, flexNights, flexDays, autoCart } = body;
+  const { campgroundId, startDate, endDate, minNights = 1, siteType, flexNights, flexDays, autoCart, mutedSiteIds } = body;
+
+  /**
+   * SITES MUTED AT CREATION (2026-08-15).
+   *
+   * Muting used to be reachable only from /manage/<token>, which the owner reported
+   * almost nobody finds — so a control the poller genuinely honours was going unused.
+   * The New watch screen now offers the same list, and the ids arrive here.
+   *
+   * THESE ARE THE POLLER'S IDS. They come from `/api/campgrounds/<id>/availability`,
+   * i.e. `getAvailabilityFromRecGov` / `getRCAvailabilityForMonth` — the same functions
+   * the poller reads, and RC's emits `String(unit.UnitId)`, which is exactly what
+   * `findRCOpenUnit` and `findRCHeldUnits` compare. `worker/site-mute-creation.test.mts`
+   * pins that chain, because a write into a column no reader can match is the failure
+   * this feature has already had once.
+   *
+   * Validated by the SAME `cleanSiteIds` the manage screen's batch writes go through, so
+   * the two surfaces cannot disagree about what a usable id is. Anything unusable is
+   * DROPPED rather than 400'd: a bad entry in this list must never cost the user the
+   * watch itself, which is the thing they actually came to create.
+   */
+  const mutedVal = cleanSiteIds(mutedSiteIds);
   // Per-watch auto-cart. Defaults TRUE when the caller says nothing, which keeps the
   // account-level setting as the effective switch for older clients (and for the web
   // app before this shipped) — the poller still requires the account to be enrolled,
@@ -246,10 +268,10 @@ export async function POST(request: NextRequest) {
   }
 
   const [row] = await mutate<{ id: string }>(
-    `INSERT INTO watches (user_id, campground_id, start_date, end_date, min_nights, site_type, flex_nights, flex_days, auto_cart)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `INSERT INTO watches (user_id, campground_id, start_date, end_date, min_nights, site_type, flex_nights, flex_days, auto_cart, muted_site_ids)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING id`,
-    [userId, campgroundId, startDate, endDate, minNights, siteType ?? null, flexNightsVal, flexDaysVal, autoCartVal]
+    [userId, campgroundId, startDate, endDate, minNights, siteType ?? null, flexNightsVal, flexDaysVal, autoCartVal, mutedVal]
   );
 
   const webhookBase = process.env.NEXT_PUBLIC_APP_URL

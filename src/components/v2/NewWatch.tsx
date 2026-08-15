@@ -5,6 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Chip from "@/components/ui/Chip";
+import Collapsible from "@/components/ui/Collapsible";
+import SiteMuteList from "./SiteMuteList";
 import DatePicker, { type DateRange } from "@/components/ui/DatePicker";
 import NightsPicker from "@/components/ui/NightsPicker";
 import TrustPanel from "./TrustPanel";
@@ -92,6 +94,25 @@ export default function NewWatch({
   const [flexNights, setFlexNights] = useState(2);
   const [weekendsOnly, setWeekendsOnly] = useState(false);
   const [autoCart, setAutoCart] = useState(true);
+  /**
+   * Sites muted before the watch exists. Local only — there is no watch to write to
+   * yet — and posted with the creation below. Cleared when the campground changes,
+   * because a site id means nothing at a different campground and carrying one over
+   * would silently mute an unrelated site.
+   */
+  const [muted, setMuted] = useState<ReadonlySet<string>>(new Set());
+  const muteLocally = useCallback(
+    async (change: { mute?: string[]; unmute?: string[] }) => {
+      setMuted((prev) => {
+        const next = new Set(prev);
+        for (const id of change.mute ?? []) next.add(id);
+        for (const id of change.unmute ?? []) next.delete(id);
+        return next;
+      });
+      return true;
+    },
+    [],
+  );
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +123,13 @@ export default function NewWatch({
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
   const [partial, setPartial] = useState<string | null>(null);
+
+  // A site id is only meaningful at the campground it came from. Carrying mutes across
+  // a change of campground would post ids that either match nothing or — worse, since
+  // rec.gov ids are global — silently mute a site the user never saw.
+  useEffect(() => {
+    setMuted(new Set());
+  }, [campgroundId]);
 
   // Resolve a pre-selected campground so the summary can name it.
   useEffect(() => {
@@ -237,6 +265,13 @@ export default function NewWatch({
             // auto-cart lane from the account-level setting alone. Turning it off
             // carted anyway.
             autoCart,
+            // MUTES RIDE ONLY THE CAMPGROUND THEY WERE LOADED FOR. Site ids are
+            // per-campground, and rec.gov's are GLOBAL — so applying this park's list
+            // to a sibling division would not merely fail to match, it could mute a
+            // real site the user never saw. The picker is hidden for a multi-division
+            // park anyway (there is no single inventory to show), so this guard is the
+            // second of two; per-division muting is available on each watch afterwards.
+            ...(muted.size && t.id === campgroundId ? { mutedSiteIds: [...muted] } : {}),
             ...(mode === "flexible"
               ? { flexNights, ...(weekendsOnly ? { flexDays: "weekend" } : {}) }
               : {}),
@@ -291,7 +326,11 @@ export default function NewWatch({
     } finally {
       setSaving(false);
     }
-  }, [campgroundId, campgroundName, divisions, chosen, range, mode, flexNights, weekendsOnly, autoCart, router]);
+    // EVERY VALUE THE BODY READS BELONGS HERE. `autoCart` was missing until the
+    // divisions work added it, and the effect of an omission is invisible: useCallback
+    // hands back a closure over whatever the value was when it was last rebuilt, so the
+    // payload is stale while the JSX, the body and the API all look correct.
+  }, [campgroundId, campgroundName, divisions, chosen, range, mode, flexNights, weekendsOnly, autoCart, muted, router]);
 
   const canAutoCart = campgroundSource ? supportsAutoCart(campgroundSource) : false;
   const windowNights = range.start && range.end ? nightsBetween(range.start, range.end) : 0;
@@ -583,6 +622,51 @@ export default function NewWatch({
           `p_site_type = ANY(c.site_types)` against the campground catalog. The defect was
           never the panel, it was this screen implying a watch would honour it.
         */}
+
+        {/*
+          MUTING, HERE AS WELL AS ON /manage/<token> (2026-08-15).
+
+          The owner's reason: "most people won't know there is a mute section in manage
+          watches, so if it is here also it will be more used." A control the poller
+          genuinely honours was reachable only from a screen users arrive at by tapping a
+          link in an alert — i.e. after the noise they wanted to avoid.
+
+          It is also what REPLACES the site-type picker removed above: the only working way
+          to say "not that kind of site" is to name the sites. Explicit and source-agnostic,
+          rather than a taxonomy that would work on rec.gov and quietly not elsewhere.
+
+          COLLAPSED BY DEFAULT. Muting nothing is the right default and the overwhelmingly
+          common case; an open list of 300 sites between the dates and the submit button
+          would bury the two controls that matter. Only rendered once a campground is
+          chosen, because there is nothing to enumerate before that.
+
+          AND NOT FOR A MULTI-DIVISION PARK. That submit creates one watch PER DIVISION,
+          so there is no single site inventory this list could describe — and applying
+          one division's ids to its siblings would be actively wrong, since rec.gov's
+          campsite ids are global and could match a real site the user never saw. Those
+          users mute per watch afterwards, where the list belongs to one campground.
+        */}
+        {campgroundId && divisions.length <= 1 && (
+          <div className="mt-5">
+            <Collapsible
+              label="Mute individual campsites"
+              summary={muted.size ? `${muted.size} muted` : "optional"}
+            >
+              <p className="pb-2 text-ch-fine leading-normal text-ch-muted">
+                Only want a handful of sites? Mute all, then unmute the ones you&apos;d
+                actually take — we&apos;ll only wake you for those. You can change this any
+                time from the watch.
+              </p>
+              <SiteMuteList
+                campgroundId={campgroundId}
+                month={(range.start ?? todayISO()).slice(0, 7)}
+                muted={muted}
+                onChange={muteLocally}
+                emptyMessage="We can't list this campground's individual sites, so there's nothing to mute. You'll still get alerts for the whole campground."
+              />
+            </Collapsible>
+          </div>
+        )}
 
         {canAutoCart && (
           <fieldset className="mt-5">

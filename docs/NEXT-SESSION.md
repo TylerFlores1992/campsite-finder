@@ -3,26 +3,30 @@
 *Retargeted 2026-08-15 (second time today). The renewal question it previously opened on has
 been ANSWERED at the code level; what is left is one reading from the box and one feature.*
 
-> ## THE ONE FEATURE TO BUILD: site muting on the New watch screen
+> ## ~~THE ONE FEATURE TO BUILD: site muting on the New watch screen~~ — SHIPPED 2026-08-15
 >
-> The owner's words: *"Most people won't know there is a mute section in manage watches, so if
-> it is here also it will be more used."*
+> Built, mutation-tested and merged. `v2/SiteMuteList.tsx` is ONE component mounted by both
+> `/new` and `/manage/<token>`; bulk mute-all / unmute-all is on both, and under an active
+> filter the buttons say "Mute these 4" rather than "Mute all". Write path is
+> `lib/watch-mutes.applyMutes`. Full write-up in CLAUDE.md under "MUTING IS ON THE NEW WATCH
+> SCREEN NOW".
 >
-> - Per-site muting in the **New watch** flow.
-> - A **mute-all / unmute-all toggle**, so muting all but one or two is easy.
-> - **The toggle must exist everywhere per-site muting lives** — including the existing
->   `/manage/<token>` surface, not just the new one.
+> **The consumer chain was checked in source before a line was written**, which is the thing
+> the 08-13 bug turned on: `/api/campgrounds/<id>/availability` IS
+> `getAvailabilityFromRecGov` / `getRCAvailabilityForMonth`, the same functions the poller
+> reads, and RC's emits `campsiteId: String(unit.UnitId)` — byte-for-byte what the finders
+> compare. Pinned by `worker/site-mute-creation.test.mts`.
 >
-> This matters more than it looks: it is now the ONLY working way for a user to say "not that
-> kind of site", because the decorative Site-type filter was removed on 08-15 (below). Muting is
-> explicit, source-agnostic, and honoured by both RC finders since 08-13.
+> **The one edge worth knowing:** the divisions work that landed the same day makes one submit
+> create a watch PER DIVISION, and rec.gov site ids are GLOBAL — so mutes are sent only where
+> `t.id === campgroundId`, and the picker is hidden entirely for a multi-division park. Those
+> users mute per watch afterwards.
 >
-> **VERIFY AT THE CONSUMER.** Muting was silently half-broken once because the WRITE persisted
-> and a READER never honoured it — `findRCHeldUnits` had no exclusion list, so a mute silenced
-> availability alerts and did nothing to coming-soon alerts for the same site. The end is the
-> consumer, not the round-trip through the API that set it. `muted_site_ids` is `text[]` and RC
-> unit ids are NUMBERS: `String(unit.UnitId)`, or the compare silently never matches and reads
-> as "no mutes are set".
+> **STILL UNVERIFIED IN PRODUCTION:** nobody has created a real watch with mutes set from
+> `/new` and confirmed the poller honoured it. The screenshot presets (`ch-newwatch-mute`,
+> `ch-manage-sites`) show the UI, and the tests pin the chain, but that is not the same as a
+> live alert not arriving. The cheapest real check is `/manage/<token>` on an existing watch —
+> token-authed, so an agent can drive it end to end.
 
 ## THE RENEWAL — answered in code, awaiting one reading from the box
 
@@ -65,8 +69,17 @@ happen at all.**
 
 ## Still open
 
-1. **Site muting on New watch** — above. The one feature ask.
-2. **The renewal reading** — needs the box updated; nothing to build until then.
+1. **THE BOX IS ON STALE CODE AND `stop-all` REFUSED TO RELAUNCH (2026-08-15).** The owner ran
+   an update and got the port check firing — *"port 8787 is STILL LISTENING (pid 5412) after
+   the stop … NOTHING was updated or relaunched — on purpose."* That is `be93fcd` working
+   exactly as designed: an **elevated** `broker.mjs` orphan is invisible to an unelevated WMI
+   query, so `stop-all` cannot see or kill it, and relaunching on top would give `EADDRINUSE`
+   and a crash-loop. It refused instead. **This needs a human at the box with an elevated
+   prompt** — the recipe is the STOP section further down, plus `taskkill /PID <pid> /F` for
+   whatever pid the run names (the number changes; do not paste 5412 from here).
+   **Until this clears, nothing bot-side from 08-15 is running** — the five auto-login fixes,
+   the hold-runner stand-off and the renewal clear are all merged and none is on the box.
+2. **The renewal reading** — blocked on item 1. Nothing to build until then.
 3. **The Chromium leak** — downgraded. rec.gov has a flat 134-145 MB baseline across nine
    cycles, so the ordinary keepalive browser does not leak. The unattributed 08-12 event
    (7.9 GB in 46s) cannot be caught by a 2-minute cadence; `OVERSIZED PROCESS` is the only

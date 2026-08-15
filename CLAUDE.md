@@ -936,6 +936,67 @@ were collected in the UI and dropped on submit.
   the implementation, AND it tells you to restore the control if `worker/` ever starts reading
   `site_type`, so the decision is re-taken deliberately rather than by whoever notices first.
 
+### MUTING IS ON THE NEW WATCH SCREEN NOW, AND IT IS ONE COMPONENT (2026-08-15)
+The owner's ask: *"Most people won't know there is a mute section in manage watches, so if it
+is here also it will be more used."* A control the poller genuinely honours was reachable only
+from `/manage/<token>` — a screen users arrive at by tapping a link in an alert, i.e. **after**
+the noise they wanted to avoid. It is now on `/new` as well, and it is what REPLACES the
+site-type picker removed above: with that gone, naming the sites is the only working way for a
+user to say "not that kind of site".
+- **ONE implementation** — `v2/SiteMuteList.tsx`, mounted by both screens. The callers differ
+  only in what a change MEANS (a write on manage; local state on `/new`, which has no watch to
+  write to yet), and that is the `onChange` prop. Nothing else differs. A second copy is how
+  `content-rc.js` spent months telling users to click a cart icon while `rc-cart.mjs` did the
+  right thing, and `NewWatch.tsx`'s own header already stated the rule.
+- **THE IDS ARE THE POLLER'S IDS, AND THAT CHAIN IS THE FEATURE.** The list loads from
+  `/api/campgrounds/<id>/availability`, which is `getAvailabilityFromRecGov` /
+  `getRCAvailabilityForMonth` — **the same functions the poller reads**. RC's emits
+  `campsiteId: String(unit.UnitId)`, byte-for-byte what `findRCOpenUnit`/`findRCHeldUnits`
+  compare. Checked in source BEFORE writing a line, because a write into a column no reader can
+  match is exactly the 08-13 Carpinteria bug — and the 08-09 verification missed that by
+  proving the write and never a reader. `worker/site-mute-creation.test.mts` pins links 1, 2, 4
+  and 5 of the chain; `site-mute.test.mts` already held the finder end.
+- **Bulk is TWO buttons, not one toggle.** "Mute all but one or two" means muting everything
+  must be one tap — but a toggle whose label flips on whether everything is muted reads wrong
+  in the middle state: after unmuting your two keepers it says "Mute all" again, and pressing
+  it silently re-mutes them. **Under an active filter the labels say "Mute these 4", never
+  "Mute all"** — someone who filtered to "B" and pressed "Mute all" would reasonably expect all
+  300 sites, and that word is the entire safeguard. The count is what will CHANGE, not what is
+  on screen.
+- **MUTES RIDE ONLY THE CAMPGROUND THEY WERE LOADED FOR**, and this is the sharp edge the
+  divisions work (`ce1840c`, landed mid-session) created: one submit now makes a watch PER
+  DIVISION. Site ids are per-campground and **rec.gov's are GLOBAL**, so handing one park's list
+  to a sibling division would not merely fail to match — it could mute a real site the user
+  never saw. Two guards: the picker is hidden for a multi-division park (there is no single
+  inventory it could honestly describe), and the payload sends mutes only where
+  `t.id === campgroundId`. `/new` also clears the set whenever the campground changes, for the
+  same reason.
+- **`applyMutes` is a module, not two lines in the route** (`lib/watch-mutes.ts`), so a real-DB
+  test exercises the statements rather than a COPY of them — the `rc-holds-readout` lesson. One
+  statement per direction; the set arithmetic is in SQL so two taps racing cannot lose one; and
+  **`COALESCE(…, '{}')` because `array_agg` over an empty set is NULL while the column is NOT
+  NULL**, which "unmute all" hits on its very first press. `worker/watch-mutes.test.mts` covers
+  that, ordering, idempotence, and an id containing a quote (`sqlit` interpolates, it does not
+  bind).
+- **Mutes are applied BEFORE unmutes**, so an id in both lists ends up UNMUTED — the safe
+  direction, since a site wrongly muted is an alert nobody learns they missed while a site
+  wrongly unmuted is only noise.
+- **16 mutations, each asserting the mutation actually applied.** Two are worth keeping:
+  the ordering mutation's first version broke `applyMutes` so thoroughly that a DIFFERENT test
+  failed, which proves the code was broken and NOT that the rule is guarded — it had to be
+  redone surgically before it meant anything. And **extracting `applyMutes` invalidated a guard
+  written ten minutes earlier**: it pinned `mutate(` inside the route body and would have gone
+  green against a route that no longer wrote anything. Both halves are pinned now (the helper
+  does the work, the caller still calls it). Sixth time that correction has been needed.
+- **A dependency array is a place a value goes stale invisibly.** `autoCart` was missing from
+  `submit`'s deps at `4a8e958`, so `useCallback` handed back a closure over whatever it was
+  when last rebuilt — and every other dep changes EARLIER in the form than that toggle does, so
+  the ordinary path (campground → dates → turn auto-cart off → submit) posted `true`. The
+  divisions commit restored it independently, so this is recorded as a hazard rather than as a
+  fix. The test reads the ARRAY, not the body, and now pins `muted` and `autoCart` together —
+  matched by content, because its first version anchored on the array's opening tokens and went
+  quiet the moment divisions added two deps in front.
+
 ### `npm run verify` GATES ON jsx-spacing NOW (2026-08-15)
 An HTML entity anywhere in a JSX text node makes SWC drop that node's leading whitespace, and
 this repo escapes entities everywhere (`react/no-unescaped-entities` pushes you there), so every
