@@ -11,6 +11,7 @@ import TrustPanel from "./TrustPanel";
 import FavoriteHeart from "./FavoriteHeart";
 import { useFavorites } from "./useFavorites";
 import { providerLabel, supportsAutoCart } from "./providers";
+import { divisionLabel, parseCampgroundName } from "./campground-name";
 import { addDays, formatRange, nightsBetween, thisWeekendRange, todayISO } from "@/components/ui/date";
 import { useIsNativeApp } from "@/lib/native/context";
 import { NATIVE_LINKOUT, SUBSCRIBE_HREF } from "./nativeSubscribe";
@@ -31,11 +32,19 @@ import { WATCH_LIMIT } from "@/lib/limits";
  * Build once, import twice — two drifting copies is how the current UI got here.
  */
 
+interface Division {
+  id: string;
+  name: string;
+}
+
 interface Suggestion {
   id: string;
   name: string;
   city: string | null;
   state: string | null;
+  /** Every bookable part of this park. Absent on favourites, which are single rows. */
+  divisions?: Division[];
+  divisionCount?: number;
 }
 
 /** Does a favourite still match what's been typed? Name, town and state all
@@ -88,6 +97,11 @@ export default function NewWatch({
   const [error, setError] = useState<string | null>(null);
   const [needsSubscription, setNeedsSubscription] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
+  // The park's parts, and which of them to watch. Empty (or length 1) means an
+  // ordinary single campground and the section never renders.
+  const [divisions, setDivisions] = useState<Division[]>([]);
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
+  const [partial, setPartial] = useState<string | null>(null);
 
   // Resolve a pre-selected campground so the summary can name it.
   useEffect(() => {
@@ -95,11 +109,16 @@ export default function NewWatch({
     let cancelled = false;
     fetch(`/api/campgrounds/${encodeURIComponent(campgroundId)}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((j: { campground: Campground } | null) => {
+      .then((j: { campground: Campground; divisions?: Division[] } | null) => {
         if (cancelled || !j) return;
         setCampgroundName(j.campground.name);
         setCampgroundSource(j.campground.source);
-        setQ(j.campground.name);
+        setQ(parseCampgroundName(j.campground.name).park);
+        // Arriving on a deep link means one division was chosen explicitly, so only
+        // that one starts checked — the others are offered, not assumed.
+        const all = j.divisions ?? [];
+        setDivisions(all.length > 1 ? all : []);
+        if (all.length > 1) setChosen(new Set([j.campground.id]));
       })
       .catch(() => {
         /* the id still works even if the name doesn't resolve */
@@ -153,6 +172,13 @@ export default function NewWatch({
     setQ(s.name);
     setSuggestions([]);
     setPickerOpen(false);
+    setPartial(null);
+    // ALL CHECKED BY DEFAULT. Someone who searched for the park and picked it wants
+    // the park; making them tick four boxes to get what they just asked for is the
+    // work this screen is supposed to remove.
+    const all = s.divisions ?? [];
+    setDivisions(all.length > 1 ? all : []);
+    setChosen(new Set(all.map((d) => d.id)));
   }, []);
 
   // Favourites shown in the picker: everything while the box is empty, then
@@ -173,66 +199,99 @@ export default function NewWatch({
       setError(mode === "flexible" ? "Choose the window to watch." : "Choose your nights.");
       return;
     }
+    // One watch per checked division. A park with no divisions is the same code path
+    // with a list of one, so there is no second submit function to drift.
+    const targets = divisions.length > 1 ? divisions.filter((d) => chosen.has(d.id)) : [{ id: campgroundId, name: campgroundName }];
+    if (targets.length === 0) {
+      setError("Pick at least one part of the park to watch.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
+    setPartial(null);
     setNeedsSubscription(false);
     setSignedOut(false);
 
+    const made: string[] = [];
     try {
-      const r = await fetch("/api/watches", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          campgroundId,
-          startDate: range.start,
-          endDate: range.end,
-          // NOT SENT ANY MORE. Nothing in worker/ reads `site_type`, so transmitting it
-          // only made the dead control look alive. The API still accepts it and the column
-          // still exists — Campflare's `campsite_kinds` is its one real consumer — so this
-          // degrades to exactly what a user who left the picker blank already got.
-          // The toggle above was PURELY DECORATIVE until 2026-08-01 — its value was
-          // never sent, the column was never written, and the poller decided the
-          // auto-cart lane from the account-level setting alone. Turning it off
-          // carted anyway.
-          autoCart,
-          ...(mode === "flexible"
-            ? { flexNights, ...(weekendsOnly ? { flexDays: "weekend" } : {}) }
-            : {}),
-        }),
-      });
+      // SEQUENTIAL, and it stops at the first refusal. Firing these in parallel would
+      // race the server's own quota check and could overshoot the cap; it would also
+      // mean up to seventy simultaneous POSTs on Ohio's largest park. Stopping on the
+      // first 409 is what bounds that naturally.
+      for (const t of targets) {
+        const r = await fetch("/api/watches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            campgroundId: t.id,
+            startDate: range.start,
+            endDate: range.end,
+            // siteType is NOT SENT. Nothing in worker/ reads `site_type`, so
+            // transmitting it only made a dead control look alive; the picker itself
+            // was removed from this screen for the same reason. Kept out of the
+            // divisions work deliberately — this loop changes WHICH campgrounds are
+            // watched, not what counts as a match within one.
+            // The auto-cart toggle was PURELY DECORATIVE until 2026-08-01 — its value
+            // was never sent, the column was never written, and the poller decided the
+            // auto-cart lane from the account-level setting alone. Turning it off
+            // carted anyway.
+            autoCart,
+            ...(mode === "flexible"
+              ? { flexNights, ...(weekendsOnly ? { flexDays: "weekend" } : {}) }
+              : {}),
+          }),
+        });
 
-      if (r.status === 402) {
-        setNeedsSubscription(true);
-        return;
+        if (r.status === 402) {
+          setNeedsSubscription(true);
+          return;
+        }
+        if (r.status === 401) {
+          // NOT a redirect. Hard-navigating to /sign-in threw away the campground,
+          // the dates and every filter the user had just set, and they came back
+          // to an empty form with no idea what happened. Say what's wrong and let
+          // them sign in from here - the form is still sitting there afterwards.
+          setSignedOut(true);
+          return;
+        }
+        if (r.status === 409) {
+          // The cap, hit part-way through a multi-division park. Say exactly how far
+          // it got: "nothing happened" and "three of four are now running" need
+          // different next actions from the user, and a bare limit message implies
+          // the first.
+          if (made.length > 0) {
+            setPartial(
+              `Watching ${made.length} of ${targets.length}: ${made.join(", ")}. ` +
+                `That is the ${WATCH_LIMIT}-watch limit - delete one to add the rest.`,
+            );
+          } else {
+            setError(`You've hit the ${WATCH_LIMIT}-watch limit. Delete one to add another.`);
+          }
+          return;
+        }
+        if (!r.ok) {
+          const j = (await r.json().catch(() => null)) as { message?: string; error?: string } | null;
+          throw new Error(j?.message ?? j?.error ?? `Couldn't create the watch (${r.status})`);
+        }
+        made.push(divisionLabel(t.name));
       }
-      if (r.status === 401) {
-        // NOT a redirect. Hard-navigating to /sign-in threw away the campground,
-        // the dates and every filter the user had just set, and they came back
-        // to an empty form with no idea what happened. Say what's wrong and let
-        // them sign in from here — the form is still sitting there afterwards.
-        setSignedOut(true);
-        return;
-      }
-      if (r.status === 409) {
-        setError(`You've hit the ${WATCH_LIMIT}-watch limit. Delete one to add another.`);
-        return;
-      }
-      if (!r.ok) {
-        const j = (await r.json().catch(() => null)) as { message?: string; error?: string } | null;
-        throw new Error(j?.message ?? j?.error ?? `Couldn't create the watch (${r.status})`);
-      }
+
       // The native shell asks for notification permission off the back of this,
       // rather than on first load when the user has nothing to be notified about
-      // and no reason to say yes (see NativeBridge). No-op on the web — nothing
+      // and no reason to say yes (see NativeBridge). No-op on the web - nothing
       // listens there.
       window.dispatchEvent(new CustomEvent("camphawk:watch-created"));
       router.push("/watches");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't create the watch");
+      // Anything already created STAYS created - the rows are real and the poller is
+      // already running them. Saying so stops the user re-submitting and doubling up.
+      const msg = e instanceof Error ? e.message : "Couldn't create the watch";
+      setError(made.length > 0 ? `${msg}. ${made.length} of ${targets.length} were still created.` : msg);
     } finally {
       setSaving(false);
     }
-  }, [campgroundId, range, mode, flexNights, weekendsOnly, router]);
+  }, [campgroundId, campgroundName, divisions, chosen, range, mode, flexNights, weekendsOnly, autoCart, router]);
 
   const canAutoCart = campgroundSource ? supportsAutoCart(campgroundSource) : false;
   const windowNights = range.start && range.end ? nightsBetween(range.start, range.end) : 0;
@@ -304,7 +363,7 @@ export default function NewWatch({
                         onClick={() => pick(f)}
                         className="min-w-0 flex-1 cursor-pointer bg-ch-card px-3 py-2 text-left text-ch-body hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
                       >
-                        <span className="font-semibold">{f.name}</span>
+                        <span className="font-semibold">{parseCampgroundName(f.name).full}</span>
                         {f.city && (
                           <span className="text-ch-muted">
                             {" "}
@@ -338,7 +397,12 @@ export default function NewWatch({
                         onClick={() => pick(s)}
                         className="w-full cursor-pointer border-b border-ch-line bg-ch-card px-3 py-2 text-left text-ch-body last:border-b-0 hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
                       >
-                        <span className="font-semibold">{s.name}</span>
+                        <span className="font-semibold">{parseCampgroundName(s.name).full}</span>
+                        {(s.divisionCount ?? 1) > 1 && (
+                          <span className="ml-1.5 rounded-full border border-ch-line bg-ch-paper px-1.5 py-0.5 text-ch-fine text-ch-muted">
+                            {s.divisionCount} parts
+                          </span>
+                        )}
                         {s.city && (
                           <span className="text-ch-muted">
                             {" "}
@@ -352,6 +416,76 @@ export default function NewWatch({
               </ul>
             )}
           </div>
+        )}
+
+        {/* WHICH PARTS OF THE PARK. Only rendered when the park actually has more than
+            one bookable division — 321 parks do, and Carpinteria's four were being
+            watched as four separate hand-made watches before this existed.
+            Each checked box becomes its own watch, because a watch is keyed to one
+            campground; the screen removes the repetition, not the rows. */}
+        {divisions.length > 1 && (
+          <fieldset className="mt-5">
+            <legend className="mb-2 text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
+              Which parts of the park
+            </legend>
+            <div className="rounded-[13px] border border-ch-line bg-ch-card">
+              <div className="flex items-center justify-between gap-2 border-b border-ch-line px-3 py-2">
+                <span className="text-ch-fine text-ch-muted">
+                  {chosen.size} of {divisions.length} selected
+                </span>
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setChosen(new Set(divisions.map((d) => d.id)))}
+                    className="rounded-lg px-2 py-1 text-ch-fine font-bold text-ch-green hover:bg-ch-green-soft"
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setChosen(new Set())}
+                    className="rounded-lg px-2 py-1 text-ch-fine font-bold text-ch-muted hover:bg-ch-green-soft hover:text-ch-ink"
+                  >
+                    None
+                  </button>
+                </div>
+              </div>
+              {/* Scrolls rather than growing: three parks in the catalog have twenty or
+                  more divisions and Ohio's Grand Lake St. Marys has seventy, which
+                  would otherwise push the date picker off the screen. */}
+              <ul className="max-h-64 divide-y divide-ch-line overflow-y-auto overscroll-contain">
+                {divisions.map((d) => (
+                  <li key={d.id}>
+                    <label className="flex cursor-pointer items-start gap-2.5 px-3 py-2 hover:bg-ch-green-soft">
+                      <input
+                        type="checkbox"
+                        checked={chosen.has(d.id)}
+                        onChange={() =>
+                          setChosen((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(d.id)) next.delete(d.id);
+                            else next.add(d.id);
+                            return next;
+                          })
+                        }
+                        className="mt-0.5 size-4 shrink-0 accent-ch-green"
+                      />
+                      {/* The division only — the park name is already the heading and
+                          the field above. The trailing "(sites 25-77, ...)" STAYS: two
+                          of Leo Carrillo's three divisions are both "Canyon
+                          Campground" and the site range is the only thing telling
+                          them apart. */}
+                      <span className="text-ch-body">{divisionLabel(d.name)}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <p className="mt-2 px-0.5 text-ch-fine leading-normal text-ch-muted">
+              Each part you keep becomes its own watch, and counts towards your{" "}
+              {WATCH_LIMIT}.
+            </p>
+          </fieldset>
         )}
 
         <fieldset className="mt-5">
@@ -631,6 +765,15 @@ export default function NewWatch({
         {error && (
           <p role="alert" className="mt-2.5 text-ch-fine text-ch-alert">
             {error}
+          </p>
+        )}
+        {/* PARTIAL SUCCESS IS NOT AN ERROR, and must not be coloured like one. Some
+            watches are now running and the user needs to know which, so they neither
+            re-submit the lot nor assume nothing happened. Kept out of the red style
+            for that reason. */}
+        {partial && (
+          <p role="status" className="mt-2.5 text-ch-fine leading-normal text-ch-ink-2">
+            {partial}
           </p>
         )}
       </aside>

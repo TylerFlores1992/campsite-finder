@@ -6,6 +6,8 @@
  * of thing that drifts once a second caller appears.
  */
 
+import { parseCampgroundName } from "./campground-name";
+
 export interface PlaceHit {
   kind: "place";
   id: string;
@@ -122,7 +124,9 @@ export async function searchLocations(q: string, signal?: AbortSignal): Promise<
         }>).map((c) => ({
           kind: "campground" as const,
           id: c.id,
-          name: c.name,
+          // Tidied at the point of DISPLAY, not in the API: /api/suggest stays faithful
+          // to what is in the database, and 2,719 rec.gov rows are stored in all caps.
+          name: parseCampgroundName(c.name).full,
           city: c.city,
           state: c.state,
           lat: c.latitude,
