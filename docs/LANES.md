@@ -16,12 +16,36 @@ two tests, because a convention that lives only in prose is one nobody notices b
 **The branch name IS the lane token** — there is nothing to configure, no lock file, no
 registry. Look at the branch and you know which session's work you are reading.
 
-`.claude/hooks/push-guard.mjs` refuses a push that lands on master, and
-`CH_ALLOW_MASTER_PUSH=1` on the front of the command clears it. The override is per-command
-on purpose: the one morning you must push straight to master is the morning something is
-broken, and a guard that is ever in the way gets deleted — and is then gone on the ordinary
-days too. Read from the command and never from the environment, so it cannot be left
-switched on the way a config flag or a disabled scheduled task can.
+`.claude/hooks/push-guard.mjs` refuses a push that lands on master.
+`CH_ALLOW_MASTER_PUSH=1` on the front of the command clears it, and it is **reserved for a
+genuine incident — it is NOT the merge path.** The override is read from the command and
+never from the environment, so it cannot be left switched on the way a config flag or a
+disabled scheduled task can.
+
+## Merging — always a pull request
+
+**Merges to master go through a PULL REQUEST, never a local push.**
+
+```
+branch  →  npm run verify + CI green  →  PR  →  merge
+```
+
+This is a standing instruction: no session needs to ask before opening a PR *for a merge*.
+(The ordinary "no PR unless the owner asks" rule is satisfied for this case and this case
+only.)
+
+**Why PRs rather than overriding the guard on each merge.** With this workflow the guard
+firing ALWAYS means a mistake — there is no legitimate reason for a local push to reach
+master — and that is exactly what makes it worth keeping. The alternative was typing
+`CH_ALLOW_MASTER_PUSH=1` on every merge, which would make the override routine; an override
+used routinely stops being a guard. That is the argument in the hook's own header turned
+against it, so the workflow moves instead of the guard.
+
+**Merges are serialized between the lanes. Announce before merging.** A push to master
+auto-deploys — Vercel always, and `worker-deploy.yml` on `worker/**` or the `src/lib` dirs
+the worker imports (note that a file as innocuous as a new `worker/*.test.mts` matches, and
+restarts both poller machines). So a merge lands underneath whatever the other lane is
+verifying, and the other lane is then curl-verifying your code without knowing it.
 
 ## Merge small and often
 
@@ -107,14 +131,7 @@ starting any of these, and wait for the other lane to finish:
   Two suites at once produce flakes that are indistinguishable from regressions, which is
   worse than a slow queue: it trains both sessions to re-run CI without looking.
 
-## Merges are serialized
-
-**A push to master deploys.** Vercel always; `worker-deploy.yml` on `worker/**` and the
-`src/lib` dirs the worker imports.
-
-So if one session is curl-verifying camphawk.app while the other merges, **it is now
-verifying the other session's code.** Announce before merging, and land changes between test
-runs rather than during one.
+Land changes between test runs rather than during one.
 
 ## Talking to the other session
 

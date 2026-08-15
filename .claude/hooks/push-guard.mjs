@@ -170,8 +170,9 @@ async function main() {
   // Exit 2 blocks the tool call, and stderr becomes the reason fed back as feedback.
   process.stderr.write(
     `${decision.reason}\n\n` +
-      'Push to a branch and merge from there. If you genuinely must push straight to master ' +
-      `(the morning something is broken), prefix the command: ${OVERRIDE} git push ...\n`,
+      'Merges go through a PULL REQUEST: branch -> npm run verify + CI green -> PR -> merge. ' +
+      'Because that is the only merge path, this guard firing always means a mistake.\n' +
+      `The override is for a genuine incident ONLY, never for a merge: ${OVERRIDE} git push ...\n`,
   )
   process.exit(2)
 }
