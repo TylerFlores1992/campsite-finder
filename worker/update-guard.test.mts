@@ -999,3 +999,47 @@ test('auto-update.ps1 writes its log to an ABSOLUTE path, not one relative to th
   assert.ok(!/New-Item[^\n]*-Path\s+"logs"/.test(code),
     'the logs directory must be created by absolute path too');
 });
+
+test('stop-all reports processes it cannot SEE, and fails on a bound broker port', async () => {
+  /**
+   * A PROCESS WE CANNOT SEE IS NOT A PROCESS THAT IS NOT THERE (2026-08-14).
+   *
+   * Every filter in stop-all.ps1 is `$_.CommandLine -and $_.CommandLine -match ...`. An
+   * unelevated WMI query cannot read `CommandLine` for a process in another security
+   * context — it returns `$null` — so that leading `-and` silently DROPS it. A `broker.mjs`
+   * started from an elevated prompt was therefore INVISIBLE: excluded from the count,
+   * from every kill, and from the re-check, so the script truthfully logged "all stopped."
+   *
+   * The cost then landed in a DIFFERENT process. The orphan held port 8787, every
+   * relaunched broker died in a second with EADDRINUSE, and supervise.ps1 gave up after
+   * five tries — so the symptom appeared where the cause was not, and it read as "the
+   * broker is broken". Same family as the Chromium children the kill pattern could not
+   * match, and as `kill-chrome`'s "SURVIVED" line: a failure that prints like a success.
+   */
+  const s = await miniPc('stop-all.ps1');
+  const body = code(s);
+
+  // The port is PROOF and must therefore fail. Nothing else on that box binds it, so a
+  // listener after the stop is ours by construction — no command line required, and no
+  // guessing from an image name, which this file forbids elsewhere for good reason.
+  assert.match(body, /Get-NetTCPConnection[^\n]*LocalPort/, 'it must check the broker port');
+  assert.match(body, /\$BROKER_PORT\s*=\s*8787/, 'and know which port that is');
+  const portIdx = body.indexOf('stillBound.Count -gt 0');
+  assert.ok(portIdx > 0, 'it must branch on the port still being bound');
+  assert.match(body.slice(portIdx, portIdx + 700), /exit 1/,
+    'a bound broker port after the stop must FAIL, or callers relaunch into EADDRINUSE');
+
+  // The unreadable processes only WARN. Failing on them would refuse every launch for the
+  // life of the box, because a node.exe we cannot inspect may belong to the person using it.
+  assert.match(body, /-not \$_\.CommandLine/, 'it must look for processes with no readable command line');
+  const blindIdx = body.indexOf('blind.Count -gt 0');
+  assert.ok(blindIdx > 0, 'and report them');
+  const blindBlock = body.slice(blindIdx, blindIdx + 600);
+  assert.ok(!/exit 1/.test(blindBlock),
+    'an unreadable command line must NOT fail the stop — that is somebody else\'s process too');
+  assert.match(blindBlock, /elevated/i, 'and it must say why it cannot see them');
+
+  // Still never by image name: the scan is scoped to naming them, never to killing them.
+  const killByImage = /Stop-Process[^\n]*\$blind|taskkill[^\n]*\/IM/i;
+  assert.ok(!killByImage.test(body), 'it must not kill anything matched only by image name');
+});
