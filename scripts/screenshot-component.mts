@@ -511,6 +511,25 @@ const PRESETS: Record<string, Preset> = {
       export const node = <div className="font-ch-body text-ch-ink"><HoldConfirm preview={preview} /></div>;`,
     frame: 'w-full',
   },
+  'ch-filters-rv': {
+    label: 'FilterPanel — RV selected (Hookups appears) above All types (Electric back in Must have)',
+    // Both mounts matter and they are the SAME boolean. The point of the shot is
+    // that "Electric" appears exactly once in each panel: under Hookups when RV is
+    // chosen, under Must have otherwise. Two chips for one field would be visible
+    // here immediately.
+    entry: `import FilterPanel, { EMPTY_FILTERS } from '@/components/ui/FilterPanel';
+      function Demo({ initial }) {
+        const [v, setV] = React.useState(initial);
+        return <FilterPanel value={v} onChange={setV} defaultOpen />;
+      }
+      export const node = (
+        <div className="space-y-5">
+          <Demo initial={{ ...EMPTY_FILTERS, siteType: 'rv', rvLength: 32, electric: true }} />
+          <Demo initial={{ ...EMPTY_FILTERS, electric: true }} />
+        </div>
+      );`,
+    frame: 'max-w-md w-full mx-auto',
+  },
   'ch-nav-collapsed': {
     // The SCROLLED state at phone width, which is the only one where the account
     // controls and the artwork's tagline compete for the same pixels. Scrolling is

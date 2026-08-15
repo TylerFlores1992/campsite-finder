@@ -68,9 +68,30 @@ const SITE_TYPES: Array<{ value: string | null; label: string }> = [
   { value: "group", label: "Group" },
 ];
 
+/**
+ * `electric` is labelled "Electric", not "Hookups".
+ *
+ * It maps to the `electric hookup` amenity and nothing else, so "Hookups" — plural,
+ * unqualified — promised water and sewer that the query never asked for.
+ *
+ * WHY THERE IS NO WATER OR SEWER CHIP, measured against the live catalog on
+ * 2026-08-15 so the next person does not "finish the set":
+ *
+ *   electric hookup   1,526 campgrounds, 8 sources
+ *   sewer hookup         79 campgrounds, recreation.gov ONLY
+ *   drinking water    2,153 campgrounds, recreation.gov only
+ *   water hookup      DOES NOT EXIST — no ingest emits this value
+ *
+ * There is no RV water hookup in the data at all; `drinking water` is a
+ * campground-level "there is potable water here", which is a different claim and
+ * belongs in Must-have where it already is. Sewer exists but covers 1% of the
+ * catalog from one source, and amenities are AND-ed, so Electric+Sewer could never
+ * return more than 79 campgrounds while silently excluding every state portal.
+ * Both are the dead-chip failure this file's header comment already forbids.
+ */
 const MUST_HAVE: Array<{ key: keyof Pick<FilterValue, "pets" | "electric" | "water" | "showers">; label: string }> = [
   { key: "pets", label: "Pets OK" },
-  { key: "electric", label: "Hookups" },
+  { key: "electric", label: "Electric" },
   { key: "water", label: "Drinking water" },
   { key: "showers", label: "Showers" },
 ];
@@ -125,6 +146,7 @@ export default function FilterPanel({ value, onChange, defaultOpen, className }:
       </fieldset>
 
       {isRv && (
+        <>
         <fieldset className="mt-4">
           <legend className="mb-2 text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
             My rig length
@@ -155,7 +177,36 @@ export default function FilterPanel({ value, onChange, defaultOpen, className }:
             Only campgrounds with a site that lists a length this long. Sites with no
             length on file are left out.
           </p>
+
         </fieldset>
+
+        {/* A SIBLING fieldset, not a nested one. `<legend>` is only valid as the
+            first child of a `<fieldset>`, and hookups are not a kind of rig length
+            anyway — nesting would have been wrong markup describing a wrong
+            relationship.
+
+            The SAME `electric` field as the Must-have row, MOVED rather than
+            duplicated: two chips writing one boolean would sit there disagreeing
+            about their own selected state. It is only relocated while RV is chosen —
+            Must-have gets it back otherwise, because electric matters to a tent or a
+            cabin too. And unlike rvLength it is NOT cleared on leaving RV; the
+            filter stays meaningful, so silently dropping it would narrow results
+            from a control the user can no longer see. */}
+        <fieldset className="mt-4">
+          <legend className="mb-2 text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
+            Hookups
+          </legend>
+          <div className="flex flex-wrap gap-1.5">
+            <Chip
+              size="sm"
+              selected={value.electric}
+              onClick={() => onChange({ ...value, electric: !value.electric })}
+            >
+              Electric
+            </Chip>
+          </div>
+        </fieldset>
+        </>
       )}
 
       <fieldset className="mt-4">
@@ -163,7 +214,9 @@ export default function FilterPanel({ value, onChange, defaultOpen, className }:
           Must have
         </legend>
         <div className="flex flex-wrap gap-1.5">
-          {MUST_HAVE.map(({ key, label }) => (
+          {/* Electric moves under Hookups while RV is chosen, so it is dropped here.
+              The field is one boolean and must never have two controls. */}
+          {MUST_HAVE.filter(({ key }) => !(isRv && key === "electric")).map(({ key, label }) => (
             <Chip
               key={key}
               size="sm"
