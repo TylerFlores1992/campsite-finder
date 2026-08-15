@@ -456,7 +456,7 @@ export default function ManageWatch({ token }: { token: string }) {
             the one you already tried. The watch keeps running for every other site.
           </p>
           <SiteMuteList
-            campgroundId={watch.campground_id}
+            campgroundIds={[watch.campground_id]}
             month={watch.start_date.slice(0, 7)}
             muted={muted}
             onChange={changeMutes}

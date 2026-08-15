@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Chip from "@/components/ui/Chip";
@@ -60,6 +60,20 @@ function matchesQuery(f: Suggestion, q: string): boolean {
     .some((v) => v!.toLowerCase().includes(needle));
 }
 
+/**
+ * Which divisions start ticked: all of them, up to the cap.
+ *
+ * ALL, because a park watch counts as ONE watch — so covering the whole park is close to
+ * free and is what someone who searched for the park meant. CAPPED, because the server
+ * refuses more than `MAX_DIVISIONS_PER_WATCH` and three parks in the catalog exceed it
+ * (Ohio's Grand Lake St. Marys has seventy). Defaulting to all seventy would make the
+ * first press of Start watching fail with "pick fewer", which is a poor way to learn
+ * about a limit you never chose.
+ */
+function defaultChosen(all: Array<{ id: string }>): ReadonlySet<string> {
+  return new Set(all.slice(0, MAX_DIVISIONS_PER_WATCH).map((d) => d.id));
+}
+
 export interface NewWatchProps {
   /** Pre-selected campground id, from a result card or detail page. */
   initialCampgroundId?: string;
@@ -114,6 +128,25 @@ export default function NewWatch({
     [],
   );
 
+  /**
+   * Drop mutes the list can no longer offer.
+   *
+   * Untick a division after muting some of its sites and those ids are still in `muted` —
+   * they would be posted with a watch that does not cover that campground, which is the
+   * one thing the id rules here forbid. Called whenever the inventory changes, so the set
+   * can only ever contain ids from campgrounds currently covered.
+   *
+   * Reference-stable identity is NOT needed (it is not an effect dependency), but the
+   * functional update is: pruning against a stale `muted` would resurrect ids.
+   */
+  const pruneMutes = useCallback((inventoryIds: string[]) => {
+    const offered = new Set(inventoryIds);
+    setMuted((prev) => {
+      if ([...prev].every((id) => offered.has(id))) return prev;
+      return new Set([...prev].filter((id) => offered.has(id)));
+    });
+  }, []);
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsSubscription, setNeedsSubscription] = useState(false);
@@ -122,6 +155,26 @@ export default function NewWatch({
   // ordinary single campground and the section never renders.
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
+
+  /**
+   * The campgrounds this watch will actually cover: the checked divisions, or the single
+   * campground when the park has none.
+   *
+   * ONE DEFINITION, read by the submit body AND by the mute picker. They were about to be
+   * two — the picker gated on `divisions.length <= 1` while the payload gated on the
+   * selection — and two rules for "what does this watch cover?" is exactly how the mute
+   * list ended up absent on Leo Carrillo while the payload thought it was fine.
+   */
+  const targets = useMemo(
+    () =>
+      divisions.length > 1
+        ? divisions.filter((d) => chosen.has(d.id))
+        : campgroundId
+          ? [{ id: campgroundId, name: campgroundName }]
+          : [],
+    [divisions, chosen, campgroundId, campgroundName],
+  );
+
 
   // A site id is only meaningful at the campground it came from. Carrying mutes across
   // a change of campground would post ids that either match nothing or — worse, since
@@ -141,11 +194,22 @@ export default function NewWatch({
         setCampgroundName(j.campground.name);
         setCampgroundSource(j.campground.source);
         setQ(parseCampgroundName(j.campground.name).park);
-        // Arriving on a deep link means one division was chosen explicitly, so only
-        // that one starts checked — the others are offered, not assumed.
+        // ALL CHECKED BY DEFAULT, here as well as in `pick()`.
+        //
+        // THIS EFFECT USED TO OVERWRITE `pick()` WITH JUST THE REPRESENTATIVE, and
+        // because `pick()` sets `campgroundId` — which is what triggers this effect —
+        // it ran a moment later and won every time. So `pick()`'s "ALL CHECKED BY
+        // DEFAULT" was dead code, and searching for Leo Carrillo gave "1 of 3 selected".
+        // Reported from production 2026-08-15 with a screenshot of exactly that.
+        //
+        // The old comment justified it as "arriving on a deep link means one division
+        // was chosen explicitly" — a fair argument, but this effect cannot tell a deep
+        // link from a pick, so it applied to both. A park watch counts as ONE watch now,
+        // so covering the whole park is close to free and is what someone who searched
+        // for the park meant.
         const all = j.divisions ?? [];
         setDivisions(all.length > 1 ? all : []);
-        if (all.length > 1) setChosen(new Set([j.campground.id]));
+        if (all.length > 1) setChosen(defaultChosen(all));
       })
       .catch(() => {
         /* the id still works even if the name doesn't resolve */
@@ -204,7 +268,7 @@ export default function NewWatch({
     // work this screen is supposed to remove.
     const all = s.divisions ?? [];
     setDivisions(all.length > 1 ? all : []);
-    setChosen(new Set(all.map((d) => d.id)));
+    setChosen(defaultChosen(all));
   }, []);
 
   // Favourites shown in the picker: everything while the box is empty, then
@@ -225,9 +289,6 @@ export default function NewWatch({
       setError(mode === "flexible" ? "Choose the window to watch." : "Choose your nights.");
       return;
     }
-    // One watch per checked division. A park with no divisions is the same code path
-    // with a list of one, so there is no second submit function to drift.
-    const targets = divisions.length > 1 ? divisions.filter((d) => chosen.has(d.id)) : [{ id: campgroundId, name: campgroundName }];
     if (targets.length === 0) {
       setError("Pick at least one part of the park to watch.");
       return;
@@ -262,13 +323,14 @@ export default function NewWatch({
           // auto-cart lane from the account-level setting alone. Turning it off
           // carted anyway.
           autoCart,
-          // MUTES RIDE ONLY A SINGLE-CAMPGROUND WATCH. The list is loaded for ONE
-          // campground, and site ids are per-campground — rec.gov's are GLOBAL — so
-          // attaching it to a watch covering four divisions could mute a real site the
-          // user never saw. The picker is already hidden for a multi-division park
-          // (there is no single inventory it could describe), so this is the second of
-          // two guards; those users mute per watch afterwards.
-          ...(muted.size && targets.length === 1 ? { mutedSiteIds: [...muted] } : {}),
+          // MUTES COVER EVERY CHECKED DIVISION, and can only contain ids the picker
+          // offered: it lists exactly `targets`, and `pruneMutes` drops anything that
+          // leaves that set when the selection changes. That is what keeps
+          // `muted_site_ids` — ONE column applying to the whole watch — from carrying an
+          // id belonging to a campground this watch does not cover. Safe within a park
+          // because campsite ids are unique there (10,757 sampled, zero collisions); it
+          // would NOT be safe across unrelated campgrounds, where rec.gov's ids are global.
+          ...(muted.size ? { mutedSiteIds: [...muted] } : {}),
           ...(mode === "flexible"
             ? { flexNights, ...(weekendsOnly ? { flexDays: "weekend" } : {}) }
             : {}),
@@ -317,6 +379,9 @@ export default function NewWatch({
   const windowNights = range.start && range.end ? nightsBetween(range.start, range.end) : 0;
   // The API rejects flexNights longer than the window; catch it before the round trip.
   const flexTooLong = mode === "flexible" && windowNights > 0 && flexNights > windowNights;
+  // The server refuses more than the cap with a 400. Catch it here, in the same spirit as
+  // flexTooLong: a limit you can only discover by pressing the button reads as a bug.
+  const tooManyDivisions = divisions.length > 1 && chosen.size > MAX_DIVISIONS_PER_WATCH;
   // Compared against the live helper rather than a flag, so the chip stays honest if
   // the user edits the dates afterwards (and across a midnight rollover).
   const weekend = thisWeekendRange();
@@ -456,7 +521,7 @@ export default function NewWatch({
                 <div className="flex gap-1.5">
                   <button
                     type="button"
-                    onClick={() => setChosen(new Set(divisions.map((d) => d.id)))}
+                    onClick={() => setChosen(defaultChosen(divisions))}
                     className="rounded-lg px-2 py-1 text-ch-fine font-bold text-ch-green hover:bg-ch-green-soft"
                   >
                     All
@@ -501,6 +566,12 @@ export default function NewWatch({
                 ))}
               </ul>
             </div>
+            {tooManyDivisions && (
+              <p role="alert" className="mt-2 px-0.5 text-ch-fine text-ch-alert">
+                {chosen.size} parts selected — the most a single watch can cover is{" "}
+                {MAX_DIVISIONS_PER_WATCH}. Untick a few.
+              </p>
+            )}
             <p className="mt-2 px-0.5 text-ch-fine leading-normal text-ch-muted">
               All the parts you keep are watched under ONE watch, so a whole park still
               counts as one of your {WATCH_LIMIT}. Up to {MAX_DIVISIONS_PER_WATCH}.
@@ -621,13 +692,18 @@ export default function NewWatch({
           would bury the two controls that matter. Only rendered once a campground is
           chosen, because there is nothing to enumerate before that.
 
-          AND NOT FOR A MULTI-DIVISION PARK. That submit creates one watch PER DIVISION,
-          so there is no single site inventory this list could describe — and applying
-          one division's ids to its siblings would be actively wrong, since rec.gov's
-          campsite ids are global and could match a real site the user never saw. Those
-          users mute per watch afterwards, where the list belongs to one campground.
+          IT COVERS EVERY CHECKED DIVISION, and an earlier version did not — it was hidden
+          outright for any multi-division park, which is how the owner found Leo Carrillo
+          offering no mute list at all (reported 2026-08-15). The reasoning then was that
+          one submit made one watch PER division, so no single inventory described it. That
+          stopped being true when a park became ONE watch: `muted_site_ids` is one column
+          covering the whole watch, and campsite ids are unique WITHIN a park (10,757
+          sampled, zero collisions), so listing every checked division is correct.
+
+          Still keyed to `targets`, never to the park, so the list can only ever offer ids
+          belonging to campgrounds this watch actually covers.
         */}
-        {campgroundId && divisions.length <= 1 && (
+        {targets.length > 0 && (
           <div className="mt-5">
             <Collapsible
               label="Mute individual campsites"
@@ -639,7 +715,9 @@ export default function NewWatch({
                 time from the watch.
               </p>
               <SiteMuteList
-                campgroundId={campgroundId}
+                campgroundIds={targets.map((t) => t.id)}
+                divisionNames={Object.fromEntries(divisions.map((d) => [d.id, divisionLabel(d.name)]))}
+                onInventory={pruneMutes}
                 month={(range.start ?? todayISO()).slice(0, 7)}
                 muted={muted}
                 onChange={muteLocally}
@@ -781,7 +859,7 @@ export default function NewWatch({
             <Button
               type="submit"
               fullWidth
-              disabled={saving || flexTooLong || gate === "loading"}
+              disabled={saving || flexTooLong || tooManyDivisions || gate === "loading"}
               onClick={() => void submit()}
             >
               {saving ? "Setting up…" : "Start watching"}

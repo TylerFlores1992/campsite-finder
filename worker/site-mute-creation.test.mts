@@ -102,24 +102,87 @@ test('the submit callback closes over every value it posts', () => {
   }
 });
 
-test('mutes ride only the campground they were loaded for', () => {
-  /**
-   * One submit can create a watch PER DIVISION. Site ids are per-campground and
-   * rec.gov's are GLOBAL, so handing this park's mute list to a sibling division would
-   * not merely fail to match — it could mute a real site the user never saw. Two guards,
-   * because the picker being hidden is a UI fact and the payload is the thing that
-   * reaches the database.
-   */
+/**
+ * THE MUTE LIST MUST OFFER EXACTLY WHAT THE WATCH WILL COVER — no less, no more.
+ *
+ * ── LESS: the Leo Carrillo bug (reported 2026-08-15) ───────────────────────────────────
+ * The picker was gated on `divisions.length <= 1`, so a multi-division park got no mute
+ * list at all. That gate was written when one submit meant one watch PER division, and it
+ * outlived the change that made a park ONE watch. The owner found it by opening Leo
+ * Carrillo and seeing nothing where the list should be.
+ *
+ * ── MORE: the id rule ──────────────────────────────────────────────────────────────────
+ * `muted_site_ids` is ONE column applying to every campground the watch covers, so an id
+ * from a campground it does NOT cover must never reach it. Within a park that is safe
+ * (campsite ids measured unique — 10,757 sampled, zero collisions); across unrelated
+ * campgrounds it is not, because rec.gov ids are global.
+ *
+ * Both directions now come from ONE definition of "what does this watch cover?" —
+ * `targets`. They were briefly two, the picker keyed on the park and the payload on the
+ * selection, and that disagreement IS the bug.
+ */
+test('the mute picker covers exactly the campgrounds the watch will cover', () => {
   assert.ok(
-    /muted\.size && targets\.length === 1 \? \{ mutedSiteIds/.test(newWatch),
-    'the POST body attaches mutedSiteIds to a watch covering several campgrounds. The ' +
-      'list was loaded for ONE of them, and rec.gov site ids are global, so the others ' +
-      'could have a real site muted that the user never saw.',
+    /\{targets\.length > 0 && \(/.test(newWatch),
+    'the mute picker is not gated on `targets`. Gating on the PARK is what hid it '
+      + 'entirely for Leo Carrillo; gating on anything narrower hides it again.',
   );
   assert.ok(
-    /\{campgroundId && divisions\.length <= 1 && \(/.test(newWatch),
-    'the mute picker renders for a multi-division park, where there is no single site ' +
-      'inventory it could honestly describe',
+    /campgroundIds=\{targets\.map\(\(t\) => t\.id\)\}/.test(newWatch),
+    'the picker is not given the covered campgrounds, so a park watch would list one '
+      + 'division and silently offer no way to mute the rest',
+  );
+  assert.ok(
+    /const targets = useMemo\(/.test(newWatch),
+    '`targets` must be ONE derived value read by both the picker and the submit body. '
+      + 'Two definitions of what the watch covers is exactly how they disagreed.',
+  );
+});
+
+test('mutes are pruned when the covered set shrinks', () => {
+  assert.ok(
+    /onInventory=\{pruneMutes\}/.test(newWatch),
+    'the picker does not report its inventory, so nothing prunes stale mutes: untick a '
+      + 'division after muting its sites and those ids are still posted',
+  );
+  assert.ok(
+    /const pruneMutes = useCallback/.test(newWatch) && /offered\.has\(id\)/.test(newWatch),
+    'pruneMutes must filter the muted set down to the ids the list can currently offer',
+  );
+  // SCOPED TO pruneMutes' OWN BODY. The first version of this matched
+  // `setMuted((prev) =>` anywhere in the file and was satisfied by `muteLocally`, which
+  // has the identical line — so a pruneMutes rewritten to close over a stale `muted`
+  // passed. A guard that can be satisfied by a different function guards nothing.
+  const pruneBody = newWatch.slice(
+    newWatch.indexOf('const pruneMutes = useCallback'),
+    newWatch.indexOf('}, []);', newWatch.indexOf('const pruneMutes = useCallback')),
+  );
+  assert.ok(pruneBody.length, 'pruneMutes not found — renamed?');
+  assert.ok(
+    /setMuted\(\(prev\) =>/.test(pruneBody),
+    'pruneMutes must use a functional update — pruning against a stale `muted` would '
+      + `resurrect ids it had just dropped:\n${pruneBody}`,
+  );
+});
+
+test('the mute list fetches EVERY covered campground, not just the first', () => {
+  // A park watch that fetched only `campgroundIds[0]` would look right — a list appears,
+  // rows are mutable — while silently offering no way to mute the other divisions. That
+  // is the reported bug wearing a different costume, so it is pinned separately from the
+  // prop being passed.
+  const loader = muteList.slice(
+    muteList.indexOf('const perCampground = await Promise.all('),
+    muteList.indexOf('if (cancelled) return;', muteList.indexOf('const perCampground')),
+  );
+  assert.ok(loader.length, 'the per-campground loader is gone — renamed?');
+  assert.ok(
+    /campgroundIds\.map\(/.test(loader),
+    `the loader does not map over every covered campground:\n${loader}`,
+  );
+  assert.ok(
+    !/\.slice\(|\[0\]/.test(loader),
+    `the loader narrows campgroundIds before fetching, so only some divisions are `
+      + `listed:\n${loader}`,
   );
 });
 
@@ -283,5 +346,61 @@ test('creation and the manage screen validate ids the same way', () => {
   assert.ok(
     /cleanSiteIds\(mute\)/.test(manageRoute) && /cleanSiteIds\(unmute\)/.test(manageRoute),
     'the manage route does not share cleanSiteIds either',
+  );
+});
+
+/**
+ * EVERY PART OF THE PARK STARTS TICKED — and the reason this needs a test is that the
+ * correct code was already there and was being overwritten.
+ *
+ * `pick()` set them all, exactly as its comment claimed. But `pick()` also sets
+ * `campgroundId`, which triggers the resolve effect, which set `chosen` to just the
+ * representative — a moment later, so it won every time. The comment was true of the line
+ * beneath it and false of the screen: searching Leo Carrillo gave "1 of 3 selected", and
+ * the owner reported it with a screenshot.
+ *
+ * That is the inert-fix shape inverted: not a fix that does nothing, but a correct line
+ * silently undone by a second writer. Both writers are pinned here, because fixing either
+ * one alone leaves the bug.
+ */
+test('all divisions start ticked, from both paths that set them', () => {
+  const calls = [...newWatch.matchAll(/setChosen\(([^;]*?)\);/g)].map((m) => m[1]);
+  assert.ok(calls.length >= 2, 'expected setChosen in both pick() and the resolve effect');
+  const initialisers = calls.filter((c) => !/prev|new Set\(\)\s*$/.test(c));
+  assert.ok(
+    initialisers.length >= 2,
+    `expected two places to INITIALISE the selection; found ${initialisers.length}`,
+  );
+  for (const c of initialisers) {
+    assert.ok(
+      /defaultChosen\(/.test(c),
+      'a division selection is initialised without defaultChosen(), so the two paths ' +
+        `can disagree about the default — which is the reported bug:\n  setChosen(${c})`,
+    );
+  }
+  assert.ok(
+    !/setChosen\(new Set\(\[j\.campground\.id\]\)\)/.test(newWatch),
+    'the resolve effect still narrows the selection to the representative division, ' +
+      'overwriting pick()\'s all-ticked default milliseconds after it is set',
+  );
+});
+
+test('the default selection is capped, and the cap is enforced before submit', () => {
+  // Three parks exceed MAX_DIVISIONS_PER_WATCH (Grand Lake St. Marys has seventy), and
+  // the server 400s over it. Defaulting to all of them would make the very first press
+  // of Start watching fail on a limit the user never chose.
+  assert.ok(
+    /function defaultChosen[\s\S]*?slice\(0, MAX_DIVISIONS_PER_WATCH\)/.test(newWatch),
+    'defaultChosen does not cap at MAX_DIVISIONS_PER_WATCH',
+  );
+  assert.ok(
+    /onClick=\{\(\) => setChosen\(defaultChosen\(divisions\)\)\}/.test(newWatch),
+    'the "All" button selects every division uncapped, so pressing it on a large park ' +
+      'produces a selection the server will refuse',
+  );
+  assert.ok(
+    /const tooManyDivisions =/.test(newWatch) && /tooManyDivisions \|\| gate/.test(newWatch),
+    'nothing stops a submit over the cap client-side; a limit you can only discover by ' +
+      'pressing the button reads as a bug',
   );
 });

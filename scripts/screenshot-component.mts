@@ -813,6 +813,44 @@ const PRESETS: Record<string, Preset> = {
       export const node = <NewWatch initialCampgroundId="233116" initialStart="2026-09-04" initialEnd="2026-09-07" />;`,
     frame: 'w-full',
   },
+  'ch-newwatch-park': {
+    label: 'New watch — a multi-division park: all parts ticked, mute list covers them all',
+    // BOTH BUGS THE OWNER REPORTED, in one frame. Before: "1 of 3 selected" and no mute
+    // section at all on Leo Carrillo. The park has three divisions, two of which are
+    // both called "Canyon Campground", which is why the mute rows carry the division.
+    entry: `import NewWatch from '@/components/v2/NewWatch';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        const DIVS = [
+          { id: 'usedirect:rc:712', name: 'Leo Carrillo SP - Canyon Campground (sites 1-24, 78-133)' },
+          { id: 'usedirect:rc:713', name: 'Leo Carrillo SP - Canyon Campground (sites 25-77, 134-139)' },
+          { id: 'usedirect:rc:714', name: 'Leo Carrillo SP - Canyon Group Camp' },
+        ];
+        const sitesFor = (cid) => {
+          const n = cid.endsWith('712') ? 8 : cid.endsWith('713') ? 6 : 3;
+          const out = [];
+          for (let i = 1; i <= n; i++) out.push({ campsiteId: cid + '-' + i, campsiteName: 'Site ' + String(i).padStart(3,'0'), loop: null });
+          return out;
+        };
+        window.fetch = async (url) => {
+          const u = String(url);
+          const m = u.match(/campgrounds\\/([^/?]+)/);
+          if (u.includes('/availability')) {
+            return { ok: true, status: 200, json: async () => ({ campsites: sitesFor(decodeURIComponent(m[1])) }) };
+          }
+          if (u.includes('/api/campgrounds/')) return { ok: true, status: 200, json: async () => ({
+            campground: { id: DIVS[0].id, name: DIVS[0].name, source: 'usedirect' }, divisions: DIVS,
+          }) };
+          return { ok: true, status: 200, json: async () => ({}) };
+        };
+        setTimeout(() => {
+          const b = [...document.querySelectorAll('button')].find((x) => /Mute individual/.test(x.textContent || ''));
+          b?.click();
+        }, 700);
+      }
+      export const node = <NewWatch initialCampgroundId="usedirect:rc:712" initialStart="2026-09-04" initialEnd="2026-09-07" />;`,
+    frame: 'w-full',
+  },
   'ch-primitives': {
     label: 'Redesign primitives (Button / Chip / Tag / Card / Collapsible)',
     // Every variant of every phase-2 primitive on one sheet, on the ch-paper

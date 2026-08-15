@@ -50,10 +50,24 @@ export interface MuteSite {
   loop: string | null;
   /** Sorts first. The manage screen sets this for sites that have alerted before. */
   alerted?: boolean;
+  /** Which division this site belongs to. Only shown when more than one is covered. */
+  division?: string | null;
 }
 
 export interface SiteMuteListProps {
-  campgroundId: string;
+  /**
+   * Every campground whose sites should be listed — one for an ordinary watch, several
+   * for a park watch covering divisions.
+   *
+   * SAFE ACROSS DIVISIONS BECAUSE IDS ARE UNIQUE WITHIN A PARK: 10,757 sampled across
+   * ReserveCalifornia, Ohio and Minnesota multi-division parks, zero collisions. That
+   * matters because `muted_site_ids` is ONE column on the watch and applies to every
+   * campground it covers — so muting "#42" in one division would silence "#42" in a
+   * sibling if the ids collided. It is emphatically NOT safe across unrelated
+   * campgrounds, where rec.gov's global ids could match anything; the caller is
+   * responsible for passing only campgrounds this one watch covers.
+   */
+  campgroundIds: string[];
   /** YYYY-MM the inventory is loaded for — the watch's first month. */
   month: string;
   muted: ReadonlySet<string>;
@@ -71,23 +85,46 @@ export interface SiteMuteListProps {
   seedSites?: MuteSite[];
   /** Extra per-row labels, e.g. "open now". Returned strings are joined with · */
   annotate?: (id: string) => (string | null)[];
+  /**
+   * campgroundId -> division label, so a park watch's rows can say which part they are
+   * in. Two of Leo Carrillo's three divisions are both "Canyon Campground", so without
+   * this a merged list would show the same site number twice with nothing telling them
+   * apart. Only rendered when more than one campground is covered.
+   */
+  divisionNames?: Record<string, string>;
   /** Rendered when the campground genuinely has no listable sites. */
   emptyMessage?: string;
+  /**
+   * Every id currently listed, whenever the inventory changes.
+   *
+   * The New watch screen uses it to PRUNE mutes when the user changes which divisions
+   * are covered: an id from a division they just unticked would otherwise still be
+   * posted, attaching a mute to a watch that does not cover that campground.
+   */
+  onInventory?: (ids: string[]) => void;
 }
 
 export default function SiteMuteList({
-  campgroundId,
+  campgroundIds,
   month,
   muted,
   onChange,
   seedSites,
   annotate,
+  divisionNames,
   emptyMessage,
+  onInventory,
 }: SiteMuteListProps) {
   const [sites, setSites] = useState<MuteSite[] | null>(null);
   const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+
+  // The effect must re-run when the COVERED SET changes — tick a division on and its
+  // sites have to appear. `campgroundIds` is a fresh array on every render, so keying the
+  // effect on the array itself would refetch every render; keying on its joined value
+  // refetches exactly when the set really changed. Sorted, so re-ordering is not a change.
+  const coveredKey = [...campgroundIds].sort().join(",");
 
   useEffect(() => {
     let cancelled = false;
@@ -96,27 +133,47 @@ export default function SiteMuteList({
 
     (async () => {
       try {
-        const r = await fetch(
-          `/api/campgrounds/${encodeURIComponent(campgroundId)}/availability?month=${month}`,
+        // ONE FETCH PER COVERED CAMPGROUND. A park watch lists every division it covers,
+        // because the alternative is what the owner reported: Leo Carrillo offering no
+        // mute list at all. Bounded by MAX_DIVISIONS_PER_WATCH, so this is at most ten
+        // requests and usually one. A division that fails contributes nothing rather
+        // than failing the list — losing one division's rows must not cost the ability
+        // to unmute the rest.
+        const perCampground = await Promise.all(
+          campgroundIds.map(async (cid) => {
+            try {
+              const r = await fetch(
+                `/api/campgrounds/${encodeURIComponent(cid)}/availability?month=${month}`,
+              );
+              if (!r.ok) return { cid, campsites: [] };
+              const a = (await r.json()) as {
+                campsites?: Array<{ campsiteId: string; campsiteName: string | null; loop: string | null }>;
+              };
+              return { cid, campsites: a.campsites ?? [] };
+            } catch {
+              return { cid, campsites: [] };
+            }
+          }),
         );
         if (cancelled) return;
-        if (!r.ok) {
-          setSites(seed);
-          return;
-        }
-        const a = (await r.json()) as {
-          campsites?: Array<{ campsiteId: string; campsiteName: string | null; loop: string | null }>;
-        };
-        if (cancelled) return;
+
         const seededIds = new Set(seed.map((s) => s.id));
-        const rows: MuteSite[] = (a.campsites ?? []).map((cs) => ({
-          id: cs.campsiteId,
-          name: cs.campsiteName,
-          loop: cs.loop,
-          alerted: seededIds.has(cs.campsiteId),
-        }));
+        const multi = campgroundIds.length > 1;
+        const rows: MuteSite[] = [];
+        for (const { cid, campsites } of perCampground) {
+          for (const cs of campsites) {
+            rows.push({
+              id: cs.campsiteId,
+              name: cs.campsiteName,
+              loop: cs.loop,
+              alerted: seededIds.has(cs.campsiteId),
+              division: multi ? (divisionNames?.[cid] ?? null) : null,
+            });
+          }
+        }
         if (rows.length === 0) {
           setSites(seed);
+          onInventory?.(seed.map((s) => s.id));
           return;
         }
         // Anything seeded or already muted that this month's grid doesn't list still
@@ -129,10 +186,14 @@ export default function SiteMuteList({
         rows.sort(
           (x, y) =>
             Number(!!y.alerted) - Number(!!x.alerted) ||
+            (x.division ?? "").localeCompare(y.division ?? "") ||
             (x.loop ?? "").localeCompare(y.loop ?? "") ||
             (x.name ?? x.id).localeCompare(y.name ?? y.id, undefined, { numeric: true }),
         );
         setSites(rows);
+        // The ids this list can actually offer. The caller prunes mutes against it, so
+        // an id from a division the user just unticked is not posted with the watch.
+        onInventory?.(rows.map((r2) => r2.id));
       } catch {
         if (!cancelled) setSites(seed);
       }
@@ -145,7 +206,7 @@ export default function SiteMuteList({
     // a 300-site grid per tap would be absurd. It is read only to backfill rows for ids
     // the grid doesn't list, which is a load-time concern.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campgroundId, month, seedSites]);
+  }, [coveredKey, month, seedSites]);
 
   const apply = useCallback(
     async (change: { mute?: string[]; unmute?: string[] }, key: string) => {
@@ -246,6 +307,10 @@ export default function SiteMuteList({
           const isMuted = muted.has(s.id);
           const notes = [
             ...(annotate?.(s.id) ?? []),
+            // FIRST, because on a park watch it is the thing that tells two identically
+            // named sites apart — Leo Carrillo has two divisions both called "Canyon
+            // Campground", so "#42" alone is ambiguous across them.
+            s.division,
             s.loop,
             s.alerted ? "alerted before" : null,
           ].filter(Boolean);
