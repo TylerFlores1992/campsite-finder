@@ -58,6 +58,25 @@ understood:
   stop. Between the two, an on-demand update had no durable record anywhere. That is why
   "Update now takes ~20 minutes" had to be inferred rather than read.
 
+### `stop-all` CANNOT KILL AN ELEVATED ORPHAN, AND SAYS NOTHING ABOUT IT (2026-08-14)
+
+A `broker.mjs` started at some point from an ELEVATED prompt survived every `stop-all`, which
+runs unelevated: `taskkill` answers **"Access is denied"** and the script's log is a list of
+what it STOPPED, so a refused kill and a successful one look identical in it. The orphan
+squatted on port **8787** and every new broker died in one second with `EADDRINUSE` - the
+symptom appearing in a DIFFERENT process from the cause, which is why it read as "the broker
+is broken".
+
+`supervise.ps1` then gave up after 5 exits in 10 minutes (correctly - a process that dies and
+restarts instantly is a busy loop wearing a service's clothes), and the watchdog would not
+have restarted it either: bot-or-broker down while the RC pair is UP is the deliberate NAMED
+hole, because `start-all` would end a live RC session. So it stays down until a human acts.
+
+Diagnose it with `netstat -ano | findstr :8787` then `tasklist /FI "PID eq <pid>"`; the kill
+needs an ELEVATED prompt. **The fix `stop-all` still needs is to re-check by NAME after
+killing and report survivors** - the same lesson as the Chromium children it could not match,
+and as `kill-chrome`'s "SURVIVED" line.
+
 **The request has been WITHDRAWN** (`requested_at = NULL`), because a pending request
 re-spawns the updater every ~15 minutes and each attempt bounces every process on the box.
 Leaving it set would have churned all night.
@@ -68,6 +87,15 @@ Leaving it set would have churned all night.
 The sampler fix is bot-side too, so it needs **one more `update.bat`**, or the
 **02:00-05:00 PT quiet window**, which uses the scheduled-task path that has always worked.
 Nothing is queued, so the window is open.
+
+**`git-status` PROVES THE CHECKOUT MOVED, NOT THAT THE RUNNING CODE DID (2026-08-14).**
+An update left `HEAD` at the new sha while `bot.mjs` went on executing the PRE-UPDATE
+`bot-commands.mjs` and `memory-sample.mjs` from memory - so `memory` printed the old
+`FAMILY rc 0 process(es), 0 MB` and the `op_Addition` error, and the sampler went on writing
+false zeros, on a box whose checkout was demonstrably current. **Both instruments were stale
+for the same reason and neither said so.** Restarting `bot.mjs` (`start-all.bat`) fixed both
+at once. So confirm the checkout with `git-status` AND confirm the running code by OBSERVING
+it - an absent `op_Addition` error is the cheapest proof there is.
 
 **CONFIRM WITH `git-status`, NOT with `autocart.bot_version`.** Measured 2026-08-14:
 `git-status` said `HEAD 60d9b98 on master` while `bot_commit` sat at the pre-update `7780c32`
