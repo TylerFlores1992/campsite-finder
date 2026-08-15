@@ -595,6 +595,49 @@ const PRESETS: Record<string, Preset> = {
       export const node = <UsersBox users={users} excludedTestRows={5} />;`,
     frame: 'max-w-2xl w-full mx-auto',
   },
+  'ch-divisions': {
+    label: 'New watch — a park with 4 divisions, all checked. Pass --wait=700',
+    // Carpinteria SB, verbatim from the catalog, because it is the park a real user is
+    // currently watching as FOUR separate hand-made watches. The two Leo Carrillo rows
+    // that share a name are not here; `ch-divisions-collide` covers those.
+    entry: `import NewWatch from '@/components/v2/NewWatch';
+      const DIVS = [
+        { id: 'rc-1', name: 'Carpinteria SB — Anacapa (sites 101-127 & group sites)' },
+        { id: 'rc-2', name: 'Carpinteria SB — San Miguel (sites 401-460)' },
+        { id: 'rc-3', name: 'Carpinteria SB — Santa Cruz (sites 201-244 & group sites)' },
+        { id: 'rc-4', name: 'Carpinteria SB — Santa Rosa (sites 301-380)' },
+      ];
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/api/suggest')) return { ok: true, json: async () => ({ campgrounds: [
+            { id: 'rc-1', name: 'Carpinteria SB', city: 'Carpinteria', state: 'CA',
+              latitude: 34.3, longitude: -119.5, source: 'reservecalifornia',
+              divisionCount: DIVS.length, divisions: DIVS },
+          ] }) };
+          if (u.includes('/api/subscription/status'))
+            return { ok: true, json: async () => ({ active: true, everSubscribed: true, autocart: true, autocartPlanAvailable: true }) };
+          return { ok: true, json: async () => ({}) };
+        };
+        // Type into the picker and choose the park, so the divisions section renders.
+        const type = (el, v) => {
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(el, v);
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        setTimeout(() => {
+          const box = document.querySelector('input[type=text], input:not([type])');
+          if (box) { box.focus(); type(box, 'Carpinteria'); }
+          setTimeout(() => {
+            const hit = Array.from(document.querySelectorAll('button'))
+              .find((b) => (b.textContent || '').includes('Carpinteria SB'));
+            if (hit) hit.click();
+          }, 350);
+        }, 150);
+      }
+      export const node = <NewWatch />;`,
+    frame: 'w-full max-w-3xl mx-auto',
+  },
   'ch-filters-rv': {
     label: 'FilterPanel — RV selected (rig length) above All types. Must-have is Pets/Hookups/Showers.',
     // Drinking water was removed 2026-08-15; Hookups stays in the flat Must-have row
