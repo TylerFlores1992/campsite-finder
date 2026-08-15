@@ -905,6 +905,57 @@ token, ~12h Okta session) apply inside the app exactly as they do to the bot.
   to `signed-out`, and the classifier reading the LAST `session` report (which is this run's
   own marker write) instead of the first.
 
+### THE FORCED KEEPALIVE SAMPLE NEVER RAN, AND THE BOX HAD BEEN ON STALE CODE FOR FOUR HOURS (2026-08-15)
+`d85bc19` made `keepSessionsWarm` take its own memory reading, because the rec.gov Chromium
+family lives ~5 seconds twice per 30-minute cycle and the 2-minute series samples it
+essentially never. On 08-15 a real keepalive pass ran — `users.autocart_verified_at` moved at
+05:31:27 and 05:32:15 UTC, 48s apart, which is its own 15-45s stagger, and only
+`reportConnected` writes that column, after `withBrowser` returns — and **not one of the 250
+rows in `chromium_memory_samples` carried `source = 'bot-keepalive'`.**
+- **The cause was none of the three obvious ones. The RUNNING CODE was four commits old**, on a
+  box whose checkout was current — the 08-14 trap again, by a new route. `e6a7ebf` contains
+  **zero** occurrences of `bot-keepalive`, so the process could not take a forced sample at all.
+- **FOUR INDEPENDENT INSTRUMENTS AGREED, and one of them had said so in plain English for
+  hours.** (1) The keepalive fires on a fixed `setInterval` from process start, and 05:31:27 /
+  06:01:27 fit **03:01:23 + 30m·n** exactly — seven consecutive fits — while the post-update
+  process started 05:12:23 predicts 05:42:23 and 06:12:23, neither of which happened. (2) The
+  sampler's in-memory interval phase is unbroken from 03:01:24, i.e. `last` never reset.
+  (3) `rc_runner_heartbeat.bot_commit` read **`e6a7ebf`** against a `git-status` of `c1bd875`.
+  (4) `autocart.bot_version` read *"mini-PC is on e6a7ebf; web is on 8a05308 — and it is MISSING
+  bot-side changes."* **Nobody read it**, because its own next sentence explained the drift away.
+- **`stop-all` SAID "nothing running." TWICE WHILE A WHOLE GENERATION WAS RUNNING.** Its filters
+  are all `$_.CommandLine -and ...`, and an unelevated WMI query reads `$null` for a process in
+  another security context — so an ELEVATED generation counts as **zero**, not as unkillable.
+  The early return `if ($before -eq 0) { "nothing running."; exit 0 }` then fired **before the
+  blind note and the broker-port check**, i.e. the one path where "I found nothing" is least
+  trustworthy skipped both checks that exist to say so. Fixed: both are functions now, called
+  from both paths, port check first, and the quiet path says *"nothing VISIBLE to stop"* when it
+  was blind. **The port check alone would have stopped this dead** — 8787 was bound throughout,
+  so `exit 1`, `start-all`'s `:stuck` branch, and the `taskkill` line printed for the human.
+- **THE ELEVATION IS THE ROOT, AND IT IS WIDER THAN THE 08-14 NOTE SAID.** That note recorded
+  "a `broker.mjs` started from an elevated prompt". It is the **whole 03:01 generation**: the
+  proof is that `list-processes`, run by `bot.mjs` itself, prints the command line of broker pid
+  15440 — the very process `stop-all` reported it could not read. Two components, one box, one
+  instant, opposite views, decided only by elevation.
+- **SO THE BOX CANNOT BE FIXED REMOTELY, AND THAT IS STRUCTURAL.** "Update now" is a no-op
+  (`HEAD` is already at the target, so the guard has nothing to do), `restart-rc` goes through
+  the same unelevated stop, and the watchdog has logged nothing since — consistent with it
+  seeing all four payloads as healthy, which they are. **The fix is a human: an ELEVATED prompt,
+  `mini-pc\stop-all.ps1`, then `start-all.bat` UNELEVATED** — elevated again just reloads the gun.
+- **`autocart.bot_version`'s detail asserted a cause it cannot know.** `boxSha` is
+  `git rev-parse HEAD` computed once **at process start**, so it reports the RUNNING code: an old
+  sha means either the update has not been applied (self-heals) or it was applied and nothing
+  restarted onto it (**never** self-heals). It named only the first. It names both now, plus the
+  discriminator — `git-status` reads the checkout at the moment you ask. **Severity deliberately
+  unchanged**; drift is normal for part of every day and turning it red is the cry-wolf failure.
+- **The rec.gov family therefore remains sampled ZERO times** — see the entry above for why 175,
+  now 250, consecutive `recgov 0` rows are the EXPECTED reading and not a lead. The instrument
+  built for that family has still never run.
+- Guarded in `worker/update-guard.test.mts` (reachability from the quiet path, order, one
+  definition each, defined-above-use, and severity) and `worker/bot-version.test.mts`. Verified
+  failing against six regressions including the restored early return and the port check present
+  but dropped from the quiet path — the inert-fix shape that passes review.
+
 ### `query()` CANNOT WRITE — the routing bug class (2026-08-11)
 `query()` goes to the `exec_select` RPC and `mutate()` to `exec_dml`, so **any
 data-modifying SQL passed to `query()` throws, every time, forever.** Nothing about the

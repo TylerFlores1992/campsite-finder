@@ -372,10 +372,33 @@ export function botVersionVerdict(o: {
     return {
       level: o.holdsAhead > 0 ? 'fail' : 'warn',
       state: 'behind-bot-code',
+      // THIS SENTENCE USED TO ASSERT A CAUSE THE CHECK CANNOT KNOW (2026-08-15).
+      //
+      // It read "Nothing is queued, so this is the ordinary wait for a quiet window." — and
+      // that is only one of the two ways a box reports an old commit. `boxSha` comes from
+      // `git rev-parse HEAD` computed ONCE AT PROCESS START, so it describes the RUNNING
+      // CODE, not the checkout. The two readings are:
+      //
+      //   the update has not been applied  -> the checkout is old too, and it self-heals on
+      //                                       the next quiet window or update.bat;
+      //   the update WAS applied and       -> the checkout is new, the process is old, and
+      //   nothing restarted onto it           it NEVER self-heals: update-guard sees HEAD
+      //                                       already at the target and has nothing to do.
+      //
+      // The second is what happened on 2026-08-15: update.bat moved the checkout to
+      // `c1bd875`, `start-all` could not see the elevated generation still running (see
+      // stop-all.ps1), and the box executed `e6a7ebf` for four hours while this line called
+      // it an ordinary wait. So it describes both and names the discriminator — `git-status`
+      // reads the checkout at the moment you ask, and disagreeing with the sha here IS the
+      // second case. The LEVEL is deliberately unchanged; only the sentence a human reads
+      // to decide whether to act.
       detail: `${base} — and it is MISSING bot-side changes` +
         (o.holdsAhead > 0
           ? `, with ${o.holdsAhead} hold(s) queued. The two halves can disagree at the release.`
-          : '. Nothing is queued, so this is the ordinary wait for a quiet window.'),
+          : '. Nothing is queued. This sha is the RUNNING code, read at process start: either ' +
+            'the update has not been applied yet (it self-heals on the next quiet window), or ' +
+            'it was applied and nothing restarted onto it (it never will). `git-status` on the ' +
+            'box reads the checkout and tells you which.'),
     };
   }
   return {
