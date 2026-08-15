@@ -14,7 +14,7 @@
     "cap:ios": "cap open ios",
     "cap:android": "cap open android",
     "test": "tsx --test --test-concurrency=1 \"worker/**/*.test.mts\" \"src/**/*.test.mts\"",
-    "verify": "npm run typecheck && npm test && npm run build"
+    "verify": "npm run typecheck && npm run jsx-spacing && npm test && npm run build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.107.0",

@@ -315,26 +315,72 @@ export function tokenSecondsLeft(token) {
  * fresh profile, and losing it is what cost twelve hours of IP block on 2026-08-06. Clearing
  * the token is the sanctioned way to get to a signed-out state; RC's own sign-out menu is not.
  */
+/**
+ * okta-auth-js namespaces ALL of its own storage under `okta-`.
+ *
+ * `ssoAccessToken`/`accessToken` are RC's OWN copies, which its app writes for its own use.
+ * The SDK keeps a separate store (`okta-token-storage` and friends) and that is what it
+ * decides from on boot — so clearing only RC's two copies leaves the SDK holding the same
+ * token, which it hands straight back. Documented default keys are `okta-token-storage`,
+ * `okta-cache-storage`, `okta-transaction-storage`, `okta-original-uri-storage`; matching the
+ * PREFIX rather than a list means an SDK upgrade that adds a fifth cannot silently reopen
+ * this. The reported key names (below) are how we find out if that assumption is wrong.
+ */
+const OKTA_STORAGE_PREFIX = 'okta-';
+/** RC's own copies of the access token. */
+const RC_TOKEN_KEYS = ['ssoAccessToken', 'accessToken'];
+
+/**
+ * Empty every persisted copy of the session token, and say exactly what was emptied.
+ *
+ * THE CLEAR WAS INCOMPLETE, AND THAT IS WHY THE RENEWAL NEVER WORKED (2026-08-15).
+ * `renewByReload` cleared these two RC keys, reloaded, and got back a token 26 seconds older
+ * than the one it dropped (`578s → 552s`). A page navigation wipes JS memory and
+ * `window.__camphawkRcToken` was deleted, so **that token can only have come from another
+ * PERSISTED copy** — the measurement forces it. `rc-probe.mjs` had already recorded the same
+ * thing from the other end: "the whole session lives in localStorage, and copying that blob
+ * DOES carry the login".
+ *
+ * SO THE 08-11 "RC RE-MINTED FROM THE OKTA SESSION" OBSERVATION IS CONFOUNDED. An incomplete
+ * clear produces exactly that appearance — the app comes back signed in, with no credential
+ * typed, because the token was never really gone. Nobody recorded whether that token had a
+ * FRESH expiry, so it cannot be told apart from a survivor after the fact. This is the
+ * "measuring the renewal against the token it meant to replace" bug in a second costume, and
+ * it is why the fix here is to clear properly and MEASURE AGAIN rather than to conclude.
+ *
+ * Returns `{ snapshot, cleared }`. The snapshot is for an EXACT restore — the clear is
+ * destructive and a failed renewal must leave the profile no worse than doing nothing, which
+ * means putting back precisely what was taken, not a guessed subset.
+ *
+ * KEY NAMES ARE REPORTED, VALUES NEVER. A token is a credential and the rule here is not to
+ * collect a field you then have to filter — the first version of the mobile report leaked an
+ * OAuth authorization code exactly that way.
+ */
 export async function dropStoredToken(page) {
-  await page.evaluate(() => {
+  return page.evaluate(({ prefix, rcKeys }) => {
+    const snapshot = {};
     try {
-      localStorage.removeItem('ssoAccessToken');
-      localStorage.removeItem('accessToken');
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (rcKeys.includes(k) || k.startsWith(prefix)) snapshot[k] = localStorage.getItem(k);
+      }
+      for (const k of Object.keys(snapshot)) localStorage.removeItem(k);
       delete window.__camphawkRcToken;
     } catch { /* ignore */ }
-  }).catch(() => {});
+    return { snapshot, cleared: Object.keys(snapshot) };
+  }, { prefix: OKTA_STORAGE_PREFIX, rcKeys: RC_TOKEN_KEYS }).catch(() => ({ snapshot: {}, cleared: [] }));
+}
+
+/** Put back exactly what `dropStoredToken` took. */
+export async function restoreStoredToken(page, snapshot) {
+  await page.evaluate((s) => {
+    try { for (const [k, v] of Object.entries(s)) if (v != null) localStorage.setItem(k, v); }
+    catch { /* ignore */ }
+  }, snapshot).catch(() => {});
 }
 
 export async function renewByReload(page, url, { oktaAlive = null } = {}) {
-  const stored = await page.evaluate(() => {
-    try {
-      return {
-        sso: localStorage.getItem('ssoAccessToken'),
-        acc: localStorage.getItem('accessToken'),
-      };
-    } catch { return { sso: null, acc: null }; }
-  }).catch(() => ({ sso: null, acc: null }));
-
   const previous = (await readLiveToken(page)).token;
   const before = tokenSecondsLeft(previous);
 
@@ -342,11 +388,14 @@ export async function renewByReload(page, url, { oktaAlive = null } = {}) {
   // unknown would switch this off permanently the first time the probe errored — the
   // "unknown is not dead" rule, applied to the thing that acts rather than the report.
   if (oktaAlive === false) {
-    return { renewed: false, before, after: before, restored: false,
+    return { renewed: false, before, after: before, restored: false, cleared: [],
       skipped: 'no Okta session to renew against' };
   }
 
-  await dropStoredToken(page);
+  // WIDER THAN IT WAS, AND THE SNAPSHOT IS WHAT MAKES THAT SAFE. Clearing only RC's two
+  // copies left okta-auth-js holding the same token in its own store, which is why every
+  // renewal since this shipped measured a survivor rather than a re-mint.
+  const { snapshot, cleared } = await dropStoredToken(page);
 
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   const { token } = await primeToken(page, { timeoutMs: 25_000, notToken: previous });
@@ -354,13 +403,12 @@ export async function renewByReload(page, url, { oktaAlive = null } = {}) {
   const renewed = isRenewal({ previous, next: token, before, after });
 
   let restored = false;
-  if (!renewed && (stored.sso || stored.acc)) {
-    await page.evaluate((s) => {
-      try {
-        if (s.sso) localStorage.setItem('ssoAccessToken', s.sso);
-        if (s.acc) localStorage.setItem('accessToken', s.acc);
-      } catch { /* ignore */ }
-    }, stored).catch(() => {});
+  if (!renewed && Object.keys(snapshot).length) {
+    // EXACTLY WHAT WAS TAKEN. The clear now spans the SDK's own storage as well, so a restore
+    // that only put back `ssoAccessToken`/`accessToken` would leave the app holding a token
+    // its SDK no longer knows about — strictly worse than never having tried, which is the
+    // one outcome this guard exists to prevent.
+    await restoreStoredToken(page, snapshot);
     // The bootstrap above decided this profile was signed out. Load once more so the app
     // reads the restored token and comes back up signed in, instead of leaving the resident
     // tab on a logged-out page with a perfectly good token sitting beside it.
@@ -368,7 +416,10 @@ export async function renewByReload(page, url, { oktaAlive = null } = {}) {
     restored = true;
   }
 
-  return { renewed, before, after, restored, skipped: null };
+  // `cleared` is the diagnostic that answers the next question. If a renewal still fails with
+  // only the two RC keys listed here, the SDK's storage is somewhere else and the prefix
+  // assumption is wrong — which is a fact worth having rather than another round of guessing.
+  return { renewed, before, after, restored, cleared, skipped: null };
 }
 
 /**

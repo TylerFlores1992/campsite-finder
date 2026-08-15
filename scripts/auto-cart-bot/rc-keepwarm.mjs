@@ -70,6 +70,7 @@ import {
 } from './profile-lock.mjs';
 import {
   installTokenCapture, readLiveToken, primeToken, renewByReload, tokenSecondsLeft,
+  dropStoredToken,
   readAuthFacts, oktaSessionAlive, authCookieSummary,
 } from './rc-token.mjs';
 import { hasCredentials, attemptLogin } from './rc-autologin.mjs';
@@ -944,14 +945,16 @@ async function runLoginRehearsal(ctx, page, { humanPresent, tag }) {
   log(`Session before the test: ${before.live === true ? 'ALIVE' : before.live === false ? 'DEAD' : 'UNKNOWN'} — ${before.why}`);
 
   // The token only, never the cookies. See the header.
+  //
+  // THROUGH `dropStoredToken`, NOT A THIRD INLINE COPY (2026-08-15). This was a hand-rolled
+  // duplicate of the same two `removeItem` calls, and when the real clear was widened to
+  // cover okta-auth-js's own storage this copy would have been left behind — still clearing
+  // two keys of a blob that carries the session, and still reporting "RC re-authenticated
+  // with no credential typed" about a token that had simply never left. That appearance is
+  // what the whole renewal question has been resting on.
   log('Dropping the stored token so RC treats this as signed out (cookies untouched)…');
-  await page.evaluate(() => {
-    try {
-      localStorage.removeItem('ssoAccessToken');
-      localStorage.removeItem('accessToken');
-      delete window.__camphawkRcToken;
-    } catch {}
-  }).catch(() => {});
+  const dropped = await dropStoredToken(page);
+  log(`  cleared ${dropped.cleared.length} key(s): ${dropped.cleared.join(', ') || '(none)'}`);
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
 
   const gone = await sessionLive(ctx, page);
@@ -1287,6 +1290,14 @@ async function warmResident() {
                 // the fields that actually carry it.
                 : `  ✗ no fresher token after the reload (${r.before}s → ${r.after}s)`
                   + `${r.restored ? ' — the previous token was put back' : ''}`);
+              // WHICH KEYS WERE ACTUALLY EMPTIED. Until 2026-08-15 the clear covered RC's two
+              // copies and not okta-auth-js's own store, so the SDK handed the same token
+              // straight back and every reading was a survivor rather than a re-mint. If a
+              // failure ever prints only those two names again, the SDK's storage has moved
+              // and the `okta-` prefix assumption is what needs revisiting — that is a fact
+              // the next run hands over instead of another round of guessing.
+              log(`    cleared ${r.cleared?.length ?? 0} storage key(s): `
+                + `${(r.cleared ?? []).join(', ') || '(none — nothing was there to drop)'}`);
             }
             // Report immediately either way: this is the event worth seeing on the
             // dashboard, not something to sit on until the next 20-minute tick.
