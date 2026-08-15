@@ -81,22 +81,29 @@ and as `kill-chrome`'s "SURVIVED" line.
 re-spawns the updater every ~15 minutes and each attempt bounces every process on the box.
 Leaving it set would have churned all night.
 
-### ONE MORE UPDATE IS NEEDED, AND IT IS THE ONE THAT MAKES recgov SAMPLEABLE
+### RESOLVED 2026-08-15 05:15 UTC — the box has the keepalive sampler, and the running code is current
 
-**Measured 2026-08-15: the box is on `e6a7ebf`, `origin/master` is `339cf0e`, and the forced
-keepalive sample exists only in the latter.** `git show e6a7ebf:scripts/auto-cart-bot/bot.mjs
-| grep -c bot-keepalive` returns **0**; on master it returns 1.
+**Box is on `c1bd875`** (owner ran `update.bat` then `start-all`), which carries the forced
+keepalive sample. Verified BOTH halves, because the checkout moving is not the same fact as
+the process moving:
 
-That is why 214 samples over ~7 hours caught **zero** rec.gov processes and the readout warns
-it says nothing about that family. The periodic 2-minute series structurally cannot sample a
-browser that lives a few seconds twice per 30-minute cycle — the fix was to have
-`keepSessionsWarm` take its own sample from inside its `withBrowser` block — and **that fix is
-not on the box.** Until it is, a quiet series is evidence about the RC profile and about
-nothing else, no matter how long it runs.
+- `git-status` -> `HEAD c1bd875 on master`;
+- `memory` -> **`FAMILY rc 8 process(es), 266 MB private`** with **no `op_Addition` error**.
+  That absent error is the cheap proof the RUNNING code is current - earlier the same day the
+  checkout read current while `bot.mjs` executed the previous modules from memory, and both
+  instruments lied in the same direction.
 
-**So: one `update.bat` (or the 02:00-05:00 PT quiet window), then a `start-all`** — see the
-next section for why the update alone is not enough. After that, expect two rec.gov samples
-per keepalive cycle instead of roughly none.
+**`git show c1bd875:scripts/auto-cart-bot/bot.mjs | grep -c bot-keepalive` returns 1.**
+
+**THE FIRST recgov SAMPLE IS DUE ~30 MINUTES AFTER THE BOT STARTED, NOT IMMEDIATELY.**
+`keepSessionsWarm` runs on a fixed `KEEPALIVE_MS` (30 min) interval from `bot.mjs` start, and
+the forced sample is taken from inside its `withBrowser` block. The bot restarted ~05:03 UTC,
+so expect the first `recgov` row around **05:33**, then two per cycle.
+
+Until one appears the readout keeps warning that no `recgov` process was observed. **That is
+the guard being honest, not the fix having failed** - and it is the reading to check first,
+because it is the difference between "the instrument still cannot see that family" and "the
+family has now been sampled and looks fine".
 
 ### RESOLVED 2026-08-15 03:01 UTC — the update landed and the sampler is honest
 
@@ -200,9 +207,9 @@ it as untracked. It is the only copy of the evidence for both questions. Do not 
 
 ## THE PROMPT — paste this to open the session
 
-*Current as of 2026-08-15 03:05 UTC. The blocking action the previous version named — getting
-the box updated — is DONE, and the sampler is recording real data. If you are reading this
-after the series has run for a while, the readout is the first thing to look at.*
+*Current as of 2026-08-15 05:15 UTC. Both blocking actions the previous versions named are
+DONE: the box is on `c1bd875`, the running code is verified current, and the keepalive
+sampler is in place. Nothing is waiting on a human.*
 
 > Read `docs/NEXT-SESSION.md` first — the STOP section at the top — then CLAUDE.md.
 >
@@ -212,49 +219,46 @@ after the series has run for a while, the readout is the first thing to look at.
 > takes every remote lever down with it — the watchdog, `kill-chrome` and `bot_commands` all
 > ride processes on that machine.
 >
-> **The instrument now works. Start by reading the series, not by taking readings:**
+> **Start by reading the series. Do not take manual readings.**
 >
 > ```
 > NODE_USE_ENV_PROXY=1 npx tsx scripts/chromium-memory-readout.mts
 > ```
 >
-> Confirmed healthy 2026-08-15 03:01 UTC — `rc 325 MB, pid 2360 130 MB` — after a long run of
-> false zeros. Box and web are both on `e6a7ebf`; `bot.mjs` samples every two minutes.
+> **The first question is whether `recgov` rows exist yet.** The box only got the forced
+> keepalive sample at 05:15 UTC on 08-15, and `keepSessionsWarm` fires every 30 minutes, so
+> the first one was due ~05:33. If the readout still warns *"NO recgov process was running at
+> any point in this window"*, check whether that is because none has fired yet or because the
+> forced sample is not working — `git show <box sha>:scripts/auto-cart-bot/bot.mjs | grep -c
+> bot-keepalive` should return 1, and the box's sha comes from `git-status`.
 >
-> **DO NOT go back to manual `memory` readings to find it.** Three attempts produced three
-> non-answers, and the reason is structural: `keepSessionsWarm()` in `bot.mjs` opens a rec.gov
-> Chromium per enrolled user every 30 minutes and closes it, so the family that has never been
-> ruled out exists only in bursts — a five-minute window has roughly one chance in ten of
-> containing one. `memory` remains useful as a SPOT check and as the cross-check against the
-> sampler; it is not how you find a leak.
+> **Manual `memory` readings cannot find this leak, and three attempts proved it.**
+> `keepSessionsWarm` opens a rec.gov Chromium per enrolled user for a few seconds twice per
+> 30-minute cycle, so a five-minute window has roughly one chance in ten of containing one.
+> `memory` is a spot check and the cross-check against the sampler; it is not the instrument.
 >
-> **Read `NOT ENOUGH DATA` and a quiet series correctly.** Under 10 comparable pairs the
-> readout refuses a verdict, and a family with no processes running has been ruled out of
-> NOTHING. Separately: the RC profile was REPLACED on 08-14 to fix a different bug, so if that
-> profile was also the leak the series may read `NO LEAK IN THIS WINDOW` for ever — a real
-> answer, not a broken instrument. That is a HYPOTHESIS and must not be promoted.
-> `rc-profile-old/` on the box is the only copy of the evidence; do not delete it.
+> **Read a quiet series correctly.** Under 10 comparable pairs the readout refuses a verdict,
+> and a family with no processes running has been ruled out of NOTHING. Separately: the RC
+> profile was REPLACED on 08-14 to fix a different bug, so if that profile was also the leak
+> the series may read `NO LEAK IN THIS WINDOW` for ever — a real answer, not a broken
+> instrument. That is a HYPOTHESIS and must not be promoted. `rc-profile-old/` on the box is
+> the only copy of the evidence; do not delete it.
 >
 > **If you update the box: `git-status` proves the CHECKOUT moved, not that the RUNNING CODE
 > did.** On 08-14 an update left HEAD current while `bot.mjs` executed the pre-update modules
 > from memory, so `memory` printed a false `FAMILY rc 0` with an `op_Addition` error and the
-> sampler wrote false zeros — both stale for the same reason, neither saying so. `start-all.bat`
-> fixed both. Confirm the checkout with `git-status` AND confirm the running code by observing
-> it; an absent `op_Addition` error is the cheapest proof there is.
+> sampler wrote false zeros — both stale for the same reason, neither saying so. `start-all`
+> fixed both. An absent `op_Addition` error and a non-zero `FAMILY` line are the cheap proof.
 >
 > Levers already built, do not rebuild: `kill-chrome rc|recgov|all` (the remote remedy),
 > `memory` (spot reading, full `--user-data-dir` per process), and `mini-pc\fix-pagefile.ps1`,
 > which raises the COMMIT ceiling and is explicitly **NOT** the fix — pagefile peak was 0.4 GB
 > against 34 GB allocated, so commit was going to reservations, not paging.
 >
-> **One known gap worth fixing if you touch the stop path:** `stop-all` cannot kill a process
-> started from an ELEVATED prompt (`taskkill` says "Access is denied") and its log lists what it
-> STOPPED, so a refused kill looks identical to a successful one. On 08-14 that left a
-> `broker.mjs` squatting on port 8787 and every new broker died with `EADDRINUSE` — the symptom
-> in a different process from the cause. It should re-check by NAME and report survivors.
->
-> Working rules: push to a branch, let `npm run verify` and CI go green, then merge to master.
-> Mutation-test any regression test — break the code, watch it fail — before trusting it.
+> Working rules: **push to a branch, then open a PR** — a hook blocks pushing to master, and
+> `docs/LANES.md` makes the PR the only merge path. Let `npm run verify` and CI go green first.
+> Mutation-test any regression test — break the code, watch it fail — and confirm the mutation
+> actually applied, because a mutation that silently fails to apply is a green proving nothing.
 > `autocart.rc_session` reading dead between releases is CORRECT, not a fault. Use ABSOLUTE
 > paths for anything run on the mini-PC: a failed `cd` is silent there, and the next command
 > then reports a confident result about the wrong thing.
