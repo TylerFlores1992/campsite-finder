@@ -36,6 +36,13 @@ let campgroundId: string;
 const WINDOW = '2031-04-05T08:00:00';
 const ARRIVAL = '2031-05-01';
 
+/**
+ * NON-NUMERIC FIXTURE UNIT IDS - see `rc-holds.test.mts`'s header for the 2026-08-15 incident.
+ * A real RC unit id is numeric, so a sentinel cannot name a real campsite if a run aborts
+ * before its cleanup. Enforced by `worker/hold-fixture-safety.test.mts`.
+ */
+const U = (n: string) => `__t${n}`;
+
 before(async () => {
   const [u] = await query<{ id: string }>(`SELECT id FROM users LIMIT 1`);
   const [c] = await query<{ id: string }>(`SELECT id FROM campgrounds WHERE source = 'reservecalifornia' ORDER BY id LIMIT 1`);
@@ -74,9 +81,9 @@ test('an offer counts against the window from the moment it is made', async () =
   // whether or not anyone has tapped it — counting only taps is how three people end up
   // holding two seats.
   assert.equal(await holdWindowLoad(WINDOW), 0);
-  await offer('7001');
+  await offer(U('7001'));
   assert.equal(await holdWindowLoad(WINDOW), 1);
-  await offer('7002');
+  await offer(U('7002'));
   assert.equal(await holdWindowLoad(WINDOW), 2);
 });
 
@@ -84,7 +91,7 @@ test('a hold is not counted against itself', async () => {
   // THE RE-ALERT CASE. The poller asks "is there room for this one", and an opening that
   // re-alerts must be judged without its own existing row — otherwise a hold already
   // offered silently loses its button the second time it is mentioned.
-  const load = await holdWindowLoad(WINDOW, { watchId, unitId: '7001', arrivalDate: ARRIVAL });
+  const load = await holdWindowLoad(WINDOW, { watchId, unitId: U('7001'), arrivalDate: ARRIVAL });
   assert.equal(load, 1, 'the other hold counts, this one does not');
 });
 
@@ -95,24 +102,24 @@ test('a different release window is a different pool', async () => {
 });
 
 test('terminal holds give their seat back', async () => {
-  await mutate(`UPDATE rc_hold_requests SET status = 'released' WHERE watch_id = $1 AND unit_id = '7002'`, [watchId]);
+  await mutate(`UPDATE rc_hold_requests SET status = 'released' WHERE watch_id = $1 AND unit_id = $2`, [watchId, U('7002')]);
   assert.equal(await holdWindowLoad(WINDOW), 1, 'a released hold is not holding anything');
-  await mutate(`UPDATE rc_hold_requests SET status = 'offered' WHERE watch_id = $1 AND unit_id = '7002'`, [watchId]);
+  await mutate(`UPDATE rc_hold_requests SET status = 'offered' WHERE watch_id = $1 AND unit_id = $2`, [watchId, U('7002')]);
 });
 
 test('a read failure fails CLOSED, so a wobble cannot over-promise', async () => {
   // Same direction as `rcBotUsable`: if we cannot tell how full the window is, do not
   // offer. A hold nobody honours costs a campsite; a missing button costs a convenience.
-  const load = await holdWindowLoad(WINDOW, { watchId, unitId: '7001', arrivalDate: 'not-a-date' });
+  const load = await holdWindowLoad(WINDOW, { watchId, unitId: U('7001'), arrivalDate: 'not-a-date' });
   assert.ok(load >= RC_HOLD_CAPACITY, 'a failed count must never look like it has room');
 });
 
 test('a carted hold that could never be released stops holding a seat', async () => {
   // THE LEAK. Two of these on 2026-08-13 were the whole fleet, held for nobody, because
   // the release loop needs an RC session and the session is dead most of the day.
-  await offer('7003');
+  await offer(U('7003'));
   const [h] = await query<{ id: string }>(
-    `SELECT id FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = '7003'`, [watchId]);
+    `SELECT id FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = $2`, [watchId, U('7003')]);
   await mutate(`UPDATE rc_hold_requests SET status = 'requested' WHERE id = $1`, [h.id]);
   await markCarted(h.id, '11111111-2222-3333-4444-555555555555', 'entry-1');
 

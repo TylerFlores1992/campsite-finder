@@ -253,18 +253,79 @@ const LOCK_WAIT_MS = Number(process.env.RC_PROFILE_LOCK_WAIT_MS || 60_000);
  * looked healthy from the server, the row looked untouched, and a user lost a site. The
  * caller now reports the reason against the affected holds; see migration 046.
  */
+/**
+ * THE DEATH SPIRAL, AND WHY BACKING OFF IS THE CURE (2026-08-15).
+ *
+ * One Chromium profile, two processes. The keep-warm OWNS the session — renewal, auto-login
+ * and measurement all live inside its 60-second loop — and this runner CONSUMES it, taking
+ * the profile by cooperative preemption whenever it has work.
+ *
+ * When a hold sits `requested` with a dead session, this runner asks for the profile every
+ * 15 seconds. From the box's own log, for twenty unbroken minutes:
+ *
+ *     15:01:34 RC loaded and STAYING OPEN — token source: none
+ *     15:01:34 → hold runner wants the profile — closing and standing down
+ *     15:02:10 RC loaded and STAYING OPEN — token source: none
+ *     15:02:10 → hold runner wants the profile — closing and standing down
+ *
+ * The keep-warm never survived 35 seconds, so its 60-second expiry poll — where the repair
+ * lives — could not complete. **The component that fixes the session was starved by the
+ * component that needs it**, and it sustains itself: dead session → cart fails → hold stays
+ * `requested` → runner keeps asking → keep-warm keeps being evicted → session stays dead.
+ *
+ * `reportCartFailure` keeping a hold `requested` is right for a transient refusal and wrong
+ * for this one, so the retry has to learn the difference. Two strikes, because one dead pass
+ * is ordinary (the session legitimately lapses between releases and `maybeAutoLogin` fixes
+ * it) and two in a row means nothing is getting the chance to.
+ *
+ * THE BACK-OFF IS DELIBERATELY SHORTER THAN THE CART GRACE WINDOW. `dueHolds` keeps handing
+ * a hold back for 20 minutes after its release, so a three-minute stand-off costs at most
+ * three minutes of that and buys three uninterrupted keep-warm cycles. Standing off longer
+ * than the grace window would trade a fixable session for a guaranteed miss.
+ */
+const DEAD_SESSION_BACKOFF_MS = Number(process.env.RC_DEAD_SESSION_BACKOFF_MS || 180_000);
+const DEAD_SESSION_STRIKES = Number(process.env.RC_DEAD_SESSION_STRIKES || 2);
+let deadSessionStrikes = 0;
+let profileStandOffUntil = 0;
+
 async function withRC(fn) {
+  // STAND OFF, so the keep-warm gets a whole cycle to repair the session. The feed is still
+  // polled on the normal beat while this holds — the runner stays reachable, keeps stamping
+  // its heartbeat and keeps answering diagnostics; the only thing it gives up is the browser.
+  if (Date.now() < profileStandOffUntil) {
+    const secs = Math.ceil((profileStandOffUntil - Date.now()) / 1000);
+    return {
+      skipped: `standing off the Chromium profile for ${secs}s so the keep-warm can repair the RC session`,
+    };
+  }
+
   // ASK FIRST. rc-keepwarm now holds the profile resident (it has to — RC only renews its
   // token while a page is loaded), so a plain wait would time out every single time, at
   // 08:00:00, on the one job that matters. The flag makes it stand down within a second.
   requestProfile(PROFILE_DIR, LOCK_OWNER);
   const requestedAt = Date.now();
+  let out;
   try {
-    return await withRCLocked(fn, requestedAt);
+    out = await withRCLocked(fn, requestedAt);
+    return out;
   } finally {
     // ALWAYS, including the failure paths — a request left behind keeps the keep-warm
     // stood down indefinitely, which would kill the session it exists to preserve.
     clearProfileRequest(PROFILE_DIR);
+    // Counted on the way out so a throw cannot leave the strike count wrong. Matched on the
+    // shape the dead-session path actually returns rather than on any skip: a busy profile
+    // is a different fault, and standing off for it would be standing off from ourselves.
+    if (out && typeof out.skipped === 'string' && /session is dead/i.test(out.skipped)) {
+      if (++deadSessionStrikes >= DEAD_SESSION_STRIKES) {
+        profileStandOffUntil = Date.now() + DEAD_SESSION_BACKOFF_MS;
+        deadSessionStrikes = 0;
+        log(`⏸ ${DEAD_SESSION_STRIKES} dead-session passes in a row — leaving the profile alone for `
+          + `${Math.round(DEAD_SESSION_BACKOFF_MS / 1000)}s so rc-keepwarm can sign in. `
+          + 'Holds stay requested and retry after.');
+      }
+    } else if (out) {
+      deadSessionStrikes = 0;
+    }
   }
 }
 

@@ -49,6 +49,8 @@
  * They are never logged, never reported, and never leave the box.
  */
 import { loadCreds, hasCreds } from './credstore.mjs';
+import { dropStoredToken } from './rc-token.mjs';
+import { sessionAcceptable } from './session-coverage.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -325,11 +327,49 @@ async function typeEmail(loc, email) {
  * because clicking behind a challenge overlay can never work and retrying is exactly the
  * pattern that got this address blocked.
  */
-export async function attemptLogin(ctx, page, { homeUrl, isLive, log = () => {}, humanPresent = false }) {
+export async function attemptLogin(
+  ctx, page, { homeUrl, isLive, sufficient = null, log = () => {}, humanPresent = false },
+) {
   const creds = credentials();
   if (!creds) return { ok: false, reason: 'no stored credentials' };
   const { email, password } = creds;
   const step = (m) => log(`    → ${m}`);
+
+  /**
+   * "ALREADY SIGNED IN" IS NOT THE SAME AS "COVERED", AND CONFLATING THEM LOST A CART.
+   *
+   * 2026-08-15, 07:30:42 PT, thirty minutes before a real release:
+   *
+   *     ⏰ hold releases in 30m and the session will not cover it — signing in ONCE
+   *         → already signed in — nothing to do
+   *       ✓ signed in unattended — the hold is covered
+   *
+   * `maybeAutoLogin` had just computed that the token would NOT last, called this function
+   * to fix it, and this function short-circuited on `isLive()` — which asks whether a
+   * session exists, never whether it will still exist when it is needed. It returned ok, the
+   * caller logged "the hold is covered", the one attempt for that release was spent, the
+   * token died at 07:53 and the 08:00 cart failed.
+   *
+   * That is the 2026-08-09 lesson running backwards. `isLive()` was ADDED because this
+   * reported failure over a healthy session; nobody checked the opposite direction. And
+   * `rehearsal.mjs` already documents this very short-circuit as a hazard — "attemptLogin
+   * short-circuits on isLive(), so it would return ok without exercising one line of the
+   * sign-in" — but only for the nightly rehearsal. The same line sits in the release-critical
+   * path and the two were never connected.
+   *
+   * So a caller that has a deadline passes `sufficient`. It is OPT-IN: the rehearsal and
+   * `--test-login` have no deadline and a live session is a fine answer for them, so the
+   * default is unchanged.
+   *
+   * `null` from `sufficient` means "could not tell" and counts as good enough. Forcing a
+   * sign-in is destructive — it drops a token that may have been fine — and the house rule
+   * is that an unknown is never treated as a failure.
+   */
+  const acceptable = async () => {
+    const live = await isLive();
+    const enough = sufficient ? await sufficient().catch(() => null) : undefined;
+    return sessionAcceptable(live, enough);
+  };
   /** Fold Okta's own words into the reason when it gave us any. */
   const withBanner = async (base) => {
     const d = await diagnose(page);
@@ -365,9 +405,28 @@ export async function attemptLogin(ctx, page, { homeUrl, isLive, log = () => {},
     // domcontentloaded; without it this would report "not signed in" for a session that is
     // one second away from proving itself.
     await page.waitForTimeout(4000);
-    if ((await isLive()) === true) {
+    if (await acceptable()) {
       step('already signed in — nothing to do');
       return { ok: true, reason: 'already signed in' };
+    }
+
+    // LIVE BUT NOT GOOD ENOUGH. There is a session, so RC renders no sign-in link and the
+    // form hunt below would find nothing — it would report "the sign-in form did not load",
+    // which is the 2026-08-09 false alarm exactly. Drop the token to reach a signed-out
+    // state we can actually sign in from. Cookies are untouched, so `DT` survives and this
+    // still looks like the device Okta has seen before; it is the same clear
+    // `rc-test-login.bat` has always used to rehearse a real login.
+    if ((await isLive()) === true) {
+      step('signed in, but the token will not cover the hold — dropping it to sign in fresh');
+      await dropStoredToken(page);
+      await page.goto(homeUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+      await page.waitForTimeout(2000);
+      // If RC bootstrapped a genuinely fresh token from the Okta cookie, that IS the repair
+      // and no credential is needed. Cheaper and safer than typing one, so take it.
+      if (await acceptable()) {
+        step('RC re-minted a token from the Okta session — no credential needed');
+        return { ok: true, reason: 'renewed from the Okta session without signing in' };
+      }
     }
 
     // Get to the Okta form. RC's sign-in is a link/button on its own header; going
@@ -456,8 +515,12 @@ export async function attemptLogin(ctx, page, { homeUrl, isLive, log = () => {},
       // Deliberately NOT matched on the banner's words: RC rewords its own copy whenever it
       // likes, and a rule built on that sentence would fail silently the day they change it.
       // A live token is the fact; the banner is only what tipped us off.
+      //
+      // `acceptable()` and not a bare `isLive()`: a caller with a deadline must not be told
+      // "already signed in" about a session that expires before its release — that is the
+      // 2026-08-15 failure, and it would simply move here if only the first check were fixed.
       for (let i = 0; i < 8; i++) {
-        if ((await isLive()) === true) {
+        if (await acceptable()) {
           return {
             ok: true,
             provedNothing: true,

@@ -329,11 +329,24 @@ test('an already-signed-in page is inconclusive, never a failure', () => {
   const login = readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8');
   const branch = login.match(/if \(!user && !pw\) \{[\s\S]*?\n    \}/)?.[0] ?? '';
   assert.ok(branch, 'could not find the no-form branch');
-  assert.match(branch, /await isLive\(\)\) === true/,
+  // ROUTED THROUGH `acceptable()` SINCE 2026-08-15, and the behaviour this test protects is
+  // unchanged: `acceptable()` calls `isLive()` and, when the caller passes no deadline — which
+  // the rehearsal never does — returns exactly its answer. The equivalence is pinned below so
+  // this cannot quietly become a different question.
+  assert.match(branch, /await acceptable\(\)/,
     'it must re-ask whether we are signed in before declaring failure');
-  const live = branch.indexOf('isLive()');
+  const live = branch.indexOf('acceptable()');
   const fail = branch.indexOf('ok: false');
   assert.ok(live !== -1 && fail !== -1 && live < fail, 'and ask BEFORE returning the failure');
+
+  // `acceptable()` must still ASK `isLive()`, or the re-ask is gone however it is spelled.
+  const helper = login.match(/const acceptable = async \(\) => \{[\s\S]*?\n  \};/)?.[0] ?? '';
+  assert.ok(helper, 'could not find acceptable()');
+  assert.match(helper, /await isLive\(\)/, 'acceptable() must consult isLive()');
+  // ...and with no deadline supplied it must reduce to plain liveness, which is what keeps the
+  // rehearsal and --test-login behaving as they always have.
+  assert.match(helper, /sufficient \? .* : undefined/,
+    'a caller with no deadline must reach sessionAcceptable with undefined, not false');
 });
 
 test('and it is not recorded as a pass either', () => {
@@ -364,7 +377,7 @@ test('a re-authenticating session is never recorded as a failed login', () => {
   // The retry loop, and that provedNothing is what it returns.
   assert.match(
     code,
-    /for \(let i = 0; i < \d+; i\+\+\) \{[\s\S]{0,400}?isLive\(\)\) === true[\s\S]{0,300}?provedNothing: true/,
+    /for \(let i = 0; i < \d+; i\+\+\) \{[\s\S]{0,400}?await acceptable\(\)[\s\S]{0,300}?provedNothing: true/,
     'the form-hunt exit must poll isLive() before calling it a failure',
   );
   assert.match(code, /await page\.waitForTimeout\(\d+\)/, 'and must actually wait between asks');

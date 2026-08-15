@@ -81,11 +81,22 @@ test('having had nothing before, any decodable token is a renewal', () => {
 test('the reload clears the token the APP decides from, not just our own copy', () => {
   // The whole bug in one assertion: `delete window.__camphawkRcToken` alone leaves
   // okta-auth-js holding a valid token, so the bootstrap issues no /authorize.
-  const body = renewBody();
-  assert.match(body, /removeItem\('ssoAccessToken'\)/, 'must clear the key the SDK reads');
-  assert.match(body, /removeItem\('accessToken'\)/, 'must clear the fallback key too');
-  assert.ok(/delete window\.__camphawkRcToken/.test(body),
+  //
+  // THE CLEARING MOVED INTO `dropStoredToken` (2026-08-15), shared with `attemptLogin`, so
+  // this now pins BOTH HALVES. Asserting only the helper would pass on a `renewByReload` that
+  // had stopped calling it, and asserting only the call would pass on a helper that cleared
+  // nothing — the extraction trap that made `control-channel.test.mts` green against a
+  // `restart-rc.ps1` which no longer killed anything.
+  const i = src.indexOf('export async function dropStoredToken');
+  assert.ok(i > 0, 'dropStoredToken must exist');
+  const helper = code(src.slice(i, src.indexOf('\n}', i)));
+  assert.match(helper, /removeItem\('ssoAccessToken'\)/, 'must clear the key the SDK reads');
+  assert.match(helper, /removeItem\('accessToken'\)/, 'must clear the fallback key too');
+  assert.ok(/delete window\.__camphawkRcToken/.test(helper),
     'our own captured copy still has to go, or the next read returns it');
+
+  assert.match(renewBody(), /await dropStoredToken\(page\)/,
+    'renewByReload must still do the clearing, or the bootstrap never happens');
 });
 
 test('it waits for a token that is not the one it dropped', () => {

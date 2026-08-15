@@ -74,6 +74,7 @@ import {
 } from './rc-token.mjs';
 import { hasCredentials, attemptLogin } from './rc-autologin.mjs';
 import { shouldRehearse, rehearsalSlot } from './rehearsal.mjs';
+import { requiredTokenSeconds } from './session-coverage.mjs';
 // The same two clock helpers the update guard decides with. Both are pure and both already
 // get the Pacific / zone-less-wall-clock handling right, which is the part that has been
 // got wrong before — a second implementation here would be a second chance to get it wrong.
@@ -173,6 +174,27 @@ const AUTOLOGIN_LEAD_MIN = Number(process.env.RC_AUTOLOGIN_LEAD_MIN || 30);
 const AUTOLOGIN_MIN_TOKEN_MIN = Number(
   process.env.RC_AUTOLOGIN_MIN_TOKEN_MIN || AUTOLOGIN_LEAD_MIN + CART_HOLD_MIN + 5,
 );
+
+/** The margin inside `AUTOLOGIN_MIN_TOKEN_MIN`, named so the live calculation can reuse it. */
+const AUTOLOGIN_MARGIN_MIN = Number(process.env.RC_AUTOLOGIN_MARGIN_MIN || 5);
+
+/**
+ * How many sign-ins one release may cost, and how far apart.
+ *
+ * IT WAS ONE, AND ONE WAS A SINGLE POINT OF FAILURE (2026-08-15). The decision was taken
+ * once at T−30 and never revisited, through thirty minutes in which the token visibly died:
+ * the attempt was spent on a no-op short-circuit at 07:30 and nothing looked again before
+ * the 08:00 release. A budget of one means the FIRST answer is the ONLY answer, and a wrong
+ * first answer costs the morning.
+ *
+ * Two, not more, and the gap is what keeps it honest. The rule being protected is that
+ * repeated logins from this address cost twelve hours of IP block on 2026-08-06 — so this
+ * is deliberately not "retry until it works". Two attempts a few times a month is a
+ * different thing from a retry loop, and the second one is what covers a token that dies
+ * early or a first attempt that proved nothing.
+ */
+const AUTOLOGIN_MAX_ATTEMPTS = Number(process.env.RC_AUTOLOGIN_MAX_ATTEMPTS || 2);
+const AUTOLOGIN_RETRY_GAP_MS = Number(process.env.RC_AUTOLOGIN_RETRY_GAP_MS || 8 * 60_000);
 
 /** Headful by default. RC/Okta fingerprints headless Chromium — the same rule the
  *  rec.gov bot follows, and the reason its cart path is headed too. */
@@ -490,34 +512,135 @@ async function feedFacts() {
  *   • ONE attempt per release, tracked by release time, so a failure never becomes a loop;
  *   • a CAPTCHA aborts and wakes a human rather than retrying (rc-autologin.mjs).
  */
-let autoLoginTriedFor = null;
+/**
+ * EVERY GATE SAYS WHY, AND CONSECUTIVE REPEATS COLLAPSE.
+ *
+ * This function had five `return false` paths and not one of them logged. On 2026-08-15,
+ * working out which had fired took a `tail-log` off the box and 120 lines of scrollback —
+ * for the single most release-critical decision the bot makes. "No credentials stored",
+ * "the feed is unreachable", "already tried" and "the token looks fine" are four different
+ * faults with four different fixes, and they all printed the same nothing. That is the same
+ * shape as `status = 'sent'` meaning only "Twilio returned 2xx".
+ *
+ * The dedupe is why this is affordable: the loop asks every 60 seconds, so an un-collapsed
+ * line would be 1,440 identical entries a day and the log would become unreadable — which
+ * is its own way of hiding the answer.
+ */
+let lastAutoLoginSkip = null;
+function autoLoginSkip(reason) {
+  if (reason !== lastAutoLoginSkip) {
+    log(`   auto-login stood down: ${reason}`);
+    lastAutoLoginSkip = reason;
+  }
+  return false;
+}
+
+/** Per-release sign-in budget. Reset when the release we are watching changes. */
+let autoLogin = { release: null, spent: 0, lastAt: 0 };
+
 async function maybeAutoLogin(ctx, page) {
-  if (!hasCredentials()) return false;
-  const { nextRelease: release } = await feedFacts();
-  if (!release || autoLoginTriedFor === release) return false;
+  if (!hasCredentials()) {
+    return autoLoginSkip('no credentials are stored on this box — run mini-pc\\rc-save-password.bat');
+  }
+  const { nextRelease: release, reachable } = await feedFacts();
+  // UNREACHABLE IS NOT "NO HOLD". Both produce a null release, and one of them means we are
+  // blind rather than idle — the distinction that `hasAvailabilityInRange` returning null
+  // exists to preserve. It cannot be acted on (we do not know if a cart is coming) but it
+  // must not read as a quiet, healthy night.
+  if (!reachable) {
+    return autoLoginSkip('the hold feed is unreachable, so we cannot tell whether a release is coming');
+  }
+  if (!release) return autoLoginSkip('no hold is queued');
+
+  if (autoLogin.release !== release) autoLogin = { release, spent: 0, lastAt: 0 };
 
   const mins = minutesUntil(release);
-  if (mins == null || mins > AUTOLOGIN_LEAD_MIN || mins < -20) return false;
+  if (mins == null) return autoLoginSkip(`could not read the release time (${release})`);
+  if (mins > AUTOLOGIN_LEAD_MIN) {
+    return autoLoginSkip(`the release is ${Math.round(mins)}m away, outside the ${AUTOLOGIN_LEAD_MIN}m lead`);
+  }
+  if (mins < -20) return autoLoginSkip(`the release was ${Math.round(-mins)}m ago, past the retry window`);
 
-  // Already covered? A token with plenty of life left needs no login, and logging in
-  // anyway would be exactly the needless repetition we are avoiding.
+  /**
+   * WHAT "COVERED" MEANS, COMPUTED FROM WHERE WE ACTUALLY ARE.
+   *
+   * `AUTOLOGIN_MIN_TOKEN_MIN` is derived for the moment the lead OPENS (L + cart hold + 5)
+   * and was then applied at every moment inside it. At T−30 that is right; at T−5 it demands
+   * fifty minutes of token to cover twenty minutes of work, so a perfectly adequate session
+   * reads as insufficient and buys a needless sign-in — and the whole point of rationing
+   * logins is not to spend them needlessly.
+   *
+   * The requirement is the same sentence the constant's own comment gives, evaluated now:
+   * alive until the release, plus the cart hold, plus margin.
+   */
+  const needSec = requiredTokenSeconds(mins, CART_HOLD_MIN, AUTOLOGIN_MARGIN_MIN);
+  const covers = (left) => left != null && left > needSec;
+
   const { token } = await readLiveToken(page).catch(() => ({ token: null }));
   const left = tokenSecondsLeft(token);
-  if (left != null && left > AUTOLOGIN_MIN_TOKEN_MIN * 60) return false;
+  if (covers(left)) {
+    return autoLoginSkip(
+      `the token covers this hold (${Math.round(left / 60)}m left, needs ${Math.round(needSec / 60)}m)`);
+  }
 
-  autoLoginTriedFor = release;
-  log(`⏰ hold releases in ${mins}m and the session will not cover it — signing in ONCE`);
+  if (autoLogin.spent >= AUTOLOGIN_MAX_ATTEMPTS) {
+    return autoLoginSkip(
+      `all ${AUTOLOGIN_MAX_ATTEMPTS} sign-in attempts for this release are spent — a human must sign in`);
+  }
+  if (autoLogin.spent > 0 && Date.now() - autoLogin.lastAt < AUTOLOGIN_RETRY_GAP_MS) {
+    const wait = Math.ceil((AUTOLOGIN_RETRY_GAP_MS - (Date.now() - autoLogin.lastAt)) / 60_000);
+    return autoLoginSkip(`waiting ${wait}m before spending the second sign-in attempt`);
+  }
+
+  lastAutoLoginSkip = null;
+  autoLogin.spent += 1;
+  autoLogin.lastAt = Date.now();
+  log(`⏰ hold releases in ${mins}m and the session will not cover it — signing in `
+    + `(attempt ${autoLogin.spent} of ${AUTOLOGIN_MAX_ATTEMPTS})`);
   const r = await attemptLogin(ctx, page, {
+    // THE DEADLINE, HANDED TO THE THING THAT SHORT-CIRCUITS ON IT. Without this,
+    // `attemptLogin` accepts any live session and reports the hold covered — which is
+    // precisely how 2026-08-15 was lost, with this function's own arithmetic saying the
+    // opposite one line earlier.
+    //
+    // `null` when the token cannot be decoded, never `false`: forcing a sign-in drops a
+    // token that may have been fine, and an unknown must not trigger a destructive act.
+    sufficient: async () => {
+      const cur = (await readLiveToken(page).catch(() => ({ token: null }))).token;
+      const secs = tokenSecondsLeft(cur);
+      return secs == null ? null : secs > needSec;
+    },
     homeUrl: RC_HOME,
     isLive: async () => (await sessionLive(ctx, page)).live === true,
     log,
   });
   if (r.ok) {
-    log('  ✓ signed in unattended — the hold is covered');
-    await reportSession('warm', 'signed in automatically before a hold');
+    // SAY WHAT THE TOKEN ACTUALLY IS, rather than asserting the outcome. "the hold is
+    // covered" was printed on 2026-08-15 over a session that died seven minutes before the
+    // release — it was a restatement of the intent, not a reading of the result, and it is
+    // what made the log look like a success for the next thirty minutes.
+    const after = tokenSecondsLeft((await readLiveToken(page).catch(() => ({ token: null }))).token);
+    const enough = covers(after);
+    log(after == null
+      ? `  ✓ ${r.reason} — but the token could not be decoded, so coverage is UNCONFIRMED`
+      : `  ${enough ? '✓' : '✗'} ${r.reason} — token now ${Math.round(after / 60)}m, `
+        + `needs ${Math.round(needSec / 60)}m ${enough ? '(covered)' : '(STILL SHORT)'}`);
+
+    // AN ATTEMPT THAT EXERCISED NOTHING IS NOT AN ATTEMPT. `provedNothing` means RC was
+    // already signed in and no credential was submitted, so nothing was spent and nothing
+    // was learned — refunding it is what lets the T−5 re-check still happen. The retry gap
+    // above is what stops this becoming a loop.
+    if (r.provedNothing) {
+      autoLogin.spent -= 1;
+      log('    (no sign-in was exercised, so the attempt is not counted against the budget)');
+    }
+    await reportSession(enough ? 'warm' : 'dead', enough
+      ? 'signed in automatically before a hold'
+      : `auto sign-in returned ok but the token is still short of the hold: ${r.reason}`);
   } else {
     log(`  ✗ could not sign in: ${r.reason}`);
-    log('    NOT retrying. Repeated logins are what got this address blocked before.');
+    log(`    ${autoLogin.spent} of ${AUTOLOGIN_MAX_ATTEMPTS} attempts used. `
+      + 'Repeated logins are what got this address blocked before.');
     // The real 07:45 failure is the one nobody is watching, so it gets the picture too.
     await saveFailureShot(page, 'autologin');
     await reportSession('dead', `auto sign-in failed: ${r.reason}`);
