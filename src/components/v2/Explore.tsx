@@ -91,7 +91,7 @@ function encodeSearch(s: SearchState): string {
   if (s.weekendsOnly) q.set("weekends", "1");
   if (s.filters.siteType) q.set("type", s.filters.siteType);
   if (s.filters.rvLength) q.set("rv", String(s.filters.rvLength));
-  for (const k of ["electric", "water", "showers", "pets"] as const) {
+  for (const k of ["electric", "showers", "pets"] as const) {
     if (s.filters[k]) q.set(k, "1");
   }
   return q.toString();
@@ -118,7 +118,6 @@ function decodeSearch(q: URLSearchParams): Partial<SearchState> {
       siteType: type === "tent" || type === "rv" || type === "cabin" || type === "group" ? type : null,
       rvLength: Number.isFinite(rv) && rv > 0 ? rv : null,
       electric: q.get("electric") === "1",
-      water: q.get("water") === "1",
       showers: q.get("showers") === "1",
       pets: q.get("pets") === "1",
     },
@@ -366,7 +365,8 @@ export default function Explore() {
     // `p_amenities <@ c.amenities`, so a typo silently returns nothing.
     const amenities: string[] = [];
     if (filters.electric) amenities.push("electric hookup");
-    if (filters.water) amenities.push("drinking water");
+    // No "drinking water" line: the chip was removed 2026-08-15. Its amenity is
+    // rec.gov-only, so ticking it silently excluded every state-portal campground.
     if (filters.showers) amenities.push("showers");
     if (amenities.length) qs.set("amenities", amenities.join(","));
 
