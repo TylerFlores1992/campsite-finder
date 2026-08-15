@@ -13,7 +13,7 @@ import TrustPanel from "./TrustPanel";
 import FavoriteHeart from "./FavoriteHeart";
 import { useFavorites } from "./useFavorites";
 import { providerLabel, supportsAutoCart } from "./providers";
-import { divisionLabel, parseCampgroundName } from "./campground-name";
+import { divisionLabel, parseCampgroundName, placeLabel } from "./campground-name";
 import { addDays, formatRange, nightsBetween, thisWeekendRange, todayISO } from "@/components/ui/date";
 import { useIsNativeApp } from "@/lib/native/context";
 import { NATIVE_LINKOUT, SUBSCRIBE_HREF } from "./nativeSubscribe";
@@ -449,12 +449,8 @@ export default function NewWatch({
                         className="min-w-0 flex-1 cursor-pointer bg-ch-card px-3 py-2 text-left text-ch-body hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
                       >
                         <span className="font-semibold">{parseCampgroundName(f.name).full}</span>
-                        {f.city && (
-                          <span className="text-ch-muted">
-                            {" "}
-                            · {f.city}
-                            {f.state ? `, ${f.state}` : ""}
-                          </span>
+                        {placeLabel(f.city, f.state) && (
+                          <span className="text-ch-muted"> · {placeLabel(f.city, f.state)}</span>
                         )}
                       </button>
                       <FavoriteHeart
@@ -488,12 +484,8 @@ export default function NewWatch({
                             {s.divisionCount} parts
                           </span>
                         )}
-                        {s.city && (
-                          <span className="text-ch-muted">
-                            {" "}
-                            · {s.city}
-                            {s.state ? `, ${s.state}` : ""}
-                          </span>
+                        {placeLabel(s.city, s.state) && (
+                          <span className="text-ch-muted"> · {placeLabel(s.city, s.state)}</span>
                         )}
                       </button>
                     </li>
