@@ -247,9 +247,33 @@ export async function takeSample(opts = {}) {
  * ITS limit resetting is an RC login from an address that has already been blocked once.
  * Match the guard to what a mistake costs.
  *
+ * ── A FORCED SAMPLE, FOR A FAMILY THE INTERVAL CANNOT SEE (2026-08-15) ────────────────────
+ * The interval cannot measure the rec.gov keepalive family, and the reason is arithmetic
+ * rather than luck. `keepSessionsWarm` opens a browser per enrolled user every thirty
+ * minutes and closes it again in a few SECONDS — measured from the box's own log against
+ * these sample timestamps:
+ *
+ *     [04:01:23] interval fires   [04:01:27] user A warmed   [04:01:49] user B warmed
+ *     samples at 03:59:34, 04:01:35, 04:03:35 — the one inside the window fell in the GAP
+ *
+ * That is under 1% coverage, so 175 consecutive samples reporting `recgov 0` is the EXPECTED
+ * reading and not a lead. Worse, a verdict needs a rate, the rate rule pairs two samples of
+ * the same pid, and the cadence is two minutes — so a rate would need the process to outlive
+ * two minutes. A five-second browser cannot produce one rarely; it cannot produce one at all.
+ *
+ * So the caller that KNOWS the browser is open — because it opened it — asks for a sample
+ * then. Same rule as `rc-keepwarm` posting its own verdict rather than a watcher inferring
+ * it: the process that knows is the process that reports.
+ *
+ * A forced sample deliberately does NOT reset the interval clock. The periodic series is the
+ * backbone and its cadence should stay even; and leaving it alone means a periodic sample can
+ * land shortly after a forced one, which is the only way this instrument ever pairs two
+ * readings of a keepalive browser — it happens exactly when the browser FAILED to close,
+ * which is the runaway case.
+ *
  * @typedef {Record<string, number | string | boolean | null>} MemorySample
  * @param {{
- *   post: (sample: MemorySample) => Promise<unknown>,
+ *   post: (sample: MemorySample, source?: string) => Promise<unknown>,
  *   log?: (msg: string) => void,
  *   now?: () => number,
  *   take?: () => Promise<MemorySample | null>,
@@ -265,14 +289,26 @@ export function createSampler({ post, log = () => {}, now = () => Date.now(), ta
   // monotonic clock. The first sample dates the beginning of the series and is worth having.
   let last = Number.NEGATIVE_INFINITY;
   let inFlight = false;
-  return async function maybeSample() {
-    if (inFlight || now() - last < SAMPLE_EVERY_MS) return false;
+  /**
+   * @param {{ force?: boolean, source?: string }} [opts]
+   *   `force` skips the interval (see the header). `source` is stored on the row, so a
+   *   forced reading is never mistaken for the periodic series when the two are compared.
+   */
+  return async function maybeSample({ force = false, source } = {}) {
+    if (inFlight) {
+      // SAY SO WHEN A FORCED SAMPLE IS LOST. The interval can afford to skip a tick; a forced
+      // one is the only sighting of a browser that exists for about five seconds, and a
+      // silent miss is indistinguishable from a family that was not running.
+      if (force) log('  (memory sample: a reading was already in flight — keepalive not sampled)');
+      return false;
+    }
+    if (!force && now() - last < SAMPLE_EVERY_MS) return false;
     inFlight = true;
-    last = now();
+    if (!force) last = now();
     try {
       const sample = await readOne();
       if (!sample) return false;
-      await post(sample);
+      await post(sample, source);
       return true;
     } catch (e) {
       // Never let the measurement break the thing being measured. This is fire-and-forget by

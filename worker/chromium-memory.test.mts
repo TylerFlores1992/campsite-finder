@@ -140,6 +140,101 @@ test('the sampler throttles, and a failure never escapes it', async () => {
   assert.equal(await boom(), false, 'it must swallow the failure, not throw into the tick');
 });
 
+/**
+ * THE FORCED SAMPLE, AND WHY EACH PROPERTY IS PINNED (2026-08-15).
+ *
+ * The interval cannot measure the rec.gov keepalive family: those browsers live a few
+ * seconds, twice per thirty minutes, so 175 consecutive samples read `recgov 0` and that is
+ * the EXPECTED reading rather than a lead. `keepSessionsWarm` therefore asks for a sample
+ * while its own browser is open. Every assertion below is a way that fix could be present
+ * and inert — the shape that has already cost this repo two commits (`6006428` changed only
+ * the copy; the `--claimed` fix was never passed by its caller).
+ */
+test('the forced sample bypasses the throttle and carries its own source', async () => {
+  let now = 0;
+  const posted: Array<string | undefined> = [];
+  const sample = createSampler({
+    now: () => now,
+    take: async () => parseSample(`M|1|2|3\nP|1|5|${RC}`),
+    post: async (_s: unknown, source?: string) => { posted.push(source); },
+  });
+
+  assert.equal(await sample(), true, 'the first periodic sample');
+  // Well inside SAMPLE_EVERY_MS: the periodic path must refuse, the forced path must not.
+  now += 1000;
+  assert.equal(await sample(), false, 'the interval still applies to periodic samples');
+  assert.equal(await sample({ force: true, source: 'bot-keepalive' }), true,
+    'a forced sample must ignore the interval, or it measures the family it exists for never');
+  assert.deepEqual(posted, [undefined, 'bot-keepalive'],
+    'the source must reach post(), or a forced reading is indistinguishable from the series');
+});
+
+test('a forced sample does NOT reset the interval clock', async () => {
+  // If it did, a keepalive would silently push the periodic series out by two minutes twice
+  // an hour — and the periodic sample landing just after a forced one is the ONLY way this
+  // instrument ever pairs two readings of a keepalive browser, which happens exactly when
+  // that browser failed to close. Resetting the clock would delete the runaway case.
+  let now = 0;
+  let taken = 0;
+  const sample = createSampler({
+    now: () => now,
+    take: async () => { taken++; return parseSample(`M|1|2|3\nP|1|5|${RC}`); },
+    post: async () => {},
+  });
+  assert.equal(await sample(), true);
+  now += SAMPLE_EVERY_MS - 1;
+  assert.equal(await sample({ force: true, source: 'bot-keepalive' }), true);
+  now += 2; // now past the interval measured from the PERIODIC sample, not the forced one
+  assert.equal(await sample(), true, 'the forced sample must not have moved the interval');
+  assert.equal(taken, 3);
+});
+
+test('a forced sample that is lost to an in-flight read says so', async () => {
+  // The interval can afford a skipped tick. A forced one is the only sighting of a
+  // five-second browser, and a silent miss reads as "the family was not running" — the exact
+  // ambiguity the C| line was added to remove one level down.
+  const logs: string[] = [];
+  // Held on an object, not in a `let`: control-flow analysis narrows a `let` initialised to
+  // null and never sees the assignment made inside the promise executor, so calling it back
+  // is a type error on a value that is provably set.
+  const held: { release?: () => void } = {};
+  const sample = createSampler({
+    now: () => 0,
+    log: (m: string) => logs.push(m),
+    take: () => new Promise((res) => { held.release = () => res(parseSample(`M|1|2|3`)); }),
+    post: async () => {},
+  });
+  const first = sample();                       // parks in flight
+  const lost = await sample({ force: true, source: 'bot-keepalive' });
+  assert.equal(lost, false);
+  assert.ok(logs.some((l) => /keepalive not sampled/i.test(l)),
+    'a lost forced sample must be audible');
+  held.release?.();
+  await first;
+});
+
+test('keepSessionsWarm actually takes the forced sample, INSIDE the browser block', () => {
+  // The fix is worthless if it is not called, and worse than worthless if it is called after
+  // the context closes: the scan runs in a separate PowerShell process, so an unawaited or
+  // late sample measures a browser that no longer exists — precisely the thing it was added
+  // to see.
+  const bot = readFileSync('scripts/auto-cart-bot/bot.mjs', 'utf8');
+  const call = /await\s+sampleMemory\(\{[^}]*force:\s*true[^}]*source:\s*'bot-keepalive'[^}]*\}\)/;
+  assert.match(bot, call, 'bot.mjs must AWAIT a forced, sourced sample');
+
+  // It must sit between opening the browser and returning from the callback.
+  const block = bot.slice(bot.indexOf('const state = await withBrowser('));
+  const end = block.indexOf('{ headless: false }');
+  assert.ok(end > 0, 'could not find the keepalive withBrowser block');
+  assert.match(block.slice(0, end), call,
+    'the forced sample must be inside the keepalive withBrowser callback, while the browser is open');
+
+  // And the source must survive the post() closure — bound as a constant 'bot', every forced
+  // reading would land in the series it is meant to be told apart from.
+  assert.match(bot, /post:\s*\(memory,\s*source\s*=\s*'bot'\)\s*=>\s*reportControl\(\{\s*memory,\s*source\s*\}\)/,
+    "bot.mjs's post() must forward the source rather than hard-coding 'bot'");
+});
+
 test('a verdict is refused until enough pairs can actually be compared', () => {
   // Same discipline as MIN_RENEWAL_TESTS: rows fetched is not evidence gathered.
   const rows = Array.from({ length: 4 }, (_, i) => row({ taken_at: at(i) }));

@@ -165,7 +165,7 @@ async function reportControl(body) {
  * new endpoint.
  */
 const sampleMemory = createSampler({
-  post: (memory) => reportControl({ memory, source: 'bot' }),
+  post: (memory, source = 'bot') => reportControl({ memory, source }),
   log,
 });
 
@@ -372,6 +372,21 @@ async function keepSessionsWarm() {
       // the user only discovered on a missed cancellation.
       const state = await withBrowser(user.userId, async (ctx) => {
         const first = await recgovLoginState(ctx);
+        // THE ONLY MOMENT THE REC.GOV FAMILY IS VISIBLE — see memory-sample.mjs. The two
+        // browsers this pass opens live a few seconds each, so the 2-minute series samples
+        // them essentially never (175 consecutive rows read `recgov 0`, which is the
+        // EXPECTED reading and not a lead). This process knows the browser is open because
+        // it opened it, so it is the one that can take the reading.
+        //
+        // AWAITED, NOT FIRE-AND-FORGET. The scan runs in a separate PowerShell process and
+        // the browser must still exist while it runs; unawaited, `withBrowser` closes the
+        // context first and the sample measures precisely the thing it was added to see.
+        // The cost is ~1s on a path that is not latency-critical — unlike the cart, nothing
+        // is racing a release here.
+        //
+        // Taken AFTER the first login check so the page has actually loaded: a browser
+        // sampled mid-launch reports a baseline that no later reading can be compared with.
+        await sampleMemory({ force: true, source: 'bot-keepalive' });
         if (first !== 'out') return first;
         await sleep(5000);
         return await recgovLoginState(ctx); // confirm before we destroy anything
