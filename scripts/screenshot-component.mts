@@ -638,6 +638,39 @@ const PRESETS: Record<string, Preset> = {
       export const node = <NewWatch />;`,
     frame: 'w-full max-w-3xl mx-auto',
   },
+  'ch-park-watch': {
+    label: 'WatchCard — a park watch (4 divisions) above an ordinary single-campground one',
+    // The point of the shot is that the two are DISTINGUISHABLE. Before this, a park
+    // watch rendered as its representative division and looked identical to the card
+    // below it, so a watch covering four campgrounds was indistinguishable from one
+    // covering a quarter of that.
+    entry: `import WatchCard from '@/components/v2/WatchCard';
+      const DIVS = [
+        { id: 'rc-1', name: 'Carpinteria SB — Anacapa (sites 101-127 & group sites)' },
+        { id: 'rc-2', name: 'Carpinteria SB — San Miguel (sites 401-460)' },
+        { id: 'rc-3', name: 'Carpinteria SB — Santa Cruz (sites 201-244 & group sites)' },
+        { id: 'rc-4', name: 'Carpinteria SB — Santa Rosa (sites 301-380)' },
+      ];
+      const base = {
+        start_date: '2026-10-02', end_date: '2026-10-05',
+        flex_nights: null, flex_days: null, active: true, auto_cart: false,
+        manage_token: 'tok', campground_source: 'reservecalifornia',
+      };
+      export const node = (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <WatchCard
+            watch={{ ...base, id: 'w1', campground_id: 'rc-1',
+                     campground_name: 'Carpinteria SB — San Miguel (sites 401-460)',
+                     divisions: DIVS }}
+            stalledSources={new Set()} sessionExpired={false} />
+          <WatchCard
+            watch={{ ...base, id: 'w2', campground_id: 'r-9',
+                     campground_name: 'GULL LAKE CAMPGROUND', campground_source: 'ridb' }}
+            stalledSources={new Set()} sessionExpired={false} />
+        </div>
+      );`,
+    frame: 'max-w-3xl w-full mx-auto',
+  },
   'ch-filters-rv': {
     label: 'FilterPanel — Hookups inside Site type, Pad length its own always-visible control',
     // RESTRUCTURED 2026-08-15. Showers and pets are gone (both rec.gov-only in effect);
