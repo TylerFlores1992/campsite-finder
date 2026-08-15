@@ -5,7 +5,7 @@ import { requireAuth, syncUser, hasActiveSubscription } from '@/lib/auth';
 import { createAlert, cancelAlert } from '@/lib/campflare/client';
 import { getOpeningRate } from '@/lib/likelihood';
 import { manageTokenFor, manageLink } from '@/lib/notifications/actions';
-import { WATCH_LIMIT } from '@/lib/limits';
+import { WATCH_LIMIT, MAX_DIVISIONS_PER_WATCH } from '@/lib/limits';
 import { cleanSiteIds } from '@/lib/watch-mutes';
 import { currentUserIsAdmin } from '@/lib/admin';
 import type { CampflareDateRange } from '@/lib/campflare/types';
@@ -124,6 +124,33 @@ export async function GET(request: NextRequest) {
     })
   );
 
+  // The divisions each watch covers, in ONE query rather than per watch. Best-effort:
+  // this is a label on a card, and a watch list that fails because a badge could not be
+  // computed is a worse outcome than a missing badge.
+  try {
+    const ids = rows.map((w) => String(w.id));
+    if (ids.length > 0) {
+      const divs = await query<{ watch_id: string; campground_id: string; name: string }>(
+        `SELECT wc.watch_id, wc.campground_id, c.name
+           FROM watch_campgrounds wc JOIN campgrounds c ON c.id = wc.campground_id
+          WHERE wc.watch_id = ANY($1::text[]) ORDER BY c.name`,
+        [ids],
+      );
+      const byWatch = new Map<string, Array<{ id: string; name: string }>>();
+      for (const d of divs) {
+        const list = byWatch.get(d.watch_id) ?? [];
+        list.push({ id: d.campground_id, name: d.name });
+        byWatch.set(d.watch_id, list);
+      }
+      for (const w of rows) {
+        const list = byWatch.get(String(w.id));
+        if (list && list.length > 1) w.divisions = list;
+      }
+    }
+  } catch (err) {
+    console.error('[watches] divisions lookup failed:', (err as Error).message);
+  }
+
   // null = no cap (admin). The UI must not recompute this from an email or a flag
   // of its own: lib/admin is `server-only` precisely so the roster never reaches the
   // bundle, and a second definition of "is this an admin?" is a second thing that
@@ -151,7 +178,35 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { campgroundId, startDate, endDate, minNights = 1, siteType, flexNights, flexDays, autoCart, mutedSiteIds } = body;
+  const { campgroundId, campgroundIds, startDate, endDate, minNights = 1, siteType, flexNights, flexDays, autoCart, mutedSiteIds } = body;
+
+  // ONE watch can cover several divisions of a park (migration 070). The representative
+  // stays `watches.campground_id` — what the watch is named after and what every
+  // existing reader already uses — and the extra divisions go in `watch_campgrounds`.
+  //
+  // A single-campground request writes NO join rows at all, so it is indistinguishable
+  // from a pre-070 watch everywhere downstream, including in the poller.
+  const requested: string[] = Array.isArray(campgroundIds) && campgroundIds.length > 0
+    ? Array.from(new Set(campgroundIds.filter((c: unknown): c is string => typeof c === 'string' && c.length > 0)))
+    : (typeof campgroundId === 'string' && campgroundId ? [campgroundId] : []);
+
+  if (requested.length === 0) {
+    return NextResponse.json({ error: 'campground_required', message: 'Pick a campground to watch.' }, { status: 400 });
+  }
+  if (requested.length > MAX_DIVISIONS_PER_WATCH) {
+    // The bound that replaces the watch cap for park watches — see lib/limits.
+    return NextResponse.json(
+      {
+        error: 'too_many_divisions',
+        message: `A watch can cover up to ${MAX_DIVISIONS_PER_WATCH} parts of a park. Pick fewer.`,
+      },
+      { status: 400 },
+    );
+  }
+  // The representative is the FIRST requested id, and it must be one of them — a
+  // representative outside the set would name the watch after a campground it does not
+  // actually watch.
+  const primaryId: string = requested[0];
 
   /**
    * SITES MUTED AT CREATION (2026-08-15).
@@ -171,6 +226,10 @@ export async function POST(request: NextRequest) {
    * the two surfaces cannot disagree about what a usable id is. Anything unusable is
    * DROPPED rather than 400'd: a bad entry in this list must never cost the user the
    * watch itself, which is the thing they actually came to create.
+   *
+   * A PARK WATCH SENDS NONE. The picker is hidden for a multi-division park (there is no
+   * single inventory it could describe) and the client gates the field on that, so this
+   * arrives empty rather than carrying one division's ids into a watch covering several.
    */
   const mutedVal = cleanSiteIds(mutedSiteIds);
   // Per-watch auto-cart. Defaults TRUE when the caller says nothing, which keeps the
@@ -180,7 +239,7 @@ export async function POST(request: NextRequest) {
   // who hasn't set it up. `false` is what finally makes the toggle mean something.
   const autoCartVal = autoCart === undefined ? true : !!autoCart;
 
-  if (!campgroundId || !startDate || !endDate) {
+  if (!startDate || !endDate) {
     return NextResponse.json({ error: 'campgroundId, startDate, endDate required' }, { status: 400 });
   }
 
@@ -213,7 +272,7 @@ export async function POST(request: NextRequest) {
   const existing = await queryOne<{ id: string; campflare_sub_id: string | null }>(
     `SELECT id, campflare_sub_id FROM watches
      WHERE user_id = $1 AND campground_id = $2 AND start_date = $3 AND end_date = $4 AND active = true`,
-    [userId, campgroundId, startDate, endDate]
+    [userId, primaryId, startDate, endDate]
   );
 
   // Cap active watches per account. Replacing an existing watch (same campground +
@@ -271,8 +330,34 @@ export async function POST(request: NextRequest) {
     `INSERT INTO watches (user_id, campground_id, start_date, end_date, min_nights, site_type, flex_nights, flex_days, auto_cart, muted_site_ids)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING id`,
-    [userId, campgroundId, startDate, endDate, minNights, siteType ?? null, flexNightsVal, flexDaysVal, autoCartVal, mutedVal]
+    [userId, primaryId, startDate, endDate, minNights, siteType ?? null, flexNightsVal, flexDaysVal, autoCartVal, mutedVal]
   );
+
+  // The divisions. WRITTEN ONLY FOR A GENUINELY MULTI-CAMPGROUND WATCH — a single
+  // campground writes nothing, so the row stays indistinguishable from a pre-070 watch
+  // and the poller's expansion falls back to `campground_id` exactly as before.
+  //
+  // NOT best-effort: if these rows fail, the watch would silently cover one division
+  // instead of the four the user asked for, and nothing downstream could tell. Better to
+  // fail the request and let them retry than to create a watch that quietly does less
+  // than it says. The watch row is removed again so a retry is clean.
+  if (requested.length > 1) {
+    try {
+      await mutate(
+        `INSERT INTO watch_campgrounds (watch_id, campground_id)
+         SELECT $1, c.id FROM campgrounds c WHERE c.id = ANY($2::text[]) AND NOT c.hidden
+         ON CONFLICT DO NOTHING`,
+        [row.id, requested],
+      );
+    } catch (err) {
+      await mutate(`DELETE FROM watches WHERE id = $1`, [row.id]).catch(() => {});
+      console.error('[watches] could not attach divisions:', (err as Error).message);
+      return NextResponse.json(
+        { error: 'divisions_failed', message: "Couldn't save the parts of that park. Try again." },
+        { status: 500 },
+      );
+    }
+  }
 
   const webhookBase = process.env.NEXT_PUBLIC_APP_URL
     ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
@@ -281,7 +366,7 @@ export async function POST(request: NextRequest) {
   // are covered exclusively by our own Fly.io poller.
   const cgSource = await queryOne<{ source: string }>(
     `SELECT source FROM campgrounds WHERE id = $1`,
-    [campgroundId]
+    [primaryId]
   );
 
   // Flexible watches skip Campflare: it monitors one fixed range per arrival and can't
@@ -290,7 +375,7 @@ export async function POST(request: NextRequest) {
   if (!isFlex && cgSource?.source === 'ridb' && webhookBase && process.env.CAMPFLARE_API_KEY) {
     try {
       const alert = await createAlert({
-        campground_ids: [campgroundId],
+        campground_ids: [primaryId],
         parameters: {
           date_ranges: buildDateRanges(startDate, endDate, minNights),
           campsite_kinds: siteType ? [siteType] : undefined,

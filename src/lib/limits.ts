@@ -9,6 +9,26 @@
 export const WATCH_LIMIT = 6;
 
 /**
+ * How many campgrounds one watch may cover (migration 070).
+ *
+ * A park watch counts ONCE against WATCH_LIMIT, which is the point of it — but that
+ * removes the only thing bounding how many campgrounds an account can put in front of
+ * the poller. This is the replacement bound.
+ *
+ * TEN, measured against the catalog on 2026-08-15: of the 321 parks with more than one
+ * division, 87 have 2, 75 have 3, 50 have 4 and 86 have 5-9 — so ten covers 298 of them
+ * whole. Only 23 exceed it, and for those the division picker already lets the user
+ * choose which parts they want, so nothing becomes unwatchable. It keeps the worst case
+ * at 6 x 10 = 60 campgrounds instead of 6 x 70 = 420.
+ *
+ * WHY THE CEILING MATTERS AT ALL: multi-division parks are ReserveCalifornia and the
+ * state portals, NOT recreation.gov — so this does not touch the rec.gov budget that
+ * `poller.capacity` gauges. What it loads is UseDirect through /api/rc-proxy, whose WAFs
+ * meter per IP, and every division is another campground polled every 15 seconds.
+ */
+export const MAX_DIVISIONS_PER_WATCH = 10;
+
+/**
  * How long ReserveCalifornia keeps a site in a cart before dropping it.
  *
  * **READ OFF RC'S BUNDLE, NEVER OBSERVED.** The bundle exposes `extendShoppingCartTimer`

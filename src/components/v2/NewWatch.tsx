@@ -19,7 +19,7 @@ import { useIsNativeApp } from "@/lib/native/context";
 import { NATIVE_LINKOUT, SUBSCRIBE_HREF } from "./nativeSubscribe";
 import SubscribeCta, { useAccountGate } from "./SubscribeCta";
 import type { Campground } from "@/lib/types";
-import { WATCH_LIMIT } from "@/lib/limits";
+import { WATCH_LIMIT, MAX_DIVISIONS_PER_WATCH } from "@/lib/limits";
 
 /**
  * New watch — now the only place a watch is created.
@@ -122,7 +122,6 @@ export default function NewWatch({
   // ordinary single campground and the section never renders.
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
-  const [partial, setPartial] = useState<string | null>(null);
 
   // A site id is only meaningful at the campground it came from. Carrying mutes across
   // a change of campground would post ids that either match nothing or — worse, since
@@ -200,7 +199,6 @@ export default function NewWatch({
     setQ(s.name);
     setSuggestions([]);
     setPickerOpen(false);
-    setPartial(null);
     // ALL CHECKED BY DEFAULT. Someone who searched for the park and picked it wants
     // the park; making them tick four boxes to get what they just asked for is the
     // work this screen is supposed to remove.
@@ -237,92 +235,75 @@ export default function NewWatch({
 
     setSaving(true);
     setError(null);
-    setPartial(null);
     setNeedsSubscription(false);
     setSignedOut(false);
 
-    const made: string[] = [];
     try {
-      // SEQUENTIAL, and it stops at the first refusal. Firing these in parallel would
-      // race the server's own quota check and could overshoot the cap; it would also
-      // mean up to seventy simultaneous POSTs on Ohio's largest park. Stopping on the
-      // first 409 is what bounds that naturally.
-      for (const t of targets) {
-        const r = await fetch("/api/watches", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            campgroundId: t.id,
-            startDate: range.start,
-            endDate: range.end,
-            // siteType is NOT SENT. Nothing in worker/ reads `site_type`, so
-            // transmitting it only made a dead control look alive; the picker itself
-            // was removed from this screen for the same reason. Kept out of the
-            // divisions work deliberately — this loop changes WHICH campgrounds are
-            // watched, not what counts as a match within one.
-            // The auto-cart toggle was PURELY DECORATIVE until 2026-08-01 — its value
-            // was never sent, the column was never written, and the poller decided the
-            // auto-cart lane from the account-level setting alone. Turning it off
-            // carted anyway.
-            autoCart,
-            // MUTES RIDE ONLY THE CAMPGROUND THEY WERE LOADED FOR. Site ids are
-            // per-campground, and rec.gov's are GLOBAL — so applying this park's list
-            // to a sibling division would not merely fail to match, it could mute a
-            // real site the user never saw. The picker is hidden for a multi-division
-            // park anyway (there is no single inventory to show), so this guard is the
-            // second of two; per-division muting is available on each watch afterwards.
-            ...(muted.size && t.id === campgroundId ? { mutedSiteIds: [...muted] } : {}),
-            ...(mode === "flexible"
-              ? { flexNights, ...(weekendsOnly ? { flexDays: "weekend" } : {}) }
-              : {}),
-          }),
-        });
+      // ONE watch covering every checked division (migration 070). It counts once
+      // against the 6-watch cap, which is the whole point of doing it server-side
+      // rather than looping here: an earlier version POSTed once per division, and a
+      // park then ate as many slots as it had parts.
+      const r = await fetch("/api/watches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          campgroundId: targets[0].id,
+          // Sent even for a single campground, so there is one code path. The server
+          // writes NO join rows for a list of one, which is what keeps such a watch
+          // byte-identical to a pre-070 one all the way down to the poller.
+          campgroundIds: targets.map((t) => t.id),
+          startDate: range.start,
+          endDate: range.end,
+          // siteType is NOT SENT. Nothing in worker/ reads `site_type`, so
+          // transmitting it only made a dead control look alive; the picker itself
+          // was removed from this screen for the same reason.
+          // The auto-cart toggle was PURELY DECORATIVE until 2026-08-01 — its value
+          // was never sent, the column was never written, and the poller decided the
+          // auto-cart lane from the account-level setting alone. Turning it off
+          // carted anyway.
+          autoCart,
+          // MUTES RIDE ONLY A SINGLE-CAMPGROUND WATCH. The list is loaded for ONE
+          // campground, and site ids are per-campground — rec.gov's are GLOBAL — so
+          // attaching it to a watch covering four divisions could mute a real site the
+          // user never saw. The picker is already hidden for a multi-division park
+          // (there is no single inventory it could describe), so this is the second of
+          // two guards; those users mute per watch afterwards.
+          ...(muted.size && targets.length === 1 ? { mutedSiteIds: [...muted] } : {}),
+          ...(mode === "flexible"
+            ? { flexNights, ...(weekendsOnly ? { flexDays: "weekend" } : {}) }
+            : {}),
+        }),
+      });
 
-        if (r.status === 402) {
-          setNeedsSubscription(true);
-          return;
-        }
-        if (r.status === 401) {
-          // NOT a redirect. Hard-navigating to /sign-in threw away the campground,
-          // the dates and every filter the user had just set, and they came back
-          // to an empty form with no idea what happened. Say what's wrong and let
-          // them sign in from here - the form is still sitting there afterwards.
-          setSignedOut(true);
-          return;
-        }
-        if (r.status === 409) {
-          // The cap, hit part-way through a multi-division park. Say exactly how far
-          // it got: "nothing happened" and "three of four are now running" need
-          // different next actions from the user, and a bare limit message implies
-          // the first.
-          if (made.length > 0) {
-            setPartial(
-              `Watching ${made.length} of ${targets.length}: ${made.join(", ")}. ` +
-                `That is the ${WATCH_LIMIT}-watch limit - delete one to add the rest.`,
-            );
-          } else {
-            setError(`You've hit the ${WATCH_LIMIT}-watch limit. Delete one to add another.`);
-          }
-          return;
-        }
-        if (!r.ok) {
-          const j = (await r.json().catch(() => null)) as { message?: string; error?: string } | null;
-          throw new Error(j?.message ?? j?.error ?? `Couldn't create the watch (${r.status})`);
-        }
-        made.push(divisionLabel(t.name));
+      if (r.status === 402) {
+        setNeedsSubscription(true);
+        return;
+      }
+      if (r.status === 401) {
+        // NOT a redirect. Hard-navigating to /sign-in threw away the campground,
+        // the dates and every filter the user had just set, and they came back
+        // to an empty form with no idea what happened. Say what's wrong and let
+        // them sign in from here — the form is still sitting there afterwards.
+        setSignedOut(true);
+        return;
+      }
+      if (r.status === 409) {
+        setError(`You've hit the ${WATCH_LIMIT}-watch limit. Delete one to add another.`);
+        return;
+      }
+      if (!r.ok) {
+        const j = (await r.json().catch(() => null)) as { message?: string; error?: string } | null;
+        throw new Error(j?.message ?? j?.error ?? `Couldn't create the watch (${r.status})`);
       }
 
       // The native shell asks for notification permission off the back of this,
       // rather than on first load when the user has nothing to be notified about
-      // and no reason to say yes (see NativeBridge). No-op on the web - nothing
+      // and no reason to say yes (see NativeBridge). No-op on the web — nothing
       // listens there.
       window.dispatchEvent(new CustomEvent("camphawk:watch-created"));
       router.push("/watches");
     } catch (e) {
-      // Anything already created STAYS created - the rows are real and the poller is
-      // already running them. Saying so stops the user re-submitting and doubling up.
-      const msg = e instanceof Error ? e.message : "Couldn't create the watch";
-      setError(made.length > 0 ? `${msg}. ${made.length} of ${targets.length} were still created.` : msg);
+      setError(e instanceof Error ? e.message : "Couldn't create the watch");
     } finally {
       setSaving(false);
     }
@@ -521,8 +502,8 @@ export default function NewWatch({
               </ul>
             </div>
             <p className="mt-2 px-0.5 text-ch-fine leading-normal text-ch-muted">
-              Each part you keep becomes its own watch, and counts towards your{" "}
-              {WATCH_LIMIT}.
+              All the parts you keep are watched under ONE watch, so a whole park still
+              counts as one of your {WATCH_LIMIT}. Up to {MAX_DIVISIONS_PER_WATCH}.
             </p>
           </fieldset>
         )}
@@ -849,15 +830,6 @@ export default function NewWatch({
         {error && (
           <p role="alert" className="mt-2.5 text-ch-fine text-ch-alert">
             {error}
-          </p>
-        )}
-        {/* PARTIAL SUCCESS IS NOT AN ERROR, and must not be coloured like one. Some
-            watches are now running and the user needs to know which, so they neither
-            re-submit the lot nor assume nothing happened. Kept out of the red style
-            for that reason. */}
-        {partial && (
-          <p role="status" className="mt-2.5 text-ch-fine leading-normal text-ch-ink-2">
-            {partial}
           </p>
         )}
       </aside>

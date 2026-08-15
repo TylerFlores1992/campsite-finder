@@ -75,9 +75,19 @@ export async function getShardCoverage(): Promise<ShardCoverage> {
  */
 export async function getPollerCapacity(machines: number): Promise<PollerCapacity> {
   const demandRow = await queryOne<{ n: number }>(
-    `SELECT COUNT(DISTINCT (w.campground_id, to_char(m, 'YYYY-MM')))::int AS n
+    `SELECT COUNT(DISTINCT (c.id, to_char(m, 'YYYY-MM')))::int AS n
        FROM watches w
-       JOIN campgrounds c ON c.id = w.campground_id
+       -- Every campground the watch covers, not just its representative. A park watch
+       -- (migration 070) counts ONCE against WATCH_LIMIT but polls each division, so
+       -- counting only campground_id here would under-report the real fetch streams --
+       -- which is the one number this gauge exists to get right.
+       CROSS JOIN LATERAL (
+         SELECT COALESCE(
+           (SELECT array_agg(wc.campground_id) FROM watch_campgrounds wc WHERE wc.watch_id = w.id),
+           ARRAY[w.campground_id]) AS ids
+       ) e
+       CROSS JOIN LATERAL unnest(e.ids) AS pair(campground_id)
+       JOIN campgrounds c ON c.id = pair.campground_id
        CROSS JOIN LATERAL generate_series(
          date_trunc('month', GREATEST(w.start_date, CURRENT_DATE)::timestamp),
          date_trunc('month', w.end_date::timestamp),
