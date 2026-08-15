@@ -9,6 +9,7 @@ import Tag from "@/components/ui/Tag";
 import Collapsible from "@/components/ui/Collapsible";
 import SiteMuteList, { type MuteSite } from "./SiteMuteList";
 import { providerLabel, supportsAutoCart } from "./providers";
+import { divisionLabel, parseCampgroundName } from "./campground-name";
 import { formatRange, nightsBetween, type ISODate } from "@/components/ui/date";
 
 /**
@@ -49,6 +50,8 @@ interface Watch {
   id: string;
   campground_id: string;
   campground_name: string;
+  /** Every campground this watch covers. Present only when there is more than one. */
+  divisions?: Array<{ id: string; name: string }>;
   source: string;
   reservations_url: string | null;
   start_date: string;
@@ -290,9 +293,41 @@ export default function ManageWatch({ token }: { token: string }) {
           {watch.auto_cart && supportsAutoCart(watch.source) && <Tag kind="cart">Auto-cart</Tag>}
           <Tag kind="src">{providerLabel(watch.source, watch.campground_id)}</Tag>
         </div>
+        {/* A park watch is titled after the PARK. `campground_name` is the
+            representative division — one of four for Carpinteria — so using it whole
+            names the watch after a quarter of what it covers. Same rule as WatchCard. */}
         <h1 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em]">
-          {watch.campground_name}
+          {watch.divisions
+            ? parseCampgroundName(watch.campground_name).park
+            : parseCampgroundName(watch.campground_name).full}
         </h1>
+        {watch.divisions && (
+          <div className="mt-2 rounded-[13px] border border-ch-line bg-ch-card px-3.5 py-3">
+            <p className="text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
+              {watch.divisions.length} parts of this park
+            </p>
+            {/* LISTED IN FULL here, unlike the watch card's four-name cap. This is the
+                page you open to change a watch, so the complete answer to "what does
+                this cover?" is worth the vertical space; the card is scanned, this is
+                read. */}
+            <ul className="mt-1.5 space-y-0.5">
+              {watch.divisions.map((d) => (
+                <li key={d.id} className="text-ch-fine leading-normal text-ch-ink-2">
+                  {divisionLabel(d.name)}
+                </li>
+              ))}
+            </ul>
+            {/* SAID PLAINLY, because the mute list below cannot honour it. Site ids are
+                per-campground and /manage can only enumerate the representative
+                division's inventory, so muting here does not reach the others. Leaving
+                that unsaid would make a working control look broken on the parts it
+                cannot see. */}
+            <p className="mt-2 text-ch-fine leading-normal text-ch-muted">
+              Muting below covers{" "}
+              {divisionLabel(watch.campground_name)} only — the other parts keep alerting.
+            </p>
+          </div>
+        )}
         <p className="mt-2 text-ch-body font-bold text-ch-ink-2">
           {flex ? `Any ${nights} nights, ${formatRange(start, end)}` : formatRange(start, end)}
         </p>
