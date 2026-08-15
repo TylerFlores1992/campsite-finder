@@ -273,63 +273,60 @@ it as untracked. It is the only copy of the evidence for both questions. Do not 
 
 ## THE PROMPT — paste this to open the session
 
-*Current as of 2026-08-15 05:15 UTC. Both blocking actions the previous versions named are
-DONE: the box is on `c1bd875`, the running code is verified current, and the keepalive
-sampler is in place. Nothing is waiting on a human.*
+*Current as of 2026-08-15 06:00 UTC. The leak work is BLOCKED on one human action at the box
+(see the STOP section at the very top). Everything else in the queue is unblocked.*
 
 > Read `docs/NEXT-SESSION.md` first — the STOP section at the top — then CLAUDE.md.
 >
-> **This session is for the Chromium memory leak on the mini-PC.** It is the only failure left
-> that has ever required physically power-cycling the box: it exhausts Windows COMMIT, which
-> kills `supervise.ps1` (a supervisor that cannot start a shell cannot restart anything) and
-> takes every remote lever down with it — the watchdog, `kill-chrome` and `bot_commands` all
-> ride processes on that machine.
->
-> **Start by reading the series. Do not take manual readings.**
+> **FIRST, CHECK WHETHER THE BOX HAS BEEN FIXED**, because the Chromium-leak work cannot
+> advance until it has and there is nothing an agent can do about it:
 >
 > ```
 > NODE_USE_ENV_PROXY=1 npx tsx scripts/chromium-memory-readout.mts
 > ```
 >
-> **The first question is whether `recgov` rows exist yet.** The box only got the forced
-> keepalive sample at 05:15 UTC on 08-15, and `keepSessionsWarm` fires every 30 minutes, so
-> the first one was due ~05:33. If the readout still warns *"NO recgov process was running at
-> any point in this window"*, check whether that is because none has fired yet or because the
-> forced sample is not working — `git show <box sha>:scripts/auto-cart-bot/bot.mjs | grep -c
-> bot-keepalive` should return 1, and the box's sha comes from `git-status`.
+> If the samples still carry no `source = 'bot-keepalive'` rows, the box is still running
+> `e6a7ebf` while its checkout says `c1bd875` — an elevated process generation that every
+> unelevated `stop-all` counts as ZERO. It needs a person at the keyboard: an **elevated**
+> `stop-all.ps1`, then `start-all.bat` **unelevated**. Ask; do not burn the session on it.
+> `autocart.bot_version` going `ok` is the confirmation, and `git-status` alone is not — it
+> proves the checkout moved, not that the running code did.
 >
-> **Manual `memory` readings cannot find this leak, and three attempts proved it.**
-> `keepSessionsWarm` opens a rec.gov Chromium per enrolled user for a few seconds twice per
-> 30-minute cycle, so a five-minute window has roughly one chance in ten of containing one.
-> `memory` is a spot check and the cross-check against the sampler; it is not the instrument.
+> **While that is outstanding, take item 2 in "Still open": the New-watch Filters control is
+> decorative.** `NewWatch.tsx` discards `rvLength`/`electric`/`showers`/`pets` on submit, and
+> `worker/` never reads `site_type` at all — `grep -rn "site_type\|siteType" worker/` returns
+> zero hits. So a user picks RV and we alert them for tent sites, on a control that looks like
+> it works. **The owner asked for a DECISION, not a patch**: thread it into detection, persist
+> the rest properly, or drop the panel and say a watch covers the whole campground. Read the
+> queue entry — it has the file/line evidence and the one inference in it is labelled.
+> Recommend, with the trade-offs, before writing code.
 >
-> **Read a quiet series correctly.** Under 10 comparable pairs the readout refuses a verdict,
-> and a family with no processes running has been ruled out of NOTHING. Separately: the RC
-> profile was REPLACED on 08-14 to fix a different bug, so if that profile was also the leak
-> the series may read `NO LEAK IN THIS WINDOW` for ever — a real answer, not a broken
-> instrument. That is a HYPOTHESIS and must not be promoted. `rc-profile-old/` on the box is
-> the only copy of the evidence; do not delete it.
+> Do NOT take manual `memory` readings to hunt the leak. Three attempts produced three
+> non-answers: `keepSessionsWarm()` opens a rec.gov Chromium for a few seconds twice per
+> 30-minute cycle, so a five-minute window has ~1 chance in 10 of containing one. That is
+> why the forced sample and the 2-minute series exist.
 >
-> **If you update the box: `git-status` proves the CHECKOUT moved, not that the RUNNING CODE
-> did.** On 08-14 an update left HEAD current while `bot.mjs` executed the pre-update modules
-> from memory, so `memory` printed a false `FAMILY rc 0` with an `op_Addition` error and the
-> sampler wrote false zeros — both stale for the same reason, neither saying so. `start-all`
-> fixed both. An absent `op_Addition` error and a non-zero `FAMILY` line are the cheap proof.
+> Read a quiet series correctly. Under 10 comparable pairs the readout refuses a verdict, and
+> a family with no processes running has been ruled out of NOTHING. The RC profile was
+> REPLACED on 08-14 to fix a different bug, so if that profile was also the leak the series may
+> read `NO LEAK IN THIS WINDOW` for ever — a real answer, not a broken instrument. That is a
+> HYPOTHESIS and must not be promoted. `rc-profile-old/` on the box is the only copy of the
+> evidence; do not delete it.
 >
-> Levers already built, do not rebuild: `kill-chrome rc|recgov|all` (the remote remedy),
-> `memory` (spot reading, full `--user-data-dir` per process), and `mini-pc\fix-pagefile.ps1`,
-> which raises the COMMIT ceiling and is explicitly **NOT** the fix — pagefile peak was 0.4 GB
-> against 34 GB allocated, so commit was going to reservations, not paging.
+> Levers already built, do not rebuild: `kill-chrome rc|recgov|all`, `memory` (spot reading,
+> full `--user-data-dir` per process), and `mini-pc\fix-pagefile.ps1`, which raises the COMMIT
+> ceiling and is explicitly **NOT** the fix — pagefile peak was 0.4 GB against 34 GB allocated,
+> so commit was going to reservations, not paging.
 >
-> Working rules: **push to a branch, then open a PR** — a hook blocks pushing to master, and
-> `docs/LANES.md` makes the PR the only merge path. Let `npm run verify` and CI go green first.
-> Mutation-test any regression test — break the code, watch it fail — and confirm the mutation
-> actually applied, because a mutation that silently fails to apply is a green proving nothing.
-> `autocart.rc_session` reading dead between releases is CORRECT, not a fault. Use ABSOLUTE
-> paths for anything run on the mini-PC: a failed `cd` is silent there, and the next command
-> then reports a confident result about the wrong thing.
-
----
+> Working rules: **push to a branch, then open a PR** — a hook blocks pushing to master and
+> `docs/LANES.md` makes the PR the only merge path. `npm run verify` and CI green first.
+> **Squash-merging leaves your branch and master with divergent histories for identical
+> content**, so after a merge, reset the branch to `origin/master` rather than fighting a
+> conflict. Mutation-test every regression test — break the code, watch it fail — and **assert
+> the mutation actually applied**, because one that silently fails to apply is a green proving
+> nothing. `autocart.rc_session` reading dead between releases is CORRECT, not a fault. Use
+> ABSOLUTE paths on the mini-PC: a failed `cd` there is silent, and the next command then
+> reports a confident result about the wrong thing.
 
 ## 2026-08-14, later: THE READINGS WERE TAKEN, AND THEY COULD NOT HAVE ANSWERED IT
 
@@ -491,27 +488,62 @@ that is now known not to work; see the section at the top of this file.)*
 ## Still open, in rough priority
 
 1. **The Chromium leak** — above.
-2. **A wedge is only caught where the process detects its own wedge.** `supervise.ps1` restarts
+2. **THE NEW-WATCH FILTERS CONTROL IS DECORATIVE, and this one is a DECISION, not a patch.**
+   Measured by the side lane 2026-08-15 (`docs/NOTES-claude-side-lane-setup-f7bpe2.md`
+   finding 1) and recorded here because a notes file is not where a user-facing defect
+   should live:
+   - `NewWatch.tsx` posts only `siteType` (`src/components/v2/NewWatch.tsx:186-198`);
+     `rvLength`, `electric`, `showers` and `pets` are collected in the UI and **discarded on
+     submit**.
+   - `/api/watches` POST persists `site_type` and nothing else from that set.
+   - **`worker/` NEVER READS IT.** `grep -rn "site_type\|siteType" worker/` returns zero hits,
+     and `loadWatches` (`worker/poller.ts` ~585) does not even SELECT the column.
+   - Its only consumer is Campflare, as `campsite_kinds` in `/api/watches/route.ts:241`, for
+     non-flex rec.gov watches only — and `CAMPFLARE_API_KEY` is absent from the agent session
+     env. **Vercel's env is authoritative and was not readable, so "unset in prod" is
+     INFERENCE, not fact.**
+
+   **So a user picks RV and we alert them for tent sites, and the control looks like it
+   works.** `NewWatch.tsx` already carries a comment about the auto-cart toggle being "PURELY
+   DECORATIVE until 2026-08-01" — same shape, same file, second time.
+
+   Three honest options, and the owner asked for a DECISION rather than a quiet fix:
+   thread `site_type` into detection (into `loadWatches` and every source's open-site finder,
+   beside the existing `muted_site_ids` exclusion); persist the others too (they are
+   CAMPGROUND-level in search, so on a watch they need SITE-level data — `hasElectric()` in
+   `src/lib/sources/ridb/transform.ts` already computes electric per campsite, and
+   `max_vehicle_length` is a campsites column); or **drop the panel from `/new` and say plainly
+   that a watch covers the whole campground**, which is honest and cheap and may be right.
+
+   **Muting is unaffected and works** — `muted_site_ids` is an explicit exclusion the user sets
+   from `/manage/<token>`, and nothing writes it automatically, which is correct.
+
+3. **`npm run jsx-spacing` exists but is NOT in `npm run verify`.** An HTML entity makes SWC eat
+   a JSX text node's leading whitespace, which silently broke four user-visible strings, and
+   this repo escapes entities everywhere. Adding it is a one-line change to the `verify` script
+   and is the owner's call. (`verify` is `typecheck && test && build` today.)
+
+4. **A wedge is only caught where the process detects its own wedge.** `supervise.ps1` restarts
    what *exits*; the watchdog restarts what is *missing*; a hung-but-alive process is neither.
    The keep-warm exits on purpose when its loop stalls, so it is covered — nothing else is. The
    server sees it (`rc_runner_heartbeat` goes stale) but nothing acts on it. **Proposed:** let
    the watchdog read that heartbeat and treat "alive but not beating for N minutes" as down. The
    box already polls camphawk.app every 15s, so there is no new plumbing.
-3. **A last-resort reboot tier is now defensible** — the owner confirmed 2026-08-14 that the
+5. **A last-resort reboot tier is now defensible** — the owner confirmed 2026-08-14 that the
    bots start at Windows login. Behind repeated `start-all` failures only, carrying the
    updater's release check, and `update-guard.test.mts`'s ban on `Restart-Computer` must be
    NARROWED to that branch rather than deleted. **It is still not the 08-12 fix.**
-4. **Can one RC session hold more than one cart?** `rc-probe.mjs --cart-cap` settles it, is on
+6. **Can one RC session hold more than one cart?** `rc-probe.mjs --cart-cap` settles it, is on
    the box, and is headful — **only a human at the mini-PC can run it**. Run
    `mini-pc\rc-cart-cap.bat`. Both confounds must be clear (the bot's cart empty AND the
    owner's phone cart empty) and each fakes the pessimistic answer. `INCONCLUSIVE` is not an
    answer. **Do not raise `RC_HOLD_CAPACITY` on reasoning alone.**
-5. **Do the cart POSTs fire on Android?** Proven on iOS twice. One Android hand-off answers it;
+7. **Do the cart POSTs fire on Android?** Proven on iOS twice. One Android hand-off answers it;
    `rc-holds-readout.mts` prints the platform per hand-off.
-6. **`TWILIO_AUTH_TOKEN` should be removed from the agent environment** — full account access,
+8. **`TWILIO_AUTH_TOKEN` should be removed from the agent environment** — full account access,
    also signs the delivery webhooks, added for a one-off link test long since finished. An agent
    cannot remove it; it is environment config on the owner's side.
-7. **The A2P campaign edit is blocked on Twilio** enabling API campaign edits (#28871693).
+9. **The A2P campaign edit is blocked on Twilio** enabling API campaign edits (#28871693).
    Replacement samples are generated and waiting in `docs/a2p-campaign.md` with three caveats.
 
 ## Traps worth keeping
