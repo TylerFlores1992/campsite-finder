@@ -42,6 +42,12 @@ called from the quiet path as well as the stop path, port check first. The port 
 throughout, so the fixed version exits 1 and `start-all` refuses to launch. **But the fix is
 bot-side, so it only takes effect after the restart above.**
 
+**The same blindness was in the memory sampler** (`memory-sample.mjs`), and it left a row
+behind: at 05:12:24 the short-lived unelevated process stored `rc 0` while nine Chromium were
+running. `C|` separates "found none" from "never ran"; "ran and could not see" is a third state
+that reads identically to the first. It emits a blind count now and reverts to null rather than
+recording a zero it could not see. **Also bot-side.**
+
 `autocart.bot_version` had been reading *"mini-PC is on e6a7ebf … MISSING bot-side changes"*
 for hours; its next sentence called that "the ordinary wait for a quiet window", which is one of
 two causes and the wrong one — the update HAD been applied. That copy now names both causes and

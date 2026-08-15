@@ -948,6 +948,18 @@ rows in `chromium_memory_samples` carried `source = 'bot-keepalive'`.**
   restarted onto it (**never** self-heals). It named only the first. It names both now, plus the
   discriminator — `git-status` reads the checkout at the moment you ask. **Severity deliberately
   unchanged**; drift is normal for part of every day and turning it red is the cry-wolf failure.
+- **THE SAME BLINDNESS WAS IN THE MEMORY SAMPLER, AND IT LEFT A ROW BEHIND.** At 05:12:24 the
+  short-lived unelevated process stored `rc 0 procs, 0 MB` while pid 8844 was alive on both
+  sides of it — the elevated process reported NINE at 05:11:52 and again at 05:13:51. Same
+  filter, seconds apart, opposite answers, elevation the only variable. `C|` separates "found
+  none of ours" from "never ran"; **"ran and could not see" is a THIRD state that reports
+  identically to the first**, and the readout counts a zero as evidence and a null as nothing.
+  The PowerShell emits `B|<count>` now, from the SAME `Get-CimInstance` filtered twice (two
+  calls would make the ours/blind pair two readings a second apart, which is not a pair), and a
+  scan that matched none of ours **while blind to some** reverts to null. **A PARTIAL reading
+  keeps its numbers on purpose** — nulling it would delete real processes to express a doubt,
+  and on a box where the owner's own browser runs as another user it would erase every reading
+  for ever; the log line carries the doubt and says which way the row went.
 - **The rec.gov family therefore remains sampled ZERO times** — see the entry above for why 175,
   now 250, consecutive `recgov 0` rows are the EXPECTED reading and not a lead. The instrument
   built for that family has still never run.
