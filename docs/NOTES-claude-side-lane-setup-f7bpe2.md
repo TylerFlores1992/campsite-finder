@@ -97,7 +97,57 @@ status marks ("renders the tab with a warn and a fail in view"). If it is throwi
 part-way, that verification is not doing its job. Its fixture gained the two new
 `AdminData` fields on this branch, but that is not the cause.
 
-## 5. CI runs the production-DB test suite on every `claude/**` push
+## 5. THE TEST SUITE RACES ITSELF IN CI — MEASURED, and it needs no second lane
+
+**This started as a prediction about two lanes colliding and turned out to be worse: a
+single PR collides with itself.** Evidence, from the Actions API on 2026-08-15:
+
+| run | event | head_sha | conclusion |
+|---|---|---|---|
+| 31865582126 | `pull_request` | `07fa9211` | **failure** |
+| 31865560005 | `push` | `07fa9211` | **success** |
+
+**Same commit, same code, 31 seconds apart, opposite results.** Neither is mine — that is
+the main lane's branch (`claude/camphawk-sms-test-update-s3cash`).
+
+Why the concurrency group does not stop it: `concurrency: verify-${{ github.ref }}`, and
+a `push` run has `github.ref = refs/heads/<branch>` while the `pull_request` run has
+`refs/pull/<n>/merge`. **Different groups, so they never cancel each other** — they run
+side by side against the one production database. (The group does work for its intended
+case; run 31865526920 shows a `cancelled` push run.)
+
+The collision mechanism is a **fixed fixture id plus a prefix DELETE**. `ridb-photos.test.mts`:
+
+```
+const ID = 'ridb-test-photos-fixture';
+const cleanup = () => mutate(`DELETE FROM campgrounds WHERE id LIKE 'ridb-test-photos-%'`);
+```
+
+Two runs share that exact row, and either one's `cleanup()` deletes the other's fixture
+mid-test. `--test-concurrency=1` cannot help: it serializes files *within* a run.
+
+Reproduced locally on this branch while the main lane's CI was running: full suite gave
+**1 failure**, then **2 failures** (different tests), while `ridb-photos.test.mts` **run
+alone passes 3/3**. Both failures were in that suite:
+
+```
+not ok 440 - an EMPTY array still overwrites — a real "no media" answer is not the same as no answer
+not ok 441 - a NEW row inserts its photos normally
+```
+
+**This is not confined to the two suites the side-lane brief names** (`sync-claim`,
+`shard-lease`). Any suite with a fixed fixture id has the property, and `ridb-photos` is
+one.
+
+Worth fixing, because a gate that fails ~half the time on unchanged code is one people
+learn to ignore — the reason `lint` is deliberately kept out of `verify` in the first
+place. Cheapest fixes, in order: make fixture ids unique per run (a run id or random
+suffix, so `cleanup()` cannot reach another run's rows), or widen the concurrency group
+to the commit rather than the ref so push and PR runs of one SHA serialize.
+
+**Left alone — `.github/workflows/` and the worker test fixtures are the main lane's.**
+
+## 5b. CI also runs the production-DB suite on every `claude/**` push
 
 `.github/workflows/verify.yml` triggers on `master` **and `'claude/**'`**, and
 `npm run verify` is typecheck → `npm test` → build with the real Supabase secrets.
@@ -112,8 +162,9 @@ run. Two runs — one per lane — are the case it does not cover.
 So the thing to serialize between lanes is **branch pushes**, not only merges. Also note a
 single PR costs two full prod-DB runs if `npm run verify` is also run locally.
 
-*Not observed here* — no cross-branch flake was seen. The mechanism is read off the
-workflow and the ref-scoped concurrency group; the occurrence is inference.
+Two lanes pushing at once is therefore a *second* way into the same collision, on top of
+the self-race in 5. A single PR also costs two full production-DB runs if `npm run verify`
+is run locally as well.
 
 ## 6. Account shape, measured 2026-08-15
 
