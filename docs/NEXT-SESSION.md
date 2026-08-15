@@ -10,16 +10,54 @@ healthy on `7780c32`. **Delete this file once the leak is diagnosed.***
 **The mini-PC is running `e6a7ebf`. Its checkout is on `c1bd875`. Only a person at the box,
 with an ELEVATED prompt, can fix it — and until they do, nothing about the leak can advance.**
 
+**GIVE THE OWNER THESE TWO LINES AND NOTHING ELSE.** An earlier version of this block
+prefixed each line with a `(elevated prompt)` / `(NORMAL prompt)` label, and the owner pasted
+the labels — cmd answered `powershell was unexpected at this time`, which reads as a broken
+script rather than as a broken instruction. **Anything inside a fenced block on this page is
+something a human will paste verbatim.** Put the elevation in the prose, never in the block.
+
+Elevated prompt — Start, type `cmd`, right-click Command Prompt, **Run as administrator**.
+The title bar must read *Administrator: Command Prompt*:
+
 ```
-(elevated prompt)  cd C:\Users\Tyler\campsite-finder\scripts\auto-cart-bot\mini-pc
-(elevated prompt)  powershell -ExecutionPolicy Bypass -File .\stop-all.ps1
-(NORMAL prompt)    start-all.bat          <- unelevated, deliberately
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\Tyler\campsite-finder\scripts\auto-cart-bot\mini-pc\stop-all.ps1
+```
+
+Then a NORMAL (unelevated) prompt:
+
+```
+C:\Users\Tyler\campsite-finder\scripts\auto-cart-bot\mini-pc\start-all.bat
 ```
 
 **Start it back up UNELEVATED.** An elevated generation is invisible to every unelevated
 `stop-all`, which is the entire bug: start it elevated again and the next update reloads the gun.
 Confirm with `git-status` (checkout) **and** `autocart.bot_version` going `ok` (running code).
-Absolute paths: a failed `cd` on that box is silent.
+Absolute paths, and no `cd`: a failed `cd` on that box is silent, and the next command then
+reports a confident result about the wrong directory. `start-all.bat` resolves its own siblings
+through `%~dp0`, so it does not care where it is launched from.
+
+### The RC browser cycling every ~20s is a SYMPTOM of this, not a separate fault
+
+Observed by the owner 2026-08-15, while the duplicate generation was still up: the RC Chromium
+opened and closed on a roughly 20-second beat, and Chromium offered *"Restore pages? Chromium
+didn't shut down correctly"* — i.e. it was being killed, not closed.
+
+`warmResident()` holds RC open continuously and breaks out of its loop for exactly two reasons:
+the hold runner asked for the profile (`.camphawk-profile-wanted`), or the window was closed.
+**The hold runner polls every 15 seconds.** Two generations means two hold runners each asking,
+so the keep-warm yields, reopens, and yields again on that beat — which is what a ~20s cycle
+looks like from the desktop.
+
+**HYPOTHESIS, not a measurement** — nobody counted the processes before the restart. To settle
+it on a recurrence, count them from an ELEVATED prompt (an unelevated one cannot see the
+orphaned generation, which is the whole bug):
+
+```
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'rc-keepwarm|rc-hold-runner' } | Select-Object ProcessId, CreationDate | Format-Table -Auto"
+```
+
+Two `rc-keepwarm` rows, or two `rc-hold-runner` rows, with creation times hours apart, confirms
+it. If the cycling survives a clean restart it is something else and this paragraph is wrong.
 
 ### Why — the finding, 2026-08-15
 
