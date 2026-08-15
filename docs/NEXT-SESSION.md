@@ -70,17 +70,32 @@ happen at all.**
 
 ## Still open
 
-1. **THE BOX IS ON STALE CODE AND `stop-all` REFUSED TO RELAUNCH (2026-08-15).** The owner ran
-   an update and got the port check firing — *"port 8787 is STILL LISTENING (pid 5412) after
-   the stop … NOTHING was updated or relaunched — on purpose."* That is `be93fcd` working
-   exactly as designed: an **elevated** `broker.mjs` orphan is invisible to an unelevated WMI
-   query, so `stop-all` cannot see or kill it, and relaunching on top would give `EADDRINUSE`
-   and a crash-loop. It refused instead. **This needs a human at the box with an elevated
-   prompt** — the recipe is the STOP section further down, plus `taskkill /PID <pid> /F` for
-   whatever pid the run names (the number changes; do not paste 5412 from here).
-   **Until this clears, nothing bot-side from 08-15 is running** — the five auto-login fixes,
-   the hold-runner stand-off and the renewal clear are all merged and none is on the box.
-2. **The renewal reading** — blocked on item 1. Nothing to build until then.
+1. ~~**THE BOX IS ON STALE CODE AND `stop-all` REFUSED TO RELAUNCH**~~ — **RESOLVED ITSELF
+   WITHIN THE HOUR, 2026-08-15.** The owner's unelevated `stop-all` refused with *"port 8787
+   is STILL LISTENING (pid 5412) after the stop … NOTHING was updated or relaunched — on
+   purpose"*, which is `be93fcd`'s port check working exactly as designed against an
+   **elevated** `broker.mjs` orphan an unelevated WMI query cannot see. **The box then updated
+   anyway and is on `d72fb2e`** — asked directly via `git-status`, `HEAD d72fb2e on master`,
+   with a 10-second runner heartbeat. So it HAS the five auto-login fixes, the hold-runner
+   stand-off and the renewal clear.
+   **This is the "a reading goes stale faster than the conclusion drawn from it" rule again,
+   inside one session:** the refusal was real, the write-up of it was accurate, and by the
+   time it was read the box had moved. **Re-read `git-status` before sending anyone to the
+   keyboard.** The elevated-orphan recipe below is still the right one when the port check
+   genuinely fires and nothing clears it.
+2. **The renewal reading — UNBLOCKED, and it is the next thing to look at.** The corrected
+   clear is on the box as of `d72fb2e`. The next `renewByReload` on a token near expiry is
+   the first honest reading anyone has ever taken: it renews (the keep-warm can stop needing
+   credentials), it fails listing MORE than the two RC keys (first honest negative — a login
+   per hold morning), or it fails listing ONLY those two (the `okta-` prefix assumption is
+   wrong). Read the box's log; nothing to build.
+3. **THE FIRST PARK WATCH HAS NEVER RUN A POLLER CYCLE** (migration 070, merged 2026-08-15).
+   `watch_campgrounds` is empty, the expansion is provably a no-op today, and every new
+   branch is gated on `multi` — so the path is dormant and safe, and it is also completely
+   unexercised. **Do not advertise park watches until one has been created and watched
+   through a cycle.** Two known display gaps while that is true: the watches list does not
+   show a park watch's parts, and `/manage/<token>` can only enumerate the representative
+   division's inventory. Full write-up in CLAUDE.md under "ONE WATCH CAN COVER A WHOLE PARK".
 3. **The Chromium leak** — downgraded. rec.gov has a flat 134-145 MB baseline across nine
    cycles, so the ordinary keepalive browser does not leak. The unattributed 08-12 event
    (7.9 GB in 46s) cannot be caught by a 2-minute cadence; `OVERSIZED PROCESS` is the only
