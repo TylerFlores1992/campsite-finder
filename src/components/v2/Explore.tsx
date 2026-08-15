@@ -91,9 +91,7 @@ function encodeSearch(s: SearchState): string {
   if (s.weekendsOnly) q.set("weekends", "1");
   if (s.filters.siteType) q.set("type", s.filters.siteType);
   if (s.filters.rvLength) q.set("rv", String(s.filters.rvLength));
-  for (const k of ["electric", "showers", "pets"] as const) {
-    if (s.filters[k]) q.set(k, "1");
-  }
+  if (s.filters.electric) q.set("electric", "1");
   return q.toString();
 }
 
@@ -118,8 +116,10 @@ function decodeSearch(q: URLSearchParams): Partial<SearchState> {
       siteType: type === "tent" || type === "rv" || type === "cabin" || type === "group" ? type : null,
       rvLength: Number.isFinite(rv) && rv > 0 ? rv : null,
       electric: q.get("electric") === "1",
-      showers: q.get("showers") === "1",
-      pets: q.get("pets") === "1",
+      // `showers` and `pets` are deliberately NOT read back. Both chips were removed
+      // 2026-08-15 on measurement, and an old shared link carrying ?showers=1 should
+      // land on an unfiltered search rather than silently applying a filter with no
+      // control to turn it off.
     },
   };
 }
@@ -359,15 +359,18 @@ export default function Explore() {
     if (range.end) qs.set("endDate", range.end);
     if (when === "flexible") qs.set("flexNights", String(flexNights));
     if (filters.siteType) qs.set("siteType", filters.siteType);
-    if (filters.siteType === "rv" && filters.rvLength) qs.set("rvLength", String(filters.rvLength));
+    // NO LONGER GATED ON THE RV SITE TYPE. Pad length is an independent control now, and
+    // gating the PARAMETER on site type meant anyone who set a length without also
+    // picking "RV" got no length filtering at all while the chip showed as applied.
+    if (filters.rvLength) qs.set("rvLength", String(filters.rvLength));
 
     // Amenity strings must match the catalog values exactly — the RPC does
     // `p_amenities <@ c.amenities`, so a typo silently returns nothing.
     const amenities: string[] = [];
     if (filters.electric) amenities.push("electric hookup");
-    // No "drinking water" line: the chip was removed 2026-08-15. Its amenity is
-    // rec.gov-only, so ticking it silently excluded every state-portal campground.
-    if (filters.showers) amenities.push("showers");
+    // No "drinking water" or "showers" line: both chips were removed 2026-08-15. Their
+    // amenities are rec.gov-only, so ticking either silently excluded every
+    // state-portal campground. See FilterPanel's header for the measurements.
     if (amenities.length) qs.set("amenities", amenities.join(","));
 
     try {
@@ -375,10 +378,10 @@ export default function Explore() {
       if (!r.ok) throw new Error(`Search failed (${r.status})`);
       const j = (await r.json()) as { campgrounds: Campground[] };
       if (id !== requestId.current) return; // a newer search already landed
-      // pets has no SQL param — filtered client-side off the returned column,
-      // same as the current UI does.
-      const rows = filters.pets ? j.campgrounds.filter((c) => c.petsAllowed) : j.campgrounds;
-      setResults(rows);
+      // The pets chip was removed 2026-08-15: `pets_allowed` is `true` for 100% of
+      // every non-rec.gov source, so it is a default rather than a measurement and
+      // could not carry a filter. The column still feeds JSON-LD.
+      setResults(j.campgrounds);
       setSearchedAt(origin);
       setSelectedId(null);
       // Reflect the search in the address bar. replaceState, not push: each

@@ -639,9 +639,12 @@ const PRESETS: Record<string, Preset> = {
     frame: 'w-full max-w-3xl mx-auto',
   },
   'ch-filters-rv': {
-    label: 'FilterPanel — RV selected (rig length) above All types. Must-have is Pets/Hookups/Showers.',
-    // Drinking water was removed 2026-08-15; Hookups stays in the flat Must-have row
-    // rather than nesting under RV. This shot is what catches either being undone.
+    label: 'FilterPanel — Hookups inside Site type, Pad length its own always-visible control',
+    // RESTRUCTURED 2026-08-15. Showers and pets are gone (both rec.gov-only in effect);
+    // Hookups moved into Site type because removing them left a one-chip "Must have"
+    // section; rig length became Pad length and no longer hides when RV is deselected.
+    // Two instances: one with a site type chosen, one with none — the second is the shot
+    // that catches Pad length being re-hidden behind the RV type.
     entry: `import FilterPanel, { EMPTY_FILTERS } from '@/components/ui/FilterPanel';
       function Demo({ initial }) {
         const [v, setV] = React.useState(initial);
@@ -650,7 +653,7 @@ const PRESETS: Record<string, Preset> = {
       export const node = (
         <div className="space-y-5">
           <Demo initial={{ ...EMPTY_FILTERS, siteType: 'rv', rvLength: 32, electric: true }} />
-          <Demo initial={{ ...EMPTY_FILTERS, electric: true }} />
+          <Demo initial={{ ...EMPTY_FILTERS, rvLength: 28 }} />
         </div>
       );`,
     frame: 'max-w-md w-full mx-auto',
