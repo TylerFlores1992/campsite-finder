@@ -87,13 +87,23 @@ test('the reload clears the token the APP decides from, not just our own copy', 
   // had stopped calling it, and asserting only the call would pass on a helper that cleared
   // nothing — the extraction trap that made `control-channel.test.mts` green against a
   // `restart-rc.ps1` which no longer killed anything.
+  // WIDENED 2026-08-15, and the widening IS the fix. Clearing RC's two copies left
+  // okta-auth-js holding the same token in its own `okta-` store, which it handed straight
+  // back — so `renewByReload` measured a survivor and reported "RC will not renew" for days.
+  // A token came back 26 seconds older than the one dropped (578s -> 552s), which can only
+  // happen if a persisted copy was missed.
   const i = src.indexOf('export async function dropStoredToken');
   assert.ok(i > 0, 'dropStoredToken must exist');
-  const helper = code(src.slice(i, src.indexOf('\n}', i)));
-  assert.match(helper, /removeItem\('ssoAccessToken'\)/, 'must clear the key the SDK reads');
-  assert.match(helper, /removeItem\('accessToken'\)/, 'must clear the fallback key too');
+  const helper = code(src.slice(i, src.indexOf('\n}\n', i)));
+  assert.match(helper, /rcKeys\.includes\(k\)/, "RC's own copies must still go");
+  assert.match(helper, /k\.startsWith\(prefix\)/,
+    "okta-auth-js's own storage must go too, or the SDK returns the same token");
   assert.ok(/delete window\.__camphawkRcToken/.test(helper),
     'our own captured copy still has to go, or the next read returns it');
+  // The prefix and RC's keys are named constants, not inline strings, so the two callers
+  // cannot drift apart the way the rehearsal's third inline copy did.
+  assert.match(code(src), /OKTA_STORAGE_PREFIX = 'okta-'/);
+  assert.match(code(src), /RC_TOKEN_KEYS = \['ssoAccessToken', 'accessToken'\]/);
 
   assert.match(renewBody(), /await dropStoredToken\(page\)/,
     'renewByReload must still do the clearing, or the bootstrap never happens');
@@ -110,11 +120,18 @@ test('a failed renewal puts the old token back', () => {
   // The clear is destructive: it trades a token with minutes left for a bootstrap that may
   // find no Okta session. Restoring is what makes the worst case no worse than doing
   // nothing — and it must restore the exact keys that were emptied, not a guessed one.
+  //
+  // AND IT MUST RESTORE THE WHOLE SNAPSHOT. Now that the clear spans okta-auth-js's storage,
+  // putting back only `ssoAccessToken`/`accessToken` would leave the app holding a token its
+  // own SDK no longer knows about — strictly worse than never having tried, which is the one
+  // outcome this guard exists to prevent.
   const body = renewBody();
-  assert.match(body, /if \(!renewed && \(stored\.sso \|\| stored\.acc\)\)/,
+  assert.match(body, /if \(!renewed && Object\.keys\(snapshot\)\.length\)/,
     'the restore must be conditional on the renewal having failed');
-  assert.match(body, /setItem\('ssoAccessToken', s\.sso\)/);
-  assert.match(body, /setItem\('accessToken', s\.acc\)/);
+  assert.match(body, /await restoreStoredToken\(page, snapshot\)/,
+    'restore exactly what dropStoredToken took, not a guessed subset');
+  const helper = code(src.slice(src.indexOf('export async function restoreStoredToken')));
+  assert.match(helper, /Object\.entries\(s\)/, 'the restore must replay the whole snapshot');
 });
 
 test('an unknown Okta verdict does not switch renewal off', () => {
@@ -133,4 +150,43 @@ test('the failure line no longer blames a cookie that is demonstrably present', 
   const keepwarm = code(readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8'));
   assert.ok(!/Okta cookie may be gone/.test(keepwarm),
     'the renewal failure must not assert a cause it has not checked');
+});
+
+test('the rehearsal clears through the shared helper, not a third inline copy', () => {
+  // IT WAS A THIRD COPY, AND THE COPY IS WHAT MAKES THIS DANGEROUS. `runLoginRehearsal` had
+  // its own hand-rolled `removeItem('ssoAccessToken')` pair. When the real clear widened to
+  // cover okta-auth-js's storage, that copy would have been left behind — still clearing two
+  // keys of a blob that carries the whole session, and still reporting "RC re-authenticated
+  // with no credential typed" about a token that had never actually gone.
+  //
+  // That appearance is precisely what the renewal question has been resting on since 08-11,
+  // so a stale copy here does not merely duplicate code: it manufactures the evidence.
+  const kw = readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8');
+  const body = kw.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  const rehearsal = body.slice(body.indexOf('async function runLoginRehearsal'));
+  const fn = rehearsal.slice(0, rehearsal.indexOf('\n}\n'));
+  assert.match(fn, /await dropStoredToken\(page\)/,
+    'the rehearsal must clear through the shared helper');
+  assert.ok(!/removeItem\('ssoAccessToken'\)/.test(fn),
+    'no inline copy of the clear — it will be the one that goes stale');
+});
+
+test('the keys actually emptied are reported, never their values', () => {
+  // The renewal has now failed twice for reasons invisible from its own log line. `cleared`
+  // is what turns the next failure into a fact: only RC's two keys listed means the SDK's
+  // storage is somewhere the `okta-` prefix does not reach.
+  //
+  // NAMES ONLY. A token is a credential, and the rule here is not to collect a field you then
+  // have to filter — the first mobile report leaked an OAuth authorization code exactly that
+  // way, and the scrub that guarded it sailed straight past.
+  assert.match(renewBody(), /cleared/, 'renewByReload must return which keys it emptied');
+  const helper = code(src.slice(src.indexOf('export async function dropStoredToken')));
+  assert.match(helper, /cleared: Object\.keys\(snapshot\)/,
+    'report the key NAMES, which is what Object.keys gives');
+  const kw = readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8');
+  // MATCHED ON THE `log(` CALL, NOT THE STRING. The first version of this assertion checked
+  // only that the sentence existed, and a mutation swapping `log(` for `void (` kept the text
+  // and passed — the inert-fix shape, inside the guard written to catch it.
+  assert.match(kw, /log\(`\s*cleared \$\{r\.cleared\?\.length \?\? 0\} storage key\(s\)/,
+    'and the caller must actually LOG them, or the diagnostic is dead code');
 });

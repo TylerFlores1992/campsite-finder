@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Chip from "@/components/ui/Chip";
 import DatePicker, { type DateRange } from "@/components/ui/DatePicker";
-import FilterPanel, { EMPTY_FILTERS, type FilterValue } from "@/components/ui/FilterPanel";
 import NightsPicker from "@/components/ui/NightsPicker";
 import TrustPanel from "./TrustPanel";
 import FavoriteHeart from "./FavoriteHeart";
@@ -27,7 +26,8 @@ import { WATCH_LIMIT } from "@/lib/limits";
  * Result cards deep-link in with ?campground=, so arriving from a search still
  * skips straight past this step.
  *
- * Mounts the SAME DatePicker / NightsPicker / FilterPanel as Explore.
+ * Mounts the SAME DatePicker / NightsPicker as Explore. NOT the FilterPanel — see the
+ * note at the fieldset it used to occupy.
  * Build once, import twice — two drifting copies is how the current UI got here.
  */
 
@@ -82,7 +82,6 @@ export default function NewWatch({
   });
   const [flexNights, setFlexNights] = useState(2);
   const [weekendsOnly, setWeekendsOnly] = useState(false);
-  const [filters, setFilters] = useState<FilterValue>(EMPTY_FILTERS);
   const [autoCart, setAutoCart] = useState(true);
 
   const [saving, setSaving] = useState(false);
@@ -187,7 +186,10 @@ export default function NewWatch({
           campgroundId,
           startDate: range.start,
           endDate: range.end,
-          siteType: filters.siteType ?? undefined,
+          // NOT SENT ANY MORE. Nothing in worker/ reads `site_type`, so transmitting it
+          // only made the dead control look alive. The API still accepts it and the column
+          // still exists — Campflare's `campsite_kinds` is its one real consumer — so this
+          // degrades to exactly what a user who left the picker blank already got.
           // The toggle above was PURELY DECORATIVE until 2026-08-01 — its value was
           // never sent, the column was never written, and the poller decided the
           // auto-cart lane from the account-level setting alone. Turning it off
@@ -230,7 +232,7 @@ export default function NewWatch({
     } finally {
       setSaving(false);
     }
-  }, [campgroundId, range, mode, flexNights, weekendsOnly, filters.siteType, router]);
+  }, [campgroundId, range, mode, flexNights, weekendsOnly, router]);
 
   const canAutoCart = campgroundSource ? supportsAutoCart(campgroundSource) : false;
   const windowNights = range.start && range.end ? nightsBetween(range.start, range.end) : 0;
@@ -415,12 +417,38 @@ export default function NewWatch({
           )}
         </fieldset>
 
-        <fieldset className="mt-5">
-          <legend className="mb-2 text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
-            What counts as a match
-          </legend>
-          <FilterPanel value={filters} onChange={setFilters} />
-        </fieldset>
+        {/*
+          THE FILTER PANEL IS GONE FROM THIS SCREEN (2026-08-15), and its legend said why:
+          "What counts as a match". It did not.
+
+          Measured: `grep -rn "site_type\|siteType" worker/` returns ZERO hits, and
+          `loadWatches` does not even SELECT the column. So a user picked RV, we sent it, and
+          the poller alerted them for tent sites. Of the five controls only `siteType` was
+          ever transmitted at all — rvLength, electric, showers and pets were collected here
+          and dropped on submit.
+
+          THIS IS THE SAME FILE'S SECOND OFFENCE. The auto-cart toggle a few lines below
+          carries a comment recording that it was "PURELY DECORATIVE until 2026-08-01".
+
+          WHY REMOVED RATHER THAN IMPLEMENTED. Making the poller honour it is the answer
+          users would prefer, and it is a bigger job than it looks: our four buckets
+          (tent/RV/cabin/group) have to map onto rec.gov's `campsite_type` vocabulary AND
+          ReserveCalifornia's AND UseDirect's AND GoingToCamp's, and every source whose site
+          records lack a type needs a deliberate include-or-exclude answer. Get that wrong in
+          the strict direction and alerting stops silently, with no error anywhere — the
+          failure mode this codebase has paid for repeatedly. A filter that works on rec.gov
+          and quietly does not elsewhere is worse than none, because nothing tells the user
+          which they got.
+
+          What replaces it is better and already honoured by the poller: PER-SITE MUTING,
+          which is explicit, source-agnostic, and excluded by both RC finders since
+          2026-08-13. Implement type filtering later if the taxonomy work is funded; until
+          then this screen promises only what it delivers.
+
+          THE SAME PANEL STAYS ON EXPLORE, where it genuinely works — search resolves it to
+          `p_site_type = ANY(c.site_types)` against the campground catalog. The defect was
+          never the panel, it was this screen implying a watch would honour it.
+        */}
 
         {canAutoCart && (
           <fieldset className="mt-5">
