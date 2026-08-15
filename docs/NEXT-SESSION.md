@@ -171,6 +171,10 @@ it as untracked. It is the only copy of the evidence for both questions. Do not 
 
 ## THE PROMPT — paste this to open the session
 
+*Current as of 2026-08-15 03:05 UTC. The blocking action the previous version named — getting
+the box updated — is DONE, and the sampler is recording real data. If you are reading this
+after the series has run for a while, the readout is the first thing to look at.*
+
 > Read `docs/NEXT-SESSION.md` first — the STOP section at the top — then CLAUDE.md.
 >
 > **This session is for the Chromium memory leak on the mini-PC.** It is the only failure left
@@ -179,41 +183,46 @@ it as untracked. It is the only copy of the evidence for both questions. Do not 
 > takes every remote lever down with it — the watchdog, `kill-chrome` and `bot_commands` all
 > ride processes on that machine.
 >
-> **DO NOT take manual `memory` readings to find it. That approach has produced three
-> non-answers and cannot work.** `keepSessionsWarm()` in `bot.mjs` opens a rec.gov Chromium per
-> enrolled user every 30 minutes and closes it, so the family that has never been ruled out
-> exists only in bursts — a five-minute window has roughly one chance in ten of containing one.
-> The series is recorded every two minutes instead (migration 059). Read it:
+> **The instrument now works. Start by reading the series, not by taking readings:**
 >
 > ```
 > NODE_USE_ENV_PROXY=1 npx tsx scripts/chromium-memory-readout.mts
 > ```
 >
-> **THE ONE ACTION THAT UNBLOCKS EVERYTHING: get the box past `60d9b98`.** The sampler recorded
-> `rc 0 procs, 0 MB` while `memory`, run seconds apart through a byte-identical filter, saw NINE
-> processes on that profile. Fixed — counts start `null`, PowerShell emits `C|<count>` before the
-> loop so "found none" and "never ran" stop being the same evidence, and stderr is logged — but
-> it is BOT-SIDE, so it takes an update. **Use `update.bat` or the 02:00–05:00 PT quiet window;
-> "Update now" is broken and will just bounce every process.** Confirm with **`git-status`**, not
-> `autocart.bot_version` — that field held a stale sha next to a live heartbeat for 90 seconds
-> and made the box look like it rolled backwards.
+> Confirmed healthy 2026-08-15 03:01 UTC — `rc 325 MB, pid 2360 130 MB` — after a long run of
+> false zeros. Box and web are both on `e6a7ebf`; `bot.mjs` samples every two minutes.
 >
-> Until that lands the series reads `NOT ENOUGH DATA` and says no `rc` process was observed.
-> **That is the guard working. Do not read those rows as evidence about any family**, and do not
-> theorise about why the scan was empty ahead of the `C|` line, which is what will answer it.
+> **DO NOT go back to manual `memory` readings to find it.** Three attempts produced three
+> non-answers, and the reason is structural: `keepSessionsWarm()` in `bot.mjs` opens a rec.gov
+> Chromium per enrolled user every 30 minutes and closes it, so the family that has never been
+> ruled out exists only in bursts — a five-minute window has roughly one chance in ten of
+> containing one. `memory` remains useful as a SPOT check and as the cross-check against the
+> sampler; it is not how you find a leak.
 >
-> **Read the HYPOTHESIS section before interpreting a quiet series.** The RC profile was replaced
-> on 08-14 to fix a different bug; if that profile was also the leak, the series may read
-> `NO LEAK IN THIS WINDOW` for ever and that is a real answer, not a broken instrument. It is a
-> hypothesis and must not be promoted. `rc-profile-old/` on the box is the only copy of the
-> evidence — do not delete it.
+> **Read `NOT ENOUGH DATA` and a quiet series correctly.** Under 10 comparable pairs the
+> readout refuses a verdict, and a family with no processes running has been ruled out of
+> NOTHING. Separately: the RC profile was REPLACED on 08-14 to fix a different bug, so if that
+> profile was also the leak the series may read `NO LEAK IN THIS WINDOW` for ever — a real
+> answer, not a broken instrument. That is a HYPOTHESIS and must not be promoted.
+> `rc-profile-old/` on the box is the only copy of the evidence; do not delete it.
+>
+> **If you update the box: `git-status` proves the CHECKOUT moved, not that the RUNNING CODE
+> did.** On 08-14 an update left HEAD current while `bot.mjs` executed the pre-update modules
+> from memory, so `memory` printed a false `FAMILY rc 0` with an `op_Addition` error and the
+> sampler wrote false zeros — both stale for the same reason, neither saying so. `start-all.bat`
+> fixed both. Confirm the checkout with `git-status` AND confirm the running code by observing
+> it; an absent `op_Addition` error is the cheapest proof there is.
 >
 > Levers already built, do not rebuild: `kill-chrome rc|recgov|all` (the remote remedy),
-> `memory` (a spot reading, with the full `--user-data-dir` per process), and
-> `mini-pc\fix-pagefile.ps1`, which raises the COMMIT ceiling and is explicitly **NOT** the fix —
-> pagefile peak was 0.4 GB against 34 GB allocated, so commit was going to reservations, not
-> paging. The two instrument bugs the older prompt asked for were fixed in `a57f6e7`; the box
-> may still be running the broken ones, which is the update problem, not a failed fix.
+> `memory` (spot reading, full `--user-data-dir` per process), and `mini-pc\fix-pagefile.ps1`,
+> which raises the COMMIT ceiling and is explicitly **NOT** the fix — pagefile peak was 0.4 GB
+> against 34 GB allocated, so commit was going to reservations, not paging.
+>
+> **One known gap worth fixing if you touch the stop path:** `stop-all` cannot kill a process
+> started from an ELEVATED prompt (`taskkill` says "Access is denied") and its log lists what it
+> STOPPED, so a refused kill looks identical to a successful one. On 08-14 that left a
+> `broker.mjs` squatting on port 8787 and every new broker died with `EADDRINUSE` — the symptom
+> in a different process from the cause. It should re-check by NAME and report survivors.
 >
 > Working rules: push to a branch, let `npm run verify` and CI go green, then merge to master.
 > Mutation-test any regression test — break the code, watch it fail — before trusting it.
