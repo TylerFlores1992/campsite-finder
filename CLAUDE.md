@@ -1481,6 +1481,87 @@ straight off `tail-log rc-keepwarm`, twice, an hour apart:
   produced it, it now reports honestly either way, and its restore guard means a failed
   attempt costs nothing. Retire it when a bootstrap-on-a-schedule is proven, not before.
 
+### WHY THE RELOAD FAILED: A PLAIN LOAD IS NOT THE BOOTSTRAP — THE CLICK IS (2026-08-15, later)
+The section above is right that the reload does not renew and right that the bootstrap does.
+It is wrong about **why**, and the correction is the whole fix. "RC will not renew" was never
+the finding available; **nothing was asking it to.**
+- **THE 2x2 IS COMPLETE, off one evening of `tail-log rc-keepwarm`, and every cell is
+  reproduced:**
+
+  | | token present, short | no token at all |
+  |---|---|---|
+  | **plain load** | no re-mint (4x: 18:18, 18:25, 20:08, 21:08) | no re-mint (2x: 18:46, 22:22) |
+  | **sign-in click** | not observed to work (1x, see below) | **59m token (2x: 19:18, 22:26)** |
+
+  The negative controls are the valuable half and they were sitting in the log all along:
+  `RC loaded and STAYING OPEN — token source: none` at 18:46:50, then **thirty minutes and
+  two twenty-minute checks** with `okta session STILL ALIVE` and nothing appearing. A plain
+  navigation, from a genuinely token-less profile, against a live Okta session, produces
+  nothing. Then `19:18:38 clicked a:has-text("Log in")` → `19:18:57 token now 59m`.
+- **MECHANISM, and it follows from the pair rather than preceding it:** with no token in
+  storage RC's SPA renders signed-out and simply sits there — it issues no `/authorize` of
+  its own. The sign-in control starts the authorization-code flow; Okta answers it from the
+  `idx` cookie without showing a form; RC exchanges the code for a fresh hour. `renewByReload`
+  cleared correctly and then did the one thing that cannot work. **The clear was necessary
+  and never sufficient.**
+- **`hasRefreshToken:false` stands and is unaffected.** There is nothing to *silently
+  refresh* with, and there never was. What re-mints is a full authorization-code round trip
+  that costs no credential because Okta already knows the device. Do not read this entry as
+  reopening the refresh-token question.
+- **SO THE FIX IS TWO STAGES AND A SCHEDULE, NOT A NEW MECHANISM.**
+  `renewByReload` is now **`renewSession`** (renamed, because a name describing half of what
+  a function does is what this file keeps paying for) and runs the reload, then — only if the
+  reload produced nothing — the click. **The result says WHICH stage minted the token**:
+  `reload` would mean the SDK's own bootstrap has started working and this can be simplified
+  back down, `authorize` is the expected success, and `no-signin-control` is separated from
+  `none` because they need different responses.
+- **THE ONE OBSERVED CLICK FAILURE IS THE KNOWN WEAK CELL, and it is the near-expiry one.**
+  At 18:22 `attemptLogin` dropped a live-but-short token, and the SPA went on rendering its
+  signed-in banner — so no `a:has-text("Log in")` anchor existed, `button:has-text("Login")`
+  matched something else, and nothing was started. That is the surviving-persisted-copy
+  finding showing up from the other end. **Expect the near-expiry path to fail sometimes;**
+  the token then expires, the profile becomes token-less, and the reliable cell takes it on
+  the next pass. Cost is minutes, not the night.
+- **`worker/renewal-schedule.test.mts` decides WHEN** (`scripts/auto-cart-bot/renewal-schedule.mjs`),
+  and the case it adds is the one the old loop refused outright:
+  - The old condition was `left != null && left > 0 && left < RENEW_BEFORE_S`, i.e. act on a
+    nearly-dead token and **never** on an already-dead one. Defensible clause by clause and
+    wrong as a whole: a signed-out profile is where a re-mint is both **free** (nothing to
+    clear, nothing to restore) and worth most. **It cost ninety dead minutes in one evening**
+    — 18:47→19:18 and 21:29→22:25 — both repaired only because somebody happened to queue a
+    hold, since `maybeAutoLogin` was the sole caller.
+  - Rationed on **its own terms, not the login's**: a floor (5m) honoured whatever changed, a
+    gap (10m) for repeating an unchanged state, a backoff (30m after 3 consecutive failures)
+    that **never becomes a stop** — a gate that switches itself off for good is the
+    `.camphawk-ready` bug. A re-mint is not a login: no credential is submitted, no form is
+    filled, and the CAPTCHA that stops `attemptLogin` lives on the password form this never
+    reaches. It therefore does NOT spend the one-attempt-per-release budget.
+  - **The ration lives at MODULE scope.** `warmResident` reopens its browser every time the
+    hold runner wants the profile — ten times in four hours on 08-15 — so state inside that
+    loop would bound nothing at all.
+  - **Okta is probed only when there is a token to lose.** `/api/v1/sessions/me` refreshes
+    Okta's own idle timer, so asking on every attempt extends the very window whose length
+    we are trying to learn. The probe guards the DESTRUCTIVE clear; with no token there is
+    nothing to clear, so it guards nothing and is skipped. The attempt is self-diagnosing —
+    a dead Okta session lands on the form and reports `stage: 'none'`.
+- **`maybeAutoLogin` IS DELIBERATELY UNTOUCHED.** It remains the release-critical path with
+  its own budget at T−30. This is a background improvement; if it were also the release
+  repair, one bad night of renewals would spend the ration that protects an 08:00 cart.
+- **The dedupe keys on a STATE, not on the sentence** — every stand-down reason carries a
+  minute count that changes on every 60s ask, so `autoLoginSkip`'s direct string comparison
+  would collapse nothing and print 1,440 lines a day. It also had to MOVE into the tested
+  module: as six lines in `rc-keepwarm.mjs` it was pinned by a regex on its own shape, and a
+  mutation reinstating the volatile comparison **from inside the body** matched that shape
+  and passed. A source scan cannot see through a function it can only pattern-match.
+- **27 mutations, each asserting the mutation applied.** Two are worth keeping: the one above,
+  and `clickSignInControl`'s extraction tripping `rc-autologin.test.mts`'s **pinned export
+  list** — which is the "an existing guard pinned it by name" rule working as designed, and
+  the list is pinned precisely so adding to it is a decision with a written reason.
+- **BOT-SIDE, so none of this is live until the box updates.** `autocart.bot_version` is a
+  hint; `git-status` through `bot_commands` is what answers "did it land?". **Nothing here is
+  proven until the log shows `✓ renewed by authorize` on the box** — the evidence above is
+  two hand-triggered reproductions of the mechanism, not one run of the schedule.
+
 ### THE RENEWAL WAS MEASURING ITSELF (2026-08-12) — the keep-warm question is REOPENED
 `renewByReload` has been reporting "RC will not renew" since it shipped, and **it was never
 asking RC anything.** From the box's own log:
@@ -3424,7 +3505,19 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs current to 2026-08-15 (second pass).** The later session resolved the renewal question at
+**Docs current to 2026-08-15 (third pass).** The renewal question is now answered TWICE OVER,
+and the second answer corrects the first: `renewByReload` fails **because a plain page load is
+not the bootstrap** — RC's SPA, holding no token, issues no `/authorize` of its own, and the
+CLICK on its sign-in control is what starts the flow Okta answers from the `idx` cookie. The
+2x2 is complete (plain load: nothing, 6 times; click: a 59-minute token, twice). Shipped:
+`renewSession` (two stages, reporting which minted the token), `renewal-schedule.mjs` (which
+also acts on an ALREADY-DEAD token — the refusal that cost ninety dead minutes in one evening),
+and 27 mutation-verified guards. `maybeAutoLogin` is deliberately untouched.
+**IT HAS NEVER RUN ON THE MINI-PC — `✓ renewed by authorize` in `tail-log rc-keepwarm` is the
+only thing that will prove it, and until then this is a mechanism reproduced by hand, not a
+working schedule.**
+
+*(Previous pass.)* The earlier session resolved the renewal question at
 the code level — **`renewByReload` was clearing RC's OWN two token keys and not okta-auth-js's
 `okta-` store**, so the SDK handed the same token back and nothing was ever asked of RC. That
 also **CONFOUNDS the 08-11 "RC re-minted with no credential typed" evidence**, since the

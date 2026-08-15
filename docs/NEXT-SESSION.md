@@ -1,80 +1,94 @@
-# Next session — stop babysitting the RC auto-cart
+# Next session — the renewal is BUILT and UNPROVEN on the box
 
-*Rewritten 2026-08-15 evening. The renewal question is ANSWERED and the answer changes the
-plan: there is nothing to renew, and the thing that already works is not on a schedule.
-Everything below the horizontal rule is archive — resolved sections kept for their reasoning.*
+*Rewritten 2026-08-15, latest. The previous version asked for a schedule around the
+bootstrap; that is written, tested and merged. **It has never run on the mini-PC.** The one
+job now is to watch it there and read the answer. Everything below the horizontal rule is
+archive — resolved sections kept for their reasoning.*
 
-> ## THE GOAL: the 08:00 cart fires without a human in the loop
+> ## THE GOAL: confirm `✓ renewed by authorize` on the box, then stop babysitting
 >
-> Today a human is needed because the RC access token dies every hour and only a real
-> release schedules the repair. Three facts, all measured on 2026-08-15, decide the design:
+> ### What changed, and the correction that made it work
 >
-> 1. **RC ISSUES NO REFRESH TOKEN.** Straight off the box:
->    `grant: {"hasRefreshToken":false,"expiresIn":3600,...}`. Every "make the token renew
->    itself" plan was reaching for a mechanism RC does not hand out. **Stop looking for one.**
-> 2. **`renewByReload` DOES NOT WORK, and the negative is finally honest.** The corrected
->    clear (`d72fb2e`) named what it emptied — `accessToken`, `ssoAccessToken`,
->    `okta-original-uri-storage` — and the token still came back 25s older, twice, an hour
->    apart. **A persisted copy survives all three keys.** Where it lives is unknown;
->    IndexedDB, a cookie, or a key nothing has looked for.
-> 3. **THE BOOTSTRAP RE-MINTS WITH NO CREDENTIAL TYPED, and that is the way in:**
->    `✓ already signed in — RC re-authenticated before any form appeared — token now 59m`.
->    **59 minutes is a FULL-lifetime token**, which is what separates this from the 08-11
->    confound: a restored stale copy carries its old expiry (20:09:19 shows exactly that,
->    540s). The Okta session runs ~12h, so inside that window a bootstrap is free.
+> The prior handover recorded "`renewByReload` genuinely fails" as settled. It fails, and the
+> reason was wrong: **a plain page load is not the bootstrap.** The 2x2 is complete and every
+> cell is reproduced off one evening of `tail-log rc-keepwarm` —
 >
-> **SO THE WORK IS A SCHEDULE, NOT A MECHANISM.** `attemptLogin` already does the right
-> thing and already short-circuits into that line. Today it only fires at T−30 of a real
-> release, so between releases the token dies and stays dead — hours of
-> `⚠ RC SESSION IS DEAD … okta=ALIVE` in the log. Nothing is broken there; **nothing is
-> trying.**
+> - a plain load produces nothing, whether a short token is present (4x) or the profile is
+>   genuinely signed out (2x, one of them sitting dead through two twenty-minute checks with
+>   `okta session STILL ALIVE`);
+> - a **click on RC's own sign-in control** produces a full **59-minute** token with no
+>   credential typed (2x, ~19s after the click).
 >
-> ### What to build, and the traps around it
+> With no token in storage RC's SPA renders signed-out and issues no `/authorize` of its own.
+> The clear was necessary and never sufficient. `hasRefreshToken:false` is unaffected — what
+> re-mints is a full authorization-code round trip that Okta answers from the `idx` cookie.
 >
-> - **Keep the token alive by re-bootstrapping when it is near expiry**, inside the
->   keep-warm's existing loop, whenever the Okta session is alive. Not a new process — the
->   keep-warm already owns the profile and already polls every 60s.
-> - **THE OKTA SESSION IS THE BUDGET, AND IT IS NOT INFINITE.** ~12h, and
->   `oktaSessionAlive()` reads `/api/v1/sessions/me`, **which itself refreshes Okta's idle
->   timer** — so a keep-warm that asks often may be extending the very window it measures.
->   Do not treat a long-lived Okta session as proof the design works until it survives a
->   night where nothing asked.
-> - **A BOOTSTRAP IS NOT FREE THE WAY A CACHE READ IS.** Repeated logins from this address
->   cost 12h of IP block on 08-06, and a CAPTCHA is a full stop. The 08-15 short-circuit
->   fixes (`sufficient` deadline, two-attempt budget, refunded no-ops) exist precisely
->   because this path is rationed. **Re-bootstrapping ≠ re-logging-in** — the whole point is
->   that it returns before any form appears — but instrument it so the two are told apart in
->   the log, or the ration will be spent by something that looks like a no-op.
-> - **`renewByReload` STAYS for now.** It is the instrument that produced this answer, it
->   reports honestly either way, and its restore guard makes a failed attempt free. Retire it
->   once bootstrap-on-a-schedule is proven, not before.
-> - **The remaining mystery is worth one bounded look, not a session:** where the surviving
->   token copy lives. It matters only if you later want the reload path; the bootstrap route
->   does not need it.
+> ### What was built
 >
-> ### How to check where this stands, before writing anything
+> - `renewByReload` → **`renewSession`**: reload, then — only if the reload produced nothing —
+>   the click. The result names the **stage** that minted the token, so the standing "has the
+>   SDK's own bootstrap started working?" measurement is not thrown away to save a navigation.
+> - `scripts/auto-cart-bot/renewal-schedule.mjs` decides **when**, and the case it adds is the
+>   one the old loop refused outright: a token that has ALREADY expired. That refusal cost
+>   ninety dead minutes on 08-15. Rationed on its own terms (floor 5m, gap 10m, backoff 30m
+>   after 3 failures, never a stop) because a re-mint is not a login and must not spend the
+>   login's one-attempt-per-release budget.
+> - `maybeAutoLogin` is **untouched**. It stays the release-critical repair at T−30.
+>
+> ### THE ONE THING TO DO: get it onto the box and read the log
+>
+> It is bot-side, so it reaches the mini-PC only via `update.bat`, "Update now", or a
+> 02:00–05:00 PT quiet-window run. Confirm with `git-status` through `bot_commands` —
+> `autocart.bot_version` is a hint and has read a stale sha next to a live heartbeat before.
 >
 > ```
-> NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
+> NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status
+> NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts tail-log rc-keepwarm:120
 > ```
-> Then ask the box for its own evidence — this is what produced every fact above, and it is
-> available from a web session with no repo access to the mini-PC:
-> `requestBotCommand('tail-log', 'rc-keepwarm:120', 'you')`, then read `bot_commands`.
-> `git-status` answers "what code is it running?"; `autocart.bot_version` is a hint only.
+>
+> **What a working night looks like:** `renewing the session — the app holds no usable token`
+> followed by `✓ renewed by authorize`, and the `⚠ RC SESSION IS DEAD … okta=ALIVE` runs
+> disappearing. **What to read carefully:**
+>
+> - **`✓ renewed by reload`** would be genuinely new — the SDK's own bootstrap working — and
+>   means this can be simplified back down. Do not skim past it.
+> - **`got as far as: no-signin-control`** is the known weak cell, and it is the near-expiry
+>   one: on 08-15 18:22 a clear left the SPA still rendering its signed-in header, so no
+>   "Log in" anchor existed. Expect it sometimes. The token then expires, the profile becomes
+>   token-less, and the reliable cell takes it on the next pass — minutes lost, not the night.
+> - **`got as far as: none`** repeatedly is a dead Okta session, and that is the honest
+>   negative the design wants: it is obtained WITHOUT calling `oktaSessionAlive`, which
+>   refreshes Okta's own idle timer. The schedule deliberately probes Okta only when there is
+>   a token to lose, so a long-lived session in these logs is no longer partly our own doing.
+> - **The 12h Okta session is still the ceiling**, and it has never been measured across a
+>   night where nothing asked. That measurement is now possible for the first time; it is the
+>   next real finding, not something to assume either way.
+>
+> **Nothing here is proven until that log line appears.** What exists today is two
+> hand-triggered reproductions of the mechanism plus 27 mutation-verified guards on the
+> plumbing. Neither is a run of the schedule.
 
 ## The state of everything else, 2026-08-15 evening
 
-- **The box is on `d72fb2e`** (confirmed by `git-status`, not inferred). It carries the
-  auto-login fixes, the hold-runner stand-off and the corrected renewal clear. Master is
-  further ahead but **the gap is web-side only** — `autocart.bot_version` says so itself.
-- **No holds are queued**, so nothing is at risk overnight and the 02:00–05:00 quiet window
-  is open.
+- **The box was on `d72fb2e`** (confirmed by `git-status`, not inferred) — the auto-login
+  fixes, the hold-runner stand-off and the corrected renewal clear. **THE GAP IS NO LONGER
+  WEB-SIDE ONLY:** the two-stage `renewSession` and the schedule are bot-side, so until the
+  box updates it goes on doing exactly what the 08-15 log shows, and the whole point of this
+  change is unobservable. Re-read `git-status` rather than this line — a reading goes stale
+  faster than the conclusion drawn from it, and that rule has bitten here twice.
+- **No holds were queued** at 15:43 PT, so nothing is at risk overnight and the 02:00–05:00
+  quiet window is open. Test holds were queued and expired during the day's diagnosis; the
+  readout is what says whether that is still true.
 - **Alerting is healthy** — 16 of 18 checks green; the two warns are the `bot_version` gap
   and the login rehearsal, which has never passed and has no green to have lost.
+- **The RC session was healthy at 15:43 PT** (token 48m), from a bootstrap at 22:26 UTC. That
+  is `maybeAutoLogin` doing its job on a test hold, not the new schedule — which is exactly
+  the confusion to avoid when reading the first post-update log.
 
 ## Still open, in rough priority
 
-1. **RC automation** — above. The one thing that removes the human.
+1. **RC automation** — above. Built; **unproven on the box.** The remaining work is an
+   update and a night of log-reading, not more code.
 2. **No park watch has ever run a poller cycle** (migration 070). The expansion is provably a
    no-op today and every new branch is gated on `multi`, so the path is dormant and safe —
    and completely unexercised. **Do not advertise park watches until one has been created and

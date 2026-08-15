@@ -98,7 +98,17 @@ test('the module never logs or exports a credential', async () => {
   // returns neither. Exported so it can be tested directly, since the branch it guards -
   // refusing to type our password at somebody else's remembered account - is one a browser
   // test would reach only by chance.
-  assert.deepEqual(exported.sort(), ['attemptLogin', 'hasCredentials', 'looksLikeAnotherAccount']);
+  //
+  // `clickSignInControl(page)` (2026-08-15) presses RC's own "Log in" control and returns
+  // which selector matched. It is handed a Playwright page and NOTHING else, reads no
+  // credential, and cannot: `credentials()` stays private and this does not call it. It is
+  // exported because the token renewal in `rc-token.mjs` needs exactly that act — a click on
+  // that control, with a live Okta cookie, is the only thing measured to re-mint a token
+  // without a credential — and INJECTING it is what keeps `rc-token.mjs` structurally unable
+  // to sign in. The alternative was a second copy of the click over there, which is how
+  // `content-rc.js` spent months disagreeing with `rc-cart.mjs`.
+  assert.deepEqual(exported.sort(),
+    ['attemptLogin', 'clickSignInControl', 'hasCredentials', 'looksLikeAnotherAccount']);
   // And the module must not be able to send anything anywhere by itself.
   assert.ok(!/\bfetch\s*\(/.test(src), 'rc-autologin makes no network calls of its own');
 });

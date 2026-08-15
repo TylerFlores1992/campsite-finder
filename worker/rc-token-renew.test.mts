@@ -8,7 +8,7 @@
  * an OIDC round trip cannot happen in a second, and a genuine failure does not hand back the
  * identical number — that was the same token being read straight out of localStorage.
  *
- * `renewByReload` deleted only `window.__camphawkRcToken`, the page-scoped copy. The copy
+ * `renewByReload` — now `renewSession` — deleted only `window.__camphawkRcToken`. The copy
  * okta-auth-js decides from is **localStorage**, and with a still-valid token there the SDK
  * has no reason to issue `/authorize` at all. So the reload that was supposed to exercise
  * the bootstrap path never triggered it, and this was reported for three days as RC
@@ -35,9 +35,9 @@ const src = readFileSync('scripts/auto-cart-bot/rc-token.mjs', 'utf8');
 const code = (s: string) => s.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
 
 function renewBody(): string {
-  const i = src.indexOf('export async function renewByReload');
-  assert.ok(i > 0, 'renewByReload must exist');
-  const end = src.indexOf('\n}', src.indexOf('return { renewed, before, after', i));
+  const i = src.indexOf('export async function renewSession');
+  assert.ok(i > 0, 'renewSession must exist');
+  const end = src.indexOf('\n}', src.indexOf('return { renewed, stage, before, after', i));
   assert.ok(end > i);
   return code(src.slice(i, end));
 }
@@ -83,13 +83,13 @@ test('the reload clears the token the APP decides from, not just our own copy', 
   // okta-auth-js holding a valid token, so the bootstrap issues no /authorize.
   //
   // THE CLEARING MOVED INTO `dropStoredToken` (2026-08-15), shared with `attemptLogin`, so
-  // this now pins BOTH HALVES. Asserting only the helper would pass on a `renewByReload` that
+  // this now pins BOTH HALVES. Asserting only the helper would pass on a `renewSession` that
   // had stopped calling it, and asserting only the call would pass on a helper that cleared
   // nothing — the extraction trap that made `control-channel.test.mts` green against a
   // `restart-rc.ps1` which no longer killed anything.
   // WIDENED 2026-08-15, and the widening IS the fix. Clearing RC's two copies left
   // okta-auth-js holding the same token in its own `okta-` store, which it handed straight
-  // back — so `renewByReload` measured a survivor and reported "RC will not renew" for days.
+  // back — so `renewSession` measured a survivor and reported "RC will not renew" for days.
   // A token came back 26 seconds older than the one dropped (578s -> 552s), which can only
   // happen if a persisted copy was missed.
   const i = src.indexOf('export async function dropStoredToken');
@@ -106,7 +106,7 @@ test('the reload clears the token the APP decides from, not just our own copy', 
   assert.match(code(src), /RC_TOKEN_KEYS = \['ssoAccessToken', 'accessToken'\]/);
 
   assert.match(renewBody(), /await dropStoredToken\(page\)/,
-    'renewByReload must still do the clearing, or the bootstrap never happens');
+    'renewSession must still do the clearing, or the bootstrap never happens');
 });
 
 test('it waits for a token that is not the one it dropped', () => {
@@ -179,7 +179,7 @@ test('the keys actually emptied are reported, never their values', () => {
   // NAMES ONLY. A token is a credential, and the rule here is not to collect a field you then
   // have to filter — the first mobile report leaked an OAuth authorization code exactly that
   // way, and the scrub that guarded it sailed straight past.
-  assert.match(renewBody(), /cleared/, 'renewByReload must return which keys it emptied');
+  assert.match(renewBody(), /cleared/, 'renewSession must return which keys it emptied');
   const helper = code(src.slice(src.indexOf('export async function dropStoredToken')));
   assert.match(helper, /cleared: Object\.keys\(snapshot\)/,
     'report the key NAMES, which is what Object.keys gives');
@@ -189,4 +189,96 @@ test('the keys actually emptied are reported, never their values', () => {
   // and passed — the inert-fix shape, inside the guard written to catch it.
   assert.match(kw, /log\(`\s*cleared \$\{r\.cleared\?\.length \?\? 0\} storage key\(s\)/,
     'and the caller must actually LOG them, or the diagnostic is dead code');
+});
+
+/**
+ * ── THE AUTHORIZE STAGE (added 2026-08-15) ─────────────────────────────────────────────
+ *
+ * With the clear finally covering okta-auth-js's own store, the reload asked an honest
+ * question and the answer was still no — twice, an hour apart, the token coming back older.
+ * That reads as "RC will not renew" and it is not what happened: **nothing was asking it to.**
+ *
+ * The same evening's log carries the discriminating pair, both halves reproduced:
+ *   NEGATIVE  a plain load from a token-less profile, Okta ALIVE, produces nothing — twice,
+ *             the first of them sitting dead through two twenty-minute checks.
+ *   POSITIVE  a click on RC's own sign-in control produces a FULL 59-minute token with no
+ *             credential typed — twice, each ~19s after the click.
+ *
+ * A full hour is the discriminator: a restored stale copy carries its old expiry, which is
+ * exactly what the failing reloads showed (565s → 540s).
+ */
+
+test('the renewal clicks the sign-in control when a plain reload produced nothing', () => {
+  // THE FIX, as a source assertion. Without the click the function is the thing that has
+  // measured four consecutive failures and cannot do anything else.
+  const body = renewBody();
+  assert.match(body, /await clickSignIn\(page\)/,
+    'a plain reload has never re-minted a token — the click is what starts the flow');
+  assert.match(body, /stage = 'authorize'/, 'and the result must say which stage produced the token');
+});
+
+test('the click is the SECOND stage, so a working reload still wins', () => {
+  // Ordering is the whole reason both stages stay. `reload` succeeding would mean the SDK's
+  // own bootstrap has started working and this can be simplified back down; running the
+  // click unconditionally would hide that the day it happens, which is the standing
+  // measurement being thrown away to save one navigation.
+  const body = renewBody();
+  assert.match(
+    body,
+    /if \(clickSignIn && !isRenewal\(\{ previous, next: token, before, after: tokenSecondsLeft\(token\) \}\)\)/,
+    'stage two must be gated on stage one having failed, judged by isRenewal and not by presence',
+  );
+});
+
+test('a click that found no control is its own outcome, not a silent failure', () => {
+  // 2026-08-15 18:22: the clear did not sign the SPA out — it went on rendering its
+  // signed-in banner — so no "Log in" anchor existed, a different control matched, and the
+  // flow was never started. "We asked and Okta refused" needs a human; "we never got as far
+  // as asking" does not, and collapsing them is the `status = 'sent'` family of lie.
+  const body = renewBody();
+  assert.match(body, /stage = 'no-signin-control'/,
+    'not finding the control must be distinguishable from Okta refusing us');
+});
+
+test('a failed click does not leave the resident tab parked on a sign-in page', () => {
+  // The signed-out case clears nothing, so the restore branch does not run — and the click
+  // navigates. Without this the headful keep-warm would sit on Okta's form on somebody's
+  // desktop, and every later readLiveToken would be reading the wrong page.
+  assert.match(renewBody(), /\} else if \(!renewed && stage !== 'reload'\) \{/,
+    'the non-restore failure path must navigate back to RC');
+});
+
+test('the renewal path is STRUCTURALLY incapable of submitting a credential', () => {
+  // THE PROPERTY THAT LETS THIS BE RATIONED ON ITS OWN TERMS. A re-mint does not spend the
+  // one-attempt-per-release login budget — the budget that exists because repeated logins
+  // from this address cost twelve hours of IP block on 2026-08-06 — and that is only
+  // defensible while it cannot type anything. The click is INJECTED as a callback; owning a
+  // selector list here would be one import away from owning a password field too.
+  assert.ok(!/from '\.\/rc-autologin\.mjs'/.test(src),
+    'rc-token.mjs must not import the login module, or the boundary is decoration');
+  const body = renewBody();
+  for (const forbidden of [/password/i, /credential/i, /\.fill\(/]) {
+    assert.ok(!forbidden.test(body),
+      `the renewal must never reach a credential (matched ${forbidden})`);
+  }
+});
+
+test('the sign-in click is ONE definition, and attemptLogin still goes through it', () => {
+  // THE EXTRACTION TRAP, which has now cost six guards in this repo. Asserting only that
+  // `clickSignInControl` exists would pass against an `attemptLogin` that had gone back to
+  // its own inline copy — and the forgotten copy is by definition the one running when it
+  // matters. Both halves, always.
+  const auto = readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8');
+  const bare = code(auto);
+  assert.match(bare, /export async function clickSignInControl\(page/,
+    'the click must be an exported definition the renewal can inject');
+  const helper = bare.slice(bare.indexOf('export async function clickSignInControl'));
+  assert.match(helper.slice(0, helper.indexOf('\n}\n')), /findIn\(page, SIGNIN_LINK_SELECTORS/,
+    'and it must be the one that uses the shared selector list');
+
+  const attempt = bare.slice(bare.indexOf('export async function attemptLogin'));
+  assert.match(attempt, /await clickSignInControl\(page\)/,
+    'attemptLogin must call it, not keep a second copy of the same act');
+  assert.ok(!/const link = await findIn\(page, SIGNIN_LINK_SELECTORS/.test(attempt),
+    'the inline copy inside attemptLogin must be gone, or the two will drift');
 });
