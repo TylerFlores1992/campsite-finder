@@ -776,6 +776,43 @@ const PRESETS: Record<string, Preset> = {
       export const node = <NewWatch />;`,
     frame: 'max-w-2xl w-full mx-auto',
   },
+  'ch-newwatch-mute': {
+    label: 'New watch — mute sites before the watch exists, with bulk controls',
+    // THE SECOND HOME OF THE MUTE LIST (2026-08-15). The owner's reason for it:
+    // "most people won't know there is a mute section in manage watches."
+    //
+    // A campground is pre-selected, because the section deliberately does not
+    // render before that — there is nothing to enumerate. The panel is opened and
+    // three sites muted, so the frame shows the state that matters: the bulk pair
+    // reading "Mute all 31 / Unmute all 3" and the running count beside them.
+    entry: `import NewWatch from '@/components/v2/NewWatch';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        const LOOPS = ['Ocean Loop','Creek Loop','Ridge Loop'];
+        const campsites = [];
+        for (let i = 1; i <= 34; i++) campsites.push({ campsiteId: 'S'+i, campsiteName: 'Site ' + String(i).padStart(2,'0'), loop: LOOPS[i % 3] });
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/availability')) return { ok: true, status: 200, json: async () => ({ campsites }) };
+          if (u.includes('/api/campgrounds/')) return { ok: true, status: 200, json: async () => ({
+            campground: { id: '233116', name: 'Kirk Creek Campground', source: 'ridb' },
+          }) };
+          return { ok: true, status: 200, json: async () => ({}) };
+        };
+        setTimeout(() => {
+          const b = [...document.querySelectorAll('button')].find((x) => /Mute individual/.test(x.textContent || ''));
+          b?.click();
+          setTimeout(() => {
+            [...document.querySelectorAll('button')]
+              .filter((x) => (x.textContent || '').trim() === 'Mute')
+              .slice(0, 3)
+              .forEach((x) => x.click());
+          }, 300);
+        }, 500);
+      }
+      export const node = <NewWatch initialCampgroundId="233116" initialStart="2026-09-04" initialEnd="2026-09-07" />;`,
+    frame: 'w-full',
+  },
   'ch-primitives': {
     label: 'Redesign primitives (Button / Chip / Tag / Card / Collapsible)',
     // Every variant of every phase-2 primitive on one sheet, on the ch-paper

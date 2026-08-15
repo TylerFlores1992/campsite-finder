@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { watchOpenings, withHoldLinks, withBookLinks } from '@/lib/watch-openings';
 import { query, mutate } from '@/lib/db/client';
 import { resolveManageToken } from '@/lib/notifications/actions';
+import { applyMutes, cleanSiteIds } from '@/lib/watch-mutes';
 
 export const dynamic = 'force-dynamic';
 
@@ -111,9 +112,32 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   const watchId = await resolveManageToken(token);
   if (!watchId) return NextResponse.json({ error: 'invalid or expired link' }, { status: 404 });
 
-  const { op, siteId } = await req.json().catch(() => ({}));
+  const { op, siteId, mute, unmute } = await req.json().catch(() => ({}));
 
   switch (op) {
+    /**
+     * BATCH mute/unmute — what "mute all" is built on.
+     *
+     * A 300-site campground muted one request per site is 300 round trips from a phone
+     * on campground wifi, and any one of them failing leaves the watch in a state
+     * neither the user nor the screen can describe. One statement per direction, so the
+     * write either happened or it didn't.
+     *
+     * Both directions in ONE call on purpose: the caller sends what it wants changed,
+     * and a mute+unmute pair applied in that order is well defined. `mute` is applied
+     * first so an id in both lists ends up UNMUTED — the safe direction, since a site
+     * wrongly muted is an alert the user never learns they missed, while a site wrongly
+     * unmuted is only noise.
+     */
+    case 'setMutes': {
+      const add = cleanSiteIds(mute);
+      const remove = cleanSiteIds(unmute);
+      if (add.length === 0 && remove.length === 0) {
+        return NextResponse.json({ error: 'mute or unmute required' }, { status: 400 });
+      }
+      await applyMutes(watchId, { mute: add, unmute: remove });
+      break;
+    }
     case 'remove':
       // Permanent delete (cascades action_tokens + notifications keep their SET NULL).
       await mutate(`DELETE FROM watches WHERE id = $1`, [watchId]);
