@@ -140,7 +140,7 @@ This codebase uses `&apos;`, `&rsquo;`, `&ldquo;`, `&mdash;` and `&amp;` heavily
 is a place this can happen**, so `npm run jsx-spacing` is worth having in `npm run verify`.
 Not added here: that recipe is shared with the main lane's CI.
 
-## 4. PRE-EXISTING: the `admin-health` screenshot preset throws
+## 4. FIVE SCREENSHOT PRESETS RENDERED NOTHING AND REPORTED SUCCESS — FIXED 2026-08-15
 
 `npx tsx scripts/screenshot-component.mts admin-health` logs
 `page error: Cannot read properties of undefined (reading 'level')`.
@@ -149,9 +149,73 @@ Not added here: that recipe is shared with the main lane's CI.
 committed baseline — identical error. Not caused by this branch.
 
 It matters because CLAUDE.md points at that preset as the check for the colour-blind
-status marks ("renders the tab with a warn and a fail in view"). If it is throwing
-part-way, that verification is not doing its job. Its fixture gained the two new
-`AdminData` fields on this branch, but that is not the cause.
+status marks ("renders the tab with a warn and a fail in view").
+
+**It was worse than "throws part-way".** The throw is `overallStatus(data)` reading
+`data.shardCov.level` at `AdminTabs.tsx:206`, and that call is the FIRST thing the
+component does — so React unmounted the whole tree. **The saved PNG is a plain cream
+rectangle with nothing on it**, confirmed by reading the image back, not by inferring from
+the log. So the named verification for the one accessibility property the owner cannot
+check by eye was producing an empty file, and exiting 0 while it did.
+
+**Three fields were missing from the fixture**, all required by `AdminData`: `shardCov`,
+`capacity`, and the four `r_*` fields on `smsDelivery` (the 7-day window `smsLevel` is
+actually judged on — the 30-day figures next to them are history).
+
+### The instrument, not the fixture, is the finding
+
+`page.on('pageerror')` only `console.error`d. The script then saved the PNG and
+**exited 0**. So every preset in the repo could throw and still read as a pass.
+
+**Measured, by sweeping all 47 presets** (`exit` code and page-error count per preset):
+
+| | count | behaviour |
+|---|---|---|
+| Rendered clean | 35 | exit 0, no page error |
+| **Threw at render, exit 0** | **5** | `admin-health`, `ch-admin`, `ch-admin-broken`, `ch-costs`, `ch-costs-edit` |
+| Failed at build, exit 1 | 7 | see below — these were already honest |
+
+The five silent ones were two families: `.level` (missing `shardCov`/`capacity` — three
+presets feeding `AdminTabs`) and `.sms` (missing `lifetimeUsage` — two feeding
+`CostsPanel`). **All five now render and exit 0**; the harness throws on any page error,
+verified by restoring the exact bug and watching `exit=1`, then restoring the fix and
+watching `exit=0`.
+
+Console errors are deliberately NOT collected — React logs recoverable warnings through
+`console.error`, and failing on those would make the harness cry wolf, which is the
+failure being fixed rather than a second copy of it.
+
+### Why no build could ever have caught this
+
+**A preset's `entry` is a template STRING**, compiled by esbuild at run time. A prop-type
+change to `AdminTabs` cannot break a preset at typecheck or at `next build` — the fixture
+just drifts, and only a browser finds out. `npm run typecheck` passes with all five
+broken. That is the structural reason this survived: the guard has to be the run itself,
+which is why the exit code had to change.
+
+Same string-ness bites the author: **an entry cannot contain a backtick or a bare `${`**,
+even inside a `//` comment, because either ends the literal. Hit while writing the fix —
+a comment quoting a field name in backticks closed the entry and the parse error surfaced
+on an unrelated later line. Documented on the `Preset` interface now.
+
+### 7 presets point at components deleted in the front-end swap
+
+`search-bar`, `favorites-panel`, `manage-watch`, `ch-home`, `v2-available`, `v2-mobile`,
+`avail-usedirect` fail at esbuild with `Could not resolve` for `@/components/SearchBar`,
+`FavoritesPanel`, `ManageWatch`, `@/app/v2/page`, `v2/AvailableNow`,
+`AvailabilityCalendar`. CLAUDE.md records those deletions ("the old pages and 14 orphaned
+components are deleted; `/v2` no longer exists") — the presets were never updated with
+them.
+
+**Left alone deliberately.** They already fail loudly with a message that names the
+missing module, so they are not lying, and every one has a live successor already covered
+by another preset (`Explore` for `AvailableNow`, `v2/ManageWatch` for `ManageWatch`).
+Deleting seven presets is a separate judgement call and would have muddied a change whose
+point is "make the instrument honest". **Recommend removing them**; not done here.
+
+*Inference, flagged as such:* nothing runs these presets in CI, so the 7 dead ones cost
+only a person's time when they try one. I did not add a CI sweep — 47 Chromium launches is
+too heavy, and `verify` is the main lane's recipe.
 
 ## 5. THE TEST SUITE RACES ITSELF IN CI — MEASURED, and it needs no second lane
 
@@ -294,7 +358,18 @@ Everything above is merged (PR #45) and live. What is NOT done:
 2. **`verify.yml` races itself** (finding 5). A `push` run and a `pull_request` run of the
    same commit have different `github.ref`, so the concurrency group never cancels either
    and both hit the production DB. Fixture ids are fixed strings with prefix `DELETE`s.
-3. **`admin-health` screenshot preset throws** (finding 4), pre-existing.
+3. ~~**`admin-health` screenshot preset throws**~~ **DONE 2026-08-15** — see finding 4.
+   Five presets were rendering blank and exiting 0; the fixtures are repaired and the
+   harness now fails on a page error. **Still open from that work:** the 7 presets
+   pointing at components deleted in the front-end swap. They fail loudly, so they are
+   not dangerous, but they can never run and should probably be deleted.
 4. **`npm run jsx-spacing` is not in `npm run verify`.** Given that the SWC entity trap
    (finding 3) silently broke four user-visible strings and this codebase escapes entities
    everywhere, it is worth adding — one line, and the recipe is the main lane's.
+5. **`verify.yml` racing itself is FIXED** — the concurrency group is now
+   `verify-${{ github.head_ref || github.ref_name }}`, so a branch's push run and its PR
+   run share a group and cancel. Finding 5 below describes the race as live; read it as
+   history. **What it does not fix** is the underlying fragility it documents: fixed
+   fixture ids with prefix `DELETE`s against ONE production database, so two branches
+   pushing at once still collide. That is why `docs/LANES.md` serializes `npm test`
+   between lanes rather than treating it as ceremony.

@@ -38,6 +38,14 @@ const CHROMIUM = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 interface Preset {
   label: string;
   // ESM import + a JSX expression rendered inside the frame. `React` is in scope.
+  //
+  // TWO THINGS THIS STRING CANNOT CONTAIN, both of which end the template literal or
+  // splice into it rather than failing where you wrote them: a BACKTICK (even inside a
+  // // comment — it closes the entry and the parse error lands on some later line) and
+  // a bare ${. And because `entry` is a STRING, esbuild compiles it at run time and
+  // `npm run typecheck` never sees it — a fixture here cannot be caught drifting from
+  // its component's props by any build. Only running the preset finds that, which is
+  // why a page error below is a non-zero exit.
   entry: string;
   // Optional wrapper classes around the mount (defaults to a centered app-like frame).
   frame?: string;
@@ -142,6 +150,13 @@ const PRESETS: Record<string, Preset> = {
       const series = { users: [{ day: day(3), n: 2 }], subs: [], watches: [], alerts: [] };
       const data = {
         clerkTotal: 41, usersAgg: { total: 38, new_7d: 3, new_30d: 9 }, activeSub: { n: 6 },
+        // The Poller capacity panel. Deliberately ok + warn rather than two of a kind:
+        // the warn is what renders the "Clone first, then raise the count" instruction,
+        // and capacity is the one leading indicator on the page.
+        shardCov: { held: 2, expected: 2, missing: [], machines: 2, level: 'ok',
+                    detail: 'both shards held' },
+        capacity: { demand: 7, capacity: 8, machines: 2, free: 1, level: 'warn',
+                    detail: '7 rec.gov campground-months across 2 machines' },
         subMap: { active: 5, trialing: 1, past_due: 1, canceled: 2 },
         watchAgg: { active: 13, total: 61, watchers: 11 },
         alertAgg: { sent: 402, sent_7d: 21, failed: 12 },
@@ -164,7 +179,12 @@ const PRESETS: Record<string, Preset> = {
           { source: 'reserveamerica-IL', finished_at: day(0), facilities_synced: 0, error: '403', metadata: { totalErrors: 282 }, age_s: 9600 },
           { source: 'reservecalifornia', finished_at: day(0), facilities_synced: 1211, error: null, metadata: { totalErrors: 3 }, age_s: 12000 },
         ],
-        smsDelivery: { delivered: 84, dropped: 5, pending: 2, untracked: 311 },
+        // The 30-day figures are HISTORY; the r_* 7-day figures are what the level is
+        // judged on. They disagree on purpose — 5/89 over 30 days is above the 3% warn
+        // line, 0/31 over 7 days is not. That is the 2026-08-05 shape exactly, and it is
+        // what a regression back to the 30-day window would light up in this shot.
+        smsDelivery: { delivered: 84, dropped: 5, pending: 2, untracked: 311,
+                       r_delivered: 31, r_dropped: 0, r_pending: 1, r_untracked: 0 },
         costItems: [], usage: { sms: 0, email: 0, push: 0 }, lifetimeUsage: { sms: 0, email: 0, push: 0 },
         monthLabel: 'Aug 2026',
       };
@@ -385,7 +405,10 @@ const PRESETS: Record<string, Preset> = {
         { id: '3', label: 'Domain (camphawk.app)', category: 'other', amount_cents: 1800, billing_period: 'yearly', notes: 'Renews annually', sort_order: 30 },
         { id: '4', label: 'Twilio number', category: 'comms', amount_cents: 115, billing_period: 'monthly', notes: 'A2P phone number', sort_order: 40 },
       ];
-      export const node = <div className="font-ch-body text-ch-ink"><CostsPanel initialItems={items} usage={{ sms: 311, email: 4200, push: 900 }} mrrCents={24150} monthLabel="Jul 2026" /></div>;`,
+      // lifetimeUsage is REQUIRED — CostsPanel reads .sms off it for the lifetime row.
+      // Larger than the monthly usage on purpose: one is this month, the other is all
+      // time, and a fixture where they match cannot show the two apart.
+      export const node = <div className="font-ch-body text-ch-ink"><CostsPanel initialItems={items} usage={{ sms: 311, email: 4200, push: 900 }} lifetimeUsage={{ sms: 2480, email: 31600, push: 7400 }} mrrCents={24150} monthLabel="Jul 2026" /></div>;`,
     frame: 'w-full',
   },
   'ch-costs-edit': {
@@ -398,32 +421,47 @@ const PRESETS: Record<string, Preset> = {
       if (typeof window !== 'undefined') {
         setTimeout(() => document.querySelector('[aria-label^="Edit Domain"]')?.click(), 350);
       }
-      export const node = <div className="font-ch-body text-ch-ink"><CostsPanel initialItems={items} usage={{ sms: 0, email: 0, push: 0 }} mrrCents={24150} monthLabel="Jul 2026" /></div>;`,
+      export const node = <div className="font-ch-body text-ch-ink"><CostsPanel initialItems={items} usage={{ sms: 0, email: 0, push: 0 }} lifetimeUsage={{ sms: 2480, email: 31600, push: 7400 }} mrrCents={24150} monthLabel="Jul 2026" /></div>;`,
     frame: 'w-full',
   },
   'ch-admin': {
     label: 'Admin dashboard (redesign) — healthy state',
     entry: `import AdminTabs from '@/components/admin/AdminTabs';
-      const days = Array.from({length: 30}, (_, i) => ({ day: '2026-07-' + String(i+1).padStart(2,'0'), n: [2,5,1,8,4,3,9,6,2,7,11,4,3,5,8,2,6,9,4,7,3,5,12,6,4,8,2,9,5,7][i] }));
+      const day = (i) => '2026-07-' + String(i + 1).padStart(2, '0');
+      const N = [2,5,1,8,4,3,9,6,2,7,11,4,3,5,8,2,6,9,4,7,3,5,12,6,4,8,2,9,5,7];
+      const mkSeries = (scale) => N.map((n, i) => ({ day: day(i), n: Math.max(1, Math.round(n * scale)) }));
+      // AdminData.series is keyed by SeriesKey — all four, or the chart's metric
+      // switcher has a tab with nothing behind it.
+      const series = { users: mkSeries(1), subs: mkSeries(0.2), watches: mkSeries(1.5), alerts: mkSeries(4) };
       const data = {
         clerkTotal: 1284, usersAgg: { total: 1240, new_7d: 38, new_30d: 152 },
         activeSub: { n: 96 }, subMap: { active: 96, trialing: 14, past_due: 2, canceled: 31 },
         watchAgg: { active: 213, total: 908, watchers: 74 },
         alertAgg: { sent: 4820, sent_7d: 311, failed: 22 },
         cgRows: [{source:'ridb',n:4102},{source:'reservecalifornia',n:1280},{source:'reserveamerica',n:1642},{source:'goingtocamp',n:589},{source:'tnsc',n:400}],
-        cgTotal: 8013, days, maxDay: 12,
+        cgTotal: 8013, series,
+        // Healthy state, so both capacity rows are ok — this is the shot that shows
+        // what "nothing to do" looks like, and a warn here would blunt that.
+        shardCov: { held: 2, expected: 2, missing: [], machines: 2, level: 'ok',
+                    detail: 'both shards held' },
+        capacity: { demand: 5, capacity: 8, machines: 2, free: 3, level: 'ok',
+                    detail: '5 rec.gov campground-months across 2 machines' },
         mrr: { monthly: 241.5, activeCount: 96 },
-        beat: { beat_at: '', watches_checked: 213, age_s: 12 }, workerHealthy: true,
+        beat: { beat_at: new Date().toISOString(), watches_checked: 213, age_s: 12 }, workerHealthy: true,
         canaryRows: [
           { key: 'detect:ridb', ok: true, age_s: 45, consecutive_failures: 0, detail: null },
           { key: 'detect:reservecalifornia', ok: true, age_s: 60, consecutive_failures: 0, detail: null },
           { key: 'delivery:sms', ok: true, age_s: 1800, consecutive_failures: 0, detail: null },
         ],
         syncRows: [
-          { source: 'ridb', finished_at: '2026-07-27T02:00:00Z', facilities_synced: 4102, error: null, metadata: null },
-          { source: 'reservecalifornia', finished_at: '2026-07-27T03:00:00Z', facilities_synced: 1280, error: null, metadata: null },
+          { source: 'ridb', finished_at: '2026-07-27T02:00:00Z', facilities_synced: 4102, error: null, metadata: null, age_s: 7200 },
+          { source: 'reservecalifornia', finished_at: '2026-07-27T03:00:00Z', facilities_synced: 1280, error: null, metadata: null, age_s: 10800 },
         ],
-        costItems: [], usage: { sms: 311, email: 4200, push: 900 }, monthLabel: 'Jul 2026',
+        smsDelivery: { delivered: 402, dropped: 3, pending: 1, untracked: 96,
+                       r_delivered: 88, r_dropped: 0, r_pending: 0, r_untracked: 0 },
+        costItems: [], usage: { sms: 311, email: 4200, push: 900 },
+        lifetimeUsage: { sms: 2480, email: 31600, push: 7400 },
+        monthLabel: 'Jul 2026', users: [], testUserCount: 0,
       };
       export const node = <AdminTabs data={data} />;`,
     frame: 'w-full',
@@ -431,22 +469,34 @@ const PRESETS: Record<string, Preset> = {
   'ch-admin-broken': {
     label: 'Admin dashboard (redesign) — worker down',
     entry: `import AdminTabs from '@/components/admin/AdminTabs';
-      const days = Array.from({length: 30}, (_, i) => ({ day: '2026-07-' + String(i+1).padStart(2,'0'), n: 3 }));
+      const flat = Array.from({length: 30}, (_, i) => ({ day: '2026-07-' + String(i+1).padStart(2,'0'), n: 3 }));
+      const series = { users: flat, subs: flat, watches: flat, alerts: flat };
       const data = {
         clerkTotal: 1284, usersAgg: { total: 1240, new_7d: 38, new_30d: 152 },
         activeSub: { n: 96 }, subMap: { active: 96, trialing: 14, past_due: 2, canceled: 31 },
         watchAgg: { active: 213, total: 908, watchers: 74 },
         alertAgg: { sent: 4820, sent_7d: 311, failed: 22 },
-        cgRows: [], cgTotal: 8013, days, maxDay: 3,
+        cgRows: [], cgTotal: 8013, series,
+        // An UNHELD shard is the silent-blindness case — those campgrounds are polled by
+        // nobody while everything else reports green. This is the shot it belongs in.
+        shardCov: { held: 1, expected: 2, missing: [1], machines: 1, level: 'fail',
+                    detail: 'shard 1 of 2 is held by no machine' },
+        capacity: { demand: 11, capacity: 4, machines: 1, free: -7, level: 'fail',
+                    detail: '11 rec.gov campground-months across 1 machine' },
         mrr: { monthly: 241.5, activeCount: 96 },
         beat: { beat_at: '', watches_checked: 213, age_s: 2400 }, workerHealthy: false,
         canaryRows: [
           { key: 'detect:ridb', ok: false, age_s: 3000, consecutive_failures: 5, detail: 'timeout' },
         ],
         syncRows: [
-          { source: 'goingtocamp', finished_at: '2026-07-27T02:00:00Z', facilities_synced: 0, error: 'WAF block', metadata: null },
+          { source: 'goingtocamp', finished_at: '2026-07-27T02:00:00Z', facilities_synced: 0, error: 'WAF block', metadata: null, age_s: 9000 },
         ],
-        costItems: [], usage: { sms: 0, email: 0, push: 0 }, monthLabel: 'Jul 2026',
+        // Texts dropping too: 4 of 26 answered is 15%, past the 10% fail line.
+        smsDelivery: { delivered: 300, dropped: 40, pending: 12, untracked: 96,
+                       r_delivered: 22, r_dropped: 4, r_pending: 6, r_untracked: 0 },
+        costItems: [], usage: { sms: 0, email: 0, push: 0 },
+        lifetimeUsage: { sms: 2480, email: 31600, push: 7400 },
+        monthLabel: 'Jul 2026', users: [], testUserCount: 0,
       };
       export const node = <AdminTabs data={data} />;`,
     frame: 'w-full',
@@ -1344,9 +1394,23 @@ async function main() {
     args: ['--no-sandbox', '--no-proxy-server', '--disable-features=HttpsUpgrades'],
     env: cleanEnv,
   });
+  // An uncaught error in the page is a FAILED SHOT, not a note in the log.
+  //
+  // This used to only console.error, then save the PNG and exit 0 — so a preset whose
+  // fixture had drifted from its component's props threw during render, unmounted the
+  // whole tree, wrote a blank cream rectangle and reported success. Five of the 47
+  // presets were in exactly that state when this was found (2026-08-15), including
+  // `admin-health`, which CLAUDE.md names as THE verification for the colour-blind
+  // status marks. The image is still written — a blank shot is evidence, and deleting
+  // it would remove the thing that shows what went wrong.
+  //
+  // Console errors are NOT collected here. React logs recoverable warnings through
+  // console.error, and failing on those would make the harness cry wolf — which is the
+  // failure this exists to prevent, not a second copy of it.
+  const pageErrors: string[] = [];
   try {
     const page = await browser.newPage({ viewport: { width, height } });
-    page.on('pageerror', (e) => console.error('[shot] page error:', e.message));
+    page.on('pageerror', (e) => { pageErrors.push(e.message); console.error('[shot] page error:', e.message); });
     page.on('console', (m) => { if (m.type() === 'error') console.error('[shot] console:', m.text().slice(0, 300)); });
     await page.goto(`http://localhost:${port}/${query ? '?' + query : ''}`, { waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.waitForTimeout(wait);
@@ -1355,6 +1419,11 @@ async function main() {
   } finally {
     await browser.close();
     server.close();
+  }
+  if (pageErrors.length) {
+    throw new Error(
+      `the page threw ${pageErrors.length} error(s) — ${out} shows what rendered, which may be nothing: ${pageErrors.join('; ')}`
+    );
   }
 }
 
