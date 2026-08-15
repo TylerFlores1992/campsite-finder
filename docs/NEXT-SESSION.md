@@ -5,7 +5,34 @@ healthy on `7780c32`. **Delete this file once the leak is diagnosed.***
 
 ---
 
-## STOP — ONE HUMAN ACTION IS BLOCKING EVERYTHING BELOW (2026-08-15)
+## RESOLVED (unattended, ops-review session, 2026-08-15 ~14:20 UTC / 07:20 PT)
+
+**The STOP block immediately below is no longer the current state — do not act on it.** This
+was checked from a session with no mini-PC access, using only server-side evidence, in the
+spirit of this file's own repeated "confirm behaviourally, not by self-report" lesson:
+
+- `rc_runner_heartbeat.bot_commit` = `be93fcda19cd6aec4bcfa72d6b78936e3a12532c` (the exact
+  commit titled "The keepalive sample never ran: stop-all called a live box empty (#48)" —
+  i.e. the fix this STOP block was blocking on), `bot_commit_at` = `06:36:09 UTC` today —
+  after the 05:12–05:31 UTC window this block describes.
+- **Behavioural proof, not just the reported sha:** `chromium_memory_samples` has 19 rows with
+  `source = 'bot-keepalive'` in the last 6h, earliest `09:01:49 UTC` today, latest `14:02 UTC`
+  (minutes before this check) — this is precisely the forced sample this block says "has never
+  run". It is running now.
+- `commit_used_mb` in the same window sits steadily around 9,200 MB against a 59,134 MB limit
+  (~15.5%) — no sign of the leak recurring at the time of this check.
+- Not independently re-verified: `git-status` on the box itself (no mini-PC access from this
+  session). If a future session can run it, do that before fully retiring this section — this
+  file has been burned twice before by a resolution claimed from one signal that turned out
+  stale (see the two RESOLVED/WRONG flips below). This one has two independent signals
+  (self-reported commit + a behavioural effect only that commit's code produces), which is why
+  it's marked resolved rather than merely noted.
+- The underlying leak (item 1 in "Still open, in rough priority" below) is **not** diagnosed by
+  this — only the block on progressing toward it is cleared. Do not delete this file yet.
+
+---
+
+## STOP — ONE HUMAN ACTION IS BLOCKING EVERYTHING BELOW (2026-08-15) — SEE RESOLVED NOTE ABOVE
 
 **The mini-PC is running `e6a7ebf`. Its checkout is on `c1bd875`. Only a person at the box,
 with an ELEVATED prompt, can fix it — and until they do, nothing about the leak can advance.**
