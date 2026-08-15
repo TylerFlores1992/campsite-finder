@@ -53,7 +53,11 @@ const FEATURES = [
   {
     icon: MapPin,
     title: "Live search — free, no account",
-    body: `Real-time availability at ${campgroundsRounded()} campgrounds, on a map, with filters for tents, RVs, hookups and pets. No subscription, no sign-up.`,
+    // Names the filters that EXIST. "pets" was removed from the panel on 2026-08-15
+    // (`pets_allowed` is `true` for every non-rec.gov campground, so it is a default
+    // rather than a measurement), and marketing copy promising a control the page does
+    // not have is the same defect as a control that does nothing.
+    body: `Real-time availability at ${campgroundsRounded()} campgrounds, on a map, with filters for tents, RVs, hookups and pad length. No subscription, no sign-up.`,
   },
   {
     icon: Zap,

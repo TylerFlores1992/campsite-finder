@@ -25,9 +25,25 @@ import { cx } from "./cx";
  *  - ADA is gone. `ada_accessible` is false for all 8,013 campgrounds, so the
  *    chip could only ever return nothing.
  *
- * Amenities are AND-ed (`p_amenities <@ c.amenities`), so each added chip
- * narrows. Pets is filtered client-side off the returned `petsAllowed` column
- * rather than in SQL — same as today.
+ * Amenities are AND-ed (`p_amenities <@ c.amenities`), so each added chip narrows.
+ *
+ * SHOWERS AND PETS WERE REMOVED 2026-08-15, both on measurement, both for the reason
+ * that already removed `drinking water` from this row:
+ *
+ *   - `showers` is RECREATION.GOV ONLY — 197 of 4,469 rec.gov rows and **zero** across
+ *     all seven other sources (ReserveAmerica, Ohio, ReserveCalifornia, GoingToCamp,
+ *     Minnesota, Illinois, Virginia). Ticking it silently excluded every state-portal
+ *     campground. The owner found it from the other end: Silver Lake Campground has
+ *     showers in real life and reads `["fire rings","picnic tables"]` here.
+ *   - `pets_allowed` is `true` for **100% of every non-rec.gov source** (882/882
+ *     ReserveAmerica, 478/478 Ohio, 392/392 ReserveCalifornia …). It is a DEFAULT, not
+ *     a measurement, so the chip filtered nothing on eight sources and 80% of the
+ *     catalog claims it. The column stays — JSON-LD publishes it — but it cannot carry
+ *     a filter.
+ *
+ * The rule both break is the one this file's header already states: a chip that works
+ * on rec.gov and quietly returns nothing elsewhere is worse than no chip, because
+ * nothing tells the user which they got.
  *
  * NOT INCLUDED: the mockup's "Waterfront". `environment_tags` does carry
  * ocean/lake/river and the RPC returns it, so it's cheap to add client-side
@@ -37,18 +53,15 @@ import { cx } from "./cx";
 export interface FilterValue {
   /** null = all types. One of 'tent' | 'rv' | 'cabin' | 'group'. */
   siteType: string | null;
+  /** Minimum pad length in feet, INDEPENDENT of site type — see the fieldset. */
   rvLength: number | null;
-  pets: boolean;
   electric: boolean;
-  showers: boolean;
 }
 
 export const EMPTY_FILTERS: FilterValue = {
   siteType: null,
   rvLength: null,
-  pets: false,
   electric: false,
-  showers: false,
 };
 
 export interface FilterPanelProps {
@@ -80,44 +93,34 @@ const SITE_TYPES: Array<{ value: string | null; label: string }> = [
  * never return more than 79 campgrounds while silently excluding every state portal.
  * Both are the dead-chip failure this file's header comment already forbids.
  *
- * The chip stays labelled "Hookups" and stays in Must-have rather than moving under
- * the RV site type: hookups matter to more than RV campers, and the owner's call on
- * 2026-08-15 was that the flat Must-have row reads better than a nested one.
+ * DRINKING WATER WAS REMOVED from this row on 2026-08-15 at the owner's request, for
+ * the same reason showers and pets went later the same day: rec.gov-only coverage.
  *
- * DRINKING WATER WAS REMOVED from this row on 2026-08-15 at the owner's request.
- * Its `drinking water` amenity is rec.gov-only (2,153 campgrounds), so the chip
- * silently excluded every state-portal campground the moment it was ticked.
+ * HOOKUPS MOVED INTO "Site type" on 2026-08-15, which REVERSES a call recorded here
+ * earlier the same day ("stays in Must-have ... the flat Must-have row reads better
+ * than a nested one"). The reversal is left visible rather than overwritten, because
+ * the reasoning that produced it was sound and only the surroundings changed: removing
+ * showers and pets left "Must have" a section with exactly one chip in it, and a
+ * one-item group is not a group. Electric is the only amenity in the catalog broad
+ * enough to carry a filter — 9 of 14 sources — so there is nothing left to pair it with.
  */
-const MUST_HAVE: Array<{ key: keyof Pick<FilterValue, "pets" | "electric" | "showers">; label: string }> = [
-  { key: "pets", label: "Pets OK" },
-  { key: "electric", label: "Hookups" },
-  { key: "showers", label: "Showers" },
-];
 
-const RIG_LENGTHS = [24, 28, 32, 36, 40];
+/** Minimum PAD length in feet. Its own control since 2026-08-15 — see the fieldset. */
+const PAD_LENGTHS = [24, 28, 32, 36, 40];
 
 export function countApplied(v: FilterValue): number {
-  return (
-    (v.siteType ? 1 : 0) +
-    (v.rvLength ? 1 : 0) +
-    MUST_HAVE.filter(({ key }) => v[key]).length
-  );
+  return (v.siteType ? 1 : 0) + (v.rvLength ? 1 : 0) + (v.electric ? 1 : 0);
 }
 
 export default function FilterPanel({ value, onChange, defaultOpen, className }: FilterPanelProps) {
   const id = useId();
-  const isRv = value.siteType === "rv";
   const applied = countApplied(value);
 
-  const setSiteType = (next: string | null) => {
-    onChange({
-      ...value,
-      siteType: next,
-      // Leaving RV clears the rig length, so a filter can never keep narrowing
-      // results from a control the user can no longer see.
-      rvLength: next === "rv" ? value.rvLength : null,
-    });
-  };
+  // NO LONGER CLEARS THE PAD LENGTH. It used to, because the control only existed while
+  // RV was selected and a hidden filter that keeps narrowing results is a bug. Pad
+  // length is its own always-visible control now, so there is nothing to hide and
+  // nothing to clear — and a tent camper with a trailer can ask for a 32ft pad.
+  const setSiteType = (next: string | null) => onChange({ ...value, siteType: next });
 
   return (
     <FilterPanelShell
@@ -141,63 +144,62 @@ export default function FilterPanel({ value, onChange, defaultOpen, className }:
             </Chip>
           ))}
         </div>
+        {/* HOOKUPS LIVES HERE NOW, and it is deliberately on its own line rather than
+            as a sixth chip in the row above. Those chips are SINGLE-select — picking
+            Tent unpicks RV — and a toggle sitting among them would look like one more
+            of the same, so tapping it would appear to clear the site type. A separate
+            line, its own label and aria-pressed say "this is a different kind of
+            control" without a second heading for one chip. */}
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-ch-line pt-2.5">
+          <span className="text-ch-fine text-ch-muted">Must have</span>
+          <Chip
+            size="sm"
+            selected={value.electric}
+            aria-pressed={value.electric}
+            onClick={() => onChange({ ...value, electric: !value.electric })}
+          >
+            Hookups
+          </Chip>
+        </div>
       </fieldset>
 
-      {isRv && (
-        <fieldset className="mt-4">
-          <legend className="mb-2 text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
-            My rig length
-          </legend>
-          <div className="flex flex-wrap gap-1.5">
-            <Chip
-              size="sm"
-              selected={value.rvLength === null}
-              onClick={() => onChange({ ...value, rvLength: null })}
-            >
-              Any
-            </Chip>
-            {RIG_LENGTHS.map((ft) => (
-              <Chip
-                key={ft}
-                size="sm"
-                selected={value.rvLength === ft}
-                onClick={() => onChange({ ...value, rvLength: ft })}
-              >
-                {ft} ft
-              </Chip>
-            ))}
-          </div>
-          {/* Truthful version of the mockup's note, which claimed the opposite.
-              The RPC requires EXISTS(campsite with max_vehicle_length >= N), so a
-              campground with no length on file is excluded, not shown. */}
-          <p className="mt-2 px-0.5 text-ch-fine leading-normal text-ch-muted">
-            Only campgrounds with a site that lists a length this long. Sites with no
-            length on file are left out.
-          </p>
-
-        </fieldset>
-      )}
-
+      {/* PAD LENGTH IS ITS OWN CONTROL, always visible (2026-08-15).
+          It used to appear only while the RV site type was selected, and Explore only
+          sent it in that case — so anyone with a trailer who had not also picked "RV"
+          silently got no length filtering at all. The two are independent questions:
+          what kind of site you want, and what will physically fit on it. */}
       <fieldset className="mt-4">
         <legend className="mb-2 text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
-          Must have
+          Pad length
         </legend>
         <div className="flex flex-wrap gap-1.5">
-          {MUST_HAVE.map(({ key, label }) => (
+          <Chip
+            size="sm"
+            selected={value.rvLength === null}
+            onClick={() => onChange({ ...value, rvLength: null })}
+          >
+            Any
+          </Chip>
+          {PAD_LENGTHS.map((ft) => (
             <Chip
-              key={key}
+              key={ft}
               size="sm"
-              selected={value[key]}
-              onClick={() => onChange({ ...value, [key]: !value[key] })}
+              selected={value.rvLength === ft}
+              onClick={() => onChange({ ...value, rvLength: ft })}
             >
-              {label}
+              {ft} ft
             </Chip>
           ))}
         </div>
+        {/* Truthful version of the mockup's note, which claimed the opposite.
+            The RPC requires EXISTS(campsite with max_vehicle_length >= N), so a
+            campground with no length on file is excluded, not shown. */}
         <p className="mt-2 px-0.5 text-ch-fine leading-normal text-ch-muted" id={`${id}-hint`}>
-          Nothing selected means every site counts. Each one you add narrows the results.
+          Only campgrounds with a site that lists a pad this long. Sites with no length
+          on file are left out.
         </p>
       </fieldset>
+
     </FilterPanelShell>
   );
 }
