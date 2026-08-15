@@ -302,6 +302,29 @@ export function tokenSecondsLeft(token) {
  * Returns `{ renewed, before, after, restored, skipped }` in seconds — a token that is both
  * NEW and further from expiry is the only thing counted as a renewal.
  */
+/**
+ * Empty the two keys okta-auth-js decides from, plus our own captured copy.
+ *
+ * ONE DEFINITION, TWO CALLERS, and that is deliberate. `renewByReload` clears these to force
+ * a bootstrap; `attemptLogin` clears them to force a signed-out state it can then sign into.
+ * A second hand-rolled copy is how `renewByReload` came to delete `window.__camphawkRcToken`
+ * and leave localStorage alone — which made it measure the renewal against the very token it
+ * meant to replace, and report "RC will not renew" for weeks on no evidence at all.
+ *
+ * COOKIES ARE NEVER TOUCHED. `DT` is the device identity that stops a sign-in looking like a
+ * fresh profile, and losing it is what cost twelve hours of IP block on 2026-08-06. Clearing
+ * the token is the sanctioned way to get to a signed-out state; RC's own sign-out menu is not.
+ */
+export async function dropStoredToken(page) {
+  await page.evaluate(() => {
+    try {
+      localStorage.removeItem('ssoAccessToken');
+      localStorage.removeItem('accessToken');
+      delete window.__camphawkRcToken;
+    } catch { /* ignore */ }
+  }).catch(() => {});
+}
+
 export async function renewByReload(page, url, { oktaAlive = null } = {}) {
   const stored = await page.evaluate(() => {
     try {
@@ -323,13 +346,7 @@ export async function renewByReload(page, url, { oktaAlive = null } = {}) {
       skipped: 'no Okta session to renew against' };
   }
 
-  await page.evaluate(() => {
-    try {
-      localStorage.removeItem('ssoAccessToken');
-      localStorage.removeItem('accessToken');
-      delete window.__camphawkRcToken;
-    } catch { /* ignore */ }
-  }).catch(() => {});
+  await dropStoredToken(page);
 
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   const { token } = await primeToken(page, { timeoutMs: 25_000, notToken: previous });
