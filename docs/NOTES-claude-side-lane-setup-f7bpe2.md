@@ -369,7 +369,9 @@ Everything above is merged (PR #45) and live. What is NOT done:
    harness now fails on a page error. **Still open from that work:** the 7 presets
    pointing at components deleted in the front-end swap. They fail loudly, so they are
    not dangerous, but they can never run and should probably be deleted.
-4. **`npm run jsx-spacing` is not in `npm run verify`.** Given that the SWC entity trap
+4. **PR #56 (park watches) is open and needs review** — see section 11, including four
+   things it does not verify.
+5. **`npm run jsx-spacing` is not in `npm run verify`.** Given that the SWC entity trap
    (finding 3) silently broke four user-visible strings and this codebase escapes entities
    everywhere, it is worth adding — one line, and the recipe is the main lane's.
 5. **`verify.yml` racing itself is FIXED** — the concurrency group is now
@@ -379,3 +381,100 @@ Everything above is merged (PR #45) and live. What is NOT done:
    fixture ids with prefix `DELETE`s against ONE production database, so two branches
    pushing at once still collide. That is why `docs/LANES.md` serializes `npm test`
    between lanes rather than treating it as ceremony.
+
+
+---
+
+# Second session, 2026-08-15 — campground names, park watches
+
+## 10. Campground names and divisions (PR #53, MERGED)
+
+Measured on the live catalog:
+
+| | |
+|---|---|
+| rec.gov names that are ALL CAPS | **2,719** — a third of the catalog |
+| rows that are divisions of a park | **1,584**, across **321** parks |
+| parks by division count | 87 have 2 · 75 have 3 · 50 have 4 · 86 have 5-9 · 20 have 10-19 · **3 have 20+** |
+| biggest | Ohio's Grand Lake St. Marys, **70** divisions |
+| multi-division parks that are rec.gov | **ZERO** — all ReserveCalifornia and state portals |
+
+**THE TRAP IN "TOO MUCH INFO".** `rc-539` and `rc-542` are BOTH
+"Leo Carrillo SP — Canyon Campground"; only "(sites 1-24, 78-133)" vs
+"(sites 25-77, 134-139)" separates them. Blanket-stripping trailing parentheses makes
+**374 campgrounds ambiguous** across 167 collision groups. The fix has to be structural —
+park once, division beneath, ranges intact — not a regex that deletes suffixes.
+
+`tidyCase` title-cases a name ONLY when it contains no lowercase at all. A mixed-case
+name was cased by a human and re-casing it would rewrite every ReserveCalifornia row.
+
+**PRE-EXISTING BUG FIXED:** `/api/suggest` never filtered `hidden`, so the picker offered
+**425 non-campgrounds** — 183 shelters, 127 day-use areas, visitor centres, a golf
+course. `/api/search` already excluded them.
+
+**Users were already working around the division problem by hand:** Carpinteria SB
+watched as FOUR separate watches, Pfeiffer Big Sur as three — one park eating most of a
+6-watch allowance. That is what motivated option B below.
+
+## 11. Park watches — option B (PR #56, OPEN, with the main lane)
+
+One watch covers several divisions and counts ONCE against `WATCH_LIMIT`.
+**Migration 070 is APPLIED TO PROD** (side lane claimed block 070+; `watches.id` is TEXT,
+not UUID — Postgres refused the FK until that was fixed).
+
+**THE SAFETY PROPERTY:** `watch_campgrounds` is EMPTY for every pre-existing watch and
+`loadWatches` falls back to `w.campground_id`, so all 20 live watches keep a
+byte-identical path. Verified against prod: 20 pairs → 22 with one watch expanded to
+three → 20 again after cleanup, table back to zero rows.
+
+**TWO PLACES COLLAPSED PER-WATCH STATE, both silent:**
+
+1. `claimNotification` keyed on `campsiteId ?? '*'`, and **that sentinel is per-watch**.
+   ReserveAmerica / GoingToCamp / TN-SC send no site id, so every division of a park
+   watch would land on `(watch_id, '*')` and the first to open would silence the rest for
+   an hour — migration 026's bug one level up.
+2. `rc_hold_notified_for` is ONE column on the watch, so two divisions releasing in the
+   same hour share it. Its **clear** needed scoping too, or a division with nothing held
+   wipes the claim a sibling just made.
+
+Both namespaced by campground **only when the watch is multi** — unconditional
+namespacing would change every stored key and re-alert every open site once on deploy.
+The flag is computed in the `loadWatches` SQL beside the expansion, not passed by each
+call site.
+
+Campsite ids were **measured unique within a park**: 10,757 sampled across
+ReserveCalifornia, Ohio and Minnesota multi-division parks, **zero collisions**. So the
+namespacing is belt-and-braces on the id path and load-bearing on the sentinel path.
+
+`MAX_DIVISIONS_PER_WATCH = 10` replaces the bound the cap used to give. Covers 298 of the
+321 parks whole. **This is UseDirect load, not rec.gov** — `poller.capacity` was never
+threatened, though it counts expanded campgrounds now.
+
+### What is NOT verified about PR #56
+
+- **No multi-campground watch has ever run through a real poller cycle.** The join table
+  is empty in prod, so the new path is dormant and untested end to end.
+- **`expire-watches`, `watch-openings`, the manage page and the notification payload were
+  NOT audited** for per-watch assumptions. Two claims were found and fixed; nobody looked
+  at the rest.
+- **The watches list does NOT show a park watch's parts.** `GET /api/watches` returns
+  `divisions`; `WatchCard` / `WatchesList` / `ManageWatch` render nothing with it, so a
+  park watch looks like an ordinary watch named after its representative division. The
+  create flow is complete; the display half is not.
+- **PR #56 will now CONFLICT with master.** The main lane merged site-muting (#55) after
+  it was opened, touching `NewWatch.tsx` and `/api/watches` — the same two files.
+
+## 12. The SWC entity trap, restated because it will recur
+
+An HTML entity (`&apos;` `&rsquo;` `&mdash;` `&amp;`, named or numeric) **anywhere** in a
+JSX text node makes SWC drop that node's LEADING whitespace — even when the entity is on
+a later line than the space being lost. A literal apostrophe is safe; the trailing space
+survives. This is NOT Babel's behaviour, which is why a Babel-ported checker reported the
+codebase clean while production rendered "ReserveCaliforniacarts".
+
+`npm run jsx-spacing` catches it. **Verify UI copy fixes in the COMPILED artifact**
+(`grep .next/static/chunks`), not by trusting a checker.
+
+Related, and it bit twice in one session: **do not put backticks inside SQL comments** in
+`worker/poller.ts` or `src/lib/capacity.ts` — those queries are template literals and a
+backtick terminates the string.
