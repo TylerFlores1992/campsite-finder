@@ -44,6 +44,70 @@ interface Preset {
 }
 
 const PRESETS: Record<string, Preset> = {
+  'beta-testers': {
+    label: 'BetaTesters — 16 on the list, so the 10-row scroll box and search are in view',
+    // Sized ABOVE the scroll threshold deliberately. At 4 testers the max-height
+    // never engages and the preset would prove nothing about the thing it exists
+    // to show; the roster is already past 10 in production, which is why the box
+    // was added at all.
+    entry: `import BetaTesters from '@/components/BetaTesters';
+      const day = (n) => new Date(Date.now() - n * 86400000).toISOString();
+      const NAMES = ['ada','ben','cara','dev','eli','fern','gus','hana','ivan','jo',
+                     'kit','lena','moss','nia','omar','pia'];
+      const testers = NAMES.map((n, i) => ({
+        email: n + '@example.com',
+        added_at: day(30 - i),
+        // A third have no invite record — the "no record of an email" line is a
+        // real state (rows predating invite tracking) and belongs in the fixture.
+        invited_at: i % 3 === 0 ? null : day(28 - i),
+        signed_up: i % 2 === 0,
+        is_beta: true,
+      }));
+      if (typeof window !== 'undefined') {
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({ testers }) });
+      }
+      export const node = <BetaTesters />;`,
+    frame: 'max-w-2xl w-full mx-auto',
+  },
+  'beta-testers-search': {
+    label: 'BetaTesters — search with hits (top) and with none (bottom). Pass --wait=400',
+    // The no-match mount is the point of this preset. Before the search box existed,
+    // the "No {filter} testers." empty state was unreachable for filter='all'; adding
+    // a query that can miss is what makes it reachable, and rendering it as
+    // "No all testers." is the bug this shot exists to catch.
+    entry: `import BetaTesters from '@/components/BetaTesters';
+      const day = (n) => new Date(Date.now() - n * 86400000).toISOString();
+      const NAMES = ['ada','ben','cara','dev','eli','fern','gus','hana','ivan','jo',
+                     'kit','lena','moss','nia','omar','pia'];
+      const testers = NAMES.map((n, i) => ({
+        email: n + '@example.com', added_at: day(30 - i),
+        invited_at: i % 3 === 0 ? null : day(28 - i),
+        signed_up: i % 2 === 0, is_beta: true,
+      }));
+      if (typeof window !== 'undefined') {
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({ testers }) });
+        // React tracks the DOM value itself, so assigning .value is ignored on a
+        // controlled input — go through the prototype's native setter and fire the
+        // event React actually listens for.
+        const type = (el, v) => {
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+            .set.call(el, v);
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        setTimeout(() => {
+          const boxes = document.querySelectorAll('input[type=search]');
+          if (boxes[0]) type(boxes[0], 'an');       // matches hana, ivan (NOT lena — that is 'na')
+          if (boxes[1]) type(boxes[1], 'nobody');   // matches nothing
+        }, 150);
+      }
+      export const node = (
+        <div className="space-y-6">
+          <BetaTesters />
+          <BetaTesters />
+        </div>
+      );`,
+    frame: 'max-w-2xl w-full mx-auto',
+  },
   'setup-nudges': {
     label: 'SetupNudges — both states (no phone, auto-cart unconnected)',
     // Two mounts with two stubbed responses. A real account can see both at once;
