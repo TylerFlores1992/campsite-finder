@@ -652,7 +652,7 @@ const PRESETS: Record<string, Preset> = {
       }
       export const node = (
         <div className="space-y-5">
-          <Demo initial={{ ...EMPTY_FILTERS, siteType: 'rv', rvLength: 32, electric: true }} />
+          <Demo initial={{ ...EMPTY_FILTERS, siteType: 'tent', rvLength: 32, electric: true }} />
           <Demo initial={{ ...EMPTY_FILTERS, rvLength: 28 }} />
         </div>
       );`,
@@ -1375,7 +1375,7 @@ const PRESETS: Record<string, Preset> = {
         const [range, setRange] = React.useState({ start: '2026-08-29', end: '2026-09-01' });
         const [nights, setNights] = React.useState(2);
         const [weekend, setWeekend] = React.useState(true);
-        const [filters, setFilters] = React.useState({ ...EMPTY_FILTERS, siteType: 'rv', rvLength: 32, pets: true });
+        const [filters, setFilters] = React.useState({ ...EMPTY_FILTERS, siteType: 'tent', rvLength: 32, electric: true });
         return (
           <div className="bg-ch-paper p-6 rounded-ch-card font-ch-body text-ch-ink">
             <H>DatePicker — Aug 29 → Sep 1, viewed from August (runs out)</H>

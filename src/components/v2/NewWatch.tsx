@@ -13,7 +13,7 @@ import TrustPanel from "./TrustPanel";
 import FavoriteHeart from "./FavoriteHeart";
 import { useFavorites } from "./useFavorites";
 import { providerLabel, supportsAutoCart } from "./providers";
-import { divisionLabel, parseCampgroundName, placeLabel } from "./campground-name";
+import { divisionLabel, dropRedundantState, parseCampgroundName, placeLabel } from "./campground-name";
 import { addDays, formatRange, nightsBetween, thisWeekendRange, todayISO } from "@/components/ui/date";
 import { useIsNativeApp } from "@/lib/native/context";
 import { NATIVE_LINKOUT, SUBSCRIBE_HREF } from "./nativeSubscribe";
@@ -448,9 +448,26 @@ export default function NewWatch({
                         onClick={() => pick(f)}
                         className="min-w-0 flex-1 cursor-pointer bg-ch-card px-3 py-2 text-left text-ch-body hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
                       >
-                        <span className="font-semibold">{parseCampgroundName(f.name).full}</span>
-                        {placeLabel(f.city, f.state) && (
-                          <span className="text-ch-muted"> · {placeLabel(f.city, f.state)}</span>
+                        {/* A FAVOURITE IS ONE DIVISION, not a park, so it cannot collapse
+                            to the park name the way a search hit does — that would name a
+                            different thing. It gets the same TWO-LINE shape instead: park
+                            in bold, the division beneath in muted text. The site ranges
+                            stay on the second line, because two of Leo Carrillo's three
+                            divisions are both "Canyon Campground" and the range is the
+                            only thing telling them apart. */}
+                        <span className="block font-semibold">
+                          {parseCampgroundName(dropRedundantState(f.name, f.state)).park}
+                          {placeLabel(f.city, f.state) && (
+                            <span className="font-normal text-ch-muted">
+                              {" · "}
+                              {placeLabel(f.city, f.state)}
+                            </span>
+                          )}
+                        </span>
+                        {parseCampgroundName(f.name).division && (
+                          <span className="mt-0.5 block text-ch-fine text-ch-muted">
+                            {parseCampgroundName(f.name).division}
+                          </span>
                         )}
                       </button>
                       <FavoriteHeart
@@ -478,7 +495,9 @@ export default function NewWatch({
                         onClick={() => pick(s)}
                         className="w-full cursor-pointer border-b border-ch-line bg-ch-card px-3 py-2 text-left text-ch-body last:border-b-0 hover:bg-ch-green-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ch-green"
                       >
-                        <span className="font-semibold">{parseCampgroundName(s.name).full}</span>
+                        <span className="font-semibold">
+                          {parseCampgroundName(dropRedundantState(s.name, s.state)).full}
+                        </span>
                         {(s.divisionCount ?? 1) > 1 && (
                           <span className="ml-1.5 rounded-full border border-ch-line bg-ch-paper px-1.5 py-0.5 text-ch-fine text-ch-muted">
                             {s.divisionCount} parts
