@@ -1,4 +1,5 @@
 @AGENTS.md
+@docs/LANES.md
 
 # CampHawk — project memory (orientation for a fresh session)
 
