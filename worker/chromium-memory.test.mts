@@ -518,6 +518,96 @@ test('a P| without its C| still counts — losing a real process is the worse mi
   assert.equal(s.rcProcs, null);
 });
 
+/**
+ * THE THIRD STATE: THE SCAN RAN, AND COULD NOT SEE (2026-08-15).
+ *
+ * `C|` separates "found none of ours" from "never ran". It cannot separate either from
+ * "ran, and every Chromium was in another security context" — an unelevated WMI query
+ * returns $null for CommandLine there, so `-match` drops the process silently and the scan
+ * honestly reports zero matches.
+ *
+ * Measured the day this went in. At 05:12:24 an unelevated bot.mjs recorded `rc 0`; the
+ * SAME filter from the elevated process, seconds either side, reported NINE. Identical
+ * PowerShell, opposite answers, differing only in elevation — and the row that was stored
+ * said zero, which the readout would have counted as evidence about the rc family.
+ */
+test('a blindfolded scan is unknown, not a measured zero', () => {
+  const s = parseSample('M|9000|57700|8000\nC|0\nB|9');
+  assert.equal(s.scanned, true, 'the scan did run — that part is honest');
+  assert.equal(s.blind, 9);
+  assert.equal(s.rcProcs, null, 'NOT 0 — nine Chromium were unreadable, so nothing was learned');
+  assert.equal(s.rcMb, null);
+  assert.equal(s.recgovProcs, null);
+  assert.equal(s.otherProcs, null);
+  assert.equal(s.commitUsedMb, 9000, 'the half that did work is still recorded');
+});
+
+test('zero blind is still a measured zero — the healthy case must not be nulled', () => {
+  // 2026-08-14 genuinely had a window with none of our browsers running. Collapsing that
+  // into "unknown" erases real evidence and is the opposite error.
+  const s = parseSample('M|9000|57700|8000\nC|0\nB|0');
+  assert.equal(s.rcProcs, 0);
+  assert.equal(s.recgovProcs, 0);
+});
+
+test('a PARTIAL reading keeps its numbers', () => {
+  // Saw one of ours and was blind to others. Nulling this would throw away real processes to
+  // express a doubt — and an undercount that is present still shows a ramp. The doubt rides
+  // the log line instead. It also matters on a box where the owner's own browser runs as
+  // another user, which would otherwise delete every reading for ever.
+  const s = parseSample([
+    'M|9000|57700|8000',
+    'C|1',
+    'B|3',
+    String.raw`P|4242|900|C:\Users\Tyler\campsite-finder\scripts\auto-cart-bot\.rc-bot-profile`,
+  ].join('\n'));
+  assert.equal(s.rcProcs, 1);
+  assert.equal(s.rcMb, 900);
+  assert.equal(s.recgovProcs, 0, 'the families the scan did see stay measured');
+});
+
+test('takeSample names the blindness, and says which way the row went', async () => {
+  const said: string[] = [];
+  const blindfolded = await takeSample({
+    platform: 'win32',
+    log: (m: string) => said.push(m),
+    exec: ((_f: unknown, _a: unknown, _o: unknown, cb: Function) =>
+      cb(null, 'M|9000|57700|8000\nC|0\nB|9\n', '')) as never,
+  });
+  assert.equal(blindfolded!.rcProcs, null);
+  assert.equal(said.length, 1, 'it must say so exactly once');
+  assert.match(said[0]!, /unreadable command line/);
+  assert.match(said[0]!, /elevated/, 'and name the cause a human can act on');
+  assert.match(said[0]!, /UNKNOWN, not zero/, 'and say what was stored');
+
+  // A partial reading is a DIFFERENT fact about the row and must not use the same sentence.
+  const partial: string[] = [];
+  await takeSample({
+    platform: 'win32',
+    log: (m: string) => partial.push(m),
+    exec: ((_f: unknown, _a: unknown, _o: unknown, cb: Function) => cb(
+      null,
+      `M|9000|57700|8000\nC|1\nB|3\nP|4242|900|C:\\x\\.rc-bot-profile\n`,
+      '',
+    )) as never,
+  });
+  assert.equal(partial.length, 1);
+  assert.match(partial[0]!, /may be short/, 'kept numbers must be flagged as possibly short');
+});
+
+test('the PowerShell emits the blind count from the SAME process list', () => {
+  // One Get-CimInstance, filtered twice. Two calls would make the ours/blind pair two
+  // readings taken a second apart, which is not a pair — and the whole point of the blind
+  // count is that it qualifies the matched count from the same instant.
+  const src = readFileSync('scripts/auto-cart-bot/memory-sample.mjs', 'utf8');
+  const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  assert.match(code, /'B\|\{0\}' -f \$blind\.Count/, 'the PowerShell must report what it could not read');
+  assert.equal((code.match(/Get-CimInstance Win32_Process/g) ?? []).length, 1,
+    'the process list must be fetched once and filtered twice');
+  assert.match(code, /\$blind = @\(\$all \| Where-Object \{ -not \$_\.CommandLine \}\)/,
+    'blind means no readable command line, not an image-name guess');
+});
+
 test('takeSample says out loud when the scan did not report', async () => {
   // THE REASON WAS BEING THROWN AWAY AT THE POINT IT WAS PRODUCED. stderr was discarded, so
   // when the scan came back empty on a box with nine of our browsers running, the one line

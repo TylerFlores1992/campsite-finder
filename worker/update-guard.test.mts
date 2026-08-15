@@ -300,6 +300,68 @@ test('stop-all covers every process start-all launches, and proves they stopped'
   assert.match(s, /exit 1/, 'and exits non-zero so callers do not launch on top');
 });
 
+/**
+ * THE "NOTHING RUNNING" PATH SKIPPED BOTH CHECKS THAT COULD SAY IT WAS BLIND (2026-08-15).
+ *
+ * stop-all's filters are all `$_.CommandLine -and ...`, and an unelevated WMI query reads
+ * $null for a process in another security context — so a whole generation started elevated
+ * counts as ZERO. The early return `if ($before -eq 0) { "nothing running."; exit 0 }` then
+ * fired before the blind note and the broker-port check, i.e. exactly where "I found
+ * nothing" is least trustworthy the script printed its most reassuring sentence.
+ *
+ * Measured at 05:12 UTC that day: two bare `nothing running.` lines thirteen seconds apart
+ * with the elevated broker holding 8787 throughout, start-all treating the exit 0 as
+ * permission, a second generation launched on top, and the pre-update elevated generation
+ * surviving — so the box ran `e6a7ebf` for four hours with its checkout on `c1bd875`.
+ *
+ * The port check is what would have stopped it: proof by construction, exit 1, start-all's
+ * :stuck branch. So these assert REACHABILITY and ORDER, which is what was wrong — every
+ * check existed and passed its own test, one path just never ran them.
+ */
+test('the "nothing to stop" path runs the blindness checks before it reassures', async () => {
+  const raw = await miniPc('stop-all.ps1');
+  const s = code(raw);
+
+  // ONE DEFINITION EACH. Two copies is how rc-login.bat's kill was fixed in one file and
+  // left broken in the second — and the forgotten copy is by definition the one running.
+  for (const fn of ['Write-BlindNote', 'Test-BrokerStillBound']) {
+    const defs = s.split(new RegExp(`function\\s+${fn}\\b`)).length - 1;
+    assert.equal(defs, 1, `${fn} must be defined exactly once`);
+  }
+
+  // PowerShell runs top-down: a function is not callable above its definition. The quiet
+  // path would die on "not recognized" — same lesson as Report-Applied below.
+  const quiet = s.indexOf('$before -eq 0');
+  assert.ok(quiet > 0, 'the quiet path must exist');
+  for (const fn of ['Write-BlindNote', 'Test-BrokerStillBound']) {
+    assert.ok(s.indexOf(`function ${fn}`) < quiet, `${fn} must be defined above the quiet path`);
+  }
+
+  // THE REACHABILITY PROPERTY. The block from the early-return test to its `exit 0` must
+  // call both — that is the whole defect, and it is invisible from either check's own body.
+  const block = s.slice(quiet, s.indexOf('Write-Line "stopping $before'));
+  assert.ok(block.length > 0, 'the quiet block must be bounded by the normal stop path');
+  assert.match(block, /Write-BlindNote/, 'the quiet path must report what it could not see');
+  assert.match(block, /Test-BrokerStillBound/, 'and must check the port, which is proof');
+
+  // ORDER: the port check outranks the reassurance. Reversed, it still prints "nothing
+  // running." and exits 0 first, and start-all launches on top of the orphan anyway.
+  assert.ok(block.indexOf('Test-BrokerStillBound') < block.indexOf('"nothing running."'),
+    'the port check must run BEFORE the all-clear sentence');
+
+  // SEVERITY, unchanged and deliberately different. The port is proof and fails; an
+  // unreadable node.exe may be the owner's own and only warns, or this script would refuse
+  // every launch for the rest of the box's life.
+  assert.match(block, /Test-BrokerStillBound\)\s*\{\s*exit 1/, 'a bound port is a FAILURE');
+  assert.match(block, /nothing VISIBLE/,
+    'a blind scan must not be reported with the same words as a scan that saw nothing');
+
+  // And the normal path keeps both checks too, from the same definitions.
+  const tail = s.slice(s.indexOf('Write-Line "stopping $before'));
+  assert.match(tail, /Write-BlindNote/, 'the stop path reports blindness as well');
+  assert.match(tail, /Test-BrokerStillBound/, 'and re-checks the port after the kill');
+});
+
 test('auto-update stops before the checkout moves, on both paths', async () => {
   const up = await miniPc('auto-update.ps1');
   const guard = up.indexOf('if (-not (Stop-Everything))');
@@ -1019,22 +1081,39 @@ test('stop-all reports processes it cannot SEE, and fails on a bound broker port
   const s = await miniPc('stop-all.ps1');
   const body = code(s);
 
+  // BOTH CHECKS MOVED INTO FUNCTIONS ON 2026-08-15 so the "nothing to stop" path could
+  // reach them too — see the reachability test above. These assertions follow the behaviour
+  // into its new home rather than asserting the old inline shape, which is the mistake
+  // control-channel.test.mts records: guards left watching an empty room pass on a file
+  // that no longer does the thing.
+  //
   // The port is PROOF and must therefore fail. Nothing else on that box binds it, so a
   // listener after the stop is ours by construction — no command line required, and no
   // guessing from an image name, which this file forbids elsewhere for good reason.
   assert.match(body, /Get-NetTCPConnection[^\n]*LocalPort/, 'it must check the broker port');
   assert.match(body, /\$BROKER_PORT\s*=\s*8787/, 'and know which port that is');
-  const portIdx = body.indexOf('stillBound.Count -gt 0');
-  assert.ok(portIdx > 0, 'it must branch on the port still being bound');
-  assert.match(body.slice(portIdx, portIdx + 700), /exit 1/,
-    'a bound broker port after the stop must FAIL, or callers relaunch into EADDRINUSE');
+  // `$false` on a free port and `$true` once it has named the survivor, so every caller
+  // branches on the same verdict instead of re-deriving it.
+  const portIdx = body.indexOf('function Test-BrokerStillBound');
+  assert.ok(portIdx > 0, 'the port check must exist');
+  const portFn = body.slice(portIdx, portIdx + 900);
+  assert.match(portFn, /stillBound\.Count -eq 0[^\n]*return \$false/,
+    'a free port is the only way out without a verdict');
+  assert.match(portFn, /taskkill \/PID/, 'and a bound one must name the fix');
+  // EVERY caller of it must exit non-zero, or the proof is gathered and thrown away.
+  const portCalls = body.split('if (Test-BrokerStillBound)').length - 1;
+  assert.ok(portCalls >= 2, 'both the quiet path and the stop path must consult it');
+  for (const part of body.split('if (Test-BrokerStillBound)').slice(1)) {
+    assert.match(part.slice(0, 40), /\{\s*exit 1/,
+      'a bound broker port must FAIL, or callers relaunch into EADDRINUSE');
+  }
 
   // The unreadable processes only WARN. Failing on them would refuse every launch for the
   // life of the box, because a node.exe we cannot inspect may belong to the person using it.
   assert.match(body, /-not \$_\.CommandLine/, 'it must look for processes with no readable command line');
-  const blindIdx = body.indexOf('blind.Count -gt 0');
+  const blindIdx = body.indexOf('function Write-BlindNote');
   assert.ok(blindIdx > 0, 'and report them');
-  const blindBlock = body.slice(blindIdx, blindIdx + 600);
+  const blindBlock = body.slice(blindIdx, blindIdx + 900);
   assert.ok(!/exit 1/.test(blindBlock),
     'an unreadable command line must NOT fail the stop — that is somebody else\'s process too');
   assert.match(blindBlock, /elevated/i, 'and it must say why it cannot see them');

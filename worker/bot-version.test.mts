@@ -93,15 +93,44 @@ test('missing BOT-SIDE code with a hold queued FAILS — the acceptance criterio
 });
 
 test('missing bot-side code with NOTHING queued is only a warn', () => {
-  // Same drift, no release to disagree at — the ordinary wait for the quiet window. The
-  // gate on a queued hold is what keeps this check worth reading.
+  // Same drift, no release to disagree at. The gate on a queued hold is what keeps this
+  // check worth reading.
   const v = botVersionVerdict({
     boxSha: BOX, boxCommitAt: T.boxBefore, deploySha: DEPLOY,
     deployCommitAt: T.deployNow, botCodeAt: T.botCodeChanged, holdsAhead: 0,
   });
   assert.equal(v.level, 'warn');
   assert.equal(v.state, 'behind-bot-code');
-  assert.match(v.detail, /ordinary wait/);
+});
+
+test('the quiet-drift detail does not assert a cause it cannot know', () => {
+  /**
+   * IT SAID "this is the ordinary wait for a quiet window" AND THAT WAS ONE OF TWO CAUSES.
+   *
+   * `boxSha` is `git rev-parse HEAD` computed once at PROCESS START, so it reports the
+   * RUNNING code. An old sha therefore means either the update has not been applied — which
+   * self-heals — or it was applied and nothing restarted onto it, which never does.
+   *
+   * On 2026-08-15 it was the second: update.bat moved the checkout to `c1bd875`, start-all
+   * could not see the elevated generation still running, and the box executed `e6a7ebf` for
+   * four hours under a line calling it an ordinary wait. Reading that as "it will sort
+   * itself out overnight" is exactly what it invites, and the box had already been left
+   * four hours by then.
+   */
+  const v = botVersionVerdict({
+    boxSha: BOX, boxCommitAt: T.boxBefore, deploySha: DEPLOY,
+    deployCommitAt: T.deployNow, botCodeAt: T.botCodeChanged, holdsAhead: 0,
+  });
+  // Both readings named, so neither can be mistaken for the whole story.
+  assert.match(v.detail, /RUNNING code/, 'it must say which sha this is');
+  assert.match(v.detail, /nothing restarted onto it/,
+    'the non-self-healing cause must be named — it is the one that needs a human');
+  // And the discriminator, or naming two causes just moves the guessing.
+  assert.match(v.detail, /git-status/, 'it must name what tells the two apart');
+  // The severity is deliberately untouched: this was always a warn with nothing queued,
+  // and turning it red on a state that is normal for part of every day is the cry-wolf
+  // failure this check was carefully built to avoid.
+  assert.equal(v.level, 'warn');
 });
 
 test('a box sitting exactly ON the last bot-side commit is not "missing" it', () => {

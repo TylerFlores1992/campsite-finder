@@ -5,6 +5,59 @@ healthy on `7780c32`. **Delete this file once the leak is diagnosed.***
 
 ---
 
+## STOP — ONE HUMAN ACTION IS BLOCKING EVERYTHING BELOW (2026-08-15)
+
+**The mini-PC is running `e6a7ebf`. Its checkout is on `c1bd875`. Only a person at the box,
+with an ELEVATED prompt, can fix it — and until they do, nothing about the leak can advance.**
+
+```
+(elevated prompt)  cd C:\Users\Tyler\campsite-finder\scripts\auto-cart-bot\mini-pc
+(elevated prompt)  powershell -ExecutionPolicy Bypass -File .\stop-all.ps1
+(NORMAL prompt)    start-all.bat          <- unelevated, deliberately
+```
+
+**Start it back up UNELEVATED.** An elevated generation is invisible to every unelevated
+`stop-all`, which is the entire bug: start it elevated again and the next update reloads the gun.
+Confirm with `git-status` (checkout) **and** `autocart.bot_version` going `ok` (running code).
+Absolute paths: a failed `cd` on that box is silent.
+
+### Why — the finding, 2026-08-15
+
+The forced keepalive sample from `d85bc19` has never run. A real pass happened at 05:31:27 UTC
+(`autocart_verified_at` moved for two accounts, 48s apart) and not one of the 250 rows in
+`chromium_memory_samples` carried `source = 'bot-keepalive'`. **It was not the in-flight guard
+and not a dropped `source` field — the running code is four commits old and `e6a7ebf` contains
+zero occurrences of `bot-keepalive`.**
+
+At 05:12 UTC `update.bat` moved the checkout and `start-all` ran. `stop-all` logged a bare
+`nothing running.` **twice, thirteen seconds apart**, because its filters are all
+`$_.CommandLine -and ...` and an unelevated WMI query reads `$null` for a process in another
+security context — so the whole elevated 03:01 generation counted as **zero**. `start-all` took
+the `exit 0` as permission, launched a second generation on top, its broker crash-looped on
+EADDRINUSE against the elevated orphan on 8787, and the next `stop-all` killed that new
+generation — the only one it could see. The pre-update generation survived all of it.
+
+**Fixed this session** (`stop-all.ps1`): the blind note and the port check are functions now,
+called from the quiet path as well as the stop path, port check first. The port was bound
+throughout, so the fixed version exits 1 and `start-all` refuses to launch. **But the fix is
+bot-side, so it only takes effect after the restart above.**
+
+**The same blindness was in the memory sampler** (`memory-sample.mjs`), and it left a row
+behind: at 05:12:24 the short-lived unelevated process stored `rc 0` while nine Chromium were
+running. `C|` separates "found none" from "never ran"; "ran and could not see" is a third state
+that reads identically to the first. It emits a blind count now and reverts to null rather than
+recording a zero it could not see. **Also bot-side.**
+
+`autocart.bot_version` had been reading *"mini-PC is on e6a7ebf … MISSING bot-side changes"*
+for hours; its next sentence called that "the ordinary wait for a quiet window", which is one of
+two causes and the wrong one — the update HAD been applied. That copy now names both causes and
+the discriminator. Full write-up in CLAUDE.md.
+
+**Nothing remote fixes this.** "Update now" is a no-op (HEAD is already at the target), and
+`restart-rc` uses the same unelevated stop.
+
+---
+
 ## STOP — READ THIS FIRST (added 2026-08-14, later still)
 
 ### THE BOX UPDATED, THE SERIES STARTED, AND THE SAMPLER'S FIRST ROWS WERE A LIE
@@ -81,7 +134,20 @@ and as `kill-chrome`'s "SURVIVED" line.
 re-spawns the updater every ~15 minutes and each attempt bounces every process on the box.
 Leaving it set would have churned all night.
 
-### RESOLVED 2026-08-15 05:15 UTC — the box has the keepalive sampler, and the running code is current
+### ~~RESOLVED 2026-08-15 05:15 UTC — the box has the keepalive sampler, and the running code is current~~
+### WRONG, AND KEPT VISIBLE. The running code was NOT current — see the STOP section at the top.
+
+**The check below was the right check and it was read at the wrong moment.** `memory` was asked
+at 05:14:25, ~two minutes after the `start-all` at 05:12:23 — so it was answered by the process
+that had *just* started, which really was current, and which was killed nine seconds later by the
+`stop-all` at 05:12:34. Everything after that was answered by the surviving pre-update process.
+**A reading goes stale faster than the conclusion drawn from it** (CLAUDE.md, 08-12); here it went
+stale in seconds, and the conclusion was written as a resolution. The absent `op_Addition` error
+proves the code answering *that* question was current; it cannot prove which process answers the
+next one. `autocart.bot_version` is the standing version of this check and it was reading
+`e6a7ebf` the whole time.
+
+
 
 **Box is on `c1bd875`** (owner ran `update.bat` then `start-all`), which carries the forced
 keepalive sample. Verified BOTH halves, because the checkout moving is not the same fact as

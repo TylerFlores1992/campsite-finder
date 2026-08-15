@@ -85,7 +85,24 @@ const PS = [
   '$cFree = [double]$os.FreeVirtualMemory / 1024;',
   '$ramFree = [double]$os.FreePhysicalMemory / 1024;',
   "'M|{0}|{1}|{2}' -f [int]($cLim - $cFree), [int]$cLim, [int]$ramFree;",
-  "$ours = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -match '--user-data-dir=\\S*(\\.rc-bot-profile|auto-cart-bot)' });",
+  // Fetched ONCE and filtered twice, so the two counts below cannot come from two different
+  // instants — an ours/blind pair taken a second apart is not a pair.
+  "$all = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' });",
+  "$ours = @($all | Where-Object { $_.CommandLine -match '--user-data-dir=\\S*(\\.rc-bot-profile|auto-cart-bot)' });",
+  // HOW MANY CHROMIUM WE COULD NOT READ AT ALL - the third state (2026-08-15).
+  //
+  // An UNELEVATED WMI query returns $null for CommandLine on a process in another security
+  // context, so `-match` drops it silently. That is not "none of ours are running", it is
+  // "this scan could not see". Measured the day this went in: at 05:12:24 an unelevated
+  // bot.mjs scanned and recorded `rc 0`, while the SAME filter from the elevated process
+  // seconds either side reported NINE - identical PowerShell, opposite answers, differing
+  // only in elevation. The row that got stored said zero.
+  //
+  // `C|` was added to separate "found none" from "never ran". This is the state that reports
+  // identically to the first and is neither: the same bug, one level in. stop-all.ps1 counts
+  // exactly this and for exactly this reason.
+  "$blind = @($all | Where-Object { -not $_.CommandLine });",
+  "'B|{0}' -f $blind.Count;",
   // HOW MANY THE SCAN MATCHED, emitted BEFORE the per-process loop.
   //
   // Without this, "the scan completed and found no Chromium of ours" and "the scan never
@@ -151,6 +168,11 @@ export function parseSample(text) {
      * between a quiet box and a broken instrument.
      */
     scanned: false,
+    /**
+     * Chromium the scan could not read at all - see the `B|` line in PS above. Also not a
+     * column; it decides whether an empty scan is a measurement or a blindfold.
+     */
+    blind: 0,
   };
   const num = (s) => {
     const n = Number(s);
@@ -174,6 +196,8 @@ export function parseSample(text) {
         out[`${f}Procs`] ??= 0;
         out[`${f}Mb`] ??= 0;
       }
+    } else if (line.startsWith('B|')) {
+      out.blind = num(line.split('|')[1]) ?? 0;
     } else if (line.startsWith('P|')) {
       // The directory may itself be empty if the match failed; split with a limit so a path
       // is never truncated at a character it cannot contain anyway.
@@ -194,6 +218,24 @@ export function parseSample(text) {
         out.maxPid = pid;
         out.maxFamily = fam;
       }
+    }
+  }
+
+  // A BLINDFOLDED SCAN IS NOT A MEASURED ZERO (2026-08-15).
+  //
+  // Saw nothing of ours AND there was Chromium it could not read: that is the one
+  // combination where the zero is indistinguishable from the blindness, so it reverts to
+  // null - which the readout already prints as a dash and excludes from every verdict. The
+  // file header's rule, applied to the state it did not yet know about.
+  //
+  // A PARTIAL reading (saw some, blind to others) deliberately keeps its numbers. Nulling
+  // it would throw away real processes to express a doubt, and an undercount that is present
+  // still shows a ramp; the log line below is what carries the doubt. Erring the other way
+  // would delete data on any box where the owner's own browser runs as another user.
+  if (out.scanned && out.blind > 0 && !FAMILIES.some((f) => (out[`${f}Procs`] ?? 0) > 0)) {
+    for (const f of FAMILIES) {
+      out[`${f}Procs`] = null;
+      out[`${f}Mb`] = null;
     }
   }
   return out;
@@ -234,6 +276,13 @@ export async function takeSample(opts = {}) {
   // only place the reason is still in hand.
   if (!sample.scanned) {
     log(`  (memory sample: the Chromium scan did not report${errText ? ` - ${errText.slice(0, 300)}` : ' and PowerShell printed nothing'})`);
+  } else if (sample.blind > 0) {
+    // ALWAYS SAID, even on a partial reading where the numbers were kept. This is the only
+    // place the reason is still in hand, and "recorded as unknown" and "recorded, possibly
+    // short" are different facts about the row that was just stored.
+    const kept = sample.rcProcs !== null;
+    log(`  (memory sample: ${sample.blind} Chromium had an unreadable command line - this ` +
+      `process may not be elevated; ${kept ? 'the counts below may be short' : 'the families are recorded as UNKNOWN, not zero'})`);
   }
   return sample;
 }
