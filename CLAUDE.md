@@ -1664,6 +1664,7 @@ readings, 312 MB → 264 MB, about **−9 MB/min**, COMMIT 16% of 57.7 GB.
     emitting it after the loop. Every parse test feeds `parseSample` a hand-written string, so
     the parser and the thing producing its input could drift apart silently — and there is no
     PowerShell on the machine this repo is written from. Guarded mechanically now.
+
 - **TWO INSTRUMENTS WERE LYING, both the house shape.** `memory`'s per-family rollup kept
   `@(count, mb)` in a hashtable and threw `op_Addition` once per process on **every run it ever
   made** — printing `FAMILY rc 0 process(es), 0 MB` over a profile holding 312 MB, while the
@@ -1673,6 +1674,63 @@ readings, 312 MB → 264 MB, about **−9 MB/min**, COMMIT 16% of 57.7 GB.
   clean kill plus healthy recovery printed the same words as a kill that reached nothing (the
   08-12 "7 before, 7 after"; the pids were different every time, i.e. it had worked). It diffs pid
   sets now. Both fixed by the idiom already working three lines away, not by a second guess.
+
+#### THE SAMPLER CAN NEVER PRODUCE A VERDICT ON THE REC.GOV FAMILY (2026-08-15)
+The series ran clean for 175 samples and reported `recgov 0` in **every one of them**, and the
+readout says so in a warning: *"NO recgov process was running at any point in this window."*
+That reads as "the episodic family still has not been sampled — keep waiting". **Waiting cannot
+work, and the reason is arithmetic, not luck.**
+- **MEASURED, from the box's own `bot` log against the sample timestamps.** `keepSessionsWarm`
+  fires on a fixed 30-minute interval from `bot.mjs` start, so the window is predictable:
+  ```
+  [04:01:23] interval fires (03:01:23 start + 30m + 30m)
+  [04:01:27] ♻ tyl***: rec.gov session kept warm     <- +4s
+  [04:01:49] ♻ cam***: rec.gov session kept warm     <- +26s, after the 15-45s stagger
+  ```
+  Samples ran at 03:59:34, **04:01:35**, 04:03:35. The one sample inside the window landed in
+  the GAP between the two browsers — the first had closed at ~04:01:27, the second had not yet
+  opened. Same shape at 03:31:23 (`+4s`, `+25s`).
+- **So each keepalive browser exists for a few SECONDS**, twice per 30-minute cycle: on the
+  order of **10-20 seconds of browser per 1800**, under 1% coverage. Across the ~13 cycles in
+  the series that predicts one or two catches, so **zero out of 175 is unremarkable and is NOT
+  evidence of anything.** Do not read the readout's warning as a lead; it is the expected
+  reading.
+- **THE STRUCTURAL HALF DOES NOT DEPEND ON THAT ESTIMATE, and it is the finding.** A verdict
+  needs a RATE, the rate rule pairs two samples **of the same `max_pid`**, and the cadence is
+  two minutes — so a rate requires the process to live longer than two minutes. **These live
+  about five seconds.** A rec.gov leak therefore cannot produce a rate verdict from this
+  instrument *rarely*; it cannot produce one **at all**. The recorder built precisely because
+  "the rec.gov family is episodic and manual readings miss it" has the same blind spot it was
+  built to remove — narrowed from a five-minute window to a two-minute one, and the family is
+  five seconds wide.
+- **`OVERSIZED PROCESS` is the one thing that could still speak**, because it is a single
+  reading and is deliberately not gated on the pair count. That is a real partial answer: the
+  08-12 event held 7.9 GB, so a recurrence would be reported *if a sample happened to land on
+  it* — still under 1% per cycle, and only once it is already enormous.
+- **RULED OUT FIRST, so it is not re-run:** the sampler is **not** misfiling recgov as rc.
+  `classifyProfile` tests `.rc-bot-profile` BEFORE `auto-cart-bot` — the correct order, with the
+  trap named in its own comment — and `PROFILES_DIR` defaults inside `auto-cart-bot`, so the
+  PowerShell filter matches the rec.gov profiles as written. The attribution is sound; the
+  CADENCE is the problem.
+- **The 08-12 note is what makes this expensive rather than academic.** It says the process
+  *"reached 7.9 GB in 46 seconds of the keep-warm starting"* — and CLAUDE.md already flags that
+  "keep-warm" names two different things. If it was `keepSessionsWarm`, then the one family the
+  instrument cannot measure is the family the only measured event points at.
+- **THE FIX IS TO SAMPLE FROM WHERE THE EVENT IS, not to poll faster.** `keepSessionsWarm`
+  knows exactly when its browser is open — it opened it. A sample taken inside that block
+  catches it every time, at two samples per cycle instead of a 1-in-100 chance, and needs no
+  new cadence and no extra PowerShell on an idle box. Same rule as `rc-keepwarm` posting its own
+  verdict instead of a watcher inferring it, and as the RcReport channel: the process that knows
+  is the process that reports. **NOT BUILT YET** — recorded first, because a fix written before
+  the measurement is how the family got guessed wrong twice.
+- **A DIAGNOSTIC CAN BE MARKED STARTED AND NEVER ARRIVE.** Three `memory` commands were stamped
+  `started_at = 04:01:24.014` — all three identical, i.e. one hand-out — and **the box's log
+  shows no `? diagnostic` line for any of them** while the same log shows #87, #88 and the
+  keepalives either side. `bot.mjs` was demonstrably alive throughout (samples every two minutes,
+  and it answered the next command). `claimBotCommands` stamps `started_at` **as it hands them
+  out**, so a response lost in flight leaves a command permanently "picked up, no answer yet" —
+  which is the state CLAUDE.md already records as indistinguishable from a wedged command. Worth
+  knowing before reading that state as the box being stuck.
 
 ### THREE DIAGNOSTICS LIED AT ONCE, AND THE HEARTBEAT WAS RIGHT (2026-08-12)
 I told the owner the RC pair was dead and to go to the box. **It was running the whole time.**
