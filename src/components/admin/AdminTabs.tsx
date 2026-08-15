@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ExternalLink, XCircle } from 'lucide-react';
 import BetaTesters from '@/components/BetaTesters';
+import UsersBox from '@/components/admin/UsersBox';
 import CostsPanel from '@/components/admin/CostsPanel';
 import MetricChart, {
   MetricSwitcher,
@@ -20,6 +21,9 @@ import type { RcReport } from '@/lib/native/rc-handoff';
 // The row shape the diagnostics panel renders. Imported rather than restated so a
 // column added server-side cannot quietly go unrendered here.
 import type { BotCommand as BotCommandRow } from '@/lib/bot-commands';
+// `import type` deliberately: the queries module imports the database client, and a
+// value import would drag it into this client bundle.
+import type { AdminUserRow } from '@/app/admin/users/queries';
 
 /**
  * Admin dashboard, in the redesign's ch-* system.
@@ -94,6 +98,9 @@ export interface AdminData {
   /** ALL-TIME alert counts, for lifetime spend. Distinct from `usage` (this month). */
   lifetimeUsage: UsageCounts;
   monthLabel: string;
+  users: AdminUserRow[];
+  /** Hand-inserted test rows left out of `users`, so the exclusion is never silent. */
+  testUserCount: number;
 }
 
 import {
@@ -580,6 +587,7 @@ function UsersRevenuePanel({
       <p className="text-ch-fine text-ch-muted">
         {`${usersAgg.new_30d.toLocaleString()} new users in the last 30 days.`}
       </p>
+      <UsersBox users={data.users} excludedTestRows={data.testUserCount} />
       <BetaTesters />
     </div>
   );
