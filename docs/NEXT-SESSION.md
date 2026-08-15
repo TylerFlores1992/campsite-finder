@@ -1,7 +1,8 @@
-# Next session — site muting on New watch, and the first real renewal reading
+# Next session — unblock the box, then take the first real renewal reading
 
-*Retargeted 2026-08-15 (second time today). The renewal question it previously opened on has
-been ANSWERED at the code level; what is left is one reading from the box and one feature.*
+*Retargeted 2026-08-15 (third time today). The mute feature is SHIPPED. The renewal question
+is answered at the code level. Everything remaining is blocked on one human action at the
+mini-PC — see "Still open" item 1.*
 
 > ## ~~THE ONE FEATURE TO BUILD: site muting on the New watch screen~~ — SHIPPED 2026-08-15
 >
