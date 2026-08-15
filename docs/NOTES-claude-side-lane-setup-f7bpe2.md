@@ -177,9 +177,15 @@ actually judged on — the 30-day figures next to them are history).
 
 The five silent ones were two families: `.level` (missing `shardCov`/`capacity` — three
 presets feeding `AdminTabs`) and `.sms` (missing `lifetimeUsage` — two feeding
-`CostsPanel`). **All five now render and exit 0**; the harness throws on any page error,
-verified by restoring the exact bug and watching `exit=1`, then restoring the fix and
-watching `exit=0`.
+`CostsPanel`). **Re-swept after the fix: all 40 live presets exit 0.** The harness now
+throws on any page error, verified the way this repo requires — the exact bug restored and
+watched to `exit=1`, then the fix restored and watched to `exit=0`.
+
+The repaired shots were also read back rather than trusted: `admin-health` renders all
+three status shapes (round tick / triangle / round cross) each with its word, which is the
+property the preset exists to show; `ch-admin-broken` renders "6 things need attention"
+naming the stale poller, the failing canary, the empty sync and the three added here. A
+green exit on a fixture one has just invented is weak evidence on its own.
 
 Console errors are deliberately NOT collected — React logs recoverable warnings through
 `console.error`, and failing on those would make the harness cry wolf, which is the
