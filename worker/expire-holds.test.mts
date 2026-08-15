@@ -28,7 +28,19 @@ const pacific = (offsetMinutes: number) => {
   return `${p.year}-${p.month}-${p.day}T${p.hour === '24' ? '00' : p.hour}:${p.minute}:${p.second}`;
 };
 
+/**
+ * NON-NUMERIC FIXTURE UNIT IDS - see the header of `rc-holds.test.mts` for the incident.
+ * These tests deliberately put rows into `requested` with a release time just past, which is
+ * precisely the shape `dueHolds` hands to the production RC runner to cart. A real unit id is
+ * numeric, so a sentinel cannot name a real campsite. `worker/hold-fixture-safety.test.mts`
+ * enforces it; that guard found THIS file on its first run.
+ */
+const U = (n: string) => `__t${n}`;
+
 before(async () => {
+  // Sweep anything an earlier aborted run left - see rc-holds.test.mts's before().
+  await mutate(`DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_t%'`).catch(() => {});
+
   const [u] = await query<{ id: string }>(`SELECT id FROM users LIMIT 1`);
   const [c] = await query<{ id: string }>(`SELECT id FROM campgrounds WHERE source = 'reservecalifornia' ORDER BY id LIMIT 1`);
   assert.ok(u && c);
@@ -58,18 +70,18 @@ const offer = (unitId: string, releaseAt: string) =>
 const sweep = (id: string) => failMissedHolds([id]);
 
 test('a requested hold whose release passed long ago is failed, not left silent', async () => {
-  await offer('8001', pacific(-(HOLD_MISS_GRACE_MIN + 120)));
+  await offer(U('8001'), pacific(-(HOLD_MISS_GRACE_MIN + 120)));
   // requestHold refuses a past release (correctly), so reproduce the real sequence:
   // tapped while the release was still ahead, then time passed.
   await mutate(
     `UPDATE rc_hold_requests SET status = 'requested', requested_at = NOW()
-      WHERE watch_id = $1 AND unit_id = '8001'`, [watchId]);
+      WHERE watch_id = $1 AND unit_id = $2`, [watchId, U('8001')]);
   const [row] = await query<{ id: string }>(
-    `SELECT id FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = '8001'`, [watchId]);
+    `SELECT id FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = $2`, [watchId, U('8001')]);
 
   const missed = await sweep(row.id);
   assert.equal(missed.length, 1, 'the whole point: this must not sit at `requested` forever');
-  assert.equal(missed[0].unit_name, '#L8001', 'the caller needs enough to notify the user');
+  assert.equal(missed[0].unit_name, `#L${U('8001')}`, 'the caller needs enough to notify the user');
   const [after] = await query<{ status: string; error: string | null }>(
     `SELECT status, error FROM rc_hold_requests WHERE id = $1`, [row.id]);
   assert.equal(after.status, 'failed');
@@ -80,12 +92,12 @@ test('a hold still inside the grace is LEFT ALONE — the runner may yet take it
   // Sweeping earlier than the feed gives up would tell the user "we couldn't" and then
   // cart it anyway. The grace must stay wider than dueHolds' 20-minute window.
   assert.ok(HOLD_MISS_GRACE_MIN > 20, 'grace must exceed the feed grace, or the two disagree');
-  await offer('8002', pacific(-5));
+  await offer(U('8002'), pacific(-5));
   await mutate(
-    `UPDATE rc_hold_requests SET status = 'requested' WHERE watch_id = $1 AND unit_id = '8002'`,
-    [watchId]);
+    `UPDATE rc_hold_requests SET status = 'requested' WHERE watch_id = $1 AND unit_id = $2`,
+    [watchId, U('8002')]);
   const [row] = await query<{ id: string }>(
-    `SELECT id FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = '8002'`, [watchId]);
+    `SELECT id FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = $2`, [watchId, U('8002')]);
   assert.equal((await sweep(row.id)).length, 0);
 });
 
@@ -93,8 +105,8 @@ test('a FUTURE release is never swept', async () => {
   // The timezone trap: `release_at` is zone-less Pacific text. Compare it as a Date on a
   // UTC worker and "8am Pacific tomorrow" reads as seven hours earlier than it is, which
   // would fail live holds hours before their moment.
-  await offer('8003', pacific(180));
-  const req = await requestHold(watchId, '8003');
+  await offer(U('8003'), pacific(180));
+  const req = await requestHold(watchId, U('8003'));
   assert.ok(req);
   assert.equal((await sweep(req!.id)).length, 0, 'a hold three hours out is not missed');
 });
@@ -102,15 +114,15 @@ test('a FUTURE release is never swept', async () => {
 test('an OFFERED hold is not "missed" — nobody promised anything', async () => {
   // We only owe an apology where we made a commitment. An unanswered offer is the opt-in
   // working; expireStaleHolds marks those `expired`, quietly and correctly.
-  await offer('8004', pacific(-(HOLD_MISS_GRACE_MIN + 60)));
+  await offer(U('8004'), pacific(-(HOLD_MISS_GRACE_MIN + 60)));
   const [row] = await query<{ id: string }>(
-    `SELECT id FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = '8004'`, [watchId]);
+    `SELECT id FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = $2`, [watchId, U('8004')]);
   assert.equal((await sweep(row.id)).length, 0);
 });
 
 test('a hold that WAS carted is never reported as missed', async () => {
-  await offer('8005', pacific(30));
-  const req = await requestHold(watchId, '8005');
+  await offer(U('8005'), pacific(30));
+  const req = await requestHold(watchId, U('8005'));
   await markCarted(req!.id, 'ck', 'ek');
   await mutate(
     `UPDATE rc_hold_requests SET release_at = $2 WHERE id = $1`,

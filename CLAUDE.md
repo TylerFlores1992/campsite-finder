@@ -905,6 +905,52 @@ token, ~12h Okta session) apply inside the app exactly as they do to the bot.
   to `signed-out`, and the classifier reading the LAST `session` report (which is this run's
   own marker write) instead of the first.
 
+### `npm test` TOLD THE PRODUCTION BOT TO CART A REAL CAMPSITE (2026-08-15)
+An aborted real-DB test run left four `requested` holds with **numeric** unit ids on a real
+ReserveCalifornia campground, and the mini-PC's hold runner spent fifteen minutes trying to
+cart unit **9003 at Westport-Union Landing SB** — a site belonging to nobody, for a watch dated
+2020, on behalf of `test-user-001`. **Nothing was locked only because the RC session happened to
+be dead.** That is luck, and it is the whole finding.
+- **THE SAFETY COMMENT WAS ABOUT THE WRONG PROCESS.** `rc-holds.test.mts` said "the fixture
+  watch is dated 2020 so the poller's `end_date > CURRENT_DATE` filter can never see it, and
+  every row is deleted on the way out." Both halves are true. Neither covers the **hold
+  runner**: `dueHolds` selects on `release_at` alone, never joins `watches`, and does not care
+  whether the watch is active or ancient. So the 2020 dates bought nothing on the one path that
+  can lock a stranger's site, and "we delete on the way out" was the entire protection — which
+  is precisely what an aborted run skips. **A safety argument that names a different consumer
+  than the dangerous one is not a safety argument.**
+- **IT WAS ALSO THE ~20s RC BROWSER CHURN the owner reported as "seems abnormal".** The runner
+  asks the keep-warm for the Chromium profile on every attempt and polls every 15s, so the
+  keep-warm yielded and reopened on that beat and the RC session could never stay alive —
+  which then guaranteed every cart failed, which kept the rows `requested`, which kept the
+  runner asking. Self-sustaining. Two symptoms, one cause, and the *cosmetic-looking* one is
+  what surfaced it. **I first wrote this up as the duplicate elevated generation from 08-14
+  and it was not** — that had already been fixed by a scheduled quiet-window update at 09:00
+  UTC. Diagnosing it from the readout took one command; guessing took a paragraph of wrong.
+- **The fix is a NON-NUMERIC sentinel unit id** (`U()` → `__t9003`), not better cleanup. Real
+  RC unit ids are numeric, so a sentinel cannot collide with a real site — and unlike
+  cleanup-on-exit that holds **during** the run too, which matters because a run lasts longer
+  than the runner's 15s poll. Same rule `scripts/rc-test-hold.mts` already followed and that
+  the hold suites never adopted. `before()` also sweeps leaked fixtures, so an abort self-heals
+  on the next run instead of waiting for someone to read a dashboard.
+- **`worker/hold-fixture-safety.test.mts` scans for it, and found TWO MORE FILES on its first
+  run** — `expire-holds.test.mts` (8001-8005, one of them `requested` with a release five
+  minutes past, i.e. squarely inside `dueHolds`' grace) and `rc-hold-capacity.test.mts`
+  (7001-7003). Guarded mechanically because the dangerous line is `offer('9108', pacific(60))`
+  next to nine identical neighbours, and it is only wrong because of a property of a different
+  process on a different machine. Same family as `sql-routing.test.mts`.
+  - The scan is **scoped to lines carrying a unit id**; the first version read whole files and
+    flagged `'24'`/`'00'` inside the `pacific()` hour helper. A guard that cries wolf gets
+    deleted, and it would take the real finding with it. The digit floor stayed at 2 rather
+    than being raised to dodge that noise — a short real unit id is exactly the bad collision.
+  - It also strips `U('…')` before matching, or it flags its own remedy and can never go green.
+- **Mutation-verified against three regressions** (a fixture id put back to numeric, the sweep
+  removed, the sentinel made numeric), each with an explicit assert that the mutation applied —
+  a mutation that silently fails to apply is a green proving nothing.
+- **Where the rows came from is NOT established.** They appeared at 13:35:2x UTC with no run in
+  this session; `npm test` is serial per `docs/LANES.md` and CI runs it too. Do not write a
+  culprit into this file. The live rows were `expired` (not deleted) so the evidence survives.
+
 ### THE FORCED KEEPALIVE SAMPLE NEVER RAN, AND THE BOX HAD BEEN ON STALE CODE FOR FOUR HOURS (2026-08-15)
 `d85bc19` made `keepSessionsWarm` take its own memory reading, because the rec.gov Chromium
 family lives ~5 seconds twice per 30-minute cycle and the 2-minute series samples it

@@ -5,12 +5,19 @@ healthy on `7780c32`. **Delete this file once the leak is diagnosed.***
 
 ---
 
-## STOP — ONE HUMAN ACTION IS BLOCKING EVERYTHING BELOW (2026-08-15)
+## ~~STOP — ONE HUMAN ACTION IS BLOCKING EVERYTHING BELOW (2026-08-15)~~ — CLEARED, see below
 
-**The mini-PC is running `e6a7ebf`. Its checkout is on `c1bd875`. Only a person at the box,
-with an ELEVATED prompt, can fix it — and until they do, nothing about the leak can advance.**
+**IT CLEARED ITSELF at 09:00 UTC and nobody needs to go to the box.** The section is kept
+because the *recipe* below is the right one next time an elevated generation survives — and
+because it was written, acted on, and overtaken within two hours, which is the "a reading goes
+stale faster than a conclusion drawn from it" rule biting again. **Read the RESOLVED subsection
+before doing anything here.**
 
-**GIVE THE OWNER THESE TWO LINES AND NOTHING ELSE.** An earlier version of this block
+~~The mini-PC is running `e6a7ebf`. Its checkout is on `c1bd875`. Only a person at the box,
+with an ELEVATED prompt, can fix it.~~ It is on `be93fcd` and the forced keepalive sample is
+running.
+
+**IF YOU DO EVER NEED IT: GIVE THE OWNER THESE TWO LINES AND NOTHING ELSE.** An earlier version of this block
 prefixed each line with a `(elevated prompt)` / `(NORMAL prompt)` label, and the owner pasted
 the labels — cmd answered `powershell was unexpected at this time`, which reads as a broken
 script rather than as a broken instruction. **Anything inside a fenced block on this page is
@@ -36,63 +43,26 @@ Absolute paths, and no `cd`: a failed `cd` on that box is silent, and the next c
 reports a confident result about the wrong directory. `start-all.bat` resolves its own siblings
 through `%~dp0`, so it does not care where it is launched from.
 
-### The RC browser cycling every ~20s is a SYMPTOM of this, not a separate fault
+### RESOLVED 2026-08-15 — the box fixed ITSELF, and the ~20s churn was leaked test fixtures
 
-Observed by the owner 2026-08-15, while the duplicate generation was still up: the RC Chromium
-opened and closed on a roughly 20-second beat, and Chromium offered *"Restore pages? Chromium
-didn't shut down correctly"* — i.e. it was being killed, not closed.
+**The STOP section above is obsolete. Do not send anyone to the keyboard for it.**
+`autocart.bot_version` reads `be93fcd`, and `chromium_memory_samples` carries 17 rows with
+`source = 'bot-keepalive'` since 09:01 UTC — two per 30-minute cycle, exactly as designed. So
+the forced keepalive sample IS running and **the rec.gov family has been sampled for the first
+time**: 7-9 processes, **134-145 MB, flat across nine cycles**. That is the baseline that never
+existed. A scheduled quiet-window update at 02:00 PT is the likely repair (inference from the
+timing — nobody read the updater's log).
 
-`warmResident()` holds RC open continuously and breaks out of its loop for exactly two reasons:
-the hold runner asked for the profile (`.camphawk-profile-wanted`), or the window was closed.
-**The hold runner polls every 15 seconds.** Two generations means two hold runners each asking,
-so the keep-warm yields, reopens, and yields again on that beat — which is what a ~20s cycle
-looks like from the desktop.
+The RC browser opening and closing on a ~20s beat was **not** the duplicate generation. An
+aborted `npm test` run left four `requested` holds with numeric unit ids, and the production
+hold runner asked the keep-warm for the Chromium profile on every 15s attempt. Full write-up in
+CLAUDE.md under "npm test TOLD THE PRODUCTION BOT TO CART A REAL CAMPSITE". Fixed with
+non-numeric sentinel fixture ids plus `worker/hold-fixture-safety.test.mts`, which found two
+more files with the same hazard.
 
-**HYPOTHESIS, not a measurement** — nobody counted the processes before the restart. To settle
-it on a recurrence, count them from an ELEVATED prompt (an unelevated one cannot see the
-orphaned generation, which is the whole bug):
-
-```
-powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'rc-keepwarm|rc-hold-runner' } | Select-Object ProcessId, CreationDate | Format-Table -Auto"
-```
-
-Two `rc-keepwarm` rows, or two `rc-hold-runner` rows, with creation times hours apart, confirms
-it. If the cycling survives a clean restart it is something else and this paragraph is wrong.
-
-### Why — the finding, 2026-08-15
-
-The forced keepalive sample from `d85bc19` has never run. A real pass happened at 05:31:27 UTC
-(`autocart_verified_at` moved for two accounts, 48s apart) and not one of the 250 rows in
-`chromium_memory_samples` carried `source = 'bot-keepalive'`. **It was not the in-flight guard
-and not a dropped `source` field — the running code is four commits old and `e6a7ebf` contains
-zero occurrences of `bot-keepalive`.**
-
-At 05:12 UTC `update.bat` moved the checkout and `start-all` ran. `stop-all` logged a bare
-`nothing running.` **twice, thirteen seconds apart**, because its filters are all
-`$_.CommandLine -and ...` and an unelevated WMI query reads `$null` for a process in another
-security context — so the whole elevated 03:01 generation counted as **zero**. `start-all` took
-the `exit 0` as permission, launched a second generation on top, its broker crash-looped on
-EADDRINUSE against the elevated orphan on 8787, and the next `stop-all` killed that new
-generation — the only one it could see. The pre-update generation survived all of it.
-
-**Fixed this session** (`stop-all.ps1`): the blind note and the port check are functions now,
-called from the quiet path as well as the stop path, port check first. The port was bound
-throughout, so the fixed version exits 1 and `start-all` refuses to launch. **But the fix is
-bot-side, so it only takes effect after the restart above.**
-
-**The same blindness was in the memory sampler** (`memory-sample.mjs`), and it left a row
-behind: at 05:12:24 the short-lived unelevated process stored `rc 0` while nine Chromium were
-running. `C|` separates "found none" from "never ran"; "ran and could not see" is a third state
-that reads identically to the first. It emits a blind count now and reverts to null rather than
-recording a zero it could not see. **Also bot-side.**
-
-`autocart.bot_version` had been reading *"mini-PC is on e6a7ebf … MISSING bot-side changes"*
-for hours; its next sentence called that "the ordinary wait for a quiet window", which is one of
-two causes and the wrong one — the update HAD been applied. That copy now names both causes and
-the discriminator. Full write-up in CLAUDE.md.
-
-**Nothing remote fixes this.** "Update now" is a no-op (HEAD is already at the target), and
-`restart-rc` uses the same unelevated stop.
+**The lesson for this page:** the first draft of this section confidently blamed the duplicate
+generation. One `rc-holds-readout.mts` run settled it. Read the instrument before writing the
+paragraph.
 
 ---
 
