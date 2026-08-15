@@ -1058,6 +1058,57 @@ reviewed here because those are the main lane's files.
   warned about this in the same message that asked for the review, having hit it twice — and
   it still cost a build here, in a comment quoting the very key shape being fixed.
 
+### THE UI ROUND, 2026-08-15 evening — all three found by USING the app
+Three defects reported from production with screenshots, none reachable by reading the
+source, and all three the same family: the mechanism worked and the meaning was absent.
+- **LEO CARRILLO OFFERED NO MUTE LIST.** The picker was gated on `divisions.length <= 1`,
+  written when one submit meant one watch PER division. A park became ONE watch and the gate
+  outlived its reason, hiding the feature for EVERY multi-division park. It now lists every
+  checked division — safe because campsite ids are unique within a park — with each row
+  labelled by its part, since two of Leo Carrillo's three are both "Canyon Campground".
+  **`targets` is now ONE definition** read by the picker and the payload; they were briefly
+  two, and that disagreement WAS the bug.
+- **ONLY ONE PART OF A PARK WAS TICKED.** `pick()` ticked them all, exactly as its comment
+  said — and `pick()` sets `campgroundId`, which triggers the resolve effect, which reset the
+  selection to the representative a moment later and won every time. **A correct line, live
+  and inert, overwritten by a second writer** — the inert-fix shape inverted. Both writers go
+  through `defaultChosen` now, capped at `MAX_DIVISIONS_PER_WATCH` so a 70-division park does
+  not fail its first submit on a limit nobody chose.
+- **"SOME CAMPGROUNDS SHOW A CITY AND STATE AND OTHERS DO NOT."** Every call site gated the
+  label on the CITY, which is the rarer field: 26% of visible campgrounds have no city, only
+  3.6% have no state, and **all 859 ReserveAmerica rows are `{city: null, state: "NY"}`** — a
+  state we had and threw away. `placeLabel` takes the list from 74% to 96% labelled.
+  **`geo.hitLabel` was the only one of four call sites already correct**, so one feature held
+  two expressions for one idea and the broken one was what users read first.
+- **AND THE PLACE WAS THE PART THAT GOT TRUNCATED.** Explore's rail is a fixed 316px
+  (`--ch-rail`) and its row put name AND place in one truncating span, so a long name ate the
+  town — the half that distinguishes similar names. Name truncates on its own line now;
+  widening the rail would have fixed one breakpoint and restructured the page.
+
+### FILTERS: TWO WERE UNUSABLE ON THE DATA (2026-08-15)
+The owner tested Silver Lake, which has showers in life and not in our catalog. The
+measurement is worse than "sparse", and both removals are the SAME defect that had already
+removed `drinking water`:
+- **`showers` is recreation.gov ONLY** — 197 of 4,469 rec.gov rows and **zero** across all
+  seven other sources. Ticking it silently excluded every state-portal campground.
+- **`pets_allowed` is `true` for 100% of every non-rec.gov source** (882/882 ReserveAmerica,
+  478/478 Ohio, 392/392 RC). A DEFAULT, not a measurement.
+Both columns stay — JSON-LD publishes `petsAllowed` and the rec.gov showers ingest is real —
+they just cannot carry a filter.
+- **The three surviving filters were MEASURED to work**, which is the part worth keeping:
+  against 80 campgrounds near Big Sur, site type gave 56/52/4/16, pad length 49/24/7, and a
+  nonsense value returned 0 in both — that last is what proves the SQL clause is live rather
+  than merely present. Electric is genuinely multi-source (9 of 14).
+- **Hookups moved into Site type**, reversing a call recorded the same day. Left visible
+  rather than overwritten: that reasoning was sound and only its surroundings changed —
+  removing two chips left "Must have" holding one, and a one-item group is not a group.
+- **Pad length is its own always-visible control now, and that fixed a real bug.** Explore
+  sent `rvLength` only when `siteType === "rv"`, so a length set without also picking RV
+  showed as applied and was never transmitted. A filter that lied about being on.
+- **`worker/explore-filters.test.mts` derives its field list FROM `FilterValue`**, so adding
+  a filter without wiring it to the query fails. A hand-written list of three would pass for
+  ever against a fourth that does nothing — which is how the last one survived review.
+
 ### `npm run verify` GATES ON jsx-spacing NOW (2026-08-15)
 An HTML entity anywhere in a JSX text node makes SWC drop that node's leading whitespace, and
 this repo escapes entities everywhere (`react/no-unescaped-entities` pushes you there), so every
@@ -1382,6 +1433,53 @@ was "I proved nothing" — which is the banner trap being caught correctly, not 
   — check the keep-warm's report age before treating the two as the same event.
 - The health line reads *"no rehearsal has PASSED in 26h27m"*, which is accurate and easy to
   misread as a regression: nothing has ever passed, so there is no green to have lost.
+
+### THE RENEWAL QUESTION IS ANSWERED (2026-08-15 evening) — and the answer is "stop renewing"
+The corrected clear reached the box (`d72fb2e`) and produced the first honest reading. Read
+straight off `tail-log rc-keepwarm`, twice, an hour apart:
+```
+20:08:53 token has 9m left (src=live) — renewing by reload
+20:09:19   ✗ no fresher token after the reload (565s → 540s) — the previous token was put back
+20:09:19     cleared 3 storage key(s): accessToken, okta-original-uri-storage, ssoAccessToken
+21:08:36 token has 9m left (src=live) — renewing by reload
+21:09:02   ✗ no fresher token after the reload (553s → 528s) — the previous token was put back
+```
+- **`renewByReload` DOES NOT WORK, and this reading is finally entitled to say so.** The
+  clear now reaches the `okta-` namespace and names what it emptied, so the negative is real
+  rather than an artifact of clearing the wrong keys. The token still comes BACK 25s older,
+  so **a persisted copy survives all three keys** — not sessionStorage-vs-localStorage
+  guesswork, a fact forced by the measurement. Where it lives is still unknown; the
+  remaining candidates are IndexedDB, a cookie, or a key name nothing has looked for.
+- **THE `okta-` PREFIX ASSUMPTION WAS HALF RIGHT.** The sweep ran and found exactly ONE
+  `okta-` key — `okta-original-uri-storage`, which is a redirect breadcrumb, not a token
+  store. So okta-auth-js is **not** keeping tokens under `okta-` in this profile, and the
+  three-way prediction in the old handover ("more than 2 keys ⇒ honest negative") needs that
+  qualification: it listed three, but the third was not a token.
+- **RC ISSUES NO REFRESH TOKEN AT ALL** — the single most useful line in the log, and it
+  changes the shape of the problem:
+  ```
+  grant: {"hasRefreshToken":false,"expiresIn":3600,"scope":"openid profile email"}
+  ```
+  There is nothing to silently refresh WITH. Every "make the token renew itself" plan was
+  reaching for a mechanism RC does not hand out. Stop looking for one.
+- **BUT THE BOOTSTRAP RE-MINTS, WITH NO CREDENTIAL TYPED**, and that is the path forward:
+  ```
+  19:18:57  ✓ already signed in — RC re-authenticated before any form appeared,
+            so no sign-in was exercised — token now 59m, needs 21m (covered)
+  ```
+  **59 minutes is a FULL-LIFETIME token, which is what separates this from the 08-11
+  confound**: a restored stale copy would carry its old expiry (that is exactly what
+  20:09:19 shows — 540s). A fresh hour means RC minted a new one from the live Okta cookie.
+  The Okta session runs ~12h (`okta=ALIVE (exp 2026-08-16T10:09:03)` against a 22:09
+  reading), so within that window a bootstrap costs nothing and needs nobody.
+- **SO THE AUTOMATION ANSWER IS: DON'T RENEW THE TOKEN, RE-RUN THE BOOTSTRAP.** That is
+  `attemptLogin`, which already short-circuits into the line above when the Okta session is
+  alive. What is missing is only its SCHEDULE — today it fires at T−30 of a real release, so
+  between releases the token dies and stays dead (the `⚠ RC SESSION IS DEAD … okta=ALIVE`
+  lines, hours of them). Nothing is broken there; nothing is trying.
+- **`renewByReload` should NOT be deleted on this reading.** It is the instrument that
+  produced it, it now reports honestly either way, and its restore guard means a failed
+  attempt costs nothing. Retire it when a bootstrap-on-a-schedule is proven, not before.
 
 ### THE RENEWAL WAS MEASURING ITSELF (2026-08-12) — the keep-warm question is REOPENED
 `renewByReload` has been reporting "RC will not renew" since it shipped, and **it was never

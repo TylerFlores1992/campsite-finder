@@ -1,111 +1,118 @@
-# Next session — unblock the box, then take the first real renewal reading
+# Next session — stop babysitting the RC auto-cart
 
-*Retargeted 2026-08-15 (third time today). The mute feature is SHIPPED. The renewal question
-is answered at the code level. Everything remaining is blocked on one human action at the
-mini-PC — see "Still open" item 1.*
+*Rewritten 2026-08-15 evening. The renewal question is ANSWERED and the answer changes the
+plan: there is nothing to renew, and the thing that already works is not on a schedule.
+Everything below the horizontal rule is archive — resolved sections kept for their reasoning.*
 
-> ## ~~THE ONE FEATURE TO BUILD: site muting on the New watch screen~~ — SHIPPED 2026-08-15
+> ## THE GOAL: the 08:00 cart fires without a human in the loop
 >
-> Built, mutation-tested and merged. `v2/SiteMuteList.tsx` is ONE component mounted by both
-> `/new` and `/manage/<token>`; bulk mute-all / unmute-all is on both, and under an active
-> filter the buttons say "Mute these 4" rather than "Mute all". Write path is
-> `lib/watch-mutes.applyMutes`. Full write-up in CLAUDE.md under "MUTING IS ON THE NEW WATCH
-> SCREEN NOW".
+> Today a human is needed because the RC access token dies every hour and only a real
+> release schedules the repair. Three facts, all measured on 2026-08-15, decide the design:
 >
-> **The consumer chain was checked in source before a line was written**, which is the thing
-> the 08-13 bug turned on: `/api/campgrounds/<id>/availability` IS
-> `getAvailabilityFromRecGov` / `getRCAvailabilityForMonth`, the same functions the poller
-> reads, and RC's emits `campsiteId: String(unit.UnitId)` — byte-for-byte what the finders
-> compare. Pinned by `worker/site-mute-creation.test.mts`.
+> 1. **RC ISSUES NO REFRESH TOKEN.** Straight off the box:
+>    `grant: {"hasRefreshToken":false,"expiresIn":3600,...}`. Every "make the token renew
+>    itself" plan was reaching for a mechanism RC does not hand out. **Stop looking for one.**
+> 2. **`renewByReload` DOES NOT WORK, and the negative is finally honest.** The corrected
+>    clear (`d72fb2e`) named what it emptied — `accessToken`, `ssoAccessToken`,
+>    `okta-original-uri-storage` — and the token still came back 25s older, twice, an hour
+>    apart. **A persisted copy survives all three keys.** Where it lives is unknown;
+>    IndexedDB, a cookie, or a key nothing has looked for.
+> 3. **THE BOOTSTRAP RE-MINTS WITH NO CREDENTIAL TYPED, and that is the way in:**
+>    `✓ already signed in — RC re-authenticated before any form appeared — token now 59m`.
+>    **59 minutes is a FULL-lifetime token**, which is what separates this from the 08-11
+>    confound: a restored stale copy carries its old expiry (20:09:19 shows exactly that,
+>    540s). The Okta session runs ~12h, so inside that window a bootstrap is free.
 >
-> **The one edge worth knowing:** the divisions work that landed the same day makes one submit
-> create a watch PER DIVISION, and rec.gov site ids are GLOBAL — so mutes are sent only where
-> `t.id === campgroundId`, and the picker is hidden entirely for a multi-division park. Those
-> users mute per watch afterwards.
+> **SO THE WORK IS A SCHEDULE, NOT A MECHANISM.** `attemptLogin` already does the right
+> thing and already short-circuits into that line. Today it only fires at T−30 of a real
+> release, so between releases the token dies and stays dead — hours of
+> `⚠ RC SESSION IS DEAD … okta=ALIVE` in the log. Nothing is broken there; **nothing is
+> trying.**
 >
-> **STILL UNVERIFIED IN PRODUCTION:** nobody has created a real watch with mutes set from
-> `/new` and confirmed the poller honoured it. The screenshot presets (`ch-newwatch-mute`,
-> `ch-manage-sites`) show the UI, and the tests pin the chain, but that is not the same as a
-> live alert not arriving. The cheapest real check is `/manage/<token>` on an existing watch —
-> token-authed, so an agent can drive it end to end.
+> ### What to build, and the traps around it
+>
+> - **Keep the token alive by re-bootstrapping when it is near expiry**, inside the
+>   keep-warm's existing loop, whenever the Okta session is alive. Not a new process — the
+>   keep-warm already owns the profile and already polls every 60s.
+> - **THE OKTA SESSION IS THE BUDGET, AND IT IS NOT INFINITE.** ~12h, and
+>   `oktaSessionAlive()` reads `/api/v1/sessions/me`, **which itself refreshes Okta's idle
+>   timer** — so a keep-warm that asks often may be extending the very window it measures.
+>   Do not treat a long-lived Okta session as proof the design works until it survives a
+>   night where nothing asked.
+> - **A BOOTSTRAP IS NOT FREE THE WAY A CACHE READ IS.** Repeated logins from this address
+>   cost 12h of IP block on 08-06, and a CAPTCHA is a full stop. The 08-15 short-circuit
+>   fixes (`sufficient` deadline, two-attempt budget, refunded no-ops) exist precisely
+>   because this path is rationed. **Re-bootstrapping ≠ re-logging-in** — the whole point is
+>   that it returns before any form appears — but instrument it so the two are told apart in
+>   the log, or the ration will be spent by something that looks like a no-op.
+> - **`renewByReload` STAYS for now.** It is the instrument that produced this answer, it
+>   reports honestly either way, and its restore guard makes a failed attempt free. Retire it
+>   once bootstrap-on-a-schedule is proven, not before.
+> - **The remaining mystery is worth one bounded look, not a session:** where the surviving
+>   token copy lives. It matters only if you later want the reload path; the bootstrap route
+>   does not need it.
+>
+> ### How to check where this stands, before writing anything
+>
+> ```
+> NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
+> ```
+> Then ask the box for its own evidence — this is what produced every fact above, and it is
+> available from a web session with no repo access to the mini-PC:
+> `requestBotCommand('tail-log', 'rc-keepwarm:120', 'you')`, then read `bot_commands`.
+> `git-status` answers "what code is it running?"; `autocart.bot_version` is a hint only.
 
-## THE RENEWAL — answered in code, awaiting one reading from the box
+## The state of everything else, 2026-08-15 evening
 
-`renewByReload` was clearing `ssoAccessToken`/`accessToken` — **RC's own copies**. okta-auth-js
-keeps its own store under `okta-` and decides from that on boot, so the SDK handed the same
-token straight back. Forced by the measurement: `578s → 552s` means a token *came back*, 26
-seconds older, and a navigation wipes JS memory, so a persisted copy survived.
+- **The box is on `d72fb2e`** (confirmed by `git-status`, not inferred). It carries the
+  auto-login fixes, the hold-runner stand-off and the corrected renewal clear. Master is
+  further ahead but **the gap is web-side only** — `autocart.bot_version` says so itself.
+- **No holds are queued**, so nothing is at risk overnight and the 02:00–05:00 quiet window
+  is open.
+- **Alerting is healthy** — 16 of 18 checks green; the two warns are the `bot_version` gap
+  and the login rehearsal, which has never passed and has no green to have lost.
 
-**The 08-11 "RC re-minted with no credential typed" evidence is confounded by the same bug** —
-the rehearsal's clear was a third hand-rolled copy of the identical two keys, so the app came
-back signed in on a token that never left. Full write-up in CLAUDE.md under "THE RENEWAL WAS
-MEASURING ITSELF", which now carries the resolution.
+## Still open, in rough priority
 
-**So: nothing is known either way, and the next run on the box is the first real reading.** The
-clear now covers `okta-` with an exact-restore snapshot and **logs the key names it emptied**.
-- If it renews → the keep-warm can stop needing credentials, and `maybeAutoLogin` becomes a
-  fallback rather than the mechanism.
-- If it does not, and the log lists MORE than the two RC keys → that is the first honest
-  negative, and the answer really is "a login per hold morning".
-- If it does not and lists ONLY the two RC keys → the `okta-` prefix assumption is wrong and
-  the SDK's storage is somewhere else.
+1. **RC automation** — above. The one thing that removes the human.
+2. **No park watch has ever run a poller cycle** (migration 070). The expansion is provably a
+   no-op today and every new branch is gated on `multi`, so the path is dormant and safe —
+   and completely unexercised. **Do not advertise park watches until one has been created and
+   watched through a cycle.** The watches list still does not show a park watch's parts, and
+   `/manage/<token>` can only enumerate the representative division.
+3. **Muting is proven on the WRITE half only.** The batch endpoint was driven end to end
+   against production; nobody has confirmed the POLLER honouring a mute set from `/new`. That
+   is the half that was silently broken on 08-13, so it deserves a real check rather than a
+   source-level chain.
+4. **The Chromium leak** — downgraded. rec.gov has a flat 134-145 MB baseline; the
+   unattributed 08-12 event (7.9 GB in 46s) cannot be caught by a 2-minute cadence.
+   `OVERSIZED PROCESS` is the only reporter. Wait for a recurrence. `rc-profile-old/` on the
+   box is the only copy of the evidence — do not delete it.
+5. **`TWILIO_AUTH_TOKEN` should be removed from the agent environment** — full account
+   access, added for a one-off long since finished. Only the owner can do it.
+6. **The A2P campaign edit** is blocked on Twilio enabling API campaign edits (#28871693).
 
-**This is bot-side, so it needs an `update.bat`, "Update now", or a quiet window before it can
-happen at all.**
+## Working rules that keep being earned
 
-## Done 2026-08-15 — do not redo
-
-- **The five auto-login fixes** (sufficiency not liveness, refunded no-op attempts, requirement
-  computed from where we stand, two-attempt budget, named gates) and the **hold-runner
-  stand-off** that breaks the profile-contention death spiral. Merged; **not yet on the box.**
-- **The renewal clear**, above. Merged; not yet on the box.
-- **site_type removed from New watch.** It was dead code in the poller — zero hits in `worker/`.
-  The panel STAYS on Explore where it genuinely filters. Decision and reasoning in CLAUDE.md.
-- **`jsx-spacing` is a verify gate**, before the slow suites.
-- **verify.yml racing itself is FIXED** — the concurrency group is
-  `verify-${{ github.head_ref || github.ref_name }}`. A `cancelled` run beside each `success`
-  is the fix working. The side-lane note describing this as open is STALE.
-- **Hold-test fixtures can no longer tell the production bot to cart a real campsite**
-  (non-numeric sentinel unit ids + `worker/hold-fixture-safety.test.mts`).
-
-## Still open
-
-1. ~~**THE BOX IS ON STALE CODE AND `stop-all` REFUSED TO RELAUNCH**~~ — **RESOLVED ITSELF
-   WITHIN THE HOUR, 2026-08-15.** The owner's unelevated `stop-all` refused with *"port 8787
-   is STILL LISTENING (pid 5412) after the stop … NOTHING was updated or relaunched — on
-   purpose"*, which is `be93fcd`'s port check working exactly as designed against an
-   **elevated** `broker.mjs` orphan an unelevated WMI query cannot see. **The box then updated
-   anyway and is on `d72fb2e`** — asked directly via `git-status`, `HEAD d72fb2e on master`,
-   with a 10-second runner heartbeat. So it HAS the five auto-login fixes, the hold-runner
-   stand-off and the renewal clear.
-   **This is the "a reading goes stale faster than the conclusion drawn from it" rule again,
-   inside one session:** the refusal was real, the write-up of it was accurate, and by the
-   time it was read the box had moved. **Re-read `git-status` before sending anyone to the
-   keyboard.** The elevated-orphan recipe below is still the right one when the port check
-   genuinely fires and nothing clears it.
-2. **The renewal reading — UNBLOCKED, and it is the next thing to look at.** The corrected
-   clear is on the box as of `d72fb2e`. The next `renewByReload` on a token near expiry is
-   the first honest reading anyone has ever taken: it renews (the keep-warm can stop needing
-   credentials), it fails listing MORE than the two RC keys (first honest negative — a login
-   per hold morning), or it fails listing ONLY those two (the `okta-` prefix assumption is
-   wrong). Read the box's log; nothing to build.
-3. **THE FIRST PARK WATCH HAS NEVER RUN A POLLER CYCLE** (migration 070, merged 2026-08-15).
-   `watch_campgrounds` is empty, the expansion is provably a no-op today, and every new
-   branch is gated on `multi` — so the path is dormant and safe, and it is also completely
-   unexercised. **Do not advertise park watches until one has been created and watched
-   through a cycle.** Two known display gaps while that is true: the watches list does not
-   show a park watch's parts, and `/manage/<token>` can only enumerate the representative
-   division's inventory. Full write-up in CLAUDE.md under "ONE WATCH CAN COVER A WHOLE PARK".
-3. **The Chromium leak** — downgraded. rec.gov has a flat 134-145 MB baseline across nine
-   cycles, so the ordinary keepalive browser does not leak. The unattributed 08-12 event
-   (7.9 GB in 46s) cannot be caught by a 2-minute cadence; `OVERSIZED PROCESS` is the only
-   reporter. Wait for a recurrence rather than hunting it. `rc-profile-old/` on the box is the
-   only copy of the evidence — do not delete it.
-4. **`TWILIO_AUTH_TOKEN` should be removed from the agent environment** — full account access,
-   also signs the delivery webhooks, added for a one-off. Only the owner can do it.
-5. **The A2P campaign edit** is blocked on Twilio enabling API campaign edits (#28871693).
-
-***Delete this file once the mute feature ships and the renewal has had its reading.***
+- **Push to a branch, open a PR.** A hook blocks master and `docs/LANES.md` makes the PR the
+  only merge path. `npm run verify` + CI green first. After a squash merge, reset the branch
+  to `origin/master` rather than fighting a divergent history.
+- **Mutation-test every regression test, and ASSERT THE MUTATION APPLIED.** Four guards this
+  session initially proved nothing — two matched an identical line in a different function,
+  one missed a two-line compound condition, one broke the code so thoroughly that a different
+  test failed. A green that proves nothing is worse than no test.
+- **When you extract behaviour into a new function or file, check whether an existing guard
+  pinned it BY NAME.** Six have now needed updating for this.
+- **A reading goes stale faster than the conclusion drawn from it.** This session sent the
+  owner to the mini-PC over a refusal the box had already resolved by the time it was read.
+  Re-read `git-status` before sending anyone to the keyboard.
+- **NO BACKTICKS in SQL comments** in `worker/poller.ts`, `src/lib/watch-openings.ts` and
+  friends — the queries are template literals and a backtick ends the string, with the parse
+  error surfacing somewhere unrelated. It cost a build even with the warning fresh.
+- **`autocart.rc_session` reading dead between releases is CORRECT.** Do not tell the owner
+  to sign in by hand on that basis; it has been wrong twice and cost a hold both times.
+- Use ABSOLUTE paths on the mini-PC — a failed `cd` there is silent.
+- **Put nothing in a fenced code block that a human should not paste verbatim.**
 
 ---
 
