@@ -43,7 +43,14 @@ Live catalog, 2026-08-15, `unnest(campgrounds.amenities)` grouped with source:
 | `sewer hookup` | **79** | ridb only |
 | `water hookup` | **0 — value does not exist** | — |
 
-Consequences, and why only Electric shipped:
+FINAL STATE after the owner's call on 2026-08-15: the chip keeps its **"Hookups"**
+label and stays in the flat Must-have row (it was briefly moved under the RV site type
+and relabelled "Electric"; that was reverted). **Drinking water was removed entirely** —
+field, URL param and amenity mapping — because its amenity is rec.gov-only, so ticking it
+narrowed by SOURCE while appearing to narrow by amenity. Must-have is now
+Pets OK / Hookups / Showers.
+
+Consequences, and why no water or sewer chip exists:
 
 - There is **no RV water hookup in the data**. `drinking water` is a campground-level
   "there is potable water here" — a different claim.
@@ -263,12 +270,31 @@ CONTEXT.md is the correct one.
 | `825faca` | Beta list scrolls at 10 + search. Fixed a latent empty state that would have read "No all testers." |
 | `eff3c13` | `npm run jsx-spacing` — the checker above. Nothing to fix; app is clean. |
 | `7474c8d` | Desktop header 52→70px, mark 28→38px. Phone header untouched and verified so. |
-| `4dfe490` | RV → Hookups → Electric. Chip MOVED, not duplicated; relabelled from "Hookups". |
+| `4dfe490` | RV → Hookups → Electric (**superseded by `43a9fea`**). |
 | `b8aecdc` | Admin exempt from the 6-watch cap. `WATCH_LIMIT` unchanged. |
 | `e4a3207` | Admin Users box + `/admin/users/<id>`. |
+| `43a9fea` | Hookups label kept in Must-have; **Drinking water removed**. |
+| `2ac913e` | **The SWC entity spacing fix** — four user-visible strings. |
 
 **Capacity note on `b8aecdc`:** `lib/limits.ts` describes `WATCH_LIMIT` as the only
 user-facing number bounding how many rec.gov campground-months one account can force onto
 a shard. The constant is untouched and only the admin is exempt, but enough admin watches
 will push `poller.capacity` in `/api/health/status` to warn and then fail, and past the
 ceiling everything just gets slower. That gauge is the one to read after adding several.
+
+---
+
+## Handover — open items after 2026-08-15
+
+Everything above is merged (PR #45) and live. What is NOT done:
+
+1. **`site_type` is inert in the poller** (finding 1). This is the "new watch filters"
+   issue and it is the main lane's to decide. A user picks RV and gets alerted for tent
+   sites; the control looks like it works.
+2. **`verify.yml` races itself** (finding 5). A `push` run and a `pull_request` run of the
+   same commit have different `github.ref`, so the concurrency group never cancels either
+   and both hit the production DB. Fixture ids are fixed strings with prefix `DELETE`s.
+3. **`admin-health` screenshot preset throws** (finding 4), pre-existing.
+4. **`npm run jsx-spacing` is not in `npm run verify`.** Given that the SWC entity trap
+   (finding 3) silently broke four user-visible strings and this codebase escapes entities
+   everywhere, it is worth adding — one line, and the recipe is the main lane's.
