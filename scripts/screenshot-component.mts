@@ -854,6 +854,38 @@ const PRESETS: Record<string, Preset> = {
       export const node = <NewWatch initialCampgroundId="usedirect:rc:712" initialStart="2026-09-04" initialEnd="2026-09-07" />;`,
     frame: 'w-full',
   },
+  'ch-suggest-place': {
+    label: 'Explore suggestions — state shows even with no city, on the narrow rail',
+    // THE TWO REPORTED BUGS. Row 2 is a ReserveAmerica campground: state "NY", city
+    // null — it rendered NOTHING before, because every call site gated the label on
+    // city. Row 3 has a name longer than the 316px rail: the place used to be the part
+    // that got truncated away, which is the half that tells similar names apart.
+    entry: `import Explore from '@/components/v2/Explore';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        const HITS = {
+          campgrounds: [
+            { id: '1', name: 'Kirk Creek Campground', city: 'Big Sur', state: 'CA', latitude: 35.9, longitude: -121.4 },
+            { id: '2', name: 'Northampton Beach Campground', city: null, state: 'NY', latitude: 43.2, longitude: -74.1 },
+            { id: '3', name: 'Grand Lake St Marys State Park Campground', city: 'Celina', state: 'OH', latitude: 40.5, longitude: -84.5 },
+          ],
+        };
+        window.fetch = async (url) => {
+          const u = String(url);
+          if (u.includes('/api/suggest')) return { ok: true, status: 200, json: async () => HITS };
+          return { ok: true, status: 200, json: async () => ({ campgrounds: [] }) };
+        };
+        setTimeout(() => {
+          const el = document.getElementById('v2-where');
+          if (!el) return;
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(el, 'camp');
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        }, 400);
+      }
+      export const node = <Explore />;`,
+    frame: 'w-full',
+  },
   'ch-primitives': {
     label: 'Redesign primitives (Button / Chip / Tag / Card / Collapsible)',
     // Every variant of every phase-2 primitive on one sheet, on the ch-paper

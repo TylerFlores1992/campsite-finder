@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   tidyCase,
   parseCampgroundName,
   parkOf,
   divisionLabel,
+  placeLabel,
 } from './campground-name';
 
 /**
@@ -98,4 +100,84 @@ test('empty and dash-only input do not throw or produce an empty park', () => {
   assert.equal(parseCampgroundName('').park, '');
   const only = parseCampgroundName('—');
   assert.equal(only.division, null, 'a lone dash has no division to speak of');
+});
+
+/**
+ * placeLabel — "some campgrounds show a city and state and others do not" (2026-08-15).
+ *
+ * Every call site wrote `city && ...`, so a campground with a state and no city rendered
+ * NOTHING. Measured: of 7,610 visible campgrounds 1,957 (26%) have no city but only 274
+ * (3.6%) have no state, and all 859 ReserveAmerica rows are `{city: null, state: "NY"}` —
+ * a state we had and threw away. Gating on the rarer of the two fields is the bug.
+ */
+test('placeLabel joins city and state when both exist', () => {
+  assert.equal(placeLabel('Big Sur', 'CA'), 'Big Sur, CA');
+});
+
+test('placeLabel RETURNS THE STATE ALONE when there is no city', () => {
+  // The reported bug, and the ReserveAmerica shape — 859 campgrounds.
+  assert.equal(placeLabel(null, 'NY'), 'NY');
+  assert.equal(placeLabel('', 'NY'), 'NY');
+  assert.equal(placeLabel('   ', 'NY'), 'NY');
+});
+
+test('placeLabel returns the city alone when there is no state', () => {
+  assert.equal(placeLabel('Celina', null), 'Celina');
+});
+
+test('placeLabel returns null for neither, rather than inventing a label', () => {
+  // 274 campgrounds (3.6%) genuinely have neither. An empty string would render a stray
+  // separator; a placeholder would be a label we made up.
+  assert.equal(placeLabel(null, null), null);
+  assert.equal(placeLabel(undefined, undefined), null);
+  assert.equal(placeLabel('  ', ''), null);
+});
+
+const readSrc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
+const stripComments = (s: string) =>
+  s.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(l)).join('\n');
+const exploreSrc = stripComments(readSrc('./Explore.tsx'));
+const newWatchSrc = stripComments(readSrc('./NewWatch.tsx'));
+const geoSrc = stripComments(readSrc('./geo.ts'));
+
+test('no suggestion row gates its place label on the city', () => {
+  for (const [name, src] of [['Explore', exploreSrc], ['NewWatch', newWatchSrc]] as const) {
+    // MATCHES BOTH SHAPES. The first version of this anchored on `{<obj>.city && (`
+    // and so missed Explore's compound condition, which spans two lines and opens with
+    // `hit.kind === "campground" &&`. The mutation that restored the bug there passed.
+    // `.city && (` is the render gate itself, whatever precedes it.
+    assert.ok(
+      !/\.city && \(/.test(src),
+      `${name} still renders its place label only when a city exists, so every ` +
+        'campground with a state and no city shows nothing — 26% of the catalog.',
+    );
+  }
+});
+
+test('all three rows and hitLabel share one definition of the place label', () => {
+  assert.ok((exploreSrc.match(/placeLabel\(/g) ?? []).length >= 1, 'Explore does not use placeLabel');
+  assert.ok((newWatchSrc.match(/placeLabel\(/g) ?? []).length >= 2, 'NewWatch has two rows and must use placeLabel in both');
+  assert.ok(
+    (geoSrc.match(/placeLabel\(/g) ?? []).length >= 1,
+    'geo.hitLabel keeps its own copy. It was the ONLY one of the four that was right, ' +
+      'which is precisely why it should not be a separate expression.',
+  );
+});
+
+test("Explore's place label survives a name longer than the rail", () => {
+  // The rail is 316px (--ch-rail). The name and the place used to share ONE truncating
+  // span, so the place — the half that tells two identical names apart — was what got
+  // cut. Separate blocks now, so truncation eats the name instead.
+  const start = exploreSrc.indexOf('<span className="min-w-0 flex-1"');
+  assert.notEqual(start, -1, 'the suggestion row was not found — restructured?');
+  const row = exploreSrc.slice(start, start + 600);
+  assert.ok(
+    !/min-w-0 flex-1 truncate/.test(row),
+    'the name and the place are back in one truncating span, so a long name hides the ' +
+      'town and state entirely',
+  );
+  assert.ok(
+    /block truncate font-semibold/.test(row),
+    'the campground NAME should be the part that truncates',
+  );
 });

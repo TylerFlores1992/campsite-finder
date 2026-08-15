@@ -18,6 +18,7 @@ import { campgroundsRounded } from "@/lib/coverage";
 import dynamic from "next/dynamic";
 import { addDays, todayISO, thisWeekendRange, type ISODate } from "@/components/ui/date";
 import { deviceCoords, hitLabel, ipCoords, searchLocations, type LocationHit } from "./geo";
+import { placeLabel } from "./campground-name";
 import { LocateFixed, MapPin, Tent } from "lucide-react";
 import type { Campground } from "@/lib/types";
 
@@ -511,16 +512,25 @@ export default function Explore() {
                     ) : (
                       <MapPin aria-hidden="true" className="size-3.5 shrink-0 text-ch-muted" />
                     )}
-                    <span className="min-w-0 flex-1 truncate">
-                      <span className="font-semibold">{hit.name}</span>
-                      {hit.kind === "campground" && hit.city && hit.city !== hit.name && (
-                        <span className="text-ch-muted">
-                          {" "}
-                          · {hit.city}
-                          {hit.state ? `, ${hit.state}` : ""}
-                        </span>
-                      )}
-                      {hit.kind === "place" && hit.name.includes(",") && null}
+                    {/* TWO LINES, and the second one is why.
+                        This used to be ONE truncating span holding the name AND the
+                        place, inside a 316px rail (--ch-rail) — so on any name longer
+                        than the bar the town and state were the part that vanished,
+                        which is exactly the information that tells two identically
+                        named parks apart. The owner reported it as "you can't see it
+                        because it exceeds the width of the search bar".
+                        Now the NAME truncates and the place has its own line, so it
+                        survives at every width including a phone. Widening the rail
+                        would have fixed one breakpoint and not the rest. */}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold">{hit.name}</span>
+                      {hit.kind === "campground" &&
+                        placeLabel(hit.city, hit.state) &&
+                        hit.city !== hit.name && (
+                          <span className="block truncate text-ch-fine text-ch-muted">
+                            {placeLabel(hit.city, hit.state)}
+                          </span>
+                        )}
                     </span>
                     <span className="shrink-0 text-ch-fine text-ch-faint">
                       {hit.kind === "campground" ? "campground" : "place"}

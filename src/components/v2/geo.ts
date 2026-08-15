@@ -6,7 +6,7 @@
  * of thing that drifts once a second caller appears.
  */
 
-import { parseCampgroundName } from "./campground-name";
+import { parseCampgroundName, placeLabel } from "./campground-name";
 
 export interface PlaceHit {
   kind: "place";
@@ -139,10 +139,18 @@ export async function searchLocations(q: string, signal?: AbortSignal): Promise<
   return [...campgrounds.slice(0, 5), ...places.slice(0, 5)];
 }
 
-/** Display label for a hit, avoiding "Big Sur, Big Sur" when name === city. */
+/**
+ * Display label for a hit, avoiding "Big Sur, Big Sur" when name === city.
+ *
+ * Shares `placeLabel` with the suggestion rows. It did NOT before, and the two
+ * disagreed in the way that matters: this one joined whatever of city/state existed —
+ * correct — while the rows gated the whole thing on `city` and rendered nothing for the
+ * 1,957 campgrounds that have a state and no city. Two expressions for one idea, in the
+ * same feature, and the broken one was what the user read first.
+ */
 export function hitLabel(hit: LocationHit): string {
   if (hit.kind === "place") return hit.name;
-  const where = [hit.city, hit.state].filter(Boolean).join(", ");
+  const where = placeLabel(hit.city, hit.state);
   if (!where || hit.city === hit.name) return hit.name;
   return `${hit.name}, ${where}`;
 }

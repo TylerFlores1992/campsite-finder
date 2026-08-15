@@ -141,3 +141,30 @@ export function divisionLabel(raw: string): string {
   const { division, full } = parseCampgroundName(raw);
   return division ?? full;
 }
+
+/**
+ * "Big Sur, CA" — the place line under a campground suggestion.
+ *
+ * ── THE BUG THIS EXISTS TO FIX (reported 2026-08-15) ───────────────────────────────────
+ * Every call site wrote `city && <>· {city}{state ? `, ${state}` : ""}</>`, gated on the
+ * CITY. So a campground with no city and a perfectly good state rendered **nothing**, and
+ * the owner saw "some campgrounds show a city and state and others do not".
+ *
+ * Measured against the live catalog, that gate is why: of 7,610 visible campgrounds
+ * **1,957 (26%) have no city**, but only **274 (3.6%) have no state**. The single biggest
+ * block is ReserveAmerica — all 859 rows carry `{"city": null, "state": "NY"}`, a state
+ * and no city — so the one thing we could have shown was thrown away by the condition.
+ *
+ * Showing the state alone takes the suggestion list from 74% labelled to 96%, which is
+ * the whole point: telling two identically named parks apart. The remaining 3.6% have
+ * neither and honestly render nothing — this returns null rather than inventing a label.
+ *
+ * ONE HELPER, THREE CALL SITES (Explore's hits, New watch's favourites and its search
+ * hits). They were three copies of the same expression and all three had the same bug.
+ */
+export function placeLabel(city?: string | null, state?: string | null): string | null {
+  const c = city?.trim();
+  const s = state?.trim();
+  if (c && s) return `${c}, ${s}`;
+  return c || s || null;
+}
