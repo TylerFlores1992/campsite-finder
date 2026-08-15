@@ -43,6 +43,11 @@ export default function WatchesList() {
   const [error, setError] = useState<string | null>(null);
   const [stalledSources, setStalledSources] = useState<ReadonlySet<string>>(new Set());
   const [sessionExpired, setSessionExpired] = useState(false);
+  // The cap AS THE SERVER APPLIES IT: a number, or null for an admin with none.
+  // Starts at WATCH_LIMIT rather than null so a slow or failed load shows the
+  // ordinary cap instead of flashing "unlimited" at everybody — undefined must
+  // never read as "no limit", the same reason `unknown` is not "not subscribed".
+  const [watchLimit, setWatchLimit] = useState<number | null>(WATCH_LIMIT);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,8 +63,13 @@ export default function WatchesList() {
         if (!r.ok) throw new Error(`Couldn't load your watches (${r.status})`);
         return r.json();
       })
-      .then((j: { watches: WatchCardWatch[] } | null) => {
-        if (!cancelled && j) setWatches(j.watches ?? []);
+      .then((j: { watches: WatchCardWatch[]; watchLimit?: number | null } | null) => {
+        if (!cancelled && j) {
+          setWatches(j.watches ?? []);
+          // `undefined` means an older response with no such field; only an
+          // explicit null is "no cap".
+          if (j.watchLimit !== undefined) setWatchLimit(j.watchLimit);
+        }
       })
       .catch((e: Error) => {
         if (!cancelled) setError(e.message);
@@ -193,7 +203,11 @@ export default function WatchesList() {
       <div className="mb-3.5 flex items-center gap-2.5 rounded-[13px] border border-ch-line bg-ch-card px-3.5 py-3">
         <div className="flex-1">
           <p className="text-ch-body font-bold">
-            {watches.filter((w) => w.active !== false).length} of {WATCH_LIMIT} watches running
+            {/* "N of 6" is a quota readout, and printing it to someone who has no
+                quota states a limit that will not be enforced — so an admin gets a
+                plain count. */}
+            {watches.filter((w) => w.active !== false).length}
+            {watchLimit === null ? "" : ` of ${watchLimit}`} watches running
           </p>
           <p className="mt-0.5 text-ch-fine text-ch-muted">
             We check every 15 seconds, around the clock.

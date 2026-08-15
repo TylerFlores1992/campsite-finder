@@ -6,6 +6,7 @@ import { createAlert, cancelAlert } from '@/lib/campflare/client';
 import { getOpeningRate } from '@/lib/likelihood';
 import { manageTokenFor, manageLink } from '@/lib/notifications/actions';
 import { WATCH_LIMIT } from '@/lib/limits';
+import { currentUserIsAdmin } from '@/lib/admin';
 import type { CampflareDateRange } from '@/lib/campflare/types';
 
 const DAY_MS = 86_400_000;
@@ -35,6 +36,18 @@ export async function GET(request: NextRequest) {
   // app and only reachable through a magic link from an old alert, which is how
   // "pause" ended up meaning "disappear".
   const includeInactive = request.nextUrl.searchParams.get('includeInactive') === '1';
+
+  // STARTED HERE, AWAITED AT THE RETURN, so the round trip overlaps the queries
+  // below instead of adding to them. `requireAuth` reads the session token and
+  // touches no network; `currentUserIsAdmin` goes through Clerk's `currentUser()`,
+  // which is a real request — in series that is pure latency added to the list
+  // every subscriber loads.
+  //
+  // Fails to NOT-admin, which shows the ordinary cap. That is the safe direction:
+  // a failed lookup must never render "no limit", the same rule as `unknown` never
+  // meaning "not subscribed". The catch is also what stops an unhandled rejection
+  // if a query below throws before this is awaited.
+  const isAdmin = currentUserIsAdmin().catch(() => false);
 
   const rows = await query<Record<string, unknown>>(
     `SELECT w.*, c.name AS campground_name, c.source AS campground_source
@@ -110,7 +123,14 @@ export async function GET(request: NextRequest) {
     })
   );
 
-  return NextResponse.json({ watches: rows });
+  // null = no cap (admin). The UI must not recompute this from an email or a flag
+  // of its own: lib/admin is `server-only` precisely so the roster never reaches the
+  // bundle, and a second definition of "is this an admin?" is a second thing that
+  // can disagree with the route actually enforcing it.
+  return NextResponse.json({
+    watches: rows,
+    watchLimit: (await isAdmin) ? null : WATCH_LIMIT,
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -192,7 +212,20 @@ export async function POST(request: NextRequest) {
         WHERE user_id = $1 AND active = true AND end_date > CURRENT_DATE`,
       [userId]
     );
-    if ((cnt?.n ?? 0) >= WATCH_LIMIT) {
+    // THE CAP IS LIFTED FOR ADMINS, and the constant is deliberately untouched.
+    //
+    // WATCH_LIMIT is not a billing lever — lib/limits.ts explains it as the only
+    // user-facing number bounding how many rec.gov campground-months one account can
+    // force onto a shard, at ~4 req/min each against a 15/min-per-IP budget. So this
+    // is an exemption from a CAPACITY control, and it is worth knowing what it
+    // spends: enough admin watches will push `poller.capacity` in /api/health/status
+    // to warn and then fail, and past the ceiling every watch on every account just
+    // gets slower. Nothing else goes red for over-capacity, so that gauge is the
+    // thing to read after adding several.
+    //
+    // Checked server-side and not merely hidden in the UI: the client sends the
+    // POST, so a hidden cap is not a cap.
+    if (!(await currentUserIsAdmin()) && (cnt?.n ?? 0) >= WATCH_LIMIT) {
       return NextResponse.json(
         {
           error: 'watch_limit',
