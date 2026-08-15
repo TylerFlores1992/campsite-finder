@@ -1054,11 +1054,18 @@ function BotDiagnostics() {
       <h3 className="mb-0.5 text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
         Ask the mini-PC
       </h3>
+      {/* The {' '} after the blackout expression below is load-bearing. That text node
+          carries an &mdash;, and SWC drops the leading whitespace of any text node
+          holding an HTML entity, so a plain space rendered "is refusedof a release".
+          NOTE the comment sits OUTSIDE the <p>: putting it between "runner</b>," and
+          "which asks" split one text node into two and dropped THAT space instead —
+          caught by `npm run jsx-spacing`, which is the point of having it. */}
       <p className="mb-2 text-ch-fine text-ch-muted">
         Answered on the box&rsquo;s next poll. The list is fixed: the box implements each one
         itself and refuses anything else, so this can never become a way to run commands on
         that machine. All are read-only except <b>Restart the RC keep-warm + hold runner</b>,
-        which asks and is refused{blackoutMin ? ` within ${blackoutMin} minutes` : ''} of a release.
+        which asks and is refused{blackoutMin ? ` within ${blackoutMin} minutes` : ''}{' '}
+        of a release.
         Questions ride whichever feed is alive &mdash; the rec.gov bot answers when the RC
         runner is down, which is when you most need to ask.
       </p>

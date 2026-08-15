@@ -17,17 +17,23 @@
  * WatchCard and WatchesList — a leading space INSIDE the string literal), which is
  * the tell that somebody hit this before and fixed it locally rather than globally.
  *
- * THE RULE, implemented against Babel's own text-cleaning algorithm rather than a
- * regex guess at it: for each adjacent pair of rendered children, flag when
- *   (a) the left one does not end in a space,
- *   (b) the right one does not begin with one, and
- *   (c) the source between them contains a NEWLINE.
+ * THE RULE. For each adjacent pair of rendered children, flag when the left one does
+ * not end in a space, the right one does not begin with one, and EITHER the source
+ * between them contains a newline, OR an HTML entity made SWC eat a space the author
+ * actually typed (see HAS_ENTITY — that is the "ReserveCaliforniacarts" case, and it
+ * happens on a single line).
  *
- * (c) is what keeps this quiet. `{count} items` on one line is correct and common;
- * `{a}{b}` on one line is a deliberate join (a currency symbol, a unit suffix). Only
- * a line break between two things that will touch when rendered is suspicious,
- * because a line break is the author saying "these are separate" to a reader while
- * saying the opposite to the renderer.
+ * The newline condition is what keeps this quiet. `{count} items` on one line is
+ * correct and common; `{a}{b}` on one line is a deliberate join (a currency symbol, a
+ * unit suffix). A line break between two things that will touch when rendered is the
+ * author saying "these are separate" to a reader while saying the opposite to the
+ * compiler.
+ *
+ * IT WAS PORTED FROM BABEL AND THE APP IS COMPILED BY SWC. The first version reported
+ * the whole codebase clean while production rendered "ReserveCaliforniacarts" on the
+ * New watch screen. Agreeing with the wrong reference implementation is worse than no
+ * checker at all, because it produces a confident green. Every rule here is now
+ * checked against real `next build` output rather than against a spec.
  *
  *   npx tsx scripts/jsx-spacing-check.mts            # scan src/, exit 1 on a hit
  *   npx tsx scripts/jsx-spacing-check.mts src/components/v2
@@ -48,6 +54,30 @@ const ROOT = process.cwd();
  * both cost more than the bug. Returns '' when the child contributes nothing at
  * all, which is how a whitespace-only line between two expressions disappears.
  */
+/**
+ * An HTML entity anywhere in a JSX text node makes SWC drop that node's LEADING
+ * whitespace. This is the whole bug, and it is not in Babel's algorithm.
+ *
+ * MEASURED through real `next build` runs on 2026-08-15, not read anywhere:
+ *
+ *   {X()} q6none plain first / second line has a literal apostrophe   -> "ZED"," q6none…"
+ *   {X()} q1lead has wouldn&apos;t on this very line                  -> "ZED","q1lead…"
+ *   {X()} q3amp  / second line has &amp; ampersand                    -> "ZED","q3amp…"
+ *   {X()} q4real / second line has &#39; numeric                      -> "ZED","q4real…"
+ *   {X()} q5rsquo / second line has &rsquo; curly                     -> "ZED","q5rsquo…"
+ *
+ * So it is ANY entity, named or numeric, ANYWHERE in the node — including on a later
+ * line than the space being lost. A literal apostrophe is safe. It is asymmetric:
+ * `q2trail text with wouldn&apos;t entity {X()}` kept its TRAILING space, so only the
+ * leading edge is affected.
+ *
+ * This is why the first version of this checker reported the whole app clean while
+ * production rendered "ReserveCaliforniacarts" — it was ported from Babel, and the app
+ * is compiled by SWC. Agreeing with the wrong reference implementation is worse than
+ * having no checker, because it produces a confident green.
+ */
+const HAS_ENTITY = /&(?:[a-zA-Z][a-zA-Z0-9]*|#\d+|#[xX][0-9a-fA-F]+);/;
+
 function cleanJsxText(raw: string): string {
   const lines = raw.split(/\r\n|\n|\r/);
   let lastNonEmptyLine = 0;
@@ -95,6 +125,13 @@ interface Rendered {
    * text run either way and can only be a bug.
    */
   isElement: boolean;
+  /**
+   * The author wrote a leading space and SWC ATE IT, because this text node contains
+   * an HTML entity. See HAS_ENTITY. This is the one case that does NOT need a line
+   * break between the two children to be a real bug — the space is right there in the
+   * source, on the same line, and the compiler removes it anyway.
+   */
+  entityAte: boolean;
   /**
    * Is it SAFE for something to sit directly against this edge — because the edge
    * is already a space, or punctuation that is supposed to touch? Unknown is false,
@@ -212,13 +249,17 @@ function containsJsx(node: ts.Node): boolean {
 function renderedOf(child: ts.Node): Rendered | null {
   if (ts.isJsxText(child)) {
     const raw = child.getFullText();
-    const text = cleanJsxText(raw);
-    if (!text) return null; // contributes nothing — dropped, like a blank line
+    const babel = cleanJsxText(raw);
+    if (!babel) return null; // contributes nothing — dropped, like a blank line
+    // SWC drops this node's leading whitespace when it holds an entity. See HAS_ENTITY.
+    const entityAte = HAS_ENTITY.test(raw) && /^[ \t]/.test(babel);
+    const text = entityAte ? babel.replace(/^[ \t]+/, '') : babel;
     return {
       node: child,
       text,
       isProse: true,
       isElement: false,
+      entityAte,
       startsOk: okAsRight(text[0]),
       endsOk: okAsLeft(text[text.length - 1]),
       lead: /^[ \t\r\n]*/.exec(raw)![0],
@@ -242,6 +283,7 @@ function renderedOf(child: ts.Node): Rendered | null {
         text: null,
         isProse: true,
         isElement: false,
+        entityAte: false,
         // EVERY possible rendering must be safe, or one of them joins.
         startsOk: eg.every((x) => okAsRight(x.first)),
         endsOk: eg.every((x) => okAsLeft(x.last)),
@@ -260,6 +302,7 @@ function renderedOf(child: ts.Node): Rendered | null {
       text: null,
       isProse: false,
       isElement: containsJsx(e),
+      entityAte: false,
       startsOk: false,
       endsOk: false,
       lead: '',
@@ -279,6 +322,7 @@ function renderedOf(child: ts.Node): Rendered | null {
       text: null,
       isProse: false,
       isElement: true,
+      entityAte: false,
       startsOk: false,
       endsOk: false,
       lead: '',
@@ -322,7 +366,12 @@ function scanFile(file: string, findings: Finding[]) {
         // whitespace of the right node.
         const between = src.slice(a.node.getEnd(), b.node.getFullStart());
         const separator = a.trail + between + b.lead;
-        if (!separator.includes('\n')) continue;
+        // The newline requirement exists to spare deliberate same-line joins like
+        // {currency}{amount}. It must be WAIVED when the entity rule ate a space the
+        // author actually typed — that is a bug whether or not a line break is
+        // involved, and NewWatch's "ReserveCaliforniacarts" is exactly that shape:
+        // the space is on the same line, and the &apos; two lines down removes it.
+        if (!b.entityAte && !separator.includes('\n')) continue;
 
         const pos = sf.getLineAndCharacterOfPosition(b.node.getStart(sf));
         const show = (s: string | null, tail: boolean) =>

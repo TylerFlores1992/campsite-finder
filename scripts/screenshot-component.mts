@@ -546,11 +546,9 @@ const PRESETS: Record<string, Preset> = {
     frame: 'max-w-2xl w-full mx-auto',
   },
   'ch-filters-rv': {
-    label: 'FilterPanel — RV selected (Hookups appears) above All types (Electric back in Must have)',
-    // Both mounts matter and they are the SAME boolean. The point of the shot is
-    // that "Electric" appears exactly once in each panel: under Hookups when RV is
-    // chosen, under Must have otherwise. Two chips for one field would be visible
-    // here immediately.
+    label: 'FilterPanel — RV selected (rig length) above All types. Must-have is Pets/Hookups/Showers.',
+    // Drinking water was removed 2026-08-15; Hookups stays in the flat Must-have row
+    // rather than nesting under RV. This shot is what catches either being undone.
     entry: `import FilterPanel, { EMPTY_FILTERS } from '@/components/ui/FilterPanel';
       function Demo({ initial }) {
         const [v, setV] = React.useState(initial);

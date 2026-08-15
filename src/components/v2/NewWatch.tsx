@@ -406,7 +406,10 @@ export default function NewWatch({
           />
           {flexTooLong && (
             <p role="alert" className="mt-1.5 text-ch-fine text-ch-alert">
-              {flexNights} nights doesn&apos;t fit in a {windowNights}-night window. Widen the
+              {/* {' '} because the &apos; below makes SWC eat this node's leading
+                  space — it rendered "3nights doesn't fit". */}
+              {flexNights}{' '}
+              nights doesn&apos;t fit in a {windowNights}-night window. Widen the
               window or shorten the stay.
             </p>
           )}
@@ -453,8 +456,12 @@ export default function NewWatch({
         {!canAutoCart && campgroundSource && (
           <p className="mt-5 text-ch-fine leading-normal text-ch-muted">
             Auto-cart is Recreation.gov only —{" "}
-            {providerLabel(campgroundSource, campgroundId ?? undefined)} carts are tied to a browser
-            session and wouldn&apos;t follow you to your phone. You&apos;ll still get the alert.
+            {/* THE "ReserveCaliforniacarts" BUG, reported from production 2026-08-15.
+                The space WAS in the source; the &apos; two lines down makes SWC drop this
+                text node's leading whitespace. It has to live inside a literal. */}
+            {providerLabel(campgroundSource, campgroundId ?? undefined)}{" "}
+            carts are tied to a browser session and wouldn&apos;t follow you to your
+            phone. You&apos;ll still get the alert.
           </p>
         )}
       </form>

@@ -56,33 +56,82 @@ Consequences, and why only Electric shipped:
 `hasElectric()` in `sources/ridb/transform.ts` does compute this per CAMPSITE, so a
 site-level filter is possible in principle — it just isn't what the search RPC exposes.
 
-## 3. "ReserveCaliforniacarts" is NOT in master, and now there is a checker
+## 3. "ReserveCaliforniacarts" IS REAL — and the cause is SWC, not the source
 
-Reported as appearing under watches. **Not reproducible in the current source.**
+**I reported this as "not in master". That was WRONG**, and the owner's screenshot of the
+live New watch screen is what disproved it. Correction and cause below; the mistake is
+left visible because the reasoning that produced it is the interesting part.
 
-- The only place that string can come from is `NewWatch.tsx:456`, where the space is on
-  the same line as the expression and renders correctly.
-- `WatchCard.tsx:250` and `WatchesList.tsx:177` both use the `{" isn't responding"}`
-  leading-space-inside-the-literal guard.
-- `npm run jsx-spacing` (new, `scripts/jsx-spacing-check.mts`) scans all 79 `.tsx` files
-  and reports **zero** missing spaces in text runs.
+The source has ALWAYS had the space, in every one of the 52 commits visible here:
 
-Mutation-tested both directions before being trusted: re-splitting the `NewWatch` line
-reproduces the exact reported string and fails the check; so does
-`Open on\n{providerLabel(...)}` in `ManageWatch`.
+```jsx
+{providerLabel(campgroundSource, campgroundId ?? undefined)} carts are tied to a browser
+session and wouldn&apos;t follow you to your phone. You&apos;ll still get the alert.
+```
 
-So it is a stale deploy, an older build, or something that is not a JSX spacing bug.
-**Open question for the owner** — which screen and roughly when.
+`cat -A` confirms a real 0x20. And yet **both the deployed bundle and my own local build**
+emit `providerLabel($,N??void 0),"carts are tied…"` — no leading space.
 
-Building it took four narrowings, each found by running it, and the sequence is the
-useful part: 883 hits → 22 → 6 → 0. The false-positive classes were sibling elements
-(CSS owns that gap), expressions that *evaluate* to JSX, `{cond && ' literal'}` and
-template heads (the same put-the-space-in-the-literal fix the checker recommends), and
-punctuation that correctly hugs (`{city}{state ? \`, ${state}\` : ""}`). It has two tiers
-and only the unambiguous one exits non-zero.
+### The rule, measured through real `next build` runs
 
-**Not wired into `npm run verify`** — that recipe is shared with the main lane's CI, so
-adding a gate to it is their call.
+**An HTML entity anywhere in a JSX text node makes SWC drop that node's LEADING
+whitespace.** Labelled cases, compiled and read out of `.next/static/chunks`:
+
+| source | emitted |
+|---|---|
+| `{X()} q6none…` + literal apostrophe on line 2 | `"ZED"," q6none…"` ✅ |
+| `{X()} q1lead has wouldn&apos;t on this line` | `"ZED","q1lead…"` ❌ |
+| `{X()} q3amp…` + `&amp;` on line 2 | `"ZED","q3amp…"` ❌ |
+| `{X()} q4real…` + `&#39;` on line 2 | `"ZED","q4real…"` ❌ |
+| `{X()} q5rsquo…` + `&rsquo;` on line 2 | `"ZED","q5rsquo…"` ❌ |
+
+So: any entity, **named or numeric**, **anywhere in the node** — including on a *later
+line* than the space being lost. A literal apostrophe is safe. It is **asymmetric**:
+`q2trail text with wouldn&apos;t entity {X()}` kept its TRAILING space, so only the
+leading edge is affected.
+
+### Why the checker said clean
+
+It was ported from **Babel's** `cleanJSXElementLiteralChild`, and Next compiles with
+**SWC**. Babel preserves the first line's leading space; SWC does not when an entity is
+present. **Agreeing with the wrong reference implementation is worse than having no
+checker, because it produces a confident green** — which is exactly what it did, over a
+bug visible on the live site.
+
+Two further things the first version got wrong, both now fixed:
+
+- Its "there must be a NEWLINE between the two children" condition. That is right for the
+  ordinary case and **wrong for this one**: here the author's space is on the *same line*
+  and the entity two lines down removes it. The newline requirement is now waived when
+  the entity rule demonstrably ate a typed space.
+- It only knew the trigger from a spec. Every rule in it is now checked against real
+  build output.
+
+### Four real bugs, all now fixed
+
+| | rendered |
+|---|---|
+| `NewWatch.tsx:456` | `ReserveCaliforniacarts are tied…` |
+| `NewWatch.tsx:409` | `3nights doesn't fit in a 5-night window` |
+| `HoldConfirm.tsx:40` | `Carpinteria SB— we'll grab it at…` |
+| `AdminTabs.tsx:1061` | `…is refusedof a release.` |
+
+Fixed by moving the space into a literal (`{' '}`). **Verified in the compiled artifact**,
+not just by the checker: the chunk now reads
+`providerLabel($,N??void 0)," ","carts are tied…"`.
+
+### It caught a regression I introduced while fixing it
+
+Adding an explanatory comment *between* `runner</b>,` and `which asks` split one text node
+into two and dropped THAT space. The checker flagged it immediately. The comment now sits
+outside the `<p>`.
+
+### Consequence worth acting on
+
+This codebase uses `&apos;`, `&rsquo;`, `&ldquo;`, `&mdash;` and `&amp;` heavily —
+`react/no-unescaped-entities` pushes people towards them. **Every one of those text nodes
+is a place this can happen**, so `npm run jsx-spacing` is worth having in `npm run verify`.
+Not added here: that recipe is shared with the main lane's CI.
 
 ## 4. PRE-EXISTING: the `admin-health` screenshot preset throws
 
