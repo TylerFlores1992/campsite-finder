@@ -81,12 +81,41 @@ and as `kill-chrome`'s "SURVIVED" line.
 re-spawns the updater every ~15 minutes and each attempt bounces every process on the box.
 Leaving it set would have churned all night.
 
-### The one action that unblocks everything — STILL ONE MORE UPDATE
+### ONE MORE UPDATE IS NEEDED, AND IT IS THE ONE THAT MAKES recgov SAMPLEABLE
 
-**DONE ONCE ALREADY** (box reached `60d9b98`), which is what exposed the false zeros above.
-The sampler fix is bot-side too, so it needs **one more `update.bat`**, or the
-**02:00-05:00 PT quiet window**, which uses the scheduled-task path that has always worked.
-Nothing is queued, so the window is open.
+**Measured 2026-08-15: the box is on `e6a7ebf`, `origin/master` is `339cf0e`, and the forced
+keepalive sample exists only in the latter.** `git show e6a7ebf:scripts/auto-cart-bot/bot.mjs
+| grep -c bot-keepalive` returns **0**; on master it returns 1.
+
+That is why 214 samples over ~7 hours caught **zero** rec.gov processes and the readout warns
+it says nothing about that family. The periodic 2-minute series structurally cannot sample a
+browser that lives a few seconds twice per 30-minute cycle — the fix was to have
+`keepSessionsWarm` take its own sample from inside its `withBrowser` block — and **that fix is
+not on the box.** Until it is, a quiet series is evidence about the RC profile and about
+nothing else, no matter how long it runs.
+
+**So: one `update.bat` (or the 02:00-05:00 PT quiet window), then a `start-all`** — see the
+next section for why the update alone is not enough. After that, expect two rec.gov samples
+per keepalive cycle instead of roughly none.
+
+### RESOLVED 2026-08-15 03:01 UTC — the update landed and the sampler is honest
+
+Box and web are both on **`e6a7ebf`**, and the series records real numbers again:
+`rc 325 MB, pid 2360 130 MB`, with zeros now appearing only where the scan proves nothing
+was running. **Nothing above this line is an outstanding action any more** — it is kept
+because the *reasons* are still live, and one of them nearly cost another evening:
+
+**IT TOOK A `start-all` AS WELL AS THE UPDATE, AND THAT IS THE PART TO REMEMBER.** After
+`update.bat` moved `HEAD`, `bot.mjs` went on executing the PRE-UPDATE `bot-commands.mjs` and
+`memory-sample.mjs` from memory - so `memory` still printed the old `FAMILY rc 0` line with
+its `op_Addition` error, and the sampler still wrote false zeros, on a box whose checkout was
+demonstrably current. Both instruments were stale for the same reason and neither said so;
+restarting `bot.mjs` fixed both at once.
+
+**The broker did NOT come back with it** - see the elevated-orphan section above. That cost a
+`netstat`, a `tasklist`, an elevated `taskkill` and a second `start-all`. `stop-all` now fails
+outright when the broker port is still bound after a stop, so the next occurrence announces
+itself instead of surfacing as a crash-loop in a different process.
 
 **`git-status` PROVES THE CHECKOUT MOVED, NOT THAT THE RUNNING CODE DID (2026-08-14).**
 An update left `HEAD` at the new sha while `bot.mjs` went on executing the PRE-UPDATE

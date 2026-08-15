@@ -122,6 +122,54 @@ foreach ($i in 1..10) {
   if ($left -eq 0) { break }
 }
 
+# A PROCESS WE CANNOT SEE IS NOT A PROCESS THAT IS NOT THERE (2026-08-14).
+#
+# Every filter above is `$_.CommandLine -and $_.CommandLine -match ...`. An UNELEVATED WMI
+# query cannot read CommandLine for a process in another security context - it returns
+# $null - so `$_.CommandLine -and` silently DROPS it. A broker.mjs that had been started
+# from an elevated prompt was therefore INVISIBLE to this script, not merely un-killable:
+# it was left out of $before, out of every kill, and out of the re-check, and this script
+# truthfully reported "all stopped." It was never wrong about what it saw. It could not see.
+#
+# The cost landed in a DIFFERENT process: the orphan held port 8787, every relaunched broker
+# died in one second with EADDRINUSE, and supervise.ps1 gave up after five tries. So the
+# symptom appeared where the cause was not, which is why it read as "the broker is broken".
+#
+# TWO CHECKS, and they are deliberately different in severity.
+$OUR_IMAGES = '^(node|chrome|cloudflared)\.exe$'
+$blind = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+  Where-Object { -not $_.CommandLine -and $_.Name -match $OUR_IMAGES -and $_.ProcessId -ne $PID })
+
+# 1. THE PORT IS PROOF, so it FAILS. Nothing else on this box binds the broker's port, so a
+#    listener still there after the stop is ours by construction - no command line needed,
+#    and no guessing from an image name, which this file forbids for good reason. This is the
+#    one signal that turns an invisible orphan into a definite failure.
+$BROKER_PORT = 8787
+$stillBound = @()
+try {
+  $stillBound = @(Get-NetTCPConnection -LocalPort $BROKER_PORT -State Listen -ErrorAction SilentlyContinue)
+} catch { }
+
+# 2. THE UNREADABLE PROCESSES ONLY WARN. A `node.exe` we cannot inspect may be somebody
+#    else's - this machine belongs to a person - and failing on that would refuse every
+#    launch for the rest of the box's life. Naming it is the whole value: the failure that
+#    cost an evening was invisible, not ambiguous.
+if ($blind.Count -gt 0) {
+  Write-Line "  note: $($blind.Count) process(es) named like ours have an UNREADABLE command line."
+  Write-Line "        WMI hides that from an unelevated session, so they MAY be ours, started"
+  Write-Line "        elevated - this script can neither see nor stop those. Re-run from an"
+  Write-Line "        elevated prompt if something will not die."
+}
+
+if ($stillBound.Count -gt 0) {
+  Write-Line "*** port $BROKER_PORT is STILL LISTENING (pid $($stillBound[0].OwningProcess)) after the stop. ***"
+  Write-Line "    That is our broker and this script could not stop it - almost certainly"
+  Write-Line "    started from an elevated prompt, which also hides its command line."
+  Write-Line "    Relaunching now gives EADDRINUSE and a crash-loop, so this is a FAILURE."
+  Write-Line "    Fix: elevated prompt, taskkill /PID $($stillBound[0].OwningProcess) /F"
+  exit 1
+}
+
 if ($left -eq 0) { Write-Line "all stopped."; exit 0 }
 
 Write-Line "*** $left process(es) SURVIVED. Not safe to relaunch on top of them. ***"
