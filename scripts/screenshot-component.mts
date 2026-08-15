@@ -44,6 +44,70 @@ interface Preset {
 }
 
 const PRESETS: Record<string, Preset> = {
+  'beta-testers': {
+    label: 'BetaTesters — 16 on the list, so the 10-row scroll box and search are in view',
+    // Sized ABOVE the scroll threshold deliberately. At 4 testers the max-height
+    // never engages and the preset would prove nothing about the thing it exists
+    // to show; the roster is already past 10 in production, which is why the box
+    // was added at all.
+    entry: `import BetaTesters from '@/components/BetaTesters';
+      const day = (n) => new Date(Date.now() - n * 86400000).toISOString();
+      const NAMES = ['ada','ben','cara','dev','eli','fern','gus','hana','ivan','jo',
+                     'kit','lena','moss','nia','omar','pia'];
+      const testers = NAMES.map((n, i) => ({
+        email: n + '@example.com',
+        added_at: day(30 - i),
+        // A third have no invite record — the "no record of an email" line is a
+        // real state (rows predating invite tracking) and belongs in the fixture.
+        invited_at: i % 3 === 0 ? null : day(28 - i),
+        signed_up: i % 2 === 0,
+        is_beta: true,
+      }));
+      if (typeof window !== 'undefined') {
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({ testers }) });
+      }
+      export const node = <BetaTesters />;`,
+    frame: 'max-w-2xl w-full mx-auto',
+  },
+  'beta-testers-search': {
+    label: 'BetaTesters — search with hits (top) and with none (bottom). Pass --wait=400',
+    // The no-match mount is the point of this preset. Before the search box existed,
+    // the "No {filter} testers." empty state was unreachable for filter='all'; adding
+    // a query that can miss is what makes it reachable, and rendering it as
+    // "No all testers." is the bug this shot exists to catch.
+    entry: `import BetaTesters from '@/components/BetaTesters';
+      const day = (n) => new Date(Date.now() - n * 86400000).toISOString();
+      const NAMES = ['ada','ben','cara','dev','eli','fern','gus','hana','ivan','jo',
+                     'kit','lena','moss','nia','omar','pia'];
+      const testers = NAMES.map((n, i) => ({
+        email: n + '@example.com', added_at: day(30 - i),
+        invited_at: i % 3 === 0 ? null : day(28 - i),
+        signed_up: i % 2 === 0, is_beta: true,
+      }));
+      if (typeof window !== 'undefined') {
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({ testers }) });
+        // React tracks the DOM value itself, so assigning .value is ignored on a
+        // controlled input — go through the prototype's native setter and fire the
+        // event React actually listens for.
+        const type = (el, v) => {
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+            .set.call(el, v);
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        setTimeout(() => {
+          const boxes = document.querySelectorAll('input[type=search]');
+          if (boxes[0]) type(boxes[0], 'an');       // matches hana, ivan (NOT lena — that is 'na')
+          if (boxes[1]) type(boxes[1], 'nobody');   // matches nothing
+        }, 150);
+      }
+      export const node = (
+        <div className="space-y-6">
+          <BetaTesters />
+          <BetaTesters />
+        </div>
+      );`,
+    frame: 'max-w-2xl w-full mx-auto',
+  },
   'setup-nudges': {
     label: 'SetupNudges — both states (no phone, auto-cart unconnected)',
     // Two mounts with two stubbed responses. A real account can see both at once;
@@ -82,6 +146,7 @@ const PRESETS: Record<string, Preset> = {
         watchAgg: { active: 13, total: 61, watchers: 11 },
         alertAgg: { sent: 402, sent_7d: 21, failed: 12 },
         cgRows: [{ source: 'ridb', n: 4469 }], cgTotal: 8013, series, mrr: { monthly: 21.5, activeCount: 6 },
+        users: [], testUserCount: 5,
         beat: { beat_at: new Date().toISOString(), watches_checked: 13, age_s: 11 },
         workerHealthy: true,
         canaryRows: [
@@ -446,6 +511,56 @@ const PRESETS: Record<string, Preset> = {
       };
       export const node = <div className="font-ch-body text-ch-ink"><HoldConfirm preview={preview} /></div>;`,
     frame: 'w-full',
+  },
+  'admin-users': {
+    label: 'Admin → Users box: mixed access reasons, sort and search, scrolls at ~10',
+    // The fixture mirrors the real distribution measured 2026-08-15: most accounts get
+    // in on `is_beta` and only two have a Stripe subscription, so a badge reading off
+    // `subscriptions` alone would show the owner's own account as "no plan". If that
+    // regresses, the top row of this shot says "no plan" next to 530 alerts.
+    entry: `import UsersBox from '@/components/admin/UsersBox';
+      const h = (n) => new Date(Date.now() - n * 3600000).toISOString();
+      const mk = (email, o) => ({
+        id: 'user_' + email.replace(/\\W/g, ''), email,
+        created_at: h(24 * 90), last_seen_at: h(o.seen ?? 3),
+        is_beta: false, has_phone: true, subscribed: false, autocart_entitled: false,
+        autocart_enabled: false, autocart_connected: false,
+        sub_status: null, sub_tier: null, grandfathered: null,
+        live_watches: 0, total_watches: 0, alerts_sent: 0, last_alert_at: null, ...o,
+      });
+      const users = [
+        mk('owner@example.com', { is_beta: true, subscribed: true, autocart_entitled: true, live_watches: 6, total_watches: 19, alerts_sent: 530, seen: 0.2 }),
+        mk('paying@example.com', { subscribed: true, autocart_entitled: true, sub_status: 'active', sub_tier: 'base', grandfathered: true, live_watches: 6, total_watches: 6, alerts_sent: 88, seen: 2 }),
+        mk('trial@example.com', { subscribed: true, sub_status: 'trialing', sub_tier: 'base', live_watches: 2, total_watches: 3, alerts_sent: 12, seen: 9 }),
+        mk('lapsed@example.com', { sub_status: 'canceled', total_watches: 4, alerts_sent: 31, seen: 40 }),
+        mk('beta1@example.com', { is_beta: true, subscribed: true, live_watches: 1, total_watches: 1, alerts_sent: 6, seen: 30 }),
+        mk('beta2@example.com', { is_beta: true, subscribed: true, live_watches: 3, total_watches: 3, alerts_sent: 4, seen: 55 }),
+        mk('quiet1@example.com', { seen: 100 }),
+        mk('quiet2@example.com', { seen: 140 }),
+        mk('quiet3@example.com', { seen: 200 }),
+        mk('quiet4@example.com', { seen: 260 }),
+        mk('quiet5@example.com', { seen: 320 }),
+        mk('quiet6@example.com', { seen: 400 }),
+      ];
+      export const node = <UsersBox users={users} excludedTestRows={5} />;`,
+    frame: 'max-w-2xl w-full mx-auto',
+  },
+  'ch-filters-rv': {
+    label: 'FilterPanel — RV selected (rig length) above All types. Must-have is Pets/Hookups/Showers.',
+    // Drinking water was removed 2026-08-15; Hookups stays in the flat Must-have row
+    // rather than nesting under RV. This shot is what catches either being undone.
+    entry: `import FilterPanel, { EMPTY_FILTERS } from '@/components/ui/FilterPanel';
+      function Demo({ initial }) {
+        const [v, setV] = React.useState(initial);
+        return <FilterPanel value={v} onChange={setV} defaultOpen />;
+      }
+      export const node = (
+        <div className="space-y-5">
+          <Demo initial={{ ...EMPTY_FILTERS, siteType: 'rv', rvLength: 32, electric: true }} />
+          <Demo initial={{ ...EMPTY_FILTERS, electric: true }} />
+        </div>
+      );`,
+    frame: 'max-w-md w-full mx-auto',
   },
   'ch-nav-collapsed': {
     // The SCROLLED state at phone width, which is the only one where the account

@@ -40,7 +40,6 @@ export interface FilterValue {
   rvLength: number | null;
   pets: boolean;
   electric: boolean;
-  water: boolean;
   showers: boolean;
 }
 
@@ -49,7 +48,6 @@ export const EMPTY_FILTERS: FilterValue = {
   rvLength: null,
   pets: false,
   electric: false,
-  water: false,
   showers: false,
 };
 
@@ -68,10 +66,31 @@ const SITE_TYPES: Array<{ value: string | null; label: string }> = [
   { value: "group", label: "Group" },
 ];
 
-const MUST_HAVE: Array<{ key: keyof Pick<FilterValue, "pets" | "electric" | "water" | "showers">; label: string }> = [
+/**
+ * WHY "Hookups" HAS NO WATER OR SEWER SIBLING, measured against the live catalog on
+ * 2026-08-15 so the next person does not "finish the set":
+ *
+ *   electric hookup   1,526 campgrounds, 8 sources
+ *   sewer hookup         79 campgrounds, recreation.gov ONLY
+ *   drinking water    2,153 campgrounds, recreation.gov only
+ *   water hookup      DOES NOT EXIST — no ingest emits this value
+ *
+ * There is no RV water hookup in the data at all. Sewer exists but covers 1% of the
+ * catalog from a single source, and amenities are AND-ed, so Electric+Sewer could
+ * never return more than 79 campgrounds while silently excluding every state portal.
+ * Both are the dead-chip failure this file's header comment already forbids.
+ *
+ * The chip stays labelled "Hookups" and stays in Must-have rather than moving under
+ * the RV site type: hookups matter to more than RV campers, and the owner's call on
+ * 2026-08-15 was that the flat Must-have row reads better than a nested one.
+ *
+ * DRINKING WATER WAS REMOVED from this row on 2026-08-15 at the owner's request.
+ * Its `drinking water` amenity is rec.gov-only (2,153 campgrounds), so the chip
+ * silently excluded every state-portal campground the moment it was ticked.
+ */
+const MUST_HAVE: Array<{ key: keyof Pick<FilterValue, "pets" | "electric" | "showers">; label: string }> = [
   { key: "pets", label: "Pets OK" },
   { key: "electric", label: "Hookups" },
-  { key: "water", label: "Drinking water" },
   { key: "showers", label: "Showers" },
 ];
 
@@ -155,6 +174,7 @@ export default function FilterPanel({ value, onChange, defaultOpen, className }:
             Only campgrounds with a site that lists a length this long. Sites with no
             length on file are left out.
           </p>
+
         </fieldset>
       )}
 

@@ -37,7 +37,10 @@ export default function HoldConfirm({ preview }: { preview: HoldPreview }) {
         <Check className="text-ch-green-deep" size={32} />
         <h1 className="mt-3 text-xl font-bold text-ch-ink">You&rsquo;re already down for this one</h1>
         <p className="mt-2 text-ch-muted">
-          {preview.unitLabel} at {preview.campgroundName} — we&rsquo;ll grab it at{' '}
+          {/* {' '} because the &rsquo; below makes SWC eat this node's leading space —
+              it rendered "Carpinteria SB— we'll grab it at". */}
+          {preview.unitLabel} at {preview.campgroundName}{' '}
+          — we&rsquo;ll grab it at{' '}
           {formatRelease(preview.releaseAt)}. Tapping again changes nothing.
         </p>
         <p className="mt-4 text-sm text-ch-muted">

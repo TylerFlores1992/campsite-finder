@@ -383,12 +383,17 @@ export default function V2Nav() {
               it's a tablet in the native app — but that's still a tablet showing
               prices. Native goes home to Explore instead, which is where the app
               launches anyway. */}
+          {/* SIZED FOR A DESKTOP, and only a desktop. Everything in this <header>
+              is behind `hidden sm:block`, and the phone's band is a separate block
+              above with its own collapse animation, safe-area arithmetic and
+              scroll hysteresis — so growing the logo here cannot reach any of that.
+              Keep it that way: the two headers look alike and are not one component. */}
           <Link
             href={isNative ? "/search" : "/"}
-            className="flex shrink-0 items-center gap-2 py-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green"
+            className="flex shrink-0 items-center gap-2.5 py-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green"
           >
-            <BrandMark size={28} />
-            <span className="font-ch-display text-[19px] font-extrabold whitespace-nowrap tracking-[-.025em]">
+            <BrandMark size={38} />
+            <span className="font-ch-display text-[24px] font-extrabold whitespace-nowrap tracking-[-.025em]">
               CampHawk
             </span>
           </Link>
@@ -402,7 +407,10 @@ export default function V2Nav() {
                   href={href}
                   aria-current={active ? "page" : undefined}
                   className={cx(
-                    "rounded-[9px] px-3 py-2 text-[13.5px] font-bold whitespace-nowrap transition-colors",
+                    // Nudged up with the logo, not independently. At 13.5px beside a
+                    // 38px mark the tabs read as a different, smaller header bolted
+                    // onto the brand.
+                    "rounded-[10px] px-3.5 py-2.5 text-[14.5px] font-bold whitespace-nowrap transition-colors",
                     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green",
                     "motion-reduce:transition-none",
                     active

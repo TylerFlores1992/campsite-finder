@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Loader2, Plus, Trash2, Check, Clock, Send } from 'lucide-react';
+import { Loader2, Plus, Trash2, Check, Clock, Send, Search } from 'lucide-react';
 
 interface Tester {
   email: string;
@@ -22,6 +22,7 @@ export default function BetaTesters() {
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'invited'>('all');
+  const [search, setSearch] = useState('');
   // Which row is mid-send. Per-row rather than a single global flag so a slow
   // send can't grey out every other button on the list.
   const [sending, setSending] = useState<string | null>(null);
@@ -115,18 +116,29 @@ export default function BetaTesters() {
 
   const activeCount = testers.filter((t) => t.signed_up).length;
   const invitedCount = testers.length - activeCount;
-  const filtered =
+
+  // The tab counts stay whole-list totals on purpose: they answer "how many
+  // testers are active?", which is not a question about whatever is typed in the
+  // search box. Narrowing them to the query would make the three numbers move
+  // every keystroke and stop being the roster summary they exist to be. The
+  // effect of the query is reported separately, as "showing N of M".
+  const byStatus =
     filter === 'active'
       ? testers.filter((t) => t.signed_up)
       : filter === 'invited'
         ? testers.filter((t) => !t.signed_up)
         : testers;
 
+  const q = search.trim().toLowerCase();
+  const filtered = q ? byStatus.filter((t) => t.email.toLowerCase().includes(q)) : byStatus;
+
   return (
     <div className="bg-white rounded-2xl border border-ch-line shadow-sm p-5">
       <div className="flex items-baseline justify-between mb-4">
         <h2 className="font-ch-display font-semibold text-ch-ink">Beta testers</h2>
-        <span className="text-sm text-ch-muted">{testers.length} on the list</span>
+        <span className="text-sm text-ch-muted">
+          {q ? `showing ${filtered.length} of ${testers.length}` : `${testers.length} on the list`}
+        </span>
       </div>
 
       <form onSubmit={add} className="flex gap-2 mb-4">
@@ -150,22 +162,43 @@ export default function BetaTesters() {
       {note && <p className="mb-3 text-xs text-ch-ink-2">{note}</p>}
 
       {!loading && testers.length > 0 && (
-        <div className="inline-flex rounded-lg border border-ch-line p-0.5 mb-4 text-xs font-medium">
-          {([
-            ['all', 'All', testers.length],
-            ['active', 'Active', activeCount],
-            ['invited', 'Invited', invitedCount],
-          ] as const).map(([key, label, count]) => (
-            <button
-              key={key}
-              onClick={() => setFilter(key)}
-              className={`px-3 py-1.5 rounded-md transition-colors ${
-                filter === key ? 'bg-ch-green text-white' : 'text-ch-muted hover:text-ch-ink'
-              }`}
-            >
-              {label} <span className={filter === key ? 'text-white/70' : 'text-ch-muted'}>{count}</span>
-            </button>
-          ))}
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-lg border border-ch-line p-0.5 text-xs font-medium">
+            {([
+              ['all', 'All', testers.length],
+              ['active', 'Active', activeCount],
+              ['invited', 'Invited', invitedCount],
+            ] as const).map(([key, label, count]) => (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                className={`px-3 py-1.5 rounded-md transition-colors ${
+                  filter === key ? 'bg-ch-green text-white' : 'text-ch-muted hover:text-ch-ink'
+                }`}
+              >
+                {label} <span className={filter === key ? 'text-white/70' : 'text-ch-muted'}>{count}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Deliberately OUTSIDE the add form above. A second input inside it would
+              submit the form on Enter and try to add whatever was being searched for
+              as a new tester — an accidental write from a read-only control. */}
+          <div className="relative min-w-[12rem] flex-1">
+            <Search
+              size={14}
+              aria-hidden="true"
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ch-faint"
+            />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search testers"
+              aria-label="Search beta testers by email"
+              className="w-full rounded-lg border border-ch-line py-1.5 pl-8 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-ch-green"
+            />
+          </div>
         </div>
       )}
 
@@ -176,9 +209,24 @@ export default function BetaTesters() {
       ) : testers.length === 0 ? (
         <p className="text-sm text-ch-muted py-2">No beta testers yet. Add an email above.</p>
       ) : filtered.length === 0 ? (
-        <p className="text-sm text-ch-muted py-2">No {filter} testers.</p>
+        /* Two different empty states, because they have two different fixes: clear
+           the query, or switch tab. The single "No {filter} testers." that used to
+           be here was unreachable for filter='all' — adding a search that can miss
+           is exactly what would have made it reachable, as "No all testers." */
+        <p className="text-sm text-ch-muted py-2">
+          {q ? `No testers match "${search.trim()}".` : `No ${filter} testers.`}
+        </p>
       ) : (
-        <ul className="divide-y divide-ch-line">
+        /* 10 rows, then scroll. MEASURED, not computed: a row renders 58px, and
+           35rem/560px showed exactly ten in the `beta-testers` screenshot preset.
+           There is deliberately no attempt to leave the 11th row half-peeking as a
+           scroll hint — that lands within a few px of a row boundary and would drift
+           with font metrics or a wrapped long email, i.e. it is a cue that cannot be
+           relied on. What signals "there is more" instead is the header count, which
+           reads "16 on the list" while ten are visible.
+           overscroll-contain stops a flick at the end of the list from scrolling the
+           whole admin page underneath it. */
+        <ul className="max-h-[35rem] divide-y divide-ch-line overflow-y-auto overscroll-contain">
           {filtered.map((t) => (
             <li key={t.email} className="flex items-center gap-3 py-2.5">
               <div className="flex-1 min-w-0">

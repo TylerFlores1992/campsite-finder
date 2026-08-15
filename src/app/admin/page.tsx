@@ -7,6 +7,7 @@ import BrandMark from '@/components/v2/BrandMark';
 import AdminAutoRefresh from '@/components/AdminAutoRefresh';
 import AdminTabs, { type AdminData } from '@/components/admin/AdminTabs';
 import { query, queryOne } from '@/lib/db/client';
+import { listAdminUsers, countTestUsers } from './users/queries';
 import { getShardCoverage, getPollerCapacity, type PollerCapacity, type ShardCoverage } from '@/lib/capacity';
 import type { CostItem, UsageCounts } from '@/lib/costs';
 
@@ -321,6 +322,13 @@ export default async function AdminPage() {
   };
   const monthLabel = new Date().toLocaleString('en-US', { month: 'short', year: 'numeric' });
 
+  // Through safe(), like every other block on this page: the user roster is a panel,
+  // and a panel failing must not take down the health tab somebody opened at 2am.
+  // An empty list renders "No accounts yet", which is visibly different from the page
+  // erroring — the failure stays legible either way.
+  const users = await safe(listAdminUsers(), []);
+  const testUserCount = await safe(countTestUsers(), 0);
+
   const data: AdminData = {
     clerkTotal,
     usersAgg,
@@ -343,6 +351,8 @@ export default async function AdminPage() {
     usage,
     lifetimeUsage,
     monthLabel,
+    users,
+    testUserCount,
   };
 
   return (

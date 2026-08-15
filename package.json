@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
+    "jsx-spacing": "tsx scripts/jsx-spacing-check.mts",
     "cap:sync": "cap sync",
     "cap:assets": "npx --yes @capacitor/assets generate --assetPath assets",
     "cap:ios": "cap open ios",
