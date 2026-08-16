@@ -277,6 +277,31 @@ const PRESETS: Record<string, Preset> = {
       export const node = <ManageWatch token="demo" />;`,
     frame: 'max-w-lg w-full mx-auto',
   },
+  'ch-holds': {
+    label: 'HoldsPanel — the four live states, and which one gets a remove button',
+    // ONE ROW PER STATUS, because the whole design question here is which rows may be
+    // dismissed. Only `released` carries the ✕: the bot has let go, so there is nothing
+    // left to strand. `carted` deliberately has none — hiding a row while a real campsite
+    // sits in a real cart is the 2026-08-13 leak with a button on it.
+    entry: `import HoldsPanel from '@/components/v2/HoldsPanel';
+      if (typeof window !== 'undefined') {
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({ holds: [
+          { id: '1', status: 'released', unitLabel: '#L108', campgroundName: 'Leo Carrillo SP - Canyon Campground',
+            arrivalDate: '2026-09-04', nights: 1, releaseAt: '2026-09-01T08:00:00', cartedAt: null,
+            claimUrl: '/claim/1?t=demotoken' },
+          { id: '2', status: 'carted', unitLabel: '#035', campgroundName: 'South Carlsbad SB - Northern End',
+            arrivalDate: '2026-09-06', nights: 2, releaseAt: '2026-09-01T08:00:00', cartedAt: '2026-09-01T15:00:02Z',
+            claimUrl: '/claim/2?t=demotoken' },
+          { id: '3', status: 'requested', unitLabel: '#C218', campgroundName: 'Carpinteria SB - Santa Cruz',
+            arrivalDate: '2026-09-12', nights: 1, releaseAt: '2026-09-02T08:00:00', cartedAt: null },
+          { id: '4', status: 'offered', unitLabel: '#042', campgroundName: 'Silver Lake Campground',
+            arrivalDate: '2026-09-20', nights: 3, releaseAt: '2026-09-03T08:00:00', cartedAt: null,
+            holdUrl: '/w/demotoken' },
+        ] }) });
+      }
+      export const node = <HoldsPanel />;`,
+    frame: 'max-w-md w-full mx-auto',
+  },
   'ch-claim': {
     label: 'ClaimFlow — the RC hand-off, gated on the signed-in confirmation',
     entry: `import ClaimFlow from '@/components/v2/ClaimFlow';

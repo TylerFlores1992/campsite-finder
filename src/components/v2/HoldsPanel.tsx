@@ -43,6 +43,7 @@ interface MyHold {
 
 export default function HoldsPanel({ className }: { className?: string }) {
   const [holds, setHolds] = useState<MyHold[] | null>(null);
+  const [dismissed, setDismissed] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,28 +67,97 @@ export default function HoldsPanel({ className }: { className?: string }) {
     };
   }, []);
 
-  if (!holds || holds.length === 0) return null;
+  // THE LOCAL LIST IS A HEAD START, NOT THE RECORD. Removing writes `claimed` server-side
+  // and the next poll drops the row on its own, on every device — this only spares the user
+  // up to 20 seconds of looking at a row they just dismissed. It is deliberately NOT
+  // optimistic: `dismissed` is appended only after the write comes back ok, so a failed
+  // remove leaves the row where it is rather than hiding a hold that still exists.
+  const visible = holds?.filter((h) => !dismissed.includes(h.id)) ?? [];
+  if (visible.length === 0) return null;
 
   return (
     <section className={className} aria-label="Sites we're holding">
       <h2 className="mb-2 font-ch-display text-ch-h font-bold">Holds</h2>
       <div className="grid gap-2.5">
-        {holds.map((h) => (
-          <HoldRow key={h.id} hold={h} />
+        {visible.map((h) => (
+          <HoldRow key={h.id} hold={h} onRemoved={(id) => setDismissed((d) => [...d, id])} />
         ))}
       </div>
     </section>
   );
 }
 
-function HoldRow({ hold }: { hold: MyHold }) {
+/**
+ * "I'm done with this one" — the only remove this panel can honestly offer.
+ *
+ * ## Why it is on `released` and nothing else
+ *
+ * A released hold is FINISHED: the bot has already let go, the site is on
+ * ReserveCalifornia for whoever gets there first, and nothing further will happen to the
+ * row. It nonetheless sat in this list for ever, because `/api/rc-holds/mine` keeps
+ * `carted`/`claiming`/`released` regardless of age and **nothing in the product had ever
+ * called the PATCH that retires one** — `markClaimed` existed, with a comment explaining
+ * that it distinguishes an abandoned hand-off from a completed one, and had no caller. So
+ * every hand-off anyone has ever completed is still on their Watches tab. That is the
+ * space the owner reported this eating, and `claimed` is exactly the state for it.
+ *
+ * The other four statuses get NO remove, and the omission is the design:
+ *
+ *   - `carted` / `claiming` — the bot is holding a real campsite in a real cart right now.
+ *     Hiding that row does not release it; it takes the site off the market for every other
+ *     camper and removes the only thing on screen still pointing at it. That is the
+ *     2026-08-13 leak with a button on it.
+ *   - `offered` / `requested` — there is no decline path server-side, so a remove here could
+ *     only ever hide the row while the bot went on to cart the site at 08:00 anyway. A
+ *     control that appears to cancel and does not is worse than no control. Giving these a
+ *     real "no thanks" means a server-side decline (and freeing the capacity seat an
+ *     `offered` row occupies), which is hold-lifecycle work, not panel work.
+ *
+ * ## The token
+ *
+ * Read back out of `claimUrl`, which this row already holds — the same hold id + manage
+ * token pair that authorises RELEASING the site. Never weaker than the authorisation for
+ * the more consequential act on the same row.
+ */
+function removeToken(claimUrl: string | undefined): string | null {
+  if (!claimUrl) return null;
+  try {
+    return new URL(claimUrl, window.location.origin).searchParams.get("t");
+  } catch {
+    return null;
+  }
+}
+
+function HoldRow({ hold, onRemoved }: { hold: MyHold; onRemoved: (id: string) => void }) {
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState(false);
   const held = hold.status === "carted" || hold.status === "claiming";
   const released = hold.status === "released";
+  const token = released ? removeToken(hold.claimUrl) : null;
   // READY MEANS THERE IS SOMETHING TO PRESS, not that the hold exists. A `requested` hold
   // is real and important and there is nothing whatever for its owner to do until 08:00, so
   // giving it the same urgent styling as a site sitting in a cart teaches people to ignore
   // the styling.
   const ready = held || released;
+
+  async function remove() {
+    if (!token) return;
+    setRemoving(true);
+    setRemoveError(false);
+    try {
+      const r = await fetch("/api/rc-holds/claim", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: hold.id, token }),
+      });
+      if (!r.ok) { setRemoveError(true); return; }
+      onRemoved(hold.id);
+    } catch {
+      setRemoveError(true);
+    } finally {
+      setRemoving(false);
+    }
+  }
 
   return (
     <div
@@ -109,6 +179,22 @@ function HoldRow({ hold }: { hold: MyHold }) {
           </p>
         </div>
         <StatusChip status={hold.status} />
+        {/* ONLY EVER ON A `released` ROW — see removeToken's header for why the other four
+            statuses have no button. `title` and `aria-label` both say "from this list"
+            rather than "remove the hold", because by this point there is no hold left to
+            remove and the site is already back on the open market. */}
+        {token && (
+          <button
+            type="button"
+            onClick={remove}
+            disabled={removing}
+            title="Remove from this list"
+            aria-label={`Remove ${hold.unitLabel} from this list`}
+            className="-my-1.5 -mr-1.5 grid size-8 shrink-0 cursor-pointer place-items-center rounded-full text-[15px] leading-none text-ch-ink-2 hover:bg-black/[.07] hover:text-ch-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green disabled:opacity-50"
+          >
+            <span aria-hidden="true">✕</span>
+          </button>
+        )}
       </div>
 
       <p className="mt-2 text-ch-meta leading-normal text-ch-ink-2">
@@ -127,6 +213,11 @@ function HoldRow({ hold }: { hold: MyHold }) {
         >
           Open the hand-off again
         </Link>
+      )}
+      {removeError && (
+        <p className="mt-2 text-ch-meta text-ch-ochre-ink">
+          Could not remove that just now. Try again in a moment.
+        </p>
       )}
       {hold.status === "offered" && hold.holdUrl && (
         <Link href={hold.holdUrl} className={buttonClasses({ fullWidth: true, className: "mt-3" })}>
