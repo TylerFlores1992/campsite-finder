@@ -1,91 +1,86 @@
-# Next session — the renewal is BUILT and UNPROVEN on the box
+# Next session — the renewal WORKS; read tomorrow's 08:00 test
 
-*Rewritten 2026-08-15, latest. The previous version asked for a schedule around the
-bootstrap; that is written, tested and merged. **It has never run on the mini-PC.** The one
-job now is to watch it there and read the answer. Everything below the horizontal rule is
-archive — resolved sections kept for their reasoning.*
+*Rewritten 2026-08-16. The previous version's one job was "get it onto the box and read the
+log". Done, and it worked. Everything below the horizontal rule is archive — resolved sections
+kept for their reasoning.*
 
-**ON MASTER AS OF `a357605`** (PR #64, merged 2026-08-15). Both the two-stage `renewSession`
-and `renewal-schedule.mjs` are in. **This changes nothing about the box** — they are bot-side,
-so the mini-PC goes on doing exactly what the 08-15 log shows until it updates. Read
-`git-status` through `bot_commands` for what is actually running there; the sha above is where
-the CODE is, not where the box is, and conflating those two is the mistake this file has
-recorded three times.
-
-> ## THE GOAL: confirm `✓ renewed by authorize` on the box, then stop babysitting
+> ## WHAT IS NOW PROVEN, AND WHAT STILL IS NOT
 >
-> ### What changed, and the correction that made it work
->
-> The prior handover recorded "`renewByReload` genuinely fails" as settled. It fails, and the
-> reason was wrong: **a plain page load is not the bootstrap.** The 2x2 is complete and every
-> cell is reproduced off one evening of `tail-log rc-keepwarm` —
->
-> - a plain load produces nothing, whether a short token is present (4x) or the profile is
->   genuinely signed out (2x, one of them sitting dead through two twenty-minute checks with
->   `okta session STILL ALIVE`);
-> - a **click on RC's own sign-in control** produces a full **59-minute** token with no
->   credential typed (2x, ~19s after the click).
->
-> With no token in storage RC's SPA renders signed-out and issues no `/authorize` of its own.
-> The clear was necessary and never sufficient. `hasRefreshToken:false` is unaffected — what
-> re-mints is a full authorization-code round trip that Okta answers from the `idx` cookie.
->
-> ### What was built
->
-> - `renewByReload` → **`renewSession`**: reload, then — only if the reload produced nothing —
->   the click. The result names the **stage** that minted the token, so the standing "has the
->   SDK's own bootstrap started working?" measurement is not thrown away to save a navigation.
-> - `scripts/auto-cart-bot/renewal-schedule.mjs` decides **when**, and the case it adds is the
->   one the old loop refused outright: a token that has ALREADY expired. That refusal cost
->   ninety dead minutes on 08-15. Rationed on its own terms (floor 5m, gap 10m, backoff 30m
->   after 3 failures, never a stop) because a re-mint is not a login and must not spend the
->   login's one-attempt-per-release budget.
-> - `maybeAutoLogin` is **untouched**. It stays the release-critical repair at T−30.
->
-> ### THE ONE THING TO DO: get it onto the box and read the log
->
-> It is bot-side, so it reaches the mini-PC only via `update.bat`, "Update now", or a
-> 02:00–05:00 PT quiet-window run. Confirm with `git-status` through `bot_commands` —
-> `autocart.bot_version` is a hint and has read a stale sha next to a live heartbeat before.
+> **The renewal runs on the mini-PC.** Straight off `tail-log rc-keepwarm`:
 >
 > ```
-> NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status
-> NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts tail-log rc-keepwarm:120
+> 01:52:18 renewing the session — the app holds no usable token (src=none)
+> 01:53:05   ✓ renewed by authorize: none → 3580s
+> 01:53:19    renewal stood down: the token has 59m left
 > ```
 >
-> **What a working night looks like:** `renewing the session — the app holds no usable token`
-> followed by `✓ renewed by authorize`, and the `⚠ RC SESSION IS DEAD … okta=ALIVE` runs
-> disappearing. **What to read carefully:**
+> `none → 3580s` is the strongest shape this could take: the `before` was not a token, so
+> "the previous one was put back" is unavailable as an explanation, and a full 3580s is a
+> fresh mint by the CLICK stage with no credential typed. The ration then declines fourteen
+> seconds later, so it acts *and* stands down. **The reliable cell is proven in production**
+> and the `⚠ RC SESSION IS DEAD … okta=ALIVE` runs are gone.
 >
-> - **`✓ renewed by reload`** would be genuinely new — the SDK's own bootstrap working — and
->   means this can be simplified back down. Do not skim past it.
-> - **`got as far as: no-signin-control`** is the known weak cell, and it is the near-expiry
->   one: on 08-15 18:22 a clear left the SPA still rendering its signed-in header, so no
->   "Log in" anchor existed. Expect it sometimes. The token then expires, the profile becomes
->   token-less, and the reliable cell takes it on the next pass — minutes lost, not the night.
-> - **`got as far as: none`** repeatedly is a dead Okta session, and that is the honest
->   negative the design wants: it is obtained WITHOUT calling `oktaSessionAlive`, which
->   refreshes Okta's own idle timer. The schedule deliberately probes Okta only when there is
->   a token to lose, so a long-lived session in these logs is no longer partly our own doing.
-> - **The 12h Okta session is still the ceiling**, and it has never been measured across a
->   night where nothing asked. That measurement is now possible for the first time; it is the
->   next real finding, not something to assume either way.
+> ### THE NEAR-EXPIRY CELL STILL FAILS — and the documented reading of it was WRONG
 >
-> **Nothing here is proven until that log line appears.** What exists today is two
-> hand-triggered reproductions of the mechanism plus 27 mutation-verified guards on the
-> plumbing. Neither is a run of the schedule.
+> ```
+> 02:44:29   ✗ no fresher token (554s → none), got as far as: none — the previous token was put back
+> 02:44:29     cleared 3 storage key(s): accessToken, okta-original-uri-storage, ssoAccessToken
+> 02:56:27   ✗ no fresher token (-115s → none), got as far as: none
+> 02:56:27     cleared 2 storage key(s): accessToken, ssoAccessToken
+> ```
+>
+> The prior handover said *"`got as far as: none` repeatedly is a dead Okta session, and that
+> is the honest negative the design wants"*. **Falsified.** `okta=ALIVE (exp 2026-08-16T13:53:31)`
+> was printed in the same second, both times. So `none` means the click found no control or
+> the round trip produced nothing — it licenses NO conclusion about Okta. The second attempt
+> ran on an already-dead token (`-2m`), which is exactly the case the schedule was extended to
+> cover, so the extension fires correctly and the re-mint still does not happen from there.
+>
+> Also worth keeping: the two clears emptied **different key sets**. Whatever the SPA rebuilds
+> between attempts is not stable, and that is a lead rather than a tidy story.
+>
+> ### THE LOGIN REHEARSAL PASSED — first time in its life
+>
+> At 20:00 PT, its own hour, with the release 12h out. `Session before the test: DEAD — RC
+> rejected the token (401)` and `cleared 0 key(s)`, so a credential really was submitted —
+> not the banner-trap false pass this instrument has produced before. **It is also what
+> restored the session that night, not the renewal.** Two repairs ran twenty minutes apart and
+> only one worked; crediting the wrong one is how a broken mechanism keeps its reputation.
+>
+> ### THE ONE THING TO DO: read tomorrow's 08:00 PT test
+>
+> **Two holds are queued for 2026-08-16 08:00 PT** — South Carlsbad SB Northern End, units
+> **45722 (#38)** and **45723 (#39)**, arrival 2026-12-01. RC had 50 sites free that night, so
+> locking two disturbs nobody. Two is exactly `RC_HOLD_CAPACITY`, so the ceiling is exercised
+> at its boundary rather than over it.
+>
+> ```
+> NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
+> ```
+>
+> Claim links (**open in the APP** — from a browser `canInject` is false and the injected
+> precart is never exercised, which is the part being tested):
+> `camphawk.app/claim/d0cc4919-7c5b-4b8f-aecf-ec0a76e9463e?t=HaPUjQd_`
+> `camphawk.app/claim/0fd0e5fe-1757-44ae-9097-2e9069b04d89?t=HaPUjQd_`
+>
+> **WHICH PATH CARRIES THE MORNING IS THE INTERESTING PART, AND IT IS GENUINELY OPEN.** The
+> rehearsal minted a fresh Okta session at 03:00 UTC. At the documented ~12h that expires
+> around 15:00 UTC — and the release is 15:00 UTC exactly. So:
+> - Okta alive at 07:30 → the renewal or a silent bootstrap can carry it;
+> - Okta lapsed → everything falls to `maybeAutoLogin` at T−30 doing a real credential login,
+>   which is the first live exercise of the sufficiency fix that lost the 08-15 cart.
+>
+> **Do not predict it.** Whichever happens is also the 12h-Okta-ceiling measurement, which has
+> never been taken across a night where nothing asked.
 
 ## The state of everything else, 2026-08-15 evening
 
-- **The box was on `d72fb2e`** (confirmed by `git-status`, not inferred) — the auto-login
-  fixes, the hold-runner stand-off and the corrected renewal clear. **THE GAP IS NO LONGER
-  WEB-SIDE ONLY:** the two-stage `renewSession` and the schedule are bot-side, so until the
-  box updates it goes on doing exactly what the 08-15 log shows, and the whole point of this
-  change is unobservable. Re-read `git-status` rather than this line — a reading goes stale
-  faster than the conclusion drawn from it, and that rule has bitten here twice.
-- **No holds were queued** at 15:43 PT, so nothing is at risk overnight and the 02:00–05:00
-  quiet window is open. Test holds were queued and expired during the day's diagnosis; the
-  readout is what says whether that is still true.
+- **The box is on `2cb30d9`** — same sha as master, no bot-side code in the gap, confirmed
+  from `autocart.bot_version` AND by diffing the tree. *(Superseded: it was `d72fb2e`)*
+- **TWO TEST HOLDS ARE QUEUED for 08:00 PT 2026-08-16** (see above), so the 02:00–05:00 quiet
+  window is SHUT tonight — `nextHoldRelease` counts them and the 6h release check is not
+  liftable. Nothing needed updating: the box is on `2cb30d9` with no bot-side code in the gap,
+  which is why queueing them was safe. Re-read the readout rather than this line.
 - **Alerting is healthy** — 16 of 18 checks green; the two warns are the `bot_version` gap
   and the login rehearsal, which has never passed and has no green to have lost.
 - **The RC session was healthy at 15:43 PT** (token 48m), from a bootstrap at 22:26 UTC. That
@@ -94,8 +89,9 @@ recorded three times.
 
 ## Still open, in rough priority
 
-1. **RC automation** — above. Built; **unproven on the box.** The remaining work is an
-   update and a night of log-reading, not more code.
+1. **RC automation** — above. The reliable cell is PROVEN on the box; **the near-expiry cell
+   is not, and `got as far as: none` does not mean what the last handover said it meant.**
+   Tomorrow's 08:00 test is the next reading. No new code is obviously needed first.
 2. **No park watch has ever run a poller cycle** (migration 070). The expansion is provably a
    no-op today and every new branch is gated on `multi`, so the path is dormant and safe —
    and completely unexercised. **Do not advertise park watches until one has been created and
