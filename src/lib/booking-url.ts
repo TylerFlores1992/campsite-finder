@@ -66,21 +66,6 @@
  * you'll silently strip the autofill.
  */
 
-/**
- * ReserveCalifornia's cart page.
- *
- * OBSERVED, NOT CONSTRUCTED — the owner copied it from the address bar while checking out on
- * 2026-08-15. That provenance is the whole reason this constant exists: the RC URL shape has
- * been written from memory twice, both times answered with RC's branded 404, and the second
- * time burned a live test that needed a human, an emulator and a fresh build to set up. The
- * rule that came out of it is that the one place allowed to build an RC URL is this module,
- * and the one way to learn a new shape is to see it.
- *
- * `/Customers/ShoppingCart` — capitalised exactly as RC serves it. Do not "tidy" the casing;
- * nobody has checked whether their router cares, and finding out costs a 404 at 08:00.
- */
-export const RC_CART_URL = 'https://www.reservecalifornia.com/Customers/ShoppingCart';
-
 export interface BookingLinkOpts {
   /** Campground `source` column: 'ridb' | 'reserveamerica' | 'reservecalifornia' | 'goingtocamp' | 'tnsc' | …
    *  ('tnsc' has no verified date/site deep-link params, so it falls through to the plain reservationsUrl). */

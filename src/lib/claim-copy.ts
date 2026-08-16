@@ -96,17 +96,9 @@ export function handoffCopy(canInject: boolean): HandoffCopy {
   // `executeScript` answered the runtime probe, which is the same capability that carries
   // the precart. Proven end to end on 2026-08-13 — see the header.
   return {
-    // WE DO THE SIGNING IN NOW. The old copy — "We open ReserveCalifornia right here. Sign
-    // in, then come back" — described a trip the user no longer takes: they type the
-    // credentials here and the app fills RC's own form inside the webview. Saying "sign in,
-    // then come back" over a form that does it for them is the same class of error as
-    // telling an app user to "switch to your ReserveCalifornia tab".
-    //
-    // It still promises nothing about a cart. That sentence is `afterBody`'s alone and is
-    // reachable only after a release, which is what two real holds earned it.
-    prepareTitle: 'Sign in and we will hand it over',
+    prepareTitle: 'First, sign in to ReserveCalifornia',
     prepareBody:
-      'Enter your ReserveCalifornia login and we will sign you in here, then pass the site straight to you. Your password goes to ReserveCalifornia, never to us.',
+      'We open ReserveCalifornia right here. Sign in, then come back — nothing is released until you tap the button yourself.',
     prepareCta: 'Sign in to ReserveCalifornia',
     waitingTitle: 'Waiting for you to sign in',
     waitingBody:

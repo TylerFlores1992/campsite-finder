@@ -283,10 +283,7 @@ const IAB_OPTIONS = [
 ].join(',');
 
 async function injectableWebView(): Promise<null | {
-  open: (
-    url: string, code: string, onReport?: (r: RcReport) => void, closeOnToken?: boolean,
-    afterLoad?: () => string | null,
-  ) => Promise<void>;
+  open: (url: string, code: string, onReport?: (r: RcReport) => void, closeOnToken?: boolean) => Promise<void>;
 }> {
   if (!isNativeShell()) return null;
   const w = window as unknown as {
@@ -295,10 +292,7 @@ async function injectableWebView(): Promise<null | {
   const iab = w.cordova?.InAppBrowser;
   if (!iab) return null;
   return {
-    async open(
-      url: string, code: string, onReport?: (r: RcReport) => void, closeOnToken = false,
-      afterLoad?: () => string | null,
-    ) {
+    async open(url: string, code: string, onReport?: (r: RcReport) => void, closeOnToken = false) {
       const ref = iab.open(url, '_blank', IAB_OPTIONS) as {
         addEventListener: (e: string, cb: (ev?: unknown) => void) => void;
         executeScript: (d: { code: string }, cb?: (r: unknown) => void) => void;
@@ -344,29 +338,7 @@ async function injectableWebView(): Promise<null | {
       //
       // Fires again on every navigation, which is intended: RC's adopt path reloads, and a
       // re-injected reporter re-announces without re-installing (see the route).
-      ref.addEventListener('loadstop', () => {
-        ref.executeScript({ code });
-        // A SECOND, ONE-OFF INJECTION — this is where a credential goes, and the reason it is
-        // separate from `code`.
-        //
-        // `code` is the bundle `/api/rc-precart` serves, byte-identical for every user and
-        // cached. A password can never be part of it. This callback is evaluated per
-        // injection instead, so the secret exists only in the string handed to this one
-        // `executeScript` and nowhere else — not on our servers, not in the served script,
-        // not in any log.
-        //
-        // AFTER `code`, always: the bundle is what defines `window.__chRcLogin`, and calling
-        // it first would be a silent no-op — `executeScript` returns nothing useful, so a
-        // reversed order would look exactly like a login that ran and did nothing.
-        //
-        // Re-evaluated on EVERY `loadstop`, which is intended. RC's sign-in walks through
-        // Okta and back, and the caller decides on each pass whether there is still anything
-        // to do; returning null is how it says no.
-        if (afterLoad) {
-          const once = afterLoad();
-          if (once) ref.executeScript({ code: once });
-        }
-      });
+      ref.addEventListener('loadstop', () => ref.executeScript({ code }));
     },
   };
 }
@@ -380,19 +352,7 @@ async function injectableWebView(): Promise<null | {
  */
 export async function openRcHandoff(
   h: RcHandoff,
-  opts?: {
-    onReport?: (r: RcReport) => void;
-    closeOnToken?: boolean;
-    /**
-     * Extra source to run after the served bundle, re-asked on every navigation.
-     *
-     * A FUNCTION, not a string, so a credential is never held for the life of the handoff —
-     * the caller can hand one over on the pass that needs it and `null` on every other.
-     * Ignored entirely without an injectable webview, which is correct: there is no
-     * injection there, so a caller must never assume its login ran.
-     */
-    afterLoad?: () => string | null;
-  },
+  opts?: { onReport?: (r: RcReport) => void; closeOnToken?: boolean },
 ): Promise<'injected' | 'in-app' | 'browser'> {
   const url = rcHandoffUrl(h);
 
@@ -403,7 +363,7 @@ export async function openRcHandoff(
     // payload once (the `extraValues` requirement, 2026-08-06).
     const code = await rcInjectedPrecart();
     if (code) {
-      await injectable.open(url, code, opts?.onReport, opts?.closeOnToken === true, opts?.afterLoad);
+      await injectable.open(url, code, opts?.onReport, opts?.closeOnToken === true);
       return 'injected';
     }
   }

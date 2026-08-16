@@ -10,32 +10,6 @@ import { useIsNativeApp } from '@/lib/native/context';
 import { stayLabel } from '@/lib/hold-labels';
 import { handoffCopy } from '@/lib/claim-copy';
 import { rcHandoffStep, type RcCheck } from '@/lib/claim-gate';
-import { loginInvocation } from '@/lib/rc-login-script';
-import { RC_CART_URL } from '@/lib/booking-url';
-import RcSignInForm from './RcSignInForm';
-
-/**
- * The stages the injected sign-in emits, and the only ones the form reacts to.
- *
- * An allow-list rather than "anything that is not a precart stage", because the channel
- * carries the precart's own `load`/`submit`/`status` too and showing those under a sign-in
- * form would describe the wrong job. `rc-login-script.ts` is where these names come from.
- */
-const LOGIN_STAGES = new Set(['signin-open', 'captcha', 'email', 'password', 'submitted']);
-
-/**
- * The banner text that means the site is in the user's cart.
- *
- * OUR OWN COPY, not RC's — `content-rc.js` writes it into `#camphawk-rc-status`, which the
- * epilogue observes and reports as a `status` stage. That is the same line
- * `rc-holds-readout.mts` reads to decide whether a hand-off worked, so the screen and the
- * post-mortem cannot disagree about what happened.
- *
- * Matching on copy is normally the thing this codebase avoids — RC rewords its own pages and
- * a rule built on their sentence fails silently the day they do. This sentence is ours, and
- * changing it means changing the readout too; the guard below pins them together.
- */
-const CARTED_BANNER = 'Added to cart';
 import { RC_CART_HOLD_MINUTES } from '@/lib/limits';
 
 /**
@@ -141,18 +115,6 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
    * a no-op callback rather than asserting from above an early return.
    */
   const [rcCheck, setRcCheck] = useState<RcCheck>('idle');
-  /**
-   * What the injected sign-in last said about itself, and RC's own words when it failed.
-   *
-   * `loginStage` is the raw stage name so the form can act on `captcha` — the one report the
-   * USER has a job for. Everything else is progress. `loginError` is Okta's banner text
-   * verbatim: a paraphrase of "incorrect password" would be a guess derived from which
-   * timeout expired, which is precisely what the bot's sign-in was fixed not to do.
-   */
-  const [loginStage, setLoginStage] = useState<string | null>(null);
-  /** The precart reported the site is in their cart, so checkout is reachable. */
-  const [carted, setCarted] = useState(false);
-  const [loginError, setLoginError] = useState<string | null>(null);
   /** Does THIS binary have an injectable webview? Probed without opening one. */
   const [canInject, setCanInject] = useState(false);
 
@@ -208,36 +170,6 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     // the button and the thing recorded on the hold can never disagree.
     if (r.stage === 'token' && (r.detail as { captured?: boolean } | null)?.captured) {
       setRcCheck('verified');
-      // A token means the sign-in is done, whatever the last stage was. Leaving `captcha` on
-      // screen after a successful login would tell the user to solve a challenge that is no
-      // longer there — the same class of mistake as the claim screen asking someone to
-      // "switch to your ReserveCalifornia tab" in an app that has no tabs.
-      setLoginStage(null);
-      setLoginError(null);
-    }
-    // THE SIGN-IN'S OWN STAGES. Read from the same channel as everything else, so what the
-    // form shows and what is recorded against the hold cannot disagree — the rule that made
-    // the release gate read `token captured` rather than a checkbox the user ticked.
-    if (LOGIN_STAGES.has(r.stage)) setLoginStage(r.stage);
-    // THE SIGN-IN NEVER RAN. Distinct from "it ran and RC said no", which is `failed` and
-    // carries RC's own words. This one is ours: the webview loaded a bundle with no sign-in
-    // in it — in practice a cached copy from before a deploy, which is why the remedy the
-    // user is offered is "try again" and not "check your password". Before this stage
-    // existed the screen simply sat there, which is what the user saw on 2026-08-16.
-    if (r.stage === 'login-unavailable' || r.stage === 'login-threw') {
-      setRcCheck('unconfirmed');
-      setLoginStage(null);
-      setLoginError(
-        'We could not start the sign-in. Close this and tap it again — if it happens twice, '
-        + 'sign in on ReserveCalifornia yourself and come back.',
-      );
-    }
-    // THE CART LANDED. Until now the screen said "tap the cart icon at the top", which is an
-    // instruction to go and navigate a page we just put them on. We know the moment it
-    // succeeds, so we can offer the one control that finishes the job instead.
-    if ((r.stage === 'status' || r.stage === 'banner')
-      && String((r.detail as { status?: string } | null)?.status ?? '').includes(CARTED_BANNER)) {
-      setCarted(true);
     }
     // The webview closed. If nothing announced a token before it went, we did not confirm
     // a session — which is NOT the same as knowing there isn't one, and is treated that way
@@ -295,48 +227,6 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
    * Open RC in the injectable webview so the user can sign in BEFORE anything is released.
    * No `unitId` — see the note on `rcCheck`; this must not be able to cart.
    */
-  /**
-   * Sign the user in to RC inside the webview, with credentials they just typed.
-   *
-   * THE CREDENTIALS LIVE IN THIS CLOSURE AND NOWHERE ELSE. They are not state, so they are
-   * never in a React tree, never in a devtools snapshot, and gone the moment this returns.
-   * They are handed to `afterLoad`, which is re-asked on every navigation — RC's sign-in
-   * walks out to Okta and back, so a single injection would fire on the home page and never
-   * again on the form.
-   *
-   * `sent` is what stops it firing twice. `__chRcLogin` is idempotent enough (it returns
-   * early on an existing token) but a second submission of a password is not something to
-   * leave to chance: Okta locks accounts, and the bot carries a two-strike rule for it.
-   *
-   * NO `unitId`, exactly as `prepareRc` does — `rcFragment` returns '' without one, so this
-   * window physically cannot cart. Signing in and handing the site over stay separate acts,
-   * which is what lets the user decide when the ~2.5s exposure window opens.
-   */
-  async function signInToRc(email: string, password: string) {
-    notePlatform();
-    setLoginError(null);
-    setLoginStage(null);
-    setRcCheck('opening');
-    let sent = false;
-    try {
-      await openRcHandoff(
-        { url: bookingUrl.current },
-        {
-          onReport,
-          closeOnToken: true,
-          afterLoad: () => {
-            if (sent) return null;
-            sent = true;
-            return loginInvocation(email, password);
-          },
-        },
-      );
-    } catch {
-      setRcCheck('unconfirmed');
-      setLoginError('We could not open ReserveCalifornia. Try again, or sign in there yourself.');
-    }
-  }
-
   async function prepareRc() {
     notePlatform();
     setRcCheck('opening');
@@ -550,16 +440,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
         <div className="mt-4">
           {rcCheck === 'verified' || signedIn ? (
             <Step tone="done" title={copy.readyTitle} />
-          ) : rcCheck === 'opening' && !canInject ? (
-            /*
-              THE WAITING STEP IS FOR THE PATH WE CANNOT DRIVE. There the user has gone off to
-              RC themselves and this screen has nothing to do but wait.
-              ON THE INJECTABLE PATH THE FORM STAYS MOUNTED while the sign-in runs, and that
-              is not cosmetic: `captcha` is the one stage the USER has a job for, and
-              swapping the form out for a spinner would unmount the only thing able to tell
-              them so. TypeScript found this — it narrowed `rcCheck` past 'opening' in the
-              branch below and made the dead `busy` prop an error.
-            */
+          ) : rcCheck === 'opening' ? (
             <Step tone="busy" title={copy.waitingTitle} body={copy.waitingBody} />
           ) : (
             /*
@@ -570,36 +451,12 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
             */
             <>
               <Step tone="todo" title={copy.prepareTitle} body={copy.prepareBody} />
-              {/*
-                WE DO THE SIGNING IN NOW, on an injectable client. The user typed their
-                ReserveCalifornia password into the app and we fill RC's own form with it
-                inside this webview — so at 08:00 the job is "type it once", not "go and
-                navigate a browser you did not open".
-
-                THE SESSION HAS TO BE THEIRS, which is why this happens in the webview and
-                not on our box: the cart is bound to the SESSION that made it, measured
-                2026-08-06 when a second session on the same account read that cart as 0
-                entries. A server-side login would mint a cart their phone could never see.
-
-                ON A PLAIN BROWSER, `canInject` is false, `rcHandoffStep` returns 'finish'
-                and this branch is unreachable — correct, because there is no injection
-                there and a form we cannot act on would be a worse lie than the old button.
-              */}
-              {canInject ? (
-                <RcSignInForm
-                  onSubmit={signInToRc}
-                  busy={rcCheck === 'opening'}
-                  error={loginError}
-                  stage={loginStage}
-                />
-              ) : (
-                <button
-                  onClick={prepareRc}
-                  className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-3' })}
-                >
-                  {copy.prepareCta}
-                </button>
-              )}
+              <button
+                onClick={prepareRc}
+                className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-3' })}
+              >
+                {copy.prepareCta}
+              </button>
             </>
           )}
 
@@ -748,36 +605,6 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
             >
               {copy.afterCta}
             </a>
-            {/*
-              STRAIGHT TO THE CART, once the precart says there is one.
-
-              The button above lands on the PARK page, because that is where the precart has
-              to run. Before this, the screen then told the user to "tap the cart icon at the
-              top" — an instruction to navigate a page we had just opened for them, and the
-              last piece of browser wrangling left in the flow.
-
-              Only rendered once a `status` report carried our own "Added to cart" banner, so
-              it is offered on evidence rather than on optimism. A checkout button over an
-              empty cart is the same broken promise as the copy rule this file has enforced
-              since 2026-08-09.
-
-              NAVIGATED FROM HERE rather than from inside the injected script: the precart
-              runs on `loadstop`, so a script-driven navigation re-injects on arrival and can
-              loop. This is one deliberate press instead.
-            */}
-            {carted && (
-              <button
-                onClick={() => {
-                  notePlatform();
-                  // No `unitId` — this window is for checking out, and rcFragment returns ''
-                  // without one, so it physically cannot try to cart again.
-                  void openRcHandoff({ url: RC_CART_URL }, { onReport });
-                }}
-                className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-3' })}
-              >
-                Check out on ReserveCalifornia
-              </button>
-            )}
           </>
         ) : step === 'waiting' ? (
           <div className="mt-4">
@@ -798,7 +625,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
           </div>
         )}
         <a
-          href={RC_CART_URL}
+          href="https://www.reservecalifornia.com/Customers/ShoppingCart"
           className="mt-3 block text-center text-ch-meta text-ch-muted underline"
         >
           Go straight to your ReserveCalifornia cart
