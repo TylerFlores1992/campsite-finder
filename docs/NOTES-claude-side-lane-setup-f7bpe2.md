@@ -684,3 +684,82 @@ one exception in this file's history and it was made because the owner asked dir
 **Do not advertise park watches.** `watch_campgrounds` is still 0 rows in prod and no park
 watch has ever run a poller cycle. The display work in §13 makes an existing one legible; it
 does not promote the feature, and neither should any copy written next.
+
+---
+
+## 20. THE FIXTURE SWEEP DELETES A CONCURRENT RUN'S LIVE ROWS (2026-08-16)
+
+CI failed on a **docs-only** commit. Not a flake to re-run past — the mechanism is exact,
+and it is a defect in `worker/rc-holds.test.mts`'s own safety fix.
+
+```
+not ok 377 - a carted hold records how to RELEASE it, not just that we hold it
+  error: "Cannot read properties of undefined (reading 'status')"
+  worker/rc-holds.test.mts:164:20
+```
+
+Line 164 is `assert.equal(row.status, 'carted')`. `row` is undefined, so the `SELECT … WHERE
+id = $1` returned **zero rows** — a row `markCarted` had written two statements earlier had
+been deleted mid-test. `req!` did not throw, so `requestHold` succeeded; nothing in the test
+deletes.
+
+**`before()` is what deletes it:**
+
+```sql
+DELETE FROM rc_hold_requests WHERE unit_id LIKE '\_\_t%'
+```
+
+Its own comment states the assumption: *"Matched on the sentinel, never on the watch id: the
+leaked rows belong to a PREVIOUS run's watch, which this process has never seen."* **That
+holds only if no other run is live.** Every run's fixtures carry the same sentinel prefix, so
+a starting run cannot distinguish an aborted run's litter from a running one's working set —
+and it deletes both.
+
+**Confirmed from the run timings, not inferred:**
+
+| run | window |
+|---|---|
+| `claude/side-lane-setup-f7bpe2` (mine) | 05:01:51 → 05:04:25, **failing assert at 05:03:48** |
+| `claude/rc-claim-flow` (main lane) | **05:02:39 → 05:05:05** |
+
+The other lane's run started 69 seconds into mine and swept the table underneath it.
+
+**My own two runs were ruled out first.** The push run was cancelled during `npm ci` with the
+`Verify` step **skipped** — it never executed a test. The `verify-${{ github.head_ref ||
+github.ref_name }}` concurrency group did exactly its job; this is a *cross-branch* collision,
+which that group cannot address by construction.
+
+### Why this is worse than the collision it replaced
+
+Before the sweep (added 2026-08-15), two concurrent runs collided *passively* — shared fixture
+ids, unpredictable interference. The sweep makes one run **actively wipe** the other's live
+rows on startup. The fix for an aborted run made the concurrent-run case sharper, which is the
+same shape as CLAUDE.md's *"a fix that makes a failing path succeed can promote junk that was
+only ever filtered by its failure"*.
+
+It is also **silent in the dangerous direction**: the run that gets swept fails with a null
+dereference three statements away from the cause, while the run doing the sweeping passes
+clean and logs `swept N hold fixture(s) left by an earlier run` — a line that reads as
+self-healing working, at the exact moment it is destroying a live run.
+
+### What it does NOT mean
+
+`docs/LANES.md` already serializes `npm test` between lanes. **This is that rule being broken
+by CI, not by a session** — neither lane ran `npm test` by hand; two `claude/**` pushes landed
+90 seconds apart and CI ran both. So "announce before running the suite" cannot fix it, because
+nobody ran the suite.
+
+### The fix belongs to the main lane (`worker/`)
+
+Options, in the order I'd rank them:
+
+1. **Namespace the sentinel per run** — `__t<runId>_9006` — so a sweep can only ever match
+   another run's ids by an explicit "older than N minutes" rule. Keeps non-numeric, keeps
+   recognisable in `rc-holds-readout.mts`.
+2. **Age the sweep**: only delete sentinel rows whose `updated_at` is older than a few minutes.
+   Cheaper, and it preserves the self-heal — but it is a clock guess, and a slow run could
+   still cross it.
+
+Whatever is chosen, **the mutation to verify against is the one that makes the sweep
+unconditional again** — and a real-DB test for it has to simulate two overlapping runs, which
+is the hard part and the reason to keep the guard mechanical rather than a comment.
