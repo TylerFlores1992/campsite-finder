@@ -791,3 +791,78 @@ Options, in the order I'd rank them:
 Whatever is chosen, **the mutation to verify against is the one that makes the sweep
 unconditional again** — and a real-DB test for it has to simulate two overlapping runs, which
 is the hard part and the reason to keep the guard mechanical rather than a comment.
+
+---
+
+## 21. THE DEMO PASSWORD WAS NEVER WRONG — `CLAUDE.md`'s cause 1 is false (2026-08-16)
+
+`CLAUDE.md` §"iOS 1.0 WAS REJECTED" gives two causes for the Guideline 2.1 rejection and
+states the first as measured fact:
+
+> **The password in the Sign-In Information field is WRONG.** … §5's "VERIFIED DONE
+> 2026-08-08" checked that the field was POPULATED, never that its contents WORK.
+
+**It is not wrong, and the owner says it has never been wrong.** Verified two ways:
+
+- The **Sign-In Information field** in App Store Connect, read off a screenshot, holds the
+  same value the owner's 2026-08-13 reply to Apple quotes.
+- That value verifies against Clerk: `POST /v1/users/<id>/verify_password` → **200
+  `{"verified": true}`**.
+
+**No credential is recorded here, deliberately** — `docs/APP-STORE.md` §2 keeps `<fill in>`
+for that reason. The failing string is the 11-character variant already quoted in
+`CLAUDE.md` §2a; it differs from the real one in two characters. Referring to it by location
+rather than re-quoting it keeps the count of copies in git at one.
+
+### How I reproduced a bug that did not exist
+
+I read cause 1 in `CLAUDE.md`, tested the string it names, got `422 incorrect_password`, and
+reported it to the owner as *"that's the password in your Sign-In Information field, checked
+against Clerk this minute"* — recommending a password reset before resubmitting.
+
+**The 422 was real. The attribution was not.** I had verified that *a string in a doc* fails;
+I had not looked at the field, and I described the result as though I had. The owner's
+screenshot is what corrected it.
+
+This is the house failure shape aimed at a doc instead of an instrument: **a fact inherited
+from `CLAUDE.md` and re-reported as freshly measured.** Same family as `status = 'sent'`
+meaning only "Twilio returned 2xx" — the check that felt conclusive measured the cheaper
+half. `CLAUDE.md` is ~1,200 lines of hard-won evidence and is right about almost everything,
+which is exactly what makes an inherited claim feel like a verified one. **Say which artifact
+you actually read.**
+
+### What is still open
+
+**Where the failing variant came from is NOT established, and there are two possibilities
+with different owners.** Either Apple's 2026-08-13 06:33 message genuinely quoted it that way
+— meaning the reviewer was working from a mistyped string, which is Apple's side — or a
+previous session mis-transcribed it into `CLAUDE.md`, which is ours. Apple's original message
+settles it and only the owner can read it. **Do not write a cause into any doc until someone
+has.**
+
+### The rejection's real cause was cause 2 alone
+
+Clerk **Device Trust** emails a one-time code on any password sign-in from an unrecognised
+device — every App Review device, every time. The demo account is `password_enabled: true`,
+`two_factor_enabled: false`, so it is squarely in scope. The owner turned it off and
+confirmed a clean sign-in from a private window on a device that had never touched the
+account, which is a stronger check than anything available from here: `/v1/instance` does not
+expose the setting and the settings endpoints return 405, so **Device Trust is dashboard-only
+and cannot be verified by an agent.**
+
+### Account state, checked the same day
+
+```
+status: active · tier: base · grandfathered: true · is_beta: false · active_watches: 2
+```
+
+So the reply's claim that a reviewer sees a populated paid app is accurate.
+
+**iOS 1.0 was resubmitted to App Review on 2026-08-16.**
+
+### For the main lane
+
+`CLAUDE.md` still carries cause 1 as fact. It should be struck and corrected — a wrong,
+confident, measured-sounding claim there is worse than an absent one, because the next reader
+will reproduce the 422 and treat it as confirmation. Not edited from this lane; `CLAUDE.md`
+is the main lane's file.
