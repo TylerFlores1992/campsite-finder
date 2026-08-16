@@ -505,15 +505,28 @@ test('the browser opens RC in a new tab, and the app still uses the webview', ()
   assert.match(body, /target="_blank"/, 'the browser control must genuinely open a new tab');
   assert.match(body, /rel="noopener noreferrer"/, 'a new tab must not get window.opener');
 
-  // The anchor belongs to the NON-injectable branch and the button to the injectable one.
+  // THE ANCHOR BELONGS TO THE NON-INJECTABLE ARM, and the injectable arm to whatever can
+  // actually drive the webview.
+  //
+  // This used to pin `onClick={prepareRc}` as the injectable control. That was right until
+  // the in-app sign-in re-landed and the arm became `<RcSignInForm>` — the rule was
+  // unchanged, the thing implementing it moved, and a guard naming the implementation went
+  // red over correct code. Pinned on the PROPERTY now: the injectable arm must not be the
+  // plain-browser link, and the browser arm must be exactly that.
   const ternary = body.slice(body.indexOf('{canInject ? ('), body.indexOf('</>', body.indexOf('{canInject ? (')));
   assert.ok(ternary.length > 0, 'the two paths must be chosen by canInject');
-  const buttonAt = ternary.indexOf('onClick={prepareRc}');
-  const anchorAt = ternary.indexOf('target="_blank"');
-  assert.ok(buttonAt > 0, 'the injectable path must keep the webview button');
-  assert.ok(anchorAt > 0, 'the browser path must use an anchor');
-  assert.ok(buttonAt < anchorAt,
-    'canInject true takes the button; false takes the link — reversed, both platforms break');
+  const elseAt = ternary.indexOf(') : (');
+  assert.ok(elseAt > 0, 'the ternary must have both arms');
+  const injectable = ternary.slice(0, elseAt);
+  const browser = ternary.slice(elseAt);
+
+  assert.ok(!/target="_blank"/.test(injectable),
+    'the injectable arm must not be the new-tab link — there is no tab in a webview');
+  assert.match(browser, /target="_blank"/, 'the browser arm must open a real new tab');
+  assert.match(injectable, /RcSignInForm|onClick=\{prepareRc\}/,
+    'the injectable arm must drive the webview — the sign-in form or prepareRc');
+  assert.ok(!/RcSignInForm/.test(browser),
+    'a sign-in form on the browser path is a promise nothing there can honour');
 });
 
 test('the browser copy no longer promises a tab it does not open', () => {

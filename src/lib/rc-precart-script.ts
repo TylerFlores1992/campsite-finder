@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { loginScript } from './rc-login-script';
 
 /**
  * Serves the ReserveCalifornia precart script, for injection into a mobile in-app webview.
@@ -100,19 +101,18 @@ export function reporter(): string {
     // DROP WEBKIT'S SOURCE QUOTE BEFORE ANYTHING ELSE.
     //
     // Safari formats a TypeError as `X is not a function. (In 'SOURCE', 'X' is undefined)` —
-    // and SOURCE is the failing expression, verbatim. On 2026-08-16 that expression was an
-    // injected sign-in carrying a real ReserveCalifornia password, so the password was
-    // reported through this function and stored in `client_reports`. This regex knew JWT
-    // shapes and went straight past it, exactly as it went past an OAuth authorization code
-    // on 2026-08-09.
+    // and SOURCE is the failing expression, verbatim. On 2026-08-16 that expression was the
+    // sign-in invocation, so a user's real ReserveCalifornia password was reported through
+    // this function and stored in `client_reports`. This regex knew JWT shapes and went
+    // straight past it, exactly as it went past an OAuth authorization code on 2026-08-09.
     //
-    // KEPT WHEN THAT SIGN-IN WAS REVERTED, deliberately. It is not a fix for that one call
-    // site — it is the rule that ANY expression touching a secret gets published this way,
-    // and reverting the feature that proved it would otherwise take the lesson with it. The
-    // upstream half (never put a credential in a call expression) comes back with the
-    // feature; this half is cheap and belongs here regardless.
+    // The real fix is upstream — `loginInvocation` binds credentials to locals so no call
+    // expression can contain one (see its header). This is the second layer, and it is here
+    // because the first layer only protects the one call site anybody thought about: ANY
+    // future expression that touches a secret gets quoted the same way, and the leak would
+    // again look like an ordinary error message.
     //
-    // The half carrying the diagnosis ("X is not a function") survives. The source quote
+    // The half that carries the diagnosis ("X is not a function") is kept. The source quote
     // never carried any, which is why dropping it costs nothing.
     '  function scrub(s) {',
     '    return String(s == null ? "" : s)',
@@ -462,6 +462,16 @@ export function buildPrecartScript(): string {
     '})();',
     inject,
     content,
+    // THE SIGN-IN, AFTER THE REPORTER IT USES AND BEFORE THE EPILOGUE. It only DEFINES
+    // `window.__chRcLogin`; the claim screen calls it in a separate one-off injection with
+    // the user's credentials, which is what keeps this served bundle identical for everyone.
+    //
+    // IT WAS MISSING ENTIRELY ON THE FIRST RUN (2026-08-15). The module, the wiring and the
+    // call site all existed and the function was never served, so the invocation hit an
+    // undefined name and threw inside a try — the exact "fix present but inert" shape that
+    // has cost this repo four commits. The guard that should have caught it asserted the
+    // ORDER of the two injections without checking the first defines what the second calls.
+    loginScript(),
     epilogue(),
   ].join('\n');
 }
