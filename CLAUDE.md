@@ -1131,6 +1131,93 @@ such node is a place it recurs — it silently broke four user-visible strings.
 - `worker/verify-gates.test.mts` pins the membership and the ordering, because a gate quietly
   dropped from `verify` stops existing with no test failing and nothing to notice.
 
+### THE 08:00 HAND-OFF WORKED END TO END (2026-08-16) — and the alarm that fired was ours
+Two holds, both carted, both claimed, at exactly `RC_HOLD_CAPACITY`:
+
+| site | carted | claimed |
+|---|---|---|
+| South Carlsbad 45722 | 15:00:43Z (**T+43s**) | 15:02:01Z |
+| South Carlsbad 45723 | 15:00:49Z (**T+49s**) | 15:03:23Z |
+
+45722 reported **`✓ Added to cart`** on iOS — the third confirmation of the cart POSTs — and a
+later re-injection got `already added`, which is proof the cart STUCK, not a failure. 45723 was
+claimed from a plain browser (`web build unavailable`), so both paths are exercised in one
+morning. **`RC_HOLD_CAPACITY = 2` was met at its exact boundary and both seats filled**, which
+is the first time the ceiling has been tested rather than exceeded.
+
+#### A LIVE SESSION WAS REPORTED DEAD, AND THE PRINTED REMEDY WOULD HAVE KILLED IT
+The phone rang at **07:33 PT, 27 minutes before the release that then worked perfectly.**
+- **THE CHAIN.** `acceptable()` is liveness AND coverage, so a **live** session with a 40m token
+  against a 46m requirement returned false. Drop-and-re-mint did not lift it. RC then showed no
+  sign-in form — **it never does to a signed-in user** — so `attemptLogin` fell through to its
+  no-form exit and returned `ok: false`, *"neither an email nor a password field appeared — RC
+  said: 'You have a reservation arriving on today's date'"*. `maybeAutoLogin` reported that as
+  `dead`, `autocart.rc_session` FAILED, `holdAtRisk` rang, and the remedy printed was
+  `rc-login.bat` — **which force-kills the Chromium the access token lives in. Following the
+  alarm's own advice would have destroyed the working session it was complaining about.**
+- **THE 46-MINUTE BOUND WAS BEHAVING CORRECTLY.** It already carries a 15-minute cart hold and a
+  5-minute margin. The token was six minutes under a deliberately conservative figure, and the
+  cart fired at T+43s with the hold claimed two minutes later. **The REPORTING turned a
+  conservative margin into an emergency**; the arithmetic was never wrong.
+- **I CALLED IT THE 2026-08-09 BANNER TRAP AND IT IS NOT — the distinction is the finding.**
+  That trap is a *dead-looking session that is really alive*, and its fix is the `acceptable()`
+  poll above the exit, **which worked**. This is that poll's own NEGATIVE, described in words
+  belonging to a different fault. Filing it under the old name would have sent the next reader
+  to a fix already in place, which is how a real defect survives a post-mortem.
+- **Two halves, both required.** `attemptLogin` asks `isLive()` at the terminal exit and returns
+  `sessionLive: true` for a session that exists — **with NO banner on that path**, because to a
+  signed-in user RC's text is evidence of SUCCESS and printing it as the explanation for a
+  failure has now cost three separate mornings. `maybeAutoLogin` gives that its own arm,
+  reporting **`warm` with the shortfall stated** rather than `dead`. **Severity is the defect,
+  not the sentence:** `dead` is what pages and what prints the destructive remedy. The attempt
+  is refunded like `provedNothing` — no credential was submitted, so the T−5 re-check keeps its
+  turn.
+- **The shortfall stays visible, and a guard fails if it becomes a plain success.** A silent
+  short token is the opposite failure and the one that makes a downgrade dangerous.
+- `worker/rc-live-not-dead.test.mts`, four mutations each asserting the mutation applied. Both
+  halves pinned **by ORDER as well as presence** — a live check placed after the banner return,
+  or a live arm after the dead arm, is unreachable and merely looks right.
+- **BOT-SIDE.** Needs `update.bat`, "Update now", or a quiet window; nothing changes until the
+  box moves.
+
+### A TypeError PUBLISHED A USER'S PASSWORD (2026-08-16) — and the feature is REVERTED
+An in-app RC sign-in (the user types credentials on the claim screen, we inject them into the
+webview) was built, shipped, failed three times in one night, and was **reverted**. Two findings
+outlived it.
+- **THE LEAK. `window.__chRcLogin("<email>", "<password>")` was undefined**, and WebKit formats
+  that as `X is not a function. (In 'SOURCE', 'X' is undefined)` — **where SOURCE is the failing
+  expression, verbatim.** The bundle's global `error` listener reported it and a real
+  ReserveCalifornia password landed in `client_reports` in production. **Nothing mishandled the
+  secret; the ENGINE published it.** `scrub()` knew JWT shapes and sailed straight past it,
+  exactly as it sailed past an OAuth authorization code on 2026-08-09. **Second time, same
+  lesson: do not produce a value you then have to filter.** The row was scrubbed; the owner was
+  told to change the password.
+  - **The layer that counts is upstream** — bind credentials to locals so no call expression can
+    contain one; an engine quoting source can then only quote `f(e, p)`. That came back out with
+    the revert.
+  - **`scrub()` DROPPING WEBKIT'S SOURCE QUOTE WAS DELIBERATELY KEPT**, and moved to
+    `worker/rc-report-scrub.test.mts` so it does not depend on the sign-in existing. The
+    mechanism belongs to the REPORTER, not that call site: any future expression touching a
+    secret is published the same way. **Reverting the feature would otherwise have taken the
+    lesson with it — which is how a finding disappears leaving no diff to notice.**
+- **WHY THE SIGN-IN NEVER WORKED — two defects, and the second is why it took three tries.**
+  `afterLoad` fired **once per hand-off**, and `__chRcLogin` begins by clicking RC's sign-in
+  control, which **navigates to `signin.reservecalifornia.com` and destroys the JS context** — so
+  it died on the park page and was never invoked on the page with the form. ClaimFlow's own
+  comment said `afterLoad` was *"re-asked on every navigation"*; the flag defeated exactly that,
+  and the guard beside it **pinned the flag**. And **every terminal path of `done()` was silent**
+  — it only RETURNED its verdict, and `executeScript` discards return values, so "could not find
+  the control", "no password field", "Okta rejected it" and "signed in" were the same nothing. A
+  real run reported `injected`, `session`, `idle` and stopped, **indistinguishable from the
+  sign-in never being invoked.**
+- **Both fixes live unmerged on `claude/rc-login-fix` (PR #78)** — once per PAGE keyed on
+  origin+path with a redirect-loop bound, and `login-result`/`signin-missing` reports. **Do not
+  merge it onto the reverted claim screen**; re-land the feature first.
+- **THE REVERT WAS THE RIGHT CALL AND WAS THE OWNER'S.** Two real holds released nine hours
+  later and the claim screen is what takes them; a fourth overnight attempt would have put a
+  half-tested gate in front of the one control that matters at 08:00. The reverted flow is not
+  untried — it is the one with `✓ Added to cart` behind it.
+
 ### "ALREADY SIGNED IN" IS NOT "COVERED" — the 08:00 cart lost to a one-line short-circuit (2026-08-15)
 A queued hold released at 08:00:40 PT and was never carted. The runner was alive, the feed was
 right, the hold was `requested`, and the auto-login fired **correctly and on time**:
@@ -3539,6 +3626,18 @@ act). A non-paging failure reads `degraded`, so nothing is hidden. The cost of c
 is not the noise, it is that the next real page gets skimmed.
 
 ### If a hold is queued: did the 8am cart fire? (the daily check)
+**2026-08-16 WORKED END TO END, TWICE OVER, AT FULL CAPACITY.** South Carlsbad 45722 carted
+15:00:43Z and was claimed 15:02:01Z; 45723 carted 15:00:49Z and was claimed 15:03:23Z. Both
+`released`. 45722 reported **`✓ Added to cart`** on iOS (and `already added` on a re-injection,
+which is proof it STUCK); 45723 was claimed from a plain browser, so both client paths ran in one
+morning. **Two tapped holds is exactly `RC_HOLD_CAPACITY`**, and both seats filled. (Do NOT
+call this the first time the ceiling was met — the 08-14 note below claims that too, and it was
+written the night BEFORE and never had its outcome recorded. This is the first one with times
+against it.)
+**READ THE 07:33 FALSE ALARM BEFORE TRUSTING A `dead` VERDICT NEAR A RELEASE** — see the entry
+above. A live session with a short token was reported dead and the printed remedy would have
+destroyed it.
+
 **2026-08-12 WORKED END TO END.** Elk Prairie `#33`: offered 01:15Z, tapped 01:34Z,
 **carted 15:00:02Z — two seconds after the release** — `claiming`, then **released
 15:05:24Z**. `maybeAutoLogin` signed in unattended at ~07:29 PT with no human involved, which
@@ -3558,6 +3657,9 @@ That sweep is the 44ae4b7 fix working on its first morning. `#60`'s hand-off sti
 the OLD "click the cart icon" banner, which is what confirmed the 09:11 precart fix had
 never run against a real hold.
 
+**STALE — WRITTEN THE NIGHT BEFORE, OUTCOME NEVER RECORDED.** Kept because its reasoning about
+the quiet window is still correct and reusable, but do not read its "first morning the ceiling is
+met" as an observation: nothing here says what happened on 08-14.
 **TWO holds are TAPPED for 2026-08-14 08:00 PT** — South Carlsbad `#55` and Carpinteria
 `#C218`, both `requested` since 03:00Z (read 21:55 PT 08-13). `#95` is `offered` and
 untapped, so it does not compete. **Two tapped is exactly `RC_HOLD_CAPACITY`**, so this is
@@ -3615,7 +3717,20 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs current to 2026-08-16.** **THE RENEWAL RUNS ON THE BOX** — `✓ renewed by authorize:
+**Docs current to 2026-08-16 (second pass).** **THE 08:00 HAND-OFF WORKED END TO END** — both
+holds carted at T+43s and T+49s, both claimed, `✓ Added to cart` reported on iOS, and
+`RC_HOLD_CAPACITY = 2` met at its exact boundary with both seats filled. **The alarm that fired
+at 07:33 was ours**: a LIVE session with a 40m token against a 46m requirement was reported
+`dead`, and the remedy it printed (`rc-login.bat`) would have killed the very session it was
+complaining about. Fixed in PR #80 — **bot-side, so it needs `update.bat`, "Update now", or a
+quiet window before it means anything.** Also this pass: **a TypeError published a user's
+ReserveCalifornia password** (WebKit quotes the failing source expression; `scrub()` sailed past
+it exactly as it sailed past an OAuth code on 08-09), and the in-app sign-in that produced it is
+**REVERTED** — its two real fixes sit unmerged on `claude/rc-login-fix` (PR #78) and must NOT be
+merged onto the reverted claim screen. **Open: fold PR #78 back in after re-landing the feature;
+`autocart.bot_version` should be checked before trusting the 07:33 fix is live.**
+
+*(Previous pass.)* **Docs current to 2026-08-16.** **THE RENEWAL RUNS ON THE BOX** — `✓ renewed by authorize:
 none → 3580s` at 01:53:05 UTC, from a genuinely token-less profile, no credential typed. The
 reliable cell of the 2x2 is proven in production, and the `⚠ RC SESSION IS DEAD … okta=ALIVE`
 runs it was built to end are gone. **The near-expiry cell still fails** (twice, `554s → none`
@@ -3624,8 +3739,8 @@ and `-115s → none`) — and the previously documented reading of that failure 
 NOT mean a dead Okta session. **And the login rehearsal PASSED for the first time in its life**
 at 20:00 PT, which is what restored the session that night — not the renewal. Two repairs ran
 twenty minutes apart and only one worked; the entries above say which.
-**Two test holds are queued for 2026-08-16 08:00 PT** (South Carlsbad #38/#39, units
-45722/45723) — exactly `RC_HOLD_CAPACITY`, so the ceiling is exercised at its boundary.
+~~**Two test holds are queued for 2026-08-16 08:00 PT**~~ — **THEY RAN, AND BOTH CARTED.** See
+"THE 08:00 HAND-OFF WORKED END TO END" above for the times and what the morning proved.
 
 *(Previous pass.)* **Docs current to 2026-08-15 (third pass).** The renewal question is now answered TWICE OVER,
 and the second answer corrects the first: `renewByReload` fails **because a plain page load is
