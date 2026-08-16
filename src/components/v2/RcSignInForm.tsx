@@ -51,6 +51,19 @@ export default function RcSignInForm({ onSubmit, busy, error, stage }: RcSignInF
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  /**
+   * Show the password.
+   *
+   * The confirmation box asks the user to promise the credentials are right, and a
+   * masked field gives them nothing to check it against — so the promise was one they
+   * could not actually keep. That matters more here than on an ordinary login: a wrong
+   * password submitted to Okta risks a lockout, and we only get one attempt before the
+   * site goes back on the open market.
+   *
+   * Defaults to hidden, and the toggle is the user's own act — this screen is opened at
+   * 08:00 in whatever room they happen to be in.
+   */
+  const [reveal, setReveal] = useState(false);
 
   const ready = email.trim().length > 0 && password.length > 0 && confirmed && !busy;
 
@@ -89,20 +102,43 @@ export default function RcSignInForm({ onSubmit, busy, error, stage }: RcSignInF
         />
       </label>
 
-      <label className="mt-3 block">
-        <span className="text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
-          ReserveCalifornia password
-        </span>
+      <div className="mt-3">
+        <div className="flex items-baseline justify-between gap-3">
+          <label
+            htmlFor="rc-password"
+            className="text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted"
+          >
+            ReserveCalifornia password
+          </label>
+          {/* A real button, not a tap target on the field — screen readers get the state, and
+              `aria-pressed` says which way it is rather than leaving them to infer it from a
+              label that flips. */}
+          <button
+            type="button"
+            onClick={() => setReveal((v) => !v)}
+            aria-pressed={reveal}
+            aria-controls="rc-password"
+            className="text-ch-fine text-ch-muted underline"
+          >
+            {reveal ? 'Hide' : 'Show'}
+          </button>
+        </div>
         <input
-          type="password"
+          id="rc-password"
+          type={reveal ? 'text' : 'password'}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="current-password"
+          // A revealed password must not be autocorrected or capitalised on the way in —
+          // iOS does both to a text input by default, which would silently change it.
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           required
           disabled={busy}
           className="mt-1 w-full rounded-ch border border-ch-line bg-ch-surface px-3 py-2 text-ch-body"
         />
-      </label>
+      </div>
 
       <label className="mt-4 flex items-start gap-2.5">
         <input

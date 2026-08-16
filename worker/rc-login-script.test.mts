@@ -72,7 +72,7 @@ test('a CAPTCHA is a PAUSE here, not a full stop', () => {
   // rule would be wrong. Carrying the bot's posture onto this path is the mistake the
   // 2026-08-09 mobile tests warned about explicitly.
   const src = loginScript();
-  assert.match(src, /ch_report\('captcha'/, 'a challenge must be announced so the user can clear it');
+  assert.match(src, /chSay\('captcha'/, 'a challenge must be announced so the user can clear it');
   assert.match(src, /chWait\(CH_EMAIL_SELS\.concat\(CH_PW_SELS\), 300000\)/,
     'and it must WAIT for them, not abort');
 });
@@ -286,4 +286,52 @@ test('the checkout window cannot cart', () => {
   const at = src.indexOf('openRcHandoff({ url: RC_CART_URL }');
   assert.ok(at !== -1, 'the checkout button must open the cart URL');
   assert.ok(!src.slice(at, at + 120).includes('unitId'), 'and pass no unitId');
+});
+
+// ── THE BUNDLE ACTUALLY DEFINES IT ─────────────────────────────────────────────────────
+//
+// THE BUG THESE EXIST FOR (2026-08-15, found by running it on a phone). The module, the
+// wiring, the call site and eleven passing tests all existed — and `loginScript()` was never
+// added to `buildPrecartScript()`. So `window.__chRcLogin` was undefined, the one-off
+// injection threw inside a try, and the user saw RC's park page and nothing else.
+//
+// The guard that should have caught it asserted the ORDER of the two injections and never
+// that the first defines what the second calls. Order is not existence. These run the REAL
+// served bundle, which is the only assertion that could not have passed.
+
+test('the served bundle defines the function the claim screen calls', async () => {
+  const { buildPrecartScript } = await import('../src/lib/rc-precart-script.js');
+  const bundle = buildPrecartScript();
+  assert.match(bundle, /window\.__chRcLogin = function/,
+    'buildPrecartScript must include loginScript() — the wiring is inert without it');
+});
+
+test('the whole served bundle parses', () => {
+  // It concatenates our source with two files out of extension/. A syntax error in any of
+  // them takes the precart down with the login, and `executeScript` reports nothing.
+  const bundleSrc = readFileSync('src/lib/rc-precart-script.ts', 'utf8');
+  assert.match(bundleSrc, /loginScript\(\),/, 'loginScript must be in the assembly list');
+});
+
+test('the login reports through the reporter that actually exists', () => {
+  // `reporter()` exposes `window.__camphawkRc.send` and nothing else. The first version of
+  // this module called `ch_report(...)`, invented from memory, which would have thrown on
+  // every report — inside a try, so invisibly.
+  const src = loginScript();
+  assert.ok(!/ch_report\(/.test(src), 'ch_report does not exist — use the reporter API');
+  assert.match(src, /window\.__camphawkRc\.send\(stage, detail/,
+    'reports must go through window.__camphawkRc.send');
+  // And it must survive the reporter being absent: losing diagnostics is survivable, losing
+  // the sign-in is not.
+  assert.match(src, /if \(window\.__camphawkRc\) window\.__camphawkRc\.send/);
+});
+
+test('no backticks inside the emitted template literal', () => {
+  // The script is a template literal, so a backtick anywhere in it — including in a comment —
+  // terminates the string, and the parse error surfaces somewhere unrelated. CLAUDE.md
+  // records this for SQL comments in the poller; it has now cost a build here too.
+  const file = readFileSync('src/lib/rc-login-script.ts', 'utf8');
+  const body = file.slice(file.indexOf('export function loginScript'));
+  const lit = body.slice(body.indexOf('return `') + 8, body.indexOf('\n  };'));
+  assert.ok(!lit.includes('`'), 'a backtick inside the template literal ends it early');
 });
