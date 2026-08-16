@@ -74,7 +74,11 @@ export interface FilterPanelProps {
 const SITE_TYPES: Array<{ value: string | null; label: string }> = [
   { value: null, label: "All types" },
   { value: "tent", label: "Tent" },
-  { value: "rv", label: "RV" },
+  // NO "RV" CHIP (2026-08-15, owner's call). "RV" as a site type overlapped the two
+  // controls that answer the question more precisely and from better data: Hookups
+  // beside it, and Pad length below. A camper picking RV almost always meant one of
+  // those, and picking it INSTEAD narrowed by a `site_types` tag rather than by what
+  // will actually fit and plug in.
   { value: "cabin", label: "Cabin" },
   { value: "group", label: "Group" },
 ];
@@ -132,7 +136,17 @@ export default function FilterPanel({ value, onChange, defaultOpen, className }:
         <legend className="mb-2 text-ch-label font-bold uppercase tracking-[.1em] text-ch-muted">
           Site type
         </legend>
-        <div className="flex flex-wrap gap-1.5">
+        {/* HOOKUPS SITS IN THIS ROW, in the slot RV used to occupy (2026-08-15,
+            owner's call) — it is not its own category.
+
+            The DIVIDER before it is load-bearing, and replaces the separate labelled
+            line this used to have. The chips to its left are SINGLE-select (picking
+            Tent unpicks Cabin); Hookups is a TOGGLE that combines with whichever type
+            is chosen. Dropped in as a plain sixth chip it would read as one more of the
+            same, so tapping it would look like it had cleared the site type. The rule
+            and `aria-pressed` carry that distinction without spending a heading on one
+            chip. */}
+        <div className="flex flex-wrap items-center gap-1.5">
           {SITE_TYPES.map(({ value: v, label }) => (
             <Chip
               key={label}
@@ -143,15 +157,7 @@ export default function FilterPanel({ value, onChange, defaultOpen, className }:
               {label}
             </Chip>
           ))}
-        </div>
-        {/* HOOKUPS LIVES HERE NOW, and it is deliberately on its own line rather than
-            as a sixth chip in the row above. Those chips are SINGLE-select — picking
-            Tent unpicks RV — and a toggle sitting among them would look like one more
-            of the same, so tapping it would appear to clear the site type. A separate
-            line, its own label and aria-pressed say "this is a different kind of
-            control" without a second heading for one chip. */}
-        <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-ch-line pt-2.5">
-          <span className="text-ch-fine text-ch-muted">Must have</span>
+          <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-ch-line" />
           <Chip
             size="sm"
             selected={value.electric}
@@ -161,6 +167,7 @@ export default function FilterPanel({ value, onChange, defaultOpen, className }:
             Hookups
           </Chip>
         </div>
+
       </fieldset>
 
       {/* PAD LENGTH IS ITS OWN CONTROL, always visible (2026-08-15).

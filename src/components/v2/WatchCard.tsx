@@ -5,6 +5,7 @@ import Card from "@/components/ui/Card";
 import Tag from "@/components/ui/Tag";
 import Button, { buttonClasses } from "@/components/ui/Button";
 import { providerLabel, supportsAutoCart } from "./providers";
+import { divisionLabel, parseCampgroundName } from "./campground-name";
 import { SHOW_LIKELIHOOD } from "./likelihood";
 import { formatRange, nightsBetween, type ISODate } from "@/components/ui/date";
 
@@ -37,6 +38,12 @@ export interface WatchCardWatch {
   campground_name: string;
   /** Only present if the API selects c.source — badge is omitted without it. */
   campground_source?: string;
+  /**
+   * Every campground this ONE watch covers (migration 070). Present only when there is
+   * more than one — /api/watches omits it otherwise — so its presence is the test for
+   * "is this a park watch?" and there is no count to compare against 1.
+   */
+  divisions?: Array<{ id: string; name: string }>;
   start_date: string;
   end_date: string;
   flex_nights: number | null;
@@ -211,9 +218,33 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
           {source && <Tag kind="src">{providerLabel(source, watch.campground_id)}</Tag>}
         </div>
 
+        {/* A PARK WATCH IS NAMED AFTER THE PARK, not after the division that happens to
+            be its representative. `campground_name` is that representative — one of
+            four for Carpinteria — so showing it whole would name the watch after a
+            quarter of what it actually covers, which is how this looked identical to an
+            ordinary single-campground watch. */}
         <h3 className="font-ch-display text-ch-park font-bold leading-tight tracking-[-.02em]">
-          {watch.campground_name}
+          {watch.divisions
+            ? parseCampgroundName(watch.campground_name).park
+            : parseCampgroundName(watch.campground_name).full}
         </h3>
+        {watch.divisions && (
+          <p className="mt-1 text-ch-fine leading-normal text-ch-muted">
+            {/* The parts are NAMED, not just counted. "4 parts" tells you a number;
+                what a user needs at a glance is whether the loop they care about is in
+                there. Divisions are short once the park name is stripped, so they fit. */}
+            <span className="font-bold">
+              {watch.divisions.length} parts
+            </span>
+            {" · "}
+            {/* CAPPED AT FOUR. Most multi-division parks are 2-4 so most cards list
+                everything, but the limit is ten and naming all of those runs to seven
+                lines on a card whose job is to be scanned. The count above is always
+                exact, so the truncation cannot mislead about how much is covered. */}
+            {watch.divisions.slice(0, 4).map((d) => divisionLabel(d.name)).join(" · ")}
+            {watch.divisions.length > 4 ? ` · +${watch.divisions.length - 4} more` : ""}
+          </p>
+        )}
         <p className="mt-2.5 text-ch-body font-bold text-ch-ink-2">
           {flex ? `Any ${nights} nights, ${formatRange(start, end)}` : formatRange(start, end)}
         </p>

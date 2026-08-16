@@ -168,3 +168,25 @@ export function placeLabel(city?: string | null, state?: string | null): string 
   if (c && s) return `${c}, ${s}`;
   return c || s || null;
 }
+
+/**
+ * Drop a trailing state code from a name when the SAME state is already being shown
+ * beside it — "Silver Lake Campground (WY) · Saratoga, WY" reads the state twice.
+ *
+ * SCOPED TO A MATCH ON PURPOSE, and this is the whole subtlety. The catalog contains
+ * BOTH "Silver Lake Campground" and "Silver Lake Campground (WY)", so stripping the
+ * suffix unconditionally would render two different campgrounds identically — the same
+ * collision this file already refuses to create by stripping site ranges. The suffix is
+ * only redundant when the place label repeats it; when there is no place label, or it
+ * names a different state, the suffix is the only thing telling the rows apart and it
+ * stays.
+ */
+export function dropRedundantState(name: string, state?: string | null): string {
+  const st = state?.trim().toUpperCase();
+  if (!st || st.length !== 2) return name;
+  const m = /\s*\(([A-Za-z]{2})\)\s*$/.exec(name);
+  if (!m || m[1].toUpperCase() !== st) return name;
+  const stripped = name.slice(0, m.index).trim();
+  // Never strip a name down to nothing.
+  return stripped || name;
+}

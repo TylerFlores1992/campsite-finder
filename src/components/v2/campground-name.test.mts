@@ -7,6 +7,7 @@ import {
   parkOf,
   divisionLabel,
   placeLabel,
+  dropRedundantState,
 } from './campground-name';
 
 /**
@@ -180,4 +181,26 @@ test("Explore's place label survives a name longer than the rail", () => {
     /block truncate font-semibold/.test(row),
     'the campground NAME should be the part that truncates',
   );
+});
+
+test('a trailing state is dropped only when the SAME state is shown beside it', () => {
+  // "Silver Lake Campground (WY) · Saratoga, WY" says WY twice.
+  assert.equal(dropRedundantState('Silver Lake Campground (WY)', 'WY'), 'Silver Lake Campground');
+  assert.equal(dropRedundantState('Silver Lake Campground June Lake (CA)', 'CA'),
+    'Silver Lake Campground June Lake');
+});
+
+test('a trailing state is KEPT when nothing repeats it', () => {
+  // The catalog holds BOTH "Silver Lake Campground" and "Silver Lake Campground (WY)".
+  // Stripping unconditionally renders two different campgrounds identically — the same
+  // collision this module refuses to create by stripping site ranges.
+  assert.equal(dropRedundantState('Silver Lake Campground (WY)', null), 'Silver Lake Campground (WY)');
+  assert.equal(dropRedundantState('Silver Lake Campground (WY)', 'CA'), 'Silver Lake Campground (WY)');
+  assert.equal(dropRedundantState('Porcupine (AK)', undefined), 'Porcupine (AK)');
+});
+
+test('dropRedundantState leaves anything that is not a trailing 2-letter code', () => {
+  assert.equal(dropRedundantState('Leo Carrillo SP — Canyon Campground (sites 1-24)', 'CA'),
+    'Leo Carrillo SP — Canyon Campground (sites 1-24)');
+  assert.equal(dropRedundantState('(CA)', 'CA'), '(CA)', 'never strips a name to nothing');
 });

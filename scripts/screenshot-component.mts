@@ -246,7 +246,11 @@ const PRESETS: Record<string, Preset> = {
   },
   'manage-watch': {
     label: 'ManageWatch (per-watch manage page)',
-    entry: `import ManageWatch from '@/components/ManageWatch';
+    // POINTED AT v2 (2026-08-15). It imported '@/components/ManageWatch', which was
+    // DELETED in the front-end swap — so this preset could only ever have failed to
+    // resolve. Same family as the five presets that rendered nothing and reported
+    // success. The fixture now carries `divisions`, so it also covers the park case.
+    entry: `import ManageWatch from '@/components/v2/ManageWatch';
       if (typeof window !== 'undefined') {
         window.fetch = async (url) => {
           const u = String(url);
@@ -255,7 +259,13 @@ const PRESETS: Record<string, Preset> = {
               ['A01','A02','A12','A14','B03','B07','B12','C05','C09'].map((id, i) => ({ campsiteId: id, campsiteName: 'Site ' + id, loop: id[0] === 'A' ? 'Ocean Loop' : id[0] === 'B' ? 'Creek Loop' : 'Ridge Loop' })) }) };
           }
           return { ok: true, status: 200, json: async () => ({
-            watch: { id: 'w1', campground_id: '233116', campground_name: 'Kirk Creek Campground', source: 'ridb', reservations_url: null, latitude: 35.99, longitude: -121.49, start_date: '2026-09-04', end_date: '2026-09-07', min_nights: 2, flex_nights: 2, flex_days: 'weekend', site_type: null, active: true, auto_cart: true, muted_site_ids: ['A14'] },
+            watch: { id: 'w1', campground_id: 'rc-2', campground_name: 'Carpinteria SB — San Miguel (sites 401-460)', source: 'reservecalifornia', reservations_url: null, latitude: 34.39, longitude: -119.51, start_date: '2026-09-04', end_date: '2026-09-07', min_nights: 2, flex_nights: 2, flex_days: 'weekend', site_type: null, active: true, auto_cart: true, muted_site_ids: ['A14'],
+              divisions: [
+                { id: 'rc-1', name: 'Carpinteria SB — Anacapa (sites 101-127 & group sites)' },
+                { id: 'rc-2', name: 'Carpinteria SB — San Miguel (sites 401-460)' },
+                { id: 'rc-3', name: 'Carpinteria SB — Santa Cruz (sites 201-244 & group sites)' },
+                { id: 'rc-4', name: 'Carpinteria SB — Santa Rosa (sites 301-380)' },
+              ] },
             alerts: [
               { created_at: '2026-08-20T15:00:00Z', channel: 'sms', status: 'sent', site_name: 'A12', dates: ['2026-09-04','2026-09-05'], kind: 'available' },
               { created_at: '2026-08-18T09:00:00Z', channel: 'email', status: 'sent', site_name: 'A14', dates: ['2026-09-06'], kind: 'coming_soon' },
@@ -638,6 +648,39 @@ const PRESETS: Record<string, Preset> = {
       export const node = <NewWatch />;`,
     frame: 'w-full max-w-3xl mx-auto',
   },
+  'ch-park-watch': {
+    label: 'WatchCard — a park watch (4 divisions) above an ordinary single-campground one',
+    // The point of the shot is that the two are DISTINGUISHABLE. Before this, a park
+    // watch rendered as its representative division and looked identical to the card
+    // below it, so a watch covering four campgrounds was indistinguishable from one
+    // covering a quarter of that.
+    entry: `import WatchCard from '@/components/v2/WatchCard';
+      const DIVS = [
+        { id: 'rc-1', name: 'Carpinteria SB — Anacapa (sites 101-127 & group sites)' },
+        { id: 'rc-2', name: 'Carpinteria SB — San Miguel (sites 401-460)' },
+        { id: 'rc-3', name: 'Carpinteria SB — Santa Cruz (sites 201-244 & group sites)' },
+        { id: 'rc-4', name: 'Carpinteria SB — Santa Rosa (sites 301-380)' },
+      ];
+      const base = {
+        start_date: '2026-10-02', end_date: '2026-10-05',
+        flex_nights: null, flex_days: null, active: true, auto_cart: false,
+        manage_token: 'tok', campground_source: 'reservecalifornia',
+      };
+      export const node = (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <WatchCard
+            watch={{ ...base, id: 'w1', campground_id: 'rc-1',
+                     campground_name: 'Carpinteria SB — San Miguel (sites 401-460)',
+                     divisions: DIVS }}
+            stalledSources={new Set()} sessionExpired={false} />
+          <WatchCard
+            watch={{ ...base, id: 'w2', campground_id: 'r-9',
+                     campground_name: 'GULL LAKE CAMPGROUND', campground_source: 'ridb' }}
+            stalledSources={new Set()} sessionExpired={false} />
+        </div>
+      );`,
+    frame: 'max-w-3xl w-full mx-auto',
+  },
   'ch-filters-rv': {
     label: 'FilterPanel — Hookups inside Site type, Pad length its own always-visible control',
     // RESTRUCTURED 2026-08-15. Showers and pets are gone (both rec.gov-only in effect);
@@ -652,7 +695,7 @@ const PRESETS: Record<string, Preset> = {
       }
       export const node = (
         <div className="space-y-5">
-          <Demo initial={{ ...EMPTY_FILTERS, siteType: 'rv', rvLength: 32, electric: true }} />
+          <Demo initial={{ ...EMPTY_FILTERS, siteType: 'tent', rvLength: 32, electric: true }} />
           <Demo initial={{ ...EMPTY_FILTERS, rvLength: 28 }} />
         </div>
       );`,
@@ -1375,7 +1418,7 @@ const PRESETS: Record<string, Preset> = {
         const [range, setRange] = React.useState({ start: '2026-08-29', end: '2026-09-01' });
         const [nights, setNights] = React.useState(2);
         const [weekend, setWeekend] = React.useState(true);
-        const [filters, setFilters] = React.useState({ ...EMPTY_FILTERS, siteType: 'rv', rvLength: 32, pets: true });
+        const [filters, setFilters] = React.useState({ ...EMPTY_FILTERS, siteType: 'tent', rvLength: 32, electric: true });
         return (
           <div className="bg-ch-paper p-6 rounded-ch-card font-ch-body text-ch-ink">
             <H>DatePicker — Aug 29 → Sep 1, viewed from August (runs out)</H>

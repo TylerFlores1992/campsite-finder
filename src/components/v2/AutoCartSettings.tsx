@@ -284,6 +284,28 @@ export default function AutoCartSettings() {
         </a>
       )}
 
+      {/* BETA, and scoped to ReserveCalifornia ONLY.
+          Recreation.gov auto-cart has been carting live sites for weeks and is not in
+          testing; the ReserveCalifornia hold-and-hand-off path is, and it is the one a
+          user could be surprised by — it asks them to finish the booking themselves in
+          a webview at 08:00. Labelling the whole feature "Beta" would put a warning on
+          a paid product that mostly works, which is its own kind of untrue.
+
+          It sits beside the toggle rather than at the top of the card because this is
+          where someone decides to rely on it. */}
+      {state.connected && !state.sessionExpired && (
+        <p className="mt-3 flex flex-wrap items-center gap-2 rounded-ch-input border border-[#E7C98C] bg-ch-ochre-soft px-3.5 py-2.5 text-ch-fine leading-normal text-ch-ink-2">
+          <span className="rounded-full border border-[#E7C98C] bg-ch-card px-2 py-0.5 text-[11px] font-bold uppercase tracking-[.06em]">
+            Beta
+          </span>
+          <span className="min-w-0 flex-1">
+            ReserveCalifornia holds are still under testing. We&apos;ll hold the site and
+            hand it to you, but finish the booking yourself rather than assuming it is
+            done. Recreation.gov auto-cart is not affected.
+          </span>
+        </p>
+      )}
+
       {state.connected && !state.sessionExpired && (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-ch-input border border-ch-line px-3.5 py-3">
           <div className="min-w-0">

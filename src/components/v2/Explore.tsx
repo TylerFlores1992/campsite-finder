@@ -114,7 +114,11 @@ function decodeSearch(q: URLSearchParams): Partial<SearchState> {
     weekendsOnly: q.get("weekends") === "1",
     filters: {
       ...EMPTY_FILTERS,
-      siteType: type === "tent" || type === "rv" || type === "cabin" || type === "group" ? type : null,
+      // "rv" IS DELIBERATELY NOT ACCEPTED any more. The chip was removed on
+      // 2026-08-15, and a bookmarked ?type=rv would otherwise keep narrowing results
+      // through a control no longer on screen — the hidden-filter bug the pad-length
+      // control was already fixed for. An unknown type falls back to "All types".
+      siteType: type === "tent" || type === "cabin" || type === "group" ? type : null,
       rvLength: Number.isFinite(rv) && rv > 0 ? rv : null,
       electric: q.get("electric") === "1",
       // `showers` and `pets` are deliberately NOT read back. Both chips were removed

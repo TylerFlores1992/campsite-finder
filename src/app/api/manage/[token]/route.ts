@@ -29,6 +29,13 @@ interface WatchRow {
   auto_cart: boolean;
   muted_site_ids: string[];
   created_at: string;
+  /**
+   * Every campground this ONE watch covers (migration 070). Present only when there is
+   * more than one, so its presence is the test for "is this a park watch?" — the same
+   * contract /api/watches uses, deliberately, so the two screens cannot disagree about
+   * what a park watch looks like.
+   */
+  divisions?: Array<{ id: string; name: string }>;
 }
 
 async function loadWatch(watchId: string): Promise<WatchRow | null> {
@@ -43,7 +50,23 @@ async function loadWatch(watchId: string): Promise<WatchRow | null> {
       WHERE w.id = $1`,
     [watchId]
   );
-  return w ?? null;
+  if (!w) return null;
+
+  // The park's other divisions. Best-effort: this page is how a user pauses or deletes
+  // a watch from an emailed link, and it must not fail to load because a label could
+  // not be computed.
+  try {
+    const divisions = await query<{ id: string; name: string }>(
+      `SELECT c.id, c.name
+         FROM watch_campgrounds wc JOIN campgrounds c ON c.id = wc.campground_id
+        WHERE wc.watch_id = $1 ORDER BY c.name`,
+      [watchId],
+    );
+    if (divisions.length > 1) w.divisions = divisions;
+  } catch (err) {
+    console.error('[manage] divisions lookup failed:', (err as Error).message);
+  }
+  return w;
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
