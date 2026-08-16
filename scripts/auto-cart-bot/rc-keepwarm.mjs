@@ -668,6 +668,28 @@ async function maybeAutoLogin(ctx, page) {
     await reportSession(enough ? 'warm' : 'dead', enough
       ? 'signed in automatically before a hold'
       : `auto sign-in returned ok but the token is still short of the hold: ${r.reason}`);
+  } else if (r.sessionLive) {
+    // A LIVE SESSION IS NEVER REPORTED DEAD, WHATEVER THE COVERAGE SAYS.
+    //
+    // `attemptLogin` reaches its no-form exit for two opposite reasons, and only one of them
+    // is a fault: RC refused us, or RC is already signed in and shows no form because there
+    // is nothing to fill. `sessionLive` is that second case, and reporting it as `dead` is
+    // what rang the owner's phone at 07:33 on 2026-08-16 over a session that carted both
+    // holds seventeen minutes later.
+    //
+    // The severity matters more than the wording. `dead` fails the check, fires `holdAtRisk`,
+    // and prints `rc-login.bat` — which force-kills the Chromium the access token lives in.
+    // Following that advice destroys the very session the alarm is complaining about, and it
+    // is the third time this shape has sent somebody to the box for nothing.
+    //
+    // `warm`, because the session IS live and RC accepts it — with the shortfall stated
+    // rather than hidden, so the pre-flight still shows the risk without calling it an
+    // outage. The attempt is refunded for the same reason `provedNothing` is: no credential
+    // was submitted, so nothing was spent and the T−5 re-check should still get its turn.
+    autoLogin.spent -= 1;
+    log(`  … signed in, but coverage is short: ${r.reason}`);
+    log('    (no credential was submitted, so this does not count against the budget)');
+    await reportSession('warm', `signed in, but the token may not cover the hold: ${r.reason}`);
   } else {
     log(`  ✗ could not sign in: ${r.reason}`);
     log(`    ${autoLogin.spent} of ${AUTOLOGIN_MAX_ATTEMPTS} attempts used. `
