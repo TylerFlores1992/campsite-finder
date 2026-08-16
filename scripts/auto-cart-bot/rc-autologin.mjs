@@ -561,6 +561,42 @@ export async function attemptLogin(
         }
         await page.waitForTimeout(1000);
       }
+      // LIVE BUT SHORT IS NOT A FAILED SIGN-IN, AND CONFLATING THEM RANG THE PHONE ON
+      // 2026-08-16 AT 07:33 — twenty-seven minutes before a release that then carted both
+      // holds perfectly.
+      //
+      // Everything above this line is about a session that does not exist. This exit is also
+      // reached by one that DOES: `acceptable()` is liveness AND coverage, so a healthy
+      // session whose token is merely shorter than the deadline falls through the drop-and-
+      // re-mint, finds no form (RC shows none to a signed-in user), and lands here. It was
+      // then reported as `dead` with "auto sign-in failed", and the health check's remedy is
+      // `rc-login.bat` — which kills the Chromium the token lives in. **The advice would have
+      // destroyed a working session to fix a session that was working.**
+      //
+      // That morning the token had 40 minutes against a 46-minute requirement: six minutes
+      // short of a bound that already carries a 15-minute cart hold and a 5-minute margin.
+      // The cart fired at T+43s and the hold was claimed two minutes later, so the coverage
+      // rule was being conservative exactly as designed — and the REPORTING turned a
+      // conservative margin into an emergency.
+      //
+      // I called this the 2026-08-09 banner trap when it fired, and it is not: that one is a
+      // dead-looking session that was really alive, and its fix is the `acceptable()` poll
+      // directly above, which worked. This is the poll's own negative being described in
+      // words that belong to a different fault.
+      //
+      // NO BANNER ON THIS PATH, deliberately. `withBanner` folds in RC's own text, and to a
+      // signed-in user that text is "You have a reservation arriving on today's date" —
+      // evidence of success, printed as the explanation for a failure. That reading has cost
+      // three separate mornings.
+      const stillLive = await isLive();
+      if (stillLive === true) {
+        return {
+          ok: false,
+          sessionLive: true,
+          reason: 'signed in, but the token is shorter than this hold needs — and RC shows no '
+            + 'sign-in form to a signed-in user, so there was nothing to re-mint it with',
+        };
+      }
       return {
         ok: false,
         reason: await withBanner(link
