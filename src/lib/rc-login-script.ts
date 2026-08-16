@@ -320,7 +320,50 @@ ${captchaProbeSource()}
  * backslash would otherwise break the script, and a password containing `');` would change
  * what it does. This is the only place a credential appears in any source we generate, it is
  * generated per invocation, and it is never logged or persisted.
+ *
+ * ## THE CREDENTIALS ARE BOUND TO LOCALS BEFORE ANY CALL, AND THAT IS THE WHOLE POINT
+ *
+ * The first version was one line — `window.__chRcLogin("<email>", "<password>")` — and on
+ * 2026-08-16 it wrote a real user's ReserveCalifornia password into the production database
+ * in plaintext. Nothing mis-handled the secret; the ENGINE did. `__chRcLogin` was undefined
+ * (the bundle that defines it was not being served yet), WebKit raised
+ *
+ *     TypeError: window.__chRcLogin is not a function.
+ *     (In 'window.__chRcLogin("a@b.com", "hunter2")', 'window.__chRcLogin' is undefined)
+ *
+ * — a message that QUOTES THE SOURCE EXPRESSION — and the bundle's global `error` listener
+ * dutifully reported it. `scrub()` knew JWT shapes and sailed straight past it, exactly as it
+ * had sailed past an OAuth authorization code on 2026-08-09. Same lesson, second time:
+ * **don't produce a value you then have to filter.**
+ *
+ * So the values never appear inside a call expression. An engine quoting the source can only
+ * quote `window.__chRcLogin(e, p)` — identifiers, not secrets — whatever it decides to
+ * include. That property does not depend on any denylist, on `scrub()`, or on which engine
+ * is running, which is why it is the layer that matters. (`scrub()` also strips WebKit's
+ * source quote now; that is the second layer, and it is the one that would have failed
+ * silently if it were the only one.)
+ *
+ * ## It cannot throw at all
+ *
+ * The `typeof` guard turns the precise failure above into a NAMED report — `login-unavailable`,
+ * meaning "the bundle that defines the sign-in was not served" — instead of a raw TypeError
+ * that reaches the global handler. A stale cached bundle and a broken sign-in used to produce
+ * the same evidence, and the first is a deploy that has not landed yet while the second is a
+ * bug; a reader must be able to tell them apart at 08:00.
  */
 export function loginInvocation(email: string, password: string): string {
-  return `window.__chRcLogin(${JSON.stringify(email)}, ${JSON.stringify(password)});`;
+  return `(function () {
+  var e = ${JSON.stringify(email)}, p = ${JSON.stringify(password)};
+  function say(stage, detail) {
+    try { if (window.__camphawkRc) window.__camphawkRc.send(stage, detail || {}); } catch (x) {}
+  }
+  if (typeof window.__chRcLogin !== 'function') {
+    // The served bundle did not define it. Almost always a cached copy from before the
+    // deploy — say so, rather than letting a TypeError describe it.
+    say('login-unavailable', { reason: 'the sign-in script was not in the bundle this webview loaded' });
+    return;
+  }
+  try { window.__chRcLogin(e, p); }
+  catch (x) { say('login-threw', {}); }
+})();`;
 }
