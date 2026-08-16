@@ -749,6 +749,34 @@ by CI, not by a session** — neither lane ran `npm test` by hand; two `claude/*
 90 seconds apart and CI ran both. So "announce before running the suite" cannot fix it, because
 nobody ran the suite.
 
+### It happened AGAIN 20 minutes later, and the second one is the better example
+
+Re-running the failed job passed, which alone would have licensed "flake". It is not — the
+next commit failed the same way with a **different victim**:
+
+```
+not ok 228 - a requested hold whose release passed long ago is failed, not left silent
+  the whole point: this must not sit at `requested` forever
+  0 !== 1
+  worker/expire-holds.test.mts:83:10
+```
+
+Zero rows expired because the rows were gone. Timings again:
+
+| run | window |
+|---|---|
+| mine (PR) | 05:21:38 → 05:23:45, **failing assert at 05:22:46** |
+| **`master` push** | **05:21:36 → 05:24:18** |
+
+**The overlapping run was `master`** — the main lane merging `claude/rc-claim-flow` two
+seconds before my run started. That is the sharper case for two reasons: nobody thinks to
+serialize against a *merge*, and `expire-holds.test.mts` is a different suite from the one
+holding the sweep, so the blast radius is every suite using the sentinel, not just its owner.
+
+**Two occurrences, two different victim tests, two different colliding branches, inside 25
+minutes.** Both times the failure is a null/zero where a row should be, several statements
+from the delete that caused it.
+
 ### The fix belongs to the main lane (`worker/`)
 
 Options, in the order I'd rank them:
