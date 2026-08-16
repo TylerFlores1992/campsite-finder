@@ -290,6 +290,41 @@ export function tokenSecondsLeft(token) {
  * adjacent line, and `idx` — Okta Identity Engine's session cookie — is present in the
  * profile. Both facts contradicted the diagnosis being printed.)
  *
+ * ## AND THE CORRECTED CLEAR STILL DID NOT RENEW — BECAUSE A PLAIN LOAD IS NOT THE
+ *    BOOTSTRAP (measured 2026-08-15, and this is what the second stage is for)
+ *
+ * With the `okta-` store included in the clear, the reload was finally asking an honest
+ * question, and the answer was no — twice, an hour apart, the token coming back older:
+ *
+ *     20:08:53 token has 9m left (src=live) — renewing by reload
+ *     20:09:19   ✗ no fresher token after the reload (565s → 540s) — the previous token was put back
+ *
+ * **RC does not refuse to re-mint. Nothing was asking it to.** The same evening's log carries
+ * the discriminating pair, and both halves are reproduced:
+ *
+ *   NEGATIVE — a plain load, from a genuinely token-less profile, with Okta ALIVE, produces
+ *   nothing. Twice (18:46:50 and 22:22:37 `RC loaded and STAYING OPEN — token source: none`),
+ *   the first of them sitting dead through two twenty-minute checks.
+ *
+ *   POSITIVE — a CLICK on RC's own sign-in control re-mints a FULL-LIFETIME token with no
+ *   credential typed. Twice (19:18:38 and 22:26:05 `clicked a:has-text("Log in")`, each
+ *   answered ~19s later by `token now 59m`).
+ *
+ * Fifty-nine minutes is the discriminator that separates this from the 2026-08-11 confound:
+ * a restored stale copy carries its OLD expiry, which is exactly what the 540s line above
+ * shows. A fresh hour can only have been minted.
+ *
+ * The mechanism follows: with no token in storage the SPA renders signed-out and simply
+ * sits there — it issues no `/authorize` of its own. The sign-in control is what starts the
+ * authorization-code flow, Okta answers it from the live `idx` cookie without showing a
+ * form, and RC exchanges the code for a new hour. So the reload was necessary and never
+ * sufficient, and every "RC will not renew" reading was a question nobody asked.
+ *
+ * **Both stages therefore run, and the result says WHICH produced the token.** Keeping the
+ * reload stage is not sentiment: it is the standing measurement of whether the SDK's own
+ * bootstrap ever starts working, and collapsing the two into one verdict is how "we did X"
+ * and "X worked" became the same sentence twice already in this file.
+ *
  * ## The clear is destructive, so the failure path must put it back
  *
  * Dropping the token to force a bootstrap risks a session that had ten minutes left. Three
@@ -299,13 +334,22 @@ export function tokenSecondsLeft(token) {
  *   - **Restore the exact keys** we emptied and reload, so the app ends up signed in on the
  *     old token rather than sitting on a signed-out page.
  *
- * Returns `{ renewed, before, after, restored, skipped }` in seconds — a token that is both
- * NEW and further from expiry is the only thing counted as a renewal.
+ * ## NO CREDENTIAL IS EVER SUBMITTED HERE, AND THAT IS A PROPERTY, NOT A HABIT
+ *
+ * This module cannot sign in: it imports nothing from `rc-autologin.mjs`, and the click is
+ * INJECTED by the caller as a callback. That is what lets the schedule ration this on its
+ * own terms rather than borrowing the login's one-attempt-per-release budget — the ration
+ * that exists because repeated logins from this address cost twelve hours of IP block on
+ * 2026-08-06. A CAPTCHA lives on the password form, which this never reaches.
+ * `worker/rc-token-renew.test.mts` asserts the property rather than trusting it.
+ *
+ * Returns `{ renewed, stage, before, after, restored, cleared, skipped }` — seconds, and a
+ * token that is both NEW and further from expiry is the only thing counted as a renewal.
  */
 /**
  * Empty the two keys okta-auth-js decides from, plus our own captured copy.
  *
- * ONE DEFINITION, TWO CALLERS, and that is deliberate. `renewByReload` clears these to force
+ * ONE DEFINITION, TWO CALLERS, and that is deliberate. `renewSession` clears these to force
  * a bootstrap; `attemptLogin` clears them to force a signed-out state it can then sign into.
  * A second hand-rolled copy is how `renewByReload` came to delete `window.__camphawkRcToken`
  * and leave localStorage alone — which made it measure the renewal against the very token it
@@ -380,7 +424,7 @@ export async function restoreStoredToken(page, snapshot) {
   }, snapshot).catch(() => {});
 }
 
-export async function renewByReload(page, url, { oktaAlive = null } = {}) {
+export async function renewSession(page, url, { oktaAlive = null, clickSignIn = null } = {}) {
   const previous = (await readLiveToken(page)).token;
   const before = tokenSecondsLeft(previous);
 
@@ -388,19 +432,49 @@ export async function renewByReload(page, url, { oktaAlive = null } = {}) {
   // unknown would switch this off permanently the first time the probe errored — the
   // "unknown is not dead" rule, applied to the thing that acts rather than the report.
   if (oktaAlive === false) {
-    return { renewed: false, before, after: before, restored: false, cleared: [],
+    return { renewed: false, stage: 'skipped', before, after: before, restored: false, cleared: [],
       skipped: 'no Okta session to renew against' };
   }
 
   // WIDER THAN IT WAS, AND THE SNAPSHOT IS WHAT MAKES THAT SAFE. Clearing only RC's two
   // copies left okta-auth-js holding the same token in its own store, which is why every
   // renewal since this shipped measured a survivor rather than a re-mint.
+  //
+  // On a profile that already holds no token this takes nothing and restores nothing, so the
+  // signed-out case — the one that cost ninety dead minutes on 2026-08-15 — costs no risk at
+  // all. It is a pure click.
   const { snapshot, cleared } = await dropStoredToken(page);
 
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-  const { token } = await primeToken(page, { timeoutMs: 25_000, notToken: previous });
+  let { token } = await primeToken(page, { timeoutMs: 25_000, notToken: previous });
+  let stage = 'reload';
+
+  // STAGE TWO — THE ONE THAT HAS ACTUALLY BEEN OBSERVED TO WORK. See the header: a plain
+  // load leaves the SPA sitting signed-out and issuing no `/authorize`, so the reload alone
+  // has never re-minted anything. Clicking RC's own sign-in control starts the
+  // authorization-code flow, which Okta answers from the `idx` cookie with no form.
+  //
+  // Guarded on the reload having failed, so the cheaper path still wins when it can, and on
+  // the caller having supplied a click — this module deliberately cannot find that control
+  // itself, because owning a selector list here is one import away from owning a password
+  // field too.
+  if (clickSignIn && !isRenewal({ previous, next: token, before, after: tokenSecondsLeft(token) })) {
+    stage = 'authorize';
+    const clicked = await clickSignIn(page).catch(() => false);
+    if (!clicked) {
+      // A REAL AND DISTINCT OUTCOME, not a shrug. On 2026-08-15 18:22 the clear did not sign
+      // the SPA out — it went on rendering its signed-in banner — so no "Log in" anchor
+      // existed, a different control matched, and nothing was started. Naming that keeps it
+      // apart from "we asked and Okta said no", which needs a human and this does not.
+      stage = 'no-signin-control';
+    } else {
+      ({ token } = await primeToken(page, { timeoutMs: 30_000, notToken: previous }));
+    }
+  }
+
   const after = tokenSecondsLeft(token);
   const renewed = isRenewal({ previous, next: token, before, after });
+  if (!renewed && stage === 'authorize') stage = 'none';
 
   let restored = false;
   if (!renewed && Object.keys(snapshot).length) {
@@ -414,12 +488,25 @@ export async function renewByReload(page, url, { oktaAlive = null } = {}) {
     // tab on a logged-out page with a perfectly good token sitting beside it.
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
     restored = true;
+  } else if (!renewed && stage !== 'reload') {
+    // THE CLICK NAVIGATES, AND A FAILED ONE LANDS ON OKTA'S FORM. There was nothing to
+    // restore here — this is the signed-out case, where the clear took nothing — so the
+    // branch above does not run and without this the resident tab would be left parked on
+    // `signin.reservecalifornia.com`. It is headful and sits on somebody's desktop: a
+    // keep-warm displaying a login form invites exactly the hand sign-in that `rc-login.bat`
+    // exists to do properly, and every later `readLiveToken` would be reading the wrong page.
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
   }
 
   // `cleared` is the diagnostic that answers the next question. If a renewal still fails with
   // only the two RC keys listed here, the SDK's storage is somewhere else and the prefix
   // assumption is wrong — which is a fact worth having rather than another round of guessing.
-  return { renewed, before, after, restored, cleared, skipped: null };
+  //
+  // `stage` is the other one, and it is the reason both stages run rather than only the one
+  // that works: `reload` would mean the SDK's own bootstrap has started working and this can
+  // be simplified, `authorize` is the expected success, and `none` versus `no-signin-control`
+  // separates "Okta refused" from "we never got as far as asking".
+  return { renewed, stage, before, after, restored, cleared, skipped: null };
 }
 
 /**

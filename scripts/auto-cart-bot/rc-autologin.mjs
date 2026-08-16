@@ -207,6 +207,41 @@ async function findIn(page, selectors, timeoutMs = 15_000) {
 }
 
 /**
+ * Press RC's own sign-in control and wait for wherever it takes us.
+ *
+ * ONE DEFINITION, TWO CALLERS, and the second caller is why it moved out of `attemptLogin`.
+ * The renewal in `rc-token.mjs` needs exactly this act and nothing else around it: clicking
+ * here is what starts the authorization-code flow, which Okta answers from the live `idx`
+ * cookie **with no form and no credential** — the only path measured to re-mint a token
+ * (2026-08-15, twice, each producing a full 59-minute token).
+ *
+ * A second hand-rolled copy would have been the cheaper edit and is the mistake this repo
+ * keeps paying for: `content-rc.js` spent months telling users to click a cart icon while
+ * `rc-cart.mjs` did the right thing, because the two were copies. The selector list is
+ * already shared; the act should be too.
+ *
+ * Returns the `{ loc, sel }` that was pressed, or `null` when no control was found — which
+ * is a real outcome and not an error. On 2026-08-15 18:22 a clear failed to sign the SPA
+ * out, so RC went on rendering its signed-in header, no "Log in" anchor existed, and the
+ * flow was never started at all. That is a different fault from Okta refusing us and the
+ * callers are entitled to tell them apart.
+ *
+ * `rc-token.mjs` takes this as an INJECTED callback rather than importing it, so that module
+ * stays structurally incapable of signing in — see its header.
+ */
+export async function clickSignInControl(page, { timeoutMs = 10_000 } = {}) {
+  const link = await findIn(page, SIGNIN_LINK_SELECTORS, timeoutMs);
+  if (!link) return null;
+  await link.loc.click().catch(() => {});
+  // Best-effort: on the renewal path Okta may answer and bounce us back to RC before this
+  // ever matches, and that is the SUCCESS case — so a timeout here means nothing on its own
+  // and must never be read as a failure.
+  await page.waitForURL(/signin\.reservecalifornia\.com|\/signin/i, { timeout: 20_000 }).catch(() => {});
+  await page.waitForTimeout(1500);
+  return link;
+}
+
+/**
  * Tick "Keep me signed in" when present.
  *
  * The probe calls this load-bearing and it was missing here entirely. It does not extend
@@ -431,11 +466,8 @@ export async function attemptLogin(
 
     // Get to the Okta form. RC's sign-in is a link/button on its own header; going
     // straight at a guessed /Customers/SignIn path is how earlier attempts hit dead ends.
-    const link = await findIn(page, SIGNIN_LINK_SELECTORS, 10_000);
+    const link = await clickSignInControl(page);
     if (link) {
-      await link.loc.click().catch(() => {});
-      await page.waitForURL(/signin\.reservecalifornia\.com|\/signin/i, { timeout: 20_000 }).catch(() => {});
-      await page.waitForTimeout(1500);
       step(`clicked ${link.sel} → ${new URL(page.url()).host}`);
     } else {
       step('no sign-in link found — already on a sign-in page?');

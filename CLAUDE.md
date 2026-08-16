@@ -1058,6 +1058,57 @@ reviewed here because those are the main lane's files.
   warned about this in the same message that asked for the review, having hit it twice — and
   it still cost a build here, in a comment quoting the very key shape being fixed.
 
+### THE UI ROUND, 2026-08-15 evening — all three found by USING the app
+Three defects reported from production with screenshots, none reachable by reading the
+source, and all three the same family: the mechanism worked and the meaning was absent.
+- **LEO CARRILLO OFFERED NO MUTE LIST.** The picker was gated on `divisions.length <= 1`,
+  written when one submit meant one watch PER division. A park became ONE watch and the gate
+  outlived its reason, hiding the feature for EVERY multi-division park. It now lists every
+  checked division — safe because campsite ids are unique within a park — with each row
+  labelled by its part, since two of Leo Carrillo's three are both "Canyon Campground".
+  **`targets` is now ONE definition** read by the picker and the payload; they were briefly
+  two, and that disagreement WAS the bug.
+- **ONLY ONE PART OF A PARK WAS TICKED.** `pick()` ticked them all, exactly as its comment
+  said — and `pick()` sets `campgroundId`, which triggers the resolve effect, which reset the
+  selection to the representative a moment later and won every time. **A correct line, live
+  and inert, overwritten by a second writer** — the inert-fix shape inverted. Both writers go
+  through `defaultChosen` now, capped at `MAX_DIVISIONS_PER_WATCH` so a 70-division park does
+  not fail its first submit on a limit nobody chose.
+- **"SOME CAMPGROUNDS SHOW A CITY AND STATE AND OTHERS DO NOT."** Every call site gated the
+  label on the CITY, which is the rarer field: 26% of visible campgrounds have no city, only
+  3.6% have no state, and **all 859 ReserveAmerica rows are `{city: null, state: "NY"}`** — a
+  state we had and threw away. `placeLabel` takes the list from 74% to 96% labelled.
+  **`geo.hitLabel` was the only one of four call sites already correct**, so one feature held
+  two expressions for one idea and the broken one was what users read first.
+- **AND THE PLACE WAS THE PART THAT GOT TRUNCATED.** Explore's rail is a fixed 316px
+  (`--ch-rail`) and its row put name AND place in one truncating span, so a long name ate the
+  town — the half that distinguishes similar names. Name truncates on its own line now;
+  widening the rail would have fixed one breakpoint and restructured the page.
+
+### FILTERS: TWO WERE UNUSABLE ON THE DATA (2026-08-15)
+The owner tested Silver Lake, which has showers in life and not in our catalog. The
+measurement is worse than "sparse", and both removals are the SAME defect that had already
+removed `drinking water`:
+- **`showers` is recreation.gov ONLY** — 197 of 4,469 rec.gov rows and **zero** across all
+  seven other sources. Ticking it silently excluded every state-portal campground.
+- **`pets_allowed` is `true` for 100% of every non-rec.gov source** (882/882 ReserveAmerica,
+  478/478 Ohio, 392/392 RC). A DEFAULT, not a measurement.
+Both columns stay — JSON-LD publishes `petsAllowed` and the rec.gov showers ingest is real —
+they just cannot carry a filter.
+- **The three surviving filters were MEASURED to work**, which is the part worth keeping:
+  against 80 campgrounds near Big Sur, site type gave 56/52/4/16, pad length 49/24/7, and a
+  nonsense value returned 0 in both — that last is what proves the SQL clause is live rather
+  than merely present. Electric is genuinely multi-source (9 of 14).
+- **Hookups moved into Site type**, reversing a call recorded the same day. Left visible
+  rather than overwritten: that reasoning was sound and only its surroundings changed —
+  removing two chips left "Must have" holding one, and a one-item group is not a group.
+- **Pad length is its own always-visible control now, and that fixed a real bug.** Explore
+  sent `rvLength` only when `siteType === "rv"`, so a length set without also picking RV
+  showed as applied and was never transmitted. A filter that lied about being on.
+- **`worker/explore-filters.test.mts` derives its field list FROM `FilterValue`**, so adding
+  a filter without wiring it to the query fails. A hand-written list of three would pass for
+  ever against a fourth that does nothing — which is how the last one survived review.
+
 ### `npm run verify` GATES ON jsx-spacing NOW (2026-08-15)
 An HTML entity anywhere in a JSX text node makes SWC drop that node's leading whitespace, and
 this repo escapes entities everywhere (`react/no-unescaped-entities` pushes you there), so every
@@ -1382,6 +1433,134 @@ was "I proved nothing" — which is the banner trap being caught correctly, not 
   — check the keep-warm's report age before treating the two as the same event.
 - The health line reads *"no rehearsal has PASSED in 26h27m"*, which is accurate and easy to
   misread as a regression: nothing has ever passed, so there is no green to have lost.
+
+### THE RENEWAL QUESTION IS ANSWERED (2026-08-15 evening) — and the answer is "stop renewing"
+The corrected clear reached the box (`d72fb2e`) and produced the first honest reading. Read
+straight off `tail-log rc-keepwarm`, twice, an hour apart:
+```
+20:08:53 token has 9m left (src=live) — renewing by reload
+20:09:19   ✗ no fresher token after the reload (565s → 540s) — the previous token was put back
+20:09:19     cleared 3 storage key(s): accessToken, okta-original-uri-storage, ssoAccessToken
+21:08:36 token has 9m left (src=live) — renewing by reload
+21:09:02   ✗ no fresher token after the reload (553s → 528s) — the previous token was put back
+```
+- **`renewByReload` DOES NOT WORK, and this reading is finally entitled to say so.** The
+  clear now reaches the `okta-` namespace and names what it emptied, so the negative is real
+  rather than an artifact of clearing the wrong keys. The token still comes BACK 25s older,
+  so **a persisted copy survives all three keys** — not sessionStorage-vs-localStorage
+  guesswork, a fact forced by the measurement. Where it lives is still unknown; the
+  remaining candidates are IndexedDB, a cookie, or a key name nothing has looked for.
+- **THE `okta-` PREFIX ASSUMPTION WAS HALF RIGHT.** The sweep ran and found exactly ONE
+  `okta-` key — `okta-original-uri-storage`, which is a redirect breadcrumb, not a token
+  store. So okta-auth-js is **not** keeping tokens under `okta-` in this profile, and the
+  three-way prediction in the old handover ("more than 2 keys ⇒ honest negative") needs that
+  qualification: it listed three, but the third was not a token.
+- **RC ISSUES NO REFRESH TOKEN AT ALL** — the single most useful line in the log, and it
+  changes the shape of the problem:
+  ```
+  grant: {"hasRefreshToken":false,"expiresIn":3600,"scope":"openid profile email"}
+  ```
+  There is nothing to silently refresh WITH. Every "make the token renew itself" plan was
+  reaching for a mechanism RC does not hand out. Stop looking for one.
+- **BUT THE BOOTSTRAP RE-MINTS, WITH NO CREDENTIAL TYPED**, and that is the path forward:
+  ```
+  19:18:57  ✓ already signed in — RC re-authenticated before any form appeared,
+            so no sign-in was exercised — token now 59m, needs 21m (covered)
+  ```
+  **59 minutes is a FULL-LIFETIME token, which is what separates this from the 08-11
+  confound**: a restored stale copy would carry its old expiry (that is exactly what
+  20:09:19 shows — 540s). A fresh hour means RC minted a new one from the live Okta cookie.
+  The Okta session runs ~12h (`okta=ALIVE (exp 2026-08-16T10:09:03)` against a 22:09
+  reading), so within that window a bootstrap costs nothing and needs nobody.
+- **SO THE AUTOMATION ANSWER IS: DON'T RENEW THE TOKEN, RE-RUN THE BOOTSTRAP.** That is
+  `attemptLogin`, which already short-circuits into the line above when the Okta session is
+  alive. What is missing is only its SCHEDULE — today it fires at T−30 of a real release, so
+  between releases the token dies and stays dead (the `⚠ RC SESSION IS DEAD … okta=ALIVE`
+  lines, hours of them). Nothing is broken there; nothing is trying.
+- **`renewByReload` should NOT be deleted on this reading.** It is the instrument that
+  produced it, it now reports honestly either way, and its restore guard means a failed
+  attempt costs nothing. Retire it when a bootstrap-on-a-schedule is proven, not before.
+
+### WHY THE RELOAD FAILED: A PLAIN LOAD IS NOT THE BOOTSTRAP — THE CLICK IS (2026-08-15, later)
+The section above is right that the reload does not renew and right that the bootstrap does.
+It is wrong about **why**, and the correction is the whole fix. "RC will not renew" was never
+the finding available; **nothing was asking it to.**
+- **THE 2x2 IS COMPLETE, off one evening of `tail-log rc-keepwarm`, and every cell is
+  reproduced:**
+
+  | | token present, short | no token at all |
+  |---|---|---|
+  | **plain load** | no re-mint (4x: 18:18, 18:25, 20:08, 21:08) | no re-mint (2x: 18:46, 22:22) |
+  | **sign-in click** | not observed to work (1x, see below) | **59m token (2x: 19:18, 22:26)** |
+
+  The negative controls are the valuable half and they were sitting in the log all along:
+  `RC loaded and STAYING OPEN — token source: none` at 18:46:50, then **thirty minutes and
+  two twenty-minute checks** with `okta session STILL ALIVE` and nothing appearing. A plain
+  navigation, from a genuinely token-less profile, against a live Okta session, produces
+  nothing. Then `19:18:38 clicked a:has-text("Log in")` → `19:18:57 token now 59m`.
+- **MECHANISM, and it follows from the pair rather than preceding it:** with no token in
+  storage RC's SPA renders signed-out and simply sits there — it issues no `/authorize` of
+  its own. The sign-in control starts the authorization-code flow; Okta answers it from the
+  `idx` cookie without showing a form; RC exchanges the code for a fresh hour. `renewByReload`
+  cleared correctly and then did the one thing that cannot work. **The clear was necessary
+  and never sufficient.**
+- **`hasRefreshToken:false` stands and is unaffected.** There is nothing to *silently
+  refresh* with, and there never was. What re-mints is a full authorization-code round trip
+  that costs no credential because Okta already knows the device. Do not read this entry as
+  reopening the refresh-token question.
+- **SO THE FIX IS TWO STAGES AND A SCHEDULE, NOT A NEW MECHANISM.**
+  `renewByReload` is now **`renewSession`** (renamed, because a name describing half of what
+  a function does is what this file keeps paying for) and runs the reload, then — only if the
+  reload produced nothing — the click. **The result says WHICH stage minted the token**:
+  `reload` would mean the SDK's own bootstrap has started working and this can be simplified
+  back down, `authorize` is the expected success, and `no-signin-control` is separated from
+  `none` because they need different responses.
+- **THE ONE OBSERVED CLICK FAILURE IS THE KNOWN WEAK CELL, and it is the near-expiry one.**
+  At 18:22 `attemptLogin` dropped a live-but-short token, and the SPA went on rendering its
+  signed-in banner — so no `a:has-text("Log in")` anchor existed, `button:has-text("Login")`
+  matched something else, and nothing was started. That is the surviving-persisted-copy
+  finding showing up from the other end. **Expect the near-expiry path to fail sometimes;**
+  the token then expires, the profile becomes token-less, and the reliable cell takes it on
+  the next pass. Cost is minutes, not the night.
+- **`worker/renewal-schedule.test.mts` decides WHEN** (`scripts/auto-cart-bot/renewal-schedule.mjs`),
+  and the case it adds is the one the old loop refused outright:
+  - The old condition was `left != null && left > 0 && left < RENEW_BEFORE_S`, i.e. act on a
+    nearly-dead token and **never** on an already-dead one. Defensible clause by clause and
+    wrong as a whole: a signed-out profile is where a re-mint is both **free** (nothing to
+    clear, nothing to restore) and worth most. **It cost ninety dead minutes in one evening**
+    — 18:47→19:18 and 21:29→22:25 — both repaired only because somebody happened to queue a
+    hold, since `maybeAutoLogin` was the sole caller.
+  - Rationed on **its own terms, not the login's**: a floor (5m) honoured whatever changed, a
+    gap (10m) for repeating an unchanged state, a backoff (30m after 3 consecutive failures)
+    that **never becomes a stop** — a gate that switches itself off for good is the
+    `.camphawk-ready` bug. A re-mint is not a login: no credential is submitted, no form is
+    filled, and the CAPTCHA that stops `attemptLogin` lives on the password form this never
+    reaches. It therefore does NOT spend the one-attempt-per-release budget.
+  - **The ration lives at MODULE scope.** `warmResident` reopens its browser every time the
+    hold runner wants the profile — ten times in four hours on 08-15 — so state inside that
+    loop would bound nothing at all.
+  - **Okta is probed only when there is a token to lose.** `/api/v1/sessions/me` refreshes
+    Okta's own idle timer, so asking on every attempt extends the very window whose length
+    we are trying to learn. The probe guards the DESTRUCTIVE clear; with no token there is
+    nothing to clear, so it guards nothing and is skipped. The attempt is self-diagnosing —
+    a dead Okta session lands on the form and reports `stage: 'none'`.
+- **`maybeAutoLogin` IS DELIBERATELY UNTOUCHED.** It remains the release-critical path with
+  its own budget at T−30. This is a background improvement; if it were also the release
+  repair, one bad night of renewals would spend the ration that protects an 08:00 cart.
+- **The dedupe keys on a STATE, not on the sentence** — every stand-down reason carries a
+  minute count that changes on every 60s ask, so `autoLoginSkip`'s direct string comparison
+  would collapse nothing and print 1,440 lines a day. It also had to MOVE into the tested
+  module: as six lines in `rc-keepwarm.mjs` it was pinned by a regex on its own shape, and a
+  mutation reinstating the volatile comparison **from inside the body** matched that shape
+  and passed. A source scan cannot see through a function it can only pattern-match.
+- **27 mutations, each asserting the mutation applied.** Two are worth keeping: the one above,
+  and `clickSignInControl`'s extraction tripping `rc-autologin.test.mts`'s **pinned export
+  list** — which is the "an existing guard pinned it by name" rule working as designed, and
+  the list is pinned precisely so adding to it is a decision with a written reason.
+- **BOT-SIDE, so none of this is live until the box updates.** `autocart.bot_version` is a
+  hint; `git-status` through `bot_commands` is what answers "did it land?". **Nothing here is
+  proven until the log shows `✓ renewed by authorize` on the box** — the evidence above is
+  two hand-triggered reproductions of the mechanism, not one run of the schedule.
 
 ### THE RENEWAL WAS MEASURING ITSELF (2026-08-12) — the keep-warm question is REOPENED
 `renewByReload` has been reporting "RC will not renew" since it shipped, and **it was never
@@ -3326,7 +3505,19 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs current to 2026-08-15 (second pass).** The later session resolved the renewal question at
+**Docs current to 2026-08-15 (third pass).** The renewal question is now answered TWICE OVER,
+and the second answer corrects the first: `renewByReload` fails **because a plain page load is
+not the bootstrap** — RC's SPA, holding no token, issues no `/authorize` of its own, and the
+CLICK on its sign-in control is what starts the flow Okta answers from the `idx` cookie. The
+2x2 is complete (plain load: nothing, 6 times; click: a 59-minute token, twice). Shipped:
+`renewSession` (two stages, reporting which minted the token), `renewal-schedule.mjs` (which
+also acts on an ALREADY-DEAD token — the refusal that cost ninety dead minutes in one evening),
+and 27 mutation-verified guards. `maybeAutoLogin` is deliberately untouched.
+**IT HAS NEVER RUN ON THE MINI-PC — `✓ renewed by authorize` in `tail-log rc-keepwarm` is the
+only thing that will prove it, and until then this is a mechanism reproduced by hand, not a
+working schedule.**
+
+*(Previous pass.)* The earlier session resolved the renewal question at
 the code level — **`renewByReload` was clearing RC's OWN two token keys and not okta-auth-js's
 `okta-` store**, so the SDK handed the same token back and nothing was ever asked of RC. That
 also **CONFOUNDS the 08-11 "RC re-minted with no credential typed" evidence**, since the

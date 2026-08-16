@@ -69,13 +69,14 @@ import {
   profileRequested,
 } from './profile-lock.mjs';
 import {
-  installTokenCapture, readLiveToken, primeToken, renewByReload, tokenSecondsLeft,
+  installTokenCapture, readLiveToken, primeToken, renewSession, tokenSecondsLeft,
   dropStoredToken,
   readAuthFacts, oktaSessionAlive, authCookieSummary,
 } from './rc-token.mjs';
-import { hasCredentials, attemptLogin } from './rc-autologin.mjs';
+import { hasCredentials, attemptLogin, clickSignInControl } from './rc-autologin.mjs';
 import { shouldRehearse, rehearsalSlot } from './rehearsal.mjs';
 import { requiredTokenSeconds } from './session-coverage.mjs';
+import { planRenewal, recordRenewal, newRenewalState, makeSkipLogger } from './renewal-schedule.mjs';
 // The same two clock helpers the update guard decides with. Both are pure and both already
 // get the Pacific / zone-less-wall-clock handling right, which is the part that has been
 // got wrong before — a second implementation here would be a second chance to get it wrong.
@@ -538,6 +539,35 @@ function autoLoginSkip(reason) {
 
 /** Per-release sign-in budget. Reset when the release we are watching changes. */
 let autoLogin = { release: null, spent: 0, lastAt: 0 };
+
+/**
+ * The renewal ration, and it lives at MODULE scope on purpose.
+ *
+ * `warmResident` reopens its browser constantly — it stands down whenever the hold runner
+ * wants the Chromium profile, and on 2026-08-15 that happened ten times in four hours. State
+ * held inside the reopen loop would reset on every one of those, so the floor and the backoff
+ * would bound nothing at all and a dead Okta session would be re-asked every few minutes from
+ * an address that has been IP-blocked for less. `lastCheck`/`lastExpiryPoll` are reset per
+ * open deliberately (see their comment); this is the opposite case and the distinction is the
+ * whole point of separating them.
+ */
+let renewal = newRenewalState();
+
+/**
+ * Same collapse as `autoLoginSkip` above: the loop asks every 60s and would otherwise print
+ * 1,440 lines a day, which hides the answer as thoroughly as printing none.
+ *
+ * TWO DIFFERENCES FROM ITS NEIGHBOUR, and both were paid for. It compares the STATE and not
+ * the sentence — `autoLoginSkip`'s reasons are constant strings, while every reason here
+ * carries a minute count that changes on every ask, so the same comparison would collapse
+ * nothing at all. And it lives in `renewal-schedule.mjs` rather than here, because as six
+ * lines in this file it was guarded by a regex on its own shape and a mutation that
+ * reinstated the volatile comparison from inside the body matched that shape and passed.
+ */
+const renewalSkip = makeSkipLogger((reason) => log(`   renewal stood down: ${reason}`));
+
+/** `null` seconds is "no token", which must not render as the string "null". */
+const secsText = (v) => (v == null ? 'none' : `${v}s`);
 
 async function maybeAutoLogin(ctx, page) {
   if (!hasCredentials()) {
@@ -1211,8 +1241,6 @@ async function warmResident() {
       // in fact we just did, on the one dashboard that decides whether to wake someone.
       let lastCheck = 0;
       let lastExpiryPoll = 0;
-      /** The token we last tried to renew. Retrying the SAME one buys nothing — see below. */
-      let lastRenewAttemptFor = null;
       for (;;) {
         // The watchdog's heartbeat. Every path through this loop must reach here, so a
         // stall anywhere below it — a Playwright call that never settles, a page that
@@ -1238,7 +1266,7 @@ async function warmResident() {
         // app's own OIDC exchange against the persistent "Keep me signed in" cookie —
         // correct client_id, correct redirect_uri, correct PKCE verifier, none of which we
         // would have to guess — and never shows a CAPTCHA, because the challenge lives on
-        // the password form, not on a cookie exchange. See renewByReload.
+        // the password form, not on a cookie exchange. See renewSession.
         if (Date.now() - lastExpiryPoll >= EXPIRY_POLL_MS) {
           lastExpiryPoll = Date.now();
           // Before anything else: is a hold about to need a session we do not have?
@@ -1255,40 +1283,69 @@ async function warmResident() {
           }
           const { token, source } = await readLiveToken(page).catch(() => ({ token: null, source: 'none' }));
           const left = tokenSecondsLeft(token);
-          // `left === null` (no token, or one that will not decode) is NOT a reason to
-          // reload on a loop — that would hammer RC every minute on a signed-out page.
-          // The 20-minute check reports it; a human decides.
+          // WHEN IS `planRenewal`'S JOB, AND IT NOW SAYS YES TO THE CASE THIS REFUSED.
           //
-          // ONE ATTEMPT PER TOKEN, and never on an expired one. The first version retried
-          // every minute for as long as the token was under the threshold, which on
-          // 2026-08-08 meant SIXTEEN reloads between 21:24 and 21:40 — the last five
-          // against a token that had already expired, where there is nothing left to
-          // renew. That is the request storm the null-guard above was written to avoid,
-          // arriving through the other door: a residential address whose WAF has 403'd us
-          // before, reloading a site once a minute to no purpose.
-          if (left != null && left > 0 && left < RENEW_BEFORE_S && token !== lastRenewAttemptFor) {
-            lastRenewAttemptFor = token;
-            log(`token has ${Math.round(left / 60)}m left (src=${source}) — renewing by reload`);
-            // ASKED FIRST, BECAUSE THE RENEWAL IS DESTRUCTIVE. It clears the stored token to
-            // force the app's bootstrap to re-authorize, and with no Okta session behind it
-            // that trades a token with minutes left for nothing at all. A probe that errors
-            // returns null, which is "we could not tell" and does NOT refuse — refusing on
-            // unknown would switch renewal off for good the first time Okta hiccuped.
-            const okta = await oktaSessionAlive(ctx).catch(() => null);
-            const r = await renewByReload(page, RC_HOME, { oktaAlive: okta?.alive ?? null }).catch((e) => {
+          // The condition here used to be `left != null && left > 0 && left < RENEW_BEFORE_S`,
+          // i.e. act on a token that is nearly out and NEVER on one that is already gone. The
+          // reasoning was sound and the consequence was not: a signed-out profile is precisely
+          // where a re-mint is both free (nothing to clear, nothing to restore) and most
+          // needed. On 2026-08-15 that refusal cost ninety dead minutes in one evening, twice
+          // over, with `okta=ALIVE` printed on every line — see renewal-schedule.mjs.
+          //
+          // The other half of the old condition — one attempt per token, because sixteen
+          // reloads in sixteen minutes on 2026-08-08 is a request storm from an address whose
+          // WAF has 403'd us — is kept, and is now a floor plus a gap plus a backoff rather
+          // than a single equality that could not pace the signed-out case at all.
+          const plan = planRenewal({
+            token, leftS: left, now: Date.now(), state: renewal, renewBeforeS: RENEW_BEFORE_S,
+          });
+          if (!plan.go) {
+            renewalSkip(plan.key, plan.reason);
+          } else {
+            log(`renewing the session — ${plan.reason} (src=${source})`);
+            // ASK OKTA ONLY WHEN THERE IS SOMETHING TO LOSE.
+            //
+            // This probe guards a DESTRUCTIVE act: the clear trades a token that may have had
+            // ten minutes left for nothing if no Okta session is behind it. With no token in
+            // the app there is nothing to trade, so the probe protects nothing and is skipped
+            // — and skipping it matters, because `/api/v1/sessions/me` REFRESHES Okta's own
+            // idle timer. Asking on every attempt would extend the very window we are trying
+            // to measure the length of, which is the one thing that would make a working
+            // schedule impossible to distinguish from a lucky one.
+            //
+            // The attempt is self-diagnosing anyway: a dead Okta session lands us on the form
+            // and comes back `stage: 'none'`, which is a reading obtained without touching
+            // the timer. An errored probe returns null — "we could not tell" — and does NOT
+            // refuse, or one hiccup would switch renewal off for good.
+            const okta = token ? await oktaSessionAlive(ctx).catch(() => null) : null;
+            const r = await renewSession(page, RC_HOME, {
+              oktaAlive: okta?.alive ?? null,
+              // INJECTED, so `rc-token.mjs` stays incapable of signing in — see its header.
+              // Only whether a control was pressed crosses the boundary, never a locator.
+              clickSignIn: (p) => clickSignInControl(p).then((l) => l != null),
+            }).catch((e) => {
               log(`  renew failed: ${e.message}`);
               return null;
             });
+            // RECORDED BEFORE ANYTHING ELSE CAN THROW. `checkAndReport` below is wrapped but
+            // the logging is not, and an attempt that is made and not recorded is an attempt
+            // the floor cannot see — which turns the ration into no ration at all.
+            renewal = recordRenewal(renewal, { token, now: Date.now(), renewed: r?.renewed === true });
             if (r?.skipped) {
               log(`  · skipped: ${r.skipped} — the token is untouched`);
             } else if (r) {
               log(r.renewed
-                ? `  ✓ renewed: ${Math.round((r.before ?? 0) / 60)}m → ${Math.round((r.after ?? 0) / 60)}m`
+                // WHICH STAGE, ALWAYS. `reload` would mean the SDK's own bootstrap has started
+                // working and this can be simplified back down; `authorize` is the expected
+                // success. Printing "renewed" without saying how is how a mechanism gets
+                // credited for something a different mechanism did.
+                ? `  ✓ renewed by ${r.stage}: ${secsText(r.before)} → ${secsText(r.after)}`
                 // NOT "the Okta cookie may be gone" — that was printed for three days with
                 // `okta=ALIVE` on the very next line, and the real cause was this function
                 // reading its own token back. Say what happened and leave the diagnosis to
                 // the fields that actually carry it.
-                : `  ✗ no fresher token after the reload (${r.before}s → ${r.after}s)`
+                : `  ✗ no fresher token (${secsText(r.before)} → ${secsText(r.after)}), `
+                  + `got as far as: ${r.stage}`
                   + `${r.restored ? ' — the previous token was put back' : ''}`);
               // WHICH KEYS WERE ACTUALLY EMPTIED. Until 2026-08-15 the clear covered RC's two
               // copies and not okta-auth-js's own store, so the SDK handed the same token
