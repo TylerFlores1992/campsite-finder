@@ -1389,6 +1389,72 @@ never scheduled, so it only ever ran when somebody already suspected a problem.
 - **THAT RE-AUTHENTICATION IS ITSELF A LOOSE END — and pulling it found a real bug.**
   See "THE RENEWAL WAS MEASURING ITSELF" immediately below.
 
+### THE RENEWAL RUNS ON THE BOX — CONFIRMED 2026-08-16 01:53 UTC
+Read straight off `tail-log rc-keepwarm`, from a genuinely token-less profile:
+```
+01:52:18 renewing the session — the app holds no usable token (src=none)
+01:53:05   ✓ renewed by authorize: none → 3580s
+01:53:19    renewal stood down: the token has 59m left
+```
+**`none → 3580s` is the strongest form this evidence could take.** The `before` was NOT a
+token, so "the previous token was put back" is not available as an explanation — a restored
+stale copy carries its OLD expiry, which is exactly what the failures below show. A full
+3580s is a fresh mint, by the CLICK stage, with no credential typed. The ration then works in
+the other direction fourteen seconds later. **The reliable cell of the 2x2 is proven in
+production.**
+
+#### THE NEAR-EXPIRY CELL FAILS, AND THE DOCUMENTED READING OF `none` IS WRONG
+Twice within fifteen minutes, on the same box, the same night:
+```
+02:43:31 renewing the session — the token has 9m left (src=live)
+02:44:29   ✗ no fresher token (554s → none), got as far as: none — the previous token was put back
+02:44:29     cleared 3 storage key(s): accessToken, okta-original-uri-storage, ssoAccessToken
+02:54:40 renewing the session — the token has -2m left (src=live)
+02:56:27   ✗ no fresher token (-115s → none), got as far as: none
+02:56:27     cleared 2 storage key(s): accessToken, ssoAccessToken
+```
+- **`got as far as: none` WITH `okta=ALIVE` ON THE ADJACENT LINE.** The handover said "`none`
+  repeatedly is a dead Okta session, and that is the honest negative the design wants". **That
+  reading is falsified.** Okta was alive for both attempts (`exp 2026-08-16T13:53:31` printed
+  in the same second). So `none` means the click found no control OR the round trip produced
+  nothing — it does NOT license a conclusion about the Okta session. Do not read it as one.
+- **The second attempt ran on an ALREADY-DEAD token (`-2m`) and still failed**, which is the
+  cell the schedule was extended to cover. So the extension fires correctly and the underlying
+  re-mint still does not happen from this state.
+- **The two clears emptied DIFFERENT key sets** — 3 keys including `okta-original-uri-storage`,
+  then 2. That is the `okta-` sweep finding something once and nothing the next time, and it is
+  a fact worth having rather than a tidy story: whatever the SPA rebuilds between attempts is
+  not stable.
+- **The token was NOT restored by the renewal.** `03:01:33 renewal stood down: the token has
+  59m left` is the rehearsal's doing, not the schedule's — see immediately below. Attributing
+  that recovery to the renewal would be the third time this file credited a repair to the
+  wrong mechanism.
+
+### THE LOGIN REHEARSAL PASSED — FOR THE FIRST TIME IN ITS LIFE (2026-08-16 03:00 UTC)
+```
+03:00:33 ── nightly login rehearsal: proving the bot can still sign itself in ──
+03:00:34 Session before the test: DEAD — RC rejected the token (401)
+03:00:34   cleared 0 key(s): (none)
+03:00:40     → clicked a:has-text("Log in") → signin.reservecalifornia.com
+03:00:40     → Okta skipped the email step — it remembers this account
+03:00:44 ✓ the bot can still sign itself in — tomorrow morning has a session behind it
+```
+**The entry below says the instrument has produced exactly one verdict in its life and that
+verdict was "I proved nothing". It has produced a second, and it is a PASS.**
+`autocart.rc_login` reads *"the bot signed in unattended 6m ago"*.
+- **It fired at 20:00 PT, its own hour**, with the release 12h out — comfortably past the 6h
+  gate — so all four gates were satisfiable and it ran. That is the first time the schedule
+  has been observed working end to end.
+- **It was NOT a banner-trap false pass.** `Session before the test: DEAD — RC rejected the
+  token (401)` is RC's own answer, and the clear reported `0 key(s)` because the profile was
+  already empty — so a credential really was submitted and the sign-in really was exercised.
+  That is precisely the distinction `provedNothing` exists to draw.
+- **`Okta skipped the email step — it remembers this account`** is the `DT` device cookie
+  earning its keep, and the reason the "never lose the profile" rule is not superstition.
+- **AND IT IS WHAT RESTORED THE SESSION**, not the renewal — the 59m token at 03:01:33 comes
+  from this login. Two repairs ran within twenty minutes of each other and only one worked;
+  crediting the wrong one is how a broken mechanism keeps its reputation.
+
 ### THE LOGIN REHEARSAL HAS NEVER PASSED, AND IT DID NOT FIRE ON 08-12
 Observed 2026-08-12 22:29 PT, with three holds queued for the next morning.
 `rc_login_rehearsal` holds **one row**: `ran_at` 2026-08-11 20:02 PT, **`ok` NULL**,
@@ -3505,7 +3571,19 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs current to 2026-08-15 (third pass).** The renewal question is now answered TWICE OVER,
+**Docs current to 2026-08-16.** **THE RENEWAL RUNS ON THE BOX** — `✓ renewed by authorize:
+none → 3580s` at 01:53:05 UTC, from a genuinely token-less profile, no credential typed. The
+reliable cell of the 2x2 is proven in production, and the `⚠ RC SESSION IS DEAD … okta=ALIVE`
+runs it was built to end are gone. **The near-expiry cell still fails** (twice, `554s → none`
+and `-115s → none`) — and the previously documented reading of that failure is FALSIFIED:
+`got as far as: none` was printed with `okta=ALIVE` on the adjacent line both times, so it does
+NOT mean a dead Okta session. **And the login rehearsal PASSED for the first time in its life**
+at 20:00 PT, which is what restored the session that night — not the renewal. Two repairs ran
+twenty minutes apart and only one worked; the entries above say which.
+**Two test holds are queued for 2026-08-16 08:00 PT** (South Carlsbad #38/#39, units
+45722/45723) — exactly `RC_HOLD_CAPACITY`, so the ceiling is exercised at its boundary.
+
+*(Previous pass.)* **Docs current to 2026-08-15 (third pass).** The renewal question is now answered TWICE OVER,
 and the second answer corrects the first: `renewByReload` fails **because a plain page load is
 not the bootstrap** — RC's SPA, holding no token, issues no `/authorize` of its own, and the
 CLICK on its sign-in control is what starts the flow Okta answers from the `idx` cookie. The
@@ -3513,9 +3591,9 @@ CLICK on its sign-in control is what starts the flow Okta answers from the `idx`
 `renewSession` (two stages, reporting which minted the token), `renewal-schedule.mjs` (which
 also acts on an ALREADY-DEAD token — the refusal that cost ninety dead minutes in one evening),
 and 27 mutation-verified guards. `maybeAutoLogin` is deliberately untouched.
-**IT HAS NEVER RUN ON THE MINI-PC — `✓ renewed by authorize` in `tail-log rc-keepwarm` is the
-only thing that will prove it, and until then this is a mechanism reproduced by hand, not a
-working schedule.**
+~~**IT HAS NEVER RUN ON THE MINI-PC**~~ — **IT HAS, and it worked: `✓ renewed by authorize:
+none → 3580s` at 2026-08-16 01:53:05 UTC.** See "THE RENEWAL RUNS ON THE BOX" above for the
+reading and for the near-expiry cell that still fails.
 
 *(Previous pass.)* The earlier session resolved the renewal question at
 the code level — **`renewByReload` was clearing RC's OWN two token keys and not okta-auth-js's
