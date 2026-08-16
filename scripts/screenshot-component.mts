@@ -289,6 +289,7 @@ const PRESETS: Record<string, Preset> = {
         // are spinners and outcomes. Freeze it here so the gate can be eyeballed.
         window.fetch = async () => ({ ok: true, status: 200, json: async () => ({
           status: 'carted', unitId: '42558', unitName: 'Hook Up (E ) Campsite #L108',
+          campgroundName: 'Leo Carrillo SP — Canyon Campground',
           arrivalDate: '2026-09-04', nights: 1,
           bookingUrl: 'https://www.reservecalifornia.com/park/665/539',
         }) });

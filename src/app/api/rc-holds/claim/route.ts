@@ -39,16 +39,21 @@ export const dynamic = 'force-dynamic';
  * out of a park list while the site sat free. Route it through the shared helper so this
  * link can never again be less specific than the alert that led here.
  */
-async function bookingUrlFor(campgroundId: string): Promise<string> {
-  const [c] = await query<{ reservations_url: string | null; source: string | null }>(
-    `SELECT reservations_url, source FROM campgrounds WHERE id = $1`,
+async function parkFor(campgroundId: string): Promise<{ url: string; name: string | null }> {
+  // ONE QUERY, TWO FACTS. The name comes from the same row as the URL deliberately: they
+  // must describe the SAME division or the screen tells the user to verify against the
+  // wrong thing, which is worse than not naming it at all.
+  const [c] = await query<{ reservations_url: string | null; source: string | null; name: string | null }>(
+    `SELECT reservations_url, source, name FROM campgrounds WHERE id = $1`,
     [campgroundId],
   ).catch(() => []);
-  return (
-    bookingLink({ source: c?.source, reservationsUrl: c?.reservations_url, campgroundId }) ??
-    c?.reservations_url ??
-    'https://www.reservecalifornia.com/'
-  );
+  return {
+    url:
+      bookingLink({ source: c?.source, reservationsUrl: c?.reservations_url, campgroundId }) ??
+      c?.reservations_url ??
+      'https://www.reservecalifornia.com/',
+    name: c?.name ?? null,
+  };
 }
 
 async function authorise(holdId: string, token: string) {
@@ -86,6 +91,8 @@ export async function GET(req: NextRequest) {
     hold.claim_started_at != null &&
     Date.now() - new Date(hold.claim_started_at).getTime() > 30_000;
 
+  const park = await parkFor(hold.campground_id);
+
   return NextResponse.json({
     status: hold.status,
     stuck,
@@ -98,7 +105,19 @@ export async function GET(req: NextRequest) {
     unitName: hold.unit_name,
     arrivalDate: hold.arrival_date,
     nights: hold.nights,
-    bookingUrl: await bookingUrlFor(hold.campground_id),
+    // WHICH PARK, AND WHICH DIVISION OF IT. The card could name the SITE and the dates and
+    // nothing else, so a user landing on ReserveCalifornia had nothing to check the page
+    // against. Reported on 2026-08-16: "says site A012 but took me to 35-102 — there are
+    // two sets of north end sites and we landed on the wrong one."
+    //
+    // The URL was right in that instance (a hold records the division that actually had the
+    // opening, not the watch's representative one — see loadWatches' CROSS JOIN LATERAL).
+    // But a screen that gives the user no way to VERIFY that is one they cannot trust at
+    // 08:00, and a park with several similarly-named divisions is exactly where the doubt
+    // is reasonable. Since migration 070 one watch can span divisions, so the name is the
+    // only thing that distinguishes them.
+    campgroundName: park.name,
+    bookingUrl: park.url,
   });
 }
 
