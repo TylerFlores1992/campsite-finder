@@ -219,6 +219,19 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     // form shows and what is recorded against the hold cannot disagree — the rule that made
     // the release gate read `token captured` rather than a checkbox the user ticked.
     if (LOGIN_STAGES.has(r.stage)) setLoginStage(r.stage);
+    // THE SIGN-IN NEVER RAN. Distinct from "it ran and RC said no", which is `failed` and
+    // carries RC's own words. This one is ours: the webview loaded a bundle with no sign-in
+    // in it — in practice a cached copy from before a deploy, which is why the remedy the
+    // user is offered is "try again" and not "check your password". Before this stage
+    // existed the screen simply sat there, which is what the user saw on 2026-08-16.
+    if (r.stage === 'login-unavailable' || r.stage === 'login-threw') {
+      setRcCheck('unconfirmed');
+      setLoginStage(null);
+      setLoginError(
+        'We could not start the sign-in. Close this and tap it again — if it happens twice, '
+        + 'sign in on ReserveCalifornia yourself and come back.',
+      );
+    }
     // THE CART LANDED. Until now the screen said "tap the cart icon at the top", which is an
     // instruction to go and navigate a page we just put them on. We know the moment it
     // succeeds, so we can offer the one control that finishes the job instead.

@@ -15,6 +15,7 @@ import {
   loginScript, loginInvocation,
   SIGNIN_TEXTS, EMAIL_SELECTORS, PASSWORD_SELECTORS, ERROR_SELECTORS,
 } from '../src/lib/rc-login-script.js';
+import { buildPrecartScript } from '../src/lib/rc-precart-script.js';
 
 test('the emitted source parses', () => {
   // A bare `new vm.Script` is the cheapest possible proof, and the one thing no amount of
@@ -40,10 +41,85 @@ test('the credentials are JSON-encoded at the call site', () => {
 
   const ctx: Record<string, unknown> = {};
   vm.createContext(ctx);
-  vm.runInContext(`window = {}; window.__chRcLogin = (e, p) => ({ e, p });`, ctx);
-  const got = vm.runInContext(call, ctx) as { e: string; p: string };
+  // Captured by side effect, because the invocation is an IIFE that returns nothing — see
+  // `loginInvocation`'s header for why it has to be one.
+  vm.runInContext(`window = {}; window.__chRcLogin = (e, p) => { window.got = { e, p }; };`, ctx);
+  vm.runInContext(call, ctx);
+  const got = (ctx.window as { got: { e: string; p: string } }).got;
   assert.equal(got.p, evil, 'the password must survive encoding byte for byte');
   assert.equal(got.e, 'user@example.com');
+});
+
+/**
+ * THE LEAK OF 2026-08-16, GUARDED AT ITS MECHANISM.
+ *
+ * A user's real ReserveCalifornia password reached the production database because WebKit
+ * quotes the failing SOURCE EXPRESSION in a TypeError, and the expression was
+ * `window.__chRcLogin("<email>", "<password>")`. Nothing mishandled the secret — the engine
+ * published it, and the bundle's global error listener reported it.
+ *
+ * This asserts the property that makes that impossible regardless of engine or scrubber: no
+ * credential literal may sit inside a call expression. It is checked by EXECUTION as well as
+ * by shape, because the value has to still arrive intact.
+ */
+test('no credential is inside a call expression — an engine quoting the source cannot leak one', () => {
+  const call = loginInvocation('user@example.com', 'hunter2!');
+
+  // Every `(` … `)` that follows an identifier. The credentials must appear in NONE of them.
+  const callArgs = [...call.matchAll(/[\w.$]+\(([^()]*)\)/g)].map((m) => m[1]);
+  assert.ok(callArgs.length > 0, 'the invocation must actually call something');
+  for (const args of callArgs) {
+    assert.ok(!args.includes('hunter2!'), `a call expression carries the password: ${args}`);
+    assert.ok(!args.includes('user@example.com'), `a call expression carries the email: ${args}`);
+  }
+  // …and specifically the one that failed.
+  assert.match(call, /__chRcLogin\(\s*\w+\s*,\s*\w+\s*\)/,
+    'the sign-in must be called with identifiers, never with literals');
+});
+
+test('a missing sign-in script is a named report, not a thrown TypeError', () => {
+  const call = loginInvocation('user@example.com', 'hunter2!');
+  const ctx: Record<string, unknown> = {};
+  vm.createContext(ctx);
+  // The exact 2026-08-16 state: the reporter is present, the sign-in is not.
+  vm.runInContext(
+    `window = {}; window.said = []; window.__camphawkRc = { send: (s, d) => window.said.push([s, d]) };`,
+    ctx,
+  );
+  assert.doesNotThrow(() => vm.runInContext(call, ctx),
+    'an absent __chRcLogin must not throw — a TypeError is what carried the password');
+
+  const said = (ctx.window as { said: [string, unknown][] }).said;
+  // Spread into a HOST array: `said` is built in the vm realm, so its prototype is a
+  // different `Array` and a strict deep-equal fails on two identical-looking lists.
+  assert.deepEqual([...said].map((s) => s[0]), ['login-unavailable'],
+    'the failure must NAME itself; silence and a TypeError were the same evidence');
+  assert.ok(!JSON.stringify(said).includes('hunter2!'), 'the report must not carry the password');
+});
+
+test('ClaimFlow surfaces login-unavailable — the screen must not just sit there', () => {
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  assert.match(src, /login-unavailable/,
+    'the stage the invocation emits must be handled, or it is a silent dead end');
+  assert.match(src, /login-threw/);
+});
+
+test("scrub() drops WebKit's source quote, which is the second layer", () => {
+  // The regex lives in the served bundle as source lines; run the real thing rather than a
+  // copy of it — a test asserting against a copy asserts the copy.
+  const bundle = buildPrecartScript();
+  const ctx: Record<string, unknown> = {};
+  vm.createContext(ctx);
+  vm.runInContext(
+    `${bundle.slice(bundle.indexOf('function scrub'), bundle.indexOf('function href'))}
+     out = scrub("TypeError: window.__chRcLogin is not a function. "
+       + "(In 'window.__chRcLogin(\\"a@b.com\\", \\"hunter2!\\")', 'window.__chRcLogin' is undefined)");`,
+    ctx,
+  );
+  const out = String(ctx.out);
+  assert.ok(!out.includes('hunter2!'), `scrub left the password in: ${out}`);
+  assert.ok(!out.includes('a@b.com'), `scrub left the email in: ${out}`);
+  assert.match(out, /is not a function/, 'the diagnosis must survive — only the quote goes');
 });
 
 test('the result never carries the credentials back', () => {

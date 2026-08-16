@@ -98,8 +98,25 @@ export function reporter(): string {
     '  } catch (e) { bridge = null; }',
     '  var n = 0;',
     '  // Belt and braces — see the route header. Also caps length: RC error bodies are HTML.',
+    // DROP WEBKIT'S SOURCE QUOTE BEFORE ANYTHING ELSE.
+    //
+    // Safari formats a TypeError as `X is not a function. (In 'SOURCE', 'X' is undefined)` —
+    // and SOURCE is the failing expression, verbatim. On 2026-08-16 that expression was the
+    // sign-in invocation, so a user's real ReserveCalifornia password was reported through
+    // this function and stored in `client_reports`. This regex knew JWT shapes and went
+    // straight past it, exactly as it went past an OAuth authorization code on 2026-08-09.
+    //
+    // The real fix is upstream — `loginInvocation` binds credentials to locals so no call
+    // expression can contain one (see its header). This is the second layer, and it is here
+    // because the first layer only protects the one call site anybody thought about: ANY
+    // future expression that touches a secret gets quoted the same way, and the leak would
+    // again look like an ordinary error message.
+    //
+    // The half that carries the diagnosis ("X is not a function") is kept. The source quote
+    // never carried any, which is why dropping it costs nothing.
     '  function scrub(s) {',
     '    return String(s == null ? "" : s)',
+    '      .replace(/\\s*\\(In \'[\\s\\S]*$/, "")',
     '      .replace(/eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]*/g, "<token>")',
     '      .slice(0, 300);',
     '  }',
