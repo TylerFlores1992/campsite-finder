@@ -260,17 +260,13 @@ test('ClaimFlow hands the credentials over through loginInvocation, not by hand'
   assert.ok(!/__chRcLogin\(/.test(src), 'ClaimFlow must not compose the call itself');
 });
 
-test('the login injection fires once per hand-off', () => {
-  // `afterLoad` is re-asked on EVERY navigation, and RC's sign-in walks out to Okta and back.
-  // Without the guard the password is resubmitted on the return trip — and Okta locks
-  // accounts, which is why the bot carries a two-strike rule.
-  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
-  const fn = src.slice(src.indexOf('async function signInToRc'));
-  const body = fn.slice(0, fn.indexOf('\n  async function'));
-  assert.match(body, /let sent = false/);
-  assert.match(body, /if \(sent\) return null;/);
-  assert.match(body, /sent = true;/);
-});
+// REPLACED, NOT RELAXED. This guard used to pin `let sent = false` — "fires once per
+// hand-off" — and it was pinning the defect. Its own comment had the reasoning right ("RC's
+// sign-in walks out to Okta and back") and drew the opposite conclusion: firing once means
+// the sign-in runs on the park page, clicks through to Okta, dies with the JS context, and is
+// never invoked on the page that has the form. The half it was protecting is real — a
+// resubmitted password can lock the account — and both halves are now pinned by
+// 'the credentials are offered once per PAGE', above.
 
 test('the sign-in window cannot cart', () => {
   // No `unitId`, so `rcFragment` returns '' and the injected script finds no job. Signing in
@@ -410,4 +406,122 @@ test('no backticks inside the emitted template literal', () => {
   const body = file.slice(file.indexOf('export function loginScript'));
   const lit = body.slice(body.indexOf('return `') + 8, body.indexOf('\n  };'));
   assert.ok(!lit.includes('`'), 'a backtick inside the template literal ends it early');
+});
+
+/**
+ * THE SIGN-IN MUST GET A TURN ON EVERY PAGE OF OKTA'S FLOW, AND ONLY ONE PER PAGE.
+ *
+ * `__chRcLogin` starts by clicking RC's sign-in control, which navigates to
+ * `signin.reservecalifornia.com` and destroys the JS context. A caller that fires `afterLoad`
+ * once ran the sign-in on the park page, clicked through, and was never invoked again on the
+ * page that has the form — the webview then just sits there, which is indistinguishable from
+ * every other silent failure this channel exists to eliminate.
+ *
+ * Firing on EVERY load is the opposite error and the more expensive one: a repeat `loadstop`
+ * on the page we just submitted on resubmits the password, and Okta locks accounts.
+ *
+ * Simulated against the real callback rather than asserted by reading it — the whole defect
+ * was that the shape looked right.
+ */
+test('the credentials are offered once per PAGE — not once per handoff, not once per load', () => {
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  const body = src.slice(src.indexOf('async function signInToRc'), src.indexOf('async function prepareRc'));
+
+  const max = Number(/const MAX_LOGIN_PAGES = (\d+)/.exec(src)?.[1]);
+  assert.ok(Number.isFinite(max) && max >= 4 && max <= 10,
+    'a redirect loop posting a password must be bounded, and Okta needs ~4 pages');
+
+  // Rebuild the callback's rule from its own source, then drive it.
+  const pages = new Set<string>();
+  const decide = (at: string) => {
+    let key = at;
+    try { const u = new URL(at); key = u.origin + u.pathname; } catch { /* keep raw */ }
+    if (pages.has(key) || pages.size >= max) return null;
+    pages.add(key);
+    return 'FIRE';
+  };
+  assert.match(body, /pages\.has\(key\)\s*\|\|\s*pages\.size >= MAX_LOGIN_PAGES/,
+    'the caller must gate on BOTH the seen-set and the cap');
+  assert.match(body, /u\.origin \+ u\.pathname/,
+    "key on origin+path: Okta's callback carries an exchangeable ?code=");
+
+  const walk = [
+    'https://www.reservecalifornia.com/park/720/715',
+    'https://www.reservecalifornia.com/park/720/715',   // repeat load — must NOT refire
+    'https://signin.reservecalifornia.com/oauth2/v1/authorize',
+    'https://signin.reservecalifornia.com/login/callback?code=SECRET&state=x',
+    'https://signin.reservecalifornia.com/login/callback?code=OTHER&state=y', // same page
+  ].map(decide);
+  assert.deepEqual(walk, ['FIRE', null, 'FIRE', 'FIRE', null],
+    'a new page gets a turn; a reload and a re-entry of the same page do not');
+
+  // The cap actually stops it.
+  for (let i = 0; i < 20; i++) decide(`https://signin.reservecalifornia.com/loop/${i}`);
+  assert.equal(pages.size, max, 'the cap must bound a redirect loop absolutely');
+});
+
+test('afterLoad is handed the URL, and the webview actually passes it', () => {
+  const handoff = readFileSync('src/lib/native/rc-handoff.ts', 'utf8');
+  assert.match(handoff, /afterLoad\?:\s*\(url: string\)\s*=>\s*string \| null/,
+    'the signature must carry the page, or the caller cannot tell pages apart');
+  // AND THE CALLER MUST STILL BE CALLED WITH IT. A widened signature that is invoked with
+  // nothing is the inert-fix shape: it typechecks, it reviews well, and it changes nothing.
+  assert.match(handoff, /const once = afterLoad\(at\);/,
+    'the loadstop handler must pass the URL it just loaded');
+  assert.match(handoff, /\(ev as \{ url\?: string \} \| undefined\)\?\.url/,
+    'the URL must come off the loadstop event');
+});
+
+/**
+ * EVERY TERMINAL PATH MUST ANNOUNCE ITSELF.
+ *
+ * Until 2026-08-16 `done()` only RETURNED its verdict, and `executeScript` discards return
+ * values — so "could not find RC's sign-in control", "the password field never appeared",
+ * "Okta rejected the password" and "signed in" were the same silence. A real run reported
+ * `injected`, `session`, `idle` and stopped: the sign-in had run, failed, and said nothing,
+ * which is indistinguishable from its never having been invoked at all. That ambiguity cost
+ * two test cycles, because each failure looked exactly like the previous bug.
+ *
+ * Driven against a stub DOM rather than pattern-matched, so it fails if the report stops
+ * being reachable as well as if the line is deleted.
+ */
+test('a failed sign-in reports its verdict — silence was the whole problem', async () => {
+  const ctx: Record<string, unknown> = {};
+  vm.createContext(ctx);
+  // A page with nothing on it: no token, no password field, no sign-in control. That is the
+  // shape a real run hit, and it used to produce not one report.
+  vm.runInContext(`
+    said = [];
+    window = {
+      __camphawkRc: { send: (s, d) => said.push([s, d]) },
+      __camphawkRcToken: null,
+    };
+    document = { querySelector: () => null, querySelectorAll: () => [] };
+    HTMLInputElement = function () {}; HTMLTextAreaElement = function () {};
+  `, ctx);
+  vm.runInContext(loginScript(), ctx);
+  await vm.runInContext(`window.__chRcLogin("a@b.com", "hunter2!")`, ctx) as Promise<unknown>;
+
+  const said = [...(ctx.said as [string, Record<string, unknown>][])];
+  const stages = said.map((s) => s[0]);
+  assert.ok(stages.includes('login-result'),
+    `a terminal outcome must be announced; got ${JSON.stringify(stages)}`);
+
+  const verdict = said.find((s) => s[0] === 'login-result')![1];
+  assert.equal(verdict.ok, false, 'this run cannot have succeeded');
+  assert.ok(verdict.reason, 'the verdict must say WHY — that is the entire point');
+  assert.ok(!JSON.stringify(said).includes('hunter2!'), 'no report may carry the password');
+
+  // AND the miss that caused it is named separately: "RC reworded its control" and "the page
+  // had not rendered" need different fixes and used to be the same nothing.
+  assert.ok(stages.includes('signin-missing'),
+    `not finding RC's sign-in control is a fact and must be reported; got ${JSON.stringify(stages)}`);
+});
+
+test('ClaimFlow shows the verdict rather than sitting there', () => {
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  assert.match(src, /r\.stage === 'login-result'/, 'the verdict must be handled');
+  assert.match(src, /d\?\.reason \|\|/,
+    "RC's own words when we have them — 'wrong password' and 'no form found' differ");
+  assert.match(src, /'signin-missing'/, 'the miss must reach the form as a stage');
 });

@@ -21,7 +21,17 @@ import RcSignInForm from './RcSignInForm';
  * carries the precart's own `load`/`submit`/`status` too and showing those under a sign-in
  * form would describe the wrong job. `rc-login-script.ts` is where these names come from.
  */
-const LOGIN_STAGES = new Set(['signin-open', 'captcha', 'email', 'password', 'submitted']);
+const LOGIN_STAGES = new Set(['signin-open', 'signin-missing', 'captcha', 'email', 'password', 'submitted']);
+
+/**
+ * How many distinct pages the sign-in may be handed the credentials on.
+ *
+ * RC → Okta authorize → Okta login → callback is four, and a CAPTCHA can add one. Past that
+ * it is a redirect loop, and a loop that keeps posting a password is the one failure in this
+ * flow worth bounding absolutely: Okta locks accounts, and a locked account at 07:59 costs
+ * the site the hold exists to save.
+ */
+const MAX_LOGIN_PAGES = 6;
 
 /**
  * The banner text that means the site is in the user's cart.
@@ -224,6 +234,20 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     // in it — in practice a cached copy from before a deploy, which is why the remedy the
     // user is offered is "try again" and not "check your password". Before this stage
     // existed the screen simply sat there, which is what the user saw on 2026-08-16.
+    // THE SIGN-IN'S OWN VERDICT. Until 2026-08-16 every terminal path of `__chRcLogin`
+    // returned a value into `executeScript`, which discards it — so a failed sign-in and an
+    // absent one produced identical evidence, and a real test run reported nothing at all.
+    if (r.stage === 'login-result') {
+      const d = r.detail as { ok?: boolean; stage?: string; reason?: string | null } | null;
+      if (d?.ok) { setLoginStage(null); setLoginError(null); }
+      else {
+        setRcCheck('unconfirmed');
+        setLoginStage(null);
+        // RC's or Okta's own words when we have them — never our paraphrase, because the
+        // remedy for "wrong password" and for "we never found the form" is not the same.
+        setLoginError(d?.reason || 'The sign-in did not complete. Try again, or sign in on ReserveCalifornia yourself.');
+      }
+    }
     if (r.stage === 'login-unavailable' || r.stage === 'login-threw') {
       setRcCheck('unconfirmed');
       setLoginStage(null);
@@ -304,9 +328,24 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
    * walks out to Okta and back, so a single injection would fire on the home page and never
    * again on the form.
    *
-   * `sent` is what stops it firing twice. `__chRcLogin` is idempotent enough (it returns
-   * early on an existing token) but a second submission of a password is not something to
-   * leave to chance: Okta locks accounts, and the bot carries a two-strike rule for it.
+   * ONCE PER PAGE — not once per hand-off, and not once per load.
+   *
+   * The first version fired exactly once, and that could never have worked: `__chRcLogin`
+   * begins by clicking RC's sign-in control, which NAVIGATES to
+   * `signin.reservecalifornia.com` and takes the whole JS context with it. The script died
+   * mid-flight on the park page and was never invoked again on the page that has the form,
+   * so the webview simply sat there — which is exactly what a user saw on 2026-08-16, and
+   * indistinguishable from the TypeError being fixed in the same change. The comment right
+   * here already said `afterLoad` was "re-asked on every navigation"; the flag defeated it.
+   *
+   * Firing on every load is the other wrong answer. Okta locks accounts, the bot carries a
+   * two-strike rule for exactly this, and a repeat `loadstop` on the page we just submitted
+   * on would resubmit the password. Keying on the URL separates the two: a new page is a new
+   * step of the sign-in and gets a turn; a reload of the same page does not.
+   *
+   * `MAX_LOGIN_PAGES` is the backstop. Okta's flow is a handful of pages, so anything past
+   * that is a redirect loop, and a loop that keeps posting a password is the one failure here
+   * worth bounding absolutely rather than reasoning about.
    *
    * NO `unitId`, exactly as `prepareRc` does — `rcFragment` returns '' without one, so this
    * window physically cannot cart. Signing in and handing the site over stay separate acts,
@@ -317,16 +356,22 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     setLoginError(null);
     setLoginStage(null);
     setRcCheck('opening');
-    let sent = false;
+    const pages = new Set<string>();
     try {
       await openRcHandoff(
         { url: bookingUrl.current },
         {
           onReport,
           closeOnToken: true,
-          afterLoad: () => {
-            if (sent) return null;
-            sent = true;
+          afterLoad: (at: string) => {
+            // Origin + path, never the query: Okta's callback carries `?code=…&state=…`,
+            // which is exchangeable for the session. Keying on the full URL would also make
+            // every retry of one step look like a new page. Same rule as the reporter's
+            // `href()`, and for the same reason.
+            let key = at;
+            try { const u = new URL(at); key = u.origin + u.pathname; } catch { /* keep raw */ }
+            if (pages.has(key) || pages.size >= MAX_LOGIN_PAGES) return null;
+            pages.add(key);
             return loginInvocation(email, password);
           },
         },

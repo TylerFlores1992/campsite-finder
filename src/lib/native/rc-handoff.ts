@@ -285,7 +285,7 @@ const IAB_OPTIONS = [
 async function injectableWebView(): Promise<null | {
   open: (
     url: string, code: string, onReport?: (r: RcReport) => void, closeOnToken?: boolean,
-    afterLoad?: () => string | null,
+    afterLoad?: (url: string) => string | null,
   ) => Promise<void>;
 }> {
   if (!isNativeShell()) return null;
@@ -297,7 +297,7 @@ async function injectableWebView(): Promise<null | {
   return {
     async open(
       url: string, code: string, onReport?: (r: RcReport) => void, closeOnToken = false,
-      afterLoad?: () => string | null,
+      afterLoad?: (url: string) => string | null,
     ) {
       const ref = iab.open(url, '_blank', IAB_OPTIONS) as {
         addEventListener: (e: string, cb: (ev?: unknown) => void) => void;
@@ -344,8 +344,12 @@ async function injectableWebView(): Promise<null | {
       //
       // Fires again on every navigation, which is intended: RC's adopt path reloads, and a
       // re-injected reporter re-announces without re-installing (see the route).
-      ref.addEventListener('loadstop', () => {
+      ref.addEventListener('loadstop', (ev?: unknown) => {
         ref.executeScript({ code });
+        // WHICH PAGE THIS IS. The plugin puts it on the event; both platforms send it. It is
+        // handed to `afterLoad` because a sign-in walks across several pages and the caller
+        // has to be able to tell them apart — see the note below.
+        const at = String((ev as { url?: string } | undefined)?.url ?? '');
         // A SECOND, ONE-OFF INJECTION — this is where a credential goes, and the reason it is
         // separate from `code`.
         //
@@ -362,8 +366,16 @@ async function injectableWebView(): Promise<null | {
         // Re-evaluated on EVERY `loadstop`, which is intended. RC's sign-in walks through
         // Okta and back, and the caller decides on each pass whether there is still anything
         // to do; returning null is how it says no.
+        //
+        // THE URL IS PASSED BECAUSE "EVERY LOADSTOP" AND "EVERY PAGE" ARE NOT THE SAME THING.
+        // A caller holding a credential must not resubmit it on a repeat load of the page it
+        // just submitted on — Okta locks accounts — but it MUST get a turn on the next page,
+        // because the sign-in control navigates to `signin.reservecalifornia.com` and takes
+        // the whole JS context with it. Without this the injected sign-in ran on the park
+        // page, clicked through to Okta, and was never invoked again on the form; the caller
+        // had no way to tell those two cases apart, so it had to pick one and be wrong.
         if (afterLoad) {
-          const once = afterLoad();
+          const once = afterLoad(at);
           if (once) ref.executeScript({ code: once });
         }
       });
@@ -390,8 +402,11 @@ export async function openRcHandoff(
      * the caller can hand one over on the pass that needs it and `null` on every other.
      * Ignored entirely without an injectable webview, which is correct: there is no
      * injection there, so a caller must never assume its login ran.
+     *
+     * Receives the URL that just finished loading, so a caller can act once per PAGE rather
+     * than once per hand-off or once per load. See the call site for why nothing weaker works.
      */
-    afterLoad?: () => string | null;
+    afterLoad?: (url: string) => string | null;
   },
 ): Promise<'injected' | 'in-app' | 'browser'> {
   const url = rcHandoffUrl(h);

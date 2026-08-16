@@ -252,6 +252,22 @@ ${captchaProbeSource()}
     var done = function (ok, stage, reason) {
       // THE CREDENTIALS LEAVE MEMORY HERE, and the result never carries them.
       email = null; password = null;
+      // AND THE VERDICT IS ANNOUNCED, which it was not until 2026-08-16.
+      //
+      // Every terminal path returned this object and nothing else. executeScript discards
+      // the return value, so "could not find RC's sign-in control", "the password field never
+      // appeared", "Okta rejected the password" and "signed in" were the SAME SILENCE — the
+      // exact family this whole report channel exists to end, reappearing inside the one
+      // function it was built for. A real test run reported injected, session, idle and
+      // stopped: the sign-in had run, failed, and said nothing, which is indistinguishable
+      // from its never having been invoked.
+      //
+      // The progress stages (email, password, submitted) were reported all along, so the
+      // omission was specifically the ANSWER.
+      //
+      // NO BACKTICKS ANYWHERE IN THIS FUNCTION'S COMMENTS. It lives inside a template
+      // literal, so one ends the string and the parse error surfaces somewhere unrelated.
+      chSay('login-result', { ok: !!ok, stage: stage, reason: reason ? String(reason).slice(0, 160) : null });
       return { ok: ok, stage: stage, reason: reason || null };
     };
     return (async function () {
@@ -265,6 +281,14 @@ ${captchaProbeSource()}
         if (!pw) {
           var link = chSignInControl();
           if (link) { link.click(); chSay('signin-open', {}); }
+          // NOT FINDING IT IS A FACT, AND IT WAS SILENT. On the park page RC renders its own
+          // sign-in control in the header; if the match misses, everything downstream waits
+          // 15s for a form that will never come and the user watches a calendar. Report the
+          // MISS and how many candidates were on the page, so "RC reworded it" and "the page
+          // had not rendered yet" can be told apart — 0 candidates means the DOM was empty.
+          //
+          // Never the candidates' text: RC's header carries the signed-in user's own name.
+          else chSay('signin-missing', { candidates: document.querySelectorAll('a, button').length });
         }
 
         // A challenge can appear before the form. The human is here; let them clear it.
