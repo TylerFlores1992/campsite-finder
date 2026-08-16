@@ -356,6 +356,10 @@ ceiling everything just gets slower. That gauge is the one to read after adding 
 
 ## Handover — open items after 2026-08-15
 
+> **SUPERSEDED — every item below is now closed. See "Handover — 2026-08-16" at the END of
+> this file for current state.** Kept because the reasoning for each is still worth reading,
+> and because a handover deleted once resolved leaves no record that it was ever open.
+
 Everything above is merged (PR #45) and live. What is NOT done:
 
 1. **`site_type` is inert in the poller** (finding 1). This is the "new watch filters"
@@ -629,3 +633,54 @@ silently dropping the inventory half would have read as "gap closed".
 `CLAUDE.md` is the main lane's file under `docs/LANES.md`. This edit is one paragraph, made
 because the owner asked for it directly, and is called out in the PR so the main lane sees
 it rather than meeting it in a conflict.
+
+---
+
+# Handover — 2026-08-16
+
+**Branch state: nothing outstanding.** `claude/side-holds-dismiss` merged as PR #70 and is
+deleted; the side lane holds no open branch, no open PR, and no uncommitted work. The three
+open PRs on the repo (#51, #66, #69) are all the MAIN lane's — RC renewal and Feature E
+docs. Do not touch them.
+
+## The 2026-08-15 handover is fully closed
+
+All five of its items, verified mechanically rather than read off `CLAUDE.md`:
+
+| item | state |
+|---|---|
+| `site_type` inert in the poller | **Closed by the main lane.** The picker is gone from New watch; `NewWatch.tsx:318` now carries the comment recording why. The panel stays on Explore, where search really does resolve it. |
+| `verify.yml` races itself | **Closed.** `concurrency.group` is `verify-${{ github.head_ref \|\| github.ref_name }}`, so a branch's push run and its PR run share a group and cancel. |
+| dead screenshot presets | **Closed this session** — see §18. Six deleted, all 35 remaining specifiers checked. |
+| PR #56 park watches | **Merged**, migration 070. |
+| `jsx-spacing` not in `verify` | **Closed.** `npm run verify` is `typecheck && jsx-spacing && test && build`. |
+
+## What a fresh side-lane session should know
+
+**Read `docs/LANES.md` first.** The parts that bite: never work on `master` (a hook
+refuses it, and the override is an incident tool, not the merge path); merges go through a
+PR; and `npm test` hits the **production DB**, so it is serialized between lanes — as are
+`rc-test-hold.mts`, anything touching the mini-PC, and `sms-link-test.mts --send`.
+
+**The side lane does not write `CLAUDE.md`, `docs/CONTEXT.md`, `docs/SETUP.md` or
+`docs/NEXT-SESSION.md`.** Findings go in this file; the main lane folds them in. §19 is the
+one exception in this file's history and it was made because the owner asked directly.
+
+**Migrations: the side lane's block is 070+, and 070 is taken.** Default to creating none.
+
+## Two things left for someone else, both named in-file
+
+1. **`docs/CONTEXT.md` ~1465 is stale** and I deliberately did not half-repair it — it names
+   `src/components/AvailabilityCalendar.tsx` (deleted; now `v2/AvailabilityGrid.tsx`) and the
+   `avail-usedirect` preset (deleted in §18). Main lane's file. Reasoning in §18.
+2. **A real "no thanks" for `offered`/`requested` holds.** §17 explains why the remove
+   control deliberately stops at `released`: there is no server-side decline, so a button on
+   those two would hide the row while the bot carted the site anyway. Doing it properly means
+   a decline path that also frees the capacity seat an `offered` row occupies — `offered`
+   counts toward `RC_HOLD_CAPACITY`, which is **2**. Hold-lifecycle work, main lane.
+
+## Standing constraint, unchanged
+
+**Do not advertise park watches.** `watch_campgrounds` is still 0 rows in prod and no park
+watch has ever run a poller cycle. The display work in §13 makes an existing one legible; it
+does not promote the feature, and neither should any copy written next.
