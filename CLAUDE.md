@@ -2630,9 +2630,48 @@ Two holds carted at 08:00 were still `carted` at **09:40**, with `last_attempt_n
   still try. The claim screen no longer says *"so we released the site"* — it says the site
   is back on the open market, which is true whichever way it ended.
 
+#### ANSWERED 2026-08-15: THE CAP IS PER CART, AND THE CEILING IS OURS
+`rc-probe.mjs --cart-cap` ran on the box and the four steps are decisive:
+```
+1. unit 43793 → a FRESH cart      → in cart: YES, holds 1, key 68928f9e…
+2. unit 43794 → the SAME cart     → in cart: YES, holds 2, key 68928f9e…
+3. unit 43795 → the same cart     → in cart: no, holds 0
+   RC said: Your request violates the 'Maximum Reservations in Cart'
+            restriction. The maximum number of reservations allowed in the cart is '2'.
+4. unit 43795 → a FRESH cart      → in cart: YES, holds 1, key f572383a…
+```
+- **STEP 3 IS WHAT MAKES THIS AN ANSWER.** The control was refused **in RC's own words**, so
+  step 4 succeeding is a real second cart and not an artifact of a probe that was never
+  actually at the limit. Without that refusal the run would have been `INCONCLUSIVE`, which
+  the script's own instructions say must never be rounded to a verdict.
+- **Two carts live at once, one session, one account.** `68928f9e…` and `f572383a…`. So
+  `RC_SITES_PER_CART = 2` is RC's and real; **`RC_MAX_CARTS = 1` was never RC's at all.** The
+  hold runner reuses one cart key — `localStorage["shoppingCartKey"]`, passed as
+  `existing || NO_CART` — and simply need not.
+- **The data model already supports the fix.** `rc_hold_requests.cart_key` is per HOLD. The
+  runner has to stop reading the browser's pointer and let each hold mint its own cart.
+- **RAISE `RC_MAX_CARTS` TO 2, NOT TO UNLIMITED.** The probe's own closing line: *"NOT yet
+  proven: how many carts a session may hold. This showed two."* That is the same discipline
+  that kept it at 1 while it was unmeasured, and the reason this entry exists at all.
+- **The retry case gets harder, and it was flagged before this ran.** A hold that carted but
+  whose read-back failed stays `requested`; a retry into a NEW cart will not find the old
+  entry. It must check both candidate keys, the way `rc-probe` already does.
+- **DO NOT quote this run's login verdict.** Step 2 printed *"Already signed in (persistent
+  profile) — skipping login"*, and the script flags the distinction itself. "Unattended login
+  WORKS" is not earned by a run that skipped the login.
+- **The probe emptied the RC session on its way through**, and the renewal repaired it
+  unattended in 47 seconds — `04:07:43 renewing … (src=none)` → `04:08:30 ✓ renewed by
+  authorize: none → 3580s`, with `cleared 0 storage key(s)`. That is the second production
+  confirmation of the reliable cell, and the first as an unplanned recovery rather than a
+  scheduled tick.
+- **Step 7 writes `rc-blob.json` — a LIVE session, 13 keys.** It is gitignored
+  (`scripts/auto-cart-bot/.gitignore`), so it cannot be committed, but it is full account
+  access sitting in the working tree. Delete it after a run.
+
 #### CAPACITY IS ENFORCED NOW, IN TWO PLACES (2026-08-13)
 `RC_HOLD_CAPACITY` = `RC_SITES_PER_CART` (2, **RC's, measured**) × `RC_MAX_CARTS` (1,
-**ours, and 1 only because that is all we can prove** — raise it after `--cart-cap`).
+**ours, and 1 only because that was all we could prove** — `--cart-cap` ANSWERED THIS on
+2026-08-15: the cap is per CART, so this may go to 2. See directly above.)
 - **The poller withholds the BUTTON** when the release window is full, and sends the
   ordinary coming-soon alert instead — same posture as `rcBotUsable`.
 - **The `hold` action checks again**, because a link outlives the alert and two other
