@@ -5,6 +5,13 @@ bootstrap; that is written, tested and merged. **It has never run on the mini-PC
 job now is to watch it there and read the answer. Everything below the horizontal rule is
 archive — resolved sections kept for their reasoning.*
 
+**ON MASTER AS OF `a357605`** (PR #64, merged 2026-08-15). Both the two-stage `renewSession`
+and `renewal-schedule.mjs` are in. **This changes nothing about the box** — they are bot-side,
+so the mini-PC goes on doing exactly what the 08-15 log shows until it updates. Read
+`git-status` through `bot_commands` for what is actually running there; the sha above is where
+the CODE is, not where the box is, and conflating those two is the mistake this file has
+recorded three times.
+
 > ## THE GOAL: confirm `✓ renewed by authorize` on the box, then stop babysitting
 >
 > ### What changed, and the correction that made it work
