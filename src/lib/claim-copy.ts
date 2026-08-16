@@ -71,9 +71,18 @@ export function handoffCopy(canInject: boolean): HandoffCopy {
     // pleasant surprise is a much better failure than a broken one.
     return {
       prepareTitle: 'Open ReserveCalifornia and sign in',
+      // "IN A NEW TAB" IS A PROMISE THE CODE NOW KEEPS. It did not until 2026-08-16: the
+      // control was a button routed through `openRcHandoff`, whose web branch is
+      // `window.location.href = url`, so it opened in THIS tab and took the claim screen
+      // with it — including the site number and the release button. It is a real anchor
+      // with target="_blank" now, which is also why the wording can stay specific.
+      //
+      // "This page stays open" is the part worth saying. The reason to care about the tab
+      // is not the tab; it is that they have to come back here to hand the site over, and
+      // on a phone that is the step most likely to go wrong.
       prepareBody:
-        'Do this first, in another tab. Find your site and get as far as you can without booking — it will look taken, because we are the ones holding it.',
-      prepareCta: 'Open ReserveCalifornia in another tab',
+        'Do this first. Find your site and get as far as you can without booking — it will look taken, because we are the ones holding it. This page stays open; come back here when you are signed in.',
+      prepareCta: 'Open ReserveCalifornia',
       waitingTitle: 'Sign in over there, then come back',
       waitingBody: 'Nothing has been released yet. We keep holding it until you say go.',
       readyTitle: 'Ready when you are',

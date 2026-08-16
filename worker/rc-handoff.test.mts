@@ -479,3 +479,51 @@ test('no cart promise is written inline into the claim screen', () => {
     'route claim copy through lib/claim-copy, where the capability branch is enforced',
   );
 });
+
+/**
+ * THE PLAIN-BROWSER "OPEN RC" CONTROL MUST BE A REAL LINK, NOT A BUTTON.
+ *
+ * Reported from a phone on 2026-08-16: "Clicking Open RC in another tab does not open in
+ * another tab, it opens in this tab." The control was a button routed through
+ * `openRcHandoff`, whose web branch is `window.location.href = url` — same tab, by its own
+ * comment. That destroys the claim screen, which is where the site number, the dates and
+ * the release button live, and the only way back is Back.
+ *
+ * `window.open` inside `prepareRc` is the fix that does NOT work: it is async and awaits
+ * `injectableWebView()` before reaching the web branch, so the user-gesture window has
+ * closed and Safari blocks the popup. That version looks right in review and fails on the
+ * device it was written for. An anchor cannot be blocked.
+ *
+ * The button must SURVIVE for the injectable path — there is no tab to open there, and
+ * `prepareRc` is what drives the InAppBrowser and makes the sign-in observable. Pinned both
+ * ways, because deleting either branch is a silent regression on one platform.
+ */
+test('the browser opens RC in a new tab, and the app still uses the webview', () => {
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  const body = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(l)).join('\n');
+
+  assert.match(body, /target="_blank"/, 'the browser control must genuinely open a new tab');
+  assert.match(body, /rel="noopener noreferrer"/, 'a new tab must not get window.opener');
+
+  // The anchor belongs to the NON-injectable branch and the button to the injectable one.
+  const ternary = body.slice(body.indexOf('{canInject ? ('), body.indexOf('</>', body.indexOf('{canInject ? (')));
+  assert.ok(ternary.length > 0, 'the two paths must be chosen by canInject');
+  const buttonAt = ternary.indexOf('onClick={prepareRc}');
+  const anchorAt = ternary.indexOf('target="_blank"');
+  assert.ok(buttonAt > 0, 'the injectable path must keep the webview button');
+  assert.ok(anchorAt > 0, 'the browser path must use an anchor');
+  assert.ok(buttonAt < anchorAt,
+    'canInject true takes the button; false takes the link — reversed, both platforms break');
+});
+
+test('the browser copy no longer promises a tab it does not open', () => {
+  // The old CTA said "Open ReserveCalifornia in another tab" while navigating in this one.
+  // Whatever the wording becomes, it must not describe a tab unless the control opens one —
+  // and the body should say the claim screen survives, which is the reason to care.
+  const browser = handoffCopy(false);
+  assert.match(browser.prepareBody, /stays open/i,
+    'the user must be told this page survives, because they have to come back to it');
+  const app = handoffCopy(true);
+  assert.ok(!/another tab|your .*tab/i.test(app.prepareCta + app.prepareBody),
+    'the app has no tabs — that wording has already been fixed there once');
+});
