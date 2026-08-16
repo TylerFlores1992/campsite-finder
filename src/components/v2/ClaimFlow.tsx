@@ -451,12 +451,42 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
             */
             <>
               <Step tone="todo" title={copy.prepareTitle} body={copy.prepareBody} />
-              <button
-                onClick={prepareRc}
-                className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-3' })}
-              >
-                {copy.prepareCta}
-              </button>
+              {/*
+                AN ANCHOR ON THE PLAIN-BROWSER PATH, NOT A BUTTON — and the difference is
+                not stylistic.
+
+                The button said "Open ReserveCalifornia in another tab" and `openRcHandoff`
+                ends in `window.location.href = url` for web, so it opened in THIS tab and
+                destroyed the claim screen. Reported from a phone on 2026-08-16. Losing this
+                screen mid-flow is the whole cost: the site number, the dates and the release
+                button all live here, and the only way back is Back.
+
+                `window.open` inside `prepareRc` would NOT fix it. That function is async and
+                awaits `injectableWebView()` before it reaches the web branch, so by then the
+                user-gesture window has closed and Safari blocks the popup — a fix that looks
+                right in review and fails on the device it was written for. A real link cannot
+                be blocked and costs nothing to reason about.
+
+                The button stays where it belongs: with an injectable webview there is no tab
+                to open, `prepareRc` drives the InAppBrowser, and the sign-in is observable.
+              */}
+              {canInject ? (
+                <button
+                  onClick={prepareRc}
+                  className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-3' })}
+                >
+                  {copy.prepareCta}
+                </button>
+              ) : (
+                <a
+                  href={bookingUrl.current}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-3 block text-center' })}
+                >
+                  {copy.prepareCta}
+                </a>
+              )}
             </>
           )}
 

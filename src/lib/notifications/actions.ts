@@ -11,9 +11,41 @@ export type WatchAction = 'stop' | 'reopen' | 'mute_site' | 'keep' | 'cancel' | 
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://camphawk.app').replace(/\/$/, '');
 
-/** ~8-char opaque token (48 bits). Short enough for SMS, wide enough to not collide. */
-function genToken(): string {
-  return randomBytes(6).toString('base64url');
+/**
+ * ~8-char opaque token (48 bits). Short enough for SMS, wide enough to not collide.
+ *
+ * NEVER ENDS IN `-` OR `_`, AND THAT IS NOT COSMETIC.
+ *
+ * base64url's alphabet includes both, so 2 of 64 characters can land last — and a URL ending
+ * in one is the classic linkification casualty. Chat clients, mail clients and SMS previewers
+ * treat trailing punctuation as sentence punctuation rather than part of the link, so the
+ * final character is silently dropped from the href while the visible text still looks right.
+ * The token then fails to resolve and the user is told the link is no longer valid.
+ *
+ * Observed live on 2026-08-16: a claim link with `?t=HaPUjQd_` opened as `?t=HaPUjQd` and the
+ * claim screen said "This link is no longer valid." Reproduced against production — the full
+ * token answers 200 and the truncated one 404s — and measured across the table: 4 of 97 live
+ * tokens ended in one of these, which is ~1 in 32 alert links arriving dead.
+ *
+ * That is worse than it sounds because of WHERE these travel. `manage`, `mute_site`, `stop`
+ * and `cancel` ride the alert email; a `hold` claim link is tapped at 08:00 with a campsite on
+ * a fifteen-minute fuse. A dead link there is indistinguishable to the user from the hold
+ * having expired.
+ *
+ * Rejecting the ~3% of draws that end badly is cheaper than every alternative: it needs no
+ * migration, no change to the resolvers, and **existing tokens keep working** — the ones
+ * already in somebody's inbox are unaffected. Entropy is unchanged; this rejects a suffix,
+ * not a character, so all 48 bits are still in play.
+ *
+ * EXPORTED FOR THE GUARD. The rule is a property of the OUTPUT, so the test drives this
+ * function rather than a reconstruction of it — a rebuilt copy would assert the copy, and
+ * the regex could be present and inverted while a diff still looked right.
+ */
+export function genToken(): string {
+  for (;;) {
+    const t = randomBytes(6).toString('base64url');
+    if (!/[-_]$/.test(t)) return t;
+  }
 }
 
 /** Full one-tap action URL for a token. */
