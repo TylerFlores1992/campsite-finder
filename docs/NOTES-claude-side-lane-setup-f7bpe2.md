@@ -457,12 +457,10 @@ threatened, though it counts expanded campgrounds now.
 - **`expire-watches`, `watch-openings`, the manage page and the notification payload were
   NOT audited** for per-watch assumptions. Two claims were found and fixed; nobody looked
   at the rest.
-- **The watches list does NOT show a park watch's parts.** `GET /api/watches` returns
-  `divisions`; `WatchCard` / `WatchesList` / `ManageWatch` render nothing with it, so a
-  park watch looks like an ordinary watch named after its representative division. The
-  create flow is complete; the display half is not.
-- **PR #56 will now CONFLICT with master.** The main lane merged site-muting (#55) after
-  it was opened, touching `NewWatch.tsx` and `/api/watches` — the same two files.
+- ~~**The watches list does NOT show a park watch's parts.**~~ **CLOSED in PR #63** — see
+  section 13. Struck rather than deleted because CLAUDE.md still carries the same claim;
+  see the flag at the end of section 13.
+- ~~**PR #56 will now conflict with master.**~~ Resolved on the rebase and merged.
 
 ## 12. The SWC entity trap, restated because it will recur
 
@@ -478,3 +476,75 @@ codebase clean while production rendered "ReserveCaliforniacarts".
 Related, and it bit twice in one session: **do not put backticks inside SQL comments** in
 `worker/poller.ts` or `src/lib/capacity.ts` — those queries are template literals and a
 backtick terminates the string.
+
+
+---
+
+# Third batch, 2026-08-15 (PR #63, merged)
+
+## 13. A park watch now LOOKS like one — the display half is closed
+
+`GET /api/watches` had returned `divisions` since migration 070 and **nothing rendered
+it**, so a watch covering four campgrounds was indistinguishable from one covering a
+quarter of that: it showed its REPRESENTATIVE division's name.
+
+| surface | what it does now |
+|---|---|
+| `WatchCard` | Titled after the park, parts named beneath. Capped at 4 names then "+N more" — the ceiling is 10 and naming all runs to ~7 lines on a card built to be scanned. The count is always exact, so the truncation cannot mislead about coverage. |
+| `/manage/<token>` | Same title rule, parts listed **in full** (this page is read, not scanned), and it **says what muting actually reaches**. |
+
+**The manage caveat is the part worth keeping.** Site ids are per-campground and
+`/manage` can only enumerate the representative division's inventory, so the mute list
+there does not touch the siblings. It now says so:
+
+> Muting below covers San Miguel (sites 401-460) only — the other parts keep alerting.
+
+Leaving that unsaid would make a working control look broken on the sites it cannot see —
+the failure mode where a feature's write half works and its read half is absent.
+
+`divisions` is **absent** below two rather than length-1, so its presence is the test.
+`/api/manage` uses the identical contract, deliberately, so the two screens cannot
+disagree about what a park watch is.
+
+> **FLAG FOR THE MAIN LANE:** `CLAUDE.md` line ~1045 still reads "The watches list does
+> not show a park watch's parts" under KNOWN GAPS. That is **no longer true** for either
+> surface. A stale known-gap sends someone to fix something already fixed.
+
+## 14. Picker and filter fixes from the owner's screenshots
+
+- **Favourites reverted to the long name.** A search hit collapses to the park; the same
+  campground saved as a FAVOURITE could not, because a favourite is one division and
+  naming it after the park would name a different thing. It gets the two-line shape
+  instead — park bold, division beneath.
+- **`dropRedundantState`** removes a trailing `(WY)` **only when the place label beside it
+  repeats the same state**. The catalog holds BOTH "Silver Lake Campground" and "Silver
+  Lake Campground (WY)"; stripping unconditionally renders two different campgrounds
+  identically — the collision this module already refuses to create by stripping site
+  ranges.
+- **RV removed from Site type, Hookups in its slot.** RV overlapped the two controls that
+  answer it from better data. Explore no longer accepts `?type=rv`, or a bookmark would
+  keep narrowing through a control that is gone.
+- **Beta banner scoped to ReserveCalifornia only.** rec.gov auto-cart has been carting
+  live sites for weeks and is not in testing; the RC hold-and-hand-off is. Labelling the
+  whole paid feature Beta would warn about something that mostly works.
+
+## 15. Another dead screenshot preset, same family as the five
+
+`manage-watch` imported `@/components/ManageWatch` — **deleted in the front-end swap** —
+so it could only ever have failed to resolve. Repaired to `@/components/v2/ManageWatch`.
+
+Two other fixtures still set `siteType: 'rv'` (one also set `pets`, removed the same day),
+which would render a state the panel can no longer produce. **A fixture is code that
+nothing typechecks**, so it rots silently; these are worth a sweep when a shared prop
+changes.
+
+## 16. Backticks bit a THIRD time, in a new place
+
+Recorded because the first two were written off as a template-literal quirk and it is
+broader than that. Twice in SQL comments inside template literals (`worker/poller.ts`,
+`src/lib/capacity.ts`), and once in a `git commit -m "..."` string, where the shell
+executed `` `divisions` `` and silently ate the word out of the commit message. Caught by
+reading the message back before pushing.
+
+**Use `-F-` with a quoted heredoc for commit messages**, and keep backticks out of SQL
+comments in these files.
