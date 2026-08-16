@@ -10,6 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import { readFileSync } from 'node:fs';
 import {
   loginScript, loginInvocation,
   SIGNIN_TEXTS, EMAIL_SELECTORS, PASSWORD_SELECTORS, ERROR_SELECTORS,
@@ -152,4 +153,88 @@ test('an existing session short-circuits before any credential is typed', () => 
   const setValue = body.indexOf('chSetValue');
   assert.ok(check !== -1 && setValue !== -1 && check < setValue,
     'the already-signed-in check must come before anything is typed');
+});
+
+// ── THE WIRING ─────────────────────────────────────────────────────────────────────────
+//
+// The module above can be perfect while nothing calls it, or while a caller leaks the very
+// thing it was careful with. These read the call site, because that is where the credential
+// actually travels — and because a fix present but inert has cost this repo three commits.
+
+test('the credentials are never React state', () => {
+  // State lands in the component tree, in devtools, and in any error-boundary snapshot. They
+  // belong to the closure of the one function that submits them and nowhere else.
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  // MATCHED ON THE DECLARED NAME, not on proximity. The first version of this looked for
+  // `password` AFTER `useState` on the same line and sailed straight past
+  // `const [password, setPassword] = useState('')` — the exact declaration it exists to
+  // forbid, because the name comes first. It survived its own mutation.
+  const declared = [...src.matchAll(/const \[\s*(\w+)\s*,[^\]]*\]\s*=\s*useState/g)].map((m) => m[1]);
+  const secret = declared.filter((n) => /password|passcode|credential|secret/i.test(n));
+  assert.deepEqual(secret, [], `credentials must not be React state: ${secret.join(', ')}`);
+  assert.match(src, /async function signInToRc\(email: string, password: string\)/,
+    'the credentials arrive as arguments to the submitting function');
+});
+
+test('ClaimFlow hands the credentials over through loginInvocation, not by hand', () => {
+  // The JSON encoding is the whole defence against a password containing a quote. A call site
+  // that builds the string itself would reintroduce it silently.
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  assert.match(src, /loginInvocation\(email, password\)/);
+  assert.ok(!/__chRcLogin\(/.test(src), 'ClaimFlow must not compose the call itself');
+});
+
+test('the login injection fires once per hand-off', () => {
+  // `afterLoad` is re-asked on EVERY navigation, and RC's sign-in walks out to Okta and back.
+  // Without the guard the password is resubmitted on the return trip — and Okta locks
+  // accounts, which is why the bot carries a two-strike rule.
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  const fn = src.slice(src.indexOf('async function signInToRc'));
+  const body = fn.slice(0, fn.indexOf('\n  async function'));
+  assert.match(body, /let sent = false/);
+  assert.match(body, /if \(sent\) return null;/);
+  assert.match(body, /sent = true;/);
+});
+
+test('the sign-in window cannot cart', () => {
+  // No `unitId`, so `rcFragment` returns '' and the injected script finds no job. Signing in
+  // and handing over stay separate acts — which is what lets the user decide when the ~2.5s
+  // window where the site belongs to nobody actually opens.
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  const fn = src.slice(src.indexOf('async function signInToRc'));
+  const body = fn.slice(0, fn.indexOf('\n  async function'));
+  assert.ok(!/unitId/.test(body), 'the sign-in open must pass no unitId');
+});
+
+test('afterLoad runs AFTER the served bundle, which defines the function it calls', () => {
+  // Reversed, `__chRcLogin` would be undefined and the call a silent no-op — and
+  // `executeScript` returns nothing useful, so it would look exactly like a login that ran
+  // and did nothing. Same silence as `status = 'sent'` meaning only "Twilio returned 2xx".
+  const src = readFileSync('src/lib/native/rc-handoff.ts', 'utf8');
+  const stop = src.slice(src.indexOf("ref.addEventListener('loadstop'"));
+  const block = stop.slice(0, stop.indexOf('\n    },'));
+  const bundle = block.indexOf('executeScript({ code })');
+  const once = block.indexOf('afterLoad');
+  assert.ok(bundle !== -1 && once !== -1 && bundle < once,
+    'the bundle must be injected before the one-off call');
+});
+
+test('a captured token clears the captcha prompt', () => {
+  // Leaving `captcha` on screen after a successful sign-in tells the user to solve a
+  // challenge that is no longer there — the same shape as instructing an app user to
+  // "switch to your ReserveCalifornia tab" in an app with no tabs.
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  const at = src.indexOf("setRcCheck('verified')");
+  assert.ok(at !== -1);
+  const after = src.slice(at, at + 500);
+  assert.match(after, /setLoginStage\(null\)/);
+});
+
+test('the form stays mounted while the sign-in runs', () => {
+  // `captcha` is the one stage the USER has a job for. Swapping the form for a spinner would
+  // unmount the only thing able to tell them. TypeScript found this: it narrowed `rcCheck`
+  // past 'opening' and made the dead `busy` prop an error.
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  assert.match(src, /rcCheck === 'opening' && !canInject/,
+    'the busy Step is for the path we cannot drive; the injectable path keeps the form');
 });

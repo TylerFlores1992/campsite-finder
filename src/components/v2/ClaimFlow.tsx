@@ -10,6 +10,17 @@ import { useIsNativeApp } from '@/lib/native/context';
 import { stayLabel } from '@/lib/hold-labels';
 import { handoffCopy } from '@/lib/claim-copy';
 import { rcHandoffStep, type RcCheck } from '@/lib/claim-gate';
+import { loginInvocation } from '@/lib/rc-login-script';
+import RcSignInForm from './RcSignInForm';
+
+/**
+ * The stages the injected sign-in emits, and the only ones the form reacts to.
+ *
+ * An allow-list rather than "anything that is not a precart stage", because the channel
+ * carries the precart's own `load`/`submit`/`status` too and showing those under a sign-in
+ * form would describe the wrong job. `rc-login-script.ts` is where these names come from.
+ */
+const LOGIN_STAGES = new Set(['signin-open', 'captcha', 'email', 'password', 'submitted']);
 import { RC_CART_HOLD_MINUTES } from '@/lib/limits';
 
 /**
@@ -115,6 +126,16 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
    * a no-op callback rather than asserting from above an early return.
    */
   const [rcCheck, setRcCheck] = useState<RcCheck>('idle');
+  /**
+   * What the injected sign-in last said about itself, and RC's own words when it failed.
+   *
+   * `loginStage` is the raw stage name so the form can act on `captcha` — the one report the
+   * USER has a job for. Everything else is progress. `loginError` is Okta's banner text
+   * verbatim: a paraphrase of "incorrect password" would be a guess derived from which
+   * timeout expired, which is precisely what the bot's sign-in was fixed not to do.
+   */
+  const [loginStage, setLoginStage] = useState<string | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
   /** Does THIS binary have an injectable webview? Probed without opening one. */
   const [canInject, setCanInject] = useState(false);
 
@@ -170,7 +191,17 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     // the button and the thing recorded on the hold can never disagree.
     if (r.stage === 'token' && (r.detail as { captured?: boolean } | null)?.captured) {
       setRcCheck('verified');
+      // A token means the sign-in is done, whatever the last stage was. Leaving `captcha` on
+      // screen after a successful login would tell the user to solve a challenge that is no
+      // longer there — the same class of mistake as the claim screen asking someone to
+      // "switch to your ReserveCalifornia tab" in an app that has no tabs.
+      setLoginStage(null);
+      setLoginError(null);
     }
+    // THE SIGN-IN'S OWN STAGES. Read from the same channel as everything else, so what the
+    // form shows and what is recorded against the hold cannot disagree — the rule that made
+    // the release gate read `token captured` rather than a checkbox the user ticked.
+    if (LOGIN_STAGES.has(r.stage)) setLoginStage(r.stage);
     // The webview closed. If nothing announced a token before it went, we did not confirm
     // a session — which is NOT the same as knowing there isn't one, and is treated that way
     // below: it downgrades to the checkbox rather than blocking the release.
@@ -227,6 +258,48 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
    * Open RC in the injectable webview so the user can sign in BEFORE anything is released.
    * No `unitId` — see the note on `rcCheck`; this must not be able to cart.
    */
+  /**
+   * Sign the user in to RC inside the webview, with credentials they just typed.
+   *
+   * THE CREDENTIALS LIVE IN THIS CLOSURE AND NOWHERE ELSE. They are not state, so they are
+   * never in a React tree, never in a devtools snapshot, and gone the moment this returns.
+   * They are handed to `afterLoad`, which is re-asked on every navigation — RC's sign-in
+   * walks out to Okta and back, so a single injection would fire on the home page and never
+   * again on the form.
+   *
+   * `sent` is what stops it firing twice. `__chRcLogin` is idempotent enough (it returns
+   * early on an existing token) but a second submission of a password is not something to
+   * leave to chance: Okta locks accounts, and the bot carries a two-strike rule for it.
+   *
+   * NO `unitId`, exactly as `prepareRc` does — `rcFragment` returns '' without one, so this
+   * window physically cannot cart. Signing in and handing the site over stay separate acts,
+   * which is what lets the user decide when the ~2.5s exposure window opens.
+   */
+  async function signInToRc(email: string, password: string) {
+    notePlatform();
+    setLoginError(null);
+    setLoginStage(null);
+    setRcCheck('opening');
+    let sent = false;
+    try {
+      await openRcHandoff(
+        { url: bookingUrl.current },
+        {
+          onReport,
+          closeOnToken: true,
+          afterLoad: () => {
+            if (sent) return null;
+            sent = true;
+            return loginInvocation(email, password);
+          },
+        },
+      );
+    } catch {
+      setRcCheck('unconfirmed');
+      setLoginError('We could not open ReserveCalifornia. Try again, or sign in there yourself.');
+    }
+  }
+
   async function prepareRc() {
     notePlatform();
     setRcCheck('opening');
@@ -440,7 +513,16 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
         <div className="mt-4">
           {rcCheck === 'verified' || signedIn ? (
             <Step tone="done" title={copy.readyTitle} />
-          ) : rcCheck === 'opening' ? (
+          ) : rcCheck === 'opening' && !canInject ? (
+            /*
+              THE WAITING STEP IS FOR THE PATH WE CANNOT DRIVE. There the user has gone off to
+              RC themselves and this screen has nothing to do but wait.
+              ON THE INJECTABLE PATH THE FORM STAYS MOUNTED while the sign-in runs, and that
+              is not cosmetic: `captcha` is the one stage the USER has a job for, and
+              swapping the form out for a spinner would unmount the only thing able to tell
+              them so. TypeScript found this — it narrowed `rcCheck` past 'opening' in the
+              branch below and made the dead `busy` prop an error.
+            */
             <Step tone="busy" title={copy.waitingTitle} body={copy.waitingBody} />
           ) : (
             /*
@@ -451,12 +533,36 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
             */
             <>
               <Step tone="todo" title={copy.prepareTitle} body={copy.prepareBody} />
-              <button
-                onClick={prepareRc}
-                className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-3' })}
-              >
-                {copy.prepareCta}
-              </button>
+              {/*
+                WE DO THE SIGNING IN NOW, on an injectable client. The user typed their
+                ReserveCalifornia password into the app and we fill RC's own form with it
+                inside this webview — so at 08:00 the job is "type it once", not "go and
+                navigate a browser you did not open".
+
+                THE SESSION HAS TO BE THEIRS, which is why this happens in the webview and
+                not on our box: the cart is bound to the SESSION that made it, measured
+                2026-08-06 when a second session on the same account read that cart as 0
+                entries. A server-side login would mint a cart their phone could never see.
+
+                ON A PLAIN BROWSER, `canInject` is false, `rcHandoffStep` returns 'finish'
+                and this branch is unreachable — correct, because there is no injection
+                there and a form we cannot act on would be a worse lie than the old button.
+              */}
+              {canInject ? (
+                <RcSignInForm
+                  onSubmit={signInToRc}
+                  busy={rcCheck === 'opening'}
+                  error={loginError}
+                  stage={loginStage}
+                />
+              ) : (
+                <button
+                  onClick={prepareRc}
+                  className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-3' })}
+                >
+                  {copy.prepareCta}
+                </button>
+              )}
             </>
           )}
 
