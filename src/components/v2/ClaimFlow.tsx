@@ -11,6 +11,7 @@ import { stayLabel } from '@/lib/hold-labels';
 import { handoffCopy } from '@/lib/claim-copy';
 import { rcHandoffStep, type RcCheck } from '@/lib/claim-gate';
 import { loginInvocation } from '@/lib/rc-login-script';
+import { RC_CART_URL } from '@/lib/booking-url';
 import RcSignInForm from './RcSignInForm';
 
 /**
@@ -21,6 +22,20 @@ import RcSignInForm from './RcSignInForm';
  * form would describe the wrong job. `rc-login-script.ts` is where these names come from.
  */
 const LOGIN_STAGES = new Set(['signin-open', 'captcha', 'email', 'password', 'submitted']);
+
+/**
+ * The banner text that means the site is in the user's cart.
+ *
+ * OUR OWN COPY, not RC's — `content-rc.js` writes it into `#camphawk-rc-status`, which the
+ * epilogue observes and reports as a `status` stage. That is the same line
+ * `rc-holds-readout.mts` reads to decide whether a hand-off worked, so the screen and the
+ * post-mortem cannot disagree about what happened.
+ *
+ * Matching on copy is normally the thing this codebase avoids — RC rewords its own pages and
+ * a rule built on their sentence fails silently the day they do. This sentence is ours, and
+ * changing it means changing the readout too; the guard below pins them together.
+ */
+const CARTED_BANNER = 'Added to cart';
 import { RC_CART_HOLD_MINUTES } from '@/lib/limits';
 
 /**
@@ -135,6 +150,8 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
    * timeout expired, which is precisely what the bot's sign-in was fixed not to do.
    */
   const [loginStage, setLoginStage] = useState<string | null>(null);
+  /** The precart reported the site is in their cart, so checkout is reachable. */
+  const [carted, setCarted] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   /** Does THIS binary have an injectable webview? Probed without opening one. */
   const [canInject, setCanInject] = useState(false);
@@ -202,6 +219,13 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     // form shows and what is recorded against the hold cannot disagree — the rule that made
     // the release gate read `token captured` rather than a checkbox the user ticked.
     if (LOGIN_STAGES.has(r.stage)) setLoginStage(r.stage);
+    // THE CART LANDED. Until now the screen said "tap the cart icon at the top", which is an
+    // instruction to go and navigate a page we just put them on. We know the moment it
+    // succeeds, so we can offer the one control that finishes the job instead.
+    if ((r.stage === 'status' || r.stage === 'banner')
+      && String((r.detail as { status?: string } | null)?.status ?? '').includes(CARTED_BANNER)) {
+      setCarted(true);
+    }
     // The webview closed. If nothing announced a token before it went, we did not confirm
     // a session — which is NOT the same as knowing there isn't one, and is treated that way
     // below: it downgrades to the checkbox rather than blocking the release.
@@ -711,6 +735,36 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
             >
               {copy.afterCta}
             </a>
+            {/*
+              STRAIGHT TO THE CART, once the precart says there is one.
+
+              The button above lands on the PARK page, because that is where the precart has
+              to run. Before this, the screen then told the user to "tap the cart icon at the
+              top" — an instruction to navigate a page we had just opened for them, and the
+              last piece of browser wrangling left in the flow.
+
+              Only rendered once a `status` report carried our own "Added to cart" banner, so
+              it is offered on evidence rather than on optimism. A checkout button over an
+              empty cart is the same broken promise as the copy rule this file has enforced
+              since 2026-08-09.
+
+              NAVIGATED FROM HERE rather than from inside the injected script: the precart
+              runs on `loadstop`, so a script-driven navigation re-injects on arrival and can
+              loop. This is one deliberate press instead.
+            */}
+            {carted && (
+              <button
+                onClick={() => {
+                  notePlatform();
+                  // No `unitId` — this window is for checking out, and rcFragment returns ''
+                  // without one, so it physically cannot try to cart again.
+                  void openRcHandoff({ url: RC_CART_URL }, { onReport });
+                }}
+                className={buttonClasses({ size: 'lg', fullWidth: true, className: 'mt-3' })}
+              >
+                Check out on ReserveCalifornia
+              </button>
+            )}
           </>
         ) : step === 'waiting' ? (
           <div className="mt-4">
@@ -731,7 +785,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
           </div>
         )}
         <a
-          href="https://www.reservecalifornia.com/Customers/ShoppingCart"
+          href={RC_CART_URL}
           className="mt-3 block text-center text-ch-meta text-ch-muted underline"
         >
           Go straight to your ReserveCalifornia cart

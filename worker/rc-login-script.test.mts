@@ -238,3 +238,52 @@ test('the form stays mounted while the sign-in runs', () => {
   assert.match(src, /rcCheck === 'opening' && !canInject/,
     'the busy Step is for the path we cannot drive; the injectable path keeps the form');
 });
+
+test('the checkout button uses the OBSERVED cart URL, not a constructed one', () => {
+  // The RC URL shape has been written from memory twice, both times answered with RC's
+  // branded 404, the second time burning a live test that needed a human, an emulator and a
+  // fresh build. `lib/booking-url` is the one place allowed to build an RC URL, and this one
+  // was copied off the address bar rather than derived.
+  const url = readFileSync('src/lib/booking-url.ts', 'utf8');
+  assert.match(url, /RC_CART_URL = 'https:\/\/www\.reservecalifornia\.com\/Customers\/ShoppingCart'/);
+
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  assert.match(src, /import \{ RC_CART_URL \} from '@\/lib\/booking-url'/);
+  // SCOPED TO THE CART PATH. `bookingUrl`'s default is RC's home page and is a different
+  // thing; forbidding every mention would fail on it and get this guard deleted.
+  //
+  // It found a real one on its first run: a hardcoded "/Customers/ShoppingCart" href already
+  // in this file, added separately. Two spellings of one URL is how the park link came to be
+  // wrong twice — hence the single constant.
+  assert.ok(!/reservecalifornia\.com\/Customers/.test(src),
+    'the cart URL must come from RC_CART_URL, never be spelled here');
+});
+
+test('checkout is offered only once a cart is REPORTED', () => {
+  // A checkout button over an empty cart is the same broken promise the copy rule has
+  // enforced since 2026-08-09: a user who believes the site is handled stops watching.
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  assert.match(src, /\{carted && \(/, 'the button must be gated on the reported cart');
+  assert.match(src, /includes\(CARTED_BANNER\)/, 'and set from the precart status report');
+});
+
+test('the carted banner text matches what the readout looks for', () => {
+  // The screen and the post-mortem must agree about what "it worked" looks like. This is our
+  // own copy, so changing it means changing both — pinned together rather than left to whoever
+  // edits one of them.
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  const readout = readFileSync('scripts/rc-holds-readout.mts', 'utf8');
+  const m = src.match(/const CARTED_BANNER = '([^']+)'/);
+  assert.ok(m, 'CARTED_BANNER must be a named constant');
+  assert.ok(readout.includes(m![1]),
+    `rc-holds-readout.mts must look for the same phrase (${m![1]})`);
+});
+
+test('the checkout window cannot cart', () => {
+  // No unitId, so rcFragment returns '' and the injected script finds no job. Otherwise
+  // arriving on the cart page would re-run the precart against a cart that is already right.
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  const at = src.indexOf('openRcHandoff({ url: RC_CART_URL }');
+  assert.ok(at !== -1, 'the checkout button must open the cart URL');
+  assert.ok(!src.slice(at, at + 120).includes('unitId'), 'and pass no unitId');
+});
