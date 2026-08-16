@@ -145,6 +145,25 @@ export function loginScript(): string {
   return `
 ${captchaProbeSource()}
 
+  /*
+     THE REPORTER'S CHANNEL, AS IT ACTUALLY EXISTS.
+
+     The first version called a function named ch_report, which is not a thing. reporter()
+     exposes window.__camphawkRc.send(stage, detail) and nothing else, so every report in
+     here would have thrown on its first call - inside a try, so silently. Written from
+     memory instead of read, which is the mistake this repo has a rule about.
+
+     NO BACKTICKS IN THIS COMMENT. It lives inside a template literal, so one would terminate
+     the string and the parse error surfaces somewhere unrelated - the same trap CLAUDE.md
+     records for SQL comments in the poller, which has now cost a build twice.
+
+     Guarded rather than assumed: if the reporter failed to install, the sign-in must still
+     work. Losing the diagnostics is survivable; losing the login is not.
+  */
+  function chSay(stage, detail) {
+    try { if (window.__camphawkRc) window.__camphawkRc.send(stage, detail || {}); } catch (e) {}
+  }
+
   var CH_SIGNIN_TEXTS = ${JSON.stringify(SIGNIN_TEXTS)};
   var CH_EMAIL_SELS = ${JSON.stringify(EMAIL_SELECTORS)};
   var CH_PW_SELS = ${JSON.stringify(PASSWORD_SELECTORS)};
@@ -245,12 +264,12 @@ ${captchaProbeSource()}
         var pw = chFind(CH_PW_SELS);
         if (!pw) {
           var link = chSignInControl();
-          if (link) { link.click(); ch_report('signin-open', {}); }
+          if (link) { link.click(); chSay('signin-open', {}); }
         }
 
         // A challenge can appear before the form. The human is here; let them clear it.
         if (chCaptchaVisible()) {
-          ch_report('captcha', { visible: true });
+          chSay('captcha', { visible: true });
           var cleared = await chWait(CH_EMAIL_SELS.concat(CH_PW_SELS), 300000);
           if (!cleared) return done(false, 'captcha', 'the challenge was not cleared');
         }
@@ -263,7 +282,7 @@ ${captchaProbeSource()}
           // and that is a documented rc-probe finding, not a hypothetical.
           if (user.value !== email) return done(false, 'email', 'the email field would not take the address');
           chKeepSignedIn();
-          ch_report('email', {});
+          chSay('email', {});
           chSubmit(user);
           pw = await chWait(CH_PW_SELS, 20000);
         }
@@ -274,16 +293,16 @@ ${captchaProbeSource()}
 
         chSetValue(pw, password);
         chKeepSignedIn();
-        ch_report('password', {});
+        chSay('password', {});
         chSubmit(pw);
-        ch_report('submitted', {});
+        chSay('submitted', {});
 
         // A challenge can also appear AFTER the password. Same rule: a human is here.
         for (var i = 0; i < 120; i++) {
           if (window.__camphawkRcToken) return done(true, 'signed-in', null);
           var err = chOktaError();
           if (err) return done(false, 'failed', err);
-          if (chCaptchaVisible()) ch_report('captcha', { visible: true, after: 'password' });
+          if (chCaptchaVisible()) chSay('captcha', { visible: true, after: 'password' });
           await new Promise(function (r) { setTimeout(r, 1000); });
         }
         return done(false, 'failed', 'signed in but no session appeared');

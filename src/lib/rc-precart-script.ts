@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { loginScript } from './rc-login-script';
 
 /**
  * Serves the ReserveCalifornia precart script, for injection into a mobile in-app webview.
@@ -444,6 +445,16 @@ export function buildPrecartScript(): string {
     '})();',
     inject,
     content,
+    // THE SIGN-IN, AFTER THE REPORTER IT USES AND BEFORE THE EPILOGUE. It only DEFINES
+    // `window.__chRcLogin`; the claim screen calls it in a separate one-off injection with
+    // the user's credentials, which is what keeps this served bundle identical for everyone.
+    //
+    // IT WAS MISSING ENTIRELY ON THE FIRST RUN (2026-08-15). The module, the wiring and the
+    // call site all existed and the function was never served, so the invocation hit an
+    // undefined name and threw inside a try — the exact "fix present but inert" shape that
+    // has cost this repo four commits. The guard that should have caught it asserted the
+    // ORDER of the two injections without checking the first defines what the second calls.
+    loginScript(),
     epilogue(),
   ].join('\n');
 }
