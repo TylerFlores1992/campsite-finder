@@ -694,7 +694,7 @@ the full Next app pulls in Clerk's dev-browser redirect — isolation sidesteps 
 alignment before shipping.
 
 ```
-npx tsx scripts/screenshot-component.mts ch-home --out=/tmp/x.png --width=1280 --height=1400
+npx tsx scripts/screenshot-component.mts ch-admin --out=/tmp/x.png --width=1280 --height=1400
 ```
 
 Add a preset to the `PRESETS` map for a component that needs realistic props; or pass

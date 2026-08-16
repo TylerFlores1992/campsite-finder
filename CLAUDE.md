@@ -1042,10 +1042,15 @@ reviewed here because those are the main lane's files.
   renders as "Checking N watches every 15 seconds" on the admin page. Nothing gates on it,
   which is precisely why the human reading it should get the number its label promises.
 - **KNOWN GAPS, not bugs to hunt.** No multi-campground watch has EVER run a real poller
-  cycle — the first park watch is the first exercise of the path. The watches list does not
-  show a park watch's parts (`GET /api/watches` returns `divisions`; nothing renders it), and
-  `/manage/<token>` can only enumerate the REPRESENTATIVE division's inventory, so a sibling
-  division's site cannot be muted from there. **`muted_site_ids` being watch-wide is CORRECT
+  cycle — the first park watch is the first exercise of the path. ~~The watches list does not
+  show a park watch's parts (`GET /api/watches` returns `divisions`; nothing renders it)~~
+  **— CLOSED 2026-08-15 by the side lane (PR #63): `WatchCard` renders the park title plus
+  its parts (capped at 4, then "+N more") and `/manage/<token>` lists them in full.** The
+  INVENTORY half stands and is the part that matters:
+  `/manage/<token>` can still only enumerate the REPRESENTATIVE division's sites, so a sibling
+  division's site cannot be muted from there — the screen now says so in as many words rather
+  than leaving the reader to infer it from a list that quietly covers one park in three.
+  **`muted_site_ids` being watch-wide is CORRECT
   for a park watch** — campsite ids were measured unique within a park (10,757 sampled, zero
   collisions) — so this is a display gap, not corruption. Do not advertise park watches until
   one has been observed through a cycle.

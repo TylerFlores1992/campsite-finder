@@ -548,3 +548,84 @@ reading the message back before pushing.
 
 **Use `-F-` with a quoted heredoc for commit messages**, and keep backticks out of SQL
 comments in these files.
+
+## 17. `markClaimed` had no caller, so every completed hand-off is still on screen
+
+Reported by the owner as the hand-off banner hogging the Watches tab. It is not a layout
+problem — nothing in the product had ever retired a hold.
+
+`/api/rc-holds/mine` keeps `carted`, `claiming` and `released` **regardless of age**, on
+purpose (that is the 2026-08-13 leak, where two carted holds sat unclaimed until a sweep
+expired them). A `released` row is finished — the bot let go, the site is on RC for
+whoever gets there first — and the only thing that would drop it is `status = 'claimed'`.
+`markClaimed` exists, `PATCH /api/rc-holds/claim` exposes it, and its own comment says it
+is what distinguishes an abandoned hand-off from a completed one. **`grep -rn markClaimed
+src/` returns the definition, the route, and one test.** No caller. `ClaimFlow` POSTs to
+start the claim and never PATCHes when it finishes.
+
+So the remove control is the first caller, and `claimed` is exactly the state for it.
+
+**The other four statuses get no button, and the omission is the design.**
+
+| status | why not |
+|---|---|
+| `carted` / `claiming` | The bot is holding a real campsite in a real cart. Hiding the row does not release it — it takes the site off the market for every other camper and removes the only thing on screen still pointing at it. That is the 08-13 leak with a button on it. |
+| `offered` / `requested` | There is no decline path server-side. A remove could only hide the row while the bot went on to cart the site at 08:00 anyway. **A control that appears to cancel and does not is worse than no control.** |
+
+Giving those two a real "no thanks" means a server-side decline that also frees the
+capacity seat an `offered` row occupies (`offered` counts toward `RC_HOLD_CAPACITY`) —
+hold-lifecycle work, main lane, not panel work.
+
+Removal is **deliberately not optimistic**: the row is dropped only after the write comes
+back ok, so a failed remove leaves a hold that still exists exactly where it was. The
+token is read back out of `claimUrl` — the same hold id + manage token that authorises
+RELEASING the site, so never a weaker check than the more consequential act on the same row.
+
+## 18. The six dead screenshot presets are gone, and two docs referenced them
+
+Deleted: `search-bar`, `favorites-panel`, `ch-home`, `v2-available`, `v2-mobile`,
+`avail-usedirect`. All six imported components removed in the front-end swap
+(`@/components/SearchBar`, `@/components/FavoritesPanel`, `@/app/v2/page`,
+`@/components/v2/AvailableNow`, `@/components/AvailabilityCalendar`) — verified missing on
+disk before deleting, not assumed from the previous session's list.
+
+**Every remaining preset was then checked mechanically** — all 35 `@/…` specifiers across
+the file resolve. Worth re-running after any component move:
+
+```
+python3 -c "import re,os;s=open('scripts/screenshot-component.mts').read();print([m for m in sorted(set(re.findall(r\"from '(@/[^']+)'\", s))) if not any(os.path.exists(m.replace('@/','src/')+e) for e in ('.tsx','.ts','/index.tsx','/index.ts'))])"
+```
+
+**No guard test was added, on purpose.** It would live in `worker/`, and a new
+`worker/*.test.mts` matches `worker-deploy.yml`'s path filter — it restarts both poller
+machines. The failure mode here is already loud (a resolve error at render time, not a
+silent wrong picture), so a poller restart is the wrong price for it.
+
+`docs/SETUP.md`'s example invocation used `ch-home`; swapped for `ch-admin` so the
+documented command still runs. That is mechanical fallout from the deletion, not a
+rewrite of anyone's evidence.
+
+### FLAGGED, NOT FIXED: `docs/CONTEXT.md` ~1465 is stale in a way I should not half-repair
+
+That block reads *"The availability calendar is `src/components/AvailabilityCalendar.tsx`
+… see the `avail-usedirect` preset"*. **Both names are dead** — the file was replaced by
+`src/components/v2/AvailabilityGrid.tsx` and the preset is now deleted. Fixing only the
+preset reference would leave a paragraph that names a file which does not exist while
+LOOKING freshly verified, which is worse than leaving it visibly stale. Main lane's file
+and main lane's call.
+
+## 19. One cross-lane edit, made at the owner's explicit instruction
+
+`CLAUDE.md`'s KNOWN GAPS entry (~1044) still said the watches list does not show a park
+watch's parts. PR #63 closed that on both `WatchCard` and `/manage/<token>`. Struck rather
+than deleted, with the correction beside it.
+
+**The other half of that entry is still true and was kept**: `/manage/<token>` can only
+enumerate the REPRESENTATIVE division's inventory, so a sibling division's site cannot be
+muted from there. What changed is that the screen now says so instead of leaving the reader
+to infer it from a list quietly covering one park in three. Correcting the display half and
+silently dropping the inventory half would have read as "gap closed".
+
+`CLAUDE.md` is the main lane's file under `docs/LANES.md`. This edit is one paragraph, made
+because the owner asked for it directly, and is called out in the PR so the main lane sees
+it rather than meeting it in a conflict.

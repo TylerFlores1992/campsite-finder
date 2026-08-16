@@ -12,7 +12,7 @@ import NightsPicker from "@/components/ui/NightsPicker";
 import TrustPanel from "./TrustPanel";
 import FavoriteHeart from "./FavoriteHeart";
 import { useFavorites } from "./useFavorites";
-import { providerLabel, supportsAutoCart } from "./providers";
+import { supportsAutoCart } from "./providers";
 import { divisionLabel, dropRedundantState, parseCampgroundName, placeLabel } from "./campground-name";
 import { addDays, formatRange, nightsBetween, thisWeekendRange, todayISO } from "@/components/ui/date";
 import { useIsNativeApp } from "@/lib/native/context";
@@ -769,17 +769,14 @@ export default function NewWatch({
           </fieldset>
         )}
 
-        {!canAutoCart && campgroundSource && (
-          <p className="mt-5 text-ch-fine leading-normal text-ch-muted">
-            Auto-cart is Recreation.gov only —{" "}
-            {/* THE "ReserveCaliforniacarts" BUG, reported from production 2026-08-15.
-                The space WAS in the source; the &apos; two lines down makes SWC drop this
-                text node's leading whitespace. It has to live inside a literal. */}
-            {providerLabel(campgroundSource, campgroundId ?? undefined)}{" "}
-            carts are tied to a browser session and wouldn&apos;t follow you to your
-            phone. You&apos;ll still get the alert.
-          </p>
-        )}
+        {/* NOTHING IS SAID HERE WHEN AUTO-CART IS UNAVAILABLE (2026-08-16, owner's call).
+            This used to explain, in three lines, that auto-cart is Recreation.gov only and
+            why ReserveCalifornia carts cannot follow you to your phone. It was accurate and
+            it was answering a question nobody on this screen had asked: the toggle simply
+            is not there, so the paragraph introduced a feature, withdrew it, and taught the
+            reader a session-scoping detail about somebody else's shopping cart — all while
+            they were trying to pick dates. The alert still arrives, which is the only part
+            that affects them, and the watch summary beside this form already says so. */}
       </form>
 
       <aside className="rounded-ch-card border border-[#BFDDC9] bg-ch-green-soft p-4">

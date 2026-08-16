@@ -223,27 +223,6 @@ const PRESETS: Record<string, Preset> = {
       );`,
     frame: 'max-w-3xl w-full mx-auto',
   },
-  'search-bar': {
-    label: 'SearchBar (landing search bar)',
-    entry: `import SearchBar from '@/components/SearchBar';
-      export const node = <SearchBar onSearch={() => {}} onTonight={() => {}} onThisWeekend={() => {}} />;`,
-    // The real bar sits on the cream hero over a max-width container.
-    frame: 'max-w-3xl w-full mx-auto',
-  },
-  'favorites-panel': {
-    label: 'FavoritesPanel (subscriber saved-campgrounds slide-over)',
-    // Stub fetch so the panel renders populated instead of its empty state.
-    entry: `import FavoritesPanel from '@/components/FavoritesPanel';
-      if (typeof window !== 'undefined') {
-        window.fetch = async () => ({ ok: true, json: async () => ({ favorites: [
-          { id: '1', name: 'Kirk Creek Campground', city: 'Big Sur', state: 'CA', latitude: 0, longitude: 0, source: 'ridb', reservations_url: null },
-          { id: '2', name: 'Wrights Beach', city: 'Bodega Bay', state: 'CA', latitude: 0, longitude: 0, source: 'reservecalifornia', reservations_url: null },
-          { id: '3', name: 'Point Reyes Hike-In', city: 'Point Reyes', state: 'CA', latitude: 0, longitude: 0, source: 'ridb', reservations_url: null },
-        ] }) });
-      }
-      export const node = <FavoritesPanel onClose={() => {}} onSelect={() => {}} />;`,
-    frame: 'w-full h-full',
-  },
   'manage-watch': {
     label: 'ManageWatch (per-watch manage page)',
     // POINTED AT v2 (2026-08-15). It imported '@/components/ManageWatch', which was
@@ -276,6 +255,31 @@ const PRESETS: Record<string, Preset> = {
       }
       export const node = <ManageWatch token="demo" />;`,
     frame: 'max-w-lg w-full mx-auto',
+  },
+  'ch-holds': {
+    label: 'HoldsPanel — the four live states, and which one gets a remove button',
+    // ONE ROW PER STATUS, because the whole design question here is which rows may be
+    // dismissed. Only `released` carries the ✕: the bot has let go, so there is nothing
+    // left to strand. `carted` deliberately has none — hiding a row while a real campsite
+    // sits in a real cart is the 2026-08-13 leak with a button on it.
+    entry: `import HoldsPanel from '@/components/v2/HoldsPanel';
+      if (typeof window !== 'undefined') {
+        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({ holds: [
+          { id: '1', status: 'released', unitLabel: '#L108', campgroundName: 'Leo Carrillo SP - Canyon Campground',
+            arrivalDate: '2026-09-04', nights: 1, releaseAt: '2026-09-01T08:00:00', cartedAt: null,
+            claimUrl: '/claim/1?t=demotoken' },
+          { id: '2', status: 'carted', unitLabel: '#035', campgroundName: 'South Carlsbad SB - Northern End',
+            arrivalDate: '2026-09-06', nights: 2, releaseAt: '2026-09-01T08:00:00', cartedAt: '2026-09-01T15:00:02Z',
+            claimUrl: '/claim/2?t=demotoken' },
+          { id: '3', status: 'requested', unitLabel: '#C218', campgroundName: 'Carpinteria SB - Santa Cruz',
+            arrivalDate: '2026-09-12', nights: 1, releaseAt: '2026-09-02T08:00:00', cartedAt: null },
+          { id: '4', status: 'offered', unitLabel: '#042', campgroundName: 'Silver Lake Campground',
+            arrivalDate: '2026-09-20', nights: 3, releaseAt: '2026-09-03T08:00:00', cartedAt: null,
+            holdUrl: '/w/demotoken' },
+        ] }) });
+      }
+      export const node = <HoldsPanel />;`,
+    frame: 'max-w-md w-full mx-auto',
   },
   'ch-claim': {
     label: 'ClaimFlow — the RC hand-off, gated on the signed-in confirmation',
@@ -730,12 +734,6 @@ const PRESETS: Record<string, Preset> = {
       export const node = <V2Nav />;`,
     frame: 'w-full',
   },
-  'ch-home': {
-    label: 'Marketing home (redesign) — signed out',
-    entry: `import Home from '@/app/v2/page';
-      export const node = <div className="font-ch-body text-ch-ink"><Home /></div>;`,
-    frame: 'w-full',
-  },
   'ch-connect': {
     label: 'Recreation.gov connect (restyled) — credential form',
     entry: `import Connect from '@/app/connect/page';
@@ -1011,66 +1009,6 @@ const PRESETS: Record<string, Preset> = {
       export const node = <Sheet />;`,
     frame: 'max-w-2xl w-full mx-auto',
   },
-  'v2-available': {
-    label: 'v2 Available now (search rail + results)',
-    // Drives the REAL flow rather than faking state: types a place, picks the
-    // suggestion, submits, and lets the component call the mocked endpoints. That
-    // exercises the debounce, the request guard and the result mapping.
-    entry: `import AvailableNow from '@/components/v2/AvailableNow';
-      const mk = (id, name, city, state, source, dist, avail, extra = {}) => ({
-        id, source, name, description: null, latitude: 36, longitude: -121.5,
-        address: { city, state }, amenities: [], activities: [], environmentTags: [],
-        siteTypes: ['tent'], reservable: true, reservationsUrl: null, phone: null, email: null,
-        adaAccessible: false, petsAllowed: true, photos: [], lastSyncedAt: null,
-        distanceMiles: dist, hasAvailability: avail, ...extra,
-      });
-      const CAMPGROUNDS = [
-        mk('233116', 'Kirk Creek Campground', 'Big Sur', 'CA', 'ridb', 4, true,
-           { likelihood: { rate: 0.34, label: '3–6 weeks out', samples: 91 } }),
-        mk('rc-783', 'Limekiln State Park', 'Big Sur', 'CA', 'reservecalifornia', 11, true),
-        mk('gtc-WA--2147483647', 'Cape Disappointment', 'Ilwaco', 'WA', 'goingtocamp', 18, false),
-        mk('tnsc-SC-aiken', 'Aiken State Park', 'Windsor', 'SC', 'tnsc', 23, false),
-        mk('232447', 'Ponderosa Campground', 'Big Sur', 'CA', 'ridb', 27, undefined),
-        mk('ra-NY-12', 'Allegany State Park', 'Salamanca', 'NY', 'reserveamerica', 31, false),
-      ];
-      if (typeof window !== 'undefined') {
-        window.fetch = async (url) => {
-          const u = String(url);
-          if (u.includes('/api/suggest')) {
-            return { ok: true, json: async () => ({ campgrounds: [
-              { id: 'x', name: 'Big Sur', city: 'Big Sur', state: 'CA', latitude: 36.27, longitude: -121.81 },
-            ] }) };
-          }
-          return { ok: true, json: async () => ({ campgrounds: CAMPGROUNDS, total: CAMPGROUNDS.length }) };
-        };
-      }
-      function Harness() {
-        React.useEffect(() => {
-          const setValue = (el, v) => {
-            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-            setter.call(el, v);
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-          };
-          const t1 = setTimeout(() => {
-            const input = document.getElementById('v2-where');
-            if (input) setValue(input, 'Big Sur');
-          }, 200);
-          const t2 = setTimeout(() => {
-            const sug = document.querySelector('ul li button');
-            if (sug) sug.click();
-          }, 700);
-          const t3 = setTimeout(() => {
-            const btn = Array.from(document.querySelectorAll('button'))
-              .find((b) => b.textContent.trim() === 'Search');
-            if (btn) btn.click();
-          }, 1000);
-          return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
-        }, []);
-        return <AvailableNow />;
-      }
-      export const node = <div className="bg-ch-paper font-ch-body text-ch-ink"><Harness /></div>;`,
-    frame: 'w-full',
-  },
   'v2-detail': {
     label: 'v2 Campground detail (calendar + open sites + about)',
     // Mocks both endpoints the page calls and auto-taps an open day so the shot
@@ -1311,63 +1249,6 @@ const PRESETS: Record<string, Preset> = {
       );`,
     frame: 'w-full',
   },
-  'v2-mobile': {
-    label: 'v2 phone — bottom tab bar, guest banner, results',
-    // Renders the real shell chrome at phone width: top brand bar, the fixed
-    // bottom tab bar, and the signed-out guest banner (the Clerk stub defaults
-    // to signed out). Search is driven so results are on screen behind the bar.
-    entry: `import V2Nav from '@/components/v2/V2Nav';
-      import AvailableNow from '@/components/v2/AvailableNow';
-      const mk = (id, name, city, state, source, dist, avail) => ({
-        id, source, name, description: null, latitude: 36, longitude: -121.5,
-        address: { city, state }, amenities: [], activities: [], environmentTags: [],
-        siteTypes: ['tent'], reservable: true, reservationsUrl: null, phone: null, email: null,
-        adaAccessible: false, petsAllowed: true, photos: [], lastSyncedAt: null,
-        distanceMiles: dist, hasAvailability: avail,
-      });
-      const CAMPGROUNDS = [
-        mk('233116', 'Kirk Creek Campground', 'Big Sur', 'CA', 'ridb', 4, true),
-        mk('rc-783', 'Limekiln State Park', 'Big Sur', 'CA', 'reservecalifornia', 11, false),
-      ];
-      if (typeof window !== 'undefined') {
-        window.fetch = async (url) => {
-          const u = String(url);
-          if (u.includes('api.mapbox.com')) {
-            return { ok: true, json: async () => ({ features: [
-              { id: 'p1', place_name: 'Big Sur, California, United States', center: [-121.81, 36.27] },
-              { id: 'p2', place_name: 'Big Sur Station, California, United States', center: [-121.78, 36.25] },
-            ] }) };
-          }
-          if (u.includes('/api/suggest')) {
-            return { ok: true, json: async () => ({ campgrounds: [
-              { id: 'c1', name: 'Big Sur Campground', city: 'Big Sur', state: 'CA', latitude: 36.24, longitude: -121.78 },
-            ] }) };
-          }
-          return { ok: true, json: async () => ({ campgrounds: CAMPGROUNDS, total: 2 }) };
-        };
-      }
-      function Harness() {
-        React.useEffect(() => {
-          const setValue = (el, v) => {
-            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-            setter.call(el, v);
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-          };
-          const t1 = setTimeout(() => { const i = document.getElementById('v2-where'); if (i) setValue(i, 'Big Sur'); }, 200);
-          return () => { clearTimeout(t1); };
-        }, []);
-        return (
-          <div className="flex min-h-full flex-col bg-ch-paper font-ch-body text-ch-ink">
-            <V2Nav />
-            <main className="flex-1 pb-16">
-              <AvailableNow />
-            </main>
-          </div>
-        );
-      }
-      export const node = <Harness />;`,
-    frame: 'w-full',
-  },
   'ch-logo': {
     label: 'HawkGlyph vs the full badge at small sizes',
     // The point of the glyph is that it survives favicon size. Shown against the
@@ -1439,41 +1320,6 @@ const PRESETS: Record<string, Preset> = {
         );
       }
       export const node = <Sheet />;`,
-    frame: 'max-w-md w-full mx-auto',
-  },
-  'avail-usedirect': {
-    label: 'AvailabilityCalendar (ReserveCalifornia — open-site dropdown)',
-    // Mocks a UseDirect availability response with several sites open on a near day,
-    // then auto-taps that day so the shot captures the open-site picker (the thing the
-    // rec.gov→UseDirect dropdown change added). Sites share the park link by design.
-    entry: `import AvailabilityCalendar from '@/components/AvailabilityCalendar';
-      const now = new Date();
-      const month = now.toISOString().slice(0, 7);
-      const iso = (d) => d.toISOString().slice(0, 10);
-      const day = (n) => { const d = new Date(now); d.setDate(now.getDate() + n); return iso(d); };
-      const mk = (id, name, loop, type, dates) => ({ campsiteId: id, campsiteName: name, campsiteType: type, loop, availability: dates.map((dt) => ({ date: dt, status: 'available', minStay: null })) });
-      const campsites = [
-        mk('72101', 'Oceanfront 12', 'Sea Breeze Loop', 'RV', [day(3), day(4)]),
-        mk('72102', 'Oceanfront 14', 'Sea Breeze Loop', 'TENT', [day(3), day(5)]),
-        mk('72103', 'Redwood 07', 'Canopy Loop', 'TENT', [day(3), day(10)]),
-        mk('72104', 'Redwood 22', 'Canopy Loop', 'RV', [day(4), day(11)]),
-        mk('72105', 'Meadow 03', null, 'TENT', [day(3)]),
-      ];
-      if (typeof window !== 'undefined') {
-        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({ campgroundId: 'rc-783', month, campsites, availableCount: campsites.length }) });
-      }
-      function Harness() {
-        React.useEffect(() => {
-          const t = setTimeout(() => {
-            const btns = Array.from(document.querySelectorAll('button[data-avail-day]'));
-            const target = btns.find((b) => b.getAttribute('data-avail-day') === day(3)) || btns[0];
-            if (target) target.click();
-          }, 500);
-          return () => clearTimeout(t);
-        }, []);
-        return <AvailabilityCalendar campgroundId="rc-783" month={month} source="reservecalifornia" reservationsUrl="https://www.reservecalifornia.com/park/622" providerName="ReserveCalifornia" />;
-      }
-      export const node = <Harness />;`,
     frame: 'max-w-md w-full mx-auto',
   },
 };
