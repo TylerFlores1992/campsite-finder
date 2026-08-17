@@ -62,6 +62,7 @@
 
 import { chromium } from 'playwright';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -373,6 +374,67 @@ const RC_MAX_FAMILY_MB = Number(process.env.RC_KEEPWARM_MAX_MB || 1500);
 /** How often to look. The expiry poll is 60s and the ramp takes minutes, so this is the
  *  same cadence — checking faster would spawn PowerShell for nothing. */
 const MEM_CHECK_MS = Number(process.env.RC_KEEPWARM_MEM_CHECK_MS || 60_000);
+
+/**
+ * ── THE SIZE BOUND ABOVE COULD NEVER HAVE FIRED, AND THIS IS WHY (2026-08-17, second pass) ──
+ *
+ * `RC_MAX_FAMILY_MB` is checked in the resident loop's BODY. The leak happens during a WEDGE,
+ * and a wedge is by definition that loop not advancing — `renewing the session` at 15:42:58,
+ * `WEDGED — the loop has not advanced in 13m` at 15:55:58. So during every one of the twenty
+ * observed ramps, control never returned to the check. **A guard placed inside the thing it
+ * guards against is not a guard.** It is the watchdog-wired-to-the-thing-it-watches shape for
+ * the third time in this repo — after `expireStaleHolds` living in the feed the dead runner
+ * polls, and `reclaimLapsedHolds` living inside `withRC`.
+ *
+ * The wedge watchdog's own comment already worked this out and is quoted here because the fix
+ * is to obey it: *"The renew timer is the only code proven to still be executing, which makes
+ * it the only place a watchdog can live."*
+ *
+ * ── AND THE MEASUREMENT HAD TO CHANGE WITH THE LOCATION ──
+ *
+ * `rcFamilyMb()` spawns PowerShell, and spawning is EXACTLY what fails at 99% COMMIT — it is
+ * the mechanism by which `supervise.ps1` could not start a shell on 2026-08-12 and by which
+ * the Scheduled Tasks stopped on 08-17. An instrument that stops answering as the emergency
+ * peaks is no use in the emergency, so the fast arm uses `os.freemem()`: no child process, no
+ * WMI, no allocation, answers in microseconds under any load.
+ *
+ * Free RAM is a genuine signal here rather than a proxy, and the series proves it — across the
+ * 11:08 ramp it read 13,112 → 9,776 → 4,428 → 1,816 → 1,987 → 1,174 → 881 MB. The commit was
+ * not being reserved, it was being TOUCHED.
+ *
+ * ── IT REQUIRES A STALL TOO, AND THAT IS THE WHOLE SAFETY ARGUMENT ──
+ *
+ * This is somebody's actual desktop PC. Free RAM alone would fire when the owner opens a
+ * browser with too many tabs, and killing the RC session over that is the cry-wolf failure
+ * this file has already fixed three times — most expensively at 07:33 on 08-16, where the
+ * printed remedy would have destroyed the healthy session it was complaining about.
+ *
+ * Requiring BOTH makes it specific: the loop ticks about once a second when healthy, so a
+ * stall of a minute means we are inside a hung Playwright call, and low RAM at that moment
+ * means the browser we are hung against is eating the machine. Neither alone acts.
+ */
+const LOW_RAM_MB = Number(process.env.RC_KEEPWARM_LOW_RAM_MB || 4000);
+
+/**
+ * How long the loop must ALSO have been stalled before low RAM counts as a runaway.
+ *
+ * Shorter than `HUNG_MS` by design — that one has to tolerate a full unattended sign-in,
+ * which is minutes of legitimate silence, so it cannot be tightened without killing real
+ * logins. This arm can be short precisely because it carries the second condition: a sign-in
+ * that is merely slow does not also drain 9 GB of RAM.
+ */
+const MEM_STALL_MS = Number(process.env.RC_KEEPWARM_MEM_STALL_MS || 60_000);
+
+/**
+ * How often the watchdog timer runs.
+ *
+ * IT USED TO BE `RENEW_MS` (2 min), AND THAT IS TOO SLOW TO BOUND THIS. The ramp is ~2,400
+ * MB/min, so a two-minute tick lets it gain nearly 5 GB between looks — the tick interval is
+ * the overshoot. Ten seconds bounds it at ~400 MB. The profile lock is still renewed on its
+ * own `RENEW_MS` cadence inside this timer, so writing the lock file has not got 12x more
+ * frequent; only the two checks have.
+ */
+const WATCHDOG_MS = Number(process.env.RC_KEEPWARM_WATCHDOG_MS || 10_000);
 
 /**
  * Don't thrash. If the browser is somehow over the line the instant it opens, recycling in
@@ -1289,33 +1351,82 @@ async function warmResident() {
      */
     let lastTick = Date.now();
     const tick = () => { lastTick = Date.now(); };
+    let lastLockRenew = 0;
     const renew = setInterval(() => {
-      if (Date.now() - lastTick > HUNG_MS) {
-        log(`✗ WEDGED — the keep-warm loop has not advanced in ${Math.round((Date.now() - lastTick) / 60_000)}m.`);
+      const stalledMs = Date.now() - lastTick;
+      const bail = (why) => {
+        log(why);
         log('  Releasing the profile and exiting so the hold runner can use it.');
         try { clearInterval(renew); } catch {}
         releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
         process.exit(1);
+      };
+      if (stalledMs > HUNG_MS) {
+        bail(`✗ WEDGED — the keep-warm loop has not advanced in ${Math.round(stalledMs / 60_000)}m.`);
       }
-      renewProfileLock(PROFILE_DIR, LOCK_OWNER);
-    }, RENEW_MS);
+      /**
+       * THE RUNAWAY ARM. See LOW_RAM_MB: the size bound in the loop body cannot fire while the
+       * loop is wedged, which is every occasion it was written for, so the fast check lives
+       * here — in the timer the wedge watchdog above already identifies as the only code
+       * proven to still be executing.
+       *
+       * BOTH CONDITIONS, ALWAYS. Low RAM on its own is the owner using their own computer.
+       * A stall on its own is an unattended sign-in doing its job. Together they are a hung
+       * Playwright call against a browser that is eating the machine, which is the shape of
+       * all twenty ramps in the series.
+       *
+       * `os.freemem()` and not `rcFamilyMb()` deliberately: the latter spawns PowerShell, and
+       * spawning is the thing that fails first at 99% COMMIT. An instrument that goes quiet as
+       * the emergency peaks reports the emergency as calm.
+       */
+      const freeMb = os.freemem() / (1024 * 1024);
+      if (stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB) {
+        bail(`✗ RUNAWAY — stalled ${Math.round(stalledMs / 1000)}s with only ${Math.round(freeMb)} MB `
+           + `of free RAM (floor ${LOW_RAM_MB} MB). Normal here is ~13,000 MB free and this `
+           + 'browser has taken the box to 99% COMMIT twenty times in five days.');
+      }
+      // Unchanged cadence. The timer got 12x faster so the checks above could bound a
+      // ~2,400 MB/min ramp; the lock file has no such need and rewriting it every ten
+      // seconds would be churn for nothing.
+      if (Date.now() - lastLockRenew >= RENEW_MS) {
+        lastLockRenew = Date.now();
+        renewProfileLock(PROFILE_DIR, LOCK_OWNER);
+      }
+    }, WATCHDOG_MS);
     let ctx = null;
     try {
       ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
         headless: HEADLESS, viewport: null,
         ignoreDefaultArgs: ['--enable-automation'],
-        // WITHOUT THESE, KEEPING THE PAGE OPEN BUYS NOTHING. Chrome aggressively throttles
-        // timers in background, minimised and occluded tabs — and this window will spend
-        // its whole life behind something on a desktop the owner actually uses. The
-        // renewal we are staying open to catch is a timer inside RC's app; a throttled
-        // timer is a timer that does not fire, so the resident tab would sit there looking
-        // healthy and renew exactly as little as the old eight-second visit did.
-        args: [
-          '--hide-crash-restore-bubble',
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-renderer-backgrounding',
-        ],
+        /**
+         * THE THREE THROTTLING FLAGS ARE GONE, AND THE REASON THEY WERE ADDED IS THE REASON.
+         *
+         * They arrived 2026-08-08 under: *"the renewal we are staying open to catch is a timer
+         * inside RC's app; a throttled timer is a timer that does not fire."* That premise was
+         * falsified by this repo's own later work and the entry was never revisited:
+         *
+         *   • 2026-08-09 — okta-auth-js fires `authorize?prompt=none` on its autoRenew timer,
+         *     fails, and DELETES the tokens. The timer we were staying open to catch does not
+         *     produce a renewal; it produces a signed-out app.
+         *   • 2026-08-15 — `hasRefreshToken: false`, read off the grant. There is nothing to
+         *     silently refresh with, so no timer of RC's could have renewed anything.
+         *   • What does re-mint is `renewSession`'s CLICK, which we drive ourselves through
+         *     Playwright. `page.evaluate` and `page.goto` are devtools-driven and are not
+         *     subject to background throttling at all, so nothing we rely on needs these.
+         *
+         * So they bought nothing, and what they cost is specific: they remove every brake
+         * Chrome has on an occluded tab, and this tab spends hours occluded running an SPA in
+         * a permanently-401 state — a token that expired 44 hours ago, retried against RC
+         * forever. Twenty ramps in five days, each ~2,400 MB/min of real RAM.
+         *
+         * THIS IS A HYPOTHESIS ABOUT THE CAUSE, NOT A PROVEN FIX, and it is deliberately
+         * shipped alongside the containment above rather than instead of it — the two are
+         * distinguishable in `chromium_memory_samples` because they act at different points.
+         * If ramps stop appearing at all, the flags were the cause. If ramps still appear but
+         * stop short of taking the box down, the containment is what worked and this was not
+         * it. Crediting a repair to the wrong mechanism has cost this file three times.
+         */
+        args: ['--hide-crash-restore-bubble'],
       });
       await installTokenCapture(ctx);
       const page = ctx.pages()[0] ?? (await ctx.newPage());

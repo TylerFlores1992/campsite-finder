@@ -1055,6 +1055,84 @@ token-less profile — and ~50 minutes later the token is back to 10 minutes and
   live. **Confirm from the box after the update:** a `renewing the session` line followed
   within ~20s by a result instead of a wedge settles it. If it still wedges, suspect the
   browser, not the code.
+  - **ANSWERED THE SAME DAY, AND THE ARROW POINTS THE OTHER WAY.** The wedge is not the
+    disease, it is the browser at 25 GB refusing to answer. See directly below: the four
+    wedge times above (05:39, 06:53, 07:43, 08:55) match four memory-ramp recoveries
+    (05:40:35, 06:55:00, 07:45:21, 08:57:35) to within two minutes. `evaluateWithin` is
+    still right — it turns a hang into a fast failure — but it prevents nothing.
+
+### THE CHROMIUM LEAK IS FULLY ATTRIBUTED (2026-08-17, third pass) — 20 RAMPS IN 5 DAYS
+The sampler (migration 059) had never once recorded an event; it has now recorded twenty, and
+the family that was guessed wrong twice is settled. **Every ramp is the `rc` family — the
+keep-warm's own resident browser** — and `recgov` peaks at 0 MB in nineteen of the twenty.
+```
+last-healthy 11:06:19  rc 214MB pid144       RAM free 13,115MB   commit 11%
+first-big    11:08:20  rc 3,057MB pid144     RAM free  9,776MB   commit 58%   <- SAME pid
+             11:12:20  rc 13,773MB           RAM free  1,816MB   commit 77%
+peak         11:18:29  rc 27,085MB pid144    RAM free    881MB   commit 99%
+recovered    11:20:21  rc 163MB pid2956      RAM free 13,480MB   commit 10%
+```
+- **~2,400 MB/min, and it is REAL memory.** Free RAM goes 13,112 → 881 MB, so the commit is
+  being TOUCHED, not reserved. That rules out a huge-but-untouched allocation and it rules
+  out reading the metric wrong.
+- **ONE PROCESS, and the same pid that was healthy two minutes earlier.** `max_mb` carries
+  almost all of `rc_mb` (25,183 of 25,436 in one). It is the resident tab going bad, not a
+  fleet of children accumulating.
+- **EVERY ~70 MINUTES, TWENTY TIMES, ACROSS FIVE DAYS.** 08-16: 08:05, 09:17, 13:50, 15:03,
+  16:09, 17:17, 18:31, 19:47, 21:32. 08-17: 00:41, 01:53, 02:57, 04:12, 05:26, 06:42, 07:31,
+  08:43, 09:51, 11:08, 12:14. **This was never an occasional event** — every "not reproduced
+  this session" reading in this file was a window that happened to miss one.
+- **60 min of token + ~10 min of ramp = the 70-minute period.** The browser opens, mints a
+  token, is flat for about an hour, the near-expiry renewal runs, it ramps, it dies, repeat.
+- **THE RECYCLE SHIPPED THAT MORNING COULD NEVER HAVE FIRED.** `RC_MAX_FAMILY_MB` is checked
+  in the resident loop's BODY, and the leak happens during a WEDGE — which is by definition
+  that loop not advancing. On all twenty occasions control never reached the check. **A guard
+  placed inside the thing it guards against is not a guard**, and this is the third instance
+  of the shape here, after `expireStaleHolds` living in the feed only a live runner polls and
+  `reclaimLapsedHolds` living inside `withRC`. The wedge watchdog's own comment had already
+  written the rule down — *"the renew timer is the only code proven to still be executing,
+  which makes it the only place a watchdog can live"* — and the recycle did not obey it.
+- **THE FIX IS TWO LAYERS, AND THEY ARE DELIBERATELY DISTINGUISHABLE.**
+  1. **Containment (certain).** A RAM-pressure arm inside the watchdog timer: stalled >60s
+     **AND** `os.freemem()` under 4 GB → release the profile and exit, exactly as the wedge
+     arm does. The timer now ticks every 10s rather than 2 min, because **the tick interval
+     IS the overshoot** — at 2,400 MB/min a two-minute timer lets it gain 5 GB between looks.
+     The profile lock keeps its own `RENEW_MS` cadence inside the faster timer.
+  2. **Root-cause candidate (a hypothesis, labelled as one).** The three throttling-disable
+     flags are removed. They were added 2026-08-08 to catch *"a timer inside RC's app"* —
+     and this file's own later findings killed that premise twice over: okta-auth-js's
+     autoRenew fails and **deletes** the tokens (08-09), and RC issues **no refresh token at
+     all** (08-15). Nothing we rely on needs them, because `page.evaluate`/`page.goto` are
+     devtools-driven and unthrottled. What they cost is every brake Chrome has on an occluded
+     tab — and this tab spends hours occluded running an SPA in a permanent 401 state.
+- **`os.freemem()` AND NOT THE POWERSHELL SCAN, deliberately.** `rcFamilyMb()` spawns a child
+  process, and spawning is precisely what fails at 99% COMMIT — it is *how* `supervise.ps1`
+  could not start a shell on 08-12 and *how* the Scheduled Tasks stopped on 08-17. An
+  instrument that goes quiet as the emergency peaks reports the emergency as calm.
+- **BOTH CONDITIONS, ALWAYS.** Low RAM alone is the owner using their own desktop PC; a stall
+  alone is an unattended sign-in doing its job. Acting on either would be the cry-wolf failure
+  this file has fixed three times, most expensively at 07:33 on 08-16.
+- **WHAT THE FIX BUYS, STATED HONESTLY.** The RAM floor is crossed about three minutes into a
+  ramp, at ~8-10 GB and ~68% COMMIT — comfortably below the ~90% where Windows stops
+  scheduling tasks and the 99% where Node aborts. **So the box never goes dark again.** It
+  does NOT stop the browser being recycled; that is what layer 2 is for, and it is unproven.
+- **HOW TO READ THE NEXT FEW DAYS.** The two layers act at different points, so the memory
+  series tells them apart: **no ramps at all ⇒ the flags were the cause**; **ramps that still
+  appear but stop around 8-10 GB ⇒ the containment is what worked and the flags were not it.**
+  Shipping them together is only acceptable because of that. Crediting a repair to the wrong
+  mechanism has cost this file three times.
+- **THE ALLOCATION SITE INSIDE THE PAGE IS STILL UNKNOWN — do not write one in.** Candidates
+  not distinguished: a retry loop in RC's SPA against a token that expired 44 hours ago, our
+  own `fetch` wrapper retaining `init` per pending request, or something in Chromium's
+  handling of the occluded headful window. What would settle it is a `--remote-debugging-port`
+  heap snapshot taken DURING a ramp, which needs somebody at the box in the ten-minute window.
+- `worker/keepwarm-recycle.test.mts`, **8 mutations, each asserting the mutation applied** —
+  including the guard moved back into the loop body, the stall condition dropped, the timer
+  slowed back to 2 minutes, and a throttling flag restored. **Two of its own assertions were
+  wrong at baseline and one PASSED FOR THE WRONG REASON:** a bare `(\d+)` stops at the
+  underscore in `60_000`, so `MEM_STALL_MS` read as **60** and `WATCHDOG_MS` as **10** — and
+  10 sails under a 15,000 ms ceiling. A guard that reads the wrong number will approve the
+  wrong value later, silently. Ninth time a guard here has anchored on the wrong thing.
 
 ## Open / next session
 
@@ -3981,7 +4059,18 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs current to 2026-08-17 (second pass).** **THE HOLD RUNNER WAS DOWN FOR 2.5 HOURS AND THE
+**Docs current to 2026-08-17 (third pass).** **THE CHROMIUM LEAK IS ATTRIBUTED AT LAST — 20
+ramps in 5 days, every ~70 minutes, every one the keep-warm's own resident RC browser, one
+process, ~2,400 MB/min of REAL memory (free RAM 13.1 GB → 0.9 GB).** It is not an occasional
+event and never was; every "not reproduced this session" reading was a window that missed one.
+**The recycle shipped that morning was inert by construction** — checked in the resident loop's
+body, while the leak happens during a wedge, which is that loop not advancing. The guard now
+lives in the watchdog timer and trips on `os.freemem()` (no child process — spawning is what
+fails at 99% COMMIT), and the three throttling-disable flags are gone because this file's own
+later findings disproved the reason they were added. **The allocation site inside the page is
+still unknown; a heap snapshot during a ramp is what would settle it.**
+
+*(Previous pass.)* **THE HOLD RUNNER WAS DOWN FOR 2.5 HOURS AND THE
 WATCHDOG NEVER SPOKE** — an 08:00 test hold was never carted, `last_attempt_note` stayed NULL,
 and `rc-login.bat` restored the SESSION while the runner stayed dead. **This is process
 supervision on the mini-PC, not anti-bot** — the rehearsal passed on 08-16 and the renewal
