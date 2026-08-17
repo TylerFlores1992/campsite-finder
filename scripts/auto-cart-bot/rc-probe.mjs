@@ -194,6 +194,23 @@ const CART_CAP = args.has('--cart-cap');
  * reason. Same discipline as --cart-cap, which is why that probe's step 3 exists.
  */
 const CART_LADDER = args.has('--cart-ladder');
+/**
+ * --concurrent-mint: may N carts be minted AT THE SAME TIME, or do they race?
+ *
+ * `--cart-ladder` proved one session holds ten carts and twenty reservations, but it minted
+ * them strictly in sequence -- each cart was filled and proven full before the next was
+ * asked for. The production runner carts SERIALLY for the same reason, and at capacity 20 a
+ * release where every hold shares one `release_at` means twenty carts back to back through
+ * one Chromium.
+ *
+ * Parallelising that is the obvious fix and it has one unmeasured precondition: if N
+ * simultaneous NO_CART requests all receive the SAME new cart, then two succeed and the
+ * rest fail with RC's per-cart message -- turning a 20-capacity morning into a 2-capacity
+ * one, and doing it in a way that reads like an RC limit rather than a race we caused.
+ *
+ * So: fire N mints at once, count DISTINCT keys. Nothing else changes.
+ */
+const CONCURRENT_MINT = args.has('--concurrent-mint');
 /** Releases ONE entry, leaving the rest of the cart alone — what a bot holding several
  *  sites needs. Both shapes read out of RC's bundle (2026-08-06). */
 const CART_REMOVE_ENTRY = 'https://rdapi.reservecalifornia.com/api/webaccesscustomer/remove/cartentry';
@@ -1220,6 +1237,96 @@ try {
         }
       } finally {
         await ctxB.close();
+      }
+    }
+  }
+
+  if (signedIn && CONCURRENT_MINT) {
+    const units = String(process.env.RC_CAP_UNITS || '').split(',').map((x) => x.trim()).filter(Boolean);
+    const arrival = process.env.RC_ARRIVAL;
+    const nights = Number(process.env.RC_NIGHTS ?? 1);
+    if (units.length < 4 || !arrival) {
+      log('\nSkipping --concurrent-mint: set RC_CAP_UNITS to at least 4 units and RC_ARRIVAL.');
+    } else {
+      step(6, 'May carts be minted CONCURRENTLY, or do they race?');
+      log(`   Firing ${units.length} NO_CART precarts AT ONCE and counting DISTINCT keys.`);
+      log('   Locks up to that many real campsites for the length of the run, then releases.\n');
+
+      const savedKey = await page.evaluate(() => {
+        try { return localStorage.getItem('shoppingCartKey'); } catch { return null; }
+      });
+      const made = [];
+      try {
+        // ALL AT ONCE — the whole question. `page.evaluate` is async in the page, so these
+        // fetches genuinely overlap rather than queueing behind each other.
+        const started = Date.now();
+        const results = await Promise.all(units.map(async (unitId) => {
+          const r = await precartInPage(page, { unitId: Number(unitId), arrival, nights, cartKey: NO_CART })
+            .catch((e) => ({ error: String(e && e.message) }));
+          const key = r?.submitted?.v?.cartKey || r?.finalKey || null;
+          const err = r?.submitted?.v?.error || r?.error || '';
+          return { unitId, key, err, headers: r?.replay?.headers ?? null };
+        }));
+        const elapsed = ((Date.now() - started) / 1000).toFixed(1);
+
+        for (const r of results) {
+          log(`   unit ${String(r.unitId).padEnd(7)} -> ${r.key ? 'key ' + String(r.key).slice(0, 8) + '...' : 'NO KEY'}` +
+              `${r.err ? '  RC said: ' + String(r.err).replace(/<br\/?>/g, ' ').slice(0, 90) : ''}`);
+        }
+
+        const headers = results.find((r) => r.headers)?.headers ?? null;
+        const keys = results.map((r) => r.key).filter(Boolean);
+        const distinct = new Set(keys);
+        // Read each cart back so `made` releases exactly what was taken. A key we were
+        // handed is not proof the site is in it — the same rule the ladder follows.
+        if (headers) {
+          for (const r of results) {
+            if (!r.key) continue;
+            const found = await findCartEntry(ctx.request, headers, r.key, { unitId: r.unitId }).catch(() => null);
+            if (found?.found) made.push({ unitId: r.unitId, cartKey: r.key, entryKey: found.entryKey });
+          }
+        }
+
+        log('');
+        log(`   ${units.length} fired in ${elapsed}s -> ${keys.length} key(s), ${distinct.size} DISTINCT, ${made.length} site(s) actually held.`);
+        if (distinct.size === units.length && made.length === units.length) {
+          log('   + CONCURRENT MINTING IS SAFE. Every request got its own cart and every site');
+          log('     landed, so the runner may fire a release group in parallel. Bound the');
+          log('     concurrency anyway -- this IP has eaten a 12-hour block, and the limit');
+          log('     that matters next is the WAF, not RC cart rules.');
+        } else if (distinct.size < keys.length) {
+          log(`   x THEY RACE. ${keys.length} requests received only ${distinct.size} distinct cart(s), so`);
+          log('     simultaneous NO_CART is NOT how to get N carts -- the losers would fail');
+          log("     with RC's per-cart message and read like an account limit. Mint carts");
+          log('     SEQUENTIALLY and parallelise only the fill/submit within each cart.');
+        } else {
+          log('   ? INCONCLUSIVE. Keys were distinct but not every site was held, so something');
+          log('     other than the race decided this run. Read the per-unit lines above before');
+          log('     concluding anything about concurrency.');
+        }
+      } finally {
+        log('');
+        const hdr = null;
+        for (const m of made) {
+          try {
+            const h = await page.evaluate(() => {
+              const ls = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+              const t = ls('ssoAccessToken') || ls('accessToken');
+              return { 'Content-Type': 'application/json', accesstoken: t, authorization: 'Bearer ' + t,
+                       installationsidentity: 'cali', storeid: '111' };
+            });
+            const r = await releaseEntry(ctx.request, hdr ?? h, m.cartKey, m.entryKey);
+            log(`   released unit ${m.unitId} from ${String(m.cartKey).slice(0, 8)}... -> HTTP ${r.status}`);
+          } catch (err) {
+            log(`   x COULD NOT RELEASE unit ${m.unitId}: ${err.message}`);
+            log(`     Remove it by hand -- cart ${m.cartKey}, entry ${m.entryKey}.`);
+          }
+        }
+        await page.evaluate((k) => {
+          try { if (k) localStorage.setItem('shoppingCartKey', k); else localStorage.removeItem('shoppingCartKey'); }
+          catch {}
+        }, savedKey);
+        log('   restored the session\'s cart pointer.');
       }
     }
   }
