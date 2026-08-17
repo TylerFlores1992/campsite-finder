@@ -484,6 +484,50 @@ export const COMMANDS = {
   'disk-free': async () =>
     await run('powershell', ['-NoProfile', '-Command',
       "Get-PSDrive -PSProvider FileSystem | ForEach-Object { '{0}: {1} GB free of {2} GB' -f $_.Name, [math]::Round($_.Free/1GB,1), [math]::Round(($_.Used+$_.Free)/1GB,1) }"]),
+
+  /**
+   * ARE THE SCHEDULED TASKS ALIVE, AND IS THERE A SESSION FOR THEM TO RUN IN?
+   *
+   * Both mini-PC Scheduled Tasks went silent at ~05:31 PT on 2026-08-17 and the watchdog
+   * that fires every five minutes said nothing for two and a half hours. **The one fact
+   * nobody could obtain remotely was whether Windows had run them at all** — and the two
+   * levers that would have answered it are on the box: RustDesk (which the same day failed
+   * with "No displays") and physically sitting at it. Twice now the diagnosis has waited on
+   * a human.
+   *
+   * `bot_task_heartbeat` (migration 060) answers "did it fire?" going forward, but only for
+   * firings after the box updates, and it cannot say WHY a task stopped. This says why:
+   * `Scheduled Task State`, `Last Run Time`, `Last Result` and `Logon Mode` are exactly the
+   * four fields `docs/NEXT-SESSION.md` asks a human to read.
+   *
+   * THE SESSION LIST IS THE OTHER HALF, and it is what distinguishes the two failures that
+   * look identical from here. `install-watchdog.bat` registers with no `/RU`, i.e. "run only
+   * when the user is logged on" — so a task that stops because the session went away is a
+   * different fault from one Windows disabled, and they need different fixes. A logoff also
+   * kills the payloads, so `list-processes` plus this pins it down: processes alive with no
+   * Active session means DISCONNECTED (RustDesk's "No displays"), and that is survivable;
+   * no session at all means the tasks cannot run by construction.
+   *
+   * READ-ONLY, deliberately. It queries and reports; it never enables, re-registers or runs
+   * a task. A diagnostic that changes the thing it measures is how "did the update land?"
+   * became unanswerable, and re-registering a task is the sort of act that should be a
+   * decision rather than a side effect of asking a question.
+   */
+  tasks: async () =>
+    await run('powershell', ['-NoProfile', '-Command',
+      // `2>$null` on each query: a task that is not registered is a legitimate ANSWER here,
+      // not an error, and letting schtasks write to stderr would bury the other one.
+      "$names = @('CampHawk watchdog','CampHawk auto-update'); " +
+      "foreach ($n in $names) { " +
+      "  $r = (schtasks /Query /TN $n /V /FO LIST 2>$null); " +
+      "  if (-not $r) { \"$n : NOT REGISTERED\"; continue } " +
+      "  $keep = 'Status|Scheduled Task State|Last Run Time|Last Result|Next Run Time|Logon Mode|Run As User'; " +
+      "  \"=== $n ===\"; $r | Select-String $keep | ForEach-Object { $_.Line.Trim() } " +
+      "} " +
+      // quser is the plain-English answer to "is anybody logged on, and is it disconnected?"
+      // It is absent on some SKUs, hence the fallback rather than a hard failure.
+      "'=== sessions ==='; " +
+      "$q = (quser 2>$null); if ($q) { $q } else { 'quser unavailable - Active session state unknown' }"]),
 };
 
 export const KINDS = Object.keys(COMMANDS);

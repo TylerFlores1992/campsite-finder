@@ -77,6 +77,17 @@ export const BOT_COMMAND_KINDS = {
   'git-status': { label: 'What commit is the box on', argPattern: null, argOptions: null, argHint: '' },
   'disk-free': { label: 'Free disk space', argPattern: null, argOptions: null, argHint: '' },
   /**
+   * The Windows Scheduled Tasks, and whether there is a session for them to run in.
+   *
+   * Both tasks went silent at ~05:31 PT on 2026-08-17 and the watchdog said nothing for
+   * 2h32m. The one fact nobody could get remotely was whether Windows had run them --
+   * and RustDesk failed with "No displays" the same day, so the diagnosis waited on a
+   * human at the box for the second time. Read-only: it queries and reports, never
+   * enables or re-registers, because re-registering a task should be a decision rather
+   * than a side effect of asking a question.
+   */
+  tasks: { label: 'Are the Scheduled Tasks firing, and is anyone logged on', argPattern: null, argOptions: null, argHint: '' },
+  /**
    * THE FIRST COMMAND THAT IS NOT READ-ONLY, and it is here because of 2026-08-11: the RC
    * hold runner died at 09:36 PT, the keep-warm came back by itself and the runner did not,
    * and there was no way to restart it without a person at the keyboard. Everything else in
