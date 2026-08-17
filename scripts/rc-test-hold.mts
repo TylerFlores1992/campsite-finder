@@ -100,6 +100,14 @@ async function list() {
  * looks enough like a sold-out season to be believed — it was, for a few minutes, while
  * writing this. Read `slice.Date`, exactly as `lib/availability/reservecalifornia.ts` does.
  */
+/**
+ * How many unit ids `--find` prints per campground. `--show 8` for a --cart-ladder run.
+ * Clamped: a huge list is just noise, and one is not enough to be useful.
+ */
+const showCount = Math.min(20, Math.max(1, Number(
+  process.argv[process.argv.indexOf('--show') + 1] ?? 4,
+) || 4));
+
 async function find() {
   const rc = USEDIRECT_PROVIDERS.find((p) => p.idPrefix === 'rc')!;
   const dates = (flag('dates') ?? '2026-12-01,2026-12-08,2027-01-12').split(',');
@@ -132,8 +140,19 @@ async function find() {
       if (!free.length) continue;
       console.log(`\n${w.name}`);
       console.log(`  --watch ${w.watch_id}   (${free.length} bookable on ${date})`);
-      for (const u of free.slice(0, 4)) {
+      // HOW MANY TO PRINT. Four is right for queueing one test hold, and WRONG for
+      // `rc-probe.mjs --cart-ladder`, which needs six at an absolute minimum and does
+      // better with eight — every refusal it has to disambiguate spends one more.
+      //
+      // A tool that shows fewer ids than the caller needs pushes them toward inventing
+      // one, which is the single instruction here whose failure mode is locking a
+      // stranger's campsite, and the whole reason `--find` exists. So it is a flag.
+      for (const u of free.slice(0, showCount)) {
         console.log(`    --unit ${String(u.UnitId).padEnd(7)} --arrival ${date}    ${u.Name}`);
+      }
+      // Ready to paste into the ladder, which wants them comma-separated in one string.
+      if (showCount > 4) {
+        console.log(`    RC_CAP_UNITS=${free.slice(0, showCount).map((u) => u.UnitId).join(',')}`);
       }
       break;
     }
