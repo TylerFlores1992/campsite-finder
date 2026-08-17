@@ -66,8 +66,20 @@ const offer = (unitId: string, releaseAt: string) =>
     arrivalDate: '2026-09-04', nights: 1, releaseAt,
   });
 
-/** The real sweep, scoped to one row so `npm test` cannot fail live users' holds. */
-const sweep = (id: string) => failMissedHolds([id]);
+/**
+ * The real sweep, scoped to one row so `npm test` cannot fail live users' holds.
+ *
+ * AND WITH THE RUNNER'S LIVENESS PINNED. The grace is conditional on `rc_runner_heartbeat`
+ * since 2026-08-17, which is the REAL mini-PC — so without this the outcome depends on
+ * whether the owner's box happens to be up. It passed four consecutive `npm run verify` runs
+ * and failed the moment the box went dark, sweeping a fixture that sits inside the
+ * 45-minute grace with the 5-minute branch. A real-DB test may touch real rows; it must
+ * never depend on real weather.
+ *
+ * `runnerAbsent: false` is the conservative branch — the one every assertion below was
+ * written against.
+ */
+const sweep = (id: string, runnerAbsent = false) => failMissedHolds([id], { runnerAbsent });
 
 test('a requested hold whose release passed long ago is failed, not left silent', async () => {
   await offer(U('8001'), pacific(-(HOLD_MISS_GRACE_MIN + 120)));
@@ -99,6 +111,29 @@ test('a hold still inside the grace is LEFT ALONE — the runner may yet take it
   const [row] = await query<{ id: string }>(
     `SELECT id FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = $2`, [watchId, U('8002')]);
   assert.equal((await sweep(row.id)).length, 0);
+});
+
+test('with the runner DEAD, the same hold is reported in minutes', async () => {
+  // The whole point of the 2026-08-17 change: 45 minutes is bought by "the runner might
+  // still cart it", and with a stale heartbeat that justification does not apply. Same row,
+  // same age, opposite answer — which is what makes this a branch rather than a shorter
+  // constant. Uses -8 minutes: inside the 45-minute grace, outside the 5-minute one, so it
+  // can only pass if the branch is really being taken.
+  await offer(U('8006'), pacific(-8));
+  await mutate(
+    `UPDATE rc_hold_requests SET status = 'requested' WHERE watch_id = $1 AND unit_id = $2`,
+    [watchId, U('8006')]);
+  const [row] = await query<{ id: string }>(
+    `SELECT id FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = $2`, [watchId, U('8006')]);
+
+  // Alive: left alone, because a cart is still possible.
+  assert.equal((await sweep(row.id, false)).length, 0);
+  // Dead: reported, because nothing is coming.
+  const missed = await sweep(row.id, true);
+  assert.equal(missed.length, 1, 'a dead runner must not buy the hold another 40 minutes');
+  const [after] = await query<{ status: string }>(
+    `SELECT status FROM rc_hold_requests WHERE id = $1`, [row.id]);
+  assert.equal(after.status, 'failed');
 });
 
 test('a FUTURE release is never swept', async () => {

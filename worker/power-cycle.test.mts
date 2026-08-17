@@ -77,6 +77,24 @@ test('power is ALWAYS turned back on', () => {
     "restoring power must never depend on the off call having succeeded");
 });
 
+test('it calls the endpoint that works on EVERY generation', () => {
+  // The first version used `/device/relay/control`. Shelly's own docs say that API "is
+  // deprecated and will be removed in the near future" and document Gen1/Gen2 only — so it
+  // would have failed on a current Gen4 plug, and eventually on every plug. Found by the
+  // owner asking whether a Gen4 would work, which is the question I should have asked before
+  // writing it.
+  //
+  // `/v2/devices/api/set/switch` is documented to work for "all types and generations of
+  // relays and plugs". That property is the whole point: the hardware is bought once, by a
+  // person, and a lever that only works with a discontinued generation quietly stops
+  // existing.
+  assert.match(code, /\/v2\/devices\/api\/set\/switch\?auth_key=/);
+  assert.ok(!/device\/relay\/control/.test(code), 'the deprecated endpoint must not come back');
+  // v2 takes JSON with a boolean, not a form with turn=on|off.
+  assert.match(code, /body: JSON\.stringify\(\{ id: [^}]*on: turn === 'on', channel: 0 \}\)/);
+  assert.match(code, /'Content-Type': 'application\/json'/);
+});
+
 test('the act is a POST and the preview is a GET', () => {
   // A GET can be fired by a link preview or a scanner with nobody involved — the same
   // reasoning that makes "hold it for me" a form POST rather than a link.
