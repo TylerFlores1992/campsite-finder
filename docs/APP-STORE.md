@@ -124,6 +124,163 @@ leaves search fully usable — the user types a place name instead.
 
 ---
 
+## 2b. REJECTED 2026-08-16 — Guideline 2.1, Information Needed (New App Submission)
+
+**A different 2.1 from §2a, and a much cheaper one.** Nothing is broken and nothing is
+disputed: Apple's standard new-app information request, asking for a screen recording plus
+six written answers. `1.0 (5)` is marked Rejected; Submission ID `243b36c7-27a1-42e8-9f1a-
+7f19d98a6ed2`, submitted Aug 16 10:23 AM, answered by Apple the same evening.
+
+**The sign-in complaint from §2a is ABSENT — but do not read that as proof it is fixed.**
+This letter is Apple's templated new-app request and its "Next Steps" list is boilerplate,
+so it is equally consistent with a reviewer who never got as far as signing in. What IS
+established is that the demo password verifies against Clerk (200) and that the owner
+confirmed a clean sign-in from a private window on a device that had never touched the
+account. See §21 of `docs/NOTES-claude-side-lane-setup-f7bpe2.md`.
+
+### Only item 1 needs a human
+
+Apple asks for seven things. Six are writing and are drafted below. The first is a **screen
+recording on a physical device running the latest iOS** — nobody can produce that from a
+web session, and it is the long pole.
+
+**What the recording must contain**, from Apple's own list, in order:
+
+1. **Launch the app** — the recording has to begin here, not mid-flow.
+2. **Search without an account** — this is the free tier and the best thing to lead with.
+3. **Sign in** with the demo account (registration/login is explicitly named).
+4. **Create a watch** — the core paid feature.
+5. **The push permission prompt**, which appears right after the first watch. Apple names
+   "any prompts requesting access to sensitive data or device capabilities", so it must be
+   on camera.
+6. **The location prompt** — tap "near me". Same reason.
+7. **Settings → Delete account**, and complete it. Named explicitly. **Do this last**, and
+   on a throwaway account rather than the demo one, or the demo credentials in Sign-In
+   Information stop working and §2a repeats itself.
+
+**There are no purchase or subscription flows to film, and that is the point.** The app has
+no purchase mechanism at all — that is the 3.1.3(b) position in §2. Filming a subscribe
+button would contradict the defence. If a non-subscriber state is shown, it should be the
+"Subscriptions are managed at camphawk.app" copy.
+
+**No user-generated content either** — nothing is authored, shared, or visible to another
+user, so there is nothing to report or block.
+
+### The six written answers
+
+Paste into the Resolution Center reply, and add a condensed form to the **Notes** field —
+Apple asks for it there "for future submissions", and the existing Notes block in §2 (the
+3.1.3(b) business-model paragraph) **must be kept**; it is what prevents the predictable
+rejection.
+
+```
+2. DEVICES AND OS TESTED
+<fill in — the owner's real devices. Apple wants models and OS versions, e.g.
+"iPhone 15 Pro, iOS 26.x" and "Pixel 8, Android 16". State only what was really
+tested; this is checkable and a padded list is worse than a short one.>
+
+3. WHAT THE APP DOES AND WHO IT IS FOR
+CampHawk watches campgrounds that are already fully booked and alerts the user
+within seconds of a cancellation, so they can take the site before anyone else.
+
+The problem: popular campgrounds sell out months ahead, cancellations are common,
+and they are re-booked within minutes. Refreshing a reservation website by hand is
+the only alternative.
+
+Target audience: campers in the United States, particularly families and RV owners
+planning trips at high-demand state and federal campgrounds.
+
+Searching live availability across 8,035 campgrounds is free and needs no account.
+Watching a campground and receiving alerts is the paid feature.
+
+4. HOW TO SET UP AND REACH THE MAIN FEATURES
+No setup is required to search.
+
+  Search (free, no account): open the app, type a place name or tap "near me",
+  and pick dates. Results show live availability.
+
+  Sign in: credentials are in the Sign-In Information fields of this submission.
+  Email and password. Social sign-in is deliberately hidden in the app because
+  Google blocks OAuth inside embedded webviews, so no third-party login is
+  offered and Sign in with Apple is not applicable.
+
+  Create a watch (paid): open a campground, choose dates, and save the watch. The
+  demo account has an active subscription, so this works immediately.
+
+  Alerts: when a site opens, the watch sends an email, a push notification and a
+  text message. Push permission is requested only after the first watch exists,
+  because before that there is nothing to notify about.
+
+  Delete the account: Settings tab, "Delete account" at the bottom. It removes the
+  account and all of its data and cancels any subscription immediately.
+
+5. EXTERNAL SERVICES USED
+  Authentication ......... Clerk
+  Payments ............... Stripe (on our website only; no purchase in the app)
+  Database ............... Supabase (PostgreSQL)
+  Push notifications ..... Firebase Cloud Messaging
+  Text messages .......... Twilio
+  Maps and geocoding ..... Mapbox, and OpenStreetMap for place names
+  Error monitoring ....... Sentry
+  Hosting ................ Vercel (website and API), Fly.io (background worker)
+
+  Campground and availability data comes from the reservation systems themselves:
+  Recreation.gov and the federal Recreation Information Database (RIDB),
+  ReserveCalifornia and the other UseDirect state park portals, ReserveAmerica,
+  GoingToCamp, and individual state park systems. Every source, the states it
+  covers, and its official URL are listed publicly at
+  https://camphawk.app/sources, which is reachable without an account and is
+  linked from the app's footer.
+
+  No AI service is used.
+
+6. REGIONAL DIFFERENCES
+  None. The app behaves identically everywhere it is available. Availability is
+  restricted to the United States storefront, and the campground catalog covers
+  United States campgrounds only.
+
+7. REGULATED INDUSTRY OR PROTECTED MATERIAL
+  Neither applies. CampHawk is not in a regulated industry and includes no
+  protected third-party material.
+
+  The campground information is public government data, read from the official
+  reservation systems and open-data APIs listed above — the federal RIDB is a
+  public open-data API. We publish the official source, the states it covers and
+  a working link for every one of them at https://camphawk.app/sources.
+
+  CampHawk does not create campground or availability information. It reads what
+  those official systems publish and shows it unchanged, and every reservation,
+  payment and cancellation happens on the official site under that agency's
+  terms, not ours.
+
+  That same page opens by stating, in its own heading, that CampHawk is not a
+  government app: it is an independent app that does not represent any government
+  entity and is not affiliated with, endorsed by, or authorized by Recreation.gov,
+  the National Park Service, the U.S. Forest Service, the Bureau of Land
+  Management, the U.S. Army Corps of Engineers, or any state park agency. The
+  same disclaimer opens and closes the App Store description.
+```
+
+### Why item 7 is worth answering carefully rather than briefly
+
+**Google Play rejected this app on exactly that point** (2026-08-03, Misleading Claims): an
+app showing government information must cite an official, functional source in the listing
+and carry a visible non-affiliation disclaimer. The fix built for Play — `/sources`,
+`src/lib/data-sources.ts`, and the disclaimer opening and closing both store descriptions —
+is the documentation Apple is asking for here, already live and already public.
+
+**`/sources` must stay in `isPublicRoute`.** A reviewer opens it signed out, and Clerk's
+`auth.protect()` returns 404 rather than 401 — so a regression there would answer Apple's
+question with a dead link.
+
+### Cost
+
+**No new build.** Every one of these is a Resolution Center reply plus a text field.
+`1.0 (5)` stays attached, and swapping the build is the one edit that would cost the queue
+slot.
+
+---
+
 ## 2a. REJECTED 2026-08-14 — Guideline 2.1, the reviewer could not sign in
 
 Submission `243b36c7-27e1-42e8-9ffa-7f19d98a6ed2`, reviewed 2026-08-13 on an iPhone 17
