@@ -1312,6 +1312,14 @@ try {
             ok: r?.submitted?.v ? r.submitted.v.isSuccess === true : null,
             status: r?.submitted?.status ?? null,
             headers: r?.replay?.headers ?? null,
+            // A THROWN FETCH IS NOT A REFUSAL, AND THEY LOOKED IDENTICAL. `call()` returns
+            // `status: 0, raw: ''` when the request never completed, and an empty body
+            // parses as `(unparseable body)` — so RC declining a booking and RC being
+            // unreachable printed the same line. On 2026-08-17 that read as "REFUSED",
+            // which is a statement about RC's answer when there was no answer at all.
+            netError: r?.submitted?.netError || r?.loaded?.netError || null,
+            loadOk: r?.loaded?.v ? r.loaded.v.isSuccess === true : null,
+            loadStatus: r?.loaded?.status ?? null,
           };
         }));
         const elapsed = ((Date.now() - started) / 1000).toFixed(1);
@@ -1328,17 +1336,29 @@ try {
         // produced it separates "RC minted a cart" from "RC accepted a reservation", and
         // those are the two halves of the question this probe exists to ask.
         for (const r of results) {
-          const via = r.fromSubmit ? 'submit' : (r.key ? 'load only' : '--');
+          // `key via load only` is really "via load OR the session's existing pointer" —
+          // `finalKey` is `localStorage['shoppingCartKey']`, which every request reads and
+          // none of them minted. Naming it separately matters because N reads of one shared
+          // value are ALWAYS one distinct key, which is indistinguishable from a race.
+          const via = r.fromSubmit ? 'submit' : (r.key ? 'load or the session pointer' : '--');
+          const answered = r.netError ? 'NO ANSWER (request failed)'
+            : r.ok === true ? 'IsSuccess' : r.ok === false ? 'REFUSED' : '(no answer)';
           log(`   unit ${String(r.unitId).padEnd(7)} -> ${r.key ? 'key ' + String(r.key).slice(0, 8) + '...' : 'NO KEY'}` +
-              `  submit: ${r.ok === true ? 'IsSuccess' : r.ok === false ? 'REFUSED' : '(no answer)'}` +
-              `  key via ${via}`);
-          if (r.err) log(`     RC said: ${String(r.err).replace(/<br\/?>/g, ' ').slice(0, 120)}`);
-          if (r.status) log(`     HTTP ${r.status}`);
+              `  submit: ${answered}  key via ${via}`);
+          if (r.netError) log(`     the request never completed: ${String(r.netError).slice(0, 140)}`);
+          else if (r.err) log(`     RC said: ${String(r.err).replace(/<br\/?>/g, ' ').slice(0, 120)}`);
+          log(`     HTTP load ${r.loadStatus ?? '-'} / submit ${r.status ?? '-'}` +
+              `${r.status === 0 || r.loadStatus === 0 ? '   (0 = the fetch threw, NOT an RC response)' : ''}`);
         }
 
         const headers = results.find((r) => r.headers)?.headers ?? null;
-        const keys = results.map((r) => r.key).filter(Boolean);
+        // ONLY A SUBMIT'S KEY IS EVIDENCE ABOUT MINTING. Counting `finalKey` made six reads
+        // of one localStorage value look like six requests colliding on one cart, and the
+        // probe declared THEY RACE — the most expensive possible misread, since it would
+        // retire the parallel-cart plan on a run where nothing was ever asked of RC.
+        const keys = results.filter((r) => r.fromSubmit).map((r) => r.key);
         const distinct = new Set(keys);
+        const reached = results.filter((r) => r.ok === true).length;
         // Read each cart back so `made` releases exactly what was taken. A key we were
         // handed is not proof the site is in it — the same rule the ladder follows.
         if (headers) {
@@ -1366,9 +1386,29 @@ try {
         }
 
         log('');
-        log(`   ${units.length} fired in ${elapsed}s -> ${keys.length} key(s), ${distinct.size} DISTINCT, ` +
-            `${made.length} entr(y/ies) held, ${matched.length} identified as ours.`);
-        if (distinct.size === units.length && matched.length === units.length) {
+        log(`   ${units.length} fired in ${elapsed}s -> ${reached} submit(s) accepted, ${keys.length} minted key(s), ` +
+            `${distinct.size} DISTINCT, ${made.length} entr(y/ies) held, ${matched.length} identified as ours.`);
+        // NOTHING WAS EVER ASKED OF RC — say that, and say nothing about the race.
+        //
+        // On 2026-08-17 every submit failed and the probe reported THEY RACE, because six
+        // reads of one localStorage pointer counted as one distinct cart. The requests had
+        // not raced; they had not arrived. A failure to reach RC must never be reported as
+        // a fact about RC's behaviour, which is the same rule as `unknown` never being
+        // rounded to `signed-out` and an empty grid never meaning "fully booked".
+        if (reached === 0) {
+          const netErrors = results.filter((r) => r.netError).length;
+          log('   ? THE QUESTION WAS NEVER REACHED. No submit was accepted, so nothing here');
+          log('     says anything about whether concurrent mints race. Do not record one.');
+          if (netErrors) {
+            log(`     ${netErrors} of ${units.length} request(s) never completed at all -- this is a`);
+            log('     CONNECTIVITY failure, not RC declining. Load reservecalifornia.com in a');
+            log('     plain browser on this box; run `node rc-diag.mjs` if it errors there too.');
+          } else {
+            log("     RC answered and declined. The likeliest cause is a unit id that is not");
+            log('     bookable for this arrival -- re-derive them with rc-test-hold.mts --find');
+            log('     rather than typing ids, and check RC_ARRIVAL is a date it will accept.');
+          }
+        } else if (distinct.size === units.length && matched.length === units.length) {
           log('   + CONCURRENT MINTING IS SAFE. Every request got its own cart and every site');
           log('     landed, so the runner may fire a release group in parallel. Bound the');
           log('     concurrency anyway -- this IP has eaten a 12-hour block, and the limit');
@@ -1385,8 +1425,10 @@ try {
           log(`     holds exactly one reservation (${matched.length}/${units.length} identified by placeId+facilityId).`);
           log('     Bound the concurrency anyway -- this IP has eaten a 12-hour block, and');
           log('     the limit that matters next is the WAF, not RC cart rules.');
-        } else if (distinct.size < keys.length) {
-          log(`   x THEY RACE. ${keys.length} requests received only ${distinct.size} distinct cart(s), so`);
+        } else if (keys.length >= 2 && distinct.size < keys.length) {
+          // GATED ON MINTED KEYS, at least two of them. A race is two ACCEPTED submits
+          // handed the same cart; anything less is a failure wearing a race's clothes.
+          log(`   x THEY RACE. ${keys.length} accepted submits received only ${distinct.size} distinct cart(s), so`);
           log('     simultaneous NO_CART is NOT how to get N carts -- the losers would fail');
           log("     with RC's per-cart message and read like an account limit. Mint carts");
           log('     SEQUENTIALLY and parallelise only the fill/submit within each cart.');
