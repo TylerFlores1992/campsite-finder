@@ -95,7 +95,22 @@ interface MissedHold {
  * `expireFinishedWatches(onlyIds)`: drive the REAL predicate without failing every live
  * user's holds as a side effect of `npm test`. Production passes nothing.
  */
-export async function failMissedHolds(onlyIds?: string[]): Promise<MissedHold[]> {
+export async function failMissedHolds(
+  onlyIds?: string[],
+  /**
+   * INJECTABLE, BECAUSE THE GRACE NOW DEPENDS ON A LIVE PRODUCTION FACT.
+   *
+   * The branch below reads `rc_runner_heartbeat`, which is the REAL mini-PC. That quietly
+   * made this function's behaviour — and therefore every test of it — depend on whether the
+   * owner's box happened to be up. It passed for four consecutive `npm run verify` runs and
+   * then failed the moment the box went dark, on a fixture inside the 45-minute grace that
+   * the 5-minute branch swept.
+   *
+   * A real-DB test may hit real rows; it must never depend on real WEATHER. Production
+   * passes nothing and reads the heartbeat, exactly as before.
+   */
+  deps?: { runnerAbsent?: boolean },
+): Promise<MissedHold[]> {
   // WHICH GRACE APPLIES IS A QUESTION ABOUT THE RUNNER, NOT ABOUT THE HOLD.
   //
   // Read once per sweep and applied to every row: the runner is a single process, so its
@@ -106,7 +121,9 @@ export async function failMissedHolds(onlyIds?: string[]): Promise<MissedHold[]>
   // heartbeat AT ALL, and that is "we could not tell", not "the runner is dead" — the same
   // rule as `unknown` never rounding to `signed-out`. A DB blip must not shorten the window
   // and start declaring live holds missed, so an unreadable heartbeat keeps the full 45.
-  const beat = await rcBotUsable().catch(() => ({ ok: true, beatAgeMs: null }));
+  const beat = deps?.runnerAbsent == null
+    ? await rcBotUsable().catch(() => ({ ok: true, beatAgeMs: null }))
+    : { ok: !deps.runnerAbsent, beatAgeMs: deps.runnerAbsent ? Number.MAX_SAFE_INTEGER : 0 };
   const runnerAbsent = beat.beatAgeMs != null && !beat.ok;
   const graceMin = runnerAbsent ? HOLD_MISS_GRACE_NO_RUNNER_MIN : HOLD_MISS_GRACE_MIN;
   if (runnerAbsent) {

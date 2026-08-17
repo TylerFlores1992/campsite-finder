@@ -51,8 +51,16 @@ test('a dead runner gets a short grace, because there is no retry to protect', (
 });
 
 test('the branch is chosen from the heartbeat, once per sweep', () => {
-  assert.match(code, /const beat = await rcBotUsable\(\)/,
-    'the runner heartbeat is what distinguishes the two cases');
+  // BOTH HALVES. The liveness became injectable so a real-DB test would stop depending on
+  // whether the owner's actual mini-PC was up — and that extraction invalidated the original
+  // form of this assertion, which pinned the bare `await rcBotUsable()`. Pinning only the
+  // injection would go green against a function that never reads the real heartbeat at all;
+  // pinning only the call would go green against one that ignores the override and is
+  // therefore untestable. Same trap as the `isLive()`/`acceptable()` guards on 2026-08-15.
+  assert.match(code, /await rcBotUsable\(\)/,
+    'production must still read the real heartbeat');
+  assert.match(code, /deps\?\.runnerAbsent == null/,
+    'and a test must be able to pin it, or this function depends on live weather');
   assert.match(code, /const graceMin = runnerAbsent \? HOLD_MISS_GRACE_NO_RUNNER_MIN : HOLD_MISS_GRACE_MIN/);
   assert.match(code, /\[String\(graceMin\), onlyIds \?\? null\]/,
     'the chosen grace must reach the query — a constant here makes the branch inert');

@@ -128,25 +128,37 @@ export async function powerCycleRefusal(silentMs: number | null): Promise<string
   return null;
 }
 
-/** One Shelly cloud call. Kept tiny and separate so the sequencing above can be tested
- *  without touching the network. */
+/**
+ * One Shelly cloud call. Kept tiny and separate so the sequencing above can be tested
+ * without touching the network.
+ *
+ * THE v2 ENDPOINT, NOT `/device/relay/control`. The first version of this used the legacy
+ * one, and that was a defect found by the owner asking a question I should have asked
+ * myself: Shelly's own documentation says that API "is **deprecated** and will be removed in
+ * the near future", and it documents Gen1 and Gen2 only — no mention of Gen3 or Gen4. So it
+ * would have failed on any current plug, and eventually on every plug.
+ *
+ * `POST /v2/devices/api/set/switch` is documented to work for "all types and generations of
+ * relays and plugs", which is the property that matters here: the hardware is bought once,
+ * by a person, and a lever that only works with a discontinued generation is a lever that
+ * quietly stops existing. JSON body, `auth_key` in the query string, 200 with no body on
+ * success.
+ */
 async function shelly(turn: 'on' | 'off'): Promise<{ ok: boolean; detail: string }> {
   const server = String(process.env.SHELLY_SERVER).replace(/^https?:\/\//, '').replace(/\/$/, '');
-  const body = new URLSearchParams({
-    id: String(process.env.SHELLY_DEVICE_ID),
-    auth_key: String(process.env.SHELLY_AUTH_KEY),
-    channel: '0',
-    turn,
-  });
+  const key = encodeURIComponent(String(process.env.SHELLY_AUTH_KEY));
   try {
-    const r = await fetch(`https://${server}/device/relay/control`, {
+    const r = await fetch(`https://${server}/v2/devices/api/set/switch?auth_key=${key}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: String(process.env.SHELLY_DEVICE_ID), on: turn === 'on', channel: 0 }),
       signal: AbortSignal.timeout(15_000),
     });
-    const text = (await r.text()).slice(0, 300);
-    return { ok: r.ok, detail: `${turn}: HTTP ${r.status} ${text}` };
+    // Success is a bare 200 with no body, so the status IS the answer — but an error returns
+    // a readable message and throwing it away would leave "the plug said no" indistinguishable
+    // from "the plug did not answer".
+    const text = (await r.text().catch(() => '')).slice(0, 300);
+    return { ok: r.ok, detail: `${turn}: HTTP ${r.status}${text ? ` ${text}` : ''}` };
   } catch (e) {
     // NAMED, not swallowed. "The plug did not answer" and "the plug said no" need different
     // responses, and a cut we merely THINK we made is the worst outcome — the rate limit
