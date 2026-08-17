@@ -919,6 +919,37 @@ SCHEDULED (`maybeAutoLogin` at 07:30), which is the right side of the 2026-08-10
 `rc_login` warns that no rehearsal has passed since 08-16. **This is the first real morning
 with PR #80's 07:33-false-alarm fix live on the box.**
 
+### THE TEST HOLD BLOCKS THE UPDATE THAT WOULD DELIVER THE CODE IT TESTS
+
+Within minutes of queueing it, the main lane merged **#98** — which rewrites
+`scripts/auto-cart-bot/rc-hold-runner.mjs`. `autocart.bot_version` went to **FAIL**:
+
+```
+mini-PC is on d09f225; web is on 44a66b2 — and it is MISSING bot-side changes,
+with 1 hold(s) queued.
+```
+
+That is the one configuration the check exists to catch, and **the test hold is what
+produced it**: `nextHoldRelease` counts a `requested` row, so the 02:00–05:00 PT quiet
+window is shut and the guard's 6h release check refuses as well. The hold prevents the
+update that would deliver the runner code the morning is about to exercise.
+
+**Decided: keep the hold and let it run on `d09f225`.** #98's own commit message is what
+settles it —
+
+> THE LEAD IS WAITED ONCE PER RELEASE. It used to be waited per hold, inside the loop —
+> where every wait after the first was already zero, so the sequencing was pure
+> serialisation gating nothing.
+
+So the change is about carting a release **group** concurrently, and with **one** hold the
+old and new paths are functionally identical. The other half of #98 (the BETA labelling) is
+web-side and already live on Vercel. Nothing in the single-hold path is stale.
+
+**The FAIL is therefore expected and self-clearing** — once the hold reaches a terminal
+status the window opens and the box updates. Do not read it as the halves having drifted by
+accident; it is a cost this test knowingly took. **If a future test needs the NEW runner,
+the order has to invert:** let the box update first, then queue the hold.
+
 ## Still open, all main lane's
 
 1. **Issue #76** — `rc-holds.test.mts`'s fixture sweep deletes a *concurrent* run's live
