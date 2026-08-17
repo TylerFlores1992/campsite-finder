@@ -148,6 +148,51 @@ function msUntilRelease(releaseAt) {
  */
 const MAX_RELEASE_WAIT_MS = 3 * 60_000;
 
+/**
+ * HOW MANY HOLDS OF ONE RELEASE ARE CARTED AT ONCE.
+ *
+ * Carting was strictly serial, and at RC_HOLD_CAPACITY = 20 a release where every hold
+ * shares one `release_at` is twenty carts back to back — measured at roughly a second
+ * each, so the twentieth site sits un-carted for twenty seconds after it frees, exposed to
+ * everyone else watching it. That is the whole cost, and it grows with the product.
+ *
+ * `rc-probe.mjs --concurrent-mint` answered the precondition on 2026-08-17: six
+ * simultaneous NO_CART precarts produced six DISTINCT carts, each accepting exactly one
+ * reservation, all six identified by (placeId, facilityId) and all six released, in 1.4s.
+ * They do not race for one cart. Before that run this was unknown, and the failure mode
+ * was that the losers would be refused with RC's per-cart wording and read as an account
+ * limit rather than a race we caused.
+ *
+ * FOUR, NOT TWENTY, AND THE PROBE IS WHY. It demonstrated six; it demonstrated nothing
+ * about twenty, and the next ceiling is not RC's cart rules but the WAF in front of them —
+ * this address has already eaten a 12-hour block once. A bound we can defend beats a
+ * number we would be guessing.
+ *
+ * PARALLEL WITHIN A RELEASE GROUP ONLY. Holds with different `release_at` values are
+ * sequenced by their own leads and must stay that way: firing a later group early is the
+ * 2026-08-08 bug, where a cart submitted 85 seconds before the release was refused for a
+ * site RC had not let go of yet, and `failed` was terminal.
+ */
+const CART_CONCURRENCY = Math.max(1, Number(process.env.RC_CART_CONCURRENCY || 4));
+
+/**
+ * Run `task` over `items`, at most `limit` in flight, preserving nothing but the promise
+ * that every item is attempted. A thrown task must not cancel its siblings — one hold
+ * failing is ordinary and the other nineteen still have a release to make.
+ */
+async function pMap(items, limit, task) {
+  const queue = [...items.entries()];
+  const workers = Array.from({ length: Math.min(limit, queue.length) }, async () => {
+    for (;;) {
+      const next = queue.shift();
+      if (!next) return;
+      const [i, item] = next;
+      try { await task(item, i); } catch { /* task reports its own failure */ }
+    }
+  });
+  await Promise.all(workers);
+}
+
 /** Where AUTOCART_TOKEN came from — printed on any auth failure. See load-env.mjs. */
 const TOKEN_SOURCE = envSource('AUTOCART_TOKEN');
 
@@ -560,17 +605,32 @@ async function runPass() {
       if (r.ok) await report({ id: h.id, released: true });
     }
 
+    // ONE WAIT PER RELEASE, NOT ONE PER HOLD. Twenty holds sharing an 08:00 release used to
+    // wait, cart, wait, cart — and every wait after the first was already zero, so the
+    // sequencing was pure serialisation with nothing gating it. Grouping makes the lead a
+    // property of the RELEASE, which is what it always was, and leaves the parallelism free
+    // to happen inside a group where every site frees at the same instant.
+    const groups = new Map();
     for (const h of cart) {
-      try {
-        // WAIT OUT THE LEAD. Browser open, token in hand — that was the point of being
-        // handed this 90 seconds early. Submitting now would ask RC for a site it has not
-        // released yet and get a "not available" that means nothing.
-        const wait = Math.min(msUntilRelease(h.releaseAt), MAX_RELEASE_WAIT_MS);
-        if (wait > 0) {
-          log(`  ready for ${h.unitName ?? h.unitId} — holding ${(wait / 1000).toFixed(1)}s until ${h.releaseAt} PT`);
-          await sleep(wait);
-        }
+      if (!groups.has(h.releaseAt)) groups.set(h.releaseAt, []);
+      groups.get(h.releaseAt).push(h);
+    }
+    // Earliest release first. `release_at` is zone-less Pacific text in a fixed format, so
+    // it sorts lexically — no parsing, and therefore no zone to get wrong.
+    const ordered = [...groups.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
 
+    for (const [releaseAt, holds] of ordered) {
+      const wait = Math.min(msUntilRelease(releaseAt), MAX_RELEASE_WAIT_MS);
+      if (wait > 0) {
+        log(`  ready for ${holds.length} hold(s) — holding ${(wait / 1000).toFixed(1)}s until ${releaseAt} PT`);
+        await sleep(wait);
+      }
+      if (holds.length > 1) {
+        log(`  carting ${holds.length} hold(s) ${Math.min(CART_CONCURRENCY, holds.length)} at a time`);
+      }
+
+      await pMap(holds, CART_CONCURRENCY, async (h) => {
+      try {
         // EACH HOLD GETS ITS OWN CART, and that is what lifts the capacity ceiling.
         //
         // This used to pass the BROWSER's pointer, so every hold the system ever made was
@@ -626,6 +686,7 @@ async function runPass() {
         log(`  ✗ ${h.unitName ?? h.unitId} threw: ${err.message}`);
         await report({ id: h.id, ok: false, error: err.message.slice(0, 300) });
       }
+      });
     }
   });
 

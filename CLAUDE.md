@@ -808,6 +808,119 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
   layout/rendering changes — dynamic segments aren't executed at build, so the throw only
   surfaces at runtime. Smoke-test a real page after deploying (`curl -sI camphawk.app/`).
 
+### CONCURRENT CART MINTING IS SAFE, MEASURED (2026-08-17) — and carting is parallel now
+`--cart-ladder` proved one session holds ten carts and twenty reservations, but it minted
+them strictly IN SEQUENCE. The production runner carted serially for the same reason, so at
+`RC_HOLD_CAPACITY = 20` a release where every hold shares one `release_at` was twenty carts
+back to back at roughly a second each — the twentieth site sitting un-carted for twenty
+seconds after it freed, exposed to everyone else watching it, and the cost GROWING with the
+product. `rc-probe.mjs --concurrent-mint` answered the precondition:
+```
+unit 45719 -> key 4f035e59...  submit: IsSuccess  key via submit   HTTP load 200 / submit 200
+   [... six units, all identical ...]
+cart 4f035e59... holds 1 entr(y/ies) -- ours is b7b09df1...
+6 fired in 1.4s -> 6 submit(s) accepted, 6 minted key(s), 6 DISTINCT,
+                   6 entr(y/ies) held, 6 identified as ours.
++ CONCURRENT MINTING IS SAFE.       released ... HTTP 200  (x6)
+```
+**They do not race.** Six simultaneous `NO_CART` precarts each got their own cart and each
+cart accepted one reservation. Until that run the live failure was that the losers would be
+refused in RC's own per-cart wording and read as an **account limit** rather than a race we
+caused — the same misreading that kept `RC_MAX_CARTS` at 1 for a fortnight.
+- **`CART_CONCURRENCY = 4`, NOT 20.** The probe demonstrated six; it demonstrated nothing
+  about twenty, and the next ceiling is not RC's cart rules but the **WAF** in front of them
+  — this address has eaten a 12-hour block once. `RC_CART_CONCURRENCY` overrides it.
+- **PARALLEL WITHIN A RELEASE GROUP ONLY.** The lead is waited ONCE PER RELEASE now (it was
+  waited per hold, where every wait after the first was already zero — pure serialisation
+  gating nothing), groups run earliest first and each is AWAITED. Firing a later group early
+  is 2026-08-08 exactly: a cart submitted 85s before its release was refused for a site RC
+  had not let go of, and `failed` was terminal.
+- **Parallelised through `page.evaluate`, which is what the probe measured.** The plan also
+  said to move the precart to `ctx.request`; doing both at once would ship an unvalidated
+  transport on the strength of a run that validated a different one. Transport unchanged.
+- `worker/cart-parallel.test.mts`, six mutations (unawaited fan-out, bound raised past what
+  was measured, `Promise.all` over the items, wait moved back inside the task, browser cart
+  pointer read again, `release_at` parsed as a Date).
+
+#### THE PROBE ITSELF LIED TWICE BEFORE IT ANSWERED, AND BOTH ARE THE HOUSE SHAPE
+Two runs cost twelve locked campsites and produced no information. Worth keeping because
+both defects were *inside the instrument written to avoid exactly this*.
+- **RUN 1 — `0 site(s) actually held` over six SUCCESSFUL carts.** It called `findCartEntry`
+  with `{ unitId }` alone, and that function's own header records that **RC's cart entries
+  carry NO unit field at all** and that a matcher looking for one "reported an empty cart for
+  a full one, twice". Third time. The cost was not the wrong verdict: `made[]` is populated
+  from the match, so **nothing was released** and six real sites were left to lapse.
+  - Fixed on `(placeId, facilityId)` from the load response's `LockedShoppingCart` — what
+    the ladder always passed. **And release is now driven by the cart's CONTENTS**
+    (`listCartEntries`), not by the match: a cart this run minted with `NO_CART` holds only
+    what this run put there, which is a guarantee about how the cart was CREATED and cannot
+    rot the way a matcher can. Never `empty/shoppingcart`.
+- **RUN 2 — `x THEY RACE` over six requests that NEVER ARRIVED.** `key` fell back to
+  `finalKey`, which is `localStorage['shoppingCartKey']` — the session's EXISTING pointer,
+  which every request READS and none of them mints. **Six reads of one shared value are
+  always one distinct key**, so ANY run whose submits fail reports a collision. A fake race
+  by construction, and the most expensive misread available: it would have retired the
+  parallel-cart plan on a run where nothing was asked of RC.
+  - The tells were all in the output and none was printed: **0.1s** against 4.3s for the
+    working run, and `status: 0` — which in `rc-cart.mjs` means **the fetch THREW**, with an
+    empty body that parses as `(unparseable body)`. So "RC declined" and "RC was unreachable"
+    were the identical line, with the reason sitting unread in `netError`.
+  - Only a SUBMIT's key counts now; a thrown request says so; `HTTP 0` is explained where it
+    is printed; and the verdict **refuses to speak** when no submit was accepted — `THE
+    QUESTION WAS NEVER REACHED`, tested BEFORE the race arm, naming connectivity vs the unit
+    ids. Same rule as `unknown` never rounding to `signed-out`.
+- **I INVENTED SIX UNIT IDS AND PUT THEM IN A PASTE-READY BLOCK** (4728-4733), in the same
+  message that said never to guess them. Nothing was locked only because every submit failed.
+  **`scripts/rc-test-hold.mts --find --show 6` is the only way to get them**, and it must be
+  run from a session with DB access — the mini-PC has no `@supabase/supabase-js` installed,
+  so `--find` dies there with `MODULE_NOT_FOUND`.
+- **`<` AND `>` ARE REDIRECTION IN cmd.** A paste block with `<the arrival date>` placeholders
+  died on `The syntax of the command is incorrect.`, `RC_ARRIVAL` was never set, and the probe
+  printed `Skipping --concurrent-mint` — which reads as the flag being unsupported. Use
+  `set "VAR=value"` (the quotes also stop cmd swallowing a trailing space into the value) and
+  echo the variables back before the run.
+
+### RC AUTO-HOLD IS LABELLED BETA, AND THE ENTITLEMENT WAS NEVER THE GATE (2026-08-17)
+Asked to "open up RC auto carting to beta testers". **Nothing had to be opened.**
+`hasAutocartEntitlement` has been `is_beta OR (a live autocart/grandfathered subscription)`
+since migration 032 and the poller's hold offer uses exactly that, so every beta tester with
+an RC watch has been eligible the whole time (five accounts carry `is_beta`). Two things were
+actually missing, and the second was reported by the owner mid-session.
+- **NOTHING SAID BETA.** A tester met a button promising to take a real campsite off the
+  market, in a feature whose full path has completed on ONE real morning (2026-08-16) plus
+  synthetic runs. **The cost of a miss is not the failed cart — it is that a user who
+  believes the site is handled STOPS WATCHING**, the rule the claim copy has been governed by
+  since 2026-08-09. So the label arrives BEFORE the decision (confirm screen, above the
+  promise, not under it) and it **names the remedy**: set an alarm anyway. A caveat with no
+  instruction changes nobody's morning. One definition in `src/lib/autocart-beta.ts`.
+- **NOT IN SMS, deliberately.** The coming-soon offer is 154 chars against a 160-char
+  one-segment budget, already after `fitOneSegment` trims the name. Any beta wording spends
+  more than that margin and tips it into TWO segments — the shape that was Undelivered/30007
+  thirteen times on 08-05. **A label nobody receives, on an alert nobody receives, is strictly
+  worse than no label.** Push takes the SHORT note, because a lock screen truncates the tail
+  and would drop the caveat while keeping the promise.
+- **"NO SIGN OF AUTO CART" (owner, on a Carpinteria watch) WAS CORRECT BEHAVIOUR AND A REAL
+  GAP.** `supportsAutoCart` is `source === 'ridb'` — the watch-level toggle drives the
+  **rec.gov** lane. **An RC hold is not a watch setting at all**: it is offered per release,
+  the night before, and only a tap authorises it. So there was nothing on `/new` to find, and
+  the only way to discover the feature was to receive an alert. `/new` now states it for a
+  hold-capable source — **with no toggle**, because a switch would imply a standing consent
+  this product deliberately does not take.
+- **AND OPENING IT UP IS WHAT WOULD HAVE MADE A LATENT GAP FIRE.** `findRCHeldUnits` reads
+  UseDirect's generic `Lock` field, so the coming-soon path covers **all ten portals** — while
+  the bot signs in to ONE ReserveCalifornia account and `rc-cart.mjs` posts to
+  reservecalifornia.com. An Ohio or Virginia watch could be offered a hold **nothing on earth
+  can perform**. It has never fired (every live watch is `reservecalifornia` (16) or `ridb`
+  (1), checked 2026-08-17) — and the first tester to watch an Ohio park is what turns it into
+  a promise we break. `supportsRcHold` is narrower than `isUseDirectSource` on purpose, with
+  **two enforcers**: the poller withholds the button and `/new` does not advertise it. Widen
+  only when the bot holds an account for that portal.
+- `worker/autocart-beta.test.mts`, five mutations. **One of them survived the first round and
+  the reason is worth keeping**: the ordering assertion compared raw file indexes and matched
+  the **import line**, which is above everything — so "the caveat precedes the promise" was
+  true whatever the markup did. It measures inside the component body now. Sixth time a guard
+  has needed re-doing because it anchored on the wrong thing.
+
 ## Open / next session
 
 > **START AT `docs/NEXT-SESSION.md`** (written 2026-08-13). Three open items — claim-flow
@@ -3717,7 +3830,21 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs current to 2026-08-16 (second pass).** **THE 08:00 HAND-OFF WORKED END TO END** — both
+**Docs current to 2026-08-17.** **CONCURRENT CART MINTING IS MEASURED SAFE** — six simultaneous
+`NO_CART` precarts, six DISTINCT carts, one reservation each, all released, 1.4s — so a release
+group now carts **four at a time** instead of serially, and the last of twenty holds lands nearer
+T+6s than T+20s. Getting there cost two probe runs that each locked six real campsites and
+answered nothing: one matched cart entries on a unit id RC's entries do not carry (third time,
+and it released nothing), the other called a **connectivity failure a race** because six reads of
+one `localStorage` pointer counted as one distinct cart. Both instruments now refuse a verdict
+they have not earned. Also: **RC auto-hold is labelled BETA** — the entitlement was never the
+gate (`is_beta` has entitled it since migration 032), what was missing was that nothing SAID so
+and nothing on `/new` revealed the feature existed; and `supportsRcHold` now stops the poller
+offering a hold on the nine UseDirect portals the bot has **no account for**. **Open: fold PR #78
+back in after re-landing the in-app sign-in; the box needs an update for the parallel carting and
+the 07:33 alarm fix.**
+
+*(Previous pass.)* **Docs current to 2026-08-16 (second pass).** **THE 08:00 HAND-OFF WORKED END TO END** — both
 holds carted at T+43s and T+49s, both claimed, `✓ Added to cart` reported on iOS, and
 `RC_HOLD_CAPACITY = 2` met at its exact boundary with both seats filled. **The alarm that fired
 at 07:33 was ours**: a LIVE session with a 40m token against a 46m requirement was reported

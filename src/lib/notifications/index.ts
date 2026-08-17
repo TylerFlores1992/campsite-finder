@@ -6,6 +6,7 @@ import { sendPush } from './push';
 import { actionUrlFor } from './actions';
 import { formatStayDates } from './dates';
 import { smsBody } from './sms-body';
+import { AUTOCART_BETA_LABEL, AUTOCART_BETA_NOTE, AUTOCART_BETA_NOTE_SHORT } from '@/lib/autocart-beta';
 import type { CampflareWebhookPayload } from '@/lib/campflare/types';
 import { USEDIRECT_PROVIDERS } from '@/lib/sources/reservecalifornia/providers';
 import { GOINGTOCAMP_PROVIDERS } from '@/lib/sources/goingtocamp/providers';
@@ -342,7 +343,11 @@ export function pushBody(payload: NotificationPayload): { title: string; body: s
     // it is the channel most likely to be seen, since these alerts land overnight for an
     // 8am release. Leaving it out meant an offer with a deadline sat unread in an inbox.
     title = `⏳ Opening soon: ${name}`;
-    body = `${subject} releases ${formatReleaseTime(payload.availableAt, true)}. Tap to have us hold it for you.`;
+    // The short note, not the full one: this is a lock-screen body and the tail of a long
+    // one is truncated away — which would drop the caveat and keep the promise, i.e. the
+    // exact inversion the label exists to prevent. The full wording is in the email and on
+    // the confirm screen, both of which the user reaches before committing.
+    body = `${subject} releases ${formatReleaseTime(payload.availableAt, true)}. Tap to have us hold it. ${AUTOCART_BETA_NOTE_SHORT}`;
   } else if (payload.kind === 'coming_soon') {
     title = `⏳ Opening soon: ${name}`;
     body = `${subject} was just cancelled — we'll alert you when it's bookable.`;
@@ -565,6 +570,14 @@ export function buildEmailHtml(payload: NotificationPayload): string {
        subscribed". The upgrade path lives in Settings, where the answer is known. */ ''}
   ${payload.holdUrl ? `
   <p style="color:#555">Cancelled sites get snapped up within seconds of release. We can be waiting for this one — tap below and CampHawk will put it in a cart the moment it opens, then hand it to you.</p>
+
+  <!-- ABOVE the button, not below it. This alert lands overnight for an 08:00 release and
+       the tap is the moment somebody decides not to set an alarm; a caveat under the CTA is
+       read after that decision, if at all. The label is not in the SMS — see lib/autocart-
+       beta for why five characters of one-segment margin decide that. -->
+  <p style="background:#f5f5f4;border-radius:10px;padding:12px 14px;margin:16px 0;font-size:14px;color:#555">
+    <strong style="color:#166534">${AUTOCART_BETA_LABEL}</strong> — ${AUTOCART_BETA_NOTE}
+  </p>
 
   <a href="${payload.holdUrl}"
      style="display:inline-block;background:#166534;color:white;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:8px">

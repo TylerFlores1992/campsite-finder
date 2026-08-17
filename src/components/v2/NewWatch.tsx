@@ -13,6 +13,8 @@ import TrustPanel from "./TrustPanel";
 import FavoriteHeart from "./FavoriteHeart";
 import { useFavorites } from "./useFavorites";
 import { supportsAutoCart } from "./providers";
+import { supportsRcHold } from "@/lib/sources/reservecalifornia/providers";
+import { AUTOCART_BETA_LABEL, AUTOCART_BETA_NOTE } from "@/lib/autocart-beta";
 import { divisionLabel, dropRedundantState, parseCampgroundName, placeLabel } from "./campground-name";
 import { addDays, formatRange, nightsBetween, thisWeekendRange, todayISO } from "@/components/ui/date";
 import { useIsNativeApp } from "@/lib/native/context";
@@ -376,6 +378,9 @@ export default function NewWatch({
   }, [campgroundId, campgroundName, divisions, chosen, range, mode, flexNights, weekendsOnly, autoCart, muted, router]);
 
   const canAutoCart = campgroundSource ? supportsAutoCart(campgroundSource) : false;
+  // Narrower than isUseDirectSource on purpose -- the bot holds ONE ReserveCalifornia
+  // account, so advertising this on an Ohio watch would promise what nothing can perform.
+  const canRcHold = campgroundSource ? supportsRcHold(campgroundSource) : false;
   const windowNights = range.start && range.end ? nightsBetween(range.start, range.end) : 0;
   // The API rejects flexNights longer than the window; catch it before the round trip.
   const flexTooLong = mode === "flexible" && windowNights > 0 && flexNights > windowNights;
@@ -767,6 +772,38 @@ export default function NewWatch({
             </button>
             {autoCart && <TrustPanel className="mt-2.5" />}
           </fieldset>
+        )}
+
+        {/* RESERVECALIFORNIA GETS A STATEMENT, AND IT IS NOT A REVERSAL OF THE CALL BELOW.
+            That call removed a paragraph that INTRODUCED auto-cart and then WITHDREW it —
+            three lines teaching the reader why they cannot have something. This is the
+            opposite: for RC we can genuinely hold a site at its release, it has worked on a
+            real morning, and until now the only way to discover it was to receive an alert.
+            The owner hit exactly that on 2026-08-17 — "no sign of auto cart" on a Carpinteria
+            watch, where the capability exists and nothing said so.
+
+            THERE IS NO TOGGLE BECAUSE THERE IS NOTHING TO SET. An RC hold is offered per
+            release, the night before, and only a tap authorises it — the poller records the
+            offer and the bot never takes a site nobody asked for. A switch here would imply
+            a standing consent this product deliberately does not take. So the panel says
+            what will happen and where the decision lands, and nothing more. */}
+        {canRcHold && (
+          <div className="mt-5 rounded-ch-input border border-ch-line bg-ch-card px-3.5 py-3">
+            <p className="flex flex-wrap items-baseline gap-x-2">
+              <span className="text-ch-body font-bold">We can grab a site at 8am</span>
+              <span className="rounded-full bg-ch-sand px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-ch-green-deep">
+                {AUTOCART_BETA_LABEL}
+              </span>
+            </p>
+            <p className="mt-1 text-ch-fine leading-normal text-ch-muted">
+              ReserveCalifornia releases cancelled sites at 8am. The night before, we&apos;ll
+              tell you which site is opening and offer to cart it the second it does —
+              you decide then, site by site. Nothing to switch on here.
+            </p>
+            <p className="mt-1.5 text-ch-fine leading-normal text-ch-muted">
+              {AUTOCART_BETA_NOTE}
+            </p>
+          </div>
         )}
 
         {/* NOTHING IS SAID HERE WHEN AUTO-CART IS UNAVAILABLE (2026-08-16, owner's call).

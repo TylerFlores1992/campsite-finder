@@ -133,6 +133,28 @@ export function isUseDirectSource(source: string): boolean {
   return USEDIRECT_PROVIDERS.some((p) => p.source === source);
 }
 
+/**
+ * May we offer to HOLD a site at its release for this source?
+ *
+ * Narrower than `isUseDirectSource`, and the gap is the point. The coming-soon detection
+ * (`findRCHeldUnits`) reads UseDirect's generic `Lock` field and therefore works for all ten
+ * portals — but the bot that would honour the offer signs in to ONE ReserveCalifornia
+ * account, and `rc-cart.mjs` posts to reservecalifornia.com. An Ohio or Virginia watch could
+ * be offered a hold that nothing on earth can perform.
+ *
+ * It has never fired: every live watch is `reservecalifornia` or `ridb` (checked
+ * 2026-08-17, 16 and 1). It is guarded now precisely BECAUSE auto-hold is being opened to
+ * beta testers — the first tester to watch an Ohio park is what turns a latent gap into a
+ * promise we break, and "the offer went out and nobody could keep it" is the failure mode
+ * that costs a user their morning rather than merely a feature.
+ *
+ * Two enforcers, one definition: the poller withholds the button, and `/new` does not
+ * advertise the capability. Widen this only when the bot holds an account for that portal.
+ */
+export function supportsRcHold(source: string): boolean {
+  return source === 'reservecalifornia';
+}
+
 /** RDR API hosts we allow the Vercel proxy to forward to (WAF workaround). */
 export const USEDIRECT_ALLOWED_HOSTS = Array.from(
   new Set(
