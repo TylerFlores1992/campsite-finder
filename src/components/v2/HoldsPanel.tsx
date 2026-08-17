@@ -78,7 +78,17 @@ export default function HoldsPanel({ className }: { className?: string }) {
   return (
     <section className={className} aria-label="Sites we're holding">
       <h2 className="mb-2 font-ch-display text-ch-h font-bold">Holds</h2>
-      <div className="grid gap-2.5">
+      {/* `grid-cols-[minmax(0,1fr)]`, NOT a bare `grid`, AND IT IS NOT COSMETIC.
+          A grid item's default `min-width` is `auto`, so the track sizes to the item's
+          MAX-CONTENT — and a hold row is a flex line holding a `truncate` title (which is
+          `white-space: nowrap`) beside a `shrink-0` status chip and a `shrink-0` remove
+          button. Nothing in that row is allowed to shrink, so the track grew past the
+          viewport and the whole card hung off the right edge of an iPhone: the "Yours" chip
+          and most of "Open the hand-off again" were unreachable, on the one panel whose job
+          is to get somebody to a campsite inside fifteen minutes.
+          The inner `min-w-0 flex-1` was already correct and could never have helped — it
+          constrains the flex CHILD, and the overflow was the grid TRACK one level up. */}
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-2.5">
         {visible.map((h) => (
           <HoldRow key={h.id} hold={h} onRemoved={(id) => setDismissed((d) => [...d, id])} />
         ))}
