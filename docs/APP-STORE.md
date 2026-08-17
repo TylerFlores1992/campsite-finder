@@ -175,9 +175,8 @@ rejection.
 
 ```
 2. DEVICES AND OS TESTED
-<fill in — the owner's real devices. Apple wants models and OS versions, e.g.
-"iPhone 15 Pro, iOS 26.x" and "Pixel 8, Android 16". State only what was really
-tested; this is checkable and a padded list is worse than a short one.>
+iPhone SE (3rd generation), iOS 26.6 — a physical device. This is the device
+the attached screen recording was captured on.
 
 3. WHAT THE APP DOES AND WHO IT IS FOR
 CampHawk watches campgrounds that are already fully booked and alerts the user
