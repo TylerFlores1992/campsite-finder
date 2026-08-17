@@ -22,14 +22,59 @@
 
 import { query, mutate } from '../src/lib/db/client';
 import { notifyHoldMissed } from '../src/lib/rc-holds-notify';
+import { rcBotUsable } from '../src/lib/rc-holds';
 
-/** Hourly. Nothing here is urgent — the moment is already lost — and the value is
- *  telling the user, which is worth doing reliably rather than instantly. */
-export const EXPIRE_HOLDS_INTERVAL_MS = Number(process.env.EXPIRE_HOLDS_INTERVAL_MS ?? 60 * 60 * 1000);
+/**
+ * EVERY MINUTE. This was hourly, under a comment reading "nothing here is urgent — the
+ * moment is already lost — and the value is telling the user, which is worth doing
+ * reliably rather than instantly."
+ *
+ * **THE PREMISE WAS WRONG AND THE OWNER SAID SO (2026-08-17): "if we can't cart it the user
+ * needs to know immediately, not an hour later."** The moment is NOT already lost.
+ * ReserveCalifornia's cancelled sites routinely sit unbooked for a while after release —
+ * that is the entire reason `hold_missed` carries the provider link and says "it may still
+ * be free". The alert exists so the user can go and take the site themselves, and its value
+ * decays by the minute.
+ *
+ * Measured cost of the old cadence: the 2026-08-17 miss released at 08:00:53 and was
+ * reported at 09:19:04 — **79 minutes**, of which ~34 were purely waiting for the next
+ * hourly tick. Worst case was 105 minutes.
+ *
+ * The sweep is one indexed UPDATE that normally returns zero rows, so a 60x cadence
+ * increase costs essentially nothing. "Reliably rather than instantly" was a false choice.
+ */
+export const EXPIRE_HOLDS_INTERVAL_MS = Number(process.env.EXPIRE_HOLDS_INTERVAL_MS ?? 60 * 1000);
 
-/** Minutes past the release after which a `requested` hold is unreachable. Must exceed
- *  the feed's `dueHolds` grace (20) — see the header. */
+/**
+ * Minutes past the release after which a `requested` hold is unreachable **while the runner
+ * is alive and could still take it**. Must exceed the feed's `dueHolds` grace (20) — see the
+ * header: sweeping earlier than the feed gives up would mark a hold failed while the runner
+ * could legitimately still cart it, and the user would get "we couldn't" followed by "we
+ * did". Wider is safe; narrower is a lie.
+ */
 export const HOLD_MISS_GRACE_MIN = Number(process.env.HOLD_MISS_GRACE_MIN ?? 45);
+
+/**
+ * The same question when NOTHING IS RUNNING, which is a different question.
+ *
+ * The 45-minute grace above is bought entirely by "the runner might still cart it". That
+ * justification is CONDITIONAL, and we already hold the evidence: `rc_runner_heartbeat`.
+ * When the runner has gone silent there is no retry to protect, so waiting protects nothing
+ * and costs the user the site — which is exactly what happened on 2026-08-17, where the
+ * runner had not polled for 2h32m and we still sat on the news for 79 minutes.
+ *
+ * **This is NOT "narrower is a lie" being overruled.** The rule says never claim we could
+ * not hold it while we still might. With a stale heartbeat we demonstrably might not: the
+ * runner is not asking for work. The window is only shortened in the branch where the
+ * conservative reasoning does not apply, and a live runner keeps the full 45 minutes
+ * unchanged.
+ *
+ * Deliberately not zero. A runner that is mid-restart can be a couple of minutes silent and
+ * then cart normally, and `supervise.ps1` backs off up to 5 minutes between restarts. Five
+ * minutes is long enough that a routine restart does not produce a retracted alert, and
+ * short enough that the user still has the morning.
+ */
+export const HOLD_MISS_GRACE_NO_RUNNER_MIN = Number(process.env.HOLD_MISS_GRACE_NO_RUNNER_MIN ?? 5);
 
 interface MissedHold {
   id: string;
@@ -51,6 +96,25 @@ interface MissedHold {
  * user's holds as a side effect of `npm test`. Production passes nothing.
  */
 export async function failMissedHolds(onlyIds?: string[]): Promise<MissedHold[]> {
+  // WHICH GRACE APPLIES IS A QUESTION ABOUT THE RUNNER, NOT ABOUT THE HOLD.
+  //
+  // Read once per sweep and applied to every row: the runner is a single process, so its
+  // liveness cannot differ between two holds in the same pass. Reading it per row would
+  // also let a heartbeat landing mid-sweep give two holds different answers.
+  //
+  // FAILS TOWARD THE LONG GRACE. `rcBotUsable` returns ok:false when it cannot read the
+  // heartbeat AT ALL, and that is "we could not tell", not "the runner is dead" — the same
+  // rule as `unknown` never rounding to `signed-out`. A DB blip must not shorten the window
+  // and start declaring live holds missed, so an unreadable heartbeat keeps the full 45.
+  const beat = await rcBotUsable().catch(() => ({ ok: true, beatAgeMs: null }));
+  const runnerAbsent = beat.beatAgeMs != null && !beat.ok;
+  const graceMin = runnerAbsent ? HOLD_MISS_GRACE_NO_RUNNER_MIN : HOLD_MISS_GRACE_MIN;
+  if (runnerAbsent) {
+    console.log(
+      `[expire-holds] the runner has not polled for ${Math.round((beat.beatAgeMs ?? 0) / 1000)}s — ` +
+      `nothing is going to cart, so a missed hold is reported after ${graceMin} min instead of ${HOLD_MISS_GRACE_MIN}.`,
+    );
+  }
   // `release_at` is RC's zone-less Pacific wall-clock string, so it is compared against
   // Pacific wall-clock rather than parsed — the same rule as `dueHolds`. Parsing it into
   // a Date here would shift the cutoff by the worker's UTC offset, i.e. seven hours, and
@@ -65,7 +129,7 @@ export async function failMissedHolds(onlyIds?: string[]): Promise<MissedHold[]>
         AND ($2 IS NULL OR id = ANY($2))
       RETURNING id, watch_id, user_id, campground_id, unit_id, unit_name,
                 arrival_date::text AS arrival_date, release_at`,
-    [String(HOLD_MISS_GRACE_MIN), onlyIds ?? null],
+    [String(graceMin), onlyIds ?? null],
   ).catch((err) => {
     console.error('[expire-holds] sweep failed:', (err as Error).message);
     return [];
