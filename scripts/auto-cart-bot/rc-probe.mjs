@@ -176,6 +176,24 @@ const RELEASE = args.has('--release');
  *     node rc-probe.mjs --cart-cap --headful
  */
 const CART_CAP = args.has('--cart-cap');
+/**
+ * --cart-ladder: HOW MANY CARTS, not merely "more than one".
+ *
+ * `--cart-cap` answered the question it was written for -- the cap is per CART, and one
+ * session held two at once -- and stopped there, saying so: "NOT yet proven: how many carts
+ * a session may hold. This showed two." That leaves the product's capacity at
+ * RC_SITES_PER_CART x RC_MAX_CARTS with the second factor set to 1 out of caution, and
+ * `holdWindowLoad` counts holds GLOBALLY, so the whole product carts two sites per release.
+ *
+ * The difference between "capacity is 4" and "capacity scales with carts" is the difference
+ * between a ceiling and a wall, so it is worth six locked campsites for two minutes.
+ *
+ * RC only mints a NEW cart once the current one is FULL, so each rung must fill its cart
+ * and then be REFUSED a third add -- with RC's own cap wording -- before asking for the
+ * next. Without that control a fresh key proves nothing: RC could hand one back for any
+ * reason. Same discipline as --cart-cap, which is why that probe's step 3 exists.
+ */
+const CART_LADDER = args.has('--cart-ladder');
 /** Releases ONE entry, leaving the rest of the cart alone — what a bot holding several
  *  sites needs. Both shapes read out of RC's bundle (2026-08-06). */
 const CART_REMOVE_ENTRY = 'https://rdapi.reservecalifornia.com/api/webaccesscustomer/remove/cartentry';
@@ -1206,16 +1224,17 @@ try {
     }
   }
 
-  if (signedIn && CART_CAP) {
+  if (signedIn && (CART_CAP || CART_LADDER)) {
     const units = String(process.env.RC_CAP_UNITS || '').split(',').map((s) => s.trim()).filter(Boolean);
     const arrival = process.env.RC_ARRIVAL;
     const nights = Number(process.env.RC_NIGHTS ?? 1);
-    if (units.length !== 3 || !arrival) {
-      log('\nSkipping --cart-cap: set RC_CAP_UNITS=a,b,c and RC_ARRIVAL (see the header).');
+    const needUnits = CART_LADDER ? 6 : 3;
+    if (units.length !== needUnits || !arrival) {
+      log(`\nSkipping: set RC_CAP_UNITS to ${needUnits} comma-separated units and RC_ARRIVAL (see the header).`);
     } else {
-      step(6, 'Is the cap on the CART or on the ACCOUNT?');
-      log('   This locks three real campsites for the length of the run and releases them');
-      log('   again. Do not run it near a release, or with a hold queued.\n');
+      step(6, CART_LADDER ? 'How many CARTS may one session hold?' : 'Is the cap on the CART or on the ACCOUNT?');
+      log(`   This locks up to ${needUnits} real campsites for the length of the run and releases`);
+      log('   them again. Do not run it near a release, or with a hold queued.\n');
 
       // SAVE THE CART POINTER. `precartInPage` writes the winning key into localStorage on
       // every success, and this run makes several — so without this the profile is left
@@ -1263,7 +1282,79 @@ try {
       /** RC's own wording for the cap, so a DIFFERENT refusal is never read as this one. */
       const isCapRefusal = (e) => /Maximum Reservations in Cart|maximum number of reservations/i.test(String(e || ''));
 
+      /**
+       * THE LADDER. Three rungs, each: mint a cart, fill it, then be REFUSED a third add.
+       *
+       * The refusal is the control and it is not optional. A fresh cart key only means
+       * something if the previous cart was demonstrably FULL and demonstrably capped --
+       * otherwise RC handing back a new key proves nothing about a ceiling, and a wrong
+       * ceiling written down as measured is the failure this file exists to avoid.
+       *
+       * Stops at the first rung that does not behave, and says which rung and why. A
+       * partial ladder is a real answer ("at least N carts"); a guessed one is not.
+       */
+      const runLadder = async () => {
+        const keys = [];
+        let stopped = null;
+        for (let rung = 0; rung < 3 && !stopped; rung++) {
+          const mint = units[rung * 2];
+          const fill = units[rung * 2 + 1];
+          const control = units[rung * 2 + 2];   // undefined on the last rung -- see below
+          log(`\n   --- cart ${rung + 1} ---`);
+
+          const a = await attempt(mint, NO_CART, `${rung + 1}a. unit ${mint} -> ask for a FRESH cart`);
+          if (!a.ok) { stopped = { rung, why: 'refused', err: a.err }; break; }
+          // A KEY WE ALREADY HAVE IS NOT A NEW CART. This is the whole measurement: RC
+          // putting the site back into an existing cart means no further cart was minted.
+          if (a.key && keys.includes(a.key)) { stopped = { rung, why: 'same-cart', key: a.key }; break; }
+          keys.push(a.key);
+
+          const b = await attempt(fill, a.key, `${rung + 1}b. unit ${fill} -> fill it to two`);
+          if (!b.ok) { stopped = { rung, why: 'fill-failed', err: b.err }; break; }
+
+          // The last rung has no spare unit for a control, and does not need one: it is not
+          // asking for another cart, so there is nothing left to prove full.
+          if (control === undefined) break;
+          const c = await attempt(control, a.key, `${rung + 1}c. unit ${control} -> a third add (the CONTROL)`);
+          if (c.ok) { stopped = { rung, why: 'cap-not-firing' }; break; }
+          if (!isCapRefusal(c.err)) { stopped = { rung, why: 'other-refusal', err: c.err }; break; }
+        }
+
+        log('');
+        const n = keys.filter(Boolean).length;
+        if (stopped && stopped.why === 'cap-not-firing') {
+          log(`   ! THE 2-PER-CART CAP DID NOT FIRE on cart ${stopped.rung + 1}. Three sites went into one`);
+          log('     cart, so RC_SITES_PER_CART may not be 2 either. Nothing below the failure');
+          log('     was tested. Re-measure that before reading anything into the cart count.');
+        } else if (stopped && stopped.why === 'other-refusal') {
+          log(`   x INCONCLUSIVE at cart ${stopped.rung + 1}: the third add was refused, but NOT with the cap`);
+          log('     message, so the cart was never proven full and the next rung would have');
+          log('     been meaningless. Some other rejection (availability, a required extra)');
+          log(`     is not evidence about the cap. RC said: ${String(stopped.err || '').slice(0, 140)}`);
+        } else if (stopped && stopped.why === 'fill-failed') {
+          log(`   x INCONCLUSIVE at cart ${stopped.rung + 1}: the second site never went in, so that cart`);
+          log('     never reached two and no control was possible. Check the unit is genuinely');
+          log(`     available on that date. RC said: ${String(stopped.err || '').slice(0, 140)}`);
+        } else if (stopped && stopped.why === 'same-cart') {
+          log(`   = ${n} CART(S), AND THAT IS THE CEILING. Asking for a fresh cart on rung`);
+          log(`     ${stopped.rung + 1} returned a key we already hold, so RC stopped minting.`);
+          log(`     Capacity is ${n} x RC_SITES_PER_CART. Set RC_MAX_CARTS = ${n}.`);
+        } else if (stopped && stopped.why === 'refused') {
+          log(`   = ${n} CART(S). A fresh cart was REFUSED on rung ${stopped.rung + 1}, so the limit is not`);
+          log('     the cart -- it lives on the SESSION or the ACCOUNT, and no amount of cart');
+          log('     juggling lifts it. More concurrent holds then costs IDENTITIES, which is a');
+          log(`     much more expensive answer. RC said: ${String(stopped.err || '').slice(0, 140)}`);
+        } else {
+          log(`   + AT LEAST ${n} CARTS, all distinct, on ONE session and ONE account.`);
+          log(`     Capacity is at least ${n} x RC_SITES_PER_CART with per-hold carts built.`);
+          log('     THE CEILING IS STILL NOT FOUND -- the ladder ran out of units, it did not');
+          log('     hit a limit. Do not write down a maximum; write down what was reached.');
+        }
+        log(`     carts obtained: ${keys.filter(Boolean).map((k) => String(k).slice(0, 8) + '...').join(', ') || '(none)'}`);
+      };
+
       try {
+        if (CART_LADDER) { await runLadder(); } else {
         const a = await attempt(units[0], NO_CART, `1. unit ${units[0]} → a fresh cart`);
         if (!a.ok) {
           log('\n   ✗ INCONCLUSIVE — the first cart failed, so nothing below was ever tested.');
@@ -1308,6 +1399,7 @@ try {
               if (c2.err) log(`     RC said: ${String(c2.err).replace(/<br\/?>/g, ' ').slice(0, 160)}`);
             }
           }
+        }
         }
       } finally {
         // LET GO OF EXACTLY WHAT WE TOOK. Never empty/shoppingcart — the bot's own cart may

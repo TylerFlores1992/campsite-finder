@@ -355,7 +355,12 @@ export async function POST(req: NextRequest) {
   // attempt, not an outcome — see reportCartFailure. The feed's 90-second lead means the
   // FIRST attempt is always before the release, so treating it as final guaranteed every
   // hold failed exactly once, too early, forever.
-  const outcome = await reportCartFailure(id, typeof error === 'string' ? error : 'unknown error');
+  // The cart key travels even on a failure: a submit that landed and whose read-back did
+  // not is the case where the retry must return to the SAME cart. See reportCartFailure.
+  const outcome = await reportCartFailure(
+    id, typeof error === 'string' ? error : 'unknown error', undefined,
+    typeof cartKey === 'string' && cartKey ? cartKey : null,
+  );
   // AND TELL THEM. A hold that the runner reports as dead used to be the SILENT path —
   // only `expire-holds`'s sweep notified, and its `WHERE status = 'requested'` can never
   // match a row the runner already failed. So the case where we know exactly what went

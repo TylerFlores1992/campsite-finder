@@ -571,20 +571,35 @@ async function runPass() {
           await sleep(wait);
         }
 
-        const existing = await page.evaluate(() => {
-          try { return localStorage.getItem('shoppingCartKey'); } catch { return null; }
-        });
+        // EACH HOLD GETS ITS OWN CART, and that is what lifts the capacity ceiling.
+        //
+        // This used to pass the BROWSER's pointer, so every hold the system ever made was
+        // funnelled into one cart -- and RC caps a cart at two reservations. The third hold
+        // of a release was refused in RC's own words and read as a hard limit on the
+        // account. It never was: --cart-cap proved on 2026-08-15 that one session holds
+        // several carts at once, so the ceiling was ours and it was this line.
+        //
+        // NO_CART is RC's own "I have no cart" sentinel, answered with a real key we adopt.
+        //
+        // A RETRY GOES BACK TO THE CART IT ALREADY USED. `h.cartKey` is set the moment a
+        // submit yields one -- including on a failure whose read-back did not confirm the
+        // entry -- so a second attempt looks where the site may already be locked instead
+        // of minting a fresh cart and orphaning it.
+        //
+        // The browser's `shoppingCartKey` is deliberately NOT read any more -- it belongs to
+        // whichever hold went last, which is precisely the bug. The read is gone rather than
+        // merely unused: a live variable holding the wrong cart is an invitation.
         const result = await precartInPage(page, {
           unitId: Number(h.unitId),
           arrival: h.arrivalDate,
           nights: Number(h.nights) || 1,
-          cartKey: existing || NO_CART,
+          cartKey: h.cartKey || NO_CART,
         });
 
         // RC ANSWERS 200 WITH IsSuccess:false, and "cart is already added" is a REJECTED
         // submit on top of a site we already hold — proof, not failure. So the verdict
         // comes from reading the cart back, never from the flag.
-        const cartKey = result?.submitted?.v?.cartKey || result?.finalKey || existing;
+        const cartKey = result?.submitted?.v?.cartKey || result?.finalKey || h.cartKey || null;
         const locked = (() => {
           try { return (JSON.parse(result.loadedFull)?.Result ?? {}).LockedShoppingCart ?? null; }
           catch { return null; }
@@ -601,7 +616,11 @@ async function runPass() {
         } else {
           const why = result?.submitted?.v?.error || `HTTP ${result?.submitted?.status}`;
           log(`  ✗ could not hold ${h.unitName ?? h.unitId}: ${why}`);
-          await report({ id: h.id, ok: false, error: String(why).slice(0, 300) });
+          // The cart key travels even though this failed. If the submit landed and only the
+          // read-back did not, the site is locked in THAT cart and the retry has to return
+          // to it -- see reportCartFailure. Sending null when there is no key is fine; the
+          // server COALESCEs and never overwrites a good one.
+          await report({ id: h.id, ok: false, error: String(why).slice(0, 300), cartKey });
         }
       } catch (err) {
         log(`  ✗ ${h.unitName ?? h.unitId} threw: ${err.message}`);
