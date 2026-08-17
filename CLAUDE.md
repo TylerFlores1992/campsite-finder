@@ -1250,7 +1250,20 @@ Carpinteria SB's four divisions were being watched as four separate watches, Pfe
 Sur as three — so one park ate most of a 6-watch allowance. A park watch now counts ONCE.
 Side-lane work, crossing into `worker/` and `src/lib` with the owner's authorisation, and
 reviewed here because those are the main lane's files.
-- **`watch_campgrounds` (070) IS EMPTY, AND THAT IS THE ENTIRE SAFETY ARGUMENT.**
+- **NO LONGER EMPTY — THE FIRST PARK WATCH IS LIVE (checked 2026-08-17).** One active watch
+  (`14e96a2e`, **Pfeiffer Big Sur SP**) now spans **2 campgrounds**, so the expansion path
+  below is executing on every poller cycle rather than sitting dormant. **Every "this has
+  never run" sentence in this section is therefore stale**, including the one under KNOWN
+  GAPS. What that buys: the `CROSS JOIN LATERAL` expansion, the namespaced
+  `<campgroundId>::<siteKey>` claim keys, the `rc_hold_notified_for` namespacing and
+  `watchOpenings`' `::`-stripping SQL are all live code paths for the first time. Nothing
+  has gone wrong — but nothing had been *exercised* before either, so the next park-watch
+  alert is the first real evidence any of it works. Watch for a duplicate or missing alert
+  on that watch specifically.
+- **The paragraph below is kept because its REASONING is what made this safe to ship**, and
+  it is still how a reader should judge the expansion — it is simply no longer a statement
+  about today's data:
+- **`watch_campgrounds` (070) WAS EMPTY, AND THAT WAS THE ENTIRE SAFETY ARGUMENT.**
   `loadWatches` now emits ONE ROW PER (watch, campground) via `CROSS JOIN LATERAL`, with
   `COALESCE(..., ARRAY[w.campground_id])` falling back for any watch with no rows. **Verified
   against prod independently of the PR's own claim**: the new expansion and the old query
@@ -1289,8 +1302,11 @@ reviewed here because those are the main lane's files.
 - **`beat()` takes DISTINCT watches.** `watches` is one row per pair now, and that number
   renders as "Checking N watches every 15 seconds" on the admin page. Nothing gates on it,
   which is precisely why the human reading it should get the number its label promises.
-- **KNOWN GAPS, not bugs to hunt.** No multi-campground watch has EVER run a real poller
-  cycle — the first park watch is the first exercise of the path. ~~The watches list does not
+- **KNOWN GAPS, not bugs to hunt.** ~~No multi-campground watch has EVER run a real poller
+  cycle — the first park watch is the first exercise of the path.~~ **FALSE since at least
+  2026-08-17: a 2-part Pfeiffer Big Sur watch is active and being polled.** Struck rather
+  than deleted, because "nothing has exercised this" is exactly the sentence a later
+  reader would quote as a reason not to trust an alert that is in fact real. ~~The watches list does not
   show a park watch's parts (`GET /api/watches` returns `divisions`; nothing renders it)~~
   **— CLOSED 2026-08-15 by the side lane (PR #63): `WatchCard` renders the park title plus
   its parts (capped at 4, then "+N more") and `/manage/<token>` lists them in full.** The
