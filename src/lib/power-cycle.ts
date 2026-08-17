@@ -52,8 +52,36 @@ export interface PowerCycleResult {
 
 /** Is the plug configured at all? Deliberately separate from doing anything, so the admin
  *  page can hide or explain the control instead of offering a button that 503s. */
+export type PlugVendor = 'shelly' | 'switchbot';
+
+const shellySet = () =>
+  Boolean(process.env.SHELLY_AUTH_KEY && process.env.SHELLY_DEVICE_ID && process.env.SHELLY_SERVER);
+const switchbotSet = () =>
+  Boolean(process.env.SWITCHBOT_TOKEN && process.env.SWITCHBOT_SECRET && process.env.SWITCHBOT_DEVICE_ID);
+
+/**
+ * Which plug we drive, decided by which credentials are present.
+ *
+ * TWO VENDORS BECAUSE THE HARDWARE IS BOUGHT BY A PERSON, under whatever delivery date they
+ * can get. Tying the recovery lever to one brand means an outage waits on a courier. Both
+ * have PUBLISHED APIs, which is the actual requirement — Kasa, Meross and Wyze were rejected
+ * for having only reverse-engineered ones, and a lever you reach for at 07:50 must not depend
+ * on an endpoint that can change without notice.
+ *
+ * BOTH CONFIGURED IS A REFUSAL, NOT A PREFERENCE. Picking one of two plugs by an ordering
+ * rule nobody remembers means cutting power to whatever is plugged into the other — and the
+ * whole point of this module is that the act is irreversible from here. Ambiguity about
+ * WHICH physical thing loses power is the one input that must never be resolved silently.
+ */
+export function plugVendor(): PlugVendor | null | 'ambiguous' {
+  if (shellySet() && switchbotSet()) return 'ambiguous';
+  if (shellySet()) return 'shelly';
+  if (switchbotSet()) return 'switchbot';
+  return null;
+}
+
 export function powerPlugConfigured(): boolean {
-  return Boolean(process.env.SHELLY_AUTH_KEY && process.env.SHELLY_DEVICE_ID && process.env.SHELLY_SERVER);
+  return plugVendor() === 'shelly' || plugVendor() === 'switchbot';
 }
 
 /**
@@ -83,8 +111,14 @@ export async function boxSilentMs(): Promise<number | null> {
  * by somebody deciding whether to drive to the machine.
  */
 export async function powerCycleRefusal(silentMs: number | null): Promise<string | null> {
-  if (!powerPlugConfigured()) {
-    return 'no smart plug configured — set SHELLY_SERVER, SHELLY_DEVICE_ID and SHELLY_AUTH_KEY.';
+  const vendor = plugVendor();
+  if (vendor === 'ambiguous') {
+    return 'BOTH a Shelly and a SwitchBot are configured, so we cannot tell which physical ' +
+      'plug to cut. Refusing: unplugging the wrong thing is not undoable from here. Clear one set.';
+  }
+  if (!vendor) {
+    return 'no smart plug configured — set either SHELLY_SERVER/SHELLY_DEVICE_ID/SHELLY_AUTH_KEY ' +
+      'or SWITCHBOT_TOKEN/SWITCHBOT_SECRET/SWITCHBOT_DEVICE_ID.';
   }
   if (silentMs == null) {
     return 'could not read the runner heartbeat, so we cannot tell whether the box is dead. ' +
@@ -144,6 +178,65 @@ export async function powerCycleRefusal(silentMs: number | null): Promise<string
  * quietly stops existing. JSON body, `auth_key` in the query string, 200 with no body on
  * success.
  */
+/**
+ * SwitchBot Plug Mini, via the official Open API v1.1.
+ *
+ * NO HUB. That was checked rather than assumed: SwitchBot's own README requires a Hub "for
+ * BLE-based devices such as Bot and Curtain", and the Plug Mini is WiFi, so the requirement
+ * does not reach it. The Amazon listing says the same thing, but a listing is marketing copy
+ * about the APP and this is a question about the API — different claims, and only one of them
+ * decides whether this code can work.
+ *
+ * THE SIGNATURE IS PLAIN BASE64, NOT UPPERCASED, AND THAT IS DELIBERATE. SwitchBot's prose
+ * says "convert the signature to upper case" while their own JavaScript example does not, and
+ * their PHP and Go examples do. Base64 is case-sensitive, so those cannot all be right. This
+ * follows the JS sample verbatim, which is the language we are in and what the working Node
+ * clients do. **If auth ever fails with a signature error, try uppercasing before suspecting
+ * anything else** — and do not "tidy" this by adding .toUpperCase() on the strength of the
+ * prose alone.
+ */
+async function switchbot(turn: 'on' | 'off'): Promise<{ ok: boolean; detail: string }> {
+  const { createHmac, randomUUID } = await import('node:crypto');
+  const token = String(process.env.SWITCHBOT_TOKEN);
+  const secret = String(process.env.SWITCHBOT_SECRET);
+  const t = Date.now();
+  const nonce = randomUUID();
+  const sign = createHmac('sha256', secret).update(token + t + nonce).digest('base64');
+  const id = encodeURIComponent(String(process.env.SWITCHBOT_DEVICE_ID));
+  try {
+    const r = await fetch(`https://api.switch-bot.com/v1.1/devices/${id}/commands`, {
+      method: 'POST',
+      headers: {
+        Authorization: token,
+        sign,
+        nonce,
+        t: String(t),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ command: turn === 'on' ? 'turnOn' : 'turnOff', parameter: 'default', commandType: 'command' }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    // SwitchBot answers 200 with a JSON body carrying its OWN statusCode, so an HTTP 200 is
+    // not success — the same trap as RC returning 200 with IsSuccess:false, and as
+    // `notifications.status = 'sent'` meaning only "Twilio returned 2xx". Read the payload.
+    const text = (await r.text().catch(() => '')).slice(0, 300);
+    let inner: number | null = null;
+    try { inner = JSON.parse(text)?.statusCode ?? null; } catch { /* keep the raw text */ }
+    return { ok: r.ok && inner === 100, detail: `${turn}: HTTP ${r.status} ${text}` };
+  } catch (e) {
+    return { ok: false, detail: `${turn}: request failed — ${(e as Error).message}` };
+  }
+}
+
+/** Dispatch to whichever plug is configured. `powerCycleRefusal` has already rejected the
+ *  unconfigured and ambiguous cases, so reaching here with neither set is a bug, not input. */
+async function switchPlug(turn: 'on' | 'off'): Promise<{ ok: boolean; detail: string }> {
+  const vendor = plugVendor();
+  if (vendor === 'switchbot') return switchbot(turn);
+  if (vendor === 'shelly') return shelly(turn);
+  return { ok: false, detail: `${turn}: no plug configured` };
+}
+
 async function shelly(turn: 'on' | 'off'): Promise<{ ok: boolean; detail: string }> {
   const server = String(process.env.SHELLY_SERVER).replace(/^https?:\/\//, '').replace(/\/$/, '');
   const key = encodeURIComponent(String(process.env.SHELLY_AUTH_KEY));
@@ -179,9 +272,9 @@ export async function powerCycle(by: string): Promise<PowerCycleResult> {
   const refusal = await powerCycleRefusal(silentMs);
   if (refusal) return { ok: false, detail: refusal };
 
-  const off = await shelly('off');
+  const off = await switchPlug('off');
   await new Promise((r) => setTimeout(r, POWER_OFF_SECONDS * 1000));
-  const on = await shelly('on');
+  const on = await switchPlug('on');
   const ok = off.ok && on.ok;
   const detail = `${off.detail} | waited ${POWER_OFF_SECONDS}s | ${on.detail}`;
 

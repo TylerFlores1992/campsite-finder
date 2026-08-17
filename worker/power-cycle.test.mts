@@ -71,9 +71,9 @@ test('the rate limit is read from the table, not from memory', () => {
 test('power is ALWAYS turned back on', () => {
   // A plug left off is the one outcome strictly worse than the outage: the box cannot boot
   // and the next lever is a car journey. The `on` call must not be conditional on `off`.
-  const seq = code.slice(code.indexOf('const off = await shelly'));
-  assert.match(seq, /const on = await shelly\('on'\)/);
-  assert.ok(!/if \(off\.ok\)[\s\S]{0,80}shelly\('on'\)/.test(seq),
+  const seq = code.slice(code.indexOf("const off = await switchPlug('off')"));
+  assert.match(seq, /const on = await switchPlug\('on'\)/);
+  assert.ok(!/if \(off\.ok\)[\s\S]{0,80}switchPlug\('on'\)/.test(seq),
     "restoring power must never depend on the off call having succeeded");
 });
 
@@ -110,4 +110,48 @@ test('the route is admin-only and outlives the off-window', () => {
   assert.match(routeCode, /status: 404/, '404 rather than 403, matching the rest of /api/admin');
   assert.match(routeCode, /maxDuration = 60/,
     'the handler holds the power off, so it must outlive the default timeout');
+});
+
+/**
+ * TWO VENDORS, added 2026-08-17 because the hardware is bought by a person under whatever
+ * delivery date they can get — the Shelly was four days out. Both have PUBLISHED APIs, which
+ * is the real requirement: Kasa, Meross and Wyze were rejected for having only
+ * reverse-engineered ones, and a lever reached for at 07:50 must not depend on an endpoint
+ * that can change without notice.
+ */
+test('both configured is a REFUSAL, not a preference', () => {
+  // Picking one of two plugs by an ordering rule nobody remembers means cutting power to
+  // whatever is in the other socket — and this act is not undoable from here. Ambiguity about
+  // WHICH physical thing loses power is the one input that must never be resolved silently.
+  assert.match(code, /if \(shellySet\(\) && switchbotSet\(\)\) return 'ambiguous'/);
+  const branch = code.slice(code.indexOf("vendor === 'ambiguous'"));
+  assert.match(branch.slice(0, 400), /Refusing/);
+});
+
+test('SwitchBot reads its OWN status code, not the HTTP status', () => {
+  // SwitchBot answers 200 with a JSON body carrying `statusCode` — so an HTTP 200 is not
+  // success. Exactly the trap as RC returning 200 with IsSuccess:false, and as
+  // `notifications.status = 'sent'` meaning only "Twilio returned 2xx".
+  assert.match(code, /inner = JSON\.parse\(text\)\?\.statusCode \?\? null/);
+  assert.match(code, /ok: r\.ok && inner === 100/,
+    'the payload must gate success, not the transport');
+});
+
+test('the SwitchBot signature follows their JS sample, not their prose', () => {
+  // Their docs say "convert the signature to upper case"; their own JavaScript example does
+  // not, and PHP/Go do. Base64 is case-sensitive so those cannot all be right. This follows
+  // the JS sample — the language we are in, and what the working Node clients do. A regression
+  // here fails at 07:50 with an auth error, so it is pinned rather than left to taste.
+  assert.match(code, /createHmac\('sha256', secret\)\.update\(token \+ t \+ nonce\)\.digest\('base64'\)/);
+  assert.ok(!/digest\('base64'\)\.toUpperCase\(\)/.test(code),
+    'do not uppercase on the strength of the prose alone — see the comment');
+});
+
+test('each vendor is reached only when it is the selected one', () => {
+  // The dispatch must not fall through to a default vendor: sending a turnOff to the wrong
+  // API is harmless, but silently doing nothing while reporting success is not.
+  assert.match(code, /if \(vendor === 'switchbot'\) return switchbot\(turn\)/);
+  assert.match(code, /if \(vendor === 'shelly'\) return shelly\(turn\)/);
+  assert.match(code, /return \{ ok: false, detail: `\$\{turn\}: no plug configured` \}/,
+    'no vendor must report failure, never a silent success');
 });
