@@ -866,3 +866,74 @@ So the reply's claim that a reviewer sees a populated paid app is accurate.
 confident, measured-sounding claim there is worse than an absent one, because the next reader
 will reproduce the 422 and treat it as confirmation. Not edited from this lane; `CLAUDE.md`
 is the main lane's file.
+
+---
+
+# Handover — 2026-08-17 (supersedes the 08-16 handover above)
+
+## Two things are LIVE and waiting on the outside world
+
+### 1. iOS 1.0 was RESUBMITTED to App Review on 2026-08-17
+
+Answering Apple's 2026-08-16 **Guideline 2.1 — Information Needed** letter (a different,
+much cheaper rejection than the 08-14 sign-in one). Sent: a **2:56 screen recording**
+attached in Resolution Center, the **Notes field replaced** with a 3,997-character block,
+and a reply carrying a timestamp index plus items 2–7. **Build `1.0 (5)` untouched.**
+
+Everything about what was sent, and the three findings from producing it, is in
+`docs/APP-STORE.md` §2b. The one to read first: **iOS does not record privacy permission
+alerts** — a screen recording captures only the app's window dimming behind them, so the
+two prompts had to be filmed with a second camera.
+
+**Nothing to do but wait.** When Apple replies, record the outcome in §2b.
+
+### 2. An RC test hold is queued for 2026-08-17 08:00:53 PT
+
+```
+hold    a04171a2-49de-4d3a-8108-8f4b7dcbdcc7
+site    Carpinteria SB — San Miguel (sites 401-460) · unit 4728 · #M401
+stay    arrive 2026-12-01, 1 night
+claim   https://camphawk.app/claim/a04171a2-49de-4d3a-8108-8f4b7dcbdcc7?t=EQO2oXcQ
+```
+
+**Queued at the owner's explicit request.** `docs/LANES.md` marks `rc-test-hold.mts` as
+SERIAL and says to announce first; `ListAgents` reported no reachable sibling, so the
+owner's instruction is the authorisation and this is the record of it.
+
+- **The unit came from `--find`, not from a person** — it asks RC's own grid what is
+  genuinely bookable, because "never invent a unit id" has locking a stranger's campsite
+  as its failure mode. San Miguel was chosen for having **44 bookable sites** that night,
+  the most on offer, so the test takes nothing scarce.
+- **It is a REAL site and it locks at 08:00** until claimed, released, or RC drops the cart
+  (~15 min). Abandoning it means `--delete a04171a2-…` **and** clearing the cart by hand.
+- **Open the claim link IN THE APP.** From a browser `canInject` is false and the injected
+  precart — the thing being tested — never runs.
+- **The answer is in `client_reports`:** a `load` stage, a `submit` stage, and
+  **`✓ Added to cart`**. `token captured` as the last line is NOT a successful cart.
+- **The 02:00–05:00 update window is shut** while this sits `requested`. Costs nothing
+  tonight — the mini-PC is already on `d09f225`, same as web.
+
+**Health going in (2026-08-16 23:38 PT):** runner OK (polling), `bot_version` OK,
+`rc_session` **dead but not stale** — the keep-warm reported 82s earlier, so the repair is
+SCHEDULED (`maybeAutoLogin` at 07:30), which is the right side of the 2026-08-10 failure.
+`rc_login` warns that no rehearsal has passed since 08-16. **This is the first real morning
+with PR #80's 07:33-false-alarm fix live on the box.**
+
+## Still open, all main lane's
+
+1. **Issue #76** — `rc-holds.test.mts`'s fixture sweep deletes a *concurrent* run's live
+   rows. Two confirmed occurrences 25 minutes apart, different victim tests. Options ranked
+   in the issue; §20 has the traces.
+2. **PR #78** (`claude/rc-login-fix`) — two real fixes stranded by the in-app sign-in
+   revert. **Must not be merged onto the reverted claim screen**; re-land the feature first.
+3. **`docs/CONTEXT.md` ~1465** — names `src/components/AvailabilityCalendar.tsx` (deleted;
+   now `v2/AvailabilityGrid.tsx`) and the `avail-usedirect` preset (deleted in §18).
+   Deliberately not half-repaired — see §18.
+4. **A real decline path for `offered`/`requested` holds** — §17. Needs to free the
+   capacity seat an `offered` row occupies, since `offered` counts toward
+   `RC_HOLD_CAPACITY` and that is 2.
+
+## Side lane state
+
+No branch, no uncommitted work beyond this PR. Park watches remain unadvertised —
+`watch_campgrounds` is still 0 rows.
