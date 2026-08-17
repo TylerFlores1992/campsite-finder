@@ -6,6 +6,7 @@ import { Check, ExternalLink, Loader2 } from 'lucide-react';
 import Logo from '@/components/Logo';
 import { formatStayDates } from '@/lib/notifications/dates';
 import { RC_CART_HOLD_MINUTES } from '@/lib/limits';
+import { AUTOCART_BETA_LABEL, AUTOCART_BETA_NOTE } from '@/lib/autocart-beta';
 import type { HoldPreview } from '@/lib/notifications/actions';
 
 /**
@@ -75,7 +76,21 @@ export default function HoldConfirm({ preview }: { preview: HoldPreview }) {
         </a>
       )}
 
-      <p className="mt-5 text-sm text-ch-ink">
+      {/*
+        THE BETA LABEL BELONGS HERE MORE THAN ANYWHERE ELSE. This is the screen on which
+        somebody decides to rely on the bot instead of setting an alarm, and that decision
+        is the whole cost of a miss — not the failed cart, but a user who stopped watching.
+        Above the paragraph promising the cart, deliberately: a caveat underneath a promise
+        is read after the reader has already decided.
+      */}
+      <p className="mt-5 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm text-ch-ink">
+        <span className="rounded-full bg-ch-sand px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-ch-green-deep">
+          {AUTOCART_BETA_LABEL}
+        </span>
+        <span className="text-ch-muted">{AUTOCART_BETA_NOTE}</span>
+      </p>
+
+      <p className="mt-3 text-sm text-ch-ink">
         If you say yes, our bot carts this exact site the second it opens and holds it
         for you — but ReserveCalifornia only keeps a cart about {RC_CART_HOLD_MINUTES}{' '}
         minutes, so claim it quickly when we tell you. Only say yes if you actually want

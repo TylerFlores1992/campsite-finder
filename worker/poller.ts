@@ -47,7 +47,7 @@ import { syncAllGoingToCamp } from '../src/lib/sources/goingtocamp/sync';
 import { startHttpServer } from './http-server';
 import { syncAllUseDirect } from '../src/lib/sources/reservecalifornia/sync';
 import { fetchUnitTypes } from '../src/lib/sources/reservecalifornia/client';
-import { isUseDirectSource, USEDIRECT_PROVIDERS } from '../src/lib/sources/reservecalifornia/providers';
+import { isUseDirectSource, supportsRcHold, USEDIRECT_PROVIDERS } from '../src/lib/sources/reservecalifornia/providers';
 import { dispatchNotifications, type NotificationPayload } from '../src/lib/notifications';
 import { bookingLink } from '../src/lib/booking-url';
 import { runDetectionCanary, runDeliveryCanary } from './canary';
@@ -1263,8 +1263,19 @@ async function cycle(): Promise<void> {
           'without a hold link.'
         );
       }
+      // AND THE BOT MUST HAVE AN ACCOUNT ON THIS PORTAL. Detection covers all ten UseDirect
+      // portals because `Lock` is generic; the bot signs in to ONE ReserveCalifornia account
+      // and carts against reservecalifornia.com. See supportsRcHold — an Ohio watch would
+      // otherwise be offered a hold nothing can perform.
+      const holdablePortal = supportsRcHold(w.campground_source);
+      if (!holdablePortal && held.unitId != null) {
+        console.log(
+          `[poller] watch ${w.id}: NOT offering a hold — ${w.campground_source} is UseDirect but ` +
+          'the cart bot only holds a ReserveCalifornia account. Coming-soon alert without a hold link.'
+        );
+      }
       const mayHold =
-        held.unitId != null && bot.ok && roomToHold &&
+        held.unitId != null && bot.ok && roomToHold && holdablePortal &&
         (await hasAutocartEntitlement(w.user_id).catch(() => false));
       if (mayHold && held.unitId != null) {
         const offered = await offerHold({
