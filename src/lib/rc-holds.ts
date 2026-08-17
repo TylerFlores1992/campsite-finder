@@ -506,12 +506,24 @@ export async function markClaimed(id: string): Promise<void> {
  * notifies the user either way.
  */
 export async function reportCartFailure(
-  id: string, error: string, graceMinutes = 20,
+  id: string, error: string, graceMinutes = 20, cartKey?: string | null,
 ): Promise<{ state: 'retry' | 'failed' | 'already-failed'; hold: HoldRequest | null }> {
   const stillOpen = `release_at >= to_char((NOW() - ($3 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`;
   const rows = await mutate<HoldRequest & { status: HoldStatus }>(
     `UPDATE rc_hold_requests
         SET last_attempt_at = NOW(), last_attempt_note = $2,
+            -- REMEMBER WHICH CART WE TRIED, EVEN THOUGH THIS FAILED.
+            --
+            -- Since holds mint their own carts, a submit that succeeded and whose read-back
+            -- did not would leave the site locked in a cart NOTHING remembers: the retry
+            -- would mint a fresh one, look there, find nothing, and the entry would sit
+            -- orphaned until RC dropped it ~15 minutes later. With the old shared cart the
+            -- retry happened to look in the right place by accident.
+            --
+            -- COALESCE keeps the FIRST key: once a hold has a cart, later attempts must not
+            -- repoint it at one that holds nothing. And $4 is only ever supplied when the
+            -- submit actually produced a key, so a plain failure stores nothing.
+            cart_key   = COALESCE(cart_key, $4),
             status     = CASE WHEN ${stillOpen} THEN status     ELSE 'failed' END,
             error      = CASE WHEN ${stillOpen} THEN error      ELSE $2 END,
             -- updated_at means "the hold changed". A retryable attempt is not a change,
@@ -522,7 +534,7 @@ export async function reportCartFailure(
       -- hold it" — the same lesson as markCarted and migration 039.
       WHERE id = $1 AND status <> 'failed'
       RETURNING *`,
-    [id, error.slice(0, 500), String(graceMinutes)],
+    [id, error.slice(0, 500), String(graceMinutes), cartKey ?? null],
   ).catch((e) => { console.error('[rc-holds] reportCartFailure failed:', e.message); return []; });
   if (!rows[0]) return { state: 'already-failed', hold: null };
   return { state: rows[0].status === 'failed' ? 'failed' : 'retry', hold: rows[0] };
