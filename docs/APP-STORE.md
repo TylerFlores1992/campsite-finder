@@ -175,9 +175,8 @@ rejection.
 
 ```
 2. DEVICES AND OS TESTED
-<fill in — the owner's real devices. Apple wants models and OS versions, e.g.
-"iPhone 15 Pro, iOS 26.x" and "Pixel 8, Android 16". State only what was really
-tested; this is checkable and a padded list is worse than a short one.>
+iPhone SE (3rd generation), iOS 26.6 — a physical device. This is the device
+the attached screen recording was captured on.
 
 3. WHAT THE APP DOES AND WHO IT IS FOR
 CampHawk watches campgrounds that are already fully booked and alerts the user
@@ -260,6 +259,53 @@ No setup is required to search.
   Management, the U.S. Army Corps of Engineers, or any state park agency. The
   same disclaimer opens and closes the App Store description.
 ```
+
+### RESUBMITTED 2026-08-17 — what was actually sent
+
+- **`CampHawk-AppReview.mp4`, 2:56**, attached in Resolution Center. Covers every flow
+  Apple named: launch, guest search, location prompt, sign-in, push prompt, watch
+  creation, watch management, registration, the free-account "managed at camphawk.app"
+  state, and account deletion through to sign-out.
+- **Notes field REPLACED** with a 3,997-character condensed version (see below).
+- **Reply** carried a timestamp index of the recording plus the full items 2–7.
+- **Build `1.0 (5)` untouched** — no rebuild, so the queue position was not spent.
+
+#### iOS DOES NOT RECORD PRIVACY PERMISSION ALERTS — this cost three takes
+
+Apple asks for the permission prompts on camera. **An iOS screen recording cannot capture
+them.** The alert is drawn by a separate system process; the recording captures only the
+app's own window **dimming behind it**, leaving a dim-in / hold / dim-out with an empty
+overlay. Measured at 15fps: brightness falls over ~6 frames, holds ~10, recovers — and
+nothing is ever drawn on top.
+
+**Two wrong diagnoses came first, and both were plausible.** First that the permission had
+already been granted (it had, on the earliest take — but a reinstall did not fix it).
+Second that the app had been opened once after reinstalling, consuming the prompt. **The
+owner was right and both were wrong:** the prompt fires correctly and is redacted from the
+capture. The tell is the dimming with no dialog — a real "already granted" case has *no
+dimming at all*, which is exactly how the two takes differ.
+
+**The fix is a second camera** pointed at the device. That footage also happens to be the
+strongest possible evidence for "captured on a physical device". Say so in the reply, or
+the image quality change mid-video reads as a doctored recording.
+
+#### Two edits the footage needed
+
+- **The location alert's map shows the tester's home neighbourhood** — named streets and a
+  named elementary school, legible at full resolution. Blurred. The blur box had to be
+  positioned twice: the first attempt clipped *"campgrounds near you."*, which is the
+  purpose string Apple most wants to read.
+- **A Mail inbox showing our own monitoring email** — *"CampHawk health check: overall
+  status DEGRADED"* — appeared during the email-verification step. Cut. It was flagged in
+  one clip and then found in a **different** one during a spot-check of the joined file,
+  which is the argument for verifying the output rather than the plan.
+
+#### THE NOTES FIELD CAPS AT 4,000 CHARACTERS
+
+The existing notes are ~1,992 and the six new answers ~2,100, so **appending them as-is
+overflows**. The delivered block is 3,997 — the 3.1.3(b) paragraph kept essentially
+verbatim, wording tightened elsewhere. **Three characters of headroom: re-count before
+saving any edit to that field.**
 
 ### Why item 7 is worth answering carefully rather than briefly
 
