@@ -211,6 +211,32 @@ const CART_LADDER = args.has('--cart-ladder');
  * So: fire N mints at once, count DISTINCT keys. Nothing else changes.
  */
 const CONCURRENT_MINT = args.has('--concurrent-mint');
+
+/**
+ * A MODE FLAG THIS BUILD DOES NOT KNOW IS AN ERROR, NOT A NO-OP.
+ *
+ * Run `--concurrent-mint` against a checkout that predates it and the flag is simply
+ * ignored: steps 1-3 and 7 run, the sign-in reports success, and the output looks like a
+ * complete probe that happened to find nothing. That happened on 2026-08-17 -- the box was
+ * a merge behind and the missing step 6 read as "the probe ran and said nothing".
+ *
+ * The mini-PC is routinely a commit or two behind the repo (it updates on update.bat, a
+ * quiet window, or a human), so this is the normal state of things rather than an edge case.
+ */
+const KNOWN_FLAGS = new Set([
+  '--cart-cap', '--cart-ladder', '--concurrent-mint', '--headful', '--handoff', '--release',
+  '--cart', '--capture', '--real-profile', '--test-login', '--save-login', '--find',
+]);
+for (const a of process.argv.slice(2)) {
+  if (a.startsWith('--') && !KNOWN_FLAGS.has(a) && !a.includes('=')) {
+    console.log(`\n!! THIS BUILD DOES NOT KNOW ${a}.`);
+    console.log('   Nothing will run for it. The most likely cause is that this checkout is');
+    console.log('   behind the repo -- the mini-PC updates on update.bat, a quiet window or a');
+    console.log('   human, so being a commit or two behind is normal. Update, then re-run.');
+    console.log(`   git rev-parse --short HEAD  ->  compare with autocart.bot_version.\n`);
+    process.exit(2);
+  }
+}
 /** Releases ONE entry, leaving the rest of the cart alone — what a bot holding several
  *  sites needs. Both shapes read out of RC's bundle (2026-08-06). */
 const CART_REMOVE_ENTRY = 'https://rdapi.reservecalifornia.com/api/webaccesscustomer/remove/cartentry';

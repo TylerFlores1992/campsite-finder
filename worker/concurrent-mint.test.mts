@@ -57,5 +57,25 @@ test('a partial result is INCONCLUSIVE, never a green light', () => {
   // never earned.
   const verdict = code.slice(code.indexOf('distinct.size === units.length'));
   assert.match(verdict, /INCONCLUSIVE/);
-  assert.match(verdict, /before\s*\n?.*concluding anything about concurrency/s);
+  // [\s\S] rather than the /s flag: tsconfig.worker.json targets below es2018, where
+  // dotAll is a compile error. Caught by CI, not locally, because `npm run verify` chains
+  // typecheck FIRST and short-circuits -- so a failing typecheck produces NO test output
+  // at all, which is easy to read as "nothing to report".
+  assert.match(verdict, /before[\s\S]*concluding anything about concurrency/);
+});
+
+test('an unknown mode flag stops the probe instead of half-running', () => {
+  // Running `--concurrent-mint` against a checkout that predates it silently ignored the
+  // flag: steps 1-3 and 7 ran, the sign-in reported success, and the output read like a
+  // complete probe that found nothing. Observed 2026-08-17 with the mini-PC one merge
+  // behind — which is its NORMAL state, since it updates on update.bat, a quiet window or
+  // a human rather than on push.
+  assert.match(SRC, /const KNOWN_FLAGS = new Set\(\[/);
+  assert.match(SRC, /THIS BUILD DOES NOT KNOW/);
+  assert.match(SRC, /process\.exit\(2\)/,
+    'it must exit non-zero — a partial run that looks complete is the failure');
+  // Every mode this file implements must be listed, or the guard rejects a real flag.
+  for (const flag of ['--cart-cap', '--cart-ladder', '--concurrent-mint']) {
+    assert.ok(SRC.includes(`'${flag}'`), `${flag} must be in KNOWN_FLAGS`);
+  }
 });
