@@ -85,6 +85,25 @@ try {
   const res = await fetch(HOME, { redirect: 'follow' });
   const body = await res.text();
   console.log(`node fetch:  HTTP ${res.status}, ${body.length} bytes of shell`);
+  // THE CONTROL FOR A TIME-VARYING CAUSE, and the one the 2x2 cannot see without it.
+  //
+  // This fetch happens before Chromium launches and uses plain Node, so NO flag of this
+  // script can change it. That makes it the only line in the output whose value is a
+  // statement about RC's edge rather than about the browser.
+  //
+  // On 2026-08-17 two runs seconds apart read 403 then 200 -- the same IP, different
+  // minutes -- while a --capture flag flipped in between. Read as a 2x2 that is "the
+  // token-capture hook FIXES RC", which is nonsense; the server changed its mind and the
+  // flag came along for the ride. Every 403 was on a STATIC asset (/, the bundle, the CSS,
+  // manifest.json), which no page script can cause.
+  if (res.status === 403) {
+    console.log('             ^ RC IS REFUSING THIS IP, and no browser flag can change that.');
+    console.log('               A 403 here means the EDGE is blocking, not the app failing --');
+    console.log('               these WAFs mean "slow down", not "never" (see CLAUDE.md, and');
+    console.log('               the 12-hour block on 2026-08-06). STOP: nothing measured while');
+    console.log('               this is 403 is about the browser, the profile or the hook.');
+    console.log('               Wait, re-run this alone, and only compare runs that agree here.');
+  }
 } catch (e) {
   console.log(`node fetch:  FAILED - ${e.message}`);
   console.log('             The network cannot reach RC from this box at all, which is a');
@@ -179,5 +198,12 @@ console.log('  both --real-profile runs RENDER       -> it is neither, and the d
 console.log('                                           something the bot does after launch.');
 console.log('  NOTHING is blank                      -> it has stopped reproducing; say so');
 console.log('                                           rather than declaring it fixed.');
+console.log('');
+console.log('BEFORE ANY OF THAT - do the runs agree on `node fetch`?');
+console.log('  That line is taken before Chromium launches, so NO flag here can change it.');
+console.log('  If one run reads 403 and another 200, the variable that moved was TIME, not');
+console.log('  the flag, and the 2x2 is measuring RC edge behaviour rather than this browser.');
+console.log('  2026-08-17: two runs seconds apart read 403 then 200, which as a 2x2 says');
+console.log('  "the token-capture hook fixes RC". It does not. Only compare runs that agree.');
 
 await ctx.close();
