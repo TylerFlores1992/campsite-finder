@@ -28,6 +28,45 @@ test('the mints actually overlap', () => {
   assert.match(code, /cartKey: NO_CART/, 'every request must ask for a FRESH cart');
 });
 
+/**
+ * THE SECOND RUN REPORTED "THEY RACE" OVER SIX REQUESTS THAT NEVER ARRIVED (2026-08-17).
+ *
+ * Six submits failed, every key came from `finalKey` — which is `localStorage
+ * ['shoppingCartKey']`, the session's EXISTING pointer that every request reads and none
+ * of them mints — so six reads of one shared value counted as one distinct cart and the
+ * probe declared a race. `status` was 0, meaning the fetch threw; the whole run took 0.1s
+ * against 4.3s for the run that worked, and `netError` held the reason and was never shown.
+ *
+ * That is the most expensive misread available here: it would retire the parallel-cart plan
+ * on a run where nothing was ever asked of RC.
+ */
+test('only a SUBMIT key counts toward the distinct-cart tally', () => {
+  assert.match(code, /results\.filter\(\(r\) => r\.fromSubmit\)\.map\(\(r\) => r\.key\)/,
+    'finalKey is a read of shared state — N reads are always 1 distinct, i.e. a fake race');
+  assert.ok(!/const keys = results\.map\(\(r\) => r\.key\)/.test(code),
+    'counting every key is what manufactured the race verdict');
+});
+
+test('a thrown request is distinguished from RC refusing', () => {
+  // `call()` returns status 0 with an empty body when the fetch throws, and an empty body
+  // parses as "(unparseable body)" — so "RC declined" and "RC was unreachable" printed the
+  // same line. One is a fact about RC; the other is a fact about this box's network.
+  assert.match(code, /netError/, 'the network error must be carried out of precartInPage');
+  assert.match(code, /NO ANSWER \(request failed\)/, 'and named differently from REFUSED');
+  assert.match(code, /the fetch threw, NOT an RC response/,
+    'HTTP 0 must be explained where it is printed, not left as a bare zero');
+});
+
+test('no accepted submit means NO verdict about racing', () => {
+  const verdict = code.slice(code.indexOf('reached === 0'));
+  assert.match(code, /const reached = results\.filter\(\(r\) => r\.ok === true\)\.length/);
+  assert.match(verdict, /THE QUESTION WAS NEVER REACHED/);
+  assert.ok(code.indexOf('reached === 0') < code.indexOf('THEY RACE'),
+    'the never-reached arm must be tested BEFORE the race arm, or a failed run still races');
+  assert.match(code, /keys\.length >= 2 && distinct\.size < keys\.length/,
+    'a race needs at least two ACCEPTED submits handed the same cart');
+});
+
 test('the verdict counts DISTINCT keys, not successful calls', () => {
   // N calls returning a key is not N carts. RC handing the same new cart to all of them
   // would look like total success right up to the moment the sites collide.
