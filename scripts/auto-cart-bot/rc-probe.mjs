@@ -1289,15 +1289,37 @@ try {
         const results = await Promise.all(units.map(async (unitId) => {
           const r = await precartInPage(page, { unitId: Number(unitId), arrival, nights, cartKey: NO_CART })
             .catch((e) => ({ error: String(e && e.message) }));
-          const key = r?.submitted?.v?.cartKey || r?.finalKey || null;
+          const submitKey = r?.submitted?.v?.cartKey || null;
+          const key = submitKey || r?.finalKey || null;
           const err = r?.submitted?.v?.error || r?.error || '';
-          return { unitId, key, err, headers: r?.replay?.headers ?? null };
+          return {
+            unitId, key, err,
+            fromSubmit: !!submitKey,
+            ok: r?.submitted?.v ? r.submitted.v.isSuccess === true : null,
+            status: r?.submitted?.status ?? null,
+            headers: r?.replay?.headers ?? null,
+          };
         }));
         const elapsed = ((Date.now() - started) / 1000).toFixed(1);
 
+        // REPORT THE SUBMIT'S OWN VERDICT, ALWAYS -- not only when it carried an error.
+        //
+        // The first run of this probe printed a key per unit, no errors, and "0 sites
+        // actually held", which is two completely different stories with one output: the
+        // submits failed silently, or they worked and the read-back missed them. Neither
+        // could be ruled out, so a run that locked six real campsites answered nothing.
+        //
+        // `IsSuccess` is the field RC actually sets, and a cart key can come back from
+        // `load` alone -- so a key is NOT evidence the site went in. Printing which call
+        // produced it separates "RC minted a cart" from "RC accepted a reservation", and
+        // those are the two halves of the question this probe exists to ask.
         for (const r of results) {
+          const via = r.fromSubmit ? 'submit' : (r.key ? 'load only' : '--');
           log(`   unit ${String(r.unitId).padEnd(7)} -> ${r.key ? 'key ' + String(r.key).slice(0, 8) + '...' : 'NO KEY'}` +
-              `${r.err ? '  RC said: ' + String(r.err).replace(/<br\/?>/g, ' ').slice(0, 90) : ''}`);
+              `  submit: ${r.ok === true ? 'IsSuccess' : r.ok === false ? 'REFUSED' : '(no answer)'}` +
+              `  key via ${via}`);
+          if (r.err) log(`     RC said: ${String(r.err).replace(/<br\/?>/g, ' ').slice(0, 120)}`);
+          if (r.status) log(`     HTTP ${r.status}`);
         }
 
         const headers = results.find((r) => r.headers)?.headers ?? null;
@@ -1309,6 +1331,11 @@ try {
           for (const r of results) {
             if (!r.key) continue;
             const found = await findCartEntry(ctx.request, headers, r.key, { unitId: r.unitId }).catch(() => null);
+            // THE COUNT IS THE DISCRIMINATOR. An EMPTY cart means the submit never landed;
+            // a cart holding entries we could not match means the read-back is wrong. Both
+            // report `found: false`, and without this they are the same line.
+            log(`   cart ${String(r.key).slice(0, 8)}... holds ${found?.count ?? '?'} entr(y/ies)` +
+                `${found?.found ? ` -- ours is ${String(found.entryKey).slice(0, 8)}...` : ' -- ours NOT among them'}`);
             if (found?.found) made.push({ unitId: r.unitId, cartKey: r.key, entryKey: found.entryKey });
           }
         }
@@ -1329,6 +1356,9 @@ try {
           log('   ? INCONCLUSIVE. Keys were distinct but not every site was held, so something');
           log('     other than the race decided this run. Read the per-unit lines above before');
           log('     concluding anything about concurrency.');
+          log('     A key from `load only` is RC handing out a cart, NOT accepting a booking --');
+          log('     if every submit says REFUSED or (no answer), the concurrency question was');
+          log('     never reached and the carts were empty rather than lost.');
         }
       } finally {
         log('');
