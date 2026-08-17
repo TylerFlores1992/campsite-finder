@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, CheckCircle2, ShieldCheck, AlertTriangle } from 'lucide-react';
+import Logo from '@/components/Logo';
 
 // Remote one-time recreation.gov sign-in. Primary path: the user enters their
 // rec.gov email/password into a normal form here; the credentials are sent over the
@@ -173,6 +174,21 @@ export default function ConnectPage() {
   return (
     <div className="min-h-dvh bg-ch-paper px-4 py-8 font-ch-body text-ch-ink">
       <div className="mx-auto max-w-3xl">
+        {/* THIS PAGE HAS NO NAV, AND UNTIL NOW NO WAY BACK AT ALL.
+            `/connect` lives OUTSIDE the `(app)` route group, so it never gets `V2Nav` —
+            which is deliberate (a credential-entry screen should not carry an account menu
+            and a set of tabs inviting you away mid-sign-in) and left the page with no
+            CampHawk mark and no link home. Reported 2026-08-17 on the test account: a user
+            who lands here, or who finishes and wants to get back, has nothing to press.
+            A logo linking to `/` is the whole fix — it is also the brand assurance you want
+            on the one screen where somebody types a password for a third-party account. */}
+        <Link
+          href="/"
+          aria-label="CampHawk — back to the site"
+          className="mb-6 inline-flex rounded-ch-btn focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green"
+        >
+          <Logo markSize={30} />
+        </Link>
         <div className="flex items-center gap-2 text-ch-ink">
           <ShieldCheck size={22} className="text-ch-green" />
           <h1 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em]">Connect recreation.gov</h1>
