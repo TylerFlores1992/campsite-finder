@@ -221,6 +221,35 @@ return page.evaluate(
  * is released without disturbing anything else in the cart.
  */
 export async function findCartEntry(requestCtx, headers, cartKey, { placeId, facilityId, unitId }) {
+  const { entries: list, status } = await listCartEntries(requestCtx, headers, cartKey);
+  try {
+    const hit = list.find(
+      (e) =>
+        (placeId != null && Number(e.PlaceId) === Number(placeId) &&
+         facilityId != null && Number(e.FacilityId) === Number(facilityId)) ||
+        (unitId != null && JSON.stringify(e).includes(String(unitId))),
+    );
+    return { found: !!hit, entryKey: hit?.CartEntryKey ?? null, count: list.length, status };
+  } catch {
+    return { found: false, entryKey: null, count: 0, status };
+  }
+}
+
+/**
+ * Every entry in a cart, matched against nothing.
+ *
+ * `findCartEntry` answers "is the site we asked for in here?", which is the right question
+ * for EVIDENCE and the wrong one for CLEANUP: a read-back that fails to match leaves a real
+ * campsite locked, and the two runs that hit exactly that each left six of them to lapse.
+ * A cart this run minted with NO_CART contains only what this run put in it, so its whole
+ * contents can be released without matching anything — which is a guarantee about how the
+ * cart was CREATED, not a guess about RC's entry shape, and so it cannot rot the way a
+ * matcher can.
+ *
+ * NEVER reach for `empty/shoppingcart` instead. That would also empty a cart holding a real
+ * user's hold if the key were ever wrong; releasing named entries cannot.
+ */
+export async function listCartEntries(requestCtx, headers, cartKey) {
   const r = await requestCtx.post(CART_LOAD, {
     headers, data: { shoppingCartKey: cartKey }, timeout: 30_000,
   });
@@ -228,15 +257,9 @@ export async function findCartEntry(requestCtx, headers, cartKey, { placeId, fac
   try {
     const res = JSON.parse(raw)?.Result ?? {};
     const list = res.CartEntry?.$values ?? (Array.isArray(res.CartEntry) ? res.CartEntry : []);
-    const hit = list.find(
-      (e) =>
-        (placeId != null && Number(e.PlaceId) === Number(placeId) &&
-         facilityId != null && Number(e.FacilityId) === Number(facilityId)) ||
-        (unitId != null && JSON.stringify(e).includes(String(unitId))),
-    );
-    return { found: !!hit, entryKey: hit?.CartEntryKey ?? null, count: list.length, status: r.status() };
+    return { entries: Array.isArray(list) ? list : [], status: r.status() };
   } catch {
-    return { found: false, entryKey: null, count: 0, status: r.status() };
+    return { entries: [], status: r.status() };
   }
 }
 

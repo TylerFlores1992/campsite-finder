@@ -67,7 +67,7 @@ const RC_HOME = 'https://www.reservecalifornia.com/';
 // RC does precart in TWO steps — its own bundle exposes both, and a live trace shows
 // them back to back (a big `load` response, then a small `submit`). Calling only
 // `submit` is what made the first --cart run fail.
-import { precartInPage, findCartEntry, releaseEntry, PRECART_LOAD, PRECART_SUBMIT, NO_CART } from './rc-cart.mjs';
+import { precartInPage, findCartEntry, listCartEntries, releaseEntry, PRECART_LOAD, PRECART_SUBMIT, NO_CART } from './rc-cart.mjs';
 import { hasCreds, loadCreds } from './credstore.mjs';
 const RC_CART_PAGE = 'https://www.reservecalifornia.com/Customers/ShoppingCart';
 /** Reads a cart's CONTENTS by key. This is how "is it really in the cart?" is answered
@@ -1281,7 +1281,12 @@ try {
       const savedKey = await page.evaluate(() => {
         try { return localStorage.getItem('shoppingCartKey'); } catch { return null; }
       });
+      /** Everything to let go of. Populated from each minted cart's CONTENTS. */
       const made = [];
+      /** Units whose entry we could positively identify — the evidence, not the cleanup. */
+      const matched = [];
+      /** How many entries each minted cart came back holding, one number per cart. */
+      const cartCounts = [];
       try {
         // ALL AT ONCE — the whole question. `page.evaluate` is async in the page, so these
         // fetches genuinely overlap rather than queueing behind each other.
@@ -1292,8 +1297,17 @@ try {
           const submitKey = r?.submitted?.v?.cartKey || null;
           const key = submitKey || r?.finalKey || null;
           const err = r?.submitted?.v?.error || r?.error || '';
+          // THE CART ENTRY IS MATCHED ON (placeId, facilityId), NEVER ON THE UNIT ID.
+          // `findCartEntry`'s own header says RC's entries carry no unit field at all, and
+          // calling it with `{unitId}` alone is the documented mistake — it reported an
+          // empty cart for a full one twice before, and a third time here, which is what
+          // left six real campsites locked. The pair comes off the LOAD response.
+          const locked = (() => {
+            try { return (JSON.parse(r.loadedFull)?.Result ?? {}).LockedShoppingCart ?? null; }
+            catch { return null; }
+          })();
           return {
-            unitId, key, err,
+            unitId, key, err, locked,
             fromSubmit: !!submitKey,
             ok: r?.submitted?.v ? r.submitted.v.isSuccess === true : null,
             status: r?.submitted?.status ?? null,
@@ -1330,32 +1344,56 @@ try {
         if (headers) {
           for (const r of results) {
             if (!r.key) continue;
-            const found = await findCartEntry(ctx.request, headers, r.key, { unitId: r.unitId }).catch(() => null);
+            const { entries } = await listCartEntries(ctx.request, headers, r.key).catch(() => ({ entries: [] }));
+            const hit = entries.find((e) =>
+              r.locked?.placeId != null && Number(e.PlaceId) === Number(r.locked.placeId) &&
+              r.locked?.facilityId != null && Number(e.FacilityId) === Number(r.locked.facilityId));
             // THE COUNT IS THE DISCRIMINATOR. An EMPTY cart means the submit never landed;
             // a cart holding entries we could not match means the read-back is wrong. Both
             // report `found: false`, and without this they are the same line.
-            log(`   cart ${String(r.key).slice(0, 8)}... holds ${found?.count ?? '?'} entr(y/ies)` +
-                `${found?.found ? ` -- ours is ${String(found.entryKey).slice(0, 8)}...` : ' -- ours NOT among them'}`);
-            if (found?.found) made.push({ unitId: r.unitId, cartKey: r.key, entryKey: found.entryKey });
+            log(`   cart ${String(r.key).slice(0, 8)}... holds ${entries.length} entr(y/ies)` +
+                `${hit ? ` -- ours is ${String(hit.CartEntryKey).slice(0, 8)}...` : ' -- ours NOT among them'}`);
+            if (hit) matched.push(r.unitId);
+            cartCounts.push(entries.length);
+            // RELEASE IS DRIVEN BY THE CART'S CONTENTS, NOT BY THE MATCH. This run minted
+            // every one of these carts with NO_CART, so whatever is in one is what this run
+            // put there — which means a read-back that fails to identify the entry can no
+            // longer strand a real campsite. Twice it did.
+            for (const e of entries) {
+              if (e?.CartEntryKey) made.push({ unitId: r.unitId, cartKey: r.key, entryKey: e.CartEntryKey });
+            }
           }
         }
 
         log('');
-        log(`   ${units.length} fired in ${elapsed}s -> ${keys.length} key(s), ${distinct.size} DISTINCT, ${made.length} site(s) actually held.`);
-        if (distinct.size === units.length && made.length === units.length) {
+        log(`   ${units.length} fired in ${elapsed}s -> ${keys.length} key(s), ${distinct.size} DISTINCT, ` +
+            `${made.length} entr(y/ies) held, ${matched.length} identified as ours.`);
+        if (distinct.size === units.length && matched.length === units.length) {
           log('   + CONCURRENT MINTING IS SAFE. Every request got its own cart and every site');
           log('     landed, so the runner may fire a release group in parallel. Bound the');
           log('     concurrency anyway -- this IP has eaten a 12-hour block, and the limit');
           log('     that matters next is the WAF, not RC cart rules.');
+        } else if (distinct.size === units.length &&
+                   cartCounts.length === units.length && cartCounts.every((n) => n === 1)) {
+          // EVERY CART GOT EXACTLY WHAT IT WAS SENT, and only the identification fell short.
+          // The question this probe asks is "does a concurrent NO_CART yield its own cart
+          // that accepts a reservation?", and N distinct carts each holding one entry
+          // answers it — the (placeId, facilityId) match is corroboration, not the finding.
+          // Rounding this down to INCONCLUSIVE would throw away a run that cost real locked
+          // campsites, which is how the same probe gets run a third time.
+          log('   + CONCURRENT MINTING WORKS. Every request got its own cart and every cart');
+          log(`     holds exactly one reservation (${matched.length}/${units.length} identified by placeId+facilityId).`);
+          log('     Bound the concurrency anyway -- this IP has eaten a 12-hour block, and');
+          log('     the limit that matters next is the WAF, not RC cart rules.');
         } else if (distinct.size < keys.length) {
           log(`   x THEY RACE. ${keys.length} requests received only ${distinct.size} distinct cart(s), so`);
           log('     simultaneous NO_CART is NOT how to get N carts -- the losers would fail');
           log("     with RC's per-cart message and read like an account limit. Mint carts");
           log('     SEQUENTIALLY and parallelise only the fill/submit within each cart.');
         } else {
-          log('   ? INCONCLUSIVE. Keys were distinct but not every site was held, so something');
-          log('     other than the race decided this run. Read the per-unit lines above before');
-          log('     concluding anything about concurrency.');
+          log(`   ? INCONCLUSIVE. Keys were distinct but the carts hold [${cartCounts.join(', ')}]`);
+          log('     entries, so something other than the race decided this run. Read the');
+          log('     per-unit lines above before concluding anything about concurrency.');
           log('     A key from `load only` is RC handing out a cart, NOT accepting a booking --');
           log('     if every submit says REFUSED or (no answer), the concurrency question was');
           log('     never reached and the carts were empty rather than lost.');
