@@ -62,18 +62,46 @@ export const RC_CART_HOLD_MINUTES = 15;
  * genuinely different cart key. So the old ceiling of 2 was never RC's; it was the hold
  * runner reusing `localStorage["shoppingCartKey"]` for every hold, which it no longer does.
  *
- * IT IS **3** SINCE 2026-08-17, and that number came from `rc-probe.mjs --cart-ladder`
- * rather than from reasoning. Three DISTINCT cart keys (`6556b9bb…`, `290bc8e7…`,
- * `dc5e61d0…`) held six reservations at once on one session and one account, and each cart
- * was proven FULL before the next was minted — every rung's third add was refused in RC's
- * own words, which is what makes a new key evidence instead of a coincidence.
+ * IT IS **10** SINCE 2026-08-17, measured by `rc-probe.mjs --cart-ladder`: TEN distinct
+ * cart keys held **twenty reservations at once** on one session and one account. Every rung
+ * was controlled — each cart proven FULL by a third add refused in RC's own words before the
+ * next was minted — and all twenty released HTTP 200 afterwards.
  *
- * **NO ACCOUNT-LEVEL LIMIT APPEARED AT SIX.** The ladder stopped because it ran out of
- * units, not because RC pushed back, so six is a FLOOR and the ceiling is still unknown.
- * That is the whole reason this is 3 and not "unlimited": more units would very likely
- * climb further, and the constant moves when a run says so. A capacity nobody has observed
- * is a promise to a user that the morning cannot keep — and the cost is not a failed cart,
- * it is somebody who believes the site is handled and stops watching.
+ * **RC IS NO LONGER THE CONSTRAINT.** The ladder stopped because it ran out of campsites,
+ * not because ReserveCalifornia objected, so twenty is a FLOOR and the per-account ceiling
+ * is still unknown.
+ *
+ * ## READ THIS BEFORE TRUSTING THE NUMBER
+ *
+ * The binding constraint has MOVED, and the new one is ours. It is also much smaller than
+ * a first reading of the 2026-08-16 morning suggested, and the correction is worth keeping
+ * because the wrong version was very nearly written down here as fact.
+ *
+ * MEASURED, from `carted_at - release_at`: both holds that morning carted **1 second**
+ * after their own release.
+ *
+ *     45722  release_at 08:00:42  carted 15:00:43Z  ->  1s
+ *     45723  release_at 08:00:48  carted 15:00:49Z  ->  1s
+ *
+ * The earlier reading of "T+43s, then T+49s, so ~43s of startup plus ~6s per site" was an
+ * artifact of two mistakes: `release_at` carries SECONDS and was assumed to be 08:00:00,
+ * and the six seconds between the two carts was the gap between RC's OWN release times,
+ * not our serial cost. Extrapolating that gave ~T+157s for the twentieth hold, which is
+ * not supported by anything.
+ *
+ * WHAT IS STILL UNMEASURED is how this scales: n=2, six seconds apart, so those two never
+ * contended for the runner at all. Twenty holds due in ONE pass go through a single
+ * Chromium in sequence and nobody has watched that happen.
+ *
+ * So the number was raised as an explicit product decision by the owner on 2026-08-17,
+ * with RC's half measured and the contention half not. The risk it accepts is the one this
+ * comment has always named — a user who believes the site is handled STOPS WATCHING, and a
+ * hold that carts too late costs a morning rather than a request.
+ *
+ * **Checking it needs no new instrumentation**: `scripts/rc-holds-readout.mts` prints the
+ * lag per hold as `T+s`. That column is what caught the arithmetic above. If tail-end holds
+ * start landing late on a busy morning, that is this decision showing up, and the answer is
+ * to parallelise the precart rather than to shrink the number back.
  *
  * WHY A CAP AT ALL, rather than offering and hoping. Offering a third hold for a release
  * we can only take two of is a promise that cannot be kept, and the cost is not the failed
@@ -82,5 +110,5 @@ export const RC_CART_HOLD_MINUTES = 15;
  * button when the runner is absent.
  */
 export const RC_SITES_PER_CART = 2;
-export const RC_MAX_CARTS = 3;
+export const RC_MAX_CARTS = 10;
 export const RC_HOLD_CAPACITY = RC_SITES_PER_CART * RC_MAX_CARTS;
