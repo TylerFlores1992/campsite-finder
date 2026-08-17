@@ -92,6 +92,28 @@ function Import-BotEnv {
 }
 Import-BotEnv
 
+# REPORT THAT THIS TASK FIRED, AS THE FIRST ACT AFTER THE ENVIRONMENT IS READABLE.
+#
+# WHY (2026-08-17). This log stopping dead at 05:31:03 PT - after a flawless five-minute
+# cadence - is the ONLY reason the outage that morning was diagnosable at all. The hold
+# runner crashed at 05:36:31 and stayed dead for two and a half hours, and the watchdog
+# never spoke because it was never invoked; two independent Scheduled Tasks going silent
+# together is what ruled out every per-task explanation and pointed at the layer underneath.
+#
+# That diagnosis rested on a LOG FILE ON THE BOX, readable only through the control channel,
+# and only because this task happens to log on every run while the watchdog deliberately
+# does not. Both facts belong on the server, where a health check can see them without
+# anybody asking. See migration 060.
+#
+# It must never be the reason an update does not happen: report-task-beat.mjs swallows every
+# failure and exits zero.
+#
+# AFTER Import-BotEnv, and that ordering is load-bearing. A Windows Scheduled Task has no
+# parent environment to inherit, so AUTOCART_TOKEN only exists once the .env is read - the
+# exact trap that had this script reporting every run and being answered 401 for weeks,
+# indistinguishable from a task that was never registered.
+try { & node "$botDir\report-task-beat.mjs" auto-update "fired" 2>&1 | Out-Null } catch { }
+
 # UTF-8, EVERYWHERE. PowerShell 5.1's Tee-Object writes UTF-16LE while Add-Content defaults
 # to the shell's codepage, so this one log ended up HALF UTF-16 and half UTF-8 - unreadable
 # as a whole by any single decoder, which is how the 401 above stayed hidden inside mojibake.

@@ -25,6 +25,7 @@ import { planRetry, retryDue, repairOwed, giveUpState, shouldBootstrapRepair } f
 import { acquireProfileLock, releaseProfileLock, profileLockHolder } from './profile-lock.mjs';
 import { makeControlChannel } from './control-channel.mjs';
 import { createSampler } from './memory-sample.mjs';
+import { makeWatchdogTrigger, WATCHDOG_TRIGGER_MS } from './watchdog-trigger.mjs';
 import { loadEnv } from './load-env.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -178,6 +179,9 @@ const sampleMemory = createSampler({
 const control = makeControlChannel({
   dir: __dirname, actor: 'bot', log, report: reportControl,
 });
+
+/** The watchdog's second trigger. See watchdog-trigger.mjs for why this process is it. */
+const triggerWatchdog = makeWatchdogTrigger({ dir: __dirname, log });
 
 // One browser per profile at a time — the persistent profile dir has a singleton
 // lock, so a keepalive refresh must never overlap a cart/login on the same user.
@@ -625,6 +629,21 @@ async function runMode() {
   log(`Session keepalive every ${Math.round(KEEPALIVE_MS / 60000)}m (profiles warmed in the last ${Math.round(KEEPALIVE_MS * 0.75 / 60000)}m are skipped).`);
   setTimeout(keepSessionsWarm, 30_000); // once shortly after startup
   setInterval(keepSessionsWarm, KEEPALIVE_MS);
+
+  // A SECOND TRIGGER FOR THE WATCHDOG — see watchdog-trigger.mjs.
+  //
+  // On 2026-08-17 the RC hold runner crashed and stayed dead for two and a half hours
+  // because the Windows Scheduled Task that would have restarted it stopped firing five
+  // minutes earlier. This process was healthy throughout, as it has been through every RC
+  // outage so far, so it is the natural place to ask the same question a second way.
+  //
+  // The script rate-limits itself, so this cannot double up with the Scheduled Task, and it
+  // does NOT replace it: only Windows can recover a box on which every poller is dead.
+  if (process.platform === 'win32') {
+    log(`Watchdog also triggered from here every ${Math.round(WATCHDOG_TRIGGER_MS / 60000)}m (the Scheduled Task remains the primary).`);
+    setTimeout(triggerWatchdog, 60_000);
+    setInterval(triggerWatchdog, WATCHDOG_TRIGGER_MS);
+  }
 }
 
 const li = process.argv.indexOf('--login');

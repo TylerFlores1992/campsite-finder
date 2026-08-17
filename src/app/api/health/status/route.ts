@@ -11,9 +11,11 @@ import {
   RC_SESSION_CRITICAL_MIN,
   RC_SESSION_REPAIR_SPENT_MIN,
   RC_AUTOLOGIN_LEAD_MIN,
+  BOT_TASK_STALE_MS,
   rehearsalFault,
   botVersionVerdict,
 } from '@/lib/health-thresholds';
+import { taskBeats, BOT_TASKS } from '@/lib/bot-tasks';
 
 // Machine-readable alert-health aggregate. Turns the "silent death" traps in
 // docs/CONTEXT.md into something an external cron/uptime-monitor pages on:
@@ -462,6 +464,57 @@ export async function GET() {
     });
   } catch (err) {
     checks.push({ name: 'autocart.rc_runner', level: 'warn', pages: false, detail: `read failed: ${(err as Error).message}` });
+  }
+
+  // 4c-bis. DID THE WATCHDOG ACTUALLY RUN? — the supervisor of last resort, measured.
+  //
+  //     Every check above this one is downstream of a process on the mini-PC. The watchdog
+  //     is what restarts those processes when they die, and on 2026-08-17 it stopped firing
+  //     five minutes before the hold runner hard-crashed — so the runner stayed dead for two
+  //     and a half hours and an 08:00 hold was never carted.
+  //
+  //     IT WAS INVISIBLE BY CONSTRUCTION. `watchdog.ps1` is silent when everything is
+  //     healthy (deliberately — a line per firing would bury `restarts.log` under thousands
+  //     that say nothing), so a watchdog that never runs and a box that never needs one
+  //     write the identical log: nothing. The only reason we know it stopped is that
+  //     `auto-update.log`, a SEPARATE task on the same cadence, also stops dead at 05:31:03
+  //     — and two independent tasks going silent together is what ruled out every per-task
+  //     explanation.
+  //
+  //     SO THE TASK REPORTS FOR ITSELF (migration 060), and this reads it. Same rule as
+  //     `rc-keepwarm` posting its own session verdict instead of a watcher inferring it.
+  //
+  //     NEVER WORSE THAN A WARN, and never paged — see BOT_TASK_STALE_MS. A box that has not
+  //     been updated to the reporting `.ps1` yet reports nothing at all, which is
+  //     indistinguishable from a task that has stopped; turning that red would be the
+  //     cry-wolf failure, on a box that is legitimately behind for part of most days.
+  try {
+    const beats = await taskBeats();
+    const seen = new Map(beats.map((b) => [b.task, b]));
+    const stale = beats.filter((b) => b.age_ms > BOT_TASK_STALE_MS);
+    const never = BOT_TASKS.filter((t) => !seen.has(t));
+    checks.push({
+      name: 'autocart.watchdog',
+      pages: false,
+      level: stale.length > 0 || never.length > 0 ? 'warn' : 'ok',
+      detail:
+        beats.length === 0
+          ? 'no Scheduled Task has ever reported — expected until the mini-PC updates to the reporting scripts'
+          : [
+              ...stale.map(
+                (b) => `${b.task} last fired ${Math.round(b.age_ms / 60_000)}m ago (expected every 5m)`,
+              ),
+              // "Never reported" is NOT "stopped". Name it separately or the two get one
+              // sentence and the reader guesses which they have.
+              ...never.map((t) => `${t} has never reported (box not updated, or task not registered)`),
+              ...(stale.length === 0 && never.length === 0
+                ? [`all ${beats.length} task(s) firing; oldest ${Math.round(beats[0].age_ms / 60_000)}m ago`]
+                : []),
+            ].join(' · '),
+      ageSeconds: beats.length ? secs(beats[0].age_ms) : undefined,
+    });
+  } catch (err) {
+    checks.push({ name: 'autocart.watchdog', level: 'warn', pages: false, detail: `read failed: ${(err as Error).message}` });
   }
 
   // 4d. CAN THE BOT STILL SIGN IN? — one level deeper again, and the level that has failed

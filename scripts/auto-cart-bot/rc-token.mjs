@@ -187,8 +187,59 @@ export async function installTokenCapture(ctx) {
  * that has already produced a false "session is dead" once, so anything acting on it
  * should say which it used rather than presenting both as the same fact.
  */
+/**
+ * `page.evaluate` WITH A DEADLINE, because it has none of its own.
+ *
+ * ── WHY (2026-08-17) ─────────────────────────────────────────────────────────────────────
+ * The keep-warm wedged FOUR times in one day, each time entering the near-expiry renewal
+ * (`src=live`, ~10m left) and never coming out:
+ *
+ *     15:42:58 renewing the session - the token has 10m left (src=live)
+ *     15:55:58 x WEDGED - the keep-warm loop has not advanced in 13m.
+ *
+ * Every await inside `renewSession` carries an explicit timeout - 45s gotos, 25s and 30s
+ * primes, a 10s control hunt - and they sum to about four minutes. It hung for thirteen. The
+ * only unbounded awaits on that path were these three, and `readLiveToken` is the FIRST line
+ * of `renewSession`.
+ *
+ * Playwright's `page.evaluate` waits forever: it needs an execution context, and a page whose
+ * main thread is blocked or whose context is being replaced by a navigation simply never
+ * provides one. Almost every other Playwright call takes `timeout`; this one does not, which
+ * is exactly why it is the one that got written without a bound.
+ *
+ * ── WHAT IS PROVEN AND WHAT IS NOT ───────────────────────────────────────────────────────
+ * PROVEN: these were unbounded, they are on the hanging path, and the declared timeouts
+ * cannot account for the observed 13 minutes. NOT PROVEN: that this is what hung - nothing
+ * recorded which await it was, and it could be a Playwright call failing to honour its own
+ * timeout against an unresponsive browser. Do not write the cause into CLAUDE.md as fact.
+ *
+ * The bound is worth having either way. An unbounded await inside a loop whose only backstop
+ * is a 12-minute wedge detector is a latent hang by construction, and the cost is not the
+ * wedge itself: a wedged keep-warm HOLDS THE CHROMIUM PROFILE, the hold runner's preemption
+ * is cooperative and needs the loop to notice the flag, so a wedge at 07:50 is an 08:00 cart
+ * that cannot happen. That is 2026-08-10 exactly, when the same shape cost a campsite.
+ *
+ * A TIMEOUT HERE IS NOT A FAILURE, IT IS AN ABSENT READING. `readLiveToken` returning "no
+ * token" because the page would not answer is the same shape as `hasAvailabilityInRange`
+ * returning null - the callers already treat a missing token as "we could not tell" rather
+ * than as "signed out", so the safe value falls out of the existing contract. The dangling
+ * evaluate is deliberately abandoned rather than awaited: it cannot be cancelled, and the
+ * point is to let the LOOP advance.
+ */
+const EVAL_TIMEOUT_MS = Number(process.env.RC_EVAL_TIMEOUT_MS || 20_000);
+
+export function evaluateWithin(page, fn, arg, { timeoutMs = EVAL_TIMEOUT_MS, fallback = null } = {}) {
+  let timer;
+  return Promise.race([
+    page.evaluate(fn, arg),
+    new Promise((resolve) => { timer = setTimeout(() => resolve(fallback), timeoutMs); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 export async function readLiveToken(page) {
-  return page.evaluate(() => {
+  // A page that will not answer is "we could not tell", which `source: 'none'` already means
+  // to every caller — see evaluateWithin.
+  return evaluateWithin(page, () => {
     try {
       if (window.__camphawkRcToken) return { token: window.__camphawkRcToken, source: 'live' };
       const ls = localStorage.getItem('ssoAccessToken') || localStorage.getItem('accessToken');
@@ -196,7 +247,7 @@ export async function readLiveToken(page) {
     } catch {
       return { token: null, source: 'none' };
     }
-  });
+  }, undefined, { fallback: { token: null, source: 'none' } });
 }
 
 /**
@@ -401,7 +452,10 @@ const RC_TOKEN_KEYS = ['ssoAccessToken', 'accessToken'];
  * OAuth authorization code exactly that way.
  */
 export async function dropStoredToken(page) {
-  return page.evaluate(({ prefix, rcKeys }) => {
+  // A timeout here reports NOTHING CLEARED, which is true and is the safe direction: the
+  // caller then has an empty snapshot to restore and has not been told it emptied storage it
+  // did not touch.
+  return evaluateWithin(page, ({ prefix, rcKeys }) => {
     const snapshot = {};
     try {
       for (let i = 0; i < localStorage.length; i++) {
@@ -413,12 +467,13 @@ export async function dropStoredToken(page) {
       delete window.__camphawkRcToken;
     } catch { /* ignore */ }
     return { snapshot, cleared: Object.keys(snapshot) };
-  }, { prefix: OKTA_STORAGE_PREFIX, rcKeys: RC_TOKEN_KEYS }).catch(() => ({ snapshot: {}, cleared: [] }));
+  }, { prefix: OKTA_STORAGE_PREFIX, rcKeys: RC_TOKEN_KEYS },
+     { fallback: { snapshot: {}, cleared: [] } }).catch(() => ({ snapshot: {}, cleared: [] }));
 }
 
 /** Put back exactly what `dropStoredToken` took. */
 export async function restoreStoredToken(page, snapshot) {
-  await page.evaluate((s) => {
+  await evaluateWithin(page, (s) => {
     try { for (const [k, v] of Object.entries(s)) if (v != null) localStorage.setItem(k, v); }
     catch { /* ignore */ }
   }, snapshot).catch(() => {});
