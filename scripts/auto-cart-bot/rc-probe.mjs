@@ -1330,7 +1330,24 @@ try {
           return r;
         };
 
-        for (let rung = 0; rung < 3 && !stopped; rung++) {
+        // HOW FAR TO CLIMB IS THE POOL'S DECISION, NOT A CONSTANT'S.
+        //
+        // This was hardcoded to 3, which was right for the run that first found three carts
+        // and wrong the moment anybody passed more units: twenty units would have locked
+        // twenty real campsites to re-report a number already in hand. A probe that ignores
+        // the input it was given is worse than one that refuses it.
+        //
+        // Each rung consumes TWO units (mint + fill) and PEEKS a third as the control, and
+        // that control becomes the next rung's mint -- so N units buy about (N-1)/2 rungs.
+        //
+        // MAX_RUNGS is a runaway backstop, never a finding. It bounds how many real sites
+        // can be locked at once if RC never pushes back, and the verdict below says which
+        // bound stopped the climb -- "we ran out of units" and "we hit our own ceiling" are
+        // different facts and only one of them is about RC.
+        const MAX_RUNGS = 12;
+        let hitOurCap = false;
+        for (let rung = 0; pool.length >= 2 && !stopped; rung++) {
+          if (rung >= MAX_RUNGS) { hitOurCap = true; break; }
           const mintUnit = take();
           const fillUnit = take();
           if (mintUnit === null || fillUnit === null) break;   // pool exhausted, not a limit
@@ -1400,9 +1417,17 @@ try {
           log(`     Capacity is ${n} x RC_SITES_PER_CART. Set RC_MAX_CARTS = ${n}.`);
         } else {
           log(`   + AT LEAST ${n} CARTS and ${held} RESERVATIONS at once, on ONE session and ONE account.`);
-          log('     THE CEILING IS STILL NOT FOUND -- the ladder ran out of units, it did not');
-          log('     hit a limit. Do not write down a maximum; write down what was reached.');
-          log(`     RC_MAX_CARTS may go to ${n}. For more, re-run with more units.`);
+          log('     THE CEILING IS STILL NOT FOUND. Do not write down a maximum; write down');
+          log('     what was reached.');
+          if (hitOurCap) {
+            log(`     It stopped at OUR OWN backstop of ${MAX_RUNGS} carts, not at anything RC did.`);
+            log('     That is a number in this file, not a fact about ReserveCalifornia --');
+            log('     raise MAX_RUNGS if you genuinely want to lock that many sites at once.');
+          } else {
+            log('     It ran out of UNITS, not patience -- RC never pushed back. Re-run with');
+            log('     more units in RC_CAP_UNITS to climb further.');
+          }
+          log(`     RC_MAX_CARTS may go to ${n}.`);
         }
         log(`     carts obtained: ${keys.filter(Boolean).map((k) => String(k).slice(0, 8) + '...').join(', ') || '(none)'}`);
       };
