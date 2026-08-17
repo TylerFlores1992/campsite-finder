@@ -127,3 +127,30 @@ test('the reservation count travels with every verdict', () => {
     assert.match(st, /held/, `a stop reason without the reservation count: ${st}`);
   }
 });
+
+/**
+ * THE LADDER CLIMBS AS FAR AS THE POOL ALLOWS.
+ *
+ * The rung count was hardcoded to 3 — right for the run that first found three carts, and
+ * wrong the moment anybody passed more units. Twenty units against a fixed three would have
+ * locked twenty real campsites to re-report a number already in hand. A probe that silently
+ * ignores the input it was given is worse than one that refuses it, because the output looks
+ * like a complete result.
+ */
+test('the rung count comes from the pool, not a constant', () => {
+  assert.match(code, /for \(let rung = 0; pool\.length >= 2 && !stopped; rung\+\+\)/,
+    'the climb must be bounded by available units');
+  assert.ok(!/rung < 3\b/.test(code), 'the hardcoded three must be gone');
+});
+
+test('our own backstop is reported as ours, never as RC pushing back', () => {
+  // "We ran out of units", "we hit our own ceiling" and "RC refused" are three different
+  // facts and only the last is about ReserveCalifornia. Collapsing them is how a number in
+  // this file gets written down as a property of the vendor.
+  assert.match(code, /const MAX_RUNGS = \d+;/);
+  assert.match(code, /hitOurCap/, 'the run must record WHICH bound stopped it');
+  const verdict = code.slice(code.indexOf('CEILING IS STILL NOT FOUND'));
+  assert.match(verdict, /if \(hitOurCap\)/, 'and the verdict must branch on it');
+  assert.match(verdict, /not at anything RC did/i);
+  assert.match(verdict, /ran out of UNITS, not patience/i);
+});
