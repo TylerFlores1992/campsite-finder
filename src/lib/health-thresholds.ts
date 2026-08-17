@@ -228,6 +228,23 @@ export function rehearsalFault(
 export const RC_RUNNER_STALE_MS = 3 * 60 * 1000;
 
 /**
+ * How long a mini-PC Scheduled Task may be silent before we stop believing it fires.
+ *
+ * Both tasks run every 5 minutes, so this is four missed firings. Wide enough that a slow
+ * run, a reboot or a single skipped tick says nothing, narrow enough that the 2026-08-17
+ * outage — both tasks silent from 05:31 PT, the hold runner dead from 05:36, nothing said
+ * for two and a half hours — would have been visible before 06:00, over two hours before
+ * the release it cost.
+ *
+ * A WARN AND NEVER A FAIL, wherever it is read. This measures the SUPERVISOR, not the work:
+ * a silent watchdog on a box whose four payloads are all up has cost nothing yet, and a box
+ * that has simply not been updated to the reporting `.ps1` reads identically. Failing on it
+ * would be red on a healthy box for as long as the box is behind, which is part of most
+ * days — the cry-wolf failure already fixed three times in this file's neighbours.
+ */
+export const BOT_TASK_STALE_MS = Number(process.env.BOT_TASK_STALE_MS || 20 * 60 * 1000);
+
+/**
  * How close a release has to be before a DEAD RC session counts as a failure.
  *
  * The access token lives about an hour, so the session is legitimately dead for most of the

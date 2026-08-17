@@ -44,6 +44,9 @@
 $ErrorActionPreference = 'Stop'
 Set-Location -Path (Split-Path -Parent $PSScriptRoot)
 
+$botLogDir = "logs"
+if (-not (Test-Path $botLogDir)) { New-Item -ItemType Directory -Path $botLogDir | Out-Null }
+
 function Write-Line($msg) {
   $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [watchdog] $msg"
   # CONSOLE FIRST, FILE SECOND. Every supervisor and stop path appends to restarts.log, and
@@ -105,12 +108,71 @@ function Get-Missing {
   , ($missing | Sort-Object)
 }
 
+# REPORT THAT THIS TASK FIRED, AS THE VERY FIRST ACT.
+#
+# WHY (2026-08-17). The hold runner hard-crashed at 05:36:31 and stayed dead for two and a
+# half hours; an 08:00 hold was never carted. This script fires every five minutes for
+# exactly that and never spoke - because it was NEVER INVOKED. auto-update.log, a separate
+# Scheduled Task on the same cadence, stops dead at 05:31:03 in the same way, and two
+# independent tasks going silent together is the layer underneath them rather than either
+# task.
+#
+# NOTHING ANYWHERE COULD SEE THAT. This script is deliberately silent when the box is
+# healthy - correctly, since a line per run would bury restarts.log - so "ran and found
+# nothing wrong" and "never ran" write the identical thing: nothing at all. The outage was
+# only diagnosable because the OTHER task happens to log every run, which is luck, not
+# instrumentation.
+#
+# So the task reports for ITSELF, the same rule as rc-keepwarm posting its own session
+# verdict instead of a watcher inferring it. BEFORE the checks and never gated on the
+# outcome: the question this answers is "did Windows run you?", and a firing that reached
+# the script counts even if everything after it throws. report-task-beat.mjs swallows every
+# failure by design - a watchdog that does not run because its telemetry threw would be a
+# self-inflicted copy of the outage it exists to report.
+function Send-Beat($note) {
+  try {
+    & node "$PSScriptRoot\..\report-task-beat.mjs" watchdog "$note" 2>&1 | Out-Null
+  } catch { }
+}
+
+# AT MOST ONE RUN EVERY FEW MINUTES, WHOEVER ASKED.
+#
+# This script now has TWO triggers: the Windows Scheduled Task, and bot.mjs (see
+# watchdog-trigger.mjs). That is the point - the Scheduled Task stopping IS the outage of
+# 2026-08-17, and a supervisor with one trigger has the same single point of failure as a
+# box with one poller. But two triggers must not mean two overlapping runs of start-all.bat
+# or restart-rc.ps1, which stop and start every process they own.
+#
+# A LOCK FILE WITH A TTL, not a named mutex: PowerShell's `exit` does not reliably run a
+# `finally`, so a mutex would be abandoned on most paths here and the release would be the
+# fragile part. A timestamp ages out by itself and a run that dies leaves nothing to clean
+# up - the same reasoning as the profile lock and .camphawk-profile-wanted.
+#
+# It is a RATE LIMIT, not mutual exclusion, and naming it honestly matters: it guarantees
+# the watchdog ACTS at most once per gap, which is what stops two triggers doubling up. It
+# does not pretend to serialise two runs starting in the same second - a race never observed
+# and costing a duplicate log line, against a failure that costs a restart storm.
+$MIN_GAP_SEC = 240
+$gate = Join-Path $botLogDir "watchdog-last-run"
+if (Test-Path $gate) {
+  $age = ((Get-Date) - (Get-Item $gate).LastWriteTime).TotalSeconds
+  # SILENT, like the healthy path below. This is reached several times an hour by design and
+  # a line per skip would bury restarts.log exactly as a line per healthy run would.
+  if ($age -lt $MIN_GAP_SEC) { exit 0 }
+}
+try { Set-Content -Path $gate -Value (Get-Date -Format 'o') -Encoding UTF8 -ErrorAction Stop } catch { }
+
 $missing = Get-Missing
 if ($missing.Count -eq 0) {
-  # THE ORDINARY CASE, AND IT MUST BE SILENT. This fires every few minutes forever; a line
-  # per run would bury the restarts.log entries that matter under thousands that do not.
+  # THE ORDINARY CASE, AND IT MUST BE SILENT IN THE LOG - but it still reports to the
+  # server. A restarts.log line per run would bury the entries that matter under thousands
+  # that do not; a beat is ONE ROW, overwritten rather than appended, and costs nothing to
+  # keep. That difference is why the healthy path can afford to speak here and not there.
+  Send-Beat "healthy - all 4 payloads up"
   exit 0
 }
+
+Send-Beat "missing: $($missing -join ', ')"
 
 # SOMETHING IS MISSING. Before restarting, find out whether that is because an update is
 # legitimately in flight - moving the git checkout out from under a restart is how one bad
@@ -174,6 +236,7 @@ if ($missing.Count -eq $PAYLOADS.Count) {
     & "$PSScriptRoot\restart-rc.ps1" | Out-Null
   } catch {
     Write-Line "restart-rc.ps1 threw: $($_.Exception.Message)"
+    Send-Beat "restart-rc.ps1 threw"
     exit 1
   }
 } else {
@@ -183,6 +246,7 @@ if ($missing.Count -eq $PAYLOADS.Count) {
   # here is the bug being fixed. If it recurs, the fix is a per-payload relaunch, not a
   # blanket restart.
   Write-Line "$($otherDown -join ', ') down, but the RC pair is UP - not restarting: start-all would end a live RC session. A human is needed."
+  Send-Beat "$($otherDown -join ', ') down, RC pair up - a human is needed"
   exit 1
 }
 
@@ -190,6 +254,7 @@ Start-Sleep -Seconds 20
 $still = Get-Missing
 if ($still.Count -eq 0) {
   Write-Line "recovered - all four payloads are up"
+  Send-Beat "recovered $($missing -join ', ')"
   exit 0
 }
 
@@ -197,4 +262,5 @@ if ($still.Count -eq 0) {
 # what must not happen is this exiting 0 on a failure, because then the only record of a
 # box that cannot be restarted is a log nobody reads.
 Write-Line "START FAILED - still down: $($still -join ', '). A human is needed."
+Send-Beat "START FAILED - still down: $($still -join ', ')"
 exit 1

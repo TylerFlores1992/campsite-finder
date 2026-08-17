@@ -60,6 +60,7 @@ import { alreadyCartedForWatch } from './carted-history';
 import { withSyncClaim } from './sync-claim';
 import { expireFinishedWatches, EXPIRE_INTERVAL_MS } from './expire-watches';
 import { sweepMissedHolds, EXPIRE_HOLDS_INTERVAL_MS } from './expire-holds';
+import { checkRunner, RUNNER_WATCH_INTERVAL_MS } from './runner-watch';
 import { findQualifyingRun, flexCandidateStays, isFlexible, type FlexDays, type FlexSpec } from '../src/lib/availability/flex';
 import { markAlive, msSinceAlive, msSinceExternalFetchOk, externalFetchWedged } from './liveness';
 
@@ -1649,6 +1650,32 @@ async function main() {
   };
   holdSweep();
   setInterval(holdSweep, EXPIRE_HOLDS_INTERVAL_MS);
+
+  // RING THE PHONE IF NOTHING IS GOING TO CART A HOLD. Same argument as the sweep above and
+  // the same reason it is here rather than in the feed: on 2026-08-17 the hold runner
+  // crashed at 05:36 and stayed dead, and the alarm that would have said so lives in the
+  // feed the dead runner polls. See worker/runner-watch.ts.
+  //
+  // UNDER A CLAIM, because the poller runs on TWO shard machines and `alarmCall`'s rate
+  // limit is per-process — two machines would place two calls each, four in total, for one
+  // incident. That is not a tidy-up: an alarm that over-rings gets ignored, which is the
+  // only way this one can fail.
+  const runnerWatch = async () => {
+    try {
+      await withSyncClaim('runner-watch', async () => {
+        const r = await checkRunner();
+        // The quiet outcomes are the overwhelming majority and must stay quiet, or the
+        // heartbeat log becomes unreadable. Anything that rang, or failed to, is logged.
+        if (r.outcome === 'alarmed' || r.outcome === 'not-called' || r.outcome === 'read-failed') {
+          console.error(`[poller] runner-watch: ${r.outcome} — ${r.detail}`);
+        }
+      });
+    } catch (err) {
+      console.error('[poller] runner watch failed:', (err as Error).message);
+    }
+  };
+  runnerWatch();
+  setInterval(runnerWatch, RUNNER_WATCH_INTERVAL_MS);
 
   // Feature E probe roster: sample high-demand campgrounds hourly so the
   // cancellation-likelihood signal covers popular sites nobody is watching.
