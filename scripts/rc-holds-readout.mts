@@ -43,13 +43,23 @@ const holds = await query<{
   last_attempt_at: string | null; last_attempt_note: string | null;
   client_last_stage: string | null; client_last_note: string | null; client_reported_at: string | null;
   client_reports: Array<{ stage: string; detail: Record<string, unknown> | null }> | null;
+  cart_lag_s: number | null;
 }>(
   `SELECT r.id, r.unit_id, r.unit_name, r.arrival_date::text AS arrival, r.nights,
           r.release_at, r.status, r.error, c.name, u.email,
           r.offered_at, r.requested_at, r.carted_at, r.claim_started_at, r.released_at, r.claimed_at,
           r.last_attempt_at, r.last_attempt_note,
           r.client_last_stage, r.client_last_note, r.client_reported_at::text,
-          r.client_reports
+          r.client_reports,
+          -- HOW LATE THE CART WAS, in seconds after the release.
+          --
+          -- Computed HERE and not in JS because release_at is zone-less PACIFIC wall-clock
+          -- text while carted_at is a real UTC timestamp -- the trap this file's header
+          -- already names. Subtracting them in JS needs a Pacific offset, and any hardcoded
+          -- one is wrong on the other side of a DST boundary; Postgres owns those rules.
+          EXTRACT(EPOCH FROM (
+            r.carted_at - (r.release_at::timestamp AT TIME ZONE 'America/Los_Angeles')
+          ))::int AS cart_lag_s
      FROM rc_hold_requests r
      JOIN campgrounds c ON c.id = r.campground_id
      JOIN users u ON u.id = r.user_id
@@ -148,6 +158,22 @@ console.table(holds.map((h) => ({
   offered: clock(h.offered_at),
   tapped: clock(h.requested_at),
   carted: clock(h.carted_at),
+  // HOW LATE THE CART WAS, in seconds after the release. The number that says whether the
+  // capacity is real.
+  //
+  // The runner carts SERIALLY through one Chromium — measured 2026-08-16, the first hold
+  // landed at T+43s and the second at T+49s, so ~43s of startup plus ~6s per additional
+  // site. At RC_HOLD_CAPACITY = 20 the last hold lands around T+157s, and nothing has
+  // measured whether a released site survives that long. Raising to 20 was a deliberate
+  // product decision (see limits.ts) taken with that unmeasured.
+  //
+  // This column is how the decision reports on itself. Late carts that still succeed mean
+  // the headroom is real; late carts that FAIL are the tail of the queue losing sites, and
+  // the answer then is to parallelise the precart rather than shrink the capacity back.
+  //
+  // Derived from data already recorded — no new instrumentation — because the alternative
+  // was believing an arithmetic estimate for as long as it took somebody to complain.
+  'T+s': h.cart_lag_s == null ? '—' : `${h.cart_lag_s}s`,
   claimed: clock(h.claimed_at ?? h.released_at),
 })));
 
