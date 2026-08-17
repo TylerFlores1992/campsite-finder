@@ -921,6 +921,54 @@ actually missing, and the second was reported by the owner mid-session.
   true whatever the markup did. It measures inside the component body now. Sixth time a guard
   has needed re-doing because it anchored on the wrong thing.
 
+### THE HOLD RUNNER WAS DOWN 2.5 HOURS AND THE WATCHDOG NEVER NOTICED (2026-08-17)
+A test hold for the 08:00 release was never carted. **Nothing about RC was wrong** — this
+was Windows process supervision, and it is the thing standing between this product and
+running unattended.
+```
+07:46:31 PT  autocart.rc_runner   last poll 7822s ago (2h10m), no holds due   WARN
+             autocart.rc_session  no token at all - signed out                 FAIL
+08:0x        mini-pc\rc-login.bat  ->  session RESTORED (token 47m, okta ALIVE)
+08:08:15 PT  autocart.rc_runner   last poll 9154s ago (2h32m), 1 hold due      FAIL
+             TEST 4728            requested, last_attempt_note NULL, updated_at
+                                  unchanged since the 06:38:54Z tap
+```
+- **THE GAP GREW BY EXACTLY THE WALL CLOCK** — 7822s to 9154s is 1332s over 22 minutes of
+  elapsed time. So the runner did not poll ONCE in between, including after the sign-in.
+- **`last_attempt_note` NULL IS THE DISCRIMINATOR AND IT WORKED.** The readout said
+  *"NOTHING has tried to act on this hold at all"* rather than *"the runner TRIED"*. That
+  distinction is migration 046 earning its keep — before 2026-08-08 both were the same
+  silence and cost six hours of guessing.
+- **`rc-login.bat` FIXED THE SESSION AND NOT THE RUNNER, and I said it would fix both.**
+  That claim came from CLAUDE.md's note that the script relaunches the RC pair; the
+  heartbeat says otherwise. **Whether it relaunches the runner at all is now an open
+  question, not a fact** — do not repeat the claim without reading `restarts.log`.
+- **A CAPTCHA IS NOT INVOLVED AND MUST NOT BE BLAMED.** The rehearsal PASSED on 08-16, the
+  renewal re-mints from a token-less profile (`✓ renewed by authorize: none → 3580s`), and
+  `rc-login.bat` restored the session this morning in one attempt. Reaching for a CAPTCHA
+  solver here would be solving a problem the evidence says we do not have.
+- **THE BOX IS REACHABLE THE WHOLE TIME.** `autocart.bot` beat 3s ago, so `bot.mjs` is alive
+  and carrying the control channel — `list-processes`, `tail-log`, `restart-rc` and
+  `git-status` all work. This is NOT the 08-11 dark box.
+- **CANDIDATE CAUSES, NONE ESTABLISHED — do not write one in as fact.** (1) `supervise.ps1`
+  hit its 5-exits-in-10-minutes stop-loudly rule and gave up, which is by design and leaves
+  the runner dead for ever. (2) The watchdog's `Get-Missing` counts it present while it is
+  not polling — the 08-15 elevation blindness, where an unelevated WMI query reads `$null`
+  for a process in another security context and an elevated generation counts as HEALTHY.
+  (3) The runner is alive but wedged, never reaching its poll.
+- **THE WATCHDOG IS THE REAL DEFECT WHATEVER THE CAUSE.** It fires every 5 minutes for
+  exactly this and produced nothing for 30 consecutive firings. A supervisor that is silent
+  through the outage it exists for is the `status = 'sent'` shape one level up.
+- **NO AVAILABILITY ALERT WAS OWED, AND THIS IS NOT A SECOND FAULT.** The watch covers
+  2026-10-02→10-04; the hold's arrival is **2026-12-01**, which the poller does not watch —
+  `rc-test-hold.mts` picks a far-future midweek date on purpose so a test cannot disturb a
+  real booking, and that date is decoupled from the watch's range. And a synthetic hold has
+  **no real RC lock behind it**: the 08:00:53 release is one the script invented, so nothing
+  on RC's side was going to change at that instant. Expect silence; it is not a symptom.
+- **UNIT 4728 IS ONE I INVENTED** (see the paste-block entry above) and was queued from that
+  block. Whether it is a real San Miguel unit was never established, and the runner never
+  tried, so it is still unknown. Re-derive ids with `rc-test-hold.mts --find`.
+
 ## Open / next session
 
 > **START AT `docs/NEXT-SESSION.md`** (written 2026-08-13). Three open items — claim-flow
@@ -3830,7 +3878,15 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs current to 2026-08-17.** **CONCURRENT CART MINTING IS MEASURED SAFE** — six simultaneous
+**Docs current to 2026-08-17 (second pass).** **THE HOLD RUNNER WAS DOWN FOR 2.5 HOURS AND THE
+WATCHDOG NEVER SPOKE** — an 08:00 test hold was never carted, `last_attempt_note` stayed NULL,
+and `rc-login.bat` restored the SESSION while the runner stayed dead. **This is process
+supervision on the mini-PC, not anti-bot** — the rehearsal passed on 08-16 and the renewal
+re-mints unattended, so do NOT go looking for a CAPTCHA solver. `bot.mjs` was beating
+throughout, so the control channel is live and the box is diagnosable. **START AT
+`docs/NEXT-SESSION.md`.**
+
+*(Previous pass.)* **CONCURRENT CART MINTING IS MEASURED SAFE** — six simultaneous
 `NO_CART` precarts, six DISTINCT carts, one reservation each, all released, 1.4s — so a release
 group now carts **four at a time** instead of serially, and the last of twenty holds lands nearer
 T+6s than T+20s. Getting there cost two probe runs that each locked six real campsites and
