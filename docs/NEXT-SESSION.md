@@ -63,15 +63,30 @@ kept for their reasoning.*
 > `camphawk.app/claim/d0cc4919-7c5b-4b8f-aecf-ec0a76e9463e?t=HaPUjQd_`
 > `camphawk.app/claim/0fd0e5fe-1757-44ae-9097-2e9069b04d89?t=HaPUjQd_`
 >
-> **WHICH PATH CARRIES THE MORNING IS THE INTERESTING PART, AND IT IS GENUINELY OPEN.** The
-> rehearsal minted a fresh Okta session at 03:00 UTC. At the documented ~12h that expires
-> around 15:00 UTC — and the release is 15:00 UTC exactly. So:
-> - Okta alive at 07:30 → the renewal or a silent bootstrap can carry it;
-> - Okta lapsed → everything falls to `maybeAutoLogin` at T−30 doing a real credential login,
->   which is the first live exercise of the sufficiency fix that lost the 08-15 cart.
+> **THE OKTA SESSION EXPIRES 66 MINUTES BEFORE THE RELEASE**, so the likely carrier is the
+> credential login, not the renewal:
 >
-> **Do not predict it.** Whichever happens is also the 12h-Okta-ceiling measurement, which has
-> never been taken across a night where nothing asked.
+> ```
+> okta expires  2026-08-16T13:53:31 UTC = 06:53 PT
+> release                        15:00 UTC = 08:00 PT
+> ```
+>
+> **CORRECTED — an earlier draft of this block said the rehearsal "minted a fresh Okta session
+> at 03:00 UTC" so the two would "land on top of each other". IT DID NOT.** The 20:00 PT
+> rehearsal submitted a real credential and RC accepted it, and the reported Okta expiry did
+> not move: `13:53:31` was printed at 02:02, 02:05, 02:07, 02:09, 02:29, 02:44, 02:56 and again
+> at 03:52 UTC — **pin-stable across a fresh sign-in.**
+>
+> **That is the first real evidence that the ~12h is an ABSOLUTE ceiling and not the rolling
+> idle timer CLAUDE.md hedges about** — and it is one night, from one instrument, so treat it
+> as a lead. If it holds, `oktaSessionAlive` refreshing the idle timer is not the confound it
+> was feared to be, and "sign in once and never let it lapse" has a hard daily floor.
+>
+> So expect: Okta gone by 07:30 → `maybeAutoLogin` does a real credential login at T−30. That
+> is the FIRST live exercise of the sufficiency fix that lost the 08-15 cart, which makes it
+> the valuable half of this test. **If instead Okta is still alive at 07:30, the expiry rolls
+> after all and the reading above is wrong** — that would be the more important finding of the
+> two, so check it before assuming.
 
 ## The state of everything else, 2026-08-15 evening
 
@@ -81,11 +96,13 @@ kept for their reasoning.*
   window is SHUT tonight — `nextHoldRelease` counts them and the 6h release check is not
   liftable. Nothing needed updating: the box is on `2cb30d9` with no bot-side code in the gap,
   which is why queueing them was safe. Re-read the readout rather than this line.
-- **Alerting is healthy** — 16 of 18 checks green; the two warns are the `bot_version` gap
-  and the login rehearsal, which has never passed and has no green to have lost.
-- **The RC session was healthy at 15:43 PT** (token 48m), from a bootstrap at 22:26 UTC. That
-  is `maybeAutoLogin` doing its job on a test hold, not the new schedule — which is exactly
-  the confusion to avoid when reading the first post-update log.
+- **Alerting is healthy.** `autocart.rc_login` is GREEN now — "the bot signed in unattended" —
+  so the "never passed, no green to have lost" line that lived here is retired. The one warn is
+  the `bot_version` gap, and it says **"No bot-side code in the gap"**, which is the benign
+  half of that check and the reason it is a warn rather than a fail.
+- **The RC session is healthy**, carried by the 20:00 PT rehearsal's credential login. Note
+  which mechanism that was: it is NOT the renewal schedule, and mixing them up is the exact
+  confusion to avoid when reading the morning's log.
 
 ## Still open, in rough priority
 
