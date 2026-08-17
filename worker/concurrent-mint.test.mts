@@ -79,3 +79,38 @@ test('an unknown mode flag stops the probe instead of half-running', () => {
     assert.ok(SRC.includes(`'${flag}'`), `${flag} must be in KNOWN_FLAGS`);
   }
 });
+
+/**
+ * THE FIRST REAL RUN ANSWERED NOTHING, AND THAT WAS THE PROBE'S FAULT.
+ *
+ * 2026-08-17: six units fired, six DISTINCT keys, "0 site(s) actually held", verdict
+ * INCONCLUSIVE. Two completely different stories share that output — the submits failed
+ * silently, or they worked and the read-back missed them — and neither could be ruled out,
+ * so a run that locked six real campsites bought no information at all.
+ *
+ * Cause: errors were printed only when non-empty, the submit's own `IsSuccess` was never
+ * shown, and the cart's entry COUNT was thrown away. Same two-causes-one-signal shape this
+ * repo is built around.
+ */
+test('every unit reports the submit verdict, not just an error string', () => {
+  // `IsSuccess` is what RC actually sets. A missing error is not a success.
+  assert.match(code, /r\.ok === true \? 'IsSuccess'/,
+    'the submit verdict must be printed for every unit, including the successes');
+  assert.match(code, /'\(no answer\)'/, 'no answer at all is a third state, not a failure');
+  assert.match(code, /isSuccess === true/, 'read RC\'s own field, never the status code');
+});
+
+test('a key is attributed to load or to submit', () => {
+  // `load` alone hands back a cart key. Treating that as evidence the site went in is how
+  // "six distinct carts" gets read as "six holds" — the carts were empty.
+  assert.match(code, /fromSubmit/);
+  assert.match(code, /key via/, 'the output must say which call produced the key');
+});
+
+test('the read-back reports the cart SIZE', () => {
+  // An empty cart means the submit never landed; a populated cart with no match means the
+  // read-back is wrong. Both are `found: false` and without the count they are one line.
+  assert.match(code, /found\?\.count/, 'the entry count is the discriminator');
+  assert.match(code, /ours NOT among them/,
+    'and it must distinguish "empty" from "ours is missing"');
+});
