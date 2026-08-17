@@ -39,8 +39,32 @@ test('the verdict counts DISTINCT keys, not successful calls', () => {
 
 test('a key is not treated as a held site', () => {
   // Same rule the ladder follows: judge by reading the cart back, never by the response.
-  assert.match(code, /findCartEntry\(/, 'each cart must be read back before it counts');
-  assert.match(code, /found\?\.found/, 'and only a found entry may be released later');
+  assert.match(code, /listCartEntries\(/, 'each cart must be read back before it counts');
+  assert.match(code, /matched\.push/, 'and only an identified entry counts as evidence');
+});
+
+test('the cart entry is matched on placeId + facilityId, never on the unit id', () => {
+  // `findCartEntry`'s own header records that RC's cart entries carry NO unit field, and
+  // that a matcher looking for one reported an empty cart for a full one twice. This probe
+  // then called it with `{ unitId }` alone and did it a third time — six real campsites
+  // locked, released nothing, and the run reported INCONCLUSIVE over six successful carts.
+  assert.match(code, /LockedShoppingCart/, 'the pair comes off the load response');
+  assert.match(code, /Number\(e\.PlaceId\) === Number\(r\.locked\.placeId\)/);
+  assert.match(code, /Number\(e\.FacilityId\) === Number\(r\.locked\.facilityId\)/);
+  assert.ok(!/\{ unitId: r\.unitId \}/.test(code),
+    'a unit-id-only read-back is the documented mistake, not a fallback');
+});
+
+test('release is driven by the cart CONTENTS, not by the match', () => {
+  // The safety property has to be independent of the evidence property. A cart minted with
+  // NO_CART in this run holds only what this run put there, so releasing everything in it
+  // is a guarantee about how the cart was CREATED — which cannot rot the way a matcher can,
+  // and which is what stops a broken read-back stranding a campsite for a third time.
+  const release = code.slice(code.indexOf('for (const e of entries)'));
+  assert.match(release, /made\.push\(/, 'every entry found in a minted cart must be released');
+  const push = code.slice(0, code.indexOf('for (const e of entries)'));
+  assert.ok(!/if \(hit\) made\.push/.test(push),
+    'the release list must not be gated on identifying the entry');
 });
 
 test('everything taken is released, and only that', () => {
@@ -110,7 +134,20 @@ test('a key is attributed to load or to submit', () => {
 test('the read-back reports the cart SIZE', () => {
   // An empty cart means the submit never landed; a populated cart with no match means the
   // read-back is wrong. Both are `found: false` and without the count they are one line.
-  assert.match(code, /found\?\.count/, 'the entry count is the discriminator');
+  assert.match(code, /entries\.length/, 'the entry count is the discriminator');
   assert.match(code, /ours NOT among them/,
     'and it must distinguish "empty" from "ours is missing"');
+});
+
+test('N distinct carts each holding one reservation is a POSITIVE result', () => {
+  // The question is "does a concurrent NO_CART get its own cart that accepts a booking?".
+  // N distinct keys and N carts of one answers it; identifying WHICH entry is corroboration.
+  // The first run had exactly this and printed INCONCLUSIVE, which is how a probe that has
+  // already cost real locked campsites gets run again for no new information.
+  const verdict = code.slice(code.indexOf('distinct.size === units.length'));
+  assert.match(verdict, /cartCounts\.every\(\(n\) => n === 1\)/,
+    'every minted cart must hold exactly one — a cart of two is a different finding');
+  assert.match(verdict, /CONCURRENT MINTING WORKS/);
+  assert.ok(verdict.indexOf('CONCURRENT MINTING WORKS') < verdict.indexOf('INCONCLUSIVE'),
+    'the positive branch must be reached before the catch-all, or it is unreachable');
 });
