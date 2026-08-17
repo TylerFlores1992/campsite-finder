@@ -83,6 +83,7 @@ import { planRenewal, recordRenewal, newRenewalState, makeSkipLogger } from './r
 import { pacificHour, hoursUntilRelease } from './update-guard.mjs';
 import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
+import { takeSample } from './memory-sample.mjs';
 
 // No secrets here, but RC_PROFILE_DIR / RC_KEEPALIVE_MS / RC_HEADLESS are read the same
 // way as everywhere else. A process that silently ignores the config file is the bug
@@ -333,6 +334,68 @@ const RENEW_MS = 2 * 60_000;
  * and far shorter than the ~45 minutes of lead a hold needs to be rescued.
  */
 const HUNG_MS = Number(process.env.RC_KEEPWARM_HUNG_MS || 12 * 60_000);
+
+/**
+ * RECYCLE THE RESIDENT BROWSER WHEN IT STARTS TO RUN AWAY.
+ *
+ * On 2026-08-17 the box went from 12% COMMIT to 99% in TEN MINUTES, and both of the
+ * morning's failures fall inside that window: the Windows Scheduled Tasks stopped at
+ * 05:31:03 as commit crossed ~90%, and the hold runner died at 05:36:31 with 0xC0000409 —
+ * the fast-fail `abort()` a Node process produces when it cannot allocate. One cause, two
+ * silences, and the 08:00 cart lost with them. It was the SEVENTH such event in 24 hours
+ * (99-100% at 16:17, 18:41, 21:40, 00:49, 05:34, 06:49, 08:54, 12:24), every one attributed
+ * by the sampler to the `rc` family — this browser.
+ *
+ * WHY A SIZE BOUND AND NOT AN AGE BOUND. The family sits at 220-300 MB for HOURS and then
+ * ramps at ~4,160 MB/min. Recycling on age would have to be absurdly aggressive to land
+ * inside a ten-minute cliff, and would spend a session every time for nothing on the ~95%
+ * of the day that is flat. A size bound fires roughly twenty seconds into the ramp, at
+ * one or two GB, which is nowhere near the point where spawning a process starts failing.
+ *
+ * THE THRESHOLD IS ~5x THE MEASURED NORMAL, and it is a FAMILY total rather than a single
+ * process because the 08-12 event and this one both spread across several. `memory-sample`
+ * already owns the scan and its attribution rules — including that `rc` is tested before
+ * `auto-cart-bot`, since the RC profile lives inside it and the general test first would
+ * file every RC process under rec.gov.
+ *
+ * A RECYCLE IS NOT A LOSS. Closing and reopening is the SAME action this loop already takes
+ * when the window is closed or the runner wants the profile, it takes seconds, and the Okta
+ * cookie survives in the profile directory — so the session re-mints by `authorize` from a
+ * token-less profile with no credential typed, which is proven on this box (`✓ renewed by
+ * authorize: none → 3580s`, 2026-08-16 01:53). What is lost is at most one access token.
+ *
+ * AND IT IS STRICTLY BETTER THAN THE ALTERNATIVE AT ANY HOUR, INCLUDING 07:59. A browser at
+ * 1.5 GB climbing 4 GB/min reaches 25 GB inside six minutes and takes the whole box with it,
+ * runner included. A five-second reopen cannot cost more than that.
+ */
+const RC_MAX_FAMILY_MB = Number(process.env.RC_KEEPWARM_MAX_MB || 1500);
+
+/** How often to look. The expiry poll is 60s and the ramp takes minutes, so this is the
+ *  same cadence — checking faster would spawn PowerShell for nothing. */
+const MEM_CHECK_MS = Number(process.env.RC_KEEPWARM_MEM_CHECK_MS || 60_000);
+
+/**
+ * Don't thrash. If the browser is somehow over the line the instant it opens, recycling in
+ * a tight loop would be a busy loop wearing a fix's clothes — the exact shape
+ * `supervise.ps1`'s five-exits rule exists to stop, one level down. Two minutes is longer
+ * than a reopen and shorter than the ramp.
+ */
+const RECYCLE_COOLDOWN_MS = Number(process.env.RC_KEEPWARM_RECYCLE_COOLDOWN_MS || 120_000);
+
+/**
+ * The `rc` family's total MB, or null when we could not tell.
+ *
+ * NULL IS NOT ZERO, and here it must never trigger a recycle. `takeSample` returns null on
+ * a failed scan and nulls the family counts when the scan was blind — an unreadable
+ * measurement is "we could not tell", the same rule as `unknown` never rounding to
+ * `signed-out`. Recycling on a failed read would restart the browser every minute on a box
+ * where PowerShell is merely busy.
+ */
+async function rcFamilyMb() {
+  const sample = await takeSample({ log: () => {} }).catch(() => null);
+  const mb = sample?.rcMb;
+  return typeof mb === 'number' && Number.isFinite(mb) ? mb : null;
+}
 
 /**
  * `rc-hold-runner.mjs` drives the SAME profile directory, and two Chromium instances on
@@ -1192,6 +1255,10 @@ if (SAVE_LOGIN) {
  * next move is to drive the OIDC silent-auth endpoint explicitly.
  */
 async function warmResident() {
+  // OUTSIDE both loops. A reopen resets everything inside them, so a cooldown declared
+  // in there would reset on the very event it exists to rate-limit and bound nothing —
+  // the same reason renewal-schedule's ration lives at module scope.
+  let lastRecycleAt = 0;
   for (;;) {
     if (!(await waitForProfileLock(PROFILE_DIR, LOCK_OWNER, 60_000))) {
       const held = profileLockHolder(PROFILE_DIR);
@@ -1263,6 +1330,9 @@ async function warmResident() {
       // in fact we just did, on the one dashboard that decides whether to wake someone.
       let lastCheck = 0;
       let lastExpiryPoll = 0;
+      // 0 so the first look happens immediately on every open — a browser that comes back
+      // already huge is exactly the case worth catching before it ramps again.
+      let lastMemCheck = 0;
       for (;;) {
         // The watchdog's heartbeat. Every path through this loop must reach here, so a
         // stall anywhere below it — a Playwright call that never settles, a page that
@@ -1283,6 +1353,27 @@ async function warmResident() {
         if (!ctx.pages().length || page.isClosed()) {
           log('⚠ the RC window was closed — reopening it');
           break;
+        }
+
+        // IS THIS BROWSER RUNNING AWAY? See RC_MAX_FAMILY_MB. Placed here on purpose: after
+        // the runner's preemption, so a cart never waits behind a PowerShell spawn, and
+        // BEFORE the expiry poll, because a browser this large will hang the renewal's
+        // evaluates anyway and recycling first is what makes the next poll meaningful.
+        if (Date.now() - lastMemCheck >= MEM_CHECK_MS) {
+          lastMemCheck = Date.now();
+          const mb = await rcFamilyMb();
+          if (mb != null && mb > RC_MAX_FAMILY_MB) {
+            if (Date.now() - lastRecycleAt < RECYCLE_COOLDOWN_MS) {
+              log(`⚠ RC Chromium at ${Math.round(mb)} MB — over the ${RC_MAX_FAMILY_MB} MB line, ` +
+                  'but a recycle is still cooling down. Not restarting again yet.');
+            } else {
+              lastRecycleAt = Date.now();
+              log(`✗ RC Chromium at ${Math.round(mb)} MB (limit ${RC_MAX_FAMILY_MB}) — RECYCLING the browser.`);
+              log('  Normal is 220-300 MB. On 2026-08-17 this family took the box from 12% to 99%');
+              log('  COMMIT in ten minutes and killed the hold runner. The session re-mints itself.');
+              break;
+            }
+          }
         }
         // SILENT AUTH, on the clock rather than on a fixed cadence. A reload re-runs the
         // app's own OIDC exchange against the persistent "Keep me signed in" cookie —
