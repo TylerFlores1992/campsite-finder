@@ -62,11 +62,18 @@ export const RC_CART_HOLD_MINUTES = 15;
  * genuinely different cart key. So the old ceiling of 2 was never RC's; it was the hold
  * runner reusing `localStorage["shoppingCartKey"]` for every hold, which it no longer does.
  *
- * IT IS 2 AND NOT MORE FOR THE SAME REASON IT WAS 1: that is what has been seen. The probe
- * closed with "NOT yet proven: how many carts a session may hold. This showed two."
- * `--cart-ladder` is the measurement that would raise it further, and this is the constant
- * to change afterwards — never before. A capacity nobody has observed is a promise to a
- * user that the morning cannot keep.
+ * IT IS **3** SINCE 2026-08-17, and that number came from `rc-probe.mjs --cart-ladder`
+ * rather than from reasoning. Three DISTINCT cart keys (`6556b9bb…`, `290bc8e7…`,
+ * `dc5e61d0…`) held six reservations at once on one session and one account, and each cart
+ * was proven FULL before the next was minted — every rung's third add was refused in RC's
+ * own words, which is what makes a new key evidence instead of a coincidence.
+ *
+ * **NO ACCOUNT-LEVEL LIMIT APPEARED AT SIX.** The ladder stopped because it ran out of
+ * units, not because RC pushed back, so six is a FLOOR and the ceiling is still unknown.
+ * That is the whole reason this is 3 and not "unlimited": more units would very likely
+ * climb further, and the constant moves when a run says so. A capacity nobody has observed
+ * is a promise to a user that the morning cannot keep — and the cost is not a failed cart,
+ * it is somebody who believes the site is handled and stops watching.
  *
  * WHY A CAP AT ALL, rather than offering and hoping. Offering a third hold for a release
  * we can only take two of is a promise that cannot be kept, and the cost is not the failed
@@ -75,5 +82,5 @@ export const RC_CART_HOLD_MINUTES = 15;
  * button when the runner is absent.
  */
 export const RC_SITES_PER_CART = 2;
-export const RC_MAX_CARTS = 2;
+export const RC_MAX_CARTS = 3;
 export const RC_HOLD_CAPACITY = RC_SITES_PER_CART * RC_MAX_CARTS;
