@@ -46,11 +46,14 @@ test('a failed attempt still records the cart it tried', () => {
 
 test('capacity reflects what was measured, and only that', () => {
   assert.equal(RC_SITES_PER_CART, 2, "RC's own cap, measured 2026-08-13");
-  assert.equal(RC_MAX_CARTS, 2, 'two live carts were observed on one session, 2026-08-15');
-  assert.equal(RC_HOLD_CAPACITY, 4);
+  assert.equal(RC_MAX_CARTS, 3, 'three live carts, six reservations, measured 2026-08-17');
+  assert.equal(RC_HOLD_CAPACITY, 6);
   // The guard that matters is the UPPER one. Raising RC_MAX_CARTS past what a probe has
   // actually seen is promising a user capacity the morning cannot deliver — and the cost is
   // not a failed cart, it is that somebody who believes the site is handled stops watching.
-  assert.ok(RC_MAX_CARTS <= 2,
-    'run rc-probe.mjs --cart-ladder before raising this; do not raise it on reasoning');
+  // THE BOUND MOVES ONLY WHEN A RUN MOVES IT. 3 is what the 2026-08-17 ladder reached
+  // before running out of units — it never hit a limit, so the ceiling is still unknown and
+  // a higher number here would again be a promise nobody has observed.
+  assert.ok(RC_MAX_CARTS <= 3,
+    'run rc-probe.mjs --cart-ladder with more units before raising this; never on reasoning');
 });
