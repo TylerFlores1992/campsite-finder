@@ -1228,9 +1228,13 @@ try {
     const units = String(process.env.RC_CAP_UNITS || '').split(',').map((s) => s.trim()).filter(Boolean);
     const arrival = process.env.RC_ARRIVAL;
     const nights = Number(process.env.RC_NIGHTS ?? 1);
+    // SIX IS THE MINIMUM, NOT THE INTENT. Three rungs need six units, and every refusal
+    // spends one MORE as the control that separates "this account is full" from "that unit
+    // is not bookable". A run that exhausts the pool reports UNDECIDABLE rather than a
+    // number, so more units means fewer questions left open -- 8 or 10 is a better run.
     const needUnits = CART_LADDER ? 6 : 3;
-    if (units.length !== needUnits || !arrival) {
-      log(`\nSkipping: set RC_CAP_UNITS to ${needUnits} comma-separated units and RC_ARRIVAL (see the header).`);
+    if (units.length < needUnits || !arrival) {
+      log(`\nSkipping: set RC_CAP_UNITS to at least ${needUnits} comma-separated units and RC_ARRIVAL.`);
     } else {
       step(6, CART_LADDER ? 'How many CARTS may one session hold?' : 'Is the cap on the CART or on the ACCOUNT?');
       log(`   This locks up to ${needUnits} real campsites for the length of the run and releases`);
@@ -1283,72 +1287,122 @@ try {
       const isCapRefusal = (e) => /Maximum Reservations in Cart|maximum number of reservations/i.test(String(e || ''));
 
       /**
-       * THE LADDER. Three rungs, each: mint a cart, fill it, then be REFUSED a third add.
+       * THE LADDER, and the number it exists to produce: HOW MANY RESERVATIONS ONE ACCOUNT
+       * HOLDS AT ONCE.
        *
-       * The refusal is the control and it is not optional. A fresh cart key only means
-       * something if the previous cart was demonstrably FULL and demonstrably capped --
-       * otherwise RC handing back a new key proves nothing about a ceiling, and a wrong
-       * ceiling written down as measured is the failure this file exists to avoid.
+       * Each rung mints a cart, fills it to two, and must then be REFUSED a third add in
+       * RC's own cap wording before the next rung means anything. Without that control a
+       * fresh key proves nothing -- RC could hand one back for any reason.
        *
-       * Stops at the first rung that does not behave, and says which rung and why. A
-       * partial ladder is a real answer ("at least N carts"); a guessed one is not.
+       * ## Telling an ACCOUNT limit from an unavailable unit
+       *
+       * RC's only documented rule is per CART ("maximum ... in the cart is 2"). So a refusal
+       * that arrives when the cart is NOT full cannot be that rule, and is the first sign of
+       * a limit on the session or the account -- the constraint that decides whether carts
+       * are a growth path at all.
+       *
+       * But it has a second reading: that particular unit may simply not be bookable. Those
+       * need opposite responses, and they arrive as the same refusal. So a refusal is never
+       * a verdict on its own -- the ladder retries the SAME slot with a DIFFERENT unit from
+       * the pool. Two refusals in a row is evidence about a LIMIT; one followed by a success
+       * was only ever about the unit. A run with no spare unit left says so instead of
+       * guessing, because "we could not tell" is a real answer and a wrong ceiling is not.
+       *
+       * `held` is the running count of reservations live across every cart at the moment the
+       * wall arrives. That is the number to write down.
        */
       const runLadder = async () => {
+        const pool = [...units];
+        const take = () => (pool.length ? pool.shift() : null);
         const keys = [];
+        let held = 0;
         let stopped = null;
+
+        /**
+         * Was that refusal about the UNIT or about the ACCOUNT? Retry the same slot with a
+         * different unit. Returns null when the pool is empty -- undecidable, and said so.
+         */
+        const control = async (cartKey, what) => {
+          const u = take();
+          if (u === null) return null;
+          const r = await attempt(u, cartKey, `      control: unit ${u} -> ${what} (unit, or account?)`);
+          if (r.ok) held++;
+          return r;
+        };
+
         for (let rung = 0; rung < 3 && !stopped; rung++) {
-          const mint = units[rung * 2];
-          const fill = units[rung * 2 + 1];
-          const control = units[rung * 2 + 2];   // undefined on the last rung -- see below
+          const mintUnit = take();
+          const fillUnit = take();
+          if (mintUnit === null || fillUnit === null) break;   // pool exhausted, not a limit
           log(`\n   --- cart ${rung + 1} ---`);
 
-          const a = await attempt(mint, NO_CART, `${rung + 1}a. unit ${mint} -> ask for a FRESH cart`);
-          if (!a.ok) { stopped = { rung, why: 'refused', err: a.err }; break; }
-          // A KEY WE ALREADY HAVE IS NOT A NEW CART. This is the whole measurement: RC
-          // putting the site back into an existing cart means no further cart was minted.
-          if (a.key && keys.includes(a.key)) { stopped = { rung, why: 'same-cart', key: a.key }; break; }
-          keys.push(a.key);
+          let a = await attempt(mintUnit, NO_CART, `${rung + 1}a. unit ${mintUnit} -> ask for a FRESH cart`);
+          if (!a.ok) {
+            // A BRAND NEW CART CANNOT BE FULL, so the per-cart rule cannot explain this.
+            const c = await control(NO_CART, 'a fresh cart');
+            if (c === null) stopped = { rung, why: 'undecidable', at: 'mint', err: a.err, held };
+            else if (!c.ok) stopped = { rung, why: 'account-limit', at: 'mint', err: c.err, held };
+            else { a = c; keys.push(c.key); held--; held++; }   // first unit was the problem
+            if (stopped) break;
+          } else { held++; }
+          if (a.key && keys.includes(a.key) && keys.indexOf(a.key) !== keys.length - 1) {
+            stopped = { rung, why: 'same-cart', key: a.key, held }; break;
+          }
+          if (!keys.includes(a.key)) keys.push(a.key);
 
-          const b = await attempt(fill, a.key, `${rung + 1}b. unit ${fill} -> fill it to two`);
-          if (!b.ok) { stopped = { rung, why: 'fill-failed', err: b.err }; break; }
+          let b = await attempt(fillUnit, a.key, `${rung + 1}b. unit ${fillUnit} -> fill it to two`);
+          if (!b.ok) {
+            // A CART HOLDING ONE IS NOT AT RC'S CAP OF TWO, so this is not that rule either.
+            const c = await control(a.key, 'the same half-full cart');
+            if (c === null) stopped = { rung, why: 'undecidable', at: 'fill', err: b.err, held };
+            else if (!c.ok) stopped = { rung, why: 'account-limit', at: 'fill', err: c.err, held };
+            else b = c;
+            if (stopped) break;
+          } else { held++; }
 
-          // The last rung has no spare unit for a control, and does not need one: it is not
-          // asking for another cart, so there is nothing left to prove full.
-          if (control === undefined) break;
-          const c = await attempt(control, a.key, `${rung + 1}c. unit ${control} -> a third add (the CONTROL)`);
-          if (c.ok) { stopped = { rung, why: 'cap-not-firing' }; break; }
-          if (!isCapRefusal(c.err)) { stopped = { rung, why: 'other-refusal', err: c.err }; break; }
+          const controlUnit = pool[0];
+          if (controlUnit === undefined) break;   // last rung: nothing left to prove full with
+          const third = await attempt(controlUnit, a.key, `${rung + 1}c. unit ${controlUnit} -> a third add (the CONTROL)`);
+          if (third.ok) { held++; stopped = { rung, why: 'cap-not-firing', held }; break; }
+          if (!isCapRefusal(third.err)) { stopped = { rung, why: 'other-refusal', err: third.err, held }; break; }
         }
 
         log('');
         const n = keys.filter(Boolean).length;
-        if (stopped && stopped.why === 'cap-not-firing') {
+        const wall = (w) => `${w} reservation(s) live across ${n} cart(s) when it arrived`;
+
+        if (stopped && stopped.why === 'account-limit') {
+          log(`   = ONE ACCOUNT HOLDS ${stopped.held}. Two DIFFERENT units were refused at the same`);
+          log(`     point (${stopped.at === 'mint' ? 'a brand-new cart' : 'a cart holding only one'}), which RC's per-cart rule cannot explain --`);
+          log('     that cart was not full. So the limit is on the SESSION or the ACCOUNT.');
+          log(`     ${wall(stopped.held)}.`);
+          log('     THIS IS THE GROWTH NUMBER: more carts stop helping here, and concurrency');
+          log('     beyond it costs IDENTITIES, not code.');
+          log(`     RC said: ${String(stopped.err || '').replace(/<br\/?>/g, ' ').slice(0, 160)}`);
+        } else if (stopped && stopped.why === 'undecidable') {
+          log(`   ? UNDECIDABLE at ${stopped.at}: a unit was refused and the pool had no spare to`);
+          log('     retry with, so "this account is full" and "that unit is not bookable" cannot');
+          log('     be told apart. Re-run with more units in RC_CAP_UNITS.');
+          log(`     ${wall(stopped.held)}, which is a FLOOR on the account, not the limit.`);
+          log(`     RC said: ${String(stopped.err || '').replace(/<br\/?>/g, ' ').slice(0, 160)}`);
+        } else if (stopped && stopped.why === 'cap-not-firing') {
           log(`   ! THE 2-PER-CART CAP DID NOT FIRE on cart ${stopped.rung + 1}. Three sites went into one`);
           log('     cart, so RC_SITES_PER_CART may not be 2 either. Nothing below the failure');
           log('     was tested. Re-measure that before reading anything into the cart count.');
         } else if (stopped && stopped.why === 'other-refusal') {
           log(`   x INCONCLUSIVE at cart ${stopped.rung + 1}: the third add was refused, but NOT with the cap`);
           log('     message, so the cart was never proven full and the next rung would have');
-          log('     been meaningless. Some other rejection (availability, a required extra)');
-          log(`     is not evidence about the cap. RC said: ${String(stopped.err || '').slice(0, 140)}`);
-        } else if (stopped && stopped.why === 'fill-failed') {
-          log(`   x INCONCLUSIVE at cart ${stopped.rung + 1}: the second site never went in, so that cart`);
-          log('     never reached two and no control was possible. Check the unit is genuinely');
-          log(`     available on that date. RC said: ${String(stopped.err || '').slice(0, 140)}`);
+          log('     been meaningless.');
+          log(`     RC said: ${String(stopped.err || '').replace(/<br\/?>/g, ' ').slice(0, 160)}`);
         } else if (stopped && stopped.why === 'same-cart') {
           log(`   = ${n} CART(S), AND THAT IS THE CEILING. Asking for a fresh cart on rung`);
           log(`     ${stopped.rung + 1} returned a key we already hold, so RC stopped minting.`);
           log(`     Capacity is ${n} x RC_SITES_PER_CART. Set RC_MAX_CARTS = ${n}.`);
-        } else if (stopped && stopped.why === 'refused') {
-          log(`   = ${n} CART(S). A fresh cart was REFUSED on rung ${stopped.rung + 1}, so the limit is not`);
-          log('     the cart -- it lives on the SESSION or the ACCOUNT, and no amount of cart');
-          log('     juggling lifts it. More concurrent holds then costs IDENTITIES, which is a');
-          log(`     much more expensive answer. RC said: ${String(stopped.err || '').slice(0, 140)}`);
         } else {
-          log(`   + AT LEAST ${n} CARTS, all distinct, on ONE session and ONE account.`);
-          log(`     Capacity is at least ${n} x RC_SITES_PER_CART with per-hold carts built.`);
+          log(`   + AT LEAST ${n} CARTS and ${held} RESERVATIONS at once, on ONE session and ONE account.`);
           log('     THE CEILING IS STILL NOT FOUND -- the ladder ran out of units, it did not');
           log('     hit a limit. Do not write down a maximum; write down what was reached.');
+          log(`     RC_MAX_CARTS may go to ${n}. For more, re-run with more units.`);
         }
         log(`     carts obtained: ${keys.filter(Boolean).map((k) => String(k).slice(0, 8) + '...').join(', ') || '(none)'}`);
       };
