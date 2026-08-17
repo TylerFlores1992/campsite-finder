@@ -55,6 +55,8 @@ interface HoldState {
   stuck?: boolean;
   unitId?: string;
   unitName?: string | null;
+  /** The park AND division this site belongs to — what the user checks RC against. */
+  campgroundName?: string | null;
   arrivalDate?: string;
   nights?: number;
   /** The park's own booking page — where the hand-off lands. */
@@ -400,6 +402,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
         <SiteCard
           site={site}
           stay={stayLabel(state.arrivalDate, state.nights)}
+          place={state.campgroundName}
           heading={maybeGone ? 'This may already be gone' : "We're holding this for you"}
           tone={maybeGone ? 'warn' : 'hold'}
           footer={
@@ -543,6 +546,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
         <SiteCard
           site={site}
           stay={stayLabel(state.arrivalDate, state.nights)}
+          place={state.campgroundName}
           heading="Letting go — grab it now"
           tone="hold"
         />
@@ -599,6 +603,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
         <SiteCard
           site={site}
           stay={stayLabel(state.arrivalDate, state.nights)}
+          place={state.campgroundName}
           heading={`${site} is yours to book`}
           tone="done"
         />
@@ -693,10 +698,12 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
  * gets spent re-reading the sentence.
  */
 function SiteCard({
-  site, stay, heading, tone, footer,
+  site, stay, place, heading, tone, footer,
 }: {
   site: string;
   stay: string;
+  /** Park + division. Optional: an older payload has none, and a missing line beats a wrong one. */
+  place?: string | null;
   heading: string;
   tone: 'hold' | 'done' | 'warn';
   footer?: string | null;
@@ -721,6 +728,16 @@ function SiteCard({
       >
         {site}
       </p>
+      {/* THE PLACE, DIRECTLY UNDER THE SITE. A user who taps through to ReserveCalifornia
+          lands on a division page and has to decide whether it is the right one — and on
+          2026-08-16 somebody could not, because this card named the site and the dates and
+          never the park. South Carlsbad alone has several similarly-named northern
+          divisions, and since migration 070 one watch can span them, so the division name
+          is the only thing that tells them apart.
+
+          Under the site number, not above it: the number is still the fact they carry in
+          their head, and this is what they check once they arrive. */}
+      {place && <p className="mt-1 text-ch-body text-ch-ink-2">{place}</p>}
       {stay && <p className="mt-2 text-ch-body text-ch-ink-2">{stay}</p>}
       {footer && (
         <p className="mt-3 border-t border-ch-line/70 pt-3 text-ch-meta leading-normal text-ch-ink-2">

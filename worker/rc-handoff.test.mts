@@ -527,3 +527,44 @@ test('the browser copy no longer promises a tab it does not open', () => {
   assert.ok(!/another tab|your .*tab/i.test(app.prepareCta + app.prepareBody),
     'the app has no tabs — that wording has already been fixed there once');
 });
+
+/**
+ * THE CLAIM CARD MUST NAME THE PARK, NOT ONLY THE SITE.
+ *
+ * 2026-08-16, from the browser walkthrough: "says site A012 but took me to 35-102 — there
+ * are two sets of north end sites and we landed on the wrong one."
+ *
+ * The URL was RIGHT. A hold records the division that actually had the opening (loadWatches
+ * selects `c.id AS campground_id` off the CROSS JOIN LATERAL expansion, not the watch's
+ * representative), so `bookingUrlFor` sends the user to the correct facility. What was
+ * missing was any way to CHECK that: the payload carried the site, the dates and the URL,
+ * and never the campground, so the card could not say where "right" was.
+ *
+ * Since migration 070 one watch can span divisions of a park, and parks like South Carlsbad
+ * have several similarly-named ones — the division name is the only thing distinguishing
+ * them. A screen that cannot be verified is one nobody trusts at 08:00.
+ */
+test('the claim payload carries the campground, from the same row as the URL', () => {
+  const src = readFileSync('src/app/api/rc-holds/claim/route.ts', 'utf8');
+  const body = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+  assert.match(body, /campgroundName: park\.name/, 'the payload must name the campground');
+  // ONE QUERY, so the name and the URL cannot describe different divisions. Two lookups
+  // would be two chances to drift, and the drift would tell the user to verify against the
+  // wrong page — worse than not naming it.
+  assert.match(body, /SELECT reservations_url, source, name FROM campgrounds WHERE id = \$1/,
+    'the name must come from the same row as the booking URL');
+  assert.ok(!/bookingUrlFor/.test(body), 'the old single-purpose helper must be gone, not shadowed');
+});
+
+test('every claim state renders the place', () => {
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  const cards = src.match(/<SiteCard/g) ?? [];
+  const places = src.match(/place=\{state\.campgroundName\}/g) ?? [];
+  assert.ok(cards.length >= 3, 'expected the carted, released and terminal cards');
+  assert.equal(places.length, cards.length,
+    'every SiteCard must get the place — a user can be checking RC in any of these states');
+  // Optional on the way in: an older cached payload has no campgroundName, and a missing
+  // line is better than a wrong one.
+  assert.match(src, /place\?: string \| null;/, 'the prop must tolerate an older payload');
+});
