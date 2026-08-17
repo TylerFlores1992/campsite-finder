@@ -282,3 +282,36 @@ test('the sign-in click is ONE definition, and attemptLogin still goes through i
   assert.ok(!/const link = await findIn\(page, SIGNIN_LINK_SELECTORS/.test(attempt),
     'the inline copy inside attemptLogin must be gone, or the two will drift');
 });
+
+/**
+ * OBSERVED ON THE BOX, 2026-08-17, from a genuinely token-less profile:
+ *
+ *     renewing the session — the app holds no usable token (src=none)
+ *       ✓ renewed by authorize: none → -157885s
+ *     … RC rejected a localStorage token (401)
+ *
+ * -157885s is a token that died about 44 hours earlier, and `isRenewal` called it a success
+ * because `before` was null and the final clause returned true for ANY token in that case.
+ * The genuine article, from 2026-08-16, reads `none → 3580s`.
+ *
+ * The cost is specific: a dead session reports itself REPAIRED, the renewal ration is spent
+ * on a no-op, and the next thing to find out is RC returning 401 — or 08:00.
+ */
+test('an already-expired token is NOT a renewal, even from nothing', () => {
+  assert.equal(
+    isRenewal({ previous: null, next: 'jwt-stale', before: null, after: -157885 }),
+    false,
+    'the exact reading the box produced must be rejected',
+  );
+  // The boundary, both sides.
+  assert.equal(isRenewal({ previous: null, next: 'j', before: null, after: 0 }), false,
+    'a token expiring exactly now buys nothing');
+  assert.equal(isRenewal({ previous: null, next: 'j', before: null, after: 1 }), true,
+    'and the bar is "usable at all", not a comfortable margin');
+});
+
+test('the live-token rule applies with a previous token too', () => {
+  // A stale token cannot become a renewal by being "fresher" than an even staler one.
+  assert.equal(isRenewal({ previous: 'old', next: 'new', before: -900, after: -60 }), false);
+  assert.equal(isRenewal({ previous: 'old', next: 'new', before: 100, after: 3500 }), true);
+});

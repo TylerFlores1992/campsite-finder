@@ -578,6 +578,28 @@ export function isRenewal({ previous, next, before, after }) {
   if (!next) return false;
   if (previous != null && next === previous) return false;
   if (after == null) return false;
+  // A TOKEN THAT HAS ALREADY EXPIRED IS NOT A RENEWAL, WHATEVER ELSE IS TRUE OF IT.
+  //
+  // Observed on the box 2026-08-17, from a token-less profile:
+  //
+  //     renewing the session — the app holds no usable token (src=none)
+  //       ✓ renewed by authorize: none → -157885s
+  //     … RC rejected a localStorage token (401)
+  //
+  // -157885s is a token that died ~44 hours earlier, and this function called it a success
+  // because `before` was null and the final clause returns true for ANY token in that case.
+  // Compare the genuine article from 2026-08-16: `none → 3580s`, a full fresh hour.
+  //
+  // Presence is not liveness — the same family as `notifications.status = 'sent'` meaning
+  // only "Twilio returned 2xx", and as `attemptLogin` short-circuiting on `isLive()` when
+  // the question was whether the session would still be alive at the release. Here the cost
+  // is specific: a dead session reports itself REPAIRED, the renewal ration is spent on a
+  // no-op, and the next thing to discover the truth is RC returning 401 — or 08:00.
+  //
+  // `> 0` rather than a comfortable margin, deliberately. The bar is "usable at all"; a
+  // stricter floor would start rejecting genuine renewals that happen to arrive late, and
+  // `requiredTokenSeconds` already owns the question of whether a live token is long enough.
+  if (after <= 0) return false;
   return before == null || after > before;
 }
 
