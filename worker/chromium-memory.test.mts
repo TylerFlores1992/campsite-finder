@@ -33,6 +33,9 @@ function row(over: Partial<MemorySampleRow> & { taken_at: string }): MemorySampl
     commit_used_mb: 9000, commit_limit_mb: 57700, ram_free_mb: 8000,
     rc_procs: 8, rc_mb: 300, recgov_procs: 0, recgov_mb: 0, other_procs: 0, other_mb: 0,
     max_pid: 100, max_mb: 100, max_family: 'rc',
+    // Null by default, i.e. the pre-062 shape a box emits until it updates — so every
+    // existing case keeps testing the reading that production actually sends today.
+    max_type: null, rc_by_type: null,
     ...over,
   };
 }

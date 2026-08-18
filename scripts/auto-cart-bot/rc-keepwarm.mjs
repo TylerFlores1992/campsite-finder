@@ -87,7 +87,7 @@ import { exitWhenDrained } from './exit-clean.mjs';
 import { takeSample } from './memory-sample.mjs';
 import {
   attachHeapProbe, collectHeapFacts, describeHeapFacts, writeHeapSnapshot,
-  sampleHeap, describeTrail, TRAIL_KEEP,
+  sampleHeap, describeTrail, describeRamTrail, TRAIL_KEEP,
 } from './rc-heap.mjs';
 
 // No secrets here, but RC_PROFILE_DIR / RC_KEEPALIVE_MS / RC_HEADLESS are read the same
@@ -1414,6 +1414,19 @@ async function warmResident() {
     // the guard fires — see rc-heap's sampleHeap for why it cannot be taken at the trip.
     let heapTrail = [];
     let heapInFlight = false;
+    /**
+     * THE FREE-RAM TRAIL, AND WHY IT IS THE ONE THAT CAN TIME THE ONSET.
+     *
+     * The heap trail froze the instant the ramp began — its newest sample was 123s old against
+     * a 121s stall — because CDP stops answering. `os.freemem()` never stops answering: it is a
+     * syscall, not a request to the browser, and it is already being read on this tick.
+     *
+     * Pairing each reading with the STEP the loop is in turns "the ramp happened somewhere in
+     * the renewal" into "free RAM was still 9 GB twenty seconds into renew:click-sign-in and
+     * 4 GB ten seconds later". That is what separates the reload from the click, which is
+     * currently a candidate on three matching firings and not a finding.
+     */
+    let ramTrail = [];
     const renew = setInterval(() => {
       const stalledMs = Date.now() - lastTick;
       const bail = (why) => {
@@ -1465,6 +1478,9 @@ async function warmResident() {
           .finally(() => { heapInFlight = false; });
       }
       const freeMb = os.freemem() / (1024 * 1024);
+      // Recorded on EVERY tick, including the healthy ones, because the sample before the ramp
+      // is what gives the one during it a baseline to be a change from.
+      ramTrail = [...ramTrail, { at: Date.now(), freeMb: Math.round(freeMb), step }].slice(-TRAIL_KEEP);
       if (stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB && !bailing) {
         bailing = true;
         const why = `✗ RUNAWAY — stalled ${Math.round(stalledMs / 1000)}s with only ${Math.round(freeMb)} MB `
@@ -1491,6 +1507,8 @@ async function warmResident() {
           // because the browser will not answer once it is this large; the trail is what was
           // captured on the way in.
           log(`  ${describeTrail(heapTrail, Date.now())}`);
+          // The trail that never stops answering. See ramTrail.
+          log(`  ${describeRamTrail(ramTrail, Date.now())}`);
           bail('  (see the runaway line above)');
         })();
         return;

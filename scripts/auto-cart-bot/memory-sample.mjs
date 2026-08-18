@@ -117,12 +117,23 @@ const PS = [
   "'C|{0}' -f $ours.Count;",
   'foreach ($o in $ours) {',
   "  $dir = ''; if ($o.CommandLine -match '--user-data-dir=(\\S+)') { $dir = $Matches[1] };",
+  // WHICH KIND OF CHROMIUM PROCESS. The heap trail settled that the leak is not the JS heap
+  // (16 MB, flat, while the process reached 4,903 MB), and the next fork is which process is
+  // growing: a renderer, the GPU process, a utility process or the browser itself are four
+  // different investigations. Chromium already puts it on the command line we are reading.
+  //
+  // THE BROWSER PROCESS CARRIES NO `--type` AT ALL, so an absent match is the parent and is
+  // recorded as such rather than as unknown - that distinction is the whole point here.
+  "  $ty = 'browser'; if ($o.CommandLine -match '--type=([a-zA-Z-]+)') { $ty = $Matches[1] };",
   // Chrome re-quotes the path for its renderer/GPU/utility children, so most processes report
   // it wrapped in quotes. Left in, the same profile would classify and group as two.
   '  $dir = $dir.Trim([char]34);',
   '  $q = Get-Process -Id $o.ProcessId -ErrorAction SilentlyContinue;',
   '  $mb = 0; if ($q) { $mb = [int]([double]$q.PrivateMemorySize64/1MB) };',
-  "  'P|{0}|{1}|{2}' -f $o.ProcessId, $mb, $dir;",
+  // TYPE BEFORE DIR, because the directory is a path that may itself contain `|` and is
+  // therefore joined from the remainder by the parser. A field appended after it would be
+  // swallowed by that join.
+  "  'P|{0}|{1}|{2}|{3}' -f $o.ProcessId, $mb, $ty, $dir;",
   '};',
 ].join(' ');
 
@@ -160,6 +171,14 @@ export function parseSample(text) {
     recgovProcs: null, recgovMb: null,
     otherProcs: null, otherMb: null,
     maxPid: null, maxMb: null, maxFamily: null,
+    /**
+     * Which KIND of Chromium process the biggest one is: `browser`, `renderer`, `gpu-process`,
+     * `utility`. Null means the box is running a build that predates this field — NOT that the
+     * type is unknowable, and the readout must not print it as a measured absence.
+     */
+    maxType: null,
+    /** Per-type MB within the `rc` family, e.g. `{ renderer: 3052, 'gpu-process': 890 }`. */
+    rcByType: {},
     /**
      * Did the scan report a count? Only then is "no processes" a reading rather than a gap.
      *
@@ -204,7 +223,13 @@ export function parseSample(text) {
       const parts = line.split('|');
       const pid = num(parts[1]);
       const mb = num(parts[2]);
-      const dir = parts.slice(3).join('|');
+      // BACKWARD COMPATIBLE ON PURPOSE. A box running the previous build emits the four-field
+      // form, and this parser is shared with it for as long as the update takes. An older row
+      // must read as "type not reported" rather than being mis-parsed into the directory —
+      // which would classify every process as `other` and silently empty the rc family.
+      const hasType = parts.length >= 5;
+      const type = hasType ? (parts[3] || null) : null;
+      const dir = parts.slice(hasType ? 4 : 3).join('|');
       if (pid === null || mb === null) continue;
       const fam = classifyProfile(dir);
       // A `P|` without its `C|` still counts - losing a real process because the count line
@@ -217,7 +242,12 @@ export function parseSample(text) {
         out.maxMb = mb;
         out.maxPid = pid;
         out.maxFamily = fam;
+        out.maxType = type;
       }
+      // Per-type totals for the family under suspicion. `max` alone said 3,052 of 4,903 MB —
+      // so most of a ramp sits OUTSIDE the biggest process, and naming only the biggest would
+      // describe under two thirds of it.
+      if (fam === 'rc' && type) out.rcByType[type] = (out.rcByType[type] ?? 0) + mb;
     }
   }
 
@@ -320,7 +350,8 @@ export async function takeSample(opts = {}) {
  * readings of a keepalive browser — it happens exactly when the browser FAILED to close,
  * which is the runaway case.
  *
- * @typedef {Record<string, number | string | boolean | null>} MemorySample
+ * @typedef {Record<string, number | string | boolean | null | Record<string, number>>} MemorySample
+ *   Flat scalars, plus `rcByType` — a per-process-type MB map added with migration 062.
  * @param {{
  *   post: (sample: MemorySample, source?: string) => Promise<unknown>,
  *   log?: (msg: string) => void,

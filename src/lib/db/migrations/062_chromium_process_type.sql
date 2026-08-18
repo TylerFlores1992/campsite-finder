@@ -1,0 +1,44 @@
+-- WHICH KIND OF CHROMIUM PROCESS IS GROWING?
+--
+-- The leak is attributed to the `rc` family and the JS heap is now ruled out as the thing
+-- holding the memory. From the trip of 2026-08-18 05:09:57, the heap trail sampled every ten
+-- seconds for the two minutes leading into the ramp:
+--
+--     heap trail (newest first): 123s ago JS 16 MB / 1711 nodes
+--                              · 133s ago JS 16 MB / 1711 nodes
+--                              · ... twelve samples, byte-identical ...
+--
+-- Sixteen megabytes of JavaScript heap, and a flat DOM, while the process reached 4,903 MB.
+-- That eliminates the whole JavaScript-retention family at once: the retry loop, our own fetch
+-- wrapper holding `init` per pending request, an array nobody trims, DOM growth. Whatever is
+-- allocating is OUTSIDE the JS heap.
+--
+-- (Stated precisely: the trail proves the heap was flat up to the onset, and CDP goes
+-- unanswerable the instant the ramp starts, so the during-ramp window is unobserved. What
+-- makes "not the JS heap" the strong reading anyway is V8's own ceiling — its default max old
+-- space is about 4 GB and these ramps have peaked at 27 GB.)
+--
+-- ── SO THE NEXT FORK IS THE PROCESS, AND WE CANNOT CURRENTLY SEE IT ────────────────────────
+-- A renderer, the GPU process, a utility process and the browser process are four different
+-- investigations with four different fixes, and `chromium_memory_samples` records only the
+-- profile FAMILY. Chromium puts `--type=` on the command line the scan already reads for
+-- `--user-data-dir`, so this costs one more regex.
+--
+-- THE BROWSER PROCESS CARRIES NO `--type` AT ALL. An absent match is therefore the parent and
+-- is stored as 'browser', never as unknown — that is precisely the distinction being bought.
+--
+-- ── WHY BOTH COLUMNS ──────────────────────────────────────────────────────────────────────
+-- `max_type` names the single biggest process, which is the shape the 2026-08-12 event had.
+-- But the last three ramps put only 3,052 MB of 4,903 in the biggest one, so naming only that
+-- describes under two thirds of the growth. `rc_by_type` carries the per-type totals for the
+-- family under suspicion, which is what says whether the growth is one process or spread
+-- across every renderer at once.
+--
+-- NULL IS "NOT REPORTED", NOT "UNKNOWN TYPE". A box running a build older than this emits the
+-- previous four-field line and lands here as null; the readout must print that as a gap and
+-- never as a measured absence. Same rule the family counts already follow, and the same one
+-- that had to be re-learned when a zero was recorded for a scan that never ran.
+
+ALTER TABLE chromium_memory_samples
+  ADD COLUMN IF NOT EXISTS max_type   text,
+  ADD COLUMN IF NOT EXISTS rc_by_type jsonb;

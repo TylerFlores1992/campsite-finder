@@ -1260,6 +1260,55 @@ recovered    11:20:21  rc 163MB pid2956      RAM free 13,480MB   commit 10%
     SPA. **Recorded as a candidate, not a finding** — the memory rose across the reload, the
     prime and the click, so the navigation is where it was caught and not yet where it is
     proven to allocate. The trail is what will separate them.
+- **THIRD FIRING, 05:09:57 — AND THE TRAIL ANSWERED THE QUESTION.**
+  ```
+  05:07:55 renewing the session — the token has 10m left (src=live)
+  05:09:57 ✗ RUNAWAY — stalled 121s with only 3728 MB of free RAM (floor 4000 MB)
+  05:09:57   heap facts unavailable (Performance.getMetrics: no answer in 3000ms)
+  05:09:57   heap trail (newest first): 123s ago JS 16 MB / 1711 nodes · 133s ago JS 16 MB /
+             1711 nodes · … twelve samples, byte-identical …
+  05:09:57   Stalled in: renew:click-sign-in (81s in that step).
+  ```
+  **IT IS NOT THE JS HEAP.** Sixteen megabytes, flat, with a flat DOM, while the process reached
+  **4,903 MB**. That eliminates the entire JavaScript-retention family in one reading — the
+  retry loop, our own `fetch` wrapper holding `init` per pending request, an array nobody trims,
+  DOM growth. Whatever allocates is OUTSIDE the JS heap.
+  - **STATED PRECISELY, BECAUSE THE TRAIL SHOWS ITS OWN LIMIT.** All twelve samples are
+    identical and the newest is **123s** old against a **121s** stall — so sampling stopped the
+    instant the renewal began, and the during-ramp window is UNOBSERVED. What makes "not the JS
+    heap" the strong reading anyway is V8's own ceiling: default max old space is ~4 GB and
+    these ramps have peaked at **27 GB**. A 27 GB process cannot be mostly JS heap.
+  - **The containment has now held THREE times** — 5,688 / 4,866 / 4,903 MB, never past 71%
+    COMMIT. And all three stalled in `renew:click-sign-in`, which navigates to
+    `signin.reservecalifornia.com`. **Still a candidate**: memory rose across the reload, the
+    prime AND the click, so that is where it was caught, not where it is proven to allocate.
+- **TWO INSTRUMENTS FOR THE NEXT ONE (migration 062).** The heap trail cannot answer either
+  question, for one shared reason — it stops when CDP does.
+  1. **A FREE-RAM TRAIL WITH THE STEP ATTACHED.** `os.freemem()` is a syscall, not a request to
+     the browser, so it keeps answering through the whole event, and it is already read on every
+     10s tick. Each reading carries the breadcrumb step, so the next trip prints e.g.
+     `9080 MB @ renew:reload · 8900 @ renew:prime-after-reload · 4100→3700 @ renew:click-sign-in`
+     — which is what separates the three steps, and they have different fixes. Consecutive
+     identical steps collapse, **oldest→newest inside a group**: the first version overwrote as
+     it walked and printed the OLDEST value against the NEWEST timestamp, reversing the
+     direction of travel on the one line whose job is showing memory fall. Caught by rendering a
+     fixture and reading it, which is the only way a formatting bug ever is.
+  2. **THE CHROMIUM PROCESS TYPE.** `browser` / `renderer` / `gpu-process` / `utility` are four
+     different investigations and the sampler recorded only the profile FAMILY. `--type=` sits
+     on the command line it already reads for `--user-data-dir`. **The parent carries no `--type`
+     at all**, so an absent flag identifies it as `browser` rather than defeating the check.
+     `rc_by_type` keeps per-type totals as well, because the last three ramps put only 3,052 MB
+     of 4,903 in the biggest process — naming only that describes under two thirds of the growth.
+     - **The 2-min sampler can now catch a ramp at all**, which is new: it spawns PowerShell, and
+       that used to fail as COMMIT passed ~95%. With the guard capping ramps near 60-70% it
+       recorded the whole of this one.
+     - **The parser stays backward compatible** and the type field goes BEFORE the directory: the
+       directory is a path that may contain `|` and is joined from the remainder, so a field
+       after it would be swallowed. A four-field line from a box that has not updated reads as
+       "type not reported" rather than putting the path in the type slot and classifying every
+       process as `other`.
+     - The type is allow-listed on the way into the database — it crosses the network from the
+       box and renders on the admin page — and an empty per-type map stores NULL, never `{}`.
 - **OUR OWN CONTAINMENT TURNED THE DASHBOARD RED.** The supervisor restarted the process and
   the login rehearsal fired **24 seconds later**, against a browser that had just come up on a
   box recovering from 71% COMMIT. RC answered *"We're having trouble loading the

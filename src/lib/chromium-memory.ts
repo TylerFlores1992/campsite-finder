@@ -30,6 +30,10 @@ export interface MemorySampleInput {
   maxPid?: number | null;
   maxMb?: number | null;
   maxFamily?: string | null;
+  /** `browser` | `renderer` | `gpu-process` | `utility`. Null on a box predating migration 062. */
+  maxType?: string | null;
+  /** Per-type MB within the `rc` family, e.g. `{ renderer: 3052, 'gpu-process': 890 }`. */
+  rcByType?: Record<string, number> | null;
 }
 
 export interface MemorySampleRow {
@@ -47,6 +51,8 @@ export interface MemorySampleRow {
   max_pid: number | null;
   max_mb: number | null;
   max_family: string | null;
+  max_type: string | null;
+  rc_by_type: Record<string, number> | null;
 }
 
 /** Only these three, so a malformed report cannot invent a family the readout never shows. */
@@ -67,6 +73,35 @@ function num(v: unknown, max: number): number | null {
   return n;
 }
 
+/**
+ * The Chromium process types worth recording. An allow-list because this value crosses the
+ * network from the box and is rendered on the admin page; anything else stores as null.
+ *
+ * `browser` is the PARENT, which carries no `--type` at all — an absent flag is not an unknown
+ * type, it is the one process that identifies itself by having none.
+ */
+const PROCESS_TYPES = new Set([
+  'browser', 'renderer', 'gpu-process', 'utility', 'zygote', 'ppapi', 'crashpad-handler',
+]);
+
+/**
+ * Per-type MB for the family under suspicion, sanitised the same way.
+ *
+ * Returns null for anything unusable rather than `{}` — an empty object would read as "we
+ * looked and every type was zero", which is a measurement nobody took. Same rule as the family
+ * counts, which had to be taught it after a scan that never ran was stored as zero.
+ */
+function rcByType(v: unknown): Record<string, number> | null {
+  if (!v || typeof v !== 'object') return null;
+  const out: Record<string, number> = {};
+  for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (!PROCESS_TYPES.has(k)) continue;
+    const n = num(raw, 4e6);
+    if (n !== null) out[k] = n;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 /** Store one sample. Never throws — a measurement must not break the poll that carries it. */
 export async function recordMemorySample(
   sample: MemorySampleInput, source: string | null,
@@ -77,8 +112,8 @@ export async function recordMemorySample(
     `INSERT INTO chromium_memory_samples
        (source, commit_used_mb, commit_limit_mb, ram_free_mb,
         rc_procs, rc_mb, recgov_procs, recgov_mb, other_procs, other_mb,
-        max_pid, max_mb, max_family)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        max_pid, max_mb, max_family, max_type, rc_by_type)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
     [
       source ? source.slice(0, 40) : null,
       // A 4 TB ceiling on memory figures and 1e7 on a pid: generous enough that no real
@@ -88,6 +123,12 @@ export async function recordMemorySample(
       num(sample.recgovProcs, 1e4), num(sample.recgovMb, 4e6),
       num(sample.otherProcs, 1e4), num(sample.otherMb, 4e6),
       num(sample.maxPid, 1e7), num(sample.maxMb, 4e6), fam,
+      // WHICH KIND OF PROCESS. Allow-listed rather than stored verbatim: this arrives from the
+      // box over the network, and a column rendered on the admin page must not carry whatever
+      // a caller feels like sending. An unrecognised type stores null — "not reported" — which
+      // the readout already prints as a gap.
+      typeof sample.maxType === 'string' && PROCESS_TYPES.has(sample.maxType) ? sample.maxType : null,
+      rcByType(sample.rcByType),
     ],
   ).catch((e) => console.error('[chromium-memory] recordMemorySample failed:', e.message));
 }
@@ -96,7 +137,7 @@ export async function recentMemorySamples(hours: number, limit = 5000): Promise<
   return await query<MemorySampleRow>(
     `SELECT taken_at::text, source, commit_used_mb, commit_limit_mb, ram_free_mb,
             rc_procs, rc_mb, recgov_procs, recgov_mb, other_procs, other_mb,
-            max_pid, max_mb, max_family
+            max_pid, max_mb, max_family, max_type, rc_by_type
        FROM chromium_memory_samples
       WHERE taken_at > NOW() - ($1 || ' hours')::interval
       ORDER BY taken_at ASC
