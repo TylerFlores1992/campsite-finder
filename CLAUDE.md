@@ -1498,11 +1498,18 @@ above, and the two together are one chain.
   both-conditions rule is right for the case it was written for (the owner using their own
   desktop) and it has no answer for a healthy loop next to a dying box.
 - **WHAT TO BUILD, and it is bot-side so the box must update.** The keep-warm must **kill any
-  Chromium on `.rc-bot-profile` that it does not own, at STARTUP** — before launching, while
-  COMMIT is still normal and a PowerShell spawn still works. That is `kill-chrome`'s existing
-  mechanism (kill by `--user-data-dir`, no cooperation needed) moved to the one moment it is
-  both necessary and cheap. **Do NOT put the kill in the trip path**: spawning is exactly what
-  fails as COMMIT passes ~95%, which is the instrument-goes-quiet-at-the-peak trap.
+  Chromium on `.rc-bot-profile` that it does not own, immediately AFTER TAKING THE PROFILE LOCK
+  and before `launchPersistentContext`** — while COMMIT is still normal and a PowerShell spawn
+  still works. That is `kill-chrome`'s existing `rc` mechanism (kill by `--user-data-dir`, no
+  cooperation needed) moved to the one moment it is both necessary and cheap.
+  - **THE LOCK IS WHAT MAKES THE SWEEP SAFE, AND "AT STARTUP" WITHOUT IT WOULD BE A DISASTER.**
+    `rc-hold-runner.mjs` drives the SAME profile directory, so a blanket kill on process start
+    can land at 08:00:00 on the Chromium that is carting. Once we hold the lock the runner does
+    not, so anything still on that profile is by definition owned by nobody — which is exactly
+    the orphan, and nothing else. (This corrects the first draft of this entry, which said
+    "at STARTUP" flat and would have been followed literally.)
+  - **Do NOT put the kill in the trip path**: spawning is exactly what fails as COMMIT passes
+    ~95%, which is the instrument-goes-quiet-at-the-peak trap.
   - **Scope it with the negative lookahead `kill-chrome` already uses.** A pattern that matched
     `auto-cart-bot` broadly would take the rec.gov profiles with it — that regression is
     already recorded once.

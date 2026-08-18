@@ -11,8 +11,13 @@ proven again and the near-expiry renewal has been dealt with.***
 That is the level at which Windows stops scheduling tasks, which has twice taken everything
 down. Build this first:
 
-> **The keep-warm must kill any Chromium on `.rc-bot-profile` that it does not own, at
-> STARTUP** — before launching, while COMMIT is normal and a PowerShell spawn still works.
+> **The keep-warm must kill any Chromium on `.rc-bot-profile` that it does not own —
+> immediately after TAKING THE PROFILE LOCK, before `launchPersistentContext`.**
+
+**The lock is what makes that safe.** `rc-hold-runner.mjs` drives the same profile directory,
+so a sweep on plain process start can land at 08:00:00 on the Chromium that is carting. Once
+we hold the lock the runner does not, so anything still on that profile is owned by nobody —
+which is the orphan, and nothing else.
 
 The evidence is in `CLAUDE.md` under "A 25 GB RUNAWAY, FIVE RECYCLES". In one line: the size
 guard fired five times, freed nothing, and the reading went **up** across every recycle,
