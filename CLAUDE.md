@@ -1398,6 +1398,24 @@ The step that leaks is a step that has never worked, so removing it may cost not
   is not the reload-with-clear either — two token-less renewals ran the identical clear and
   reload with no ramp at all. See below.
 
+### TWO CONCURRENT `npm test` RUNS RACE ON A GLOBAL SWEEP (2026-08-18)
+`rc-hold-capacity.test.mts` → *"a carted hold that could never be released stops holding a
+seat"* failed once and passed on every re-run — alone, with the other three hold suites, and
+on a clean full `verify` (914/914). **Not a flake to shrug at: the mechanism is specific.**
+- The test ages its own row past `HOLD_LAPSE_MIN`, calls `reclaimLapsedHolds()`, and asserts
+  its id comes back. **That function is a global MUTATING sweep** — it marks every lapsed
+  `carted` row `expired` and returns the ones it claimed. So a concurrent run's sweep can
+  claim this row first, and the second caller correctly returns nothing.
+- **Caused by breaking `docs/LANES.md`'s own serialization rule**: a local `npm run verify` was
+  run while CI ran `npm test` on the same production DB for PR #127. That file says in as many
+  words that two suites at once produce flakes indistinguishable from regressions.
+- **Left as a flake rather than "fixed".** Loosening the assertion would weaken a guard over a
+  real bug (two carted holds were the entire fleet on 2026-08-13), and the actual rule — one
+  test run at a time — already exists and was simply not followed.
+- **And I pushed before confirming green**, because the command chained `grep … && git commit`
+  and grep succeeds when it finds the failure line. A verify gate that runs after the push is
+  not a gate.
+
 ### THE SESSION RENEWS ITSELF ONCE WE STOP TOUCHING IT (2026-08-18, first 2.5 hours)
 An OBSERVATION, not yet a measurement, and it is better than the stand-down was meant to buy.
 Straight off the keepalive lines, with **zero `renewing the session` entries in the window**:
