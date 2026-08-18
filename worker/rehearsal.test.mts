@@ -355,10 +355,42 @@ test('and it is not recorded as a pass either', () => {
   // the session is live: a pass that proved nothing reads as evidence.
   const login = readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8');
   assert.match(login, /provedNothing: true/, 'the caller must be told nothing was exercised');
-  const kw = readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8');
-  assert.match(kw, /r\.provedNothing[\s\S]{0,220}result: 'inconclusive'/,
+  // BOUNDED ON THE BRANCH, NOT BY A CHARACTER COUNT (re-anchored 2026-08-18). This was
+  // `provedNothing[\s\S]{0,220}result: 'inconclusive'` and it broke the moment a comment and a
+  // `detail` const were added between the two — over unchanged behaviour. A proximity window
+  // measures how close two strings are, which is not the property; `keepwarm-recycle.test.mts`
+  // learned the same thing when the heap diagnostics grew its block. The branch is the anchor.
+  assert.match(provedNothingBranch(), /result: 'inconclusive'/,
     'and the rehearsal must record it as inconclusive, not ok');
+  assert.ok(!/result: '(ok|failed)'/.test(provedNothingBranch()),
+    'never a pass and never a failure — those are the two ways this has been got wrong');
 });
+
+/**
+ * The body of `runLoginRehearsal`'s `if (r.provedNothing) { … }`, comments stripped.
+ *
+ * Comments are removed because the branch now explains, in prose, the two inconclusive cases
+ * it distinguishes — and a guard that failed on its own explanation would be "fixed" by
+ * deleting the explanation, which is the half worth keeping.
+ */
+function provedNothingBranch(): string {
+  const kw = readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  // SCOPED TO THE FUNCTION FIRST. `if (r.provedNothing) {` appears in `maybeAutoLogin` too —
+  // which refunds the attempt rather than recording a verdict — and it comes FIRST in the
+  // file, so a bare indexOf lands there and the assertion fails against correct code. That is
+  // the same wrong-anchor mistake as matching a function definition instead of its call site.
+  const fnAt = kw.indexOf('async function runLoginRehearsal(');
+  assert.ok(fnAt > -1, 'could not find runLoginRehearsal');
+  const fnEnd = kw.indexOf('\nasync function ', fnAt + 10);
+  const fn = kw.slice(fnAt, fnEnd > fnAt ? fnEnd : undefined);
+
+  const at = fn.indexOf('if (r.provedNothing) {');
+  assert.ok(at > -1, 'could not find the provedNothing branch in runLoginRehearsal');
+  const end = fn.indexOf('\n  }', at);
+  assert.ok(end > at, 'could not find the end of the provedNothing branch');
+  return fn.slice(at, end);
+}
 
 test('a re-authenticating session is never recorded as a failed login', () => {
   // THE BANNER TRAP, THIRD OCCURRENCE (2026-08-14 03:01). The rehearsal recorded a FAILURE
@@ -389,9 +421,10 @@ test('a re-authenticating session is never recorded as a failed login', () => {
     'do not classify on RC banner text — a live token is the fact, the banner is only the tell',
   );
 
-  // And the mapping that makes it inconclusive rather than a pass must survive.
-  const kw = readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8');
-  assert.match(kw, /provedNothing[\s\S]{0,200}?result: 'inconclusive'/,
+  // And the mapping that makes it inconclusive rather than a pass must survive. Anchored on
+  // the branch rather than on a 200-character window, for the reason given at
+  // `provedNothingBranch` — the window broke over a comment while the behaviour was unchanged.
+  assert.match(provedNothingBranch(), /result: 'inconclusive'/,
     'proved-nothing must record as inconclusive — never a pass, never a failure');
 });
 

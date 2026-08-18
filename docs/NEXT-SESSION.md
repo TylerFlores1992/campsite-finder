@@ -109,6 +109,22 @@ cannot idle out while the keep-warm runs.
   the `idx` cookie with a restore on failure (certain, destructive). **`DT` must survive
   either way.**
 
+### The rehearsal now FORCES the form — read its next run carefully
+
+`withForcedLoginPrompt` adds `prompt=login` to RC's own authorize request, so Okta should show
+the credential form instead of answering from the cookie. **Bot-side; live once the box
+updates.** Three outcomes, and they mean different things:
+
+| the log says | what it means |
+| --- | --- |
+| `asked Okta for a fresh credential — rewrote N authorize request(s)` then a **pass** | it works; `autocart.rc_login` goes green and stays green |
+| `rewrote N` then **inconclusive**, detail says *"Okta declined to re-prompt"* | Okta ignores `prompt=login`. **This approach is dead** — go to the destructive cookie drop |
+| `the authorize request was never intercepted` | the route did not fire; the run says nothing about the password. Fix the interception, do not conclude anything |
+
+**If ramps come back hourly, suspect a leaked route first.** A handler left installed would
+force `prompt=login` onto every silent re-mint. It is disarmed two ways and tested, but it is
+the one failure mode of this change that would be expensive.
+
 ### And fix the instrument while you are there
 
 **`rc_login_rehearsal` KEEPS NO HISTORY.** It is one row updated in place (`id 1`). The
