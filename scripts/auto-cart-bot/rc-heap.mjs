@@ -65,6 +65,72 @@ const WANTED = [
 const mb = (bytes) => (typeof bytes === 'number' ? Math.round(bytes / (1024 * 1024)) : null);
 
 /**
+ * How long a TRAIL sample may take. Much shorter than CDP_TIMEOUT_MS: this runs on a ten-second
+ * timer, so a slow answer is not worth waiting for — there will be another along shortly, and
+ * an attempt that outlives its own tick would overlap the next one.
+ */
+const TRAIL_TIMEOUT_MS = Number(process.env.RC_HEAP_TRAIL_TIMEOUT_MS || 2_000);
+
+/** How many trail samples to keep. At a ten-second tick this is about two minutes. */
+export const TRAIL_KEEP = 12;
+
+/**
+ * ── ASK WHILE IT CAN STILL ANSWER ──────────────────────────────────────────────────────────
+ *
+ * Two firings, two different failures, and together they say the reading cannot be taken at
+ * the trip at all:
+ *
+ *     2026-08-18 03:00:24  heap facts unavailable (newCDPSession: no answer in 3000ms)
+ *     2026-08-18 04:05:54  heap facts unavailable (Performance.getMetrics: no answer in 3000ms)
+ *
+ * Attaching the session at launch fixed the first — the second proves the browser will not
+ * answer a command down an EXISTING socket either. By the time the guard fires, the renderer
+ * is unreachable, and no timeout we are willing to spend changes that.
+ *
+ * So the instrument moves earlier: the watchdog timer samples the heap every tick while the
+ * browser is healthy and keeps the last few readings. When the guard fires it prints the
+ * TRAIL — the last readings before the browser went quiet, with their ages. A ramp goes from
+ * ~270 MB to ~5 GB in two minutes, so the samples either side of the onset are exactly the
+ * ones that say whether the JS heap grew with the process or stayed flat while something
+ * outside it did.
+ *
+ * The same reasoning as the memory sampler itself: the process that knows is the one that
+ * reports, and a series replaces an observation that can only be taken at the worst moment.
+ */
+export async function sampleHeap(cdp) {
+  if (!cdp) return null;
+  const got = await within(cdp.send('Performance.getMetrics'), TRAIL_TIMEOUT_MS, 'getMetrics');
+  if (!got.ok) return null;
+  const byName = new Map((got.value?.metrics ?? []).map((m) => [m.name, m.value]));
+  const used = byName.get('JSHeapUsedSize');
+  if (typeof used !== 'number') return null;
+  return {
+    jsMb: mb(used),
+    nodes: byName.get('Nodes') ?? null,
+    docs: byName.get('Documents') ?? null,
+    listeners: byName.get('JSEventListeners') ?? null,
+  };
+}
+
+/**
+ * Render the trail newest-first with ages, or say plainly that there is none.
+ *
+ * AN EMPTY TRAIL IS ITS OWN READING and must not print as a blank line: it means the browser
+ * was never answering, which is different from "the JS heap was flat". Same rule as `unknown`
+ * never rounding to a verdict.
+ */
+export function describeTrail(samples, now) {
+  if (!samples || !samples.length) {
+    return 'heap trail: EMPTY — the browser answered no CDP call at all, which is itself a fact';
+  }
+  const parts = samples
+    .slice(-TRAIL_KEEP)
+    .reverse()
+    .map((s) => `${Math.round((now - s.at) / 1000)}s ago JS ${s.jsMb} MB / ${s.nodes ?? '?'} nodes`);
+  return `heap trail (newest first): ${parts.join(' · ')}`;
+}
+
+/**
  * Race a promise against a timer.
  *
  * A REJECTION AND A TIMEOUT MUST NOT LOOK THE SAME. `reason` distinguishes "the browser
