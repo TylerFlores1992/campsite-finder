@@ -302,22 +302,66 @@ async function captchaChallenge(page) {
  *
  * This is the difference between reporting "check the password" because a timeout expired
  * and reporting it because RC said so.
+ *
+ * ── `badCreds` AND `locked` READ THE BANNER, NOT THE PAGE (2026-08-18) ───────────────────
+ * They used to test `document.body.innerText`, i.e. every word Okta renders — headings,
+ * help links, footer boilerplate — and `/invalid|unable to sign|locked|temporarily
+ * unavailable/` are words a sign-in page can easily carry while nothing is wrong. A page
+ * that merely OFFERS help with signing in reads identically to a page REFUSING to sign
+ * you in.
+ *
+ * It fired three times on 2026-08-18 over a sign-in that WORKED — see readTokenAnyOrigin
+ * for the timeline — and each time it printed "re-run rc-save-password.bat", which sends a
+ * human to change a password that was never wrong. That is the same shape as the
+ * 2026-08-09 banner trap, where RC's "You have a reservation arriving today" (rendered
+ * ONLY to a signed-in user) was read as the obstacle: text lifted out of the one element
+ * that would have given it meaning.
+ *
+ * WHICH phrase matched is NOT established and must not be guessed into the record — the
+ * badCreds path never printed the page text. What is established is that the test could
+ * not tell a refusal from boilerplate, and that it was wrong three times running.
+ *
+ * The failure direction is deliberate: with no banner these fall through to "sign-in did
+ * not complete", which says we could not tell rather than asserting a cause. Same rule as
+ * `provedNothing` and as `unknown` never rounding to `signed-out`.
+ *
+ * `mfa` is LEFT ON THE WHOLE PAGE on purpose. A challenge replaces the form, so it is a
+ * page-level state rather than a banner, and narrowing it would risk missing a real one —
+ * which fails in the dangerous direction (retrying into a challenge) rather than the safe
+ * one. No evidence asks for that change; do not make it for symmetry.
  */
+/**
+ * The verdict, from what the page said. PURE, and exported so it can be tested.
+ *
+ * It used to live inside the `page.evaluate` below, where nothing could reach it: a
+ * function handed to Playwright is serialised into the browser, so it can import nothing
+ * and be called by no test. The three-times-wrong classification of 2026-08-18 was
+ * therefore unreachable by any guard. The page now returns strings and the JUDGEMENT
+ * happens here — the same move that put `session-coverage.mjs`, `relogin-retry.mjs` and
+ * `renewal-schedule.mjs` in modules of their own, and for the same reason: both were wrong
+ * in production and neither could be tested where it lived.
+ */
+export function classifyOktaPage({ url = '', banner = '', text = '' } = {}) {
+  const said = (re) => re.test(banner);
+  return {
+    url,
+    mfa: /verification code|verify your identity|enter the code|multifactor|authenticator/i.test(text),
+    badCreds: said(/incorrect|invalid|does not match|unable to sign/i),
+    locked: said(/locked|too many attempts|temporarily unavailable/i),
+    error: banner,
+    snippet: text.replace(/\s+/g, ' ').slice(0, 200),
+  };
+}
+
 async function diagnose(page) {
-  return page.evaluate(() => {
-    const text = document.body?.innerText ?? '';
-    const has = (re) => re.test(text);
-    return {
-      url: location.href,
-      mfa: has(/verification code|verify your identity|enter the code|multifactor|authenticator/i),
-      badCreds: has(/incorrect|invalid|does not match|unable to sign/i),
-      locked: has(/locked|too many attempts|temporarily unavailable/i),
-      error: Array.from(document.querySelectorAll(
-        '[role="alert"], .okta-form-infobox-error, .infobox-error, .o-form-error-container',
-      )).map((el) => el.textContent?.trim()).filter(Boolean).join(' | ').slice(0, 200),
-      snippet: text.replace(/\s+/g, ' ').slice(0, 200),
-    };
-  }).catch(() => ({ url: '', mfa: false, badCreds: false, locked: false, error: '', snippet: '' }));
+  const raw = await page.evaluate(() => ({
+    url: location.href,
+    banner: Array.from(document.querySelectorAll(
+      '[role="alert"], .okta-form-infobox-error, .infobox-error, .o-form-error-container',
+    )).map((el) => el.textContent?.trim()).filter(Boolean).join(' | ').slice(0, 200),
+    text: document.body?.innerText ?? '',
+  })).catch(() => null);
+  return classifyOktaPage(raw ?? {});
 }
 
 /** visible/enabled/size — the three facts that tell a refused click from an unhittable one. */

@@ -107,8 +107,18 @@ test('the module never logs or exports a credential', async () => {
   // without a credential — and INJECTING it is what keeps `rc-token.mjs` structurally unable
   // to sign in. The alternative was a second copy of the click over there, which is how
   // `content-rc.js` spent months disagreeing with `rc-cart.mjs`.
+  //
+  // `classifyOktaPage({url, banner, text})` (2026-08-18) turns what the page SAID into a
+  // verdict. It takes three plain strings scraped from the DOM and returns booleans; it is
+  // never handed a credential and could not reach one — `credentials()` stays private and
+  // this does not call it. Exported because it USED to live inside a `page.evaluate`, i.e.
+  // serialised into the browser where no test could call it — and it was wrong three times
+  // in one morning, reporting "ReserveCalifornia rejected the email or password" over
+  // sign-ins that worked, because it matched `/unable to sign|invalid/` against the whole
+  // page instead of the error banner. A judgement no test can reach is one that gets to be
+  // wrong indefinitely.
   assert.deepEqual(exported.sort(),
-    ['attemptLogin', 'clickSignInControl', 'hasCredentials', 'looksLikeAnotherAccount']);
+    ['attemptLogin', 'classifyOktaPage', 'clickSignInControl', 'hasCredentials', 'looksLikeAnotherAccount']);
   // And the module must not be able to send anything anywhere by itself.
   assert.ok(!/\bfetch\s*\(/.test(src), 'rc-autologin makes no network calls of its own');
 });

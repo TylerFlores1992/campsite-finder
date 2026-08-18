@@ -250,6 +250,56 @@ export async function readLiveToken(page) {
   }, undefined, { fallback: { token: null, source: 'none' } });
 }
 
+/** The origin RC keeps its tokens on. Okta's is a DIFFERENT one — that is the whole point. */
+export const RC_TOKEN_ORIGIN = 'https://www.reservecalifornia.com';
+
+/**
+ * The token, WHATEVER PAGE WE HAPPEN TO BE PARKED ON.
+ *
+ * ── WHY (2026-08-18) ─────────────────────────────────────────────────────────────────────
+ * `readLiveToken` reads the CURRENT page: `window.__camphawkRcToken` (set by the capture
+ * hook, and wiped by any cross-origin navigation) or `localStorage` — which is
+ * per-ORIGIN. RC's tokens live on `www.reservecalifornia.com`. Okta's sign-in lives on
+ * `signin.reservecalifornia.com`. Those are two different storage areas.
+ *
+ * So during a sign-in, the success detector was reading the WRONG ORIGIN'S localStorage.
+ * `sessionLive` starts with "no token in localStorage" and returns false WITHOUT ASKING
+ * RC ANYTHING — so `attemptLogin`'s 90-second `isLive()` poll could not observe a success
+ * while the page sat on Okta, no matter how well the sign-in had gone.
+ *
+ * Measured, 2026-08-18. Three sign-ins reported failure — 14:30, 14:39, 14:54 UTC — each
+ * with the identical shape: password field found, password entered and submitted, then 90
+ * seconds of `waiting for the session…`, then a verdict. Every one ended with the page at
+ * `signin.reservecalifornia.com/oauth2/v1/authorize`, which the log printed itself. And
+ * they had WORKED: Okta was `GONE (404)` at 13:44 and `ALIVE (exp +12h)` at 15:00, and
+ * only a credential submission creates an Okta session. The 14:58 restart came up
+ * `token source: live` and the 08:00 cart went in at T+1s.
+ *
+ * `context.storageState()` reads every origin's storage without navigating, so it cannot
+ * be fooled by where the redirect chain happens to have stopped.
+ *
+ * THIS CAN ONLY TURN "no token" INTO "a token", NEVER THE REVERSE — the page is asked
+ * first and its answer wins. And finding a token is not the same as being signed in: the
+ * caller still POSTs it to RC and a stale one comes back 401. Presence is not liveness,
+ * and that discipline is unchanged.
+ */
+export async function readTokenAnyOrigin(ctx, page) {
+  const fromPage = await readLiveToken(page);
+  if (fromPage.token) return fromPage;
+  if (!ctx?.storageState) return fromPage;
+  // Bounded like every other await on the sign-in path: an unanswerable browser must
+  // degrade to "we could not tell", never to a hang. See evaluateWithin.
+  const state = await Promise.race([
+    ctx.storageState(),
+    new Promise((resolve) => setTimeout(() => resolve(null), EVAL_TIMEOUT_MS)),
+  ]).catch(() => null);
+  const origin = state?.origins?.find((o) => o.origin === RC_TOKEN_ORIGIN);
+  const items = origin?.localStorage ?? [];
+  const pick = (name) => items.find((i) => i.name === name)?.value;
+  const ls = pick('ssoAccessToken') || pick('accessToken');
+  return ls ? { token: ls, source: 'storageState' } : fromPage;
+}
+
 /**
  * Everything we learned about RC's auth during this page's life. Diagnostics only —
  * logged locally on the mini-PC, never reported to the server. See noteTokenCall for why

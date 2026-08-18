@@ -70,7 +70,7 @@ import {
   profileRequested,
 } from './profile-lock.mjs';
 import {
-  installTokenCapture, readLiveToken, primeToken, renewSession, tokenSecondsLeft,
+  installTokenCapture, readLiveToken, readTokenAnyOrigin, primeToken, renewSession, tokenSecondsLeft,
   dropStoredToken,
   readAuthFacts, oktaSessionAlive, authCookieSummary,
 } from './rc-token.mjs';
@@ -297,7 +297,13 @@ function tokenExpiry(token) {
  * that held nothing.
  */
 async function sessionLive(ctx, page) {
-  const token = await readToken(page);
+  // `readTokenAnyOrigin`, NOT `readToken`. During a sign-in the page is parked on
+  // `signin.reservecalifornia.com`, whose localStorage is a different origin from the
+  // `www.` one RC writes its token to — so the page-scoped read returned nothing and this
+  // function answered "dead" WITHOUT ASKING RC, for the whole 90s `attemptLogin` waits.
+  // Three successful sign-ins were reported as rejected credentials on 2026-08-18 that
+  // way. See readTokenAnyOrigin for the measurement.
+  const token = (await readTokenAnyOrigin(ctx, page)).token;
   if (!token) return { live: false, why: 'no token in localStorage' };
   try {
     const r = await ctx.request.post(
