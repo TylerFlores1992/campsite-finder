@@ -49,6 +49,12 @@
 // --real-profile TAKES THE REAL PROFILE, so stop the bots first or Chromium will refuse it:
 //   powershell -ep Bypass -File mini-pc\stop-rc.ps1
 //
+// AND DISABLE THE WATCHDOG WHILE YOU DO (2026-08-18). It restarts the RC pair within five
+// minutes, and the keep-warm now sweeps the RC profile the moment it takes the lock — see
+// orphan-sweep.mjs. This script does NOT take that lock, so a restarted keep-warm will read
+// this browser as an orphan and KILL it. Previously it merely failed to launch beside you.
+//   schtasks /Change /TN "CampHawk watchdog" /DISABLE     (needs an ELEVATED prompt)
+//
 //   node rc-diag.mjs --headless   # only to contrast; never as the answer
 //
 import { chromium } from 'playwright';

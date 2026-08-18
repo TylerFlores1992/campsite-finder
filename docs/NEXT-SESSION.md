@@ -7,33 +7,30 @@ proven again and the near-expiry renewal has been dealt with.***
 
 ## Read this first — START HERE, and it is not what the rest of this file used to say
 
-**The containment does not contain an ORPHAN, and on 2026-08-18 the box reached 94% COMMIT.**
-That is the level at which Windows stops scheduling tasks, which has twice taken everything
-down. Build this first:
+**The orphan sweep is BUILT** (`scripts/auto-cart-bot/orphan-sweep.mjs`) — the keep-warm kills
+any Chromium on `.rc-bot-profile` the moment it takes the lock, before it launches. That is the
+one safe placement: `rc-hold-runner.mjs` drives the same directory, so a sweep at plain process
+start could land at 08:00:00 on the Chromium that is carting. Once we hold the lock the runner
+does not, so anything still there is owned by nobody.
 
-> **The keep-warm must kill any Chromium on `.rc-bot-profile` that it does not own —
-> immediately after TAKING THE PROFILE LOCK, before `launchPersistentContext`.**
-
-**The lock is what makes that safe.** `rc-hold-runner.mjs` drives the same profile directory,
-so a sweep on plain process start can land at 08:00:00 on the Chromium that is carting. Once
-we hold the lock the runner does not, so anything still on that profile is owned by nobody —
-which is the orphan, and nothing else.
-
-The evidence is in `CLAUDE.md` under "A 25 GB RUNAWAY, FIVE RECYCLES". In one line: the size
-guard fired five times, freed nothing, and the reading went **up** across every recycle,
-because `max_pid` was **13004 throughout** — an orphan left by the keep-warm restarting
-mid-login. `ctx.close()` closes the context this process owns; `rcFamilyMb()` totals every
-Chromium on the profile. **Fully visible to the measurement, invisible to the remedy.**
-
-Do NOT put the kill in the trip path — spawning is what fails as COMMIT passes ~95%.
-Scope it with the negative lookahead `kill-chrome` already uses, or it takes the rec.gov
-profiles with it.
+**It is bot-side, so none of it is live until the box updates.** Until then the 25 GB case can
+recur exactly as it did.
 
 | | state | urgency |
 | --- | --- | --- |
-| **Orphaned Chromium** | 25 GB event, 94% COMMIT, three guards none of which can stop it | **Build the startup sweep first** |
-| **The RC login** | account changed and signed in by hand; no unattended rehearsal has passed since 08-16 | This is the one that loses a campsite |
-| **The Chromium leak** | trigger NAMED (the Okta navigation); recycled after each round trip | Understood; the orphan case above is what still bites |
+| **The RC login** | account changed and signed in by hand; no unattended rehearsal has passed since 08-16 | **This is the one that loses a campsite** |
+| **Orphaned Chromium** | sweep built, unproven — needs a box update, then a real orphan | Watch for `♻ orphan sweep` in the keep-warm log |
+| **The Chromium leak** | trigger NAMED (the Okta navigation); recycled after each round trip | Understood; watch that ramps now peak ~2.3 GB |
+
+### What to watch once the box updates
+
+- `♻ orphan sweep: killed N Chromium…` in `logs\rc-keepwarm.log` — the first real firing. It
+  is **silent when there is nothing to kill**, so silence is the healthy reading, not evidence
+  it did not run.
+- `⚠ orphan sweep did not complete` means the spawn failed and carries stderr. That is the
+  guard failing, not finding nothing.
+- **`rc-diag.mjs --real-profile` now loses its browser** to a restarted keep-warm unless the
+  watchdog task is disabled. Its header says so; that procedure already required it.
 
 ---
 

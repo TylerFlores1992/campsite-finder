@@ -246,17 +246,31 @@ test('every Chromium kill pattern matches Chrome\'s QUOTED child processes', asy
     .map((f) => [`${dir}/${f}`, readFileSync(`${dir}/${f}`, 'utf8')]);
   sources.push(['scripts/auto-cart-bot/bot-commands.mjs',
     readFileSync('scripts/auto-cart-bot/bot-commands.mjs', 'utf8')]);
+  // The orphan sweep kills by the same rule and is subject to the same trap (2026-08-18). It
+  // runs on every keep-warm reopen rather than when a human asks, so a pattern that missed
+  // Chrome's quoted children here would leave the orphan's renderer — the process that
+  // actually holds the gigabytes — alive after a sweep that reported success.
+  sources.push(['scripts/auto-cart-bot/orphan-sweep.mjs',
+    readFileSync('scripts/auto-cart-bot/orphan-sweep.mjs', 'utf8')]);
 
   let checked = 0;
+  const seen = new Set<string>();
   for (const [file, src] of sources) {
     for (const line of src.split('\n')) {
       // Assignments only — the header comments quote the BROKEN pattern deliberately, to
       // explain it, and a test that failed on its own explanation would be fixed by deleting
       // the explanation. Same trap as `code()` stripping comments elsewhere in this suite.
       const m = /^\s*\$[A-Za-z_]\w*\s*=\s*'(--user-data-dir=[^']+)'/.exec(line)
-        ?? /^\s*(?:rc|recgov|all):\s*"\$pat = '(--user-data-dir=[^']+)'/.exec(line);
+        ?? /^\s*(?:rc|recgov|all):\s*"\$pat = '(--user-data-dir=[^']+)'/.exec(line)
+        // A JS constant holding the pattern (orphan-sweep.mjs). WITHOUT THIS ARM THE FILE
+        // WAS SCANNED AND NOTHING IN IT MATCHED, so the suite went green against a pattern
+        // deliberately broken to `[^"]*` — verified. A guard that inspects nothing is
+        // indistinguishable from a guard that approves, which is why `checked` is asserted
+        // below and why that assertion had to be made specific rather than a floor of three.
+        ?? /^\s*export const [A-Z_]+ = '(--user-data-dir=[^']+)'/.exec(line);
       if (!m) continue;
       checked++;
+      seen.add(file);
       // Unescape the JS-string doubling used in bot-commands.mjs (\\S* in source is \S*).
       const pattern = m[1].replace(/\\\\/g, '\\');
       let re: RegExp;
@@ -276,4 +290,12 @@ test('every Chromium kill pattern matches Chrome\'s QUOTED child processes', asy
     }
   }
   assert.ok(checked >= 3, `expected to find the kill patterns, checked only ${checked}`);
+  // PER FILE, NOT JUST A TOTAL. A floor of three was already satisfied by the .ps1 files
+  // alone, so adding orphan-sweep.mjs to `sources` looked like coverage and bought none —
+  // verified by breaking its pattern and watching this suite stay green. Name the files whose
+  // patterns must actually have been read.
+  for (const f of ['scripts/auto-cart-bot/orphan-sweep.mjs', 'scripts/auto-cart-bot/bot-commands.mjs']) {
+    assert.ok(seen.has(f), `no --user-data-dir pattern was extracted from ${f} — the scan ran ` +
+      'but matched nothing in it, which is a guard inspecting no code rather than approving it');
+  }
 });
