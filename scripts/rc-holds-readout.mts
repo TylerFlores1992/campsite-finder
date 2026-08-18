@@ -139,6 +139,42 @@ if (!session || session.session_ok == null) {
   console.log('  the whole session and it lasts about an hour.\n');
 }
 
+// ── CAN THE BOT STILL SIGN ITSELF IN? THE TREND, NOT LAST NIGHT ──────────────────────────
+//
+// Above this line is whether RC accepts the token we HAVE. This is whether we can still
+// MINT one, which is the different and more consequential question — it decided 2026-08-07,
+// 08-08 and 08-11, and each was found at 07:30 with twenty minutes to act.
+//
+// A SERIES, because the singleton could only ever show last night and stand-downs overwrote
+// every failure (migration 063). A run of `skip` is NOT a run of green nights: it is a run
+// of nights nobody tested, which is precisely what "no rehearsal has PASSED in 12h" looked
+// like from the inside. Printed even when there are no holds — the cheapest moment to find
+// out the sign-in is broken is the morning nothing depends on it.
+const rehearsals = await query<{
+  ran_at: string; ok: boolean | null; detail: string | null; skipped_why: string | null;
+}>(
+  `SELECT ran_at::text, ok, detail, skipped_why FROM rc_login_rehearsal_log
+    ORDER BY ran_at DESC LIMIT 10`,
+).catch(() => []);
+console.log('LOGIN REHEARSALS — can the bot still sign itself in?');
+if (!rehearsals.length) {
+  // Migration 063 is new, so an empty table is the ordinary case for its first nights and
+  // says nothing about the login. Do not read it as a broken instrument.
+  console.log('  No history yet (migration 063 is recent). The singleton still holds last');
+  console.log("  night's verdict; this fills in from the next rehearsal onward.\n");
+} else {
+  for (const r of rehearsals) {
+    const mark = r.ok === true ? '✓ PASS' : r.ok === false ? '✗ FAIL' : '· skip';
+    const why = r.ok === null ? (r.skipped_why ?? 'no reason recorded') : (r.detail ?? '');
+    console.log(`  ${r.ran_at.slice(0, 16)}  ${mark}  ${why}`.slice(0, 160));
+  }
+  if (!rehearsals.some((r) => r.ok === true)) {
+    console.log('  ⚠ NOT ONE PASS in this window. A skip is not a pass — nothing here has');
+    console.log('    proved the bot can sign in, so treat the next release as unprotected.');
+  }
+  console.log('');
+}
+
 if (!holds.length) {
   console.log('No holds released in that window and none queued ahead. That is the normal');
   console.log('state: a hold needs a watched RC site to be');

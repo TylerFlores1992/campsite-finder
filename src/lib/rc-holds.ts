@@ -453,17 +453,53 @@ export interface RehearsalRow {
  *
  * `ok_at` is never cleared by a later failure — the health check needs to say "broken
  * since", not merely "broken".
+ *
+ * TWO WRITES, AND THE ORDER IS THE POINT (migration 063, 2026-08-18). The singleton is
+ * only ever the LATEST verdict, so every failure was erased by the next stand-down — and
+ * stand-downs are the common case, which made the erasure a nightly certainty rather than
+ * a risk. The append-only log is what lets anyone ask whether the sign-in is getting
+ * worse. The singleton is written FIRST and its failure is what gets reported: it is what
+ * `/api/health/status` reads and what pages, and a history table must never come between
+ * the alarm and the fact. The append is best-effort for the same reason.
  */
 export async function recordRehearsal(
   ok: boolean | null, detail: string | null, skippedWhy: string | null,
 ): Promise<void> {
+  const d = detail ? detail.slice(0, 300) : null;
+  const why = skippedWhy ? skippedWhy.slice(0, 200) : null;
   await mutate(
     `UPDATE rc_login_rehearsal
         SET ran_at = NOW(), ok = $1, detail = $2, skipped_why = $3,
             ok_at = CASE WHEN $1 IS TRUE THEN NOW() ELSE ok_at END
       WHERE id = 1`,
-    [ok, detail ? detail.slice(0, 300) : null, skippedWhy ? skippedWhy.slice(0, 200) : null],
+    [ok, d, why],
   ).catch((e) => console.error('[rc-holds] recordRehearsal failed:', e.message));
+  await mutate(
+    `INSERT INTO rc_login_rehearsal_log (ok, detail, skipped_why) VALUES ($1, $2, $3)`,
+    [ok, d, why],
+  ).catch((e) => console.error('[rc-holds] recordRehearsal history failed:', e.message));
+}
+
+export interface RehearsalLogRow {
+  ran_at: string;
+  ok: boolean | null;
+  detail: string | null;
+  skipped_why: string | null;
+}
+
+/**
+ * The rehearsal's history, newest first — the trend the singleton cannot show.
+ *
+ * Read by `scripts/rc-holds-readout.mts`, which is where a human looks before an 08:00.
+ * A run of NULLs is a run of nights nobody tested, and that is a finding rather than an
+ * absence of one: it is what "no rehearsal has PASSED in 12h" looked like from inside.
+ */
+export async function rehearsalHistory(limit = 14): Promise<RehearsalLogRow[]> {
+  return await query<RehearsalLogRow>(
+    `SELECT ran_at::text, ok, detail, skipped_why FROM rc_login_rehearsal_log
+      ORDER BY ran_at DESC LIMIT $1`,
+    [String(Math.max(1, Math.min(100, limit)))],
+  ).catch(() => []);
 }
 
 export async function lastRehearsal(): Promise<RehearsalRow | null> {
