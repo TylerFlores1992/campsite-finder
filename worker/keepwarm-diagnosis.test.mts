@@ -254,3 +254,62 @@ test("RC's app failing to load is INCONCLUSIVE, not a broken login", () => {
   // DOM on every call, so asking twice could classify on one answer and report another.
   assert.match(AUTOLOGIN, /const said = await withBanner\(link/);
 });
+
+/* ── 5. THE HEAP TRAIL: ASK WHILE IT CAN STILL ANSWER ──────────────────────────────── */
+
+/**
+ * Two firings, two different CDP failures, and together they close off asking at the trip:
+ *
+ *     03:00:24  heap facts unavailable (newCDPSession: no answer in 3000ms)
+ *     04:05:54  heap facts unavailable (Performance.getMetrics: no answer in 3000ms)
+ *
+ * Attaching at launch fixed the first. The second proves the browser will not answer a command
+ * down an EXISTING socket either, so no timeout worth spending changes the outcome. The
+ * reading has to be taken BEFORE the browser goes quiet, which means a series rather than an
+ * observation — the same lesson as the memory sampler that produced this whole investigation.
+ */
+
+test('the trail is sampled from the TIMER, not the loop', () => {
+  // Same argument as the guard itself: the loop is stalled during exactly the window whose
+  // readings are worth having, so a sampler living there would capture nothing.
+  const timer = KEEPWARM.slice(KEEPWARM.indexOf('const renew = setInterval('));
+  const body = timer.slice(0, timer.indexOf('}, WATCHDOG_MS);'));
+  assert.match(body, /sampleHeap\(heapProbe\)/, 'the trail must be sampled inside the watchdog tick');
+});
+
+test('sampling never blocks the watchdog, and never piles up', () => {
+  // The timer must not await: the guard's whole value is that it keeps running. And once the
+  // browser stops answering, every attempt costs its full timeout — without an in-flight flag
+  // those would accumulate one per tick, against a browser already in trouble.
+  const timer = KEEPWARM.slice(KEEPWARM.indexOf('const renew = setInterval('));
+  const body = timer.slice(0, timer.indexOf('}, WATCHDOG_MS);'));
+  assert.match(body, /void sampleHeap\(/, 'must be fire-and-forget');
+  assert.ok(!/await sampleHeap/.test(body), 'awaiting it would stall the watchdog itself');
+  assert.match(body, /!heapInFlight && heapProbe/, 'overlapping samples must be prevented');
+  assert.match(body, /finally\(\(\) => \{ heapInFlight = false; \}\)/,
+    'and the flag must clear on failure too, or one timeout ends sampling for ever');
+});
+
+test('the trail is bounded and printed at the trip', () => {
+  assert.match(KEEPWARM, /\.slice\(-TRAIL_KEEP\)/, 'the buffer must be bounded');
+  const arm = KEEPWARM.slice(KEEPWARM.indexOf('stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB'));
+  assert.match(arm.slice(0, 2200), /describeTrail\(heapTrail, Date\.now\(\)\)/,
+    'the trip must print the trail — it is the reading that actually arrives');
+});
+
+test('an empty trail says so rather than printing nothing', () => {
+  // "The browser answered no CDP call at all" and "the JS heap was flat" are different facts,
+  // and a blank line would merge them. Same rule as `unknown` never rounding to a verdict.
+  assert.match(HEAP, /heap trail: EMPTY/);
+  assert.match(HEAP, /if \(!samples \|\| !samples\.length\)/);
+});
+
+test('a trail sample is cheaper than a trip-time reading', () => {
+  // It runs on a ten-second timer, so a slow answer is not worth waiting for — there will be
+  // another along shortly, and an attempt outliving its own tick would overlap the next.
+  const trail = Number(/RC_HEAP_TRAIL_TIMEOUT_MS \|\| ([\d_]+)/.exec(HEAP)?.[1]?.replace(/_/g, ''));
+  const trip = envDefault(HEAP, 'RC_HEAP_CDP_TIMEOUT_MS');
+  assert.ok(trail > 0 && trail < trip, `trail ${trail}ms must be tighter than the trip's ${trip}ms`);
+  const tick = envDefault(KEEPWARM, 'RC_KEEPWARM_WATCHDOG_MS');
+  assert.ok(trail < tick, 'a sample must not outlive the tick that started it');
+});

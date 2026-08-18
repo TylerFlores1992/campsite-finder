@@ -85,7 +85,10 @@ import { pacificHour, hoursUntilRelease } from './update-guard.mjs';
 import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 import { takeSample } from './memory-sample.mjs';
-import { attachHeapProbe, collectHeapFacts, describeHeapFacts, writeHeapSnapshot } from './rc-heap.mjs';
+import {
+  attachHeapProbe, collectHeapFacts, describeHeapFacts, writeHeapSnapshot,
+  sampleHeap, describeTrail, TRAIL_KEEP,
+} from './rc-heap.mjs';
 
 // No secrets here, but RC_PROFILE_DIR / RC_KEEPALIVE_MS / RC_HEADLESS are read the same
 // way as everywhere else. A process that silently ignores the config file is the bug
@@ -1407,6 +1410,10 @@ async function warmResident() {
     // Opened at launch while the browser is healthy — see collectHeapFacts. Negotiating a new
     // CDP session at trip time is what produced `no answer in 3000ms` on the first real firing.
     let heapProbe = null;
+    // The trail. Sampled on the watchdog tick while the browser still answers, printed when
+    // the guard fires — see rc-heap's sampleHeap for why it cannot be taken at the trip.
+    let heapTrail = [];
+    let heapInFlight = false;
     const renew = setInterval(() => {
       const stalledMs = Date.now() - lastTick;
       const bail = (why) => {
@@ -1441,6 +1448,22 @@ async function warmResident() {
        * spawning is the thing that fails first at 99% COMMIT. An instrument that goes quiet as
        * the emergency peaks reports the emergency as calm.
        */
+      /**
+       * SAMPLED HERE, IN THE TIMER, FOR THE SAME REASON THE GUARD IS. This is the only code
+       * proven to keep executing while the loop is stalled — and the stall is precisely the
+       * window we need readings from.
+       *
+       * Fire-and-forget with an in-flight flag: the timer must not await anything, and once
+       * the browser stops answering, every attempt costs its full timeout. Without the flag
+       * those would pile up one per tick.
+       */
+      if (!heapInFlight && heapProbe) {
+        heapInFlight = true;
+        void sampleHeap(heapProbe)
+          .then((v) => { if (v) heapTrail = [...heapTrail, { ...v, at: Date.now() }].slice(-TRAIL_KEEP); })
+          .catch(() => {})
+          .finally(() => { heapInFlight = false; });
+      }
       const freeMb = os.freemem() / (1024 * 1024);
       if (stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB && !bailing) {
         bailing = true;
@@ -1464,6 +1487,10 @@ async function warmResident() {
           const facts = await collectHeapFacts(ctx, residentPage, heapProbe).catch(() => null);
           log(why);
           log(`  ${describeHeapFacts(facts, null)}`);
+          // THE READING THAT ACTUALLY ARRIVES. The line above has failed twice, both times
+          // because the browser will not answer once it is this large; the trail is what was
+          // captured on the way in.
+          log(`  ${describeTrail(heapTrail, Date.now())}`);
           bail('  (see the runaway line above)');
         })();
         return;

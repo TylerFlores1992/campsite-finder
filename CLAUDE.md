@@ -1231,6 +1231,35 @@ recovered    11:20:21  rc 163MB pid2956      RAM free 13,480MB   commit 10%
   trip only SENDS a command down it. The old path survives as a fallback, and the shared
   session is never detached by a borrower — doing so would silently restore the bug on the
   second firing.
+- **SECOND FIRING, 04:05:54 — THE CONTAINMENT HELD AGAIN AND THE CDP FAILURE MOVED.**
+  ```
+  04:03:52 renewing the session — the token has 10m left (src=live)
+  04:05:54 ✗ RUNAWAY — stalled 121s with only 3669 MB of free RAM (floor 4000 MB)
+  04:05:54   heap facts unavailable (Performance.getMetrics: no answer in 3000ms)
+  04:05:54   Stalled in: renew:click-sign-in (80s in that step).
+  ```
+  Peak 4,866 MB / 51% COMMIT. **Attaching the probe at launch worked** — the failure is no
+  longer `newCDPSession` — **and the browser will not answer a command down an EXISTING socket
+  either.** Two firings, two different CDP failures, and together they close the question:
+  **the reading cannot be taken at the trip at all**, and no timeout worth spending changes it.
+  - **SO THE INSTRUMENT MOVED EARLIER: a heap TRAIL.** The watchdog tick samples
+    `Performance.getMetrics` every 10s while the browser still answers and keeps the last
+    dozen; the trip prints them with ages. A ramp goes 270 MB → 5 GB in two minutes, so the
+    samples either side of the onset are exactly the ones that say whether the JS heap grew
+    **with** the process or stayed flat while something outside it did. Same move as the memory
+    sampler that started all this: a series replaces an observation that can only be taken at
+    the worst possible moment.
+  - **Fire-and-forget with an in-flight flag.** The timer must never await — its whole value is
+    that it keeps running — and once the browser goes quiet every attempt costs its full
+    timeout, so without the flag they pile up one per tick.
+  - **An EMPTY trail is its own reading** and says so: "the browser answered no CDP call at
+    all" and "the JS heap was flat" are different facts and a blank line would merge them.
+  - **BOTH FIRINGS STALLED IN `renew:click-sign-in`, AND THAT STEP NAVIGATES TO OKTA.**
+    `clickSignInControl` clicks RC's Log in control, which goes to
+    `signin.reservecalifornia.com`. So the ramp coincides with loading OKTA'S page, not RC's
+    SPA. **Recorded as a candidate, not a finding** — the memory rose across the reload, the
+    prime and the click, so the navigation is where it was caught and not yet where it is
+    proven to allocate. The trail is what will separate them.
 - **OUR OWN CONTAINMENT TURNED THE DASHBOARD RED.** The supervisor restarted the process and
   the login rehearsal fired **24 seconds later**, against a browser that had just come up on a
   box recovering from 71% COMMIT. RC answered *"We're having trouble loading the
