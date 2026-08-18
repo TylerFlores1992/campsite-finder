@@ -425,3 +425,18 @@ test('the hand-run test reports the REASON, not a canned string', () => {
   assert.ok(!/reportRehearsal\(false, 'test login failed/.test(body),
     'the canned string must not be what gets reported');
 });
+
+test('an INCONCLUSIVE hand-run is reported, not returned in silence', () => {
+  // The singleton's `ok` is three-valued for exactly this. The nightly path has always sent
+  // `null` with the reason; the hand path returned silently, so after a real failure the
+  // dashboard kept showing "the bot COULD NOT SIGN IN" while the latest run had actually been
+  // unable to test at all. Two different wrong answers about one run.
+  const kw = readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  const fn = kw.slice(kw.indexOf('async function testLogin()'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.match(body, /reportRehearsal\(null, detail, null\)/,
+    'inconclusive must be recorded as ok=null WITH its reason');
+  assert.ok(!/if \(result === 'inconclusive'\) return false;/.test(body),
+    'it must not return in silence');
+});
