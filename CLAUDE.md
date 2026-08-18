@@ -1309,6 +1309,29 @@ recovered    11:20:21  rc 163MB pid2956      RAM free 13,480MB   commit 10%
        process as `other`.
      - The type is allow-listed on the way into the database — it crosses the network from the
        box and renders on the admin page — and an empty per-type map stores NULL, never `{}`.
+- **AND THE PROCESS-TYPE CHANGE KILLED THE MEMORY SERIES FOR TEN MINUTES (2026-08-18).**
+  `rc_by_type` is `jsonb`, and a plain JS object was handed to `mutate`. **`sqlit`
+  INTERPOLATES rather than binds**, and its fallback is `String(val)` — so the object became
+  the literal `'[object Object]'`, Postgres rejected it, the whole INSERT threw, and
+  `recordMemorySample`'s `.catch` turned that into silence.
+  - **THE COST WAS NOT THE MISSING COLUMN. NO SAMPLE WAS STORED AT ALL** — the instrument this
+    entire investigation runs on, switched off by one unstringified argument, with nothing
+    anywhere reporting it. Found only because a reading that should have arrived did not.
+  - **DIAGNOSED FROM THE CLOCK, and the first two readings were both misread.** Samples stopped
+    at 05:35:50 and `bot.mjs` restarted at **05:36:37**, so the NULLs read at 05:37 predated the
+    new code entirely and proved nothing either way; then four minutes with no sample at all
+    looked like the box, when the timing points at Vercel deploying the new route. **The box was
+    never at fault.** `tail-log bot` showing a restart AFTER the samples is what separated them.
+  - Fixed at the call site (`JSON.stringify` + `$15::jsonb`, verified by driving the real INSERT
+    against the real table and reading it back) **and systemically: `sqlit` now THROWS on a plain
+    object.** `[object Object]` is either a rejected statement or corrupt data written without
+    complaint, and no caller can ever have wanted it — so throwing surfaces an existing bug
+    rather than creating one. Arrays and Dates keep their real encodings; the refusal sits
+    ABOVE the `String()` fallback or it could never run.
+  - **A MUTATION SURVIVED AND THE REASON IS THE USUAL ONE.** The guard asserted the refusal's
+    MESSAGE was present and correctly positioned, so `if (false)` left both true and passed
+    against a `sqlit` that stringified objects exactly as before. Pin the comparison, not the
+    branch it guards. **Twelfth time.**
 - **OUR OWN CONTAINMENT TURNED THE DASHBOARD RED.** The supervisor restarted the process and
   the login rehearsal fired **24 seconds later**, against a browser that had just come up on a
   box recovering from 71% COMMIT. RC answered *"We're having trouble loading the

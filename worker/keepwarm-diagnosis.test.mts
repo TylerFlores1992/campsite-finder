@@ -37,6 +37,7 @@ const REHEARSAL = strip(readFileSync('scripts/auto-cart-bot/rehearsal.mjs', 'utf
 const AUTOLOGIN = strip(readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8'));
 const SAMPLE = strip(readFileSync('scripts/auto-cart-bot/memory-sample.mjs', 'utf8'));
 const MEMORY = strip(readFileSync('src/lib/chromium-memory.ts', 'utf8'));
+const CLIENT = strip(readFileSync('src/lib/db/client.ts', 'utf8'));
 
 function envDefault(code: string, name: string): number {
   // MUST HANDLE `40 * 60_000` AS WELL AS `60_000`. The first version matched `[\d_]+`, which
@@ -395,5 +396,51 @@ test('the type crosses the network through an allow-list', () => {
   assert.match(MEMORY, /PROCESS_TYPES\.has\(sample\.maxType\) \? sample\.maxType : null/);
   // An empty map must store null rather than {} - "we looked and every type was zero" is a
   // measurement nobody took. Same rule the family counts had to be taught.
-  assert.match(MEMORY, /return Object\.keys\(out\)\.length \? out : null;/);
+  assert.match(MEMORY, /return Object\.keys\(out\)\.length \? JSON\.stringify\(out\) : null;/);
+});
+
+/* ── 7. THE JSONB THAT KILLED THE SERIES (2026-08-18) ──────────────────────────────── */
+
+/**
+ * `rc_by_type` shipped as a jsonb column with a plain JS object handed to `mutate`. `sqlit`
+ * INTERPOLATES rather than binds, and its fallback is `String(val)` — so the object became the
+ * literal `'[object Object]'`, Postgres rejected it, the whole INSERT threw, and
+ * `recordMemorySample`'s catch turned that into silence.
+ *
+ * The cost was not the missing column. **No sample was stored at all** for ten minutes — the
+ * instrument this entire leak investigation runs on, switched off by one unstringified
+ * argument, with nothing anywhere reporting it. It was found only because a reading that should
+ * have arrived did not.
+ *
+ * Two guards, because the call site and the class of bug are different problems.
+ */
+
+test('the per-type map is stringified and cast, never passed as an object', () => {
+  assert.match(MEMORY, /JSON\.stringify\(out\) : null/,
+    'rcByType must hand mutate a string');
+  assert.match(MEMORY, /\$15::jsonb/,
+    'and the SQL must cast it, so the column type is never inferred from a bare literal');
+});
+
+test('sqlit REFUSES a plain object rather than stringifying it', () => {
+  // The systemic half. `[object Object]` is either a rejected statement or corrupt data written
+  // without complaint, and neither is ever what a caller wanted. Throwing surfaces an existing
+  // bug rather than creating one — nobody can have been relying on that literal.
+  assert.match(CLIENT, /sqlit: refusing to interpolate a plain object/);
+  // THE CONDITION, NOT JUST THE MESSAGE. The first version asserted only that the string was
+  // present and correctly positioned — so replacing the test with `if (false)` left both true
+  // and the mutation passed against a sqlit that stringified objects exactly as before. Same
+  // trap as the power-cycle guard that pinned the hold query but not the comparison deciding
+  // on it. Twelfth time a guard here has anchored on the wrong thing.
+  assert.match(CLIENT, /if \(typeof val === 'object'\) \{/,
+    'the type test itself must be live, not merely the message it would print');
+  const fn = CLIENT.slice(CLIENT.indexOf('export function sqlit'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  const throwAt = body.indexOf('refusing to interpolate');
+  const fallbackAt = body.indexOf('String(val).replace');
+  assert.ok(throwAt > -1 && fallbackAt > throwAt,
+    'the refusal must come BEFORE the String() fallback, or it can never run');
+  // Arrays and Dates have real encodings and must still work.
+  assert.ok(body.indexOf('Array.isArray(val)') < throwAt, 'arrays keep their ARRAY[...] form');
+  assert.ok(body.indexOf('val instanceof Date') < throwAt, 'dates keep their ISO form');
 });

@@ -26,6 +26,25 @@ export function sqlit(val: unknown): string {
     if (val.length === 0) return "ARRAY[]::text[]";
     return `ARRAY[${val.map((v) => sqlit(v)).join(',')}]::text[]`;
   }
+  /**
+   * A PLAIN OBJECT CAN NEVER BE RIGHT HERE, so it throws instead of stringifying.
+   *
+   * The fallback below is `String(val)`, which turns `{ renderer: 3052 }` into the literal
+   * `'[object Object]'`. That is either a rejected statement or, worse, corrupt data written
+   * without complaint. On 2026-08-18 it was the former: a jsonb column got `'[object Object]'`,
+   * the INSERT threw, `recordMemorySample`'s catch swallowed it, and the chromium memory series
+   * — the instrument the whole leak investigation runs on — silently stopped recording
+   * ANYTHING. Ten minutes of blindness from one unstringified argument.
+   *
+   * Callers wanting jsonb pass `JSON.stringify(...)` and cast in the SQL. Throwing surfaces an
+   * existing bug rather than creating one: no caller can have been relying on `[object Object]`.
+   */
+  if (typeof val === 'object') {
+    throw new Error(
+      'sqlit: refusing to interpolate a plain object — it would become the literal '
+      + "'[object Object]'. JSON.stringify() it and cast with ::jsonb in the SQL.",
+    );
+  }
   return `'${String(val).replace(/'/g, "''")}'`;
 }
 

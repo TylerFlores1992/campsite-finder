@@ -91,7 +91,7 @@ const PROCESS_TYPES = new Set([
  * looked and every type was zero", which is a measurement nobody took. Same rule as the family
  * counts, which had to be taught it after a scan that never ran was stored as zero.
  */
-function rcByType(v: unknown): Record<string, number> | null {
+function rcByType(v: unknown): string | null {
   if (!v || typeof v !== 'object') return null;
   const out: Record<string, number> = {};
   for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
@@ -99,7 +99,7 @@ function rcByType(v: unknown): Record<string, number> | null {
     const n = num(raw, 4e6);
     if (n !== null) out[k] = n;
   }
-  return Object.keys(out).length ? out : null;
+  return Object.keys(out).length ? JSON.stringify(out) : null;
 }
 
 /** Store one sample. Never throws — a measurement must not break the poll that carries it. */
@@ -113,7 +113,7 @@ export async function recordMemorySample(
        (source, commit_used_mb, commit_limit_mb, ram_free_mb,
         rc_procs, rc_mb, recgov_procs, recgov_mb, other_procs, other_mb,
         max_pid, max_mb, max_family, max_type, rc_by_type)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb)`,
     [
       source ? source.slice(0, 40) : null,
       // A 4 TB ceiling on memory figures and 1e7 on a pid: generous enough that no real
@@ -128,6 +128,11 @@ export async function recordMemorySample(
       // a caller feels like sending. An unrecognised type stores null — "not reported" — which
       // the readout already prints as a gap.
       typeof sample.maxType === 'string' && PROCESS_TYPES.has(sample.maxType) ? sample.maxType : null,
+      // STRINGIFIED, NOT THE OBJECT. `sqlit` interpolates rather than binds, and its fallback
+      // is `String(val)` — so a plain object becomes the literal `'[object Object]'`, which
+      // Postgres rejects for a jsonb column. The whole INSERT then throws, and the `.catch`
+      // below turns that into silence: no sample stored AT ALL, not merely a missing column.
+      // Shipped 2026-08-18 and killed the memory series for ten minutes.
       rcByType(sample.rcByType),
     ],
   ).catch((e) => console.error('[chromium-memory] recordMemorySample failed:', e.message));
