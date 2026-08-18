@@ -1261,7 +1261,32 @@ async function testLogin() {
     await reportRehearsal(true, detail ?? 'verified by --test-login', null);
     return true;
   }
-  if (result === 'inconclusive') return false;
+  if (result === 'inconclusive') {
+    /**
+     * INCONCLUSIVE IS A THIRD ANSWER AND IT MUST BE REPORTED (2026-08-18).
+     *
+     * This used to `return false` in silence. The nightly path has always reported it as
+     * `ok = null` — the singleton's `ok` is three-valued precisely for this — so the hand-run
+     * path left the dashboard showing whatever it said BEFORE, which after a real failure is
+     * "the bot COULD NOT SIGN IN".
+     *
+     * Observed today: a test login re-authenticated from the live Okta session before any
+     * form appeared, so no credential was submitted and nothing was proved. The owner
+     * reasonably read the browser signing itself in as a pass; the dashboard meanwhile went
+     * on reporting a four-hour-old FAILURE. Two different wrong answers about the same run,
+     * because the run itself reported neither.
+     *
+     * `ok = null` with the reason is the honest record: we tried, and could not test.
+     */
+    log('');
+    log('… NOTHING WAS PROVED — this run did not exercise the password.');
+    log('   RC re-authenticated from the live Okta session before a form appeared. That is');
+    log('   the session working, not the unattended LOGIN working. To test the login itself');
+    log('   the Okta session has to be gone (it lasts ~12h), which is why the nightly');
+    log('   rehearsal only runs when the session is already down.');
+    await reportRehearsal(null, detail, null);
+    return false;
+  }
 
   log('');
   log('✗✗ THE UNATTENDED LOGIN DOES NOT WORK, and you are now signed OUT.');
