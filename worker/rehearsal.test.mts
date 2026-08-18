@@ -394,3 +394,34 @@ test('a re-authenticating session is never recorded as a failed login', () => {
   assert.match(kw, /provedNothing[\s\S]{0,200}?result: 'inconclusive'/,
     'proved-nothing must record as inconclusive — never a pass, never a failure');
 });
+
+/* ── THE HAND-RUN PATH THREW THE REASON AWAY (2026-08-18) ──────────────────────────── */
+
+/**
+ * `runLoginRehearsal` computes the real reason — Okta's own banner, folded in by
+ * `withBanner`, which is what separates "the password was mistyped when you saved it" from
+ * "a CAPTCHA is up" from "RC's app never rendered" — and RETURNS it as `detail`.
+ *
+ * `testLogin` took `.result` and discarded `.detail`, reporting the canned string
+ * "test login failed — a human must sign in". The NIGHTLY path always reported the real one,
+ * so the single path a human runs when actively trying to find out why was the one that threw
+ * the answer away — and `rc-test-login.bat` keeps no log, so the reason existed only in that
+ * console window. Observed on the first row this instrument ever wrote.
+ */
+
+test('the hand-run test reports the REASON, not a canned string', () => {
+  const kw = readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  const fn = kw.slice(kw.indexOf('async function testLogin()'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+
+  assert.match(body, /const detail = outcome === BUSY \|\| !outcome \? null : outcome\.detail \?\? null;/,
+    'testLogin must take the detail off the rehearsal result');
+  // BOTH REPORTS. The dashboard reads reportSession; the history reads reportRehearsal. A fix
+  // to one leaves the other saying nothing, which is how this survived in the first place.
+  assert.match(body, /reportRehearsal\(false, detail \?\?/, 'the history must carry it');
+  assert.match(body, /reportSession\('dead', detail \?\?/, 'and so must the dashboard');
+  // The canned sentence survives ONLY as a fallback — never as the value itself.
+  assert.ok(!/reportRehearsal\(false, 'test login failed/.test(body),
+    'the canned string must not be what gets reported');
+});

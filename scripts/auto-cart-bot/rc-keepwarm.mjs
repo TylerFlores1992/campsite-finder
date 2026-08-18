@@ -1219,6 +1219,26 @@ async function testLogin() {
     { headless: false, waitMs: 60_000 },
   );
   const result = outcome === BUSY ? BUSY : outcome.result;
+  /**
+   * THE REASON, NOT A CANNED STRING (2026-08-18).
+   *
+   * `runLoginRehearsal` computes the real one — Okta's own banner, folded in by
+   * `withBanner`, which is what separates "the password was mistyped when you saved it"
+   * from "a CAPTCHA is up" from "RC's app never rendered". It RETURNS it as `detail`. This
+   * function took `.result` and threw `.detail` away, substituting
+   * `'test login failed — a human must sign in'`.
+   *
+   * The nightly path (line ~934) has always reported the real detail. So the ONE path that
+   * a human runs when they are actively trying to find out why — with the answer printed on
+   * their screen and nowhere else, because rc-test-login.bat keeps no log — was the one that
+   * discarded it. Observed 2026-08-18: the first row this instrument ever wrote said
+   * "test login failed" and could not say what failed.
+   *
+   * Same family as `notifications.status = 'sent'` meaning only "Twilio returned 2xx", and
+   * as `claimBotCommands` returning `[]` for both "nobody asked" and "the query threw": the
+   * fact was computed and then dropped one step before it was useful.
+   */
+  const detail = outcome === BUSY || !outcome ? null : outcome.detail ?? null;
 
   if (result === BUSY) {
     log('✗ The hold runner has the profile. Wait a minute and re-run — nothing was changed.');
@@ -1238,7 +1258,7 @@ async function testLogin() {
     // test and recording half of it — so a login proved by hand at 16:00 did not stop the
     // 20:00 rehearsal spending a SECOND login on the same question, from an address that
     // has been blocked for twelve hours before over exactly that.
-    await reportRehearsal(true, 'verified by --test-login', null);
+    await reportRehearsal(true, detail ?? 'verified by --test-login', null);
     return true;
   }
   if (result === 'inconclusive') return false;
@@ -1249,10 +1269,12 @@ async function testLogin() {
   log('   Most likely: the password was mistyped when you saved it (it is hidden, so');
   log('   there is nothing to notice), or RC is showing a CAPTCHA. The line above says');
   log('   which. Re-save with mini-pc\\rc-save-password.bat if it is the password.');
-  await reportSession('dead', 'test login failed — a human must sign in');
+  await reportSession('dead', detail ?? 'test login failed — a human must sign in');
   // A FAILURE IS THE MORE IMPORTANT ONE TO RECORD. It is the state `autocart.rc_login`
   // exists to shout about, and a hand-run failure is no less real than a scheduled one.
-  await reportRehearsal(false, 'test login failed — a human must sign in', null);
+  // The real reason first, so the dashboard and the history say WHICH failure this was.
+  // The generic sentence stays as the fallback for a run that somehow produced none.
+  await reportRehearsal(false, detail ?? 'test login failed — a human must sign in', null);
   return false;
 }
 
