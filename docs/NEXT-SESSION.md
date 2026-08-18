@@ -54,9 +54,49 @@ only until the next skip. Verified by reading the table: one row, `ok=null`,
 
 ---
 
-## 2. THE LEAK — what is known, and the one change left to try
+## 2. THE LEAK — the trigger is NAMED, and the schedule cannot cure it
 
-### Known, measured, not guessed
+### The controlled comparison (2026-08-18 19:04–19:14 UTC)
+
+Three **token-less** renewals, ten minutes apart, same code, same profile, same browser
+generation. The only difference is whether RC's sign-in control was found and clicked:
+
+| time | stage reached | navigated to Okta? | `rc` at the next sample |
+| --- | --- | --- | --- |
+| 19:04:04 | `no-signin-control` | no | 200 MB |
+| 19:10:43 | `authorize` ✓ (`none → 3579s`) | **yes** | **2,331 MB** |
+| 19:13:46 | `no-signin-control` | no | 237 MB |
+
+The two that never navigated ran the identical `dropStoredToken`, `renew:reload` and
+`renew:prime-after-reload` and allocated nothing. **So it is the Okta navigation.** The RAM
+trail's "onset at the reload" was where the stall was *caught*, one level in from where the
+click was caught before it.
+
+The arithmetic agrees: a near-expiry renewal makes **two** Okta trips (the SPA's own hidden
+`prompt=none` once a real clear signs it out, then our click) and lands at 4–5 GB; one trip
+lands at 2.3 GB.
+
+### What that changed
+
+- **Half of yesterday's plan is false.** The token-less cell *does* ramp. The near-expiry
+  stand-down halves the leak and cannot cure it.
+- **No schedule can cure it.** `attemptLogin` navigates to Okta too and is release-critical.
+- **So the browser is recycled after any Okta round trip**, keyed on the click
+  (`renewSession` returns `visitedOkta`), read from one flag at the top of the resident loop.
+  Safe for exactly the reason the age recycle was useless: `localStorage` survives a restart,
+  so the freshly minted token does, and `planRenewal` then stands down for 59 minutes.
+- **Still unknown, and now moot:** whether the 2.3 GB accumulates across renewals in one
+  browser life. Nothing has ever run two — the guard always killed it first.
+
+### Still open on the leak
+
+- **The mechanism inside the Okta page load.** Non-JS memory, renderer + browser process,
+  network/IPC buffering is a CANDIDATE and is not promoted. Nothing distinguishes it yet.
+- **Watch for:** ramps should now peak at ~2.3 GB (one trip) and be followed within a minute
+  by a `♻ recycling the browser` line and a 200 MB baseline. A 4–5 GB ramp after the box
+  updates would mean something still makes two trips.
+
+### Earlier, still true
 
 - **Family:** the keep-warm's own resident RC browser. 20 ramps in 5 days, ~every 70 min.
 - **Not the JS heap.** 15 MB, flat, twelve identical samples, while the process reached 4.9 GB.
@@ -67,34 +107,23 @@ only until the next skip. Verified by reading the table: one row, `ok=null`,
   baseline  {browser:42,  utility:24, renderer:103,  gpu-process:93, crashpad:2} =  264MB
   ramp      {browser:587, utility:28, renderer:1340, gpu-process:89, crashpad:2} = 2046MB
   ```
-- **Onset is the reload after `dropStoredToken`**, NOT the sign-in click:
+- A near-expiry ramp loses memory in **two** places, which is the two Okta trips:
   ```
      3s ago  6912→3946 MB free @ renew:click-sign-in      (x7)
     73s ago  8440→7253 MB free @ renew:prime-after-reload  (x4)
    113s ago  9060      MB free @ login rehearsal
   ```
-  The click is simply the longest step, which is why the stall landed there four times running.
+  Read oldest-first. The `prime-after-reload` loss is the SPA's own hidden `prompt=none`
+  after a real clear; the `click-sign-in` loss is ours. Neither occurs when the clear takes
+  nothing and the click finds no control — which is what the table above measures.
 
-**Leading candidate: network/IPC buffering** — renderer plus browser process, with the network
-service evidently not in the (flat) utility process. **Labelled a candidate. Do not promote it
-to a finding without evidence.**
+**Leading candidate for the mechanism: network/IPC buffering** — renderer plus browser process,
+with the network service evidently not in the (flat) utility process. **Labelled a candidate.
+Do not promote it to a finding without evidence.**
 
-### The change left to try — NOT BUILT
-
-**Stop renewing at near-expiry.** The step that leaks is a step that has never worked:
-
-- Every ramp began in a near-expiry renewal (`the token has 10m left (src=live)`) — 5 for 5.
-- That cell has **never once succeeded** (`554s → none`, `-115s → none`, and on 08-18 not one
-  attempt completed — the guard killed the browser every time).
-- The **token-less** cell works and does not ramp: `✓ renewed by authorize: none → 3580s`,
-  repeatedly, with `cleared 0 storage key(s)`.
-
-So let the token lapse and renew from empty. The apparent cost — a few dead minutes per hour —
-is what we already have, because the near-expiry attempt fails anyway.
-
-**A wobble, recorded so it is not re-discovered as a refutation:** two near-expiry renewals on
-08-18 (11:08, 11:38 UTC) show no ramp. Both read `· skipped: no Okta session to renew against`.
-They never ran; they neither support nor contradict.
+**Both near-expiry renewals on 08-18 at 11:08 and 11:38 UTC show no ramp, and prove nothing** —
+both read `· skipped: no Okta session to renew against`, so they never ran. Recorded so they are
+not re-discovered as a refutation.
 
 ---
 
@@ -106,7 +135,9 @@ They never ran; they neither support nor contradict.
   history.
 - **Do not re-add an age recycle.** Built and removed the same night: `localStorage` survives a
   browser restart, so a recycled browser comes back `token source: live` and lands in the same
-  near-expiry cell. It changed neither the cell nor the timing.
+  near-expiry cell. It changed neither the cell nor the timing. **The post-Okta recycle is a
+  different thing and is deliberately keyed on the event** — that same `localStorage` fact is
+  what makes it safe rather than useless, since the token it just minted survives the reopen.
 - **Do not re-add the three throttling-disable flags.** Their stated purpose (catching RC's own
   renewal timer) was disproven twice over. They are not the leak's cause either — that A/B has
   still not been run cleanly — but nothing needs them.
@@ -116,26 +147,29 @@ They never ran; they neither support nor contradict.
 
 ---
 
-## 4. State of the box, as of 2026-08-18 05:00 PT
+## 4. State of the box, as of 2026-08-18 12:40 PT
 
-- mini-PC on `7f5e1d8`; master is ahead by the web-side `sqlit` fix (`4fa84d5`) — **no bot
-  update needed for that one.**
-- Session **DEAD**, `okta=GONE(404)` after ~12h. The renewal is skipped entirely in that state;
-  only a real sign-in recovers it.
-- The 08:00 PT hold is **`TEST · 4729`** — synthetic, and 4729 comes from the block of unit ids
-  that were **invented** and never verified against real San Miguel inventory. Yesterday's
-  `4728` already failed. **No real campsite is at stake in that hold.**
+- mini-PC on `f02e497` — it HAS the near-expiry stand-down (`renewal stood down: the token has
+  59m left — waiting for it to lapse`, first seen 19:21:33 UTC). It does **not** yet have the
+  reason-reporting fix, the inconclusive fix, or the Okta recycle.
+- **The RC account was changed this morning** after the old one would not sign in; the owner
+  signed in by hand seconds before the 08:00 hold. `rc-test-login.bat` then succeeded at
+  ~19:21 UTC and the session is live (`token exp in 45m; okta=ALIVE`).
+- `rc_login_rehearsal_log` (migration 063) is live and holds its first row — the 19:13 failure.
+  **The singleton still reads that failure**, because the run the owner watched succeed
+  reported nothing at all; that is what the inconclusive fix addresses.
 
 ---
 
 ## Opening prompt for the next session
 
 > Read `CLAUDE.md` and `docs/NEXT-SESSION.md`. Two things are open. The RC **login** is the
-> urgent one: it hung at the password when run by hand, no rehearsal has passed since 08-16,
-> and `rc_login_rehearsal` keeps only one row so failures are overwritten — start by getting a
-> trustworthy read on whether the unattended sign-in still works, and fix the rehearsal's
-> history while you are there. The Chromium **leak** is contained (the RAM guard has caught
-> four ramps and the box has not been past 71% COMMIT) and narrowed to non-JS memory in the
-> renderer and browser process, beginning at the reload after `dropStoredToken`. The change
-> left to try is removing the near-expiry renewal entirely, since that cell has never once
-> succeeded and is where every ramp starts. Do not redo the four things in section 3.
+> urgent one: the account had to be changed and signed in by hand seconds before an 08:00
+> hold, and no unattended rehearsal has passed since 08-16 — start by getting a trustworthy
+> read on whether the unattended sign-in still works, now that the rehearsal keeps a history
+> and reports its inconclusive runs. The Chromium **leak**'s trigger is named: the **Okta
+> navigation**, established by a controlled comparison of three token-less renewals that
+> differ only in whether the sign-in control was clicked. The browser is now recycled after
+> any Okta round trip; confirm from the memory series that ramps peak near 2.3 GB and are
+> followed by a `♻ recycling the browser` line. Do not redo the four things in section 3, and
+> do not re-assert that the token-less cell does not ramp — it does.

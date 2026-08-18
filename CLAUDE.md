@@ -1364,8 +1364,12 @@ The step that leaks is a step that has never worked, so removing it may cost not
 - **That cell has never once succeeded.** This file's own 2x2 already records it as "not
   observed to work" (`554s → none`, `-115s → none`), and on 08-18 not one attempt completed —
   the guard killed the browser every time.
-- **The TOKEN-LESS cell works and does not ramp**: `✓ renewed by authorize: none → 3580s`,
-  observed repeatedly, with `cleared 0 storage key(s)` and no memory event after any of them.
+- ~~**The TOKEN-LESS cell works and does not ramp**: `✓ renewed by authorize: none → 3580s`,
+  observed repeatedly, with `cleared 0 storage key(s)` and no memory event after any of them.~~
+  **FALSIFIED THE SAME DAY — see the section directly below.** It works and it ramps ~2.3 GB.
+  Every "no memory event" reading behind that sentence was a 2-minute sampler missing a
+  46-second allocation. **The stand-down is still right and it HALVES the leak; it does not
+  cure it,** because the cell it moves to navigates to Okta as well.
 - So: let the token lapse and renew from empty. The apparent cost — a few dead minutes per
   hour — is what we ALREADY have, because the near-expiry attempt fails anyway.
 - **A WOBBLE, RECORDED SO IT IS NOT RE-DISCOVERED AS A REFUTATION.** Two near-expiry renewals
@@ -1387,10 +1391,77 @@ The step that leaks is a step that has never worked, so removing it may cost not
   and says why. A second test pins the boundary as live-vs-dead (1s acts as alive, 0s acts as
   lapsed) so the threshold cannot creep back as "under a minute is basically expired".
   Four mutations, each verified to fail.
-- **HOW TO READ THE NEXT DAY.** If ramps stop entirely once the box updates, this was the
+- ~~**HOW TO READ THE NEXT DAY.** If ramps stop entirely once the box updates, this was the
   cause. If they continue, the near-expiry path was merely where it was observed and the real
   trigger is the reload-with-clear itself — which the token-less renewal also performs, just
-  with nothing to clear.
+  with nothing to clear.~~ **ANSWERED IN NINETY MINUTES, AND BY NEITHER BRANCH.** The trigger
+  is not the reload-with-clear either — two token-less renewals ran the identical clear and
+  reload with no ramp at all. See below.
+
+### IT IS THE OKTA NAVIGATION, AND THAT IS A CONTROLLED COMPARISON (2026-08-18, fifth pass)
+The stand-down above went live on the box at ~19:13 PT. Within ten minutes the keep-warm's own
+log produced the cleanest evidence this investigation has had — three **token-less** renewals,
+same code, same profile, same browser generation, differing in exactly one thing: whether RC's
+sign-in control was found and clicked.
+
+| time (UTC) | cell | stage reached | navigated to Okta? | `rc` family at the next sample |
+|---|---|---|---|---|
+| 19:04:04 | token-less | `no-signin-control` | **no** | 200 MB |
+| 19:10:43 | token-less | `authorize` ✓ (`none → 3579s`) | **yes** | **2,331 MB** |
+| 19:13:46 | token-less | `no-signin-control` | **no** | 237 MB |
+
+- **The two that never navigated ran the identical `dropStoredToken`, `renew:reload` and
+  `renew:prime-after-reload` and allocated NOTHING.** So the RAM trail's reading — "the onset
+  is the reload after `dropStoredToken`" — was where the stall was *caught*, not where the
+  allocation happens. That correction is the same shape as the one the trail itself made about
+  `renew:click-sign-in`, one level further in.
+- **THE ARITHMETIC AGREES.** A near-expiry renewal makes **two** Okta round trips — the SPA's
+  own hidden `prompt=none` once a real clear signs it out, then our click — and lands at
+  4,313 / 3,986 / 4,866 / 4,903 MB. One trip lands at 2,331 MB. Half the trips, half the
+  memory, and the 19:03 trail shows the two halves separately
+  (`8638→6552 @ renew:prime-after-reload`, then `6217→3802 @ renew:click-sign-in`).
+- **WITH THE JS HEAP FLAT AT 15-18 MB** and the growth in the **renderer plus the browser
+  process**, the mechanism is still non-JS memory — network/IPC buffering remains the leading
+  CANDIDATE and is not promoted. What IS established is the trigger.
+- **SO THE SCHEDULE CANNOT CURE THIS.** `attemptLogin` navigates to Okta too, and it is
+  release-critical: `maybeAutoLogin` at T−30 is the only thing between a queued hold and a
+  missed cart. There is no version of this product that never loads Okta.
+- **THE FIX IS THEREFORE A RECYCLE, KEYED ON THE EVENT.** `renewSession` returns
+  `visitedOkta` — read off the CLICK, not off `stage`, because `authorize`/`none` mean clicked
+  and `no-signin-control` does not, which is three strings to keep in step across two files
+  for one boolean. The resident loop reads one `oktaTrip` flag at the TOP (the auto-login and
+  the rehearsal both `continue`, so a check beside each call site is three chances to forget
+  one) and `break`s into the existing reopen path.
+- **WHY RECYCLE RATHER THAN LET THE GUARD HANDLE IT.** 2.3 GB trips nothing: it leaves
+  ~6,500 MB free against a 4,000 MB floor, and the renewal COMPLETES, so there is no stall
+  either. Across twenty ramps in five days **every one was followed by a new pid** — the
+  memory has never once been seen coming back down in place — and nothing has ever run two
+  renewals in one browser life, because the guard always killed it first. **Whether it
+  accumulates hour on hour is UNKNOWN**, and the choice was between finding out at 3 a.m. and
+  making the question moot.
+- **THIS IS NOT THE AGE RECYCLE THAT WAS REMOVED, and the reason is the fact that killed it.**
+  That one fired on a clock and came back `token source: live` — because `localStorage`
+  survives a browser restart — so it landed in the same near-expiry cell and changed nothing.
+  Here that same fact is what makes this SAFE: the freshly minted token survives the reopen,
+  `planRenewal` stands down for 59 minutes, and the browser sits at its 200 MB baseline until
+  the token lapses. One recycle per token lifetime, at the moment the allocation happened.
+- **NOT GATED ON `RECYCLE_COOLDOWN_MS`, though it stamps it.** We KNOW two gigabytes were just
+  allocated; standing down would leave them standing. Pacing comes from `planRenewal`'s floor
+  (5m), gap (10m) and backoff instead.
+- **AND IT MAY BEAR ON THE LOGIN.** The owner's sign-in "got hung up at password" and a later
+  one sat on *"We are processing your request…"*. Okta's form is rendered **by the navigation
+  that allocates the gigabytes**, so memory pressure is now a live alternative to the CAPTCHA
+  reading — **both remain candidates, neither is established.** The discriminators already
+  exist: `diagnose()` reads Okta's own error banner, `saveFailureShot` writes a picture (a
+  challenge is visible in it), and the RAM trail carries the step, so a login that allocates
+  shows up as a trail entry losing GB `@ auto-login`.
+- `worker/keepwarm-recycle.test.mts`, **seven mutations, each asserting the mutation applied** —
+  `visitedOkta` read off the stage, the early skip dropping the field, the flag set after the
+  `continue`, the check moved below the setters, the check moved above the profile yield, the
+  cooldown gating it, and `process.exit` instead of `break`.
+  **One guard failed at baseline and the reason is the usual one**: it anchored on
+  `maybeAutoLogin(ctx, page)`, which matches the function DEFINITION four hundred lines above
+  the call site. It anchors on the awaited call now. **Thirteenth time.**
 
 ### THE LOGIN IS THE OPEN RISK, NOT THE LEAK (2026-08-18)
 - **THE OWNER RAN THE LOGIN BY HAND AND IT "GOT HUNG UP AT PASSWORD".** That is a signature,
@@ -4374,20 +4445,22 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs current to 2026-08-18.** **THE CHROMIUM LEAK IS CONTAINED, NOT CURED — know the
-difference.** The RAM guard has fired four times (5,688 / 4,866 / 4,903 / 2,046 MB) and the box
-has not been past 71% COMMIT since; the allocation still happens every ~70 minutes. What is now
-known: it is the **renderer AND the browser process** (GPU, utility, crashpad flat), it is **not
-the JS heap** (15 MB, flat, while the process reached 4.9 GB), and it **begins at the reload
-after `dropStoredToken`** — not at the sign-in click, which is merely where the stall was caught
-on all four firings. **The candidate cure is to stop renewing at near-expiry at all**: that cell
-has never once succeeded, it is where every ramp starts, and the token-less cell works and does
-not ramp. NOT BUILT.
-**THE OPEN RISK IS THE LOGIN, NOT THE LEAK.** The owner ran the sign-in by hand and it hung at
-the password — a CAPTCHA signature, not a wrong password — so `maybeAutoLogin` should be
-expected to fail too. No rehearsal has PASSED since 2026-08-16, and `rc_login_rehearsal` keeps
-one row updated in place, so failures do not survive to be counted. **START AT
-`docs/NEXT-SESSION.md`.**
+**Docs current to 2026-08-18 (fifth pass).** **THE LEAK'S TRIGGER IS NAMED, BY A CONTROLLED
+COMPARISON RATHER THAN A CORRELATION: it is the OKTA NAVIGATION.** Three token-less renewals ten
+minutes apart, same code and profile, split cleanly on whether RC's sign-in control was clicked
+— the one that navigated cost **2,331 MB**, the two that reached `no-signin-control` cost
+**nothing**, having run the identical clear, reload and prime. That retires "the onset is the
+reload after `dropStoredToken`", and it **falsifies half of the entry shipped the same morning**:
+the token-less cell does ramp, so the near-expiry stand-down halves the leak (two Okta trips per
+near-expiry renewal against one) and cannot cure it. **`attemptLogin` navigates too and is
+release-critical, so no schedule can fix this** — the browser is now RECYCLED after any Okta
+round trip, keyed on the click (`visitedOkta`), which is safe for the same reason the age recycle
+was useless: `localStorage` survives a restart, so the minted token does too. Containment is
+otherwise unchanged: the RAM guard has fired four times and the box has not been past 71% COMMIT.
+**THE OPEN RISK IS STILL THE LOGIN.** The owner's sign-in hung at the password and a later one
+sat on *"We are processing your request…"*. A CAPTCHA and memory pressure are now **both** live
+candidates — Okta's form is rendered by the very navigation that allocates the gigabytes — and
+neither is established. **START AT `docs/NEXT-SESSION.md`.**
 
 *(Previous pass.)* **THE CHROMIUM LEAK IS ATTRIBUTED AT LAST — 20
 ramps in 5 days, every ~70 minutes, every one the keep-warm's own resident RC browser, one
