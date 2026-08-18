@@ -226,3 +226,111 @@ test('the disproven throttling flags are gone and stay gone', () => {
   assert.match(code, /'--hide-crash-restore-bubble'/,
     'the crash-restore bubble suppression is unrelated and must stay');
 });
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────────────────
+ * RECYCLE AFTER AN OKTA ROUND TRIP (2026-08-18)
+ *
+ * A CONTROLLED COMPARISON, off one ten-minute window on the box. Three token-less renewals,
+ * same code, same profile, same browser generation, differing only in whether RC's sign-in
+ * control was found and clicked:
+ *
+ *     19:04:04  token-less -> `no-signin-control` (never clicked)  ->   200 MB
+ *     19:10:43  token-less -> `authorize` OK (clicked)             -> 2,331 MB
+ *     19:13:46  token-less -> `no-signin-control` (never clicked)  ->   237 MB
+ *
+ * The two that never navigated ran the identical clear, reload and prime and allocated
+ * NOTHING. So the onset is the Okta navigation, not `renew:reload` where the RAM trail had
+ * put it — the trail could only say where the stall was CAUGHT.
+ *
+ * AND IT CORRECTS THE ENTRY SHIPPED THE SAME MORNING. `planRenewal` stands down on a live
+ * token because every ramp began in a near-expiry renewal AND because the token-less cell
+ * "works and does not ramp". The first half stands; the second is false. The stand-down
+ * halves the leak (two Okta trips per near-expiry renewal against one) and cannot cure it.
+ *
+ * These tests pin the recycle to the CLICK and to the loop position, because the two ways to
+ * get this wrong both read as correct: keying off `stage` strings that must stay in step
+ * across two files, and placing the check where a `continue` skips it.
+ * ─────────────────────────────────────────────────────────────────────────────────────────
+ */
+
+const TOKEN_SRC = readFileSync('scripts/auto-cart-bot/rc-token.mjs', 'utf8');
+const tokenCode = TOKEN_SRC.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+test('renewSession reports whether it actually navigated, and it is the click', () => {
+  // The function that navigates is the function that knows. `stage` cannot answer this
+  // without the caller knowing that `authorize` and `none` mean clicked while
+  // `no-signin-control` does not — three strings to keep in step for one boolean.
+  assert.match(tokenCode, /visitedOkta = clicked === true/,
+    'visitedOkta must be set from the click itself');
+  assert.match(tokenCode, /return \{ renewed, stage, before, after, restored, cleared, skipped: null, visitedOkta \}/,
+    'the successful return must carry visitedOkta');
+  assert.match(tokenCode, /skipped: 'no Okta session to renew against', visitedOkta: false/,
+    'the early skip must carry visitedOkta too, or the caller reads undefined');
+});
+
+test('the caller recycles on the click, never on a stage string', () => {
+  assert.match(code, /if \(r\?\.visitedOkta\) oktaTrip =/,
+    'the renewal must set oktaTrip from visitedOkta');
+  assert.ok(!/oktaTrip = .*r\.stage === /.test(code),
+    'reading the stage back would reintroduce the three-string coupling');
+});
+
+test('every path that goes through Okta sets the flag', () => {
+  // The auto-login and the rehearsal both `continue`, so a check beside each call site
+  // would be three chances to forget one. All three set one variable instead.
+  // ANCHOR ON THE CALL, NOT THE NAME. The first version searched for
+  // `maybeAutoLogin(ctx, page)` and landed on the function DEFINITION four hundred lines
+  // above the call site, so it failed while the code was correct. Thirteenth time a guard
+  // here has anchored on the wrong thing; the awaited call is the thing being asserted about.
+  for (const [what, near] of [
+    ['an unattended sign-in', 'await maybeAutoLogin(ctx, page).catch('],
+    ['the login rehearsal', 'await maybeRehearse(ctx, page).catch('],
+  ] as const) {
+    const at = code.indexOf(near);
+    assert.ok(at > -1, `could not find the awaited call ${near}`);
+    const block = code.slice(at, at + 400);
+    assert.ok(block.includes(`oktaTrip = '${what}'`),
+      `${near} must set oktaTrip — a true return means an attempt was made, and every ` +
+      'branch of an attempt has been through Okta, provedNothing included');
+    assert.ok(block.indexOf(`oktaTrip = '${what}'`) < block.indexOf('continue;'),
+      'the flag must be set BEFORE the continue, or the recycle never happens');
+  }
+});
+
+test('the recycle is read at the top of the loop, where both continues reach it', () => {
+  const loop = code.slice(code.indexOf('for (;;) {', code.indexOf('let oktaTrip')));
+  const readAt = loop.indexOf('if (oktaTrip) {');
+  const autoLoginAt = loop.indexOf('maybeAutoLogin(ctx, page)');
+  const renewAt = loop.indexOf('await renewSession(');
+  assert.ok(readAt > -1, 'the recycle check must exist inside the resident loop');
+  assert.ok(readAt < autoLoginAt && readAt < renewAt,
+    'a check placed after the setters is skipped by every `continue` that sets one');
+});
+
+test('a cart still outranks the recycle, and the recycle outranks the memory scan', () => {
+  const loop = code.slice(code.indexOf('for (;;) {', code.indexOf('let oktaTrip')));
+  const yieldAt = loop.indexOf('profileRequested(PROFILE_DIR)');
+  const readAt = loop.indexOf('if (oktaTrip) {');
+  const memAt = loop.indexOf('lastMemCheck >= MEM_CHECK_MS');
+  assert.ok(yieldAt < readAt,
+    'the hold runner must be able to take the profile before we close the browser for tidiness');
+  assert.ok(readAt < memAt,
+    'recycling first saves a PowerShell spawn on a browser that is about to be replaced');
+});
+
+test('the recycle reuses the reopen path and is not gated on the cooldown', () => {
+  const start = code.indexOf('if (oktaTrip) {');
+  const end = code.indexOf('lastMemCheck >= MEM_CHECK_MS', start);
+  assert.ok(start > -1 && end > start, 'could not locate the Okta recycle block');
+  const block = code.slice(start, end);
+  assert.match(block, /\bbreak;/, 'must break, so the existing outer loop reopens');
+  assert.ok(!/process\.exit/.test(block),
+    'exiting would hand the supervisor a restart and write an abnormal-exit marker');
+  // It SETS the cooldown so the size arm does not immediately recycle a fresh browser, but
+  // it must not READ it: we know two gigabytes were just allocated, and standing down would
+  // leave them standing. Pacing comes from planRenewal's floor, gap and backoff.
+  assert.match(block, /lastRecycleAt = Date\.now\(\)/, 'it must stamp the cooldown');
+  assert.ok(!/lastRecycleAt < RECYCLE_COOLDOWN_MS/.test(block),
+    'gating on the cooldown would skip a recycle after a real 2 GB allocation');
+});

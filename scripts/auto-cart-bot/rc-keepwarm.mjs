@@ -1627,6 +1627,19 @@ async function warmResident() {
       // in fact we just did, on the one dashboard that decides whether to wake someone.
       let lastCheck = 0;
       let lastExpiryPoll = 0;
+      /**
+       * ── WHAT JUST TOOK THIS BROWSER THROUGH OKTA, IF ANYTHING ────────────────────────────
+       *
+       * Null on every ordinary pass. Set to a short human phrase by the three places that
+       * navigate to `signin.reservecalifornia.com`, and read at the TOP of the loop, which is
+       * the one place all three reach — the auto-login and the rehearsal both `continue`, so a
+       * check beside each call site would be three chances to forget one.
+       *
+       * WHY IT EXISTS. See `oktaTrip`'s consumer below. Short version: an Okta round trip in
+       * this Chromium costs ~2 GB that is never given back, and the only mechanism ever
+       * observed to return this profile to its 200 MB baseline is a new process.
+       */
+      let oktaTrip = null;
       // 0 so the first look happens immediately on every open — a browser that comes back
       // already huge is exactly the case worth catching before it ramps again.
       let lastMemCheck = 0;
@@ -1649,6 +1662,69 @@ async function warmResident() {
         // a keep-warm that keeps nothing warm and still reports for duty.
         if (!ctx.pages().length || page.isClosed()) {
           log('⚠ the RC window was closed — reopening it');
+          break;
+        }
+
+        /**
+         * ── RECYCLE AFTER AN OKTA ROUND TRIP (2026-08-18) ─────────────────────────────────
+         *
+         * THE CONTROLLED COMPARISON, off one ten-minute window on the box. Three token-less
+         * renewals, same code, same profile, same browser generation, differing only in
+         * whether RC's sign-in control was found and clicked:
+         *
+         *     19:04:04  token-less → `no-signin-control` (never clicked)  →   200 MB
+         *     19:10:43  token-less → `authorize` ✓ (clicked)              → 2,331 MB
+         *     19:13:46  token-less → `no-signin-control` (never clicked)  →   237 MB
+         *
+         * The two that never navigated ran the identical clear, reload and prime and allocated
+         * NOTHING. The one that navigated allocated 2.3 GB. That is a natural experiment
+         * rather than a correlation over days, and it moves the onset off `renew:reload` —
+         * where the RAM trail had put it — onto the Okta navigation itself.
+         *
+         * IT ALSO CORRECTS THE PLAN THAT SHIPPED THIS MORNING. `planRenewal` now stands down
+         * on a live token, on the evidence that every ramp began in a near-expiry renewal and
+         * that the token-less cell "works and does not ramp". The first half stands. The
+         * second is FALSE: 19:10:43 is token-less, cleared 0 keys, succeeded, and cost 2.3 GB.
+         * The stand-down halves the leak — a near-expiry renewal makes TWO Okta trips (the
+         * SPA's own hidden `prompt=none` after a real clear, then our click) and lands at
+         * ~4-5 GB, against ~2.3 GB for one — and it cannot cure it, because the cell we moved
+         * TO navigates as well. So does `attemptLogin`, which is release-critical and cannot
+         * be removed at all.
+         *
+         * WHY RECYCLE RATHER THAN WAIT FOR THE GUARD. The 2.3 GB does not trip anything: it
+         * leaves ~6,500 MB free, well above the 4,000 MB floor, and the renewal COMPLETES, so
+         * there is no stall either. It simply sits there. Across twenty ramps in five days
+         * every single one was followed by a NEW pid — the memory has never once been observed
+         * coming back down in place — and nothing has ever run two renewals in one browser
+         * life, because the guard always killed it first. So whether it accumulates hour on
+         * hour is UNKNOWN, and the honest options are to find out at 3 a.m. or to make the
+         * question moot. This makes it moot.
+         *
+         * WHY THIS IS NOT THE AGE RECYCLE THAT WAS REMOVED. That one fired on a clock, and its
+         * premise was false: `localStorage` survives a browser restart, so it came back
+         * `token source: live`, landed in the same near-expiry cell, and changed neither the
+         * cell nor the timing. Here that same fact is what makes this SAFE — the freshly minted
+         * token survives the reopen, `planRenewal` stands down for the next 59 minutes, and the
+         * browser sits at its 200 MB baseline until the token lapses. One recycle per token
+         * lifetime, at the moment the allocation has just happened.
+         *
+         * NOT GATED ON `RECYCLE_COOLDOWN_MS`, THOUGH IT SETS IT. The cooldown exists to stop
+         * the size arm thrashing on a browser that is over the line the instant it opens; here
+         * we KNOW two gigabytes were just allocated, so standing down would leave them
+         * standing. Pacing comes from `planRenewal` instead — a floor of 5 minutes, a gap of
+         * 10, and a backoff after three failures — which bounds a failing renewal to a reopen
+         * every few minutes. That is what the guard already does on those, more expensively.
+         *
+         * AFTER the runner's preemption and the closed-window check, deliberately: a cart at
+         * 08:00:00 outranks tidying up memory, and a window somebody closed needs the reopen
+         * for its own reasons. BEFORE the size scan, so this costs no PowerShell spawn.
+         */
+        if (oktaTrip) {
+          lastRecycleAt = Date.now();
+          log(`♻ recycling the browser — ${oktaTrip} took it through Okta.`);
+          log('  Measured 2026-08-18: one Okta round trip costs this renderer and browser');
+          log('  process ~2 GB between them, and nothing here has ever been seen to give it');
+          log('  back. The reopen takes seconds and the minted token survives it.');
           break;
         }
 
@@ -1698,6 +1774,10 @@ async function warmResident() {
           // Before anything else: is a hold about to need a session we do not have?
           mark('auto-login');
           if (await maybeAutoLogin(ctx, page).catch((e) => { log(`auto-login error: ${e.message}`); return false; })) {
+            // A TRUE RETURN MEANS AN ATTEMPT WAS MADE, and every branch of an attempt has
+            // already been through Okta — including `provedNothing`, where RC answered from
+            // the cookie and showed no form. No form is not no navigation.
+            oktaTrip = 'an unattended sign-in';
             continue;
           }
           // AFTER the auto-login, never before. If a hold is close enough that the bot is
@@ -1707,6 +1787,7 @@ async function warmResident() {
           // within six hours of a release, so this ordering is a belt on top of a brace.)
           mark('login rehearsal');
           if (await maybeRehearse(ctx, page).catch((e) => { log(`rehearsal error: ${e.message}`); return false; })) {
+            oktaTrip = 'the login rehearsal';
             continue;
           }
           mark('reading the token');
@@ -1765,6 +1846,10 @@ async function warmResident() {
             // the logging is not, and an attempt that is made and not recorded is an attempt
             // the floor cannot see — which turns the ration into no ration at all.
             renewal = recordRenewal(renewal, { token, now: Date.now(), renewed: r?.renewed === true });
+            // THE CLICK, NOT THE STAGE. `renewSession` reports whether it actually navigated;
+            // reading it off `stage` would mean keeping `authorize`, `none` and
+            // `no-signin-control` in step across two files to express one boolean.
+            if (r?.visitedOkta) oktaTrip = `the renewal's sign-in click (${r.stage})`;
             if (r?.skipped) {
               log(`  · skipped: ${r.skipped} — the token is untouched`);
             } else if (r) {

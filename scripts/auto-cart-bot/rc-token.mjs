@@ -553,7 +553,7 @@ export async function renewSession(
   // "unknown is not dead" rule, applied to the thing that acts rather than the report.
   if (oktaAlive === false) {
     return { renewed: false, stage: 'skipped', before, after: before, restored: false, cleared: [],
-      skipped: 'no Okta session to renew against' };
+      skipped: 'no Okta session to renew against', visitedOkta: false };
   }
 
   // WIDER THAN IT WAS, AND THE SNAPSHOT IS WHAT MAKES THAT SAFE. Clearing only RC's two
@@ -571,6 +571,7 @@ export async function renewSession(
   onStep('renew:prime-after-reload');
   let { token } = await primeToken(page, { timeoutMs: 25_000, notToken: previous });
   let stage = 'reload';
+  let visitedOkta = false;
 
   // STAGE TWO — THE ONE THAT HAS ACTUALLY BEEN OBSERVED TO WORK. See the header: a plain
   // load leaves the SPA sitting signed-out and issuing no `/authorize`, so the reload alone
@@ -585,6 +586,14 @@ export async function renewSession(
     stage = 'authorize';
     onStep('renew:click-sign-in');
     const clicked = await clickSignIn(page).catch(() => false);
+    // THE FACT THE CALLER NEEDS, REPORTED BY THE FUNCTION THAT KNOWS IT. A click here
+    // navigates to `signin.reservecalifornia.com`, and on 2026-08-18 three token-less
+    // renewals ten minutes apart separated cleanly on exactly this: the one that clicked
+    // allocated 2.3 GB, the two that reached `no-signin-control` allocated nothing. The
+    // caller recycles the browser on it, so it must be the click itself and never a guess
+    // from `stage` — `none` and `authorize` both mean clicked, `no-signin-control` does not,
+    // and that is three strings to keep in step across two files instead of one boolean.
+    visitedOkta = clicked === true;
     if (!clicked) {
       // A REAL AND DISTINCT OUTCOME, not a shrug. On 2026-08-15 18:22 the clear did not sign
       // the SPA out — it went on rendering its signed-in banner — so no "Log in" anchor
@@ -634,7 +643,7 @@ export async function renewSession(
   // that works: `reload` would mean the SDK's own bootstrap has started working and this can
   // be simplified, `authorize` is the expected success, and `none` versus `no-signin-control`
   // separates "Okta refused" from "we never got as far as asking".
-  return { renewed, stage, before, after, restored, cleared, skipped: null };
+  return { renewed, stage, before, after, restored, cleared, skipped: null, visitedOkta };
 }
 
 /**
