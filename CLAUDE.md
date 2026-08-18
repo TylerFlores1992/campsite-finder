@@ -1357,7 +1357,7 @@ ramp      rc 2046MB  {browser:587, utility:28, renderer:1340, gpu-process:89, cr
   proven" caveat the trail was built to settle. **The onset is the reload that follows
   `dropStoredToken`.** `renew:reload` never appears because it completes inside one 10s tick.
 
-### THE CANDIDATE CURE: STOP RENEWING AT NEAR-EXPIRY (2026-08-18) — NOT YET BUILT
+### STOP RENEWING AT NEAR-EXPIRY (2026-08-18) — BUILT, awaiting a box update
 The step that leaks is a step that has never worked, so removing it may cost nothing.
 - **Every ramp began in a NEAR-EXPIRY renewal** (`the token has 10m left (src=live)`):
   23:44, 02:58, 04:03, 05:07, 06:12 — five for five.
@@ -1371,6 +1371,26 @@ The step that leaks is a step that has never worked, so removing it may cost not
 - **A WOBBLE, RECORDED SO IT IS NOT RE-DISCOVERED AS A REFUTATION.** Two near-expiry renewals
   on 08-18 (11:08, 11:38 UTC) show no ramp. Both read `· skipped: no Okta session to renew
   against` — they never ran. They neither support nor contradict.
+- **BUILT.** `planRenewal` now stands down while the token is alive AT ALL (`key: 'alive'`)
+  instead of acting under a 10-minute threshold. `RENEW_BEFORE_S` and the `renewBeforeS`
+  parameter are GONE rather than left unused, so nobody wires the threshold back in by
+  accident. `leftS == null` (no token, or one that will not decode) and `leftS <= 0` still act
+  — refusing those is the ninety dead minutes of 2026-08-15.
+- **THE COST, STATED HONESTLY:** the session is dead between expiry and the next attempt, at
+  most one `RENEW_FLOOR_MS` (5 min). **That is not new.** The near-expiry attempt renewed
+  nothing and took the browser with it, so that window was already dead — and cost several GB.
+- **`maybeAutoLogin` IS UNTOUCHED.** It signs in at T−30 of a real release and is the thing
+  between a queued hold and a missed cart. This schedule is the background repair; they stay
+  separate, as they have since 2026-08-15.
+- **THE OLD GUARD WAS INVERTED, NOT DELETED.** `worker/renewal-schedule.test.mts` asserted
+  `go === true` at 5 minutes left; that assertion WAS the bug, so it now asserts the stand-down
+  and says why. A second test pins the boundary as live-vs-dead (1s acts as alive, 0s acts as
+  lapsed) so the threshold cannot creep back as "under a minute is basically expired".
+  Four mutations, each verified to fail.
+- **HOW TO READ THE NEXT DAY.** If ramps stop entirely once the box updates, this was the
+  cause. If they continue, the near-expiry path was merely where it was observed and the real
+  trigger is the reload-with-clear itself — which the token-less renewal also performs, just
+  with nothing to clear.
 
 ### THE LOGIN IS THE OPEN RISK, NOT THE LEAK (2026-08-18)
 - **THE OWNER RAN THE LOGIN BY HAND AND IT "GOT HUNG UP AT PASSWORD".** That is a signature,

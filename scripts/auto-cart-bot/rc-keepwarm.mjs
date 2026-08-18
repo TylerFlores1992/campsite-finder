@@ -121,14 +121,12 @@ const ABNORMAL_EXIT_MARKER = path.join(PROFILE_DIR, '.camphawk-abnormal-exit');
 const KEEPALIVE_MS = Number(process.env.RC_KEEPALIVE_MS || 20 * 60 * 1000);
 
 /**
- * Renew when the token has less than this left — the SILENT-AUTH trigger.
- *
- * Ten minutes against an ~1h token: comfortably before expiry, and far enough out that a
- * reload which fails can be retried twice before anything is lost. The old loop reloaded
- * every twenty minutes regardless of the clock, which is not the same thing at all — it
- * renewed by accident when the timing happened to line up, and not otherwise.
+ * REMOVED 2026-08-18: `RENEW_BEFORE_S`, the "renew when the token is this close to expiry"
+ * threshold. `planRenewal` no longer acts on a live token at all — it waits for the token to
+ * lapse and renews from empty, because the near-expiry path is where the Chromium leak begins
+ * (RAM trail, `renew:prime-after-reload`) and it has never once produced a fresher token.
+ * The constant is gone rather than left unused so nobody wires it back in by accident.
  */
-const RENEW_BEFORE_S = Number(process.env.RC_RENEW_BEFORE_S || 10 * 60);
 /** How often to look at the clock. Cheap — one page.evaluate against an open tab. */
 const EXPIRY_POLL_MS = 60_000;
 
@@ -1680,9 +1678,10 @@ async function warmResident() {
           // reloads in sixteen minutes on 2026-08-08 is a request storm from an address whose
           // WAF has 403'd us — is kept, and is now a floor plus a gap plus a backoff rather
           // than a single equality that could not pace the signed-out case at all.
-          const plan = planRenewal({
-            token, leftS: left, now: Date.now(), state: renewal, renewBeforeS: RENEW_BEFORE_S,
-          });
+          // NO `renewBeforeS` ANY MORE — see planRenewal. It waits for the token to LAPSE
+          // rather than acting ten minutes out, because the near-expiry cell is where the
+          // Chromium leak lives and it has never once produced a fresher token.
+          const plan = planRenewal({ token, leftS: left, now: Date.now(), state: renewal });
           if (!plan.go) {
             renewalSkip(plan.key, plan.reason);
           } else {

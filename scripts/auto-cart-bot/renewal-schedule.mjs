@@ -83,19 +83,51 @@ export function planRenewal({
   leftS,
   now,
   state,
-  renewBeforeS,
   floorMs = RENEW_FLOOR_MS,
   minGapMs = RENEW_MIN_GAP_MS,
   backoffGapMs = RENEW_BACKOFF_GAP_MS,
   backoffAfter = RENEW_BACKOFF_AFTER,
 }) {
-  // A HEALTHY TOKEN IS THE COMMON CASE AND THE CHEAPEST ANSWER. Note what is NOT excluded
-  // here: `leftS == null` (no token, or one that will not decode) and `leftS <= 0` (expired)
-  // both fall through to the rationing below. The old loop refused both — it required
-  // `left != null && left > 0` — and that refusal is exactly the ninety dead minutes in this
-  // file's header. "We cannot see a usable token" is the strongest reason to act there is.
-  if (leftS != null && leftS > renewBeforeS) {
-    return { go: false, key: 'healthy', reason: `the token has ${mins(leftS * 1000)}m left` };
+  /**
+   * ── WAIT FOR THE TOKEN TO LAPSE. DO NOT RENEW AT NEAR-EXPIRY. (2026-08-18) ──────────────
+   *
+   * This used to act as soon as the token fell under `renewBeforeS` (10 min). That cell is
+   * where the Chromium leak lives, and it is a cell that has NEVER ONCE WORKED:
+   *
+   *   • Five ramps on 2026-08-18, five near-expiry renewals — `the token has 10m left
+   *     (src=live)` — 23:44, 02:58, 04:03, 05:07, 06:12. Not one completed; the RAM guard
+   *     killed the browser every time.
+   *   • The failures predate the guard too: `554s → none` and `-115s → none` on 08-16, with
+   *     `okta=ALIVE` printed on the adjacent line both times.
+   *   • The RAM trail dated the onset to `renew:prime-after-reload` — the reload that follows
+   *     `dropStoredToken`. Clearing a LIVE token and reloading is the act that leaks.
+   *
+   * And the other cell works and does not ramp: from a token-less profile the same code
+   * returns `✓ renewed by authorize: none → 3580s`, repeatedly, with `cleared 0 storage
+   * key(s)` and no memory event after any of them.
+   *
+   * So the token is left alone while it is alive AT ALL, and the renewal happens from empty.
+   *
+   * WHAT THIS COSTS, STATED HONESTLY: the session is dead between expiry and the next
+   * attempt — at most `floorMs` (5 min), usually less. **That is not a new cost.** The
+   * near-expiry attempt did not renew anything; it failed and took the browser with it, so
+   * the session was dead through that window anyway and the box lost several GB doing it.
+   *
+   * WHAT IT DOES NOT TOUCH: `maybeAutoLogin`, which signs in at T−30 of a real release and
+   * is the thing standing between a queued hold and a missed cart. This schedule is the
+   * background repair; that one is the release-critical path, and they stay separate.
+   *
+   * `leftS == null` (no token, or one that will not decode) still falls through to act —
+   * "we cannot see a usable token" remains the strongest reason to act there is, and
+   * refusing it is the ninety dead minutes in this file's header.
+   */
+  if (leftS != null && leftS > 0) {
+    return {
+      go: false,
+      key: 'alive',
+      reason: `the token has ${mins(leftS * 1000)}m left — waiting for it to lapse, because `
+        + 'renewing a live token is what leaks and it has never once worked',
+    };
   }
 
   const since = now - state.lastAt;

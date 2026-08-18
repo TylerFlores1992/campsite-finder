@@ -32,7 +32,7 @@ import {
 const RENEW_BEFORE_S = 600;
 const T0 = 1_800_000_000_000;
 const ask = (o: Record<string, unknown>) =>
-  planRenewal({ now: T0, renewBeforeS: RENEW_BEFORE_S, state: newRenewalState(), ...o } as never);
+  planRenewal({ now: T0, state: newRenewalState(), ...o } as never);
 
 test('a healthy token is left alone', () => {
   const r = ask({ token: 'eyJ.A.s', leftS: 3400 });
@@ -40,8 +40,32 @@ test('a healthy token is left alone', () => {
   assert.match(r.reason, /57m left/, 'and the reason says how much life it saw');
 });
 
-test('a token near expiry is renewed — the case the old line already handled', () => {
-  assert.equal(ask({ token: 'eyJ.A.s', leftS: 300 }).go, true);
+test('a token near expiry is LEFT ALONE — renewing a live token is what leaks', () => {
+  /**
+   * INVERTED 2026-08-18. This used to assert `go === true` at 5 minutes left, and that
+   * behaviour is the Chromium leak.
+   *
+   *   • Five ramps on 08-18, five near-expiry renewals (`the token has 10m left (src=live)`).
+   *     Not one completed — the RAM guard killed the browser every time.
+   *   • The failures predate the guard: `554s → none`, `-115s → none`, both with okta=ALIVE.
+   *   • The RAM trail dated the onset to `renew:prime-after-reload` — the reload that follows
+   *     dropStoredToken. Clearing a LIVE token and reloading is the act that allocates.
+   *
+   * So the cell this test protected has never once produced a fresher token, and it is where
+   * ~2,400 MB/min of non-JS memory comes from. Waiting costs at most one floor interval of
+   * dead session — which the failed renewal cost anyway, plus several GB.
+   */
+  const r = ask({ token: 'eyJ.A.s', leftS: 300 });
+  assert.equal(r.go, false, 'a live token must be left to lapse');
+  assert.match(r.reason, /waiting for it to lapse/);
+  assert.equal(r.key, 'alive');
+});
+
+test('the boundary is LIVE-vs-DEAD, not a near-expiry threshold', () => {
+  // One second of life is still life; zero is not. Pinning the boundary stops the old
+  // threshold creeping back in as "well, under a minute is basically expired".
+  assert.equal(ask({ token: 'eyJ.A.s', leftS: 1 }).go, false, '1s left is still alive');
+  assert.equal(ask({ token: 'eyJ.A.s', leftS: 0 }).go, true, '0s is lapsed — act');
 });
 
 test('NO TOKEN AT ALL is a reason to act, not a reason to wait', () => {
@@ -63,7 +87,7 @@ test('the floor holds even when the state changed', () => {
   // clothes. This is the only rule that does not care what changed.
   const state = { lastAt: T0 - 60_000, lastToken: 'eyJ.OLD.s', failures: 0 };
   const r = planRenewal({
-    token: null, leftS: null, now: T0, state, renewBeforeS: RENEW_BEFORE_S,
+    token: null, leftS: null, now: T0, state,
   });
   assert.equal(r.go, false);
   assert.match(r.reason, /floor/);
@@ -74,19 +98,19 @@ test('past the floor, a CHANGED state is acted on at once', () => {
   // the last attempt is new information, and making it wait out the full gap would leave the
   // session dead for ten minutes it did not need to be.
   const state = { lastAt: T0 - (RENEW_FLOOR_MS + 1000), lastToken: 'eyJ.OLD.s', failures: 0 };
-  const r = planRenewal({ token: null, leftS: null, now: T0, state, renewBeforeS: RENEW_BEFORE_S });
+  const r = planRenewal({ token: null, leftS: null, now: T0, state });
   assert.equal(r.go, true, 'token → no token is a state change, not a repeat');
 });
 
 test('an UNCHANGED state waits out the gap', () => {
   const state = { lastAt: T0 - (RENEW_FLOOR_MS + 1000), lastToken: null, failures: 0 };
-  const r = planRenewal({ token: null, leftS: null, now: T0, state, renewBeforeS: RENEW_BEFORE_S });
+  const r = planRenewal({ token: null, leftS: null, now: T0, state });
   assert.equal(r.go, false);
   assert.match(r.reason, /nothing has changed/);
 
   const later = { ...state, lastAt: T0 - (RENEW_MIN_GAP_MS + 1000) };
   assert.equal(
-    planRenewal({ token: null, leftS: null, now: T0, state: later, renewBeforeS: RENEW_BEFORE_S }).go,
+    planRenewal({ token: null, leftS: null, now: T0, state: later }).go,
     true,
   );
 });
@@ -105,13 +129,13 @@ test('repeated failures back off, and NEVER stop', () => {
   // no point discovering that six times an hour. But a gate that switches itself off for good
   // is the `.camphawk-ready` bug: one failure, twelve days ago, and the repair never ran again.
   const failing = { lastAt: T0 - (RENEW_MIN_GAP_MS + 1000), lastToken: null, failures: RENEW_BACKOFF_AFTER };
-  const held = planRenewal({ token: null, leftS: null, now: T0, state: failing, renewBeforeS: RENEW_BEFORE_S });
+  const held = planRenewal({ token: null, leftS: null, now: T0, state: failing });
   assert.equal(held.go, false, 'past the min gap but inside the backoff');
   assert.match(held.reason, /in a row have failed/);
 
   const eventually = { ...failing, lastAt: T0 - (RENEW_BACKOFF_GAP_MS + 1000) };
   assert.equal(
-    planRenewal({ token: null, leftS: null, now: T0, state: eventually, renewBeforeS: RENEW_BEFORE_S }).go,
+    planRenewal({ token: null, leftS: null, now: T0, state: eventually }).go,
     true,
     'the backoff must be a longer wait, never a permanent stand-down',
   );
@@ -233,18 +257,21 @@ test('every stand-down carries a STABLE key beside its changing sentence', () =>
   const cases = [
     ask({ token: 'eyJ.A.s', leftS: 3400 }),
     ask({ token: 'eyJ.A.s', leftS: 300 }),
-    planRenewal({ token: null, leftS: null, now: T0, renewBeforeS: RENEW_BEFORE_S,
+    // `go` used to come from the near-expiry case above. That now stands down as `alive`,
+    // so the acting state has to be produced by the cell that still acts: no usable token.
+    ask({ token: null, leftS: null }),
+    planRenewal({ token: null, leftS: null, now: T0,
       state: { lastAt: T0 - 60_000, lastToken: 'eyJ.OLD.s', failures: 0 } }),
-    planRenewal({ token: null, leftS: null, now: T0, renewBeforeS: RENEW_BEFORE_S,
+    planRenewal({ token: null, leftS: null, now: T0,
       state: { lastAt: T0 - (RENEW_FLOOR_MS + 1000), lastToken: null, failures: 0 } }),
-    planRenewal({ token: null, leftS: null, now: T0, renewBeforeS: RENEW_BEFORE_S,
+    planRenewal({ token: null, leftS: null, now: T0,
       state: { lastAt: T0 - (RENEW_MIN_GAP_MS + 1000), lastToken: null, failures: RENEW_BACKOFF_AFTER } }),
   ];
   for (const c of cases) {
     assert.ok(c.key, `every outcome needs a key (${c.reason})`);
     seen.add(c.key);
   }
-  assert.deepEqual([...seen].sort(), ['backoff', 'floor', 'go', 'healthy', 'unchanged'],
+  assert.deepEqual([...seen].sort(), ['alive', 'backoff', 'floor', 'go', 'unchanged'],
     'the five states must be distinguishable, or two of them collapse into one line');
 
   // AND THE KEY MUST NOT CONTAIN THE NUMBERS. A key built from the reason would be as
