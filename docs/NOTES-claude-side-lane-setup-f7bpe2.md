@@ -871,6 +871,10 @@ is the main lane's file.
 
 # Handover — 2026-08-17 (supersedes the 08-16 handover above)
 
+> **SUPERSEDED — see "Handover — 2026-08-18" at the END of this file.** Its item 2 (the
+> `a04171a2` test hold) is resolved and the answer is **it failed**: see §22. Its item 1
+> (App Review) is unchanged and still waiting.
+
 ## Two things are LIVE and waiting on the outside world
 
 ### 1. iOS 1.0 was RESUBMITTED to App Review on 2026-08-17
@@ -1037,3 +1041,89 @@ test did not.
 
 **Fix the log before trusting the next post-mortem** — a frozen log will make tomorrow just
 as unreadable as today.
+
+---
+
+# Handover — 2026-08-18 (supersedes the 08-17 handover above)
+
+## The one thing that is live and dated
+
+**RC test hold `cec06412-6226-4319-94d5-fe2867749063` releases 2026-08-18 08:00:08 PT.**
+
+```
+site   Carpinteria SB — San Miguel (sites 401-460) · unit 4729 · #M402
+stay   arrive 2026-12-01, 1 night
+claim  https://camphawk.app/claim/cec06412-6226-4319-94d5-fe2867749063?t=EQO2oXcQ
+```
+
+**Check it first thing:**
+
+```
+NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
+```
+
+- The verdict is in `client_reports`: a `load` stage, a `submit` stage, and
+  **`✓ Added to cart`**. **`token captured` as the last line is NOT a successful cart** —
+  that has been misread as success before.
+- **Open the claim link IN THE APP.** From a browser `canInject` is false and the injected
+  precart, which is the thing under test, never runs.
+- It is a **REAL site** and locks at 08:00 until claimed, released, or RC drops the cart
+  (~15 min). Abandoning it means `--delete cec06412-…` **and** clearing the cart by hand.
+
+**This is the second attempt. The first (`a04171a2`, 08-17) FAILED — read §22 before
+drawing any conclusion from this one.**
+
+## Read §22 before diagnosing anything
+
+Two things in it will save a wasted hour:
+
+1. **The runner's log is FROZEN** (last line 22:48:52 PT on 08-16) while the process is
+   alive. `tail-log rc-holds` therefore returns a stale file, and its silence over a release
+   window says nothing about what the runner did. Reading that silence as "the runner never
+   saw the hold" is the mistake §22 records me making. **Fix the log before trusting any
+   post-mortem** — main lane's code.
+2. **The "update requested … standing down" spam is NOT a cart blocker.** The claim runs in
+   a fire-and-forget IIFE (`control-channel.mjs:81`) and never blocks the poll loop. It is a
+   churn bug, not starvation.
+
+**The cause of 08-17's miss is NOT established, and no guess is recorded. Keep it that way
+unless there is evidence.**
+
+## Health at handover (2026-08-17 ~17:30 PT)
+
+Everything green except the standing rehearsal warn:
+
+```
+OK    autocart.bot / rc_runner / rc_session / watchdog
+OK    autocart.bot_version   mini-PC and web BOTH on b3c6a3a
+WARN  autocart.rc_login      no rehearsal has PASSED since 2026-08-16
+```
+
+**The box is fully current this time**, which is the material difference from 08-17 — that
+run went out on a box the queued hold had pinned to older code. The quiet window is shut
+again tonight (a `requested` hold within 6h of 02:00–05:00 PT), but nothing is pending, so
+it costs nothing.
+
+## Still waiting on the outside world
+
+**iOS 1.0 is with App Review**, resubmitted 2026-08-17 with the recording and the rewritten
+Notes. Nothing to do but wait; record the outcome in `docs/APP-STORE.md` §2b.
+
+## Still open, all main lane's
+
+1. **The frozen runner log** — see §22. Nothing else on this list matters as much, because
+   it is what makes every other RC question unanswerable.
+2. **Issue #76** — `rc-holds.test.mts`'s fixture sweep deletes a *concurrent* run's live
+   rows. Two confirmed occurrences, traces in §20.
+3. **PR #78** (`claude/rc-login-fix`) — two real fixes stranded by the in-app sign-in
+   revert. **Must not be merged onto the reverted claim screen**; re-land the feature first.
+4. **`docs/CONTEXT.md` ~1465** — names a deleted component and a deleted preset.
+   Deliberately not half-repaired; reasoning in §18.
+5. **A real decline path for `offered`/`requested` holds** (§17) — needs to free the
+   capacity seat an `offered` row occupies, since `offered` counts toward
+   `RC_HOLD_CAPACITY` and that is 2.
+
+## Side lane state
+
+On `master`, clean, no open branch or PR. Park watches remain unadvertised —
+`watch_campgrounds` is still 0 rows.
