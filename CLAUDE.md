@@ -1332,6 +1332,62 @@ recovered    11:20:21  rc 163MB pid2956      RAM free 13,480MB   commit 10%
     MESSAGE was present and correctly positioned, so `if (false)` left both true and passed
     against a `sqlit` that stringified objects exactly as before. Pin the comparison, not the
     branch it guards. **Twelfth time.**
+### FOURTH FIRING, 2026-08-18 23:12 PT — BOTH INSTRUMENTS ANSWERED
+The process type and the RAM trail landed together, and between them they name the family of
+allocation and **correct a candidate this file carried for three firings.**
+```
+baseline  rc  264MB  {browser:42,  utility:24, renderer:103,  gpu-process:93, crashpad:2}
+ramp      rc 2046MB  {browser:587, utility:28, renderer:1340, gpu-process:89, crashpad:2}
+```
+- **IT IS THE RENDERER *AND* THE BROWSER PROCESS.** Renderer **+1237 MB**, browser process
+  **+545 MB**; GPU, utility and crashpad all FLAT. That rules the GPU family out entirely, and
+  the pairing is the interesting part — the browser process is where Chromium's network stack
+  lives when the network service is not in its own utility process, and utility did not move.
+- **WITH THE JS HEAP FLAT AT 15 MB**, that gives: **non-JS memory, in the renderer and the
+  browser process.** Network/IPC buffering is the leading CANDIDATE, and is labelled as one.
+- **THE CLICK IS NOT THE TRIGGER — THE RAM TRAIL SAYS SO IN ONE LINE.**
+  ```
+     3s ago  6912→3946 MB free @ renew:click-sign-in      (x7)
+    73s ago  8440→7253 MB free @ renew:prime-after-reload  (x4)
+   113s ago  9060      MB free @ login rehearsal
+  ```
+  Read oldest-first: the machine was already shedding ~1,200 MB **during
+  `renew:prime-after-reload`**, before the click ran at all. The click is simply the LONGEST
+  step, which is why the stall landed there on all four firings — exactly the "caught, not
+  proven" caveat the trail was built to settle. **The onset is the reload that follows
+  `dropStoredToken`.** `renew:reload` never appears because it completes inside one 10s tick.
+
+### THE CANDIDATE CURE: STOP RENEWING AT NEAR-EXPIRY (2026-08-18) — NOT YET BUILT
+The step that leaks is a step that has never worked, so removing it may cost nothing.
+- **Every ramp began in a NEAR-EXPIRY renewal** (`the token has 10m left (src=live)`):
+  23:44, 02:58, 04:03, 05:07, 06:12 — five for five.
+- **That cell has never once succeeded.** This file's own 2x2 already records it as "not
+  observed to work" (`554s → none`, `-115s → none`), and on 08-18 not one attempt completed —
+  the guard killed the browser every time.
+- **The TOKEN-LESS cell works and does not ramp**: `✓ renewed by authorize: none → 3580s`,
+  observed repeatedly, with `cleared 0 storage key(s)` and no memory event after any of them.
+- So: let the token lapse and renew from empty. The apparent cost — a few dead minutes per
+  hour — is what we ALREADY have, because the near-expiry attempt fails anyway.
+- **A WOBBLE, RECORDED SO IT IS NOT RE-DISCOVERED AS A REFUTATION.** Two near-expiry renewals
+  on 08-18 (11:08, 11:38 UTC) show no ramp. Both read `· skipped: no Okta session to renew
+  against` — they never ran. They neither support nor contradict.
+
+### THE LOGIN IS THE OPEN RISK, NOT THE LEAK (2026-08-18)
+- **THE OWNER RAN THE LOGIN BY HAND AND IT "GOT HUNG UP AT PASSWORD".** That is a signature,
+  not a vague symptom: a WRONG password is REJECTED (Okta shows a banner, `diagnose` reports
+  `badCreds`). Hanging instead matches the 2026-08-06 reCAPTCHA, where the control reports
+  `enabled=true` and every click times out because the challenge overlay swallows pointer
+  events. **Retrying harder can never work**, and a CAPTCHA is a deliberate full stop for the
+  unattended path.
+- **So expect `maybeAutoLogin` at T−30 to fail as well** — it runs the same `attemptLogin`.
+  This ALSO revises the 08-18 03:01 write-up above: that rehearsal failure was attributed to
+  our own restart timing, and a real login fault is now the likelier explanation.
+- **`rc_login_rehearsal` KEEPS NO HISTORY.** It is ONE ROW, updated in place (`id 1`), so the
+  03:01 failure detail was overwritten by the next skip and is gone. The instrument built to
+  catch exactly this cannot show a trend, and a failure survives only until the next stand-down.
+  Fix it before trusting it.
+- Overnight the session died completely — `okta=GONE(404)` after ~12h — so the renewal path is
+  skipped entirely (`no Okta session to renew against`) and only a real sign-in can recover it.
 - **OUR OWN CONTAINMENT TURNED THE DASHBOARD RED.** The supervisor restarted the process and
   the login rehearsal fired **24 seconds later**, against a browser that had just come up on a
   box recovering from 71% COMMIT. RC answered *"We're having trouble loading the
@@ -4298,16 +4354,27 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs current to 2026-08-17 (third pass).** **THE CHROMIUM LEAK IS ATTRIBUTED AT LAST — 20
+**Docs current to 2026-08-18.** **THE CHROMIUM LEAK IS CONTAINED, NOT CURED — know the
+difference.** The RAM guard has fired four times (5,688 / 4,866 / 4,903 / 2,046 MB) and the box
+has not been past 71% COMMIT since; the allocation still happens every ~70 minutes. What is now
+known: it is the **renderer AND the browser process** (GPU, utility, crashpad flat), it is **not
+the JS heap** (15 MB, flat, while the process reached 4.9 GB), and it **begins at the reload
+after `dropStoredToken`** — not at the sign-in click, which is merely where the stall was caught
+on all four firings. **The candidate cure is to stop renewing at near-expiry at all**: that cell
+has never once succeeded, it is where every ramp starts, and the token-less cell works and does
+not ramp. NOT BUILT.
+**THE OPEN RISK IS THE LOGIN, NOT THE LEAK.** The owner ran the sign-in by hand and it hung at
+the password — a CAPTCHA signature, not a wrong password — so `maybeAutoLogin` should be
+expected to fail too. No rehearsal has PASSED since 2026-08-16, and `rc_login_rehearsal` keeps
+one row updated in place, so failures do not survive to be counted. **START AT
+`docs/NEXT-SESSION.md`.**
+
+*(Previous pass.)* **THE CHROMIUM LEAK IS ATTRIBUTED AT LAST — 20
 ramps in 5 days, every ~70 minutes, every one the keep-warm's own resident RC browser, one
 process, ~2,400 MB/min of REAL memory (free RAM 13.1 GB → 0.9 GB).** It is not an occasional
-event and never was; every "not reproduced this session" reading was a window that missed one.
-**The recycle shipped that morning was inert by construction** — checked in the resident loop's
-body, while the leak happens during a wedge, which is that loop not advancing. The guard now
-lives in the watchdog timer and trips on `os.freemem()` (no child process — spawning is what
-fails at 99% COMMIT), and the three throttling-disable flags are gone because this file's own
-later findings disproved the reason they were added. **The allocation site inside the page is
-still unknown; a heap snapshot during a ramp is what would settle it.**
+event and never was. **The recycle shipped that morning was inert by construction** — checked in
+the resident loop's body, while the leak happens during a wedge, which is that loop not
+advancing. The guard now lives in the watchdog timer and trips on `os.freemem()`.
 
 *(Previous pass.)* **THE HOLD RUNNER WAS DOWN FOR 2.5 HOURS AND THE
 WATCHDOG NEVER SPOKE** — an 08:00 test hold was never carted, `last_attempt_note` stayed NULL,
