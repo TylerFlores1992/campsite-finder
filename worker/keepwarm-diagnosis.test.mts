@@ -1,14 +1,23 @@
 // Three instruments added 2026-08-17 (fourth pass), once the leak had a full history:
 // twenty ramps in five days, every ~70 minutes, every one the `rc` family, ~2,400 MB/min.
 //
-// The containment landed first and WORKED on its very first ramp — 7 GB and 61% COMMIT
-// instead of 27 GB and 99%, recycled within ~40 seconds. But the same reading settled the
-// other half of the question in the unwelcome direction: **the ramp still happened on a
-// browser launched without the throttling flags, so those were not the cause.** The stated
-// reading rule was "no ramps at all means the flags were it; ramps that stop short mean the
-// containment was", and it returned the second answer within the hour.
+// A ramp at 16:45 was written up as the containment firing and working — 7 GB instead of 27,
+// and therefore as proof the throttling flags were not the cause. BOTH WERE WRONG. `stop-all`
+// from an `update.bat` killed that browser at 16:47:31, two minutes into the ramp; the
+// keep-warm had been launched at 15:58 on a commit that predates the containment, and there is
+// no `RUNAWAY` line in the log because the guard was not running. The memory series cannot
+// tell a guard firing from a stop-all, and `restarts.log` is what settles it.
 //
-// So the leak is contained and not cured, and these three exist to close that gap:
+// So NONE of this is production-tested yet, the flags remain an open candidate, and the
+// reading rule is unchanged: no ramps at all means the flags were it; ramps that appear and
+// stop around 8-10 GB mean the containment is what worked.
+//
+// What the same log DID establish is the finding that matters most here: the ramp begins at
+// `renewing the session — the token has 9m left (src=live)`, the near-expiry cell, which is
+// the half of the 2x2 that has never been observed to succeed. The age recycle exists to
+// reach every renewal from the token-less cell instead.
+//
+// These three exist to close the gap between contained and cured:
 //
 //   1. A BREADCRUMB. Four wedges were recorded, each beginning at `renewing the session` and
 //      ending twelve minutes later, and none said which of six awaits never returned.

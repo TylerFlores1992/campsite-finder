@@ -1126,21 +1126,44 @@ recovered    11:20:21  rc 163MB pid2956      RAM free 13,480MB   commit 10%
   own `fetch` wrapper retaining `init` per pending request, or something in Chromium's
   handling of the occluded headful window. What would settle it is a `--remote-debugging-port`
   heap snapshot taken DURING a ramp, which needs somebody at the box in the ten-minute window.
-- **THE CONTAINMENT FIRED ON ITS FIRST RAMP, ~70 MINUTES AFTER THE BOX UPDATED, AND THE A/B
-  ANSWERED ITSELF.**
+- ~~**THE CONTAINMENT FIRED ON ITS FIRST RAMP, ~70 MINUTES AFTER THE BOX UPDATED, AND THE A/B
+  ANSWERED ITSELF.**~~ **BOTH HALVES OF THAT WERE WRONG. IT WAS `update.bat`.** Struck rather
+  than deleted, because this is the "crediting a repair to the wrong mechanism" failure the
+  entry three bullets above warns about, committed within the hour by the person who wrote
+  the warning.
   ```
   16:43:02  commit 15%  RAM free 8,502MB  rc 264MB   pid9544   <- healthy
   16:45:02  commit 53%  RAM free 6,178MB  rc 2,217MB pid16816  <- ramping
-  16:47:03  commit 61%  RAM free 1,580MB  rc 7,016MB pid16816  <- floor crossed
-  16:47:41  commit 15%  RAM free 9,556MB  rc 208MB   pid7896   <- recycled, ~40s later
+  16:47:03  commit 61%  RAM free 1,580MB  rc 7,016MB pid16816  <- 7 GB
+  16:47:31  [stop-all] stopping chrome.exe pid 16816 (orphaned Chromium)   <- THE UPDATE
+  16:47:41  commit 15%  RAM free 9,556MB  rc 208MB   pid7896
   ```
-  **Peak 7 GB / 61% COMMIT instead of 27 GB / 99%.** Two things settled by one reading:
-  `os.freemem()` and the PowerShell figure agree closely enough that the floor tripped where
-  intended (the calibration doubt recorded above is resolved) — and, per the reading rule set
-  out in advance, **the ramp still happened on a browser launched WITHOUT the throttling
-  flags, so those were not the cause.** Layer 2 is dead; the leak is contained, not cured.
-  Do not re-add the flags on the strength of this: they are still unnecessary, and this only
-  says they were not the culprit.
+  **The memory series alone cannot tell a guard firing from a stop-all**, and I read the
+  recovery as the guard. `restarts.log` settles it: keep-warm process starts are 15:54:19,
+  15:58:52, **16:47:37**, 17:11:49 — so the browser that ramped was launched at 15:58 on
+  `e5cf430`, which predates the containment. There is **no `✗ RUNAWAY` line anywhere in the
+  log**, which is the tell that should have been checked first: the guard announces itself,
+  and silence meant it had not run.
+  - **THE CONTAINMENT HAS NEVER FIRED.** Nor has the age recycle. All three instruments are
+    deployed and none is production-tested.
+  - **THE FLAGS ARE STILL AN OPEN CANDIDATE.** That browser still had them. The A/B written
+    up as settled has not been run, and the reading rule stands unchanged: **no ramps at all
+    ⇒ the flags were the cause; ramps that appear but stop around 8-10 GB ⇒ the containment
+    is what worked.**
+  - **The calibration doubt about `os.freemem()` is therefore NOT resolved either** — nothing
+    has compared it against the PowerShell figure in anger. The first genuine trip resolves
+    it, because the `RUNAWAY` line prints the reading it saw.
+- **CONFIRMED, AND IT IS THE ONE THING THAT SURVIVED: THE RAMP BEGINS AT THE NEAR-EXPIRY
+  RENEWAL.** From the keep-warm's own log, against the same ramp:
+  ```
+  23:44:16 renewing the session — the token has 9m left (src=live)
+           [ramp: 23:45:02 → 2,217 MB … 23:47:03 → 7,016 MB]
+  23:47:37 keep-warm restarts
+  ```
+  `src=live` with 9 minutes left is the **near-expiry cell** — the one half of the 2x2 that
+  has never been observed to succeed. So the ramp is not merely correlated with a browser's
+  age; it starts in a specific, identified code path. That is direct support for the age
+  recycle, which exists precisely to arrive at every renewal from the token-less cell instead.
 
 ### THREE INSTRUMENTS FOR THE UNCURED HALF (2026-08-17, fourth pass)
 - **A BREADCRUMB, because four wedges could not say which await hung.** `mark()` in the
