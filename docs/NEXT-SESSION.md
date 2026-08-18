@@ -5,15 +5,30 @@ proven again and the near-expiry renewal has been dealt with.***
 
 ---
 
-## Read this first: two things are open, and they are not equally urgent
+## Read this first — START HERE, and it is not what the rest of this file used to say
+
+**The containment does not contain an ORPHAN, and on 2026-08-18 the box reached 94% COMMIT.**
+That is the level at which Windows stops scheduling tasks, which has twice taken everything
+down. Build this first:
+
+> **The keep-warm must kill any Chromium on `.rc-bot-profile` that it does not own, at
+> STARTUP** — before launching, while COMMIT is normal and a PowerShell spawn still works.
+
+The evidence is in `CLAUDE.md` under "A 25 GB RUNAWAY, FIVE RECYCLES". In one line: the size
+guard fired five times, freed nothing, and the reading went **up** across every recycle,
+because `max_pid` was **13004 throughout** — an orphan left by the keep-warm restarting
+mid-login. `ctx.close()` closes the context this process owns; `rcFamilyMb()` totals every
+Chromium on the profile. **Fully visible to the measurement, invisible to the remedy.**
+
+Do NOT put the kill in the trip path — spawning is what fails as COMMIT passes ~95%.
+Scope it with the negative lookahead `kill-chrome` already uses, or it takes the rec.gov
+profiles with it.
 
 | | state | urgency |
 | --- | --- | --- |
-| **The RC login** | hung at the password by hand; no rehearsal PASSED since 08-16 | **This is the one that loses a campsite** |
-| **The Chromium leak** | contained (4 firings, box never past 71%), cause narrowed, not cured | Cosmetic by comparison — the box survives it |
-
-The leak ate a whole session because it was interesting. **It is no longer the thing that can
-cost somebody a booking.** The login is.
+| **Orphaned Chromium** | 25 GB event, 94% COMMIT, three guards none of which can stop it | **Build the startup sweep first** |
+| **The RC login** | account changed and signed in by hand; no unattended rehearsal has passed since 08-16 | This is the one that loses a campsite |
+| **The Chromium leak** | trigger NAMED (the Okta navigation); recycled after each round trip | Understood; the orphan case above is what still bites |
 
 ---
 

@@ -1463,6 +1463,56 @@ sign-in control was found and clicked.
   `maybeAutoLogin(ctx, page)`, which matches the function DEFINITION four hundred lines above
   the call site. It anchors on the awaited call now. **Thirteenth time.**
 
+### A 25 GB RUNAWAY, FIVE RECYCLES, AND THE GUARD CLOSED THE WRONG BROWSER (2026-08-18)
+**THE CONTAINMENT DOES NOT CONTAIN AN ORPHAN, AND THE BOX REACHED 94% COMMIT.** This is the
+single most urgent thing open. It followed straight on from the spurious CI-triggered login
+above, and the two together are one chain.
+```
+20:00:44  ⏰ hold releases in 1m … signing in       <- a CI test fixture (see below)
+20:01:51  [keep-warm process restarts MID-LOGIN]    <- ORPHANS its Chromium
+20:02:40  rc  5,118 MB  pid 13004 renderer  64% COMMIT   free 4,361 MB
+20:06:45  rc 17,811 MB  pid 13004           83%          free   982 MB
+20:12:52  rc 25,307 MB  pid 13004           94%          free   163 MB
+20:14:51  rc    325 MB  pid  6772           15%          free 11,788 MB
+```
+- **THE SIZE GUARD FIRED FIVE TIMES AND FREED NOTHING**, and said so without anybody hearing:
+  `RECYCLING` at 20:02:21, 20:11:57, 20:14:20, with `over the line, but a recycle is still
+  cooling down` at 22,356 / 23,994 / 24,794 / 25,408 / 25,812 MB in between. **The reading went
+  UP across every recycle.**
+- **THE PID SETTLES IT, AND IT WAS ALREADY IN THE MEMORY SERIES.** `max_pid` is **13004 in
+  every sample** from 20:02:40 to 20:12:52 — across three recycles. And at 20:02:40, one second
+  after a browser opened at 20:02:39, pid 13004 was already **4,953 MB**: a renderer born that
+  second cannot be five gigabytes. **So 13004 predates the reopen. It is an ORPHAN**, left by
+  the keep-warm process restarting at 20:01:51.
+- **`ctx.close()` IS NOT A KILL, AND THE GUARD MEASURES A FAMILY IT CANNOT ACT ON.**
+  `rcFamilyMb()` totals every Chromium on the profile directory; the recycle closes only the
+  context this process owns. An orphan is therefore **fully visible to the measurement and
+  invisible to the remedy** — so the guard recycles a healthy browser, over and over, while
+  reporting the corpse's memory as the reason. Fourth instance in this repo of a guard whose
+  remedy does not reach the thing it measures.
+- **AND A SECOND CHROMIUM RAN ON ONE `user-data-dir`** — the corruption case the profile lock
+  exists to prevent. The lock did not stop it because an orphan holds no lock file: the dying
+  process released it on the way out, and the new keep-warm took it and launched anyway.
+- **THE RAM ARM COULD NOT HELP EITHER.** It needs a stall **and** low RAM, and the loop kept
+  ticking the whole time — so at 163 MB free, one condition short, it never fired. The
+  both-conditions rule is right for the case it was written for (the owner using their own
+  desktop) and it has no answer for a healthy loop next to a dying box.
+- **WHAT TO BUILD, and it is bot-side so the box must update.** The keep-warm must **kill any
+  Chromium on `.rc-bot-profile` that it does not own, at STARTUP** — before launching, while
+  COMMIT is still normal and a PowerShell spawn still works. That is `kill-chrome`'s existing
+  mechanism (kill by `--user-data-dir`, no cooperation needed) moved to the one moment it is
+  both necessary and cheap. **Do NOT put the kill in the trip path**: spawning is exactly what
+  fails as COMMIT passes ~95%, which is the instrument-goes-quiet-at-the-peak trap.
+  - **Scope it with the negative lookahead `kill-chrome` already uses.** A pattern that matched
+    `auto-cart-bot` broadly would take the rec.gov profiles with it — that regression is
+    already recorded once.
+  - A second, independent candidate: a catastrophic free-RAM floor (~800 MB) that acts with **no
+    stall requirement**. It reverses a documented "BOTH CONDITIONS, ALWAYS" decision, so take it
+    deliberately or not at all — and note it may not help, since exiting a process does not
+    necessarily reap an orphan either.
+- **NOTHING HERE IS FIXED YET.** Three instruments are deployed against this leak and **none of
+  them can stop an orphan.**
+
 ### `npm test` MADE THE PRODUCTION BOT SIGN IN TO RC (2026-08-18) — CI does it on every PR
 The 2026-08-15 entry above records `npm test` telling the bot to cart a real campsite, fixed
 with **non-numeric sentinel unit ids**. That protected the CART. **Nothing protected the
@@ -4543,7 +4593,17 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs current to 2026-08-18 (fifth pass).** **THE LEAK'S TRIGGER IS NAMED, BY A CONTROLLED
+**Docs current to 2026-08-18 (sixth pass).** **START AT THE ORPHANED CHROMIUM.** A 25 GB
+runaway took the box to **94% COMMIT** — where Windows stops scheduling tasks — while the size
+guard fired FIVE times and freed nothing: `max_pid` was 13004 across every recycle, so
+`ctx.close()` was closing a healthy browser while the measurement counted an orphan left by the
+keep-warm restarting mid-login. **Three instruments are deployed against this leak and none of
+them can stop an orphan.** The fix is a startup sweep that kills Chromium on `.rc-bot-profile`
+by `--user-data-dir` — NOT BUILT. And the login that orphaned it was fired by **`npm test` in
+CI**: the 08-15 sentinel protected the cart, nothing protected the login, and `holdAtRisk`
+would have rung the owner's phone (fixed server-side in #125).
+
+*(Fifth pass.)* **THE LEAK'S TRIGGER IS NAMED, BY A CONTROLLED
 COMPARISON RATHER THAN A CORRELATION: it is the OKTA NAVIGATION.** Three token-less renewals ten
 minutes apart, same code and profile, split cleanly on whether RC's sign-in control was clicked
 — the one that navigated cost **2,331 MB**, the two that reached `no-signin-control` cost
