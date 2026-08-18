@@ -1398,6 +1398,41 @@ The step that leaks is a step that has never worked, so removing it may cost not
   is not the reload-with-clear either — two token-less renewals ran the identical clear and
   reload with no ramp at all. See below.
 
+### THE SESSION RENEWS ITSELF ONCE WE STOP TOUCHING IT (2026-08-18, first 2.5 hours)
+An OBSERVATION, not yet a measurement, and it is better than the stand-down was meant to buy.
+Straight off the keepalive lines, with **zero `renewing the session` entries in the window**:
+```
+20:58:57 ♻ … token exp in 15m; renewed=no; src=live; okta=ALIVE
+21:18:58 ♻ … token exp in 54m   <- went UP
+21:38:58 ♻ … token exp in 34m
+21:58:59 ♻ … token exp in 14m
+22:18:59 ♻ … token exp in 54m   <- again
+22:39:00 ♻ … token exp in 34m
+```
+- **Our renewal never ran.** `planRenewal` stands down for the whole period (`the token has
+  59m left — waiting for it to lapse`), so nothing of ours navigated to Okta. The token was
+  re-minted twice anyway, between 20-minute checks.
+- **AND THERE WAS NO RAMP.** Nothing above 400 MB in 2.5 hours, across both re-mint cycles —
+  against a browser that produced twenty ramps in the five days before. That is consistent
+  with the controlled comparison below: no Okta navigation, no allocation.
+- **So the near-expiry stand-down may have done more than halve the leak.** It was justified
+  as "the cell that leaks has never worked, so removing it costs nothing"; in the steady state
+  it appears to remove our Okta round trips altogether, because the SPA re-mints on its own
+  while the token is still alive and we no longer interrupt it.
+- **WHAT re-mints is NOT established — do not write one in.** Candidates: okta-auth-js's own
+  autoRenew (which this file records as failing and DELETING the tokens, measured in a
+  different state), the keepalive's own page load, or `sessionLive`'s authenticated call.
+  `renewed=no` on every line is not evidence against any of them — that flag compares before
+  and after within ONE check and cannot see a re-mint between two.
+- **IT INTERLOCKS WITH THE OKTA-PROBE FINDING, AND THAT IS THE PART TO BE CAREFUL WITH.** A
+  silent re-mint needs a live Okta cookie, and the section below establishes that OUR OWN
+  unconditional probe is what keeps that cookie from idling out. So the accidental
+  load-bearing probe is plausibly what makes this loop self-sustaining, and "tidying" it would
+  take this with it.
+- **TWO CYCLES IS NOT A REGIME.** The reading that would matter is the same pattern still
+  holding after an overnight, and after a real `attemptLogin` (which navigates and therefore
+  still leaks by construction). Do not quote this as "the leak is solved".
+
 ### IT IS THE OKTA NAVIGATION, AND THAT IS A CONTROLLED COMPARISON (2026-08-18, fifth pass)
 The stand-down above went live on the box at ~19:13 PT. Within ten minutes the keep-warm's own
 log produced the cleanest evidence this investigation has had — three **token-less** renewals,
