@@ -968,3 +968,72 @@ the order has to invert:** let the box update first, then queue the hold.
 
 No branch, no uncommitted work beyond this PR. Park watches remain unadvertised —
 `watch_campgrounds` is still 0 rows.
+
+---
+
+## 22. THE 08-17 TEST HOLD FAILED, AND THE RUNNER'S LOG CANNOT SAY WHY
+
+`a04171a2` (unit 4728, released 2026-08-17 08:00:53 PT) ended `failed`, never carted:
+
+```
+error              no cart at release time — the hold runner did not pick it up
+last_attempt_note  NULL
+requested_at       2026-08-17 06:38:54 UTC
+updated_at         2026-08-17 16:19:04 UTC   ← expireStaleHolds, ~1h after the grace
+```
+
+**`last_attempt_note` NULL is the whole hard evidence.** A skipped pass stamps it *without*
+moving status, so a runner that tried and gave up leaves a note. Nothing did.
+
+### What was going on, and what it does NOT explain
+
+`bot_update_requests` shows a request from `claude-session`, since **withdrawn** with the
+reason `"on-demand path failing silently"`. While it was pending the runner logged, every
+15 seconds:
+
+```
+→ update requested, but another process has the claim (or we could not ask) — standing down
+```
+
+**I was about to file that as the cause. It is not.** `control-channel.mjs:81` wraps the
+claim in `void (async () => {…})()` — fire-and-forget — so it never blocks the poll loop and
+carting proceeds regardless. Read the code rather than the log line. (It *is* a churn bug:
+the refusal path sets `updateStartedAt = 0`, so it re-asks on the very next poll instead of
+backing off, which is where the 15-second spam comes from.)
+
+### THE RUNNER'S LOG IS FROZEN, AND THAT IS THE REAL FINDING
+
+`tail-log rc-holds` returns a file whose last line is **22:48:52 PT on 2026-08-16** — about
+eighteen hours stale. Three things prove the file is dead rather than the process:
+
+1. **`list-processes` shows the runner alive** — `node.exe rc-hold-runner.mjs` pid 17332,
+   under its supervisor, alongside all three other payloads.
+2. **The box updated today** (`d09f225` → `dd27a98`), which stops and restarts everything.
+   The runner writes a startup banner on every launch; there is no banner after 22:42:55.
+3. **`control-channel.mjs:52` logs `? diagnostic <kind> (#<id>)` on pickup.** Two commands
+   were answered minutes before the tail was taken. Neither appears.
+
+Same family as the 2026-08-12 keep-warm freeze — Windows file locking, a log that stops
+while the process reports to the server perfectly. **So there is NO log evidence covering
+08:00, and the silence over the release window is the FILE's, not the runner's.** Reading it
+as "the runner never saw the hold" would have been exactly wrong.
+
+**Cause of the missed cart: NOT ESTABLISHED. Do not write one into any doc.**
+
+### Tomorrow's test is queued
+
+```
+hold   cec06412-6226-4319-94d5-fe2867749063
+site   Carpinteria SB — San Miguel · unit 4729 · #M402 · arrive 2026-12-01
+when   2026-08-18 08:00:08 PT
+claim  https://camphawk.app/claim/cec06412-6226-4319-94d5-fe2867749063?t=EQO2oXcQ
+```
+
+Conditions differ from the failed run in three ways that are worth stating, because if it
+fails again none of them is the excuse: **no update request is pending**, the box is
+**current** (`dd27a98`, "No bot-side code in the gap"), and the session is **live** with
+Okta good to 2026-08-18 06:50 UTC. This one also runs on #98's runner, which the previous
+test did not.
+
+**Fix the log before trusting the next post-mortem** — a frozen log will make tomorrow just
+as unreadable as today.
