@@ -22,6 +22,27 @@ recur exactly as it did.
 | **Orphaned Chromium** | sweep built, unproven — needs a box update, then a real orphan | Watch for `♻ orphan sweep` in the keep-warm log |
 | **The Chromium leak** | trigger NAMED (the Okta navigation); recycled after each round trip | Understood; watch that ramps now peak ~2.3 GB |
 
+### The single most useful thing to check first
+
+**Is the session still renewing itself with no ramp?** In the 2.5 hours after the near-expiry
+stand-down went live, the token was re-minted twice (`exp in 15m` → `54m`, twice) with **zero
+`renewing the session` lines** and **no memory event above 400 MB**. Our renewal never ran and
+the SPA did it for free.
+
+```
+NODE_USE_ENV_PROXY=1 npx tsx scripts/chromium-memory-readout.mts
+```
+
+- Still no ramps overnight ⇒ the stand-down did more than halve the leak; it removed our Okta
+  round trips from the steady state.
+- Ramps returned ⇒ something is navigating again. Check the keep-warm log for `renewing the
+  session` and for `attemptLogin` — the login navigates and therefore still leaks by
+  construction, and no schedule can change that.
+
+**Two cycles is not a regime.** Do not quote it as "the leak is solved", and do not write in a
+mechanism for the silent re-mint — three candidates are listed in `CLAUDE.md` and none is
+established.
+
 ### What to watch once the box updates
 
 - `♻ orphan sweep: killed N Chromium…` in `logs\rc-keepwarm.log` — the first real firing. It
