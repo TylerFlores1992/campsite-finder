@@ -479,7 +479,22 @@ export async function restoreStoredToken(page, snapshot) {
   }, snapshot).catch(() => {});
 }
 
-export async function renewSession(page, url, { oktaAlive = null, clickSignIn = null } = {}) {
+/**
+ * @param onStep called with a short label as each stage begins. The caller uses it to name
+ *   which await the loop stalled in — see `warmResident`'s watchdog. Deliberately a callback
+ *   rather than a logger: this module has no business owning log formatting, and a no-op
+ *   default keeps every other caller unchanged.
+ *
+ *   WHY IT EXISTS. Four wedges were recorded on 2026-08-17, each beginning at `renewing the
+ *   session` and ending twelve minutes later at `the loop has not advanced` — and nothing
+ *   recorded WHICH of the six awaits below was the one that never returned. That left the
+ *   diagnosis at "somewhere inside renewSession", which is where it stayed for a day. Every
+ *   step here is a plausible suspect and they need different fixes.
+ */
+export async function renewSession(
+  page, url, { oktaAlive = null, clickSignIn = null, onStep = () => {} } = {},
+) {
+  onStep('renew:read-token');
   const previous = (await readLiveToken(page)).token;
   const before = tokenSecondsLeft(previous);
 
@@ -498,9 +513,12 @@ export async function renewSession(page, url, { oktaAlive = null, clickSignIn = 
   // On a profile that already holds no token this takes nothing and restores nothing, so the
   // signed-out case — the one that cost ninety dead minutes on 2026-08-15 — costs no risk at
   // all. It is a pure click.
+  onStep('renew:drop-stored-token');
   const { snapshot, cleared } = await dropStoredToken(page);
 
+  onStep('renew:reload');
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  onStep('renew:prime-after-reload');
   let { token } = await primeToken(page, { timeoutMs: 25_000, notToken: previous });
   let stage = 'reload';
 
@@ -515,6 +533,7 @@ export async function renewSession(page, url, { oktaAlive = null, clickSignIn = 
   // field too.
   if (clickSignIn && !isRenewal({ previous, next: token, before, after: tokenSecondsLeft(token) })) {
     stage = 'authorize';
+    onStep('renew:click-sign-in');
     const clicked = await clickSignIn(page).catch(() => false);
     if (!clicked) {
       // A REAL AND DISTINCT OUTCOME, not a shrug. On 2026-08-15 18:22 the clear did not sign
@@ -523,6 +542,7 @@ export async function renewSession(page, url, { oktaAlive = null, clickSignIn = 
       // apart from "we asked and Okta said no", which needs a human and this does not.
       stage = 'no-signin-control';
     } else {
+      onStep('renew:prime-after-click');
       ({ token } = await primeToken(page, { timeoutMs: 30_000, notToken: previous }));
     }
   }
@@ -537,10 +557,12 @@ export async function renewSession(page, url, { oktaAlive = null, clickSignIn = 
     // that only put back `ssoAccessToken`/`accessToken` would leave the app holding a token
     // its SDK no longer knows about — strictly worse than never having tried, which is the
     // one outcome this guard exists to prevent.
+    onStep('renew:restore-token');
     await restoreStoredToken(page, snapshot);
     // The bootstrap above decided this profile was signed out. Load once more so the app
     // reads the restored token and comes back up signed in, instead of leaving the resident
     // tab on a logged-out page with a perfectly good token sitting beside it.
+    onStep('renew:reload-after-restore');
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
     restored = true;
   } else if (!renewed && stage !== 'reload') {
@@ -550,6 +572,7 @@ export async function renewSession(page, url, { oktaAlive = null, clickSignIn = 
     // `signin.reservecalifornia.com`. It is headful and sits on somebody's desktop: a
     // keep-warm displaying a login form invites exactly the hand sign-in that `rc-login.bat`
     // exists to do properly, and every later `readLiveToken` would be reading the wrong page.
+    onStep('renew:reload-off-signin');
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
   }
 

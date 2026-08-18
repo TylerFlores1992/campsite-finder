@@ -34,9 +34,17 @@ const code = SRC.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('
  * assertion that matched the import line.
  */
 function envDefault(name: string): number {
-  const m = new RegExp(`${name} \\|\\| ([\\d_]+)`).exec(code);
-  assert.ok(m, `no default found for ${name} — the constant may have been renamed`);
-  return Number(m![1].replace(/_/g, ''));
+  // MUST HANDLE `40 * 60_000` AS WELL AS `60_000`. The first version matched `[\d_]+`, which
+  // stops at the space — so `RC_KEEPWARM_MAX_AGE_MS` read as **40** and the "is it at least 20
+  // minutes?" assertion failed with `0.0006m`. That is the SECOND time in one session a
+  // threshold guard has silently read the wrong number, after a bare `(\d+)` stopping at the
+  // underscore in `60_000` — and this helper was written to stop exactly that. A guard that
+  // misreads a value will approve a wrong one later without saying anything.
+  const m = new RegExp(`${name} \\|\\| ([\\d_ *]+?)\\s*\\)`).exec(code);
+  assert.ok(m, `no default found for ${name}`);
+  const factors = m![1].split('*').map((x) => Number(x.trim().replace(/_/g, '')));
+  assert.ok(factors.every(Number.isFinite), `could not parse the default for ${name}: ${m![1]}`);
+  return factors.reduce((a, b) => a * b, 1);
 }
 
 test('the trigger is SIZE, not age', () => {
@@ -87,9 +95,16 @@ test('recycling reuses the existing reopen path', () => {
   // `break` from the inner loop is exactly what the closed-window and preemption paths do:
   // the context closes and the outer loop reopens it. Introducing a second teardown would be
   // a second thing to get wrong, and this one is already exercised many times a day.
-  const block = code.slice(code.indexOf('RECYCLING the browser'));
-  assert.match(block.slice(0, 600), /\bbreak;/, 'must break, not exit or relaunch inline');
-  assert.ok(!/process\.exit/.test(block.slice(0, 600)),
+  // BOUNDED AT THE NEXT SECTION, not by a character count. The window was a flat 600 chars
+  // and broke the moment the heap diagnostics were added between the trip and its `break` —
+  // a guard measuring by proximity rather than by structure, which fails on any edit that
+  // makes the block longer and says nothing useful when it does.
+  const start = code.indexOf('RECYCLING the browser');
+  const end = code.indexOf('lastExpiryPoll >= EXPIRY_POLL_MS', start);
+  assert.ok(start > -1 && end > start, 'could not locate the size-bound trip block');
+  const block = code.slice(start, end);
+  assert.match(block, /\bbreak;/, 'must break, not exit or relaunch inline');
+  assert.ok(!/process\.exit/.test(block),
     'dying here would drop the session for no reason — the wedge watchdog is what exits');
 });
 
@@ -178,7 +193,7 @@ test('the stall bar is shorter than the wedge bar, and both still exist', () => 
   // killing real logins — 12 minutes at 2,400 MB/min is 28 GB of runway. This arm can be
   // short precisely because it carries a second condition.
   const stall = envDefault('RC_KEEPWARM_MEM_STALL_MS');
-  const hung = envDefault('RC_KEEPWARM_HUNG_MS') * 60_000;
+  const hung = envDefault('RC_KEEPWARM_HUNG_MS');
   assert.ok(stall < hung, 'the runaway arm must fire before the generic wedge arm');
   assert.ok(stall >= 30_000, 'not so short that an ordinary slow page load trips it');
   assert.match(code, /stalledMs > HUNG_MS/, 'the generic wedge watchdog must survive');
