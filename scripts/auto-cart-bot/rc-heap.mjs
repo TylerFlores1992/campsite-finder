@@ -98,14 +98,51 @@ function within(promise, ms, label) {
  * that will show up as `no answer` here and the port becomes a decision made on evidence
  * rather than for convenience.
  */
-export async function collectHeapFacts(ctx, page) {
-  if (!ctx || !page) return { ok: false, reason: 'no page to ask' };
+export async function attachHeapProbe(ctx, page) {
+  if (!ctx || !page) return null;
   const session = await within(ctx.newCDPSession(page), CDP_TIMEOUT_MS, 'newCDPSession');
-  if (!session.ok) return { ok: false, reason: session.reason };
+  if (!session.ok) return null;
   const cdp = session.value;
+  // Enabled now too. `Performance.enable` is a round trip like any other, and the whole point
+  // of attaching early is that at trip time we send ONE command to a socket that already
+  // exists rather than negotiating a new one.
+  const ok = await within(cdp.send('Performance.enable'), CDP_TIMEOUT_MS, 'Performance.enable');
+  return ok.ok ? cdp : null;
+}
+
+export async function collectHeapFacts(ctx, page, attached = null) {
+  /**
+   * ATTACHED AT LAUNCH, NOT AT THE TRIP — and this is the whole reason the first real firing
+   * produced nothing.
+   *
+   * 2026-08-18 03:00:24, the runaway guard's own log:
+   *     ✗ RUNAWAY — stalled 99s with only 3862 MB of free RAM
+   *       heap facts unavailable (newCDPSession: no answer in 3000ms)
+   *
+   * Creating a CDP session needs the browser to negotiate a new target attachment, and a
+   * browser eating the machine will not do that. Sending one command down a socket that
+   * already exists is a far smaller ask. So the session is opened at launch while everything
+   * is healthy and merely USED here.
+   *
+   * The old behaviour survives as the fallback: with no attached session we still try to make
+   * one, because a caller that has none should degrade to a worse answer rather than none.
+   */
+  if (!ctx || !page) return { ok: false, reason: 'no page to ask' };
+  let cdp = attached;
+  let borrowed = false;
+  if (!cdp) {
+    const session = await within(ctx.newCDPSession(page), CDP_TIMEOUT_MS, 'newCDPSession');
+    if (!session.ok) return { ok: false, reason: session.reason };
+    cdp = session.value;
+    borrowed = true;
+  }
   try {
-    const enabled = await within(cdp.send('Performance.enable'), CDP_TIMEOUT_MS, 'Performance.enable');
-    if (!enabled.ok) return { ok: false, reason: enabled.reason };
+    // Already enabled when the probe was attached at launch; harmless and necessary on the
+    // fallback path, where the session is brand new.
+    if (borrowed) {
+      const enabled = await within(cdp.send('Performance.enable'), CDP_TIMEOUT_MS, 'Performance.enable');
+      if (!enabled.ok) return { ok: false, reason: enabled.reason };
+    }
     const got = await within(cdp.send('Performance.getMetrics'), CDP_TIMEOUT_MS, 'Performance.getMetrics');
     if (!got.ok) return { ok: false, reason: got.reason };
 
@@ -125,9 +162,11 @@ export async function collectHeapFacts(ctx, page) {
   } catch (err) {
     return { ok: false, reason: err?.message ?? String(err) };
   } finally {
-    // Detaching is best-effort: we are usually about to exit, and a failed detach must not
-    // become the thing that stops us exiting.
-    await within(cdp.detach(), 1_000, 'detach').catch(() => {});
+    // ONLY DETACH WHAT WE OPENED. The long-lived probe belongs to the caller and is reused on
+    // the next trip; detaching it here would silently turn the fix back into the bug — the
+    // second firing would find no session and be back to negotiating one against a browser
+    // that cannot answer.
+    if (borrowed) await within(cdp.detach(), 1_000, 'detach').catch(() => {});
   }
 }
 

@@ -85,7 +85,7 @@ import { pacificHour, hoursUntilRelease } from './update-guard.mjs';
 import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 import { takeSample } from './memory-sample.mjs';
-import { collectHeapFacts, describeHeapFacts, writeHeapSnapshot } from './rc-heap.mjs';
+import { attachHeapProbe, collectHeapFacts, describeHeapFacts, writeHeapSnapshot } from './rc-heap.mjs';
 
 // No secrets here, but RC_PROFILE_DIR / RC_KEEPALIVE_MS / RC_HEADLESS are read the same
 // way as everywhere else. A process that silently ignores the config file is the bug
@@ -99,6 +99,12 @@ const RC_HOME = 'https://www.reservecalifornia.com/';
  *  and a login is the thing we can no longer do unattended. */
 const PROFILE_DIR = path.resolve(HERE, process.env.RC_PROFILE_DIR || '.rc-bot-profile');
 const WARM_MARKER = path.join(PROFILE_DIR, '.camphawk-rc-warmed');
+/**
+ * Written by the watchdog when it kills the browser, read by the rehearsal gate after the
+ * supervisor restarts us. A FILE and not a variable, because the whole point is that the
+ * process which knows does not survive to tell the process which needs to know.
+ */
+const ABNORMAL_EXIT_MARKER = path.join(PROFILE_DIR, '.camphawk-abnormal-exit');
 
 /**
  * How often to refresh. 20 minutes against an Okta access token that lives ~1h.
@@ -437,53 +443,7 @@ const MEM_STALL_MS = Number(process.env.RC_KEEPWARM_MEM_STALL_MS || 60_000);
  */
 const WATCHDOG_MS = Number(process.env.RC_KEEPWARM_WATCHDOG_MS || 10_000);
 
-/**
- * ── RECYCLE THE BROWSER BEFORE THE RAMP INSTEAD OF DURING IT (2026-08-17, fourth pass) ──
- *
- * `RC_MAX_FAMILY_MB`'s own comment argues against an age bound: *"Recycling on age would have
- * to be absurdly aggressive to land inside a ten-minute cliff, and would spend a session every
- * time for nothing on the ~95% of the day that is flat."* **That was written before the period
- * was known, and the measurement retires it.** The ramps are not scattered — twenty of them,
- * every ~70 minutes, each arriving about an hour into a browser's life, at the near-expiry
- * renewal. An age bound is not a shot in the dark at a ten-minute window; it is stepping out
- * of a window whose arrival time we can now predict.
- *
- * FORTY MINUTES, because the ramp lands at ~60 and the reopen is the cheap part. The bound is
- * on the BROWSER, not on the process — the loop already reopens the context for the closed
- * window and for the runner's preemption, several times an hour, and this rides the identical
- * `break`. Nothing new can go wrong that is not already going wrong daily.
- *
- * AND IT MOVES EVERY RENEWAL INTO THE CELL THAT WORKS. This is the part that makes it more
- * than damage limitation. The 2x2 recorded on 08-15 has one reliable cell and one that fails:
- *
- *     no token at all  + sign-in click  ->  a full 59-minute token   (proven twice)
- *     token present, short             ->  not observed to work; the SPA keeps rendering
- *                                          signed-in, no anchor to click, nothing starts
- *
- * A browser recycled at 40 minutes comes back holding NO token, which is the reliable cell.
- * The near-expiry cell — the one that fails, and the one every observed wedge begins in — is
- * simply never reached. So the argument for this is not only "sidestep the leak"; it is that
- * the renewal path we would rather be on is the one a fresh browser is already standing in.
- *
- * WHAT IT DOES NOT CLAIM: that the leak is cured. The allocation site is still unknown and a
- * browser kept alive long enough would presumably still ramp. This avoids the conditions,
- * which is worth having and is not the same thing.
- */
-const MAX_BROWSER_AGE_MS = Number(process.env.RC_KEEPWARM_MAX_AGE_MS || 40 * 60_000);
 
-/**
- * Never recycle this close to a release.
- *
- * A reopen takes seconds and the runner preempts cooperatively, so the risk is small — but it
- * is not zero, and at 07:59 the downside is somebody's campsite. The size bound and the RAM
- * arm both stay live inside this window: those fire only when something is already wrong, and
- * a browser eating the box is worse for the cart than a five-second reopen. This one is
- * elective, and elective work does not happen near an 08:00.
- */
-const RECYCLE_BLACKOUT_MIN = Number(process.env.RC_KEEPWARM_RECYCLE_BLACKOUT_MIN || 60);
-
-/** How often the age check may ask the server about the next release. See its call site. */
-const AGE_CHECK_MS = Number(process.env.RC_KEEPWARM_AGE_CHECK_MS || 60_000);
 
 /**
  * Don't thrash. If the browser is somehow over the line the instant it opens, recycling in
@@ -740,13 +700,6 @@ let renewal = newRenewalState();
  */
 const renewalSkip = makeSkipLogger((reason) => log(`   renewal stood down: ${reason}`));
 
-/**
- * Deduped, because once the browser is past MAX_BROWSER_AGE_MS the check is reached on every
- * pass until it is allowed through — and inside a blackout that is once a minute for an hour.
- * Consecutive identical reasons collapse to one line plus a count, the same treatment the
- * renewal's stand-downs needed when asking every 60s produced 1,440 identical lines a day.
- */
-const recycleSkip = makeSkipLogger((reason) => log(`   recycle stood down: ${reason}`));
 
 /** `null` seconds is "no token", which must not render as the string "null". */
 const secsText = (v) => (v == null ? 'none' : `${v}s`);
@@ -899,6 +852,22 @@ async function maybeAutoLogin(ctx, page) {
  * from this address cost twelve hours of IP block on 2026-08-06.
  */
 let recordedSlot = null;
+/**
+ * Minutes since the watchdog last killed a browser, or null if it never has.
+ *
+ * NULL IS "NO RECORD", NOT "LONG AGO" — and the gate treats it as no reason to stand down,
+ * because a missing marker is the ordinary case on a box that has never had a runaway.
+ */
+function minutesSinceAbnormalExit() {
+  try {
+    const at = Number(fs.readFileSync(ABNORMAL_EXIT_MARKER, 'utf8').trim());
+    if (!Number.isFinite(at) || at <= 0) return null;
+    return (Date.now() - at) / 60_000;
+  } catch {
+    return null;
+  }
+}
+
 async function maybeRehearse(ctx, page) {
   const hour = pacificHour();
   // A PACIFIC DATE, NOT AN HOUR NUMBER. This used to hold `hour` and was never reset, so it
@@ -919,6 +888,8 @@ async function maybeRehearse(ctx, page) {
       ? (Date.now() - Date.parse(facts.lastRehearsalAt)) / 3_600_000
       : null,
     hasCredentials: hasCredentials(),
+    // Or the rehearsal tests our own restart. See REHEARSAL_QUIET_AFTER_RESTART_MIN.
+    minutesSinceAbnormalExit: minutesSinceAbnormalExit(),
   });
 
   if (!decision.run) {
@@ -1426,7 +1397,6 @@ async function warmResident() {
     let stepSince = Date.now();
     const mark = (s) => { step = s; stepSince = Date.now(); };
     let lastLockRenew = 0;
-    let browserOpenedAt = Date.now();
     // Re-entrancy guard. The timer fires every ten seconds and the runaway arm is async, so
     // without this a slow heap read would queue a second and a third bail behind the first.
     let bailing = false;
@@ -1434,10 +1404,17 @@ async function warmResident() {
     // there; null until then, which `collectHeapFacts` reports as "no page to ask" rather
     // than throwing inside a setInterval where nothing would catch it.
     let residentPage = null;
+    // Opened at launch while the browser is healthy — see collectHeapFacts. Negotiating a new
+    // CDP session at trip time is what produced `no answer in 3000ms` on the first real firing.
+    let heapProbe = null;
     const renew = setInterval(() => {
       const stalledMs = Date.now() - lastTick;
       const bail = (why) => {
         log(why);
+        // BEFORE the exit, and best-effort. The next process reads this to know it is coming
+        // up after a kill rather than a clean start — which is what stops the login rehearsal
+        // testing our own restart and reporting it as a broken sign-in.
+        try { fs.writeFileSync(ABNORMAL_EXIT_MARKER, String(Date.now())); } catch { /* ignore */ }
         // THE BREADCRUMB, printed before anything else can go wrong. It is the whole reason
         // the next wedge is diagnosable and this one was not.
         log(`  Stalled in: ${step} (${Math.round((Date.now() - stepSince) / 1000)}s in that step).`);
@@ -1484,7 +1461,7 @@ async function warmResident() {
          * which is the mistake `rcFamilyMb` in this same guard would have made.
          */
         void (async () => {
-          const facts = await collectHeapFacts(ctx, residentPage).catch(() => null);
+          const facts = await collectHeapFacts(ctx, residentPage, heapProbe).catch(() => null);
           log(why);
           log(`  ${describeHeapFacts(facts, null)}`);
           bail('  (see the runaway line above)');
@@ -1502,7 +1479,6 @@ async function warmResident() {
     let ctx = null;
     try {
       mark('launching Chromium');
-      browserOpenedAt = Date.now();
       ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
         headless: HEADLESS, viewport: null,
         ignoreDefaultArgs: ['--enable-automation'],
@@ -1541,6 +1517,9 @@ async function warmResident() {
       residentPage = page;
       mark('initial RC load');
       await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+      // Before anything can go wrong with it. A failure returns null and the trip falls back
+      // to negotiating one, which is strictly the old behaviour rather than a new risk.
+      heapProbe = await attachHeapProbe(ctx, page).catch(() => null);
       mark('priming the token');
       const primed = await primeToken(page);
       log(`RC loaded and STAYING OPEN — token source: ${primed.source}`);
@@ -1555,7 +1534,6 @@ async function warmResident() {
       // 0 so the first look happens immediately on every open — a browser that comes back
       // already huge is exactly the case worth catching before it ramps again.
       let lastMemCheck = 0;
-      let lastAgeCheck = 0;
       for (;;) {
         // The watchdog's heartbeat. Every path through this loop must reach here, so a
         // stall anywhere below it — a Playwright call that never settles, a page that
@@ -1582,48 +1560,6 @@ async function warmResident() {
         // the runner's preemption, so a cart never waits behind a PowerShell spawn, and
         // BEFORE the expiry poll, because a browser this large will hang the renewal's
         // evaluates anyway and recycling first is what makes the next poll meaningful.
-        /**
-         * ELECTIVE RECYCLE, BEFORE THE RAMP RATHER THAN DURING IT. See MAX_BROWSER_AGE_MS:
-         * the ramps arrive about an hour into a browser's life, at the near-expiry renewal,
-         * so stepping out at forty minutes avoids the conditions AND lands every renewal in
-         * the token-less cell that is proven to work.
-         *
-         * AFTER the runner's preemption and BEFORE the memory scan, for the same reason the
-         * scan sits where it does: nothing elective may delay a cart, and a browser this loop
-         * is about to close is not worth spawning PowerShell to measure.
-         */
-        const ageMs = Date.now() - browserOpenedAt;
-        // ONCE A MINUTE, NOT ONCE A SECOND. The loop iterates every ~1s, and the branch below
-        // asks the server when the next hold releases — so an unrated check would be an HTTP
-        // request per second to camphawk.app for as long as a blackout lasts. The browser is
-        // already past its age; another sixty seconds costs nothing.
-        if (ageMs >= MAX_BROWSER_AGE_MS && Date.now() - lastAgeCheck >= AGE_CHECK_MS) {
-          lastAgeCheck = Date.now();
-          // The one thing that outranks it. `nextRelease` is null when the feed could not be
-          // reached, and null must NOT read as "no hold" — an unreachable feed is exactly
-          // when we know least, so it defers the recycle rather than permitting it. Same rule
-          // as the update guard refusing outright when it cannot reach the feed.
-          mark('age-recycle: asking when the next hold releases');
-          const { nextRelease, reachable } = await feedFacts();
-          const mins = nextRelease ? minutesUntil(nextRelease) : null;
-          const near = !reachable || (mins != null && mins >= -RECYCLE_BLACKOUT_MIN && mins <= RECYCLE_BLACKOUT_MIN);
-          if (near) {
-            // KEYED ON THE STATE, NOT THE SENTENCE. The sentence carries a minute count that
-            // changes on every ask, so keying on it would dedupe nothing and print a line a
-            // minute for the whole blackout — the exact failure `autoLoginSkip` had.
-            recycleSkip(
-              reachable ? 'blackout' : 'feed-unreachable',
-              reachable
-                ? `a hold is ${mins} min away — inside the ${RECYCLE_BLACKOUT_MIN} min blackout`
-                : 'the feed is unreachable, so we cannot rule out a hold',
-            );
-          } else {
-            log(`♻ recycling the browser at ${Math.round(ageMs / 60_000)}m old — ahead of the `
-              + 'renewal window where twenty ramps have started. The session re-mints by '
-              + 'authorize from a token-less profile, which is the cell that works.');
-            break;
-          }
-        }
         if (Date.now() - lastMemCheck >= MEM_CHECK_MS) {
           lastMemCheck = Date.now();
           mark('memory scan');
@@ -1643,7 +1579,7 @@ async function warmResident() {
                * problem. Same reading, taken while it is cheap.
                */
               mark('heap facts');
-              const facts = await collectHeapFacts(ctx, page).catch(() => null);
+              const facts = await collectHeapFacts(ctx, page, heapProbe).catch(() => null);
               log(`  ${describeHeapFacts(facts, mb)}`);
               mark('heap snapshot');
               const snap = await writeHeapSnapshot(ctx, page, path.join(HERE, 'logs'))

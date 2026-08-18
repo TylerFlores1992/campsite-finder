@@ -1190,20 +1190,70 @@ recovered    11:20:21  rc 163MB pid2956      RAM free 13,480MB   commit 10%
     needed, it reports `no answer` and the port becomes a decision made on evidence.
   - Bounded at 3s per step and every failure is a null, so it can never delay the exit — the
     mistake `rcFamilyMb` would have made in this same arm.
-- **AN AGE RECYCLE AT 40 MINUTES** (`MAX_BROWSER_AGE_MS`), which is the closest thing to a
-  cure available without knowing the allocation site. `RC_MAX_FAMILY_MB`'s own comment argued
-  against an age bound — *"absurdly aggressive to land inside a ten-minute cliff"* — and **that
-  was written before the period was known.** Twenty ramps at ~70-minute spacing, each about an
-  hour into a browser's life, make it a predictable window rather than a shot in the dark.
-  - **AND IT LANDS EVERY RENEWAL IN THE CELL THAT WORKS**, which is the better half of the
-    argument. A recycled browser comes back holding NO token — the `no token + click → 59m`
-    cell, proven twice — so the near-expiry cell, where every observed wedge began and which
-    has never been observed to work, is simply never reached.
-  - **An unreachable feed DEFERS it.** `nextRelease` is null both for "no hold" and for "could
-    not ask", and reading the second as the first is how an elective restart lands at 07:59.
-  - **The blackout applies to this arm ONLY.** The size bound and the RAM arm fire when
-    something is already wrong, and a browser eating the box is worse for a cart than a
-    five-second reopen. Elective work does not happen near an 08:00; emergency work does.
+- ~~**AN AGE RECYCLE AT 40 MINUTES**~~ — **BUILT, MEASURED, AND REMOVED THE SAME NIGHT.** The
+  argument was that a recycled browser comes back token-less, i.e. in the half of the 2x2 that
+  works. **The premise is false: localStorage survives a browser restart.** The first firing
+  said so in two lines:
+  ```
+  02:36:27 ♻ recycling the browser at 40m old …
+  02:36:32 RC loaded and STAYING OPEN — token source: live      <- NOT token-less
+  02:58:44 renewing the session — the token has 10m left (src=live)   <- the same cell as ever
+  03:00:24 ✗ RUNAWAY … Stalled in: renew:click-sign-in
+  ```
+  It changed neither the cell nor the timing and cost a browser restart every forty minutes —
+  and restarts are not free: one of them turned the login rehearsal red the same night. Gone,
+  with `worker/keepwarm-diagnosis.test.mts` pinning that it stays gone and why.
+- **AND THE SAME DATA CLOSES THE "SHOULD THE RESIDENT TAB EXIST?" QUESTION — IT SHOULD.** The
+  proposal was to park it on `about:blank` so the SPA ran seconds per minute instead of
+  continuously. **The idle tab is measured innocent**: it sits at 200-330 MB for the best part
+  of an hour and only ramps DURING the renewal, in every one of the twenty events. Parking
+  would target the harmless part and add a page load per poll from an IP that has eaten a
+  12-hour block. **Do not revisit without new evidence.**
+
+### THE FIRST REAL FIRING, AND WHAT IT COST (2026-08-18)
+```
+02:36:27 ♻ recycling the browser at 40m old …                    <- age recycle: worked, useless
+03:00:24 ✗ RUNAWAY — stalled 99s with only 3862 MB of free RAM (floor 4000 MB)
+03:00:24   heap facts unavailable (newCDPSession: no answer in 3000ms)
+03:00:24   Stalled in: renew:click-sign-in (58s in that step).
+```
+- **THE CONTAINMENT IS PROVEN, THIS TIME WITH ITS OWN LOG LINE.** Peak **5,688 MB / 71%
+  COMMIT** against 27 GB / 99% untreated. The box stayed healthy throughout.
+- **`os.freemem()` IS CALIBRATED.** The guard read **3,862 MB**; the PowerShell sampler read
+  **3,726 MB** twenty seconds later — 3.5% apart. The doubt recorded when it shipped is closed.
+- **THE BREADCRUMB NARROWED IT TO THE RENEWAL — and NOT to the click, however tempting.**
+  `rc` went 280 MB → 5,688 MB between 02:58:24 and 03:00:25, which spans the reload, the token
+  prime AND the click. `renew:click-sign-in` is where it was **caught**, not where it is proven
+  to allocate. What IS established is that this is the renewal path and not the idle SPA.
+- **THE HEAP FACTS FAILED, AND THE REASON IS FIXED.** Creating a CDP session needs the browser
+  to negotiate a target attachment, which a browser eating the machine will not do.
+  `attachHeapProbe` now opens the session **at launch while everything is healthy**, and the
+  trip only SENDS a command down it. The old path survives as a fallback, and the shared
+  session is never detached by a borrower — doing so would silently restore the bug on the
+  second firing.
+- **OUR OWN CONTAINMENT TURNED THE DASHBOARD RED.** The supervisor restarted the process and
+  the login rehearsal fired **24 seconds later**, against a browser that had just come up on a
+  box recovering from 71% COMMIT. RC answered *"We're having trouble loading the
+  application"*, and `autocart.rc_login` went **FAIL — "1 hold(s) ahead will fail unless a
+  human signs in"**, with a real hold twelve hours out. The session was healthy again minutes
+  later. Two fixes, because they are different faults:
+  1. **A quiet window after an abnormal exit.** The bail writes `.camphawk-abnormal-exit`; the
+     rehearsal stands down for `REHEARSAL_QUIET_AFTER_RESTART_MIN` (5). A FILE, because the
+     process that knows does not survive to tell the process that needs to know. **`null` is
+     "no record" and never gates** — a missing marker is the ordinary case.
+  2. **RC's app failing to load is INCONCLUSIVE, not a broken login.** There is no sign-in
+     link on a page that never rendered, so the hunt fails and reports the login broken. That
+     is the banner trap and `provedNothing` again: an absent form means "we could not ask".
+     It returns `provedNothing` now and stays LOUD in the log — it is also the 2026-08-14
+     blank-page signature — but it no longer spends the once-per-20h budget or send anybody
+     to the box.
+- **TWO EXISTING GUARDS IN `rc-live-not-dead.test.mts` BROKE AND WERE UPDATED, NOT RELAXED** —
+  they pinned `reason: await withBanner(link` by exact expression, and hoisting it into a
+  `const` invalidated them over unchanged behaviour. **The first rewrite then WEAKENED one:**
+  bounding the live branch at the first `withBanner(` means folding a banner INTO that branch
+  merely shortens the slice, and the mutation passed. Verified failing, re-bounded on the
+  `if (stillLive === true)` block, verified again. Eleventh time a guard here has anchored on
+  the wrong thing.
 - `worker/keepwarm-diagnosis.test.mts`, **13 mutations, each asserting the mutation applied.**
   **One survived and the reason is the lesson:** the mutation meant to delete the snapshot call
   left the identifier in place, so the regex still matched and the guard passed against code

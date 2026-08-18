@@ -73,14 +73,45 @@ export function rehearsalSlot(now = new Date()) {
  *           hoursSinceLastRun: number|null, hasCredentials: boolean }} s
  * @returns {{ run: boolean, why: string }}
  */
+/**
+ * How long after an abnormal exit the rehearsal stays out of the way.
+ *
+ * WHY: on 2026-08-18 the runaway guard killed a browser at 03:00:24; the supervisor restarted
+ * the process; and the rehearsal fired **24 seconds later**, against a browser that had just
+ * come up on a box still recovering from 71% COMMIT. RC answered *"We're having trouble
+ * loading the application"*, and `autocart.rc_login` went **FAIL — "1 hold(s) ahead will fail
+ * unless a human signs in"** with a real hold twelve hours out.
+ *
+ * The session was healthy again minutes later, so that verdict was almost certainly false —
+ * and it is expensive in two ways at once: it spends the once-per-20h budget, and it points a
+ * human at the box over a system that is working. That is the cry-wolf failure this codebase
+ * has fixed three times, and this time OUR OWN containment created it.
+ *
+ * Five minutes is longer than the restart plus RC's app load and far shorter than the
+ * rehearsal hour, so a genuine rehearsal still happens the same evening.
+ */
+export const REHEARSAL_QUIET_AFTER_RESTART_MIN = 5;
+
 export function shouldRehearse(s) {
   const {
     pacificHour, hoursToRelease = null, sessionLive = null,
     hoursSinceLastRun = null, hasCredentials = true,
+    minutesSinceAbnormalExit = null,
   } = s;
 
   // Nothing to rehearse: the manual reconnect is the only path anyway.
   if (!hasCredentials) return { run: false, why: 'no saved password' };
+
+  // A BROWSER THAT JUST CAME UP AFTER A RUNAWAY IS NOT A FAIR TEST. See the constant above.
+  // `null` means "no abnormal exit on record", which is the ordinary case and must not gate
+  // anything — the same rule as `unknown` never rounding to a verdict.
+  if (minutesSinceAbnormalExit != null && minutesSinceAbnormalExit < REHEARSAL_QUIET_AFTER_RESTART_MIN) {
+    return {
+      run: false,
+      why: `the browser was killed ${Math.round(minutesSinceAbnormalExit)}m ago — a rehearsal now `
+         + 'would test the restart, not the login',
+    };
+  }
 
   if (pacificHour !== REHEARSAL_HOUR) return { run: false, why: 'not the rehearsal hour' };
 
