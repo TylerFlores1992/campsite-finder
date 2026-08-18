@@ -1709,6 +1709,46 @@ checked 19:50:40  exp 2026-08-19T07:50:40   → +12.0000h
     Arguably right (12h of warning beats finding out at 07:45) but it is a real cost.
   **`DT` MUST SURVIVE EITHER WAY.** It is the device cookie, and losing it makes a sign-in
   look like a fresh profile — which is what cost the household IP twelve hours on 2026-08-06.
+- **BUILT 2026-08-18: the FIRST one** (`scripts/auto-cart-bot/force-login-prompt.mjs`). The
+  rehearsal wraps `attemptLogin` in `withForcedLoginPrompt`, which intercepts RC's own
+  `/oauth2/v1/authorize` and adds `prompt=login`. RC's SPA still builds the client id, redirect
+  URI, `state` and the PKCE challenge; we add one query parameter to a request it already got
+  right. **Bot-side — it needs a box update.**
+  - **A 302, NOT `route.continue({ url })`.** Overriding a navigation request's URL has
+    version-dependent semantics in Playwright; a redirect is something the browser does every
+    day, and it re-enters the handler with the parameter already present, where the
+    already-forced guard passes it through. Bounded at `MAX_REWRITES` (3) so a loop cannot hang
+    the browser.
+  - **THE HAZARD IS THE LEAK, AND IT IS WHY THIS IS A MODULE.** The rehearsal runs on the
+    RESIDENT page. A route left installed would rewrite EVERY later authorize — including the
+    silent re-mints that appear to be keeping the session alive on their own — turning a free
+    background renewal into an unattended login that cannot succeed, hourly, from an address
+    that has been blocked before. Disarmed TWO independent ways: a `finally` that calls
+    `page.unroute`, and an `armed` flag the handler checks first, so a leaked route is inert
+    even if `unroute` throws. **The flag is the half that does not depend on Playwright.**
+  - **THE REHEARSAL ONLY, NEVER `maybeAutoLogin`** — that runs at T−30 of a real release and is
+    the only thing between a queued hold and a missed cart. An unproven parameter in front of it
+    would risk a campsite to improve a dashboard. Pinned by a test asserting exactly ONE call
+    site.
+  - **IT REPORTS WHETHER IT ACTUALLY ASKED.** `rewrites === 0` means the interception never
+    fired, which is a different fault from Okta ignoring the parameter — and without the count
+    the two produce the identical inconclusive run. A `provedNothing` WITH rewrites > 0 is
+    recorded as *"Okta declined to re-prompt; forcing the form this way does not work"*, which
+    is what would retire this approach in favour of the destructive cookie drop.
+  - **The downside is bounded by the status quo:** nothing is deleted, so a failed rehearsal
+    costs a live session nothing, and if Okta declines we land back on `provedNothing` — which
+    is exactly where we already are. That is why it goes first.
+  - `worker/force-login-prompt.test.mts`, **nine mutations, each verified applied.** Two of its
+    own guards were wrong at baseline and **both anchored on a token that occurs twice** —
+    `rewrites > 0` appears in the log line and in the detail line, so replacing either
+    condition with a constant left the other matching. Anchored on `log(rewrites > 0` and
+    `const detail = rewrites > 0` now. **Fifteenth and sixteenth time.**
+  - **AND TWO EXISTING GUARDS BROKE OVER UNCHANGED BEHAVIOUR.** `rehearsal.test.mts` pinned
+    `provedNothing[\s\S]{0,220}result: 'inconclusive'` — a PROXIMITY window, which a new comment
+    pushed past. Re-anchored on the `if (r.provedNothing)` BLOCK, not widened; verified still
+    failing when that branch is made to return `'ok'`. **The first re-anchor was itself wrong**
+    — `if (r.provedNothing) {` also appears in `maybeAutoLogin`, earlier in the file, so a bare
+    `indexOf` landed there and failed against correct code. Scope to the function first.
 
 ### THE LOGIN IS THE OPEN RISK, NOT THE LEAK (2026-08-18)
 - **THE OWNER RAN THE LOGIN BY HAND AND IT "GOT HUNG UP AT PASSWORD".** That is a signature,

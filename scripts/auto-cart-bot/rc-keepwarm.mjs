@@ -70,6 +70,7 @@ import {
   profileRequested,
 } from './profile-lock.mjs';
 import { sweepOrphanChromium } from './orphan-sweep.mjs';
+import { withForcedLoginPrompt } from './force-login-prompt.mjs';
 import {
   installTokenCapture, readLiveToken, readTokenAnyOrigin, primeToken, renewSession, tokenSecondsLeft,
   dropStoredToken,
@@ -1184,7 +1185,17 @@ async function runLoginRehearsal(ctx, page, { humanPresent, tag }) {
   }
 
   log('Signing in with the stored password, exactly as it would at 07:45…');
-  const r = await attemptLogin(ctx, page, {
+  // FORCE THE FORM. Without this the sign-in click is answered from the `idx` cookie with no
+  // form at all, so no credential is submitted and the run is inconclusive — which is where
+  // this test has sat since 2026-08-16, because our own liveness probe keeps that cookie
+  // permanently fresh (measured 12 for 12). `prompt=login` asks Okta to re-authenticate
+  // anyway. Nothing is deleted, so if Okta declines we land back on `provedNothing`, exactly
+  // where we already are. See force-login-prompt.mjs for why the route must not leak.
+  //
+  // THE REHEARSAL ONLY, NEVER `maybeAutoLogin`. That one runs at T−30 of a real release and
+  // is the only thing between a queued hold and a missed cart; putting an unproven parameter
+  // in front of it would risk a campsite to improve a dashboard.
+  const { result: r, rewrites } = await withForcedLoginPrompt(page, () => attemptLogin(ctx, page, {
     homeUrl: RC_HOME,
     isLive: async () => (await sessionLive(ctx, page)).live === true,
     log,
@@ -1192,7 +1203,14 @@ async function runLoginRehearsal(ctx, page, { humanPresent, tag }) {
     // failing at — they can solve it and the run carries on. The nightly rehearsal and
     // maybeAutoLogin deliberately do the opposite: unattended, a challenge is a full stop.
     humanPresent,
-  });
+  }), { log });
+  // SAY WHETHER WE ACTUALLY ASKED. Zero rewrites means the interception never fired, which is
+  // a different fault from Okta ignoring the parameter — and without this line the two
+  // produce the identical inconclusive run, which is the shape this file keeps paying for.
+  log(rewrites > 0
+    ? `  (asked Okta for a fresh credential — rewrote ${rewrites} authorize request(s))`
+    : '  (the authorize request was never intercepted — Okta was NOT asked for a fresh '
+      + 'credential, so an inconclusive result here says nothing about the password)');
   if (!r.ok) {
     log(`✗ ${r.reason}`);
     await saveFailureShot(page, tag);
@@ -1202,8 +1220,17 @@ async function runLoginRehearsal(ctx, page, { humanPresent, tag }) {
   // a form appeared, so no credential was ever submitted. Recording that as a pass would put
   // a green mark against a test that did not run — see rehearsal.mjs.
   if (r.provedNothing) {
-    log(`… ${r.reason}`);
-    return { result: 'inconclusive', detail: r.reason };
+    // TWO DIFFERENT INCONCLUSIVES, and they need different next moves. If we DID rewrite the
+    // authorize and Okta still answered from the cookie, that is Okta declining `prompt=login`
+    // — and it retires this approach in favour of the destructive cookie-drop, which is a
+    // decision somebody should make on evidence rather than re-derive. Carried in the detail
+    // so `rc_login_rehearsal_log` keeps it.
+    const detail = rewrites > 0
+      ? `${r.reason} — and this run DID force prompt=login (${rewrites} rewrite(s)), so Okta `
+        + 'declined to re-prompt; forcing the form this way does not work'
+      : r.reason;
+    log(`… ${detail}`);
+    return { result: 'inconclusive', detail };
   }
 
   const after = await sessionLive(ctx, page);
