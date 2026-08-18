@@ -35,6 +35,8 @@ const TOKEN = strip(readFileSync('scripts/auto-cart-bot/rc-token.mjs', 'utf8'));
 const HEAP = strip(readFileSync('scripts/auto-cart-bot/rc-heap.mjs', 'utf8'));
 const REHEARSAL = strip(readFileSync('scripts/auto-cart-bot/rehearsal.mjs', 'utf8'));
 const AUTOLOGIN = strip(readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8'));
+const SAMPLE = strip(readFileSync('scripts/auto-cart-bot/memory-sample.mjs', 'utf8'));
+const MEMORY = strip(readFileSync('src/lib/chromium-memory.ts', 'utf8'));
 
 function envDefault(code: string, name: string): number {
   // MUST HANDLE `40 * 60_000` AS WELL AS `60_000`. The first version matched `[\d_]+`, which
@@ -312,4 +314,86 @@ test('a trail sample is cheaper than a trip-time reading', () => {
   assert.ok(trail > 0 && trail < trip, `trail ${trail}ms must be tighter than the trip's ${trip}ms`);
   const tick = envDefault(KEEPWARM, 'RC_KEEPWARM_WATCHDOG_MS');
   assert.ok(trail < tick, 'a sample must not outlive the tick that started it');
+});
+
+/* ── 6. TIMING THE ONSET, AND NAMING THE PROCESS ───────────────────────────────────── */
+
+/**
+ * The heap trail answered "is it the JS heap?" — 16 MB, flat, twelve identical samples, while
+ * the process reached 4,903 MB. It cannot answer the two questions that follow, for one shared
+ * reason: it stops the instant the ramp begins, because CDP goes unanswerable.
+ *
+ *   WHEN does the ramp start?  -> `os.freemem()` is a syscall and never stops answering.
+ *   WHICH process is growing?  -> the periodic PowerShell scan already reads the command line.
+ */
+
+test('the RAM trail records the STEP, not just the number', () => {
+  // The step is the entire point. Three firings stalled in renew:click-sign-in, but memory rose
+  // across the reload, the prime AND the click — so the click is where it was caught, not where
+  // it is proven to allocate, and those have different fixes.
+  assert.match(KEEPWARM, /ramTrail = \[\.\.\.ramTrail, \{ at: Date\.now\(\), freeMb: Math\.round\(freeMb\), step \}\]/);
+  assert.match(KEEPWARM, /\.slice\(-TRAIL_KEEP\)/, 'and stays bounded');
+});
+
+test('the RAM trail is recorded on every tick, healthy ones included', () => {
+  // The sample before the ramp is what gives the one during it a baseline to be a change from.
+  // Recording only under pressure would produce a series with no "before".
+  const timer = KEEPWARM.slice(KEEPWARM.indexOf('const renew = setInterval('));
+  const body = timer.slice(0, timer.indexOf('}, WATCHDOG_MS);'));
+  const at = body.indexOf('ramTrail = [...ramTrail');
+  const guard = body.indexOf('stalledMs > MEM_STALL_MS');
+  assert.ok(at > -1 && guard > at, 'the trail must be appended before the guard can exit');
+});
+
+test('a collapsed RAM group shows its change, oldest to newest', () => {
+  // The first version overwrote the value as it walked, so a group printed the OLDEST reading
+  // against the NEWEST timestamp - reversing the direction of travel on the one line whose job
+  // is showing memory fall. Caught by rendering a fixture and reading it.
+  assert.match(HEAP, /last\.oldestMb = s\.freeMb/);
+  assert.match(HEAP, /\$\{p\.oldestMb\}→\$\{p\.newestMb\}/);
+});
+
+test('both trails are printed at the trip', () => {
+  const arm = KEEPWARM.slice(KEEPWARM.indexOf('stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB'));
+  const block = arm.slice(0, 2600);
+  assert.match(block, /describeTrail\(heapTrail/, 'the heap trail');
+  assert.match(block, /describeRamTrail\(ramTrail/, 'and the one that spans the event');
+});
+
+test('the scan reads the process type, and the browser is not "unknown"', () => {
+  // browser | renderer | gpu-process | utility are four different investigations. The PARENT
+  // carries no --type at all, so an absent flag identifies it rather than defeating the check.
+  assert.match(SAMPLE, /--type=\(\[a-zA-Z-\]\+\)/);
+  assert.match(SAMPLE, /\$ty = 'browser'/, "no --type means the parent, never null");
+});
+
+test('the type is emitted BEFORE the directory', () => {
+  // The directory is a path that may contain `|` and is therefore joined from the remainder by
+  // the parser. A field appended after it would be swallowed by that join.
+  assert.match(SAMPLE, /'P\|\{0\}\|\{1\}\|\{2\}\|\{3\}' -f \$o\.ProcessId, \$mb, \$ty, \$dir/);
+});
+
+test('a box on the OLD build still parses correctly', () => {
+  // The update takes as long as it takes, and during it this parser sees four-field lines. Read
+  // as the new shape they would put the directory in the type slot and classify every process
+  // as `other`, silently emptying the family under investigation.
+  assert.match(SAMPLE, /const hasType = parts\.length >= 5/);
+  assert.match(SAMPLE, /parts\.slice\(hasType \? 4 : 3\)/);
+});
+
+test('per-type totals are kept, not just the biggest process', () => {
+  // The last three ramps put only 3,052 MB of 4,903 in the biggest process, so naming only that
+  // describes under two thirds of the growth.
+  assert.match(SAMPLE, /out\.rcByType\[type\] = \(out\.rcByType\[type\] \?\? 0\) \+ mb/);
+  assert.match(MEMORY, /rc_by_type/);
+});
+
+test('the type crosses the network through an allow-list', () => {
+  // It arrives from the box and is rendered on the admin page, so it is not stored verbatim.
+  // An unrecognised value stores null - "not reported" - which the readout prints as a gap.
+  assert.match(MEMORY, /const PROCESS_TYPES = new Set\(\[/);
+  assert.match(MEMORY, /PROCESS_TYPES\.has\(sample\.maxType\) \? sample\.maxType : null/);
+  // An empty map must store null rather than {} - "we looked and every type was zero" is a
+  // measurement nobody took. Same rule the family counts had to be taught.
+  assert.match(MEMORY, /return Object\.keys\(out\)\.length \? out : null;/);
 });

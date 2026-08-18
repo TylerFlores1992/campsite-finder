@@ -315,3 +315,44 @@ export async function writeHeapSnapshot(ctx, page, dir, { maxBytes = 512 * 1024 
     await within(cdp.detach(), 1_000, 'detach').catch(() => {});
   }
 }
+
+/**
+ * Render the free-RAM trail: when the machine started losing memory, and what the loop was
+ * doing at each point.
+ *
+ * WHY THIS EXISTS ALONGSIDE THE HEAP TRAIL. The heap trail is the better measurement and it
+ * stops the moment it matters — CDP goes unanswerable as the ramp begins, so its newest sample
+ * predates the onset. `os.freemem()` is a syscall and keeps answering through the whole event,
+ * which makes this the only series that spans it.
+ *
+ * The STEP is the point. Three firings have stalled in `renew:click-sign-in`, but memory rose
+ * across the reload, the token prime AND the click, so the click is where it was caught rather
+ * than where it is proven to allocate. A reading of "9,100 MB at renew:reload, 8,900 at
+ * renew:prime-after-reload, 4,100 at renew:click-sign-in" settles that; the three steps have
+ * different fixes.
+ *
+ * Consecutive identical steps collapse to a count, or a two-minute trail of ten-second samples
+ * is a wall of `idle` that buries the three lines worth reading.
+ */
+export function describeRamTrail(samples, now) {
+  if (!samples || !samples.length) return 'RAM trail: EMPTY — the watchdog took no reading at all';
+  // A COLLAPSED GROUP SHOWS ITS CHANGE, NOT ONE END OF IT. The first version overwrote the
+  // value as it walked, so a group printed the OLDEST reading against the NEWEST timestamp —
+  // `0s ago 4100 MB` for a run whose newest sample was 3,700. On the one line whose entire job
+  // is showing memory falling, that reverses the direction of travel. Caught by rendering a
+  // fixture and reading it, which is the only way a formatting bug ever gets caught.
+  const parts = [];
+  for (const s of samples.slice(-TRAIL_KEEP).reverse()) {
+    const last = parts[parts.length - 1];
+    if (last && last.step === s.step) { last.n += 1; last.oldestMb = s.freeMb; continue; }
+    parts.push({ at: s.at, step: s.step, newestMb: s.freeMb, oldestMb: s.freeMb, n: 1 });
+  }
+  return `RAM trail (newest first): ${parts
+    .map((p) => {
+      // Oldest first inside the group, so the arrow points the way time did.
+      const mb = p.oldestMb === p.newestMb ? `${p.newestMb}` : `${p.oldestMb}→${p.newestMb}`;
+      return `${Math.round((now - p.at) / 1000)}s ago ${mb} MB free @ ${p.step}`
+        + (p.n > 1 ? ` (x${p.n})` : '');
+    })
+    .join(' · ')}`;
+}
