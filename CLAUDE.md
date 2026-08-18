@@ -1463,6 +1463,58 @@ sign-in control was found and clicked.
   `maybeAutoLogin(ctx, page)`, which matches the function DEFINITION four hundred lines above
   the call site. It anchors on the awaited call now. **Thirteenth time.**
 
+### OUR OWN LIVENESS CHECK KEEPS THE OKTA SESSION ALIVE — MEASURED, 12 FOR 12 (2026-08-18)
+`checkAndReport` calls `oktaSessionAlive(ctx)` **unconditionally**, every keepalive tick and
+every renewal. Off the box's own log, twelve consecutive readings across three hours:
+```
+checked 17:07:02  exp 2026-08-19T05:07:02   → +12.0000h
+checked 17:27:02  exp 2026-08-19T05:27:02   → +12.0000h
+   … ten more, every one +12.0000h from the moment it was CHECKED …
+checked 19:50:40  exp 2026-08-19T07:50:40   → +12.0000h
+```
+- **A fixed 12h from creation would print the same instant every time. It does not.** The
+  window moves with the clock, to the second, twelve for twelve. So the Okta session's expiry
+  is a rolling idle timeout **that our own polling resets**, and it cannot idle out while the
+  keep-warm is running.
+- **SO THE "~12 HOUR OKTA SESSION" FIGURE THROUGHOUT THIS FILE IS OUR PROBE'S WINDOW, NOT
+  RC'S.** Nobody has ever observed how long an unrefreshed one lives. Same family as the "~8
+  hour session cap" that turned out to measure when we happened to look (2026-08-08).
+- **WHICH SPECIFIC REQUEST REFRESHES IT IS NOT ESTABLISHED.** `/api/v1/sessions/me` is the
+  leading candidate — `renewSession`'s own guard already asserts it — but every check also
+  loads RC pages carrying the cookie. Do not write one in as fact.
+- **THE RENEWAL'S CAREFUL GUARD IS NULLIFIED BY A SIBLING.** It skips the Okta probe when
+  there is no token to lose, and says why in as many words: *"asking on every attempt would
+  extend the very window we are trying to measure the length of."* `checkAndReport` then asks
+  every twenty minutes regardless. The reasoning is right and the file next door defeats it —
+  the recurring shape here, this time with the guard and its defeater in one process.
+- **IT IS LOAD-BEARING BY ACCIDENT, AND THAT IS THE PART TO BE CAREFUL WITH.** A session that
+  never idles out is why this bot can go days without typing a password. **Anyone who
+  "corrects" the unconditional probe to match the renewal's guard will start the Okta session
+  expiring and force real logins from an address that has eaten a 12-hour block.** Do not
+  tidy it up; if it is ever changed, change it deliberately and expect more sign-ins.
+- **AND IT IS WHY THE REHEARSAL KEEPS PROVING NOTHING.** `runLoginRehearsal` drops the token,
+  reloads, and requires RC to REJECT the session before it will type a password. With Okta
+  permanently fresh, the sign-in click is answered from the cookie with no form — which is
+  `provedNothing`, correctly reported as inconclusive. Its one lifetime PASS (2026-08-16
+  03:00) read `Session before the test: DEAD — RC rejected the token (401)` and `cleared 0
+  key(s)`: a profile that was already genuinely empty. **The instrument is not broken; it is
+  being handed a condition in which there is nothing to prove.**
+  - **NOT "structurally impossible" — 2026-08-18 19:13 reached `attemptLogin` and FAILED for
+    real** with Okta alive on the adjacent line. So a live Okta cookie makes an inconclusive
+    run likely, not certain, and the distinction is worth keeping.
+- **TWO CANDIDATE FIXES, NEITHER BUILT, and they are not equal.**
+  1. **Force the form with `prompt=login`.** Intercept RC's own `/oauth2/v1/authorize` request
+    with `page.route` and add the one parameter; RC's SPA still builds the client id, redirect
+    URI and PKCE verifier, so nothing about the flow has to be owned here. **Non-destructive**
+    — no cookie is deleted, so a failed rehearsal costs a live session nothing. Unverified:
+    Okta may not honour it, and the callback may not survive.
+  2. **Snapshot and delete the `idx` cookie**, attempt the password, restore on failure — the
+    same shape as `dropStoredToken`'s snapshot. Certain to work and **destructive**: a
+    rehearsal that discovers a broken password does so by ending the session it was testing.
+    Arguably right (12h of warning beats finding out at 07:45) but it is a real cost.
+  **`DT` MUST SURVIVE EITHER WAY.** It is the device cookie, and losing it makes a sign-in
+  look like a fresh profile — which is what cost the household IP twelve hours on 2026-08-06.
+
 ### THE LOGIN IS THE OPEN RISK, NOT THE LEAK (2026-08-18)
 - **THE OWNER RAN THE LOGIN BY HAND AND IT "GOT HUNG UP AT PASSWORD".** That is a signature,
   not a vague symptom: a WRONG password is REJECTED (Okta shows a banner, `diagnose` reports

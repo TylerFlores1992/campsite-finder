@@ -44,6 +44,33 @@ So `maybeAutoLogin` at T−30 should be expected to fail too — it runs the sam
 3. Do **not** loop retries from that address. Repeated sign-ins are what cost the household IP
    twelve hours on 2026-08-06.
 
+### WHY THE REHEARSAL KEEPS PROVING NOTHING — measured 2026-08-18
+
+`checkAndReport` asks `oktaSessionAlive(ctx)` on **every** keepalive tick. Twelve consecutive
+readings off the box, across three hours:
+
+```
+checked 17:07:02  exp 2026-08-19T05:07:02   → +12.0000h
+checked 17:27:02  exp 2026-08-19T05:27:02   → +12.0000h
+   … ten more, every one +12.0000h from the moment it was CHECKED …
+checked 19:50:40  exp 2026-08-19T07:50:40   → +12.0000h
+```
+
+A fixed 12h from creation would print the same instant each time. **It moves with the clock,
+to the second.** So the Okta session is a rolling idle window our own polling resets, and it
+cannot idle out while the keep-warm runs.
+
+- The rehearsal needs RC to **reject** the session before it will type a password. With Okta
+  permanently fresh, the sign-in click is answered from the cookie with no form →
+  `provedNothing` → inconclusive. Its one lifetime pass came from a genuinely empty profile.
+- **The "~12h Okta session" figure throughout `CLAUDE.md` is our probe's window, not RC's.**
+- **Do not "fix" the unconditional probe.** It is load-bearing by accident: a session that
+  never idles out is why this bot goes days without a password.
+- Two candidate fixes for the rehearsal, neither built: intercept RC's own `/authorize` with
+  `page.route` and add **`prompt=login`** (non-destructive, unverified), or snapshot-and-delete
+  the `idx` cookie with a restore on failure (certain, destructive). **`DT` must survive
+  either way.**
+
 ### And fix the instrument while you are there
 
 **`rc_login_rehearsal` KEEPS NO HISTORY.** It is one row updated in place (`id 1`). The
