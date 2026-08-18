@@ -33,6 +33,8 @@ const strip = (src: string) => src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*
 const KEEPWARM = strip(readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8'));
 const TOKEN = strip(readFileSync('scripts/auto-cart-bot/rc-token.mjs', 'utf8'));
 const HEAP = strip(readFileSync('scripts/auto-cart-bot/rc-heap.mjs', 'utf8'));
+const REHEARSAL = strip(readFileSync('scripts/auto-cart-bot/rehearsal.mjs', 'utf8'));
+const AUTOLOGIN = strip(readFileSync('scripts/auto-cart-bot/rc-autologin.mjs', 'utf8'));
 
 function envDefault(code: string, name: string): number {
   // MUST HANDLE `40 * 60_000` AS WELL AS `60_000`. The first version matched `[\d_]+`, which
@@ -123,7 +125,7 @@ test('the diagnostic can never delay the exit', () => {
   // priority — which is precisely the mistake `rcFamilyMb` would have made in this same arm.
   const arm = KEEPWARM.slice(KEEPWARM.indexOf('stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB'));
   const block = arm.slice(0, 1800);
-  assert.match(block, /collectHeapFacts\(ctx, residentPage\)\.catch/,
+  assert.match(block, /collectHeapFacts\(ctx, residentPage, heapProbe\)\.catch/,
     'a failed collection must not prevent the bail');
   assert.match(block, /bail\(/, 'the bail must still run afterwards');
   const cdpTimeout = envDefault(HEAP, 'RC_HEAP_CDP_TIMEOUT_MS');
@@ -164,66 +166,91 @@ test('no remote debugging port is opened', () => {
   assert.match(HEAP, /ctx\.newCDPSession\(page\)/);
 });
 
-/* ── 3. THE AGE RECYCLE ─────────────────────────────────────────────────────────────── */
+/* ── 3. THE AGE RECYCLE — BUILT, MEASURED, AND REMOVED ─────────────────────────────── */
 
-test('the age bound sits before the ramp window, not inside it', () => {
-  // The ramps arrive ~60 min into a browser's life. Recycling at 40 steps out of the window
-  // rather than surviving it — and lands every renewal in the token-less cell that is proven
-  // to work, instead of the near-expiry cell where every observed wedge began.
-  const age = envDefault(KEEPWARM, 'RC_KEEPWARM_MAX_AGE_MS');
-  assert.ok(age <= 50 * 60_000, `${age / 60_000}m is inside the window the ramps start in`);
-  assert.ok(age >= 20 * 60_000, `${age / 60_000}m churns the session for no reason`);
+/**
+ * IT FIRED CORRECTLY AND IT DID NOTHING, and the rationale behind it was false.
+ *
+ * The argument was: recycling at 40 minutes lands every renewal in the token-less cell, which
+ * is the half of the 2x2 that works. The first firing showed the premise is wrong —
+ * localStorage survives a browser restart, so the recycled browser came straight back holding
+ * a live token:
+ *
+ *     02:36:27 recycling the browser at 40m old ...
+ *     02:36:32 RC loaded and STAYING OPEN - token source: live
+ *     02:36:34 RC session kept warm - token exp in 32m; src=live
+ *     02:58:44 renewing the session - the token has 10m left (src=live)   <- same cell as ever
+ *     03:00:24 RUNAWAY ... Stalled in: renew:click-sign-in
+ *
+ * So it changed neither the cell nor the timing, and cost a browser restart every forty
+ * minutes. That is not free: restarts have side effects, and one of them turned the login
+ * rehearsal red the same night.
+ *
+ * The related question is settled by the same data. The resident tab was suspected of being
+ * the problem and it is not: the browser sits flat at 200-330 MB for the best part of an hour
+ * and only ramps DURING the renewal. Parking it on about:blank would target the measured-
+ * innocent part and add a page load per poll from an IP that has eaten a 12-hour block.
+ * Leave it alone.
+ */
+test('the age recycle is gone, and does not come back without new evidence', () => {
+  for (const token of ['MAX_BROWSER_AGE_MS', 'browserOpenedAt', 'RECYCLE_BLACKOUT_MIN']) {
+    assert.ok(!KEEPWARM.includes(token),
+      `${token} is back — the measured result was that it changes neither the renewal cell `
+      + 'nor the timing, because localStorage survives a browser restart');
+  }
 });
 
-test('an unreachable feed DEFERS the recycle rather than permitting it', () => {
-  // `nextRelease` is null both when there is no hold and when the server could not be asked.
-  // Reading the second as the first is how an elective restart lands at 07:59. Unknown is not
-  // permission — the same rule the update guard follows when it cannot reach the feed.
-  assert.match(KEEPWARM, /const near = !reachable \|\|/,
-    'unreachable must count as "a hold may be near"');
+test('the guards that DO work are still there', () => {
+  // Removing the elective recycle must not take the two proven arms with it. The RAM arm is
+  // the one with a log line behind it; the size bound is the early, cheap one.
+  assert.match(KEEPWARM, /stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB/);
+  assert.match(KEEPWARM, /mb != null && mb > RC_MAX_FAMILY_MB/);
 });
 
-test('the elective recycle stands down near a release, and the emergency ones do not', () => {
-  // This is the distinction that makes a blackout safe. The size bound and the RAM arm fire
-  // only when something is already wrong, and a browser eating the box is worse for the cart
-  // than a five-second reopen. The age recycle is elective, and elective work does not happen
-  // at 07:59.
-  assert.match(KEEPWARM, /RECYCLE_BLACKOUT_MIN/);
-  const ramArm = KEEPWARM.slice(KEEPWARM.indexOf('stalledMs > MEM_STALL_MS'));
-  assert.ok(!ramArm.slice(0, 1800).includes('RECYCLE_BLACKOUT_MIN'),
-    'the RAM arm must not honour the blackout — a dying box outranks a pending cart');
-  const sizeArm = KEEPWARM.slice(KEEPWARM.indexOf('RECYCLING the browser'), KEEPWARM.indexOf('RECYCLING the browser') + 1500);
-  assert.ok(!sizeArm.includes('RECYCLE_BLACKOUT_MIN'),
-    'nor the size bound');
+/* ── 4. AFTERMATH OF THE FIRST REAL FIRING ─────────────────────────────────────────── */
+
+test('the CDP probe is attached at LAUNCH, not negotiated at the trip', () => {
+  // The first real firing produced `heap facts unavailable (newCDPSession: no answer in
+  // 3000ms)`. Creating a session needs the browser to negotiate a target attachment, and a
+  // browser eating the machine will not. Sending one command down an existing socket is a far
+  // smaller ask.
+  assert.match(HEAP, /export async function attachHeapProbe/);
+  const open = KEEPWARM.indexOf('attachHeapProbe(ctx, page)');
+  const prime = KEEPWARM.indexOf("mark('priming the token')");
+  assert.ok(open > -1 && prime > open, 'the probe must be attached during the healthy open');
+  assert.match(KEEPWARM, /collectHeapFacts\(ctx, residentPage, heapProbe\)/,
+    'and actually passed at the trip, or attaching it early changes nothing');
 });
 
-test('the age check does not poll the feed once a second', () => {
-  // The loop iterates every ~1s and the branch makes an HTTP call, so once the browser is past
-  // its age an unrated check would be a request per second to camphawk.app for the whole
-  // blackout — an hour of it.
-  assert.match(KEEPWARM, /ageMs >= MAX_BROWSER_AGE_MS && Date\.now\(\) - lastAgeCheck >= AGE_CHECK_MS/);
-  const gap = envDefault(KEEPWARM, 'RC_KEEPWARM_AGE_CHECK_MS');
-  assert.ok(gap >= 30_000, `${gap}ms is too eager for a check that calls the server`);
+test('the long-lived probe is never detached by a caller that borrowed it', () => {
+  // Detaching the shared session after one trip would silently restore the bug: the second
+  // firing would find nothing and be back to negotiating against an unresponsive browser.
+  assert.match(HEAP, /if \(borrowed\) await within\(cdp\.detach\(\)/);
 });
 
-test('the stand-down dedupes on a STATE, not on the sentence', () => {
-  // The sentence carries a minute count that changes on every ask, so keying on it would
-  // dedupe nothing and print a line a minute for the whole blackout. `autoLoginSkip` had
-  // exactly this bug and it had to move into a tested module to be fixed.
-  assert.match(KEEPWARM, /recycleSkip\(\s*\n?\s*reachable \? 'blackout' : 'feed-unreachable',/);
+test('a rehearsal does not run straight after a runaway kill', () => {
+  // Ours killed a browser at 03:00:24; the rehearsal fired 24 seconds later against a box
+  // still recovering, got "We're having trouble loading the application", and reported THE
+  // UNATTENDED LOGIN IS BROKEN with a real hold twelve hours out. It spends the once-per-20h
+  // budget and points a human at the box over a system that is working.
+  assert.match(REHEARSAL, /minutesSinceAbnormalExit != null && minutesSinceAbnormalExit < REHEARSAL_QUIET_AFTER_RESTART_MIN/);
+  // NULL MUST NOT GATE. No marker is the ordinary case on a box that has never had a runaway,
+  // and treating it as "recently killed" would switch the rehearsal off for ever.
+  assert.match(REHEARSAL, /minutesSinceAbnormalExit != null &&/);
+  // BOTH HALVES: the bail must write the marker and the caller must read it in.
+  assert.match(KEEPWARM, /fs\.writeFileSync\(ABNORMAL_EXIT_MARKER/);
+  assert.match(KEEPWARM, /minutesSinceAbnormalExit: minutesSinceAbnormalExit\(\)/);
 });
 
-test('recycling on age reuses the existing reopen path', () => {
-  // Same `break` as the closed-window and preemption paths, which run several times an hour.
-  // A second teardown would be a second thing to get wrong.
-  const block = KEEPWARM.slice(KEEPWARM.indexOf('recycling the browser at'));
-  assert.match(block.slice(0, 500), /\bbreak;/);
-  assert.ok(!/process\.exit/.test(block.slice(0, 500)));
-});
-
-test('the browser age is stamped at launch, not at process start', () => {
-  // The loop reopens the context many times a day for the runner's preemption and for a closed
-  // window. If the clock ran from process start, every reopen after the first forty minutes
-  // would be instantly "too old" and recycle immediately — a busy loop wearing a fix's clothes.
-  assert.match(KEEPWARM, /browserOpenedAt = Date\.now\(\);\n\s*ctx = await chromium\.launchPersistentContext/);
+test("RC's app failing to load is INCONCLUSIVE, not a broken login", () => {
+  // No sign-in link on a page that never rendered means "we could not ask", not "the answer is
+  // no" — the same rule as the 2026-08-09 banner trap and the rehearsal's provedNothing.
+  // It stays loud in the log (it is also the 08-14 blank-page signature); only the severity
+  // changes.
+  assert.match(AUTOLOGIN, /trouble loading the application\|check your connection/);
+  const branch = AUTOLOGIN.slice(AUTOLOGIN.indexOf('trouble loading the application'));
+  assert.match(branch.slice(0, 400), /provedNothing: true/);
+  // ONE reading of the page for both the decision and the message — withBanner re-queries the
+  // DOM on every call, so asking twice could classify on one answer and report another.
+  assert.match(AUTOLOGIN, /const said = await withBanner\(link/);
 });

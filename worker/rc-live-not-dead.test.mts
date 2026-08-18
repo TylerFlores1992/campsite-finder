@@ -40,8 +40,14 @@ test('attemptLogin distinguishes a live session from a failed sign-in', () => {
 
   // ORDERING: the live check must come BEFORE the withBanner failure return, or it is
   // unreachable and the diff merely looks right.
+  //
+  // ANCHORED ON `withBanner(link`, NOT on the whole assignment. The first version pinned
+  // `reason: await withBanner(link` and went red the moment that expression was hoisted into
+  // a `const said` — over code whose behaviour was unchanged. A guard that breaks on a rename
+  // teaches people to relax it, and the next relaxation is the one that matters. What is
+  // load-bearing is the ORDER of the two calls, so pin exactly that.
   const liveAt = body.indexOf('const stillLive = await isLive()');
-  const bannerAt = body.indexOf('reason: await withBanner(link');
+  const bannerAt = body.indexOf('withBanner(link');
   assert.ok(liveAt > 0 && bannerAt > liveAt,
     'the live check must precede the banner failure, or it can never run');
 });
@@ -51,9 +57,17 @@ test("RC's banner is never folded into a live session's reason", () => {
   // is evidence of SUCCESS, and printing it as the explanation for a failure has now cost
   // three separate mornings. The live branch must return before withBanner is reached.
   const body = code(AUTOLOGIN);
-  const live = body.slice(body.indexOf('const stillLive = await isLive()'));
-  const branch = live.slice(0, live.indexOf('return {\n        ok: false,\n        reason: await withBanner'));
-  assert.ok(branch.length > 0, 'the live branch must sit above the banner return');
+  //
+  // BOUNDED BY THE BLOCK, NOT BY THE FIRST MENTION OF THE BANNER. An earlier rewrite sliced
+  // at the first `withBanner(` — which means folding a banner INTO the live branch simply
+  // makes the slice shorter, and the mutation passes. Verified: that version went green
+  // against exactly the bug this test exists for. Take the `if (stillLive === true)` body and
+  // assert against that.
+  const open = body.indexOf('if (stillLive === true) {');
+  assert.ok(open > 0, 'the live branch must exist');
+  const branch = body.slice(open, body.indexOf('\n      }', open));
+  assert.ok(branch.includes('sessionLive: true') && branch.includes('return {'),
+    'the live branch must actually RETURN, not merely be computed');
   assert.ok(!branch.includes('withBanner'),
     "a live session's reason must not carry RC's signed-in banner");
 });

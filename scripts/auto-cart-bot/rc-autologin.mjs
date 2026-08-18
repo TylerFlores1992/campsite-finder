@@ -597,12 +597,39 @@ export async function attemptLogin(
             + 'sign-in form to a signed-in user, so there was nothing to re-mint it with',
         };
       }
-      return {
-        ok: false,
-        reason: await withBanner(link
-          ? 'neither an email nor a password field appeared'
-          : 'could not find the "Log in" link — RC may have reworded it'),
-      };
+      /**
+       * RC'S APP NOT LOADING IS NOT A BROKEN LOGIN — it is no test at all.
+       *
+       * Observed 2026-08-18 03:01: the runaway guard had killed the browser 24 seconds
+       * earlier and RC answered *"We're having trouble loading the application. Please check
+       * your connection and try again."* There is no sign-in link on a page that never
+       * rendered, so the hunt failed and reported **the unattended login is BROKEN**, with a
+       * real hold twelve hours out. The session was healthy again minutes later.
+       *
+       * That is the same shape as the 2026-08-09 banner trap and the rehearsal's
+       * `provedNothing`: an absent form means "we could not ask", and only sometimes means
+       * "the answer is no". Reported as inconclusive it costs a night's rehearsal; reported
+       * as broken it sends somebody to the box. This is also the documented signature of the
+       * 2026-08-14 blank-page fault, so it stays LOUD in the log — it is the severity that
+       * changes, not the visibility.
+       */
+      // ONE reading of the page, used for both the decision and the message. `withBanner`
+      // re-queries the DOM every call, so asking twice could classify on one answer and
+      // report another — and this runs against a browser we already suspect is unwell.
+      const said = await withBanner(link
+        ? 'neither an email nor a password field appeared'
+        : 'could not find the "Log in" link — RC may have reworded it');
+      if (!link && /trouble loading the application|check your connection/i.test(said)) {
+        return {
+          ok: false,
+          provedNothing: true,
+          reason: said.replace(
+            'could not find the "Log in" link — RC may have reworded it',
+            "RC's own app did not load, so there was no sign-in form to find",
+          ),
+        };
+      }
+      return { ok: false, reason: said };
     }
 
     if (user) {
