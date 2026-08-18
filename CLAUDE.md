@@ -1126,6 +1126,71 @@ recovered    11:20:21  rc 163MB pid2956      RAM free 13,480MB   commit 10%
   own `fetch` wrapper retaining `init` per pending request, or something in Chromium's
   handling of the occluded headful window. What would settle it is a `--remote-debugging-port`
   heap snapshot taken DURING a ramp, which needs somebody at the box in the ten-minute window.
+- **THE CONTAINMENT FIRED ON ITS FIRST RAMP, ~70 MINUTES AFTER THE BOX UPDATED, AND THE A/B
+  ANSWERED ITSELF.**
+  ```
+  16:43:02  commit 15%  RAM free 8,502MB  rc 264MB   pid9544   <- healthy
+  16:45:02  commit 53%  RAM free 6,178MB  rc 2,217MB pid16816  <- ramping
+  16:47:03  commit 61%  RAM free 1,580MB  rc 7,016MB pid16816  <- floor crossed
+  16:47:41  commit 15%  RAM free 9,556MB  rc 208MB   pid7896   <- recycled, ~40s later
+  ```
+  **Peak 7 GB / 61% COMMIT instead of 27 GB / 99%.** Two things settled by one reading:
+  `os.freemem()` and the PowerShell figure agree closely enough that the floor tripped where
+  intended (the calibration doubt recorded above is resolved) — and, per the reading rule set
+  out in advance, **the ramp still happened on a browser launched WITHOUT the throttling
+  flags, so those were not the cause.** Layer 2 is dead; the leak is contained, not cured.
+  Do not re-add the flags on the strength of this: they are still unnecessary, and this only
+  says they were not the culprit.
+
+### THREE INSTRUMENTS FOR THE UNCURED HALF (2026-08-17, fourth pass)
+- **A BREADCRUMB, because four wedges could not say which await hung.** `mark()` in the
+  resident loop plus an `onStep` callback threaded through `renewSession`, so the bail prints
+  `Stalled in: renew:click-sign-in (312s in that step)` instead of "the loop has not advanced".
+  **`mark()` deliberately does NOT touch `lastTick`** — a step beginning is not the loop
+  advancing, and if it reset the clock, entering a step would postpone the very watchdog that
+  exists to catch a step never finishing. That would have made the wedge detector WORSE while
+  looking like an improvement; it is the first mutation the test suite checks.
+- **HEAP FACTS OVER CDP when the guard trips** (`scripts/auto-cart-bot/rc-heap.mjs`).
+  `Performance.getMetrics` + `Runtime.getHeapUsage` answer the one question that halves the
+  candidate space: **is the JS heap most of the process, or almost none of it?** Huge ⇒
+  JavaScript is retaining it (a retry loop, our own `fetch` wrapper holding `init`). Small
+  against a 25 GB process ⇒ it is NOT JavaScript, which eliminates every current candidate at
+  a stroke. The log line states that verdict rather than printing counters.
+  - **NOT a heap snapshot at the peak.** A snapshot of a 25 GB heap is itself many GB, written
+    to disk at the moment the box cannot spawn a process — the cure arriving as part of the
+    disease. The full snapshot is opt-in (`RC_HEAP_SNAPSHOT=1`), hard-capped, and wired ONLY
+    to the early 1,500 MB trip, where the file is ordinary and the growing objects are already
+    present. The RAM arm never writes one.
+  - **No `--remote-debugging-port`.** It would open a socket with full control of a browser
+    holding a live RC session, on a machine that is routinely screen-shared, to buy a
+    diagnostic. CDP rides Playwright's existing channel; if that turns out to be jammed when
+    needed, it reports `no answer` and the port becomes a decision made on evidence.
+  - Bounded at 3s per step and every failure is a null, so it can never delay the exit — the
+    mistake `rcFamilyMb` would have made in this same arm.
+- **AN AGE RECYCLE AT 40 MINUTES** (`MAX_BROWSER_AGE_MS`), which is the closest thing to a
+  cure available without knowing the allocation site. `RC_MAX_FAMILY_MB`'s own comment argued
+  against an age bound — *"absurdly aggressive to land inside a ten-minute cliff"* — and **that
+  was written before the period was known.** Twenty ramps at ~70-minute spacing, each about an
+  hour into a browser's life, make it a predictable window rather than a shot in the dark.
+  - **AND IT LANDS EVERY RENEWAL IN THE CELL THAT WORKS**, which is the better half of the
+    argument. A recycled browser comes back holding NO token — the `no token + click → 59m`
+    cell, proven twice — so the near-expiry cell, where every observed wedge began and which
+    has never been observed to work, is simply never reached.
+  - **An unreachable feed DEFERS it.** `nextRelease` is null both for "no hold" and for "could
+    not ask", and reading the second as the first is how an elective restart lands at 07:59.
+  - **The blackout applies to this arm ONLY.** The size bound and the RAM arm fire when
+    something is already wrong, and a browser eating the box is worse for a cart than a
+    five-second reopen. Elective work does not happen near an 08:00; emergency work does.
+- `worker/keepwarm-diagnosis.test.mts`, **13 mutations, each asserting the mutation applied.**
+  **One survived and the reason is the lesson:** the mutation meant to delete the snapshot call
+  left the identifier in place, so the regex still matched and the guard passed against code
+  that still called it. A mutation that does not apply is a green proving nothing — the same
+  discipline that has to be re-learned every time it is skipped.
+  - **`envDefault` MISREAD A THRESHOLD FOR THE SECOND TIME IN ONE SESSION.** It was written
+    hours earlier to stop `(\d+)` stopping at the underscore in `60_000`; its replacement then
+    stopped at the SPACE in `40 * 60_000`, reading `MAX_BROWSER_AGE_MS` as **40 ms**. It now
+    parses products. Tenth time a guard here has anchored on the wrong thing, and the second
+    time inside the fix for the ninth.
 - `worker/keepwarm-recycle.test.mts`, **8 mutations, each asserting the mutation applied** —
   including the guard moved back into the loop body, the stall condition dropped, the timer
   slowed back to 2 minutes, and a throttling flag restored. **Two of its own assertions were

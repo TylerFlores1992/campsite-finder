@@ -85,6 +85,7 @@ import { pacificHour, hoursUntilRelease } from './update-guard.mjs';
 import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 import { takeSample } from './memory-sample.mjs';
+import { collectHeapFacts, describeHeapFacts, writeHeapSnapshot } from './rc-heap.mjs';
 
 // No secrets here, but RC_PROFILE_DIR / RC_KEEPALIVE_MS / RC_HEADLESS are read the same
 // way as everywhere else. A process that silently ignores the config file is the bug
@@ -437,6 +438,54 @@ const MEM_STALL_MS = Number(process.env.RC_KEEPWARM_MEM_STALL_MS || 60_000);
 const WATCHDOG_MS = Number(process.env.RC_KEEPWARM_WATCHDOG_MS || 10_000);
 
 /**
+ * ── RECYCLE THE BROWSER BEFORE THE RAMP INSTEAD OF DURING IT (2026-08-17, fourth pass) ──
+ *
+ * `RC_MAX_FAMILY_MB`'s own comment argues against an age bound: *"Recycling on age would have
+ * to be absurdly aggressive to land inside a ten-minute cliff, and would spend a session every
+ * time for nothing on the ~95% of the day that is flat."* **That was written before the period
+ * was known, and the measurement retires it.** The ramps are not scattered — twenty of them,
+ * every ~70 minutes, each arriving about an hour into a browser's life, at the near-expiry
+ * renewal. An age bound is not a shot in the dark at a ten-minute window; it is stepping out
+ * of a window whose arrival time we can now predict.
+ *
+ * FORTY MINUTES, because the ramp lands at ~60 and the reopen is the cheap part. The bound is
+ * on the BROWSER, not on the process — the loop already reopens the context for the closed
+ * window and for the runner's preemption, several times an hour, and this rides the identical
+ * `break`. Nothing new can go wrong that is not already going wrong daily.
+ *
+ * AND IT MOVES EVERY RENEWAL INTO THE CELL THAT WORKS. This is the part that makes it more
+ * than damage limitation. The 2x2 recorded on 08-15 has one reliable cell and one that fails:
+ *
+ *     no token at all  + sign-in click  ->  a full 59-minute token   (proven twice)
+ *     token present, short             ->  not observed to work; the SPA keeps rendering
+ *                                          signed-in, no anchor to click, nothing starts
+ *
+ * A browser recycled at 40 minutes comes back holding NO token, which is the reliable cell.
+ * The near-expiry cell — the one that fails, and the one every observed wedge begins in — is
+ * simply never reached. So the argument for this is not only "sidestep the leak"; it is that
+ * the renewal path we would rather be on is the one a fresh browser is already standing in.
+ *
+ * WHAT IT DOES NOT CLAIM: that the leak is cured. The allocation site is still unknown and a
+ * browser kept alive long enough would presumably still ramp. This avoids the conditions,
+ * which is worth having and is not the same thing.
+ */
+const MAX_BROWSER_AGE_MS = Number(process.env.RC_KEEPWARM_MAX_AGE_MS || 40 * 60_000);
+
+/**
+ * Never recycle this close to a release.
+ *
+ * A reopen takes seconds and the runner preempts cooperatively, so the risk is small — but it
+ * is not zero, and at 07:59 the downside is somebody's campsite. The size bound and the RAM
+ * arm both stay live inside this window: those fire only when something is already wrong, and
+ * a browser eating the box is worse for the cart than a five-second reopen. This one is
+ * elective, and elective work does not happen near an 08:00.
+ */
+const RECYCLE_BLACKOUT_MIN = Number(process.env.RC_KEEPWARM_RECYCLE_BLACKOUT_MIN || 60);
+
+/** How often the age check may ask the server about the next release. See its call site. */
+const AGE_CHECK_MS = Number(process.env.RC_KEEPWARM_AGE_CHECK_MS || 60_000);
+
+/**
  * Don't thrash. If the browser is somehow over the line the instant it opens, recycling in
  * a tight loop would be a busy loop wearing a fix's clothes — the exact shape
  * `supervise.ps1`'s five-exits rule exists to stop, one level down. Two minutes is longer
@@ -690,6 +739,14 @@ let renewal = newRenewalState();
  * reinstated the volatile comparison from inside the body matched that shape and passed.
  */
 const renewalSkip = makeSkipLogger((reason) => log(`   renewal stood down: ${reason}`));
+
+/**
+ * Deduped, because once the browser is past MAX_BROWSER_AGE_MS the check is reached on every
+ * pass until it is allowed through — and inside a blackout that is once a minute for an hour.
+ * Consecutive identical reasons collapse to one line plus a count, the same treatment the
+ * renewal's stand-downs needed when asking every 60s produced 1,440 identical lines a day.
+ */
+const recycleSkip = makeSkipLogger((reason) => log(`   recycle stood down: ${reason}`));
 
 /** `null` seconds is "no token", which must not render as the string "null". */
 const secsText = (v) => (v == null ? 'none' : `${v}s`);
@@ -1351,11 +1408,39 @@ async function warmResident() {
      */
     let lastTick = Date.now();
     const tick = () => { lastTick = Date.now(); };
+    /**
+     * WHICH AWAIT ARE WE SITTING IN?
+     *
+     * Four wedges were recorded on 2026-08-17, every one beginning at `renewing the session`
+     * and ending twelve minutes later at `the loop has not advanced in 13m` — and NOTHING
+     * recorded which of the six awaits inside `renewSession` was the one that never returned.
+     * The diagnosis therefore stopped at "somewhere in the renewal", where it sat for a day.
+     *
+     * `mark()` deliberately does NOT touch `lastTick`. A step beginning is not the loop
+     * advancing — if it reset the clock, entering a step would postpone the very watchdog
+     * that exists to catch a step never finishing, and a loop that wedged mid-renewal would
+     * look healthy for another twelve minutes. That is the bug this whole family keeps
+     * producing: an instrument that quietly resets the thing it measures.
+     */
+    let step = 'starting up';
+    let stepSince = Date.now();
+    const mark = (s) => { step = s; stepSince = Date.now(); };
     let lastLockRenew = 0;
+    let browserOpenedAt = Date.now();
+    // Re-entrancy guard. The timer fires every ten seconds and the runaway arm is async, so
+    // without this a slow heap read would queue a second and a third bail behind the first.
+    let bailing = false;
+    // The timer needs a page to ask, and `page` is declared inside the try below. Assigned
+    // there; null until then, which `collectHeapFacts` reports as "no page to ask" rather
+    // than throwing inside a setInterval where nothing would catch it.
+    let residentPage = null;
     const renew = setInterval(() => {
       const stalledMs = Date.now() - lastTick;
       const bail = (why) => {
         log(why);
+        // THE BREADCRUMB, printed before anything else can go wrong. It is the whole reason
+        // the next wedge is diagnosable and this one was not.
+        log(`  Stalled in: ${step} (${Math.round((Date.now() - stepSince) / 1000)}s in that step).`);
         log('  Releasing the profile and exiting so the hold runner can use it.');
         try { clearInterval(renew); } catch {}
         releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
@@ -1380,10 +1465,31 @@ async function warmResident() {
        * the emergency peaks reports the emergency as calm.
        */
       const freeMb = os.freemem() / (1024 * 1024);
-      if (stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB) {
-        bail(`✗ RUNAWAY — stalled ${Math.round(stalledMs / 1000)}s with only ${Math.round(freeMb)} MB `
-           + `of free RAM (floor ${LOW_RAM_MB} MB). Normal here is ~13,000 MB free and this `
-           + 'browser has taken the box to 99% COMMIT twenty times in five days.');
+      if (stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB && !bailing) {
+        bailing = true;
+        const why = `✗ RUNAWAY — stalled ${Math.round(stalledMs / 1000)}s with only ${Math.round(freeMb)} MB `
+                  + `of free RAM (floor ${LOW_RAM_MB} MB). Normal here is ~13,000 MB free and this `
+                  + 'browser has taken the box to 99% COMMIT twenty times in five days.';
+        /**
+         * ASK THE RENDERER WHAT IT IS HOLDING, ON THE WAY OUT.
+         *
+         * This is the one moment the answer exists. `describeHeapFacts` splits JS heap from
+         * everything else, which is the fact that halves the candidate space — and the trip
+         * is the only occasion it can be sampled, because ten minutes later the process is
+         * gone and an hour later a healthy browser has nothing to say.
+         *
+         * BOUNDED, AND THE EXIT DOES NOT DEPEND ON IT. `collectHeapFacts` resolves rather
+         * than throws and cannot exceed a few seconds; whatever it returns, `bail` runs. A
+         * diagnostic that can delay the thing that saves the box has inverted the priority,
+         * which is the mistake `rcFamilyMb` in this same guard would have made.
+         */
+        void (async () => {
+          const facts = await collectHeapFacts(ctx, residentPage).catch(() => null);
+          log(why);
+          log(`  ${describeHeapFacts(facts, null)}`);
+          bail('  (see the runaway line above)');
+        })();
+        return;
       }
       // Unchanged cadence. The timer got 12x faster so the checks above could bound a
       // ~2,400 MB/min ramp; the lock file has no such need and rewriting it every ten
@@ -1395,6 +1501,8 @@ async function warmResident() {
     }, WATCHDOG_MS);
     let ctx = null;
     try {
+      mark('launching Chromium');
+      browserOpenedAt = Date.now();
       ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
         headless: HEADLESS, viewport: null,
         ignoreDefaultArgs: ['--enable-automation'],
@@ -1430,7 +1538,10 @@ async function warmResident() {
       });
       await installTokenCapture(ctx);
       const page = ctx.pages()[0] ?? (await ctx.newPage());
+      residentPage = page;
+      mark('initial RC load');
       await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+      mark('priming the token');
       const primed = await primeToken(page);
       log(`RC loaded and STAYING OPEN — token source: ${primed.source}`);
       log('Leave this browser window ALONE. Closing it stops the renewal; it will reopen.');
@@ -1444,6 +1555,7 @@ async function warmResident() {
       // 0 so the first look happens immediately on every open — a browser that comes back
       // already huge is exactly the case worth catching before it ramps again.
       let lastMemCheck = 0;
+      let lastAgeCheck = 0;
       for (;;) {
         // The watchdog's heartbeat. Every path through this loop must reach here, so a
         // stall anywhere below it — a Playwright call that never settles, a page that
@@ -1470,8 +1582,51 @@ async function warmResident() {
         // the runner's preemption, so a cart never waits behind a PowerShell spawn, and
         // BEFORE the expiry poll, because a browser this large will hang the renewal's
         // evaluates anyway and recycling first is what makes the next poll meaningful.
+        /**
+         * ELECTIVE RECYCLE, BEFORE THE RAMP RATHER THAN DURING IT. See MAX_BROWSER_AGE_MS:
+         * the ramps arrive about an hour into a browser's life, at the near-expiry renewal,
+         * so stepping out at forty minutes avoids the conditions AND lands every renewal in
+         * the token-less cell that is proven to work.
+         *
+         * AFTER the runner's preemption and BEFORE the memory scan, for the same reason the
+         * scan sits where it does: nothing elective may delay a cart, and a browser this loop
+         * is about to close is not worth spawning PowerShell to measure.
+         */
+        const ageMs = Date.now() - browserOpenedAt;
+        // ONCE A MINUTE, NOT ONCE A SECOND. The loop iterates every ~1s, and the branch below
+        // asks the server when the next hold releases — so an unrated check would be an HTTP
+        // request per second to camphawk.app for as long as a blackout lasts. The browser is
+        // already past its age; another sixty seconds costs nothing.
+        if (ageMs >= MAX_BROWSER_AGE_MS && Date.now() - lastAgeCheck >= AGE_CHECK_MS) {
+          lastAgeCheck = Date.now();
+          // The one thing that outranks it. `nextRelease` is null when the feed could not be
+          // reached, and null must NOT read as "no hold" — an unreachable feed is exactly
+          // when we know least, so it defers the recycle rather than permitting it. Same rule
+          // as the update guard refusing outright when it cannot reach the feed.
+          mark('age-recycle: asking when the next hold releases');
+          const { nextRelease, reachable } = await feedFacts();
+          const mins = nextRelease ? minutesUntil(nextRelease) : null;
+          const near = !reachable || (mins != null && mins >= -RECYCLE_BLACKOUT_MIN && mins <= RECYCLE_BLACKOUT_MIN);
+          if (near) {
+            // KEYED ON THE STATE, NOT THE SENTENCE. The sentence carries a minute count that
+            // changes on every ask, so keying on it would dedupe nothing and print a line a
+            // minute for the whole blackout — the exact failure `autoLoginSkip` had.
+            recycleSkip(
+              reachable ? 'blackout' : 'feed-unreachable',
+              reachable
+                ? `a hold is ${mins} min away — inside the ${RECYCLE_BLACKOUT_MIN} min blackout`
+                : 'the feed is unreachable, so we cannot rule out a hold',
+            );
+          } else {
+            log(`♻ recycling the browser at ${Math.round(ageMs / 60_000)}m old — ahead of the `
+              + 'renewal window where twenty ramps have started. The session re-mints by '
+              + 'authorize from a token-less profile, which is the cell that works.');
+            break;
+          }
+        }
         if (Date.now() - lastMemCheck >= MEM_CHECK_MS) {
           lastMemCheck = Date.now();
+          mark('memory scan');
           const mb = await rcFamilyMb();
           if (mb != null && mb > RC_MAX_FAMILY_MB) {
             if (Date.now() - lastRecycleAt < RECYCLE_COOLDOWN_MS) {
@@ -1480,6 +1635,21 @@ async function warmResident() {
             } else {
               lastRecycleAt = Date.now();
               log(`✗ RC Chromium at ${Math.round(mb)} MB (limit ${RC_MAX_FAMILY_MB}) — RECYCLING the browser.`);
+              /**
+               * THE GOOD MOMENT TO ASK, and the only one. This trip happens EARLY in a ramp
+               * — the loop is still advancing, the browser is ~1.5 GB, and the objects that
+               * are growing are already there. By the time the RAM arm fires the process is
+               * many GB and the box cannot spawn, so a snapshot then would be part of the
+               * problem. Same reading, taken while it is cheap.
+               */
+              mark('heap facts');
+              const facts = await collectHeapFacts(ctx, page).catch(() => null);
+              log(`  ${describeHeapFacts(facts, mb)}`);
+              mark('heap snapshot');
+              const snap = await writeHeapSnapshot(ctx, page, path.join(HERE, 'logs'))
+                .catch((e) => ({ ok: false, reason: e?.message ?? String(e) }));
+              if (snap?.ok) log(`  heap snapshot written: ${snap.file} (${Math.round(snap.bytes / (1024 * 1024))} MB)`);
+              else if (snap?.reason && snap.reason !== 'not enabled') log(`  no heap snapshot: ${snap.reason}`);
               log('  Normal is 220-300 MB. On 2026-08-17 this family took the box from 12% to 99%');
               log('  COMMIT in ten minutes and killed the hold runner. The session re-mints itself.');
               break;
@@ -1494,6 +1664,7 @@ async function warmResident() {
         if (Date.now() - lastExpiryPoll >= EXPIRY_POLL_MS) {
           lastExpiryPoll = Date.now();
           // Before anything else: is a hold about to need a session we do not have?
+          mark('auto-login');
           if (await maybeAutoLogin(ctx, page).catch((e) => { log(`auto-login error: ${e.message}`); return false; })) {
             continue;
           }
@@ -1502,9 +1673,11 @@ async function warmResident() {
           // a second sign-in from this address for one release — which is the budget the
           // one-attempt-per-release rule exists to protect. (rehearsal.mjs also refuses
           // within six hours of a release, so this ordering is a belt on top of a brace.)
+          mark('login rehearsal');
           if (await maybeRehearse(ctx, page).catch((e) => { log(`rehearsal error: ${e.message}`); return false; })) {
             continue;
           }
+          mark('reading the token');
           const { token, source } = await readLiveToken(page).catch(() => ({ token: null, source: 'none' }));
           const left = tokenSecondsLeft(token);
           // WHEN IS `planRenewal`'S JOB, AND IT NOW SAYS YES TO THE CASE THIS REFUSED.
@@ -1542,11 +1715,15 @@ async function warmResident() {
             // the timer. An errored probe returns null — "we could not tell" — and does NOT
             // refuse, or one hiccup would switch renewal off for good.
             const okta = token ? await oktaSessionAlive(ctx).catch(() => null) : null;
+            mark('renewal');
             const r = await renewSession(page, RC_HOME, {
               oktaAlive: okta?.alive ?? null,
               // INJECTED, so `rc-token.mjs` stays incapable of signing in — see its header.
               // Only whether a control was pressed crosses the boundary, never a locator.
               clickSignIn: (p) => clickSignInControl(p).then((l) => l != null),
+              // Names the exact await inside the renewal, which is what four wedges could
+              // not say. Never resets the stall clock — see `mark`.
+              onStep: mark,
             }).catch((e) => {
               log(`  renew failed: ${e.message}`);
               return null;
@@ -1583,13 +1760,16 @@ async function warmResident() {
             // Report immediately either way: this is the event worth seeing on the
             // dashboard, not something to sit on until the next 20-minute tick.
             lastCheck = Date.now();
+            mark('reporting session health');
             await checkAndReport(ctx, page).catch((e) => log(`check failed: ${e.message}`));
           }
         }
         if (Date.now() - lastCheck >= KEEPALIVE_MS) {
           lastCheck = Date.now();
+          mark('keepalive check');
           await checkAndReport(ctx, page).catch((e) => log(`check failed: ${e.message}`));
         }
+        mark('idle');
         await sleep(1000);
       }
     } catch (err) {
