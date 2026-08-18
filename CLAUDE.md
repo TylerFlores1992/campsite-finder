@@ -1463,6 +1463,52 @@ sign-in control was found and clicked.
   `maybeAutoLogin(ctx, page)`, which matches the function DEFINITION four hundred lines above
   the call site. It anchors on the awaited call now. **Thirteenth time.**
 
+### `npm test` MADE THE PRODUCTION BOT SIGN IN TO RC (2026-08-18) — CI does it on every PR
+The 2026-08-15 entry above records `npm test` telling the bot to cart a real campsite, fixed
+with **non-numeric sentinel unit ids**. That protected the CART. **Nothing protected the
+LOGIN**, and the same fixtures fire an unattended sign-in. Caught by causing it — while a
+`npm run verify` was in flight, the mini-PC's keep-warm read a real `nextRelease` a minute
+away and did exactly what it is built to do:
+```
+20:00:44 ⏰ hold releases in 1m and the session will not cover it — signing in (attempt 1 of 2)
+20:00:49     → signed in, but the token will not cover the hold — dropping it to sign in fresh
+20:02:21 ✗ RC Chromium at 4037 MB (limit 1500) — RECYCLING the browser.
+20:02:21   JS heap 5 MB … only 0% of 4037 MB, so it is NOT the JS heap
+[the keep-warm process then restarted MID-LOGIN]
+```
+- **That is a real unattended sign-in from the household address** — the act that cost twelve
+  hours of IP block on 2026-08-06 and is rationed to two attempts per release for that reason
+  — **plus a 4 GB Okta ramp that killed the browser mid-login.** Fired by CI, on every PR.
+- **`holdAtRisk` IS THE SHARPER HALF: it is the ALARM'S TRIGGER.** A fixture releasing in one
+  minute against a dead RC session **rings the owner's phone, twice, forty-five seconds
+  apart.** Nobody had noticed because the session happened to be healthy.
+- **IT EXPLAINS THE PROFILE CHURN IN THE SAME WINDOW** — four `→ hold runner wants the
+  profile` in twenty minutes, which is the 2026-08-15 starvation signature recurring, and it
+  is what makes an unrelated test run able to disturb an 08:00 cart.
+- **AND IT EXPLAINS THE INTERMITTENCY** that nearly got written up as a feed bug: the log
+  alternates `the token covers this hold` with `no hold is queued` because fixtures exist for
+  the ~2 minutes of a test run and the keep-warm polls every 60s. **I had already queried the
+  table, found zero non-terminal holds, and was one paragraph into calling `maybeAutoLogin`
+  spurious.** The rows had simply been swept between the two queries.
+- **FIXED with `REAL_UNIT` (`unit_id ~ '^[0-9]+$'`) on `nextHoldRelease` AND `holdAtRisk`.**
+  It reuses the safety property that already exists instead of a second marker to keep in
+  step, and it is server-side, so it reaches the box on a push with no bot update.
+- **NOT APPLIED TO `dueHolds`, DELIBERATELY.** The hold suites exist to test `dueHolds`;
+  filtering fixtures out of it would gut the tests that make this table safe at all. What it
+  costs is profile churn against a sentinel that cannot cart — bounded, understood, and a
+  separate decision from an unattended login and a phone call.
+- `worker/hold-fixture-invisibility.test.mts` is **real-DB**, because the fix is one predicate
+  inside two SQL statements and a test asserting a copy would assert the copy. Three
+  mutations, each verified applied: the filter dropped from either query, and the regex made
+  over-broad — **that last one is the dangerous direction**, since an `AND false` would pass
+  both negative tests and silently switch off the whole auto-cart morning.
+  - **The positive test needs a NUMERIC id, which is the thing that must never exist.** It is
+    inserted straight to `carted` (never through `requested`, so `dueHolds` never sees it),
+    is seconds old so `expireStaleHolds` cannot list it, is not `claiming` so `pendingClaims`
+    cannot, and uses **`0`** — one digit, under `hold-fixture-safety`'s two-digit floor, so
+    that guard needed no exemption carved into it. The id being implausible is listed THIRD
+    on purpose; "vanishingly unlikely" is the reasoning this file has been burned by.
+
 ### OUR OWN LIVENESS CHECK KEEPS THE OKTA SESSION ALIVE — MEASURED, 12 FOR 12 (2026-08-18)
 `checkAndReport` calls `oktaSessionAlive(ctx)` **unconditionally**, every keepalive tick and
 every renewal. Off the box's own log, twelve consecutive readings across three hours:

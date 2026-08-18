@@ -200,6 +200,43 @@ export async function noteAttempt(ids: string[], note: string): Promise<void> {
 }
 
 /**
+ * ── A REAL RC UNIT ID IS NUMERIC, AND THAT IS HOW A TEST FIXTURE IS TOLD FROM A BOOKING ──
+ *
+ * MEASURED 2026-08-18, by causing it. `npm test` hits the production DB on purpose, and the
+ * hold suites insert `requested`/`carted`/`claiming` rows with releases a minute or two out.
+ * They are deleted on the way out and they cannot cart anything — since 2026-08-15 every
+ * fixture carries a NON-NUMERIC sentinel unit id, enforced by `hold-fixture-safety.test.mts`,
+ * exactly so the production runner cannot lock a stranger's campsite with one.
+ *
+ * **The sentinel protected the CART and nothing protected the LOGIN.** While a test run was
+ * in flight the mini-PC's keep-warm read a real `nextRelease` one minute away and did what it
+ * is built to do:
+ *
+ *     20:00:44  ⏰ hold releases in 1m and the session will not cover it — signing in
+ *     20:00:49      → signed in, but the token will not cover the hold — dropping it to sign in fresh
+ *     20:02:21  ✗ RC Chromium at 4037 MB (limit 1500) — RECYCLING the browser
+ *
+ * That is an unattended sign-in from the household address — the act that cost twelve hours
+ * of IP block on 2026-08-06 and is rationed to two attempts per release for that reason — plus
+ * a four-gigabyte Okta ramp that killed the browser mid-login. **Fired by CI, on every pull
+ * request.** It also explains the profile churn in the same window (four `→ hold runner wants
+ * the profile` in twenty minutes), which is the 2026-08-15 starvation signature recurring.
+ *
+ * `holdAtRisk` is the sharper half: it is the ALARM's trigger, so a fixture releasing in one
+ * minute against a dead RC session **rings the owner's phone twice.**
+ *
+ * SO BOTH QUERIES NOW REQUIRE A NUMERIC UNIT ID. It reuses the safety property that already
+ * exists rather than inventing a second marker to keep in step, and it is server-side, so it
+ * reaches the box on a push with no bot update.
+ *
+ * NOT APPLIED TO `dueHolds`, DELIBERATELY. The hold suites exist to test `dueHolds`, so
+ * filtering fixtures out of it would gut the tests that make this table safe at all. What
+ * `dueHolds` costs is profile churn against a sentinel that cannot cart — bounded, understood,
+ * and a separate decision from an unattended login and a phone call.
+ */
+const REAL_UNIT = `unit_id ~ '^[0-9]+$'`;
+
+/**
  * When the next hold releases, as RC's zone-less Pacific wall-clock — or null.
  *
  * The keep-warm needs this and nothing else. There is no session to keep warm (RC issues
@@ -216,6 +253,7 @@ export async function nextHoldRelease(): Promise<string | null> {
   const [row] = await query<{ release_at: string }>(
     `SELECT release_at FROM rc_hold_requests
       WHERE status IN ('requested', 'carted', 'claiming')
+        AND ${REAL_UNIT}
         AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
       ORDER BY release_at ASC LIMIT 1`,
   ).catch(() => []);
@@ -251,6 +289,7 @@ export async function holdAtRisk(withinMinutes: number): Promise<
        JOIN users u ON u.id = h.user_id
        LEFT JOIN campgrounds c ON c.id = h.campground_id
       WHERE h.status IN ('requested', 'carted', 'claiming')
+        AND h.${REAL_UNIT}
         AND h.release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
         AND h.release_at <= to_char((NOW() + ($1 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
       ORDER BY h.release_at ASC LIMIT 1`,
