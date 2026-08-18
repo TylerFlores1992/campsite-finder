@@ -1517,8 +1517,47 @@ above, and the two together are one chain.
     stall requirement**. It reverses a documented "BOTH CONDITIONS, ALWAYS" decision, so take it
     deliberately or not at all — and note it may not help, since exiting a process does not
     necessarily reap an orphan either.
-- **NOTHING HERE IS FIXED YET.** Three instruments are deployed against this leak and **none of
-  them can stop an orphan.**
+- ~~**NOTHING HERE IS FIXED YET.**~~ **BUILT 2026-08-18 — `scripts/auto-cart-bot/orphan-sweep.mjs`,
+  and it needs a box update like everything else bot-side.** The keep-warm kills any Chromium on
+  `.rc-bot-profile` the moment it takes the lock, before `launchPersistentContext`.
+  - **THE LOCK IS THE WHOLE SAFETY ARGUMENT, and "at startup" would have been an incident.**
+    Once we hold the lock the runner does not, so anything still on that profile is owned by
+    nobody — which is the orphan and nothing else. A sweep on plain process start could land
+    at 08:00:00 on the Chromium that is carting.
+  - **It also removes the `SURVIVED` ambiguity that has bitten `kill-chrome` twice.** That
+    re-check runs 3s after the kill, long enough for a supervisor to have opened a NEW browser,
+    so a clean kill plus a healthy restart printed the same words as a kill that reached
+    nothing. Here nothing may open a browser on this profile while we hold the lock, so a
+    survivor is unambiguously a survivor.
+  - **THE HOLD RUNNER DELIBERATELY DOES NOT SWEEP**, and a test pins that so it is re-taken
+    rather than drifted into. Spawning costs a second or two on the one path where latency is
+    the product (measured carts: T+1.8s, T+43s, T+49s). The keep-warm reopens on every yield,
+    guard trip and restart — including the restart that CREATES an orphan — so one is reaped
+    within minutes anyway. If the runner ever needs it, the shape is a sweep on a FAILED
+    launch, not a spawn before every cart.
+  - **A blind scan under-kills and can never over-kill.** An unelevated WMI query reads `$null`
+    for `CommandLine`, and an unreadable process cannot match the pattern — so the elevation
+    problem that has corrupted three readings here is, for once, safe by construction. The
+    count is still reported, because the reading is short.
+  - **Silent on the ordinary path, loud when it kills or fails.** It runs many times an hour;
+    a line per reopen would bury the events worth reading. `DONE` is required before any
+    reading counts — an incomplete scan is never "found nothing".
+  - **`rc-diag.mjs --real-profile` IS THE ONE PARTICIPANT THAT DOES NOT RESPECT THE LOCK**, so
+    a restarted keep-warm will now KILL its browser rather than merely failing to launch beside
+    it. That procedure already requires stopping the bots AND disabling the watchdog; the
+    script's header now says so where somebody will read it. `rc-probe.mjs` is unaffected — it
+    uses `.rc-probe-profile`, which the pattern cannot match.
+  - `worker/orphan-sweep.test.mts`, **nine mutations, each asserting the mutation applied** —
+    the sweep before the lock, after the launch, deleted, a survivor counted as killed, `DONE`
+    not required, the sleep made unconditional, the quiet path made chatty, the failure path
+    silenced, and the runner starting to sweep.
+  - **AND THE EXISTING ATTRIBUTION GUARD PASSED VACUOUSLY AT FIRST — FOURTEENTH TIME.**
+    `chromium-attribution.test.mts` was given the new file to scan and its line regex matched
+    nothing in it, so the suite went green against a pattern deliberately broken to `[^"]*`
+    (verified). Its `checked >= 3` floor was already satisfied by the `.ps1` files alone.
+    It now matches a JS `export const` assignment too, and asserts **per file** that a pattern
+    was actually extracted — a guard that inspects nothing is indistinguishable from one that
+    approves.
 
 ### `npm test` MADE THE PRODUCTION BOT SIGN IN TO RC (2026-08-18) — CI does it on every PR
 The 2026-08-15 entry above records `npm test` telling the bot to cart a real campsite, fixed
@@ -4600,15 +4639,16 @@ one with time to spare.
   its first run.
 - `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
   what actually happened. This one is a post-mortem by construction; 08:00 has passed.
-**Docs current to 2026-08-18 (sixth pass).** **START AT THE ORPHANED CHROMIUM.** A 25 GB
-runaway took the box to **94% COMMIT** — where Windows stops scheduling tasks — while the size
-guard fired FIVE times and freed nothing: `max_pid` was 13004 across every recycle, so
-`ctx.close()` was closing a healthy browser while the measurement counted an orphan left by the
-keep-warm restarting mid-login. **Three instruments are deployed against this leak and none of
-them can stop an orphan.** The fix is a startup sweep that kills Chromium on `.rc-bot-profile`
-by `--user-data-dir` — NOT BUILT. And the login that orphaned it was fired by **`npm test` in
-CI**: the 08-15 sentinel protected the cart, nothing protected the login, and `holdAtRisk`
-would have rung the owner's phone (fixed server-side in #125).
+**Docs current to 2026-08-18 (seventh pass).** **THE ORPHAN SWEEP IS BUILT** — the keep-warm
+now kills any Chromium on `.rc-bot-profile` the moment it takes the lock, which is the one
+placement that is safe (the hold runner drives the same directory, so a sweep at plain startup
+could land at 08:00:00 on the browser that is carting). That closes the 25 GB runaway which
+took the box to **94% COMMIT** while the size guard fired five times and freed nothing —
+`max_pid` was 13004 across every recycle, so `ctx.close()` was closing a healthy browser while
+the measurement counted an orphan. **Bot-side: it needs a box update.** The login that orphaned
+it was fired by **`npm test` in CI** (fixed server-side in #125). And the guard meant to cover
+the new kill pattern **passed vacuously at first** — fourteenth time a guard here has anchored
+on the wrong thing.
 
 *(Fifth pass.)* **THE LEAK'S TRIGGER IS NAMED, BY A CONTROLLED
 COMPARISON RATHER THAN A CORRELATION: it is the OKTA NAVIGATION.** Three token-less renewals ten

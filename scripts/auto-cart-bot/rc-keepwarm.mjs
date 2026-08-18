@@ -69,6 +69,7 @@ import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder,
   profileRequested,
 } from './profile-lock.mjs';
+import { sweepOrphanChromium } from './orphan-sweep.mjs';
 import {
   installTokenCapture, readLiveToken, readTokenAnyOrigin, primeToken, renewSession, tokenSecondsLeft,
   dropStoredToken,
@@ -490,6 +491,12 @@ async function withProfile(fn, { headless = HEADLESS, waitMs = 15_000 } = {}) {
   if (!(await waitForProfileLock(PROFILE_DIR, LOCK_OWNER, waitMs))) {
     return BUSY;
   }
+  // WE HOLD THE LOCK, SO ANY CHROMIUM STILL ON THIS PROFILE IS OWNED BY NOBODY. See
+  // orphan-sweep.mjs: on 2026-08-18 one such orphan reached 25 GB and took the box to 94%
+  // COMMIT while the size guard recycled a healthy browser five times over. Must stay AFTER
+  // the lock and BEFORE the launch — the hold runner drives this same directory, and a sweep
+  // that ran without the lock could land at 08:00:00 on the Chromium that is carting.
+  await sweepOrphanChromium({ log });
   const renew = setInterval(() => renewProfileLock(PROFILE_DIR, LOCK_OWNER), RENEW_MS);
   const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
     headless,
@@ -1410,6 +1417,12 @@ async function warmResident() {
       await sleep(30_000);
       continue;
     }
+    // THE RESIDENT PATH'S SWEEP, and the one that matters most. This loop reopens on every
+    // profile yield, every guard trip and every restart — including the restart that ORPHANS
+    // a browser in the first place — so it is where an orphan is actually caught, minutes
+    // after it is created and long before any 08:00. See orphan-sweep.mjs for why it must sit
+    // between the lock and the launch, and nowhere else.
+    await sweepOrphanChromium({ log });
     /**
      * THE WATCHDOG, and why it lives in the renew timer.
      *
