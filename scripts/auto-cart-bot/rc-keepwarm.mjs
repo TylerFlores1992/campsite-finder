@@ -71,6 +71,7 @@ import {
 } from './profile-lock.mjs';
 import { sweepOrphanChromium } from './orphan-sweep.mjs';
 import { withForcedLoginPrompt } from './force-login-prompt.mjs';
+import { withNetworkTrace, describeTrace } from './okta-net-trace.mjs';
 import {
   installTokenCapture, readLiveToken, readTokenAnyOrigin, primeToken, renewSession, tokenSecondsLeft,
   dropStoredToken,
@@ -1899,7 +1900,13 @@ async function warmResident() {
             // refuse, or one hiccup would switch renewal off for good.
             const okta = token ? await oktaSessionAlive(ctx).catch(() => null) : null;
             mark('renewal');
-            const r = await renewSession(page, RC_HOME, {
+            // COUNT THE BYTES. This is the first instrument that goes at the CAUSE rather than
+            // the aftermath — see okta-net-trace.mjs. "Network/IPC buffering" has been the
+            // leading candidate three times and was never once tested, though it is directly
+            // observable: non-JS memory growing by gigabytes in the renderer AND the browser
+            // process is the shape of a huge or looping response. A negative eliminates the
+            // whole family, which is why it is worth the listener.
+            const { result: r, trace } = await withNetworkTrace(page, () => renewSession(page, RC_HOME, {
               oktaAlive: okta?.alive ?? null,
               // INJECTED, so `rc-token.mjs` stays incapable of signing in — see its header.
               // Only whether a control was pressed crosses the boundary, never a locator.
@@ -1910,7 +1917,11 @@ async function warmResident() {
             }).catch((e) => {
               log(`  renew failed: ${e.message}`);
               return null;
-            });
+            }));
+            // ALWAYS PRINTED, pass or fail. The failing renewals are the ones that ramp — all
+            // five guard firings were mid-renewal — so a trace only logged on success would
+            // miss every event it was built for.
+            log(`  ${describeTrace(trace)}`);
             // RECORDED BEFORE ANYTHING ELSE CAN THROW. `checkAndReport` below is wrapped but
             // the logging is not, and an attempt that is made and not recorded is an attempt
             // the floor cannot see — which turns the ration into no ration at all.

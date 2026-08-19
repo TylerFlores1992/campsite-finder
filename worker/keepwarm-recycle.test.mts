@@ -324,7 +324,12 @@ test('the recycle is read at the top of the loop, where both continues reach it'
   const loop = code.slice(code.indexOf('for (;;) {', code.indexOf('let oktaTrip')));
   const readAt = loop.indexOf('if (oktaTrip) {');
   const autoLoginAt = loop.indexOf('maybeAutoLogin(ctx, page)');
-  const renewAt = loop.indexOf('await renewSession(');
+  // ANCHORED ON THE CALL, NOT ON `await`. This was `await renewSession(` and broke the moment
+  // the renewal was wrapped in `withNetworkTrace(page, () => renewSession(…))` — over
+  // completely unchanged behaviour, and by returning -1 rather than failing loudly, which
+  // made `readAt < -1` false and read as a real regression. Match the callee itself.
+  const renewAt = loop.indexOf('renewSession(');
+  assert.ok(renewAt > -1, 'could not find the renewal call in the resident loop');
   assert.ok(readAt > -1, 'the recycle check must exist inside the resident loop');
   assert.ok(readAt < autoLoginAt && readAt < renewAt,
     'a check placed after the setters is skipped by every `continue` that sets one');
