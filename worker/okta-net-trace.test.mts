@@ -64,15 +64,69 @@ test('a loop is aggregated by path, not lost among individual responses', () => 
   assert.match(describeTrace(t), /x40/, 'the count must survive into the log line');
 });
 
-test('the verdict is stated, and it points BOTH ways', () => {
-  // A diagnostic that can only confirm is worth much less than one that can eliminate. The
-  // whole reason this ships is that small numbers retire the buffering family.
-  const big = summariseTrace([{ url: 'https://a/b', status: 200, bytes: 900 * 1024 * 1024 }]);
-  assert.match(describeTrace(big), /LEAD, not a candidate/);
+const SMALL = [{ url: 'https://a/b', status: 200, bytes: 9 * 1024 * 1024 }];
+const HUGE = [{ url: 'https://a/b', status: 200, bytes: 900 * 1024 * 1024 }];
+const RAMPED = { beforeMb: 8940, afterMb: 6610 };   // −2,330, the measured single-trip cost
+const FLAT = { beforeMb: 8940, afterMb: 8900 };     // −40, ordinary desktop noise
 
-  const small = summariseTrace([{ url: 'https://a/b', status: 200, bytes: 900_000 }]);
-  assert.match(describeTrace(small), /does NOT explain the ramp/,
-    'small numbers must ELIMINATE the candidate, not merely fail to confirm it');
+test('a ramp with small bytes ELIMINATES buffering', () => {
+  // The whole reason this ships: a diagnostic that can only confirm is worth much less than
+  // one that can rule a family out.
+  assert.match(describeTrace(summariseTrace(SMALL, { ram: RAMPED })),
+    /it ramped while the network moved almost nothing, so buffering does NOT explain/);
+});
+
+test('a ramp with big bytes promotes buffering to a lead', () => {
+  assert.match(describeTrace(summariseTrace(HUGE, { ram: RAMPED })),
+    /it ramped AND the network moved enough[\s\S]*LEAD, not a candidate/);
+});
+
+test('NO RAMP MEANS NO VERDICT — the trap this reading exists to close', () => {
+  /**
+   * The first live trace read `112 response(s), 8.7 MB` and was very nearly written up as
+   * retiring the buffering candidate. It was not entitled to: the 2-minute memory sampler
+   * bracketed that renewal (05:05:56 and 05:07:56, around a run from 05:06:13 to 05:07:12)
+   * and the post-Okta recycle freed everything twelve seconds after it ended — so whether
+   * that navigation ramped AT ALL was unobserved, and a trace of a non-ramping trip says
+   * nothing whatever about a leak.
+   *
+   * Same rule as `unknown` never rounding to `signed-out`, and as the concurrent-mint probe
+   * refusing to call a race when no submit was accepted.
+   */
+  const said = describeTrace(summariseTrace(SMALL, { ram: FLAT }));
+  assert.match(said, /did NOT ramp/);
+  assert.match(said, /says nothing about the leak/);
+  assert.ok(!/does NOT explain the leak/.test(said),
+    'a flat run must NOT be reported as evidence against buffering');
+  assert.ok(!/LEAD/.test(said), 'nor as evidence for it');
+});
+
+test('bytes with no RAM reading give no verdict at all', () => {
+  const said = describeTrace(summariseTrace(SMALL));
+  assert.match(said, /RAM not measured/);
+  assert.match(said, /no verdict/);
+  assert.ok(!/does NOT explain|LEAD/.test(said),
+    'bytes alone cannot distinguish an innocent network from a trip that never allocated');
+});
+
+test('the RAM reading is taken around the SAME call as the bytes', () => {
+  // Two facts about one event, neither depending on a sampler's cadence. And read BEFORE the
+  // post-Okta recycle, which frees the allocation within seconds — that is exactly what made
+  // the 2-minute sampler blind to the first trace's event.
+  assert.match(code, /const beforeMb = Math\.round\(os\.freemem\(\)/,
+    'free RAM must be read before the wrapped call');
+  const at = code.indexOf('const result = await fn();');
+  assert.ok(at > -1);
+  const after = code.slice(at, at + 500);
+  assert.match(after, /afterMb: Math\.round\(os\.freemem\(\)/,
+    'and again immediately after it returns, inside the try — not in the finally');
+});
+
+test('free RAM comes from a syscall, never a spawned process', () => {
+  // `rcFamilyMb()` spawns PowerShell and spawning is precisely what fails as COMMIT passes
+  // ~95%. An instrument that goes quiet as the emergency peaks reports the emergency as calm.
+  assert.match(code, /os\.freemem\(\)/);
+  assert.ok(!/exec|spawn|PowerShell/i.test(code), 'no child process anywhere in this module');
 });
 
 test('responses with no content-length are counted, never silently treated as zero', () => {
