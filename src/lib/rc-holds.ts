@@ -237,6 +237,44 @@ export async function noteAttempt(ids: string[], note: string): Promise<void> {
 const REAL_UNIT = `unit_id ~ '^[0-9]+$'`;
 
 /**
+ * The same rule as `REAL_UNIT`, in JavaScript, for the callers that filter a RESULT rather
+ * than a query.
+ *
+ * ── WHY A SECOND FORM OF ONE RULE, AND WHY THAT IS SAFE HERE (2026-08-19) ──────────────────
+ * The note above says `dueHolds` is deliberately unfiltered, because the hold suites exist to
+ * test it, and that the cost is "profile churn against a sentinel that cannot cart — bounded,
+ * understood". **The cost is bigger than that, and it was measured today.**
+ *
+ * The hold runner asks the keep-warm for the Chromium profile whenever the feed gives it work.
+ * The keep-warm yields, closes its browser and reopens — and the live access token lives in
+ * page memory (`window.__camphawkRcToken`), not in localStorage, so the reopen comes back
+ * `token source: none`. On 2026-08-19 that destroyed a session which had sustained itself for
+ * SEVEN HOURS since a hand sign-in:
+ *
+ *     13:33:52 ♻ token exp in 45m; renewed=no; src=live; okta=ALIVE
+ *     13:49:07 → hold runner wants the profile — closing and standing down
+ *     13:49:50 RC loaded and STAYING OPEN — token source: none
+ *     13:50:38 ⚠ RC SESSION IS DEAD
+ *
+ * **And the work it wanted the profile for was a test fixture** — the runner's log names
+ * `#L__t9003`, `#L__t9102` and `#L__t9007`, the non-numeric sentinels. The 13:49 pass falls
+ * inside a CI run for a pull request that changed only Markdown. So `npm test` kills the
+ * production RC session, and a run landing near 08:00 takes the session a cart depends on.
+ *
+ * ── THE FILTER GOES WHERE THE RUNNER IS SERVED, NOT IN THE QUERY ───────────────────────────
+ * Adding `REAL_UNIT` to `dueHolds` would gut the suites that make this table safe, which is
+ * exactly why the earlier fix stopped short of it. Filtering the FEED costs those suites
+ * nothing — `dueHolds` keeps its full surface and they keep testing it — while the runner
+ * simply never sees a fixture, so it never asks for the profile for one.
+ *
+ * It is also server-side, so it reaches the mini-PC on a push with no bot update. Same
+ * reasoning that put `REAL_UNIT` in the two queries rather than in the runner.
+ */
+export function isRealUnitId(unitId: string | null | undefined): boolean {
+  return typeof unitId === 'string' && /^[0-9]+$/.test(unitId);
+}
+
+/**
  * When the next hold releases, as RC's zone-less Pacific wall-clock — or null.
  *
  * The keep-warm needs this and nothing else. There is no session to keep warm (RC issues
