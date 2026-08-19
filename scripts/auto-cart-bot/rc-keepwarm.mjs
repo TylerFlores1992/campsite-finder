@@ -2017,6 +2017,25 @@ async function warmResident() {
                 // finding, and a hung database must not be able to take it down.
                 const idb = await takeIdbCensus(evaluate);
                 log(`    ${describeCensus(census, { idb })}`);
+                // ── THE OTHER HALF OF "A COOKIE OR THE SERVER" ─────────────────────────
+                // The census can say the corpse is not in any web store and not in
+                // IndexedDB; it cannot see cookies, and a cookie is the half we can look
+                // at. `authCookieSummary` decodes the expiry INSIDE itself and returns a
+                // number — no value ever reaches this log line.
+                //
+                // A token-shaped cookie whose expiry matches the corpse IS the answer, and
+                // `dropStoredToken` could then be taught to reach it. NONE of them being
+                // token-shaped is just as useful: it leaves the server, which is a
+                // different investigation and not one a clear can ever fix.
+                const cookies = await authCookieSummary(ctx).catch(() => []);
+                const carrying = cookies.filter((c) => c.jwtExp != null);
+                log(carrying.length
+                  ? `    TOKEN-SHAPED COOKIE(S) — the corpse may live here: ${carrying
+                      .map((c) => `${c.name}@${c.domain} (${c.chars} chars, exp `
+                        + `${Math.round((c.jwtExp * 1000 - Date.now()) / 3600_000)}h)`)
+                      .join(', ')}`
+                  : `    cookies: ${cookies.length} on the RC origins, NONE token-shaped — `
+                    + 'so the stale token is coming from the server, not from this profile');
               }
             }
             // Report immediately either way: this is the event worth seeing on the

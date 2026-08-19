@@ -552,7 +552,7 @@ export async function renewSession(
   // unknown would switch this off permanently the first time the probe errored — the
   // "unknown is not dead" rule, applied to the thing that acts rather than the report.
   if (oktaAlive === false) {
-    return { renewed: false, stage: 'skipped', before, after: before, afterSource: null,
+    return { renewed: false, stage: 'skipped', before, after: before, afterSource: null, reclearedExpired: false,
       restored: false, cleared: [],
       skipped: 'no Okta session to renew against', visitedOkta: false };
   }
@@ -591,6 +591,56 @@ export async function renewSession(
   // the caller having supplied a click — this module deliberately cannot find that control
   // itself, because owning a selector list here is one import away from owning a password
   // field too.
+  /**
+   * CLEAR AGAIN, BECAUSE THE FIRST CLEAR RAN BEFORE THERE WAS ANYTHING TO CLEAR.
+   *
+   * ── THE TWO LOG LINES THAT FORCE THIS (2026-08-19) ────────────────────────────────────
+   *     ✗ no fresher token (none → -316679s), got as far as: none
+   *       cleared 0 storage key(s): (none — nothing was there to drop)
+   *       the expired token was found via: localStorage
+   *
+   * Storage is EMPTY when `dropStoredToken` runs — okta-auth-js deleted the corpse itself
+   * on the previous boot after its silent renew failed — and a token three days dead is
+   * back in localStorage a moment later. So the SPA restores it DURING the reload, from
+   * somewhere neither web store nor IndexedDB (all three measured clean; a cookie or the
+   * server are what remain).
+   *
+   * ── WHY THAT IS THE WHOLE FAILURE ────────────────────────────────────────────────────
+   * The 2x2 in CLAUDE.md is unambiguous about which cell works: a click from a genuinely
+   * TOKEN-LESS profile mints a full hour (`none → 3580s`, observed repeatedly), and a click
+   * with a token present has never once succeeded. By restoring the corpse the reload puts
+   * every renewal in the cell that cannot work — the app renders as though it holds a
+   * session, so the authorization-code flow the click is supposed to start never starts.
+   *
+   * Dropping it here is therefore not a tidy-up, it is the difference between the two cells.
+   *
+   * ── SAFE BY CONSTRUCTION ─────────────────────────────────────────────────────────────
+   * Only an EXPIRED token is dropped. A live one is a working session and must never be
+   * touched on this path — that is what makes this different from the near-expiry renewal
+   * this file stood down from, which destroyed live sessions and leaked gigabytes doing it.
+   * Cookies are untouched, so `DT` survives, as everywhere else.
+   *
+   * ONE EXTRA ROUND, NOT A LOOP. If the corpse comes straight back the source restores it on
+   * every load and clearing can never win — that is a finding to report, not something to
+   * retry against. `reclearedExpired` carries it out so the caller can say which happened.
+   */
+  let reclearedExpired = false;
+  const secondsNow = tokenSecondsLeft(token);
+  if (token && secondsNow != null && secondsNow <= 0) {
+    onStep('renew:reclear-restored-token');
+    const again = await dropStoredToken(page);
+    reclearedExpired = true;
+    // The keys are merged into `cleared` so the caller's existing line reports both sweeps
+    // rather than one of them silently vanishing.
+    cleared.push(...again.cleared);
+    // Re-read WITHOUT a reload: a reload is exactly what let the SPA restore it, so going
+    // round again would undo the clear we just made. If the app still hands one back from
+    // memory there is nothing more this path can do, and the click will say so.
+    const after = await readLiveToken(page);
+    token = after.token;
+    afterSource = after.source;
+  }
+
   if (clickSignIn && !isRenewal({ previous, next: token, before, after: tokenSecondsLeft(token) })) {
     stage = 'authorize';
     onStep('renew:click-sign-in');
@@ -652,7 +702,7 @@ export async function renewSession(
   // that works: `reload` would mean the SDK's own bootstrap has started working and this can
   // be simplified, `authorize` is the expected success, and `none` versus `no-signin-control`
   // separates "Okta refused" from "we never got as far as asking".
-  return { renewed, stage, before, after, afterSource, restored, cleared, skipped: null, visitedOkta };
+  return { renewed, stage, before, after, afterSource, reclearedExpired, restored, cleared, skipped: null, visitedOkta };
 }
 
 /**
@@ -792,6 +842,24 @@ export async function oktaSessionAlive(ctx) {
  * it would put full account access in a plain-text file on the mini-PC, which is exactly
  * the property the whole "no credentials on the box" design protects.
  */
+/**
+ * A JWT's `exp`, decoded locally, or null when the value is not a JWT.
+ *
+ * NEVER LOGS, NEVER RETURNS THE VALUE. It takes a credential and gives back a number, which
+ * is the only shape that is safe to put in a log line — this repo has published a credential
+ * twice by collecting a field it then had to filter.
+ */
+export function jwtExpOf(value) {
+  if (typeof value !== 'string') return null;
+  if (!/^ey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\./.test(value)) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(value.split('.')[1], 'base64url').toString('utf8'));
+    return typeof claims.exp === 'number' ? claims.exp : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function authCookieSummary(ctx) {
   try {
     const all = await ctx.cookies(['https://signin.reservecalifornia.com', 'https://www.reservecalifornia.com']);
@@ -805,6 +873,18 @@ export async function authCookieSummary(ctx) {
       expiresInMin: typeof c.expires === 'number' && c.expires > 0
         ? Math.round((c.expires * 1000 - Date.now()) / 60000)
         : null,
+      // ── IS THE CORPSE IN A COOKIE? (2026-08-19) ──────────────────────────────────────
+      // A renewal that clears nothing (`cleared 0`) and then finds a three-day-dead token
+      // via localStorage means the SPA restores it during the reload. Both web stores and
+      // IndexedDB were measured empty, so a cookie or the server are what remain — and a
+      // cookie is the half we can look at.
+      //
+      // THE VALUE IS READ HERE AND NEVER RETURNED. `c.value` is potentially the session
+      // itself; the length and a locally-decoded `exp` identify it and cannot be replayed.
+      // Same rule as the storage census, and the reason this is computed inside this
+      // function rather than by handing the caller the cookies.
+      chars: typeof c.value === 'string' ? c.value.length : 0,
+      jwtExp: jwtExpOf(c.value),
     }));
   } catch {
     return [];
