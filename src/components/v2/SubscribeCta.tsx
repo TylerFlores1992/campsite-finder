@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSyncExternalStore } from "react";
-import { SubscribeLink, subscribeSentence } from "./nativeSubscribe";
+import { SubscribeLink, SubscribeSentence } from "./nativeSubscribe";
 import { useIsNativeApp } from "@/lib/native/context";
 import { buttonClasses } from "@/components/ui/Button";
 import { useSubscription } from "./useSubscription";
@@ -111,7 +111,7 @@ export default function SubscribeCta({
     }
     return (
       <p className={`text-ch-fine leading-normal text-ch-ink-2 ${className}`}>
-        {subscribeSentence()} <SubscribeLink />
+        <SubscribeSentence /> <SubscribeLink />
       </p>
     );
   }

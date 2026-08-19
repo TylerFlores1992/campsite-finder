@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Pricing from "./Pricing";
 import { buttonClasses } from "@/components/ui/Button";
-import { SubscribeLink, subscribeSentence } from "./nativeSubscribe";
+import { SubscribeLink, SubscribeSentence } from "./nativeSubscribe";
 import { useSubscription } from "./useSubscription";
 import { useIsNativeApp } from "@/lib/native/context";
 import { WATCH_LIMIT } from "@/lib/limits";
@@ -116,9 +116,9 @@ export default function PricingSection() {
           search keeps working either way.
         </p>
         <p className="mt-2 max-w-[58ch] text-ch-meta leading-normal text-ch-green-deep">
-          {subscribeSentence()} Once yours is active, everything works here.
+          <SubscribeSentence /> Once yours is active, everything works here.
         </p>
-        {/* Renders nothing while NATIVE_LINKOUT is off. See nativeSubscribe.tsx —
+        {/* Renders nothing where LINKOUT_BY_STORE is off for this store. See nativeSubscribe.tsx —
             steering out is US-storefront-only, so it stays dark until app
             availability is restricted to the US. Never shown to a subscriber:
             prompting someone who already pays reads as a billing failure. */}

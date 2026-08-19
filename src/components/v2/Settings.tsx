@@ -8,7 +8,7 @@ import { useIsNativeApp } from "@/lib/native/context";
 import { useSubscription } from "./useSubscription";
 import SmsAlerts from "./SmsAlerts";
 import AutoCartSettings from "./AutoCartSettings";
-import { SubscribeLink, subscribeSentence } from "./nativeSubscribe";
+import { SubscribeLink, SubscribeSentence } from "./nativeSubscribe";
 import DeleteAccount from "./DeleteAccount";
 import BuildStamp from "./BuildStamp";
 
@@ -157,7 +157,7 @@ export default function Settings() {
             </p>
           ) : (
             <>
-              <p className="text-ch-body text-ch-muted">{subscribeSentence()}</p>
+              <p className="text-ch-body text-ch-muted"><SubscribeSentence /></p>
               {/* Never offered to someone already paying — a "Subscribe" prompt on a
                   live subscription reads as a billing failure. */}
               <SubscribeLink className="mt-2 text-ch-body text-ch-green" />
