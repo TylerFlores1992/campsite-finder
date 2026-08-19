@@ -83,7 +83,15 @@ test('the keep-warm reports a live-but-short session as warm, never dead', () =>
 
   // Slice to the NEXT arm, not to the dead report — the else block's own
   // `saveFailureShot` sits between them and would be read as this arm's.
-  const arm = body.slice(branch, body.indexOf('} else {', branch));
+  //
+  // THE NEXT ARM MAY ITSELF BE AN `else if`. This searched for `} else {` literally, so
+  // inserting a `} else if (r.provedNothing) {` arm between the live branch and the plain
+  // failure branch silently widened the slice to cover BOTH — and the new arm's own
+  // screenshot was then read as this one's. The rule being pinned is "nothing inside the
+  // LIVE arm treats it as a failure"; where that arm ends is not part of the rule.
+  const nextArm = /\n\s*\} else\b/.exec(body.slice(branch + 1));
+  assert.ok(nextArm, 'the live arm must be followed by another arm');
+  const arm = body.slice(branch, branch + 1 + nextArm.index);
   assert.match(arm, /reportSession\('warm'/,
     'a session RC accepts must be reported live, with the shortfall stated');
   assert.ok(!/reportSession\('dead'/.test(arm), 'this arm must never report dead');
