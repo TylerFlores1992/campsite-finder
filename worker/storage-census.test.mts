@@ -20,7 +20,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  censusInPage, takeStorageCensus, describeCensus, MAX_KEYS,
+  censusInPage, idbCensusInPage, takeStorageCensus, takeIdbCensus,
+  describeCensus, describeIdb, MAX_KEYS,
 } from '../scripts/auto-cart-bot/storage-census.mjs';
 
 const SRC = readFileSync('scripts/auto-cart-bot/storage-census.mjs', 'utf8');
@@ -97,10 +98,11 @@ test('a key the clear DOES cover is not flagged as surviving', () => {
 
 test('clean stores point ELSEWHERE rather than declaring the profile innocent', () => {
   // The corpse has to come from somewhere. If neither web store holds one, that is a
-  // redirection to IndexedDB, a cookie or the server — not an all-clear.
+  // redirection — not an all-clear. This is the reading the box actually produced on
+  // 2026-08-19: `local 6 key(s), session 1 key(s) — NO token-shaped value in either store`.
   const said = describeCensus(runCensus([['theme', 'dark']]), { nowSec: NOW });
   assert.match(said, /NO token-shaped value/);
-  assert.match(said, /IndexedDB, a cookie, or the server/);
+  assert.match(said, /coming from somewhere else/);
 });
 
 test('a failed read is "no reading", never an empty profile', () => {
@@ -117,13 +119,111 @@ test('takeStorageCensus never throws, and rejects a malformed reading', async ()
     'a shape that is not a census must read as no reading, not as empty stores');
 });
 
-test('there is no always-empty idb field to be misread as "we looked"', () => {
-  // An `idb: []` returned by a synchronous body that never enumerates IndexedDB would read as
-  // "we looked and found none" — the zero-for-an-absent-reading mistake this repo has made
-  // twice. IndexedDB is simply not covered, and the clean-stores message says so.
+test('the web-store body stays SYNCHRONOUS — IndexedDB is a separate evaluate', () => {
+  // The two readings must be independent. `idbCensusInPage` is async and talks to a subsystem
+  // that can block; the web-store census is the one that has already produced a finding, and a
+  // hung database must not be able to take it down with it. One evaluate for both would make
+  // exactly that possible.
   const c = runCensus([['a', 'b']]);
-  assert.ok(!('idb' in c), 'no field may claim coverage the census does not have');
-  assert.ok(!/indexedDB/.test(code), 'and the injected body must stay synchronous');
+  assert.ok(!('idb' in c), 'the synchronous body must not claim coverage it does not have');
+  const sync = code.slice(code.indexOf('export function censusInPage'), code.indexOf('export function idbCensusInPage'));
+  assert.ok(!/indexedDB/.test(sync), 'and it must not touch IndexedDB at all');
+  assert.match(KEEPWARM, /takeStorageCensus\(evaluate\)[\s\S]{0,600}takeIdbCensus\(evaluate\)/,
+    'the caller must make two separate evaluates');
+});
+
+test('NO IndexedDB VALUE IS EVER FETCHED — names and counts only', () => {
+  // `getAll()` pulls every row into the page. On a renderer already suspected of allocating
+  // gigabytes that is the cure arriving as part of the disease — the same mistake as
+  // `response.body()` in the network trace, and as writing a multi-GB heap snapshot at the
+  // moment the box cannot spawn. `count()` answers the only question that has to be answered:
+  // which store is holding something.
+  const idb = code.slice(code.indexOf('export function idbCensusInPage'));
+  assert.ok(!/getAll|\.get\(|openCursor/.test(idb), 'no row may be read out of a store');
+  assert.match(idb, /\.count\(\)/, 'the count is the whole reading');
+});
+
+test('an IndexedDB reading that did not happen is NOT an empty one', () => {
+  // The distinction the web-store census earned its finding with, applied to the store it
+  // pointed at. Three states, three sentences.
+  assert.match(describeIdb(undefined), /was not checked/);
+  assert.match(describeIdb(null), /could NOT be read/);
+  assert.match(describeIdb(null), /not ruled out/);
+  assert.match(describeIdb([]), /no databases at all/);
+  assert.ok(!/not ruled out/.test(describeIdb([])),
+    'an enumerated-and-empty IndexedDB genuinely does rule itself out');
+});
+
+test('a store holding rows is called out as the lead', () => {
+  const said = describeIdb([
+    { db: 'okta-token-storage', store: 'tokens', rows: 1 },
+    { db: 'firebase-heartbeat-db', store: 'heartbeats', rows: 0 },
+  ]);
+  assert.match(said, /HOLDS DATA/);
+  assert.match(said, /okta-token-storage\/tokens=1/);
+  assert.ok(!/heartbeats/.test(said), 'the empty stores must not bury the full one');
+  assert.match(said, /the clear has never reached these/);
+});
+
+test('an unreadable store is reported as unreadable, never as zero', () => {
+  const said = describeIdb([{ db: 'locked', store: 'x', rows: null }]);
+  assert.match(said, /locked\/x=unreadable/);
+  assert.ok(!/HOLDS DATA/.test(said), 'an unreadable count is not evidence of contents');
+});
+
+test('takeIdbCensus never throws, and a non-array reads as no reading', async () => {
+  assert.equal(await takeIdbCensus(async () => { throw new Error('page gone'); }), null);
+  assert.equal(await takeIdbCensus(async () => null), null);
+  assert.equal(await takeIdbCensus(async () => ({ nonsense: true })), null);
+  assert.deepEqual(await takeIdbCensus(async () => []), [], 'but a real empty enumeration survives');
+});
+
+test('the IndexedDB body is self-bounded INSIDE the caller\'s bound', async () => {
+  // `evaluateWithin` caps the whole evaluate, but a single `open()` that never fires an event
+  // would spend that entire budget and return nothing at all. Bounding per-request means a
+  // hung database costs one database, not the reading.
+  const idb = code.slice(code.indexOf('export function idbCensusInPage'));
+  assert.match(idb, /const deadline = Date\.now\(\) \+ BUDGET_MS/);
+  assert.match(idb, /Date\.now\(\) > deadline/, 'and the loop must check it');
+  assert.match(idb, /onblocked/, 'a blocked open is an answer, not a hang');
+
+  // And it really does resolve when the subsystem never answers.
+  const g = globalThis as Record<string, unknown>;
+  const saved = g.indexedDB;
+  g.indexedDB = {
+    databases: async () => [{ name: 'never-opens' }],
+    open: () => ({}),   // no event ever fires
+  };
+  try {
+    const out = await idbCensusInPage(MAX_KEYS);
+    assert.deepEqual(out, [{ db: 'never-opens', store: null, rows: null }],
+      'a database that never answers is reported unreadable, not waited on for ever');
+  } finally { g.indexedDB = saved; }
+});
+
+test('an absent IndexedDB API reads as "could not look", not as empty', async () => {
+  const g = globalThis as Record<string, unknown>;
+  const saved = g.indexedDB;
+  g.indexedDB = {};   // no databases()
+  try {
+    assert.equal(await idbCensusInPage(MAX_KEYS), null,
+      'no enumeration API means no reading — an empty array would claim we had looked');
+  } finally { g.indexedDB = saved; }
+});
+
+test('the token SOURCE is reported, because it splits the hunt in two', () => {
+  // `live` means RC's SPA held the corpse in memory and put it on an outbound Authorization
+  // header — restored from somewhere the clear cannot see. `localStorage` would mean the
+  // census simply ran too late and the store is the answer after all. `primeToken` has always
+  // computed this and `renewSession` threw it away.
+  const TOKEN = readFileSync('scripts/auto-cart-bot/rc-token.mjs', 'utf8')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  assert.match(TOKEN, /source: afterSource \} = await primeToken\([\s\S]{0,120}notToken: previous \}\)\);/,
+    'the post-click prime must keep the source — that is the one that finds the corpse');
+  assert.match(TOKEN, /return \{ renewed, stage, before, after, afterSource,/,
+    'and it must be returned');
+  assert.match(KEEPWARM, /the expired token was found via: \$\{r\.afterSource/,
+    'and logged on the pathology');
 });
 
 test('the census fires ONLY on the pathology, not on every renewal', () => {
@@ -140,6 +240,17 @@ test('the census fires ONLY on the pathology, not on every renewal', () => {
 test('the census is bounded and time-limited', () => {
   assert.ok(MAX_KEYS > 0 && MAX_KEYS <= 100, 'a profile with hundreds of keys must not bury it');
   assert.match(code, /out\.length < limit/, 'the scan must stop at the cap');
-  assert.match(KEEPWARM, /takeStorageCensus\(\s*\(fn, arg\) => evaluateWithin\(/,
-    'and run through the bounded evaluate — this page is already suspected of hanging');
+
+  // ANCHORED ON THE BEHAVIOUR, NOT THE EXPRESSION. This guard used to pin the inline
+  // `takeStorageCensus((fn, arg) => evaluateWithin(…))`, and hoisting that arrow into a
+  // `const evaluate` — a change that alters nothing — broke it. Same shape as the guard that
+  // pinned `await renewSession(` and went red when the call was wrapped in a network trace.
+  // What has to be true is that BOTH censuses run through the bounded evaluate, because this
+  // page is already suspected of hanging; how the caller spells that is not the rule.
+  const at = KEEPWARM.indexOf('const evaluate = (fn, arg) => evaluateWithin(');
+  assert.ok(at > -1, 'the bounded evaluate must be defined');
+  assert.match(KEEPWARM.slice(at, at + 600), /takeStorageCensus\(evaluate\)/,
+    'the web-store census must use it');
+  assert.match(KEEPWARM.slice(at, at + 600), /takeIdbCensus\(evaluate\)/,
+    'and so must the IndexedDB one — it is the body most able to block');
 });
