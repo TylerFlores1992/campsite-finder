@@ -124,6 +124,28 @@ leaves search fully usable — the user types a place name instead.
 
 ---
 
+## 0. App Store Connect — the app id and the links worth bookmarking
+
+**Apple app id: `6794772605`.** Not a secret — it is the number in every public App Store
+URL — and it was missing from the entire repo until 2026-08-19, which meant every trip to
+App Store Connect started by clicking through the app list.
+
+| what | link |
+|---|---|
+| App list | https://appstoreconnect.apple.com/apps |
+| This app | https://appstoreconnect.apple.com/apps/6794772605 |
+| Version in flight | https://appstoreconnect.apple.com/apps/6794772605/distribution/ios/version/inflight |
+| Availability (countries) | https://appstoreconnect.apple.com/apps/6794772605/distribution/availability |
+| Pricing | https://appstoreconnect.apple.com/apps/6794772605/distribution/pricing |
+| Public store page | https://apps.apple.com/us/app/id6794772605 |
+
+**Availability is APP-level, not version-level** — a sibling of `/distribution/ios/…`, not
+under it. That matters because the US-only setting is the whole precondition for the
+link-out in §2c, and looking for it on the version page finds nothing.
+
+Apple has renamed these routes more than once; the first two are stable, the rest are
+best-effort. If one 404s, the setting has not moved — the path has.
+
 ## 2c. REJECTED 2026-08-19 — Guideline 3.1.1, In-App Purchase
 
 **The reviewer finally got INTO the app, and this is the rejection the plan always expected.**
