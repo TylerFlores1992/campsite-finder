@@ -5234,8 +5234,47 @@ label published, age rating 4+, content rights yes, **availability United States
 screenshots in all three size boxes (6.9" / 6.5" / 13" iPad — the iPad set is required
 because the Capacitor build declares iPad support). Everything Apple asked for is in
 `docs/APP-STORE.md`; §2 is the review-notes text to paste into any Resolution Center
-reply. The rejection to argue rather than code around is **3.1.3(b)** — the app has no
-purchase mechanism at all, which is the whole defence.
+reply. ~~The rejection to argue rather than code around is **3.1.3(b)** — the app has no
+purchase mechanism at all, which is the whole defence.~~ **WRONG, AND IT ARRIVED
+2026-08-19 — see below.**
+
+### iOS 1.0 (5) REJECTED 2026-08-19 — GUIDELINE 3.1.1, and 3.1.3(b) WAS NEVER THE DEFENCE
+The reviewer got into the app this time (iPad Air 11-inch M3) and found what the plan
+always expected: *"the app accesses digital content purchased outside the app, such as
+subscriptions, but that content isn't available to purchase using In-App Purchase."*
+**Factually right, nothing to dispute** — the demo account is a paying subscriber, and a
+non-subscriber reads *"Subscriptions are managed at camphawk.app"* with no link, no price
+and no way to act.
+- **THE SENTENCE STRUCK OUT ABOVE HAD THE GUIDELINE BACKWARDS.** 3.1.3(b) Multiplatform
+  permits access to content bought elsewhere **"provided those items are also available as
+  in-app purchases within the app"** — it *restates* the demand rather than excusing it, and
+  Apple's letter cites it against us for exactly that reason. The no-IAP carve-out is
+  3.1.3(a) **Reader** apps, whose enumerated list (magazines, books, audio, video, cloud
+  storage, professional databases) does not cover a campsite alerting service. **"The app
+  has no purchase mechanism at all" was never a defence; it was the FINDING.**
+- **THE REAL ALLOWANCE IS IN APPLE'S OWN LETTER**, two paragraphs above its boilerplate
+  "Next Steps": *"Apps on the United States storefront may link out to the default browser,
+  using buttons, external links, or other calls to action, for payment mechanisms other than
+  in-app purchase."* That is `NATIVE_LINKOUT`, dark since 2026-07-27 for precisely this, and
+  it is **web-side — so it reaches the build already under review with no rebuild.**
+- **THE ONE-LINE FIX WAS A TRAP AND IT IS TWO FLAGS NOW.** The flag is shared by both native
+  apps and their availability differs: iOS is US-only, the Android closed test is
+  **worldwide** because the paid tester service requires it. Both carve-outs are
+  US-storefront only, so flipping one boolean fixes Apple **by showing steering UI to non-US
+  Play testers** — the failure the module's own header warns about, introduced BY the fix for
+  the other store. `LINKOUT_BY_STORE` is `{ios: true, android: false}`; **android stays false
+  until Play PRODUCTION is live and US-only.** A **STORE** check (device OS names the store
+  exactly), never a country check — country is ASC availability, and device locale would not
+  do that job.
+- **WHAT IS NOT ESTABLISHED:** whether a link-out ALONE clears 3.1.1 with no IAP at all.
+  Apple's "Next Steps" still demands IAP and sits directly above their own link-out
+  allowance; the two do not agree. A number of US subscription apps operate this way
+  post-injunction — a pattern, not a guarantee. The fallback is StoreKit: weeks of native
+  work, a new build, and 15-30% commission, which is why the free option goes first.
+- `worker/store-linkout.test.mts`, seven mutations each verified applied — including **iOS
+  matched before Android in the UA sniff**, which would enable Android steering through the
+  back door and defeat the flag entirely.
+- Reply text, the storefront precondition and the full reasoning: `docs/APP-STORE.md` §2c.
 
 ### DO THIS THE MOMENT THE APP IS LIVE
 **Turn on store link-out:** set `NATIVE_LINKOUT = true` in

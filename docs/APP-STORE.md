@@ -124,6 +124,104 @@ leaves search fully usable — the user types a place name instead.
 
 ---
 
+## 2c. REJECTED 2026-08-19 — Guideline 3.1.1, In-App Purchase
+
+**The reviewer finally got INTO the app, and this is the rejection the plan always expected.**
+`1.0 (5)`, reviewed 19 Aug on an iPad Air 11-inch (M3). Apple:
+
+> The app accesses digital content purchased outside the app, such as subscriptions, but
+> that content isn't available to purchase using In-App Purchase.
+
+**They are factually right and there is nothing to dispute.** Signed in as the demo account —
+a paying, grandfathered subscriber — the app delivers watches and alerts that were bought on
+the web. A non-subscriber, meanwhile, reads *"Subscriptions are managed at camphawk.app"*
+with **no link, no price and no way to act.** A dead end, which is exactly the complaint.
+
+### THE REMEDY IS IN APPLE'S OWN LETTER, TWO PARAGRAPHS ABOVE "Next Steps"
+
+> Apps on the United States storefront may link out to the default browser, using buttons,
+> external links, or other calls to action, for payment mechanisms other than in-app purchase.
+
+That is `NATIVE_LINKOUT`, built and dark since 2026-07-27 for precisely this. **Web-side, so
+it reaches the build already under review** — no rebuild, no new binary, and the version is
+already Rejected so the queue position is spent either way.
+
+### THE TRAP IN THE ONE-LINE FIX, AND WHY IT IS TWO FLAGS NOW
+
+The flag is shared by both native apps and **the two do not have the same availability**:
+
+| | availability | steering |
+|---|---|---|
+| iOS | United States only (ASC, 2026-07-30) | **on** |
+| Android | closed test, **worldwide** — the paid tester service requires it | **off** |
+
+Both anti-steering carve-outs are US-storefront only, so flipping one boolean would have
+fixed Apple **by showing steering UI to non-US Play testers** — the review failure
+`nativeSubscribe.tsx`'s own header warns about, introduced BY the fix for the other store.
+`LINKOUT_BY_STORE` is per store now, and **`android` stays false until Play PRODUCTION is
+live and US-only**. The closed test is not the exception.
+
+**It is a STORE check, not a COUNTRY check.** A CampHawk iOS build can only have come from
+the App Store, so device OS names the store exactly. Country is handled the only way it
+safely can be — by ASC availability being US-only, so every iOS install is a US storefront by
+construction. Device locale would not do that job.
+
+### WHAT IS NOT CERTAIN, AND SHOULD NOT BE WRITTEN UP AS IF IT WERE
+
+Apple's "Next Steps" paragraph still says the content *"must be available for purchase in the
+app using In-App Purchase"*. That is older boilerplate sitting directly above their own
+link-out allowance, and the two do not agree. **Whether a link-out ALONE clears 3.1.1 for a
+service like this, with no IAP at all, is not established.** Post-injunction a number of US
+subscription apps operate that way; that is a pattern, not a guarantee.
+
+**3.1.3(b) IS NOT THE DEFENCE, and CLAUDE.md said it was.** That entry read *"the rejection to
+argue rather than code around is 3.1.3(b) — the app has no purchase mechanism at all, which is
+the whole defence."* Read the guideline: 3.1.3(b) Multiplatform allows access to content
+acquired elsewhere **"provided those items are also available as in-app purchases within the
+app"** — the very requirement being complained about. It does not excuse us, it restates the
+demand. The no-IAP carve-out is 3.1.3(a) Reader apps, whose enumerated list (magazines, books,
+audio, video, cloud storage, professional databases) does not include a campsite alerting
+service. **Having no purchase mechanism was never a defence; it was the finding.**
+
+The genuine allowance is the US link-out one, and nothing else.
+
+### If Apple insists on IAP anyway
+
+The fallback is StoreKit: weeks of native work, a new build, a new review, and 15–30%
+commission on every subscription. That is why the free option goes first — a round trip costs
+days, and being wrong about it costs only those days.
+
+### Resolution Center reply
+
+Paste as-is. It concedes the finding, points at their own allowance, and states the storefront
+precondition so the reviewer does not have to go looking for it.
+
+> Thank you for the review.
+>
+> We have addressed this. CampHawk now presents a clear call to action inside the app, on
+> every surface where a subscription is required, linking out to the default browser to
+> complete payment at camphawk.app.
+>
+> We are relying on the allowance stated in your message: apps on the United States storefront
+> may link out to the default browser, using buttons, external links, or other calls to
+> action, for payment mechanisms other than in-app purchase. **CampHawk's App Store
+> availability is restricted to the United States storefront only**, so every install falls
+> within that allowance.
+>
+> The change is server-side and is already live, so it is present in the build currently under
+> review — no new binary is required.
+>
+> For context on what the app is: CampHawk monitors campground reservation systems and alerts
+> subscribers within seconds when a booking is cancelled. The subscription is a service that
+> runs on our servers continuously, independently of the app; the app is one of several ways a
+> subscriber reads their alerts, alongside email, SMS and the web.
+>
+> If you would prefer us to implement In-App Purchase instead, please let us know and we will
+> plan that work — we would appreciate confirmation, as it requires a new build.
+
+**Before sending, confirm in App Store Connect that availability is still United States only.**
+If it is not, this reply is wrong and the change is a worse rejection than the one it answers.
+
 ## 2b. REJECTED 2026-08-16 — Guideline 2.1, Information Needed (New App Submission)
 
 **A different 2.1 from §2a, and a much cheaper one.** Nothing is broken and nothing is
