@@ -72,10 +72,13 @@ import {
 import { sweepOrphanChromium } from './orphan-sweep.mjs';
 import { withForcedLoginPrompt } from './force-login-prompt.mjs';
 import { withNetworkTrace, describeTrace } from './okta-net-trace.mjs';
+import { takeStorageCensus, describeCensus } from './storage-census.mjs';
 import {
   installTokenCapture, readLiveToken, readTokenAnyOrigin, primeToken, renewSession, tokenSecondsLeft,
   dropStoredToken,
   readAuthFacts, oktaSessionAlive, authCookieSummary,
+  // Bounded page.evaluate — the census runs inside a page we already suspect of hanging.
+  evaluateWithin,
 } from './rc-token.mjs';
 import { hasCredentials, attemptLogin, clickSignInControl } from './rc-autologin.mjs';
 import { shouldRehearse, rehearsalSlot } from './rehearsal.mjs';
@@ -1954,6 +1957,20 @@ async function warmResident() {
               // the next run hands over instead of another round of guessing.
               log(`    cleared ${r.cleared?.length ?? 0} storage key(s): `
                 + `${(r.cleared ?? []).join(', ') || '(none — nothing was there to drop)'}`);
+              // ── WHERE IS THE STALE TOKEN COMING FROM? (2026-08-19) ──────────────────────
+              // Fires ONLY on the pathology: the renewal failed AND handed back a token that
+              // is already expired. Four runs in a row produced `none → -267960s` — no token
+              // before, a 74-hour-old one after — while the clear reported nothing to drop.
+              // Something is restoring a corpse from a store `dropStoredToken` does not cover.
+              //
+              // Narrow on purpose: this reads every key name in both web stores, and doing it
+              // on every renewal would be noise on the one log a human reads at 07:30.
+              if (!r.renewed && r.after != null && r.after < 0) {
+                const census = await takeStorageCensus(
+                  (fn, arg) => evaluateWithin(page, fn, arg, { fallback: null }),
+                );
+                log(`    ${describeCensus(census)}`);
+              }
             }
             // Report immediately either way: this is the event worth seeing on the
             // dashboard, not something to sit on until the next 20-minute tick.

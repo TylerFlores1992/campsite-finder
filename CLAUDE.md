@@ -1398,6 +1398,40 @@ The step that leaks is a step that has never worked, so removing it may cost not
   is not the reload-with-clear either — two token-less renewals ran the identical clear and
   reload with no ramp at all. See below.
 
+### A THREE-DAY-OLD TOKEN KEEPS COMING BACK (2026-08-19) — the session cannot exit the loop
+Four consecutive renewals produced the same impossible pair:
+```
+✗ no fresher token (none → -267960s), got as far as: none
+    cleared 0 storage key(s): (none — nothing was there to drop)
+```
+- **No token BEFORE, a 74-hour-dead one AFTER**, and the negative grows by ~700s per run —
+  one fixed ancient expiry receding, i.e. the SAME corpse returning every time. Something
+  restores it DURING the navigation.
+- **This is why the session cannot recover.** Every renewal ends with the app holding a dead
+  token, Okta reporting `ALIVE`, and nothing minting anything. `maybeAutoLogin` at T−30 is the
+  only thing that can break the loop.
+- **`dropStoredToken` COVERS LESS THAN ITS NAME SUGGESTS.** `localStorage` only, and within it
+  only `ssoAccessToken`, `accessToken`, and keys starting `okta-`. It has never touched
+  **sessionStorage**, **IndexedDB**, or a localStorage key under any other name. Cookies are
+  excluded deliberately and must stay so — losing `DT` makes a sign-in look like a fresh
+  profile, which cost the household IP twelve hours on 2026-08-06.
+- The 2026-08-15 entry already named the candidates — *"IndexedDB, a cookie, or a key name
+  nothing has looked for"* — and then nobody looked. `storage-census.mjs` looks.
+- **VALUES ARE NEVER REPORTED: a key NAME, a character COUNT, and a locally-decoded `exp`.**
+  Every value here is potentially the session, and this repo has published a credential twice
+  by collecting a field it then had to filter — an OAuth code on 08-09, a password on 08-16.
+  An age identifies the corpse and cannot be replayed.
+- **It fires ONLY on the pathology** (`!renewed && after < 0`), because it reads every key name
+  in both stores and doing that on every renewal is noise on the one log read at 07:30.
+- **NO `idb` FIELD.** The injected body is synchronous on purpose, so an always-empty array
+  would read as "we looked and found none" — the zero-for-an-absent-reading mistake, twice
+  made. Clean stores instead print *"the stale token is coming from somewhere else (IndexedDB,
+  a cookie, or the server)"*, which is a redirection and not an all-clear.
+- `worker/storage-census.test.mts`, **six mutations, each verified applied** — the value
+  reported, a failed read shown as empty stores, the `SURVIVES` flag dropped, sessionStorage
+  treated as covered, clean stores reported as an all-clear, and the gate widened to every
+  renewal.
+
 ### FIVE INSTRUMENTS AND NONE OF THEM STOPS IT — so COUNT THE BYTES (2026-08-19)
 The owner's question, and it is the right one: *"It sounds like we keep trying to find a
 solution for what to do after the leak, not stop it from leaking."* **Correct.** A size guard,
@@ -1536,6 +1570,18 @@ on a clean full `verify` (914/914). **Not a flake to shrug at: the mechanism is 
 - **And I pushed before confirming green**, because the command chained `grep … && git commit`
   and grep succeeds when it finds the failure line. A verify gate that runs after the push is
   not a gate.
+- **IT RECURRED THE SAME NIGHT, WITH A DIFFERENT SUITE, AND THE TRIGGER IS NOW NAMED.** A local
+  `npm run verify` run immediately after merging #132 failed **eight** tests in
+  `claim.test.mts` — the Silver Lake re-alert guards, the nudge, the concurrent-claim winner —
+  and passed 14/14 alone and 953/953 on a re-run minutes later. **Merging IS starting a test
+  run**: the merge fires CI on master, which runs `npm test` against the same production DB.
+  So "merge, then verify" is the concurrency, and it is easy to do without noticing because
+  neither half looks like running two suites at once.
+- **THE SPREAD IS THE USEFUL PART.** The first occurrence was `reclaimLapsedHolds`, a global
+  mutating sweep, which made it look like a property of that one function. `claim.test.mts`
+  collides through `watch_site_alerts` rows instead. **Any real-DB suite with fixed fixture
+  keys is exposed**, so the rule is the whole remedy — there is no subset of tests that is
+  safe to run concurrently.
 
 ### THE SESSION RENEWS ITSELF ONCE WE STOP TOUCHING IT (2026-08-18, first 2.5 hours)
 An OBSERVATION, not yet a measurement, and it is better than the stand-down was meant to buy.
