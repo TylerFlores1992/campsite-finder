@@ -873,6 +873,43 @@ async function maybeAutoLogin(ctx, page) {
     log(`  … signed in, but coverage is short: ${r.reason}`);
     log('    (no credential was submitted, so this does not count against the budget)');
     await reportSession('warm', `signed in, but the token may not cover the hold: ${r.reason}`);
+  } else if (r.provedNothing) {
+    /**
+     * WE COULD NOT ASK, WHICH IS NOT THE SAME AS BEING TOLD NO.
+     *
+     * `attemptLogin` returns `provedNothing` when RC's own app never rendered — *"We're
+     * having trouble loading the application"* — so there was no sign-in form to find. That
+     * detection shipped 2026-08-18 and the REHEARSAL has honoured it ever since; this path
+     * did not, because the only refund lived inside the `r.ok` branch and a blank load
+     * returns `ok: false`. So the release-critical caller kept treating it as a failed login.
+     *
+     * WHAT THAT COST, HAD IT FIRED AT 07:30: one of two attempts spent, the session reported
+     * `dead`, `holdAtRisk` ringing the owner's phone, and the printed remedy being
+     * `rc-login.bat` — which force-kills the Chromium the access token lives in. Following
+     * the alarm would have destroyed a session that was very likely healthy. That is the
+     * 2026-08-16 07:33 false alarm exactly, in the one place it has not yet been fixed, and
+     * two transient loads eight minutes apart would exhaust the budget before the cart.
+     *
+     * THE ATTEMPT IS REFUNDED because no credential was submitted and nothing was exercised —
+     * the same rule as the `r.ok` and `sessionLive` branches. The retry gap is what stops
+     * this becoming a loop.
+     *
+     * AND NOTHING IS REPORTED. `warm` and `dead` are both verdicts, and we do not have one:
+     * a page that never rendered says nothing whatever about the session. Posting nothing
+     * lets the previous verdict go stale, which is the honest reading and the rule this file
+     * already applies to an `unknown` Okta probe. `alarmIfSessionUnusable` still watches the
+     * staleness, so a genuinely dead keep-warm is not hidden by this.
+     *
+     * IT STAYS LOUD, including the screenshot: this is also the documented signature of the
+     * 2026-08-14 blank-page fault, where the profile itself was the cause. It is the
+     * SEVERITY that changes, never the visibility.
+     */
+    autoLogin.spent -= 1;
+    log(`  ? no sign-in was possible: ${r.reason}`);
+    log('    RC\'s app not loading is not a verdict on the session — nothing is reported, and');
+    log('    the attempt is not counted. If this repeats, suspect the Chromium profile');
+    log('    (2026-08-14): rename .rc-bot-profile and let start-all.bat rebuild it.');
+    await saveFailureShot(page, 'autologin-noload');
   } else {
     log(`  ✗ could not sign in: ${r.reason}`);
     log(`    ${autoLogin.spent} of ${AUTOLOGIN_MAX_ATTEMPTS} attempts used. `
