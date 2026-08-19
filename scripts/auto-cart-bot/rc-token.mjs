@@ -552,7 +552,8 @@ export async function renewSession(
   // unknown would switch this off permanently the first time the probe errored — the
   // "unknown is not dead" rule, applied to the thing that acts rather than the report.
   if (oktaAlive === false) {
-    return { renewed: false, stage: 'skipped', before, after: before, restored: false, cleared: [],
+    return { renewed: false, stage: 'skipped', before, after: before, afterSource: null,
+      restored: false, cleared: [],
       skipped: 'no Okta session to renew against', visitedOkta: false };
   }
 
@@ -569,7 +570,15 @@ export async function renewSession(
   onStep('renew:reload');
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   onStep('renew:prime-after-reload');
-  let { token } = await primeToken(page, { timeoutMs: 25_000, notToken: previous });
+  // `source` IS KEPT, AND IT IS THE FIELD THAT NAMES THE HIDING PLACE. `readLiveToken`
+  // answers `live` for a token caught off RC's own outbound Authorization header and
+  // `localStorage` for one read out of storage — and on 2026-08-19 those two are different
+  // investigations. A storage census taken after a failed renewal found NO token-shaped
+  // value in either web store, while the renewal itself had just handed back a token three
+  // days dead; `live` there means the SPA held it in memory, having restored it from
+  // somewhere `dropStoredToken` cannot see, and `localStorage` would mean the census simply
+  // ran too late. One already-computed field separates them, and it was being discarded.
+  let { token, source: afterSource } = await primeToken(page, { timeoutMs: 25_000, notToken: previous });
   let stage = 'reload';
   let visitedOkta = false;
 
@@ -602,7 +611,7 @@ export async function renewSession(
       stage = 'no-signin-control';
     } else {
       onStep('renew:prime-after-click');
-      ({ token } = await primeToken(page, { timeoutMs: 30_000, notToken: previous }));
+      ({ token, source: afterSource } = await primeToken(page, { timeoutMs: 30_000, notToken: previous }));
     }
   }
 
@@ -643,7 +652,7 @@ export async function renewSession(
   // that works: `reload` would mean the SDK's own bootstrap has started working and this can
   // be simplified, `authorize` is the expected success, and `none` versus `no-signin-control`
   // separates "Okta refused" from "we never got as far as asking".
-  return { renewed, stage, before, after, restored, cleared, skipped: null, visitedOkta };
+  return { renewed, stage, before, after, afterSource, restored, cleared, skipped: null, visitedOkta };
 }
 
 /**

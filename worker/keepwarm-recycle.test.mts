@@ -285,8 +285,14 @@ test('renewSession reports whether it actually navigated, and it is the click', 
   // `no-signin-control` does not — three strings to keep in step for one boolean.
   assert.match(tokenCode, /visitedOkta = clicked === true/,
     'visitedOkta must be set from the click itself');
-  assert.match(tokenCode, /return \{ renewed, stage, before, after, restored, cleared, skipped: null, visitedOkta \}/,
-    'the successful return must carry visitedOkta');
+  // ANCHORED ON THE FIELD, NOT ON THE WHOLE RETURN LITERAL. This used to pin the exact
+  // property list in order, so adding `afterSource` beside it failed over behaviour that had
+  // not changed at all — the same anchor-on-a-refactored-expression shape that has now broken
+  // a guard in this repo seventeen times. What must be true is that the successful return
+  // carries `visitedOkta`; which other fields travel with it is not this test's business.
+  const ret = tokenCode.slice(tokenCode.indexOf('return { renewed, stage,'));
+  assert.ok(ret.startsWith('return { renewed, stage,'), 'the successful return must exist');
+  assert.match(ret.slice(0, 200), /\bvisitedOkta\b/, 'and must carry visitedOkta');
   assert.match(tokenCode, /skipped: 'no Okta session to renew against', visitedOkta: false/,
     'the early skip must carry visitedOkta too, or the caller reads undefined');
 });

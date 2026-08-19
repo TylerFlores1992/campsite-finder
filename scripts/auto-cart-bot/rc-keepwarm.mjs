@@ -72,7 +72,7 @@ import {
 import { sweepOrphanChromium } from './orphan-sweep.mjs';
 import { withForcedLoginPrompt } from './force-login-prompt.mjs';
 import { withNetworkTrace, describeTrace } from './okta-net-trace.mjs';
-import { takeStorageCensus, describeCensus } from './storage-census.mjs';
+import { takeStorageCensus, takeIdbCensus, describeCensus } from './storage-census.mjs';
 import {
   installTokenCapture, readLiveToken, readTokenAnyOrigin, primeToken, renewSession, tokenSecondsLeft,
   dropStoredToken,
@@ -1966,10 +1966,20 @@ async function warmResident() {
               // Narrow on purpose: this reads every key name in both web stores, and doing it
               // on every renewal would be noise on the one log a human reads at 07:30.
               if (!r.renewed && r.after != null && r.after < 0) {
-                const census = await takeStorageCensus(
-                  (fn, arg) => evaluateWithin(page, fn, arg, { fallback: null }),
-                );
-                log(`    ${describeCensus(census)}`);
+                // WHERE THE TOKEN WAS FOUND, WHICH IS TWO DIFFERENT INVESTIGATIONS.
+                // `live` means it came off RC's own outbound Authorization header — the SPA
+                // was holding it in memory, having restored it from somewhere the clear
+                // cannot see. `localStorage` would mean the census below simply ran too late
+                // and the store is the answer after all. The field was already computed by
+                // `primeToken` and thrown away; it costs nothing and it splits the hunt.
+                log(`    the expired token was found via: ${r.afterSource ?? '(not reported)'}`);
+                const evaluate = (fn, arg) => evaluateWithin(page, fn, arg, { fallback: null });
+                const census = await takeStorageCensus(evaluate);
+                // TWO EVALUATES, NOT ONE. The IndexedDB body is async and talks to a
+                // subsystem that can block; the web-store census has already produced a
+                // finding, and a hung database must not be able to take it down.
+                const idb = await takeIdbCensus(evaluate);
+                log(`    ${describeCensus(census, { idb })}`);
               }
             }
             // Report immediately either way: this is the event worth seeing on the
