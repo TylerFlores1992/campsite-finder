@@ -60,6 +60,21 @@ export const LOGS = {
   'auto-update': 'logs/auto-update.log',
   'update-spawn': 'logs/update-spawn.log',
   restarts: 'logs/restarts.log',
+  // ── THE TWO HUMAN-RUN SCRIPTS, ADDED 2026-08-19 ──────────────────────────────────────
+  // `rc-test-login.bat` failed at 19:46 printing NO reason line, no rewrite count and no
+  // stack — the console stopped dead after "Signing in with the stored password". The one
+  // record that could say why is Tee'd to `rc-test-login.log`, and it was the only bot log
+  // NOT reachable from here, so diagnosing a remote box needed a human to copy a file off
+  // it. That is backwards: the runs worth reading remotely are exactly the ones nobody is
+  // sitting in front of afterwards.
+  //
+  // STILL AN ENUMERATED LIST, NOT A PATH PARAMETER. "Everything" means every log this repo
+  // writes, named here — never a path, which is a directory traversal waiting to happen.
+  // `.env` and the profile directories stay absent on purpose: they are exactly what an
+  // attacker holding AUTOCART_TOKEN would ask for. `worker/log-allowlist.test.mts` keeps
+  // this list from falling behind in either direction.
+  'rc-test-login': 'logs/rc-test-login.log',
+  'rc-cart-cap': 'logs/rc-cart-cap.log',
 };
 
 /**
