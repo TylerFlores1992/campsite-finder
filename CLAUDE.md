@@ -1398,6 +1398,58 @@ The step that leaks is a step that has never worked, so removing it may cost not
   is not the reload-with-clear either — two token-less renewals ran the identical clear and
   reload with no ramp at all. See below.
 
+### THE RAM GUARD KILLED THE REPAIR IT WAS PROTECTING (2026-08-19) — floor 4000 → 2000
+Reported as *"the session died after 4 hours"*. It did not, and none of the three obvious
+causes is the answer.
+- **IT SUSTAINED ITSELF FOR ~7h45m.** From the 19:21 sign-in to 03:00 the token cycled
+  `42m → 22m → 2m → 41m → 21m → 1m → 41m → 21m → 1m → 40m` — five or six SILENT re-mints, with
+  `renewed=no` and **zero `renewing the session` lines**. The self-renewal recorded the night
+  before held far longer than the 2.5h it was recorded on.
+- **AT 02:58:43 THE RE-MINT STOPPED AND OKTA'S EXPIRY FROZE, IN THE SAME INSTANT.**
+  ```
+  02:57:30  okta exp 14:57:30   <- rolling, +12h from the moment of the check
+  03:17:30  okta exp 14:58:43   <- frozen
+  03:37:31  okta exp 14:58:43
+  03:57:32  okta exp 14:58:43
+  ```
+  The probe still answers `ALIVE`; the window simply stops advancing. **So there is an
+  ABSOLUTE cap sitting behind the rolling idle timer**, and the SPA cannot silently re-mint
+  once it is reached. That qualifies the 12-for-12 finding rather than overturning it: the
+  rolling window is real and it is bounded. **What the cap is measured from is NOT
+  established** — 02:58:43 is 19h37m after the sign-in, which is not a round number.
+- **THEN OUR OWN GUARD KILLED THE REPAIR.**
+  ```
+  03:58:37 renewing the session — the token has -1m left (src=live)
+  04:00:36 ✗ RUNAWAY — stalled 117s with only 3630 MB of free RAM (floor 4000 MB)
+  04:00:36   RAM trail: 7158→3630 MB free @ renew:click-sign-in (x8)
+  04:00:36   Stalled in: renew:click-sign-in (78s in that step).
+  ```
+  The stand-down worked exactly as designed — it waited for a genuinely lapsed token (−1m).
+  The memory series shows the rest: flat 280 MB until 03:58, **4,168 MB** at 04:00 (renderer
+  2,689 + browser 1,350, the two-trip signature), 213 MB at 04:02 after the kill.
+- **AND IT WAS STRUCTURAL, NOT BAD LUCK.** The arm needs a 60s stall AND low free RAM. The
+  Okta navigation **always** exceeds 60s and **always** allocates several GB, so a renewal
+  that is working perfectly meets both conditions every single time. That is why all five
+  firings stalled in `renew:click-sign-in` — arithmetic, not coincidence. **`maybeAutoLogin`
+  makes the same navigation at T−30 of a real release**, with the breadcrumb parked on
+  `auto-login`, so at 4000 the guard could take the login a campsite depends on.
+- **THE POST-OKTA RECYCLE CANNOT COVER THIS**: `visitedOkta` is set when the click RETURNS,
+  and here the process died mid-click.
+- **FLOOR IS 2000 NOW, from the box's own series.** Free RAM maps to COMMIT roughly
+  1,875 MB → 74%, 982 MB → 83%, 520 MB → 89%; the numbers that matter are ~90% (Windows stops
+  scheduling) and ~99% (Node aborts). 2000 acts at about 73% — seventeen points of margin —
+  while leaving room for a renewal whose worst observed peak is 5,688 MB against a ~9,000 MB
+  idle, i.e. a trough near 3,300 MB.
+- **THE CASE THAT JUSTIFIED 4000 HAS ITS OWN REMEDY NOW.** The 25 GB event was an ORPHAN, and
+  **this arm never fired on it** — the loop kept ticking, so there was no stall. That is
+  `orphan-sweep.mjs`'s job and it does not depend on this threshold. What is left here is the
+  BOUNDED case, which the box survives comfortably.
+- `worker/keepwarm-recycle.test.mts` now bounds the floor from BOTH sides with those measured
+  numbers (≥1500 so it never acts past ~85% COMMIT, ≤3000 so it cannot trip during a normal
+  renewal), rather than the old ≥2000/≤8000 which encoded the reasoning that produced 4000.
+  Three mutations, each verified applied: the floor restored to 4000, dropped to 500, and the
+  both-conditions rule removed.
+
 ### TWO CONCURRENT `npm test` RUNS RACE ON A GLOBAL SWEEP (2026-08-18)
 `rc-hold-capacity.test.mts` → *"a carted hold that could never be released stops holding a
 seat"* failed once and passed on every re-run — alone, with the other three hold suites, and

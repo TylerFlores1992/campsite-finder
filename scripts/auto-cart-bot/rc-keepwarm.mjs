@@ -428,8 +428,37 @@ const MEM_CHECK_MS = Number(process.env.RC_KEEPWARM_MEM_CHECK_MS || 60_000);
  * Requiring BOTH makes it specific: the loop ticks about once a second when healthy, so a
  * stall of a minute means we are inside a hung Playwright call, and low RAM at that moment
  * means the browser we are hung against is eating the machine. Neither alone acts.
+ *
+ * ── 4000 KILLED THE REPAIR IT WAS PROTECTING (2026-08-19), SO IT IS 2000 ──
+ *
+ * At 4000 this arm was structurally guaranteed to kill every Okta renewal, and it did — five
+ * firings, five stalls in `renew:click-sign-in`. That is not a coincidence, it is arithmetic:
+ * the navigation ALWAYS takes longer than `MEM_STALL_MS`, and it ALWAYS allocates several GB,
+ * so both conditions are met every single time by a renewal that is working correctly.
+ *
+ *     03:58:37 renewing the session — the token has -1m left (src=live)
+ *     04:00:36 ✗ RUNAWAY — stalled 117s with only 3630 MB of free RAM (floor 4000 MB)
+ *     04:00:36   RAM trail: 7158→3630 MB free @ renew:click-sign-in (x8)
+ *
+ * The cost is not the wasted browser. The session had re-minted itself silently for nearly
+ * eight hours; when that finally stopped, THIS is the repair that would have restored it, and
+ * the guard killed it 78 seconds in. The session then sat dead. `maybeAutoLogin` makes the
+ * same navigation at T−30 of a real release, so at 4000 the guard could take the login that a
+ * campsite depends on.
+ *
+ * WHY 2000 IS STILL SAFE, from the box's own series rather than from taste. Free RAM maps to
+ * COMMIT roughly: 1,875 MB → 74%, 982 MB → 83%, 520 MB → 89%. The number that matters is ~90%,
+ * where Windows stops scheduling tasks, and ~99%, where Node aborts. A floor of 2000 acts at
+ * about 73% — seventeen points of margin — while leaving room for a renewal whose worst
+ * observed peak is 5,688 MB against a ~9,000 MB idle.
+ *
+ * AND THE CASE THAT JUSTIFIED 4000 HAS ITS OWN REMEDY NOW. The 25 GB event was an ORPHAN —
+ * a browser no process owned, ramping without bound — and this arm never fired on it anyway,
+ * because the loop kept ticking and there was no stall. That is `orphan-sweep.mjs`'s job, and
+ * it does not depend on this threshold at all. What is left here is the BOUNDED case, and a
+ * bounded ramp of ~5 GB is one the box survives comfortably.
  */
-const LOW_RAM_MB = Number(process.env.RC_KEEPWARM_LOW_RAM_MB || 4000);
+const LOW_RAM_MB = Number(process.env.RC_KEEPWARM_LOW_RAM_MB || 2000);
 
 /**
  * How long the loop must ALSO have been stalled before low RAM counts as a runaway.

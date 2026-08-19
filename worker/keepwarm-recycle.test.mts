@@ -199,13 +199,35 @@ test('the stall bar is shorter than the wedge bar, and both still exist', () => 
   assert.match(code, /stalledMs > HUNG_MS/, 'the generic wedge watchdog must survive');
 });
 
-test('the RAM floor is far below idle and far above zero', () => {
-  // Measured idle on this box is ~13,000 MB free. The ramps passed 4,428 MB about three
-  // minutes in, with COMMIT still near 67% — comfortably before the point where spawning a
-  // process starts to fail, which is the only thing that must never happen again.
+test('the RAM floor leaves room for a renewal to finish, and still beats 90% COMMIT', () => {
+  /**
+   * BOTH BOUNDS ARE MEASURED, and the upper one is the reason this test was rewritten.
+   *
+   * At 4000 the arm was arithmetically certain to kill every Okta renewal — the navigation
+   * always exceeds MEM_STALL_MS and always allocates several GB, so both conditions are met
+   * by a renewal that is working perfectly. Five firings, five stalls in
+   * `renew:click-sign-in`. On 2026-08-19 it killed the repair that would have restored a
+   * session which had just stopped re-minting itself, and the session then sat dead.
+   *
+   * UPPER BOUND — a renewal must be able to complete. Worst observed peak is 5,688 MB
+   * against a ~9,000 MB idle, so the trough is around 3,300 MB and the floor must sit below
+   * it. `maybeAutoLogin` makes the same navigation at T−30 of a real release, so a floor
+   * that kills a renewal can kill the login a campsite depends on.
+   *
+   * LOWER BOUND — free RAM maps to COMMIT on this box: 1,875 MB → 74%, 982 MB → 83%,
+   * 520 MB → 89%. ~90% is where Windows stops scheduling tasks and ~99% is where Node
+   * aborts, so the floor must stay well clear of those.
+   *
+   * The UNBOUNDED case that once justified a high floor is the 25 GB ORPHAN, and this arm
+   * never fired on it — the loop kept ticking, so there was no stall. That is
+   * `orphan-sweep.mjs`'s job and it does not depend on this number.
+   */
   const floor = envDefault('RC_KEEPWARM_LOW_RAM_MB');
-  assert.ok(floor >= 2000, `${floor} MB fires so late the box may already be unable to spawn`);
-  assert.ok(floor <= 8000, `${floor} MB is close enough to idle to fire on ordinary desktop use`);
+  assert.ok(floor >= 1500,
+    `${floor} MB acts past ~85% COMMIT, close to where the box stops scheduling tasks`);
+  assert.ok(floor <= 3000,
+    `${floor} MB trips during a normal Okta renewal — the measured trough is ~3,300 MB, and ` +
+    'a guard that kills the repair is worse than no guard');
 });
 
 test('the disproven throttling flags are gone and stay gone', () => {
