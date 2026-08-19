@@ -1398,6 +1398,51 @@ The step that leaks is a step that has never worked, so removing it may cost not
   is not the reload-with-clear either — two token-less renewals ran the identical clear and
   reload with no ramp at all. See below.
 
+### FIVE INSTRUMENTS AND NONE OF THEM STOPS IT — so COUNT THE BYTES (2026-08-19)
+The owner's question, and it is the right one: *"It sounds like we keep trying to find a
+solution for what to do after the leak, not stop it from leaking."* **Correct.** A size guard,
+a RAM arm, a heap trail, a post-Okta recycle and an orphan sweep are all aftermath. Each was
+justified in the moment by a box actively falling over, and none was ever a cure.
+- **THE CANDIDATE WAS NAMED THREE TIMES AND NEVER TESTED.** "Network/IPC buffering" is written
+  into three separate entries above as the leading explanation, and it is **directly
+  observable** — non-JS memory growing by gigabytes in the RENDERER and the BROWSER PROCESS is
+  the shape of a huge or looping response, and the browser process is where Chromium's network
+  stack lives when the network service is not in a utility process (utility was flat).
+  Nobody ever watched the network during a ramp.
+- **`okta-net-trace.mjs` counts them**, wrapped around `renewSession`, logged pass or fail —
+  the failing renewals are the ones that ramp, so a trace gated on success would miss every
+  event it exists for. Aggregated BY PATH, because forty requests to one endpoint at 30 MB is
+  a LOOP and looks nothing like one big download.
+- **A NEGATIVE IS THE POINT.** Small numbers ELIMINATE the whole buffering family at a stroke
+  and make the next candidate worth building for. The verdict line says which way it went
+  rather than printing counters.
+- **IT MUST NOT BECOME THE THING IT MEASURES.** Response bodies are NEVER read —
+  `response.body()` buffers the payload into this process, which on a page suspected of moving
+  hundreds of MB is the cure arriving as part of the disease, the same mistake as writing a
+  multi-GB heap snapshot when the box cannot spawn. Only `content-length` is consulted, and the
+  record count is capped.
+- **AND IT MUST NOT LEAK A CREDENTIAL.** URLs are `origin + pathname`. Okta's callback is
+  `/login/callback?code=…&state=…` and that code is exchangeable for the session — published
+  once already on 2026-08-09 by reporting `location.href`. **Do not collect a field you would
+  then have to filter.**
+- **THE TWO REAL CURES, NOT BUILT, in order of ambition.** (1) Do the Okta round trip in a
+  throwaway TAB in the same context — same cookies, same session — and close it; the last
+  event put 2,689 MB of 4,168 in the renderer, reclaimed deterministically instead of by
+  killing the browser. (2) Skip the renderer entirely: intercept the authorize request (the
+  `prompt=login` machinery already does this), abort the navigation, replay it over
+  `ctx.request` following redirects, hand the callback back. No page load, no gigabytes.
+  **Do the trace first** — it is the only one that could make both unnecessary.
+- `worker/okta-net-trace.test.mts`, **eight mutations, each verified applied.** One survived
+  first: the disarm flag deleted. **The test was wrong, not the code** — it fired a leaked
+  handler and then asserted a SECOND trace saw nothing, but a leaked handler pushes into the
+  FIRST run's array, which has already been summarised. The effect is not observable from
+  outside, so the flag is pinned structurally and the reason is written down.
+- **AND A GUARD FROM YESTERDAY BROKE OVER UNCHANGED BEHAVIOUR.** `keepwarm-recycle.test.mts`
+  anchored on `await renewSession(`; wrapping the call in `withNetworkTrace(page, () =>
+  renewSession(…))` made `indexOf` return **-1**, so `readAt < -1` was false and it read as a
+  real regression. Re-anchored on the callee with an explicit `> -1` assert, so a missing
+  anchor fails loudly instead of silently inverting.
+
 ### THE RAM GUARD KILLED THE REPAIR IT WAS PROTECTING (2026-08-19) — floor 4000 → 2000
 Reported as *"the session died after 4 hours"*. It did not, and none of the three obvious
 causes is the answer.
