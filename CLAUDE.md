@@ -1523,6 +1523,47 @@ struggle:
   grace for the length of the run. It read `no holds due` once the run finished. Expect this
   whenever a merge lands; it cannot cart anything, because the unit id is non-numeric.
 
+### THE RENEWAL RUNS IN A THROWAWAY TAB NOW (2026-08-19) — the first CURE, and what it rests on
+The owner's instruction was "solve the leak", and the recorded cure (1) is what shipped
+(PR #142): **the renewal's Okta round trip runs in a tab opened for that purpose and closed
+in a `finally`** — same context, same cookies, same localStorage, so the minted token lands
+in the same profile — and the renderer that did the trip dies at close, taking its
+allocation with it.
+- **THE THREE MEASUREMENTS IT RESTS ON**, all above: the ramp is NON-JS memory (heap trail:
+  15-18 MB flat against multi-GB processes); it lands in the RENDERER (+1,237 of 2,046 MB)
+  plus the browser process; and across twenty ramps it has **never once been seen to come
+  back down in place** — every recovery was a new pid. A renderer's memory dies with its
+  page, so give the trip its own page.
+- **THE RECYCLE IS GONE FROM THIS PATH AND KEPT FOR `maybeAutoLogin`/THE REHEARSAL**, which
+  still navigate the resident page. The recycle was a browser restart per renewal; restarts
+  are not free (one turned the rehearsal red on 08-18) and after the tab they free memory
+  that is already freed. **The old guard asserting the renewal sets `oktaTrip` was INVERTED
+  deliberately** — reinstating that line reintroduces a per-renewal browser restart that
+  looks like caution.
+- **THE RESIDENT PAGE IS RELOADED AFTER A SUCCESSFUL TAB RENEWAL**, because `checkAndReport`
+  reads the resident page and `window.__camphawkRcToken` is per-page: without it, every
+  report after a tab renewal announces a dead session over a fresh hour of token — a repair
+  that happened and cannot be seen.
+- **WHAT THIS DOES NOT CLAIM: the allocation itself is not stopped.** A ramping trip still
+  ramps while it runs; the RAM arm still guards it. The claim is only that the memory is
+  handed back at close, every time, without costing the browser. **HOW TO READ THE SERIES:**
+  spikes that drain at tab close with no `♻ recycling` line ⇒ working as designed; rc-family
+  growth ACROSS renewals ⇒ the browser-process share does not drain, which is the residual to
+  chase next (cure (2), `ctx.request`, remains unbuilt and would eliminate it).
+- **AND THE "~2.3 GB PER OKTA TRIP" FIGURE IS NO LONGER A LAW.** The 19:20 renewal on 08-19
+  made a complete, SUCCESSFUL round trip — click, authorize, callback, code exchange, fresh
+  hour — for **141 MB** (`RAM 7839 → 7698`). Whatever separates a 141 MB trip from a 2.3 GB
+  one is still unknown; the tab makes the question moot for the resident browser's health,
+  and the RAM-paired trace keeps measuring it per-trip either way.
+- **A TAB THAT CANNOT OPEN IS RECORDED** (`recordRenewal(renewed: false)`), so `planRenewal`'s
+  floor and backoff pace the retries — unrecorded, a sick browser retries every tick, which
+  is the 2026-08-08 request storm. The failure diagnostics (censuses) bind to the TAB while
+  it is open: localStorage is shared, but the corpse-carrying `window.__camphawkRcToken`
+  lives where the trip ran.
+- `worker/keepwarm-recycle.test.mts`, six mutations, each verified applied — the renewal
+  moved back to the resident page, the tab never closed, the recycle reinstated, the
+  resident refresh removed, a failed tab open unrecorded, and the prime dropped.
+
 ### FIVE INSTRUMENTS AND NONE OF THEM STOPS IT — so COUNT THE BYTES (2026-08-19)
 The owner's question, and it is the right one: *"It sounds like we keep trying to find a
 solution for what to do after the leak, not stop it from leaking."* **Correct.** A size guard,

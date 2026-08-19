@@ -206,9 +206,14 @@ test('a broken response object never fails the renewal', async () => {
 test('the trace wraps the renewal and is logged pass OR fail', () => {
   // The FAILING renewals are the ones that ramp — all five guard firings were mid-renewal — so
   // a trace only printed on success would miss every event it was built for.
-  assert.match(KEEPWARM, /withNetworkTrace\(page, \(\) => renewSession\(/,
+  // `tab`, not `page`, since 2026-08-19: the renewal runs in a throwaway tab so its
+  // renderer — where the ramps live — dies at close. The rule THIS test pins is unchanged
+  // (the trace wraps the renewal and is logged pass or fail); the page identity is pinned
+  // separately in keepwarm-recycle.test.mts, where reverting it means the resident
+  // renderer ballooning again.
+  assert.match(KEEPWARM, /withNetworkTrace\(tab, \(\) => renewSession\(/,
     'the renewal must run inside the trace');
-  const at = KEEPWARM.indexOf('withNetworkTrace(page, () => renewSession(');
+  const at = KEEPWARM.indexOf('withNetworkTrace(tab, () => renewSession(');
   const after = KEEPWARM.slice(at, at + 1200);
   const logAt = after.indexOf('describeTrace(trace)');
   const recordAt = after.indexOf('recordRenewal(');
