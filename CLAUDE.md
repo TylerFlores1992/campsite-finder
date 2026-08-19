@@ -1423,14 +1423,105 @@ Four consecutive renewals produced the same impossible pair:
   An age identifies the corpse and cannot be replayed.
 - **It fires ONLY on the pathology** (`!renewed && after < 0`), because it reads every key name
   in both stores and doing that on every renewal is noise on the one log read at 07:30.
-- **NO `idb` FIELD.** The injected body is synchronous on purpose, so an always-empty array
-  would read as "we looked and found none" — the zero-for-an-absent-reading mistake, twice
-  made. Clean stores instead print *"the stale token is coming from somewhere else (IndexedDB,
-  a cookie, or the server)"*, which is a redirection and not an all-clear.
+- ~~**NO `idb` FIELD.**~~ True when written and **superseded within the hour by the census's own
+  first reading** — see directly below. The reasoning stands and is why the coverage arrived as
+  a SECOND evaluate rather than by making one body async: an always-empty array would read as
+  "we looked and found none", the zero-for-an-absent-reading mistake, twice made.
 - `worker/storage-census.test.mts`, **six mutations, each verified applied** — the value
   reported, a failed read shown as empty stores, the `SURVIVES` flag dropped, sessionStorage
   treated as covered, clean stores reported as an all-clear, and the gate widened to every
   renewal.
+
+#### IT ANSWERED ON ITS FIRST RUN: THE CORPSE IS NOT IN EITHER WEB STORE (2026-08-19 05:58)
+```
+05:57:54 renewing the session — the app holds no usable token (src=none)
+05:58:52   ✗ no fresher token (none → -270366s), got as far as: none
+05:58:52     cleared 0 storage key(s): (none — nothing was there to drop)
+05:58:52     storage census: local 6 key(s), session 1 key(s) — NO token-shaped value in
+             either store, so the stale token is coming from somewhere else
+05:58:52    signin.reservecalifornia.com: DT, [opaque], luf_*, ln, luf_*, [opaque], idx, JSESSIONID
+```
+- **THE PATHOLOGY IS CONFIRMED AS ONE FIXED EXPIRY RECEDING, TO THE SECOND.** `-270133s` at
+  05:54:59 and `-270366s` at 05:58:52 differ by **233s**, which is exactly the wall clock
+  between them. So it is not a family of stale tokens — it is the SAME token, minted around
+  2026-08-16 01:52 (the last one the box held before the session died), coming back every time.
+- **AND IT IS NOT IN `localStorage` OR `sessionStorage`.** Six keys and one key respectively,
+  none of them JWT-shaped. That eliminates the store `dropStoredToken` sweeps AND the store it
+  has never touched, in one reading — which is the whole reason the census reports the count
+  and the shape rather than just the names it knows about.
+- **SO THE REMAINING CANDIDATES ARE INDEXEDDB, A COOKIE, OR THE SERVER**, and the census then
+  declined to look at the first of those. **Fixed the same night (PR #134):** IndexedDB is
+  enumerated through a SECOND evaluate — names, object stores and `count()`, **never a value**.
+  `getAll()` would pull every row into a renderer already suspected of allocating gigabytes,
+  which is `response.body()` and the multi-GB heap snapshot all over again.
+- **`renewSession` ALSO REPORTS WHERE THE TOKEN WAS FOUND NOW**, and it is one field that was
+  already being computed and thrown away. `primeToken` returns a `source`: **`live`** means the
+  token came off RC's own outbound Authorization header — the SPA held it in memory, having
+  restored it from somewhere the clear cannot see — while **`localStorage`** would mean the
+  census simply ran too late and the store is the answer after all. Two different
+  investigations, separated for free.
+- **TWO EXISTING GUARDS BROKE OVER UNCHANGED BEHAVIOUR.** `storage-census.test.mts` pinned the
+  inline `takeStorageCensus((fn, arg) => evaluateWithin(…))`, and hoisting that arrow into a
+  `const` invalidated it; `keepwarm-recycle.test.mts` pinned `renewSession`'s ENTIRE return
+  literal in order, so adding `afterSource` beside `visitedOkta` failed over a change that
+  altered nothing. Both re-anchored on the property rather than the expression, and both
+  verified still failing against the regression they exist for. **Seventeenth time.**
+
+#### AND FOUR OKTA TRIPS IN NINETY MINUTES DID NOT RAMP — which does not fit
+The first RAM-paired trace is a NEGATIVE, and it is the interesting kind:
+```
+05:58:52  network trace: 112 response(s), 8.7 MB declared (+30 with no content-length)
+          · simple_banner.jpg 3.3 MB · index-*.js x2 1.9 MB · …
+          · RAM 8837 → 8784 MB (−53) ⇒ this navigation did NOT ramp, so the byte count
+            says nothing about the leak — wait for one that does
+```
+The memory sampler agrees independently: `rc` went 199 → 323 → 342 MB across it.
+- **THE THREE-WAY VERDICT EARNED ITS KEEP IMMEDIATELY.** Without the RAM reading this would
+  have printed *"buffering does NOT explain the ramp"* over a navigation that never ramped —
+  which is the exact false elimination the 05:07 trace was one sentence away from being written
+  up as. It refused instead.
+- **AND IT CONTRADICTS "EVERY OKTA NAVIGATION COSTS ~2.3 GB".** Four token-less renewals
+  between 05:43 and 05:58 all clicked through to Okta and **none of them ramped**; the hourly
+  peak table reads 370 MB at 05:00 and 329 MB at 06:00 against 4,168 MB at 04:00.
+- **TWO CANDIDATE EXPLANATIONS AND THE DATA CANNOT SEPARATE THEM — do not write one in.**
+  (1) **The browser's AGE matters** and the post-Okta recycle, by keeping every browser young,
+  has incidentally suppressed the ramp; the 08-18 19:10 counter-example (token-less, ONE trip,
+  2,331 MB) was in a browser that had been alive about an hour, before that recycle reached the
+  box. (2) **The CELL matters** — every ramp over 4 GB has been `src=live` (the two-trip case:
+  the SPA's own `prompt=none` plus our click), and 04:00 today was `src=live` at −1m.
+  **Both predict today's silence.** The discriminator is a token-less renewal in a browser that
+  has been alive an hour, which the recycle now makes rare on purpose.
+- **THE BOX HAS NOT BEEN PAST 71% COMMIT SINCE THE 25 GB ORPHAN**, and the orphan sweep has
+  since shipped. Containment is holding; the cause is still open.
+
+#### THE HAND SIGN-IN TOOK 17 SECONDS, AND THE LOGIN IS NOT BROKEN (2026-08-19 06:24 UTC)
+Three days dead, and `rc-login.bat` fixed it on the first attempt with no CAPTCHA and no form
+struggle:
+```
+06:24:23 Opening ReserveCalifornia for a ONE-TIME human sign-in.
+06:24:40 ✓ Signed in. The keep-warm loop can take it from here.
+06:24:40   token call: {"grantType":"authorization_code","usedPkce":true,…}
+06:24:40   grant:      {"hasRefreshToken":false,"expiresIn":3600,…}
+```
+- **SO THE 08-18 "GOT HUNG UP AT PASSWORD" READING IS NOT A STANDING FAULT.** Whatever that
+  was, the credentials work and Okta still remembers this device — the browser rendered
+  **"Log in / Sign up"**, i.e. genuinely signed out, so this exercised the real sign-in rather
+  than being answered silently. That is the `provedNothing` case avoided by luck of state.
+- **`hasRefreshToken: false` AGAIN.** The script's own epilogue asks for these three lines
+  because `hasRefreshToken` "decides whether the 8am hold can ever run without a human" — that
+  question was **answered on 2026-08-15** and the answer is no, there is nothing to silently
+  refresh with. **The prompt is older than the finding; do not re-open it on seeing that line.**
+- **`autocart.rc_session` READ `fail` FOR ABOUT A MINUTE AFTERWARDS AND IT WAS AN ARTIFACT** —
+  *"RC REJECTED the session … checked 0s ago"*, taken by a keep-warm that had just been
+  relaunched by `rc-login.bat` and had not primed the token yet. It read `ok … token exp in
+  60m; okta=ALIVE` on the next pass. **A health reading taken 0 seconds after a restart is not
+  evidence**; the same family as the 08-12 note that a reading goes stale faster than a
+  conclusion drawn from it, inverted — this one was too FRESH to mean anything.
+- **`autocart.rc_runner` SAID "1 hold(s) due" AND IT WAS A TEST FIXTURE.** `dueHolds` is
+  deliberately NOT filtered to real unit ids (the hold suites exist to test it), so any
+  `npm test` run — including CI on a merge — puts a `requested` sentinel inside the 20-minute
+  grace for the length of the run. It read `no holds due` once the run finished. Expect this
+  whenever a merge lands; it cannot cart anything, because the unit id is non-numeric.
 
 ### FIVE INSTRUMENTS AND NONE OF THEM STOPS IT — so COUNT THE BYTES (2026-08-19)
 The owner's question, and it is the right one: *"It sounds like we keep trying to find a
