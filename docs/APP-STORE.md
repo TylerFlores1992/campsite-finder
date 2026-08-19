@@ -244,6 +244,31 @@ precondition so the reviewer does not have to go looking for it.
 **Before sending, confirm in App Store Connect that availability is still United States only.**
 If it is not, this reply is wrong and the change is a worse rejection than the one it answers.
 
+### SENT AND RESUBMITTED 2026-08-19 06:25 PT — Waiting for Review
+
+Availability was checked first and reads **1 Available: United States, 174 Not Available**,
+base country United States (USD) — so the load-bearing sentence in the reply is true and
+verified rather than assumed. The reply above was sent as written, and `1.0 (5)` — **the same
+binary** — went back in the queue. Seven messages in the thread now.
+
+**AND THE CHANGE WAS VERIFIED IN THE DEPLOYED BUNDLE BEFORE THE REPLY CLAIMED IT WAS LIVE**,
+because that claim is the one an untrue reply would be caught on:
+```
+SubscribeLink … {return n() ? <a href=… data-native-external="true" …> : null}   <- was `{return null}`
+ios:!0,android:!1                                                                <- iOS on, Android off
+e.includes("CampHawkApp") ? /Android/i.test(e) ? "android" : /iPhone|iPad|iPod/…  <- the sniff, Android first
+```
+`NATIVE_LINKOUT` is absent from all 21 chunks, and `/`, `/search`, `/new`, `/settings`,
+`/pricing` and a campground page all return 200.
+
+- **THE FIRST DEPLOY CHECK WAS WRONG AND NEARLY PASSED.** It grepped production for
+  `"Subscribe at camphawk.app"` — which is the default `label` PARAMETER and was in the old
+  bundle too, inside a function that returned `null` unconditionally. **A marker present on
+  both sides of the change can only ever produce a green**, and this one would have certified
+  a build with the fix entirely absent. Caught by accident, from surrounding code in an
+  unrelated output. Same family as `status = 'sent'` meaning only "Twilio returned 2xx":
+  measure the thing that DIFFERS, not the thing that is there either way.
+
 ## 2b. REJECTED 2026-08-16 — Guideline 2.1, Information Needed (New App Submission)
 
 **A different 2.1 from §2a, and a much cheaper one.** Nothing is broken and nothing is
