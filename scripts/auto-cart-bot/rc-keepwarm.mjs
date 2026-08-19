@@ -1940,13 +1940,57 @@ async function warmResident() {
             // refuse, or one hiccup would switch renewal off for good.
             const okta = token ? await oktaSessionAlive(ctx).catch(() => null) : null;
             mark('renewal');
+            /**
+             * ── THE RENEWAL RUNS IN A THROWAWAY TAB (2026-08-19) — the first CURE ─────────
+             *
+             * Every instrument so far has been aftermath — a size guard, a RAM arm, a heap
+             * trail, a post-Okta recycle, an orphan sweep — and the attribution work they
+             * bought is what makes this fix possible: the ramp is NON-JS memory, in the
+             * RENDERER (+1,237 MB of the measured 2,046) and the browser process, allocated
+             * during the Okta navigation, and **never once seen to come back down in place**
+             * — across twenty ramps, every recovery was a new pid.
+             *
+             * A renderer's memory dies with its page. So the Okta round trip now happens in
+             * a tab opened for exactly that purpose and closed in a `finally` — same
+             * context, same cookies, same localStorage, so the minted token lands in the
+             * same profile — and whatever the navigation allocated is reclaimed
+             * deterministically at close, instead of by killing the browser.
+             *
+             * WHAT THIS REPLACES: the post-Okta recycle FOR THIS PATH. The recycle restarts
+             * the whole browser once per renewal, and a restart is not free — one turned the
+             * login rehearsal red on 08-18, and every restart is a window where the profile
+             * lock churns. `maybeAutoLogin` and the rehearsal still navigate the RESIDENT
+             * page and keep the recycle; this path no longer needs it.
+             *
+             * WHAT IT DOES NOT CLAIM: that the allocation stops. A ramping trip still ramps
+             * while it runs, and the RAM arm still guards that. The claim is only that the
+             * memory is handed back seconds later, every time, without costing the browser.
+             * The memory series is the A/B: spikes that drain at tab close with no
+             * `♻ recycling` line are this working; rc-family growth ACROSS renewals would
+             * mean the browser-process share does not drain, and that residual is the next
+             * investigation, already contained by the RAM arm.
+             *
+             * A TAB THAT CANNOT OPEN IS A READING, NOT AN ERROR: a browser too sick to open
+             * a page is not going to renew anything either. The attempt is recorded so
+             * `planRenewal`'s floor and backoff pace the retries — an unrecorded attempt
+             * would retry every tick, which is the request storm the schedule exists to
+             * prevent.
+             */
+            mark('renew:open-tab');
+            const tab = await ctx.newPage().catch((e) => {
+              log(`  ✗ could not open a renewal tab: ${e.message} — the browser may be unwell; retrying at the schedule's pace`);
+              return null;
+            });
+            if (!tab) {
+              renewal = recordRenewal(renewal, { token, now: Date.now(), renewed: false });
+            } else try {
             // COUNT THE BYTES. This is the first instrument that goes at the CAUSE rather than
             // the aftermath — see okta-net-trace.mjs. "Network/IPC buffering" has been the
             // leading candidate three times and was never once tested, though it is directly
             // observable: non-JS memory growing by gigabytes in the renderer AND the browser
             // process is the shape of a huge or looping response. A negative eliminates the
             // whole family, which is why it is worth the listener.
-            const { result: r, trace } = await withNetworkTrace(page, () => renewSession(page, RC_HOME, {
+            const { result: r, trace } = await withNetworkTrace(tab, () => renewSession(tab, RC_HOME, {
               oktaAlive: okta?.alive ?? null,
               // INJECTED, so `rc-token.mjs` stays incapable of signing in — see its header.
               // Only whether a control was pressed crosses the boundary, never a locator.
@@ -1966,10 +2010,15 @@ async function warmResident() {
             // the logging is not, and an attempt that is made and not recorded is an attempt
             // the floor cannot see — which turns the ration into no ration at all.
             renewal = recordRenewal(renewal, { token, now: Date.now(), renewed: r?.renewed === true });
-            // THE CLICK, NOT THE STAGE. `renewSession` reports whether it actually navigated;
-            // reading it off `stage` would mean keeping `authorize`, `none` and
-            // `no-signin-control` in step across two files to express one boolean.
-            if (r?.visitedOkta) oktaTrip = `the renewal's sign-in click (${r.stage})`;
+            // NO `oktaTrip` HERE ANY MORE, DELIBERATELY. This line used to hand the renewal's
+            // Okta trip to the recycle — a full browser restart per renewal, because the
+            // allocation had never been seen to come back down in place. The trip now happens
+            // in the throwaway tab above, and the tab's `finally` close is what reclaims the
+            // renderer; restarting the browser on top of that would spend a restart (they are
+            // not free — one turned the rehearsal red on 08-18) to free memory that is already
+            // freed. `maybeAutoLogin` and the rehearsal still navigate the RESIDENT page and
+            // still set `oktaTrip`; reinstating it here would quietly reintroduce a
+            // once-per-renewal browser restart that looks like caution and buys nothing.
             if (r?.skipped) {
               log(`  · skipped: ${r.skipped} — the token is untouched`);
             } else if (r) {
@@ -2010,7 +2059,10 @@ async function warmResident() {
                 // and the store is the answer after all. The field was already computed by
                 // `primeToken` and thrown away; it costs nothing and it splits the hunt.
                 log(`    the expired token was found via: ${r.afterSource ?? '(not reported)'}`);
-                const evaluate = (fn, arg) => evaluateWithin(page, fn, arg, { fallback: null });
+                // THE TAB, NOT THE RESIDENT PAGE. The corpse — if it exists — was restored
+                // into the page that made the trip, and localStorage is shared anyway; what
+                // is NOT shared is `window.__camphawkRcToken`, which lives where the trip ran.
+                const evaluate = (fn, arg) => evaluateWithin(tab, fn, arg, { fallback: null });
                 const census = await takeStorageCensus(evaluate);
                 // TWO EVALUATES, NOT ONE. The IndexedDB body is async and talks to a
                 // subsystem that can block; the web-store census has already produced a
@@ -2038,11 +2090,31 @@ async function warmResident() {
                     + 'so the stale token is coming from the server, not from this profile');
               }
             }
+            // THE RESIDENT PAGE DOES NOT KNOW YET. The tab minted the token into the SHARED
+            // profile (localStorage is per-origin, not per-page), but the resident SPA is
+            // still rendered signed-out and `window.__camphawkRcToken` is per-page — and
+            // `checkAndReport` below reads THIS page. Without this reload, every report
+            // after a tab renewal would read the resident's stale nothing and announce a
+            // dead session over a fresh hour of token — `status = 'sent'` inverted: a
+            // repair that happened and cannot be seen.
+            if (r?.renewed) {
+              mark('renew:refresh-resident');
+              await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+              await primeToken(page, { timeoutMs: 15_000 }).catch(() => {});
+            }
             // Report immediately either way: this is the event worth seeing on the
             // dashboard, not something to sit on until the next 20-minute tick.
             lastCheck = Date.now();
             mark('reporting session health');
             await checkAndReport(ctx, page).catch((e) => log(`check failed: ${e.message}`));
+            } finally {
+              // THE RECLAIM. A renderer's memory dies with its page, and this close is the
+              // whole mechanism — in a `finally` so a thrown renewal, a failed census or a
+              // failed report can never leave the tab (and its gigabytes, on a bad trip)
+              // parked in the browser for the resident page's lifetime.
+              mark('renew:close-tab');
+              await tab.close().catch(() => {});
+            }
           }
         }
         if (Date.now() - lastCheck >= KEEPALIVE_MS) {

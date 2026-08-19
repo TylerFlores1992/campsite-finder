@@ -297,11 +297,62 @@ test('renewSession reports whether it actually navigated, and it is the click', 
     'the early skip must carry visitedOkta too, or the caller reads undefined');
 });
 
-test('the caller recycles on the click, never on a stage string', () => {
-  assert.match(code, /if \(r\?\.visitedOkta\) oktaTrip =/,
-    'the renewal must set oktaTrip from visitedOkta');
+test('the RENEWAL does not recycle — the throwaway tab is its reclaim (inverted 2026-08-19)', () => {
+  /**
+   * THIS GUARD USED TO ASSERT THE OPPOSITE — `if (r?.visitedOkta) oktaTrip =` — and the
+   * assertion it replaced WAS the design until the tab shipped: the renewal's Okta trip
+   * allocated into the RESIDENT page's renderer, nothing was ever seen to give that memory
+   * back in place, so the only reclaim was restarting the whole browser.
+   *
+   * The renewal now runs in a tab closed in a `finally`, and a renderer's memory dies with
+   * its page — so the recycle on this path became a browser restart that frees already-freed
+   * memory. Restarts are not free: one turned the rehearsal red on 08-18, and each churns the
+   * profile lock. Reinstating the flag here would look like caution and buy nothing, which
+   * is exactly the shape that passes review.
+   *
+   * `maybeAutoLogin` and the rehearsal still navigate the RESIDENT page; their setters are
+   * pinned by the test below and must stay.
+   */
+  assert.ok(!/if \(r\?\.visitedOkta\) oktaTrip =/.test(code),
+    'the renewal must NOT hand its Okta trip to the recycle — the tab close is the reclaim');
   assert.ok(!/oktaTrip = .*r\.stage === /.test(code),
-    'reading the stage back would reintroduce the three-string coupling');
+    'nor read the stage back — the three-string coupling stays dead');
+});
+
+test('the renewal runs in a THROWAWAY TAB, closed whatever happens', () => {
+  // The cure itself, pinned structurally because it is three properties an innocent-looking
+  // refactor could undo one at a time:
+  //  1. the trip runs on a page that is NOT the resident page,
+  //  2. that page is closed in a `finally` — a thrown renewal, failed census or failed
+  //     report must not leave the tab (and its gigabytes, on a bad trip) parked in the
+  //     browser for the resident page's lifetime,
+  //  3. a tab that cannot open is RECORDED, so `planRenewal`'s floor paces the retries —
+  //     unrecorded, a sick browser would retry every tick, the 2026-08-08 request storm.
+  assert.match(code, /const tab = await ctx\.newPage\(\)\.catch\(/,
+    'the renewal must open its own page');
+  assert.match(code, /withNetworkTrace\(tab, \(\) => renewSession\(tab, RC_HOME/,
+    'and the trip must run on it — a `page` here is the resident renderer ballooning again');
+  const tabAt = code.indexOf('const tab = await ctx.newPage()');
+  const finallyAt = code.indexOf('} finally {', tabAt);
+  assert.ok(finallyAt > tabAt, 'the tab block must carry a finally');
+  assert.match(code.slice(finallyAt, finallyAt + 300), /await tab\.close\(\)\.catch\(/,
+    'and the finally must close the tab');
+  const noTab = code.slice(code.indexOf('if (!tab) {', tabAt));
+  assert.match(noTab.slice(0, 200), /recordRenewal\(renewal, \{ token, now: Date\.now\(\), renewed: false \}\)/,
+    'a tab that cannot open must still be recorded, or the schedule cannot pace the retry');
+});
+
+test('after a tab renewal the RESIDENT page is refreshed, or every report lies', () => {
+  // The tab minted the token into the shared profile, but `checkAndReport` reads the
+  // resident page, whose `window.__camphawkRcToken` is per-page and whose SPA is still
+  // rendered signed-out. Without the reload, a successful renewal is followed by a report
+  // announcing a dead session over a fresh hour of token — a repair that happened and
+  // cannot be seen.
+  const at = code.indexOf('if (r?.renewed) {', code.indexOf('const tab = await ctx.newPage()'));
+  assert.ok(at > -1, 'the success branch must exist');
+  const block = code.slice(at, at + 400);
+  assert.match(block, /await page\.goto\(RC_HOME/, 'the resident page must be reloaded');
+  assert.match(block, /await primeToken\(page/, 'and primed, so the very next report sees it');
 });
 
 test('every path that goes through Okta sets the flag', () => {
