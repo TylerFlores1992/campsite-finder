@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, after } from 'next/server';
-import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, recordRehearsal, lastRehearsal, reportCartFailure, nextHoldRelease, holdAtRisk, beatIsFromRunner, type HoldRequest } from '@/lib/rc-holds';
+import { dueHolds, markCarted, markFailed, markReleased, expireStaleHolds, pendingClaims, getHold, noteAttempt, recordSessionHealth, recordRehearsal, lastRehearsal, reportCartFailure, nextHoldRelease, holdAtRisk, beatIsFromRunner, isRealUnitId, type HoldRequest } from '@/lib/rc-holds';
 import { alarmCall } from '@/lib/notifications/voice';
 import { rcSessionFault, type RcSessionFault } from '@/lib/health-thresholds';
 import { markBotUpdateApplied, noteBotUpdateAttempt, claimBotUpdate } from '@/lib/bot-update';
@@ -170,12 +170,33 @@ export async function GET(req: NextRequest) {
   // delay the response that carries a due cart.
   void alarmIfSessionUnusable().catch((e) => console.error('[rc-holds] stale-session alarm failed:', e));
 
+  // ── A TEST FIXTURE MUST NEVER MAKE THE RUNNER TAKE THE PROFILE (2026-08-19) ──────────────
+  // Every one of these three lists is WORK: the runner asks the keep-warm for the Chromium
+  // profile whenever any of them is non-empty. The keep-warm yields, closes its browser and
+  // reopens — and the live token lives in page memory, not localStorage, so the reopen comes
+  // back signed out. That destroyed a seven-hour-old session today, for a hold whose unit id
+  // was `__t9003`: a `npm test` sentinel, during CI for a Markdown-only pull request.
+  //
+  // FILTERED HERE AND NOT IN THE QUERIES, DELIBERATELY. `dueHolds` and `pendingClaims` are
+  // what the hold suites exist to test; filtering them would gut the tests that make this
+  // table safe at all, which is exactly why the 2026-08-18 fix stopped at `nextHoldRelease`
+  // and `holdAtRisk`. Filtering the FEED costs those suites nothing and still means the
+  // runner never sees a fixture. Server-side, so it reaches the box on a push.
+  //
+  // `stale.expired` is NOT filtered: it is a count of rows already swept, not work, and the
+  // runner only logs it.
+  const real = (rows: HoldRequest[]) => rows.filter((h) => isRealUnitId(h.unit_id));
+  const claimReal = real(claims);
+  const cartReal = real(cart);
+
   return NextResponse.json({
-    claim: claims.map(forBot),
-    cart: cart.map(forBot),
-    release: stale.toRelease.map(forBot),
+    claim: claimReal.map(forBot),
+    cart: cartReal.map(forBot),
+    release: real(stale.toRelease).map(forBot),
     expired: stale.expired,
-    pollMs: claims.length ? 1000 : cart.length ? 5000 : null,
+    // THE FAST LANES FOLLOW THE FILTERED LISTS. Keyed on the raw ones, a fixture would put
+    // the runner on its 1s cadence — polling hard for work it is no longer being given.
+    pollMs: claimReal.length ? 1000 : cartReal.length ? 5000 : null,
     nextRelease,
     // Read by update-guard.mjs, which still applies the release check on top: an update
     // asked for by hand must not take the session down twenty minutes before a cart.
