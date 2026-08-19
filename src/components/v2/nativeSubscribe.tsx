@@ -2,6 +2,8 @@
 
 import { ExternalLink } from "lucide-react";
 
+import { useNativePlatform } from "@/lib/native/context";
+
 /**
  * Steering a non-subscriber in the native app to camphawk.app to subscribe.
  *
@@ -23,16 +25,45 @@ import { ExternalLink } from "lucide-react";
  * travelling abroad still counts as US, and vice versa.
  * ────────────────────────────────────────────────────────────────────────────
  *
- * Hence ONE switch, off by default. Flip it only once app availability is
- * restricted to the United States in App Store Connect and Play Console.
+ * Hence a switch PER STORE, off by default. Flip one only once THAT store's app
+ * availability is restricted to the United States.
  *
  * The switch lives in the WEB code, which is the useful part: the app is a webview
  * pointed at the live site, so turning steering off is a push to master, not an app
  * release. If the legal picture moves — and it is still moving; Google's terms run
  * to Nov 2027 and Apple's remain under appeal — you are one deploy from compliant,
  * not one store review.
+ *
+ * ── WHY THIS IS TWO FLAGS AND NOT ONE (2026-08-19) ──────────────────────────────────
+ * It was one boolean until Apple rejected 1.0 (5) under guideline 3.1.1 — *"the app
+ * accesses digital content purchased outside the app … but that content isn't available
+ * to purchase using In-App Purchase"* — and named this exact remedy in the same letter.
+ *
+ * **The two apps do not have the same availability, so one boolean could not answer.**
+ * iOS is United States only (App Store Connect, 2026-07-30). The Android closed test is
+ * deliberately WORLDWIDE, because the paid tester service requires it — and because the
+ * flag is web-side and shared, flipping it for Apple would have shown steering UI to
+ * non-US Play testers. That is precisely the failure the paragraph above warns about,
+ * and it would have been introduced BY the fix for the other store.
+ *
+ * So `android` stays false until Play PRODUCTION is live and US-only. Turning it on
+ * while a worldwide track exists is the mistake; the closed test is not the exception.
  */
-export const NATIVE_LINKOUT = false;
+export const LINKOUT_BY_STORE = {
+  // App Store availability is United States only, so every install is a US storefront.
+  ios: true,
+  // The closed test is worldwide. Do NOT flip this until Play production is US-only.
+  android: false,
+} as const;
+
+/**
+ * Is steering allowed for THIS install? False on the web (nothing to steer — the web
+ * can simply sell) and false in a shell we cannot identify, which is the safe direction.
+ */
+export function useNativeLinkout(): boolean {
+  const platform = useNativePlatform();
+  return platform ? LINKOUT_BY_STORE[platform] : false;
+}
 
 /** Where the link goes. `?from=app` so the funnel is measurable — otherwise there's
  *  no way to tell whether any of this converts. */
@@ -55,7 +86,8 @@ export function SubscribeLink({
   label?: string;
   className?: string;
 }) {
-  if (!NATIVE_LINKOUT) return null;
+  const linkout = useNativeLinkout();
+  if (!linkout) return null;
   return (
     <a
       href={SUBSCRIBE_HREF}
@@ -73,8 +105,22 @@ export function SubscribeLink({
  * defined once rather than drifting across five screens. Returns the no-link
  * version when steering is off, which is what ships today.
  */
-export function subscribeSentence(): string {
-  return NATIVE_LINKOUT
+export function useSubscribeSentence(): string {
+  return useNativeLinkout()
     ? "Subscriptions are set up at camphawk.app — it takes a minute, and everything works here straight after."
     : "Subscriptions are managed at camphawk.app.";
+}
+
+/**
+ * The sentence as a COMPONENT, which is what the five surfaces render.
+ *
+ * A COMPONENT AND NOT A BARE HOOK CALL, DELIBERATELY. Every one of those call sites sits
+ * inside a conditional branch — `{needsSubscription && …}`, the `subscribed` arm of
+ * `PricingSection`, and so on. `{useSubscribeSentence()}` there would be a hook called
+ * conditionally, which is a Rules-of-Hooks violation that happens to work until the
+ * branch flips on a re-render and the hook order changes under React. A component can be
+ * rendered conditionally all day; only its own body has to be unconditional.
+ */
+export function SubscribeSentence() {
+  return <>{useSubscribeSentence()}</>;
 }

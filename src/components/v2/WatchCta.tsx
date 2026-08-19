@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { NATIVE_LINKOUT, SUBSCRIBE_HREF } from "./nativeSubscribe";
+import { useNativeLinkout, SUBSCRIBE_HREF } from "./nativeSubscribe";
 import { useIsNativeApp } from "@/lib/native/context";
 import { buttonClasses, type ButtonVariant } from "@/components/ui/Button";
 import { useSubscription } from "./useSubscription";
@@ -49,6 +49,9 @@ export default function WatchCta({
 }: WatchCtaProps) {
   const { loaded, signedIn, subscribed, everSubscribed, unknown } = useSubscription();
   const isNative = useIsNativeApp();
+  // ABOVE THE EARLY RETURNS. This component bails out on `!loaded` and on several
+  // subscription states, so a hook read further down would be called conditionally.
+  const linkout = useNativeLinkout();
 
   const cls = buttonClasses({ variant, fullWidth, className });
 
@@ -85,7 +88,7 @@ export default function WatchCta({
   // specific. When steering is switched on this becomes a real tap; until then it
   // stays the inert label it has always been.
   if (isNative) {
-    if (NATIVE_LINKOUT) {
+    if (linkout) {
       return (
         <a href={SUBSCRIBE_HREF} data-native-external="true" className={cls}>
           Subscribe to watch
