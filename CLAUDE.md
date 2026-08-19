@@ -1437,6 +1437,30 @@ justified in the moment by a box actively falling over, and none was ever a cure
   handler and then asserted a SECOND trace saw nothing, but a leaked handler pushes into the
   FIRST run's array, which has already been summarised. The effect is not observable from
   outside, so the flag is pinned structurally and the reason is written down.
+- **THE FIRST TRACE RAN, AND IT NEARLY PRODUCED A FALSE ELIMINATION (2026-08-19 05:07).**
+  ```
+  05:06:13 renewing the session — the app holds no usable token (src=none)
+  05:07:12   network trace: 112 response(s), 8.7 MB declared (+30 with no content-length)
+             · simple_banner.jpg 3.3 MB · index-*.js x2 1.9 MB · index-*.css 0.5 MB
+  05:07:24 ♻ recycling the browser — the sign-in click took it through Okta
+  ```
+  8.7 MB across a full Okta round trip is three orders of magnitude below a 2.3 GB
+  allocation, and it was one sentence away from being written up as retiring the buffering
+  candidate. **It was not entitled to be.** The 2-minute memory sampler BRACKETED that
+  renewal — 05:05:56 and 05:07:56 either side of a run from 05:06:13 to 05:07:12 — and the
+  post-Okta recycle freed everything twelve seconds after it ended. **Whether that navigation
+  ramped at all is unobserved**, and a trace of a non-ramping trip says nothing about a leak.
+- **TWO INSTRUMENTS HAD MADE EACH OTHER USELESS.** The recycle now cleans up faster than the
+  sampler samples, so the series can no longer see the very event the trace is attached to.
+  That is a new shape here: not a guard that cannot reach what it measures, but two correct
+  instruments whose cadences cancel.
+- **FIXED BY PAIRING THE TWO FACTS IN ONE READING.** `os.freemem()` is taken immediately
+  before and after the SAME wrapped call — a syscall, so it keeps answering under the pressure
+  that stops `rcFamilyMb()` spawning PowerShell, and read inside the `try` so the recycle
+  cannot have run yet. The verdict is now three-way and **refuses to speak when there was no
+  ramp**: `RAM 8940 → 6610 MB (−2330) ⇒ it ramped while the network moved almost nothing`
+  versus `⇒ this navigation did NOT ramp, so the byte count says nothing about the leak`.
+  Same rule as `unknown` never rounding to `signed-out`.
 - **AND A GUARD FROM YESTERDAY BROKE OVER UNCHANGED BEHAVIOUR.** `keepwarm-recycle.test.mts`
   anchored on `await renewSession(`; wrapping the call in `withNetworkTrace(page, () =>
   renewSession(…))` made `indexOf` return **-1**, so `readAt < -1` was false and it read as a

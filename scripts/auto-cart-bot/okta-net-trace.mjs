@@ -42,6 +42,8 @@
  * have to filter.**
  */
 
+import os from 'node:os';
+
 /** Bytes, formatted for a log line a human reads at 08:00. */
 function mb(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -62,13 +64,26 @@ export function safeUrl(url) {
 }
 
 /**
- * Summarise what a run downloaded. PURE, so it is testable without a browser — the same split
- * as `parseSample` and `parseSweep`, and for the same reason: there is no Chromium on the
- * machine this repo is written from.
+ * A fall in free RAM big enough to be the leak rather than the box being a desktop.
+ *
+ * The measured allocations are 2,331 MB for one Okta trip and 4-5 GB for two, against
+ * ordinary noise in the tens to low hundreds. 800 leaves a wide gap on both sides, and the
+ * consequence of getting it wrong is only which sentence gets printed.
+ */
+const RAMP_MB = 800;
+
+/** Bytes big enough that buffering could plausibly account for a multi-GB allocation. */
+const BIG_BYTES = 200 * 1024 * 1024;
+
+/**
+ * Summarise what a run downloaded, and what it cost in RAM. PURE, so it is testable without a
+ * browser — the same split as `parseSample` and `parseSweep`, and for the same reason: there
+ * is no Chromium on the machine this repo is written from.
  *
  * @param {{ url: string, status: number, bytes: number|null }[]} responses
+ * @param {{ top?: number, ram?: { beforeMb: number, afterMb: number }|null }} [opts]
  */
-export function summariseTrace(responses, { top = 5 } = {}) {
+export function summariseTrace(responses, { top = 5, ram = null } = {}) {
   const known = responses.filter((r) => typeof r.bytes === 'number');
   const total = known.reduce((a, r) => a + r.bytes, 0);
   // BY PATH, not by response. Forty requests to one endpoint at 30 MB each is a LOOP, and it
@@ -87,15 +102,30 @@ export function summariseTrace(responses, { top = 5 } = {}) {
     unsized: responses.length - known.length,
     totalBytes: total,
     biggest,
+    // MEASURED AROUND THE SAME CALL AS THE BYTES, which is the whole point — see
+    // `describeTrace`. `null` when nobody measured, and that is not the same as zero.
+    ram,
   };
 }
 
 /**
- * One line for the log, and it states the VERDICT rather than printing counters.
+ * One line, stating a VERDICT — and refusing to state one it has not earned.
  *
- * The threshold is deliberately far below the ~2,300 MB a single Okta trip allocates: if the
- * network moved even a few hundred MB that is already the story, and if it moved a handful
- * this eliminates the candidate. There is no interesting case in between.
+ * ── THE THIRD CASE IS WHY THE RAM READING IS HERE (2026-08-19) ─────────────────────────────
+ * The first trace read `112 response(s), 8.7 MB` and was very nearly written up as retiring
+ * the buffering candidate. It was not entitled to: the 2-minute memory sampler bracketed that
+ * renewal (05:05:56 and 05:07:56 either side of a run from 05:06:13 to 05:07:12), and the
+ * post-Okta recycle freed everything twelve seconds after it ended — so **whether that
+ * navigation ramped at all was unobserved**, and a trace of a non-ramping trip says nothing
+ * about a leak.
+ *
+ * Two instruments had made each other useless, which is a failure this file has recorded
+ * before in other clothes. `os.freemem()` around the SAME call fixes it: both facts come from
+ * one event and neither depends on a sampler's cadence. It is a syscall, so it keeps answering
+ * under exactly the pressure that stops `rcFamilyMb()` spawning PowerShell.
+ *
+ * FREE RAM IS NOISY — this is somebody's desktop — which is why the bar is `RAMP_MB` and not
+ * "went down". At gigabyte scale the noise does not matter; below it, no verdict is offered.
  */
 export function describeTrace(t) {
   if (!t || t.responses === 0) return 'network trace: nothing observed — the trace did not run';
@@ -104,12 +134,27 @@ export function describeTrace(t) {
   const list = t.biggest.length
     ? ' · ' + t.biggest.map((b) => `${b.url}${b.hits > 1 ? ` x${b.hits}` : ''} ${mb(b.bytes)}`).join(' · ')
     : '';
-  // 200 MB against a 2,300 MB ramp is not proportionate, but it is far more than a login page
-  // should ever move, and it is the level at which buffering becomes worth chasing.
-  const verdict = t.totalBytes > 200 * 1024 * 1024
-    ? ' ⇒ the network moved enough to explain a ramp — buffering is now a LEAD, not a candidate'
-    : ' ⇒ the network moved almost nothing, so buffering does NOT explain the ramp';
-  return head + list + verdict;
+
+  // NO RAM READING, NO VERDICT. Bytes alone cannot distinguish "the network is innocent" from
+  // "this trip never allocated", and conflating them is the mistake this exists to prevent.
+  if (!t.ram || typeof t.ram.beforeMb !== 'number' || typeof t.ram.afterMb !== 'number') {
+    return `${head}${list} · RAM not measured ⇒ no verdict: bytes alone cannot say whether this `
+      + 'navigation allocated anything';
+  }
+
+  const used = t.ram.beforeMb - t.ram.afterMb;
+  const ramText = ` · RAM ${t.ram.beforeMb} → ${t.ram.afterMb} MB `
+    + `(${used >= 0 ? '−' : '+'}${Math.abs(Math.round(used))})`;
+
+  if (used < RAMP_MB) {
+    return `${head}${list}${ramText} ⇒ this navigation did NOT ramp, so the byte count says `
+      + 'nothing about the leak — wait for one that does';
+  }
+  return t.totalBytes > BIG_BYTES
+    ? `${head}${list}${ramText} ⇒ it ramped AND the network moved enough to explain it — `
+      + 'buffering is now a LEAD, not a candidate'
+    : `${head}${list}${ramText} ⇒ it ramped while the network moved almost nothing, so `
+      + 'buffering does NOT explain the leak';
 }
 
 /**
@@ -147,10 +192,23 @@ export async function withNetworkTrace(page, fn) {
     }
   };
 
+  // A SYSCALL, NOT A CHILD PROCESS. `rcFamilyMb()` spawns PowerShell and spawning is exactly
+  // what fails as COMMIT passes ~95% — an instrument that goes quiet as the emergency peaks
+  // reports the emergency as calm. `os.freemem()` answers under any load.
+  const beforeMb = Math.round(os.freemem() / (1024 * 1024));
+
   page.on('response', onResponse);
   try {
     const result = await fn();
-    return { result, trace: summariseTrace(responses) };
+    return {
+      result,
+      // READ AFTER `fn` RETURNS AND BEFORE ANY RECYCLE. The post-Okta recycle frees the
+      // allocation within seconds, which is precisely what made the 2-minute sampler blind to
+      // the first trace's event. Taking it here is what keeps the two facts about one event.
+      trace: summariseTrace(responses, {
+        ram: { beforeMb, afterMb: Math.round(os.freemem() / (1024 * 1024)) },
+      }),
+    };
   } finally {
     armed = false;
     try { page.off('response', onResponse); } catch { /* best effort */ }
