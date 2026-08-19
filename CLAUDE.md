@@ -1674,6 +1674,36 @@ on a clean full `verify` (914/914). **Not a flake to shrug at: the mechanism is 
   keys is exposed**, so the rule is the whole remedy — there is no subset of tests that is
   safe to run concurrently.
 
+#### THE SECOND CALLER IS PRODUCTION, NOT A SECOND TEST RUN (2026-08-19)
+It recurred on PR #136 — same suite, same test, same assertion (*"a stuck hold must be
+reclaimed"*, `false !== true`), 969/970 — on a branch whose diff is **React components,
+a UA sniff and docs.** Nothing in it can reach `worker/`. It passed alone (7/7) on the
+first re-run, as it always does.
+- **AND NO SECOND `npm test` WAS RUNNING.** No side-lane session was live, and the only
+  other CI run on the PR had been cancelled four minutes earlier, before it could have
+  reached the suite. So the account above — "two concurrent runs" — **does not fit this
+  occurrence**, and it is the account that would have had somebody hunting for a phantom
+  second run.
+- **THE SWEEP HAS A STANDING CALLER ON FLY.** `worker/poller.ts` runs
+  `withSyncClaim('expire-holds', …)` every `EXPIRE_HOLDS_INTERVAL_MS`, and
+  `sweepMissedHolds` calls `reclaimLapsedHolds()`. That is a **global mutating sweep running
+  in production on a timer**, against the same database the tests use on purpose. The
+  fixture is a `carted` row aged past `HOLD_LAPSE_MIN`, which is exactly what it claims —
+  and `REAL_UNIT` does not protect it, because that filter is on `nextHoldRelease` and
+  `holdAtRisk`, not on the lapse sweep.
+- **SO ONE TEST RUN IS ENOUGH.** The race is not test-versus-test, it is
+  **test-versus-production**, it needs no second session, and serializing the lanes cannot
+  prevent it. `docs/LANES.md`'s rule is still right and still insufficient here.
+- **DELIBERATELY NOT "FIXED" BY LOOSENING THE ASSERTION.** Two carted holds were the entire
+  fleet on 2026-08-13, and this guard covers a real bug. The honest options are to have the
+  test tolerate the sweep having won (assert the row reached `expired` by SOMEBODY, rather
+  than that this caller claimed it) or to scope the fixture out of the sweep. Both are
+  changes to a safety-critical query and neither should be made in passing on an unrelated
+  PR — which is why this is a note and not a diff.
+- **A re-run is the correct response, and it is not the same as shrugging.** What makes it
+  legitimate here is that the diff cannot touch the code, the suite passes alone, and the
+  mechanism is named. Any one of those missing and it is a regression being waved through.
+
 ### THE SESSION RENEWS ITSELF ONCE WE STOP TOUCHING IT (2026-08-18, first 2.5 hours)
 An OBSERVATION, not yet a measurement, and it is better than the stand-down was meant to buy.
 Straight off the keepalive lines, with **zero `renewing the session` entries in the window**:
