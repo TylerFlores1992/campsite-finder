@@ -5049,6 +5049,15 @@ act). A non-paging failure reads `degraded`, so nothing is hidden. The cost of c
 is not the noise, it is that the next real page gets skimmed.
 
 ### If a hold is queued: did the 8am cart fire? (the daily check)
+> **CAPACITY IS 20, NOT 2 — every `RC_HOLD_CAPACITY` figure in the entries below is
+> HISTORICAL.** `RC_MAX_CARTS` went 1 → 2 (2026-08-15, `--cart-cap`) → **10** (2026-08-17,
+> `--cart-ladder`: ten distinct cart keys holding **twenty reservations at once** on one
+> session and one account, every rung controlled by a third add refused in RC's own wording,
+> all twenty released HTTP 200). So `RC_HOLD_CAPACITY = RC_SITES_PER_CART (2) × RC_MAX_CARTS
+> (10) = 20`, and parallel carting shipped with it (`CART_CONCURRENCY = 4`).
+> **`src/lib/limits.ts` is the authority; these mornings happened when the ceiling was 2.**
+> Quoting "two tapped holds is exactly capacity" as current is a mistake I made on
+> 2026-08-19 by reading these lines instead of the constant.
 **2026-08-16 WORKED END TO END, TWICE OVER, AT FULL CAPACITY.** South Carlsbad 45722 carted
 15:00:43Z and was claimed 15:02:01Z; 45723 carted 15:00:49Z and was claimed 15:03:23Z. Both
 `released`. 45722 reported **`✓ Added to cart`** on iOS (and `already added` on a re-injection,
