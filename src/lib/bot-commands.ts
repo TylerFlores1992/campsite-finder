@@ -13,12 +13,17 @@ export const BOT_COMMAND_KINDS = {
   'tail-log': {
     label: 'Read a log',
     /** `<name>` or `<name>:<lines>`. Names only — a path parameter is a traversal. */
-    argPattern: /^(rc-holds|rc-keepwarm|bot|broker|auto-update|update-spawn|restarts)(:\d{1,3})?$/,
+    argPattern: /^(rc-holds|rc-keepwarm|bot|broker|auto-update|update-spawn|restarts|rc-test-login|rc-cart-cap)(:\d{1,3})?$/,
     // DATA, not prose. The first version had the UI parse the option list back out of a
     // human-readable hint, which reads fine and breaks silently the first time somebody
     // rewords the sentence. `worker/bot-commands.test.mts` pins these against the box's own
     // LOGS table, so a log added there and forgotten here fails the build.
-    argOptions: ['rc-holds', 'rc-keepwarm', 'bot', 'broker', 'auto-update', 'update-spawn', 'restarts'] as const,
+    // Kept in step with `LOGS` in scripts/auto-cart-bot/bot-commands.mjs — the box refuses a
+    // name it does not hold, and a name the box holds but this omits is unreachable from the
+    // admin UI. Neither is visible by reading either file alone, which is why
+    // bot-commands.test.mts asserts the two lists are equal.
+    argOptions: ['rc-holds', 'rc-keepwarm', 'bot', 'broker', 'auto-update', 'update-spawn',
+      'restarts', 'rc-test-login', 'rc-cart-cap'] as const,
     argHint: 'a log name, optionally :lines',
   },
   'list-processes': { label: 'Which of our processes are running', argPattern: null, argOptions: null, argHint: '' },
