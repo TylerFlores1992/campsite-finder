@@ -10,6 +10,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { safeToUpdate, hoursUntilRelease, pacificHour, DEFAULTS } from '../scripts/auto-cart-bot/update-guard.mjs';
 
 /** A Date at a given Pacific wall-clock time. August = PDT = UTC-7. */
@@ -192,8 +193,29 @@ function handoffBlock(src: string): string {
   const i = src.indexOf('if (!updateRequested');
   assert.ok(i > 0, 'the hand-off branch must exist');
   const block = src.slice(i);
-  assert.ok(block.includes('ps.unref()'), 'the slice must span the whole branch');
+  // The sentinel moved with the mechanism. It was `ps.unref()`, from when the poller spawned
+  // PowerShell itself; the launch is now a `schtasks /Run` and there is no `ps`. A slice
+  // sentinel that no longer occurs fails LOUDLY here rather than silently returning a short
+  // block that every assertion below then passes against.
+  assert.ok(block.includes("spawn('schtasks'"), 'the slice must span the whole branch');
   return block;
+}
+
+/**
+ * From `at`, return the source up to and including the brace that closes the first `{`.
+ *
+ * Exact rather than textual, because every text sentinel tried here was defeated by
+ * reformatting the thing being measured — which is precisely what a mutation does.
+ */
+function braced(src: string, at: number): string {
+  const open = src.indexOf('{', at);
+  assert.ok(open > -1, 'no opening brace after the anchor');
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return src.slice(at, i + 1);
+  }
+  assert.fail('unbalanced braces from the anchor — the slice would run to end of file');
 }
 
 const code = (s: string) =>
@@ -493,18 +515,33 @@ test('stop-rc frees the whole profile and proves it did', async () => {
   assert.match(s, /exit 1/, 'and exits non-zero so callers do not launch on top');
 });
 
-test('the runner hands off once, and survives being killed by it', async () => {
-  // Detached because the updater kills this very process on its way through: a child tied
-  // to us would die with us and leave the box halfway between two commits. Once, because
-  // two updaters racing over one checkout is worse than a slow update.
+test('the runner hands off once, and the updater survives being killed by it', async () => {
+  /**
+   * ~~Survival never depended on detaching: killing a parent on Windows does not kill its
+   * children, and stop-all.ps1 matches the bot's own scripts, which auto-update.ps1 is
+   * not.~~ **THE FIRST CLAUSE IS FALSE AND THIS TEST ASSERTED IT.** Struck rather than
+   * deleted, because a guard that pinned the bug is the thing worth remembering.
+   *
+   * It is true of a raw Win32 TerminateProcess and false of a libuv-spawned child: on
+   * Windows `uv_spawn` puts every non-detached child in the parent's Job Object. Ancestry
+   * was `cmd.exe (npm start) -> node.exe (bot.mjs) -> powershell.exe (auto-update.ps1)`,
+   * and stop-all kills the first two. Measured twice on 2026-08-20 — both runs end on a
+   * `node.exe` kill partway through the stop list and write nothing further.
+   *
+   * The SECOND clause still holds and is still pinned below: stop-all does not match the
+   * updater by name, so nobody "fixes" this by adding it to the kill list.
+   *
+   * Survival now comes from ownership rather than from an argument about process trees —
+   * the Task Scheduler starts it, so it is not our descendant. worker/update-trigger.test.mts
+   * owns that mechanism; what stays here is the part this file has always been about.
+   */
   const { readFileSync } = await import('node:fs');
   const runner = readFileSync(HANDOFF, 'utf8');
-  assert.match(runner, /updateStarted/, 'guarded to one hand-off per process life');
-  // NOT `detached: true` any more. On Windows that meant DETACHED_PROCESS, the child got
-  // no console, and the script did not run at all. Survival never depended on it: killing
-  // a parent on Windows does not kill its children, and stop-all.ps1 matches the bot's own
-  // scripts, which auto-update.ps1 is not. `unref()` is what avoids waiting to be killed.
-  assert.match(runner, /ps\.unref\(\)/, 'not awaited — that would be waiting to be killed');
+  // THE COMPARISON, not the identifier. `updateStartedAt` also appears in the two failure
+  // handlers that reset it, so a bare /updateStarted/ passed against a poller whose retry
+  // window had been deleted outright — two updaters per process life, racing one checkout.
+  assert.match(runner, /Date\.now\(\) - updateStartedAt <= UPDATE_RETRY_MS/,
+    'guarded to one hand-off per retry window');
   const stopAll = readFileSync('scripts/auto-cart-bot/mini-pc/stop-all.ps1', 'utf8');
   assert.ok(!/auto-update/.test(stopAll.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n')),
     'stop-all must not match the updater, or the update would kill itself');
@@ -604,54 +641,29 @@ test('the script says it started before anything can kill it', async () => {
   assert.ok(up.indexOf('function Report-Attempt') < started, 'and after its own definition');
 });
 
-test('the update hand-off resolves its script from THIS file, not the cwd', async () => {
-  // 2026-08-11: the runner logged "handing off to auto-update.ps1", the script never ran,
-  // and logs\auto-update.log did not exist — because a wrong `-File` path makes PowerShell
-  // exit immediately with a message thrown away by `stdio: 'ignore'`. process.cwd() happens
-  // to be right when start-all launches the runner and is wrong the moment anything else
-  // does, so the correctness of the path depended on who started us.
-  const { readFileSync } = await import('node:fs');
-  const runner = readFileSync(HANDOFF, 'utf8');
-  // `code()` because the comment right above the fix explains why NOT to use process.cwd()
-  // — matching the raw text would fail on the explanation. Third time tonight.
-  const block = code(handoffBlock(runner));
-  assert.ok(!/process\.cwd\(\)/.test(block), 'the script path must not depend on the working directory');
-  // The shared module takes the directory from its caller, so the assertion has to follow
-  // it there: BOTH pollers must pass their own module directory, and neither may pass a cwd.
-  assert.match(block, /path\.join\(dir, 'mini-pc', 'auto-update\.ps1'\)/);
-  for (const [f, expected] of [
-    ['scripts/auto-cart-bot/rc-hold-runner.mjs', 'HERE'],
-    ['scripts/auto-cart-bot/bot.mjs', '__dirname'],
-  ] as const) {
-    const src = code(readFileSync(f, 'utf8'));
-    const call = src.match(/makeControlChannel\(\{[\s\S]*?\}\)/)?.[0];
-    assert.ok(call, `${f} must build the control channel`);
-    assert.match(call, new RegExp(`dir:\\s*${expected}\\b`), `${f} must pass its own module directory`);
-    assert.ok(!/process\.cwd\(\)/.test(call), `${f} must not pass a cwd`);
-  }
-});
-
-test('BOTH feeds carry the control channel, and both pollers read it', async () => {
-  // THE POINT OF THE WHOLE CHANGE (2026-08-11). The update flag and the diagnostics queue
-  // were read only by rc-hold-runner.mjs. It died at 09:36 PT and took every remote lever
-  // with it — no update, no diagnostics, no way to ask the box a question — while bot.mjs
-  // polled the roster feed every two seconds throughout, healthy the entire time. "The box
-  // is unreachable" and "the RC runner is down" must never be the same event again.
-  const { readFileSync } = await import('node:fs');
-  for (const f of ['scripts/auto-cart-bot/rc-hold-runner.mjs', 'scripts/auto-cart-bot/bot.mjs']) {
-    assert.match(readFileSync(f, 'utf8'), /makeControlChannel/, `${f} must read the control channel`);
-  }
-  for (const r of ['src/app/api/auto-cart/roster/route.ts', 'src/app/api/auto-cart/rc-holds/route.ts']) {
-    assert.match(readFileSync(r, 'utf8'), /botControlFor\(/, `${r} must serve the control channel`);
-  }
-  // ONE implementation. Two copies would be two chances to fix one and forget the other,
-  // and the forgotten copy is by definition the one running when the other is dead.
-  const channel = readFileSync(HANDOFF, 'utf8');
-  assert.equal((channel.match(/spawn\('powershell'/g) ?? []).length, 1);
-  for (const f of ['scripts/auto-cart-bot/rc-hold-runner.mjs', 'scripts/auto-cart-bot/bot.mjs']) {
-    assert.ok(!/auto-update\.ps1/.test(code(readFileSync(f, 'utf8'))),
-      `${f} must hand off through the shared module, not spawn the updater itself`);
-  }
+test('the hand-off names a TASK, so a wrong script path is no longer expressible', () => {
+  /**
+   * WHAT THIS USED TO GUARD, and why the class is now closed rather than the guard dropped.
+   *
+   * 2026-08-11: the runner logged "handing off to auto-update.ps1", the script never ran,
+   * and logs\auto-update.log did not exist — a wrong `-File` path makes PowerShell exit
+   * immediately with a message thrown away by `stdio: 'ignore'`. `process.cwd()` happens to
+   * be right when start-all launches the poller and wrong the moment anything else does, so
+   * the correctness of the path depended on who started us.
+   *
+   * The hand-off passes a TASK NAME now, not a path, so there is no cwd-dependent `-File`
+   * left to get wrong. The failure mode it replaces is a wrong task NAME, which
+   * worker/update-trigger.test.mts pins against the installer.
+   *
+   * The lesson still bites elsewhere and is NOT retired: `auto-update.ps1`'s own `$log` was
+   * relative until 2026-08-14 and silently wrote nothing on the on-demand path. That
+   * assertion lives below and stays.
+   */
+  const block = code(handoffBlock(readFileSync(HANDOFF, 'utf8')));
+  assert.ok(!/process\.cwd\(\)/.test(block), 'nothing here may depend on the working directory');
+  assert.ok(!/'-File'/.test(block),
+    'a -File path is the cwd-dependent shape this replaced; the launch takes a task name');
+  assert.match(block, /'\/Run', '\/TN', UPDATE_TASK/, 'the task is named, not a script located');
 });
 
 test('a hand-off that cannot start says so', async () => {
@@ -661,9 +673,13 @@ test('a hand-off that cannot start says so', async () => {
   const { readFileSync } = await import('node:fs');
   const runner = readFileSync(HANDOFF, 'utf8');
   const block = handoffBlock(runner);
-  assert.match(block, /fs\.existsSync\(script\)/, 'a missing script is reported, not launched at');
-  assert.match(block, /ps\.on\('error'/, "spawn's error event has a listener");
-  // Both reset the retry clock — a hand-off that never started must be retried.
+  // ~~`fs.existsSync(script)`~~ — there is no script path to check any more. That guard
+  // covered "launched at a file that is not there", which a task NAME cannot express; a
+  // missing task surfaces as a non-zero `schtasks` exit instead, asserted below.
+  assert.match(block, /t\.on\('error'/, "spawn's error event has a listener");
+  assert.match(block, /t\.on\('exit'/, 'and a non-zero exit is what a missing task looks like');
+  // Every failure path resets the retry clock — a hand-off that never started must be
+  // retried, or the poller stands down for UPDATE_RETRY_MS over nothing.
   assert.ok((block.match(/updateStartedAt = 0;/g) ?? []).length >= 3,
     'every failure path frees the retry');
 });
@@ -712,46 +728,73 @@ test('auto-update trusts the verdict LINE, not the exit code', async () => {
   assert.match(up, /did not reach a verdict/, 'and a crashed guard is called out as such');
 });
 
-test('a spawned hand-off cannot fail silently', async () => {
-  // `stdio: 'ignore'` made "started and died immediately" identical to "never started".
-  // That ambiguity is what made this take all night to find.
-  const { readFileSync } = await import('node:fs');
-  const runner = readFileSync(HANDOFF, 'utf8');
-  const block = handoffBlock(runner);
+test('a hand-off that cannot start still cannot fail silently', () => {
+  // `stdio: 'ignore'` made "started and died immediately" identical to "never started", and
+  // that ambiguity is what made 2026-08-11 take all night. It applies unchanged to
+  // `schtasks`, which reports "the system cannot find the file specified" for an
+  // unregistered task and "access is denied" for a permissions problem — different fixes,
+  // the same silence if discarded.
+  const block = handoffBlock(readFileSync(HANDOFF, 'utf8'));
   assert.ok(!/stdio: 'ignore'/.test(block), "the child's output must go somewhere readable");
   assert.match(block, /update-spawn\.log/, 'and it goes to a named file');
   // Written BEFORE the spawn, so the file exists even when the launch is what fails —
   // which turns "no file" into a single unambiguous meaning.
-  const marker = block.indexOf('appendFileSync');
-  assert.ok(marker > 0 && marker < block.indexOf('spawn('), 'the marker precedes the spawn');
-});
-
-test('the hand-off does not detach the child on Windows', async () => {
-  // `detached: true` means DETACHED_PROCESS on Windows — the child gets no console — and a
-  // `powershell -File` started that way produced literally nothing on 2026-08-11: no
-  // output, no error, no auto-update.log, while the identical command by hand ran fine. It
-  // was the one constant across every failed attempt.
   //
-  // It was never needed either: killing a parent on Windows does not kill its children,
-  // and stop-all.ps1 matches the bot's own scripts, which auto-update.ps1 is not.
-  const { readFileSync } = await import('node:fs');
-  const block = code(handoffBlock(readFileSync(HANDOFF, 'utf8')));
-  assert.ok(!/detached: true/.test(block), 'a detached child has no console and may not run');
-  assert.match(block, /ps\.unref\(\)/, 'unref is what lets the runner exit without waiting');
+  // ON COMMENT-STRIPPED SOURCE. The first version searched the raw block and matched
+  // `spawn('powershell'` inside the COMMENT explaining what was removed — 1568 against the
+  // real call at 5099, so the ordering read backwards and it failed against correct code.
+  // This file's own helper exists for exactly that, and the same mistake has now been made
+  // in three separate guards this session.
+  const stripped = code(block);
+  const marker = stripped.indexOf('appendFileSync');
+  assert.ok(marker > 0 && marker < stripped.indexOf('spawn('), 'the marker precedes the spawn');
 });
 
-test('the child reports how it ended, to the file and not just the console', async () => {
+test('the launch is not a detached child — it is not our child at all', () => {
+  /**
+   * `detached: true` means DETACHED_PROCESS on Windows — the child gets no console — and a
+   * `powershell -File` started that way produced literally nothing on 2026-08-11: no output,
+   * no error, no auto-update.log, while the identical command by hand ran fine.
+   *
+   * That is still the reason NOT to reach for `detached` as the fix for the job-object
+   * problem: it is the textbook answer, it was tried here, and it failed in a way nobody
+   * ever explained. Handing the launch to the Task Scheduler sidesteps the question — the
+   * process is not ours to detach.
+   */
+  const block = code(handoffBlock(readFileSync(HANDOFF, 'utf8')));
+  assert.ok(!/detached: true/.test(block),
+    'a detached child has no console and was measured not to run; and the launch should not ' +
+    'be a child of ours in the first place');
+  assert.ok(!/spawn\(\s*'powershell'/.test(block),
+    'spawning PowerShell ourselves is the job-object bug of 2026-08-20');
+});
+
+test('the launch reports how it ended, to the file and not just the console', () => {
   // "Ran and died silently" and "never ran" are identical without an exit status, and a
   // failure reported only to a console nobody can copy is how this stayed invisible for
-  // several rounds.
-  const { readFileSync } = await import('node:fs');
+  // several rounds. `schtasks` makes the status sharper, not less necessary: it exits in
+  // milliseconds having only ASKED the scheduler to start the task, so a non-zero code means
+  // the task did not start at all.
   const block = handoffBlock(readFileSync(HANDOFF, 'utf8'));
-  assert.match(block, /ps\.on\('exit'/, 'the exit status is recorded');
+  assert.match(block, /t\.on\('exit'/, 'the exit status is recorded');
   // Match the REPORTER, not merely the string: the pre-spawn marker also calls
-  // appendFileSync(spawnLog, ...), so a looser assertion passed with the reporter gutted.
-  assert.match(block, /const note = \(line\) => \{[\s\S]*?appendFileSync\(spawnLog/,
+  // appendFileSync(spawnLog, ...), so a looser assertion passes with the reporter gutted.
+  //
+  // AND `[\s\S]*?` IS NOT A BOUND. Lazy is not the same as scoped: with the arrow's body
+  // emptied the match simply ran ON, past the closing brace, and found the marker's own
+  // appendFileSync — so the mutation "note only logs to the console" survived. Slice the
+  // function and assert inside it.
+  const noteAt = block.indexOf('const note = (line) => {');
+  assert.ok(noteAt > -1, 'the reporter must exist');
+  // MATCHED BRACES, not a text sentinel. The previous bound was `'\n    };'`, which the
+  // gutted one-liner `const note = (line) => { log(...); };` simply does not contain — so
+  // indexOf found the NEXT one further down the file and the assertion ran past the function
+  // AGAIN, into the marker's own appendFileSync. Second time the same mutation survived the
+  // same way; a bound that depends on how the code is FORMATTED is not a bound.
+  const noteBody = braced(block, noteAt);
+  assert.match(noteBody, /appendFileSync\(spawnLog/,
     'the failure reporter writes to the file, not only the console');
-  assert.match(block, /ps\.on\('error'/, 'as does a failure to start');
+  assert.match(block, /t\.on\('error'/, 'as does a failure to start');
 });
 
 test('the guard terminates after a successful feed call', async () => {
