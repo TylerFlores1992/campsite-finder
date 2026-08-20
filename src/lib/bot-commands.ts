@@ -23,6 +23,26 @@ export const BOT_COMMAND_KINDS = {
   },
   'list-processes': { label: 'Which of our processes are running', argPattern: null, argOptions: null, argHint: '' },
   /**
+   * RUN THE LOGIN REHEARSAL NOW, without a human at the box (2026-08-19).
+   *
+   * `rc-test-login.bat` needs somebody standing at the machine, and the run that failed at
+   * 19:46 printing nothing is exactly the kind of thing that then cannot be retried
+   * remotely. This queues the SAME rehearsal body the nightly run uses — the box's handler
+   * drops a signal file, the keep-warm (which owns the Chromium profile) picks it up within
+   * its poll cadence and runs `runLoginRehearsal` with the schedule gates lifted and the
+   * SAFETY gates kept: never within 6h of a release, rationed to one on-demand run per 6h
+   * (a file timestamp, so a restart loop cannot re-spend it), and a CAPTCHA is a full stop
+   * because nobody is at the box. The verdict lands in `autocart.rc_login` and
+   * `tail-log rc-keepwarm`.
+   *
+   * NOT a shell. The ask that produced this was "just give me PowerShell or cmd", and the
+   * box's own header says why not: it holds the live RC session, the DPAPI credential
+   * store, and a residential IP both providers have blocked before — a free-form channel
+   * would hand all three to any holder of AUTOCART_TOKEN. Levers get added HERE, by name,
+   * one at a time.
+   */
+  'test-login': { label: 'Prove the unattended RC sign-in works, now', argPattern: null, argOptions: null, argHint: '' },
+  /**
    * RAM, COMMIT and the browsers `list-processes` cannot see. Added 2026-08-12 after
    * supervise.ps1 failed to start a shell at all with "the paging file is too small" — a
    * supervisor that cannot launch cannot restart anything, and `disk-free` answered 404 GB

@@ -480,6 +480,41 @@ export const COMMANDS = {
     return await run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script]);
   },
 
+  /**
+   * QUEUE THE LOGIN REHEARSAL, for the keep-warm to run — never run it HERE.
+   *
+   * This handler executes inside bot.mjs or the hold runner, and the rehearsal needs the
+   * Chromium profile the keep-warm owns; running a login from a second process against that
+   * profile is the two-browsers-one-user-data-dir corruption every mini-pc script warns
+   * about. So the handler's whole job is a SIGNAL FILE, the same cooperative mechanism as
+   * `.camphawk-profile-wanted`, and the keep-warm consumes it inside its own loop where the
+   * profile, the gates and the recycle already live.
+   *
+   * THE RATION IS CHECKED IN BOTH PLACES. Here, so the asker gets an immediate honest
+   * refusal instead of a queued request that silently dies; in the keep-warm, because THIS
+   * check can be raced by two commands and the consumer's file-timestamp check is the one
+   * that actually spends the ration. A login is not free: repeated sign-ins from this
+   * address cost twelve hours of IP block on 2026-08-06, which is why the box refuses on
+   * its own clock no matter who asks.
+   */
+  'test-login': async () => {
+    const last = path.join(HERE, 'logs', '.rehearse-on-demand-at');
+    const gapMs = 6 * 3600_000;
+    try {
+      const at = Number(fs.readFileSync(last, 'utf8'));
+      if (Number.isFinite(at) && at > 0 && Date.now() - at < gapMs) {
+        return `refused: an on-demand rehearsal ran ${Math.round((Date.now() - at) / 60_000)} min ago, `
+          + 'and the box allows one per 6h. A login is the act that got this address blocked; '
+          + 'the nightly rehearsal still runs at 20:00 PT.';
+      }
+    } catch { /* no record = no ration spent */ }
+    fs.writeFileSync(path.join(HERE, '.camphawk-rehearse-asked'), String(Date.now()));
+    return 'queued - the keep-warm picks this up within its poll cadence (about a minute) and '
+      + 'runs the same rehearsal body as the nightly 20:00 PT run, prompt=login included. '
+      + 'It still refuses within 6h of a release. Watch tail-log rc-keepwarm; the verdict '
+      + 'lands in autocart.rc_login.';
+  },
+
   /** Free space. "No space left on device" turns every other symptom into a mystery. */
   'disk-free': async () =>
     await run('powershell', ['-NoProfile', '-Command',

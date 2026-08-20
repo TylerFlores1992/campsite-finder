@@ -131,8 +131,32 @@ export async function markBotUpdateApplied(sha: string | null, note: string | nu
  * different fixes, and they were the same silence.
  */
 export async function noteBotUpdateAttempt(note: string): Promise<void> {
+  /**
+   * ── A GUARD REFUSAL RELEASES THE CLAIM (2026-08-19) — this is the 20-minute fix ────────
+   *
+   * "Update now" was taking ~20 minutes and the anatomy is: a poller claims within 15s and
+   * spawns the updater; if the GUARD refuses (a release within 6h, the feed unreachable),
+   * the run ends — but the claim sat until its 20-minute TTL, so every other poller and the
+   * scheduled task answered `SKIP - another process holds the update claim` at a dead
+   * record. The refusal itself proves the spawned updater has FINISHED — `Report-Attempt`
+   * with the guard's verdict is the updater's last act on that path — so the claim it holds
+   * is dead weight, and releasing it lets the next 15-second poll try again.
+   *
+   * THE ONE NOTE THAT MUST NOT RELEASE: `SKIP - another process holds the update claim`.
+   * That verdict comes from a BYSTANDER (the scheduled task, refused because a REAL update
+   * is mid-`npm ci` elsewhere) — releasing on it would let a second updater claim while the
+   * first still owns the checkout, which is the two-updaters race the claim exists to
+   * prevent. `%claim%` is the discriminator, and worker/bot-update-claim.test.mts pins it
+   * against update-guard.mjs's actual output strings so the two cannot drift apart silently.
+   *
+   * "started - checking the guard" contains neither token and correctly releases nothing.
+   */
   await mutate(
-    `UPDATE bot_update_requests SET applied_note = $1 WHERE id = 1`,
+    `UPDATE bot_update_requests
+        SET applied_note = $1,
+            claimed_at = CASE WHEN $1 LIKE '%SKIP%' AND $1 NOT LIKE '%claim%' THEN NULL ELSE claimed_at END,
+            claimed_by = CASE WHEN $1 LIKE '%SKIP%' AND $1 NOT LIKE '%claim%' THEN NULL ELSE claimed_by END
+      WHERE id = 1`,
     [note.slice(0, 300)],
   ).catch((e) => console.error('[bot-update] noteAttempt failed:', e.message));
 }
