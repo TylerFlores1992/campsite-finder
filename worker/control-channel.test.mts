@@ -191,13 +191,32 @@ test('the flag is informational; the claim happens at the point of USE', () => {
   assert.match(route, /body\?\.updateClaim/, 'there must be a claim endpoint');
   assert.match(route, /claimBotUpdate\(body\.updateClaim\)/);
 
+  /**
+   * AND THE POINT OF USE MOVED DOWN A LAYER ON 2026-08-20, which makes this test's own title
+   * more true rather than less.
+   *
+   * It used to assert `claim < spawn` in control-channel.mjs — the poller claiming and then
+   * spawning `auto-update.ps1`. That claim was taken by a process the update was about to
+   * kill, so it sat held by nobody for its full 20-minute TTL, and the Windows Scheduled
+   * Task — the one launcher that survives a stop-all — spent that window refusing ITSELF
+   * with "another process holds the update claim", six times across two attempts.
+   *
+   * So the claim did not merely fail to protect anything; it blocked the recovery. It now
+   * lives in `update-guard.mjs`, which runs INSIDE the updater — the process that actually
+   * moves the checkout, and therefore the real point of use.
+   */
+  const guard = readFileSync('scripts/auto-cart-bot/update-guard.mjs', 'utf8');
+  assert.match(guard, /requested && !force && !preClaimed/,
+    'the process doing the work is the one that claims');
+  assert.match(guard, /updateClaim: 'scheduled-task'/, 'and it claims through the same endpoint');
+
   const channel = readFileSync('scripts/auto-cart-bot/control-channel.mjs', 'utf8');
-  const claim = channel.indexOf('updateClaim');
-  const spawn = channel.indexOf("spawn('powershell'");
-  assert.ok(claim !== -1 && spawn !== -1 && claim < spawn, 'the box claims before it spawns');
+  assert.ok(!/updateClaim: actor/.test(code(channel)),
+    'the poller must NOT claim before handing off — a claim held by a process the update ' +
+    'kills blocks the Scheduled Task for the whole TTL');
   // A claim it cannot reach is a NO. An update is never urgent enough to risk two of them,
   // and the flag stays pending for the next poll.
-  assert.match(channel, /\.catch\(\(\) => false\)/, 'an unreachable claim must not read as granted');
+  assert.match(guard, /\.catch\(\(\) => false\)/, 'an unreachable claim must not read as granted');
 });
 
 test('a box on OLD code is unaffected by the claim', () => {

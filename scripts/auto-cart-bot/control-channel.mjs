@@ -74,94 +74,129 @@ export function makeControlChannel({ dir, actor, log, report }) {
 
     if (!updateRequested || Date.now() - updateStartedAt <= UPDATE_RETRY_MS) return;
     updateStartedAt = Date.now();
-    // CLAIM BEFORE SPAWNING. Both feeds carry the flag, so two of our processes can see it
-    // on the same tick and `auto-update.ps1` moves one git checkout. The server grants it to
-    // exactly one caller. A claim that cannot be reached is a NO: an update is not urgent
-    // enough to risk two of them, and the flag stays pending for the next poll.
-    void (async () => {
-      const granted = await report({ updateClaim: actor })
-        .then((r) => r?.granted === true)
-        .catch(() => false);
-      if (!granted) {
-        log('→ update requested, but another process has the claim (or we could not ask) — standing down');
-        updateStartedAt = 0;
-        return;
-      }
-      spawnUpdater();
-    })();
+    /**
+     * WE NO LONGER CLAIM, AND THAT IS HALF THE FIX.
+     *
+     * This used to claim and then spawn `auto-update.ps1` with `-Claimed`. Both halves of
+     * that were wrong once the updater started dying (see `triggerUpdater`): the claim was
+     * taken by a process the update itself was about to kill, so it sat held by nobody for
+     * its full 20-minute TTL — and the Windows Scheduled Task, the one path that survives a
+     * stop-all, spent that whole window refusing itself with
+     *
+     *     [update-guard] SKIP - another process holds the update claim (or we could not ask)
+     *
+     * Measured on 2026-08-20 at 09:21, 09:26, 09:31, 09:41, 09:46 and 09:51: six refusals
+     * against a dead claim holder, across two attempts. So the claim did not merely fail to
+     * help, it BLOCKED the mechanism that would have worked.
+     *
+     * The task claims for itself (`update-guard.mjs` claims when `requested && !preClaimed`),
+     * which is the same protection one layer down, held by the process actually doing the
+     * work. Nothing here needs to hold anything: triggering a task twice is a no-op the
+     * scheduler collapses, and the guard's own claim closes the two-updaters race that this
+     * claim was added for.
+     */
+    triggerUpdater();
   }
 
-  function spawnUpdater() {
-    // AN UPDATE ASKED FOR FROM THE ADMIN PAGE. The box has no inbound path, so the request
-    // rides this poll — see migration 051. All this does is hand off to auto-update.ps1,
-    // which re-checks the release guard itself: "now" means "as soon as it is safe", because
-    // an update ends the RC session and doing that minutes before a cart loses the site.
-    //
-    // `dir` and never process.cwd(): the two agree when start-all launches us and diverge
-    // the moment anything else does, and a wrong -File path makes PowerShell exit
-    // immediately with a message we throw away — total silence, no auto-update.log, and this
-    // line still claiming the hand-off happened.
-    const script = path.join(dir, 'mini-pc', 'auto-update.ps1');
-    log(`→ update requested — handing off to ${script}`);
-    // SAY IT IS MISSING rather than launching at nothing. Otherwise the failure is
-    // indistinguishable from the script running and doing nothing.
-    if (!fs.existsSync(script)) {
-      log(`  ✗ ${script} does not exist — cannot update`);
-      updateStartedAt = 0;
-      return;
-    }
+  /**
+   * ASK WINDOWS TO RUN THE UPDATER. Do NOT spawn it ourselves.
+   *
+   * ## What this replaces, and why the old reasoning was wrong
+   *
+   * This used to `spawn('powershell', [..., '-File', script, '-Claimed'])`, under a comment
+   * arguing the child was safe because "killing a parent on Windows does NOT kill its
+   * children, and stop-all.ps1 matches on the bot's own scripts, which auto-update.ps1 is
+   * not". Both clauses are individually true and the conclusion is false.
+   *
+   * The second clause still holds: `$CHILDREN` is
+   * `supervise\.ps1|bot\.mjs|broker\.mjs|rc-keepwarm\.mjs|rc-hold-runner\.mjs|npm start|npm run broker|cloudflared`
+   * and the updater matches none of it. It is not killed BY NAME.
+   *
+   * The first clause is the one that fails. It is true of a raw Win32 `TerminateProcess`,
+   * and NOT true of a child libuv spawned: on Windows `uv_spawn` puts every non-detached
+   * child into the parent's Job Object, so killing the parent kills it. Our ancestry is
+   * `cmd.exe (npm start) -> node.exe (bot.mjs) -> powershell.exe (auto-update.ps1)`, and
+   * stop-all kills both of the first two.
+   *
+   * MEASURED TWICE ON 2026-08-20, and the logs are identical in shape:
+   *
+   *     09:16:36 [auto-update] updating b9a1dba -> 940acf7
+   *     09:16:37 [stop-all] stopping 26 process(es).
+   *     09:16:40 [stop-all]   stopping node.exe pid 10732 (payload)   <- last line ever
+   *
+   *     09:36:37 [auto-update] updating b9a1dba -> 940acf7
+   *     09:36:37 [stop-all] stopping 24 process(es).
+   *     09:36:38 [stop-all]   stopping node.exe pid 11924 (payload)   <- last line ever
+   *
+   * Fourteen of twenty-six stop lines, then sixteen of twenty-four, and in both cases the
+   * last thing written is a `node.exe` kill — the updater dying with its parent, midway
+   * through the stop it was performing. No git reset, no restart, no rollback, no refusal.
+   * The watchdog then found nothing running and restarted everything on the OLD checkout,
+   * which is why every health check read green over a box that would not update.
+   *
+   * ## Why a Scheduled Task rather than `detached: true`
+   *
+   * `detached` is the textbook answer and it is NOT taken here, because it was tried on
+   * 2026-08-11 and produced literally nothing: no output, no error, no auto-update.log,
+   * while the same command by hand ran fine. On Windows it means DETACHED_PROCESS — the
+   * child gets no console — and whatever went wrong then is unexplained, so reaching for it
+   * again would be swapping a measured failure for an unmeasured one.
+   *
+   * The task is not a new mechanism. It is REGISTERED AND FIRING every five minutes
+   * (`install-autoupdate.bat`), it is how every unattended update has ever landed, and
+   * `autocart.watchdog` reports it healthy. A process the Task Scheduler service starts is
+   * not our descendant and is in no job object of ours, so it survives the stop-all it
+   * performs — by construction, rather than by an argument about process trees.
+   *
+   * ## A failed trigger is not a failed update
+   *
+   * If `schtasks` cannot run, the task's own five-minute tick still picks the request up:
+   * the flag stays pending, and the guard proceeds on the next fire. So the worst case is
+   * "Update now" taking five minutes instead of one — which is the behaviour this whole
+   * lever was built to improve, not a new outage. There is deliberately NO fallback to the
+   * old spawn: that path is the bug.
+   */
+  const UPDATE_TASK = 'CampHawk auto-update';
+
+  function triggerUpdater() {
+    const spawnLog = path.join(dir, 'logs', 'update-spawn.log');
+    const note = (line) => {
+      log(`  ${line}`);
+      try { fs.appendFileSync(spawnLog, `${line}\n`); } catch { /* best effort */ }
+    };
+    log(`→ update requested — asking Windows to run the "${UPDATE_TASK}" task`);
     try {
-      // stdio TO A FILE, NEVER 'ignore'. With output discarded, a PowerShell that starts and
-      // dies immediately — a bad -File path, a policy refusal, a parse error — is
-      // indistinguishable from one that never started, and that ambiguity is what made
-      // 2026-08-11 take all night. The marker is written BEFORE the spawn, so the file
-      // exists even if the launch itself is what fails: "no file" can then only mean this
-      // code never got here.
-      const spawnLog = path.join(dir, 'logs', 'update-spawn.log');
-      try {
-        fs.mkdirSync(path.dirname(spawnLog), { recursive: true });
-        fs.appendFileSync(spawnLog, `\n=== ${new Date().toISOString()} ${actor} launching ${script}\n`);
-      } catch { /* best effort — never block the hand-off on logging it */ }
+      fs.mkdirSync(path.dirname(spawnLog), { recursive: true });
+      fs.appendFileSync(spawnLog,
+        `\n=== ${new Date().toISOString()} ${actor} triggering task "${UPDATE_TASK}"\n`);
+    } catch { /* best effort — never block the hand-off on logging it */ }
+
+    try {
+      // stdio TO A FILE, NEVER 'ignore'. `schtasks` reports "the system cannot find the file
+      // specified" for an unregistered task and "access is denied" for a permissions
+      // problem, and those need different fixes; discarded, they are the same silence.
       const out = fs.openSync(spawnLog, 'a');
-      const ps = spawn('powershell', [
-        // `-Claimed`: WE ALREADY HOLD THE CLAIM. `claimUpdate` above ran before we got here,
-        // so the guard inside this script must not ask for it a second time — it would be
-        // competing with us and would lose, every time, to a claim taken a second earlier.
-        // That is exactly what deadlocked on-demand updates on 2026-08-12, and because a
-        // standing request is re-claimed every 20 minutes it could never drain: the fix had
-        // to be delivered by the mechanism it fixes. The Windows Scheduled Task does NOT
-        // pass this, because it claims nothing and the guard is its only gate.
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Claimed',
-      // NOT `detached`. On Windows that means DETACHED_PROCESS — the child gets NO console —
-      // and a `powershell -File` started that way produced literally nothing on 2026-08-11:
-      // no output, no error, no auto-update.log, while the same command by hand ran fine. It
-      // was the one constant across every failed attempt.
-      //
-      // It was never needed. Killing a parent on Windows does NOT kill its children, and
-      // stop-all.ps1 matches on the bot's own scripts, which auto-update.ps1 is not — so the
-      // updater survives being killed by the update it is performing. `unref()` alone is
-      // what lets us exit without waiting for it.
-      ], { stdio: ['ignore', out, out], windowsHide: true });
-      const note = (line) => {
-        log(`  ${line}`);
-        try { fs.appendFileSync(spawnLog, `${line}\n`); } catch { /* best effort */ }
-      };
-      // spawn() reports ENOENT via an 'error' EVENT, not by throwing — so a try/catch never
-      // sees it, and an 'error' with no listener takes the whole process down. Two failure
-      // modes, both invisible, both fixed by listening.
-      ps.on('error', (e) => { note(`✗ could not start powershell: ${e.message}`); updateStartedAt = 0; });
-      // The exit STATUS is the missing fact: a child that runs and dies silently and a child
-      // that never ran look identical without it.
-      ps.on('exit', (code, signal) => {
-        note(`auto-update.ps1 exited code=${code} signal=${signal}`);
-        if (code !== 0) updateStartedAt = 0;
+      const t = spawn('schtasks', ['/Run', '/TN', UPDATE_TASK],
+        { stdio: ['ignore', out, out], windowsHide: true });
+      // spawn() reports ENOENT via an 'error' EVENT, not by throwing, and an unhandled one
+      // takes the whole process down.
+      t.on('error', (e) => {
+        note(`✗ could not run schtasks: ${e.message} — the 5-minute task will still pick this up`);
+        updateStartedAt = 0;
       });
-      ps.unref();
-      // The parent's copy is closed straight away; the child keeps its own handles, which is
-      // what lets this survive the updater killing us.
+      // THE EXIT CODE IS THE WHOLE REPORT. This process exits in milliseconds — it only asks
+      // the scheduler to start the task — so unlike the old spawn there is no ambiguity
+      // between "ran and died" and "never ran". Non-zero means the task did not start.
+      t.on('exit', (code) => {
+        if (code === 0) note(`the task was started — auto-update.log is where it speaks from here`);
+        else {
+          note(`✗ schtasks exited ${code} — the task did not start; the 5-minute tick still will`);
+          updateStartedAt = 0;
+        }
+      });
       try { fs.closeSync(out); } catch { /* the child owns it now */ }
     } catch (err) {
-      log(`  update hand-off failed: ${err.message}`);
+      note(`update hand-off failed: ${err.message}`);
       updateStartedAt = 0;
     }
   }
