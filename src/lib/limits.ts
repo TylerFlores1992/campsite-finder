@@ -55,7 +55,9 @@ export const RC_CART_HOLD_MINUTES = 15;
  * `RC_SITES_PER_CART` is RC's, and it is measured: a third add to one cart on 2026-08-13
  * came back *"the maximum number of reservations allowed in the cart is '2'"*.
  *
- * `RC_MAX_CARTS` is OURS, and it is **2** — measured, not hoped for. `rc-probe.mjs
+ * `RC_MAX_CARTS` is OURS. ~~It is **2**~~ — **SUPERSEDED: it is 10, see two paragraphs
+ * down.** The 2 is kept because it is how the ceiling was measured the first time, and
+ * because the constant below is the authority either way. Measured, not hoped for: `rc-probe.mjs
  * --cart-cap` ran on 2026-08-15 and held two carts live at once on ONE session and ONE
  * account: cart A filled to two, a third add refused **in RC's own cap wording** (the
  * control, without which step 4 proves nothing), then the same unit accepted into a
