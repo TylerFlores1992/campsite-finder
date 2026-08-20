@@ -18,10 +18,33 @@ import { fileURLToPath } from 'node:url';
  */
 const fromFile = new Set();
 
+/**
+ * THE CALLER'S DIRECTORY, THEN THIS FILE'S — and the fallback is the whole point.
+ *
+ * `fromUrl` resolves relative to whoever calls, which was right while every caller was a
+ * sibling of the `.env`. `mini-pc/report-applied.mjs` is not: it looked for
+ * `mini-pc/.env`, found nothing, and RETURNED SILENTLY — so `AUTOCART_TOKEN` was absent,
+ * its POST was answered 401, and it printed "server said 401", which reads exactly like a
+ * wrong token. `applied_sha` therefore stopped moving on 2026-08-19 and still read
+ * `746cd5a` through two manual updates on 08-20, which is a stale field somebody then
+ * reasons from.
+ *
+ * That is verbatim the failure this file's own header describes — `rc-hold-runner.mjs`
+ * answering `feed 401` for want of an environment — reappearing one directory deeper,
+ * inside the fix for it. The doc above says this reads `scripts/auto-cart-bot/.env`, so
+ * it now does that whoever calls it, while still preferring a `.env` beside the caller if
+ * one is ever put there deliberately.
+ *
+ * @returns {string | null} the file actually read, so a caller can SAY it found nothing.
+ */
 export function loadEnv(fromUrl) {
+  const here = path.dirname(fileURLToPath(import.meta.url));
   const dir = path.dirname(fileURLToPath(fromUrl));
-  const p = path.join(dir, '.env');
-  if (!fs.existsSync(p)) return;
+  // The caller's own directory wins; this module's is the canonical fallback. Bounded to
+  // exactly these two — walking up arbitrarily would eventually find an unrelated `.env`
+  // at the repo root and load it silently, which is a worse failure than the one fixed.
+  const p = [path.join(dir, '.env'), path.join(here, '.env')].find((c) => fs.existsSync(c));
+  if (!p) return null;
   for (const line of fs.readFileSync(p, 'utf8').split('\n')) {
     const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
     if (!m) continue;
@@ -32,6 +55,7 @@ export function loadEnv(fromUrl) {
       fromFile.add(m[1]);
     }
   }
+  return p;
 }
 
 /**
