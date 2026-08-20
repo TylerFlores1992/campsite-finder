@@ -2212,14 +2212,187 @@ checked 19:50:40  exp 2026-08-19T07:50:40   → +12.0000h
   10 sails under a 15,000 ms ceiling. A guard that reads the wrong number will approve the
   wrong value later, silently. Ninth time a guard here has anchored on the wrong thing.
 
+### THE UPDATER DIED INSIDE ITS OWN `stop-all` — a JOB OBJECT, fixed and PROVEN (2026-08-20)
+"Update now" was pressed twice and landed neither time. **Not slowness — the updater was
+killed partway through the stop it was performing**, and both logs have the identical shape:
+
+```
+09:16:36 [auto-update] updating b9a1dba -> 940acf7      09:36:37 updating b9a1dba -> 940acf7
+09:16:37 [stop-all] stopping 26 process(es).            09:36:37 [stop-all] stopping 24 …
+09:16:40   stopping node.exe pid 10732 (payload)  <-|   09:36:38   stopping node.exe 11924 <-|
+          (nothing, ever)                                        (nothing, ever)
+```
+Fourteen of twenty-six stop lines, then sixteen of twenty-four, **both ending on a `node.exe`
+kill**. No `git reset`, no restart, no rollback, no refusal. The watchdog then found nothing
+running and restarted everything **on the OLD checkout**, so every health check read green
+over a box that would not update — which is why this looked like "the update button is slow"
+for most of a day.
+- **THE OLD REASONING WAS THE DEFECT, AND HALF OF IT IS STILL TRUE.** `control-channel.mjs`
+  argued its child was safe because (a) *"killing a parent on Windows does NOT kill its
+  children"* and (b) `stop-all` matches the bot's own scripts, which `auto-update.ps1` is not.
+  **(b) HOLDS** — `$CHILDREN` is `supervise.ps1|bot.mjs|broker.mjs|rc-keepwarm.mjs|
+  rc-hold-runner.mjs|npm start|npm run broker|cloudflared` and the updater matches none of it;
+  a test pins that so nobody "fixes" this by adding the updater to the kill list, which would
+  make it kill itself deliberately rather than by accident. **(a) IS FALSE for a libuv-spawned
+  child**: on Windows `uv_spawn` puts every non-detached child in the parent's **Job Object**,
+  and the ancestry is `cmd.exe (npm start) → node.exe (bot.mjs) → powershell.exe
+  (auto-update.ps1)`.
+- **WINDOWS STARTS IT NOW.** `schtasks /Run` against the task `install-autoupdate.bat` already
+  registers. Not a new mechanism — it fires every five minutes and is how every unattended
+  update has ever landed. A process the Task Scheduler service starts is **not our descendant
+  and is in no job object of ours**, so it survives by construction rather than by an argument
+  about process trees.
+- **NOT `detached: true`**, which is the textbook answer. It was tried on 2026-08-11 and
+  produced literally nothing — no output, no error, no `auto-update.log` — while the same
+  command by hand ran fine. Reaching for it again swaps a measured failure for an unmeasured one.
+- **AND THE CLAIM BLOCKED THE RECOVERY.** The poller claimed before spawning, so the claim was
+  held by a process the update was about to kill and sat there for its full 20-minute TTL —
+  during which the Scheduled Task, **the one launcher that survives a stop-all**, refused
+  ITSELF with `SKIP - another process holds the update claim` at 09:21, 09:26, 09:31, 09:41,
+  09:46 and 09:51. The poller no longer claims; `update-guard.mjs` claims inside the updater,
+  which is the process that actually moves the checkout.
+- **PROVEN 2026-08-20 19:42:49 → 19:46:27 — `b7015c7` → `58cc767`, `updated and verified`, in
+  3m38s unattended, through the full path including `stop-all`.** An earlier run the same
+  afternoon reached `PROCEED` and then `already current at b7015c7`, which proved the trigger
+  fires and proved **nothing** about the stop — record the 19:46 run as the evidence, not that one.
+- **A PENDING REQUEST CHURNS THE BOX**: `UPDATE_RETRY_MS` is 15 min against a 20-min claim TTL,
+  so a request that never lands re-spawns the updater indefinitely and each attempt bounces
+  every process. Withdraw it (`requested_at = NULL`) rather than leaving it set, and never
+  mark it applied — that asserts something untrue.
+
+### `loadEnv` RESOLVED RELATIVE TO THE CALLER, AND A 401 READ AS A BAD TOKEN (2026-08-20)
+`load-env.mjs`'s own header records the failure it exists to prevent — `rc-hold-runner.mjs`
+answering `feed 401` for want of an environment, *"which reads exactly like a wrong token"*.
+**It reappeared one directory deeper, inside the fix.** `mini-pc/report-applied.mjs` called
+`loadEnv(import.meta.url)`, which resolves `mini-pc/.env` — a file that does not exist, because
+the `.env` is one level up — and **returned SILENTLY**. So `AUTOCART_TOKEN` was absent, the POST
+was answered 401, and it printed `server said 401`.
+- **`bot_update_requests.applied_sha` therefore stopped moving on 2026-08-19** and still read
+  `746cd5a` after two SUCCESSFUL manual updates on 08-20. **It misled this session for most of a
+  day** — that sha was read while diagnosing why an update had not landed, and it was describing
+  neither the box nor the attempt. `git-status` through `bot_commands` remains the authority.
+- Exactly one caller was affected; every other is a sibling of the `.env`. **The silent return is
+  the systemic half** and is what turned a one-line path bug into a day.
+- The fallback is **BOUNDED to two candidates** (the caller's directory, then this module's).
+  Walking up would eventually find an unrelated `.env` at the repo root and load it without
+  saying so, and wrong values are harder to spot than absent ones.
+- `loadEnv` **returns the file it read**, so a 401 now distinguishes `AUTOCART_TOKEN is NOT SET,
+  .env read: NONE FOUND` from `came from the file and the server rejected it`. `envSource` was
+  written for exactly this on 2026-08-07 and nothing was calling it.
+- **`auto-update.ps1`'s own PowerShell reporter was never affected** — it has `Import-BotEnv`.
+  So the scheduled/admin path reported correctly all along and only `update.bat` 401'd, which is
+  why the field looked plausible rather than obviously dead.
+
+### THE IN-APP OKTA FILL: REACT'S `_valueTracker` (2026-08-20)
+Reported as *"it said can't leave blank even though it was filled in already as if we entered
+it"*. The `client_reports` trace of hold 4734 agrees exactly: `email` → `password` → `submitted`
+→ `login-result {ok:false, reason:"We found some errors…"}`, with the DOM read-back
+(`user.value !== email`) passing throughout.
+- **React keeps a `_valueTracker` per input and SUPPRESSES the change event when handed a value
+  equal to the one it already tracks.** iOS keychain autofill had put the address there first, so
+  the node was right and the widget's model was empty — which is what "filled in but says blank"
+  means from the other end. `chSetValue` resets the tracker before writing, and BLURS afterwards
+  because Okta validates required fields on blur.
+- A second candidate — submitting in the same synchronous block, so a batched framework handles it
+  while its model still holds the old value — produces an identical symptom and the trace cannot
+  separate them, so both are fixed (`chSettle()` before each submit).
+- **THAT SECOND ONE IS PINNED STRUCTURALLY ON PURPOSE.** A behavioural test built on the stub
+  **PASSED with the settle removed**: the stub models the tracker rule (documented, synchronous)
+  and NOT batching, so it was measuring the tracker fix twice and reporting it as two guards.
+  A structural assertion that admits what it is beats a behavioural one that proves something else.
+- **NO READ-BACK ON THE PASSWORD.** Comparing `pw.value` to the password puts the secret in an
+  expression, and an engine quoting a failing expression is precisely how a real password reached
+  the database on 2026-08-16.
+- **THE STUB HAD NO TIMERS.** `vm.createContext({})` has no `setTimeout`, so every path past
+  `chWait`'s first poll threw and was swallowed; the older stub tests passed because they only
+  assert that SOME verdict was reported — i.e. they were proving the error path.
+- **AND A NUL REACHED THE SERVED BUNDLE while writing this.** An intended space came through as
+  `\x00`; `tsc` passed, every test passed, and it would have gone to every webview. The emitted
+  bundle now gets the same no-control-characters rule the `.ps1` files have.
+
+### "PLATFORM NOT REPORTED" WAS THE TRIM, NOT A MISSING FEATURE (migration 064, 2026-08-20)
+The hand-off readout has printed that on **every hand-off it has ever summarised**, and it was
+read as the feature being unbuilt. `ClaimFlow.notePlatform` has emitted a `platform` report from
+six call sites all along — `recordClientReports` keeps the **TAIL** of 40, the platform is
+reported **once, first**, so it sat at the head of exactly the region that gets discarded.
+Measured on hold 4734: 40 reports stored, earliest survivor `session {n:2}`.
+- **Same trimming that ate `✓ Added to cart` off the front of both 2026-08-13 hand-offs.**
+- Migration 064 gives it columns. **`COALESCE`**, because a hand-off flushes several times on a
+  debounce and only the first carries the platform. A non-string is stored as **NULL, never
+  coerced** — anything with the manage token can post this, and `[object Object]` reaching a
+  column is the shape that switched off the memory series for ten minutes.
+- Not a bigger cap (buys one more run) and not a special case inside the trimming SQL (that
+  statement must stay simple enough to reason about at 08:00).
+
+### THE AUTO-LOGIN WAS THE BIGGEST OKTA TRIP NOBODY HAD MEASURED (2026-08-20)
+```
+07:29  12%   rc   300 MB  pid 6360    flat
+07:31  64%   rc 2,811 MB  pid 6452    the auto-login's Okta navigation
+07:41  76%   rc 9,434 MB  pid 6452
+07:43  12%   rc   230 MB  pid 7560    the RAM guard killed it
+```
+Twelve minutes and **9.4 GB** — four times the worst renewal and six times as long, because
+`okta=GONE` forces a full password sign-in. That variant needs a genuinely dead Okta session to
+reach, which is why it had never been sampled.
+- **It matters more here than for the renewal**: a guard kill leaves the profile lock reading as
+  HELD for `STALE_MS` (10 min) and only a living holder renews it, so nothing can preempt it
+  cooperatively. **A kill at 07:33 clears by 07:43 and is harmless; a kill at 07:53 holds the lock
+  past 08:00 and the runner cannot take the profile to cart.**
+- The trip now runs in a **throwaway tab** closed in a `finally`, as PR #142 did for the renewal.
+  **Every page-taking call is bound to the tab** — `window.__camphawkRcToken` is per-page, the tab
+  sits on `signin.reservecalifornia.com` during a sign-in, and a screenshot of the resident page
+  photographs a page on which nothing happened. A version that moved only `attemptLogin` looks
+  right and gets all three wrong.
+- **NOT CLAIMED: that a tab close reclaims a NINE-gigabyte trip.** The renewal's trips are
+  140-350 MB and drain in place on an unchanged pid; nothing has closed a tab that ramped this
+  far, and the 08-20 event put 1,330 MB in a **`utility`** process, which is not the renderer.
+  **HOW TO READ IT: a spike that drains at tab close with no `♻ recycling` line is this working.**
+  **STILL UNEXECUTED as of 2026-08-20** — it only runs at T−30 of a real release.
+
+#### PERSISTING THE LOGIN BUDGET NAIVELY WOULD HAVE MADE THAT MORNING WORSE
+The per-release budget was module state, and `supervise.ps1` restarts the process on exit, so
+every restart re-issued it — the crash-loop-spends-the-login-budget shape that cost the IP twelve
+hours on 08-06. **And that accidental refund is what saved the 08:00 cart:**
+```
+07:30  attempt 1 -> 9.4 GB ramp -> the RAM guard killed the browser
+07:43  the supervisor restarted the process
+07:48  attempt 2 -> signed in, 60m token
+08:00  carted at T+2s, claimed 08:05, released
+```
+A plain persisted counter would have counted attempt 1 and left one attempt of margin instead of
+two, on the one morning any of this was measured. So a **KILLED** attempt is inconclusive and is
+refunded — same rule as `provedNothing` — but **by the record** (`startedAt`, cleared on every
+terminal path) rather than by the accident of process memory, and bounded to **one per release**
+by `killed`, or a process that dies every attempt refunds for ever. The rule is a module
+(`autologin-budget.mjs`) because importing `rc-keepwarm.mjs` starts the keep-warm loop and this
+decision has an arm that only runs after a crash.
+
+### `worker-deploy.yml`'s PATH LIST HAD DRIFTED FROM WHAT THE WORKER IMPORTS (2026-08-20)
+`worker/poller.ts` imports `src/lib/limits.ts` (`RC_HOLD_CAPACITY`) and `src/lib/auth.ts`
+(`hasAutocartEntitlement`, one definition with six enforcers, two inside the poller), plus
+`rc-holds.ts`, `rc-holds-notify.ts` and `types.ts` — **and none of them triggered a worker
+deploy**. A change to any ships to Vercel and not to Fly, so the site and the poller disagree with
+nothing red anywhere: the deploy-by-different-routes trap that opened the T−30/T−25 alarm hole.
+- **IT HAD NEVER BITTEN, AND THAT IS LUCK.** Every previous change to those files (#86, #89, #91,
+  #125, #138) also landed a `worker/*.test.mts`, which matches `worker/**` and fired the deploy as
+  a side effect. **The house habit of shipping a guard beside every change has been silently doing
+  the deploy list's job.** The first push to escape it was #145 — a comment-only edit to
+  `limits.ts` with no worker file beside it.
+- Fixed by DERIVING the list: `worker/worker-deploy-paths.test.mts` walks the worker's real
+  **transitive** import closure. Transitive because a direct-only walk passes today and stops
+  covering the moment a worker file reaches something through a re-export.
+- **OPEN AS PR #146** at the end of 2026-08-20 — merging it restarts both poller machines (the
+  workflow is in its own path list, deliberately), so it wants a moment away from a release.
+
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-19 evening). The leak's first CURE
-> is merged and **has never executed**; the file says how to read the memory series to judge
-> it, and carries the two open questions (where the three-day-old token comes from — cookie
-> or server, everything else eliminated — and whether `prompt=login` forces Okta's form).
-> **Delete that file once the tab renewal has been observed and those two are answered**; it
-> is a handover, not a permanent doc, and a stale one would read like current state.
+> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-20 evening). Master and the box are
+> both on **`58cc767`**; "Update now" is a working lever again and was proven end to end at
+> 19:46 PT. The file carries the one open PR (#146), what is built-but-unexecuted (the
+> auto-login tab), and the two questions still open from 08-19 — where the three-day-old token
+> comes from, and whether `prompt=login` forces Okta's form.
+> **Delete that file once #146 is merged and the tab has been observed at a real T−30**; it is
+> a handover, not a permanent doc, and a stale one would read like current state.
 
 ### THE APP'S RC SESSION IS BEING MEASURED NOW — no renewal built yet (migration 058, 2026-08-13)
 The mobile claim flow needs a live RC session inside the InAppBrowser data store, and the
