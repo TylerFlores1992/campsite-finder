@@ -525,3 +525,150 @@ test('ClaimFlow shows the verdict rather than sitting there', () => {
     "RC's own words when we have them — 'wrong password' and 'no form found' differ");
   assert.match(src, /'signin-missing'/, 'the miss must reach the form as a stage');
 });
+
+// ── THE 2026-08-20 FILL BUG ────────────────────────────────────────────────────────────
+//
+// A real claim reported email/password/submitted and then Okta's form-level error, with the
+// DOM read-back passing throughout. The cause is React's `_valueTracker`: it suppresses the
+// change event when handed a value equal to the one it already tracks, and iOS keychain
+// autofill had already put the address there. So the widget's model stayed empty behind a
+// field that visibly held the right text — "can't leave blank even though it was filled in".
+//
+// These run the REAL emitted source against a stub that reproduces the tracker's rule, so a
+// regression is caught by behaviour rather than by the shape of the code.
+
+/**
+ * The stub context needs REAL TIMERS, and that is not a detail.
+ *
+ * `vm.createContext({})` has no `setTimeout`, so every path through the emitted script that
+ * awaits one — `chWait`'s poll, and `chSettle` — throws immediately and is swallowed by the
+ * outer catch as a generic failure. The older stub tests above ran that way and passed,
+ * because they only assert that SOME verdict was reported. So they were proving the error
+ * path worked, not the sign-in. Anything asserting on progress past the first timer has to
+ * install these first.
+ */
+function stubContext(): Record<string, unknown> {
+  const ctx: Record<string, unknown> = { setTimeout, clearTimeout };
+  vm.createContext(ctx);
+  return ctx;
+}
+
+/** A stub input whose framework state only updates when React's tracker sees a change. */
+const REACT_STUB = `
+  said = []; submits = []; frameworkState = '';
+  Event = function (t) { this.type = t; };
+  FocusEvent = function (t) { this.type = t; };
+  KeyboardEvent = function (t, o) { this.type = t; this.key = (o || {}).key; };
+  HTMLTextAreaElement = function () {};
+  HTMLInputElement = function () {};
+  Object.defineProperty(HTMLInputElement.prototype, 'value', {
+    configurable: true,
+    get: function () { return this.__v; },
+    set: function (v) { this.__v = v; },
+  });
+  function makeInput(autofilled) {
+    var el = Object.create(HTMLInputElement.prototype);
+    el.__v = autofilled;
+    el.offsetParent = {};
+    el.focus = function () {};
+    // React's real rule, modelled exactly: the change is delivered to the framework ONLY
+    // when the tracked value differs from the node's current value.
+    var tracked = autofilled;
+    el._valueTracker = {
+      getValue: function () { return tracked; },
+      setValue: function (v) { tracked = v; },
+    };
+    el.dispatchEvent = function (ev) {
+      if (ev.type === 'input') {
+        if (tracked !== el.__v) { frameworkState = el.__v; tracked = el.__v; }
+      } else if (ev.type === 'keydown' && ev.key === 'Enter') {
+        submits.push(frameworkState);
+      }
+    };
+    return el;
+  }
+`;
+
+test('an autofilled field still reaches the framework — the tracker must be reset', async () => {
+  const ctx = stubContext();
+  vm.runInContext(REACT_STUB, ctx);
+  vm.runInContext(`
+    var email = makeInput('a@b.com');   // <- autofill already put the SAME address here
+    window = {
+      __camphawkRc: { send: function (s, d) { said.push([s, d]); } },
+      __camphawkRcToken: null,
+    };
+    document = {
+      querySelector: function (s) { return /pass/i.test(s) ? null : email; },
+      querySelectorAll: function () { return []; },
+    };
+  `, ctx);
+  vm.runInContext(loginScript(), ctx);
+  await vm.runInContext(`window.__chRcLogin("a@b.com", "hunter2!")`, ctx) as Promise<unknown>;
+
+  assert.equal(ctx.frameworkState, 'a@b.com',
+    'the widget never saw the address: React suppressed the change because the tracked ' +
+    'value already equalled it. That is the 2026-08-20 bug, and Okta answers it with ' +
+    '"we found some errors" over a field that looks correctly filled.');
+});
+
+test('the fill SETTLES before the submit — structural, because a stub cannot batch', () => {
+  // The second candidate mechanism for the 08-20 failure: submitting in the same synchronous
+  // block as the fill lets a batched framework handle it while its model still holds the old
+  // value. It produces an identical symptom to the tracker bug and the trace cannot separate
+  // them, so both are fixed.
+  //
+  // THIS ONE IS ASSERTED STRUCTURALLY ON PURPOSE. The stub below models React's tracker rule
+  // faithfully because that rule is documented and synchronous; it does NOT model React's
+  // async batching, and inventing a batching model would mean asserting against my own
+  // guess. A behavioural test written on top of that stub PASSED with the settle removed —
+  // it was measuring the tracker fix twice and reporting it as two guards. A structural
+  // assertion that admits what it is beats a behavioural one that proves something else.
+  const src = loginScript();
+  for (const field of ['user', 'pw']) {
+    const at = src.indexOf(`chSubmit(${field})`);
+    assert.ok(at > -1, `chSubmit(${field}) must exist — anchor not found`);
+    const before = src.slice(Math.max(0, at - 200), at);
+    assert.match(before, /await chSettle\(\);\s*$/,
+      `the ${field} submit must be preceded by a settle, or it can race the framework flush`);
+  }
+});
+
+test('the emitted bundle is free of control characters', () => {
+  // A NUL reached this file while the tracker fix was being written: an intended space came
+  // through as \x00, and NOTHING noticed — tsc passed, every test passed, and it would have
+  // been served to every webview. This repo has already lost a day to a NUL (an admin
+  // diagnostic went unstorable because Postgres text cannot hold one) and a day to a
+  // non-ASCII byte in a .ps1. The bundle is generated source shipped verbatim, so it gets
+  // the same rule the PowerShell scripts have.
+  for (const [name, src] of [['loginScript', loginScript()],
+                             ['loginInvocation', loginInvocation('a@b.com', 'pw')]] as const) {
+    const bad = [...src].map((c, i) => [c, i] as const)
+      .filter(([c]) => c !== '\n' && c !== '\t' && c.charCodeAt(0) < 0x20);
+    assert.deepEqual(bad, [],
+      `${name} contains a control character at ${JSON.stringify(bad.map(([, i]) => i))}`);
+  }
+});
+
+test('the fill blurs, because Okta validates required fields on blur', () => {
+  // Without it the first thing to read the model is the submit, and the failure arrives as a
+  // form-level error with no field attached — which is exactly what 08-20 reported.
+  const src = loginScript();
+  const at = src.indexOf('function chSetValue');
+  assert.ok(at > -1, 'chSetValue must still exist — anchor not found');
+  const body = src.slice(at, src.indexOf('\n  }', at));
+  assert.match(body, /dispatchEvent\(new FocusEvent\('blur'/, 'the fill must blur');
+  assert.match(body, /_valueTracker/, 'and it must reset the tracker');
+  assert.ok(body.indexOf('_valueTracker') < body.indexOf("new Event('input'"),
+    'the tracker reset is pointless after the value is written and the event dispatched');
+});
+
+test('the password is never read back into a comparison', () => {
+  // The email field IS read back, deliberately. The password must not be: a comparison is an
+  // expression, and an engine quoting a failing expression is exactly how a real password
+  // reached the database on 2026-08-16.
+  const src = loginScript();
+  assert.ok(!/\bpw\.value\s*!==\s*password\b/.test(src),
+    'comparing pw.value to the password puts the secret in an expression that can be quoted');
+  assert.match(src, /user\.value !== email/, 'the email read-back stays — it is safe and useful');
+});

@@ -1,0 +1,41 @@
+-- WHICH PLATFORM DID THE HAND-OFF RUN ON?
+--
+-- `scripts/rc-holds-readout.mts` has printed "platform not reported (an older build, or a
+-- plain browser)" on every hand-off it has ever summarised, and that sentence was read as a
+-- missing feature. It is not: `ClaimFlow.notePlatform` has emitted a `platform` report from
+-- six call sites all along. The report is EMITTED and then THROWN AWAY.
+--
+-- `recordClientReports` keeps the last `CLIENT_REPORT_CAP` (40) reports, deliberately — the
+-- interesting part of a hand-off is the end, and the token rebroadcasts at the start are the
+-- bulkiest and least informative. The platform is reported ONCE, first, so it sits at the head
+-- of exactly the region that gets discarded.
+--
+-- Measured on hold 4734, 2026-08-20: 40 reports stored, and the earliest survivor is
+-- `session {n:2}` — so `injected {n:1}` and the `platform` line ahead of it were already gone.
+-- This is the same trimming that ate `✓ Added to cart` off the front of both 2026-08-13
+-- hand-offs, and the fix there was to stop the interesting line competing for a slot.
+--
+-- ── WHY IT MATTERS ────────────────────────────────────────────────────────────────────────
+-- The two RC cart POSTs are PROVEN on iOS and STILL UNPROVEN on Android. On 2026-08-13 the
+-- right answer came from the status bar in a screenshot the owner happened to send — carrier
+-- glyph, centred clock — which is luck, not instrumentation, and CLAUDE.md says in as many
+-- words: "put the platform in the report envelope, or the next run's write-up is another coin
+-- toss." Two write-ups later it still was.
+--
+-- ── WHY A COLUMN AND NOT A BIGGER CAP, OR A PINNED ENTRY ──────────────────────────────────
+-- Raising the cap buys one more run before the same thing happens, and the cap exists for a
+-- reason: this row is also written by the cart path, on a hot morning, from a phone. Pinning
+-- the `platform` entry inside the trimming SQL would work and would put a special case in the
+-- one statement that must stay simple enough to reason about at 08:00.
+--
+-- A column is queryable, is written once, cannot be trimmed, and lets the readout answer
+-- "which platforms have ever carted?" across every hold rather than one at a time.
+--
+-- NULL IS "NOT REPORTED", NEVER "a browser". A plain-browser claim and a claim from a build
+-- older than this both land here as NULL, and the readout must keep saying so rather than
+-- rounding an absent reading to a measured one. Same rule as `max_type` in migration 062 and
+-- as `unknown` never becoming `signed-out`.
+
+ALTER TABLE rc_hold_requests
+  ADD COLUMN IF NOT EXISTS client_platform  text,
+  ADD COLUMN IF NOT EXISTS client_app_build text;
