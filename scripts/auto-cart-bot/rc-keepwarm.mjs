@@ -84,6 +84,7 @@ import { hasCredentials, attemptLogin, clickSignInControl } from './rc-autologin
 import { shouldRehearse, shouldRehearseOnDemand, rehearsalSlot } from './rehearsal.mjs';
 import { requiredTokenSeconds } from './session-coverage.mjs';
 import { planRenewal, recordRenewal, newRenewalState, makeSkipLogger } from './renewal-schedule.mjs';
+import { settleBudget, budgetForRelease, MAX_KILL_REFUNDS } from './autologin-budget.mjs';
 // The same two clock helpers the update guard decides with. Both are pure and both already
 // get the Pacific / zone-less-wall-clock handling right, which is the part that has been
 // got wrong before — a second implementation here would be a second chance to get it wrong.
@@ -719,8 +720,79 @@ function autoLoginSkip(reason) {
   return false;
 }
 
-/** Per-release sign-in budget. Reset when the release we are watching changes. */
-let autoLogin = { release: null, spent: 0, lastAt: 0 };
+/**
+ * Per-release sign-in budget, ON DISK. Reset when the release we are watching changes.
+ *
+ * ## Why a file, and why the naive version of this fix would have broken 2026-08-20
+ *
+ * It lived in module memory until now, and `supervise.ps1` restarts this process on exit —
+ * so every restart re-issued the whole budget. That is the crash-loop-spends-the-login-budget
+ * shape, and repeated logins from this address are what cost the household IP twelve hours on
+ * 2026-08-06. It became reachable the moment the login path started reliably tripping the RAM
+ * guard: the guard kills the process, the supervisor restarts it, the budget is new.
+ *
+ * **AND THAT ACCIDENTAL REFUND IS WHAT SAVED THE 08:00 CART ON 2026-08-20.**
+ *
+ *     07:30  attempt 1 → 9.4 GB ramp → the RAM guard killed the browser
+ *     07:43  the supervisor restarted the process
+ *     07:48  attempt 2 → signed in, 60m token
+ *     08:00  carted at T+2s
+ *
+ * So persisting a plain counter would have made the box strictly worse on the one morning
+ * this was measured: attempt 1 would have counted, and with `AUTOLOGIN_MAX_ATTEMPTS` at 2 the
+ * margin before "a human must sign in" would have been one attempt instead of two.
+ *
+ * ## So a killed attempt is INCONCLUSIVE, and is refunded deliberately
+ *
+ * An attempt that was killed mid-navigation observed no credential outcome — RC was never
+ * told yes or no. That is exactly `provedNothing`, which this function already refunds, and
+ * the rule this file applies everywhere else: **we could not ask is not the same as being
+ * told no.** The difference is that it is now refunded BY THE RECORD rather than by the
+ * accident of process memory, so it is bounded and legible instead of unlimited and invisible.
+ *
+ * The mechanism is `startedAt`: set when an attempt begins, cleared when it reaches a verdict.
+ * A file found with `startedAt` still set can only mean the process died mid-attempt, and
+ * that attempt is given back — ONCE, tracked by `killed`, so a genuine crash LOOP still
+ * exhausts the budget rather than refunding for ever. That single-refund bound is the whole
+ * difference between this and the in-memory behaviour it replaces.
+ */
+const AUTOLOGIN_STATE = path.join(HERE, 'logs', '.autologin-budget.json');
+
+/**
+ * Read the budget back off disk. The RULE lives in `autologin-budget.mjs`; this is only the
+ * I/O, and the split is the one this file keeps making for the same reason — importing this
+ * module starts the keep-warm loop, so a decision left in here cannot be tested at all, and
+ * the kill-refund arm only ever runs after a crash.
+ */
+function loadAutoLogin() {
+  let raw = null;
+  try {
+    raw = JSON.parse(fs.readFileSync(AUTOLOGIN_STATE, 'utf8'));
+  } catch {
+    // Missing or unreadable is a FRESH budget. See settleBudget for why this direction.
+    raw = null;
+  }
+  const { budget, refunded } = settleBudget(raw);
+  if (refunded) {
+    // SAID OUT LOUD. A silent refund is indistinguishable from a budget nothing has spent,
+    // and at 07:45 the difference is whether an attempt was killed or never made.
+    log(`   the previous sign-in attempt was killed before it reached a verdict — refunded `
+      + `(the allowance is ${MAX_KILL_REFUNDS} per release, and it is now used)`);
+  }
+  return budget;
+}
+
+function saveAutoLogin(st) {
+  try {
+    fs.writeFileSync(AUTOLOGIN_STATE, JSON.stringify(st));
+  } catch (e) {
+    // Never fatal. Losing the ration's durability is survivable; losing the login is not —
+    // the same trade the reporter makes, and the reason this is not awaited into a throw.
+    log(`   (could not persist the sign-in budget: ${e.message})`);
+  }
+}
+
+let autoLogin = loadAutoLogin();
 
 /**
  * The renewal ration, and it lives at MODULE scope on purpose.
@@ -766,7 +838,12 @@ async function maybeAutoLogin(ctx, page) {
   }
   if (!release) return autoLoginSkip('no hold is queued');
 
-  if (autoLogin.release !== release) autoLogin = { release, spent: 0, lastAt: 0 };
+  if (autoLogin.release !== release) {
+    // A NEW RELEASE IS A NEW BUDGET, and it must be written: otherwise a restart reloads
+    // the previous release's spend and applies it to this one.
+    autoLogin = budgetForRelease(autoLogin, release);
+    saveAutoLogin(autoLogin);
+  }
 
   const mins = minutesUntil(release);
   if (mins == null) return autoLoginSkip(`could not read the release time (${release})`);
@@ -806,12 +883,70 @@ async function maybeAutoLogin(ctx, page) {
     return autoLoginSkip(`waiting ${wait}m before spending the second sign-in attempt`);
   }
 
+  /**
+   * THE SIGN-IN RUNS IN A THROWAWAY TAB — the same cure PR #142 gave the renewal, arriving
+   * here because 2026-08-20 measured what this path costs on the resident page.
+   *
+   *     07:29  12%   rc   300 MB  pid 6360    flat
+   *     07:31  64%   rc 2,811 MB  pid 6452    the auto-login's Okta navigation
+   *     07:41  76%   rc 9,434 MB  pid 6452
+   *     07:43  12%   rc   230 MB  pid 7560    the RAM guard killed it
+   *
+   * Twelve minutes and 9.4 GB — four times the worst renewal and six times as long, because
+   * `okta=GONE` forces a full password sign-in, the longest Okta navigation there is and the
+   * one nothing had ever measured. A renderer's memory dies with its page, so the trip gets
+   * its own page: same context, same cookies, same localStorage, so the minted token lands
+   * in the same profile, and the allocation is reclaimed at close instead of by killing the
+   * browser.
+   *
+   * WHY THIS MATTERS MORE HERE THAN FOR THE RENEWAL. A guard kill leaves the profile lock
+   * reading as HELD for `STALE_MS` (10 min), and only a living holder renews it — so nothing
+   * can preempt it cooperatively, because nothing is left to read
+   * `.camphawk-profile-wanted`. A kill at 07:33 clears by 07:43 and is harmless. A kill at
+   * 07:53 holds the lock past 08:00, and the hold runner cannot take the profile for the
+   * cart. That is the whole failure this is here to remove.
+   *
+   * EVERYTHING THAT TOUCHES A PAGE IS BOUND TO THE TAB, and this is where it would silently
+   * go wrong: `sufficient` and the post-login read must see the token the TAB minted, since
+   * `window.__camphawkRcToken` is per-page; `isLive` must ask about the tab, which during a
+   * sign-in sits on `signin.reservecalifornia.com`; and `saveFailureShot` must photograph
+   * the tab, or it captures a resident page on which nothing happened. A version that moved
+   * only `attemptLogin` would look right, run the navigation in the tab, and still read and
+   * photograph the wrong page.
+   *
+   * WHAT IS NOT CLAIMED: that a tab close reclaims a NINE-gigabyte trip. The renewal's
+   * trips are 140-350 MB and drain in place on an unchanged pid; nothing has yet closed a
+   * tab that ramped this far, and the 08-20 event put 1,330 MB in a `utility` process,
+   * which is not the renderer. The memory series is the reading — a spike that drains at
+   * tab close with no `♻ recycling` line is this working — and the RAM arm still contains
+   * the case where it does not.
+   *
+   * A TAB THAT CANNOT OPEN IS A STAND-DOWN, NOT AN ATTEMPT. It is taken BEFORE the budget is
+   * spent, because a browser too sick to open a page never asked RC anything — the same rule
+   * as `provedNothing`, applied before the fact instead of refunded after it.
+   */
+  const tab = await ctx.newPage().catch((e) => {
+    log(`  ✗ could not open a sign-in tab: ${e.message}`);
+    return null;
+  });
+  if (!tab) {
+    return autoLoginSkip('could not open a sign-in tab — the browser may be unwell; nothing was spent');
+  }
+
   lastAutoLoginSkip = null;
   autoLogin.spent += 1;
   autoLogin.lastAt = Date.now();
+  // STAMPED AND WRITTEN BEFORE THE ATTEMPT, not after. Written after, an attempt that never
+  // returns is an attempt the budget never saw — which is the in-memory behaviour this
+  // replaces, and an unbounded one. `startedAt` is what lets the next process tell "killed
+  // mid-navigation" from "tried and was told no"; they need opposite answers and until now
+  // they were the same silence.
+  autoLogin.startedAt = Date.now();
+  saveAutoLogin(autoLogin);
   log(`⏰ hold releases in ${mins}m and the session will not cover it — signing in `
     + `(attempt ${autoLogin.spent} of ${AUTOLOGIN_MAX_ATTEMPTS})`);
-  const r = await attemptLogin(ctx, page, {
+  try {
+  const r = await attemptLogin(ctx, tab, {
     // THE DEADLINE, HANDED TO THE THING THAT SHORT-CIRCUITS ON IT. Without this,
     // `attemptLogin` accepts any live session and reports the hold covered — which is
     // precisely how 2026-08-15 was lost, with this function's own arithmetic saying the
@@ -820,12 +955,20 @@ async function maybeAutoLogin(ctx, page) {
     // `null` when the token cannot be decoded, never `false`: forcing a sign-in drops a
     // token that may have been fine, and an unknown must not trigger a destructive act.
     sufficient: async () => {
-      const cur = (await readLiveToken(page).catch(() => ({ token: null }))).token;
+      // THE TAB, because the token this is asking about is the one the tab just minted and
+      // `window.__camphawkRcToken` is per-page. Against the resident page this reads the
+      // pre-login nothing, decides the session is still short, and drives a second sign-in
+      // over a login that had already worked.
+      const cur = (await readLiveToken(tab).catch(() => ({ token: null }))).token;
       const secs = tokenSecondsLeft(cur);
       return secs == null ? null : secs > needSec;
     },
     homeUrl: RC_HOME,
-    isLive: async () => (await sessionLive(ctx, page)).live === true,
+    // THE TAB AGAIN. `sessionLive` goes through `readTokenAnyOrigin`, which exists because
+    // during a sign-in the page sits on `signin.reservecalifornia.com` — a different origin
+    // from the `www.` one RC writes the token to. Asking about the resident page instead
+    // would answer for whichever origin IT happens to be on, which is not where the login is.
+    isLive: async () => (await sessionLive(ctx, tab)).live === true,
     log,
   });
   if (r.ok) {
@@ -833,8 +976,20 @@ async function maybeAutoLogin(ctx, page) {
     // covered" was printed on 2026-08-15 over a session that died seven minutes before the
     // release — it was a restatement of the intent, not a reading of the result, and it is
     // what made the log look like a success for the next thirty minutes.
-    const after = tokenSecondsLeft((await readLiveToken(page).catch(() => ({ token: null }))).token);
+    // READ THE TAB. It is where the credential was submitted and where the token was minted;
+    // the resident page has not navigated and would report the stale nothing that made us
+    // sign in — turning a successful login into "STILL SHORT" and a `dead` verdict.
+    const after = tokenSecondsLeft((await readLiveToken(tab).catch(() => ({ token: null }))).token);
     const enough = covers(after);
+    // AND TELL THE RESIDENT PAGE. The tab minted into the SHARED profile (localStorage is
+    // per-origin, not per-page), but the resident SPA is still rendered signed-out and
+    // `checkAndReport` reads THAT page. Without this reload every later report would
+    // announce a dead session over a fresh hour of token — a repair that happened and
+    // cannot be seen. Exactly the step the tab renewal needed for the same reason.
+    if (after != null) {
+      await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+      await primeToken(page, { timeoutMs: 15_000 }).catch(() => {});
+    }
     log(after == null
       ? `  ✓ ${r.reason} — but the token could not be decoded, so coverage is UNCONFIRMED`
       : `  ${enough ? '✓' : '✗'} ${r.reason} — token now ${Math.round(after / 60)}m, `
@@ -909,16 +1064,32 @@ async function maybeAutoLogin(ctx, page) {
     log('    RC\'s app not loading is not a verdict on the session — nothing is reported, and');
     log('    the attempt is not counted. If this repeats, suspect the Chromium profile');
     log('    (2026-08-14): rename .rc-bot-profile and let start-all.bat rebuild it.');
-    await saveFailureShot(page, 'autologin-noload');
+    await saveFailureShot(tab, 'autologin-noload');
   } else {
     log(`  ✗ could not sign in: ${r.reason}`);
     log(`    ${autoLogin.spent} of ${AUTOLOGIN_MAX_ATTEMPTS} attempts used. `
       + 'Repeated logins are what got this address blocked before.');
     // The real 07:45 failure is the one nobody is watching, so it gets the picture too.
-    await saveFailureShot(page, 'autologin');
+    await saveFailureShot(tab, 'autologin');
     await reportSession('dead', `auto sign-in failed: ${r.reason}`);
   }
   return true;
+  } finally {
+    // THE RECLAIM, and it is the whole mechanism. A renderer's memory dies with its page, so
+    // this close is what hands back whatever the Okta navigation allocated. In a `finally` so
+    // a thrown login, a failed screenshot or a failed report can never leave the tab — and on
+    // a bad trip its gigabytes — parked for the resident page's lifetime.
+    //
+    // AFTER the reporting above, not before: `saveFailureShot` photographs this tab, and
+    // closing it first would leave the one picture of a failed 07:45 sign-in blank.
+    await tab.close().catch(() => {});
+    // THE ATTEMPT REACHED A VERDICT — clear the in-flight mark so the next process does not
+    // read it as a kill and refund an attempt that was genuinely spent. In the `finally`
+    // because every branch above, including the refunding ones, is a verdict: the thing this
+    // distinguishes is the process DYING, and a branch that returned did not die.
+    autoLogin.startedAt = 0;
+    saveAutoLogin(autoLogin);
+  }
 }
 
 /**
@@ -1951,10 +2122,18 @@ async function warmResident() {
           // Before anything else: is a hold about to need a session we do not have?
           mark('auto-login');
           if (await maybeAutoLogin(ctx, page).catch((e) => { log(`auto-login error: ${e.message}`); return false; })) {
-            // A TRUE RETURN MEANS AN ATTEMPT WAS MADE, and every branch of an attempt has
-            // already been through Okta — including `provedNothing`, where RC answered from
-            // the cookie and showed no form. No form is not no navigation.
-            oktaTrip = 'an unattended sign-in';
+            // NO `oktaTrip` HERE ANY MORE. A true return still means an attempt was made and
+            // every branch of one has been through Okta — but the trip now happens in a
+            // throwaway tab that `maybeAutoLogin` closes in a `finally`, and that close is
+            // what reclaims the renderer. Recycling the whole browser on top would spend a
+            // restart to free memory that is already freed, and restarts are not free: one
+            // turned the login rehearsal red on 08-18, and every one churns the profile lock
+            // — at T−28 of a release, which is the worst possible moment for it.
+            //
+            // The REHEARSAL still navigates the resident page and still sets `oktaTrip`;
+            // reinstating it here would quietly put a browser restart back into the critical
+            // window while looking like caution. Same reasoning, and the same warning, as the
+            // renewal's tab.
             continue;
           }
           // AFTER the auto-login, never before. If a hold is close enough that the bot is

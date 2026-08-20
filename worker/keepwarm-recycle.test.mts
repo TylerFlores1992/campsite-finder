@@ -332,7 +332,17 @@ test('the renewal runs in a THROWAWAY TAB, closed whatever happens', () => {
     'the renewal must open its own page');
   assert.match(code, /withNetworkTrace\(tab, \(\) => renewSession\(tab, RC_HOME/,
     'and the trip must run on it — a `page` here is the resident renderer ballooning again');
-  const tabAt = code.indexOf('const tab = await ctx.newPage()');
+  //
+  // ANCHORED ON THE RENEWAL'S OWN TAB. This was a bare `indexOf('const tab = await
+  // ctx.newPage()')` and broke the day `maybeAutoLogin` got a tab of its own — that one is
+  // EARLIER in the file, so the search landed on it, `if (!tab)` found the auto-login's
+  // stand-down instead of `recordRenewal`, and the guard reported a regression over
+  // completely correct code. The same anchored-on-a-token-that-occurs-twice failure this
+  // file already records twice. Search BACKWARDS from the renewal call, which is unique.
+  const renewCallAt = code.indexOf('withNetworkTrace(tab, () => renewSession(tab');
+  assert.ok(renewCallAt > -1, 'could not find the renewal call to anchor on');
+  const tabAt = code.lastIndexOf('const tab = await ctx.newPage()', renewCallAt);
+  assert.ok(tabAt > -1, 'the renewal must open its tab BEFORE the trip it wraps');
   const finallyAt = code.indexOf('} finally {', tabAt);
   assert.ok(finallyAt > tabAt, 'the tab block must carry a finally');
   assert.match(code.slice(finallyAt, finallyAt + 300), /await tab\.close\(\)\.catch\(/,
@@ -355,26 +365,42 @@ test('after a tab renewal the RESIDENT page is refreshed, or every report lies',
   assert.match(block, /await primeToken\(page/, 'and primed, so the very next report sees it');
 });
 
-test('every path that goes through Okta sets the flag', () => {
-  // The auto-login and the rehearsal both `continue`, so a check beside each call site
-  // would be three chances to forget one. All three set one variable instead.
-  // ANCHOR ON THE CALL, NOT THE NAME. The first version searched for
-  // `maybeAutoLogin(ctx, page)` and landed on the function DEFINITION four hundred lines
-  // above the call site, so it failed while the code was correct. Thirteenth time a guard
-  // here has anchored on the wrong thing; the awaited call is the thing being asserted about.
-  for (const [what, near] of [
-    ['an unattended sign-in', 'await maybeAutoLogin(ctx, page).catch('],
-    ['the login rehearsal', 'await maybeRehearse(ctx, page).catch('],
-  ] as const) {
-    const at = code.indexOf(near);
-    assert.ok(at > -1, `could not find the awaited call ${near}`);
-    const block = code.slice(at, at + 400);
-    assert.ok(block.includes(`oktaTrip = '${what}'`),
-      `${near} must set oktaTrip — a true return means an attempt was made, and every ` +
-      'branch of an attempt has been through Okta, provedNothing included');
-    assert.ok(block.indexOf(`oktaTrip = '${what}'`) < block.indexOf('continue;'),
-      'the flag must be set BEFORE the continue, or the recycle never happens');
-  }
+test('the path that still navigates the RESIDENT page sets the flag', () => {
+  /**
+   * THIS GUARD USED TO COVER BOTH THE AUTO-LOGIN AND THE REHEARSAL, AND WAS INVERTED FOR THE
+   * AUTO-LOGIN ON 2026-08-20 — deliberately, not relaxed.
+   *
+   * That assertion was right for as long as `maybeAutoLogin` navigated the resident page.
+   * It now runs its Okta trip in a throwaway tab closed in a `finally`, exactly as the
+   * renewal does, so the recycle there would restart the whole browser to free memory the
+   * tab close already freed — at T−28 of a release, where a restart churns the profile lock
+   * and a guard kill can hold it past 08:00. What drove it: on 2026-08-20 07:30 that login
+   * cost 9,434 MB over twelve minutes on the resident page and the RAM guard killed it.
+   *
+   * THE REHEARSAL STILL NAVIGATES THE RESIDENT PAGE, so its setter stays and is pinned here.
+   * Dropping it would leave a genuinely unreclaimed trip in the resident browser with nothing
+   * to clean it up.
+   *
+   * The auto-login's tab, and every page-taking call bound to it, are owned by
+   * worker/autologin-tab.test.mts. The one assertion kept here is that the flag does not come
+   * back, because that is a change to THIS file's mechanism.
+   */
+  const at = code.indexOf('await maybeRehearse(ctx, page).catch(');
+  assert.ok(at > -1, 'could not find the awaited rehearsal call');
+  const block = code.slice(at, at + 400);
+  assert.ok(block.includes("oktaTrip = 'the login rehearsal'"),
+    'the rehearsal must set oktaTrip — it still navigates the resident page');
+  assert.ok(block.indexOf("oktaTrip = 'the login rehearsal'") < block.indexOf('continue;'),
+    'the flag must be set BEFORE the continue, or the recycle never happens');
+
+  // And the auto-login must NOT bring it back. Bounded by the next call rather than a
+  // character count: with comments stripped the rehearsal's own setter sits a few hundred
+  // characters away, so a fixed window cannot tell the two arms apart.
+  const loginAt = code.indexOf('await maybeAutoLogin(ctx, page).catch(');
+  assert.ok(loginAt > -1 && loginAt < at, 'the auto-login call must be found, ahead of it');
+  assert.ok(!/oktaTrip\s*=/.test(code.slice(loginAt, at)),
+    'the auto-login runs in a tab now; reinstating the recycle here buys nothing and puts a ' +
+    'browser restart back into the critical window while looking like caution');
 });
 
 test('the recycle is read at the top of the loop, where both continues reach it', () => {
