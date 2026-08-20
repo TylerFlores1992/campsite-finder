@@ -96,7 +96,13 @@ test('the loader reads values, and an exported variable still wins', () => {
   delete process.env.CH_TEST_OVERRIDDEN;
 });
 
-test('a missing .env is not an error — it is the normal case off the mini-PC', () => {
+test('nothing to read is not an error — it is the normal case off the mini-PC', () => {
+  // RENAMED 2026-08-20, because the old name over-claimed once `loadEnv` gained a fallback
+  // to `scripts/auto-cart-bot/.env`. A temp directory with no `.env` no longer means nothing
+  // was read: on a box that has the canonical file, this call now loads it. The property
+  // being asserted was always "does not throw", and that is unchanged and still worth
+  // pinning — but a test whose NAME describes a condition it no longer establishes is how a
+  // reader ends up believing a case is covered when it is not.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ch-env-'));
   assert.doesNotThrow(() => loadEnv(pathToFileURL(path.join(dir, 'anything.mjs')).href));
 });
