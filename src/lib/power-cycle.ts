@@ -195,24 +195,32 @@ export async function powerCycleRefusal(silentMs: number | null): Promise<string
  * anything else** — and do not "tidy" this by adding .toUpperCase() on the strength of the
  * prose alone.
  */
-async function switchbot(turn: 'on' | 'off'): Promise<{ ok: boolean; detail: string }> {
+/**
+ * The v1.1 auth headers, and there is exactly ONE of these on purpose.
+ *
+ * `plugStatus` exists to prove these credentials work BEFORE the night we need the cut. That
+ * proof is only worth having if the status read signs identically to the command — give the
+ * two their own copies and a green status check stops saying anything about whether the cut
+ * can authenticate, which is the one question it was added to answer. The test pins both
+ * callers onto this function for that reason.
+ */
+async function switchbotAuth(): Promise<Record<string, string>> {
   const { createHmac, randomUUID } = await import('node:crypto');
   const token = String(process.env.SWITCHBOT_TOKEN);
   const secret = String(process.env.SWITCHBOT_SECRET);
   const t = Date.now();
   const nonce = randomUUID();
   const sign = createHmac('sha256', secret).update(token + t + nonce).digest('base64');
+  return { Authorization: token, sign, nonce, t: String(t), 'Content-Type': 'application/json' };
+}
+
+async function switchbot(turn: 'on' | 'off'): Promise<{ ok: boolean; detail: string }> {
+  const headers = await switchbotAuth();
   const id = encodeURIComponent(String(process.env.SWITCHBOT_DEVICE_ID));
   try {
     const r = await fetch(`https://api.switch-bot.com/v1.1/devices/${id}/commands`, {
       method: 'POST',
-      headers: {
-        Authorization: token,
-        sign,
-        nonce,
-        t: String(t),
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({ command: turn === 'on' ? 'turnOn' : 'turnOff', parameter: 'default', commandType: 'command' }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -257,6 +265,87 @@ async function shelly(turn: 'on' | 'off'): Promise<{ ok: boolean; detail: string
     // responses, and a cut we merely THINK we made is the worst outcome — the rate limit
     // spends its budget and the box is still dark.
     return { ok: false, detail: `${turn}: request failed — ${(e as Error).message}` };
+  }
+}
+
+export interface PlugStatus {
+  ok: boolean;
+  detail: string;
+  /** SwitchBot's own reading: 'on' | 'off', or null when we could not tell. */
+  power?: string | null;
+}
+
+/**
+ * Ask the plug how it is, WITHOUT touching it.
+ *
+ * ## Why this is not redundant with `powerPlugConfigured()`
+ *
+ * That function checks three environment variables are non-empty. It makes no network call,
+ * so it answers "are the credentials present", never "do the credentials WORK". Those came
+ * apart on 2026-08-19: the plug was configured, the admin route reported `configured: true`,
+ * and the credentials had never once been exercised from production — the device id had been
+ * obtained on a laptop, and whether the strings pasted into Vercel were byte-identical was
+ * unknown. Presence is not liveness, the same way `notifications.status = 'sent'` only ever
+ * meant "Twilio returned 2xx".
+ *
+ * Without this, the FIRST time the production credentials are tested is the night the box is
+ * dark and somebody is deciding whether to drive to it. That is the worst available moment to
+ * discover a trailing space — and a trailing space is the specific failure, because nothing
+ * here trims and this repo has already lost a day to a leading space on a Twilio credential
+ * producing an error that read as "wrong username".
+ *
+ * ## It cannot switch anything, and that is the point
+ *
+ * GET, to `/status`, with no command body. `powerCycle` splits GET-preview from POST-act
+ * because a GET can be fired by a link preview with nobody involved; that reasoning is what
+ * makes a read-only status call safe to expose as a GET rather than an argument against it.
+ */
+export async function plugStatus(): Promise<PlugStatus> {
+  const vendor = plugVendor();
+  if (vendor === 'ambiguous') {
+    return { ok: false, detail: 'BOTH a Shelly and a SwitchBot are configured, so we cannot tell which plug to ask. Clear one set.' };
+  }
+  if (!vendor) {
+    return { ok: false, detail: 'no smart plug configured — nothing to ask.' };
+  }
+  // SHELLY IS REFUSED RATHER THAN GUESSED. This file has already shipped a DEPRECATED Shelly
+  // endpoint written from memory, and the owner caught it. Their status API is a different
+  // shape from the switch call and is not verified here, so an unverified request would turn
+  // "the plug is fine" into a sentence nobody may rely on. An honest refusal beats a reading
+  // whose provenance is a guess.
+  if (vendor === 'shelly') {
+    return {
+      ok: false,
+      detail: 'the status read is implemented for SwitchBot only. Shelly\'s status endpoint has '
+        + 'deliberately not been written from memory — see the note above `shelly()`. The cut '
+        + 'itself still works; only this pre-flight is unavailable.',
+    };
+  }
+
+  const headers = await switchbotAuth();
+  const id = encodeURIComponent(String(process.env.SWITCHBOT_DEVICE_ID));
+  try {
+    const r = await fetch(`https://api.switch-bot.com/v1.1/devices/${id}/status`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(15_000),
+    });
+    // SAME TRAP AS THE COMMAND PATH: SwitchBot answers HTTP 200 carrying its own statusCode,
+    // so the transport says nothing. 100 is success; 171 is "device offline", which is a real
+    // answer and must not read as a broken credential.
+    const text = (await r.text().catch(() => '')).slice(0, 300);
+    let inner: number | null = null;
+    let power: string | null = null;
+    try {
+      const j = JSON.parse(text);
+      inner = j?.statusCode ?? null;
+      power = typeof j?.body?.power === 'string' ? j.body.power : null;
+    } catch { /* keep the raw text */ }
+    return { ok: r.ok && inner === 100, detail: `status: HTTP ${r.status} ${text}`, power };
+  } catch (e) {
+    // NAMED, never swallowed. "The plug said no" and "the plug did not answer" send a person
+    // to two different places, and this endpoint exists to be read by somebody deciding.
+    return { ok: false, detail: `status: request failed — ${(e as Error).message}` };
   }
 }
 

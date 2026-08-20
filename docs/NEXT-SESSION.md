@@ -1,115 +1,158 @@
-# Next session — the leak has its first CURE, and it has never run
+# Next session — the tab cure is PROVEN, and `attemptLogin` is the half still leaking
 
-*Rewritten 2026-08-19 (evening PT). A handover, not a permanent doc. **Delete it once the tab
-renewal has been observed on the box and the two open questions below are answered.***
-
-**Do not start anything until the owner says so.** Everything here is merged, verified and
-waiting; the useful first move is reading state, not writing code.
+*Rewritten 2026-08-19 (late evening PT). A handover, not a permanent doc. **Delete it once
+tasks 1–3 below are done and the two open questions are answered.***
 
 ---
 
 ## Read this first
 
-**Master is `ab9bcfb`. Six PRs merged on 2026-08-19 (#138–#143).** The box may or may not have
-them — check, do not assume:
+**Master is `b9a1dba` plus whatever landed from `claude/camphawk-sms-test-update-s3cash`.**
+The box was on `b9a1dba` at ~20:00 PT. Check, do not assume:
 
 ```
 NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status
 ```
 
-`autocart.bot_version` on the admin page is a HINT and can show a **stale sha beside a live
-heartbeat** (COALESCE keeps the last reported value). `git-status` is the authority.
-
-### The one thing that matters most
-
-**The leak's first cure is built, guarded, and has NEVER EXECUTED.** `renewSession`'s Okta
-round trip now runs in a **throwaway tab closed in a `finally`** — same context and cookies, so
-the minted token lands in the same profile, but the renderer that allocates dies at close
-instead of the whole browser being recycled.
-
-It rests on three measurements, all in CLAUDE.md: the ramp is **non-JS** (heap flat at 15–18 MB
-against multi-GB processes), it lands in the **renderer + browser process**, and across twenty
-ramps it has **never once come back down in place** — every recovery was a new pid.
-
-**How to read the memory series once it runs** (`scripts/chromium-memory-readout.mts`):
-
-| what you see | meaning |
-|---|---|
-| spikes that drain at tab close, no `♻ recycling` line | **working as designed** |
-| rc-family growth ACROSS renewals | the browser-process share does not drain — that residual is the next target |
-| no spikes at all | better than expected; do not credit it without checking a renewal actually ran |
-
-**It does NOT claim the allocation stops.** A ramping trip still ramps while it runs and the RAM
-arm still guards it. The claim is only that the memory comes back, every time, without costing
-the browser.
+`autocart.bot_version` is a HINT and can show a stale sha beside a live heartbeat (COALESCE
+keeps the last reported value). `git-status` is the authority.
 
 ---
 
-## Two open questions, both one reading away
+## The leak: the cure works, and we now know exactly what is left
 
-**1. Where does the three-day-old token come from?** Eliminated so far: `localStorage`,
-`sessionStorage`, **IndexedDB** (no databases at all). The next failed renewal prints either
-`TOKEN-SHAPED COOKIE(S) — the corpse may live here` or `NONE token-shaped … coming from the
-server`. Either line closes it. A cookie is fixable (`dropStoredToken` learns to reach it); the
-server is a different investigation no clear can fix.
+**The throwaway tab (#142) executed for the first time on 2026-08-20 and it works.** Three
+Okta round trips through it, all `✓ renewed by authorize`:
 
-**2. Does `prompt=login` force Okta's form?** Still unproven. The rehearsal keeps landing on
-`provedNothing` because our own liveness probe keeps the Okta cookie permanently fresh (measured
-12 for 12). Look for one of these in `tail-log rc-keepwarm`:
+| when (UTC) | path | cost |
+|---|---|---|
+| 02:10 | tab | rc **206 → 346 → 288 MB**, pid 17688 **unchanged** |
+| 02:34 | **resident page** (`attemptLogin`) | rc **281 → 5,097 MB**, free RAM 4,928 → 1,741, **guard killed it** |
+| 02:37 | tab | free RAM **−8 MB** |
 
-- `(asked Okta for a fresh credential — rewrote N authorize request(s))` → it fired
-- `(the authorize request was never intercepted …)` → **our** bug, not Okta's
+That middle row is not a regression — #142 deliberately left `attemptLogin` on the resident
+page. It is a **paired A/B on the same box within 25 minutes**: the same allocation,
+contained through a tab and uncontained through the resident page. It settles the mechanism
+(it is the Okta navigation) and it settles the remedy (*where* you run it decides the cost).
 
-A `provedNothing` WITH rewrites > 0 retires the approach in favour of the destructive cookie
-drop. That distinction is the whole reason the count is printed.
+**The 02:10 row is the strongest single reading.** Memory drained **in place, on an unchanged
+pid** — CLAUDE.md records that across twenty ramps this had *never once* been observed; every
+prior recovery was a new pid.
 
-**You can now trigger this remotely** — Admin → System Health → **"Prove the unattended RC
-sign-in works, now"**, or `bot-ask.mts test-login`. It runs the same body as the nightly.
-One per 6h, never within 6h of a release, and it refuses out loud.
+**A new fact for CLAUDE.md: `utility` went 24 → 1,330 MB** in the 02:34 ramp. Every previously
+recorded ramp had utility flat, so the documented "renderer + browser process" attribution is
+**incomplete**.
+
+**And the failure is now self-healing.** After the guard kill at 02:36:32, the box was back to
+a full hour of token at 02:37:45 — **73 seconds, unattended**, via the tab renewal. That is
+why task 1 was *not* shipped the night before a release.
+
+---
+
+## A NAMED 08:00 RISK — the reason tasks 1 and 2 exist
+
+`profile-lock.mjs` has `STALE_MS = 10 min`, and **only a living holder renews the lock**. So a
+guard-killed keep-warm leaves a lock reading as HELD for up to ten minutes, and cooperative
+preemption cannot help — no process is left to read `.camphawk-profile-wanted`. That is the
+~6 minutes of `profile busy (rc-keepwarm)` observed twice on 08-20 (02:20, 03:18).
+
+Chained with the two defects below:
+
+```
+07:30  maybeAutoLogin fires (likely — needs ~50m of token; it cycles 0→60)
+07:33  ~3 GB ramp on the resident page → RAM guard kills the keep-warm
+07:33  the ration is IN-MEMORY (rc-keepwarm.mjs:723) so the restart REFUNDS it
+07:41  attempt 2 (AUTOLOGIN_RETRY_GAP_MS = 8 min) → ramp → kill ~07:53
+07:53  the dead keep-warm's lock reads as held until ~08:03
+08:00  the hold runner cannot take the profile
+```
+
+**A kill at ~07:33 clears by ~07:43 and is harmless. A kill after ~07:50 is not.**
+
+---
+
+## The three tasks, in order
+
+1. **Move `attemptLogin`'s Okta trip into a throwaway tab**, exactly as #142 did for
+   `renewSession`. `page.route` (via `withForcedLoginPrompt`), `diagnose()` and
+   `saveFailureShot` must **all** rebind to the tab — a guard anchored on the resident `page`
+   would pass while the tab leaked. Mutation-test each. This is the release-critical path, so
+   land it with a morning free to observe it.
+2. **Persist the auto-login ration to a file**, matching `rehearsal.mjs`. It is in-memory at
+   `rc-keepwarm.mjs:723` (`let autoLogin = { release: null, spent: 0, lastAt: 0 }`), so
+   `supervise.ps1` restarting the process refunds it — the crash-loop-spends-the-login-budget
+   shape that cost the household IP 12 hours on 08-06, and newly reachable now that the login
+   path reliably trips the guard.
+3. **Update CLAUDE.md** with everything on this page, plus the two answered items below.
+
+---
+
+## Answered since the last handover
+
+- **Unit ids 4728–4733, recorded on 08-17 as INVENTED, are REAL San Miguel campsites.**
+  `rc-test-hold.mts --find` lists 4728 = `#M401`, 4729 = `#M402`, 4730 = `#M403`,
+  4732 = `#M405`. CLAUDE.md says *"Whether it is a real San Miguel unit was never
+  established."* It is now — and that near-miss was worse than recorded. (Unit **4734**, the
+  08-20 test hold, is real and in the same block.)
+- **The SwitchBot Plug Mini is set up and PROVEN END TO END.** Power cut → box booted unaided
+  → auto-logon → bots started → RC session came back **live**. ~5 minutes dark, ~6½ minutes to
+  a warm session, zero human involvement; the memory series recorded the outage as a
+  5-minute gap, written server-side by nothing on the box. **This retires the structural gap
+  open since 08-17** — *"no software installed on a machine can fix 'the machine is running
+  nothing'"*.
+  - **The session survived only because the last token was minted by OUR renewal**, which goes
+    through the code exchange into `localStorage`. A token the SPA silently re-mints lives in
+    page memory and would have been lost. Record it that way, **not** as "power cycles are
+    session-safe".
+  - `plugStatus()` + `GET /api/admin/power-cycle/status` were added because
+    `powerPlugConfigured()` is only a presence check on three env vars, and the production
+    credentials had never been exercised. It shares ONE signing helper with the cut, which is
+    the only reason a green status says anything about whether the cut can authenticate.
+  - **Auto-logon is load-bearing and easy to lose.** Both scheduled tasks are `Logon Mode:
+    Interactive only`, so without it a power cycle boots to a lock screen and nothing starts.
+
+---
+
+## Two open questions, both still one reading away
+
+**1. Where does the three-day-old token come from?** Eliminated: `localStorage`,
+`sessionStorage`, IndexedDB. **The corpse has not recurred** since the 08-19 hand sign-in — the
+08-20 failures were `none → none`, and the census gate is `!renewed && after != null && after
+< 0`, so a token-less failure does not fire it. Still waiting on a recurrence to print either
+`TOKEN-SHAPED COOKIE(S)` or `NONE token-shaped … coming from the server`.
+
+**2. Does `prompt=login` force Okta's form?** Still unproven. The on-demand rehearsal that
+would have answered it on 08-20 **was the browser the RAM guard killed** — it never reached a
+verdict and printed no rewrite count. `rc_login_rehearsal` still reads `"rehearsal started"`.
+The 6h on-demand ration was spent at ~02:33 UTC on 08-20.
+
+Trigger it with Admin → **"Prove the unattended RC sign-in works, now"**, or
+`bot-ask.mts test-login`. One per 6h, never within 6h of a release. **Expect it to ramp ~3 GB
+and possibly be killed again until task 1 lands** — that is now the known behaviour, not a
+surprise.
 
 ---
 
 ## What is NOT broken, so nobody re-investigates it
 
-- **The renewal works.** `✓ renewed by authorize: none → 3580s`, twice on 08-19, unattended,
-  under a minute, from a token-less profile. What made it *look* broken was the stale token
-  poisoning the path; a real sign-in clears it.
-- **The login works.** A hand sign-in took **17 seconds** with no CAPTCHA — Okta still remembers
-  the device via `DT`. The 08-18 "hung at password" reading is not a standing fault.
-- **A blank RC app** (*"We're having trouble loading the application"*) is transient more often
-  than not, and `maybeAutoLogin` no longer treats it as a failed login. Only if it PERSISTS is
-  it the 08-14 profile fault — remedy is the rename, at the cost of `DT`, so it is a last resort.
-- **`autocart.rc_runner` saying "1 hold(s) due"** during a merge is a `npm test` fixture. It can
-  no longer make the runner take the profile (#138), but `dueHolds` still returns them by design.
+- **The renewal works**, and it is cheap now: `✓ renewed by authorize: none → 3580s`, three
+  times on 08-20, unattended, under a minute, for −367 MB / −8 MB / +82 MB net.
+- **The login works.** A hand sign-in took 17 seconds with no CAPTCHA — Okta still remembers
+  the device via `DT`.
+- **`autocart.rc_runner` saying "1 hold(s) due"** during a merge is an `npm test` fixture.
+- **A health reading taken 0 seconds after a restart is not evidence.**
 
 ---
 
 ## Standing traps worth re-reading before touching anything
 
-- **A health reading taken 0 seconds after a restart is not evidence.** `rc_session` read `fail`
-  twice on 08-19 purely because the keep-warm had not primed the token yet.
 - **`npm test` hits the production DB.** `rc-hold-capacity` and `claim` flake against
-  *production's own* `expire-holds` sweep — **not** only against a second test run. A re-run is
-  legitimate when the diff cannot touch `worker/`, the suite passes alone, and you say so.
-- **Never invent an RC unit id.** `scripts/rc-test-hold.mts --find` is the only way.
-- **`.ps1` files must be pure ASCII** — one em dash took all four supervised processes down.
-- **Guards anchored on proximity windows or whole expressions break over unchanged behaviour.**
-  That happened three more times on 08-19 (rehearsal's `!facts.reachable`, the recycle's return
-  literal, the trace's `page`). Re-anchor on the property; never relax.
-
----
-
-## Immediate operational state (verify, do not trust — this ages fast)
-
-- **Test hold `4734` releases 08:00 PT 2026-08-20.** Open the claim link **in the app**, not a
-  browser, or the injected precart never runs.
-- Hold `43823` is `offered` and untapped for the same morning. An untapped offer never carts
-  **and** does not arm `maybeAutoLogin` (`nextHoldRelease` counts `requested`, not `offered`).
-- **iOS 1.0 (5) is back in review** — the 3.1.1 rejection was answered with the US-storefront
-  link-out, live and verified in the deployed bundle. `LINKOUT_BY_STORE` is `{ios: true,
-  android: false}`; **Android stays false until Play production is US-only.**
-
-```
-NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
-curl -s https://camphawk.app/api/health/status | python3 -m json.tool
-```
+  *production's own* `expire-holds` sweep, not only against a second test run.
+- **Never invent an RC unit id** — `scripts/rc-test-hold.mts --find` is the only way. And see
+  above: the last set that was invented turned out to be real sites.
+- **`.ps1` files must be pure ASCII.**
+- **Guards anchored on a token that occurs twice break silently.** It happened again writing
+  this session's tests: `code.indexOf('export async function powerCycle')` matches
+  **`powerCycleRefusal`**, four hundred lines earlier, so the slice ran backwards and every
+  assertion passed against an empty string. Only an explicit `to > from` bounds assertion
+  caught it. Anchor on something unique, and assert the anchor was found.
