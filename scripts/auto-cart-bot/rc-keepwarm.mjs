@@ -81,7 +81,7 @@ import {
   evaluateWithin,
 } from './rc-token.mjs';
 import { hasCredentials, attemptLogin, clickSignInControl } from './rc-autologin.mjs';
-import { shouldRehearse, rehearsalSlot } from './rehearsal.mjs';
+import { shouldRehearse, shouldRehearseOnDemand, rehearsalSlot } from './rehearsal.mjs';
 import { requiredTokenSeconds } from './session-coverage.mjs';
 import { planRenewal, recordRenewal, newRenewalState, makeSkipLogger } from './renewal-schedule.mjs';
 // The same two clock helpers the update guard decides with. Both are pure and both already
@@ -953,7 +953,43 @@ function minutesSinceAbnormalExit() {
   }
 }
 
+/** The remote `test-login` command's signal, written by bot-commands.mjs in a SIBLING
+ *  process. The rehearsal must run HERE — this process owns the Chromium profile — which is
+ *  why the command is a file and not a function call, the same cooperative mechanism as
+ *  `.camphawk-profile-wanted`. */
+const REHEARSE_ASK = path.join(HERE, '.camphawk-rehearse-asked');
+/** When the last ON-DEMAND rehearsal ran. A FILE, not memory: supervise.ps1 restarts this
+ *  process on every exit, and an in-memory ration is re-issued by every restart — the
+ *  crash-loop-spends-the-login-budget shape that cost the IP twelve hours on 2026-08-06. */
+const REHEARSE_ON_DEMAND_STAMP = path.join(HERE, 'logs', '.rehearse-on-demand-at');
+
+/** Consume the ask. DELETED BEFORE RUNNING, so a crash mid-rehearsal cannot loop the login. */
+function takeRehearseAsk() {
+  try {
+    if (!fs.existsSync(REHEARSE_ASK)) return false;
+    fs.unlinkSync(REHEARSE_ASK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hoursSinceOnDemandRehearsal() {
+  try {
+    const at = Number(fs.readFileSync(REHEARSE_ON_DEMAND_STAMP, 'utf8'));
+    if (!Number.isFinite(at) || at <= 0) return null;
+    return (Date.now() - at) / 3_600_000;
+  } catch {
+    return null;
+  }
+}
+
 async function maybeRehearse(ctx, page) {
+  // THE ON-DEMAND ASK, checked first and CONSUMED whatever happens next — a refused ask
+  // must not sit on disk re-asking every tick. It lifts the schedule gates (the hour, the
+  // once-per-20h) and keeps the safety gates; see shouldRehearseOnDemand for which is
+  // which and why.
+  const asked = takeRehearseAsk();
   const hour = pacificHour();
   // A PACIFIC DATE, NOT AN HOUR NUMBER. This used to hold `hour` and was never reset, so it
   // latched at 20 for the life of the process and every night after the first recorded its
@@ -963,21 +999,39 @@ async function maybeRehearse(ctx, page) {
   // UNREACHABLE FEED MEANS NO REHEARSAL. We would not know whether a hold is due, and the
   // rehearsal deliberately ENDS the current session on its way — the same reasoning as the
   // update guard refusing to update blind, and for the same stakes.
-  if (!facts.reachable) return false;
+  if (!facts.reachable) {
+    if (asked) log('on-demand rehearsal refused: the feed is unreachable, so a due hold cannot be ruled out');
+    return false;
+  }
 
-  const decision = shouldRehearse({
-    pacificHour: hour,
-    hoursToRelease: hoursUntilRelease(facts.nextRelease),
-    sessionLive: (await sessionLive(ctx, page)).live,
-    hoursSinceLastRun: facts.lastRehearsalAt
-      ? (Date.now() - Date.parse(facts.lastRehearsalAt)) / 3_600_000
-      : null,
-    hasCredentials: hasCredentials(),
-    // Or the rehearsal tests our own restart. See REHEARSAL_QUIET_AFTER_RESTART_MIN.
-    minutesSinceAbnormalExit: minutesSinceAbnormalExit(),
-  });
+  const decision = asked
+    ? shouldRehearseOnDemand({
+        hoursToRelease: hoursUntilRelease(facts.nextRelease),
+        hoursSinceLastOnDemand: hoursSinceOnDemandRehearsal(),
+        hasCredentials: hasCredentials(),
+        minutesSinceAbnormalExit: minutesSinceAbnormalExit(),
+      })
+    : shouldRehearse({
+        pacificHour: hour,
+        hoursToRelease: hoursUntilRelease(facts.nextRelease),
+        sessionLive: (await sessionLive(ctx, page)).live,
+        hoursSinceLastRun: facts.lastRehearsalAt
+          ? (Date.now() - Date.parse(facts.lastRehearsalAt)) / 3_600_000
+          : null,
+        hasCredentials: hasCredentials(),
+        // Or the rehearsal tests our own restart. See REHEARSAL_QUIET_AFTER_RESTART_MIN.
+        minutesSinceAbnormalExit: minutesSinceAbnormalExit(),
+      });
 
   if (!decision.run) {
+    // AN ON-DEMAND REFUSAL IS ALWAYS LOUD — somebody is watching the admin page for it,
+    // and a silent refusal is indistinguishable from the signal never arriving, which is
+    // the exact ambiguity the rehearsal's own bookkeeping bug taught (rehearsalSlot).
+    if (asked) {
+      log(`on-demand rehearsal refused: ${decision.why}`);
+      await reportRehearsal(null, null, `on-demand refused: ${decision.why}`);
+      return false;
+    }
     // Only the ones that happen AT the rehearsal hour are worth recording — "not the
     // rehearsal hour" is true for twenty-three hours a day and would overwrite last
     // night's real result with noise every minute.
@@ -989,6 +1043,17 @@ async function maybeRehearse(ctx, page) {
     return false;
   }
 
+  // STAMP THE RATION BEFORE ATTEMPTING, same rule as `recordedSlot` below and for the same
+  // reason: recording after would leave the ration unspent if the attempt never returns,
+  // and a supervisor restart would then run another login. The file survives the restart;
+  // that is the point of it being a file.
+  if (asked) {
+    try {
+      fs.mkdirSync(path.dirname(REHEARSE_ON_DEMAND_STAMP), { recursive: true });
+      fs.writeFileSync(REHEARSE_ON_DEMAND_STAMP, String(Date.now()));
+    } catch { /* the handler's own check is the backstop */ }
+  }
+
   // STAMP `ran_at` BEFORE ATTEMPTING, and this is not defensive noise. The once-a-day gate
   // is the only thing standing between a crash-loop and a login every time the supervisor
   // restarts this process — and a login attempt is exactly what opens Chromium and posts
@@ -997,12 +1062,14 @@ async function maybeRehearse(ctx, page) {
   // therefore reads as ran-but-unknown, which is `stale`: honest, and not a pass.
   recordedSlot = slot;
   await reportRehearsal(null, 'rehearsal started', null);
-  log('── nightly login rehearsal: proving the bot can still sign itself in ──');
+  log(asked
+    ? '── ON-DEMAND login rehearsal (asked from the admin page): proving the sign-in works ──'
+    : '── nightly login rehearsal: proving the bot can still sign itself in ──');
   const { result, detail } = await runLoginRehearsal(ctx, page, {
     // Nobody is watching at 20:00 either. A CAPTCHA here is a real finding, reported and
     // acted on this evening, not something to sit in front of for five minutes.
     humanPresent: false,
-    tag: 'rehearsal',
+    tag: asked ? 'on-demand' : 'rehearsal',
   });
 
   if (result === 'inconclusive') {

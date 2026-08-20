@@ -252,8 +252,21 @@ test('an unreachable feed cancels the rehearsal', () => {
   // Unknown is not safe. Without the feed we do not know whether a hold is due, and the
   // rehearsal ends the session on its way through — the same rule as the update guard
   // refusing to update blind, with the same thing at stake.
+  //
+  // ANCHORED ON THE BLOCK, NOT A PROXIMITY WINDOW. This was
+  // `/!facts\.reachable[\s\S]{0,40}return false/`, and adding one log line inside the branch
+  // — so an on-demand ask hears WHY it was refused instead of vanishing — pushed the gap
+  // past forty characters and failed over behaviour that had not changed at all. That is the
+  // same trap the `provedNothing` guard in this very file was re-anchored for; a window is a
+  // guess about formatting, and the rule is about the branch.
   const fn = keepwarm.match(/async function maybeRehearse\([\s\S]*?\n}/)?.[0] ?? '';
-  assert.match(code(fn), /!facts\.reachable[\s\S]{0,40}return false/);
+  const body = code(fn);
+  const at = body.indexOf('if (!facts.reachable)');
+  assert.ok(at > -1, 'the unreachable-feed branch must exist');
+  const branch = body.slice(at, body.indexOf('\n  }', at) + 4);
+  assert.match(branch, /return false/, 'an unreachable feed must cancel the rehearsal');
+  assert.ok(!/runLoginRehearsal|attemptLogin/.test(branch),
+    'and must not attempt a login on the way out');
 });
 
 // ── THE SESSION CHECK'S SEVERITY ────────────────────────────────────────────────────────

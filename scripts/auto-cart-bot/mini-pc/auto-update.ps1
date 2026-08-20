@@ -250,9 +250,20 @@ if (-not (Stop-Everything)) {
   exit 1
 }
 
+# SKIP npm ci WHEN THE LOCKFILE DID NOT MOVE (2026-08-19). npm ci was the long pole of every
+# update - one to three minutes on this box - and most pushes here change bot scripts or web
+# code, never a dependency. `git diff --name-only` between the two shas is the exact question:
+# if package-lock.json is not in the answer, node_modules already matches and reinstalling it
+# buys nothing but downtime. Computed BEFORE the reset so both shas still exist to compare,
+# and reused by the rollback below - the same pair, so the same answer.
+$lockChanged = @(& git diff --name-only $before $after) -match '^package-lock\.json$'
 & git reset --hard $after 2>&1 | Tee-Utf8
 Set-Location $botDir
-& npm ci --omit=dev 2>&1 | Tee-Utf8
+if ($lockChanged) {
+  & npm ci --omit=dev 2>&1 | Tee-Utf8
+} else {
+  Write-Line "package-lock.json unchanged - skipping npm ci"
+}
 
 Write-Line "relaunching"
 & "$PSScriptRoot\start-all.bat"
@@ -287,7 +298,13 @@ Write-Line "NO CHECK-IN after 4 min. Rolling back to $($before.Substring(0,7))."
 Set-Location $repoRoot
 & git reset --hard $before 2>&1 | Tee-Utf8
 Set-Location $botDir
-& npm ci --omit=dev 2>&1 | Tee-Utf8
+# Same pair of shas, same answer: if the forward update skipped npm ci, node_modules never
+# moved and the rollback has nothing to restore either.
+if ($lockChanged) {
+  & npm ci --omit=dev 2>&1 | Tee-Utf8
+} else {
+  Write-Line "package-lock.json unchanged - skipping npm ci on the rollback too"
+}
 & "$PSScriptRoot\start-all.bat"
 Report-Applied $before "NEW CODE DID NOT CHECK IN - rolled back"
 Write-Line "rolled back. The RC session is gone either way - maybeAutoLogin will restore it"

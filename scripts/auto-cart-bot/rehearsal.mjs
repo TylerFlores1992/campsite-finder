@@ -136,6 +136,64 @@ export function shouldRehearse(s) {
   return { run: true, why: 'rehearsing the sign-in' };
 }
 
+/** One on-demand rehearsal per this many hours, enforced on the box's own clock. */
+export const ON_DEMAND_REHEARSAL_GAP_H = 6;
+
+/**
+ * May an ON-DEMAND rehearsal run right now? (2026-08-19)
+ *
+ * The remote `test-login` command exists so a failed run at the box can be retried without a
+ * human standing there. It lifts the SCHEDULE gates deliberately — the 20:00 hour and the
+ * once-per-20h cadence exist to pace an automatic nightly job, and a human asking "now" is
+ * the pacing — and it keeps every SAFETY gate, because those protect things no human intent
+ * overrides:
+ *
+ *   • the release gate: the rehearsal ENDS the current session on its way through, and a
+ *     session within 6h of a cart belongs to the cart;
+ *   • the ration: one on-demand run per ON_DEMAND_REHEARSAL_GAP_H, because a login is the
+ *     act that got this address blocked for twelve hours on 2026-08-06, and a remote lever
+ *     any AUTOCART_TOKEN holder can pull must be bounded by the box, not by trust;
+ *   • the abnormal-exit quiet window: a browser that just came up after a runaway kill is
+ *     not a fair test of the login, whoever is asking;
+ *   • credentials: nothing to rehearse without them.
+ *
+ * DELIBERATELY NO `sessionLive` GATE, unlike the nightly. The nightly skips a live session
+ * because a short-circuited login is a pass that proves nothing — but the rehearsal body
+ * clears the token first and forces the form with prompt=login, and a human asking NOW has
+ * usually just seen something worth testing. The body's own early exit still reports
+ * `inconclusive` honestly if RC re-authenticates before a form appears.
+ */
+export function shouldRehearseOnDemand(s) {
+  const {
+    hoursToRelease = null, hoursSinceLastOnDemand = null,
+    hasCredentials = true, minutesSinceAbnormalExit = null,
+  } = s;
+
+  if (!hasCredentials) return { run: false, why: 'no saved password' };
+
+  if (minutesSinceAbnormalExit != null && minutesSinceAbnormalExit < REHEARSAL_QUIET_AFTER_RESTART_MIN) {
+    return {
+      run: false,
+      why: `the browser was killed ${Math.round(minutesSinceAbnormalExit)}m ago — a rehearsal now `
+         + 'would test the restart, not the login',
+    };
+  }
+
+  if (hoursSinceLastOnDemand != null && hoursSinceLastOnDemand < ON_DEMAND_REHEARSAL_GAP_H) {
+    return {
+      run: false,
+      why: `an on-demand rehearsal ran ${hoursSinceLastOnDemand.toFixed(1)}h ago — the box allows `
+         + `one per ${ON_DEMAND_REHEARSAL_GAP_H}h, whoever asks`,
+    };
+  }
+
+  if (hoursToRelease != null && hoursToRelease >= 0 && hoursToRelease < REHEARSAL_MIN_HOURS_TO_RELEASE) {
+    return { run: false, why: `a hold releases in ${hoursToRelease.toFixed(1)}h` };
+  }
+
+  return { run: true, why: 'on-demand rehearsal, asked for from the admin page' };
+}
+
 // HOW A STORED REHEARSAL IS READ lives in src/lib/health-thresholds.ts, not here.
 // The two consumers — the health check and the holds readout — are both server-side
 // TypeScript, and the mini-PC never reads its own results back. A copy on this side would
