@@ -690,6 +690,22 @@ export async function recordClientReports(id: string, reports: ClientReport[]): 
   const note = verdict
     ? String((verdict.detail?.status ?? verdict.detail?.message ?? '') || verdict.stage).slice(0, 300)
     : null;
+
+  // THE PLATFORM IS LIFTED OUT OF THE LIST, because it cannot survive in it.
+  //
+  // It is reported ONCE, first, and the trim above keeps the TAIL — so it sits at the head of
+  // exactly the region that gets discarded. Measured on hold 4734 (2026-08-20): 40 reports
+  // stored, earliest survivor `session {n:2}`, the platform long gone. Every hand-off summary
+  // this project has ever produced said "platform not reported" for that reason, and it was
+  // read as the feature being unbuilt rather than as its output being deleted.
+  //
+  // COALESCE, so a later batch that carries no platform cannot erase one an earlier batch
+  // established. A hand-off flushes several times and only the first carries it.
+  const platform = reports.find((r) => r.stage === 'platform')?.detail as
+    | { platform?: unknown; appBuild?: unknown } | undefined;
+  const plat = typeof platform?.platform === 'string' ? platform.platform.slice(0, 40) : null;
+  const build = typeof platform?.appBuild === 'string' ? platform.appBuild.slice(0, 60) : null;
+
   await mutate(
     `UPDATE rc_hold_requests
         SET client_reports = (
@@ -701,9 +717,11 @@ export async function recordClientReports(id: string, reports: ClientReport[]): 
             ),
             client_last_stage  = $4,
             client_last_note   = COALESCE($5, client_last_note),
+            client_platform    = COALESCE($6, client_platform),
+            client_app_build   = COALESCE($7, client_app_build),
             client_reported_at = NOW()
       WHERE id = $1`,
-    [id, JSON.stringify(reports), CLIENT_REPORT_CAP, reports[reports.length - 1].stage, note],
+    [id, JSON.stringify(reports), CLIENT_REPORT_CAP, reports[reports.length - 1].stage, note, plat, build],
   ).catch((e) => console.error('[rc-holds] recordClientReports failed:', e.message));
 }
 

@@ -204,14 +204,60 @@ ${captchaProbeSource()}
     return null;
   }
 
-  /** React tracks its own value; a bare .value assignment is not seen by the form. */
+  /**
+   * React tracks its own value; a bare .value assignment is not seen by the form.
+   *
+   * THE TRACKER RESET IS THE HALF THAT WAS MISSING, and it cost a real claim on
+   * 2026-08-20. React keeps a _valueTracker per input and SUPPRESSES the change event
+   * when the value it is handed equals the one it already tracks. iOS keychain autofill
+   * populates Okta's email field before we run, so the tracker already held the address;
+   * we then wrote the identical string, React saw no change, its state stayed empty, and
+   * the widget rejected the form as blank. The DOM read-back passed the whole time, which
+   * is why this was invisible from our side: user.value was exactly right.
+   *
+   * The user saw it from the other end, and their description is the diagnosis --
+   * "it said can't leave blank even though it was filled in already as if we entered it".
+   * Filled in the DOM, empty in the model.
+   *
+   * Setting the tracker to a value that cannot be the real one forces the comparison to
+   * fail, so the change event fires whatever autofill did first.
+   *
+   * FOCUS AND BLUR ARE NOT DECORATION. Okta validates required fields on blur; a value
+   * that arrives without one is never checked, so the first thing that reads the model is
+   * the submit, and by then the failure is a form-level error with no field attached.
+   *
+   * NO BACKTICKS ANYWHERE IN THIS FUNCTION'S COMMENTS -- see chRcLogin's done() for why.
+   */
   function chSetValue(el, v) {
+    try { el.focus(); } catch (e) {}
+    // Reset React's tracked value FIRST. Guarded because it is an internal: if a future
+    // React drops it, the native-setter path below still works exactly as it did before.
+    try {
+      if (el._valueTracker && typeof el._valueTracker.setValue === 'function') {
+        el._valueTracker.setValue('__ch_never_a_real_value__');
+      }
+    } catch (e) {}
     var proto = el instanceof HTMLTextAreaElement
       ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     var setter = Object.getOwnPropertyDescriptor(proto, 'value');
     if (setter && setter.set) setter.set.call(el, v); else el.value = v;
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+    try { el.dispatchEvent(new FocusEvent('blur', { bubbles: false })); } catch (e) {}
+  }
+
+  /**
+   * Let the framework flush before the value is read by anything.
+   *
+   * React batches state updates out of an event handler, so a submit fired in the SAME
+   * synchronous block can be handled while the model still holds the old value. That
+   * produces the identical symptom as the tracker bug -- a correct DOM and a form-level
+   * "we found some errors" -- and the 08-20 trace cannot tell the two apart, so both are
+   * fixed. One frame is not enough on a busy webview; 50ms is imperceptible next to the
+   * 15-20s waits either side of it.
+   */
+  function chSettle() {
+    return new Promise(function (r) { setTimeout(r, 50); });
   }
 
   /** ENTER, NOT THE BUTTON — Okta disables Next mid-transaction. See the header. */
@@ -307,6 +353,7 @@ ${captchaProbeSource()}
           if (user.value !== email) return done(false, 'email', 'the email field would not take the address');
           chKeepSignedIn();
           chSay('email', {});
+          await chSettle();
           chSubmit(user);
           pw = await chWait(CH_PW_SELS, 20000);
         }
@@ -316,8 +363,14 @@ ${captchaProbeSource()}
         }
 
         chSetValue(pw, password);
+        // NO READ-BACK HERE, DELIBERATELY. The email step reads its field back because a
+        // wrong address is recoverable and worth naming; comparing pw.value to the password
+        // would put the secret in a comparison this file exists to keep it out of, and a
+        // thrown TypeError inside that expression is precisely how a password reached the
+        // database on 2026-08-16.
         chKeepSignedIn();
         chSay('password', {});
+        await chSettle();
         chSubmit(pw);
         chSay('submitted', {});
 

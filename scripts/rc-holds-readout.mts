@@ -43,6 +43,7 @@ const holds = await query<{
   last_attempt_at: string | null; last_attempt_note: string | null;
   client_last_stage: string | null; client_last_note: string | null; client_reported_at: string | null;
   client_reports: Array<{ stage: string; detail: Record<string, unknown> | null }> | null;
+  client_platform: string | null; client_app_build: string | null;
   cart_lag_s: number | null;
 }>(
   `SELECT r.id, r.unit_id, r.unit_name, r.arrival_date::text AS arrival, r.nights,
@@ -50,7 +51,7 @@ const holds = await query<{
           r.offered_at, r.requested_at, r.carted_at, r.claim_started_at, r.released_at, r.claimed_at,
           r.last_attempt_at, r.last_attempt_note,
           r.client_last_stage, r.client_last_note, r.client_reported_at::text,
-          r.client_reports,
+          r.client_reports, r.client_platform, r.client_app_build,
           -- HOW LATE THE CART WAS, in seconds after the release.
           --
           -- Computed HERE and not in JS because release_at is zone-less PACIFIC wall-clock
@@ -235,11 +236,20 @@ if (handed.length) {
     // two platforms are exactly where this feature differs: WKWebView has its own cookie
     // store and its own ITP rules. A result on one is not a result on both, so a trace that
     // cannot say which it was cannot settle either.
+    //
+    // READ THE COLUMN FIRST (migration 064). It was read out of `client_reports` until
+    // 2026-08-20, and that could never work: the platform is reported ONCE, FIRST, and
+    // `recordClientReports` keeps the TAIL of 40 — so it sat at the head of exactly the
+    // region that gets trimmed. Every hand-off ever summarised here said "not reported",
+    // and it was read as the feature being unbuilt rather than as its output being deleted.
+    // The reports fallback stays for rows written before the column existed.
     const plat = h.client_reports?.find((r) => r.stage === 'platform')?.detail as
       | { platform?: string; appBuild?: string } | undefined;
-    const where = plat?.platform
-      ? `${plat.platform}${plat.appBuild ? ` build ${plat.appBuild}` : ''}`
-      : 'platform not reported (an older build, or a plain browser)';
+    const platform = h.client_platform ?? plat?.platform;
+    const build = h.client_app_build ?? plat?.appBuild;
+    const where = platform
+      ? `${platform}${build ? ` build ${build}` : ''}`
+      : 'platform not reported (a claim from before 2026-08-20, or a plain browser)';
 
     // THE OUTCOME, NOT THE LAST LINE — and the difference is not cosmetic. On both proven
     // holds `client_last_note` reads `RC declined (200) - cart is already added`, because
