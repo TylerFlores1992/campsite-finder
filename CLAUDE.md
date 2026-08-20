@@ -1523,6 +1523,82 @@ struggle:
   grace for the length of the run. It read `no holds due` once the run finished. Expect this
   whenever a merge lands; it cannot cart anything, because the unit id is non-numeric.
 
+### `npm test` KILLED THE PRODUCTION RC SESSION (2026-08-19) — fixed in the FEED
+The 2026-08-18 entry records fixture-driven profile churn as *"bounded, understood"*. **It is
+not churn. It is the session**, measured:
+```
+13:33:52 ♻ token exp in 45m; renewed=no; src=live; okta=ALIVE   <- 7h old, self-sustaining
+13:49:07 → hold runner wants the profile — closing and standing down
+13:49:50 RC loaded and STAYING OPEN — token source: none        <- the token is GONE
+13:50:38 ⚠ RC SESSION IS DEAD
+```
+- **THE LIVE TOKEN LIVES IN PAGE MEMORY, NOT localStorage**, when the SPA has been silently
+  re-minting — so the keep-warm's yield-close-reopen loses it. (A token minted by OUR renewal
+  goes through the exchange and into storage, and DOES survive a restart — the two behave
+  oppositely, which is why 08-19's update kept the session and 13:49 did not.)
+- **AND THE WORK IT YIELDED FOR WAS A TEST FIXTURE** — the runner's log names `#L__t9003`,
+  `#L__t9102`, `#L__t9007`, and the 13:49 pass falls inside CI for **a PR that changed only
+  Markdown.** So any `npm test` run, CI included, can take the session a real cart depends on.
+- **FILTERED IN THE FEED, NOT IN THE QUERIES.** `dueHolds`/`pendingClaims` are what the hold
+  suites exist to test; filtering them would gut the tests that make this table safe, which is
+  why the 08-18 fix stopped at `nextHoldRelease`/`holdAtRisk`. `isRealUnitId` filters what the
+  runner is SERVED — all three work lists, because all three make it take the profile, and
+  `pollMs` too or a fixture drops it onto the 1s cadence. Server-side, so it reached the box on
+  a push. `worker/feed-fixture-invisibility.test.mts`, six mutations.
+
+### A BLANK RC APP IS NOT A FAILED LOGIN — in the release path too (2026-08-19)
+`attemptLogin` has returned `provedNothing` for RC's *"We're having trouble loading the
+application"* since 08-18. **The rehearsal honoured it; `maybeAutoLogin` did not** — the refund
+sat inside the `r.ok` branch and a blank load returns `ok: false`, so the T−30 caller fell to
+the plain failure arm: spent one of two attempts, reported `dead`, rang the phone, and printed
+`rc-login.bat` — which force-kills the Chromium the token lives in.
+- **Observed live the same day**: RC showed that screen during a hand sign-in, seconds after
+  `stop-rc` killed eleven processes, and **cleared on a retry.** The transient case is real and
+  it happens when the box is disturbed, which is what T−30 looks like.
+- **NOTHING IS REPORTED on that arm** — `warm` and `dead` are both verdicts and a page that
+  never rendered supports neither; the previous verdict goes stale, which `alarmIfSessionUnusable`
+  still watches. It stays LOUD with a screenshot: this is also the 08-14 profile-fault signature.
+- A REAL login failure still reports `dead` and still spends an attempt, pinned separately so
+  this is not bought by making every failure inconclusive. `worker/autologin-noload.test.mts`.
+
+### "UPDATE NOW" IS FAST NOW (2026-08-19) — and the ~20-minute note below is superseded
+- **THE CLAIM WAS THE STALL.** A poller claims within 15s and spawns the updater; when the
+  GUARD refuses (release within 6h, feed unreachable) the run ENDS — but the claim sat until
+  its 20-minute TTL, so every retry answered `SKIP - another process holds the update claim` at
+  a dead record. `noteBotUpdateAttempt` now RELEASES the claim on a refusal, so the next
+  15-second poll retries. **Server-side: live already.**
+- **EXCEPT THE BYSTANDER'S OWN REFUSAL.** `SKIP - another process holds the update claim` comes
+  from a process refused *because a real update is running*; releasing on it would let a second
+  updater claim while the first owns the checkout. `%claim%` is the discriminator, pinned
+  against `update-guard.mjs`'s actual strings in `worker/bot-update-latency.test.mts`.
+- **`npm ci` NOW RUNS ONLY IF `package-lock.json` MOVED** between the two shas — computed
+  before the reset while both exist, and the ROLLBACK uses the same variable. That was one to
+  three minutes on every update for a dependency change most pushes do not contain.
+- **CHICKEN-AND-EGG, SO EXPECT ONE MORE SLOW ONE:** the `npm ci` half is bot-side, so the
+  update that LANDS it is still slow and the one after is fast.
+
+### A REMOTE `test-login`, AND WHY NOT A SHELL (2026-08-19)
+Asked for PowerShell or cmd on the box so the diagnostics need no human. **Refused, and the
+reasoning is `bot-commands.mjs`'s own header**: that machine holds the live RC session, the
+DPAPI credential store, and a residential IP both providers have blocked, so a free-form
+channel makes `AUTOCART_TOKEN` a shell on a home network. **Levers are added BY NAME.**
+- `test-login` queues a SIGNAL FILE and never logs in itself — the rehearsal needs the Chromium
+  profile the keep-warm owns, and a second process on that profile is the
+  two-browsers-one-`user-data-dir` corruption. The keep-warm consumes it in its own loop and
+  runs the SAME `runLoginRehearsal` body as the nightly, `prompt=login` included.
+- **SCHEDULE GATES LIFT, SAFETY GATES DO NOT.** Gone: the 20:00 hour, the once-per-20h. Kept:
+  the 6h release gate, the abnormal-exit quiet window, the credentials check, and **one
+  on-demand run per 6h on the BOX's own clock** — a lever any token-holder can pull must be
+  bounded by the machine, not by trust.
+- **THE RATION IS A FILE, SPENT BEFORE THE ATTEMPT.** `supervise.ps1` restarts this process on
+  exit, so an in-memory ration is re-issued by every restart — the crash-loop-spends-the-login
+  -budget shape that cost the IP twelve hours on 08-06. The ask is consumed at pickup too.
+- A refusal is REPORTED, not just logged: somebody is watching the admin page, and a silent
+  refusal is indistinguishable from the signal never arriving.
+- **EVERY LOG IS FETCHABLE NOW** (`rc-test-login`, `rc-cart-cap` added). Still a NAME allowlist,
+  never a path. `worker/log-allowlist.test.mts` fails if a written log is unreachable OR if an
+  entry points at a file nothing writes.
+
 ### THE RENEWAL RUNS IN A THROWAWAY TAB NOW (2026-08-19) — the first CURE, and what it rests on
 The owner's instruction was "solve the leak", and the recorded cure (1) is what shipped
 (PR #142): **the renewal's Okta round trip runs in a tab opened for that purpose and closed
@@ -2138,11 +2214,12 @@ checked 19:50:40  exp 2026-08-19T07:50:40   → +12.0000h
 
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`** (written 2026-08-13). Three open items — claim-flow
-> cosmetics (the owner has notes; ask, don't guess), the one-session-multiple-carts probe,
-> and the cart POSTs on Android — plus the opening prompt to paste. **Delete that file once
-> the three are done**; it is a handover, not a permanent doc, and a stale one would read
-> like current state.
+> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-19 evening). The leak's first CURE
+> is merged and **has never executed**; the file says how to read the memory series to judge
+> it, and carries the two open questions (where the three-day-old token comes from — cookie
+> or server, everything else eliminated — and whether `prompt=login` forces Okta's form).
+> **Delete that file once the tab renewal has been observed and those two are answered**; it
+> is a handover, not a permanent doc, and a stale one would read like current state.
 
 ### THE APP'S RC SESSION IS BEING MEASURED NOW — no renewal built yet (migration 058, 2026-08-13)
 The mobile claim flow needs a live RC session inside the InAppBrowser data store, and the
@@ -3360,7 +3437,9 @@ parent's claim, taken one second earlier**. Every on-demand update refused itsel
 - **A HEALTH READING GOES STALE FASTER THAN A CONCLUSION DRAWN FROM IT.** I reported the box
   stuck at 21:12 and it updated at 21:21 — the reading was right when taken and wrong by the
   time it was quoted. Re-read before acting on anything older than a few minutes.
-- **AND IT HAPPENED AGAIN ON 2026-08-13 — "Update now" TAKES ~20 MINUTES, NOT ~2.** An
+- ~~**AND IT HAPPENED AGAIN ON 2026-08-13 — "Update now" TAKES ~20 MINUTES, NOT ~2.**~~
+  **SUPERSEDED 2026-08-19 — the stall was a claim held past a finished refusal; see "UPDATE NOW
+  IS FAST NOW". The reading below is what the 20 minutes WAS, not what it is.** An
   update requested at 19:57 landed at **20:21**. I watched for 16 minutes, saw
   `SKIP - another process holds the update claim (or we could not ask)` with `claimed_at`
   NULL, and reported the 08-12 deadlock had recurred. **It had not.** That SKIP is a
