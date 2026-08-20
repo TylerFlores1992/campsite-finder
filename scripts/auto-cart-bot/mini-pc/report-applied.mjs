@@ -23,9 +23,15 @@
  * this runs. It says so and exits 0.
  */
 import { execFileSync } from 'node:child_process';
-import { loadEnv } from '../load-env.mjs';
+import { loadEnv, envSource } from '../load-env.mjs';
 
-loadEnv(import.meta.url);
+// KEEP THE RETURN. This file sits in `mini-pc/` while the `.env` is one level up, so until
+// 2026-08-20 this loaded NOTHING and did so silently — the token was absent, the POST was
+// answered 401, and the message said "server said 401", which reads as a wrong token. That
+// is why `applied_sha` stopped moving on 08-19 and still read `746cd5a` after two manual
+// updates. `loadEnv` falls back to its own directory now; the path is kept so the failure
+// message below can say WHICH file it read, or that it read none.
+const envFile = loadEnv(import.meta.url);
 
 const url = (process.env.CAMPHAWK_URL || 'https://camphawk.app').replace(/\/$/, '');
 const token = process.env.AUTOCART_TOKEN || '';
@@ -65,6 +71,15 @@ try {
     await r.body?.cancel?.().catch(() => {});
     // NAME THE STATUS. A bare "could not report" is what let 401 hide as "nothing ran".
     console.log(`[report-applied] server said ${r.status} - the admin page will still show the OLD commit`);
+    // AND ON A 401, SAY WHERE THE TOKEN CAME FROM. "no token at all" and "a token the
+    // server rejects" need completely different fixes and printed the identical line for
+    // over a day. `envSource` exists for exactly this and nothing was calling it here.
+    if (r.status === 401) {
+      const src = envSource('AUTOCART_TOKEN');
+      console.log(src === 'missing'
+        ? `  AUTOCART_TOKEN is NOT SET. .env read: ${envFile ?? 'NONE FOUND'} - that is the fault, not the token.`
+        : `  AUTOCART_TOKEN came from the ${src} (.env read: ${envFile ?? 'none'}) and the server rejected it.`);
+    }
   }
 } catch (e) {
   console.log(`[report-applied] could not reach ${url}: ${e.message}`);
