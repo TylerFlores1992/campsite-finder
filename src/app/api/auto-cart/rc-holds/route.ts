@@ -231,10 +231,22 @@ export async function POST(req: NextRequest) {
   // happily and cannot drive RC is the exact failure 045's heartbeat cannot see.
   if (body?.session && typeof body.session.live === 'boolean') {
     const why = typeof body.session.why === 'string' ? body.session.why : null;
+    // THE OKTA READING, only when this caller actually took one — see migration 065. The
+    // key being ABSENT and the key being null mean different things and must stay
+    // distinguishable all the way down: absent is "I did not ask", null is "I asked and
+    // could not tell", and only the second is a reading worth storing over an older one.
+    const o = body.session.okta;
+    const okta = o && typeof o === 'object'
+      ? {
+          alive: typeof o.alive === 'boolean' ? o.alive : null,
+          expiresAt: typeof o.expiresAt === 'string' ? o.expiresAt : null,
+        }
+      : undefined;
     await recordSessionHealth(
       body.session.live,
       why,
       typeof body.source === 'string' ? body.source : 'unknown',
+      okta,
     );
     // AND IF A SITE IS ABOUT TO BE LOST OVER IT, RING THE PHONE. Only here: a dead session
     // is normally a fix-it-today problem, and it is already a red admin check and a 07:30

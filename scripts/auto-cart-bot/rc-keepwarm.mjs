@@ -1271,7 +1271,17 @@ async function reportRehearsal(ok, detail, skippedWhy) {
   }).catch((e) => log(`  (could not report the rehearsal: ${e.message})`));
 }
 
-async function reportSession(state, renewalNote = '') {
+/**
+ * @param {'warm'|'dead'} state
+ * @param {string} renewalNote
+ * @param {{alive: boolean|null, expiresAt: string|null}|null} [okta]
+ *   The STRUCTURED reading from `oktaSessionAlive`, not the sentence built from it.
+ *   `checkAndReport` has had this object all along and posted only its stringification,
+ *   so the server had to un-parse our own prose to recover a value we already held —
+ *   the shape migration 064 fixed for the platform. Optional, because three of the six
+ *   callers legitimately have no reading to give (see the POST body).
+ */
+async function reportSession(state, renewalNote = '', okta = undefined) {
   if (state !== 'warm' && state !== 'dead') return;
   if (!TOKEN) return;
   await fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
@@ -1286,6 +1296,22 @@ async function reportSession(state, renewalNote = '') {
         // pre-flight, where it can still be acted on.
         why: [state === 'dead' ? 'keep-warm probe: RC rejected the session' : null, renewalNote]
           .filter(Boolean).join(' — ') || null,
+        // WHETHER THE NEXT REPAIR IS CHEAP OR EXPENSIVE — see migration 065. Measured on
+        // this box: okta ALIVE is answered from the idx cookie in 11s for +24 MB, okta GONE
+        // is a full password form at 12 minutes and +9,434 MB, and the RAM guard killed the
+        // browser doing the second one on 08-20.
+        //
+        // OMITTED, NOT NULLED, when this caller has no reading. `undefined` disappears from
+        // JSON.stringify, so the server sees no key and leaves the stored value alone —
+        // which is what keeps a caller that never probes Okta (the auto-login arms, the
+        // rehearsal) from erasing a real reading `checkAndReport` just took. A null here
+        // would mean "we looked and could not tell", which is a different fact.
+        ...(okta === undefined ? {} : {
+          okta: okta === null
+            // We asked and the probe itself failed. An unknown must not round to GONE.
+            ? { alive: null, expiresAt: null }
+            : { alive: okta.alive ?? null, expiresAt: okta.expiresAt ?? null },
+        }),
       },
       source: 'keepwarm',
     }),
@@ -2471,7 +2497,7 @@ async function checkAndReport(ctx, page) {
       log(`⚠ RC SESSION IS DEAD: the app holds no token at all — signed out`);
       log(`  ${verdict}`);
       log('  A human must sign in once: node rc-keepwarm.mjs --login');
-      await reportSession('dead', `no token at all — signed out; ${verdict}`);
+      await reportSession('dead', `no token at all — signed out; ${verdict}`, okta);
       return;
     }
     log(`… no token when first read, but one arrived on priming (${again.source}) — not reporting`);
@@ -2481,13 +2507,13 @@ async function checkAndReport(ctx, page) {
   if (live === true) {
     try { fs.writeFileSync(WARM_MARKER, new Date().toISOString()); } catch { /* best effort */ }
     log(`♻ RC session kept warm (${why}) — ${note}`);
-    await reportSession('warm', note);
+    await reportSession('warm', note, okta);
   } else if (live === null) {
     log(`… RC keep-warm inconclusive: ${why} — reporting nothing, unknown is not dead`);
   } else {
     log(`⚠ RC SESSION IS DEAD: ${why} — ${note}`);
     log('  A human must sign in once: node rc-keepwarm.mjs --login');
-    await reportSession('dead', note);
+    await reportSession('dead', note, okta);
   }
 }
 

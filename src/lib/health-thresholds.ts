@@ -306,6 +306,90 @@ export const RC_SESSION_REPAIR_SPENT_MIN = Number(process.env.AUTOCART_ALARM_AFT
  */
 export const RC_AUTOLOGIN_LEAD_MIN = Number(process.env.RC_AUTOLOGIN_LEAD_MIN || 30);
 
+// ── Will the next RC repair be the cheap one or the 9-gigabyte one? (migration 065) ───
+/**
+ * `autocart.rc_session` answers "does RC accept the current token". The OKTA session behind
+ * it is a different fact, and it is the one that decides what the next sign-in COSTS.
+ * Measured on the same box five days apart:
+ *
+ *     okta=ALIVE   answered from the idx cookie   11 seconds,     +24 MB   (2026-08-21)
+ *     okta=GONE    full password form             12 minutes,  +9,434 MB   (2026-08-20)
+ *
+ * The expensive one is what the RAM guard killed on 2026-08-20, and whether a throwaway tab
+ * reclaims a trip that size is still unmeasured. So "Okta is about to lapse" is a cost that
+ * is knowable in advance and was being thrown away — the bot had the structured reading and
+ * posted only a sentence.
+ *
+ * **THIS RETURNS PROSE AND NOTHING ELSE, AND THAT IS THE DESIGN.** There is no `level` to
+ * set, so no future edit here can turn `okta=GONE` into a fault. That state is the ORDINARY
+ * one between releases — the access token IS the session for most of the day and the repair
+ * at T-30 is scheduled — and reddening it is the cry-wolf failure this project has fixed
+ * three times, most expensively at 07:33 on 2026-08-16 where the printed remedy would have
+ * destroyed a working session. A cost prediction beside an existing verdict, never a verdict.
+ *
+ * NULL IS "NOT REPORTED", NEVER "GONE". A box on a build older than migration 065 sends no
+ * okta fields at all; that lands here as nulls and must produce SILENCE, not a claim about
+ * Okta. Same rule as `max_type` in 062 and `client_platform` in 064.
+ *
+ * THE AGE IS PART OF THE READING, not a footnote. `recordSessionHealth` only writes these
+ * columns when the caller actually probed, so a session verdict from ten seconds ago can sit
+ * beside an Okta reading from an hour ago — two facts of different ages presented as one
+ * record, which is precisely how `bot_commit`'s COALESCE misled a whole evening on
+ * 2026-08-14. Printing the age is what keeps them apart.
+ */
+export function oktaCostNote(o: {
+  alive: boolean | null;
+  expiresAt: string | null;
+  checkedAt: string | null;
+  now: number;
+}): string | null {
+  // Never probed by a build that reports it. Say nothing rather than "unknown": a note on
+  // every box that has not updated yet is noise, and noise on this page is what gets the
+  // signal skimmed.
+  if (!o.checkedAt) return null;
+
+  const checkedAge = Math.max(0, Math.round((o.now - Date.parse(o.checkedAt)) / 1000));
+  const when = `checked ${checkedAge}s ago`;
+
+  // A probe that could not tell. `oktaSessionAlive` returns unknown for a busy profile, a
+  // 403 from RC's edge and a network blip alike, and writing that as dead would send
+  // somebody to the box over a healthy session.
+  if (o.alive == null) return ` — Okta state UNKNOWN (the probe could not tell, ${when})`;
+
+  if (!o.alive) {
+    return ' — and the OKTA session behind it is GONE, so the next sign-in is the expensive ' +
+      `kind: a full password form, ~12 min and several GB, not the ~11s cookie-answered one (${when})`;
+  }
+
+  const expMs = o.expiresAt ? Date.parse(o.expiresAt) : NaN;
+  if (!Number.isFinite(expMs)) {
+    return ` — Okta alive, expiry not reported (${when})`;
+  }
+
+  const leftMin = Math.round((expMs - o.now) / 60_000);
+
+  // ALIVE WHEN PROBED, LAPSED SINCE. This is 2026-08-21 14:42 exactly: the reading said
+  // ALIVE with five minutes left and Okta was gone by 15:00. The stored `alive` is a fact
+  // about the past; the expiry is what makes it actionable now, so arithmetic outranks the
+  // flag rather than being averaged with it.
+  if (leftMin <= 0) {
+    return ` — Okta was alive when probed but its window has since PASSED (${when}), so the ` +
+      'next sign-in is the expensive kind unless RC has re-issued one';
+  }
+
+  // A sign-in answered from the `idx` cookie REUSES the existing Okta session and inherits
+  // its absolute cap — it does not restart the clock (2026-08-21, confirming the bounded
+  // window recorded on 2026-08-19). So "the bot signs in at T-30" does not mean twelve
+  // hours of Okta; that morning it meant eighteen minutes. Below the auto-login lead, the
+  // repair the schedule is counting on will have nothing cheap left to use.
+  if (leftMin < RC_AUTOLOGIN_LEAD_MIN) {
+    return ` — Okta lapses in ${leftMin}m (${when}), INSIDE the ${RC_AUTOLOGIN_LEAD_MIN}-min ` +
+      'auto-login lead, so the next repair is likely the expensive full sign-in';
+  }
+
+  return ` — Okta good for ${leftMin}m (${when}), so a repair would be the cheap cookie-answered one`;
+}
+
 // ── Is the mini-PC running the code master has? (migration 056) ───────────────────────
 /**
  * `autocart.rc_runner` proves the box can reach camphawk.app; `autocart.rc_session` proves

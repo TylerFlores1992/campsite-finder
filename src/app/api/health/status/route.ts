@@ -14,6 +14,7 @@ import {
   BOT_TASK_STALE_MS,
   rehearsalFault,
   botVersionVerdict,
+  oktaCostNote,
 } from '@/lib/health-thresholds';
 import { taskBeats, BOT_TASKS } from '@/lib/bot-tasks';
 
@@ -291,9 +292,11 @@ export async function GET() {
         session_at: string | null; session_detail: string | null; session_source: string | null;
         session_since: string | null;
         bot_commit: string | null; bot_commit_at: string | null;
+        okta_alive: boolean | null; okta_expires_at: string | null; okta_checked_at: string | null;
       }>(
         `SELECT beat_at::text, session_ok, session_at::text, session_detail, session_source,
-                session_since::text, bot_commit, bot_commit_at::text
+                session_since::text, bot_commit, bot_commit_at::text,
+                okta_alive, okta_expires_at::text, okta_checked_at::text
            FROM rc_runner_heartbeat WHERE id = 1`,
       ),
       queryOne<{ n: string }>(
@@ -428,7 +431,18 @@ export async function GET() {
                   : ` — ${ahead} hold(s) ahead and the next is within ${RC_SESSION_REPAIR_SPENT_MIN} min: the auto-login has had its turn`
                 : ` — ${ahead} hold(s) ahead; the bot signs itself in ${RC_AUTOLOGIN_LEAD_MIN} min before the first release`
               : '') +
-            (beat.session_detail ? `: ${beat.session_detail}` : ''),
+            (beat.session_detail ? `: ${beat.session_detail}` : '') +
+            // WILL THE NEXT REPAIR BE THE CHEAP ONE OR THE 9-GIGABYTE ONE? (migration 065)
+            // Appended to the DETAIL and nowhere near `level` — `oktaCostNote` returns prose
+            // and has no severity to return, so this cannot redden a page over `okta=GONE`,
+            // which is the ordinary state between releases. Silent when the box has not
+            // reported the fields, because a note on every un-updated box is noise.
+            (oktaCostNote({
+              alive: beat.okta_alive,
+              expiresAt: beat.okta_expires_at,
+              checkedAt: beat.okta_checked_at,
+              now: Date.now(),
+            }) ?? ''),
       ageSeconds: secs(sessionAge),
     });
 
