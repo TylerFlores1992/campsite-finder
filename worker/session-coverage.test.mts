@@ -105,9 +105,21 @@ test('maybeAutoLogin actually PASSES sufficient to attemptLogin', () => {
   // The inert-fix guard. `attemptLogin` accepting a `sufficient` option changes nothing at
   // all unless the release-critical caller supplies one, and that call site is in a different
   // file — invisible from the one being reviewed.
+  //
+  // SCOPED TO THE FUNCTION, because the file has more than one `attemptLogin` caller. This
+  // took the whole file and sliced from the FIRST `const r = await attemptLogin(`, which was
+  // maybeAutoLogin's only for as long as it happened to be the earliest in the file — and it
+  // stopped being so the moment `maybeWarmupLogin` was added above it (2026-08-21), where it
+  // failed against correct code while reading a DIFFERENT caller that deliberately passes no
+  // deadline. Anchoring on a token that occurs more than once is the recurring defect here;
+  // twentieth time.
   const src = read('rc-keepwarm.mjs');
-  const call = src.slice(src.indexOf('const r = await attemptLogin('));
-  const opts = call.slice(0, call.indexOf('});'));
+  const fnAt = src.indexOf('async function maybeAutoLogin');
+  assert.ok(fnAt > -1, 'maybeAutoLogin must still exist — anchor not found');
+  const fn = src.slice(fnAt, src.indexOf('\nasync function ', fnAt + 10));
+  const callAt = fn.indexOf('const r = await attemptLogin(');
+  assert.ok(callAt > -1, 'maybeAutoLogin must still call attemptLogin');
+  const opts = fn.slice(callAt, fn.indexOf('});', callAt));
   assert.match(opts, /sufficient:/,
     'maybeAutoLogin must hand attemptLogin its deadline, or the sufficiency check is dead code');
   assert.match(opts, /needSec/, 'the predicate must compare against the computed requirement');
