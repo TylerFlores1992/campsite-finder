@@ -423,9 +423,36 @@ export interface RcSessionHealth {
  * there is no unattended re-login: a dead session needs a human. Learning at 21:00 that
  * tomorrow's 08:00 hold has no session behind it is a fixable evening. Learning at
  * 08:00:10 is a post-mortem.
+ *
+ * @param okta The Okta session as the bot observed it, or `undefined` when this caller did
+ *   not probe. See migration 065 — that distinction is the whole design: it decides whether
+ *   the next repair is an 11-second cookie exchange or a 12-minute, 9.4 GB password sign-in.
+ *
+ *   **UNDEFINED LEAVES THE STORED READING ALONE; NULL OVERWRITES IT.** Most `reportSession`
+ *   callers (the auto-login arms, the rehearsal) never ask Okta anything, and having them
+ *   write NULL would erase a real reading `checkAndReport` took moments earlier — a fact
+ *   destroyed by a caller that never had one. `{alive: null}` is different and does write:
+ *   it means we asked and could not tell, which is a reading in its own right.
+ *
+ *   DELIBERATELY NOT COALESCE. Okta state is time-sensitive — it went ALIVE-with-5-minutes
+ *   to GONE inside twenty on 2026-08-21 — so a preserved old value is actively misleading in
+ *   a way a stale `bot_commit` merely looks current. The freshness is carried by
+ *   `okta_checked_at`, so a reader can see the reading's age rather than infer it.
  */
+/**
+ * An ISO instant Postgres will accept, or NULL. Re-serialised from the parsed value rather
+ * than passed through, so nothing reaches the `::timestamptz` cast that has not already been
+ * proved to be a date on this side.
+ */
+export function oktaExpiresAt(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string' || !raw) return null;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+
 export async function recordSessionHealth(
   ok: boolean, detail: string | null, source: string,
+  okta?: { alive: boolean | null; expiresAt: string | null },
 ): Promise<void> {
   await mutate(
     // `session_since` moves ONLY on a change of verdict. `session_at` is "when we last
@@ -441,9 +468,26 @@ export async function recordSessionHealth(
             -- will be subtracted from, or the lifetime is unmeasurable at the one moment
             -- we want to know it.
             session_live_since = CASE WHEN $1 AND session_ok IS DISTINCT FROM $1
-                                      THEN NOW() ELSE session_live_since END
+                                      THEN NOW() ELSE session_live_since END,
+            -- $4 is the flag for "this caller probed at all". When it is false every okta
+            -- column keeps its current value, so a caller with no reading cannot blank one.
+            okta_alive      = CASE WHEN $4 THEN $5 ELSE okta_alive END,
+            okta_expires_at = CASE WHEN $4 THEN $6::timestamptz ELSE okta_expires_at END,
+            okta_checked_at = CASE WHEN $4 THEN NOW() ELSE okta_checked_at END
       WHERE id = 1`,
-    [ok, detail ? detail.slice(0, 300) : null, source.slice(0, 40)],
+    [
+      ok, detail ? detail.slice(0, 300) : null, source.slice(0, 40),
+      okta !== undefined,
+      // Anything that is not a real boolean is stored as NULL rather than coerced. This
+      // arrives over the network from the box, and `[object Object]` reaching a column is
+      // the shape that switched off the memory series for ten minutes.
+      typeof okta?.alive === 'boolean' ? okta.alive : null,
+      // AND IT MUST PARSE, because `::timestamptz` on rubbish THROWS — and this statement
+      // also carries the session verdict, so a malformed diagnostic field would take the
+      // reading it rides along with. A diagnostic that can break the thing it observes is
+      // not worth having; an unparseable expiry becomes NULL, i.e. "not reported".
+      oktaExpiresAt(okta?.expiresAt),
+    ],
   ).catch((e) => console.error('[rc-holds] recordSessionHealth failed:', e.message));
 }
 
