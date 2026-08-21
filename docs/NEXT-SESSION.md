@@ -1,7 +1,54 @@
-# Next session — one PR open, one fix built but never executed
+# Next session — a test hold fires at 08:00, and it is the first run of four new things
 
 *Rewritten 2026-08-20 (evening PT). A handover, not a permanent doc. **Delete it once #146 is
-merged and the auto-login tab has been observed at a real T−30.***
+merged and the 08-21 test has been read.***
+
+---
+
+## ⏰ FIRST: a REAL test hold releases 2026-08-21 08:00:18 PT
+
+```
+hold   9252cbaa-aa61-4b6a-afe2-a5a5a5ae34c9
+site   TEST · 4733 — Carpinteria SB — San Miguel #M406
+stay   arrive 2026-12-01 (Tue), 1 night
+claim  https://camphawk.app/claim/9252cbaa-aa61-4b6a-afe2-a5a5a5ae34c9?t=EQO2oXcQ
+```
+
+**It is a REAL numeric unit id, so a cart takes that site off the market** until the claim
+releases it or RC drops the cart (~15 min). San Miguel had 45 of ~60 sites bookable on that
+date, so nothing is contended — but if the test is abandoned, delete it rather than leaving it:
+
+```
+npx tsx scripts/rc-test-hold.mts --delete 9252cbaa-aa61-4b6a-afe2-a5a5a5ae34c9
+```
+
+**Open the claim link IN THE APP.** From a browser `canInject` is false and the injected
+precart never runs, which is most of what this exists to test.
+
+**Bot updates are BLOCKED until the release passes** — `nextHoldRelease` counts `requested`,
+so the 6h gate refuses. That is by design and is NOT the 08-20 morning bug. Nothing needs to
+reach the box anyway: master and the mini-PC are both on `58cc767`.
+
+### What this run is the FIRST exercise of
+
+Four things merged on 08-20 that have never executed:
+
+1. **The auto-login throwaway tab** — the one that matters. Fires at T−30 only when the
+   session will not cover the release, which happens naturally overnight.
+2. **The persisted login budget**, including the kill-refund if the RAM guard trips again.
+3. **The platform column** (migration 064) — the hand-off should finally name iOS or Android
+   instead of "platform not reported".
+4. **The in-app Okta fill fix** (React's `_valueTracker`), if RC is signed out in the app.
+
+### How to read it
+
+- `scripts/rc-holds-readout.mts` — `T+s` is the cart lag; the **HAND-OFF** section is the
+  client's own trace.
+- **`✓ Added to cart` is the proof.** `token captured` as the last line is NOT a successful
+  cart, and `RC declined (200) — cart is already added` on a re-injection is proof it STUCK.
+- For the tab: **a memory spike that drains at tab close with NO `♻ recycling` line is it
+  working.** A 9 GB reclaim is unmeasured — see below.
+- Routines already cover it: **07:40 PT pre-flight**, **08:15 PT outcome**.
 
 ---
 

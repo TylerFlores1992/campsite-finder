@@ -2386,9 +2386,13 @@ nothing red anywhere: the deploy-by-different-routes trap that opened the T−30
 
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-20 evening). Master and the box are
-> both on **`58cc767`**; "Update now" is a working lever again and was proven end to end at
-> 19:46 PT. The file carries the one open PR (#146), what is built-but-unexecuted (the
+> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-20 evening). **A REAL test hold
+> releases 2026-08-21 08:00:18 PT** — unit 4733, Carpinteria San Miguel — and it is the first
+> exercise of four things merged on 08-20, above all the auto-login throwaway tab. That file
+> carries the claim link, the delete command and how to read the result.
+> Master and the box are both on **`58cc767`**; "Update now" is a working lever again and was
+> proven end to end at 19:46 PT — but it is BLOCKED until the release passes, by the 6h gate,
+> which is by design and not the morning's bug. The file carries the one open PR (#146), what is built-but-unexecuted (the
 > auto-login tab), and the two questions still open from 08-19 — where the three-day-old token
 > comes from, and whether `prompt=login` forces Okta's form.
 > **Delete that file once #146 is merged and the tab has been observed at a real T−30**; it is
