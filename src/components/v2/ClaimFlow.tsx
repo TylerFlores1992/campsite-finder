@@ -213,19 +213,61 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     if (flushTimer.current) clearTimeout(flushTimer.current);
     flushTimer.current = setTimeout(flushReports, 1500);
 
-    // THE VERIFICATION IS THE REPORT, not a second probe. `token captured` is the injected
-    // script telling us it read a live RC access token out of THIS webview's storage —
-    // which is the exact fact the release needs and the exact fact the checkbox could only
-    // ever guess at. Read from the same channel the diagnostics use, so the thing gating
-    // the button and the thing recorded on the hold can never disagree.
+    /**
+     * THE VERIFICATION IS THE REPORT, not a second probe. `token captured` is the injected
+     * script telling us it read an RC access token out of THIS webview's storage — read from
+     * the same channel the diagnostics use, so the thing gating the button and the thing
+     * recorded on the hold can never disagree.
+     *
+     * ## PRESENCE IS NOT LIVENESS, and this gate read presence until 2026-08-21
+     *
+     * It fired on `captured` alone. On the 08-21 test the phone reported
+     *
+     *     token { captured: true, decodable: true, expiresInSec: -82599 }
+     *
+     * — a token that had expired **23 hours earlier** — and the screen said "verified". The
+     * user released a real hold against a session that was already dead, the precart then
+     * found `storedToken: "none"`, sat on "Reading your session…", and the site went back on
+     * the open market having been carted for nobody.
+     *
+     * That is the `status = 'sent'` family exactly: a field that only ever meant "something
+     * was there". `expiresInSec` has been in this report since migration 058, whose own note
+     * says **"Never presence, always liveness"** — the reporter supplied it and the gate
+     * ignored it.
+     *
+     * ## Three outcomes, because "expired" and "could not tell" are different facts
+     *
+     *  - decodable and still alive  → `verified`, the fast path, unchanged.
+     *  - decodable and ALREADY DEAD → NOT verified, and the user is TOLD, because this is
+     *    positive evidence of no session rather than an absence of evidence.
+     *  - undecodable or no expiry   → `unconfirmed`, unchanged. We could not tell, and an
+     *    unknown must never round to a verdict in either direction.
+     *
+     * NONE OF THEM LOCKS ANYONE OUT. `mayRelease` still accepts the checkbox, so a wrong
+     * expiry read costs a sentence rather than a hold somebody waited all morning for —
+     * the same rule that makes an unconfirmed check fall back rather than refuse.
+     */
     if (r.stage === 'token' && (r.detail as { captured?: boolean } | null)?.captured) {
-      setRcCheck('verified');
-      // A token means the sign-in is done, whatever the last stage was. Leaving `captcha` on
-      // screen after a successful login would tell the user to solve a challenge that is no
-      // longer there — the same class of mistake as the claim screen asking someone to
-      // "switch to your ReserveCalifornia tab" in an app that has no tabs.
-      setLoginStage(null);
-      setLoginError(null);
+      const d = r.detail as { expiresInSec?: unknown; decodable?: unknown } | null;
+      const secs = typeof d?.expiresInSec === 'number' ? d.expiresInSec : null;
+      if (secs != null && secs <= 0) {
+        // DEAD, AND SAID SO. Silence here would leave the screen looking exactly as it did
+        // on 08-21: an apparently ready hand-off over a session that cannot cart anything.
+        setRcCheck('unconfirmed');
+        setLoginStage(null);
+        setLoginError(
+          'Your ReserveCalifornia sign-in has expired. Sign in again before handing the site '
+          + 'over — releasing now would put it back on the open market for anyone.',
+        );
+      } else {
+        setRcCheck('verified');
+        // A live token means the sign-in is done, whatever the last stage was. Leaving
+        // `captcha` on screen after a successful login would tell the user to solve a
+        // challenge that is no longer there — the same class of mistake as the claim screen
+        // asking someone to "switch to your ReserveCalifornia tab" in an app with no tabs.
+        setLoginStage(null);
+        setLoginError(null);
+      }
     }
     // THE SIGN-IN'S OWN STAGES. Read from the same channel as everything else, so what the
     // form shows and what is recorded against the hold cannot disagree — the rule that made
@@ -516,19 +558,45 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
     if (!mayRelease) return;
     setBusy(true);
     setError('');
+    /**
+     * THE REFETCH IS OUTSIDE THE TRY, AND THAT IS THE WHOLE FIX.
+     *
+     * `await load()` used to sit beside the POST inside one `try`, so a refetch that threw
+     * was reported as `Network error. Try again.` — over a release that had ALREADY
+     * HAPPENED. Measured on the 08-21 test: `claim_started 15:01:46`, `released 15:01:54`,
+     * status `released`, and the owner's screen showed nothing but that error.
+     *
+     * Two things make it worse than a wrong message. **"Try again" is advice for an action
+     * that cannot be repeated** — the bot has let go and the site is on the open market. And
+     * `if (error) return <Notice>` replaces the ENTIRE screen, so a successful release
+     * destroyed the hand-off UI the user needed next.
+     *
+     * So the POST alone decides the verdict. A failed refetch is a stale screen, which the
+     * poll below fixes on its own, and never a claim that "failed".
+     */
+    let released = false;
     try {
       const r = await fetch('/api/rc-holds/claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: holdId, token }),
       });
-      if (!r.ok) { setError('Could not claim this hold — it may have already been released.'); return; }
-      await load();
+      if (!r.ok) {
+        setError('Could not claim this hold — it may have already been released.');
+        return;
+      }
+      released = true;
     } catch {
+      // ONLY the POST reaching us at all. If this throws, nothing was released — the
+      // request never completed — so "try again" is honest here and only here.
       setError('Network error. Try again.');
+      return;
     } finally {
       setBusy(false);
     }
+    // Best effort, and deliberately unguarded by the error state above: the release stands
+    // whatever this does.
+    if (released) await load().catch(() => {});
   }
 
   if (error) {
