@@ -5783,9 +5783,21 @@ reasons are ours.
 - **A manage-billing link in Settings is worth adding and is SEPARATE.** 3.1.1 is about
   *purchasing*, so a management link answers no part of the citation on its own — it complements
   the notes fix rather than replacing it, and it is code rather than console.
-- **Still unestablished: whether link-out ALONE clears 3.1.1 with no IAP.** This round did not
-  test it, because the reviewer never saw a link-out. Both text blocks and the full reasoning are
-  in `docs/APP-STORE.md` §2d.
+- **RESUBMITTED 2026-08-22** (owner-reported): notes replaced, **same binary**, `1.0 (5)`.
+  Verified here before it went: the link-out is live in the deployed bundle, all five surfaces
+  gate on `!subscribed`, the demo account is active, and a signed-out user reaches the link.
+  **NOT verifiable from here:** that the notes saved, and that the sign-out steps behave as
+  written on the device — nobody here can read ASC, and the on-device check is exactly what §2a
+  and §2d were both caused by skipping.
+- **THIS ROUND FINALLY TESTS WHETHER LINK-OUT ALONE CLEARS 3.1.1 WITH NO IAP.** §2c recorded
+  that as unestablished and it stayed that way, because the reviewer never saw a link-out. This
+  is the first submission where they can. **A rejection now is the real answer** and moves the
+  decision to StoreKit — weeks of native work, a new build, and 15-30% — rather than another
+  notes round. Both text blocks and the full reasoning are in `docs/APP-STORE.md` §2d.
+- **THE NOTES FIELD CAP IS 3,999, VERIFIED** — App Store Connect says *"Must be less than 4000
+  characters"* and its counter read `-18` against a 4,018-character draft, i.e. it counts
+  newlines exactly as `wc -c` does. A local count is therefore trustworthy; no need to
+  paste-and-see.
 
 ### DO THIS THE MOMENT THE APP IS LIVE
 **Turn on store link-out:** set `NATIVE_LINKOUT = true` in

@@ -416,6 +416,27 @@ description was out of date and we apologise for the confusion it caused.
 No binary changes were needed; we are resubmitting the same build.
 ```
 
+### SENT AND RESUBMITTED 2026-08-22 — owner-reported
+
+The owner replaced the Notes and resubmitted **the same binary**, `1.0 (5)`. Eight messages in
+the thread now.
+
+**WHAT IS VERIFIED FROM HERE AND WHAT IS NOT.** Verified in this repo before the reply was
+sent: the link-out is live in the deployed bundle (`ios:!0,android:!1` plus the `href`); all
+five surfaces gate on `!subscribed`; the demo account is `status: active, grandfathered: true`;
+and a signed-out user in the app reaches the external link because `WatchCta`'s `isNative`
+branch precedes its `!signedIn` branch. **NOT verified from here:** that the notes saved
+cleanly, and that the sign-out steps behave as written on the owner's device. Nobody here can
+read App Store Connect, and the on-device check is the one this round exists to avoid skipping
+— §2a and §2d were both caused by shipping something nobody had exercised the way a reviewer
+would.
+
+**WHAT THIS ROUND FINALLY TESTS.** Whether a link-out ALONE clears 3.1.1 with no IAP. §2c
+recorded that as unestablished and it stayed that way, because the reviewer never saw a
+link-out. This is the first submission where they can. **A rejection now is the real answer**
+and moves the decision to StoreKit — weeks of native work, a new build, and 15-30% — rather
+than another notes round.
+
 ## 2c. REJECTED 2026-08-19 — Guideline 3.1.1, In-App Purchase
 
 **The reviewer finally got INTO the app, and this is the rejection the plan always expected.**
