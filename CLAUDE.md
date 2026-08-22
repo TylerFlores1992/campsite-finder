@@ -5765,9 +5765,21 @@ reasons are ours.
   restatement of the demand, not a defence. §2c records sending the reply and verifying the
   bundle and says nothing about the notes. **Confirm in the console before acting; nobody here
   can read ASC**, and the block in `docs/APP-STORE.md` §2 is a COPY.
-- **The fix is console-side: rewrite the notes, add a SECOND non-subscribed demo account, reply
-  and resubmit the same binary.** Signing out would also work (`useSubscription` renders the CTA
-  when signed out) but **relying on a reviewer to go looking is what cost this round**.
+- **CONFIRMED 2026-08-22: the console notes ARE stale** — the owner read the live field back and
+  it carries the 3.1.3(b) heading and *"does not link out to any purchase flow"* verbatim. **And
+  the console holds FIVE SECTIONS `docs/APP-STORE.md` §2 does not** (devices tested, main
+  features, external services, regional differences, regulated industry — §2b's six written
+  answers). §2 is a COPY and it is NOT current; rewriting the notes from it deletes Apple's own
+  answers and invites a second 2.1.
+- **NO SECOND DEMO ACCOUNT — SIGNING OUT REVEALS THE LINK-OUT**, verified in source.
+  `WatchCta`'s `isNative` branch sits ABOVE its `!signedIn` branch, and `useSubscription` gives a
+  signed-out user `loaded: true, subscribed: false, unknown: false` — so the app renders the
+  external link, not a sign-up route. `Explore` renders it too. A second account needs a mailbox
+  that does not exist AND re-introduces the Clerk Device Trust email-code trap that caused the
+  08-14 rejection. **"Do not rely on signing out" still holds for UNPROMPTED sign-out**; what
+  makes it safe is numbered steps in the notes.
+- **The fix is console-side: rewrite the notes (preserving §2b's answers), give sign-out steps,
+  reply and resubmit the same binary.**
 - **A manage-billing link in Settings is worth adding and is SEPARATE.** 3.1.1 is about
   *purchasing*, so a management link answers no part of the citation on its own — it complements
   the notes fix rather than replacing it, and it is code rather than console.

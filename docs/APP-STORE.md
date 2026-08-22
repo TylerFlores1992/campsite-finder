@@ -79,13 +79,18 @@ Three parts, all filled in and saved as of 2026-08-08:
 > says `<fill in>`" is not a defect and has now twice been mistaken for one — **verified
 > 2026-08-08 that the console field is populated**, which is the only thing that matters.
 
-> **⚠ STALE AS OF 2026-08-22 — DO NOT PASTE THIS BLOCK. See §2d.** The `BUSINESS MODEL`
-> paragraph below says the app *"does not link out to any purchase flow"* and cites
-> **3.1.3(b)**. Both are now wrong: the link-out shipped on 08-19 as the answer to the 3.1.1
-> rejection, and §2c established that 3.1.3(b) restates the demand rather than excusing it. So
-> this text denies in writing the exact thing the Resolution Center reply claimed. **§2d carries
-> the replacement**; whether the CONSOLE still holds this version is unconfirmed — nobody here
-> can read ASC.
+> **⚠ STALE, AND CONFIRMED LIVE IN THE CONSOLE 2026-08-22 — DO NOT PASTE THIS BLOCK. See §2d.**
+> The `BUSINESS MODEL` paragraph below says the app *"does not link out to any purchase flow"*
+> and cites **3.1.3(b)**. Both are now wrong: the link-out shipped on 08-19 as the answer to the
+> 3.1.1 rejection, and §2c established that 3.1.3(b) restates the demand rather than excusing
+> it. So this text denies in writing the exact thing the Resolution Center reply claimed — and
+> the owner has now read the live field back, so it IS what the reviewer sees.
+>
+> **THIS COPY IS ALSO INCOMPLETE.** The console additionally holds `DEVICES AND OS TESTED`,
+> `MAIN FEATURES`, `EXTERNAL SERVICES`, `REGIONAL DIFFERENCES` and `REGULATED INDUSTRY` — the
+> six written answers from §2b. They were never folded back into this file, so **§2 is a COPY
+> and it is not current.** Anyone rewriting the notes from this block alone deletes Apple's own
+> answers. §2d carries the full, correct replacement.
 
 The first section of the notes is the one that prevents the predictable rejection.
 
@@ -209,14 +214,20 @@ the demo-account half of this entry applies.
 1. **Rewrite the notes** (block below). Drop 3.1.3(b) entirely; state the link-out and its
    US-storefront basis; give explicit steps to reach it; say plainly that the subscriber demo
    account is by design never shown a purchase prompt.
-2. **Create a second, NON-SUBSCRIBED demo account** and name it in the notes. App Store
-   Connect's Sign-In Information holds ONE credential pair, so the second account lives in the
-   notes text — that is normal and reviewers follow it.
+2. **Give explicit SIGN-OUT steps** — no second account is needed, and none should be created.
+   See the section below: `WatchCta`'s `isNative` branch sits above its `!signedIn` branch, so a
+   signed-out user in the app gets the external link rather than a sign-up route. Verified in
+   source.
 3. **Reply in Resolution Center** (block below) and resubmit **the same binary**.
 
-**Signing out would also work** — `useSubscription` returns `loaded, subscribed: false,
-unknown: false` when signed out, so the CTA renders. **Do not rely on it.** Expecting a reviewer
-to sign out of the account you gave them and go looking is what just cost a round.
+**A SECOND DEMO ACCOUNT WAS THE FIRST PLAN AND IS THE WORSE ONE.** It needs a mailbox the owner
+does not have, and a brand-new account signing in on a review device is exactly the Clerk Device
+Trust email-code trap that caused the 2026-08-14 rejection. Sign-out needs no new mailbox, no new
+account and no new sign-in.
+
+**"Do not rely on signing out" still holds for UNPROMPTED sign-out.** What makes it safe here is
+that the notes give numbered steps — a directed instruction, not a hope that a reviewer goes
+looking.
 
 ### Optional, and deliberately SEPARATE: a manage-billing link in Settings
 
@@ -236,58 +247,128 @@ weeks plus 15–30%. Testing this properly first is the cheaper bet, not a certa
 
 ### Replacement App Review notes
 
+**CONFIRMED 2026-08-22: the console notes ARE stale.** The owner pasted the live field and it
+contains the 3.1.3(b) heading and *"does not link out to any purchase flow"* verbatim. The
+caveat above is resolved — both halves of this entry apply.
+
+**AND THE CONSOLE HELD SECTIONS THE REPO COPY DOES NOT.** The live notes carry `DEVICES AND OS
+TESTED`, `MAIN FEATURES`, `EXTERNAL SERVICES`, `REGIONAL DIFFERENCES` and `REGULATED INDUSTRY`
+— the six written answers from §2b's information request. The first draft of this block was
+built from §2's copy and **would have deleted them**, which is how you turn a 3.1.1 round into
+a second 2.1 "Information Needed". §2 is a COPY and it is not current; the console is the
+source of truth for what is actually in the field.
+
+**NO SECOND DEMO ACCOUNT IS NEEDED — signing out reveals the link-out.** Verified in source
+rather than assumed, and it turns on an ordering detail:
+
+```js
+// WatchCta.tsx — the isNative branch sits ABOVE the !signedIn branch
+if (subscribed || unknown) { ...plain /new link... }
+if (isNative) {
+  if (linkout) return <a href={SUBSCRIBE_HREF} data-native-external="true">Subscribe to watch</a>;
+}
+if (!signedIn) { return <Link href="/sign-up">Sign up to watch</Link>; }
+```
+
+`useSubscription` returns `loaded: authLoaded && (!isSignedIn || checked)`, so a signed-out user
+has `loaded: true, subscribed: false, unknown: false` — falls past the first branch, hits
+`isNative`, and gets the **external link**. `Explore.tsx` renders it too
+(`if (!loaded || unknown || subscribed) return null`). Only `SubscribeCta`'s `signedOut` gate
+shows Sign in / Create account instead, and that is a different component.
+
+**This is better than a second account, not merely cheaper.** A brand-new account signing in on
+a review device is exactly the Clerk Device Trust email-code trap that caused the 2026-08-14
+rejection. Sign-out needs no new mailbox, no new account, and no new sign-in.
+
+**The earlier note here said "do not rely on signing out".** That still holds for *unprompted*
+sign-out — what changed is that the notes now give explicit numbered steps, which is a directed
+instruction rather than a hope.
+
 Paste into *App Review Information → Notes* on the version page. Editable in place while the
-version is in review. Replace `<second account email>` / `<second account password>` with the
-non-subscribed account from step 2.
+version is in review. **4,018 characters** — Apple's field cap is understood to be 4,000, so
+**check the field accepts it and tell me if it truncates**; the `REGULATED INDUSTRY` paragraph
+is the first thing I would trim.
+
+Two numbers were corrected against production before this was written: the catalog holds
+**8,037** campgrounds, not 8,035, and it drifts with every nightly sync — so it now reads
+"8,000+", and the source count is stated as "every source" rather than a figure that goes stale.
 
 ```
 WHAT THE APP DOES
-CampHawk watches campgrounds that are fully booked and alerts the user within
-seconds of a cancellation, so they can grab the site. Searching live availability
-across 8,000+ campgrounds is free and requires no account.
+CampHawk watches campgrounds that are already fully booked and alerts the user
+within seconds of a cancellation, so they can take the site before anyone else.
+Searching live availability across 8,000+ campgrounds is free and needs no
+account; watching a campground and getting alerts is the paid feature.
 
-SUBSCRIPTIONS — HOW TO SEE THE PURCHASE PATH
-Subscriptions are sold on our website, camphawk.app. In the app, a user who is not
-subscribed is shown a link that opens camphawk.app in the default browser to
-subscribe. This is the external purchase link permitted on the United States
-storefront. This app is available on the United States storefront only.
+SUBSCRIPTIONS AND THE EXTERNAL PURCHASE LINK - PLEASE READ
+Subscriptions are sold on our website, camphawk.app. Inside the app, a user who
+is NOT subscribed is shown a link that opens camphawk.app in the default browser
+to subscribe. This is the external purchase link permitted on the United States
+storefront, and this app is available on that storefront only.
 
-IMPORTANT: the demo account below has an ACTIVE subscription, so it is never shown
-a purchase prompt anywhere in the app — by design, because prompting an existing
-subscriber to subscribe reads as a billing failure. To see the external purchase
-link, please use the SECOND account:
+WHY THE PREVIOUS REVIEW MAY NOT HAVE SEEN IT: the demo account below has an
+ACTIVE subscription, and purchase prompts are deliberately hidden from an
+existing subscriber - showing "subscribe" to someone who already pays reads as a
+billing error. Signed in with it, no purchase link appears anywhere.
 
-  Non-subscribed demo account
-  Email:    <second account email>
-  Password: <second account password>
+TO SEE THE EXTERNAL PURCHASE LINK (no extra account needed):
+  1. Open the app and do NOT sign in - or, if already signed in, open the
+     account menu (top right) and choose Sign out.
+  2. Search for any campground and open it.
+  3. Press "Start watching". The button reads "Subscribe to watch" and opens
+     camphawk.app in the default browser, outside the app.
+  The same link also appears beneath the search results on the Explore tab.
 
-  Steps: sign in with that account, open the "Watches" tab, and press
-  "Start watching". A message appears reading "Watches need a subscription —
-  Subscribe at camphawk.app". That link is the external purchase link. It opens
-  the default browser, outside the app.
-
-  The same link also appears on the Settings tab under "Subscription", and on the
-  Explore tab beneath the search results.
-
-DEMO ACCOUNT (subscribed — for the app's actual functionality)
+DEMO ACCOUNT (subscribed - for the app's paid functionality)
 Credentials are in the Sign-In Information fields above. This account has an
-active subscription so you can see watch creation, alerts and auto-cart working.
-Sign-in is email + password. Social sign-in is deliberately hidden in the app
-(Google blocks OAuth inside embedded webviews), so no third-party login is
-offered and Sign in with Apple is not applicable.
+active subscription so you can see watch creation and alerts. Sign-in is email +
+password. Social sign-in is deliberately hidden in the app (Google blocks OAuth
+inside embedded webviews), so no third-party login is offered and Sign in with
+Apple is not applicable.
+
+DEVICES AND OS TESTED
+iPhone SE (3rd generation), iOS 26.6 - a physical device.
+
+MAIN FEATURES AND HOW TO REACH THEM
+Search (free, no account): type a place name or tap "Use my location", pick
+dates. Create a watch (paid): open a campground, choose dates, save. Alerts
+arrive by email, push and text.
 
 ACCOUNT DELETION (5.1.1(v))
-Settings tab -> "Delete account" at the bottom. It deletes the account and all of
-its data, and cancels any subscription immediately.
+Account menu (top right) > "Alerts & settings" > "Delete account" at the bottom.
+It deletes the account and all of its data, and cancels any subscription
+immediately.
 
-PUSH NOTIFICATIONS
-Push is the core of the product: it is how a user hears that a campsite opened up.
-Permission is requested only after the user creates their first watch, not on
-launch, because before that there is nothing to notify them about.
+PUSH AND LOCATION
+Push is how a user hears that a campsite opened up. Permission is requested only
+after the first watch exists, never on first launch. Location is optional, used
+only to centre a search on the user's area; declining it leaves search fully
+usable.
 
-LOCATION
-Optional. Used only to centre a campground search on the user's area. Declining it
-leaves search fully usable - the user types a place name instead.
+EXTERNAL SERVICES
+Clerk (authentication), Stripe (payments, on our website only), Supabase
+(database), Firebase Cloud Messaging (push), Twilio (text messages), Mapbox and
+OpenStreetMap (maps and geocoding), Sentry (error monitoring), Vercel and Fly.io
+(hosting). No AI service is used. Campground data comes from the official
+reservation systems - Recreation.gov and the federal RIDB open-data API,
+ReserveCalifornia and other state portals, ReserveAmerica and GoingToCamp. Every
+source and its official URL is published at https://camphawk.app/sources,
+reachable without an account.
+
+REGIONAL DIFFERENCES
+None. Availability is restricted to the United States storefront and the
+campground catalog covers United States campgrounds only.
+
+REGULATED INDUSTRY OR PROTECTED MATERIAL
+Neither applies. The campground information is public government data, read from
+the official reservation systems above and shown unchanged. Every reservation,
+payment and cancellation happens on the official site under that agency's terms,
+not ours. CampHawk is independent and does not represent any government entity:
+it is not affiliated with, endorsed by, or authorized by Recreation.gov, the
+National Park Service, the U.S. Forest Service, the Bureau of Land Management,
+the U.S. Army Corps of Engineers, or any state park agency. That disclaimer
+opens https://camphawk.app/sources and both opens and closes the App Store
+description.
 ```
 
 ### Resolution Center reply
@@ -295,30 +376,30 @@ leaves search fully usable - the user types a place name instead.
 ```
 Thank you for the review.
 
-We believe the external purchase link was not reachable by the reviewer, and that
-this is our error rather than a disagreement about the guideline.
+We believe the external purchase link was not reachable by the reviewer, and
+that this is our error rather than a disagreement about the guideline.
 
 The app does contain an external purchase link, and it has been live in the
 build under review. It opens camphawk.app in the default browser to subscribe,
 which is the external purchase link permitted on the United States storefront.
-This app is available on the United States storefront only.
+This app is available on that storefront only.
 
 The reason it was not visible: the demo account we provided has an ACTIVE
 subscription. Every purchase prompt in the app is deliberately hidden from an
 existing subscriber, because showing "subscribe" to someone who already pays
-reads as a billing error. With those credentials, no purchase link is shown
-anywhere - so the app appeared exactly as described in the rejection.
+reads as a billing error. Signed in with those credentials, no purchase link is
+shown anywhere - so the app appeared exactly as described in the rejection. We
+are sorry for the wasted review.
 
-We have added a second, non-subscribed demo account to the App Review
-Information notes, and steps to reach the link:
+No additional account is needed to see it. While SIGNED OUT:
 
-  1. Sign in with the non-subscribed account listed in the notes.
-  2. Open the "Watches" tab and press "Start watching".
-  3. A message appears: "Watches need a subscription - Subscribe at
-     camphawk.app". That link opens the default browser, outside the app.
+  1. Open the app and do not sign in - or, if already signed in, open the
+     account menu (top right) and choose Sign out.
+  2. Search for any campground and open it.
+  3. Press "Start watching". The button reads "Subscribe to watch" and opens
+     camphawk.app in the default browser, outside the app.
 
-The same link appears on the Settings tab under "Subscription", and on the
-Explore tab beneath the search results.
+The same link also appears beneath the search results on the Explore tab.
 
 We have also corrected the App Review Information notes, which still described
 an earlier version of the app that contained no purchase link at all. That
