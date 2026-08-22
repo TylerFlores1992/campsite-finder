@@ -5745,6 +5745,60 @@ and no way to act.
   back door and defeat the flag entirely.
 - Reply text, the storefront precondition and the full reasoning: `docs/APP-STORE.md` §2c.
 
+### THE 3.1.1 FIX WAS LIVE AND THE REVIEWER COULD NOT SEE IT (2026-08-22)
+Rejected again on the same guideline, same build. **The change was never adjudicated**, and both
+reasons are ours.
+- **EVERY LINK-OUT SURFACE IS GATED ON `!subscribed`, AND THE DEMO ACCOUNT IS A SUBSCRIBER**
+  (`status: active, grandfathered: true`, checked in the DB). All five — Settings,
+  PricingSection, Explore, WatchCta, and NewWatch (behind `needsSubscription`, the SERVER's
+  answer to a submit). That is **"a subscriber is never sold to" working exactly as designed**,
+  and the consequence nobody had drawn is that with the credentials we handed Apple, the
+  reviewer could not see the fix ANYWHERE. From their seat the app is precisely what they
+  described. The link-out is live in production; it is invisible to that account.
+- **THIS IS THE 2026-08-14 SHAPE AGAIN.** That rejection came from a demo password nobody had
+  tried; this one from a demo ACCOUNT nobody had viewed the fix through. Both times the artefact
+  was correct and the thing handed to the reviewer was not. **Check what the reviewer will
+  actually SEE, with the credentials they will actually use** — "the fix is in the bundle" is a
+  different claim, and §2c verified only that one.
+- **THE APP REVIEW NOTES ARGUE THE OPPOSITE CASE, IN WRITING.** They say the app *"does not link
+  out to any purchase flow"* under a **3.1.3(b)** heading — the guideline §2c established is a
+  restatement of the demand, not a defence. §2c records sending the reply and verifying the
+  bundle and says nothing about the notes. **Confirm in the console before acting; nobody here
+  can read ASC**, and the block in `docs/APP-STORE.md` §2 is a COPY.
+- **CONFIRMED 2026-08-22: the console notes ARE stale** — the owner read the live field back and
+  it carries the 3.1.3(b) heading and *"does not link out to any purchase flow"* verbatim. **And
+  the console holds FIVE SECTIONS `docs/APP-STORE.md` §2 does not** (devices tested, main
+  features, external services, regional differences, regulated industry — §2b's six written
+  answers). §2 is a COPY and it is NOT current; rewriting the notes from it deletes Apple's own
+  answers and invites a second 2.1.
+- **NO SECOND DEMO ACCOUNT — SIGNING OUT REVEALS THE LINK-OUT**, verified in source.
+  `WatchCta`'s `isNative` branch sits ABOVE its `!signedIn` branch, and `useSubscription` gives a
+  signed-out user `loaded: true, subscribed: false, unknown: false` — so the app renders the
+  external link, not a sign-up route. `Explore` renders it too. A second account needs a mailbox
+  that does not exist AND re-introduces the Clerk Device Trust email-code trap that caused the
+  08-14 rejection. **"Do not rely on signing out" still holds for UNPROMPTED sign-out**; what
+  makes it safe is numbered steps in the notes.
+- **The fix is console-side: rewrite the notes (preserving §2b's answers), give sign-out steps,
+  reply and resubmit the same binary.**
+- **A manage-billing link in Settings is worth adding and is SEPARATE.** 3.1.1 is about
+  *purchasing*, so a management link answers no part of the citation on its own — it complements
+  the notes fix rather than replacing it, and it is code rather than console.
+- **RESUBMITTED 2026-08-22** (owner-reported): notes replaced, **same binary**, `1.0 (5)`.
+  Verified here before it went: the link-out is live in the deployed bundle, all five surfaces
+  gate on `!subscribed`, the demo account is active, and a signed-out user reaches the link.
+  **NOT verifiable from here:** that the notes saved, and that the sign-out steps behave as
+  written on the device — nobody here can read ASC, and the on-device check is exactly what §2a
+  and §2d were both caused by skipping.
+- **THIS ROUND FINALLY TESTS WHETHER LINK-OUT ALONE CLEARS 3.1.1 WITH NO IAP.** §2c recorded
+  that as unestablished and it stayed that way, because the reviewer never saw a link-out. This
+  is the first submission where they can. **A rejection now is the real answer** and moves the
+  decision to StoreKit — weeks of native work, a new build, and 15-30% — rather than another
+  notes round. Both text blocks and the full reasoning are in `docs/APP-STORE.md` §2d.
+- **THE NOTES FIELD CAP IS 3,999, VERIFIED** — App Store Connect says *"Must be less than 4000
+  characters"* and its counter read `-18` against a 4,018-character draft, i.e. it counts
+  newlines exactly as `wc -c` does. A local count is therefore trustworthy; no need to
+  paste-and-see.
+
 ### DO THIS THE MOMENT THE APP IS LIVE
 **Turn on store link-out:** set `NATIVE_LINKOUT = true` in
 `src/components/v2/nativeSubscribe.tsx`. It sends non-subscribers in the app to
