@@ -1,7 +1,9 @@
 # Next session — start here
 
-*Rewritten 2026-08-22. Delete this file once the sampler has produced a reading from a real ramp.
-It is a handover, not a permanent doc, and a stale one reads like current state.*
+*Rewritten 2026-08-22 (evening). Two live threads: the memory leak, and the iOS review.
+Delete this file once the sampler has produced a reading from a real ramp AND the App Store
+version has a decision. It is a handover, not a permanent doc, and a stale one reads like
+current state.*
 
 ---
 
@@ -23,22 +25,28 @@ do after the leak, not stop it from leaking."* They were right.
 
 | | |
 |---|---|
-| Master | `e2be117` |
-| Mini-PC | `e2be117` — **in sync** |
+| Master | `744bc85` |
+| Mini-PC | `e2be117` — **behind master by DOCS ONLY**, nothing bot-side |
 | Open holds | none |
-| RC session | healthy (Okta ALIVE) |
+| RC session | token dead, **Okta ALIVE** — the ordinary between-releases state |
 
-**THE SAMPLER IS LIVE ON THE BOX.** #155 merged and the box updated to `e2be117` on 08-22, so
-the instrument is armed and the **next ramp is measured automatically** — no action needed to
-arm it. Verify before assuming, though; a sha is cheap to check and this file has been wrong
-about one before:
+**THE BOX BEING BEHIND MASTER IS FINE HERE, AND THAT IS A JUDGEMENT, NOT A SHRUG.** Everything
+between `e2be117` and `744bc85` is documentation plus another lane's relay code. The sampler
+landed IN `e2be117`, so the instrument is on the box. Check rather than trust this sentence — a
+sha is cheap and this file has been wrong about one before:
 
 ```
 NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status
 ```
 
+**THE SESSION LINE IS THE NEW REPORTING WORKING.** `session_ok: false` with `okta_alive: true`
+is exactly what migration 065 was built to distinguish: RC rejects the current token, but the
+Okta session behind it is alive, so a repair right now is the **11-second cookie-answered** kind
+rather than the 12-minute, 9.4 GB password form. `autocart.rc_session` says so in words.
+
 **Still open:** **#146** (worker-deploy trigger paths — merging restarts both poller machines,
-deliberately, so do it at a quiet moment and not near a release) and **#157** (this file).
+deliberately, so do it at a quiet moment and not near a release). Three stale docs PRs (**#156**,
+**#69**, **#51**) predate this work and are worth closing so the open list stays meaningful.
 
 ---
 
@@ -131,6 +139,37 @@ real ramp, then take Track B to the owner with evidence rather than with a hypot
 
 ---
 
+## The OTHER live thread: iOS review
+
+**`1.0 (5)` was resubmitted 2026-08-22 with corrected App Review notes — same binary.** This is
+a separate thread from the leak and it can resolve while nobody is looking, because **release is
+automatic**: approval puts it on the App Store with no human step.
+
+**Read `docs/APP-STORE.md` §2d before touching anything here.** The short version: the 3.1.1 fix
+(the US-storefront link-out) had been live in the reviewed build since 08-19 and **the reviewer
+could not see it**, for two reasons that were both ours — every link-out surface is gated on
+`!subscribed` and the demo account is a subscriber, and the console notes still said in writing
+that the app *"does not link out to any purchase flow"*. Fixed console-side: rewritten notes with
+explicit **sign-out** steps, and no second demo account (signing out reveals the link because
+`WatchCta`'s `isNative` branch precedes its `!signedIn` branch).
+
+**HOW TO READ THE OUTCOME — this matters, because the obvious reading is wrong:**
+
+- **Approved** → it is live. Nothing to do; the `LINKOUT_BY_STORE.ios` flip already happened.
+- **Rejected on 3.1.1 again** → **that is the ANSWER, not a fourth process failure.** §2c and
+  §2d both recorded "does link-out alone clear 3.1.1 with no IAP?" as unestablished, because on
+  neither occasion could the reviewer reach a link-out. This is the first submission where they
+  can. A rejection now moves the decision to StoreKit — weeks of native work, a new build, and
+  15–30% — and should be taken to the owner as that decision, not as another notes round.
+- **Rejected on something else** → treat it on its own terms. §2a, §2b, §2c and §2d were each a
+  different fault from what the previous one looked like.
+
+**Android stays off.** `LINKOUT_BY_STORE.android` is `false` and must remain so until Play
+PRODUCTION is live and US-only — the closed test is worldwide, and the anti-steering carve-outs
+are US-storefront only.
+
+---
+
 ## Also landed this session
 
 - **Migration 065 — the Okta session's state is a column.** `autocart.rc_session` now says
@@ -141,6 +180,9 @@ real ramp, then take Track B to the owner with evidence rather than with a hypot
 - **#154 — the warm-up.** Signs in at T−3h when Okta is gone, so the T−30 sign-in is
   cookie-answered. Moves the expensive trip out of the window where a RAM-guard kill can hold the
   profile lock past 08:00. **It does not add a password sign-in, it moves one.**
+- **§2d + the resubmission.** The 3.1.1 fix was live and invisible to the reviewer; notes
+  rewritten, same binary resubmitted. `docs/APP-STORE.md` §2d carries both text blocks, the
+  verified 3,999-character Notes cap, and the reasoning.
 - **#152 — the claim screen.** A successful release no longer reports "Network error. Try again."
   (advice for an act that cannot be repeated), and the gate now reads the token's **expiry**, not
   merely that one was captured — which is what let a release happen against a 23-hour-dead session
@@ -156,6 +198,10 @@ real ramp, then take Track B to the owner with evidence rather than with a hypot
   not a bug.
 - **`npm test` hits the production DB on purpose**, and races production's own sweeps — a flake
   there is not automatically a second test run.
+- **Check what the REVIEWER will see, with the credentials they will actually use.** "The fix
+  is in the bundle" is a different claim, and verifying only that one cost two App Store rounds
+  — 08-14 (a demo password nobody had tried) and 08-22 (a demo account nobody had viewed the fix
+  through).
 - **A guard that anchors on a token occurring twice will break silently.** It has now happened
   twenty-one times. When one fails over unchanged behaviour, re-anchor it and then **verify it
   still fails against the regression it exists for** — a re-anchor that quietly weakens a guard is

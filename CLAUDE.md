@@ -2519,17 +2519,27 @@ as the leading explanation and **has never been tested**.
 
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-22). Master and the box are both on
-> **`e2be117`**. **The owner's standing ask is "fix the leak", and the leak is NOT fixed** —
-> everything shipped so far is containment or relocation, which that file says in its first
-> paragraph so nobody reads five green instruments as a cure. **#155 — the native memory
-> sampler, the instrument that NAMES the allocation — is MERGED and live on the box, so the
-> next ramp is measured automatically.** #146 (worker-deploy paths) is still open.
-> The cure itself, **Track B**, is designed and deliberately NOT started: it needs the owner's
-> go-ahead because it is surgery on the release-critical login path, and #155's first reading
-> could change its design.
-> **Delete that file once the sampler has produced a reading from a real ramp**; it is a handover, not
-> a permanent doc, and a stale one would read like current state.
+> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-22 evening). **TWO live threads.**
+>
+> **1. THE LEAK, and the owner's standing ask is to FIX it — it is NOT fixed.** Everything
+> shipped is containment or relocation, which that file says in its first paragraph so nobody
+> reads five green instruments as a cure. **#155 — the native memory sampler, the instrument
+> that NAMES the allocation — is MERGED and live on the box, so the next ramp is measured
+> automatically.** The cure, **Track B** (replay the Okta round trip over `ctx.request`, no
+> renderer), is designed and deliberately NOT started: it is surgery on the release-critical
+> login path and the sampler's first reading could change its design.
+>
+> **2. iOS REVIEW.** `1.0 (5)` resubmitted 2026-08-22 with corrected notes, same binary — see
+> `docs/APP-STORE.md` §2d. **Release is AUTOMATIC**, so approval puts it live with no human
+> step. **A 3.1.1 rejection now is the ANSWER, not a fourth process failure**: it is the first
+> submission where the reviewer can actually reach a link-out, so a refusal moves the decision
+> to StoreKit rather than to another notes round.
+>
+> Master is **`744bc85`**; the box is `e2be117`, behind by DOCS ONLY. #146 (worker-deploy paths)
+> is open; #156/#69/#51 are stale docs PRs worth closing.
+> **Delete that file once the sampler has a reading from a real ramp AND the App Store version
+> has a decision**; it is a handover, not a permanent doc, and a stale one would read like
+> current state.
 
 ### THE APP'S RC SESSION IS BEING MEASURED NOW — no renewal built yet (migration 058, 2026-08-13)
 The mobile claim flow needs a live RC session inside the InAppBrowser data store, and the
