@@ -72,6 +72,9 @@ import {
 import { sweepOrphanChromium } from './orphan-sweep.mjs';
 import { withForcedLoginPrompt } from './force-login-prompt.mjs';
 import { withNetworkTrace, describeTrace } from './okta-net-trace.mjs';
+import {
+  startNativeSampling, readNativeProfile, diffProfiles, renderProfile,
+} from './rc-native-sampler.mjs';
 import { takeStorageCensus, takeIdbCensus, describeCensus } from './storage-census.mjs';
 import {
   installTokenCapture, readLiveToken, readTokenAnyOrigin, primeToken, renewSession, tokenSecondsLeft,
@@ -2449,6 +2452,24 @@ async function warmResident() {
             if (!tab) {
               renewal = recordRenewal(renewal, { token, now: Date.now(), renewed: false });
             } else try {
+            /**
+             * NAME THE ALLOCATION — see rc-native-sampler.mjs.
+             *
+             * ON THE TAB'S OWN CDP SESSION, because `Memory.startSampling` is per-renderer and
+             * the trip runs in this tab, not on the resident page. Started here rather than at
+             * launch for the reason `attachHeapProbe` exists: the expensive negotiation must
+             * happen while the browser is healthy, and a tab one line old is as healthy as it
+             * gets. Only the cheap read has to land afterwards.
+             *
+             * A BEFORE-READING IS TAKEN AND DIFFED even though a fresh tab has allocated almost
+             * nothing. Whether a new tab gets its own renderer or shares the resident page's is
+             * NOT established, and if it shares one, an all-time profile carries hours of the
+             * resident page's history and would report it as this trip's. Diffing is correct
+             * either way, which is better than depending on a fact nobody has measured.
+             */
+            const sampler = await ctx.newCDPSession(tab).catch(() => null);
+            const sampling = sampler ? await startNativeSampling(sampler) : { ok: false, why: 'no CDP session' };
+            const profBefore = sampling.ok ? await readNativeProfile(sampler) : null;
             // COUNT THE BYTES. This is the first instrument that goes at the CAUSE rather than
             // the aftermath — see okta-net-trace.mjs. "Network/IPC buffering" has been the
             // leading candidate three times and was never once tested, though it is directly
@@ -2471,6 +2492,23 @@ async function warmResident() {
             // five guard firings were mid-renewal — so a trace only logged on success would
             // miss every event it was built for.
             log(`  ${describeTrace(trace)}`);
+            /**
+             * READ AFTER THE TRIP RETURNS, not at the guard. CDP goes quiet as a ramp peaks —
+             * measured twice, `newCDPSession` on the first firing and `Performance.getMetrics`
+             * on the second — which together established that the reading cannot be taken at
+             * the trip at all. The renewals that ramp 2.3 GB mostly COMPLETE, so this is the
+             * common case; the guard's heap facts remain the fallback for the ones that die.
+             *
+             * PRINTED PASS OR FAIL, like the trace above it and for the same reason: the
+             * failing renewals are the ones that ramp.
+             */
+            if (sampling.ok) {
+              const profAfter = await readNativeProfile(sampler);
+              const ram = trace?.ram ? trace.ram.afterMb - trace.ram.beforeMb : null;
+              log(renderProfile(diffProfiles(profBefore, profAfter), ram));
+            } else {
+              log(`  native allocation: not sampled (${sampling.why})`);
+            }
             // RECORDED BEFORE ANYTHING ELSE CAN THROW. `checkAndReport` below is wrapped but
             // the logging is not, and an attempt that is made and not recorded is an attempt
             // the floor cannot see — which turns the ration into no ration at all.
