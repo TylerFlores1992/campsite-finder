@@ -85,6 +85,7 @@ import { shouldRehearse, shouldRehearseOnDemand, rehearsalSlot } from './rehears
 import { requiredTokenSeconds } from './session-coverage.mjs';
 import { planRenewal, recordRenewal, newRenewalState, makeSkipLogger } from './renewal-schedule.mjs';
 import { settleBudget, budgetForRelease, MAX_KILL_REFUNDS } from './autologin-budget.mjs';
+import { warmupPlan, warmupWindowOpen } from './autologin-warmup.mjs';
 // The same two clock helpers the update guard decides with. Both are pure and both already
 // get the Pacific / zone-less-wall-clock handling right, which is the part that has been
 // got wrong before — a second implementation here would be a second chance to get it wrong.
@@ -793,6 +794,179 @@ function saveAutoLogin(st) {
 }
 
 let autoLogin = loadAutoLogin();
+
+/**
+ * The WARM-UP's own ration, in its own file.
+ *
+ * A SEPARATE FILE, NOT A FIELD ON THE AUTO-LOGIN BUDGET. That budget carries the kill-refund
+ * arithmetic (`startedAt`, `killed`, `MAX_KILL_REFUNDS`), which is subtle, release-critical
+ * and was got wrong once already; threading a second counter through `settleBudget` would put
+ * a new field inside the one piece of state that decides whether an 08:00 cart gets a session.
+ * Two small files cannot interfere with each other.
+ *
+ * PERSISTED, for the reason the auto-login budget is. `supervise.ps1` restarts this process on
+ * exit and the warm-up is exactly the kind of long Okta navigation the RAM guard kills — so an
+ * in-memory counter would be re-issued by the very event that ends an attempt, and over a
+ * 2.5-hour window polled every minute that is an unbounded sign-in loop from an address that
+ * has been blocked for less.
+ *
+ * NO KILL REFUND HERE, deliberately. A killed warm-up leaves us exactly where we started, with
+ * `maybeAutoLogin`'s full budget intact at T−30 — the status quo — so forgiving it buys a
+ * second password submission for no change in outcome. The auto-login refunds because there
+ * the alternative is a missed cart; here it is a slower morning.
+ */
+const WARMUP_STATE = path.join(HERE, 'logs', '.autologin-warmup.json');
+
+function loadWarmup() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(WARMUP_STATE, 'utf8'));
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      return {
+        release: typeof raw.release === 'string' ? raw.release : null,
+        spent: Number.isFinite(raw.spent) && raw.spent >= 0 ? raw.spent : 0,
+      };
+    }
+  } catch { /* missing or unreadable */ }
+  // UNREADABLE IS A FRESH RATION, matching settleBudget's direction: a diagnostics problem
+  // must not become a refusal to prepare for a release. The bound that matters is the
+  // per-release one, and a corrupt file is not evidence the turn was taken.
+  return { release: null, spent: 0 };
+}
+
+function saveWarmup(st) {
+  try {
+    fs.writeFileSync(WARMUP_STATE, JSON.stringify(st));
+  } catch (e) {
+    log(`   (could not persist the warm-up ration: ${e.message})`);
+  }
+}
+
+let warmup = loadWarmup();
+let lastWarmupSkip = null;
+
+function warmupSkip(reason) {
+  // Collapsed like every other gate here: this is asked every poll, and 1,440 identical
+  // lines a day hides the answer as effectively as printing nothing.
+  if (reason !== lastWarmupSkip) {
+    log(`   warm-up stood down: ${reason}`);
+    lastWarmupSkip = reason;
+  }
+  return false;
+}
+
+/**
+ * SIGN IN EARLY WHEN THE SIGN-IN IS GOING TO BE THE EXPENSIVE KIND.
+ *
+ * The rule is `autologin-warmup.mjs`; this is the I/O around it. See that file's header for
+ * why this exists at all — briefly: `maybeAutoLogin` acts only inside `AUTOLOGIN_LEAD_MIN`, so
+ * a 12-minute, 9.4 GB password sign-in can currently happen at no time EXCEPT the
+ * release-critical window, where a RAM-guard kill can hold the profile lock past 08:00 and
+ * cost the cart.
+ *
+ * It returns true when it did something, so the caller can `continue` — the same contract as
+ * `maybeAutoLogin` and `maybeRehearse`.
+ */
+async function maybeWarmupLogin(ctx, page) {
+  if (!hasCredentials()) {
+    return warmupSkip('no credentials are stored on this box — run mini-pc\\rc-save-password.bat');
+  }
+  const { nextRelease: release, reachable } = await feedFacts();
+  // UNREACHABLE IS NOT "NO HOLD" — the same distinction maybeAutoLogin draws. Being blind is
+  // not being idle, and it must not read as a quiet night.
+  if (!reachable) {
+    return warmupSkip('the hold feed is unreachable, so we cannot tell whether a release is coming');
+  }
+  if (!release) return warmupSkip('no hold is queued');
+
+  if (warmup.release !== release) {
+    warmup = { release, spent: 0 };
+    saveWarmup(warmup);
+  }
+
+  const mins = minutesUntil(release);
+  /**
+   * THE WINDOW IS CHECKED BEFORE OKTA IS PROBED, and that ordering is the point of
+   * `warmupWindowOpen` being its own export. `oktaSessionAlive` hits
+   * `/api/v1/sessions/me`; `checkAndReport` already calls it every poll, and a second
+   * unconditional call would double our traffic to that endpoint from an address both
+   * providers have blocked — to answer a question that matters for a few minutes a month.
+   */
+  const win = warmupWindowOpen({
+    minutesUntilRelease: mins,
+    criticalLeadMin: AUTOLOGIN_LEAD_MIN,
+  });
+  if (!win.open) return warmupSkip(win.why);
+
+  const okta = await oktaSessionAlive(ctx).catch(() => null);
+  const plan = warmupPlan({
+    minutesUntilRelease: mins,
+    criticalLeadMin: AUTOLOGIN_LEAD_MIN,
+    oktaAlive: okta ? okta.alive ?? null : null,
+    spent: warmup.spent,
+  });
+  if (!plan.go) return warmupSkip(plan.why);
+
+  /**
+   * A TAB THAT CANNOT OPEN IS A STAND-DOWN, NOT AN ATTEMPT — taken before the ration is
+   * spent, exactly as `maybeAutoLogin` does it. A browser too sick to open a page never
+   * asked RC anything.
+   */
+  const tab = await ctx.newPage().catch((e) => {
+    log(`  ✗ could not open a warm-up tab: ${e.message}`);
+    return null;
+  });
+  if (!tab) return warmupSkip('could not open a warm-up tab — nothing was spent');
+
+  lastWarmupSkip = null;
+  warmup.spent += 1;
+  saveWarmup(warmup);
+  log(`🌅 warming up the session: ${plan.why}`);
+  try {
+    /**
+     * NO `sufficient` DEADLINE, and that is the difference from `maybeAutoLogin`.
+     *
+     * That caller must prove the token will still be alive at T+15, because it is the last
+     * thing between a queued hold and a missed cart. This one is not trying to cover the
+     * release and CANNOT — the token lives ~60 minutes and the release is hours away. Its
+     * whole product is the OKTA SESSION left behind, which is what makes the T−30 sign-in
+     * cookie-answered instead of a password form.
+     *
+     * Passing a deadline here would be actively wrong: it would report a perfectly
+     * successful warm-up as a failure for not covering something it was never aimed at.
+     */
+    const r = await attemptLogin(ctx, tab, {
+      homeUrl: RC_HOME,
+      isLive: async () => (await sessionLive(ctx, tab)).live === true,
+      log,
+    });
+    // JUDGED ON OKTA, NOT ON THE TOKEN. Re-probed rather than assumed: `ok` means the sign-in
+    // returned, and what we actually need to know is whether the thing we came for exists.
+    const after = await oktaSessionAlive(ctx).catch(() => null);
+    if (after?.alive === true) {
+      log('  ✓ Okta session established — the sign-in before the release will be the cheap one');
+      // TELL THE RESIDENT PAGE, for the same reason maybeAutoLogin does: the tab minted into
+      // the shared profile, but `checkAndReport` reads the resident page, which is still
+      // rendered signed-out. Without this every later report announces a dead session over a
+      // repair that actually happened.
+      await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+      await primeToken(page, { timeoutMs: 15_000 }).catch(() => {});
+    } else {
+      // NOT REPORTED AS A SESSION VERDICT. `checkAndReport` owns that, runs moments later on
+      // the same tick, and asks RC properly. A warm-up that failed says nothing new about
+      // whether RC accepts the current token, and posting `dead` from here would be a second
+      // voice on a field that already has an authority.
+      log(`  ✗ warm-up did not establish an Okta session: ${r.reason}`);
+      log(`    The auto-login still has its full budget at T-${AUTOLOGIN_LEAD_MIN} — this costs `
+        + 'nothing but the chance to have done it early.');
+      await saveFailureShot(tab, 'autologin-warmup');
+    }
+  } finally {
+    // THE CLOSE IS THE CURE, so it is in a `finally`. A renderer's memory dies with its page;
+    // this is the same reclaim PR #142 gave the renewal and 08-20 gave the auto-login.
+    await tab.close().catch(() => {});
+  }
+  return true;
+}
 
 /**
  * The renewal ration, and it lives at MODULE scope on purpose.
@@ -2160,6 +2334,25 @@ async function warmResident() {
             // reinstating it here would quietly put a browser restart back into the critical
             // window while looking like caution. Same reasoning, and the same warning, as the
             // renewal's tab.
+            continue;
+          }
+          /**
+           * AFTER the auto-login, and the ordering is a safety property rather than taste.
+           *
+           * The two windows are disjoint by construction — `warmupWindowOpen` stands down at
+           * or inside `AUTOLOGIN_LEAD_MIN`, which is the whole point of it — so they cannot
+           * both fire. Calling the release-critical one FIRST anyway means that if that
+           * disjointness is ever broken by a future edit, the caller that can lose a campsite
+           * is the one that wins, and the warm-up is what gets skipped. A guard whose
+           * correctness depends on a condition elsewhere should still fail in the safe
+           * direction when that condition is wrong.
+           */
+          mark('warm-up login');
+          if (await maybeWarmupLogin(ctx, page).catch((e) => { log(`warm-up error: ${e.message}`); return false; })) {
+            // NO `oktaTrip`, for the same reason the auto-login no longer sets it: the trip
+            // ran in a throwaway tab that is closed in a `finally`, and that close is what
+            // reclaims the renderer. Recycling the browser on top would spend a restart to
+            // free memory that is already freed.
             continue;
           }
           // AFTER the auto-login, never before. If a hold is close enough that the bot is
