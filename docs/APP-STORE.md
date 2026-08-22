@@ -79,6 +79,14 @@ Three parts, all filled in and saved as of 2026-08-08:
 > says `<fill in>`" is not a defect and has now twice been mistaken for one — **verified
 > 2026-08-08 that the console field is populated**, which is the only thing that matters.
 
+> **⚠ STALE AS OF 2026-08-22 — DO NOT PASTE THIS BLOCK. See §2d.** The `BUSINESS MODEL`
+> paragraph below says the app *"does not link out to any purchase flow"* and cites
+> **3.1.3(b)**. Both are now wrong: the link-out shipped on 08-19 as the answer to the 3.1.1
+> rejection, and §2c established that 3.1.3(b) restates the demand rather than excusing it. So
+> this text denies in writing the exact thing the Resolution Center reply claimed. **§2d carries
+> the replacement**; whether the CONSOLE still holds this version is unconfirmed — nobody here
+> can read ASC.
+
 The first section of the notes is the one that prevents the predictable rejection.
 
 ```
@@ -145,6 +153,179 @@ link-out in §2c, and looking for it on the version page finds nothing.
 
 Apple has renamed these routes more than once; the first two are stable, the rest are
 best-effort. If one 404s, the setting has not moved — the path has.
+
+## 2d. THE 3.1.1 FIX WAS LIVE AND THE REVIEWER COULD NOT SEE IT (2026-08-22)
+
+Same guideline, same build, same letter as 08-19. **The change was never adjudicated**, and
+both reasons are ours.
+
+### 1. Every link-out surface is gated on `!subscribed`, and the demo account is a subscriber
+
+Verified in the database, not assumed — `tylerflores1992@yahoo.com` is `status: active`,
+`grandfathered: true`, tier `base`. And every one of the five surfaces:
+
+| surface | what a SUBSCRIBER gets |
+|---|---|
+| `Settings.tsx` | `subscribed ? "Your subscription is active." : <SubscribeLink/>` — no link |
+| `PricingSection.tsx` | `{!subscribed && <SubscribeLink/>}` — nothing |
+| `Explore.tsx` | `if (!loaded \|\| unknown \|\| subscribed) return null;` |
+| `WatchCta.tsx` | `if (subscribed \|\| unknown)` → a plain `/new` link |
+| `NewWatch.tsx` | behind `needsSubscription`, which is the SERVER's answer to a submit |
+
+That is **"a subscriber is never sold to" working exactly as designed** — the rule that exists
+because a paying customer reading "subscribe now" reads it as a billing failure. The
+consequence nobody had drawn: with the credentials we handed Apple, the reviewer could not see
+the fix **anywhere in the app**. From their seat the app is precisely what they described.
+
+The link-out is genuinely live in production (`ios:!0,android:!1` plus the `href`, re-checked in
+the deployed bundle). It is simply invisible to that account.
+
+**THIS IS THE 2026-08-14 SHAPE AGAIN.** That rejection came from a demo password nobody had
+tried; this one from a demo ACCOUNT nobody had viewed the fix through. Both times the artefact
+was correct and the thing handed to the reviewer was not. **Check what the reviewer will
+actually SEE, with the credentials they will actually use** — the fix being present in the
+bundle is not the same claim.
+
+### 2. The App Review notes argue the opposite case, in writing
+
+§2's notes still say, verbatim:
+
+> The app contains NO purchase mechanism of any kind. It does not display prices, does not
+> offer a subscribe or buy button, **and does not link out to any purchase flow.**
+
+— under a heading citing **3.1.3(b)**, the guideline §2c already established is not a defence
+but a restatement of the demand. §2c records sending the reply and verifying the bundle; **it
+says nothing about updating the notes.**
+
+So we may have handed the reviewer a written statement that we do NOT do the thing we told
+Resolution Center we now DO. A reviewer reading the notes first would find the app matches them.
+
+**CONFIRM IN THE CONSOLE BEFORE ACTING — nobody here can read ASC.** The block in §2 is a COPY,
+and whether the console was updated when the 08-19 reply went out is unrecorded. If it was, only
+the demo-account half of this entry applies.
+
+### The fix — console-side, no code, no rebuild
+
+1. **Rewrite the notes** (block below). Drop 3.1.3(b) entirely; state the link-out and its
+   US-storefront basis; give explicit steps to reach it; say plainly that the subscriber demo
+   account is by design never shown a purchase prompt.
+2. **Create a second, NON-SUBSCRIBED demo account** and name it in the notes. App Store
+   Connect's Sign-In Information holds ONE credential pair, so the second account lives in the
+   notes text — that is normal and reviewers follow it.
+3. **Reply in Resolution Center** (block below) and resubmit **the same binary**.
+
+**Signing out would also work** — `useSubscription` returns `loaded, subscribed: false,
+unknown: false` when signed out, so the CTA renders. **Do not rely on it.** Expecting a reviewer
+to sign out of the account you gave them and go looking is what just cost a round.
+
+### Optional, and deliberately SEPARATE: a manage-billing link in Settings
+
+A subscriber currently has no in-app route to manage billing at all. A neutral *"Manage your
+subscription at camphawk.app →"* would not violate the never-sell-to-a-subscriber rule and would
+put a link-out in the reviewer's own path on the account they already have.
+
+**It complements the above and does not replace it.** 3.1.1 is about *purchasing*; a management
+link demonstrates no purchase path, so on its own it does not answer the citation. It is also
+code, which means a deploy — worth doing, worth doing second.
+
+### The honest caveat, unchanged
+
+**Whether link-out ALONE clears 3.1.1 with no IAP is still unestablished** (§2c). This round did
+not test it, because the reviewer never saw a link-out. A second round costs days; StoreKit costs
+weeks plus 15–30%. Testing this properly first is the cheaper bet, not a certainty.
+
+### Replacement App Review notes
+
+Paste into *App Review Information → Notes* on the version page. Editable in place while the
+version is in review. Replace `<second account email>` / `<second account password>` with the
+non-subscribed account from step 2.
+
+```
+WHAT THE APP DOES
+CampHawk watches campgrounds that are fully booked and alerts the user within
+seconds of a cancellation, so they can grab the site. Searching live availability
+across 8,000+ campgrounds is free and requires no account.
+
+SUBSCRIPTIONS — HOW TO SEE THE PURCHASE PATH
+Subscriptions are sold on our website, camphawk.app. In the app, a user who is not
+subscribed is shown a link that opens camphawk.app in the default browser to
+subscribe. This is the external purchase link permitted on the United States
+storefront. This app is available on the United States storefront only.
+
+IMPORTANT: the demo account below has an ACTIVE subscription, so it is never shown
+a purchase prompt anywhere in the app — by design, because prompting an existing
+subscriber to subscribe reads as a billing failure. To see the external purchase
+link, please use the SECOND account:
+
+  Non-subscribed demo account
+  Email:    <second account email>
+  Password: <second account password>
+
+  Steps: sign in with that account, open the "Watches" tab, and press
+  "Start watching". A message appears reading "Watches need a subscription —
+  Subscribe at camphawk.app". That link is the external purchase link. It opens
+  the default browser, outside the app.
+
+  The same link also appears on the Settings tab under "Subscription", and on the
+  Explore tab beneath the search results.
+
+DEMO ACCOUNT (subscribed — for the app's actual functionality)
+Credentials are in the Sign-In Information fields above. This account has an
+active subscription so you can see watch creation, alerts and auto-cart working.
+Sign-in is email + password. Social sign-in is deliberately hidden in the app
+(Google blocks OAuth inside embedded webviews), so no third-party login is
+offered and Sign in with Apple is not applicable.
+
+ACCOUNT DELETION (5.1.1(v))
+Settings tab -> "Delete account" at the bottom. It deletes the account and all of
+its data, and cancels any subscription immediately.
+
+PUSH NOTIFICATIONS
+Push is the core of the product: it is how a user hears that a campsite opened up.
+Permission is requested only after the user creates their first watch, not on
+launch, because before that there is nothing to notify them about.
+
+LOCATION
+Optional. Used only to centre a campground search on the user's area. Declining it
+leaves search fully usable - the user types a place name instead.
+```
+
+### Resolution Center reply
+
+```
+Thank you for the review.
+
+We believe the external purchase link was not reachable by the reviewer, and that
+this is our error rather than a disagreement about the guideline.
+
+The app does contain an external purchase link, and it has been live in the
+build under review. It opens camphawk.app in the default browser to subscribe,
+which is the external purchase link permitted on the United States storefront.
+This app is available on the United States storefront only.
+
+The reason it was not visible: the demo account we provided has an ACTIVE
+subscription. Every purchase prompt in the app is deliberately hidden from an
+existing subscriber, because showing "subscribe" to someone who already pays
+reads as a billing error. With those credentials, no purchase link is shown
+anywhere - so the app appeared exactly as described in the rejection.
+
+We have added a second, non-subscribed demo account to the App Review
+Information notes, and steps to reach the link:
+
+  1. Sign in with the non-subscribed account listed in the notes.
+  2. Open the "Watches" tab and press "Start watching".
+  3. A message appears: "Watches need a subscription - Subscribe at
+     camphawk.app". That link opens the default browser, outside the app.
+
+The same link appears on the Settings tab under "Subscription", and on the
+Explore tab beneath the search results.
+
+We have also corrected the App Review Information notes, which still described
+an earlier version of the app that contained no purchase link at all. That
+description was out of date and we apologise for the confusion it caused.
+
+No binary changes were needed; we are resubmitting the same build.
+```
 
 ## 2c. REJECTED 2026-08-19 — Guideline 3.1.1, In-App Purchase
 

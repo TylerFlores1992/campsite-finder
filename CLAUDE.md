@@ -5745,6 +5745,36 @@ and no way to act.
   back door and defeat the flag entirely.
 - Reply text, the storefront precondition and the full reasoning: `docs/APP-STORE.md` §2c.
 
+### THE 3.1.1 FIX WAS LIVE AND THE REVIEWER COULD NOT SEE IT (2026-08-22)
+Rejected again on the same guideline, same build. **The change was never adjudicated**, and both
+reasons are ours.
+- **EVERY LINK-OUT SURFACE IS GATED ON `!subscribed`, AND THE DEMO ACCOUNT IS A SUBSCRIBER**
+  (`status: active, grandfathered: true`, checked in the DB). All five — Settings,
+  PricingSection, Explore, WatchCta, and NewWatch (behind `needsSubscription`, the SERVER's
+  answer to a submit). That is **"a subscriber is never sold to" working exactly as designed**,
+  and the consequence nobody had drawn is that with the credentials we handed Apple, the
+  reviewer could not see the fix ANYWHERE. From their seat the app is precisely what they
+  described. The link-out is live in production; it is invisible to that account.
+- **THIS IS THE 2026-08-14 SHAPE AGAIN.** That rejection came from a demo password nobody had
+  tried; this one from a demo ACCOUNT nobody had viewed the fix through. Both times the artefact
+  was correct and the thing handed to the reviewer was not. **Check what the reviewer will
+  actually SEE, with the credentials they will actually use** — "the fix is in the bundle" is a
+  different claim, and §2c verified only that one.
+- **THE APP REVIEW NOTES ARGUE THE OPPOSITE CASE, IN WRITING.** They say the app *"does not link
+  out to any purchase flow"* under a **3.1.3(b)** heading — the guideline §2c established is a
+  restatement of the demand, not a defence. §2c records sending the reply and verifying the
+  bundle and says nothing about the notes. **Confirm in the console before acting; nobody here
+  can read ASC**, and the block in `docs/APP-STORE.md` §2 is a COPY.
+- **The fix is console-side: rewrite the notes, add a SECOND non-subscribed demo account, reply
+  and resubmit the same binary.** Signing out would also work (`useSubscription` renders the CTA
+  when signed out) but **relying on a reviewer to go looking is what cost this round**.
+- **A manage-billing link in Settings is worth adding and is SEPARATE.** 3.1.1 is about
+  *purchasing*, so a management link answers no part of the citation on its own — it complements
+  the notes fix rather than replacing it, and it is code rather than console.
+- **Still unestablished: whether link-out ALONE clears 3.1.1 with no IAP.** This round did not
+  test it, because the reviewer never saw a link-out. Both text blocks and the full reasoning are
+  in `docs/APP-STORE.md` §2d.
+
 ### DO THIS THE MOMENT THE APP IS LIVE
 **Turn on store link-out:** set `NATIVE_LINKOUT = true` in
 `src/components/v2/nativeSubscribe.tsx`. It sends non-subscribers in the app to
