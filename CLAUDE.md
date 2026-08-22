@@ -80,6 +80,18 @@ before you plan to show anything. The 137k observations collected so far are unt
   `getHeadlines`). **Readout/sanity-check:** `scripts/likelihood-readout.mts`.
 - **UI:** card badge, detail-page ladder (`/api/likelihood`), per-watch odds — all share
   the aggregation + gate, all behind `SHOW_LIKELIHOOD`.
+- **"NOTHING IS BEING RECORDED" IS NOT QUITE TRUE — found by the daily ops routine,
+  2026-08-22.** `recordObservations()` in `worker/poller.ts` (called unconditionally, every
+  poller cycle, for every WATCHED campground — separate from `probeRosterIfDue()`, which
+  IS gated on `PROBE_ENABLED`) has kept writing to `availability_observations` the whole
+  time: 147,821 rows as of today against the ~137k recorded at the 07-30 stop, i.e. a
+  steady ~18 rows/hour (one per active watch per `OBSERVATION_INTERVAL_MS`, 1h) ever since.
+  **This is NOT the cost regression the stop was about** — it makes zero extra network
+  calls (it persists whatever the poller already fetched for alerting) and self-prunes at
+  `OBSERVATION_RETENTION_DAYS` (90d) — so there is nothing here to fix or revert. It is
+  only the CLAUDE.md sentence that was too broad: the probe-roster accrual (502 targets,
+  the ~15,700-invocations/day cost) is genuinely stopped; the per-watch recorder never was,
+  by design, and was probably never meant to be included in "nothing is being recorded."
 
 ## `/api/rc-proxy` takes a BATCH (2026-07-30)
 It forwarded one RDR request per invocation on the hot path of a 15s poller —
