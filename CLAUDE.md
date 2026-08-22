@@ -2520,15 +2520,15 @@ as the leading explanation and **has never been tested**.
 ## Open / next session
 
 > **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-22). Master and the box are both on
-> **`48111c4`**. **The owner's standing ask is "fix the leak", and the leak is NOT fixed** —
+> **`e2be117`**. **The owner's standing ask is "fix the leak", and the leak is NOT fixed** —
 > everything shipped so far is containment or relocation, which that file says in its first
-> paragraph so nobody reads five green instruments as a cure. Two PRs are open and green:
-> **#155** (the native memory sampler — the instrument that would NAME the allocation, and the
-> one thing that must reach the box before the next ramp) and **#146** (worker-deploy paths).
+> paragraph so nobody reads five green instruments as a cure. **#155 — the native memory
+> sampler, the instrument that NAMES the allocation — is MERGED and live on the box, so the
+> next ramp is measured automatically.** #146 (worker-deploy paths) is still open.
 > The cure itself, **Track B**, is designed and deliberately NOT started: it needs the owner's
 > go-ahead because it is surgery on the release-critical login path, and #155's first reading
 > could change its design.
-> **Delete that file once #155 has produced a reading from a real ramp**; it is a handover, not
+> **Delete that file once the sampler has produced a reading from a real ramp**; it is a handover, not
 > a permanent doc, and a stale one would read like current state.
 
 ### THE APP'S RC SESSION IS BEING MEASURED NOW — no renewal built yet (migration 058, 2026-08-13)

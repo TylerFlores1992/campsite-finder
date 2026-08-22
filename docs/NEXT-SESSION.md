@@ -1,6 +1,6 @@
 # Next session — start here
 
-*Rewritten 2026-08-22. Delete this file once PR #155 has produced a reading from a real ramp.
+*Rewritten 2026-08-22. Delete this file once the sampler has produced a reading from a real ramp.
 It is a handover, not a permanent doc, and a stale one reads like current state.*
 
 ---
@@ -23,18 +23,22 @@ do after the leak, not stop it from leaking."* They were right.
 
 | | |
 |---|---|
-| Master | `48111c4` |
-| Mini-PC | `48111c4` — **in sync** |
+| Master | `e2be117` |
+| Mini-PC | `e2be117` — **in sync** |
 | Open holds | none |
-| RC session | healthy (Okta ALIVE, ~12h window) |
+| RC session | healthy (Okta ALIVE) |
 
-**Open PRs, both green:**
+**THE SAMPLER IS LIVE ON THE BOX.** #155 merged and the box updated to `e2be117` on 08-22, so
+the instrument is armed and the **next ramp is measured automatically** — no action needed to
+arm it. Verify before assuming, though; a sha is cheap to check and this file has been wrong
+about one before:
 
-- **#155 — the native memory sampler.** The instrument that would NAME the allocation. **This is
-  the one that matters.** Merge it and update the box, or the next ramp goes unmeasured like the
-  twenty before it.
-- **#146 — worker-deploy trigger paths.** Merging restarts both poller machines (the workflow is
-  in its own path list, deliberately), so do it at a quiet moment, not near a release.
+```
+NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status
+```
+
+**Still open:** **#146** (worker-deploy trigger paths — merging restarts both poller machines,
+deliberately, so do it at a quiet moment and not near a release) and **#157** (this file).
 
 ---
 
@@ -69,7 +73,7 @@ does not. Do not repeat that inference.
 
 ---
 
-## Track A — name it (built, PR #155)
+## Track A — name it (MERGED, #155, live on the box)
 
 `scripts/auto-cart-bot/rc-native-sampler.mjs`, wired into the renewal's Okta trip.
 
@@ -122,7 +126,8 @@ cart, and Track A's first reading could change its design entirely — if the gr
 buffering in the **browser process**, `ctx.request` may not even be the right lever. Building it
 blind is how a repair gets credited to the wrong mechanism, which has happened here three times.
 
-**So: merge #155, update the box, get one reading, then take Track B to the owner with evidence.**
+**#155 is merged and on the box, so the arming is done.** What remains: get ONE reading from a
+real ramp, then take Track B to the owner with evidence rather than with a hypothesis.
 
 ---
 
