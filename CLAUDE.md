@@ -2384,19 +2384,152 @@ nothing red anywhere: the deploy-by-different-routes trap that opened the T−30
 - **OPEN AS PR #146** at the end of 2026-08-20 — merging it restarts both poller machines (the
   workflow is in its own path list, deliberately), so it wants a moment away from a release.
 
+### THE OKTA SESSION'S STATE IS A COLUMN NOW (migration 065, 2026-08-21)
+`autocart.rc_session` answers "does RC accept the current token". The OKTA session behind it is
+a different fact and it is the one that decides what the next sign-in **costs**:
+
+    okta=ALIVE   answered from the idx cookie   11 seconds,     +24 MB   (2026-08-21)
+    okta=GONE    full password form             12 minutes,  +9,434 MB   (2026-08-20)
+
+- **IT WAS ALREADY BEING PRODUCED AND THROWN AWAY.** `checkAndReport` has held the structured
+  reading from `oktaSessionAlive` all along, stringified it into `okta=ALIVE (exp …)` and posted
+  only the sentence — so the server would have had to un-parse our own prose to recover a value
+  the bot already had. Same shape as `notePlatform` emitting a fact into a region that then
+  discarded it (064).
+- **A COOKIE-ANSWERED SIGN-IN REUSES THE EXISTING OKTA SESSION AND INHERITS ITS CAP.** It does
+  not restart the clock. This answers the 2026-08-19 absolute-cap entry from the other side:
+  ```
+  14:30:06  ✓ signed in — token now 60m          <- 4s, no form: answered from the cookie
+  14:42:33  okta=ALIVE (exp 2026-08-21T14:47:57) <- 5m ahead, NOT the rolling +12h
+  15:00:32  okta=GONE(404)
+  ```
+  **"The bot signed in at T−30" therefore does NOT mean "Okta is good for twelve hours."** That
+  morning it meant eighteen minutes.
+- **NOTHING HERE MAY GO RED, and that is structural rather than a promise.** `oktaCostNote`
+  returns `string | null` and has **no severity to return**, so no later edit can promote a cost
+  prediction into a verdict. `okta=GONE` is the ORDINARY state between releases and reddening it
+  is the cry-wolf failure fixed three times, most expensively at 07:33 on 08-16.
+- **NULL IS "NOT REPORTED", NEVER "GONE"** — a pre-065 box sends no okta fields and must produce
+  SILENCE, not a claim about a machine that has said nothing. A probe that ran and could not tell
+  reports `UNKNOWN`.
+- **`undefined` LEAVES THE STORED READING ALONE; `null` OVERWRITES IT.** Three of six
+  `reportSession` callers never ask Okta anything, and writing NULL from them would erase a
+  reading `checkAndReport` took moments earlier. **Deliberately NOT COALESCE** — Okta state went
+  ALIVE-with-5-minutes to GONE inside twenty, so a preserved old value is *actively misleading*
+  in a way a stale `bot_commit` merely looks current. `okta_checked_at` carries the age instead.
+- An unparseable expiry becomes NULL rather than reaching `::timestamptz`, which throws — and
+  that statement also carries the session verdict, so a malformed diagnostic field would have
+  destroyed the reading it rides along with.
+- **PROVEN END TO END 2026-08-21**, write half and read half:
+  `— Okta good for 720m (checked 20s ago), so a repair would be the cheap cookie-answered one`.
+- `worker/okta-state-reporting.test.mts`, 16 tests, twelve mutations. **Two of its own guards
+  were wrong at baseline**: a bare `/reportSession\(/` matched the DEFINITION (eighteenth time),
+  and the SELECT guard sliced 700 chars back from the `FROM` and read the **TypeScript row type**
+  above the query — passing against a route with all three columns removed (nineteenth).
+
+### THE EXPENSIVE SIGN-IN WAS PINNED TO THE RELEASE-CRITICAL WINDOW (2026-08-21)
+`maybeAutoLogin` acts ONLY inside `AUTOLOGIN_LEAD_MIN` (30m), so the 12-minute / 9.4 GB password
+variant could happen **at no other time**. That is dangerous for a measured reason: a RAM-guard
+kill leaves the profile lock reading HELD for `STALE_MS` (10 min) with nothing alive to renew or
+release it — **a kill at 07:33 clears by 07:43 and is harmless; a kill at 07:53 holds the lock
+past 08:00 and the runner cannot take the profile to cart.** On 08-20 the cart survived only
+because `supervise.ps1` happened to restart the process in time.
+- **`scripts/auto-cart-bot/autologin-warmup.mjs`** signs in at **T−3h** when a hold is queued and
+  Okta is GONE, so the T−30 sign-in is cookie-answered.
+- **IT DOES NOT ADD A PASSWORD SIGN-IN, IT MOVES ONE.** It fires only when the T−30 login was
+  going to be a password form anyway; afterwards no credential is submitted at all. Net password
+  submissions per release: **one, exactly as today.** That matters — repeated logins from this
+  address cost the household IP twelve hours on 08-06.
+- The token's ~60-minute life is not an objection: the warm-up **cannot** cover the release
+  (`L ≤ 45` arithmetic) and is not trying to. Its whole product is the OKTA SESSION left behind.
+- **UNKNOWN STANDS DOWN.** Acting would submit a password on a guess. The failure direction is
+  always "we did nothing", which is the status quo.
+- **THE WINDOWS ARE DISJOINT BY CONSTRUCTION**, boundary to the release-critical caller (`<=`,
+  not `<`) — two sign-in drivers on one Chromium profile is worse than either. `maybeAutoLogin`
+  is still called FIRST anyway, so a later edit breaking that disjointness fails safe.
+- **THREE HOURS IS BOUNDED FROM BOTH SIDES.** Far enough that a guard kill (10 min) and a
+  supervisor restart (seconds) are free; near enough that the Okta session survives to T−30,
+  because the absolute cap's origin is **NOT established**. **Do NOT raise it to "the night
+  before" without measuring that cap** — that is the version that looks obviously better and is
+  the one the single cap observation says may quietly stop working.
+- The probe is gated on the window (`warmupWindowOpen`, ONE definition, called by both), or a
+  second unconditional `/api/v1/sessions/me` per tick doubles our traffic to that endpoint.
+- Its ration is **its own file** — not a field on the auto-login budget, whose kill-refund
+  arithmetic is release-critical and was got wrong once. Persisted, because the RAM guard killing
+  *this exact navigation* is what causes the restarts that would re-issue it. **No kill refund**:
+  a killed warm-up leaves the auto-login's full budget intact, so forgiving it buys a second
+  password submission for no change in outcome.
+- `worker/autologin-warmup.test.mts`, 18 tests, eight mutations; disjointness checked
+  **exhaustively over every minute**, not sampled. **An existing guard broke over unchanged
+  behaviour** — `session-coverage.test.mts` sliced from the FIRST `const r = await attemptLogin(`
+  in the file, which was `maybeAutoLogin`'s only by luck of ordering, and a second caller above
+  it made it read a different function. Twentieth time.
+
+### THE LEAK — WHERE IT ACTUALLY STANDS (2026-08-22)
+**Read this before building anything memory-related. Nothing shipped so far is a cure.** The size
+guard, the RAM arm, the heap trail, the post-Okta recycle, the orphan sweep, the throwaway tab and
+now the warm-up are containment or **relocation**. The owner's standing ask is to fix it.
+
+**ESTABLISHED.** The ramp is triggered by the **Okta navigation** — a controlled comparison, not a
+correlation (08-18: three token-less renewals ten minutes apart; only the one that clicked through
+cost anything, 2,331 MB, against two that ran the identical clear/reload/prime for nothing). It
+lands in the **renderer** (+1,237 MB) **and the browser process** (+545 MB), with GPU, utility and
+crashpad flat.
+
+**NEVER OBSERVED: what allocates.** "Network/IPC buffering" is written into three separate entries
+as the leading explanation and **has never been tested**.
+
+- **THE "JS HEAP IS FLAT" READING ELIMINATES FAR LESS THAN THIS FILE HAS ASSUMED (2026-08-22).**
+  Measured locally against a real Chromium: **640 MB of `Uint8Array` in a page reports
+  `JSHeapUsedSize` = 0.0 MB.** External memory — ArrayBuffers, decoded images, network buffers —
+  is simply not in that number. So a flat heap trail rules out *ordinary JS retention* (an array
+  nobody trims, our fetch wrapper holding `init`) and rules out **nothing else**. It has been
+  treated here as eliminating the whole JavaScript-adjacent family; it does not, and the heap
+  trail could never have seen this class of allocation at all.
+- **TRACK A — NAME IT. BUILT, PR #155, NOT YET ON THE BOX.**
+  `scripts/auto-cart-bot/rc-native-sampler.mjs` uses CDP's native sampling profiler. **Verified
+  before it was written**: the same 640 MB came back attributed to
+  `partition_alloc::PartitionRoot::Alloc<>() <- ArrayBufferAllocator::Allocate()` with 2% error,
+  in a few kilobytes — the response scales with DISTINCT STACKS, not bytes, which is the opposite
+  shape from the multi-GB snapshot the house rules forbid.
+  - Sampling starts **on the tab**, at creation (per-renderer; the trip runs in the throwaway
+    tab, so starting it on the resident page profiles a renderer where nothing happens), and is
+    **read after the trip returns** — CDP goes quiet as a ramp peaks, measured twice.
+  - **THE BROWSER PROCESS CANNOT BE PROFILED THIS WAY** — `Memory.startSampling` is absent on
+    that target, verified. So a reading covers the renderer only: 1,237 of 2,046 MB on the one
+    event where both were measured. The rendered line says so, because a figure silently
+    describing two thirds of a ramp is how "the biggest process" became a whole explanation once.
+  - **HOW TO READ THE FIRST ONE:** `net::` frames confirm the buffering candidate after three
+    entries asserted it without evidence; anything else means three entries need correcting.
+- **TRACK B — THE CURE. DESIGNED, DELIBERATELY NOT STARTED, NEEDS THE OWNER'S GO-AHEAD.**
+  Take the renderer out of the OAuth round trip: intercept `/authorize`, replay it over
+  `ctx.request` following redirects, exchange the code ourselves. No page load, no renderer, no
+  gigabytes. Three pieces already exist — we intercept `/authorize` (`force-login-prompt.mjs`),
+  we already read `code_verifier` off the token POST (`rc-token.mjs:108`), and okta-auth-js's
+  `okta-transaction-storage` is already known to the code.
+  - **For the COOKIE-ANSWERED case it is a plain redirect chain**, and that is where the chronic
+    damage is: **all twenty recorded ramps were renewals.**
+  - The password case is Okta Identity Engine (`/idp/idx/*`) and is the CAPTCHA-exposed path —
+    leave it in a browser. It is once per release, and the warm-up now puts it three hours from
+    the cart.
+  - **NOT STARTED ON PURPOSE.** It is surgery on the one path between a queued hold and a missed
+    cart, and Track A's first reading could change its design entirely — if the growth is
+    buffering in the **browser process**, `ctx.request` may not even be the right lever. Building
+    it blind is how a repair gets credited to the wrong mechanism, which has happened three times.
+
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-20 evening). **A REAL test hold
-> releases 2026-08-21 08:00:18 PT** — unit 4733, Carpinteria San Miguel — and it is the first
-> exercise of four things merged on 08-20, above all the auto-login throwaway tab. That file
-> carries the claim link, the delete command and how to read the result.
-> Master and the box are both on **`58cc767`**; "Update now" is a working lever again and was
-> proven end to end at 19:46 PT — but it is BLOCKED until the release passes, by the 6h gate,
-> which is by design and not the morning's bug. The file carries the one open PR (#146), what is built-but-unexecuted (the
-> auto-login tab), and the two questions still open from 08-19 — where the three-day-old token
-> comes from, and whether `prompt=login` forces Okta's form.
-> **Delete that file once #146 is merged and the tab has been observed at a real T−30**; it is
-> a handover, not a permanent doc, and a stale one would read like current state.
+> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-22). Master and the box are both on
+> **`e2be117`**. **The owner's standing ask is "fix the leak", and the leak is NOT fixed** —
+> everything shipped so far is containment or relocation, which that file says in its first
+> paragraph so nobody reads five green instruments as a cure. **#155 — the native memory
+> sampler, the instrument that NAMES the allocation — is MERGED and live on the box, so the
+> next ramp is measured automatically.** #146 (worker-deploy paths) is still open.
+> The cure itself, **Track B**, is designed and deliberately NOT started: it needs the owner's
+> go-ahead because it is surgery on the release-critical login path, and #155's first reading
+> could change its design.
+> **Delete that file once the sampler has produced a reading from a real ramp**; it is a handover, not
+> a permanent doc, and a stale one would read like current state.
 
 ### THE APP'S RC SESSION IS BEING MEASURED NOW — no renewal built yet (migration 058, 2026-08-13)
 The mobile claim flow needs a live RC session inside the InAppBrowser data store, and the
