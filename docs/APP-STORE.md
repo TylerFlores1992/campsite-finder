@@ -285,9 +285,18 @@ sign-out — what changed is that the notes now give explicit numbered steps, wh
 instruction rather than a hope.
 
 Paste into *App Review Information → Notes* on the version page. Editable in place while the
-version is in review. **4,018 characters** — Apple's field cap is understood to be 4,000, so
-**check the field accepts it and tell me if it truncates**; the `REGULATED INDUSTRY` paragraph
-is the first thing I would trim.
+version is in review.
+
+**THE CAP IS VERIFIED, NOT ASSUMED: `Must be less than 4000 characters`, so 3,999 is the
+ceiling.** The field's own counter went `-18` against a 4,018-character draft — i.e. it counts
+newlines exactly as `wc -c` does, which is worth knowing because it means a local count is
+trustworthy and there is no need to paste-and-see. **This block is 3,983.**
+
+Two cosmetic cuts got it under, and neither loses an answer Apple asked for: *"take the site
+before anyone else"* → *"take the site first"*, and *"both opens and closes the App Store
+description"* → *"and the App Store description"*. If it ever needs trimming again, the
+`REGULATED INDUSTRY` paragraph is the longest prose that is not a direct answer to a §2b
+question.
 
 Two numbers were corrected against production before this was written: the catalog holds
 **8,037** campgrounds, not 8,035, and it drifts with every nightly sync — so it now reads
@@ -296,7 +305,7 @@ Two numbers were corrected against production before this was written: the catal
 ```
 WHAT THE APP DOES
 CampHawk watches campgrounds that are already fully booked and alerts the user
-within seconds of a cancellation, so they can take the site before anyone else.
+within seconds of a cancellation, so they can take the site first.
 Searching live availability across 8,000+ campgrounds is free and needs no
 account; watching a campground and getting alerts is the paid feature.
 
@@ -367,8 +376,7 @@ not ours. CampHawk is independent and does not represent any government entity:
 it is not affiliated with, endorsed by, or authorized by Recreation.gov, the
 National Park Service, the U.S. Forest Service, the Bureau of Land Management,
 the U.S. Army Corps of Engineers, or any state park agency. That disclaimer
-opens https://camphawk.app/sources and both opens and closes the App Store
-description.
+opens https://camphawk.app/sources and the App Store description.
 ```
 
 ### Resolution Center reply
