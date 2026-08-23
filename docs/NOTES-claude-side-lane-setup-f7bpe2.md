@@ -1484,51 +1484,145 @@ So of the six, **2, 4 and 5 were theirs**; 1, 3 and 6 are the ones above.
 
 ---
 
-## Handover — 2026-08-23 afternoon (side lane)
+## Handover — 2026-08-23 evening (side lane)
 
-### Verified this pass, read-only
+*Supersedes the afternoon block written an hour earlier, which held nothing but state readings
+that have since moved. Every figure below was read fresh at **14:39 PT**, not remembered.*
 
-The 07:59:46 PT release **worked end to end** — carted T+1.6s, `✓ Added to cart` on iOS,
-`released` 15:10:05Z. It was a **test fixture** (§24a).
+---
 
-**ONE HOLD IS QUEUED AGAIN, DELIBERATELY:** `TEST · 43129`, `requested`, releasing
-**2026-08-24 07:58:47 PT** — the main lane's #176, queued at 21:12Z to manufacture an Okta
-ramp for Track A on a warm-up window that opens ~04:59 PT with Okta gone. It carries a **real
-unit id and therefore locks a real site**, and it re-arms the `docs/LANES.md` SERIAL rules and
-the updater's 6h release gate. Do not queue another, and keep anything that restarts the box
-away from it.
+### START HERE: a hold releases tomorrow at 07:58:47 PT, and it is an INSTRUMENT
 
-Health at 13:31 PT: `degraded`, every failure non-paging. `autocart.rc_session` warn (token
-exp −295m, **Okta ALIVE ~6.5h**, no holds queued — the normal between-releases state).
-Worker, both shards, all five detectors, delivery, watchdog and runner `ok`. Login rehearsal
-**passed** 03:01 PT.
+```
+TEST · 43129   Morro Bay SP — Lower Section (rc-582)   arrival 2026-12-01
+requested      release 2026-08-24 07:58:47 PT          queued 21:12:47Z by the main lane (#176)
+```
 
-### Live and dated
+**IT IS NOT A PRODUCT TEST. IT WAS QUEUED TO MANUFACTURE A RAMP.** Track A's native
+allocation sampler has never had a real ramp to read. A queued hold opens the T−3h warm-up
+window at **~04:58:47 PT** with Okta **gone**, which forces the expensive password sign-in —
+the 12-minute, ~9.4 GB Okta trip. That trip is the *point*.
 
-- **Box `6d4100b`**, master `d8d035e` (docs-only ahead). Every memory instrument including
-  #169 is live. **`git-status` through `bot_commands` is still the only authority** — this
-  pass did not run one; the sha above is the main lane's, confirmed by them at 20:41 UTC.
-- **Migration 066 applied; `native_alloc_readings` read 0 rows** when checked ~13:36 PT —
-  **five minutes before the box took #169 at 13:41 PT.** So the emptiness was correct and is
-  already superseded. **The first row lands on the next ramp**, and that is the reading the
-  whole leak investigation is waiting for.
-- **iOS `1.0 (5)`** awaiting a decision. Release is AUTOMATIC on approval.
+- **SO A 9 GB RAMP TOMORROW MORNING IS THE DESIRED OUTCOME, NOT AN INCIDENT.** Do not open the
+  memory series at 08:00, see `peak_rc 9,180 / COMMIT 88%`, and write it up as the leak
+  recurring. It is the experiment running. The leak is still unfixed and still the standing
+  ask, but tomorrow's ramp is one somebody ordered.
+- **EXPECTED, AND DELIBERATELY STATED AS A PREDICTION.** The big trip should land at **~04:59
+  PT** (warm-up, Okta gone), and the T−30 sign-in at 07:28:47 should then be the cheap
+  cookie-answered kind because the warm-up left an Okta session behind. **Check where it
+  actually landed rather than assuming** — the 08-22 handover predicted a quiet morning on
+  exactly this kind of reasoning and was falsified by a 9,180 MB ramp at T−30 (§24b).
+- **Read the result out of Postgres, not the log:**
+  `NODE_USE_ENV_PROXY=1 npx tsx scripts/native-alloc-readout.mts`.
+  **"No readings yet" is a real answer** — it means the trip did not ramp, not that the
+  sampler is broken. It reads 0 rows right now and that is correct: the box only took #169 at
+  13:41 PT and there has been no ramp since 07:41 PT.
+- **IT LOCKS A REAL CAMPSITE.** `rc-test-hold.mts` takes a real numeric unit id by design —
+  that is what makes the warm-up see it (`nextHoldRelease` carries `REAL_UNIT`, so a sentinel
+  is invisible). Far-future midweek, so nobody is competing for it, but it is a real site.
+- **THE `docs/LANES.md` SERIAL RULES BIND UNTIL IT CLEARS.** Do not queue a second hold, do not
+  run `npm test` locally, and keep anything that restarts the box away from it. The updater's
+  6h release gate shuts at **01:58:47 PT**; a *requested* update lifts the quiet window but
+  never that gate.
+
+**The second thing tomorrow can produce, and it needs a human.** #171 shipped the hand-off
+landing IN the cart and reading the cart back, and **neither has run against a real hold** —
+only against the served bundle in a stub page. `scripts/rc-holds-readout.mts` prints
+`cart read back` when it happens. That only fires if somebody opens the claim link **in the
+app**; from a browser `canInject` is false and it tests nothing. Nobody in a session can do
+this. Ask the owner; do not investigate its absence.
+
+---
+
+### State, read 14:39 PT
+
+| | |
+|---|---|
+| Master | `d8c64bb` |
+| Mini-PC | `6d4100b` — `autocart.bot_version` reads *"No bot-side code in the gap"*, i.e. current in the only sense that matters |
+| Open PRs | **none** |
+| Open holds | **one** — the instrument above |
+| Health | `degraded`, **every failure non-paging** |
+
+- **`autocart.rc_session` warn** — *"no token at all — signed out; okta session STILL ALIVE —
+  the silent renew is failing, not the login"*. That is the known pathology (the seven-day
+  stale token comes from the server, 08-22), **not a new fault**, and with Okta alive the
+  repair is the cheap kind. `autocart.bot`, `rc_runner`, `watchdog`, worker, both shards, all
+  five detectors and delivery are `ok`.
+- **Login rehearsal PASSED 03:01 PT** (`load/shoppingcart → HTTP 200`). That is the standing
+  evidence the bot can still sign itself in.
+- **THE OKTA CAP IS FROZEN — corroborated a third and fourth time this session.**
+  `okta_expires_at` read `2026-08-24T03:00:59Z` at **20:27:37Z** and again at **21:37:14Z**,
+  seventy minutes apart, unmoved; #176 had already read it twice 33 minutes apart. So it is
+  the **absolute cap**, not the rolling idle window our own probe refreshes. It expires
+  **~20:01 PT tonight**, which is what leaves Okta gone for the 04:59 warm-up.
+- **No ramp since 07:41 PT.** Hourly peaks 13:00–21:00 UTC are 305–476 MB, flat.
+
+---
+
+### What the previous session (this one) did
+
+Six items were proposed; **the main lane did three of them underneath the report** between
+20:37 and 20:59 UTC — merged #171 and #146, closed #168 as superseded, and updated the box.
+The other three landed as **PR #173** (`d8c64bb`, docs only, `verify` green):
+
+- **§24a** — the 2026-08-23 hold was a **test fixture**, not a real user's, and §23's argument
+  for "real" was inverted. Struck in place. Filed as **#174**.
+- **§24b** — **neither 9 GB ramp tripped the RAM arm**; free RAM bottomed at 3,191/3,328
+  against a 2,000 floor, and a browser replacement ended both. Raised as a question about the
+  floor's premise, not a patch. Filed as **#175**.
+- **§24c / `docs/PLAY-STORE.md` §0c** — the Play production application, submitted 2026-08-22
+  and never written up, plus the gap that the vendor answer sheet's three false claims were
+  never recorded.
+
+---
 
 ### Open
 
-- **Two issues filed by this pass** — the fixture misidentification (§24a) and the RAM-floor
-  question (§24b). Both are corrections to main-lane files and are theirs to fold.
-- **Issue #76** (rc-holds fixture sweep) and **#14** (rec.gov timeout cascade), unchanged.
-- **A fixture can still turn `autocart.rc_session` red** — the health route's own `upcoming`
-  and `imminent` counts never got the `REAL_UNIT` filter. Main lane's find, recorded not
-  fixed, and it prints the destructive `rc-login.bat` remedy while it lasts.
-- **The live manage token `EQO2oXcQ`** — still unrotated, still 200. Owner's call; not acted on.
+- **#174** and **#175** — this session's two findings, both corrections to **main-lane files**
+  and theirs to fold. Left as issues precisely so they are not re-derived.
+- **#76** — `rc-holds.test.mts`'s fixture sweep deletes a concurrent run's live rows.
+- **#14** — rec.gov timeout cascade.
+- **A CI run can still turn `autocart.rc_session` RED.** The health route carries its own
+  inline `upcoming`/`imminent` counts that never got the `REAL_UNIT` filter, so test fixtures
+  are visible to it. Bounded to the length of a run, and it prints the destructive
+  `rc-login.bat` remedy while it lasts. Main lane's find (CLAUDE.md, 08-23), recorded not fixed.
+- **The live manage token `EQO2oXcQ`** — still unrotated, still returns 200 with the owner's
+  real watch. In git history, so scrubbing files is insufficient; rotation is one DELETE from
+  `action_tokens`. **Owner's call — not acted on, three sessions running.**
+- **iOS `1.0 (5)`** — awaiting a decision, same binary, rewritten notes. Release is
+  **AUTOMATIC** on approval, so you may find out it shipped by seeing it on the App Store. A
+  3.1.1 rejection now is the real answer and moves the decision to StoreKit.
 
-### Side lane state
+---
 
-On `claude/camphawk-side-lane-status-mnsbld`. **The branch name does not match `docs/LANES.md`'s
-`claude/side-<topic>` convention**, and the branch name IS the lane token — worth fixing on the
-next side session rather than mid-flight.
+### Traps that fired, and one that did not
 
-This file is continued rather than replaced: §24 corrects §23, and a correction that lives in a
-different file from the claim it corrects is how the Feature E note got re-derived three times.
+- **`applied_note` and `applied_sha` describe DIFFERENT events**, and the note points either
+  way. **`git-status` through `bot_commands` is the only thing that answers "did it land?"**;
+  `bot_commit` is COALESCEd and can sit stale beside a live heartbeat.
+- **A requested update LIFTS the quiet window.** Only the 6h release check is unliftable.
+  Three separate write-ups got this wrong with the guard source open.
+- **Read the readout's `site` column.** `TEST · ` in `unit_name` is written only by
+  `rc-test-hold.mts` and is the one unambiguous fixture marker — it was on screen for a day
+  while three documents called the hold real (§24a).
+- **`claimed` in the readout is `claimed_at ?? released_at`.** A time there does not mean the
+  hold was claimed; `released` is the successful terminal state and `claimed` is a distinct
+  later one.
+- **A health reading goes stale faster than a conclusion drawn from it.** Master moved twice
+  during this session — once *between* the report and acting on it, once *between* the push
+  and the merge. Re-read before quoting.
+- **Do not run `npm test`** — production DB, serialized between lanes. CI runs it for you on
+  every push, which is itself the fixture-red window above.
+
+---
+
+### Side lane hygiene
+
+On `claude/camphawk-side-lane-status-mnsbld`, reset to master and clean. **The branch name does
+not match `docs/LANES.md`'s `claude/side-<topic>` convention**, and the branch name IS the lane
+token — worth correcting on the next side session rather than mid-flight.
+
+This file is continued rather than replaced. §24 corrects §23 in place, and a correction living
+in a different file from the claim it corrects is how the Feature E note got re-derived three
+times.
