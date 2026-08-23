@@ -1,45 +1,71 @@
 # Next session — start here
 
-*Rewritten 2026-08-23. Two live threads: the memory leak, and the iOS review.
+*Rewritten 2026-08-23 (evening). The session's task is the TWO APP FIXES at the top. The leak
+and the iOS review are the standing threads behind them.
 Delete this file once the sampler has produced a reading from a real ramp AND the App Store
 version has a decision. It is a handover, not a permanent doc, and a stale one reads like
 current state.*
 
 ---
 
-## ⏰ TIME-SENSITIVE — read before anything else
+## What this session is for: TWO APP FIXES
 
-**A REAL hold releases 2026-08-23 07:59:46 PT** (unit `45719`, `requested`). Real numeric id, so
-a real campsite is in the pipeline.
+Both are in the RC hand-off — the flow that runs on the owner's phone at 08:00. Both were
+reported by the owner on 2026-08-23 after a hold that **worked** (carted at T+1.6s), so
+neither is an outage; they are the two rough edges left in a flow that is otherwise proven.
 
-**The box is missing all three memory instruments, and the window to fix that is short.**
+### FIX 1 — land IN the cart, and verify it there
 
-| | |
-|---|---|
-| Master | `57e9d79` |
-| Mini-PC | `e2be117` — **missing #160, #163, #166** |
-| Update gate shuts | **01:59:46 PT** (6h before the release, not liftable) |
+Today a successful cart sets a status string: *"✓ Added to cart — tap the cart icon at the top
+of this page to check out."* The owner's ask: **just land in the cart instead.**
 
-What the box does not have:
+The pieces already exist. `RC_CART_URL` is defined in `src/lib/booking-url.ts`
+(`https://www.reservecalifornia.com/Customers/ShoppingCart`, capitalised exactly as RC serves
+it — do NOT tidy the casing), and `adoptBanner()` in `extension/content-rc.js` already renders
+an "Open cart" button pointing at it. The fresh-cart path at `content-rc.js` ~line 346 simply
+does not use it.
 
-- **#160** — the sampler resolves addresses to `module+offset`. **Without it a reading names
-  nothing**: Playwright's Windows Chromium exports no internal symbols, and the first real
-  reading off the box (08-22 19:34 PT) came back as four bare hex addresses.
-- **#163** — the auto-login is sampled at all. It is the 9.4 GB trip, and it was the one nothing
-  measured.
-- **#166** — the network trace wraps it too.
+**AND THIS IS AN UPGRADE TO THE PROOF, NOT A THREAT TO IT — which is the owner's own question,
+asked well.** The concern is real: `#camphawk-rc-status` is what `lib/rc-precart-script`'s
+epilogue reads to report the hand-off's verdict, and `✓ Added to cart` in `client_reports` is
+the evidence the two cart POSTs fired. Navigate too early and that proof is lost.
 
-**So if the box is not updated before 02:00 PT, tomorrow's trip runs with instruments that are
-either absent or mute.** Updating is `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts` /
-Admin → "Update now"; it takes ~20 seconds now (#149/#150) and nothing else is queued.
+But the injected bundle is re-injected on EVERY navigation (`loadstop` fires again — the fact
+that made `afterLoad` fire once per hand-off a bug on 2026-08-16). So on the cart page the
+script runs again and can **read the cart back**, which is strictly stronger than a status
+string we wrote ourselves. `content-rc.js`'s own comments call the current judgement — on the
+response payload's `IsSuccess` — *"one step weaker than `rc-cart.mjs`, which re-reads the
+cart."* Landing on the cart is exactly where that gap closes.
 
-**BUT DO NOT EXPECT THE BIG RAMP TOMORROW, and do not read a quiet morning as a cure.** Okta
-expires **18:01 UTC = 11:01 PT**, which is AFTER the 08:00 release — so Okta is alive at T−3h and
-T−30, the warm-up correctly stands down, and the T−30 sign-in is the **cheap cookie-answered**
-kind (11s, +24 MB). The 9.4 GB variant needs `okta=GONE` at T−30.
+**The ordering is the whole risk.** Client reports are debounced 1.5s before they POST. Flush
+`✓ Added to cart` FIRST, then navigate, then report a `cart-verified` stage from the cart page.
+Navigating first trades a proven signal for an unproven one.
 
-What tomorrow IS worth: a sampled reading of a **non-ramping** Okta trip, which is the control
-this investigation has never had — and the renewal path is sampled all day regardless.
+### FIX 2 — the in-app sign-in must click RC's own Log in control
+
+Owner, 2026-08-23: *"I enter my info on our app side. Click our button to sign in. Takes me to
+RC. It scrolls to calendar. Nothing happens. I hit login on that page and it then completed
+everything for me."*
+
+That last sentence is the diagnosis: **our script is looking for the credential form before
+anything has navigated to Okta.** RC lands the user scrolled to the availability calendar with
+its own sign-in control off screen; until that control is pressed there is no form to fill.
+
+The bot solved this exact problem — `clickSignInControl` in `scripts/auto-cart-bot/
+rc-autologin.mjs`, matched on the ACCESSIBLE NAME rather than a class, because RC ships new
+bundles whenever it likes and its class names are generated. `content-rc.js` already has a
+`signin` banner state that scrolls to top and offers a Log in button for the same reason. The
+injected sign-in path needs that click before it hunts for fields.
+
+**Read `rc-autologin.mjs`'s `signIn()` before writing any of this.** CLAUDE.md records that
+reinventing this flow cost two failed runs on 2026-08-09 — Enter BEFORE the button, the email
+step is flaky rather than blocked, Okta's error banner must be read rather than guessed at.
+
+**AND MIND THE 2026-08-16 LESSON, which this feature caused.** A `TypeError` in this exact code
+path published a real ReserveCalifornia password into `client_reports`, because WebKit formats
+`X is not a function` by quoting the FAILING SOURCE EXPRESSION verbatim. Bind credentials to
+locals so no call expression can contain one. `worker/rc-report-scrub.test.mts` guards the
+reporter end; the call site is the other half.
 
 ---
 
@@ -61,91 +87,67 @@ do after the leak, not stop it from leaking."* They were right.
 
 | | |
 |---|---|
-| Master | `57e9d79` |
-| Mini-PC | `e2be117` — **missing three memory instruments; see the top of this file** |
-| Open holds | **one REAL hold**, unit `45719`, releases 08-23 07:59:46 PT |
-| RC session | **healthy again** — see below |
+| Master | `1cf83a2` |
+| Mini-PC | `57e9d79` — has every memory instrument except #169 |
+| Open holds | none |
+| RC session | dead, but **Okta ALIVE** — so a repair is the cheap kind |
 
-**THE SESSION REPAIRED ITSELF AT ~20:30 PT ON 08-22, AND THE MECHANISM MATTERS.** It had been
-dead with a **seven-day-stale** token that the renewal could not shift (20 consecutive failures,
-then 30m backoff — the stale value comes from the SERVER, so clearing local storage cannot reach
-it). What fixed it was the **20:00 PT login rehearsal** submitting a real credential:
-`autocart.rc_login` → *"the bot signed in unattended 26m ago"*, and `rc_session` went to
-`token exp in 40m; src=live; okta=ALIVE`.
+**THIS MORNING WORKED, AND THAT IS THE BASELINE THE TWO FIXES SIT ON.** Hold `45719` carted at
+**T+1.6 seconds** (07:59:47.6 against a 07:59:46 release — the fastest yet) and was released at
+08:10. A 07:45 alarm fired and was CORRECT: the session really was dead, and the system repaired
+itself because every failed auto-login attempt is refunded, so the retry loop kept going until
+RC's app loaded.
 
-That is the 2026-08-16 pattern exactly, and it is the second time the rehearsal — an instrument
-built to *test* the login — has been the thing that **performed** the repair. **Do not credit
-the renewal schedule for it.** Crediting a repair to the wrong mechanism has cost this file
-three times.
+**THE SESSION IS DEAD RIGHT NOW AND IT IS THE KNOWN PATHOLOGY, NOT A NEW FAULT.** The storage
+census fired and answered: *"cookies: 10 on the RC origins, NONE token-shaped — so the stale
+token is coming from the server, not from this profile."* That is the seven-day-stale-token
+finding from 08-22 recurring. Okta is alive, so the repair is the 11-second cookie-answered
+kind; the renewal cannot shift it on its own, and the 20:00 rehearsal has twice been the thing
+that actually fixed it.
 
-**~~THE BOX BEING BEHIND MASTER IS FINE HERE~~ — TRUE ON 08-22, FALSE NOW.** That sentence was
-written when the gap was documentation plus another lane's relay code. Three bot-side commits
-have landed since (#160, #163, #166) and the box has none of them, so the gap is now the
-difference between an instrument that names an allocation and one that prints hex. Struck rather
-than deleted, because "the box is behind and that is fine" is exactly the sentence a later reader
-would quote to skip an update that matters.
-
-Check rather than trust any sha in this file — it is cheap, and this file has been wrong about
-one before:
-
-```
-NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status
-```
-
-**THE SESSION LINE IS THE NEW REPORTING WORKING.** `session_ok: false` with `okta_alive: true`
-is exactly what migration 065 was built to distinguish: RC rejects the current token, but the
-Okta session behind it is alive, so a repair right now is the **11-second cookie-answered** kind
-rather than the 12-minute, 9.4 GB password form. `autocart.rc_session` says so in words.
-
-**Still open:** **#160** (the sampler's Windows attribution — see below) and **#146**
-(worker-deploy trigger paths — merging restarts both poller machines, deliberately, so do it at
-a quiet moment and not near a release).
-
-**#156, #69 and #51 are closed** — and NOT because they were stale, which is what an earlier
-draft of this file called them. All three carried findings nobody had folded in: that Feature E's
-watch-driven recorder never stopped (rediscovered independently three times, because the
-correction kept sitting in an open PR), and that the Okta cap does not reset across a password
-sign-in. Both are in `CLAUDE.md` now.
-
-> ### `autocart.bot_version` IS RED AND IT IS EXPECTED — DO NOT SPEND THE MORNING ON IT
->
-> ```
-> FAIL  autocart.bot_version  mini-PC is on e2be117; web is on b8d8848 — and it is MISSING
->                             bot-side changes, with 1 hold(s) queued.
-> ```
->
-> **This was caused deliberately-ish and it is harmless.** #160 and #163 are bot-side, and both
-> were merged while the test hold was queued — which is the one configuration `bot_version`
-> fails on, by design.
->
-> **CORRECTED: the gap is no longer diagnostic-only in the file sense.** An earlier version of
-> this note said *"`rc-keepwarm.mjs` and every line of the cart path are byte-identical on both
-> sides"*, and #163 made that false within the hour by wiring the sampler into
-> `maybeAutoLogin`. What is still true is the thing that matters: **the change is confined to
-> `maybeAutoLogin`, adds no logic to the login itself, and every call it adds is bounded (5s)
-> and returns a null rather than throwing.** Its cost on the release-critical path is at worst
-> ~15s of CDP calls against a 30-minute lead.
->
-> **And tomorrow's cart runs the OLD code either way**, because the box is frozen until the
-> hold clears — so neither PR can affect it. The risk is deferred to whenever the box next
-> updates, which is after the test, which is the right order.
->
-> It clears the moment the box updates, which cannot happen until the hold clears (~08:15 PT).
-> **The check is right and the merge ordering was the mistake** — bot-side code should land
-> when no hold is queued, so this reads red only when it means something. `pages: false`, so
-> nothing rings; it is red on the admin page and in the 07:40 pre-flight only.
->
-> **If it says anything OTHER than the sampler commit, that is a different fact — read it.**
-
-**A REAL TEST HOLD IS QUEUED FOR 08:00 PT ON 2026-08-23** — South Carlsbad #35, unit 45719,
-arrival 2026-12-01, hold `51f3ad3d-8856-4bd0-8dd3-b64ad31d8b5f`. It is a TEST; the owner does
-not want the site. It locks a real campsite for ~15 min from 07:59:46 until claimed or RC drops
-the cart, and the 02:00–05:00 PT box update window is shut while it is queued (the 6h release
-gate, correctly). **It buys the cart/claim flow and NOT a leak reading** — see Track A below.
+**Still open:** **#169** (the sampler-persistence work below — merge and update the box, or the
+next ramp is lost like the last two), **#146** (worker-deploy paths — restarts both pollers, so
+pick a quiet moment).
 
 ---
 
 ## The leak: what is known, what is not
+
+### NEW 2026-08-23 — the ramp has a shape nobody had seen, and it is not a spike
+
+Two ramps in thirty-two hours, everything else flat at ~300 MB:
+
+| | peak `rc` | free RAM | COMMIT | pid |
+|---|---|---|---|---|
+| 08-22 23:12→23:23 | 8,983 MB | 6,744 → 3,191 | 82% | 10364 throughout |
+| 08-23 07:31→07:41 | **9,180 MB** | 5,960 → 3,328 | **88%** | 5296 throughout |
+
+**ONE renderer pid, growing steadily for ELEVEN MINUTES at ~400 MB/min.** The renderer is ~90%
+of it (8,245 of 9,180 MB); the browser process grows proportionally but stays under 800 MB;
+GPU, utility and crashpad are flat throughout.
+
+That revises the older reading of ~2,400 MB/min in a short burst. It is slower, longer, and
+sustained — which is a different kind of allocation and a different search.
+
+The morning ramp **starts at 07:31 — T−30, exactly when `maybeAutoLogin` fires.**
+
+**AND IT REFRAMES THAT MORNING'S FAILURE — as a CANDIDATE, not a finding.** The
+*"RC's app did not load"* errors ran 07:43–07:45, AFTER the ramp, with free RAM already back to
+9,884 MB — so the browser had just been recycled. A box coming off 88% COMMIT is exactly when
+RC's SPA would fail to boot. The RC failures look like the AFTERMATH of the memory event rather
+than an independent fault. Do not write that in as established; the discriminator is whether
+they recur on a morning with no ramp.
+
+### BOTH ATTRIBUTIONS WERE LOST, AND THAT IS WHY #169 EXISTS
+
+The sampler ran for both ramps. Neither reading survived: its only output is
+`logs\rc-keepwarm.log`, and `tail-log` returns the last 16,000 characters. By the time anyone
+looked, the only sampler lines left were from navigations that did NOT ramp (7 MB, 9 MB,
+53 MB) — which the three-way verdict correctly refuses to draw conclusions from.
+
+`chromium_memory_samples` survived those same two events by being in Postgres. **PR #169** is
+that fix applied to the other half (migration 066, already applied to production). **Merge it
+and update the box, or ramp number twenty-three is lost the same way.**
 
 **Established.** The ramp is triggered by the **Okta navigation**. That is a controlled
 comparison, not a correlation — 2026-08-18, three token-less renewals ten minutes apart, same

@@ -2633,31 +2633,65 @@ did not move**: `13:53:31` printed at 02:02, 02:05, 02:07, 02:09, 02:29, 02:44, 
   "the night before" without measuring the cap first**, which the warm-up entry already warns
   about and this is the second reason for.
 
+### THE RAMP IS AN ELEVEN-MINUTE CLIMB, NOT A SPIKE (2026-08-23)
+Two ramps in thirty-two hours; everything else in the series flat at ~300 MB.
+
+| | peak `rc` | free RAM | COMMIT | pid |
+|---|---|---|---|---|
+| 08-22 23:12→23:23 | 8,983 MB | 6,744 → 3,191 | 82% | 10364 throughout |
+| 08-23 07:31→07:41 | **9,180 MB** | 5,960 → 3,328 | **88%** | 5296 throughout |
+
+- **ONE renderer pid, climbing steadily for ELEVEN MINUTES at ~400 MB/min**, renderer ~90% of
+  the total (8,245 of 9,180). Browser process grows proportionally but stays under 800 MB; GPU,
+  utility and crashpad flat throughout.
+- **That revises the ~2,400 MB/min figure recorded on 08-17.** Slower, longer, sustained — a
+  different kind of allocation and a different search. The earlier number came from a 2-minute
+  sampler bracketing a shorter event; this is the same instrument with the per-type breakdown
+  (062) and a full climb inside the window.
+- The morning ramp **begins at 07:31 — T−30, when `maybeAutoLogin` fires.**
+- **CANDIDATE, NOT A FINDING: the "RC's app did not load" failures were the AFTERMATH.** They
+  ran 07:43–07:45, after the ramp, with free RAM already back to 9,884 MB — so the browser had
+  just been recycled, and a box coming off 88% COMMIT is exactly when RC's SPA would fail to
+  boot. It reframes an alarm that read as an independent RC fault. The discriminator is whether
+  those failures recur on a morning with no ramp; until then it is a candidate.
+- **BOTH ATTRIBUTIONS WERE LOST, and that is the finding that produced PR #169.** The sampler
+  ran for both. Its only output is `logs\rc-keepwarm.log`, and `tail-log` returns the last
+  16,000 characters, so by the time anyone looked the surviving lines were all from navigations
+  that did NOT ramp. `chromium_memory_samples` survived the same two events by being in
+  Postgres. Migration 066 is that fix applied to the other half — **the series says a ramp
+  happened, the readings say what was allocating while it did.**
+- **THE MORNING ITSELF WORKED**: hold `45719` carted at **T+1.6s** (07:59:47.6 against
+  07:59:46), released 08:10. The 07:45 alarm was CORRECT and the system repaired itself,
+  because a `provedNothing` auto-login attempt is refunded and the retry loop kept going.
+
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23). **TWO live threads, and one
-> TIME-SENSITIVE item at the top of that file.**
+> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23 evening). Its top section is the
+> next session's task: **TWO APP FIXES in the RC hand-off**, both reported by the owner after a
+> hold that WORKED, so neither is an outage.
 >
-> **0. A REAL HOLD RELEASES 2026-08-23 07:59:46 PT** (unit `45719`), and the box is on
-> `e2be117` — **missing #160, #163 and #166**, i.e. the Windows `module+offset` fix without
-> which a sampler reading names NOTHING, plus the auto-login sampling and its network trace.
-> **The 6h update gate shuts at 01:59:46 PT and is not liftable.** Expect no big ramp tomorrow
-> regardless — Okta expires 11:01 PT, after the release, so the T−30 sign-in is the cheap
-> cookie-answered kind and the warm-up correctly stands down.
+> **1. Land IN the cart** rather than telling the user to tap the cart icon. `RC_CART_URL` and
+> `adoptBanner()` already exist. **The owner asked the right question about proof** — navigating
+> could lose the `✓ Added to cart` report — and the answer is that the bundle is re-injected on
+> every navigation, so the cart page can READ THE CART BACK, which is stronger than the status
+> string. Flush the report first, then navigate, then report `cart-verified`.
 >
-> **1. THE LEAK, and the owner's standing ask is to FIX it — it is NOT fixed.** Everything
-> shipped is containment or relocation. The cure, **Track B** (replay the Okta round trip over
-> `ctx.request`, no renderer), is designed and deliberately NOT started: it is surgery on the
-> release-critical login path and the sampler's first real reading could change its design.
+> **2. The in-app sign-in must click RC's own Log in control** before hunting for the credential
+> form. RC lands the user on the calendar with that control off screen, which is why the owner
+> had to press it by hand. The bot's `clickSignInControl` is the model — **read
+> `rc-autologin.mjs`'s `signIn()` first**, and mind 2026-08-16: a TypeError on this path
+> published a real password, because WebKit quotes the failing source expression.
 >
-> **2. iOS REVIEW.** `1.0 (5)` resubmitted 2026-08-22 with corrected notes, same binary — see
-> `docs/APP-STORE.md` §2d. **Release is AUTOMATIC**, so approval puts it live with no human
-> step. **A 3.1.1 rejection now is the ANSWER, not a fourth process failure**: it is the first
-> submission where the reviewer can actually reach a link-out.
+> **THE LEAK IS NOT FIXED and remains the standing ask.** New on 08-23: the ramp is an
+> **eleven-minute climb on one renderer pid**, not a spike. **#169 is open and must be merged +
+> pushed to the box**, or the next ramp's attribution is lost exactly as the last two were.
 >
-> Master is **`57e9d79`**. #146 (worker-deploy paths) and #165 (side-lane notes) are open.
-> **Delete that file once the sampler has a reading from a real ramp AND the App Store version
-> has a decision**; it is a handover, not a permanent doc, and a stale one would read like
+> **iOS:** `1.0 (5)` resubmitted 2026-08-22 with corrected notes — `docs/APP-STORE.md` §2d.
+> Release is AUTOMATIC. A 3.1.1 rejection now is the ANSWER, not a fourth process failure.
+>
+> Master is **`1cf83a2`**; the box is `57e9d79`. #169 and #146 are open.
+> **Delete that file once the two app fixes have shipped and the sampler has a reading from a
+> real ramp**; it is a handover, not a permanent doc, and a stale one would read like
 > current state.
 
 ### THE APP'S RC SESSION IS BEING MEASURED NOW — no renewal built yet (migration 058, 2026-08-13)
