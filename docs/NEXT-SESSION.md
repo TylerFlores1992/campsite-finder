@@ -1,7 +1,9 @@
 # Next session — start here
 
-*Rewritten 2026-08-22. Delete this file once the sampler has produced a reading from a real ramp.
-It is a handover, not a permanent doc, and a stale one reads like current state.*
+*Rewritten 2026-08-22 (evening). Two live threads: the memory leak, and the iOS review.
+Delete this file once the sampler has produced a reading from a real ramp AND the App Store
+version has a decision. It is a handover, not a permanent doc, and a stale one reads like
+current state.*
 
 ---
 
@@ -23,22 +25,40 @@ do after the leak, not stop it from leaking."* They were right.
 
 | | |
 |---|---|
-| Master | `e2be117` |
-| Mini-PC | `e2be117` — **in sync** |
+| Master | `744bc85` |
+| Mini-PC | `e2be117` — **behind master by DOCS ONLY**, nothing bot-side |
 | Open holds | none |
-| RC session | healthy (Okta ALIVE) |
+| RC session | token dead, **Okta ALIVE** — the ordinary between-releases state |
 
-**THE SAMPLER IS LIVE ON THE BOX.** #155 merged and the box updated to `e2be117` on 08-22, so
-the instrument is armed and the **next ramp is measured automatically** — no action needed to
-arm it. Verify before assuming, though; a sha is cheap to check and this file has been wrong
-about one before:
+**THE BOX BEING BEHIND MASTER IS FINE HERE, AND THAT IS A JUDGEMENT, NOT A SHRUG.** Everything
+between `e2be117` and `744bc85` is documentation plus another lane's relay code. The sampler
+landed IN `e2be117`, so the instrument is on the box. Check rather than trust this sentence — a
+sha is cheap and this file has been wrong about one before:
 
 ```
 NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status
 ```
 
-**Still open:** **#146** (worker-deploy trigger paths — merging restarts both poller machines,
-deliberately, so do it at a quiet moment and not near a release) and **#157** (this file).
+**THE SESSION LINE IS THE NEW REPORTING WORKING.** `session_ok: false` with `okta_alive: true`
+is exactly what migration 065 was built to distinguish: RC rejects the current token, but the
+Okta session behind it is alive, so a repair right now is the **11-second cookie-answered** kind
+rather than the 12-minute, 9.4 GB password form. `autocart.rc_session` says so in words.
+
+**Still open:** **#160** (the sampler's Windows attribution — see below) and **#146**
+(worker-deploy trigger paths — merging restarts both poller machines, deliberately, so do it at
+a quiet moment and not near a release).
+
+**#156, #69 and #51 are closed** — and NOT because they were stale, which is what an earlier
+draft of this file called them. All three carried findings nobody had folded in: that Feature E's
+watch-driven recorder never stopped (rediscovered independently three times, because the
+correction kept sitting in an open PR), and that the Okta cap does not reset across a password
+sign-in. Both are in `CLAUDE.md` now.
+
+**A REAL TEST HOLD IS QUEUED FOR 08:00 PT ON 2026-08-23** — South Carlsbad #35, unit 45719,
+arrival 2026-12-01, hold `51f3ad3d-8856-4bd0-8dd3-b64ad31d8b5f`. It is a TEST; the owner does
+not want the site. It locks a real campsite for ~15 min from 07:59:46 until claimed or RC drops
+the cart, and the 02:00–05:00 PT box update window is shut while it is queued (the 6h release
+gate, correctly). **It buys the cart/claim flow and NOT a leak reading** — see Track A below.
 
 ---
 
@@ -87,6 +107,25 @@ partition_alloc::PartitionRoot::Alloc<>() <- namespace)::ArrayBufferAllocator::A
 stacks**, not bytes — the opposite shape from the multi-GB heap snapshot the house rules forbid
 writing when the box cannot spawn a process.
 
+**IT FIRED ON 2026-08-22 AND NAMED NOTHING — the instrument was validated on the wrong
+platform.** Four of five rows came back as bare hex (`0x7ffc499b1707 <- 0x7ffc4375aa42`): the
+"1,083 of 1,733 frames symbolized" figure was measured in the **Linux dev container**, and
+Playwright's Windows build exports no internal symbols. **#160 fixes it** by resolving addresses
+to `module+0xoffset` from the `modules` array CDP already returns — stable across runs (module
+bases move under ASLR; offsets do not) and symbolizable offline via the module `uuid`.
+
+That navigation did not ramp, so its numbers meant nothing and the trace said so. What it showed
+was the shape a real ramp would have arrived in.
+
+**#160 IS BOT-SIDE AND THE BOX CANNOT UPDATE WHILE THE TEST HOLD IS QUEUED.** Push it after the
+hold clears (~08:15 PT).
+
+**THE TEST HOLD WILL NOT PRODUCE A READING, AND THIS IS THE THING NOT TO GET WRONG.**
+`startNativeSampling` has ONE call site — the renewal's throwaway tab. `maybeAutoLogin` and the
+rehearsal are not sampled at all, and if T−30 mints a token then `planRenewal` stands down for
+the hour. Wiring the sampler into `maybeAutoLogin` is the obvious next move and would put the
+biggest trip there is (the 9.4 GB password sign-in) under measurement.
+
 **How to read the first real one:**
 
 - `net::` frames → the buffering candidate is confirmed after three entries asserted it without
@@ -131,6 +170,37 @@ real ramp, then take Track B to the owner with evidence rather than with a hypot
 
 ---
 
+## The OTHER live thread: iOS review
+
+**`1.0 (5)` was resubmitted 2026-08-22 with corrected App Review notes — same binary.** This is
+a separate thread from the leak and it can resolve while nobody is looking, because **release is
+automatic**: approval puts it on the App Store with no human step.
+
+**Read `docs/APP-STORE.md` §2d before touching anything here.** The short version: the 3.1.1 fix
+(the US-storefront link-out) had been live in the reviewed build since 08-19 and **the reviewer
+could not see it**, for two reasons that were both ours — every link-out surface is gated on
+`!subscribed` and the demo account is a subscriber, and the console notes still said in writing
+that the app *"does not link out to any purchase flow"*. Fixed console-side: rewritten notes with
+explicit **sign-out** steps, and no second demo account (signing out reveals the link because
+`WatchCta`'s `isNative` branch precedes its `!signedIn` branch).
+
+**HOW TO READ THE OUTCOME — this matters, because the obvious reading is wrong:**
+
+- **Approved** → it is live. Nothing to do; the `LINKOUT_BY_STORE.ios` flip already happened.
+- **Rejected on 3.1.1 again** → **that is the ANSWER, not a fourth process failure.** §2c and
+  §2d both recorded "does link-out alone clear 3.1.1 with no IAP?" as unestablished, because on
+  neither occasion could the reviewer reach a link-out. This is the first submission where they
+  can. A rejection now moves the decision to StoreKit — weeks of native work, a new build, and
+  15–30% — and should be taken to the owner as that decision, not as another notes round.
+- **Rejected on something else** → treat it on its own terms. §2a, §2b, §2c and §2d were each a
+  different fault from what the previous one looked like.
+
+**Android stays off.** `LINKOUT_BY_STORE.android` is `false` and must remain so until Play
+PRODUCTION is live and US-only — the closed test is worldwide, and the anti-steering carve-outs
+are US-storefront only.
+
+---
+
 ## Also landed this session
 
 - **Migration 065 — the Okta session's state is a column.** `autocart.rc_session` now says
@@ -141,6 +211,9 @@ real ramp, then take Track B to the owner with evidence rather than with a hypot
 - **#154 — the warm-up.** Signs in at T−3h when Okta is gone, so the T−30 sign-in is
   cookie-answered. Moves the expensive trip out of the window where a RAM-guard kill can hold the
   profile lock past 08:00. **It does not add a password sign-in, it moves one.**
+- **§2d + the resubmission.** The 3.1.1 fix was live and invisible to the reviewer; notes
+  rewritten, same binary resubmitted. `docs/APP-STORE.md` §2d carries both text blocks, the
+  verified 3,999-character Notes cap, and the reasoning.
 - **#152 — the claim screen.** A successful release no longer reports "Network error. Try again."
   (advice for an act that cannot be repeated), and the gate now reads the token's **expiry**, not
   merely that one was captured — which is what let a release happen against a 23-hour-dead session
@@ -156,6 +229,10 @@ real ramp, then take Track B to the owner with evidence rather than with a hypot
   not a bug.
 - **`npm test` hits the production DB on purpose**, and races production's own sweeps — a flake
   there is not automatically a second test run.
+- **Check what the REVIEWER will see, with the credentials they will actually use.** "The fix
+  is in the bundle" is a different claim, and verifying only that one cost two App Store rounds
+  — 08-14 (a demo password nobody had tried) and 08-22 (a demo account nobody had viewed the fix
+  through).
 - **A guard that anchors on a token occurring twice will break silently.** It has now happened
   twenty-one times. When one fails over unchanged behaviour, re-anchor it and then **verify it
   still fails against the regression it exists for** — a re-anchor that quietly weakens a guard is

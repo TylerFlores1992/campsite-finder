@@ -80,6 +80,31 @@ before you plan to show anything. The 137k observations collected so far are unt
   `getHeadlines`). **Readout/sanity-check:** `scripts/likelihood-readout.mts`.
 - **UI:** card badge, detail-page ladder (`/api/likelihood`), per-watch odds — all share
   the aggregation + gate, all behind `SHOW_LIKELIHOOD`.
+- **"NOTHING IS BEING RECORDED" IS WRONG, AND HAS BEEN SINCE THE DAY IT WAS WRITTEN.**
+  The three switches stop the **probe roster** — the expensive half, 502 targets and the
+  ~15,700 Vercel invocations/day. They have never touched `recordObservations()`
+  (`worker/poller.ts`, called **unconditionally** at the end of every cycle), which writes an
+  `availability_observations` row per active watch, throttled to one per (campground,
+  arrival, nights) per hour. Measured 2026-08-22: **425 rows in 24h across 13 campgrounds**,
+  newest 19:18 PT, against `probe_targets` 0 of 502 active. The roster really is off; the
+  watch-driven recorder never was.
+- **THERE IS NOTHING TO FIX HERE, WHICH IS WHY IT SURVIVED.** It makes **zero extra network
+  calls** — it persists what the poller already fetched for alerting — and self-prunes at
+  `OBSERVATION_RETENTION_DAYS` (90d). None of the cost that caused the 07-30 stop applies to
+  it. Only the SENTENCE was too broad.
+- **DO NOT READ FRESH ROWS AS THE ROSTER HAVING RESTARTED.** `scripts/likelihood-readout.mts`
+  showing recent observations is the ordinary state. Check `probe_targets.active` and
+  `PROBE_ENABLED` before concluding anything; a re-run of `seed-probe-targets.ts` is still
+  the thing that could restart accrual silently.
+- **IT WAS FOUND INDEPENDENTLY THREE TIMES — 2026-08-15, 2026-08-22 and again the same
+  evening — because nobody folded it in.** Two docs PRs (#51, #156) sat open carrying it,
+  each written by someone who had just rediscovered it from scratch. That is the cost the
+  one-writer rule in `docs/LANES.md` exists to prevent, arriving from the other direction:
+  not a finding lost in a merge, but a correction that never landed, so the file kept
+  teaching the same wrong thing to the next reader. **Fold a correction or close it as
+  wrong; leaving it open is choosing to re-derive it.**
+- **If the watch-driven recorder should ALSO stop, it needs its own gate — none exists.**
+  That is a decision nobody has taken, not an oversight to quietly fix.
 
 ## `/api/rc-proxy` takes a BATCH (2026-07-30)
 It forwarded one RDR request per invocation on the hot path of a 15s poller —
@@ -2517,19 +2542,128 @@ as the leading explanation and **has never been tested**.
     buffering in the **browser process**, `ctx.request` may not even be the right lever. Building
     it blind is how a repair gets credited to the wrong mechanism, which has happened three times.
 
+### TRACK A'S FIRST READING NAMED NOTHING — IT WAS VALIDATED ON THE WRONG PLATFORM (2026-08-22)
+The sampler fired on the box for the first time, 19:34 PT, and produced this:
+```
+02:34:58 native allocation, renderer only (...): 43 MB while free RAM moved -161 MB
+           22 MB  <V8 Heap>
+           14 MB  0x7ffc499b1707 <- 0x7ffc4375aa42
+            4 MB  0x7ffc499b1707 <- 0x7ffc44ec485f
+            2 MB  0x7ffc499b1707 <- 0x7ffc44da6a91
+```
+- **The module's header claimed "symbolization is partial — 1,083 of 1,733 frames".** That was
+  measured against the Chromium in the **Linux dev container**. Playwright's WINDOWS build
+  exports no internal symbols, so in production it is not partial, it is **absent**. Same shape
+  as `cap sync`'s plugin path and the headless RC login: validated somewhere that is not where
+  it runs.
+- **THAT NAVIGATION DID NOT RAMP** (`RAM 9462 → 9301`), and the trace said so and refused a
+  verdict — the three-way rule working. So the numbers mean nothing; what the reading shows is
+  the SHAPE a real ramp would have arrived in. **We would have waited days for an event and
+  then been told four hex addresses.**
+- **Fixed in #160: addresses resolve to `module+0xoffset`** from the `modules` array
+  `Memory.getAllTimeSamplingProfile` already returns beside `samples` and which the file
+  discarded. Module bases move per process under ASLR, so a raw address groups within one
+  profile and **nowhere else** — the offset is fixed for a build, and the `uuid` names the
+  binary for offline symbolization.
+- **The module NAME is not expected to discriminate** — nearly all of Chromium is one
+  `chrome.dll`. It is printed for the one case where it settles something for free: a frame in
+  a **system dll** (`ws2_32`, `winhttp`, `mswsock`) is the network stack, i.e. the buffering
+  candidate this file has asserted three times and never shown.
+- **BOT-SIDE, so it is not live until the box updates**, and the box cannot update while a hold
+  is queued inside 6h of its release.
+- **Nothing was going to be sampled tomorrow morning anyway.** `startNativeSampling` has ONE
+  call site — the renewal's throwaway tab. `maybeAutoLogin` and the rehearsal are not sampled,
+  and if T−30 mints a token `planRenewal` stands down for the hour. **A queued test hold buys
+  the cart flow, not a leak reading**; do not treat the two as the same test.
+
+### THE STALE TOKEN COMES FROM THE SERVER (2026-08-22) — every local candidate is eliminated
+The 08-19 census left three candidates: IndexedDB, a cookie, or the server. The box has now
+answered all three in one reading:
+```
+02:34:58 ✗ no fresher token (none → -603732s), got as far as: none
+02:34:58   storage census: local 6 key(s), session 1 key(s) — NO token-shaped value in either
+           store. IndexedDB: no databases at all, so the remaining candidates are a cookie
+           or the server.
+02:34:58   cookies: 10 on the RC origins, NONE token-shaped — so the stale token is coming
+           from the server, not from this profile
+```
+- **-603,732s is a SEVEN-DAY-dead token**, and it is the same one receding, exactly as 08-19
+  established for the 74-hour case. Clearing local storage cannot reach it because it is not
+  there. **The `dropStoredToken` family of fixes is finished as a line of attack.**
+- **This does NOT explain the leak** and must not be folded into it. It explains why the
+  RENEWAL cannot repair the session — a different failure that happens to share a code path.
+
+### THE RENEWAL HAS FAILED 20 TIMES RUNNING AND IS IN BACKOFF (2026-08-22)
+`renewal stood down: 20 attempts in a row have failed, so the next is 30m apart`.
+- **This does not endanger tomorrow's cart, and the distinction matters.** `maybeAutoLogin` at
+  T−30 is a different mechanism with its own 2-attempt budget, and with **Okta ALIVE** it is
+  the 11-second cookie-answered sign-in that migration 065 exists to predict. The login
+  rehearsal passed ~24h earlier, which is the standing evidence that it works.
+- **The backoff is correct behaviour**, not a fault to clear: a gate that never stops retrying
+  is the 2026-08-08 request storm.
+- **Do not tell anyone to run `rc-login.bat` on this alone.** The keep-warm prints "A human
+  must sign in once" on every dead verdict, and that advice has been given twice over sessions
+  that repaired themselves.
+
+### RAMPS ARE MUCH RARER NOW — AN OBSERVATION, NOT A CURE (2026-08-22)
+`chromium_memory_samples`, last 30 hours: **one ramp**, 01:49→01:59 PT, peaking 8,436 MB with
+free RAM at 2,227 MB — then **eighteen hours flat at ~320 MB** (hourly peaks 319-496 MB).
+- Against the 08-17 baseline of **twenty ramps in five days** (~one per six hours) that is
+  roughly a **5x reduction**, and the near-expiry stand-down plus the throwaway tab are the
+  plausible cause.
+- **IT IS NOT A CURE AND MUST NOT BE WRITTEN UP AS ONE.** One ramp still reached 8.4 GB, which
+  is the whole disease. And this is a 30-hour window — the file's own history is that every
+  "not reproduced this session" reading was a window that happened to miss one.
+- **What it does buy is patience**: there is no longer a fire, so Track B can wait for
+  evidence instead of being built blind.
+
+### THE OKTA CAP DID NOT RESET ACROSS A PASSWORD SIGN-IN (2026-08-16, folded in 2026-08-22)
+Recorded here from PR #69, which sat open for a week carrying it. On the night of 08-16 the
+20:00 PT rehearsal submitted a real credential, RC accepted it, and **the reported Okta expiry
+did not move**: `13:53:31` printed at 02:02, 02:05, 02:07, 02:09, 02:29, 02:44, 02:56 and
+03:52 UTC — pin-stable across a fresh sign-in.
+- **It corroborates the absolute cap from a second direction.** 08-19 found the rolling window
+  freezing while the probe still answered ALIVE, and 08-21 found that a COOKIE-answered
+  sign-in inherits the existing cap. This says a **password** sign-in does too.
+- **So the cap is measured from something other than the sign-in**, which narrows an
+  explicitly open question rather than closing it. Do not write in an origin.
+- **It bears directly on the T−3h warm-up.** That design assumes signing in early leaves an
+  Okta session behind that survives to T−30. These three readings together say the session it
+  leaves behind carries whatever remains of an older cap — so **do not extend the warm-up to
+  "the night before" without measuring the cap first**, which the warm-up entry already warns
+  about and this is the second reason for.
+
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-22). Master and the box are both on
-> **`e2be117`**. **The owner's standing ask is "fix the leak", and the leak is NOT fixed** —
-> everything shipped so far is containment or relocation, which that file says in its first
-> paragraph so nobody reads five green instruments as a cure. **#155 — the native memory
-> sampler, the instrument that NAMES the allocation — is MERGED and live on the box, so the
-> next ramp is measured automatically.** #146 (worker-deploy paths) is still open.
-> The cure itself, **Track B**, is designed and deliberately NOT started: it needs the owner's
-> go-ahead because it is surgery on the release-critical login path, and #155's first reading
-> could change its design.
-> **Delete that file once the sampler has produced a reading from a real ramp**; it is a handover, not
-> a permanent doc, and a stale one would read like current state.
+> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-22 evening). **TWO live threads.**
+>
+> **1. THE LEAK, and the owner's standing ask is to FIX it — it is NOT fixed.** Everything
+> shipped is containment or relocation, which that file says in its first paragraph so nobody
+> reads five green instruments as a cure. **#155 — the native memory sampler, the instrument
+> that NAMES the allocation — is MERGED and live on the box, so the next ramp is measured
+> automatically.** The cure, **Track B** (replay the Okta round trip over `ctx.request`, no
+> renderer), is designed and deliberately NOT started: it is surgery on the release-critical
+> login path and the sampler's first reading could change its design.
+>
+> **2. iOS REVIEW.** `1.0 (5)` resubmitted 2026-08-22 with corrected notes, same binary — see
+> `docs/APP-STORE.md` §2d. **Release is AUTOMATIC**, so approval puts it live with no human
+> step. **A 3.1.1 rejection now is the ANSWER, not a fourth process failure**: it is the first
+> submission where the reviewer can actually reach a link-out, so a refusal moves the decision
+> to StoreKit rather than to another notes round.
+>
+> Master is **`744bc85`**; the box is `e2be117`, behind by DOCS ONLY. **#160** (the sampler
+> naming nothing on Windows) and **#146** (worker-deploy paths) are open.
+>
+> **#156/#69/#51 WERE CALLED "STALE DOCS PRS WORTH CLOSING" AND ALL THREE CARRIED REAL,
+> UNINCORPORATED FINDINGS.** Closing them unread would have deleted a correction that
+> `CLAUDE.md` is still wrong without (Feature E is *not* fully stopped) and a measurement on an
+> open question (the Okta cap does not reset across a sign-in). Folded in above 2026-08-22 and
+> closed with a pointer to where they landed. **"Stale" is a judgement about CONTENT, not
+> about age** — read a docs PR before retiring it, or the next reader re-derives it, which is
+> exactly what happened to the Feature E finding three times.
+> **Delete that file once the sampler has a reading from a real ramp AND the App Store version
+> has a decision**; it is a handover, not a permanent doc, and a stale one would read like
+> current state.
 
 ### THE APP'S RC SESSION IS BEING MEASURED NOW — no renewal built yet (migration 058, 2026-08-13)
 The mobile claim flow needs a live RC session inside the InAppBrowser data store, and the
