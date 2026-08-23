@@ -516,6 +516,27 @@ const PRESETS: Record<string, Preset> = {
       export const node = <AdminTabs data={data} />;`,
     frame: 'w-full',
   },
+  'ch-signout-confirm': {
+    label: 'Settings — the sign-out confirmation, open',
+    // Renders SignOutConfirm on its own and auto-presses "Sign out", so the shot is
+    // the CONFIRM state. The default state is already visible in `ch-settings`.
+    entry: `import SignOutConfirm from '@/components/v2/SignOutConfirm';
+      if (typeof window !== 'undefined') {
+        window.__CH_SIGNED_IN = true;
+        setTimeout(() => {
+          const b = Array.from(document.querySelectorAll('button'))
+            .find((x) => x.textContent && x.textContent.trim() === 'Sign out');
+          if (b) b.click();
+        }, 300);
+      }
+      export const node = (
+        <div className="rounded-ch-card border border-ch-line bg-ch-card p-4">
+          <h2 className="text-ch-h3 font-bold">Sign out</h2>
+          <div className="mt-2"><SignOutConfirm /></div>
+        </div>
+      );`,
+    frame: 'w-full max-w-md mx-auto',
+  },
   'ch-settings': {
     label: 'Settings — no phone yet, auto-cart not set up',
     entry: `import Settings from '@/components/v2/Settings';

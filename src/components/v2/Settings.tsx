@@ -10,6 +10,7 @@ import SmsAlerts from "./SmsAlerts";
 import AutoCartSettings from "./AutoCartSettings";
 import { SubscribeLink, SubscribeSentence } from "./nativeSubscribe";
 import DeleteAccount from "./DeleteAccount";
+import SignOutConfirm from "./SignOutConfirm";
 import BuildStamp from "./BuildStamp";
 
 /**
@@ -172,6 +173,12 @@ export default function Settings() {
           Your email address, password and sign-in methods live in your account menu, in the top
           right of the page.
         </p>
+      </Section>
+
+      {/* Sign out sits ABOVE "Delete account" deliberately: they are the two ways
+          to leave, and the reversible one should be the one you meet first. */}
+      <Section title="Sign out">
+        <SignOutConfirm />
       </Section>
 
       {/* Its own section, at the bottom, with a plain title. Apple 5.1.1(v) wants
