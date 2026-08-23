@@ -1127,3 +1127,90 @@ Notes. Nothing to do but wait; record the outcome in `docs/APP-STORE.md` §2b.
 
 On `master`, clean, no open branch or PR. Park watches remain unadvertised —
 `watch_campgrounds` is still 0 rows.
+
+---
+
+## 23. THE `bot_version` FAIL, 2026-08-22 night — benign, and the quiet window misses by 14 seconds
+
+Read at 22:41 PT on 08-22, with a test hold queued for 07:59:46 PT on 08-23.
+
+```
+FAIL | mini-PC is on e2be117; web is on 6ddc12f — and it is MISSING
+       bot-side changes, with 1 hold(s) queued.
+```
+
+The main lane has already written this up in `docs/NEXT-SESSION.md` (#161, corrected by
+#164) and their account is right. Two things this pass adds that are not in it.
+
+### The gap is exactly two commits, both diagnostics
+
+`e2be117..809a46a` touching `scripts/auto-cart-bot/` or `mini-pc/`:
+
+```
+33efc4b  Sample the auto-login too (#163)     rc-keepwarm.mjs       +62
+b8d8848  Sampler: module+offset (#160)        rc-native-sampler.mjs +189/-15
+```
+
+Nothing else. #163 does touch `maybeAutoLogin`, which IS release-critical — the main lane
+corrected their own note for exactly that reason — but it adds no logic to the login, only
+bounded (5s) CDP reads that return null rather than throwing. **And it cannot reach the box
+before the test anyway**, which is the next section.
+
+### The box cannot update tonight, and the margin is fourteen seconds
+
+`safeToUpdate` refuses when `0 ≤ hoursUntilRelease < 6`. Release is **07:59:46 PT**, so the
+block starts at **01:59:46 PT**. The quiet window opens at **02:00:00 PT**. The whole window
+is inside the block — by fourteen seconds.
+
+**That freeze is accidental, not structural.** A release at 08:00:15 PT would have left the
+02:00 scheduled run clear to update, six hours before the cart, which is exactly the margin
+the constant was chosen for. So "the box is frozen because a hold is queued" happens to be
+true tonight and is a coin flip on how `rc-test-hold.mts` picks the release second. Worth
+knowing before quoting the freeze as a property of queued holds in general.
+
+### There is NO pending update request, and no churn
+
+`CLAUDE.md` warns that a standing request churns the box — `UPDATE_RETRY_MS` (15 min)
+against a 20-minute claim TTL, each attempt bouncing every process. **It does not apply
+here.** `bot_update_requests` reads:
+
+```
+requested_at  2026-08-22T17:15:07.459Z   requested_by "agent: merge #155 native memory sampler"
+applied_at    2026-08-22T17:15:37.655Z   applied_sha  e2be117   claimed_at NULL
+applied_note  "started - checking the guard"
+```
+
+`botUpdateState` derives `pending` as `requestedAt && (!appliedAt || appliedAt < requestedAt)`.
+`applied_at` is **thirty seconds newer** than `requested_at`, so **`pending` is false** — the
+request was closed the same minute it was made and has not been outstanding for twelve hours.
+
+**The guard's own verdict string proves it independently, a hundred times over.** A request
+LIFTS the quiet window (`if (!requested && hour outside window)`), and every scheduled run
+from 17:11 PT to 22:41 PT logged `SKIP - outside the quiet window`. If the feed had been
+answering `updateRequested: true`, that line could not have been printed. There is no
+`[stop-all]` anywhere in the tail either: the guard refuses before anything is stopped, so
+each 5-minute run is cheap.
+
+**The stale `applied_note` is the trap.** `"started - checking the guard"` sitting beside
+`applied_sha = e2be117`, twelve hours old, reads like an update that hung halfway. It is the
+documented `appliedNote`/`appliedSha` mismatch — the note is from whichever run wrote it last
+and does not describe the same event as the sha. Do not read it as an update in progress.
+
+### Health nine hours out
+
+- `rc_runner_heartbeat.beat_at` sampled five times: 05:41:26 → 05:41:42 → 05:41:57 →
+  05:42:12 UTC. **15.4 seconds apart, so this is the hold runner**, not the updater's 301s
+  (`beatIsFromRunner`, 2026-08-14). The runner is alive and polling the feed.
+- `session_ok: true`, `token exp in 39m`, `okta=ALIVE (exp 2026-08-23T17:21:13)`, source
+  `keepwarm`.
+- Hold `51f3ad3d-8856-4bd0-8dd3-b64ad31d8b5f`, unit `45719`, `requested`,
+  `last_attempt_note` NULL — nothing has tried yet, which is correct nine hours out.
+
+### §22 has cleared — the runner log is writing again
+
+`tail-log rc-holds` returns entries through ~04:01, most recently ~1h40m before the read.
+So tomorrow's outcome will be diagnosable from the log, which it was not on 08-17.
+
+Still true from §22: the diagnostics are answered `by bot`, so `? diagnostic` lines do not
+appear in the runner's log. That is the control channel riding both feeds working as
+designed, not a runner fault.
