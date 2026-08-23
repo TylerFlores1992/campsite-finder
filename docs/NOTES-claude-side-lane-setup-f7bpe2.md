@@ -1127,3 +1127,212 @@ Notes. Nothing to do but wait; record the outcome in `docs/APP-STORE.md` §2b.
 
 On `master`, clean, no open branch or PR. Park watches remain unadvertised —
 `watch_campgrounds` is still 0 rows.
+
+---
+
+## 23. THE `bot_version` FAIL, 2026-08-22 night — benign, and the quiet window misses by 14 seconds
+
+Read at 22:41 PT on 08-22, with a test hold queued for 07:59:46 PT on 08-23.
+
+```
+FAIL | mini-PC is on e2be117; web is on 6ddc12f — and it is MISSING
+       bot-side changes, with 1 hold(s) queued.
+```
+
+The main lane has already written this up in `docs/NEXT-SESSION.md` (#161, corrected by
+#164) and their account is right. Two things this pass adds that are not in it.
+
+### The gap is exactly two commits, both diagnostics
+
+`e2be117..809a46a` touching `scripts/auto-cart-bot/` or `mini-pc/`:
+
+```
+33efc4b  Sample the auto-login too (#163)     rc-keepwarm.mjs       +62
+b8d8848  Sampler: module+offset (#160)        rc-native-sampler.mjs +189/-15
+```
+
+Nothing else. #163 does touch `maybeAutoLogin`, which IS release-critical — the main lane
+corrected their own note for exactly that reason — but it adds no logic to the login, only
+bounded (5s) CDP reads that return null rather than throwing. **And it cannot reach the box
+before the test anyway**, which is the next section.
+
+### ~~The box cannot update tonight~~ — IT UPDATED AT 23:12 PT, AND I HAD THE REFUTATION OPEN
+
+`safeToUpdate` refuses when `0 ≤ hoursUntilRelease < 6`. Release is **07:59:46 PT**, so the
+block starts at **01:59:46 PT**. The quiet window opens at **02:00:00 PT**. The whole window
+is inside the block — by fourteen seconds.
+
+**That freeze is accidental, not structural.** A release at 08:00:15 PT would have left the
+02:00 scheduled run clear to update, six hours before the cart, which is exactly the margin
+the constant was chosen for. So "the box is frozen because a hold is queued" happens to be
+true tonight and is a coin flip on how `rc-test-hold.mts` picks the release second. Worth
+knowing before quoting the freeze as a property of queued holds in general.
+
+**THE ARITHMETIC IS RIGHT AND THE CONCLUSION WAS WRONG.** Forty minutes after writing this,
+`rc_runner_heartbeat.bot_commit` read **`57e9d79`** and `git-status` — the authority, per the
+2026-08-14 COALESCE note — confirmed **`HEAD 57e9d79 on master`**. The box updated at
+**23:12:03 PT**, taking #160, #163 and #166 in one go.
+
+**The refutation was in the file I had open.** `safeToUpdate` reads:
+
+```js
+if (!requested && (hour < windowStart || hour >= windowEnd)) { ...refuse... }
+```
+
+**A request LIFTS the quiet window.** The only gate a request cannot lift is the 6h release
+check — and at 23:11 PT the release was **8.8 hours** away, comfortably past it. So the
+legal window for a *requested* update ran from whenever the hold was queued until
+**01:59:46 PT**, roughly three hours, and somebody used it. The fourteen-second arithmetic
+describes the *unrequested* scheduled path only, and I generalised it to "the box cannot
+update tonight" without checking the branch immediately above the one I had quoted.
+
+**The main lane had the same premise and it is now stale.** #167 (`ecd1a08`, committed
+23:14:45 PT) is titled *"a real hold lands at 07:59 and the box is missing every new
+instrument"* — written **two minutes after** the box stopped missing them. Its reasoning
+about what tomorrow can and cannot show still stands; only "the box is behind" does not.
+
+**AND THE STALE-NOTE TRAP FIRED AGAIN, IN THE DANGEROUS DIRECTION.** The row now reads:
+
+```
+applied_at    2026-08-23T06:12:03Z
+applied_sha   57e9d79            ← the update that LANDED
+applied_note  "[update-guard] SKIP - outside the quiet window (23:00 PT ...)"
+```
+
+A later, unrequested scheduled run refused and `noteBotUpdateAttempt` overwrote the note
+without touching `applied_at` or `applied_sha`. So the panel shows a **refusal beside the
+sha that proves success**. The section below warns about this shape with a benign example;
+this is the same trap pointing the other way, where the note would talk you out of an update
+that already happened. **`git-status` is the only field that settles it.**
+
+### There is NO pending update request, and no churn
+
+`CLAUDE.md` warns that a standing request churns the box — `UPDATE_RETRY_MS` (15 min)
+against a 20-minute claim TTL, each attempt bouncing every process. **It does not apply
+here.** `bot_update_requests` reads:
+
+```
+requested_at  2026-08-22T17:15:07.459Z   requested_by "agent: merge #155 native memory sampler"
+applied_at    2026-08-22T17:15:37.655Z   applied_sha  e2be117   claimed_at NULL
+applied_note  "started - checking the guard"
+```
+
+`botUpdateState` derives `pending` as `requestedAt && (!appliedAt || appliedAt < requestedAt)`.
+`applied_at` is **thirty seconds newer** than `requested_at`, so **`pending` is false** — the
+request was closed the same minute it was made and has not been outstanding for twelve hours.
+
+**The guard's own verdict string proves it independently, a hundred times over.** A request
+LIFTS the quiet window (`if (!requested && hour outside window)`), and every scheduled run
+from 17:11 PT to 22:41 PT logged `SKIP - outside the quiet window`. If the feed had been
+answering `updateRequested: true`, that line could not have been printed. There is no
+`[stop-all]` anywhere in the tail either: the guard refuses before anything is stopped, so
+each 5-minute run is cheap.
+
+**The stale `applied_note` is the trap.** `"started - checking the guard"` sitting beside
+`applied_sha = e2be117`, twelve hours old, reads like an update that hung halfway. It is the
+documented `appliedNote`/`appliedSha` mismatch — the note is from whichever run wrote it last
+and does not describe the same event as the sha. Do not read it as an update in progress.
+
+### Health nine hours out
+
+- `rc_runner_heartbeat.beat_at` sampled five times: 05:41:26 → 05:41:42 → 05:41:57 →
+  05:42:12 UTC. **15.4 seconds apart, so this is the hold runner**, not the updater's 301s
+  (`beatIsFromRunner`, 2026-08-14). The runner is alive and polling the feed.
+- `session_ok: true`, `token exp in 39m`, `okta=ALIVE (exp 2026-08-23T17:21:13)`, source
+  `keepwarm`.
+- Hold `51f3ad3d-8856-4bd0-8dd3-b64ad31d8b5f`, unit `45719`, `requested`,
+  `last_attempt_note` NULL — nothing has tried yet, which is correct nine hours out.
+
+### §22 has cleared — the runner log is writing again
+
+`tail-log rc-holds` returns entries through ~04:01, most recently ~1h40m before the read.
+So tomorrow's outcome will be diagnosable from the log, which it was not on 08-17.
+
+Still true from §22: the diagnostics are answered `by bot`, so `? diagnostic` lines do not
+appear in the runner's log. That is the control channel riding both feeds working as
+designed, not a runner fault.
+
+### State at 23:21 PT, after the update
+
+Everything above was read at **22:41 PT** and the box moved at **23:12**. Re-read rather
+than remembered — the same rule `CLAUDE.md` records as *"a health reading goes stale faster
+than a conclusion drawn from it"*.
+
+```
+box            57e9d79 on master   (has #160, #163, #166)
+master         ecd1a08             (docs-only ahead of the box)
+bot_version    should now be GREEN — the gap was code, and the code landed
+heartbeat      06:21:29Z, session_ok, token 58m, okta=ALIVE (exp 18:01:14Z / 11:01 PT)
+hold           51f3ad3d · unit 45719 · South Carlsbad SB — Northern End (sites 35-102)
+               requested · release 2026-08-23 07:59:46 PT · last_attempt_note NULL
+```
+
+**THE HOLD IS A REAL USER'S, NOT A TEST FIXTURE.** It carries a `user_id` and a real
+campground, and #167 says so in its title. Nothing in this section is a synthetic run, and
+nothing here should be treated as disposable.
+
+**Okta expires 11:01 PT, i.e. AFTER the 08:00 release** — so the T−3h warm-up correctly
+stands down and the T−30 sign-in is the cheap cookie-answered kind. #167 sets expectations
+low for exactly this reason: the 9.4 GB password variant needs `okta=GONE` at T−30 and will
+not happen. What tomorrow can produce is a **sampled reading of a non-ramping Okta trip**,
+which is the control that investigation has never had.
+
+---
+
+## Handover — 2026-08-22 late evening (~23:30 PT)
+
+### The one thing that is live and dated
+
+**A REAL user's RC hold releases at 07:59:46 PT on 2026-08-23**, unit `45719`, South
+Carlsbad SB — Northern End. Hold `51f3ad3d-8856-4bd0-8dd3-b64ad31d8b5f`, `requested`,
+`last_attempt_note` NULL. Not a fixture — see §23. Read `/rc-status` or
+`scripts/rc-holds-readout.mts` before touching anything on the box; **the SERIAL rules in
+`docs/LANES.md` bind hardest in the hours around a real release.**
+
+Set expectations the way #167 does, so a quiet morning is not misread as a cure: Okta
+expires **11:01 PT**, after the release, so the warm-up stands down and the T−30 sign-in is
+the cheap cookie-answered kind. The 9.4 GB password variant cannot occur. What tomorrow can
+produce is a **sampled reading of a non-ramping Okta trip** — a control the leak
+investigation has never had.
+
+### Read §23 before diagnosing the box
+
+Two traps in it, both fired this session:
+
+1. **`applied_note` and `applied_sha` do not describe the same event**, and the note can
+   point either way. It currently reads `SKIP - outside the quiet window` beside
+   `applied_sha 57e9d79`, which is the sha of an update that **succeeded**.
+   **`git-status` through `bot_commands` is the only field that settles "did it land?"**
+2. **A requested update LIFTS the quiet window.** Only the 6h release check is unliftable.
+   I got this wrong with the guard source open, and so did #167.
+
+### What this session did
+
+- **Play Store production application submitted** (owner drove the console; I supplied
+  every copyable answer and verified the vendor answer sheet's four claims — three were
+  false). Not yet written into `docs/PLAY-STORE.md`; offered, not confirmed.
+- **`SignOutConfirm` shipped** (#162) — Settings now confirms before signing out, which is
+  what made the production application's Q8 answer true rather than aspirational. Its
+  header records why it is not in the Clerk account menu: the `appearance` key to hide
+  Clerk's built-in Sign out is not present anywhere in the installed `@clerk/*` packages,
+  and a guessed key **fails open**.
+- **iOS `1.0 (5)` resubmitted** with rewritten App Review notes, same binary — the 3.1.1
+  round that finally tests whether link-out alone clears it. `docs/APP-STORE.md` §2d.
+- **§23**, above, and its correction.
+
+### Still open, all main lane's
+
+- **PR #146** — worker-deploy path list. Merging restarts both poller machines, so it
+  wants a moment away from a release. **Not tomorrow morning.**
+- **Issue #76** — `worker/rc-holds.test.mts`'s `before()` sweep deletes a concurrently
+  running suite's fixture rows. Two confirmed occurrences, different victims, one colliding
+  with a master push. Ranked fixes are in the issue.
+- **The live manage token `EQO2oXcQ`** — still unrotated. `GET /api/manage/EQO2oXcQ`
+  returns 200 with the owner's real active watch. It is in this file's history and in
+  `docs/a2p-campaign.md:52`, and **scrubbing the files is not enough because git history
+  persists** — rotation is one DELETE from `action_tokens`. Owner's call; I have not acted.
+
+### Side lane state
+
+On `claude/side-lane-setup-f7bpe2`, **PR #165 open**, docs only. Nothing uncommitted.
+Open-issue list not re-verified at handover — GitHub rate-limited on the last call.
