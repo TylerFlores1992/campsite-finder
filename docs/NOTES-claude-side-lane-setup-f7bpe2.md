@@ -1156,7 +1156,7 @@ corrected their own note for exactly that reason — but it adds no logic to the
 bounded (5s) CDP reads that return null rather than throwing. **And it cannot reach the box
 before the test anyway**, which is the next section.
 
-### The box cannot update tonight, and the margin is fourteen seconds
+### ~~The box cannot update tonight~~ — IT UPDATED AT 23:12 PT, AND I HAD THE REFUTATION OPEN
 
 `safeToUpdate` refuses when `0 ≤ hoursUntilRelease < 6`. Release is **07:59:46 PT**, so the
 block starts at **01:59:46 PT**. The quiet window opens at **02:00:00 PT**. The whole window
@@ -1167,6 +1167,43 @@ is inside the block — by fourteen seconds.
 the constant was chosen for. So "the box is frozen because a hold is queued" happens to be
 true tonight and is a coin flip on how `rc-test-hold.mts` picks the release second. Worth
 knowing before quoting the freeze as a property of queued holds in general.
+
+**THE ARITHMETIC IS RIGHT AND THE CONCLUSION WAS WRONG.** Forty minutes after writing this,
+`rc_runner_heartbeat.bot_commit` read **`57e9d79`** and `git-status` — the authority, per the
+2026-08-14 COALESCE note — confirmed **`HEAD 57e9d79 on master`**. The box updated at
+**23:12:03 PT**, taking #160, #163 and #166 in one go.
+
+**The refutation was in the file I had open.** `safeToUpdate` reads:
+
+```js
+if (!requested && (hour < windowStart || hour >= windowEnd)) { ...refuse... }
+```
+
+**A request LIFTS the quiet window.** The only gate a request cannot lift is the 6h release
+check — and at 23:11 PT the release was **8.8 hours** away, comfortably past it. So the
+legal window for a *requested* update ran from whenever the hold was queued until
+**01:59:46 PT**, roughly three hours, and somebody used it. The fourteen-second arithmetic
+describes the *unrequested* scheduled path only, and I generalised it to "the box cannot
+update tonight" without checking the branch immediately above the one I had quoted.
+
+**The main lane had the same premise and it is now stale.** #167 (`ecd1a08`, committed
+23:14:45 PT) is titled *"a real hold lands at 07:59 and the box is missing every new
+instrument"* — written **two minutes after** the box stopped missing them. Its reasoning
+about what tomorrow can and cannot show still stands; only "the box is behind" does not.
+
+**AND THE STALE-NOTE TRAP FIRED AGAIN, IN THE DANGEROUS DIRECTION.** The row now reads:
+
+```
+applied_at    2026-08-23T06:12:03Z
+applied_sha   57e9d79            ← the update that LANDED
+applied_note  "[update-guard] SKIP - outside the quiet window (23:00 PT ...)"
+```
+
+A later, unrequested scheduled run refused and `noteBotUpdateAttempt` overwrote the note
+without touching `applied_at` or `applied_sha`. So the panel shows a **refusal beside the
+sha that proves success**. The section below warns about this shape with a benign example;
+this is the same trap pointing the other way, where the note would talk you out of an update
+that already happened. **`git-status` is the only field that settles it.**
 
 ### There is NO pending update request, and no churn
 
@@ -1214,3 +1251,28 @@ So tomorrow's outcome will be diagnosable from the log, which it was not on 08-1
 Still true from §22: the diagnostics are answered `by bot`, so `? diagnostic` lines do not
 appear in the runner's log. That is the control channel riding both feeds working as
 designed, not a runner fault.
+
+### State at 23:21 PT, after the update
+
+Everything above was read at **22:41 PT** and the box moved at **23:12**. Re-read rather
+than remembered — the same rule `CLAUDE.md` records as *"a health reading goes stale faster
+than a conclusion drawn from it"*.
+
+```
+box            57e9d79 on master   (has #160, #163, #166)
+master         ecd1a08             (docs-only ahead of the box)
+bot_version    should now be GREEN — the gap was code, and the code landed
+heartbeat      06:21:29Z, session_ok, token 58m, okta=ALIVE (exp 18:01:14Z / 11:01 PT)
+hold           51f3ad3d · unit 45719 · South Carlsbad SB — Northern End (sites 35-102)
+               requested · release 2026-08-23 07:59:46 PT · last_attempt_note NULL
+```
+
+**THE HOLD IS A REAL USER'S, NOT A TEST FIXTURE.** It carries a `user_id` and a real
+campground, and #167 says so in its title. Nothing in this section is a synthetic run, and
+nothing here should be treated as disposable.
+
+**Okta expires 11:01 PT, i.e. AFTER the 08:00 release** — so the T−3h warm-up correctly
+stands down and the T−30 sign-in is the cheap cookie-answered kind. #167 sets expectations
+low for exactly this reason: the 9.4 GB password variant needs `okta=GONE` at T−30 and will
+not happen. What tomorrow can produce is a **sampled reading of a non-ramping Okta trip**,
+which is the control that investigation has never had.
