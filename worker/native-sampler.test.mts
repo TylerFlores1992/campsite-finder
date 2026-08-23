@@ -446,7 +446,12 @@ test('the auto-login pairs the reading with a RAM delta, taken from the trace', 
   // window counts RAM the profile does not and inflates the delta against it.
   assert.match(AUTOLOGIN, /const ram = trace\?\.ram \? trace\.ram\.afterMb - trace\.ram\.beforeMb : null;/,
     'the delta must come from the trace, which brackets the login');
-  assert.match(AUTOLOGIN, /renderProfile\(diffProfiles\([^;]*?\),\s*ram\)/,
+  // ANCHORED ON THE PROPERTY, NOT THE EXPRESSION SHAPE. This required the diff to be built
+  // INLINE — `renderProfile(diffProfiles(...), ram)` — and broke over unchanged behaviour the
+  // moment that diff was hoisted into a `const` so it could also be sent to the server
+  // (migration 066). What it actually cares about is that `ram` REACHES the render, which is
+  // true either way. Twenty-second time a guard here has anchored on the wrong thing.
+  assert.match(AUTOLOGIN, /renderProfile\([^;)]*,\s*ram\)/,
     'and it must actually be passed to the render, not merely computed — a RAM figure that is '
     + 'measured and dropped is the same reading as no RAM figure at all');
 });

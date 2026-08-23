@@ -6,6 +6,7 @@ import { markBotUpdateApplied, noteBotUpdateAttempt, claimBotUpdate } from '@/li
 import { recordBotCommandResult } from '@/lib/bot-commands';
 import { botControlFor } from '@/lib/bot-control';
 import { recordMemorySample } from '@/lib/chromium-memory';
+import { recordNativeAlloc } from '@/lib/native-alloc';
 import { query, mutate } from '@/lib/db/client';
 import { notifyHoldMissed } from '@/lib/rc-holds-notify';
 import { manageTokenFor } from '@/lib/notifications/actions';
@@ -294,6 +295,22 @@ export async function POST(req: NextRequest) {
       typeof body.source === 'string' ? body.source : null,
     );
     return NextResponse.json({ ok: true, state: 'memory-recorded' });
+  }
+
+  // ── ONE NATIVE ALLOCATION READING (migration 066) ────────────────────────────────────
+  // The sibling of the memory sample above, and it exists for the same reason one level in:
+  // the memory series proves a ramp HAPPENED, this says what was allocating while it did.
+  //
+  // Both were lost on 2026-08-22 and 08-23 — two nine-gigabyte ramps with the sampler
+  // running for both — because the sampler's only output is a log `tail-log` truncates to
+  // 16,000 characters. `chromium_memory_samples` survived those same events by being in
+  // Postgres. This is that fix applied to the other half.
+  //
+  // Returns before the hold work for the same reason the memory sample does: it is not a
+  // hold report, and at 08:00:00 nothing may go in front of a cart.
+  if (body?.nativeAlloc && typeof body.nativeAlloc === 'object') {
+    await recordNativeAlloc(body.nativeAlloc);
+    return NextResponse.json({ ok: true, state: 'native-alloc-recorded' });
   }
 
   // MAY THIS PROCESS SPAWN THE UPDATER? Claimed at the point of USE, never granted on read.

@@ -1357,7 +1357,10 @@ async function maybeAutoLogin(ctx, page) {
       // correction where sampling starts: a tab-lifetime pair would include the resident-page
       // reload, which this profile cannot see.
       const ram = trace?.ram ? trace.ram.afterMb - trace.ram.beforeMb : null;
-      log(renderProfile(diffProfiles(profBefore, profAfter), ram));
+      const diff = diffProfiles(profBefore, profAfter);
+      log(renderProfile(diff, ram));
+      // AND SEND IT IF IT RAMPED. The log is where these readings went to die.
+      reportNativeAlloc('auto-login', diff, ram);
     } else {
       log(`  native allocation: not sampled (${sampling.why})`);
     }
@@ -1555,6 +1558,49 @@ async function reportRehearsal(ok, detail, skippedWhy) {
     headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
     body: JSON.stringify({ rehearsal: { ok, detail, skippedWhy } }),
   }).catch((e) => log(`  (could not report the rehearsal: ${e.message})`));
+}
+
+/**
+ * SEND A RAMP'S ALLOCATION READING SOMEWHERE IT CANNOT AGE OUT — see migration 066.
+ *
+ * The sampler works. Its readings kept vanishing: its only output is this log, and `tail-log`
+ * returns the last 16,000 characters. Two nine-gigabyte ramps happened on 2026-08-22 and
+ * 08-23 with the sampler running for both, and BOTH attributions were gone before anyone
+ * looked. `chromium_memory_samples` survived those same events by being in Postgres.
+ *
+ * ONLY RAMPS ARE SENT, and the gate is the free-RAM delta the trace already measured for its
+ * three-way verdict. The renewal makes an Okta trip roughly hourly and almost all cost
+ * 50-350 MB; storing every one would bury the interesting rows exactly as the log does.
+ * `ramMb` is negative when the machine LOST memory, so the test is "fell by more than the
+ * threshold" — written as a comparison on the raw signed value rather than an abs(), because
+ * a trip that FREED a gigabyte is not a ramp and must not be stored as one.
+ *
+ * Fire-and-forget. A diagnostic that can delay the renewal, or throw into it, is the mistake
+ * `rcFamilyMb` would have made in the guard arm.
+ */
+const NATIVE_ALLOC_RAMP_MB = Number(process.env.RC_ALLOC_RAMP_MB || 400);
+
+function reportNativeAlloc(context, diff, ramMb) {
+  // NOT A RAMP, OR WE COULD NOT TELL. `null` means the trace never closed, and an unknown
+  // must not be stored as a ramp — the rule that keeps `unknown` from rounding to a verdict.
+  if (typeof ramMb !== 'number' || ramMb > -NATIVE_ALLOC_RAMP_MB) return;
+  if (!diff) return;
+  if (!TOKEN) return;
+  fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+    body: JSON.stringify({
+      nativeAlloc: {
+        context,
+        ramDeltaMb: ramMb,
+        rendererBytes: diff.totalBytes,
+        sites: diff.sites,
+      },
+    }),
+  }).then(
+    () => log(`  (allocation reading stored — ${context}, ${ramMb} MB of free RAM)`),
+    (e) => log(`  (could not store the allocation reading: ${e.message})`),
+  );
 }
 
 /**
@@ -2614,7 +2660,10 @@ async function warmResident() {
             if (sampling.ok) {
               const profAfter = await readNativeProfile(sampler);
               const ram = trace?.ram ? trace.ram.afterMb - trace.ram.beforeMb : null;
-              log(renderProfile(diffProfiles(profBefore, profAfter), ram));
+              const diff = diffProfiles(profBefore, profAfter);
+              log(renderProfile(diff, ram));
+              // AND SEND IT IF IT RAMPED. The log is where these readings went to die.
+              reportNativeAlloc('renewal', diff, ram);
             } else {
               log(`  native allocation: not sampled (${sampling.why})`);
             }
