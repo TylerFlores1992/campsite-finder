@@ -29,6 +29,10 @@ import vm from 'node:vm';
 import { buildPrecartScript } from '../src/lib/rc-precart-script';
 
 const LOAD = 'https://rdapi.reservecalifornia.com/api/webaccessfacility/load/precartdataforbookingmodify';
+/** The cart READ-BACK, which is `rc-cart.mjs`'s `listCartEntries` endpoint verbatim. */
+const CART_LOAD = 'https://rdapi.reservecalifornia.com/api/webaccesscustomer/load/shoppingcart';
+const CART_URL = 'https://www.reservecalifornia.com/Customers/ShoppingCart';
+const CART_PATH = '/Customers/ShoppingCart';
 const SUBMIT = 'https://rdapi.reservecalifornia.com/api/webaccessfacility/submit/precartdataforbookingmodify';
 /** RC's own sentinel for "I have no cart". Must match extension/content-rc.js. */
 const NO_CART = '00000000-0000-0000-0000-000000000000';
@@ -50,11 +54,21 @@ function makePage(opts: {
   /** What `submit` answers. Defaults to RC accepting. */
   submitBody?: string;
   submitStatus?: number;
+  /** Where this document is. The cart page is a different job from the park page. */
+  pathname?: string;
+  /** A `camphawk_rc_done` marker already in the session, i.e. this run carted earlier. */
+  carted?: { cartKey: string };
+  /** What the cart read-back answers. Defaults to RC reporting one entry. */
+  cartBody?: string;
 }) {
   const calls: Call[] = [];
   const local = new Map<string, string>();
   const session = new Map<string, string>();
+  /** Every `location.assign`, with the status line as it read at that instant. */
+  const navigated: { to: string; statusWas: string }[] = [];
+  const reports: { stage: string; detail: Record<string, unknown> | null }[] = [];
   if (opts.storedCartKey) local.set('shoppingCartKey', opts.storedCartKey);
+  if (opts.carted) session.set('camphawk_rc_done', JSON.stringify(opts.carted));
 
   const listeners: Record<string, ((e: unknown) => void)[]> = {};
   const status = { textContent: '' };
@@ -82,6 +96,14 @@ function makePage(opts: {
 
   const fetchStub = async (url: string, init: { body: string }) => {
     calls.push({ url, body: JSON.parse(init.body) });
+    if (url === CART_LOAD) {
+      return {
+        ok: true, status: 200, clone() { return this; },
+        text: async () => opts.cartBody ?? JSON.stringify({
+          Result: { CartEntry: { $values: [{ CartEntryKey: 'abc' }] } },
+        }),
+      };
+    }
     if (url === LOAD) {
       return {
         ok: true, status: 200, clone() { return this; },
@@ -106,11 +128,15 @@ function makePage(opts: {
     console: { log() {} },
     location: {
       hash: opts.hash,
-      pathname: '/park/720/715',
+      pathname: opts.pathname ?? '/park/720/715',
       search: '',
       origin: 'https://www.reservecalifornia.com',
-      href: `https://www.reservecalifornia.com/park/720/715${opts.hash}`,
+      href: `https://www.reservecalifornia.com${opts.pathname ?? '/park/720/715'}${opts.hash}`,
       reload() {},
+      // CAPTURED WITH THE STATUS AS IT READ AT THAT INSTANT. "It navigated" and "it
+      // navigated only after the proof was written" are different facts, and the ordering
+      // is the whole risk in landing the user in their cart — see CART_NAV_DELAY_MS.
+      assign(to: string) { navigated.push({ to, statusWas: status.textContent }); },
     },
     history: { replaceState() {} },
     localStorage: {
@@ -137,6 +163,16 @@ function makePage(opts: {
     setInterval: () => 0,
     clearInterval: () => {},
     XMLHttpRequest: XHR,
+    // The report channel, as the webview provides it. The extension has none, which is why
+    // everything below has to work without one too.
+    cordova_iab: {
+      postMessage(raw: string) {
+        try {
+          const m = JSON.parse(raw);
+          reports.push({ stage: String(m.stage), detail: m.detail ?? null });
+        } catch { /* not ours */ }
+      },
+    },
     fetch: fetchStub,
     atob: (s: string) => Buffer.from(s, 'base64').toString('binary'),
   };
@@ -144,7 +180,7 @@ function makePage(opts: {
   vm.createContext(sandbox);
 
   return {
-    calls, local, status, sandbox,
+    calls, local, session, status, sandbox, navigated, reports,
     run() { new vm.Script(buildPrecartScript()).runInContext(sandbox); },
     /** What `rc-inject.js` does when it catches a token off one of RC's own requests. */
     sendToken(t = `eyJ${'x'.repeat(936)}`) {
@@ -250,4 +286,240 @@ test('no job in the link means nothing is carted', async () => {
   await page.settle();
 
   assert.equal(page.calls.length, 0);
+});
+
+// ── LANDING IN THE CART, AND VERIFYING IT THERE (2026-08-23) ───────────────────────────
+//
+// The status line used to end "tap the cart icon at the top of this page to check out" —
+// an instruction to go and navigate a page we had just put the user on. The owner asked for
+// the obvious thing after a hold that worked: just take them there.
+//
+// The risk is entirely in the ORDERING. `✓ Added to cart` reaching `client_reports` is the
+// evidence the two cart POSTs fired, and navigating destroys the context that reports it.
+// So: write the proof, let it out, then go — and once we are there, ask RC what is actually
+// in the cart, which is stronger evidence than a string we wrote ourselves.
+
+test('a successful cart takes the user to their cart', async () => {
+  const page = makePage({ hash: JOB });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.deepEqual(page.navigated.map((n) => n.to), [CART_URL],
+    'exactly one navigation, to RC’s own cart, with the casing RC serves');
+});
+
+test('the proof is written BEFORE the navigation, never after', async () => {
+  // THE OWNER'S OWN QUESTION, AND THE ONLY REASON THIS COULD GO WRONG. `#camphawk-rc-status`
+  // is what `lib/rc-precart-script`'s epilogue observes and forwards; its observer callback
+  // is a microtask, so a navigation started in the same turn is a race against the one line
+  // two synthetic holds were run to produce. If we ever navigate first, this fails.
+  const page = makePage({ hash: JOB });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.equal(page.navigated.length, 1);
+  assert.match(page.navigated[0].statusWas, /Added to cart/,
+    'the status must already say it before we leave the page that can report it');
+});
+
+test('the carted marker is durable, because the module flag is not', async () => {
+  // `carted` is a module variable: fine for an SPA transition, nothing at all across a real
+  // navigation. Both consumers of content-rc.js run again on the cart page — the extension
+  // matches `www.reservecalifornia.com/*`, the webview re-injects on every `loadstop`.
+  const page = makePage({ hash: JOB });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.ok(page.session.get('camphawk_rc_done'), 'a successful cart must record itself');
+});
+
+test('a re-injection on the cart page does NOT submit again', async () => {
+  // THE BUG THIS WOULD OTHERWISE INTRODUCE. A second submit on a site we already hold comes
+  // back "cart is already added" — a REJECTION, which would overwrite a true success with a
+  // failure message on the very screen the user is reading. That is the failure the
+  // `carting || carted` guard exists for, arriving through the one door it cannot close.
+  const page = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED } });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.ok(!page.calls.some((c) => c.url === SUBMIT),
+    'the cart is already made; submitting again can only turn a success into a refusal');
+  assert.equal(page.navigated.length, 0, 'and there is nowhere left to navigate to');
+  assert.match(page.status.textContent, /Added to cart/,
+    'the screen must still say it worked — this is the page it worked on');
+});
+
+test('the cart is READ BACK on the cart page, which the status string never was', async () => {
+  // `✓ Added to cart` is judged on the submit's own `IsSuccess` — our word for what we think
+  // happened, and `content-rc.js` calls it "one step weaker than rc-cart.mjs, which re-reads
+  // the cart". Landing there is exactly where that gap closes.
+  const page = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED } });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  const read = page.calls.find((c) => c.url === CART_LOAD);
+  assert.ok(read, 'RC must be asked what is actually in the cart');
+  assert.equal(read.body.shoppingCartKey, MINTED, 'and asked about the cart we wrote into');
+
+  const verified = page.reports.find((r) => r.stage === 'cart-verified');
+  assert.ok(verified, 'the answer must reach the report channel');
+  assert.equal(verified.detail?.entries, 1);
+});
+
+test('an answer we cannot read is NEVER reported as an empty cart', async () => {
+  // `listCartEntries` defaults to `[]` here, which is right for cleanup and wrong for
+  // evidence: it would report "RC holds nothing" for an answer we simply could not parse.
+  // `entries: 0` is a real and alarming reading and must stay distinguishable from silence.
+  const page = makePage({
+    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED },
+    // PARSES, BUT IS NOT A CART. The discriminating input: an unparseable body never
+    // reaches the shape test at all, so it cannot tell a careful reader from a careless
+    // one. RC answering 200 with something else entirely is the case that can.
+    cartBody: JSON.stringify({ Result: { Message: 'no cart for that key' } }),
+  });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.ok(!page.reports.some((r) => r.stage === 'cart-verified'),
+    'a shape we did not recognise is not a verdict about the cart');
+  const un = page.reports.find((r) => r.stage === 'cart-unverified');
+  assert.ok(un, 'and "we could not check" has to be said out loud, not left as silence');
+});
+
+test('an unparseable answer is not a cart either', async () => {
+  const page = makePage({
+    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED },
+    cartBody: '<html>Access Denied</html>',
+  });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.ok(!page.reports.some((r) => r.stage === 'cart-verified'));
+  assert.ok(page.reports.some((r) => r.stage === 'cart-unverified'));
+});
+
+test('an EMPTY cart is reported as itself — the reading that matters most', async () => {
+  const page = makePage({
+    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED },
+    cartBody: JSON.stringify({ Result: { CartEntry: { $values: [] } } }),
+  });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  const verified = page.reports.find((r) => r.stage === 'cart-verified');
+  assert.ok(verified, 'RC answered with a cart; that is a verified reading whatever it holds');
+  assert.equal(verified.detail?.entries, 0,
+    'RC accepted a submit and holds nothing — this must never round to a success');
+});
+
+test('a cart RC declined neither records itself nor navigates', async () => {
+  // The marker and the navigation both hang off the success branch. If either ever moved
+  // out of it, a refused cart would strand the user on RC's cart page looking at nothing,
+  // and the durable flag would stop the retry that could still have worked.
+  const page = makePage({
+    hash: JOB,
+    submitBody: JSON.stringify({ Result: { IsSuccess: false, ErrorMessage: 'nope' } }),
+  });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.equal(page.navigated.length, 0, 'there is no cart to land in');
+  assert.equal(page.session.get('camphawk_rc_done'), undefined, 'and nothing to remember');
+});
+
+test('nothing is read back before this session has carted', async () => {
+  // Asking RC about the cart before we have written to it produces a reading that looks
+  // exactly like one that counts.
+  const page = makePage({ hash: JOB });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.ok(!page.calls.some((c) => c.url === CART_LOAD),
+    'with no marker there is nothing this run put in a cart to read back');
+});
+
+test('nothing is read back on the park page, even after carting', async () => {
+  // THE SECOND GATE, AND IT IS ITS OWN. The marker alone would let this fire on the park
+  // page — an extra POST on the one path where latency is the product, for an answer we
+  // are about to get somewhere it means more. Both halves are checked separately because a
+  // test that only ever exercises one cannot tell you the other was deleted.
+  const page = makePage({ hash: JOB, carted: { cartKey: MINTED } });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.ok(!page.calls.some((c) => c.url === CART_LOAD),
+    'the read-back belongs on the cart page and nowhere else');
+});
+
+test('carting while already on the cart page does not navigate to it again', async () => {
+  // `goToCart` has to know where it is. Without that test it would assign the URL of the
+  // page under the user's thumb, which on a real browser is a reload — and a reload
+  // re-injects, which is how a loop starts on the one screen that must stay still.
+  const page = makePage({ hash: JOB, pathname: CART_PATH });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.ok(page.calls.some((c) => c.url === SUBMIT), 'it still carts');
+  assert.equal(page.navigated.length, 0, 'and goes nowhere, because it is already there');
+});
+
+// ── "HAVE WE GOT A SESSION?" — the signal the sign-in reads ────────────────────────────
+//
+// These live here rather than beside the sign-in tests because this is the file that runs
+// the REAL bundle. `rc-login-script.ts` can ask the question perfectly while the reporter
+// never answers it, which is precisely the state the code was in until 2026-08-23: the
+// sign-in asked `window.__camphawkRcToken`, a global belonging to the bot's Playwright
+// capture that nothing in a webview has ever set. Stubbing the answer in a sign-in test
+// would reproduce the bug and pass.
+
+/** A token that says something about itself. `sign` is not checked by anything here. */
+const jwt = (exp: number) =>
+  `eyJhbGciOiJub25lIn0.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.x`;
+
+test('the reporter answers whether this webview has a session', () => {
+  const page = makePage({ hash: JOB });
+  page.run();
+  const R = () => vm.runInContext('window.__camphawkRc', page.sandbox) as { signedIn?: () => boolean };
+
+  assert.equal(typeof R().signedIn, 'function',
+    'the sign-in reads this; a bundle that does not expose it puts the check back to always-false');
+  assert.equal(R().signedIn!(), false, 'nothing has been captured yet');
+
+  page.sendToken();
+  assert.equal(R().signedIn!(), true, 'a token off RC’s own traffic is the session');
+});
+
+test('an EXPIRED token is not a session', () => {
+  // The same rule the claim screen applies to the same event. Treating a dead token as a
+  // session is what let a release happen against a 23-hour-dead one on 2026-08-21 — and
+  // here it would additionally report a sign-in as unnecessary and skip it.
+  const page = makePage({ hash: JOB });
+  page.run();
+  page.sendToken(jwt(Math.floor(Date.now() / 1000) - 3600));
+
+  const R = vm.runInContext('window.__camphawkRc', page.sandbox) as { signedIn: () => boolean };
+  assert.equal(R.signedIn(), false);
+});
+
+test('a token we cannot decode still counts — "we could not tell" is not "signed out"', () => {
+  // The three-valued rule, and the failure direction is deliberate: refusing on an opaque
+  // token would turn a webview we cannot read into one we refuse to sign in.
+  const page = makePage({ hash: JOB });
+  page.run();
+  page.sendToken('not-a-jwt-at-all-but-long-enough');
+
+  const R = vm.runInContext('window.__camphawkRc', page.sandbox) as { signedIn: () => boolean };
+  assert.equal(R.signedIn(), true);
 });

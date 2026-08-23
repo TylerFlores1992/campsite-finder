@@ -14,8 +14,49 @@ import { readFileSync } from 'node:fs';
 import {
   loginScript, loginInvocation,
   SIGNIN_TEXTS, EMAIL_SELECTORS, PASSWORD_SELECTORS, ERROR_SELECTORS,
+  SIGNIN_MAX_NAME_LEN, SIGNIN_WAIT_MS,
 } from '../src/lib/rc-login-script.js';
 import { buildPrecartScript } from '../src/lib/rc-precart-script.js';
+
+/** Emitted source with its comments removed, so a guard cannot trip on its own reasoning. */
+function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
+/**
+ * A context with a CLOCK, because the sign-in waits now.
+ *
+ * `vm.createContext({})` has no `setTimeout` at all — CLAUDE.md records the day that cost,
+ * because every path past the first poll threw and was swallowed by the outer `catch`, and
+ * the tests still passed: they only asserted that SOME verdict was reported, so they were
+ * measuring the ERROR path while reading as though they measured the flow. This file's
+ * "reports its verdict" test was in exactly that state until 2026-08-23, when the sign-in
+ * started polling for RC's control and the vacuum became visible.
+ *
+ * Real timers are not the fix either: the control hunt waits `SIGNIN_WAIT_MS` and the form
+ * hunt 15s after it, so an honest run of the empty-page case is half a minute of wall clock.
+ * So the clock is FAKE and `setTimeout` ADVANCES it — every deadline is reached in order,
+ * at full iteration count, in milliseconds. Only the durations are imaginary; the sequence
+ * the assertions depend on is the real one.
+ */
+function loginSandbox(): Record<string, unknown> {
+  let clock = 1_700_000_000_000;
+  const ctx: Record<string, unknown> = {
+    setTimeout: (fn: () => void, ms = 0) => {
+      clock += Math.max(ms, 1);
+      return setTimeout(fn, 0);
+    },
+    clearTimeout,
+    Date: new Proxy(Date, { get: (t, k) => (k === 'now' ? () => clock : Reflect.get(t, k)) }),
+    Promise,
+    Array,
+    JSON,
+    String,
+    Infinity,
+  };
+  vm.createContext(ctx);
+  return ctx;
+}
 
 test('the emitted source parses', () => {
   // A bare `new vm.Script` is the cheapest possible proof, and the one thing no amount of
@@ -225,10 +266,20 @@ test('an existing session short-circuits before any credential is typed', () => 
   // submission is the act that carries the CAPTCHA and lockout risk.
   const src = loginScript();
   const body = src.slice(src.indexOf('return (async function'));
-  const check = body.indexOf('window.__camphawkRcToken');
+  // RE-ANCHORED 2026-08-23, and the property it guards became TRUE for the first time in
+  // the same change. This read `window.__camphawkRcToken` — a global belonging to the bot's
+  // Playwright capture that nothing in a webview has ever set, so the check it was pinning
+  // could never fire and the ordering it asserted was vacuous. `chSignedIn()` asks the
+  // reporter, which is the one thing here that watches the token broadcast.
+  const check = body.indexOf('chSignedIn()');
   const setValue = body.indexOf('chSetValue');
   assert.ok(check !== -1 && setValue !== -1 && check < setValue,
     'the already-signed-in check must come before anything is typed');
+  // CODE ONLY. The comment explaining this quotes the dead global by name, and a guard that
+  // fails on its own explanation gets "fixed" by deleting the explanation —
+  // `chromium-attribution.test.mts` reads assignments only for the same reason.
+  assert.ok(!stripComments(src).includes('__camphawkRcToken'),
+    'nothing in a webview sets that global — reading it is how the check went dead');
 });
 
 // ── THE WIRING ─────────────────────────────────────────────────────────────────────────
@@ -486,16 +537,12 @@ test('afterLoad is handed the URL, and the webview actually passes it', () => {
  * being reachable as well as if the line is deleted.
  */
 test('a failed sign-in reports its verdict — silence was the whole problem', async () => {
-  const ctx: Record<string, unknown> = {};
-  vm.createContext(ctx);
+  const ctx: Record<string, unknown> = loginSandbox();
   // A page with nothing on it: no token, no password field, no sign-in control. That is the
   // shape a real run hit, and it used to produce not one report.
   vm.runInContext(`
     said = [];
-    window = {
-      __camphawkRc: { send: (s, d) => said.push([s, d]) },
-      __camphawkRcToken: null,
-    };
+    window = { __camphawkRc: { send: (s, d) => said.push([s, d]) } };
     document = { querySelector: () => null, querySelectorAll: () => [] };
     HTMLInputElement = function () {}; HTMLTextAreaElement = function () {};
   `, ctx);
@@ -671,4 +718,136 @@ test('the password is never read back into a comparison', () => {
   assert.ok(!/\bpw\.value\s*!==\s*password\b/.test(src),
     'comparing pw.value to the password puts the secret in an expression that can be quoted');
   assert.match(src, /user\.value !== email/, 'the email read-back stays — it is safe and useful');
+});
+
+// ── FINDING RC'S OWN SIGN-IN CONTROL (2026-08-23) ──────────────────────────────────────
+//
+// Owner, after a hold that otherwise worked perfectly: "I enter my info on our app side.
+// Click our button to sign in. Takes me to RC. It scrolls to calendar. Nothing happens. I
+// hit login on that page and it then completed everything for me."
+//
+// Three defects, all reproduced against the SERVED BUNDLE before anything was written —
+// `chSignInControl()` was called once, synchronously, with no visibility test and a bare
+// substring match in document order. These run the real emitted source against a stub page
+// rather than reading it, because "clicked the wrong element" and "found nothing" both look
+// like a calendar to the person holding the phone.
+
+type Btn = { name: string; visible: boolean; clicks: number };
+const btn = (name: string, visible = true): Btn => ({ name, visible, clicks: 0 });
+
+/** A page whose anchors and buttons are ours, optionally appearing only after N looks. */
+function signinPage(opts: { now?: Btn[]; later?: Btn[]; afterLooks?: number; signedIn?: boolean }) {
+  const ctx = loginSandbox();
+  let looks = 0;
+  const wrap = (b: Btn) => ({
+    get innerText() { return b.visible ? b.name : ''; },
+    get textContent() { return b.name; },
+    get offsetParent() { return b.visible ? {} : null; },
+    getBoundingClientRect: () => (b.visible ? { width: 90, height: 24 } : { width: 0, height: 0 }),
+    click() { b.clicks += 1; },
+  });
+  const said: [string, Record<string, unknown>][] = [];
+  const doc = {
+    querySelector: () => null,
+    querySelectorAll: (sel: string) => {
+      if (sel !== 'a, button') return [];
+      looks += 1;
+      const live = [...(opts.now ?? [])];
+      if (opts.later && looks > (opts.afterLooks ?? 3)) live.push(...opts.later);
+      return live.map(wrap);
+    },
+  };
+  ctx.document = doc;
+  ctx.window = {
+    __camphawkRc: {
+      send: (s: string, d: Record<string, unknown>) => { said.push([s, d]); },
+      signedIn: () => opts.signedIn === true,
+    },
+  };
+  ctx.HTMLInputElement = function () {};
+  ctx.HTMLTextAreaElement = function () {};
+  vm.runInContext(loginScript(), ctx);
+  return {
+    said,
+    stages: () => said.map((s) => s[0]),
+    run: () => vm.runInContext('window.__chRcLogin("a@b.com", "hunter2!")', ctx) as Promise<unknown>,
+  };
+}
+
+test('the sign-in control is WAITED for — RC renders its header after we are injected', async () => {
+  // THE DEFECT THE OWNER HIT. We are injected at `loadstop`; RC's SPA paints its header
+  // afterwards, on its own clock. One synchronous look loses that race silently — and then
+  // spends fifteen seconds waiting for a credential form nothing asked for, which is the
+  // calendar they sat in front of. `scrollToTop()` already documents the same race.
+  const late = btn('Log in / Sign up');
+  const p = signinPage({ now: [], later: [late], afterLooks: 3 });
+  await p.run();
+
+  assert.equal(late.clicks, 1, "RC's control must be pressed once it appears");
+  assert.ok(p.stages().includes('signin-open'), 'and the press must be reported');
+  assert.ok(!p.stages().includes('signin-missing'),
+    'a control that arrived late was not missing — reporting it so hides the real fault');
+});
+
+test('a control that is in the DOM but not on the page is never clicked', async () => {
+  // RC ships a responsive header, so the same words exist twice and one copy is hidden.
+  // The old matcher took the first in DOCUMENT ORDER and clicked it — and clicking a hidden
+  // element does nothing while still reporting `signin-open`, so the run announced that it
+  // had opened the sign-in and then waited for a form that could never come. A false
+  // positive is worse than the miss: it points the next reader at the wrong half.
+  const hidden = btn('Log in / Sign up', false);
+  const shown = btn('Log in / Sign up', true);
+  const p = signinPage({ now: [hidden, shown] });
+  await p.run();
+
+  assert.equal(hidden.clicks, 0, 'a hidden control cannot be pressed by a user or by us');
+  assert.equal(shown.clicks, 1, 'the one they can see is the one to press');
+});
+
+test('the SHORTEST visible match wins, so a container never beats the control', async () => {
+  // The test has to stay a SUBSTRING one — RC says "Log in / Sign up", so an anchored
+  // `/^log ?in$/` matches nothing, which is the trap SIGNIN_LINK_SELECTORS' header records.
+  // Over a whole page that also matches any ancestor carrying those words. Ranking by name
+  // length is what keeps a substring match safe.
+  // SHORT ENOUGH TO PASS THE CEILING, so this measures the RANKING and not the ceiling.
+  const wrapper = btn('Log in / Sign up My account');
+  const control = btn('Log in / Sign up');
+  const p = signinPage({ now: [wrapper, control] });
+  await p.run();
+
+  assert.equal(wrapper.clicks, 0, 'a region that merely contains the words is not the control');
+  assert.equal(control.clicks, 1);
+});
+
+test('a name too long to be a control is rejected outright', () => {
+  // The length ceiling is the backstop for the ranking above: if the only match on the page
+  // is a whole nav region, pressing it is still wrong.
+  assert.ok(SIGNIN_MAX_NAME_LEN >= 'log in / sign up'.length + 8,
+    'RC could reword this — leave room');
+  assert.ok(SIGNIN_MAX_NAME_LEN <= 80, 'a ceiling this high stops excluding containers');
+});
+
+test('the wait ends the moment a session appears, not when it times out', async () => {
+  // A SIGNED-IN USER HAS NO SIGN-IN CONTROL, because RC does not render one for them. The
+  // old code asked `window.__camphawkRcToken` once, up top — a global nothing in a webview
+  // sets — so it went hunting anyway. Even with a real signal, asking once would miss: the
+  // token arrives with RC's first authenticated call, which is also after `loadstop`.
+  // Whichever becomes true first has to end the wait.
+  const p = signinPage({ now: [], signedIn: true });
+  const r = await p.run() as { ok: boolean; stage: string };
+
+  assert.equal(r.ok, true);
+  assert.equal(r.stage, 'signed-in');
+  assert.ok(!p.stages().includes('signin-missing'),
+    'a signed-in webview is not a page where the control went missing');
+});
+
+test('the wait is bounded, and a real miss is still reported', async () => {
+  const p = signinPage({ now: [] });
+  await p.run();
+  assert.ok(p.stages().includes('signin-missing'),
+    "not finding RC's control after waiting is a fact, and needs a different fix from a reword");
+  assert.ok(SIGNIN_WAIT_MS >= 5_000, 'shorter than the SPA takes to boot and this is the bug again');
+  assert.ok(SIGNIN_WAIT_MS <= 20_000,
+    'the form hunt waits again after this one — a long wait here is a user watching a calendar');
 });

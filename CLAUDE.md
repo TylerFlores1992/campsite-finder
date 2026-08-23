@@ -2664,6 +2664,71 @@ Two ramps in thirty-two hours; everything else in the series flat at ~300 MB.
   07:59:46), released 08:10. The 07:45 alarm was CORRECT and the system repaired itself,
   because a `provedNothing` auto-login attempt is refunded and the retry loop kept going.
 
+### THE HAND-OFF LANDS IN THE CART NOW, AND THE SIGN-IN NEVER PRESSED ANYTHING (2026-08-23)
+Two rough edges reported by the owner after a hold that **worked** (carted at T+1.6s), so
+neither was an outage. Both were reproduced against the SERVED BUNDLE before a line was
+written, which is what stopped the second one being written up as "RC reworded its control".
+- **A successful cart now NAVIGATES to `/Customers/ShoppingCart`** instead of ending its
+  status line "tap the cart icon at the top of this page" — an instruction to go and
+  navigate a page we had just put them on.
+- **THE ORDERING IS THE WHOLE RISK, AND THE OWNER ASKED THE RIGHT QUESTION ABOUT IT.**
+  `✓ Added to cart` reaching `client_reports` is the evidence the two RC cart POSTs fire.
+  The epilogue observes `#camphawk-rc-status` through a **MutationObserver**, whose callback
+  is a microtask — so a navigation in the same turn races the one line two synthetic holds
+  were run to produce. Write the proof, let it out (`CART_NAV_DELAY_MS`), *then* go.
+- **AND LANDING THERE IS AN UPGRADE TO THE PROOF.** The bundle is re-injected on every
+  `loadstop`, so the cart page **reads the cart back** — `webaccesscustomer/load/shoppingcart`,
+  `listCartEntries`' endpoint and shape verbatim. `content-rc.js` already called its own
+  judgement (the submit's `IsSuccess`) *"one step weaker than `rc-cart.mjs`, which re-reads
+  the cart"*. `cart-verified {entries}` is that gap closing, and the readout prints it.
+  - **It matches NOTHING.** RC's cart entries carry no unit field; a matcher looking for one
+    reported an empty cart for a full one twice and left six real campsites locked.
+  - **`entries: 0` is a REAL reading and must arrive as itself** — RC accepted a submit and
+    holds nothing. A shape we could not read reports `cart-unverified`, never a default `[]`
+    the way `listCartEntries` does: right for cleanup, wrong for evidence.
+- **THE DURABLE MARKER IS WHAT STOPS THIS BEING A NEW BUG.** `carted` is a module variable —
+  enough for an SPA transition, nothing across a real navigation — and **both** consumers run
+  again on the cart page (the extension matches `www.reservecalifornia.com/*`, the webview
+  re-injects). A second submit on a held site returns "cart is already added", a REJECTION,
+  which would overwrite a true success with a failure on the screen being read.
+- **THE SIGN-IN NEVER PRESSED RC'S CONTROL, THREE WAYS.** Owner: *"Takes me to RC. It scrolls
+  to calendar. Nothing happens. I hit login on that page and it then completed everything."*
+  (1) It asked **once, synchronously** — we inject at `loadstop` and RC paints its header
+  after, the identical race `scrollToTop()` documents two functions away as *"a race we lose
+  most of the time, and the failure is silent"*. It polls now, as `clickSignInControl` always
+  has. (2) **No visibility test**, so a hidden copy of RC's responsive header won in document
+  order — and clicking a hidden element does nothing **while still reporting `signin-open`**,
+  a false positive, which is worse than the miss. A **rect**, not `offsetParent`: the latter
+  is null for a fixed header, which is exactly where the control lives. (3) A bare substring
+  match could take a wrapper; it must stay a substring test (RC says "Log in / Sign up"), so
+  the **shortest visible match wins** under a length ceiling.
+- **`window.__camphawkRcToken` IS NEVER SET IN A WEBVIEW — a fourth defect, found on the way.**
+  It belongs to `rc-token.mjs`'s Playwright capture on the BOX; in the app `rc-inject.js`
+  broadcasts a postMessage and nothing assigns that global. **All three "have we got a
+  session?" reads in the sign-in were permanently false.** The expensive one is the success
+  loop: a sign-in that WORKED ran its 120-second poll to the end and reported
+  `login-result {ok:false, reason:"signed in but no session appeared"}` — **a failure over a
+  working session, on the screen somebody is standing on at 08:00.** That is the 2026-08-09
+  banner trap for the FOURTH time. The reporter owns the signal now (facts, never the token),
+  and an **expired token is not a session** — the rule the claim screen already applies to the
+  same event.
+- **TWO EXISTING GUARDS BROKE, AND BOTH WERE MEASURING NOTHING.** *"an existing session
+  short-circuits"* anchored on `window.__camphawkRcToken`, so the ordering it asserted was
+  **vacuous** — it pinned a check that could never fire, and the property became true for the
+  first time in the same change. *"a failed sign-in reports its verdict"* was measuring the
+  **error path**: `vm.createContext({})` has no `setTimeout`, so everything past the first
+  poll threw and was swallowed, and the test passed because it only asserted that SOME verdict
+  was reported. The sandbox has a fake clock now. **Twenty-first and twenty-second time.**
+- **16 mutations, each verified applied and caught. FIVE of the new guards survived their
+  first round** — including one whose fixture was rejected by the **length ceiling** and so
+  never exercised the ranking it claimed to test, and one that stubbed the reporter's own
+  answer and so could not see the reporter stop giving it. That last is why the session-signal
+  tests run the **real bundle**: a stub of the answer reproduces the bug and passes.
+- **Web-side, all of it** — `/api/rc-precart` serves the bundle, so it reaches already-installed
+  apps on a push. No rebuild, no review. **Unproven on a real hold:** the navigation and the
+  read-back have run only against the bundle in a stub page. The next hand-off answers it by
+  itself — look for `cart read back` in `rc-holds-readout.mts`.
+
 ## Open / next session
 
 > **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23 evening). Its top section is the

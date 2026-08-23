@@ -8,6 +8,25 @@ current state.*
 
 ---
 
+## The two app fixes are DONE (2026-08-23) — what is left is the leak
+
+Both shipped. They are **web-side**, so they reach already-installed apps on a push — but
+**neither has run against a real hold**, only against the served bundle in a stub page. The
+next hand-off answers that by itself: look for `cart read back` in `rc-holds-readout.mts`.
+
+A fourth defect turned up inside FIX 2 and is the one worth carrying forward:
+**`window.__camphawkRcToken` is never set in a webview.** It belongs to the bot's Playwright
+capture, so all three "have we got a session?" reads in the in-app sign-in were permanently
+false — and the success loop therefore reported `ok:false, "signed in but no session
+appeared"` **over a sign-in that had worked**. The reporter owns that signal now. See
+CLAUDE.md's 2026-08-23 entry.
+
+**The standing ask is unchanged and unmet: the leak is not fixed.** Everything below still
+applies.
+
+<details>
+<summary>The original brief for the two fixes, kept for the reasoning</summary>
+
 ## What this session is for: TWO APP FIXES
 
 Both are in the RC hand-off — the flow that runs on the owner's phone at 08:00. Both were
@@ -67,6 +86,8 @@ path published a real ReserveCalifornia password into `client_reports`, because 
 locals so no call expression can contain one. `worker/rc-report-scrub.test.mts` guards the
 reporter end; the call site is the other half.
 
+</details>
+
 ---
 
 ## The one thing to understand first
@@ -87,8 +108,8 @@ do after the leak, not stop it from leaking."* They were right.
 
 | | |
 |---|---|
-| Master | `1cf83a2` |
-| Mini-PC | `57e9d79` — has every memory instrument except #169 |
+| Master | `e488136` (#169 and #170 merged 2026-08-23) |
+| Mini-PC | `57e9d79` — **#169 is merged and NOT yet on the box; push it or the next ramp's attribution is lost like the last two** |
 | Open holds | none |
 | RC session | dead, but **Okta ALIVE** — so a repair is the cheap kind |
 
@@ -105,9 +126,8 @@ finding from 08-22 recurring. Okta is alive, so the repair is the 11-second cook
 kind; the renewal cannot shift it on its own, and the 20:00 rehearsal has twice been the thing
 that actually fixed it.
 
-**Still open:** **#169** (the sampler-persistence work below — merge and update the box, or the
-next ramp is lost like the last two), **#146** (worker-deploy paths — restarts both pollers, so
-pick a quiet moment).
+**Still open:** **#146** (worker-deploy paths — restarts both pollers, so pick a quiet moment).
+**#169 is MERGED** — what remains is getting it onto the box.
 
 ---
 
