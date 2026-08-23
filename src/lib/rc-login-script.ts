@@ -75,6 +75,39 @@ export const SIGNIN_LINK_SELECTORS = [
  */
 export const SIGNIN_TEXTS = ['log in', 'login', 'sign in'] as const;
 
+/**
+ * The longest accessible name still plausibly a sign-in CONTROL rather than a container.
+ *
+ * The match has to stay a SUBSTRING one — RC's control says "Log in / Sign up", so an
+ * anchored `/^log ?in$/` finds nothing, which is the trap `SIGNIN_LINK_SELECTORS`' header
+ * records. But a bare substring test over every anchor and button on the page will happily
+ * match a wrapper whose text contains the whole header, and clicking that does nothing.
+ *
+ * 40 is generous next to the 16 characters RC actually uses, so a rewording survives, while
+ * a nav region or a card never fits.
+ */
+export const SIGNIN_MAX_NAME_LEN = 40;
+
+/**
+ * How long to wait for RC to render its own header.
+ *
+ * **THE CONTROL IS NOT THERE WHEN WE ARE INJECTED.** We run at `loadstop`; RC's SPA boots
+ * after that and paints its header on its own clock — the same fact `scrollToTop()` exists
+ * for, which says in as many words that a single `scrollTo` at injection is "a race we lose
+ * most of the time, and the failure is silent". `chSignInControl()` was called ONCE,
+ * synchronously, so it lost the same race and the run went on to spend fifteen seconds
+ * waiting for a credential form nothing had asked for.
+ *
+ * The owner watched exactly that on 2026-08-23: *"Takes me to RC. It scrolls to calendar.
+ * Nothing happens. I hit login on that page and it then completed everything for me."*
+ *
+ * The bot has always polled — `clickSignInControl` passes a 10s `timeoutMs` into `findIn`,
+ * which retries every 400ms. This is that, and 12s rather than 10s only because a webview on
+ * a phone at 08:00 is the slowest place any of this runs. It costs NOTHING when the control
+ * is already there: the poll tests before it waits.
+ */
+export const SIGNIN_WAIT_MS = 12_000;
+
 export const EMAIL_SELECTORS = [
   'input[name="identifier"]',            // Okta Identity Engine
   'input[name="username"]',              // Okta Classic
@@ -165,6 +198,8 @@ ${captchaProbeSource()}
   }
 
   var CH_SIGNIN_TEXTS = ${JSON.stringify(SIGNIN_TEXTS)};
+  var CH_SIGNIN_MAX_LEN = ${SIGNIN_MAX_NAME_LEN};
+  var CH_SIGNIN_WAIT_MS = ${SIGNIN_WAIT_MS};
   var CH_EMAIL_SELS = ${JSON.stringify(EMAIL_SELECTORS)};
   var CH_PW_SELS = ${JSON.stringify(PASSWORD_SELECTORS)};
   var CH_ERR_SELS = ${JSON.stringify(ERROR_SELECTORS)};
@@ -179,29 +214,93 @@ ${captchaProbeSource()}
     return null;
   }
 
-  function chWait(sels, ms) {
+  /*
+     ONE POLLING LOOP, TWO CALLERS. chWait is the selector-list form of it; the sign-in
+     control needs the predicate form, because it is matched in JS rather than by a
+     selector. A second hand-rolled loop is how the two would come to disagree about how
+     long they wait.
+  */
+  function chWaitFor(get, ms) {
     return new Promise(function (resolve) {
       var deadline = Date.now() + ms;
       (function tick() {
-        var el = chFind(sels);
-        if (el) return resolve(el);
+        var v = get();
+        if (v) return resolve(v);
         if (Date.now() >= deadline) return resolve(null);
         setTimeout(tick, 250);
       })();
     });
   }
 
-  /** Anchors and buttons only, matched on the ACCESSIBLE NAME. See SIGNIN_TEXTS. */
+  function chWait(sels, ms) {
+    return chWaitFor(function () { return chFind(sels); }, ms);
+  }
+
+  /*
+     IS THIS CONTROL ON THE PAGE, OR MERELY IN THE DOM?
+
+     RC ships a responsive header, so the same words exist more than once: one copy for a
+     wide viewport and one inside a menu, and whichever is wrong for this screen is
+     display:none. The old matcher checked neither, took the first in DOCUMENT ORDER, and
+     clicked it -- and clicking a hidden element does nothing at all while reporting
+     signin-open, so the run announced that it had opened the sign-in and then waited
+     fifteen seconds for a form nobody had asked for. Reproduced against the served bundle
+     before this was written, not reasoned about.
+
+     A RECT, NOT offsetParent. chFind uses offsetParent because that is enough for a form
+     field, but offsetParent is null for a position:fixed element too -- and a sticky or
+     fixed header is exactly where a sign-in control lives, so that test would have thrown
+     away the very element we are looking for. A box with real width and height is the
+     honest question. An element scrolled off the top still has one, which matters: the
+     owner's report is precisely that the control is rendered and off screen.
+  */
+  function chVisible(el) {
+    try {
+      if (typeof el.getBoundingClientRect === 'function') {
+        var r = el.getBoundingClientRect();
+        return !!(r && r.width > 0 && r.height > 0);
+      }
+    } catch (e) {}
+    return el.offsetParent !== null;
+  }
+
+  /**
+   * Anchors and buttons only, matched on the ACCESSIBLE NAME. See SIGNIN_TEXTS.
+   *
+   * THE SHORTEST VISIBLE MATCH WINS, which is what makes a substring test safe. The test has
+   * to stay a substring one -- RC says "Log in / Sign up" -- and over a whole page that also
+   * matches any ancestor carrying those words. Ranking by name length picks the control
+   * rather than the region that contains it, and CH_SIGNIN_MAX_LEN throws out anything too
+   * long to be a control at all.
+   */
   function chSignInControl() {
     var els = Array.prototype.slice.call(document.querySelectorAll('a, button'));
+    var best = null, bestLen = Infinity;
     for (var i = 0; i < els.length; i++) {
-      var t = (els[i].innerText || els[i].textContent || '').trim().toLowerCase();
-      if (!t) continue;
+      var el = els[i];
+      if (!chVisible(el)) continue;
+      var t = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+      if (!t || t.length > CH_SIGNIN_MAX_LEN || t.length >= bestLen) continue;
       for (var j = 0; j < CH_SIGNIN_TEXTS.length; j++) {
-        if (t.indexOf(CH_SIGNIN_TEXTS[j]) !== -1) return els[i];
+        if (t.indexOf(CH_SIGNIN_TEXTS[j]) !== -1) { best = el; bestLen = t.length; break; }
       }
     }
-    return null;
+    return best;
+  }
+
+  /*
+     DO WE ALREADY HAVE A SESSION?
+
+     Read from the reporter, which is the only thing in this bundle that watches the token
+     broadcast. This used to read window.__camphawkRcToken -- a global belonging to the
+     BOT's Playwright capture that nothing in a webview has ever set, so every one of these
+     checks was permanently false. See the reporter for what that cost.
+  */
+  function chSignedIn() {
+    try {
+      var R = window.__camphawkRc;
+      return !!(R && typeof R.signedIn === 'function' && R.signedIn());
+    } catch (e) { return false; }
   }
 
   /**
@@ -321,12 +420,25 @@ ${captchaProbeSource()}
         // ALREADY SIGNED IN is a success, and asking first is what stops us typing a
         // credential we did not need. The token capture is the authority; a form's absence
         // is not, because RC's SPA re-authenticates AFTER the page settles.
-        if (window.__camphawkRcToken) return done(true, 'signed-in', 'already signed in');
+        if (chSignedIn()) return done(true, 'signed-in', 'already signed in');
 
         var pw = chFind(CH_PW_SELS);
         if (!pw) {
-          var link = chSignInControl();
-          if (link) { link.click(); chSay('signin-open', {}); }
+          // WAIT FOR RC TO RENDER ITS HEADER. See SIGNIN_WAIT_MS: we are injected at
+          // loadstop and the control does not exist yet, so asking once loses a race we
+          // cannot see ourselves lose. The poll tests before it waits, so a control that is
+          // already there is pressed immediately.
+          //
+          // AND THE SAME WAIT ANSWERS "AM I SIGNED IN?", because that is the other thing
+          // that can be true and is equally not knowable yet: the token arrives with RC's
+          // first authenticated call, which is also after loadstop. Asking once, up top,
+          // meant a signed-in user went hunting for a control RC does not render for them.
+          // Whichever becomes true first ends the wait.
+          var found = await chWaitFor(function () {
+            return chSignedIn() ? 'signed-in' : chSignInControl();
+          }, CH_SIGNIN_WAIT_MS);
+          if (found === 'signed-in') return done(true, 'signed-in', 'already signed in');
+          if (found) { found.click(); chSay('signin-open', {}); }
           // NOT FINDING IT IS A FACT, AND IT WAS SILENT. On the park page RC renders its own
           // sign-in control in the header; if the match misses, everything downstream waits
           // 15s for a form that will never come and the user watches a calendar. Report the
@@ -358,7 +470,7 @@ ${captchaProbeSource()}
           pw = await chWait(CH_PW_SELS, 20000);
         }
         if (!pw) {
-          if (window.__camphawkRcToken) return done(true, 'signed-in', 'signed in without a password step');
+          if (chSignedIn()) return done(true, 'signed-in', 'signed in without a password step');
           return done(false, 'password', chOktaError() || 'the password field never appeared');
         }
 
@@ -376,7 +488,7 @@ ${captchaProbeSource()}
 
         // A challenge can also appear AFTER the password. Same rule: a human is here.
         for (var i = 0; i < 120; i++) {
-          if (window.__camphawkRcToken) return done(true, 'signed-in', null);
+          if (chSignedIn()) return done(true, 'signed-in', null);
           var err = chOktaError();
           if (err) return done(false, 'failed', err);
           if (chCaptchaVisible()) chSay('captcha', { visible: true, after: 'password' });

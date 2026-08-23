@@ -23,6 +23,35 @@
 
 (function () {
   const STASH = 'camphawk_rc';
+  /**
+   * WE ALREADY CARTED THIS — and it has to survive a page load.
+   *
+   * `carted` below is a module variable, which is enough for an SPA navigation and is
+   * nothing at all across a real one: a fresh document gets a fresh `false`. That did not
+   * matter while a successful cart left the user standing on the park page. It matters the
+   * moment we navigate them to their cart, because BOTH consumers of this file run again
+   * there — the extension matches `www.reservecalifornia.com/*`, and the webview
+   * re-injects the whole bundle on every `loadstop` — and a second `submit` on a site we
+   * already hold comes back "cart is already added", which is a REJECTION. Without this
+   * marker, landing in the cart would overwrite a true success with a failure message: the
+   * exact bug the `carting || carted` guard was written for, arriving through the one door
+   * it cannot close.
+   */
+  const DONE = 'camphawk_rc_done';
+  /**
+   * How long to let the proof out before the context dies.
+   *
+   * `#camphawk-rc-status` is what `lib/rc-precart-script`'s epilogue observes, and
+   * `✓ Added to cart` reaching `client_reports` is the evidence the two cart POSTs fired —
+   * the thing two synthetic holds were run to establish on 2026-08-13. The observer is a
+   * MutationObserver, so its callback is a microtask, and a navigation started in the same
+   * turn is a race against it that nobody would ever see us lose.
+   *
+   * So: set the status, let it out, THEN go. Half a second is imperceptible to somebody who
+   * has just been told their site is in the cart, and it is spent AFTER the cart exists —
+   * the ~2.5s exposure window this design protects closed when `submit` returned.
+   */
+  const CART_NAV_DELAY_MS = 500;
   // RC does precart in TWO steps and the real UI always does both: `load` returns the
   // facility's rules (including the "extras" it will demand back) and takes the unit
   // lock; `submit` places it in the cart. Calling only `submit` is why an add could come
@@ -81,6 +110,37 @@
     return data;
   }
   function stashed() { try { return JSON.parse(sessionStorage.getItem(STASH) || 'null'); } catch { return null; } }
+
+  /**
+   * Are we standing on RC's own cart page?
+   *
+   * Matched on the PATH, because that is what survives: `CART_URL` is capitalised exactly as
+   * RC serves it, and RC has been observed serving its own links in other casings. The two
+   * callers want opposite things from the answer — one must not navigate to where it already
+   * is, the other must not offer a button to the page under the user's thumb.
+   */
+  function onCartPage() {
+    try { return /\/customers\/shoppingcart/i.test(location.pathname); } catch { return false; }
+  }
+  function alreadyCarted() { try { return !!sessionStorage.getItem(DONE); } catch { return false; } }
+  function rememberCarted(key) {
+    try { sessionStorage.setItem(DONE, JSON.stringify({ cartKey: key || '', at: Date.now() })); } catch {}
+  }
+  /**
+   * Take them to the cart, rather than telling them where it is.
+   *
+   * The status line used to end "tap the cart icon at the top of this page to check out" —
+   * an instruction to go and navigate a page we had just put them on, at the one moment
+   * they are least inclined to read carefully. Reported by the owner on 2026-08-23 after a
+   * hold that otherwise worked perfectly.
+   *
+   * `location.assign` and not `replace`: the park page is where they came from and Back
+   * should still take them there.
+   */
+  function goToCart() {
+    if (onCartPage()) return;
+    setTimeout(() => { try { location.assign(CART_URL); } catch {} }, CART_NAV_DELAY_MS);
+  }
 
   const job = readFragment() || stashed();
   if (!job) return;
@@ -337,13 +397,25 @@
         const newKey = (result && result.ShoppingCartKey) || (_cartKey === NO_CART ? '' : _cartKey);
         if (newKey) { try { localStorage.setItem('shoppingCartKey', newKey); } catch {} }
         carted = true;
+        // BEFORE THE NAVIGATION, AND BEFORE ANYTHING ELSE THAT CAN THROW. This is what stops
+        // the re-injection on the cart page from submitting a second time — see DONE.
+        rememberCarted(newKey);
         setState('carted');
-        // OWNER NOTE 6, and the exact words matter. "Review & check out on
-        // ReserveCalifornia" is a description of a place, not an instruction — the user is
-        // standing ON ReserveCalifornia. What they need is the ONE control that gets them
-        // to checkout, named. `✓ Added to cart` stays as the leading token because it is
-        // what `client_reports` is read for and what proves the two POSTs fired.
-        setStatus('✓ Added to cart — tap the cart icon at the top of this page to check out.');
+        // `✓ Added to cart` STAYS AS THE LEADING TOKEN. `client_reports` is read for it,
+        // `ClaimFlow` matches on it to offer checkout, and `rc-holds-readout` calls it "the
+        // one that proves the RC cart POSTs work on mobile". The tail after it is ours to
+        // change; that phrase is not.
+        //
+        // The tail used to be "tap the cart icon at the top of this page to check out",
+        // which was already an improvement on naming a place instead of a control — and it
+        // is still an instruction to go and navigate. We know the cart exists, so we can
+        // take them to it. Owner, 2026-08-23.
+        setStatus(onCartPage()
+          ? '✓ Added to cart — this is your cart. Check the dates and check out.'
+          : '✓ Added to cart — opening your cart…');
+        // LAST, so a status the report channel needs is already written and every line above
+        // has run. Delayed — see CART_NAV_DELAY_MS.
+        goToCart();
       } else {
         let detail = apiError;
         console.log('[CampHawk RC] full error body:', raw);
@@ -465,6 +537,11 @@
     headlineEl.style.fontSize = big ? '17px' : '14px';
     actionEl.textContent = '';
     if (name === 'carted') {
+      // NO CONTROL WHEN THEY ARE ALREADY LOOKING AT IT. An "Open cart" button on the cart
+      // page is the same class of mistake as telling an app user to "switch to your
+      // ReserveCalifornia tab" — it names an action that has already happened, which reads
+      // as a step still outstanding.
+      if (onCartPage()) return;
       const a = document.createElement('a');
       a.textContent = 'Open cart';
       a.href = CART_URL;
@@ -530,10 +607,25 @@
   }
   banner();
 
-  chrome.storage.local.get({ accepted: false, enabled: false }, ({ accepted, enabled }) => {
-    if (accepted && enabled) addToCart();
-    else setStatus('Auto-cart off — use the button, or enable it in the CampHawk extension.');
-  });
+  // A CART WE ALREADY MADE IS NOT A CART TO MAKE AGAIN.
+  //
+  // Reached on the cart page we navigate to, and on any other reload of this session. It is
+  // ABOVE the consent read on purpose: `chrome.storage.local.get` is async, so leaving this
+  // to the `carted` guard inside `addToCart` would work today and depends on a callback
+  // ordering nothing states. Deciding here means the re-submit is impossible rather than
+  // merely prevented.
+  if (alreadyCarted()) {
+    carted = true;
+    setState('carted');
+    setStatus(onCartPage()
+      ? '✓ Added to cart — this is your cart. Check the dates and check out.'
+      : '✓ Added to cart — open your cart to check out.');
+  } else {
+    chrome.storage.local.get({ accepted: false, enabled: false }, ({ accepted, enabled }) => {
+      if (accepted && enabled) addToCart();
+      else setStatus('Auto-cart off — use the button, or enable it in the CampHawk extension.');
+    });
+  }
 
   // Shown after we've adopted the bot's cart key and reloaded. RC has loaded the
   // held cart by now; this just points the user at it. No API calls, no auth — the

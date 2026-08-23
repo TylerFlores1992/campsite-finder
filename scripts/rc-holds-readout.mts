@@ -267,9 +267,33 @@ if (handed.length) {
       : (h.client_last_note ?? h.client_last_stage);
 
     console.log(`  • ${who} [${where}]: ${outcome} (${mins(h.client_reported_at)}m ago)`);
+
+    // THE READ-BACK, WHICH OUTRANKS THE STATUS STRING ABOVE IT.
+    //
+    // `✓ Added to cart` is judged on the submit's own `IsSuccess` — our word for what we
+    // think happened. `cart-verified` is RC's answer to "what is actually in this cart",
+    // asked from the cart page on a separate call, which is the step `rc-cart.mjs` has
+    // always taken and the injected precart could not until it started landing there.
+    //
+    // Printed as its own line rather than folded into the outcome: `entries: 0` is a
+    // SUCCESS report shape carrying a failure, and it must be impossible to skim past.
+    const verified = h.client_reports?.find((r) => r.stage === 'cart-verified')?.detail as
+      | { entries?: number } | undefined;
+    const unverified = h.client_reports?.find((r) => r.stage === 'cart-unverified')?.detail as
+      | { reason?: string } | undefined;
+    if (verified && typeof verified.entries === 'number') {
+      console.log(verified.entries > 0
+        ? `      cart read back: ${verified.entries} entr${verified.entries === 1 ? 'y' : 'ies'} — RC confirms it is holding something`
+        : '      ⚠ cart read back: EMPTY. RC accepted the submit and is holding nothing.');
+    } else if (unverified?.reason) {
+      // NOT A FAILURE. The cart may be perfectly fine; we could not ask. Same rule as
+      // `unknown` never rounding to `signed-out`.
+      console.log(`      cart not read back: ${unverified.reason}`);
+    }
   }
   console.log("  '✓ Added to cart' is the one that proves the RC cart POSTs work on mobile.");
   console.log('  PROVEN on iOS (twice, 2026-08-13). NOT yet on Android — read the platform tag.');
+  console.log("  'cart read back' is stronger still: RC's own answer, not our status string.");
 }
 
 // The one state that is unambiguously broken: the user said yes, the moment came and

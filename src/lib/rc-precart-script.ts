@@ -191,7 +191,41 @@ export function reporter(): string {
     '    } catch (e) {}',
     '    return out;',
     '  }',
-    '  window.__camphawkRc = { send: send, scrub: scrub, hasStash: hasStash, href: href, jwtFacts: jwtFacts, onToken: null, bridged: !!bridge };',
+    // HAS THIS WEBVIEW GOT A SESSION? — the fact the sign-in needs, and the one nothing
+    // was providing.
+    //
+    // `rc-login-script.ts` asked `window.__camphawkRcToken` in three places: the
+    // already-signed-in short-circuit, the no-password-step exit, and the loop that decides
+    // a submitted password WORKED. **Nothing in this bundle has ever set that global.** It
+    // belongs to `rc-token.mjs`'s Playwright capture, which runs on the BOT's box; in a
+    // webview `rc-inject.js` broadcasts a postMessage instead and no one assigns it. So all
+    // three reads were permanently false, and the third one is the expensive half: a sign-in
+    // that succeeded ran its 120-second poll to the end and then reported
+    // `login-result {ok:false, reason:"signed in but no session appeared"}` — a FAILURE over
+    // a working session, on the screen a user is standing on at 08:00. That is the
+    // 2026-08-09 banner trap for the fourth time, and it was written from memory rather than
+    // read, which is the mistake this file's own `chSay` comment already records.
+    //
+    // The reporter is the right owner because it is already the one thing watching the token
+    // broadcast. It keeps FACTS, never the token: whether one has been seen, and when the
+    // one we could decode runs out.
+    //
+    // EXPIRY IS PART OF THE ANSWER, deliberately matching what the claim screen does with
+    // the same event. A token whose `exp` has passed cannot cart, and treating it as a
+    // session is what let a release happen against a 23-hour-dead one on 2026-08-21. An
+    // UNDECODABLE token counts as live — that is "we could not tell", and refusing on it
+    // would make a webview we cannot read into a webview we refuse to sign in, which is the
+    // wrong direction. Same three-valued rule as `sessionAcceptable`.
+    '  var tokenSeen = false, tokenDeadlineMs = null;',
+    '  function noteToken(f) {',
+    '    tokenSeen = true;',
+    '    if (f && typeof f.expiresInSec === "number") tokenDeadlineMs = Date.now() + f.expiresInSec * 1000;',
+    '  }',
+    '  function signedIn() {',
+    '    if (!tokenSeen) return false;',
+    '    return tokenDeadlineMs === null || tokenDeadlineMs > Date.now();',
+    '  }',
+    '  window.__camphawkRc = { send: send, scrub: scrub, hasStash: hasStash, href: href, jwtFacts: jwtFacts, onToken: null, signedIn: signedIn, bridged: !!bridge };',
     '  // A run that ends on a repeat would otherwise lose the tail of the count.',
     '  window.addEventListener("pagehide", flush);',
     '  window.addEventListener("error", function (e) { send("error", { message: scrub(e && e.message) }); });',
@@ -215,6 +249,7 @@ export function reporter(): string {
     '      if (t !== seenToken) {',
     '        seenToken = t;',
     '        var f = jwtFacts(t);',
+    '        noteToken(f);',
     '        try { if (window.__camphawkRc && window.__camphawkRc.onToken) window.__camphawkRc.onToken(f); } catch (err) {}',
     '        send("token", { captured: true, length: t.length, decodable: f.decodable, expiresInSec: f.expiresInSec, ageSec: f.ageSec });',
     '      } else {',
@@ -385,6 +420,114 @@ export function sessionProbe(): string {
 }
 
 /**
+ * READ THE CART BACK, from the cart page we just landed on.
+ *
+ * ## Why this is an upgrade to the proof rather than a threat to it
+ *
+ * `✓ Added to cart` in `client_reports` has been the evidence that the two RC cart POSTs
+ * fired since 2026-08-13. It is a string WE wrote, judged on the submit's own `IsSuccess`
+ * — and `content-rc.js` says so itself: "one step weaker than `rc-cart.mjs`, which re-reads
+ * the cart." The owner's question when asked to navigate on success was whether moving
+ * would lose that proof. It would, if we moved first.
+ *
+ * We do not. The status is written and flushed before `goToCart()` fires (see
+ * `CART_NAV_DELAY_MS`), and the bundle is re-injected on every `loadstop` — so on the cart
+ * page this runs and asks RC what is actually in the cart. That is the step
+ * `rc-cart.mjs` takes and the injected precart never could, because until now it was never
+ * on a page where the answer was worth asking for.
+ *
+ * ## It reports facts and reaches no conclusion
+ *
+ * `entries: 0` is a real and alarming reading — RC accepted a submit and holds nothing —
+ * and it must arrive as itself rather than being folded into a failure. Equally, "RC did
+ * not answer" is not "the cart is empty". The verdict belongs where it can be tested, which
+ * is the readout; the same rule `sessionProbe` states at length.
+ *
+ * ## It matches nothing, on purpose
+ *
+ * No unit id, no site name. RC's cart entries **carry no unit field at all** — a matcher
+ * looking for one reported an empty cart for a full one twice, and the second time left six
+ * real campsites locked because the release was driven off the match. The honest question
+ * here is how many entries the cart we wrote into holds.
+ *
+ * ## Endpoint and shape are the bot's
+ *
+ * `webaccesscustomer/load/shoppingcart`, `Result.CartEntry.$values` — copied from
+ * `listCartEntries` rather than derived, and deliberately NEVER `empty/shoppingcart`, which
+ * would destroy a cart rather than read it.
+ */
+export function cartVerifier(): string {
+  return [
+    '(function () {',
+    '  var R = window.__camphawkRc; if (!R) return;',
+    // Once per document. Every `loadstop` re-injects, including RC's own SPA transitions.
+    '  if (window.__camphawkRcVerifying) return;',
+    '  var mark = null;',
+    '  try { mark = JSON.parse(sessionStorage.getItem("camphawk_rc_done") || "null"); } catch (e) { mark = null; }',
+    // NOTHING TO VERIFY unless this session carted, and nowhere to verify it but the cart
+    // page. Both halves matter: on the park page RC would answer about a cart we have not
+    // written to yet, which is a reading that means nothing and would look like one that did.
+    '  if (!mark) return;',
+    '  if (!/\\/customers\\/shoppingcart/i.test(location.pathname)) return;',
+    '  window.__camphawkRcVerifying = true;',
+    // The adopted key first: `content-rc.js` writes RC's own answer there, which is the key
+    // the SPA is showing. The marker is the fallback for a cart RC minted on the submit.
+    '  var key = "";',
+    '  try { key = localStorage.getItem("shoppingCartKey") || ""; } catch (e) {}',
+    '  if (!key) key = mark.cartKey || "";',
+    '  if (!key) { R.send("cart-unverified", { reason: "no cart key was recorded, so there is nothing to read back" }); return; }',
+    '  var CART_LOAD = "https://rdapi.reservecalifornia.com/api/webaccesscustomer/load/shoppingcart";',
+    '  var asked = false;',
+    '  function ask(token) {',
+    '    if (asked) return;',
+    '    asked = true;',
+    '    fetch(CART_LOAD, {',
+    '      method: "POST",',
+    '      credentials: "include",',
+    '      headers: {',
+    '        "Content-Type": "application/json", accesstoken: token,',
+    '        authorization: "Bearer " + token, installationsidentity: "cali", storeid: "111",',
+    '      },',
+    '      body: JSON.stringify({ shoppingCartKey: key }),',
+    '    }).then(function (r) {',
+    '      return r.text().then(function (t) { return { text: t, status: r.status }; });',
+    '    }).then(function (o) {',
+    '      var n = null;',
+    '      try {',
+    '        var res = JSON.parse(o.text);',
+    '        res = res && res.Result ? res.Result : res;',
+    '        var list = res && res.CartEntry ? (res.CartEntry.$values || res.CartEntry) : null;',
+    '        if (Array.isArray(list)) n = list.length;',
+    '      } catch (e) {}',
+    // A SHAPE WE DO NOT RECOGNISE IS NOT AN EMPTY CART. `listCartEntries` defaults to `[]`
+    // here, which is right for cleanup and wrong for evidence: it would report "RC holds
+    // nothing" for an answer we simply could not read.
+    '      if (n === null) R.send("cart-unverified", { reason: "RC answered, but not with a cart we could read", status: o.status });',
+    '      else R.send("cart-verified", { entries: n, status: o.status });',
+    '    }).catch(function () {',
+    '      R.send("cart-unverified", { reason: "the cart read-back could not be sent" });',
+    '    });',
+    '  }',
+    // The token comes off RC's own traffic, exactly as the precart gets it. rc-inject.js
+    // replays the last one it saw on a timer, so listening late still hears it.
+    '  window.addEventListener("message", function (e) {',
+    '    if (e.source !== window || !e.data || !e.data.__camphawk_token) return;',
+    '    ask(String(e.data.__camphawk_token));',
+    '  });',
+    // SILENCE IS THE ONE ANSWER THIS MUST NOT GIVE. Without this, a cart page that never
+    // produced a token reports nothing, and "we could not check" would be indistinguishable
+    // from "this build has no verifier" — the family of failure the whole channel exists
+    // to end.
+    '  setTimeout(function () {',
+    '    if (asked) return;',
+    '    asked = true;',
+    '    R.send("cart-unverified", { reason: "no RC session appeared in this webview to read the cart back with" });',
+    '  }, 12000);',
+    '})();',
+  ].join('\n');
+}
+
+/**
  * PUT RC'S PAGE BACK AT THE TOP — where its Sign In control is.
  *
  * Reported from two real hand-offs (2026-08-13): "tapping Start hand-off scrolls you down
@@ -462,6 +605,10 @@ export function buildPrecartScript(): string {
     '})();',
     inject,
     content,
+    // AFTER the precart, because it reads the marker that a successful cart writes and the
+    // key that same path adopts. On the page where it matters this is a fresh document and
+    // the ordering is moot; on the park page it returns immediately either way.
+    cartVerifier(),
     // THE SIGN-IN, AFTER THE REPORTER IT USES AND BEFORE THE EPILOGUE. It only DEFINES
     // `window.__chRcLogin`; the claim screen calls it in a separate one-off injection with
     // the user's credentials, which is what keeps this served bundle identical for everyone.
