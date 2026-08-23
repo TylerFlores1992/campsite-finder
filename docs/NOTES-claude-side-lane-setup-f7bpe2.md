@@ -1276,3 +1276,63 @@ stands down and the T−30 sign-in is the cheap cookie-answered kind. #167 sets 
 low for exactly this reason: the 9.4 GB password variant needs `okta=GONE` at T−30 and will
 not happen. What tomorrow can produce is a **sampled reading of a non-ramping Okta trip**,
 which is the control that investigation has never had.
+
+---
+
+## Handover — 2026-08-22 late evening (~23:30 PT)
+
+### The one thing that is live and dated
+
+**A REAL user's RC hold releases at 07:59:46 PT on 2026-08-23**, unit `45719`, South
+Carlsbad SB — Northern End. Hold `51f3ad3d-8856-4bd0-8dd3-b64ad31d8b5f`, `requested`,
+`last_attempt_note` NULL. Not a fixture — see §23. Read `/rc-status` or
+`scripts/rc-holds-readout.mts` before touching anything on the box; **the SERIAL rules in
+`docs/LANES.md` bind hardest in the hours around a real release.**
+
+Set expectations the way #167 does, so a quiet morning is not misread as a cure: Okta
+expires **11:01 PT**, after the release, so the warm-up stands down and the T−30 sign-in is
+the cheap cookie-answered kind. The 9.4 GB password variant cannot occur. What tomorrow can
+produce is a **sampled reading of a non-ramping Okta trip** — a control the leak
+investigation has never had.
+
+### Read §23 before diagnosing the box
+
+Two traps in it, both fired this session:
+
+1. **`applied_note` and `applied_sha` do not describe the same event**, and the note can
+   point either way. It currently reads `SKIP - outside the quiet window` beside
+   `applied_sha 57e9d79`, which is the sha of an update that **succeeded**.
+   **`git-status` through `bot_commands` is the only field that settles "did it land?"**
+2. **A requested update LIFTS the quiet window.** Only the 6h release check is unliftable.
+   I got this wrong with the guard source open, and so did #167.
+
+### What this session did
+
+- **Play Store production application submitted** (owner drove the console; I supplied
+  every copyable answer and verified the vendor answer sheet's four claims — three were
+  false). Not yet written into `docs/PLAY-STORE.md`; offered, not confirmed.
+- **`SignOutConfirm` shipped** (#162) — Settings now confirms before signing out, which is
+  what made the production application's Q8 answer true rather than aspirational. Its
+  header records why it is not in the Clerk account menu: the `appearance` key to hide
+  Clerk's built-in Sign out is not present anywhere in the installed `@clerk/*` packages,
+  and a guessed key **fails open**.
+- **iOS `1.0 (5)` resubmitted** with rewritten App Review notes, same binary — the 3.1.1
+  round that finally tests whether link-out alone clears it. `docs/APP-STORE.md` §2d.
+- **§23**, above, and its correction.
+
+### Still open, all main lane's
+
+- **PR #146** — worker-deploy path list. Merging restarts both poller machines, so it
+  wants a moment away from a release. **Not tomorrow morning.**
+- **Issue #76** — `worker/rc-holds.test.mts`'s `before()` sweep deletes a concurrently
+  running suite's fixture rows. Two confirmed occurrences, different victims, one colliding
+  with a master push. Ranked fixes are in the issue.
+- **The live manage token `EQO2oXcQ`** — still unrotated. `GET /api/manage/EQO2oXcQ`
+  returns 200 with the owner's real active watch. It is in this file's history and in
+  `docs/a2p-campaign.md:52`, and **scrubbing the files is not enough because git history
+  persists** — rotation is one DELETE from `action_tokens`. Owner's call; I have not acted.
+
+### Side lane state
+
+On `claude/side-lane-setup-f7bpe2`, **PR #165 open**, docs only. Nothing uncommitted.
+Open-issue list not re-verified at handover — GitHub rate-limited on the last call.
