@@ -28,7 +28,19 @@ do after the leak, not stop it from leaking."* They were right.
 | Master | `744bc85` |
 | Mini-PC | `e2be117` — **behind master by DOCS ONLY**, nothing bot-side |
 | Open holds | none |
-| RC session | token dead, **Okta ALIVE** — the ordinary between-releases state |
+| RC session | **healthy again** — see below |
+
+**THE SESSION REPAIRED ITSELF AT ~20:30 PT ON 08-22, AND THE MECHANISM MATTERS.** It had been
+dead with a **seven-day-stale** token that the renewal could not shift (20 consecutive failures,
+then 30m backoff — the stale value comes from the SERVER, so clearing local storage cannot reach
+it). What fixed it was the **20:00 PT login rehearsal** submitting a real credential:
+`autocart.rc_login` → *"the bot signed in unattended 26m ago"*, and `rc_session` went to
+`token exp in 40m; src=live; okta=ALIVE`.
+
+That is the 2026-08-16 pattern exactly, and it is the second time the rehearsal — an instrument
+built to *test* the login — has been the thing that **performed** the repair. **Do not credit
+the renewal schedule for it.** Crediting a repair to the wrong mechanism has cost this file
+three times.
 
 **THE BOX BEING BEHIND MASTER IS FINE HERE, AND THAT IS A JUDGEMENT, NOT A SHRUG.** Everything
 between `e2be117` and `744bc85` is documentation plus another lane's relay code. The sampler
@@ -53,6 +65,26 @@ draft of this file called them. All three carried findings nobody had folded in:
 watch-driven recorder never stopped (rediscovered independently three times, because the
 correction kept sitting in an open PR), and that the Okta cap does not reset across a password
 sign-in. Both are in `CLAUDE.md` now.
+
+> ### `autocart.bot_version` IS RED AND IT IS EXPECTED — DO NOT SPEND THE MORNING ON IT
+>
+> ```
+> FAIL  autocart.bot_version  mini-PC is on e2be117; web is on b8d8848 — and it is MISSING
+>                             bot-side changes, with 1 hold(s) queued.
+> ```
+>
+> **This was caused deliberately-ish and it is harmless.** #160 is bot-side, and it was merged
+> while the test hold was queued — which is the one configuration `bot_version` fails on, by
+> design. **The entire gap is `rc-native-sampler.mjs`, a diagnostic**; `rc-keepwarm.mjs` and
+> every line of the cart path are byte-identical on both sides. There is no version of
+> tomorrow's cart that this affects.
+>
+> It clears the moment the box updates, which cannot happen until the hold clears (~08:15 PT).
+> **The check is right and the merge ordering was the mistake** — bot-side code should land
+> when no hold is queued, so this reads red only when it means something. `pages: false`, so
+> nothing rings; it is red on the admin page and in the 07:40 pre-flight only.
+>
+> **If it says anything OTHER than the sampler commit, that is a different fact — read it.**
 
 **A REAL TEST HOLD IS QUEUED FOR 08:00 PT ON 2026-08-23** — South Carlsbad #35, unit 45719,
 arrival 2026-12-01, hold `51f3ad3d-8856-4bd0-8dd3-b64ad31d8b5f`. It is a TEST; the owner does
