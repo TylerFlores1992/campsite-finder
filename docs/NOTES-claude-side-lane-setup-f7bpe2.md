@@ -1267,9 +1267,15 @@ hold           51f3ad3d · unit 45719 · South Carlsbad SB — Northern End (sit
                requested · release 2026-08-23 07:59:46 PT · last_attempt_note NULL
 ```
 
-**THE HOLD IS A REAL USER'S, NOT A TEST FIXTURE.** It carries a `user_id` and a real
+~~**THE HOLD IS A REAL USER'S, NOT A TEST FIXTURE.** It carries a `user_id` and a real
 campground, and #167 says so in its title. Nothing in this section is a synthetic run, and
-nothing here should be treated as disposable.
+nothing here should be treated as disposable.~~
+
+**FALSE — IT WAS A TEST FIXTURE. CORRECTED IN §24.** `unit_name` reads `TEST · 45719`, the
+`MARK` prefix written only by `scripts/rc-test-hold.mts`. **And the reasoning above is exactly
+backwards**: that script COPIES `user_id` and `campground_id` from a real watch
+(`rc-test-hold.mts:240`), so "it carries a user_id and a real campground" is true of every
+test hold by construction and is evidence of nothing.
 
 **Okta expires 11:01 PT, i.e. AFTER the 08:00 release** — so the T−3h warm-up correctly
 stands down and the T−30 sign-in is the cheap cookie-answered kind. #167 sets expectations
@@ -1283,9 +1289,10 @@ which is the control that investigation has never had.
 
 ### The one thing that is live and dated
 
-**A REAL user's RC hold releases at 07:59:46 PT on 2026-08-23**, unit `45719`, South
-Carlsbad SB — Northern End. Hold `51f3ad3d-8856-4bd0-8dd3-b64ad31d8b5f`, `requested`,
-`last_attempt_note` NULL. Not a fixture — see §23. Read `/rc-status` or
+~~**A REAL user's RC hold releases at 07:59:46 PT on 2026-08-23**~~ — **a TEST FIXTURE; see
+§24.** Unit `45719`, South Carlsbad SB — Northern End. Hold
+`51f3ad3d-8856-4bd0-8dd3-b64ad31d8b5f`, `requested`, `last_attempt_note` NULL. It carted at
+T+1.6s and released; the morning worked. What was wrong was only what it was evidence OF. Read `/rc-status` or
 `scripts/rc-holds-readout.mts` before touching anything on the box; **the SERIAL rules in
 `docs/LANES.md` bind hardest in the hours around a real release.**
 
@@ -1336,3 +1343,192 @@ Two traps in it, both fired this session:
 
 On `claude/side-lane-setup-f7bpe2`, **PR #165 open**, docs only. Nothing uncommitted.
 Open-issue list not re-verified at handover — GitHub rate-limited on the last call.
+
+---
+
+## 24. THE 08-23 HOLD WAS A TEST FIXTURE, AND NEITHER 9 GB RAMP TRIPPED THE GUARD
+
+*Side lane, 2026-08-23 afternoon. A read-only status pass that turned up two corrections and
+one gap. All three are findings about main-lane files; none has been folded in, which is what
+this section is for.*
+
+### 24a. THE 2026-08-23 HOLD WAS SYNTHETIC — §23, #167 and CLAUDE.md all call it real
+
+The morning worked and that part is not in question: unit `45719` carted at **T+1.6s**
+(14:59:47.601Z against a 14:59:46Z release), reported `✓ Added to cart` on iOS 1.0 (21), and
+`released` at 15:10:05Z. **What is wrong is what it is evidence OF.**
+
+```
+unit_name     "TEST · 45719"     <- MARK, written only by scripts/rc-test-hold.mts:57
+arrival       2026-12-01         <- first of that script's three default far-future dates
+user_id       user_3GCYFCr7...   <- same user as TEST · 4733 (08-21) and TEST · 4734 (08-20)
+release_at    07:59:46 PT        <- the script's own release-second pattern
+```
+
+`grep` over the repo finds `TEST · ` in exactly two places: `rc-test-hold.mts:57` and
+`worker/rc-holds-readout.test.mts`, whose fixtures use non-numeric unit ids. Nothing in the
+poller can produce it. **The readout printed `TEST · 45719` in its `site` column the whole
+time** — the fact was on screen and was read past.
+
+- **THE ARGUMENT FOR "REAL" IS EXACTLY INVERTED, AND THAT IS THE REUSABLE PART.** §23 says
+  *"it carries a `user_id` and a real campground"*. `rc-test-hold.mts:240` **copies both from
+  a real watch by construction**, so every test hold has them. The property offered as
+  evidence of being real is produced by the thing it was meant to rule out.
+- **The discriminator is `unit_name`.** Real holds carry RC's own site label — the two
+  genuinely real rows in the same table read `#W123` and `#W121`, on different user ids, and
+  both expired unclaimed. A `TEST · ` prefix is unambiguous.
+- **CLAUDE.md ALREADY DOCUMENTS UNIT 45719 AS A SYNTHETIC HOLD**, twice, from 2026-08-13:
+  *"A synthetic hold from `rc-test-hold.mts` (South Carlsbad #35, unit 45719, arrival
+  2026-12-01)"*. The same unit, the same script, the same arrival date, ten days earlier. The
+  file contained its own refutation.
+- **WHY IT MATTERS, and it is not bookkeeping.** For a day the SERIAL rules in
+  `docs/LANES.md`, the update-window decisions and the "keep #146 away from a release" caution
+  were all being applied on the belief that a **stranger was waiting on this campsite**. They
+  happened to be the conservative calls, so nothing was lost — this is a correction, not an
+  incident.
+- **"FIXTURE" DOES NOT MEAN "HARMLESS", AND THE NEXT ONE PROVES IT.** `rc-test-hold.mts` is
+  built to take a REAL numeric unit id — that is what exercises the whole chain — so a
+  `TEST · ` hold **locks a real campsite** for as long as it is held. Unit `45719` was real;
+  so is `43129`, queued 21:12Z for 2026-08-24 07:58:47 PT to manufacture a ramp for Track A
+  (#176). What a fixture changes is that **nobody is waiting on the other end**, not that
+  nothing is at stake. The distinction is the reason the script insists on a far-future
+  midweek date.
+- **STILL UNCORRECTED ON MASTER** as of `d8d035e`: `CLAUDE.md:2663` and
+  `docs/NEXT-SESSION.md:126` both say *"hold `45719` carted at T+1.6s"* with no fixture
+  marker, and #167's title and §23 above assert it outright. **Main lane's files** — filed as
+  an issue so it is not re-derived.
+
+### 24b. THE RAM GUARD DID NOT FIRE ON EITHER OF THE TWO BIGGEST RAMPS
+
+Both ramps in the last 30 hours, from `chromium_memory_samples`:
+
+| | window (PT) | peak `rc` | free RAM at peak | COMMIT | ramping pid |
+|---|---|---|---|---|---|
+| A | 08-22 23:12→23:23 | 8,983 MB | **3,191 MB** | 82% | 10364 |
+| B | 08-23 07:31→07:41 | **9,180 MB** | **3,328 MB** | **88%** | 5296 |
+
+The guard is `stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB` — **an AND** —
+with `LOW_RAM_MB = 2000` (`rc-keepwarm.mjs:470`) and `MEM_STALL_MS = 60_000` (`:480`).
+**Free RAM never came within 1,190 MB of the floor on either.** `os.freemem()` was calibrated
+against the PowerShell sampler to within 3.5% on 2026-08-18, so a 60% gap is not a reading
+error. The stall half is unknown from here and does not matter: the AND already fails.
+
+**SO SOMETHING ELSE ENDED THEM, AND THE SERIES SAYS IT WAS A BROWSER REPLACEMENT.** Not a tab
+close and not an in-place drain — the **`gpu-process` pid changes across both events**
+(6464 → 2824 on A, 2824 → 2348 on B), and that process is one per browser:
+
+```
+14:29:05  rc   303 MB  free 9,680  16%   pid 2824 gpu-process
+14:31:06  rc 3,278 MB  free 5,960  76%   pid 5296 renderer      <- T-28.7, maybeAutoLogin
+14:41:07  rc 9,180 MB  free 3,328  88%   pid 5296 renderer      <- renderer 8,245 / browser 768
+14:41:58  rc   282 MB  free 9,658  16%   pid 2348 gpu-process   <- different browser
+```
+
+CLAUDE.md's #172 entry already says of ramp B that *"the browser had just been recycled"*, so
+the recycle itself is known. What is not recorded anywhere is that **the containment arm was
+not what did it**, and the consequence below.
+
+**THE 08-19 PREMISE HAS MOVED, AND THAT IS THE QUESTION — not that the floor is wrong.** The
+floor was set deliberately, with the arithmetic written down:
+
+> *"2000 acts at about 73% — seventeen points of margin — while leaving room for a renewal
+> whose worst observed peak is 5,688 MB against a ~9,000 MB idle, i.e. **a trough near
+> 3,300 MB**."*
+
+Observed troughs: **3,191 and 3,328 MB.** The prediction is essentially exact, and the guard is
+behaving precisely as designed — it was set below the expected trough so a working renewal
+could not be killed, which was the whole point of the 4000 → 2000 change.
+
+What has moved is the peak. **5,688 MB was the worst case that reasoning was built on; it is
+9,180 MB now, 61% higher, and COMMIT reached 88%** — against the same entry's *"the numbers
+that matter are ~90% (Windows stops scheduling)"*. Two points. And the neighbouring claim
+that *"the containment has now held THREE times ... never past 71% COMMIT"* is stale: nothing
+held these, and 88% is seventeen points past that.
+
+- **THIS IS A QUESTION FOR THE MAIN LANE, NOT A PATCH.** `keepwarm-recycle.test.mts` bounds the
+  floor 1500–3000 with recorded reasoning, and lowering the trip point is exactly the change
+  that killed a working repair on 08-19. The honest options differ in kind — leave it and rely
+  on the recycle, or give the arm a second trigger that is not free-RAM — and neither is a
+  drive-by.
+- **WHAT WOULD SETTLE WHAT ENDED THEM:** a `♻ recycling` line in `logs\rc-keepwarm.log` at
+  14:41:5x. The post-Okta recycle (`visitedOkta`) is the leading **candidate** for B; ramp A
+  coincides with the box update at 23:12 PT, so a `stop-all` is the likelier cause there. Both
+  are candidates. Reading the log needs a `tail-log` bot command, which this pass did not run.
+- **#169 IS NOW ON THE BOX**, so ramp #23 gets a native-allocation reading. That answers *what
+  allocates*; it does not answer *what stops it*, which is this section.
+
+### 24c. The Play production application is written up — `docs/PLAY-STORE.md` §0c
+
+The 08-22 handover recorded it as *"not yet written into `docs/PLAY-STORE.md`; offered, not
+confirmed."* Now written, including the pointer on §0 whose *"≥14 days out"* heading and
+*"(0 currently)"* tester count were both spent.
+
+**One gap is recorded rather than papered over:** that session verified the paid tester
+vendor's answer sheet and found **three of its four claims false**, and *which* claims was
+never written down. It is not in any file or commit. If Play asks a follow-up, that analysis
+has to be redone.
+
+### 24d. What the main lane closed while this was being written
+
+Four of the six items this pass proposed were done by the main lane between 20:37 and 20:59
+UTC, i.e. under it. Recorded so the ordering is honest:
+
+- **#171 merged** — both app fixes, plus a fourth defect found inside FIX 2
+  (`window.__camphawkRcToken` is never set in a webview, so a sign-in that WORKED reported
+  failure). CLAUDE.md 2026-08-23.
+- **#146 merged**, and the worker verified healthy after the deploy rather than assumed.
+- **#168 closed as superseded**, with the reasoning left on the PR.
+- **The box updated to `6d4100b`** at 20:41 UTC, *"updated and verified"*, 23 seconds.
+
+So of the six, **2, 4 and 5 were theirs**; 1, 3 and 6 are the ones above.
+
+---
+
+## Handover — 2026-08-23 afternoon (side lane)
+
+### Verified this pass, read-only
+
+The 07:59:46 PT release **worked end to end** — carted T+1.6s, `✓ Added to cart` on iOS,
+`released` 15:10:05Z. It was a **test fixture** (§24a).
+
+**ONE HOLD IS QUEUED AGAIN, DELIBERATELY:** `TEST · 43129`, `requested`, releasing
+**2026-08-24 07:58:47 PT** — the main lane's #176, queued at 21:12Z to manufacture an Okta
+ramp for Track A on a warm-up window that opens ~04:59 PT with Okta gone. It carries a **real
+unit id and therefore locks a real site**, and it re-arms the `docs/LANES.md` SERIAL rules and
+the updater's 6h release gate. Do not queue another, and keep anything that restarts the box
+away from it.
+
+Health at 13:31 PT: `degraded`, every failure non-paging. `autocart.rc_session` warn (token
+exp −295m, **Okta ALIVE ~6.5h**, no holds queued — the normal between-releases state).
+Worker, both shards, all five detectors, delivery, watchdog and runner `ok`. Login rehearsal
+**passed** 03:01 PT.
+
+### Live and dated
+
+- **Box `6d4100b`**, master `d8d035e` (docs-only ahead). Every memory instrument including
+  #169 is live. **`git-status` through `bot_commands` is still the only authority** — this
+  pass did not run one; the sha above is the main lane's, confirmed by them at 20:41 UTC.
+- **Migration 066 applied; `native_alloc_readings` read 0 rows** when checked ~13:36 PT —
+  **five minutes before the box took #169 at 13:41 PT.** So the emptiness was correct and is
+  already superseded. **The first row lands on the next ramp**, and that is the reading the
+  whole leak investigation is waiting for.
+- **iOS `1.0 (5)`** awaiting a decision. Release is AUTOMATIC on approval.
+
+### Open
+
+- **Two issues filed by this pass** — the fixture misidentification (§24a) and the RAM-floor
+  question (§24b). Both are corrections to main-lane files and are theirs to fold.
+- **Issue #76** (rc-holds fixture sweep) and **#14** (rec.gov timeout cascade), unchanged.
+- **A fixture can still turn `autocart.rc_session` red** — the health route's own `upcoming`
+  and `imminent` counts never got the `REAL_UNIT` filter. Main lane's find, recorded not
+  fixed, and it prints the destructive `rc-login.bat` remedy while it lasts.
+- **The live manage token `EQO2oXcQ`** — still unrotated, still 200. Owner's call; not acted on.
+
+### Side lane state
+
+On `claude/camphawk-side-lane-status-mnsbld`. **The branch name does not match `docs/LANES.md`'s
+`claude/side-<topic>` convention**, and the branch name IS the lane token — worth fixing on the
+next side session rather than mid-flight.
+
+This file is continued rather than replaced: §24 corrects §23, and a correction that lives in a
+different file from the claim it corrects is how the Feature E note got re-derived three times.

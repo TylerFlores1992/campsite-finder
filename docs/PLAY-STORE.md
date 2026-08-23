@@ -50,6 +50,10 @@ what Play accepts, discovered months later when an upload is rejected.
 
 ## 0. The critical path, and why production is ≥14 days out
 
+> **CLEARED — the production application went in on 2026-08-22. See §0c.** Everything below
+> is the state as confirmed on 2026-08-01 and is kept for the reasoning, not as current
+> status: the heading's "≥14 days out" and the "(0 currently)" tester count are both spent.
+
 Play confirmed on the app dashboard (2026-08-01) that this **personal** developer
 account must, before it can even apply for production:
 
@@ -66,6 +70,58 @@ with real Google accounts and stay opted in for the whole window.
 Internal testing has no such gate and can be published immediately — do that first, both
 to prove the AAB uploads cleanly and because it is where the **country restriction** can
 be set today.
+
+## 0c. Production access — APPLIED 2026-08-22 (owner-reported)
+
+**The gate in §0 has been cleared and the application is in.** The owner drove the Play
+Console; the side-lane session supplied every copyable answer. Recorded here because it was
+not, and §0 on its own still reads as though production is a fortnight away.
+
+**So the 12-testers-for-14-days precondition was satisfied** — Play will not accept the
+application otherwise, which makes this an inference from the submission being accepted
+rather than an observation. **The opt-in dates and the final tester roster were never
+written down** and are not recoverable from this repo; the console is the only record.
+
+### The one answer this repo can still substantiate
+
+Play asks **in writing** how you recruited your testers and what feedback you acted on (§8).
+The second half is citable:
+
+> `SignOutConfirm` (#162, `8ab87e4`) — Settings confirms before signing out. Its header
+> records the provenance in the source: *"raised in the Play closed-test feedback
+> (2026-08-22) — signing out happened immediately, with no chance to change your mind."*
+
+That is real tester feedback, dated, with a shipped change against it. It is what makes the
+"feedback acted on" answer **true rather than aspirational**, and it is the kind of thing
+worth having a commit for if Play asks a follow-up question.
+
+### A GAP, recorded rather than papered over
+
+The session that submitted this **verified the paid tester vendor's answer sheet and found
+three of its four claims false.** *Which* claims, and what was written instead, was never
+recorded. It is not in this file, the notes file, or any commit — so if Play comes back with
+questions, that analysis has to be redone from scratch.
+
+Worth knowing why it matters: §8 already warns that paid tester services are a real risk, and
+that the risk is the **recruitment answer**, not the money. An answer sheet supplied by the
+vendor being three-quarters wrong is exactly the hazard that section describes, and the
+correction is the part that had value.
+
+### What nobody in a session can verify
+
+**No session can read Play Console.** "Submitted" is owner-reported, and the decision arrives
+by email to the owner. Do not report a status here that did not come from them — the same
+rule `docs/APP-STORE.md` §2d arrived at the hard way, twice.
+
+### What unlocks on approval, and the one thing that must not happen first
+
+- **§1's US-only country restriction becomes settable.** It cannot be set today at all.
+- **That restriction is a PRECONDITION for `NATIVE_LINKOUT`**, not a tidy-up. Both stores'
+  anti-steering carve-outs are US-storefront only.
+- **The closed-test track is WORLDWIDE** (the paid service requires it, §8). Turning
+  `NATIVE_LINKOUT` on while that global track is live shows steering UI to non-US testers,
+  which is the review failure the flag exists to avoid. `LINKOUT_BY_STORE.android` stays
+  `false` until production is live **and** US-only — see CLAUDE.md.
 
 ## 0b. Automating the upload — Google Play service account
 
