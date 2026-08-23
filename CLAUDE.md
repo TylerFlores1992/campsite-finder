@@ -2729,35 +2729,83 @@ written, which is what stopped the second one being written up as "RC reworded i
   read-back have run only against the bundle in a stub page. The next hand-off answers it by
   itself — look for `cart read back` in `rc-holds-readout.mts`.
 
+### THE FIXTURE COUNT IN THE HEALTH ROUTE WAS NEVER FILTERED (2026-08-23, evening)
+Merging two PRs fired CI on master, CI runs `npm test` against the production DB, and
+`autocart.rc_session` went **warn → fail** for the length of the run:
+```
+autocart.rc_session | fail | RC REJECTED the session and the auto-login has had its turn —
+                             run mini-pc\rc-login.bat ... — 4 hold(s) ahead and the next is
+                             within 25 min
+```
+Non-terminal holds queried directly at that moment: **four.** Ninety seconds later: **zero.**
+They were the hold suites' sentinel fixtures, swept on the way out — the artifact the
+2026-08-19 entry predicts for `autocart.rc_runner`, arriving on a different check.
+- **THE 08-18 `REAL_UNIT` FIX DOES NOT REACH THIS ONE.** That change put
+  `unit_id ~ '^[0-9]+$'` into `nextHoldRelease` and `holdAtRisk` in `src/lib/rc-holds.ts`.
+  **The health route calls neither.** `src/app/api/health/status/route.ts` carries its own
+  inline `upcoming` and `imminent` counts — hand-rolled copies of the same question — and
+  neither carries the filter. A rule applied to one consumer and not to the sibling asking the
+  same question, this time inside the fix for that very shape.
+- **THE PHONE IS SAFE; THE DASHBOARD IS NOT.** `holdAtRisk` **is** filtered, so the voice alarm
+  cannot fire on a fixture. What misfires is the check the **07:30 PT pre-flight Routine
+  reads** — and the detail it prints tells a human to run `mini-pc\rc-login.bat`, which
+  force-kills the Chromium the token lives in. **The destructive remedy, printed over a session
+  with nothing wrong with it.** That is 2026-08-16 exactly, reached by a new route.
+- **BOUNDED: the fixtures exist only for the length of a test run**, so the red is minutes long
+  and clears itself. A 07:30 reading is wrong only if a run happens to overlap it. That is why
+  this is a note and not an incident.
+- **DIAGNOSED BOTH WAYS BEFORE BEING BELIEVED** — from the source (no `REAL_UNIT` in either
+  inline query) and from the observation (fail → warn as the rows were swept). Either alone
+  would have been a guess; the file's own history is full of the one that was.
+- **RECORDED, NOT FIXED.** It is a predicate in a safety-critical health path, and the two
+  honest remedies differ in kind: filter the counts in place, or route them through the
+  already-filtered helpers so there is ONE definition instead of three. Same call as the
+  `reclaimLapsedHolds` test question — not a change to make in passing, on a session whose job
+  was merging.
+
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23 evening). Its top section is the
-> next session's task: **TWO APP FIXES in the RC hand-off**, both reported by the owner after a
-> hold that WORKED, so neither is an outage.
+> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23, late evening).
 >
-> **1. Land IN the cart** rather than telling the user to tap the cart icon. `RC_CART_URL` and
-> `adoptBanner()` already exist. **The owner asked the right question about proof** — navigating
-> could lose the `✓ Added to cart` report — and the answer is that the bundle is re-injected on
-> every navigation, so the cart page can READ THE CART BACK, which is stronger than the status
-> string. Flush the report first, then navigate, then report `cart-verified`.
+> **THE TWO APP FIXES SHIPPED (#171)** — the hand-off lands the user IN their cart and reads
+> the cart BACK there (stronger proof than the status string we wrote ourselves), and the
+> in-app sign-in now presses RC's own Log in control before hunting for a form. Web-side, so
+> they are already live in installed apps. **NEITHER HAS RUN AGAINST A REAL HOLD** — look for
+> `cart read back` in `scripts/rc-holds-readout.mts` after the next hand-off; that is the
+> whole verification and nobody can force it.
 >
-> **2. The in-app sign-in must click RC's own Log in control** before hunting for the credential
-> form. RC lands the user on the calendar with that control off screen, which is why the owner
-> had to press it by hand. The bot's `clickSignInControl` is the model — **read
-> `rc-autologin.mjs`'s `signIn()` first**, and mind 2026-08-16: a TypeError on this path
-> published a real password, because WebKit quotes the failing source expression.
+> **THE BOX IS CURRENT — `6d4100b`, "updated and verified", 23 seconds end to end.** #169 is
+> live, so the native sampler's reading now lands in Postgres and **ramp #23 will be
+> attributed** instead of dying in a 16k-truncated log the way the last two did.
+> **DO NOT READ `applied_note` AND CONCLUDE IT FAILED.** That verdict was read at 20:43; by
+> 20:51 a later scheduled run had overwritten the note with its own
+> `SKIP - outside the quiet window` **while leaving `applied_at` at 20:41:59** — the
+> note-and-sha mismatch this file already documents, observed live within ten minutes.
+> `autocart.bot_version` (`mini-PC and web are both on 6d4100b`) is the field that answers
+> "did it land?".
 >
-> **THE LEAK IS NOT FIXED and remains the standing ask.** New on 08-23: the ramp is an
-> **eleven-minute climb on one renderer pid**, not a spike. **#169 is open and must be merged +
-> pushed to the box**, or the next ramp's attribution is lost exactly as the last two were.
+> **THE LEAK IS NOT FIXED and remains the standing ask.** Everything shipped is containment or
+> relocation. The 08-23 shape is an **eleven-minute climb on ONE renderer pid at ~400 MB/min**,
+> renderer ~90% — not the short burst recorded on 08-17. Still never observed: **what
+> allocates.** "Network/IPC buffering" is asserted in three entries and has never been tested.
+> **Track B (replay the Okta trip over `ctx.request`, no renderer) is designed and deliberately
+> NOT started** — it is surgery on the release-critical login path and needs the owner's
+> go-ahead; Track A's first real reading could change its design.
+>
+> **A FIXTURE CAN STILL TURN `autocart.rc_session` RED** — the health route's own `upcoming`
+> and `imminent` counts never got the `REAL_UNIT` filter (entry directly above). Bounded to the
+> length of a CI run, and it prints the destructive `rc-login.bat` remedy while it lasts.
+> Recorded, not fixed; the fix is a deliberate change, not a drive-by.
 >
 > **iOS:** `1.0 (5)` resubmitted 2026-08-22 with corrected notes — `docs/APP-STORE.md` §2d.
 > Release is AUTOMATIC. A 3.1.1 rejection now is the ANSWER, not a fourth process failure.
 >
-> Master is **`1cf83a2`**; the box is `57e9d79`. #169 and #146 are open.
-> **Delete that file once the two app fixes have shipped and the sampler has a reading from a
-> real ramp**; it is a handover, not a permanent doc, and a stale one would read like
-> current state.
+> Master is **`6d4100b`** and the box matches it. **#171, #169 and #146 are merged; #168 was
+> closed as superseded** (its correction had already landed via #165/#170 — the reasoning is on
+> the PR so it does not read as a finding dropped in a merge). **No PRs are open.**
+> **Delete `docs/NEXT-SESSION.md` once the sampler has a reading from a real ramp AND the App
+> Store version has a decision**; it is a handover, not a permanent doc, and a stale one reads
+> like current state.
 
 ### THE APP'S RC SESSION IS BEING MEASURED NOW — no renewal built yet (migration 058, 2026-08-13)
 The mobile claim flow needs a live RC session inside the InAppBrowser data store, and the
