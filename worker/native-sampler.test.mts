@@ -23,10 +23,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  attributionOf, summarise, diffProfiles, renderProfile,
+  attributionOf, summarise, diffProfiles, renderProfile, moduleResolver,
 } from '../scripts/auto-cart-bot/rc-native-sampler.mjs';
 
 const MB = 1048576;
+
+// The mini-PC's real shape, from the 2026-08-22 19:34 PT reading: a 64-bit base under ASLR,
+// and the frames that matter carrying no symbol at all.
+const CHROME_DLL = { name: 'C:\\pw-browsers\\chromium\\chrome.dll', uuid: 'B3F1-DEADBEEF', baseAddress: '0x7ffc40000000', size: 0x10000000 };
+const WS2 = { name: 'C:\\Windows\\System32\\ws2_32.dll', uuid: 'WS2-UUID', baseAddress: '0x7ffd00000000', size: 0x100000 };
 
 // ── 1. Attribution ────────────────────────────────────────────────────────────────────────
 
@@ -66,6 +71,86 @@ test('an empty or missing stack does not throw', () => {
   for (const s of [undefined, null, []]) {
     assert.equal(typeof attributionOf(s as string[] | undefined), 'string');
   }
+});
+
+// ── 1b. Windows: no symbols at all, so addresses must resolve to module+offset ─────────────
+//
+// The header's "1,083 of 1,733 frames carried a symbol" was measured in the Linux dev
+// container. The first real reading off the box symbolized none of the interesting frames:
+//
+//     14 MB  0x7ffc499b1707 <- 0x7ffc4375aa42
+//
+// A ramp read that way names nothing, which is where this instrument started.
+
+test('an unsymbolized frame resolves to module+offset', () => {
+  const resolve = moduleResolver([CHROME_DLL]);
+  const a = attributionOf(['0x7ffc499b1707', '0x7ffc4375aa42'], resolve);
+  assert.equal(a, 'chrome.dll+0x99b1707 <- chrome.dll+0x375aa42',
+    'the path must be dropped and the offset taken from the module base');
+});
+
+test('the offset is what makes two runs group — the raw address never could', () => {
+  // Module bases move per process under ASLR. Without the subtraction the same allocation site
+  // is a different row in every reading, so the top-N is noise and the diff attributes nothing.
+  const runA = moduleResolver([{ ...CHROME_DLL, baseAddress: '0x7ffc40000000' }]);
+  const runB = moduleResolver([{ ...CHROME_DLL, baseAddress: '0x1a2b00000000' }]);
+  // Both are base + 0x99b1707, i.e. the same site loaded at two different bases.
+  const a = attributionOf(['0x7ffc499b1707'], runA);
+  const b = attributionOf(['0x1a2b099b1707'], runB);
+  assert.equal(a, b, 'the same site in two processes must produce the same label');
+  assert.match(a, /^chrome\.dll\+0x99b1707$/,
+    'and it must be the offset that matches, not both falling back to a bare address');
+});
+
+test('a SYSTEM dll is named, which is the one thing the module name buys for free', () => {
+  // Almost all of Chromium is one chrome.dll, so the name rarely discriminates. A frame in the
+  // OS network stack would — that is the buffering candidate, three times asserted, never shown.
+  const resolve = moduleResolver([CHROME_DLL, WS2]);
+  assert.match(attributionOf(['0x7ffd00001234'], resolve), /^ws2_32\.dll\+0x1234$/);
+});
+
+test('a real symbol still wins over the address', () => {
+  // Symbols are identical across builds, offsets only within one. When the build has a symbol
+  // it is the better identity and resolution must not override it.
+  const resolve = moduleResolver([CHROME_DLL]);
+  assert.equal(attributionOf(['0x7ffc499b1707 net::HttpCache::Read()'], resolve),
+    'net::HttpCache::Read()');
+});
+
+test('an address in NO reported module stays a bare address', () => {
+  // JIT code and anything the browser did not report. "In no module" and "we had no module
+  // list" must both survive as visibly unresolved rather than being attributed to a neighbour.
+  const resolve = moduleResolver([CHROME_DLL]);
+  assert.equal(attributionOf(['0xdeadbeef00'], resolve), '0xdeadbeef00');
+});
+
+test('module bases above 2^53 are not rounded', () => {
+  // A Number cannot hold a 64-bit address exactly, and rounding an address does not throw — it
+  // yields a plausible, wrong offset. That is the silent-corruption shape, so BigInt.
+  const resolve = moduleResolver([{ name: 'high.dll', uuid: 'U', baseAddress: '0xfffffffff0000000', size: 0x10000 }]);
+  assert.equal(attributionOf(['0xfffffffff0000abc'], resolve), 'high.dll+0xabc');
+});
+
+test('a garbled module list degrades to the old behaviour, and never throws', () => {
+  // This crosses CDP from a browser that is by assumption misbehaving.
+  const resolve = moduleResolver([
+    null, {}, { name: 'x', baseAddress: 'not-an-address', size: 10 },
+    { name: 'y', baseAddress: '0x10', size: 0 },
+  ] as never[]);
+  assert.equal(attributionOf(['0x7ffc499b1707'], resolve), '0x7ffc499b1707');
+});
+
+test('a decimal baseAddress is accepted — the protocol permits either', () => {
+  // "Encoded as a decimal or hexadecimal (0x prefixed) string", per the CDP Module type.
+  const resolve = moduleResolver([{ name: 'd.dll', uuid: 'U', baseAddress: String(0x7ffc40000000), size: 0x1000 }]);
+  assert.equal(attributionOf(['0x7ffc40000abc'], resolve), 'd.dll+0xabc');
+});
+
+test('with no module list at all, nothing changes from before', () => {
+  // The degradation path: an older Chromium, or a target that reports no modules. It must be
+  // exactly the previous behaviour, not an error and not an empty label.
+  assert.equal(attributionOf(['0x7ffc499b1707'], null), '0x7ffc499b1707');
+  assert.equal(attributionOf(['0x1 net::Foo()'], null), 'net::Foo()');
 });
 
 // ── 2. Aggregation ────────────────────────────────────────────────────────────────────────
@@ -171,7 +256,62 @@ test('an empty diff is distinguishable from an unavailable one', () => {
   assert.match(empty, /nothing attributable/);
 });
 
+// ── 4b. The footer that makes an unsymbolized reading actionable later ────────────────────
+
+test('an unsymbolized reading names the binary to symbolize against', () => {
+  // Without this the offset is stable and unresolvable — a better dead end is still a dead end.
+  const d = diffProfiles(null, summarise([{ total: 900 * MB, stack: ['0x7ffc499b1707'] }], 6,
+    moduleResolver([CHROME_DLL])))!;
+  const line = renderProfile({ ...d, modules: [CHROME_DLL] }, -900);
+  assert.match(line, /chrome\.dll\+0x99b1707/, 'the row must carry the offset');
+  assert.match(line, /B3F1-DEADBEEF/, 'and the footer the uuid of the exact build');
+});
+
+test('a fully symbolized reading gets NO footer', () => {
+  // This prints on every renewal. A permanent epilogue about symbol servers is how a log stops
+  // being read, which costs more than the footer buys.
+  const d = diffProfiles(null, summarise([{ total: 900 * MB, stack: ['0x1 net::Foo()'] }]))!;
+  const line = renderProfile(d, -900);
+  assert.ok(!/symbolize offline/.test(line), `an all-symbol reading needs no epilogue:\n${line}`);
+});
+
+test('a bare-address row is called out as naming nothing, not as merely unsymbolized', () => {
+  // "Named a binary and an offset" and "named nothing at all" are the two outcomes this change
+  // exists to separate. One sentence covering both would hide whether it worked.
+  const d = diffProfiles(null, summarise([{ total: 900 * MB, stack: ['0xdeadbeef00'] }]))!;
+  const line = renderProfile(d, -900);
+  assert.match(line, /NO reported module/);
+  assert.ok(!/symbolize offline/.test(line), 'there is no module to symbolize against');
+});
+
 // ── 5. The wiring ─────────────────────────────────────────────────────────────────────────
+
+test('readNativeProfile resolves with the modules CDP returns beside the samples', async () => {
+  // The half this file discarded. Pinned through the real entry point rather than through
+  // `moduleResolver` alone: the pure function can be perfect while nothing passes it a list,
+  // which is the inert-fix shape this repo has paid for three times.
+  const { readNativeProfile } = await import('../scripts/auto-cart-bot/rc-native-sampler.mjs');
+  const cdp = {
+    send: async () => ({
+      profile: {
+        samples: [{ total: 900 * MB, stack: ['0x7ffc499b1707', '0x7ffc4375aa42'] }],
+        modules: [CHROME_DLL],
+      },
+    }),
+  };
+  const r = (await readNativeProfile(cdp))!;
+  assert.match(r.sites[0].site, /chrome\.dll\+0x99b1707 <- chrome\.dll\+0x375aa42/,
+    'the resolver must actually reach the aggregation');
+  assert.deepEqual(r.modules, [CHROME_DLL], 'and the list must survive for the footer');
+});
+
+test('a profile with no modules field still reads, unresolved', async () => {
+  const { readNativeProfile } = await import('../scripts/auto-cart-bot/rc-native-sampler.mjs');
+  const cdp = { send: async () => ({ profile: { samples: [{ total: 5 * MB, stack: ['0x7ffc499b1707'] }] } }) };
+  const r = (await readNativeProfile(cdp))!;
+  assert.equal(r.sites[0].site, '0x7ffc499b1707');
+  assert.equal(r.modules, null, 'null, so the footer can tell "absent" from "empty"');
+});
 
 const KW = readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8');
 const code = KW.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
