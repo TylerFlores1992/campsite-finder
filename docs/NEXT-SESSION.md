@@ -120,7 +120,7 @@ do after the leak, not stop it from leaking."* They were right.
 | Master | `6d4100b` (#171, #169, #146 all merged 2026-08-23) |
 | Mini-PC | `6d4100b` — **current; every memory instrument is live, #169 included** |
 | Open PRs | **none** |
-| Open holds | none |
+| Open holds | **ONE, deliberate** — a REAL test hold releasing 2026-08-24 07:58:47 PT, queued to manufacture a ramp for Track A. See CLAUDE.md. |
 | RC session | dead, but **Okta ALIVE** — so a repair is the cheap kind |
 
 **THIS MORNING WORKED, AND THAT IS THE BASELINE THE TWO FIXES SIT ON.** Hold `45719` carted at
@@ -280,6 +280,14 @@ That is the obvious next instrument.
 9.4 GB password sign-in — at T−3h of any queued hold when Okta is gone. That was a side effect of
 building it, but it is the useful one: an expensive Okta trip at a predictable time that nothing
 depends on.
+
+**THAT IS NOW BEING USED DELIBERATELY.** A real test hold is queued for **2026-08-24 07:58:47
+PT**, so the warm-up window opens at **~04:59 PT** with Okta gone (its expiry is frozen at
+`2026-08-24 03:00:59Z` — the absolute cap, read twice 33 minutes apart, not the rolling window).
+It had to carry a **real unit id**: the warm-up reads `nextHoldRelease()`, which carries
+`REAL_UNIT`, so a sentinel is invisible to it. Full reasoning, consequences and the claim link
+are in CLAUDE.md. Read the result with `scripts/native-alloc-readout.mts`; **"No readings yet"
+is a real answer** meaning the trip did not ramp, not a broken sampler.
 
 ---
 

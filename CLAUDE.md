@@ -2763,6 +2763,48 @@ They were the hold suites' sentinel fixtures, swept on the way out — the artif
   `reclaimLapsedHolds` test question — not a change to make in passing, on a session whose job
   was merging.
 
+### A REAL TEST HOLD IS QUEUED FOR 2026-08-24 07:58:47 PT — to MANUFACTURE a ramp (2026-08-23)
+Track A has been armed for weeks and has never had a ramp to read, because ramps are rare
+(two in thirty-two hours on 08-23, none since). **This hold exists to make one happen at a
+predictable time**, and it is the first deliberate attempt to produce the measurement rather
+than wait for it.
+
+    hold      3020e05a-8e3f-444b-8973-1426f3211760
+    site      Morro Bay SP — Lower Section, unit 43129 (#33), arrival 2026-12-01, 1 night
+    releases  2026-08-24T07:58:47 PT
+    claim     https://camphawk.app/claim/3020e05a-8e3f-444b-8973-1426f3211760?t=WNWD1BgU
+    delete    npx tsx scripts/rc-test-hold.mts --delete 3020e05a-8e3f-444b-8973-1426f3211760
+
+- **THE MECHANISM IS THE T−3h WARM-UP, NOT THE RELEASE.** `warmupWindowOpen` fires between
+  T−3h and T−30 **only when Okta is GONE**, and then does the full password sign-in — the
+  **12-minute, ~9,434 MB** trip measured on 2026-08-20, which is the biggest Okta navigation
+  this system makes and the one #163 taught the sampler to read. Window opens **~04:59 PT**.
+- **OKTA WILL BE GONE, AND THAT IS READ RATHER THAN ASSUMED.** `okta_expires_at` sat at
+  `2026-08-24 03:00:59Z` across a 33-minute gap (checked 20:32 and 21:05 UTC) — **frozen, so
+  it is the absolute cap of the 08-19 finding and not the rolling window**. It lapses at
+  20:00:59 PT on 08-23 and nothing renews it overnight.
+- **IT HAD TO BE A REAL UNIT ID, AND THAT IS THE COST.** The warm-up reads `nextRelease` off
+  the feed, which is `nextHoldRelease()`, which carries `REAL_UNIT` — so **a sentinel hold is
+  invisible to it and would have proved nothing.** That is the 2026-08-18 fixture fix working
+  exactly as designed, and it means this test locks a real campsite at 07:58:47 until the
+  claim releases it or RC drops the cart. Far-future midweek, 28 bookable that night, id taken
+  from `--find` and never invented.
+- **A DIFFERENT SITE FROM 45719 ON PURPOSE.** `recordClientReports` keeps the TAIL of 40, so
+  re-requesting that row would have pushed this morning's `✓ Added to cart` — the third proof
+  the RC cart POSTs fire — out of `client_reports`.
+- **TWO CONSEQUENCES TO EXPECT, NEITHER A FAULT.** The 6h update gate **shuts at 01:58:47 PT**
+  and is not liftable, so the box cannot update after that until the hold clears; and
+  `holdAtRisk` may **ring the phone at ~07:14 PT** if the session is dead then, which is the
+  alarm doing its job on a queued hold.
+- **IT ANSWERS THE SECOND OPEN QUESTION FOR FREE** — the two app fixes from #171 have never run
+  against a real hold. **The claim link must be opened IN THE APP** (`canInject` is false in a
+  browser and the injected precart is never exercised). Look for `cart read back`.
+- **READ IT AFTERWARDS:**
+  `NODE_USE_ENV_PROXY=1 npx tsx scripts/native-alloc-readout.mts` (the attribution) and
+  `NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts` (the hand-off).
+  **"No readings yet" is a real answer and means the trip did not ramp** — the three-way
+  verdict refuses to speak without a RAM delta, which is correct and is not a broken sampler.
+
 ## Open / next session
 
 > **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23, late evening).
@@ -2783,6 +2825,10 @@ They were the hold suites' sentinel fixtures, swept on the way out — the artif
 > note-and-sha mismatch this file already documents, observed live within ten minutes.
 > `autocart.bot_version` (`mini-PC and web are both on 6d4100b`) is the field that answers
 > "did it land?".
+>
+> **A REAL TEST HOLD IS QUEUED FOR 08-24 07:58:47 PT** (entry directly above) to manufacture
+> the 9.4 GB Okta trip at ~04:59 PT and give Track A its first reading. It also proves #171's
+> two app fixes — **the claim link must be opened IN THE APP.**
 >
 > **THE LEAK IS NOT FIXED and remains the standing ask.** Everything shipped is containment or
 > relocation. The 08-23 shape is an **eleven-minute climb on ONE renderer pid at ~400 MB/min**,
