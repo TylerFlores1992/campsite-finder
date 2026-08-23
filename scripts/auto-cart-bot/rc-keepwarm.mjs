@@ -1110,6 +1110,41 @@ async function maybeAutoLogin(ctx, page) {
     return autoLoginSkip('could not open a sign-in tab — the browser may be unwell; nothing was spent');
   }
 
+  /**
+   * NAME THE ALLOCATION ON THE BIGGEST TRIP THERE IS — see rc-native-sampler.mjs.
+   *
+   * The sampler shipped wired to the RENEWAL only, and the renewal is the CHEAP Okta trip:
+   * 140-350 MB when it behaves, 2.3 GB at its worst. This path is the expensive one — 9.4 GB
+   * over twelve minutes on 2026-08-20, because `okta=GONE` forces the full password form —
+   * and it had no instrument on it at all. The single largest measured event in the whole
+   * investigation was the one nothing was sampling.
+   *
+   * ON THE TAB'S OWN CDP SESSION, and started HERE rather than at launch, for the reason
+   * `attachHeapProbe` exists: the expensive negotiation must happen while the browser is
+   * healthy, and a tab three lines old is as healthy as it gets. Only the cheap read has to
+   * land afterwards, and CDP has twice been measured going quiet as a ramp peaks.
+   *
+   * THE BEFORE-READING IS TAKEN AND DIFFED even though a fresh tab has allocated nothing.
+   * Whether a new tab gets its own renderer or shares the resident page's is NOT established;
+   * if it shares one, an all-time profile carries hours of the resident page's history and
+   * would report it as this trip's. Diffing is correct either way, which beats depending on
+   * a fact nobody has measured.
+   *
+   * AND THE FREE-RAM PAIR IS TAKEN WITH IT, because a sampler reading with no RAM delta is
+   * exactly the artifact that nearly retired the buffering candidate on 2026-08-19: a trace of
+   * a navigation that never ramped says nothing about the leak, and without the pairing there
+   * is no way to tell which kind of reading you are holding. `os.freemem()` is a syscall, so
+   * unlike `rcFamilyMb()` it keeps answering under the pressure this is here to observe.
+   *
+   * IT BRACKETS THE TAB'S WHOLE LIFE, not just `attemptLogin`, because that is the window the
+   * all-time profile covers. Pairing a tab-lifetime profile with a login-only RAM delta would
+   * be two different windows reported as one measurement.
+   */
+  const sampler = await ctx.newCDPSession(tab).catch(() => null);
+  const sampling = sampler ? await startNativeSampling(sampler) : { ok: false, why: 'no CDP session' };
+  const profBefore = sampling.ok ? await readNativeProfile(sampler) : null;
+  const freeBeforeMb = Math.round(os.freemem() / (1024 * 1024));
+
   lastAutoLoginSkip = null;
   autoLogin.spent += 1;
   autoLogin.lastAt = Date.now();
@@ -1252,6 +1287,33 @@ async function maybeAutoLogin(ctx, page) {
   }
   return true;
   } finally {
+    /**
+     * THE ALLOCATION READING, AND IT MUST HAPPEN BEFORE THE CLOSE.
+     *
+     * `tab.close()` destroys the renderer whose profile this is. Reading after it would ask a
+     * dead target and return null on every single trip — an instrument that is silent exactly
+     * when it has something to say, which is the shape this file has fixed four times.
+     *
+     * IN THE `finally`, so it prints on EVERY path. The renewal's version sits after the trip
+     * returns and states the rule as "pass or fail"; here the rule has to be stronger, because
+     * this path has four verdict branches and a login can also throw — and the 08-20 event
+     * that motivates the whole thing did not end in a tidy return, it ended in a guard kill.
+     * A reading gated on the login succeeding would miss every expensive trip.
+     *
+     * (It cannot cover the guard kill itself: that takes the process, so no `finally` runs.
+     * The memory series remains the only witness to those.)
+     *
+     * BEFORE the RAM read too — the screenshot and the reports above have already run, so a
+     * few megabytes of theirs are inside this window. Against a trip measured in gigabytes
+     * that is noise, and moving the reading earlier would cost the throw path entirely.
+     */
+    if (sampling.ok) {
+      const profAfter = await readNativeProfile(sampler);
+      const freeAfterMb = Math.round(os.freemem() / (1024 * 1024));
+      log(renderProfile(diffProfiles(profBefore, profAfter), freeAfterMb - freeBeforeMb));
+    } else {
+      log(`  native allocation: not sampled (${sampling.why})`);
+    }
     // THE RECLAIM, and it is the whole mechanism. A renderer's memory dies with its page, so
     // this close is what hands back whatever the Okta navigation allocated. In a `finally` so
     // a thrown login, a failed screenshot or a failed report can never leave the tab — and on
