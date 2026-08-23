@@ -316,48 +316,146 @@ test('a profile with no modules field still reads, unresolved', async () => {
 const KW = readFileSync('scripts/auto-cart-bot/rc-keepwarm.mjs', 'utf8');
 const code = KW.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
 
-test('sampling starts on the TAB, before the trip', () => {
-  // `Memory.startSampling` is per-renderer and the trip runs in the throwaway tab, not on the
-  // resident page. Starting it on the wrong page profiles a renderer where nothing happens.
-  const start = code.indexOf('startNativeSampling(sampler)');
-  const trip = code.indexOf('withNetworkTrace(tab,');
-  assert.ok(start > -1, 'sampling must be started');
-  assert.ok(trip > start, 'and started BEFORE the Okta trip, not after it');
-  const attach = code.indexOf('ctx.newCDPSession(tab)');
-  assert.ok(attach > -1 && attach < start, 'the CDP session must be bound to the tab');
+/**
+ * EVERY ANCHOR BELOW OCCURS TWICE, SO EVERY TEST IS SCOPED TO ONE CALL SITE.
+ *
+ * There are two now — the renewal's tab and the auto-login's — and `maybeAutoLogin` comes
+ * FIRST in the file. `startNativeSampling(sampler)`, `ctx.newCDPSession(tab)`, `profBefore`
+ * and `renderProfile(` are each present in both, so a bare `indexOf` reads the auto-login's
+ * copy while claiming to test the renewal's, and the renewal guards pass against a renewal
+ * that no longer samples anything.
+ *
+ * That is the twenty-first instance of a guard anchoring on a token that occurs twice — and
+ * this time the second occurrence was added BY the change these guards exist to protect,
+ * which is precisely how the shape keeps recurring. Verified: without the scoping, all three
+ * renewal tests pass with the renewal's sampling deleted.
+ */
+function scope(label: string, from: string, to: string | null): string {
+  const a = code.indexOf(from);
+  assert.ok(a > -1, `${label}: start anchor not found (${from}) — re-anchor, do not delete`);
+  const b = to ? code.indexOf(to, a + from.length) : -1;
+  assert.ok(!to || b > a, `${label}: end anchor not found (${to})`);
+  return code.slice(a, b > a ? b : undefined);
+}
+
+/** `maybeAutoLogin`'s body: its declaration to the first `}` in column 0. */
+const AUTOLOGIN = scope('maybeAutoLogin', 'async function maybeAutoLogin(', '\n}\n');
+/** The renewal's tab block. `mark('renew:open-tab')` is unique to it. */
+const RENEWAL = scope('the renewal', "mark('renew:open-tab')", null);
+
+test('the two call sites are genuinely distinct regions', () => {
+  // If this ever fails, the scoping above has silently collapsed and every test below is
+  // reading one call site twice.
+  assert.ok(!AUTOLOGIN.includes("mark('renew:open-tab')"),
+    'the auto-login region must not swallow the renewal');
+  assert.ok(!RENEWAL.includes('async function maybeAutoLogin('),
+    'the renewal region must not swallow the auto-login');
 });
 
-test('a BEFORE reading is taken and diffed', () => {
-  // Whether a new tab gets its own renderer or shares the resident page's is NOT established.
-  // If it shares one, an all-time profile carries hours of the resident page's history and
-  // would report it as this trip's. Diffing is correct either way.
-  const before = code.indexOf('profBefore');
-  const trip = code.indexOf('withNetworkTrace(tab,');
-  assert.ok(before > -1 && before < trip, 'the before-reading must precede the trip');
-  assert.match(code, /diffProfiles\(profBefore, profAfter\)/,
-    'the two readings must be diffed, or the line reports the browser\'s whole life');
+for (const [label, region, trip] of [
+  ['the renewal', RENEWAL, 'withNetworkTrace(tab,'],
+  ['the auto-login', AUTOLOGIN, 'attemptLogin(ctx, tab,'],
+] as const) {
+  test(`${label}: sampling starts on the TAB, before the trip`, () => {
+    // `Memory.startSampling` is per-renderer and the trip runs in the throwaway tab, not on
+    // the resident page. Starting it on the wrong page profiles a renderer where nothing
+    // happens.
+    const start = region.indexOf('startNativeSampling(sampler)');
+    const at = region.indexOf(trip);
+    assert.ok(start > -1, 'sampling must be started');
+    assert.ok(at > -1, `could not find the trip (${trip})`);
+    assert.ok(at > start, 'and started BEFORE the Okta trip, not after it');
+    const attach = region.indexOf('ctx.newCDPSession(tab)');
+    assert.ok(attach > -1 && attach < start, 'the CDP session must be bound to the tab');
+  });
+
+  test(`${label}: a BEFORE reading is taken and diffed`, () => {
+    // Whether a new tab gets its own renderer or shares the resident page's is NOT
+    // established. If it shares one, an all-time profile carries hours of the resident page's
+    // history and would report it as this trip's. Diffing is correct either way.
+    const before = region.indexOf('profBefore');
+    const at = region.indexOf(trip);
+    assert.ok(before > -1 && before < at, 'the before-reading must precede the trip');
+    assert.match(region, /diffProfiles\(profBefore, profAfter\)/,
+      'the two readings must be diffed, or the line reports the browser\'s whole life');
+  });
+
+  test(`${label}: the reading is printed pass or fail`, () => {
+    // The trips that ramp are the FAILING ones — all five guard firings were mid-renewal, and
+    // the 9.4 GB auto-login ended in a guard kill. A reading logged only on success would
+    // miss every event it was built for.
+    //
+    // PIN THE CONDITION, NOT A LIST OF SHAPES IT MIGHT TAKE. An earlier version scanned the
+    // 400 characters before the call for guessed patterns and PASSED against
+    // `if (sampling.ok && r?.renewed === true)` — the exact regression it exists for. The
+    // honest assertion is that the render is gated on whether we SAMPLED and nothing else.
+    const at = region.indexOf('renderProfile(');
+    assert.ok(at > -1, 'the profile must be rendered');
+    const ifAt = region.lastIndexOf('if (', at);
+    assert.ok(ifAt > -1 && ifAt < at, 'the render must sit inside a conditional we can read');
+    const cond = region.slice(ifAt + 4, region.indexOf(') {', ifAt));
+    assert.equal(cond.trim(), 'sampling.ok',
+      'the profile line may be gated ONLY on whether sampling started — gating it on the '
+      + `login or renewal succeeding would miss every event it was built for. Found: ${cond}`);
+  });
+}
+
+// ── 5b. The auto-login's own constraints ──────────────────────────────────────────────────
+//
+// The sampler shipped wired to the RENEWAL only, which is the CHEAP Okta trip (140-350 MB
+// normally, 2.3 GB at worst). This path is the expensive one — 9.4 GB over twelve minutes on
+// 2026-08-20, because okta=GONE forces the full password form — and nothing was measuring it.
+
+test('the auto-login reads the profile BEFORE closing the tab', () => {
+  // `tab.close()` destroys the renderer whose profile this is. Reading after it asks a dead
+  // target and returns null on every trip — an instrument silent exactly when it has something
+  // to say, which is the shape this file has fixed four times.
+  // THE **AFTER** READING, for the same reason as the test below: `readNativeProfile(` also
+  // matches the before-reading taken up by the tab, hundreds of lines before any close, which
+  // makes `read < close` trivially true and the guard inert. It survived exactly that mutation
+  // once (verified) before being anchored properly — the twenty-second instance of this shape,
+  // and the second in this file in one sitting.
+  const read = AUTOLOGIN.indexOf('const profAfter = await readNativeProfile(');
+  const close = AUTOLOGIN.indexOf('tab.close()');
+  assert.ok(read > -1, 'the after-reading must be taken');
+  assert.ok(close > -1, 'the tab must still be closed');
+  assert.ok(read < close, 'the profile must be read while the renderer still exists');
 });
 
-test('the reading is printed pass or fail', () => {
-  // The failing renewals are the ones that ramp — all five guard firings were mid-renewal — so
-  // a reading logged only on success would miss every event it was built for. Same rule the
-  // network trace above it already follows.
-  //
-  // PIN THE CONDITION, NOT A LIST OF SHAPES IT MIGHT TAKE. The first version scanned the 400
-  // characters before the call for a handful of guessed patterns, and PASSED against
-  // `if (sampling.ok && r?.renewed === true)` — the exact regression it exists for, because
-  // that shape was not one of the ones guessed (verified). Twenty-first time a guard here has
-  // anchored on the wrong thing. The honest assertion is that the render is gated on whether
-  // we SAMPLED and on nothing else.
-  const at = code.indexOf('renderProfile(');
-  assert.ok(at > -1, 'the profile must be rendered');
-  const ifAt = code.lastIndexOf('if (', at);
-  assert.ok(ifAt > -1 && ifAt < at, 'the render must sit inside a conditional we can read');
-  const cond = code.slice(ifAt + 4, code.indexOf(') {', ifAt));
-  assert.equal(cond.trim(), 'sampling.ok',
-    'the profile line may be gated ONLY on whether sampling started — gating it on the '
-    + 'renewal succeeding would miss every event it was built for, since the renewals that '
-    + `ramp are the failing ones. Found: ${cond}`);
+test('the auto-login reading is in the finally, so a throw cannot skip it', () => {
+  // Four verdict branches AND a login that can throw. The 08-20 event did not end in a tidy
+  // return, and a reading placed after `attemptLogin` returns would miss the expensive trips.
+  const fin = AUTOLOGIN.indexOf('} finally {');
+  // THE **AFTER** READING SPECIFICALLY. `readNativeProfile(` appears twice in this region —
+  // the before-reading is taken up by the tab, long before the finally — so a bare indexOf
+  // matches the wrong one and the assertion inverts. Caught by it failing at baseline.
+  const read = AUTOLOGIN.indexOf('const profAfter = await readNativeProfile(');
+  assert.ok(fin > -1, 'the tab teardown must stay in a finally');
+  assert.ok(read > -1, 'the after-reading must be taken');
+  assert.ok(read > fin, 'the reading must sit inside it, not in a branch that a throw skips');
+});
+
+test('the auto-login pairs the reading with a free-RAM delta', () => {
+  // A sampler figure with no RAM pair is the artifact that nearly retired the buffering
+  // candidate on 2026-08-19: a trace of a navigation that never ramped says nothing about the
+  // leak, and without the pairing there is no way to tell which kind of reading you hold.
+  assert.match(AUTOLOGIN, /const freeBeforeMb = Math\.round\(os\.freemem\(\)/,
+    'a before-reading of free RAM must be taken');
+  assert.match(AUTOLOGIN, /renderProfile\(diffProfiles\([^;]*?\),\s*freeAfterMb - freeBeforeMb\)/,
+    'and the delta must actually be passed to the render, not merely computed — a RAM figure '
+    + 'that is measured and dropped is the same reading as no RAM figure at all');
+  const ramBefore = AUTOLOGIN.indexOf('const freeBeforeMb');
+  const trip = AUTOLOGIN.indexOf('attemptLogin(ctx, tab,');
+  assert.ok(ramBefore > -1 && ramBefore < trip,
+    'the RAM before-reading must precede the login, or it brackets the wrong window');
+});
+
+test('os.freemem is used, never a PowerShell process scan', () => {
+  // `rcFamilyMb()` spawns a child, and spawning is exactly what fails as COMMIT passes ~95% —
+  // an instrument that goes quiet as the emergency peaks reports the emergency as calm.
+  const win = AUTOLOGIN.slice(AUTOLOGIN.indexOf('} finally {'));
+  assert.ok(!/rcFamilyMb/.test(win),
+    'the teardown must not spawn a process to measure memory');
 });
 
 test('a browser that will not sample says so, and does not stop the renewal', () => {
