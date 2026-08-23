@@ -73,11 +73,21 @@ sign-in. Both are in `CLAUDE.md` now.
 >                             bot-side changes, with 1 hold(s) queued.
 > ```
 >
-> **This was caused deliberately-ish and it is harmless.** #160 is bot-side, and it was merged
-> while the test hold was queued — which is the one configuration `bot_version` fails on, by
-> design. **The entire gap is `rc-native-sampler.mjs`, a diagnostic**; `rc-keepwarm.mjs` and
-> every line of the cart path are byte-identical on both sides. There is no version of
-> tomorrow's cart that this affects.
+> **This was caused deliberately-ish and it is harmless.** #160 and #163 are bot-side, and both
+> were merged while the test hold was queued — which is the one configuration `bot_version`
+> fails on, by design.
+>
+> **CORRECTED: the gap is no longer diagnostic-only in the file sense.** An earlier version of
+> this note said *"`rc-keepwarm.mjs` and every line of the cart path are byte-identical on both
+> sides"*, and #163 made that false within the hour by wiring the sampler into
+> `maybeAutoLogin`. What is still true is the thing that matters: **the change is confined to
+> `maybeAutoLogin`, adds no logic to the login itself, and every call it adds is bounded (5s)
+> and returns a null rather than throwing.** Its cost on the release-critical path is at worst
+> ~15s of CDP calls against a 30-minute lead.
+>
+> **And tomorrow's cart runs the OLD code either way**, because the box is frozen until the
+> hold clears — so neither PR can affect it. The risk is deferred to whenever the box next
+> updates, which is after the test, which is the right order.
 >
 > It clears the moment the box updates, which cannot happen until the hold clears (~08:15 PT).
 > **The check is right and the merge ordering was the mistake** — bot-side code should land
@@ -152,11 +162,23 @@ was the shape a real ramp would have arrived in.
 **#160 IS BOT-SIDE AND THE BOX CANNOT UPDATE WHILE THE TEST HOLD IS QUEUED.** Push it after the
 hold clears (~08:15 PT).
 
-**THE TEST HOLD WILL NOT PRODUCE A READING, AND THIS IS THE THING NOT TO GET WRONG.**
-`startNativeSampling` has ONE call site — the renewal's throwaway tab. `maybeAutoLogin` and the
-rehearsal are not sampled at all, and if T−30 mints a token then `planRenewal` stands down for
-the hour. Wiring the sampler into `maybeAutoLogin` is the obvious next move and would put the
-biggest trip there is (the 9.4 GB password sign-in) under measurement.
+**THE AUTO-LOGIN IS SAMPLED NOW TOO (#163).** The sampler had ONE call site — the renewal's
+throwaway tab, which is the *cheap* Okta trip (140–350 MB, 2.3 GB at worst). `maybeAutoLogin` is
+the expensive one, **9,434 MB over twelve minutes on 2026-08-20** because `okta=GONE` forces the
+full password form, and nothing was measuring it. It now attaches CDP to its throwaway tab and
+reads in the `finally` **before** `tab.close()` — closing destroys the renderer whose profile it
+is — paired with an `os.freemem()` delta so a non-ramping trip cannot be misread as a negative.
+
+It cannot cover a RAM-guard kill, which takes the process. The memory series is still the only
+witness to those.
+
+**THE TEST HOLD STILL WILL NOT PRODUCE A READING**, for a different reason now: the box is
+frozen while a hold is queued, so tomorrow morning runs the pre-#163 code. The first auto-login
+reading comes from the release *after* the box updates.
+
+**Still unsampled: the rehearsal** (it navigates the resident page) — and no `withNetworkTrace`
+on the auto-login, which would test the buffering candidate on the biggest navigation there is.
+That is the obvious next instrument.
 
 **How to read the first real one:**
 
