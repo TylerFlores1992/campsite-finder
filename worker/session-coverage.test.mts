@@ -117,7 +117,11 @@ test('maybeAutoLogin actually PASSES sufficient to attemptLogin', () => {
   const fnAt = src.indexOf('async function maybeAutoLogin');
   assert.ok(fnAt > -1, 'maybeAutoLogin must still exist — anchor not found');
   const fn = src.slice(fnAt, src.indexOf('\nasync function ', fnAt + 10));
-  const callAt = fn.indexOf('const r = await attemptLogin(');
+  // ANCHOR ON THE CALLEE, not the assignment. `const r = await attemptLogin(` broke over
+  // unchanged behaviour when the login was wrapped in `withNetworkTrace` and the binding
+  // became `const { result: r, trace: t } = await withNetworkTrace(tab, () => attemptLogin(`.
+  // The callee is what survives wrapping; the assignment form is incidental. Twenty-third time.
+  const callAt = fn.indexOf('attemptLogin(ctx, tab,');
   assert.ok(callAt > -1, 'maybeAutoLogin must still call attemptLogin');
   const opts = fn.slice(callAt, fn.indexOf('});', callAt));
   assert.match(opts, /sufficient:/,

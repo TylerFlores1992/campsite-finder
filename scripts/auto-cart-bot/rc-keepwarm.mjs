@@ -1130,20 +1130,25 @@ async function maybeAutoLogin(ctx, page) {
    * would report it as this trip's. Diffing is correct either way, which beats depending on
    * a fact nobody has measured.
    *
-   * AND THE FREE-RAM PAIR IS TAKEN WITH IT, because a sampler reading with no RAM delta is
-   * exactly the artifact that nearly retired the buffering candidate on 2026-08-19: a trace of
-   * a navigation that never ramped says nothing about the leak, and without the pairing there
-   * is no way to tell which kind of reading you are holding. `os.freemem()` is a syscall, so
-   * unlike `rcFamilyMb()` it keeps answering under the pressure this is here to observe.
+   * AND THE FREE-RAM PAIR COMES FROM THE NETWORK TRACE, which brackets `attemptLogin` alone.
    *
-   * IT BRACKETS THE TAB'S WHOLE LIFE, not just `attemptLogin`, because that is the window the
-   * all-time profile covers. Pairing a tab-lifetime profile with a login-only RAM delta would
-   * be two different windows reported as one measurement.
+   * CORRECTING WHAT THIS COMMENT SAID WHEN THE SAMPLER LANDED. It argued for a pair bracketing
+   * the TAB'S WHOLE LIFE, on the grounds that that is the window the all-time profile covers.
+   * That reasoning missed a step: the `r.ok` branch reloads the RESIDENT page, and that
+   * navigation is inside the tab-lifetime window while being in a different renderer that the
+   * tab's profile does not cover. So the wider window counts RAM the profile cannot see and
+   * inflates the delta against it. The login-only pair is the closer match, and it is what the
+   * renewal already uses.
+   *
+   * A RAM PAIR OF SOME KIND IS NOT OPTIONAL: a sampler reading with no delta is the artifact
+   * that nearly retired the buffering candidate on 2026-08-19 — a trace of a navigation that
+   * never ramped says nothing about the leak, and without the pairing there is no way to tell
+   * which kind of reading you are holding. `os.freemem()` is a syscall, so unlike `rcFamilyMb()`
+   * it keeps answering under the pressure this is here to observe.
    */
   const sampler = await ctx.newCDPSession(tab).catch(() => null);
   const sampling = sampler ? await startNativeSampling(sampler) : { ok: false, why: 'no CDP session' };
   const profBefore = sampling.ok ? await readNativeProfile(sampler) : null;
-  const freeBeforeMb = Math.round(os.freemem() / (1024 * 1024));
 
   lastAutoLoginSkip = null;
   autoLogin.spent += 1;
@@ -1157,8 +1162,36 @@ async function maybeAutoLogin(ctx, page) {
   saveAutoLogin(autoLogin);
   log(`⏰ hold releases in ${mins}m and the session will not cover it — signing in `
     + `(attempt ${autoLogin.spent} of ${AUTOLOGIN_MAX_ATTEMPTS})`);
+  /**
+   * DECLARED OUTSIDE THE `try` so the `finally` can read it. `attemptLogin` is not wrapped in
+   * a catch here — deliberately, because turning a thrown login into `{ ok: false }` would
+   * route it to the `dead` branch, and `dead` is the severity that rings the owner's phone and
+   * prints `rc-login.bat`. That is a change to release-critical behaviour and it is not this
+   * instrument's business to make. So on a throw the trace never closes, `trace` stays null,
+   * and the teardown says so rather than printing a figure it does not have.
+   */
+  let trace = null;
   try {
-  const r = await attemptLogin(ctx, tab, {
+  /**
+   * COUNT THE BYTES ON THE BIGGEST OKTA NAVIGATION THERE IS — see okta-net-trace.mjs.
+   *
+   * "Network/IPC buffering" has been the leading explanation in three separate CLAUDE.md
+   * entries and has never once been tested, though it is directly observable: non-JS memory
+   * growing by gigabytes in the renderer AND the browser process is the shape of a huge or
+   * looping response. The renewal has been traced since 2026-08-19; this path — twelve minutes
+   * and 9.4 GB on 08-20, the largest event ever measured here — never was.
+   *
+   * A NEGATIVE IS THE POINT, and it is worth more here than on the renewal: small numbers
+   * against a multi-gigabyte ramp eliminate the whole buffering family on the very trip that
+   * makes the strongest case for it.
+   *
+   * ON THE TAB, so the listener dies with the tab and cannot accumulate a record per response
+   * for the life of the resident page — a small leak added by the thing investigating a large
+   * one. Responses are counted, never read: `response.body()` would buffer the payload into
+   * this process, which on a page suspected of moving hundreds of megabytes is the cure
+   * arriving as part of the disease.
+   */
+  const { result: r, trace: t } = await withNetworkTrace(tab, () => attemptLogin(ctx, tab, {
     // THE DEADLINE, HANDED TO THE THING THAT SHORT-CIRCUITS ON IT. Without this,
     // `attemptLogin` accepts any live session and reports the hold covered — which is
     // precisely how 2026-08-15 was lost, with this function's own arithmetic saying the
@@ -1182,7 +1215,8 @@ async function maybeAutoLogin(ctx, page) {
     // would answer for whichever origin IT happens to be on, which is not where the login is.
     isLive: async () => (await sessionLive(ctx, tab)).live === true,
     log,
-  });
+  }));
+  trace = t;
   if (r.ok) {
     // SAY WHAT THE TOKEN ACTUALLY IS, rather than asserting the outcome. "the hold is
     // covered" was printed on 2026-08-15 over a session that died seven minutes before the
@@ -1307,10 +1341,23 @@ async function maybeAutoLogin(ctx, page) {
      * few megabytes of theirs are inside this window. Against a trip measured in gigabytes
      * that is noise, and moving the reading earlier would cost the throw path entirely.
      */
+    // ALWAYS PRINTED, pass or fail, and for a sharper reason than the renewal's: the login
+    // that ramps 9.4 GB is by definition the one that did NOT return a healthy session, so a
+    // trace logged only on success would miss every event it was built for.
+    //
+    // A THROW LEAVES NO TRACE, and that says so rather than printing nothing — silence here
+    // would be indistinguishable from a trip that moved no bytes, which is the one reading
+    // that would falsely eliminate the buffering candidate.
+    log(trace
+      ? `  ${describeTrace(trace)}`
+      : '  network trace: unavailable — the sign-in threw before the trace closed');
     if (sampling.ok) {
       const profAfter = await readNativeProfile(sampler);
-      const freeAfterMb = Math.round(os.freemem() / (1024 * 1024));
-      log(renderProfile(diffProfiles(profBefore, profAfter), freeAfterMb - freeBeforeMb));
+      // FROM THE TRACE, so the profile and the RAM delta describe the same window. See the
+      // correction where sampling starts: a tab-lifetime pair would include the resident-page
+      // reload, which this profile cannot see.
+      const ram = trace?.ram ? trace.ram.afterMb - trace.ram.beforeMb : null;
+      log(renderProfile(diffProfiles(profBefore, profAfter), ram));
     } else {
       log(`  native allocation: not sampled (${sampling.why})`);
     }

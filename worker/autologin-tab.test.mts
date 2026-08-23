@@ -210,7 +210,11 @@ test('the budget is stamped and written BEFORE the attempt, not after', () => {
   const body = autoLoginBody();
   const stamp = body.indexOf('autoLogin.startedAt = Date.now()');
   const save = body.indexOf('saveAutoLogin(autoLogin)');
-  const attempt = body.indexOf('await attemptLogin(');
+  // ANCHOR ON THE CALLEE, not on the shape of the call. This read `await attemptLogin(` and
+  // broke over unchanged behaviour when the login was wrapped in `withNetworkTrace` — the
+  // await moved to the wrapper and the assertion could no longer find the login at all.
+  // `attemptLogin(ctx, tab,` is what stays true however the call is wrapped or assigned.
+  const attempt = body.indexOf('attemptLogin(ctx, tab,');
   assert.ok(stamp > -1 && save > -1 && attempt > -1, 'all three anchors must be found');
   assert.ok(stamp < attempt, 'the in-flight mark is set before the login runs');
   assert.ok(save < attempt, 'and persisted before it runs, or a kill leaves no record');

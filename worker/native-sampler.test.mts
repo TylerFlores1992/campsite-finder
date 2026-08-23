@@ -435,27 +435,91 @@ test('the auto-login reading is in the finally, so a throw cannot skip it', () =
   assert.ok(read > fin, 'the reading must sit inside it, not in a branch that a throw skips');
 });
 
-test('the auto-login pairs the reading with a free-RAM delta', () => {
+test('the auto-login pairs the reading with a RAM delta, taken from the trace', () => {
   // A sampler figure with no RAM pair is the artifact that nearly retired the buffering
   // candidate on 2026-08-19: a trace of a navigation that never ramped says nothing about the
   // leak, and without the pairing there is no way to tell which kind of reading you hold.
-  assert.match(AUTOLOGIN, /const freeBeforeMb = Math\.round\(os\.freemem\(\)/,
-    'a before-reading of free RAM must be taken');
-  assert.match(AUTOLOGIN, /renderProfile\(diffProfiles\([^;]*?\),\s*freeAfterMb - freeBeforeMb\)/,
-    'and the delta must actually be passed to the render, not merely computed — a RAM figure '
-    + 'that is measured and dropped is the same reading as no RAM figure at all');
-  const ramBefore = AUTOLOGIN.indexOf('const freeBeforeMb');
-  const trip = AUTOLOGIN.indexOf('attemptLogin(ctx, tab,');
-  assert.ok(ramBefore > -1 && ramBefore < trip,
-    'the RAM before-reading must precede the login, or it brackets the wrong window');
+  //
+  // FROM THE TRACE, which brackets `attemptLogin` alone. A tab-lifetime pair — which is what
+  // this originally used — spans the resident-page reload in the `r.ok` branch, and that
+  // navigation is in a DIFFERENT renderer that the tab's profile cannot see, so the wider
+  // window counts RAM the profile does not and inflates the delta against it.
+  assert.match(AUTOLOGIN, /const ram = trace\?\.ram \? trace\.ram\.afterMb - trace\.ram\.beforeMb : null;/,
+    'the delta must come from the trace, which brackets the login');
+  assert.match(AUTOLOGIN, /renderProfile\(diffProfiles\([^;]*?\),\s*ram\)/,
+    'and it must actually be passed to the render, not merely computed — a RAM figure that is '
+    + 'measured and dropped is the same reading as no RAM figure at all');
 });
 
 test('os.freemem is used, never a PowerShell process scan', () => {
   // `rcFamilyMb()` spawns a child, and spawning is exactly what fails as COMMIT passes ~95% —
   // an instrument that goes quiet as the emergency peaks reports the emergency as calm.
+  // `withNetworkTrace` takes its pair with `os.freemem()`, a syscall, for that reason.
   const win = AUTOLOGIN.slice(AUTOLOGIN.indexOf('} finally {'));
   assert.ok(!/rcFamilyMb/.test(win),
     'the teardown must not spawn a process to measure memory');
+});
+
+// ── 5c. The network trace on the auto-login ───────────────────────────────────────────────
+//
+// "Network/IPC buffering" is the leading explanation in three CLAUDE.md entries and has never
+// been tested. The renewal has been traced since 2026-08-19; this path — 9.4 GB over twelve
+// minutes on 08-20, the largest event ever measured here — never was, which is the trip that
+// makes the strongest case for the candidate.
+
+test('the auto-login counts the bytes, on the TAB', () => {
+  // On the tab so the listener dies with it. Attached to the resident page it would accumulate
+  // a record per response for the life of the browser — a small leak added by the thing
+  // investigating a large one.
+  assert.match(AUTOLOGIN, /withNetworkTrace\(tab, \(\) => attemptLogin\(ctx, tab,/,
+    'the login must be wrapped in the trace, on the tab it runs in');
+});
+
+test('the trace is logged pass or fail', () => {
+  // The login that ramps 9.4 GB is by definition the one that did NOT return a healthy
+  // session, so a trace logged only on success misses every event it was built for. It sits
+  // in the finally with the sampler reading, above the close.
+  const fin = AUTOLOGIN.indexOf('} finally {');
+  const at = AUTOLOGIN.indexOf('describeTrace(trace)');
+  assert.ok(at > -1, 'the trace must be rendered');
+  assert.ok(at > fin, 'and from the finally, so no branch or throw can skip it');
+  assert.ok(at < AUTOLOGIN.indexOf('tab.close()'), 'before the tab is closed');
+  // PIN THE CONDITION, NOT JUST THE POSITION. Placement alone let a mutation gating the log on
+  // `autoLogin.spent > 0` through this test (it was caught by a sibling, which is luck, not
+  // coverage). The only thing the line may depend on is whether a trace EXISTS.
+  assert.match(AUTOLOGIN, /log\(trace\s*\?\s*`\s*\$\{describeTrace\(trace\)\}`/,
+    'the trace line may be gated only on the trace being present — gating it on the login '
+    + 'succeeding would miss every event it was built for, since the trip that ramps 9.4 GB '
+    + 'is the one that did not return a healthy session');
+});
+
+test('a throw leaves no trace, and the line says so rather than going silent', () => {
+  // Silence here is indistinguishable from a trip that moved no bytes — which is the single
+  // reading that would falsely eliminate the buffering candidate. Same rule as `unknown` never
+  // rounding to `signed-out`.
+  assert.match(AUTOLOGIN, /network trace: unavailable/,
+    'the missing-trace case must announce itself');
+  assert.match(AUTOLOGIN, /let trace = null;/,
+    'and `trace` must be declared outside the try, or the finally cannot read it');
+  const decl = AUTOLOGIN.indexOf('let trace = null;');
+  const tryAt = AUTOLOGIN.indexOf('\n  try {');
+  assert.ok(decl > -1 && tryAt > -1 && decl < tryAt, 'declared before the try, not inside it');
+});
+
+test('a thrown login is NOT converted into a failed one', () => {
+  // The renewal wraps its trip in `.catch(() => null)`. Doing that here would route a thrown
+  // login to the `dead` branch — and `dead` is the severity that rings the owner's phone and
+  // prints `rc-login.bat`, which force-kills the Chromium the token lives in. Changing
+  // release-critical behaviour is not an instrument's business; the throw propagates exactly
+  // as it did before the trace was added.
+  // PIN THE JOIN, NOT THE WHOLE CALL. A first version scanned the entire wrapped expression
+  // for `.catch(` and failed at baseline on the `sufficient` callback's own
+  // `readLiveToken(tab).catch(...)` — a legitimate inner guard on a different call. What must
+  // be free of a catch is the point where `attemptLogin`'s options object closes into
+  // `withNetworkTrace`'s paren.
+  assert.match(AUTOLOGIN, /\}\)\);\s*\n\s*trace = t;/,
+    'the options object must close straight into withNetworkTrace with nothing between — a '
+    + '`.catch` there would turn a thrown login into `{ ok: false }` and route it to `dead`');
 });
 
 test('a browser that will not sample says so, and does not stop the renewal', () => {
