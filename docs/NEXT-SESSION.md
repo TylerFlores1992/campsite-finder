@@ -1,9 +1,45 @@
 # Next session — start here
 
-*Rewritten 2026-08-22 (evening). Two live threads: the memory leak, and the iOS review.
+*Rewritten 2026-08-23. Two live threads: the memory leak, and the iOS review.
 Delete this file once the sampler has produced a reading from a real ramp AND the App Store
 version has a decision. It is a handover, not a permanent doc, and a stale one reads like
 current state.*
+
+---
+
+## ⏰ TIME-SENSITIVE — read before anything else
+
+**A REAL hold releases 2026-08-23 07:59:46 PT** (unit `45719`, `requested`). Real numeric id, so
+a real campsite is in the pipeline.
+
+**The box is missing all three memory instruments, and the window to fix that is short.**
+
+| | |
+|---|---|
+| Master | `57e9d79` |
+| Mini-PC | `e2be117` — **missing #160, #163, #166** |
+| Update gate shuts | **01:59:46 PT** (6h before the release, not liftable) |
+
+What the box does not have:
+
+- **#160** — the sampler resolves addresses to `module+offset`. **Without it a reading names
+  nothing**: Playwright's Windows Chromium exports no internal symbols, and the first real
+  reading off the box (08-22 19:34 PT) came back as four bare hex addresses.
+- **#163** — the auto-login is sampled at all. It is the 9.4 GB trip, and it was the one nothing
+  measured.
+- **#166** — the network trace wraps it too.
+
+**So if the box is not updated before 02:00 PT, tomorrow's trip runs with instruments that are
+either absent or mute.** Updating is `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts` /
+Admin → "Update now"; it takes ~20 seconds now (#149/#150) and nothing else is queued.
+
+**BUT DO NOT EXPECT THE BIG RAMP TOMORROW, and do not read a quiet morning as a cure.** Okta
+expires **18:01 UTC = 11:01 PT**, which is AFTER the 08:00 release — so Okta is alive at T−3h and
+T−30, the warm-up correctly stands down, and the T−30 sign-in is the **cheap cookie-answered**
+kind (11s, +24 MB). The 9.4 GB variant needs `okta=GONE` at T−30.
+
+What tomorrow IS worth: a sampled reading of a **non-ramping** Okta trip, which is the control
+this investigation has never had — and the renewal path is sampled all day regardless.
 
 ---
 
@@ -25,9 +61,9 @@ do after the leak, not stop it from leaking."* They were right.
 
 | | |
 |---|---|
-| Master | `744bc85` |
-| Mini-PC | `e2be117` — **behind master by DOCS ONLY**, nothing bot-side |
-| Open holds | none |
+| Master | `57e9d79` |
+| Mini-PC | `e2be117` — **missing three memory instruments; see the top of this file** |
+| Open holds | **one REAL hold**, unit `45719`, releases 08-23 07:59:46 PT |
 | RC session | **healthy again** — see below |
 
 **THE SESSION REPAIRED ITSELF AT ~20:30 PT ON 08-22, AND THE MECHANISM MATTERS.** It had been
@@ -42,10 +78,15 @@ built to *test* the login — has been the thing that **performed** the repair. 
 the renewal schedule for it.** Crediting a repair to the wrong mechanism has cost this file
 three times.
 
-**THE BOX BEING BEHIND MASTER IS FINE HERE, AND THAT IS A JUDGEMENT, NOT A SHRUG.** Everything
-between `e2be117` and `744bc85` is documentation plus another lane's relay code. The sampler
-landed IN `e2be117`, so the instrument is on the box. Check rather than trust this sentence — a
-sha is cheap and this file has been wrong about one before:
+**~~THE BOX BEING BEHIND MASTER IS FINE HERE~~ — TRUE ON 08-22, FALSE NOW.** That sentence was
+written when the gap was documentation plus another lane's relay code. Three bot-side commits
+have landed since (#160, #163, #166) and the box has none of them, so the gap is now the
+difference between an instrument that names an allocation and one that prints hex. Struck rather
+than deleted, because "the box is behind and that is fine" is exactly the sentence a later reader
+would quote to skip an update that matters.
+
+Check rather than trust any sha in this file — it is cheap, and this file has been wrong about
+one before:
 
 ```
 NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status
@@ -135,7 +176,7 @@ does not. Do not repeat that inference.
 
 ---
 
-## Track A — name it (MERGED, #155, live on the box)
+## Track A — name it (MERGED; #155 is on the box, #160/#163/#166 are NOT)
 
 `scripts/auto-cart-bot/rc-native-sampler.mjs`, wired into the renewal's Okta trip.
 

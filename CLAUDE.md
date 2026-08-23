@@ -2635,32 +2635,27 @@ did not move**: `13:53:31` printed at 02:02, 02:05, 02:07, 02:09, 02:29, 02:44, 
 
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-22 evening). **TWO live threads.**
+> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23). **TWO live threads, and one
+> TIME-SENSITIVE item at the top of that file.**
+>
+> **0. A REAL HOLD RELEASES 2026-08-23 07:59:46 PT** (unit `45719`), and the box is on
+> `e2be117` — **missing #160, #163 and #166**, i.e. the Windows `module+offset` fix without
+> which a sampler reading names NOTHING, plus the auto-login sampling and its network trace.
+> **The 6h update gate shuts at 01:59:46 PT and is not liftable.** Expect no big ramp tomorrow
+> regardless — Okta expires 11:01 PT, after the release, so the T−30 sign-in is the cheap
+> cookie-answered kind and the warm-up correctly stands down.
 >
 > **1. THE LEAK, and the owner's standing ask is to FIX it — it is NOT fixed.** Everything
-> shipped is containment or relocation, which that file says in its first paragraph so nobody
-> reads five green instruments as a cure. **#155 — the native memory sampler, the instrument
-> that NAMES the allocation — is MERGED and live on the box, so the next ramp is measured
-> automatically.** The cure, **Track B** (replay the Okta round trip over `ctx.request`, no
-> renderer), is designed and deliberately NOT started: it is surgery on the release-critical
-> login path and the sampler's first reading could change its design.
+> shipped is containment or relocation. The cure, **Track B** (replay the Okta round trip over
+> `ctx.request`, no renderer), is designed and deliberately NOT started: it is surgery on the
+> release-critical login path and the sampler's first real reading could change its design.
 >
 > **2. iOS REVIEW.** `1.0 (5)` resubmitted 2026-08-22 with corrected notes, same binary — see
 > `docs/APP-STORE.md` §2d. **Release is AUTOMATIC**, so approval puts it live with no human
 > step. **A 3.1.1 rejection now is the ANSWER, not a fourth process failure**: it is the first
-> submission where the reviewer can actually reach a link-out, so a refusal moves the decision
-> to StoreKit rather than to another notes round.
+> submission where the reviewer can actually reach a link-out.
 >
-> Master is **`744bc85`**; the box is `e2be117`, behind by DOCS ONLY. **#160** (the sampler
-> naming nothing on Windows) and **#146** (worker-deploy paths) are open.
->
-> **#156/#69/#51 WERE CALLED "STALE DOCS PRS WORTH CLOSING" AND ALL THREE CARRIED REAL,
-> UNINCORPORATED FINDINGS.** Closing them unread would have deleted a correction that
-> `CLAUDE.md` is still wrong without (Feature E is *not* fully stopped) and a measurement on an
-> open question (the Okta cap does not reset across a sign-in). Folded in above 2026-08-22 and
-> closed with a pointer to where they landed. **"Stale" is a judgement about CONTENT, not
-> about age** — read a docs PR before retiring it, or the next reader re-derives it, which is
-> exactly what happened to the Feature E finding three times.
+> Master is **`57e9d79`**. #146 (worker-deploy paths) and #165 (side-lane notes) are open.
 > **Delete that file once the sampler has a reading from a real ramp AND the App Store version
 > has a decision**; it is a handover, not a permanent doc, and a stale one would read like
 > current state.
