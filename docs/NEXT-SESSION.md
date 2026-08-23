@@ -1,7 +1,9 @@
 # Next session — start here
 
-*Rewritten 2026-08-23 (evening). The session's task is the TWO APP FIXES at the top. The leak
-and the iOS review are the standing threads behind them.
+*Rewritten 2026-08-23, late evening, after a merge-and-update session. **The task is now the
+LEAK** — everything else on the previous handover is closed: the two app fixes shipped, the box
+is current, and no pull requests are open. The iOS review is the other standing thread.*
+*
 Delete this file once the sampler has produced a reading from a real ramp AND the App Store
 version has a decision. It is a handover, not a permanent doc, and a stale one reads like
 current state.*
@@ -20,6 +22,13 @@ capture, so all three "have we got a session?" reads in the in-app sign-in were 
 false — and the success loop therefore reported `ok:false, "signed in but no session
 appeared"` **over a sign-in that had worked**. The reporter owns that signal now. See
 CLAUDE.md's 2026-08-23 entry.
+
+**THE BOX IS CURRENT AND EVERYTHING IS MERGED (2026-08-23 evening).** #171 (these fixes), #169
+(sampler persistence) and #146 (worker-deploy paths) are all on master, and the mini-PC ran
+`6d4100b` at 20:41 UTC with the note `updated and verified` — 23 seconds from request to
+applied. **#169 is live, so ramp #23 will be attributed** rather than lost to a 16k-truncated
+log. #168 was closed as superseded; its correction had already landed via #165/#170 and the
+reasoning is on the PR, so it does not read as a finding dropped in a merge.
 
 **The standing ask is unchanged and unmet: the leak is not fixed.** Everything below still
 applies.
@@ -108,8 +117,9 @@ do after the leak, not stop it from leaking."* They were right.
 
 | | |
 |---|---|
-| Master | `e488136` (#169 and #170 merged 2026-08-23) |
-| Mini-PC | `57e9d79` — **#169 is merged and NOT yet on the box; push it or the next ramp's attribution is lost like the last two** |
+| Master | `6d4100b` (#171, #169, #146 all merged 2026-08-23) |
+| Mini-PC | `6d4100b` — **current; every memory instrument is live, #169 included** |
+| Open PRs | **none** |
 | Open holds | none |
 | RC session | dead, but **Okta ALIVE** — so a repair is the cheap kind |
 
@@ -126,7 +136,18 @@ finding from 08-22 recurring. Okta is alive, so the repair is the 11-second cook
 kind; the renewal cannot shift it on its own, and the 20:00 rehearsal has twice been the thing
 that actually fixed it.
 
-**Still open:** **#146** (worker-deploy paths — restarts both pollers, so pick a quiet moment).
+**Nothing is open.** The worker was verified healthy after each deploy rather than assumed:
+`last beat 4s ago, 2/2 shard(s) held`.
+
+**AND A FIXTURE CAN STILL TURN `autocart.rc_session` RED.** Merging fires CI, CI runs
+`npm test` against the production DB, and the check went **warn → fail** citing *"4 hold(s)
+ahead and the next is within 25 min"* — four sentinel fixtures, gone ninety seconds later. The
+2026-08-18 `REAL_UNIT` fix went into `nextHoldRelease` and `holdAtRisk`; **the health route
+calls neither** and carries its own unfiltered `upcoming`/`imminent` counts. The phone is safe
+(`holdAtRisk` IS filtered), the dashboard is not — and while it lasts it prints the destructive
+`rc-login.bat` remedy over a session with nothing wrong with it. Bounded to the length of a
+test run. **Recorded, not fixed**; see CLAUDE.md. The honest fix is one definition instead of
+three, and that is a deliberate change to a safety-critical path, not a drive-by.
 **#169 is MERGED** — what remains is getting it onto the box.
 
 ---
@@ -166,8 +187,8 @@ looked, the only sampler lines left were from navigations that did NOT ramp (7 M
 53 MB) — which the three-way verdict correctly refuses to draw conclusions from.
 
 `chromium_memory_samples` survived those same two events by being in Postgres. **PR #169** is
-that fix applied to the other half (migration 066, already applied to production). **Merge it
-and update the box, or ramp number twenty-three is lost the same way.**
+that fix applied to the other half (migration 066). **It is merged and ON THE BOX as of
+2026-08-23 evening, so ramp number twenty-three is the first that will be attributed.**
 
 **Established.** The ramp is triggered by the **Okta navigation**. That is a controlled
 comparison, not a correlation — 2026-08-18, three token-less renewals ten minutes apart, same
@@ -198,7 +219,7 @@ does not. Do not repeat that inference.
 
 ---
 
-## Track A — name it (MERGED; #155 is on the box, #160/#163/#166 are NOT)
+## Track A — name it (MERGED; #155, #160, #163, #166 and #169 are ALL on the box)
 
 `scripts/auto-cart-bot/rc-native-sampler.mjs`, wired into the renewal's Okta trip.
 
@@ -222,8 +243,8 @@ bases move under ASLR; offsets do not) and symbolizable offline via the module `
 That navigation did not ramp, so its numbers meant nothing and the trace said so. What it showed
 was the shape a real ramp would have arrived in.
 
-**#160 IS BOT-SIDE AND THE BOX CANNOT UPDATE WHILE THE TEST HOLD IS QUEUED.** Push it after the
-hold clears (~08:15 PT).
+**#160 IS ON THE BOX**, confirmed by the 2026-08-23 evening update, so the next reading
+resolves to `module+0xoffset` rather than the bare hex that named nothing on 08-22.
 
 **THE AUTO-LOGIN IS SAMPLED NOW TOO (#163).** The sampler had ONE call site — the renewal's
 throwaway tab, which is the *cheap* Okta trip (140–350 MB, 2.3 GB at worst). `maybeAutoLogin` is
@@ -235,9 +256,11 @@ is — paired with an `os.freemem()` delta so a non-ramping trip cannot be misre
 It cannot cover a RAM-guard kill, which takes the process. The memory series is still the only
 witness to those.
 
-**THE TEST HOLD STILL WILL NOT PRODUCE A READING**, for a different reason now: the box is
-frozen while a hold is queued, so tomorrow morning runs the pre-#163 code. The first auto-login
-reading comes from the release *after* the box updates.
+**THE BOX IS NO LONGER THE BLOCKER.** It has run `6d4100b` since 2026-08-23 20:41 UTC, so
+#163's auto-login sampling and #169's persistence are both live. What remains is simply
+**waiting for a ramp** — the next `maybeAutoLogin` with `okta=GONE`, or the T−3h warm-up on the
+next queued hold, whichever comes first. Read it out of Postgres, not the log:
+`NODE_USE_ENV_PROXY=1 npx tsx scripts/native-alloc-readout.mts`.
 
 **Still unsampled: the rehearsal** (it navigates the resident page) — and no `withNetworkTrace`
 on the auto-login, which would test the buffering candidate on the biggest navigation there is.
