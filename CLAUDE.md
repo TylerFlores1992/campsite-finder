@@ -2638,10 +2638,17 @@ did not move**: `13:53:31` printed at 02:02, 02:05, 02:07, 02:09, 02:29, 02:44, 
 > **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23). **TWO live threads, and one
 > TIME-SENSITIVE item at the top of that file.**
 >
-> **0. A REAL HOLD RELEASES 2026-08-23 07:59:46 PT** (unit `45719`), and the box is on
-> `e2be117` — **missing #160, #163 and #166**, i.e. the Windows `module+offset` fix without
-> which a sampler reading names NOTHING, plus the auto-login sampling and its network trace.
-> **The 6h update gate shuts at 01:59:46 PT and is not liftable.** Expect no big ramp tomorrow
+> **0. A REAL HOLD RELEASES 2026-08-23 07:59:46 PT** (unit `45719`). **UPDATE 2026-08-23
+> 06:43 UTC (side-lane notes, #165 — never folded into this file or NEXT-SESSION.md until
+> now): the box updated at 23:12:03 PT and took #160, #163 AND #166 in one go, confirmed by
+> `git-status` — it is NOT missing them.** A requested update lifts the 02:00–05:00 quiet
+> window (`safeToUpdate` gates it on `!requested`); only the 6h release check is unliftable,
+> and that arithmetic was never the problem — the box simply updated before this file's
+> "missing #160/#163/#166" paragraph (written earlier the same evening) was corrected.
+> **Confirmed independently by this session's own `autocart.rc_health` reading, live**:
+> `autocart.bot_version` reports `mini-PC is on 57e9d79; web is on 1cf83a2 — no bot-side code
+> in the gap` (checked 2026-08-23 ~14:15 UTC / 07:15 PT, less than an hour before the
+> release). So all three memory instruments are live for today's hold. Expect no big ramp
 > regardless — Okta expires 11:01 PT, after the release, so the T−30 sign-in is the cheap
 > cookie-answered kind and the warm-up correctly stands down.
 >
@@ -2655,7 +2662,8 @@ did not move**: `13:53:31` printed at 02:02, 02:05, 02:07, 02:09, 02:29, 02:44, 
 > step. **A 3.1.1 rejection now is the ANSWER, not a fourth process failure**: it is the first
 > submission where the reviewer can actually reach a link-out.
 >
-> Master is **`57e9d79`**. #146 (worker-deploy paths) and #165 (side-lane notes) are open.
+> Master is **`1cf83a2`**, mini-PC is **`57e9d79`** (current — see item 0). #146 (worker-deploy
+> paths) is open.
 > **Delete that file once the sampler has a reading from a real ramp AND the App Store version
 > has a decision**; it is a handover, not a permanent doc, and a stale one would read like
 > current state.

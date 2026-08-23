@@ -12,15 +12,22 @@ current state.*
 **A REAL hold releases 2026-08-23 07:59:46 PT** (unit `45719`, `requested`). Real numeric id, so
 a real campsite is in the pipeline.
 
-**The box is missing all three memory instruments, and the window to fix that is short.**
+**CORRECTED 2026-08-23 ~07:15 PT (this paragraph and the table below were stale from the moment
+they were written — the box updated a few hours later the same night and the correction sat
+in `docs/NOTES-claude-side-lane-setup-f7bpe2.md` without being folded in here).** The box is
+**NOT** missing the instruments:
 
 | | |
 |---|---|
-| Master | `57e9d79` |
-| Mini-PC | `e2be117` — **missing #160, #163, #166** |
-| Update gate shuts | **01:59:46 PT** (6h before the release, not liftable) |
+| Master | `1cf83a2` |
+| Mini-PC | `57e9d79` — **has #160, #163, #166** (updated 08-22 23:12:03 PT, confirmed by
+`git-status` per commit #165; re-confirmed live via `autocart.bot_version` ~07:15 PT
+2026-08-23, <1h before release: "mini-PC is on 57e9d79; web is on 1cf83a2 — no bot-side code
+in the gap") |
+| Update gate shuts | **01:59:46 PT** (6h before the release, not liftable) — moot; box was
+already current well before this |
 
-What the box does not have:
+What landed (all present on the box now):
 
 - **#160** — the sampler resolves addresses to `module+offset`. **Without it a reading names
   nothing**: Playwright's Windows Chromium exports no internal symbols, and the first real
@@ -29,9 +36,7 @@ What the box does not have:
   measured.
 - **#166** — the network trace wraps it too.
 
-**So if the box is not updated before 02:00 PT, tomorrow's trip runs with instruments that are
-either absent or mute.** Updating is `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts` /
-Admin → "Update now"; it takes ~20 seconds now (#149/#150) and nothing else is queued.
+So today's trip — ramp or not — should be readable with all three instruments live.
 
 **BUT DO NOT EXPECT THE BIG RAMP TOMORROW, and do not read a quiet morning as a cure.** Okta
 expires **18:01 UTC = 11:01 PT**, which is AFTER the 08:00 release — so Okta is alive at T−3h and
@@ -61,8 +66,8 @@ do after the leak, not stop it from leaking."* They were right.
 
 | | |
 |---|---|
-| Master | `57e9d79` |
-| Mini-PC | `e2be117` — **missing three memory instruments; see the top of this file** |
+| Master | `1cf83a2` |
+| Mini-PC | `57e9d79` — **has all three memory instruments; see the top of this file** |
 | Open holds | **one REAL hold**, unit `45719`, releases 08-23 07:59:46 PT |
 | RC session | **healthy again** — see below |
 
@@ -78,12 +83,13 @@ built to *test* the login — has been the thing that **performed** the repair. 
 the renewal schedule for it.** Crediting a repair to the wrong mechanism has cost this file
 three times.
 
-**~~THE BOX BEING BEHIND MASTER IS FINE HERE~~ — TRUE ON 08-22, FALSE NOW.** That sentence was
-written when the gap was documentation plus another lane's relay code. Three bot-side commits
-have landed since (#160, #163, #166) and the box has none of them, so the gap is now the
-difference between an instrument that names an allocation and one that prints hex. Struck rather
-than deleted, because "the box is behind and that is fine" is exactly the sentence a later reader
-would quote to skip an update that matters.
+**~~THE BOX BEING BEHIND MASTER IS FINE HERE~~ — TRUE ON 08-22, FALSE FOR A FEW HOURS, TRUE
+AGAIN NOW.** That sentence was written when the gap was documentation plus another lane's relay
+code, then went false when #160/#163/#166 landed bot-side and the box had none of them. **The
+box updated at 23:12:03 PT the same night and took all three in one go** (confirmed by
+`git-status`, recorded in commit #165 but never folded into this section until this pass). Left
+struck rather than rewritten clean, because the false-for-a-few-hours state is exactly the kind
+of thing that gets missed if the correction only lives in a side-lane notes file.
 
 Check rather than trust any sha in this file — it is cheap, and this file has been wrong about
 one before:
@@ -97,9 +103,9 @@ is exactly what migration 065 was built to distinguish: RC rejects the current t
 Okta session behind it is alive, so a repair right now is the **11-second cookie-answered** kind
 rather than the 12-minute, 9.4 GB password form. `autocart.rc_session` says so in words.
 
-**Still open:** **#160** (the sampler's Windows attribution — see below) and **#146**
-(worker-deploy trigger paths — merging restarts both poller machines, deliberately, so do it at
-a quiet moment and not near a release).
+**Still open:** **#146** (worker-deploy trigger paths — merging restarts both poller machines,
+deliberately, so do it at a quiet moment and not near a release). #160 shipped and is on the
+box (see above) — no longer open.
 
 **#156, #69 and #51 are closed** — and NOT because they were stale, which is what an earlier
 draft of this file called them. All three carried findings nobody had folded in: that Feature E's
@@ -107,16 +113,20 @@ watch-driven recorder never stopped (rediscovered independently three times, bec
 correction kept sitting in an open PR), and that the Okta cap does not reset across a password
 sign-in. Both are in `CLAUDE.md` now.
 
-> ### `autocart.bot_version` IS RED AND IT IS EXPECTED — DO NOT SPEND THE MORNING ON IT
+> ### `autocart.bot_version` WAS RED FOR A WHILE ON 08-22/23 — SUPERSEDED, THE BOX UPDATED
 >
 > ```
 > FAIL  autocart.bot_version  mini-PC is on e2be117; web is on b8d8848 — and it is MISSING
 >                             bot-side changes, with 1 hold(s) queued.
 > ```
 >
-> **This was caused deliberately-ish and it is harmless.** #160 and #163 are bot-side, and both
-> were merged while the test hold was queued — which is the one configuration `bot_version`
-> fails on, by design.
+> **This was the state for part of the evening and it was caused deliberately-ish and harmless
+> at the time.** #160 and #163 are bot-side, and both were merged while the test hold was
+> queued — which is the one configuration `bot_version` fails on, by design. **It is not the
+> state now**: the box updated at 23:12:03 PT (a REQUESTED update lifts the quiet window even
+> with a hold queued — only the 6h release check is unliftable, and that check had already
+> passed by then). Live read ~07:15 PT 2026-08-23: `WARN mini-PC is on 57e9d79; web is on
+> 1cf83a2 — no bot-side code in the gap`, i.e. ordinary docs-only drift, not a real gap.
 >
 > **CORRECTED: the gap is no longer diagnostic-only in the file sense.** An earlier version of
 > this note said *"`rc-keepwarm.mjs` and every line of the cart path are byte-identical on both
@@ -176,7 +186,7 @@ does not. Do not repeat that inference.
 
 ---
 
-## Track A — name it (MERGED; #155 is on the box, #160/#163/#166 are NOT)
+## Track A — name it (MERGED; #155, #160, #163, #166 are ALL on the box as of 08-22 23:12 PT)
 
 `scripts/auto-cart-bot/rc-native-sampler.mjs`, wired into the renewal's Okta trip.
 
@@ -200,8 +210,10 @@ bases move under ASLR; offsets do not) and symbolizable offline via the module `
 That navigation did not ramp, so its numbers meant nothing and the trace said so. What it showed
 was the shape a real ramp would have arrived in.
 
-**#160 IS BOT-SIDE AND THE BOX CANNOT UPDATE WHILE THE TEST HOLD IS QUEUED.** Push it after the
-hold clears (~08:15 PT).
+**#160 IS BOT-SIDE, AND — CORRECTED — it did NOT have to wait for the hold to clear.** A
+REQUESTED update lifts the quiet-window gate even with a hold queued; only the 6h release check
+is unliftable, and it had already passed by 23:00 PT. The box took #160 (and #163, #166) at
+23:12:03 PT the same night, confirmed by `git-status`.
 
 **THE AUTO-LOGIN IS SAMPLED NOW TOO (#163).** The sampler had ONE call site — the renewal's
 throwaway tab, which is the *cheap* Okta trip (140–350 MB, 2.3 GB at worst). `maybeAutoLogin` is
