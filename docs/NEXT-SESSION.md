@@ -44,9 +44,21 @@ is exactly what migration 065 was built to distinguish: RC rejects the current t
 Okta session behind it is alive, so a repair right now is the **11-second cookie-answered** kind
 rather than the 12-minute, 9.4 GB password form. `autocart.rc_session` says so in words.
 
-**Still open:** **#146** (worker-deploy trigger paths — merging restarts both poller machines,
-deliberately, so do it at a quiet moment and not near a release). Three stale docs PRs (**#156**,
-**#69**, **#51**) predate this work and are worth closing so the open list stays meaningful.
+**Still open:** **#160** (the sampler's Windows attribution — see below) and **#146**
+(worker-deploy trigger paths — merging restarts both poller machines, deliberately, so do it at
+a quiet moment and not near a release).
+
+**#156, #69 and #51 are closed** — and NOT because they were stale, which is what an earlier
+draft of this file called them. All three carried findings nobody had folded in: that Feature E's
+watch-driven recorder never stopped (rediscovered independently three times, because the
+correction kept sitting in an open PR), and that the Okta cap does not reset across a password
+sign-in. Both are in `CLAUDE.md` now.
+
+**A REAL TEST HOLD IS QUEUED FOR 08:00 PT ON 2026-08-23** — South Carlsbad #35, unit 45719,
+arrival 2026-12-01, hold `51f3ad3d-8856-4bd0-8dd3-b64ad31d8b5f`. It is a TEST; the owner does
+not want the site. It locks a real campsite for ~15 min from 07:59:46 until claimed or RC drops
+the cart, and the 02:00–05:00 PT box update window is shut while it is queued (the 6h release
+gate, correctly). **It buys the cart/claim flow and NOT a leak reading** — see Track A below.
 
 ---
 
@@ -94,6 +106,25 @@ partition_alloc::PartitionRoot::Alloc<>() <- namespace)::ArrayBufferAllocator::A
 2% error, a few kilobytes of response. It is a Poisson sampler: output scales with **distinct
 stacks**, not bytes — the opposite shape from the multi-GB heap snapshot the house rules forbid
 writing when the box cannot spawn a process.
+
+**IT FIRED ON 2026-08-22 AND NAMED NOTHING — the instrument was validated on the wrong
+platform.** Four of five rows came back as bare hex (`0x7ffc499b1707 <- 0x7ffc4375aa42`): the
+"1,083 of 1,733 frames symbolized" figure was measured in the **Linux dev container**, and
+Playwright's Windows build exports no internal symbols. **#160 fixes it** by resolving addresses
+to `module+0xoffset` from the `modules` array CDP already returns — stable across runs (module
+bases move under ASLR; offsets do not) and symbolizable offline via the module `uuid`.
+
+That navigation did not ramp, so its numbers meant nothing and the trace said so. What it showed
+was the shape a real ramp would have arrived in.
+
+**#160 IS BOT-SIDE AND THE BOX CANNOT UPDATE WHILE THE TEST HOLD IS QUEUED.** Push it after the
+hold clears (~08:15 PT).
+
+**THE TEST HOLD WILL NOT PRODUCE A READING, AND THIS IS THE THING NOT TO GET WRONG.**
+`startNativeSampling` has ONE call site — the renewal's throwaway tab. `maybeAutoLogin` and the
+rehearsal are not sampled at all, and if T−30 mints a token then `planRenewal` stands down for
+the hour. Wiring the sampler into `maybeAutoLogin` is the obvious next move and would put the
+biggest trip there is (the 9.4 GB password sign-in) under measurement.
 
 **How to read the first real one:**
 
