@@ -39,6 +39,27 @@ on:
       - 'src/lib/notifications/**'
       - 'src/lib/db/**'
       - 'src/lib/booking-url.ts'
+      # The four single files the poller compiles in, and one type module. These were
+      # MISSING until 2026-08-20, and the gap had never bitten only because every change
+      # to them happened to land a worker/*.test.mts beside it, which matches 'worker/**'
+      # and fired the deploy as a side effect. That is a habit, not a mechanism:
+      #   - limits.ts        RC_HOLD_CAPACITY. Raise the ceiling without deploying and the
+      #                      website withholds the hold button at a number the poller has
+      #                      never heard of.
+      #   - auth.ts          hasAutocartEntitlement — one definition, six enforcers, two of
+      #                      them inside the poller. Half-deployed, the site and the poller
+      #                      disagree about who is entitled, with nothing red anywhere.
+      #   - rc-holds*.ts     the hold feed's queries and the hold alert dispatch.
+      #   - types.ts         erased at build, so it cannot change runtime behaviour alone —
+      #                      but it never changes alone, and the deploy it costs is one the
+      #                      accompanying change needed anyway.
+      # worker/worker-deploy-paths.test.mts derives this list from the worker's real
+      # transitive import closure, so it fails rather than drifting again.
+      - 'src/lib/limits.ts'
+      - 'src/lib/auth.ts'
+      - 'src/lib/rc-holds.ts'
+      - 'src/lib/rc-holds-notify.ts'
+      - 'src/lib/types.ts'
       # A dependency change rebuilds the image.
       - 'package.json'
       - 'package-lock.json'
