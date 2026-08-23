@@ -1381,11 +1381,18 @@ time** — the fact was on screen and was read past.
   *"A synthetic hold from `rc-test-hold.mts` (South Carlsbad #35, unit 45719, arrival
   2026-12-01)"*. The same unit, the same script, the same arrival date, ten days earlier. The
   file contained its own refutation.
-- **WHY IT MATTERS, and it is not bookkeeping.** A synthetic hold is disposable; a real one is
-  not. For a day the SERIAL rules in `docs/LANES.md`, the update-window decisions and the
-  "keep #146 away from a release" caution were all being applied on the belief that a
-  stranger's campsite was at stake. The conclusions happened to be conservative, so nothing
-  was lost — this is a correction, not an incident.
+- **WHY IT MATTERS, and it is not bookkeeping.** For a day the SERIAL rules in
+  `docs/LANES.md`, the update-window decisions and the "keep #146 away from a release" caution
+  were all being applied on the belief that a **stranger was waiting on this campsite**. They
+  happened to be the conservative calls, so nothing was lost — this is a correction, not an
+  incident.
+- **"FIXTURE" DOES NOT MEAN "HARMLESS", AND THE NEXT ONE PROVES IT.** `rc-test-hold.mts` is
+  built to take a REAL numeric unit id — that is what exercises the whole chain — so a
+  `TEST · ` hold **locks a real campsite** for as long as it is held. Unit `45719` was real;
+  so is `43129`, queued 21:12Z for 2026-08-24 07:58:47 PT to manufacture a ramp for Track A
+  (#176). What a fixture changes is that **nobody is waiting on the other end**, not that
+  nothing is at stake. The distinction is the reason the script insists on a far-future
+  midweek date.
 - **STILL UNCORRECTED ON MASTER** as of `d8d035e`: `CLAUDE.md:2663` and
   `docs/NEXT-SESSION.md:126` both say *"hold `45719` carted at T+1.6s"* with no fixture
   marker, and #167's title and §23 above assert it outright. **Main lane's files** — filed as
@@ -1482,7 +1489,14 @@ So of the six, **2, 4 and 5 were theirs**; 1, 3 and 6 are the ones above.
 ### Verified this pass, read-only
 
 The 07:59:46 PT release **worked end to end** — carted T+1.6s, `✓ Added to cart` on iOS,
-`released` 15:10:05Z. It was a **test fixture** (§24a). No holds are queued now.
+`released` 15:10:05Z. It was a **test fixture** (§24a).
+
+**ONE HOLD IS QUEUED AGAIN, DELIBERATELY:** `TEST · 43129`, `requested`, releasing
+**2026-08-24 07:58:47 PT** — the main lane's #176, queued at 21:12Z to manufacture an Okta
+ramp for Track A on a warm-up window that opens ~04:59 PT with Okta gone. It carries a **real
+unit id and therefore locks a real site**, and it re-arms the `docs/LANES.md` SERIAL rules and
+the updater's 6h release gate. Do not queue another, and keep anything that restarts the box
+away from it.
 
 Health at 13:31 PT: `degraded`, every failure non-paging. `autocart.rc_session` warn (token
 exp −295m, **Okta ALIVE ~6.5h**, no holds queued — the normal between-releases state).
