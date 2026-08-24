@@ -2961,6 +2961,80 @@ api.github.com        OK — the MCP tools work, so the denial is HOST-SCOPED
   patiently waiting. The 08-23 `GITHUB_TOKEN` watchdog is the same failure one layer up. What
   saved this one is that somebody wrote "check outbound access FIRST" into the handover.
 
+### BOTH FIXES ARE DEPLOYED, AND THE THIRD DOOR IS INSTRUMENTED (2026-08-24, evening)
+
+Three things landed and were verified against production rather than assumed.
+
+**THE COMING-SOON STORM IS FIXED ON FLY.** #183 merged as `d842dc0`; the worker deploy fired
+(the branch touches `worker/**` and `src/lib/db/**`) and reported **success**, and that workflow
+fails unless a fresh heartbeat lands — `worker.heartbeat` read `last beat 11s ago, 13 watches`
+immediately after. **The handover's "#183 is web-side, so it will not restart the pollers" was
+STALE by the time it was read**: the SMS fix was added to the same branch after that line was
+written, which is what made the merge carry both.
+- **NOTHING RE-ANNOUNCED ON DEPLOY, and that was checked rather than trusted.** All six watches
+  carrying a claim still read exactly their backfilled `<hour>|*` wildcard afterwards — no new
+  per-unit keys appended — so the deploy guard held. `eb886697`, the watch primed with the
+  namespaced `rc-583|2026-8-25T8`, is among them.
+- **`notifications` CANNOT BE READ FROM AN AGENT SESSION** — RLS answers `policy context
+  unavailable`. It fails LOUDLY, so it is a clean non-answer; the claim-key column is the
+  evidence that is actually reachable from here. Worth knowing before planning a check around it.
+
+**THE WARM-UP IS SAMPLED NOW (#184, `18bb337`).** `maybeWarmupLogin` was the third
+Okta-navigating path and the only one with no instrument, and by construction it is the
+expensive one — it fires only when Okta is GONE, i.e. the full password form. That is what cost
+the 08-24 ordered ramp its attribution.
+- **THREE THINGS, BECAUSE SAMPLING ALONE WOULD HAVE BEEN INERT.** The sampler starts on the
+  tab's own CDP session with a BEFORE profile; `attemptLogin` is wrapped in `withNetworkTrace`,
+  because `reportNativeAlloc` REFUSES a reading whose RAM delta is missing and the delta comes
+  from the trace; and the report is in the `finally` before the tab closes, since a trip that
+  ramps 9 GB is by definition one that struggled. Wiring only the first would have rendered a
+  line into a 16k-truncated log and stored nothing — the fix-present-and-inert shape, four times
+  now.
+- **THE CONTEXT STRING IS `'warmup'`, AND THE SERVER ALREADY ALLOW-LISTED IT.**
+  `recordNativeAlloc` keeps a `CONTEXTS` set and stores anything else as NULL, so a plausible
+  `'warmup-login'` would have landed the reading **unattributed** — in the table, absent from the
+  readout, and looking exactly like the instrument working.
+- **THE GUARD IS THE GENERAL ONE.** `worker/warmup-sampler.test.mts` enumerates every
+  `attemptLogin`/`renewSession` call and requires each to be sampled or listed in `EXCEPTIONS`
+  with a reason, so a **fifth** path fails the build. Pinning "the warm-up samples" would have
+  been the sixth instance of the house shape in waiting.
+- **`runLoginRehearsal` IS A RECORDED EXCEPTION, NOT A GAP.** It navigates to Okta with
+  `prompt=login` forced, but runs on the **resident page** — no close to reclaim what it
+  allocates, and an all-time profile there carries hours of the SPA's history. Different change,
+  different risks, and it runs once a night hours from any release.
+- **Seven mutations, each verified to APPLY and to fail. ONE DID NOT APPLY ON THE FIRST
+  ATTEMPT** — the string it targeted now occurs three times, once per sampled path, so the
+  assertion tripped and the suite went green against unmutated code. Redone scoped to the
+  function. **Twenty-third time**, and the first where the count changed *because of the fix
+  being tested*.
+
+**THE BOX IS ON `18bb337` — 24 SECONDS, "updated and verified".** Requested at 21:57:03,
+applied 21:57:27, heartbeat beating on the new sha. `npm ci` was skipped because the lockfile
+did not move. Health went to **19 of 19 ok** (the `bot_version` warn cleared because box and web
+now match).
+- **`pending` IS NOT `requested_at IS NOT NULL`, AND READING IT THAT WAY INVENTS A CHURN THAT IS
+  NOT THERE.** A hand-rolled readout said `pending: true` after a successful update, which under
+  this file's own "a pending request churns the box" rule reads as an updater re-spawning every
+  15 minutes. The real rule is `botUpdateState`'s: `requested_at && (!applied_at || applied_at <
+  requested_at)` — and `claimBotUpdate` carries the same predicate, so once `applied_at` passes
+  `requested_at` the request is **structurally unclaimable**. Nothing clears `requested_at`, and
+  nothing needs to. **Use `botUpdateState()`, not a derivation of your own.**
+
+**THE FIRST REAL RAMP READING IS NOT GUARANTEED TOMORROW, AND THE REASON IS `offered`.**
+`maybeWarmupLogin` reads `nextHoldRelease()`, whose status filter is
+`('requested','carted','claiming')` — **never `offered`**. All four real offers for 08-25 08:00
+PT are untapped, so **if nobody taps, the warm-up stands down and there is no expensive trip to
+sample at all.** The renewal path is sampled and has been for weeks; it has produced no reading,
+which is consistent with ramps having become much rarer. **A tap is the precondition for the
+measurement, and nobody here can produce one.**
+
+**TRACK B IS STILL NOT STARTED, AND THAT IS THE OWNER'S DECISION TAKEN DELIBERATELY** (asked and
+answered 2026-08-24): wait for one attributed reading first. The reasoning that decided it is
+worth keeping — the renderer-only sampler **cannot see the browser-process share**, which on the
+one event where both were measured was 545 MB of 2,046, so if the growth is there `ctx.request`
+may be the wrong lever entirely. Building it blind is how a repair gets credited to the wrong
+mechanism, which has happened three times.
+
 ### THE RAMP WAS ORDERED, IT ARRIVED ON CUE, AND TRACK A HAD NO INSTRUMENT ON IT (2026-08-24 13:00 PT)
 Egress came back (camphawk.app 200, fly.io 200, supabase 401-with-no-key — all three of the
 blocked hosts answer; the proxy's `recentRelayFailures` now names only `mcp.vercel.com`,
@@ -3152,9 +3226,12 @@ same 08:00 release, same three dates. Thirteen held-check cycles x two divisions
 - **MIGRATION 067 IS APPLIED TO PROD** (2026-08-24, six rows backfilled, read back and verified
   — `eb886697`'s `rc-583|2026-8-25T8` became `2026-8-25T8|*`). The column is additive and unread
   until the poller ships, which is the documented order: **migration first, then the code.**
-- **THE POLLER CODE IS NOT DEPLOYED.** It reaches Fly only on a merge to master, and until then
-  **the storm can recur on any multi-division watch with a held unit** — `eb886697` is primed,
-  and four real offers are outstanding for 08-25 08:00 PT.
+- ~~**THE POLLER CODE IS NOT DEPLOYED.**~~ **DEPLOYED 2026-08-24 as `d842dc0` (#183)** — the
+  worker deploy reported success and a fresh heartbeat landed, which that workflow requires.
+  Struck rather than deleted, because "the storm can recur" is exactly the sentence a later
+  reader would quote as current state. **Verified after the deploy: all six watches carrying a
+  claim still read their backfilled `<hour>|*` wildcard and nothing re-announced**, `eb886697`
+  included.
 
 ## Open / next session
 
@@ -3166,11 +3243,16 @@ same 08:00 release, same three dates. Thirteen held-check cycles x two divisions
 > `flyctl-metrics.fly.dev`. Full reading in the entry directly above. The three headlines:
 >
 > 1. **THE MANUFACTURED RAMP ARRIVED EXACTLY AS ORDERED — 9,338 MB, 05:00→05:11 PT, 89% COMMIT,
->    renderer 90% — AND TRACK A RECORDED NOTHING FOR IT.** `maybeWarmupLogin` is the third
+>    renderer 90% — AND TRACK A RECORDED NOTHING FOR IT.** `maybeWarmupLogin` was the third
 >    Okta-navigating path and the only one with no sampler on it, and it is by construction the
->    expensive one (it fires only when Okta is GONE, i.e. the password variant). **Track A still
->    has zero readings of a real ramp.** Wiring the sampler onto that path is the obvious next
->    move and is NOT done — see the entry for why it is the fifth instance of the house shape.
+>    expensive one (it fires only when Okta is GONE, i.e. the password variant).
+>    **CLOSED 2026-08-24 evening (#184, `18bb337`, and the box is ON it).** The sampler, the
+>    network trace it needs for its RAM pair, and the report all landed together, guarded by a
+>    test that fails on a FIFTH unsampled path rather than pinning this one.
+>    **Track A still has zero readings of a real ramp** — the instrument exists now, the event
+>    has not happened since. **And it may not happen tomorrow: `nextHoldRelease` ignores
+>    `offered`, all four real offers are untapped, and with no tap the warm-up stands down and
+>    there is no expensive trip to sample.**
 > 2. **THE ONE READING THAT LANDED IS THE CHEAP T−30 SIGN-IN (−422 MB, 103 MB renderer) AND IT
 >    DOES NOT SETTLE BUFFERING EITHER WAY.** No `net::` and no system-dll frames, so the
 >    candidate gets no support — but it cleared the 400 MB bar by 22 MB, it is 4.5% of the event
@@ -3193,15 +3275,17 @@ same 08:00 release, same three dates. Thirteen held-check cycles x two divisions
 > as of 12:58 PT. Untapped offers do not block the update window; **a tap makes tomorrow a real
 > morning with a stranger waiting**, which changes what the SERIAL rules are protecting.
 >
-> **AND THE COMING-SOON DEDUP IS BROKEN IN PRODUCTION RIGHT NOW — 26 texts in an hour to one
-> user** (entry directly above). A per-campground key was being written into the single-valued
-> `rc_hold_notified_for`, so N divisions overwrote each other and the dedup was defeated
-> outright. **Migration 067 IS APPLIED; the poller fix is NOT DEPLOYED** — it reaches Fly only
-> on a merge to master, and the storm can recur on any multi-division watch with a held unit
-> before tomorrow's 08:00. Watch `eb886697` is primed. This is the one thing here that is
-> costing a real user something today.
+> ~~**AND THE COMING-SOON DEDUP IS BROKEN IN PRODUCTION RIGHT NOW — 26 texts in an hour to one
+> user.**~~ **FIXED AND DEPLOYED 2026-08-24 evening (`d842dc0`, #183).** A per-campground key was
+> being written into the single-valued `rc_hold_notified_for`, so N divisions overwrote each
+> other and the dedup was defeated outright. Migration 067 was already applied; the poller fix
+> is now on Fly, the worker deploy reported success with a fresh heartbeat, and **nothing
+> re-announced** — all six watches carrying a claim still read their backfilled `<hour>|*`
+> wildcard, `eb886697` included. Struck rather than deleted because "broken in production right
+> now" is the sentence a later reader would quote as current state.
 >
-> **THE BOX IS CURRENT — `6d4100b`, "updated and verified", 23 seconds end to end.** #169 is
+> **(Superseded — the box is on `18bb337` now; see the state line below.)** **THE BOX WAS
+> CURRENT AT `6d4100b`, "updated and verified", 23 seconds end to end.** #169 is
 > live, so the native sampler's reading now lands in Postgres and **ramp #23 will be
 > attributed** instead of dying in a 16k-truncated log the way the last two did.
 > **DO NOT READ `applied_note` AND CONCLUDE IT FAILED.** That verdict was read at 20:43; by
@@ -3254,12 +3338,15 @@ same 08:00 release, same three dates. Thirteen held-check cycles x two divisions
 > LOUDLY** (`DB query error: TypeError: fetch failed`, exit 1), so an unreachable DB does NOT
 > masquerade as "No readings yet".
 >
-> Master is **`e282fc8`**; the box is on `6d4100b` — ordinary drift, since the merges since were
-> docs-only and nothing bot-side is pending. **#171, #169 and
-> #146 are merged; #168 was closed as superseded** (its correction had already landed via
-> #165/#170 — the reasoning is on the PR so it does not read as a finding dropped in a merge).
-> **No PRs are open**; issues **#174/#175** are the two corrections above and are now folded,
-> **#76** and **#14** remain.
+> **Master is `18bb337` and THE BOX IS ON IT TOO** (2026-08-24 21:57, "updated and verified",
+> 24 seconds; health 19 of 19 ok, and the `bot_version` warn cleared because the two now match).
+> **#183 and #184 are merged.** #183 carried BOTH the coming-soon storm fix and the
+> `closeOnToken` liveness fix; #184 wired the native sampler onto the warm-up.
+> **#180 (side lane, notes) is the only PR open**; issues **#76** and **#14** remain.
+> **Do not read a `pending` update from `requested_at` alone** — `botUpdateState()`'s rule is
+> `requested_at && (!applied_at || applied_at < requested_at)`, and `claimBotUpdate` carries the
+> same predicate, so a landed update is structurally unclaimable and needs no clearing. A
+> hand-rolled `!!requested_at` reported a churn that was not there.
 > **Delete `docs/NEXT-SESSION.md` once the sampler has a reading from a real ramp AND the App
 > Store version has a decision**; it is a handover, not a permanent doc, and a stale one reads
 > like current state.
