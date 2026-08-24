@@ -2,15 +2,23 @@
 
 *Rewritten 2026-08-24, evening.*
 
-> ## START NOTHING.
+> ## UPDATED 2026-08-24, EVENING — the two urgent items are DONE.
 >
-> Read this file, then report where things stand. Everything below is either context, or is
-> explicitly marked as somebody else's decision.
+> **THE SMS STORM IS FIXED AND ON FLY** (`d842dc0`, #183). Migration 067 was already applied;
+> the poller fix is deployed, the worker deploy reported success with a fresh heartbeat, and
+> **nothing re-announced** — all six watches carrying a claim still read their backfilled
+> `<hour>|*` wildcard. §1 is history, kept for its reasoning.
 >
-> **THE ONE THING COSTING A REAL USER SOMETHING TODAY** is the coming-soon SMS storm — §1.
-> Migration 067 is applied; **the poller fix is NOT deployed.**
+> **#183 IS MERGED** — it carried the `closeOnToken` liveness fix as well.
 >
-> **One PR is open — #183, CI GREEN, deliberately NOT merged** so the owner can decide.
+> **THE WARM-UP IS SAMPLED** (`18bb337`, #184) and **the box is on it**. Track A's third door
+> is closed; it still has zero readings of a real ramp, because the event has not happened
+> since. **It may not happen tomorrow either — see §1b.**
+>
+> **Track B remains NOT started**, by the owner's explicit decision on 2026-08-24: wait for one
+> attributed reading first.
+>
+> Health at handover: **19 of 19 ok**. Master `18bb337`, box `18bb337`.
 
 *Delete this file once Track A has a reading from a real ramp AND the App Store version has a
 decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
@@ -19,10 +27,18 @@ decision. It is a handover, not a permanent doc, and a stale one reads like curr
 
 ## 0. BEFORE ANYTHING: can you actually reach production?
 
-**As of 2026-08-23 20:15 PT the answer was NO, and it was still NO at 08-24 08:15 PT** — so
-this is standing policy, not the mid-session blip the first draft of this line implied. The agent
-proxy answers **403 to CONNECT** for `camphawk.app`, `*.supabase.co` and `fly.io` — an org
-egress-policy denial.
+**YES, as of 2026-08-24 evening** — camphawk.app 200, fly.io 200, Supabase reachable, and both
+readouts plus several direct DB queries ran. `recentRelayFailures` names only `mcp.vercel.com`,
+`mcp.sentry.dev` and `flyctl-metrics.fly.dev`.
+
+**IT HAS BEEN REVOKED MID-SESSION BEFORE, so check anyway rather than assuming.** On 08-23
+20:15 PT and still at 08-24 08:15 PT the proxy answered **403 to CONNECT** for `camphawk.app`,
+`*.supabase.co` and `fly.io` — an org egress-policy denial that outlived a session restart.
+
+**ONE THING THE READOUTS CANNOT REACH EITHER WAY: `notifications`.** RLS answers `policy context
+unavailable` from an agent session. It fails loudly, so it is a clean non-answer — but do not
+plan a verification around reading that table. The claim-key column on `watches` is what is
+actually reachable, and it is the better evidence anyway.
 
 **`api.github.com` is NOT blocked, and the earlier claim that it was is wrong** (measured
 08-24). The CONNECT tunnel opens and the placeholder `GITHUB_TOKEN` *authenticates* — but access
@@ -97,7 +113,13 @@ unbounded, not off-by-one. The fix for one missed alert traded it for a storm.
   cheaper fixes are wrong: hour-only reinstates 070's bug, unit-only ping-pongs again the moment
   two units share an hour. `worker/hold-claim.ts` + real-DB test, six mutations.
 
-**This is the first thing to check on the next session: is that poller fix on master and on Fly?**
+~~**This is the first thing to check on the next session: is that poller fix on master and on
+Fly?**~~ **ANSWERED 2026-08-24 evening: it is on both.** Merged as `d842dc0`, the worker deploy
+reported success, and `worker.heartbeat` read `last beat 11s ago, 13 watches` straight after —
+that workflow fails unless a fresh heartbeat lands, which is what makes the success meaningful.
+**Verified separately that nothing re-announced**, which is the risk the wildcard backfill exists
+to cover: all six watches carrying a claim still read `<hour>|*` afterwards, with no per-unit key
+appended. `eb886697`, the watch primed with `rc-583|2026-8-25T8`, is among them.
 
 ---
 
@@ -176,8 +198,32 @@ password-sign-in figure almost exactly, and two minutes after the T−3h warm-up
 **And `native_alloc_readings` has ZERO rows for it.** `maybeWarmupLogin` is the **third**
 Okta-navigating path and the only one with no sampler on it — and by construction it is the
 EXPENSIVE one, because it fires only when Okta is GONE, i.e. the full password variant.
-`startNativeSampling` has two call sites: `maybeAutoLogin` and the renewal's throwaway tab.
-**Wiring it onto the warm-up is the obvious next move and is NOT done.**
+`startNativeSampling` had two call sites: `maybeAutoLogin` and the renewal's throwaway tab.
+
+~~**Wiring it onto the warm-up is the obvious next move and is NOT done.**~~ **DONE 2026-08-24
+evening — #184, `18bb337`, and the box is on it.** Three things, because sampling alone would
+have been inert: the sampler on the tab's own CDP session with a BEFORE profile, `attemptLogin`
+wrapped in `withNetworkTrace` (`reportNativeAlloc` refuses a reading whose RAM delta is missing,
+and the delta comes from the trace), and the report in the `finally` before the tab closes.
+Context `'warmup'`, which the server already allow-lists — anything else stores NULL and lands
+the reading unattributed.
+
+**THE GUARD IS GENERAL: `worker/warmup-sampler.test.mts` fails on a FIFTH unsampled path**, so
+this cannot recur one door along. `runLoginRehearsal` is a recorded EXCEPTION rather than a gap —
+it navigates to Okta but runs on the resident page, so there is no close to reclaim what it
+allocates; wiring it is a separate decision.
+
+### WHAT IS MISSING NOW IS THE EVENT, NOT THE INSTRUMENT — AND TOMORROW MAY NOT SUPPLY IT
+
+`maybeWarmupLogin` reads `nextHoldRelease()`, whose status filter is
+`('requested','carted','claiming')` — **never `offered`**. All four real offers for 08-25 08:00 PT
+were untapped at handover, so **if nobody taps, the warm-up stands down and there is no expensive
+trip to sample at all.** The renewal path has been sampled for weeks and has produced no reading,
+which is consistent with ramps having become much rarer.
+
+**A tap is the precondition for the measurement, and no session can produce one.** Do not read an
+empty `native-alloc-readout.mts` the next morning as a broken instrument — check whether a hold
+was ever tapped first.
 
 That is the fifth instance of the house shape — an instrument bolted to two of three doors — and
 the first where it cost an experiment somebody deliberately set up.
@@ -285,17 +331,19 @@ The SERIAL rules in `docs/LANES.md` bind while the hold is live:
 
 | | |
 |---|---|
-| Master | **`dd2ab82`** |
-| Branch | `claude/main-lane-setup-check-yxqkwc` — the #183 work |
-| Mini-PC | **`6d4100b`** — nothing bot-side is pending |
-| Open PRs | **#183 — CI GREEN, deliberately NOT merged.** The owner's call. |
+| Master | **`18bb337`** |
+| Branch | merged; `claude/main-lane-docs-0824` carries this handover update |
+| Mini-PC | **`18bb337`** — updated 21:57 PT, "updated and verified", 24s. Box and web match. |
+| Open PRs | **#180 (side lane, notes)** only. #183 and #184 are merged. |
 | Open issues | **#76**, **#14** (#174/#175 folded and closed 2026-08-23) |
 | Open holds | the 08-24 instrument has released; `expire-holds.ts` sweeps from Fly every 60s |
 | Migrations | highest applied **067** (the SMS-storm fix, applied to prod 08-24); next main-lane number is **068** (`070` is an old side-lane block claim). LANES.md's "next is 060" is stale. |
 
-**#183 is web-side**, so merging it reaches already-installed apps on the push — no rebuild, no
-App Store review. It does **not** touch any `worker-deploy.yml` path, so it will not restart the
-pollers.
+**THAT LAST LINE WAS STALE BEFORE IT WAS READ, and it is worth keeping as the correction.** It
+said #183 was web-side and would not restart the pollers. The SMS-storm fix was added to the same
+branch AFTER it was written, so the merge touched `worker/**` and `src/lib/db/**`, fired
+`worker-deploy.yml`, and restarted both machines — which is precisely how the fix reached Fly.
+**A note about a branch ages the moment the branch does; re-read the diff, not the note.**
 
 Master and the box differing is the ordinary drift `CLAUDE.md` documents — the merges since were
 docs-only, so there is nothing waiting to reach the mini-PC.
@@ -347,7 +395,18 @@ renewals.** Leave the password case (Okta Identity Engine, CAPTCHA-exposed) in a
 **Two reasons it has waited, and only one still holds.** The design reason stands: Track A's
 first reading could move the lever entirely — if the growth is buffering in the **browser
 process**, `ctx.request` may be wrong. The other reason was *"the box stays healthy"*, and 88%
-COMMIT with no guard firing weakens it. **Take both to the owner honestly.**
+COMMIT with no guard firing weakens it. ~~**Take both to the owner honestly.**~~
+
+**TAKEN TO THE OWNER 2026-08-24 AND ANSWERED: wait for one attributed reading first.** Recorded
+as a decision so it is not re-litigated or quietly started. The deciding fact was the one worth
+repeating — **the sampler is renderer-only** (`Memory.startSampling` is absent on the browser
+target), and on the single event where both were measured the browser process held **545 MB of
+2,046**. So if the growth is there, `ctx.request` may not be the lever at all, and building it
+now is how a repair gets credited to the wrong mechanism — three times already.
+
+**What changes the answer:** one reading from a real ramp, which now needs a tapped hold (see
+§1b). If several mornings pass with no tap and no ramp, the wait itself becomes the cost, and
+that is worth putting back to the owner rather than drifting.
 
 ---
 
