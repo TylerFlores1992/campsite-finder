@@ -920,10 +920,46 @@ async function maybeWarmupLogin(ctx, page) {
   });
   if (!tab) return warmupSkip('could not open a warm-up tab — nothing was spent');
 
+  /**
+   * SAMPLE THE ONE OKTA TRIP NOTHING WAS WATCHING — see rc-native-sampler.mjs.
+   *
+   * THIS PATH IS BY CONSTRUCTION THE EXPENSIVE ONE. `warmupPlan` only says go when Okta is
+   * GONE, which is precisely the full password form — the twelve-minute, ~9,434 MB trip of
+   * 2026-08-20, the largest event ever measured here. The sampler shipped wired to the
+   * renewal (the cheap trip) and 08-20 added the auto-login; this third door was left open
+   * and it is the widest.
+   *
+   * IT COST AN ORDERED EXPERIMENT. A real test hold was queued for 2026-08-24 to MANUFACTURE
+   * a ramp at a predictable time. The ramp arrived exactly as predicted — 9,338 MB,
+   * 05:00:51→05:11 PT, 89% COMMIT, renderer 90% of it, two minutes after this window opened
+   * — and `native_alloc_readings` recorded NOTHING for it, because this function has no
+   * instrument. That is the fifth instance of the house shape (an instrument bolted to two of
+   * three doors) and the first where it cost a measurement somebody deliberately set up.
+   *
+   * ON THE TAB'S OWN CDP SESSION, STARTED HERE, for the reason `attachHeapProbe` exists: the
+   * expensive negotiation must happen while the browser is healthy, and a tab three lines old
+   * is as healthy as it gets. CDP has twice been measured going quiet as a ramp peaks, so only
+   * the cheap read may land afterwards.
+   *
+   * THE BEFORE-READING IS TAKEN AND DIFFED even though a fresh tab has allocated nothing.
+   * Whether a new tab gets its own renderer or shares the resident page's is NOT established;
+   * if it shares one, an all-time profile carries hours of the resident page's history and
+   * would report it as this trip's. Diffing is correct either way.
+   */
+  const sampler = await ctx.newCDPSession(tab).catch(() => null);
+  const sampling = sampler ? await startNativeSampling(sampler) : { ok: false, why: 'no CDP session' };
+  const profBefore = sampling.ok ? await readNativeProfile(sampler) : null;
+
   lastWarmupSkip = null;
   warmup.spent += 1;
   saveWarmup(warmup);
   log(`🌅 warming up the session: ${plan.why}`);
+  /**
+   * DECLARED OUTSIDE THE `try` so the `finally` can read it, exactly as `maybeAutoLogin`
+   * does. `attemptLogin` is deliberately not caught here: this function has no `dead`
+   * branch to route a throw into, and inventing one is not an instrument's business.
+   */
+  let trace = null;
   try {
     /**
      * NO `sufficient` DEADLINE, and that is the difference from `maybeAutoLogin`.
@@ -937,11 +973,25 @@ async function maybeWarmupLogin(ctx, page) {
      * Passing a deadline here would be actively wrong: it would report a perfectly
      * successful warm-up as a failure for not covering something it was never aimed at.
      */
-    const r = await attemptLogin(ctx, tab, {
+    /**
+     * COUNT THE BYTES, AND — the part that is not optional — GET THE FREE-RAM PAIR.
+     *
+     * A sampler reading with no RAM delta is the artifact that nearly retired the buffering
+     * candidate on 2026-08-19: a trace of a navigation that never ramped says nothing about
+     * the leak, and without the pairing there is no way to tell which kind of reading you are
+     * holding. `reportNativeAlloc` refuses to store a reading whose delta is missing or small,
+     * so without this wrapper the sampling above would be silently inert — a fix present and
+     * doing nothing, which is the shape this repo has shipped three times.
+     *
+     * ON THE TAB, so the listener dies with the tab rather than accumulating a record per
+     * response for the life of the resident page. Responses are counted, never read.
+     */
+    const { result: r, trace: t } = await withNetworkTrace(tab, () => attemptLogin(ctx, tab, {
       homeUrl: RC_HOME,
       isLive: async () => (await sessionLive(ctx, tab)).live === true,
       log,
-    });
+    }));
+    trace = t;
     // JUDGED ON OKTA, NOT ON THE TOKEN. Re-probed rather than assumed: `ok` means the sign-in
     // returned, and what we actually need to know is whether the thing we came for exists.
     const after = await oktaSessionAlive(ctx).catch(() => null);
@@ -964,8 +1014,40 @@ async function maybeWarmupLogin(ctx, page) {
       await saveFailureShot(tab, 'autologin-warmup');
     }
   } finally {
+    /**
+     * IN THE `finally`, so it prints on EVERY path — the same rule the auto-login states.
+     * A warm-up that ramps 9 GB is by definition one that struggled, so a reading gated on
+     * success would miss the events it exists for. A throw leaves no trace, and that says so
+     * rather than printing nothing: silence would be indistinguishable from a trip that moved
+     * no bytes, which is the one reading that would falsely eliminate buffering.
+     *
+     * (It cannot cover a RAM-guard kill: that takes the process, so no `finally` runs. The
+     * memory series remains the only witness to those.)
+     */
+    log(trace
+      ? `  ${describeTrace(trace)}`
+      : '  network trace: unavailable — the warm-up threw before the trace closed');
+    if (sampling.ok) {
+      const profAfter = await readNativeProfile(sampler);
+      // FROM THE TRACE, so the profile and the RAM delta describe the same window — the
+      // correction the auto-login's sampler had to make: a tab-lifetime pair would include
+      // the resident-page reload above, which is a renderer this profile cannot see.
+      const ram = trace?.ram ? trace.ram.afterMb - trace.ram.beforeMb : null;
+      const diff = diffProfiles(profBefore, profAfter);
+      log(renderProfile(diff, ram));
+      // 'warmup' IS THE ALLOW-LISTED SPELLING (src/lib/native-alloc.ts). The server keeps a
+      // CONTEXTS set and stores anything else as NULL, so a plausible-looking 'warmup-login'
+      // here would land the reading unattributed — present in the table, useless in the
+      // readout, and looking for all the world like the instrument working.
+      reportNativeAlloc('warmup', diff, ram);
+    } else {
+      log(`  native allocation: not sampled (${sampling.why})`);
+    }
     // THE CLOSE IS THE CURE, so it is in a `finally`. A renderer's memory dies with its page;
     // this is the same reclaim PR #142 gave the renewal and 08-20 gave the auto-login.
+    //
+    // AFTER the reporting above, not before: `saveFailureShot` photographs this tab and the
+    // profile read needs it alive, so closing first would cost both.
     await tab.close().catch(() => {});
   }
   return true;
