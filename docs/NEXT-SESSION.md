@@ -1,9 +1,17 @@
 # Next session — start here
 
-*Rewritten 2026-08-23, 20:50 PT. **UPDATE 2026-08-24 08:15 PT: the check-in RAN and could not
-take the reading — egress is still blocked (§0). Track A still has zero attributed readings and
-the manufactured ramp is UNREAD, not absent.** The rows are in Postgres and keep. **Your first
-action is still §1**, the moment you have egress; everything else in this file stands.*
+*Rewritten 2026-08-24, 12:55 PT.*
+
+> ## START NOTHING.
+>
+> Your job is to **take one reading and report it**. Everything else here is context for that,
+> or is explicitly marked as somebody else's decision.
+>
+> **One PR is open — #183, CI GREEN, deliberately NOT merged** so the owner can decide. Do not
+> merge it unless asked.
+>
+> **The manufactured ramp is UNREAD, not absent.** Track A still has zero attributed readings.
+> The rows are in Postgres and they keep.
 
 *Delete this file once the sampler has a reading from a real ramp AND the App Store version has
 a decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
@@ -48,6 +56,24 @@ curl -sS -m 12 -o /dev/null -w '%{http_code}\n' https://camphawk.app/
   the loud failure is what made it a clean non-answer: `DB query error: TypeError: fetch failed`,
   exit 1. **Widen the readout's 14-day window if enough time has passed** — the row outliving the
   query that fetches it is the one way this reading still gets lost.
+
+### WHERE THE READOUT RUNS — asked 2026-08-24, and it is not obvious
+
+**Right here, in a session like this one.** Checked: `NEXT_PUBLIC_SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` are **already present as process env vars in this sandbox**, so
+nothing needs installing or configuring. **Only the network is blocked.** The moment egress is
+allowed, the command in §1b just works.
+
+- **NOT the mini-PC.** Nothing under `scripts/auto-cart-bot/` touches Supabase — the bot only
+  ever talks to `camphawk.app` with `AUTOCART_TOKEN` — so the box almost certainly holds no
+  service-role key. And `VAR=1 npx …` is **bash syntax that silently does nothing in cmd**;
+  Windows needs `set "VAR=value"` on its own line first.
+- **`NODE_USE_ENV_PROXY=1` is a SANDBOX-ONLY prefix.** It points Node's fetch at the agent
+  proxy. On an ordinary machine it is unnecessary — just `npx tsx scripts/…`.
+- **There is NO admin UI for the attribution.** `native_alloc_readings` (066) has only its
+  library and migration. `chromium_memory_samples` has a panel; the reading that says *what
+  allocated* does not — so this script is the only way to see it. Worth closing eventually,
+  since it means the leak's key instrument cannot be checked from a phone.
 
 ---
 
@@ -206,15 +232,20 @@ The SERIAL rules in `docs/LANES.md` bind while the hold is live:
 
 | | |
 |---|---|
-| Master | **`e282fc8`** |
-| Mini-PC | **`6d4100b`** — current in the only sense that matters; nothing bot-side is pending |
-| Open PRs | **none** |
+| Master | **`dd2ab82`** |
+| Branch | `claude/main-lane-setup-check-yxqkwc` — the #183 work |
+| Mini-PC | **`6d4100b`** — nothing bot-side is pending |
+| Open PRs | **#183 — CI GREEN, deliberately NOT merged.** The owner's call. |
 | Open issues | **#76**, **#14** (#174/#175 folded and closed 2026-08-23) |
-| Open holds | **ONE, deliberate** — the instrument above |
+| Open holds | the 08-24 instrument has released; `expire-holds.ts` sweeps from Fly every 60s |
 | Migrations | highest applied **066**; next main-lane number is **067** (`070` is an old side-lane block claim). LANES.md's "next is 060" is stale. |
 
-Master and the box differing is the ordinary drift `CLAUDE.md` documents — the last two merges
-were docs-only, so there is nothing waiting to reach the mini-PC.
+**#183 is web-side**, so merging it reaches already-installed apps on the push — no rebuild, no
+App Store review. It does **not** touch any `worker-deploy.yml` path, so it will not restart the
+pollers.
+
+Master and the box differing is the ordinary drift `CLAUDE.md` documents — the merges since were
+docs-only, so there is nothing waiting to reach the mini-PC.
 
 **`autocart.bot_version` is a hint, not an answer.** `bot_commit` is COALESCEd and can sit stale
 beside a live heartbeat. `git-status` through `bot_commands` is what answers "did it land?".
