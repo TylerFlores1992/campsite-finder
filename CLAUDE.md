@@ -2878,9 +2878,13 @@ than wait for it.
   kind because the warm-up left an Okta session behind. **Check where it actually landed rather
   than assuming** — the 08-22 handover predicted a quiet morning on exactly this reasoning and
   was falsified by a 9,180 MB ramp at T−30.
-- **THE PRECONDITION HELD:** `okta_expires_at` was frozen at `2026-08-24T03:00:59Z` across four
-  reads by two sessions (33 minutes apart, then 70 minutes apart), i.e. the **absolute cap** and
-  not the rolling window our own probe refreshes. It lapsed ~20:01 PT on 08-23 as predicted.
+- **THE PRECONDITION, AND WHAT IS ACTUALLY KNOWN ABOUT IT.** `okta_expires_at` was frozen at
+  `2026-08-24T03:00:59Z` across four reads by two sessions (33 minutes apart, then 70 minutes
+  apart) — so it is the **absolute cap**, not the rolling window our own probe refreshes. That
+  timestamp is **20:00:59 PT on 08-23**, so the cap was DUE to lapse then and Okta should be
+  GONE for the 04:59 warm-up. **Due, not observed** — the last read was at 21:37Z and nobody
+  watched it expire, so this is arithmetic on a prior reading, not a measurement. If the warm-up
+  does not fire, an Okta session that outlived its stated cap is the first thing to check.
 
 ## Open / next session
 

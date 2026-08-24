@@ -121,7 +121,7 @@ do after the leak, not stop it from leaking."* They were right.
 | Mini-PC | `6d4100b` — **current; every memory instrument is live, #169 included** |
 | Open PRs | **none** |
 | Open holds | **ONE, deliberate** — a REAL test hold releasing 2026-08-24 07:58:47 PT, queued to manufacture a ramp for Track A. See CLAUDE.md. |
-| RC session | dead, but **Okta ALIVE** — so a repair is the cheap kind (Okta's absolute cap then lapsed ~20:01 PT on 08-23, as the test hold needs) |
+| RC session | dead, but **Okta ALIVE** — so a repair is the cheap kind. Okta's absolute cap was read at `2026-08-24T03:00:59Z`, i.e. **due** to lapse ~20:01 PT on 08-23, which is what the test hold needs. **Due, not observed** — nobody watched it go. |
 
 **CHECK YOUR OUTBOUND ACCESS BEFORE TRUSTING ANY EMPTY ANSWER.** As of 2026-08-23 20:15 PT the
 agent proxy answers **403 to CONNECT** for `camphawk.app`, `*.supabase.co` and `fly.io` — an org
