@@ -1,8 +1,9 @@
 # Next session — start here
 
-*Rewritten 2026-08-23, 20:50 PT. **Your first action is the 08:15 PT check-in below. Start
-nothing else before it.** An experiment is running overnight and the one thing that can spoil
-it is a session that finds work to do near a release.*
+*Rewritten 2026-08-23, 20:50 PT. **UPDATE 2026-08-24 08:15 PT: the check-in RAN and could not
+take the reading — egress is still blocked (§0). Track A still has zero attributed readings and
+the manufactured ramp is UNREAD, not absent.** The rows are in Postgres and keep. **Your first
+action is still §1**, the moment you have egress; everything else in this file stands.*
 
 *Delete this file once the sampler has a reading from a real ramp AND the App Store version has
 a decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
@@ -11,10 +12,27 @@ a decision. It is a handover, not a permanent doc, and a stale one reads like cu
 
 ## 0. BEFORE ANYTHING: can you actually reach production?
 
-**As of 2026-08-23 20:15 PT the answer was NO**, and it changed mid-session without warning.
-The agent proxy answers **403 to CONNECT** for `camphawk.app`, `*.supabase.co` and `fly.io` — an
-org egress-policy denial. `api.github.com` is *also* blocked to `curl`; GitHub reaches you only
-through the **MCP tools**.
+**As of 2026-08-23 20:15 PT the answer was NO, and it was still NO at 08-24 08:15 PT** — so
+this is standing policy, not the mid-session blip the first draft of this line implied. The agent
+proxy answers **403 to CONNECT** for `camphawk.app`, `*.supabase.co` and `fly.io` — an org
+egress-policy denial.
+
+**`api.github.com` is NOT blocked, and the earlier claim that it was is wrong** (measured
+08-24). The CONNECT tunnel opens and the placeholder `GITHUB_TOKEN` *authenticates* — but access
+is **REPO-SCOPED**, and that distinction is the trap:
+
+```
+GET /user                                    200   <- returns the real account
+GET /rate_limit                              200
+GET /repos/<owner>/<repo>                    403   "GitHub access is not enabled for this session"
+GET /repos/<owner>/<repo>/commits/<sha>/check-runs   403   <- the CI-watchdog case
+```
+
+So **the natural smoke test succeeds and proves nothing.** `${#GITHUB_TOKEN}` is 14 and `/user`
+returning your own login is a **false positive**, which is worse than the presence check already
+documented in `CLAUDE.md` because it is a positive result rather than a mere absence. **Anything
+repo-scoped still goes through the MCP tools** — that conclusion is unchanged; only the reason
+for it is.
 
 ```bash
 curl -sS "$HTTPS_PROXY/__agentproxy/status"        # recentRelayFailures names the blocked host
@@ -25,8 +43,11 @@ curl -sS -m 12 -o /dev/null -w '%{http_code}\n' https://camphawk.app/
 - **Verified reassurance:** the readout scripts **fail loudly** on an unreachable DB
   (`DB query error: TypeError: fetch failed`, exit 1). So an empty answer is a real answer and
   never a network failure in disguise. That was tested, not assumed.
-- **If egress is still blocked, the 08:15 check cannot happen.** Say so plainly, name the three
-  hosts, and stop — do not substitute a guess for the reading.
+- **If egress is still blocked, the check cannot happen.** Say so plainly, name the three hosts,
+  and stop — do not substitute a guess for the reading. **This is what happened on 08-24**, and
+  the loud failure is what made it a clean non-answer: `DB query error: TypeError: fetch failed`,
+  exit 1. **Widen the readout's 14-day window if enough time has passed** — the row outliving the
+  query that fetches it is the one way this reading still gets lost.
 
 ---
 
