@@ -1,20 +1,19 @@
 # Next session — start here
 
-*Rewritten 2026-08-24, 12:55 PT.*
+*Rewritten 2026-08-24, evening.*
 
 > ## START NOTHING.
 >
-> Your job is to **take one reading and report it**. Everything else here is context for that,
-> or is explicitly marked as somebody else's decision.
+> Read this file, then report where things stand. Everything below is either context, or is
+> explicitly marked as somebody else's decision.
 >
-> **One PR is open — #183, CI GREEN, deliberately NOT merged** so the owner can decide. Do not
-> merge it unless asked.
+> **THE ONE THING COSTING A REAL USER SOMETHING TODAY** is the coming-soon SMS storm — §1.
+> Migration 067 is applied; **the poller fix is NOT deployed.**
 >
-> **The manufactured ramp is UNREAD, not absent.** Track A still has zero attributed readings.
-> The rows are in Postgres and they keep.
+> **One PR is open — #183, CI GREEN, deliberately NOT merged** so the owner can decide.
 
-*Delete this file once the sampler has a reading from a real ramp AND the App Store version has
-a decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
+*Delete this file once Track A has a reading from a real ramp AND the App Store version has a
+decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
 
 ---
 
@@ -77,7 +76,32 @@ allowed, the command in §1b just works.
 
 ---
 
-## 1. THE 08-24 TEST RAN. THE HOLD WAS LOST TO A BUG IN OUR SIGN-IN — FIXED, NOT RE-TESTED
+## 1. THE COMING-SOON DEDUP IS BROKEN IN PRODUCTION — the one live user cost
+
+**26 texts and 26 emails in 62 minutes to one user**, alternating two divisions of Morro Bay,
+**every one for the same physical campsite** (unit 43191, same release hour, same dates).
+
+Migration 070 made `claimHoldNotification` write a **campground-namespaced** value into
+`rc_hold_notified_for` so two divisions would not silence each other. **That column holds ONE
+value**, so N divisions overwrite each other in turn and the dedup is **defeated outright** —
+unbounded, not off-by-one. The fix for one missed alert traded it for a storm.
+
+- **Migration 067 IS APPLIED to prod** (six rows backfilled, read back and verified). The column
+  is additive and unread until the poller ships — migration first, then the code, as documented.
+- **THE POLLER FIX IS NOT DEPLOYED.** It reaches Fly only on a merge to master. Until then **the
+  storm can recur on any multi-division watch with a held unit.** Watch `eb886697` is primed.
+- **Four real user offers were outstanding for 08-25 08:00 PT**, across three users. Untapped
+  offers do not block the update window; **a tap makes it a real morning with a stranger
+  waiting.**
+- The fix is a **set** (`watches.rc_hold_notified_keys`), keyed `<releaseHour>|<unitId>`. Both
+  cheaper fixes are wrong: hour-only reinstates 070's bug, unit-only ping-pongs again the moment
+  two units share an hour. `worker/hold-claim.ts` + real-DB test, six mutations.
+
+**This is the first thing to check on the next session: is that poller fix on master and on Fly?**
+
+---
+
+## 1a. THE 08-24 TEST RAN. THE HOLD WAS LOST TO A BUG IN OUR SIGN-IN — FIXED, NOT RE-TESTED
 
 The 08-24 hand-off failed, and the owner's own account is what diagnosed it:
 
@@ -142,7 +166,36 @@ this is exercised. No session can do this — ask the owner.
 
 ---
 
-## 1b. THE ORIGINAL 08:15 CHECK-IN — still unread
+## 1b. THE MANUFACTURED RAMP — IT ARRIVED, AND TRACK A RECORDED NOTHING
+
+**Egress came back ~12:55 PT on 08-24 and both readouts ran.** The ramp happened exactly as
+ordered: **9,338 MB, 05:00:51→05:11 PT, 89% COMMIT, renderer 90% of it** — matching the 08-20
+password-sign-in figure almost exactly, and two minutes after the T−3h warm-up window opened.
+**The prediction was right on both halves.**
+
+**And `native_alloc_readings` has ZERO rows for it.** `maybeWarmupLogin` is the **third**
+Okta-navigating path and the only one with no sampler on it — and by construction it is the
+EXPENSIVE one, because it fires only when Okta is GONE, i.e. the full password variant.
+`startNativeSampling` has two call sites: `maybeAutoLogin` and the renewal's throwaway tab.
+**Wiring it onto the warm-up is the obvious next move and is NOT done.**
+
+That is the fifth instance of the house shape — an instrument bolted to two of three doors — and
+the first where it cost an experiment somebody deliberately set up.
+
+**The one reading that DID land is the cheap T−30 sign-in** (−422 MB, 103 MB renderer). It shows
+no `net::` and no system-dll frames, so the buffering candidate gets **no support** — but **do
+NOT correct the three buffering entries on it**: it cleared the 400 MB bar by 22 MB, it is 4.5%
+of the event under investigation, it is a different code path, and its shape disagrees (renderer
+24% here against 90% on real ramps).
+
+**The warm-up design is vindicated and the morning was clean** — the 9 GB trip landed at T−3h,
+the T−30 sign-in cost ~106 MB with COMMIT flat at 16%, and the cart fired at **T+2s**.
+
+**#171 IS PROVEN ON A REAL HOLD.** `TEST · 43129` carted T+2s, claimed, released, and reported
+**`cart read back: 1 entry`** on iOS build 1.0 (21) — RC's own answer, the verification nobody
+could force. **Still not exercised on Android.**
+
+### The commands and the reading rules (unchanged, for the next ramp)
 
 ### The commands and the reading rules
 
@@ -216,7 +269,7 @@ do not investigate its absence.**
 
 ---
 
-## 2. Do nothing else until that check is done
+## 2. Serial rules — still binding whenever a hold is queued
 
 The SERIAL rules in `docs/LANES.md` bind while the hold is live:
 
@@ -238,7 +291,7 @@ The SERIAL rules in `docs/LANES.md` bind while the hold is live:
 | Open PRs | **#183 — CI GREEN, deliberately NOT merged.** The owner's call. |
 | Open issues | **#76**, **#14** (#174/#175 folded and closed 2026-08-23) |
 | Open holds | the 08-24 instrument has released; `expire-holds.ts` sweeps from Fly every 60s |
-| Migrations | highest applied **066**; next main-lane number is **067** (`070` is an old side-lane block claim). LANES.md's "next is 060" is stale. |
+| Migrations | highest applied **067** (the SMS-storm fix, applied to prod 08-24); next main-lane number is **068** (`070` is an old side-lane block claim). LANES.md's "next is 060" is stale. |
 
 **#183 is web-side**, so merging it reaches already-installed apps on the push — no rebuild, no
 App Store review. It does **not** touch any `worker-deploy.yml` path, so it will not restart the
