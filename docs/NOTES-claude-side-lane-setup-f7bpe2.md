@@ -1626,3 +1626,269 @@ token — worth correcting on the next side session rather than mid-flight.
 This file is continued rather than replaced. §24 corrects §23 in place, and a correction living
 in a different file from the claim it corrects is how the Feature E note got re-derived three
 times.
+
+---
+
+## 25. THE ROUTINES WERE CONSOLIDATED — 7 to 4, AND TWO WERE DUPLICATES NOBODY HAD NOTICED
+
+*Side lane, 2026-08-23 evening. The owner's report: "none of them fire back to a session we are
+still using, a lot flag red a lot and I'm guessing they are stale and crying wolf." All three
+halves of that were correct, and the duplication was visible in the Routines list itself.*
+
+### 25a. TWO EXACT DUPLICATE PAIRS, FIRING THE SAME CRON MINUTE
+
+| kept / rebuilt | duplicate, created 2026-08-13 |
+|---|---|
+| `trig_015nU7…` RC runner pre-flight, `40 14 * * *` | `trig_01DHDm…` "07:40 PT pre-flight", `40 14 * * *` |
+| `trig_01KvxP…` RC 8am hold — did it cart?, `15 15 * * *` | `trig_01SygA…` "RC 08:15 PT outcome", `15 15 * * *` |
+
+The two duplicates were created **two minutes apart** (12:38:52 and 12:40:25) by one session
+that did not know the originals existed — **and CLAUDE.md documents both originals by ID**, in
+the "Two Routines cover this daily" block. So every morning alert had been arriving twice for
+ten days, from a pair of routines the repo's own memory file already named.
+
+**This is §24a's shape one level out**: the fact was on screen (two identical cron expressions
+in the Routines list) and was read past, while the authoritative record sat in a file nobody
+re-checked before creating.
+
+### 25b. `created_via` DECIDES WHAT AN AGENT MAY TOUCH — AND IT IS NOT VISIBLE IN THE UI
+
+Both duplicates were `created_via: "http_api"`, i.e. made through the claude.ai Routines UI.
+**An agent can neither delete nor disable those.** Both calls are refused outright:
+
+```
+delete_trigger: this routine was created via "http_api", not by an agent. Agents can only
+delete routines they created (via create_trigger), or a routine may delete itself from its
+own session.
+update_trigger: … A routine's own session may still disable itself (enabled=false only).
+```
+
+Only `created_via: "meta_mcp"` routines — the ones an agent made — are agent-editable. **So the
+set of routines an agent can INVENTORY is not the set it can ACT on**, and nothing in the list
+view distinguishes them. Budget for the owner having to delete UI-created routines by hand; say
+so up front rather than discovering it halfway through a consolidation. (The owner deleted both
+on request, confirmed by re-listing.)
+
+### 25c. TWO FIELDS ARE CREATE-ONLY, SO "EDIT THE ROUTINE" IS OFTEN "REPLACE IT"
+
+`update_trigger` accepts only `name`, `prompt`, `cron_expression`, `run_once_at`, `enabled` and
+`model`. It **cannot** change:
+
+- **`notifications`** — so adding push to an existing routine needs a delete+recreate.
+- **`persistent_session_id`** — so binding a routine to a session, or RE-POINTING one at a new
+  session, also needs a delete+recreate.
+
+That is why two trigger IDs changed in this pass, and it is the part with an ongoing cost: when
+CampHawk-Main is replaced, the 08:15 routine cannot be edited to follow it. It has to be rebuilt.
+
+### 25d. PUSH AND IN-SESSION ARE MUTUALLY EXCLUSIVE — the design constraint
+
+**The server rejects `notifications` on any routine bound to a session** (self-bind or
+`persistent_session_id`); they are accepted only for `create_new_session_on_fire`. So a routine
+either reaches the phone **or** lands in a conversation someone is reading. Never both.
+
+The split taken, and the reasoning:
+
+- **The 07:40 pre-flight KEEPS push** and stays a fresh session. Its entire product is reaching
+  a human with twenty minutes in which a hold can still be saved. A finding that lands silently
+  in a conversation at 07:40 is worth nothing.
+- **The 08:15 outcome is BOUND** to CampHawk-Main. Nothing can be saved by then — it is a
+  post-mortem — so being read matters more than being pushed.
+
+**A bound routine dies with its session, silently.** The evidence was already in the list: the
+dead `send_later` from 08-11 carries `ended_reason: auto_disabled_session_gone`. Against that,
+the Wheel routine has been bound to `session_01AZmkidxhboQaFN6TDBex2q` since **2026-08-03** and
+last fired **08-21**, so binding is durable exactly as long as the session is. **The failure mode
+is a self-disable with no alarm** — the same shape as the Windows Scheduled Tasks that stopped on
+2026-08-17 and wrote nothing, and the same reason it is recorded here rather than trusted.
+
+### 25e. THE NIGHTLY OPS REVIEW WAS GUARANTEED TO REPORT FALSE PROBLEMS — DISABLED
+
+`trig_01GRLZ…`, cron `7 14 * * *` (07:07 PT). Its prompt is dated **2026-07-28** and two of its
+checks describe a world that no longer exists:
+
+1. *"Feature E accrual … Healthy is ~1,000 rows/hr across ~502 probe targets."* Feature E was
+   **fully stopped 2026-07-30** — all 502 `probe_targets` rows are `active = false` and
+   `PROBE_ENABLED` is `"false"`. It reported a catastrophic-looking zero **every night, by
+   design.**
+2. *"Expect EXACTLY ONE machine started and one stopped."* **Sharding went live 2026-08-02 at
+   `SHARD_COUNT = 2`** — two machines in iad, both running, `min_machines_running` tracking it.
+   The CORRECT state tripped this check nightly.
+
+It also still authorises itself to *"commit and push such fixes to master"*, which
+`docs/LANES.md` (2026-08-15) forbids outright and `.claude/hooks/push-guard.mjs` would block.
+
+**DISABLED, not deleted**, so the run history and the prompt survive for whoever rewrites it.
+Note it still shows a `next_run_at` — that is a stale computed field, not an armed schedule.
+
+### 25f. THE HEALTH WATCH HAD INHERITED THE CI FIXTURE RED, WITH THE DESTRUCTIVE REMEDY ATTACHED
+
+It fired **every 2 hours, push AND email**, and its prompt was otherwise good — it already said
+to stay silent when green. What made it cry wolf was the 08-23 finding it did not know about:
+the health route's own inline `upcoming`/`imminent` counts never received the `REAL_UNIT`
+filter, so **any CI run turns `autocart.rc_session` red** citing *"4 hold(s) ahead and the next
+is within 25 min"*, and the detail prints `mini-pc\rc-login.bat` — **which force-kills the
+Chromium the live RC token lives in.** Every merge fires CI. Twelve chances a day to send
+somebody to destroy a healthy session.
+
+Cut to **every 6 hours** and the prompt now carries three named rules, each for a false alarm
+that has actually happened:
+
+1. **UNREACHABLE IS NOT DOWN** — HTTP 000 or a proxy 403 to CONNECT is the sandbox network
+   policy. Verified 2026-08-23: camphawk.app, `*.supabase.co` and fly.io were ALL 403 at the
+   gateway while the site was fine. Report "could not check — egress blocked", never an outage.
+2. **A `rc_session` fail citing N holds may be FIXTURES** — re-check two minutes later, and
+   never print `rc-login.bat` on that basis. A real hold carries RC's own label (`#W123`); a
+   fixture's `unit_name` starts `TEST · `.
+3. **`rc_session` warn/dead is usually CORRECT** — the token lives ~60 minutes.
+
+The same three went into the new pre-flight prompt, and the fixture rule plus §24a's `TEST · `
+marker and the `claimed = claimed_at ?? released_at` trap went into the new outcome prompt.
+
+### 25g. THE CART CANARY WAS FIRING AT THE RELEASE MINUTE
+
+`trig_012s8e…` ran at `0 15 * * *` = **08:00 PT exactly** — the minute the runner is carting and
+the box is under load. Moved to **14:00 PT** (`0 21 * * *`). Nothing else changed; it remains a
+genuinely valuable check that RC has not altered the cart internals the design depends on.
+
+**Its double-notify was NOT fixed**: the routine carries push+email AND the script itself emails
+the owner via `--notify`, so one failure arrives twice. Removing the routine-level notification
+needs a delete+recreate (25c), which was not worth spending on a cosmetic duplicate.
+
+### 25h. THE END STATE
+
+| Routine | Fires (PT) | Reports to |
+|---|---|---|
+| `trig_01NdJC1SvSDwxZZroAooVKnU` RC pre-flight | 07:40 | **phone** — push + email |
+| `trig_01CzPKmDUz5MC3tbYFGMTS4a` RC 08:15 outcome | 08:15 | **CampHawk-Main**, bound |
+| `trig_01Vmg72qxMMSucjfUERr8rYv` health watch | 23:12 / 05:12 / 11:12 / 17:12 | phone, faults only |
+| `trig_012s8ekj1nEjoQTdRY21PGRM` cart canary | 14:00 | phone, failures only |
+| `trig_01GRLZziuYX38yrYgf2Eq4UA` nightly ops review | — | **DISABLED** |
+
+`trig_01HqLPXsYHF7yBG9GmXe8GCV` (Wheel check-ins) is not CampHawk and was not touched.
+
+Notification volume: **~14 pushes a day down to at most 4 scheduled fires**, three of which are
+silent unless something is genuinely wrong. And the morning sequence no longer collides — it was
+07:07, 07:40 x2, 08:00 and 08:15 x2 inside seventy minutes.
+
+### 25i. DOC DRIFT THIS PASS CREATED, IN A MAIN-LANE FILE
+
+**CLAUDE.md's "Two Routines cover this daily" block names `trig_015nU7BciNU5GKimmgXjvAZG` and
+`trig_01KvxPSzmrwKHZ8CY3tDgbnj`. Both are now DELETED**, replaced by `trig_01NdJC…` and
+`trig_01CzPK…` respectively. Filed as an issue rather than edited, per the one-writer rule.
+
+**And CampHawk-Main was never told** that a routine now fires into its session at 08:15.
+`ListAgents` reports no reachable peers across cloud containers, so `SendMessage` could not
+deliver. Whoever reads this next should say so to that session.
+
+### 25j. AN OPEN HYPOTHESIS WORTH ONE COMMAND
+
+**The routine-fired sessions may share this container's egress block.** The health watch runs in
+`env_01NNXGWqS3cK1KTqhy4dH3JF` — the same environment as this session, which cannot reach
+camphawk.app, supabase.co or fly.io — and it last fired at 02:12:32Z, two minutes after this
+session started and found them all blocked.
+
+If routine sessions are also getting HTTP 000, **a share of the red flags were never about
+CampHawk at all** and the fix is the egress policy, not any routine. The prompts now refuse to
+report a 000 as an outage either way, so the failure direction is safe. But it is untested, and
+the cheap test is to read what the next health-watch firing actually says.
+
+---
+
+## Handover — 2026-08-23 night (side lane)
+
+*Supersedes the evening block above for STATE only; its §25 and the "START HERE" hold entry
+still stand. Read at 20:40 PT.*
+
+### START HERE: the hold releases at 07:58:47 PT and it is an INSTRUMENT
+
+Unchanged from the evening block — **read it there in full.** The one-line version:
+`TEST · 43129`, Morro Bay SP — Lower Section, releases **2026-08-24 07:58:47 PT**, queued by the
+main lane (#176) **to manufacture a ramp for Track A**. The T−3h warm-up opens **~04:59 PT** with
+Okta gone, forcing the ~9.4 GB password Okta trip. **A 9 GB ramp tomorrow morning is the ordered
+outcome, not an incident.** It locks a real campsite; the LANES.md SERIAL rules bind until it
+clears; the updater's 6h release gate shut at 01:58:47 PT.
+
+**Its status could NOT be re-read tonight** — see the environment note below. The last reading
+was `requested` at 14:39 PT.
+
+### THE ENVIRONMENT BLOCKED EVERY LIVE READING — VERIFY YOURS BEFORE DIAGNOSING
+
+```
+camphawk.app/api/health/status  ->  000
+supabase.co                     ->  000
+api.github.com                  ->  200
+```
+
+The agent proxy names it itself: `curl -sS "$HTTPS_PROXY/__agentproxy/status"` lists
+`connect_rejected · "gateway answered 403 to CONNECT"` for `camphawk.app:443`,
+`mraeprivokvmxbvhwbbj.supabase.co:443`, `fly.io:443`, `mcp.vercel.com` and `mcp.sentry.dev`.
+`selective: false`, `toolScoped: false` — a blanket policy. The proxy README says explicitly not
+to retry a 403 but to report it.
+
+**CampHawk is not down. It could not be looked at.** Both readouts were run and died on the
+network rather than on logic (`DB query error: TypeError: fetch failed`), so no hold status, no
+health, no memory series this session. `/rc-status` fails the same way. **Check your own egress
+first**, and never report an outage from a 000.
+
+### State — GitHub-only, read 20:40 PT
+
+| | |
+|---|---|
+| Master | `8cbff92`, identical on origin and locally |
+| Open PRs | **none** (before this branch's) |
+| Open issues | **#175, #174, #76, #14** — unchanged |
+| Mini-PC | `6d4100b` as of the 14:39 PT reading; **not re-verifiable tonight** |
+
+**Three open findings were re-verified in source**, since live state was unavailable:
+
+- **#175 stands** — `rc-keepwarm.mjs:2241` is still `stalledMs > MEM_STALL_MS && freeMb <
+  LOW_RAM_MB`, an AND, with `LOW_RAM_MB = 2000` (`:470`) and `MEM_STALL_MS = 60_000` (`:480`).
+  Free RAM bottomed at 3,191 / 3,328 MB on the two 9 GB ramps, so the arm still cannot fire.
+- **#174 stands** — `CLAUDE.md:2663` and `NEXT-SESSION.md:126` still call hold `45719` a real
+  morning, while `CLAUDE.md:4608` and `:4697` call the same unit synthetic.
+- **The fixture red stands** — `REAL_UNIT` exists only in `src/lib/rc-holds.ts`; the health
+  route's own `upcoming` count is `status IN (…) AND release_at >= now`, unfiltered.
+
+`LINKOUT_BY_STORE` is `{ios: true, android: false}`, as documented.
+
+### What this session did
+
+**Consolidated the Routines, 7 to 4 — §25 above is the write-up.** Nothing in the repo changed
+except this notes file; no code, no migrations, no bot commands, nothing on the box.
+
+The reusable parts, in case §25 is too long to read at 07:30: `created_via: "http_api"`
+routines cannot be deleted OR disabled by an agent (the owner removed both duplicates by hand);
+`update_trigger` cannot change `notifications` or `persistent_session_id`, so those edits are
+delete-and-recreate; and **push and in-session reporting are mutually exclusive** — the server
+rejects notifications on any bound routine.
+
+### Open
+
+- **#174, #175** — main lane's to fold, deliberately left as issues.
+- **CLAUDE.md names two deleted trigger IDs** (§25i) — filed as an issue this session.
+- **CampHawk-Main has not been told** a routine now fires into it at 08:15 (§25i).
+- **#76** — `rc-holds.test.mts`'s fixture sweep deletes a concurrent run's live rows.
+- **#14** — rec.gov timeout cascade.
+- **A CI run can still turn `autocart.rc_session` RED**, printing the destructive
+  `rc-login.bat` remedy. Bounded to the length of a run. Recorded, not fixed.
+- **The live manage token `EQO2oXcQ`** — still unrotated, still in git history. **Owner's call,
+  four sessions running.**
+- **iOS `1.0 (5)`** — awaiting a decision, same binary, rewritten notes. **Release is AUTOMATIC**
+  on approval. A 3.1.1 rejection now is the ANSWER, not a fourth process failure.
+- **The leak is not fixed and remains the standing ask.** Everything shipped is containment or
+  relocation.
+
+### Traps, including one new one
+
+- **`created_via` is invisible in the Routines UI** and decides whether an agent can act. Do not
+  promise a routine cleanup before checking it. **NEW this session.**
+- **Read the readout's `site` column** — `TEST · ` is the one unambiguous fixture marker.
+- **`claimed` in the readout is `claimed_at ?? released_at`** — a time there does not mean
+  claimed. `released` is the successful terminal state.
+- **A health reading goes stale faster than a conclusion drawn from it.**
+- **Do NOT run `npm test`** — production DB, serialized between lanes, and a hold is queued.
+- **The branch name IS the lane token**, and `claude/camphawk-side-lane-status-iij2xm` still does
+  not match `docs/LANES.md`'s `claude/side-<topic>`. Third session running. Worth fixing at the
+  START of a side session, never mid-flight.
+
