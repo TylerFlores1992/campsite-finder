@@ -2901,7 +2901,13 @@ than wait for it.
 
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23, late evening).
+> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23, 20:50 PT).
+>
+> **THE NEXT SESSION'S FIRST ACTION IS THE 08:15 PT CHECK-IN, AND NOTHING BEFORE IT.** A real
+> test hold releases at 07:58:47 PT on 08-24 to manufacture a ~9.4 GB Okta trip at ~04:59 PT and
+> give Track A its first reading. **Check outbound access first** — it was revoked mid-session on
+> 08-23 and an unreachable DB is the one thing that could be mistaken for "no ramp". The SERIAL
+> rules bind until the hold clears: no `npm test`, no second hold, nothing that restarts the box.
 >
 > **THE TWO APP FIXES SHIPPED (#171)** — the hand-off lands the user IN their cart and reads
 > the cart BACK there (stronger proof than the status string we wrote ourselves), and the
@@ -2963,7 +2969,8 @@ than wait for it.
 > LOUDLY** (`DB query error: TypeError: fetch failed`, exit 1), so an unreachable DB does NOT
 > masquerade as "No readings yet".
 >
-> Master is **`6d4100b`** plus the docs merges since; the box is on `6d4100b`. **#171, #169 and
+> Master is **`e282fc8`**; the box is on `6d4100b` — ordinary drift, since the merges since were
+> docs-only and nothing bot-side is pending. **#171, #169 and
 > #146 are merged; #168 was closed as superseded** (its correction had already landed via
 > #165/#170 — the reasoning is on the PR so it does not read as a finding dropped in a merge).
 > **No PRs are open**; issues **#174/#175** are the two corrections above and are now folded,
