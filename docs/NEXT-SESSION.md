@@ -51,7 +51,59 @@ curl -sS -m 12 -o /dev/null -w '%{http_code}\n' https://camphawk.app/
 
 ---
 
-## 1. THE 08:15 PT CHECK-IN — this is the whole job
+## 1. THE 08-24 TEST RAN. THE HOLD WAS LOST TO A BUG IN OUR SIGN-IN — FIXED, NOT RE-TESTED
+
+The 08-24 hand-off failed, and the owner's own account is what diagnosed it:
+
+> *"I put login info in. Checked. Hit button. It opened RC for less than a second as if auto
+> login worked. Hit grab it. Then went to RC not logged in."*
+
+**Two defects, both presence-read-as-liveness, both fixed in #183.** Web-side, so it reaches
+already-installed apps on the merge — **no rebuild, no App Store review.**
+
+1. **`closeOnToken` tested `captured` alone.** A STALE token — the ordinary state, since it
+   comes from the SERVER and no local clear reaches it — was broadcast by `rc-inject.js` on
+   RC's first API call and closed the sign-in window in under a second. **The credentials
+   were never typed:** Okta's flow is several page loads and cannot finish that fast. The
+   claim gate had learned this on 08-21 (#152), AFTER `closeOnToken` shipped in #126, and
+   nothing carried it next door because **nothing tested either one.**
+2. **The gate's own `else` sent `unknown` to `verified`**, three lines under a comment
+   promising `unconfirmed`. Rebroadcasts carry no `expiresInSec`, so they read `unknown` —
+   meaning the next replay after a correct `expired` verdict wiped the warning and unlocked
+   `mayRelease`. **The message telling a user their session is dead lived about one API
+   call**, which is likely why the owner never saw it.
+
+`src/lib/rc-token-liveness.ts` is now the ONE definition both read, and
+`rc-token-liveness.test.mts` is the guard that never existed (11 tests, six mutations, each
+verified to apply and each caught).
+
+### THE RE-TEST — NOT YET RUN, and it needs both a DB and a human
+
+Blocked on egress (§0). When it returns:
+
+```bash
+NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts --find --show 6   # never invent an id
+NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts --unit <id> --arrival <date> --watch <id>
+```
+
+**What should now happen, stated so it can be falsified:** the sign-in window **stays open**
+on the stale token instead of closing in under a second, `afterLoad` injects the credentials
+per page (bounded by `MAX_LOGIN_PAGES = 6`), and the window closes only once a **live** token
+arrives.
+
+**The proof is in `client_reports`:** look for the login stages — `signin-open`, `email`,
+`password`, `submitted` — which were **entirely absent** on 08-24 because the window closed
+before any of them could run. Their presence is the fix working. Then `✓ Added to cart` and
+`cart read back`.
+
+**The claim link must be opened IN THE APP.** From a browser `canInject` is false and none of
+this is exercised. No session can do this — ask the owner.
+
+---
+
+## 1b. THE ORIGINAL 08:15 CHECK-IN — still unread
+
+### The commands and the reading rules
 
 A **real test hold** was queued to *manufacture* a memory ramp so Track A's native-allocation
 sampler finally gets a reading. It is an instrument, not a product test.
