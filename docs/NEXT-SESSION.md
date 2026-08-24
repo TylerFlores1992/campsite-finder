@@ -1,12 +1,19 @@
 # Next session — start here
 
-*Rewritten 2026-08-23, 20:50 PT. **UPDATE 2026-08-24 08:15 PT: the check-in RAN and could not
-take the reading — egress is still blocked (§0). Track A still has zero attributed readings and
-the manufactured ramp is UNREAD, not absent.** The rows are in Postgres and keep. **Your first
-action is still §1**, the moment you have egress; everything else in this file stands.*
+*Rewritten 2026-08-24, evening.*
 
-*Delete this file once the sampler has a reading from a real ramp AND the App Store version has
-a decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
+> ## START NOTHING.
+>
+> Read this file, then report where things stand. Everything below is either context, or is
+> explicitly marked as somebody else's decision.
+>
+> **THE ONE THING COSTING A REAL USER SOMETHING TODAY** is the coming-soon SMS storm — §1.
+> Migration 067 is applied; **the poller fix is NOT deployed.**
+>
+> **One PR is open — #183, CI GREEN, deliberately NOT merged** so the owner can decide.
+
+*Delete this file once Track A has a reading from a real ramp AND the App Store version has a
+decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
 
 ---
 
@@ -49,9 +56,148 @@ curl -sS -m 12 -o /dev/null -w '%{http_code}\n' https://camphawk.app/
   exit 1. **Widen the readout's 14-day window if enough time has passed** — the row outliving the
   query that fetches it is the one way this reading still gets lost.
 
+### WHERE THE READOUT RUNS — asked 2026-08-24, and it is not obvious
+
+**Right here, in a session like this one.** Checked: `NEXT_PUBLIC_SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` are **already present as process env vars in this sandbox**, so
+nothing needs installing or configuring. **Only the network is blocked.** The moment egress is
+allowed, the command in §1b just works.
+
+- **NOT the mini-PC.** Nothing under `scripts/auto-cart-bot/` touches Supabase — the bot only
+  ever talks to `camphawk.app` with `AUTOCART_TOKEN` — so the box almost certainly holds no
+  service-role key. And `VAR=1 npx …` is **bash syntax that silently does nothing in cmd**;
+  Windows needs `set "VAR=value"` on its own line first.
+- **`NODE_USE_ENV_PROXY=1` is a SANDBOX-ONLY prefix.** It points Node's fetch at the agent
+  proxy. On an ordinary machine it is unnecessary — just `npx tsx scripts/…`.
+- **There is NO admin UI for the attribution.** `native_alloc_readings` (066) has only its
+  library and migration. `chromium_memory_samples` has a panel; the reading that says *what
+  allocated* does not — so this script is the only way to see it. Worth closing eventually,
+  since it means the leak's key instrument cannot be checked from a phone.
+
 ---
 
-## 1. THE 08:15 PT CHECK-IN — this is the whole job
+## 1. THE COMING-SOON DEDUP IS BROKEN IN PRODUCTION — the one live user cost
+
+**26 texts and 26 emails in 62 minutes to one user**, alternating two divisions of Morro Bay,
+**every one for the same physical campsite** (unit 43191, same release hour, same dates).
+
+Migration 070 made `claimHoldNotification` write a **campground-namespaced** value into
+`rc_hold_notified_for` so two divisions would not silence each other. **That column holds ONE
+value**, so N divisions overwrite each other in turn and the dedup is **defeated outright** —
+unbounded, not off-by-one. The fix for one missed alert traded it for a storm.
+
+- **Migration 067 IS APPLIED to prod** (six rows backfilled, read back and verified). The column
+  is additive and unread until the poller ships — migration first, then the code, as documented.
+- **THE POLLER FIX IS NOT DEPLOYED.** It reaches Fly only on a merge to master. Until then **the
+  storm can recur on any multi-division watch with a held unit.** Watch `eb886697` is primed.
+- **Four real user offers were outstanding for 08-25 08:00 PT**, across three users. Untapped
+  offers do not block the update window; **a tap makes it a real morning with a stranger
+  waiting.**
+- The fix is a **set** (`watches.rc_hold_notified_keys`), keyed `<releaseHour>|<unitId>`. Both
+  cheaper fixes are wrong: hour-only reinstates 070's bug, unit-only ping-pongs again the moment
+  two units share an hour. `worker/hold-claim.ts` + real-DB test, six mutations.
+
+**This is the first thing to check on the next session: is that poller fix on master and on Fly?**
+
+---
+
+## 1a. THE 08-24 TEST RAN. THE HOLD WAS LOST TO A BUG IN OUR SIGN-IN — FIXED, NOT RE-TESTED
+
+The 08-24 hand-off failed, and the owner's own account is what diagnosed it:
+
+> *"I put login info in. Checked. Hit button. It opened RC for less than a second as if auto
+> login worked. Hit grab it. Then went to RC not logged in."*
+
+**ONE defect fixed in #183** — web-side, so it reaches already-installed apps on the merge,
+**no rebuild, no App Store review.**
+
+**`closeOnToken` tested `captured` alone.** A STALE token — the ordinary state, since it comes
+from the SERVER and no local clear reaches it — was broadcast by `rc-inject.js` on RC's first
+API call and closed the sign-in window in under a second. **The credentials were never typed:**
+Okta's flow is several page loads and cannot finish that fast. The claim gate had learned this
+on 08-21 (#152), AFTER `closeOnToken` shipped in #126, and nothing carried it next door because
+**nothing tested `closeOnToken` at all.**
+
+`src/lib/rc-token-liveness.ts` now classifies a token report three ways and `closeOnToken`
+closes on `live` only. `rc-token-liveness.test.mts` is the guard that never existed.
+
+### A SECOND FINDING, DELIBERATELY NOT FIXED — and my first fix for it was WRONG
+
+A rebroadcast carries `{ captured, length }` and no `expiresInSec`, so it classifies as
+`unknown`. The claim gate verifies on `unknown` as well as `live` — therefore **a replay
+arriving after a correct `expired` verdict re-enters that branch and clears the warning.** The
+message telling a user their session is dead lives about one API call. That is real, and it is
+plausibly why the owner never saw it on 08-24.
+
+**I first "fixed" this by making `unknown` stop verifying, and `claim-release-truth.test.mts`
+caught it.** That guard exists for a reason I had not weighed: **a bundle older than migration
+058 sends no `expiresInSec` at all**, so every report from it is `unknown` and refusing those
+takes the fast path from every such client at once. The rule is *"we could not tell, so we do
+not NEWLY refuse."* The gate is behaving as designed and is left byte-identical to master.
+
+**The honest remedy is to make `expired` STICKY for the run** — a replay then cannot undo a
+verdict the first sighting earned, and older bundles keep verifying. That is a deliberate
+change to a release-critical gate with its own guards, not a drive-by, and it is the next
+session's call.
+
+### THE RE-TEST — NOT YET RUN, and it needs both a DB and a human
+
+Blocked on egress (§0). When it returns:
+
+```bash
+NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts --find --show 6   # never invent an id
+NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts --unit <id> --arrival <date> --watch <id>
+```
+
+**What should now happen, stated so it can be falsified:** the sign-in window **stays open**
+on the stale token instead of closing in under a second, `afterLoad` injects the credentials
+per page (bounded by `MAX_LOGIN_PAGES = 6`), and the window closes only once a **live** token
+arrives.
+
+**The proof is in `client_reports`:** look for the login stages — `signin-open`, `email`,
+`password`, `submitted` — which were **entirely absent** on 08-24 because the window closed
+before any of them could run. Their presence is the fix working; their absence means it is not.
+Expect the "your sign-in has expired" warning to appear and then be cleared by a replay — that
+is the second finding above, still unfixed, and NOT a failure of this fix. Then `✓ Added to cart` and
+`cart read back`.
+
+**The claim link must be opened IN THE APP.** From a browser `canInject` is false and none of
+this is exercised. No session can do this — ask the owner.
+
+---
+
+## 1b. THE MANUFACTURED RAMP — IT ARRIVED, AND TRACK A RECORDED NOTHING
+
+**Egress came back ~12:55 PT on 08-24 and both readouts ran.** The ramp happened exactly as
+ordered: **9,338 MB, 05:00:51→05:11 PT, 89% COMMIT, renderer 90% of it** — matching the 08-20
+password-sign-in figure almost exactly, and two minutes after the T−3h warm-up window opened.
+**The prediction was right on both halves.**
+
+**And `native_alloc_readings` has ZERO rows for it.** `maybeWarmupLogin` is the **third**
+Okta-navigating path and the only one with no sampler on it — and by construction it is the
+EXPENSIVE one, because it fires only when Okta is GONE, i.e. the full password variant.
+`startNativeSampling` has two call sites: `maybeAutoLogin` and the renewal's throwaway tab.
+**Wiring it onto the warm-up is the obvious next move and is NOT done.**
+
+That is the fifth instance of the house shape — an instrument bolted to two of three doors — and
+the first where it cost an experiment somebody deliberately set up.
+
+**The one reading that DID land is the cheap T−30 sign-in** (−422 MB, 103 MB renderer). It shows
+no `net::` and no system-dll frames, so the buffering candidate gets **no support** — but **do
+NOT correct the three buffering entries on it**: it cleared the 400 MB bar by 22 MB, it is 4.5%
+of the event under investigation, it is a different code path, and its shape disagrees (renderer
+24% here against 90% on real ramps).
+
+**The warm-up design is vindicated and the morning was clean** — the 9 GB trip landed at T−3h,
+the T−30 sign-in cost ~106 MB with COMMIT flat at 16%, and the cart fired at **T+2s**.
+
+**#171 IS PROVEN ON A REAL HOLD.** `TEST · 43129` carted T+2s, claimed, released, and reported
+**`cart read back: 1 entry`** on iOS build 1.0 (21) — RC's own answer, the verification nobody
+could force. **Still not exercised on Android.**
+
+### The commands and the reading rules (unchanged, for the next ramp)
+
+### The commands and the reading rules
 
 A **real test hold** was queued to *manufacture* a memory ramp so Track A's native-allocation
 sampler finally gets a reading. It is an instrument, not a product test.
@@ -123,7 +269,7 @@ do not investigate its absence.**
 
 ---
 
-## 2. Do nothing else until that check is done
+## 2. Serial rules — still binding whenever a hold is queued
 
 The SERIAL rules in `docs/LANES.md` bind while the hold is live:
 
@@ -139,15 +285,20 @@ The SERIAL rules in `docs/LANES.md` bind while the hold is live:
 
 | | |
 |---|---|
-| Master | **`e282fc8`** |
-| Mini-PC | **`6d4100b`** — current in the only sense that matters; nothing bot-side is pending |
-| Open PRs | **none** |
+| Master | **`dd2ab82`** |
+| Branch | `claude/main-lane-setup-check-yxqkwc` — the #183 work |
+| Mini-PC | **`6d4100b`** — nothing bot-side is pending |
+| Open PRs | **#183 — CI GREEN, deliberately NOT merged.** The owner's call. |
 | Open issues | **#76**, **#14** (#174/#175 folded and closed 2026-08-23) |
-| Open holds | **ONE, deliberate** — the instrument above |
-| Migrations | highest applied **066**; next main-lane number is **067** (`070` is an old side-lane block claim). LANES.md's "next is 060" is stale. |
+| Open holds | the 08-24 instrument has released; `expire-holds.ts` sweeps from Fly every 60s |
+| Migrations | highest applied **067** (the SMS-storm fix, applied to prod 08-24); next main-lane number is **068** (`070` is an old side-lane block claim). LANES.md's "next is 060" is stale. |
 
-Master and the box differing is the ordinary drift `CLAUDE.md` documents — the last two merges
-were docs-only, so there is nothing waiting to reach the mini-PC.
+**#183 is web-side**, so merging it reaches already-installed apps on the push — no rebuild, no
+App Store review. It does **not** touch any `worker-deploy.yml` path, so it will not restart the
+pollers.
+
+Master and the box differing is the ordinary drift `CLAUDE.md` documents — the merges since were
+docs-only, so there is nothing waiting to reach the mini-PC.
 
 **`autocart.bot_version` is a hint, not an answer.** `bot_commit` is COALESCEd and can sit stale
 beside a live heartbeat. `git-status` through `bot_commands` is what answers "did it land?".

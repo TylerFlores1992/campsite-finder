@@ -116,6 +116,10 @@
  * at module scope here.
  */
 
+// The one definition of "is this token evidence of a usable session?", shared with the
+// claim gate. NOT a native plugin, so a module-scope import is fine here.
+import { mayCloseOnToken } from '@/lib/rc-token-liveness';
+
 export interface RcHandoff {
   /** The RC page to land on — the loop, never the park or the cart. See lib/booking-url. */
   url: string;
@@ -324,7 +328,17 @@ async function injectableWebView(): Promise<null | {
           // NEVER on the cart path. There `closeOnToken` is false, because the token is the
           // MIDDLE of that job — closing on it would kill the webview before the two cart
           // POSTs it exists to make.
-          if (closeOnToken && r.stage === 'token' && (r.detail as { captured?: boolean } | null)?.captured) {
+          //
+          // PRESENCE IS NOT LIVENESS. This tested `captured` alone until 2026-08-24, so a
+          // STALE token — the ordinary state here, since it comes from the SERVER and no
+          // local clear reaches it — closed the sign-in window in under a second and read
+          // as "auto login worked". The credentials were never typed, and the site was
+          // then handed over against no session at all. The gate next door had learned
+          // this on 08-21 (#152) and this sibling had not. `mayCloseOnToken` is the one
+          // definition both now share, so this window closes exactly when the gate would
+          // flip to `verified` — never on `expired`, which is what has to stay open so the
+          // sign-in can run, and never on `unknown`.
+          if (closeOnToken && r.stage === 'token' && mayCloseOnToken(r.detail)) {
             try { ref.close?.(); } catch { /* the user can close it themselves */ }
           }
         });

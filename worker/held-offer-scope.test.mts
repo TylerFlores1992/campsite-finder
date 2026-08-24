@@ -54,9 +54,26 @@ test('the release-time dedup is still what stops repeats', () => {
   // disappear entirely, which is the thing it exists to catch.
   assert.match(src, /claimHoldNotification\(\s*w\.id,\s*held\.availableAt\b/,
     'the per-release claim is what makes the un-suppressed loop safe');
+});
 
-  // And the scope must actually be passed, or two divisions of one park sharing the
-  // single rc_hold_notified_for column would silence each other's coming-soon alert.
-  assert.match(src, /claimHoldNotification\([\s\S]{0,120}multi:\s*w\.multi_campground/,
-    'the hold claim is scoped per campground for a multi-campground watch');
+test('the hold claim is scoped by UNIT, never by campground', () => {
+  /**
+   * THIS ASSERTION IS INVERTED FROM WHAT IT SAID, AND THE OLD VERSION PINNED THE BUG.
+   *
+   * It used to require `multi: w.multi_campground` be passed, on the reasoning that two
+   * divisions of one park sharing the single `rc_hold_notified_for` column would silence
+   * each other. The reasoning was right; the remedy wrote a per-campground value into a
+   * single-valued column, so N divisions overwrote each other in turn and the dedup was
+   * defeated outright — 26 texts in an hour to one user for one campsite (2026-08-24).
+   *
+   * Reinstating the campground scope is therefore a regression, and it is the one that
+   * looks like caution. Guarded from both sides: the unit must be passed, and the
+   * campground scope must not come back.
+   */
+  assert.match(src, /claimHoldNotification\(\s*w\.id,\s*held\.availableAt,\s*held\.unitId\s*\)/,
+    'the coming-soon claim is keyed on the unit, so one campsite is one alert');
+  assert.ok(
+    !/claimHoldNotification\([\s\S]{0,200}multi:\s*w\.multi_campground/.test(src),
+    'a campground-scoped hold claim is the 2026-08-24 storm — one column cannot hold N claims',
+  );
 });
