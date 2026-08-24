@@ -1303,10 +1303,15 @@ recovered    11:20:21  rc 163MB pid2956      RAM free 13,480MB   commit 10%
     instant the renewal began, and the during-ramp window is UNOBSERVED. What makes "not the JS
     heap" the strong reading anyway is V8's own ceiling: default max old space is ~4 GB and
     these ramps have peaked at **27 GB**. A 27 GB process cannot be mostly JS heap.
-  - **The containment has now held THREE times** — 5,688 / 4,866 / 4,903 MB, never past 71%
-    COMMIT. And all three stalled in `renew:click-sign-in`, which navigates to
+  - **The containment had held THREE times at this point** — 5,688 / 4,866 / 4,903 MB, never
+    past 71% COMMIT. And all three stalled in `renew:click-sign-in`, which navigates to
     `signin.reservecalifornia.com`. **Still a candidate**: memory rose across the reload, the
     prime AND the click, so that is where it was caught, not where it is proven to allocate.
+    - **PAST TENSE DELIBERATELY — "never past 71% COMMIT" IS NO LONGER TRUE OF THE BOX.** Those
+      three firings are real and this reading of them stands. What does not carry forward is the
+      standing state it implies: on 2026-08-22 and 08-23 two ramps reached **8,983 and 9,180 MB
+      at 82% and 88% COMMIT and the arm did not fire on either.** See "NEITHER 9 GB RAMP TRIPPED
+      THE RAM ARM" below.
 - **TWO INSTRUMENTS FOR THE NEXT ONE (migration 062).** The heap trail cannot answer either
   question, for one shared reason — it stops when CDP does.
   1. **A FREE-RAM TRAIL WITH THE STEP ATTACHED.** `os.freemem()` is a syscall, not a request to
@@ -2663,10 +2668,67 @@ Two ramps in thirty-two hours; everything else in the series flat at ~300 MB.
 - **THE MORNING ITSELF WORKED**: hold `45719` carted at **T+1.6s** (07:59:47.6 against
   07:59:46), released 08:10. The 07:45 alarm was CORRECT and the system repaired itself,
   because a `provedNothing` auto-login attempt is refunded and the retry loop kept going.
+  - **IT WAS A TEST FIXTURE, NOT A USER'S HOLD (corrected 2026-08-24 from side-lane §24a).**
+    `unit_name` reads **`TEST · 45719`** — a prefix written in exactly two places in the repo,
+    `scripts/rc-test-hold.mts:57` and a readout test whose fixtures are non-numeric. Nothing in
+    the poller can produce it, and **the readout printed it in the `site` column the whole
+    time.** This file already described unit 45719 as *"a synthetic hold from `rc-test-hold.mts`
+    (South Carlsbad #35, arrival 2026-12-01)"* on 2026-08-13 — same unit, same script, same
+    arrival date. **The file contained its own refutation and it was read past.**
+  - **THE ARGUMENT FOR "REAL" WAS EXACTLY INVERTED, AND THAT IS THE REUSABLE PART.** It ran: *it
+    carries a `user_id` and a real campground.* `rc-test-hold.mts:240` **copies both from a real
+    watch by construction**, so every test hold has them — the property offered as evidence is
+    produced by the thing it was meant to rule out. **The discriminator is `unit_name`**; the two
+    genuinely real rows in the same table read `#W123` and `#W121`, on a different user id.
+  - **DO NOT OVER-CORRECT: THE CART PROOF SURVIVES INTACT.** `rc-test-hold.mts` takes a REAL
+    numeric unit id by design — that is what exercises the whole chain — so this hold locked a
+    real site and really carted it, and its `✓ Added to cart` on iOS is still genuine evidence
+    the two RC cart POSTs fire. **"Fixture" means nobody was waiting on the other end, not that
+    nothing was at stake.** Only what it is evidence OF was overstated.
+  - **WHAT IT COST: nothing, and that is luck.** For a day the `docs/LANES.md` SERIAL rules, the
+    update-window decisions and the "keep #146 away from a release" caution were all applied on
+    the belief that a **stranger was waiting on this campsite**. Those happened to be the
+    conservative calls. A correction, not an incident.
+
+### NEITHER 9 GB RAMP TRIPPED THE RAM ARM (2026-08-24, folded from side-lane §24b)
+The two ramps above ended, and **the containment is not what ended them.** The arm is
+`stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB` — **an AND** — with `LOW_RAM_MB = 2000`
+(`rc-keepwarm.mjs:470`) and `MEM_STALL_MS = 60_000` (`:480`), joined at `:2241`.
+
+| | peak `rc` | free RAM at peak | floor | COMMIT |
+|---|---|---|---|---|
+| 08-22 23:12→23:23 | 8,983 MB | **3,191 MB** | 2,000 | 82% |
+| 08-23 07:31→07:41 | **9,180 MB** | **3,328 MB** | 2,000 | **88%** |
+
+- **Free RAM never came within 1,190 MB of the floor**, so the AND fails on the RAM half alone
+  and the stall half does not matter. `os.freemem()` was calibrated against the PowerShell
+  sampler to within 3.5% on 2026-08-18, so a 60% gap is not a reading error.
+- **A BROWSER REPLACEMENT ENDED THEM — the series says so.** Not a tab close and not an in-place
+  drain: the **`gpu-process` pid changes across both events** (6464 → 2824, then 2824 → 2348),
+  and that process is one per browser. The entry above already says of the second that *"the
+  browser had just been recycled"*; what was never recorded is that **the arm was not what did
+  it**, and the consequence below.
+- **THE FLOOR IS BEHAVING EXACTLY AS DESIGNED. WHAT MOVED IS THE PEAK.** The 08-19 change to
+  2000 wrote its own arithmetic down: *"leaving room for a renewal whose worst observed peak is
+  5,688 MB against a ~9,000 MB idle, i.e. **a trough near 3,300 MB**."* Observed troughs: **3,191
+  and 3,328 MB.** The prediction is essentially exact, and the floor was deliberately set BELOW
+  the expected trough so a working renewal could not be killed — which was the entire point of
+  4000 → 2000. But that reasoning was built on a 5,688 MB worst case; it is **9,180 MB now, 61%
+  higher**, and 88% COMMIT is two points off the same entry's *"~90% is where Windows stops
+  scheduling"*.
+- **THIS IS A QUESTION FOR A DELIBERATE SESSION, NOT A PATCH.** `keepwarm-recycle.test.mts`
+  bounds the floor 1500–3000 with recorded reasoning, and **lowering the trip point is precisely
+  the change that killed a working repair on 08-19.** The honest options differ in kind — leave
+  it and rely on the recycle, or give the arm a second trigger that is not free-RAM. Neither is
+  a drive-by, and "just lower the number" is the version that looks like caution.
+- **WHAT WOULD SETTLE WHAT ENDED THEM:** a `♻ recycling` line in `logs\rc-keepwarm.log` at
+  14:41:5x, via a `tail-log` bot command. The post-Okta recycle (`visitedOkta`) is the leading
+  **candidate** for the 08-23 ramp; the 08-22 one coincides with the box update at 23:12 PT, so
+  a `stop-all` is likelier there. **Both are candidates.**
 
 ### THE HAND-OFF LANDS IN THE CART NOW, AND THE SIGN-IN NEVER PRESSED ANYTHING (2026-08-23)
-Two rough edges reported by the owner after a hold that **worked** (carted at T+1.6s), so
-neither was an outage. Both were reproduced against the SERVED BUNDLE before a line was
+Two rough edges reported by the owner after a hold that **worked** (carted at T+1.6s — a test
+fixture, see the correction above; the cart was real either way), so neither was an outage. Both were reproduced against the SERVED BUNDLE before a line was
 written, which is what stopped the second one being written up as "RC reworded its control".
 - **A successful cart now NAVIGATES to `/Customers/ShoppingCart`** instead of ending its
   status line "tap the cart icon at the top of this page" — an instruction to go and
@@ -2804,6 +2866,25 @@ than wait for it.
   `NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts` (the hand-off).
   **"No readings yet" is a real answer and means the trip did not ramp** — the three-way
   verdict refuses to speak without a RAM delta, which is correct and is not a broken sampler.
+  Both scripts **fail loudly** on an unreachable database (`DB query error`, exit 1), verified
+  2026-08-23 — so an empty answer is never a silent network failure wearing its clothes.
+- **A 9 GB RAMP ON THE MORNING OF 08-24 IS THE DESIRED OUTCOME, NOT AN INCIDENT.** Do not open
+  `chromium_memory_samples` at 08:00, read `peak_rc 9,180 / COMMIT 88%`, and write it up as the
+  leak recurring or as the containment failing. **It is the experiment running — somebody
+  ordered this ramp.** The leak is still unfixed and still the standing ask; this particular
+  ramp was requested. (And per the entry above, the arm would not have fired on it anyway.)
+- **PREDICTION, STATED SO IT CAN BE FALSIFIED:** the expensive trip lands at **~04:59 PT**
+  (warm-up, Okta gone), and the T−30 sign-in at 07:28:47 is then the **cheap cookie-answered**
+  kind because the warm-up left an Okta session behind. **Check where it actually landed rather
+  than assuming** — the 08-22 handover predicted a quiet morning on exactly this reasoning and
+  was falsified by a 9,180 MB ramp at T−30.
+- **THE PRECONDITION, AND WHAT IS ACTUALLY KNOWN ABOUT IT.** `okta_expires_at` was frozen at
+  `2026-08-24T03:00:59Z` across four reads by two sessions (33 minutes apart, then 70 minutes
+  apart) — so it is the **absolute cap**, not the rolling window our own probe refreshes. That
+  timestamp is **20:00:59 PT on 08-23**, so the cap was DUE to lapse then and Okta should be
+  GONE for the 04:59 warm-up. **Due, not observed** — the last read was at 21:37Z and nobody
+  watched it expire, so this is arithmetic on a prior reading, not a measurement. If the warm-up
+  does not fire, an Okta session that outlived its stated cap is the first thing to check.
 
 ## Open / next session
 
@@ -2829,6 +2910,20 @@ than wait for it.
 > **A REAL TEST HOLD IS QUEUED FOR 08-24 07:58:47 PT** (entry directly above) to manufacture
 > the 9.4 GB Okta trip at ~04:59 PT and give Track A its first reading. It also proves #171's
 > two app fixes — **the claim link must be opened IN THE APP.**
+> **SO A 9 GB RAMP THAT MORNING IS THE ORDERED OUTCOME, NOT AN INCIDENT** — and per the entry
+> above, the RAM arm would not have fired on it in any case.
+>
+> **TWO CORRECTIONS FOLDED IN 2026-08-24 from the side lane (§24a/§24b, issues #174/#175).**
+> Both correct sentences this file previously stated as fact:
+> - **The 2026-08-23 hold was a TEST FIXTURE** (`unit_name` = `TEST · 45719`), not a user's.
+>   The cart proof survives — it used a real unit id and really carted — but the argument for
+>   "real" was inverted, and this file already documented that unit as synthetic on 08-13.
+> - **NEITHER 9 GB RAMP TRIPPED THE RAM ARM.** Free RAM bottomed at 3,191 and 3,328 MB against
+>   a 2,000 floor; a **browser replacement** ended both (the `gpu-process` pid changes). The box
+>   reached **88% COMMIT**, two points off where Windows stops scheduling. **"The containment is
+>   holding, there is no fire" was wrong**, and the wait-for-evidence argument for deferring
+>   Track B rests partly on it. **The floor is a QUESTION, not a patch** — lowering the trip
+>   point is the change that killed a working repair on 08-19.
 >
 > **THE LEAK IS NOT FIXED and remains the standing ask.** Everything shipped is containment or
 > relocation. The 08-23 shape is an **eleven-minute climb on ONE renderer pid at ~400 MB/min**,
@@ -2846,9 +2941,20 @@ than wait for it.
 > **iOS:** `1.0 (5)` resubmitted 2026-08-22 with corrected notes — `docs/APP-STORE.md` §2d.
 > Release is AUTOMATIC. A 3.1.1 rejection now is the ANSWER, not a fourth process failure.
 >
-> Master is **`6d4100b`** and the box matches it. **#171, #169 and #146 are merged; #168 was
-> closed as superseded** (its correction had already landed via #165/#170 — the reasoning is on
-> the PR so it does not read as a finding dropped in a merge). **No PRs are open.**
+> **OUTBOUND ACCESS CAN BE REVOKED MID-SESSION, AND IT IS BLOCKED AS OF 2026-08-23 20:15 PT.**
+> The agent proxy answers **403 to CONNECT** for `camphawk.app`, `*.supabase.co` and `fly.io`,
+> so the health endpoint and every `NODE_USE_ENV_PROXY=1 npx tsx scripts/*.mts` DB readout are
+> unreachable; `api.github.com` still works, which is why MCP does. It is an org egress-policy
+> denial — **do not retry or route around it, report the blocked host.** Check with
+> `curl -sS "$HTTPS_PROXY/__agentproxy/status"`. **Reassuring and verified: the readouts fail
+> LOUDLY** (`DB query error: TypeError: fetch failed`, exit 1), so an unreachable DB does NOT
+> masquerade as "No readings yet".
+>
+> Master is **`6d4100b`** plus the docs merges since; the box is on `6d4100b`. **#171, #169 and
+> #146 are merged; #168 was closed as superseded** (its correction had already landed via
+> #165/#170 — the reasoning is on the PR so it does not read as a finding dropped in a merge).
+> **No PRs are open**; issues **#174/#175** are the two corrections above and are now folded,
+> **#76** and **#14** remain.
 > **Delete `docs/NEXT-SESSION.md` once the sampler has a reading from a real ramp AND the App
 > Store version has a decision**; it is a handover, not a permanent doc, and a stale one reads
 > like current state.
@@ -5802,8 +5908,11 @@ the token-less cell does ramp, so the near-expiry stand-down halves the leak (tw
 near-expiry renewal against one) and cannot cure it. **`attemptLogin` navigates too and is
 release-critical, so no schedule can fix this** — the browser is now RECYCLED after any Okta
 round trip, keyed on the click (`visitedOkta`), which is safe for the same reason the age recycle
-was useless: `localStorage` survives a restart, so the minted token does too. Containment is
-otherwise unchanged: the RAM guard has fired four times and the box has not been past 71% COMMIT.
+was useless: `localStorage` survives a restart, so the minted token does too. ~~Containment is
+otherwise unchanged: the RAM guard has fired four times and the box has not been past 71% COMMIT.~~
+**THAT SENTENCE IS FALSIFIED — 2026-08-22 and 08-23 reached 82% and 88% COMMIT with the RAM arm
+firing on NEITHER.** Struck rather than deleted: it is the exact sentence a later reader would
+quote to conclude a 9 GB ramp had been contained.
 **THE OPEN RISK IS STILL THE LOGIN.** The owner's sign-in hung at the password and a later one
 sat on *"We are processing your request…"*. A CAPTCHA and memory pressure are now **both** live
 candidates — Okta's form is rendered by the very navigation that allocates the gigabytes — and
@@ -6203,9 +6312,21 @@ break.** TestFlight build **8 is up (2026-08-08)**, after two failures worth kno
   **PUBLISHED TO PLAY CLOSED TESTING (alpha) 2026-08-08, versionCode 18** — the API-36
   deadline is CLEARED. Every green `android-release` build now uploads itself: a Google
   Play service account is wired in via the `google_play` env group (setup + gotchas in
-  `docs/PLAY-STORE.md` §0b). The 12-tester / 14-day closed-testing clock still has NOT
-  started — that is the long pole, and no build shortens it.
-Details in `docs/PLAY-STORE.md` §0a.
+  `docs/PLAY-STORE.md` §0b). ~~The 12-tester / 14-day closed-testing clock still has NOT
+  started — that is the long pole, and no build shortens it.~~
+  **SUPERSEDED — THE PRODUCTION APPLICATION WENT IN 2026-08-22** (owner-reported;
+  `docs/PLAY-STORE.md` **§0c**). Play does not accept the application until the
+  12-testers-for-14-days precondition is met, so the clock not only started, it finished —
+  though that is an **inference from the submission being accepted**, not an observation: the
+  opt-in dates and the final tester roster were never written down and the console is the only
+  record.
+  - **THE ONE ANSWER THIS REPO CAN SUBSTANTIATE** is the "feedback acted on" half: `SignOutConfirm`
+    (#162, `8ab87e4`) cites Play closed-test feedback dated 2026-08-22 in its own source header,
+    with a shipped change against it.
+  - **A RECORDED GAP:** that session verified the paid tester vendor's answer sheet and found
+    **three of its four claims false** — and **which three was never written down**, in any file
+    or commit. If Play asks a follow-up, that analysis has to be redone from scratch.
+Details in `docs/PLAY-STORE.md` §0a and §0c.
 
 ### Mobile app — everything below needs `npm install && npx cap sync` + a REBUILD
 Shipped 2026-07-27, all native-side, so **a web deploy does not deliver them**:

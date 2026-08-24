@@ -121,13 +121,26 @@ do after the leak, not stop it from leaking."* They were right.
 | Mini-PC | `6d4100b` — **current; every memory instrument is live, #169 included** |
 | Open PRs | **none** |
 | Open holds | **ONE, deliberate** — a REAL test hold releasing 2026-08-24 07:58:47 PT, queued to manufacture a ramp for Track A. See CLAUDE.md. |
-| RC session | dead, but **Okta ALIVE** — so a repair is the cheap kind |
+| RC session | dead, but **Okta ALIVE** — so a repair is the cheap kind. Okta's absolute cap was read at `2026-08-24T03:00:59Z`, i.e. **due** to lapse ~20:01 PT on 08-23, which is what the test hold needs. **Due, not observed** — nobody watched it go. |
+
+**CHECK YOUR OUTBOUND ACCESS BEFORE TRUSTING ANY EMPTY ANSWER.** As of 2026-08-23 20:15 PT the
+agent proxy answers **403 to CONNECT** for `camphawk.app`, `*.supabase.co` and `fly.io` — an org
+egress-policy denial, so the health endpoint and every DB readout are unreachable while it
+lasts. `api.github.com` still works. Diagnose with `curl -sS "$HTTPS_PROXY/__agentproxy/status"`;
+**do not retry or route around it — report the blocked host.** Verified reassurance: the readouts
+**fail loudly** (`DB query error`, exit 1), so an unreachable DB cannot be mistaken for
+"No readings yet".
 
 **THIS MORNING WORKED, AND THAT IS THE BASELINE THE TWO FIXES SIT ON.** Hold `45719` carted at
 **T+1.6 seconds** (07:59:47.6 against a 07:59:46 release — the fastest yet) and was released at
 08:10. A 07:45 alarm fired and was CORRECT: the session really was dead, and the system repaired
 itself because every failed auto-login attempt is refunded, so the retry loop kept going until
 RC's app loaded.
+
+**IT WAS A TEST FIXTURE, NOT A USER'S HOLD** — `unit_name` reads `TEST · 45719`, a prefix only
+`scripts/rc-test-hold.mts` writes. **The cart proof is untouched**: the script takes a real
+numeric unit id by design, so it locked and carted a real site and its `✓ Added to cart` on iOS
+is genuine. What was overstated is what it is evidence OF. Full correction in CLAUDE.md.
 
 **THE SESSION IS DEAD RIGHT NOW AND IT IS THE KNOWN PATHOLOGY, NOT A NEW FAULT.** The storage
 census fired and answered: *"cookies: 10 on the RC origins, NONE token-shaped — so the stale
@@ -162,6 +175,14 @@ Two ramps in thirty-two hours, everything else flat at ~300 MB:
 |---|---|---|---|---|
 | 08-22 23:12→23:23 | 8,983 MB | 6,744 → 3,191 | 82% | 10364 throughout |
 | 08-23 07:31→07:41 | **9,180 MB** | 5,960 → 3,328 | **88%** | 5296 throughout |
+
+**THE RAM ARM FIRED ON NEITHER OF THESE, AND THAT MATTERS TO EVERYTHING BELOW.** The guard needs
+a stall **AND** free RAM under 2,000 MB; the troughs were 3,191 and 3,328 MB. A **browser
+replacement** ended both — the `gpu-process` pid changes across each. So *"containment is
+holding, there is no fire"* is wrong: 88% COMMIT is two points off where Windows stops
+scheduling. **The floor is a question, not a patch** — it was deliberately set below the
+predicted 3,300 MB trough so a working renewal could not be killed, and lowering it is the
+change that killed one on 08-19. See CLAUDE.md.
 
 **ONE renderer pid, growing steadily for ELEVEN MINUTES at ~400 MB/min.** The renderer is ~90%
 of it (8,245 of 9,180 MB); the browser process grows proportionally but stays under 800 MB;
@@ -315,6 +336,13 @@ blind is how a repair gets credited to the wrong mechanism, which has happened h
 
 **#155 is merged and on the box, so the arming is done.** What remains: get ONE reading from a
 real ramp, then take Track B to the owner with evidence rather than with a hypothesis.
+
+**BUT ONE HALF OF THE DEFERRAL ARGUMENT IS WEAKER THAN IT WAS.** "Wait for evidence" rested
+partly on there being no fire — *"the box stays healthy"*. The 08-22/08-23 ramps reached **82%
+and 88% COMMIT with the RAM arm firing on neither**, and what ended them was a browser
+replacement rather than any guard. The design argument for waiting still stands entirely (the
+reading could move the lever from `ctx.request` to something else); **the "nothing is burning"
+argument does not.** Take both to the owner honestly.
 
 ---
 
