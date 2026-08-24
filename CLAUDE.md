@@ -804,6 +804,19 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
 
 ## Web-session gotchas (this environment)
 - **Node `fetch` needs `NODE_USE_ENV_PROXY=1`** to reach Supabase / reservation portals.
+- **`GITHUB_TOKEN`/`GH_TOKEN` ARE SET AND ARE 14-CHARACTER PLACEHOLDERS (2026-08-23).** Direct
+  `api.github.com` calls with them are answered *"GitHub access is not enabled for this session.
+  An org admin must connect the Claude GitHub App"* — **GitHub works ONLY through the MCP tools.**
+  - **THE VARIABLE BEING SET IS WHAT MAKES THIS A TRAP.** `env | grep GITHUB_TOKEN` finds it, so
+    the natural check passes and the natural conclusion — "a token is available, I can poll the
+    API" — is wrong. **Check `${#GITHUB_TOKEN}`, or just call it once and read the body.**
+    Presence is not liveness; same family as `status = 'sent'` meaning only "Twilio returned 2xx".
+  - **IT COST A WATCHDOG THAT COULD NOT SEE ITS TARGET.** A `Monitor` polling CI on that token
+    parsed the refusal as `check_runs: undefined`, found nothing terminal, and stayed **silent** —
+    on course to report `TIMEOUT` after twenty minutes, which reads as *CI is hanging* rather than
+    *the instrument never had access*. A watcher blind to its subject is indistinguishable from
+    one patiently waiting, which is this file's most-repeated shape. **To wait on CI, poll the
+    GitHub MCP tools; `curl` to `api.github.com` cannot work here.**
 - **The credentials are process env vars — THERE IS NO `.env` FILE.** `grep`ping `.env*`
   finds nothing and looks exactly like "no credentials here". It isn't; check
   `printenv`. Cost a wrong "I can't build here" call on 2026-07-29 with Clerk, Stripe,
