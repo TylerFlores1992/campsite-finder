@@ -34,6 +34,7 @@ import * as recgovScheduler from './recgov-scheduler';
 import { SHARD_COUNT, LEASE_RENEW_MS, claimOrRenewShard, heldShard, ownsCampground } from './shard';
 import { leadDaysUntil } from './lead-time';
 import { heldCheckDue, clampHeldInterval, RC_HELD_CHECK_DEFAULT_MS } from './held-cadence';
+import { claimHoldNotification, releaseHoldClaims } from './hold-claim';
 import { DueTracker, intervalForLead } from './poll-cadence';
 import { startRateProfile } from './rate-profile';
 import { findRCOpenUnit, findRCHeldUnits } from '../src/lib/availability/reservecalifornia';
@@ -680,30 +681,6 @@ export function holdIsNewsworthy(availableAt: string, now = new Date()): boolean
  * user cannot act on minute-level precision in a release that is at least an hour away,
  * so the hour is the honest granularity.
  */
-async function claimHoldNotification(
-  watchId: string,
-  releaseAt: string,
-  scope?: { campgroundId?: string | null; multi?: boolean }
-): Promise<boolean> {
-  const bucket = new Date(releaseAt);
-  const hour = Number.isFinite(bucket.getTime())
-    ? `${bucket.getFullYear()}-${bucket.getMonth() + 1}-${bucket.getDate()}T${bucket.getHours()}`
-    : releaseAt;
-  // SECOND COLLAPSE POINT, and it needed the same treatment as the alert claim.
-  // `rc_hold_notified_for` is ONE column on the watch, so two divisions of one park with
-  // units releasing in the same hour would share it and only the first would be
-  // announced. Prefixing with the campground keeps them apart. Scoped to `multi` for the
-  // same reason as the site key: an ordinary watch's stored value is unchanged, so
-  // nothing re-announces on deploy.
-  const key = scope?.multi && scope.campgroundId ? `${scope.campgroundId}|${hour}` : hour;
-  const rows = await mutate<{ id: string }>(
-    `UPDATE watches SET rc_hold_notified_for = $2
-     WHERE id = $1 AND active = true AND rc_hold_notified_for IS DISTINCT FROM $2
-     RETURNING id`,
-    [watchId, key]
-  );
-  return rows.length > 0;
-}
 
 /**
  * The site number a ReserveCalifornia camper would recognise.
@@ -1154,17 +1131,13 @@ async function cycle(): Promise<void> {
       notified++;
       // A held site that just went live: clear the held marker so a future
       // cancellation of the same site alerts again.
-      if (isUseDirectSource(watch.campground_source) && watch.rc_hold_notified_for) {
-        // Clear only what THIS campground claimed. A blanket NULL would let a division
-        // with nothing held wipe the claim a sibling division just made, and the
-        // sibling would then re-announce the same release on the next cycle.
-        await mutate(
-          watch.multi_campground
-            ? `UPDATE watches SET rc_hold_notified_for = NULL
-                WHERE id = $1 AND rc_hold_notified_for LIKE $2 || '|%'`
-            : `UPDATE watches SET rc_hold_notified_for = NULL WHERE id = $1`,
-          watch.multi_campground ? [watch.id, watch.campground_id] : [watch.id],
-        ).catch(() => {});
+      if (isUseDirectSource(watch.campground_source)) {
+        // Drop only THIS UNIT'S claims. A blanket clear would let one site going live
+        // re-open the claim for every other site releasing in the same hour, and they
+        // would all re-announce on the next cycle — the storm arriving by another door.
+        // Keyed on the unit to match claimHoldNotification; a unit-less source clears its
+        // one wildcard claim, which is the behaviour it has always had.
+        await releaseHoldClaims(watch.id, result.campsiteId).catch(() => {});
       }
     } catch (err) {
       console.error(`[poller] notification failed for watch ${watch.id}:`, err);
@@ -1208,10 +1181,10 @@ async function cycle(): Promise<void> {
       );
       continue;
     }
-    if (!(await claimHoldNotification(w.id, held.availableAt, {
-      campgroundId: w.campground_id,
-      multi: w.multi_campground,
-    }))) continue;
+    // SCOPED BY UNIT, NOT BY CAMPGROUND. Passing the campground here is what produced the
+    // 2026-08-24 storm: one physical campsite that RC lists under two facilities became two
+    // claims and two texts, every cycle. See claimHoldNotification.
+    if (!(await claimHoldNotification(w.id, held.availableAt, held.unitId))) continue;
 
     console.log(
       `[poller] COMING SOON: ${w.campground_name} (${w.campground_id}) — releases ${held.availableAt} — notifying watch ${w.id}`

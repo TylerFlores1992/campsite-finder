@@ -3086,6 +3086,76 @@ users**, all `offered` and none tapped as of 12:58 PT. Untapped offers do not bl
 morning with a stranger on the other end**, and changes what the SERIAL rules and the update
 window are protecting.
 
+### 26 TEXTS IN AN HOUR: A PER-CAMPGROUND KEY IN A SINGLE-VALUED COLUMN (2026-08-24)
+Reported by the owner as a multi-division texting issue. **It is a live alert storm, it hit
+three watches, and the cause is the fix for the bug it resembles.**
+```
+11:40:30  sms  coming_soon  rc-2185  "Morro Bay SP — Morro Lottery sites"          site 43191
+11:40:32  sms  coming_soon  rc-583   "Morro Bay SP — Upper Section (sites 86-140)" site 43191
+11:45:31  … the same pair, every ~5 minutes, until 12:42 …
+```
+**26 texts and 26 emails in 62 minutes to one user** (`melinda.flores0501`, watch `336d742c`),
+alternating two divisions, **every one for the SAME physical campsite** — unit 43191, `#96`,
+same 08:00 release, same three dates. Thirteen held-check cycles x two divisions, dead even.
+- **THE MECHANISM.** Migration 070 made `claimHoldNotification` write a **campground-namespaced
+  value** into `rc_hold_notified_for` so two divisions of one park would not silence each other.
+  **That column holds ONE value.** N divisions each claiming a different key for the same
+  release hour overwrite one another in turn, so `rc_hold_notified_for IS DISTINCT FROM $2` is
+  true on **every call, for ever**. The dedup was not weakened — it was **defeated outright**,
+  and the failure is unbounded rather than off-by-one.
+- **THE EVIDENCE IS IN THE COLUMN, NOT INFERRED.** Watch `eb886697` (the owner's, `parts = 2`)
+  was found holding **`rc-583|2026-8-25T8`** — a namespaced value, sitting in a scalar column,
+  three alerts into the same pattern. Melinda's watch read the bare `2026-8-25T8`, consistent
+  with it having been edited down to one division at 12:42, which is why her storm stopped.
+- **A FIX THAT MADE ITS OWN BUG UNBOUNDED.** 070 was preventing exactly ONE missed alert (two
+  divisions releasing in the same hour, only the first announced). The remedy traded that for
+  an unbounded storm. **The direction matters more than the size**: the old failure cost a user
+  one heads-up; the new one costs the product their trust in every alert it sends.
+- **AND THE GUARD PINNED THE BUG.** `held-offer-scope.test.mts` asserted `multi:
+  w.multi_campground` **was passed** — so the storm was not merely untested, it was
+  *required by a test*. Inverted now, guarded from both sides, and the reason written in.
+  Reinstating the campground scope is the regression that looks like caution.
+- **THE SAME CAMPSITE REALLY IS IN TWO DIVISIONS, AND THAT IS RC'S DATA MODEL, NOT OUR BUG.**
+  `rc-2185`, `rc-583` and `rc-582` are all facilities of **park 680**, and RC lists one physical
+  site under more than one facility — a lottery pool and an ordinary pool carry the same unit.
+  `findRCHeldUnits` is facility-scoped and correct; the poller simply reaches the same campsite
+  twice per cycle. **So even after the storm is fixed, a campground-keyed claim still sends two
+  texts for one campsite.** That is why the key is the UNIT.
+- **THE FIX IS A SET, AND THE TWO CHEAPER FIXES ARE BOTH WRONG.** Reverting to an hour-only key
+  kills the storm in one line and reinstates 070's bug. Keying on the unit alone collapses the
+  duplicate correctly and **ping-pongs again** the moment two different units share an hour —
+  the identical failure, one variable along. Only a set satisfies both.
+  **Migration 067** adds `watches.rc_hold_notified_keys text[]`; the claim is one atomic
+  `UPDATE .. SET array_append(..) WHERE NOT (keys @> ARRAY[key])`, keyed `<releaseHour>|<unitId>`.
+- **NOTHING RE-ANNOUNCES ON DEPLOY.** A live pre-067 claim is backfilled as `<hour>|*` and the
+  claim checks that wildcard too — without it every watch mid-claim sends one more alert the
+  moment the poller ships, **on the very watches that just received twenty-six.** The wildcard
+  is never written again and decays when the release passes.
+- **THE CLEAR IS PER-UNIT FOR THE SAME REASON.** A blanket clear when one site goes live would
+  re-open the claim for every other site releasing that hour and they would all re-announce on
+  the next cycle — the storm arriving by another door. The old clear also gated on
+  `watch.rc_hold_notified_for`, which this change stops writing, so leaving it would have made
+  the clear **permanently dead** while looking correct.
+- **`rc_hold_notified_for` IS LEFT IN PLACE AND SIMPLY STOPS BEING WRITTEN.** Dropping it in the
+  same change would make a poller rollback silently lose every live claim, and this is the
+  alerting path.
+- **EXTRACTED TO `worker/hold-claim.ts`, for the reason `claim.ts` was.** Importing `poller.ts`
+  STARTS the poller, so the decision governing how many texts a user receives was unreachable
+  from a test — which is why this shipped at all. `worker/hold-claim.test.mts` is **real-DB**
+  (the whole decision is one SQL predicate; a mock would test a fake) and covers the same unit
+  under two divisions, twelve consecutive cycles, a lock creeping within the hour, two different
+  units each getting their alert, a later claim not evicting an earlier one, per-unit release,
+  the legacy wildcard, and an inactive watch.
+  **Six mutations, each verified to apply and to fail** — including the single-valued column
+  itself (`array_append` → `ARRAY[$2]`), which reproduces the production bug and is caught by
+  the "a later claim must not evict an earlier one" assertion.
+- **MIGRATION 067 IS APPLIED TO PROD** (2026-08-24, six rows backfilled, read back and verified
+  — `eb886697`'s `rc-583|2026-8-25T8` became `2026-8-25T8|*`). The column is additive and unread
+  until the poller ships, which is the documented order: **migration first, then the code.**
+- **THE POLLER CODE IS NOT DEPLOYED.** It reaches Fly only on a merge to master, and until then
+  **the storm can recur on any multi-division watch with a held unit** — `eb886697` is primed,
+  and four real offers are outstanding for 08-25 08:00 PT.
+
 ## Open / next session
 
 > **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23, 20:50 PT).
@@ -3122,6 +3192,14 @@ window are protecting.
 > **FOUR REAL USER OFFERS ARE OUTSTANDING FOR 08-25 08:00 PT**, across three users, none tapped
 > as of 12:58 PT. Untapped offers do not block the update window; **a tap makes tomorrow a real
 > morning with a stranger waiting**, which changes what the SERIAL rules are protecting.
+>
+> **AND THE COMING-SOON DEDUP IS BROKEN IN PRODUCTION RIGHT NOW — 26 texts in an hour to one
+> user** (entry directly above). A per-campground key was being written into the single-valued
+> `rc_hold_notified_for`, so N divisions overwrote each other and the dedup was defeated
+> outright. **Migration 067 IS APPLIED; the poller fix is NOT DEPLOYED** — it reaches Fly only
+> on a merge to master, and the storm can recur on any multi-division watch with a held unit
+> before tomorrow's 08:00. Watch `eb886697` is primed. This is the one thing here that is
+> costing a real user something today.
 >
 > **THE BOX IS CURRENT — `6d4100b`, "updated and verified", 23 seconds end to end.** #169 is
 > live, so the native sampler's reading now lands in Postgres and **ramp #23 will be
