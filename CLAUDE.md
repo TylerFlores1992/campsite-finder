@@ -811,12 +811,29 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
     the natural check passes and the natural conclusion — "a token is available, I can poll the
     API" — is wrong. **Check `${#GITHUB_TOKEN}`, or just call it once and read the body.**
     Presence is not liveness; same family as `status = 'sent'` meaning only "Twilio returned 2xx".
+  - **AND "JUST CALL IT ONCE" IS NOT ENOUGH EITHER — THE REFUSAL IS REPO-SCOPED (measured
+    2026-08-24).** The line above says direct calls are answered with the refusal. That is true of
+    the calls anyone actually needs and **false as a general statement**, which matters because
+    the exception is the endpoint a person reaches for first:
+    ```
+    GET /user            200   <- the placeholder AUTHENTICATES; returns the real login
+    GET /rate_limit      200
+    GET /repos/...       403   "GitHub access is not enabled for this session"
+    GET /repos/.../check-runs   403   <- the watchdog case
+    ```
+    **So the natural smoke test SUCCEEDS.** `curl -H "Authorization: Bearer $GITHUB_TOKEN"
+    api.github.com/user` printing your own account is a **false positive**, and a positive result
+    is a worse trap than the mere presence this entry was written about — it looks like proof.
+    `${#GITHUB_TOKEN}` is still the honest check, and **anything repo-scoped goes through MCP.**
+    The conclusion below is unchanged; only its mechanism is corrected. The CONNECT tunnel to
+    `api.github.com` is **open** — it is authorization that is withheld, not the network.
   - **IT COST A WATCHDOG THAT COULD NOT SEE ITS TARGET.** A `Monitor` polling CI on that token
     parsed the refusal as `check_runs: undefined`, found nothing terminal, and stayed **silent** —
     on course to report `TIMEOUT` after twenty minutes, which reads as *CI is hanging* rather than
     *the instrument never had access*. A watcher blind to its subject is indistinguishable from
     one patiently waiting, which is this file's most-repeated shape. **To wait on CI, poll the
-    GitHub MCP tools; `curl` to `api.github.com` cannot work here.**
+    GitHub MCP tools; `curl` to a `/repos/` endpoint cannot work here** — and per the correction
+    above, do not conclude otherwise from `/user` answering.
 - **The credentials are process env vars — THERE IS NO `.env` FILE.** `grep`ping `.env*`
   finds nothing and looks exactly like "no credentials here". It isn't; check
   `printenv`. Cost a wrong "I can't build here" call on 2026-07-29 with Clerk, Stripe,
@@ -2899,9 +2916,59 @@ than wait for it.
   watched it expire, so this is arithmetic on a prior reading, not a measurement. If the warm-up
   does not fire, an Okta session that outlived its stated cap is the first thing to check.
 
+### THE MANUFACTURED RAMP WAS NEVER READ — EGRESS IS STILL BLOCKED (2026-08-24 08:15 PT)
+The 08-23 session queued a real test hold to produce a ~9.4 GB Okta trip at ~04:59 PT and hand
+Track A its first attribution. **The check-in ran on time and could not take the reading.** The
+denial recorded on 08-23 at 20:15 PT is still in force twelve hours later:
+```
+camphawk.app          curl: (56) CONNECT tunnel failed, response 403
+*.supabase.co         curl: (56) CONNECT tunnel failed, response 403
+fly.io                403 to CONNECT   (also mcp.vercel.com, mcp.sentry.dev)
+api.github.com        OK — the MCP tools work, so the denial is HOST-SCOPED
+```
+- **IT SURVIVED THE SESSION BOUNDARY, so it is standing policy and not a blip.** The previous
+  entry says "revoked MID-SESSION", which reads as transient and is the sentence a later reader
+  would use to justify simply retrying. It has now outlived a session restart and an overnight.
+  **Do not retry or route around it — report the hosts.** `$HTTPS_PROXY/__agentproxy/status`
+  lists the rejections with timestamps.
+- **THE READOUTS FAILED LOUDLY, EXACTLY AS THE HANDOVER PROMISED** — `DB query error: TypeError:
+  fetch failed`, **exit 1**, with the SQL printed. That is the one property that makes this a
+  clean non-answer rather than a dangerous one: **"No readings yet" (the trip did not ramp) and
+  "the database is unreachable" are different sentences here**, so nothing could be misread as
+  the sampler having found nothing. The rule was verified by running it, not quoted.
+- **SO NOTHING IS KNOWN ABOUT THE EXPERIMENT.** Not whether the warm-up fired at ~04:59, not
+  whether the ramp happened, not what allocated, not whether the T−30 sign-in was the cheap
+  cookie-answered kind, and not whether `cart read back` appeared. **Track A still has zero
+  attributed readings.** Every prediction in the entries above remains a prediction.
+- **THE READING IS NOT LOST, ONLY UNREAD.** `native_alloc_readings` (066) and
+  `chromium_memory_samples` (059) are in Postgres precisely so a truncated log cannot eat an
+  attribution — that is what PR #169 bought. The next session with egress reads the same rows.
+  **Widen the readout window past 14 days if it has been a while**, or the query that survives
+  will outlive the row it was meant to fetch.
+- **THE LOCKED CAMPSITE IS NOT STRANDED BY THIS, and that was checked in source rather than
+  assumed.** `scripts/rc-test-hold.mts --delete` needs the same blocked database, so cleanup was
+  not available from here either — but `worker/expire-holds.ts` runs **on the Fly worker every
+  60 seconds**, deliberately not in the feed ("a watchdog wired to the thing it watches"), and
+  `reclaimLapsedHolds` marks a lapsed `carted` hold `expired` on its own. Morro Bay unit 43129
+  needs nothing from this session.
+- **AN AGENT WITH NO EGRESS CANNOT VERIFY ITS OWN BLINDNESS IS THE WHOLE PROBLEM**, and the
+  house shape says so: a watcher that cannot see its subject is indistinguishable from one
+  patiently waiting. The 08-23 `GITHUB_TOKEN` watchdog is the same failure one layer up. What
+  saved this one is that somebody wrote "check outbound access FIRST" into the handover.
+
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23, late evening).
+> **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23, 20:50 PT).
+>
+> **THE 08:15 PT CHECK-IN RAN ON 08-24 AND COULD NOT TAKE THE READING — EGRESS IS STILL
+> BLOCKED** (entry directly above). `camphawk.app`, `*.supabase.co` and `fly.io` all answer
+> **403 to CONNECT**; `api.github.com` works, so the denial is host-scoped and the MCP tools are
+> unaffected. The readouts failed **loudly** (exit 1, `DB query error`), so this is a clean
+> non-answer and **not** "the trip did not ramp". **Track A still has zero attributed readings**,
+> and nothing is known about the manufactured ramp, the warm-up, or `cart read back`. The rows
+> are in Postgres and are simply unread — **first action for the next session with egress is the
+> two readouts**, widening the 14-day window if time has passed. The locked campsite needs
+> nothing: `expire-holds.ts` sweeps from Fly every 60s.
 >
 > **THE TWO APP FIXES SHIPPED (#171)** — the hand-off lands the user IN their cart and reads
 > the cart BACK there (stronger proof than the status string we wrote ourselves), and the
@@ -2963,7 +3030,8 @@ than wait for it.
 > LOUDLY** (`DB query error: TypeError: fetch failed`, exit 1), so an unreachable DB does NOT
 > masquerade as "No readings yet".
 >
-> Master is **`6d4100b`** plus the docs merges since; the box is on `6d4100b`. **#171, #169 and
+> Master is **`e282fc8`**; the box is on `6d4100b` — ordinary drift, since the merges since were
+> docs-only and nothing bot-side is pending. **#171, #169 and
 > #146 are merged; #168 was closed as superseded** (its correction had already landed via
 > #165/#170 — the reasoning is on the PR so it does not read as a finding dropped in a merge).
 > **No PRs are open**; issues **#174/#175** are the two corrections above and are now folded,
