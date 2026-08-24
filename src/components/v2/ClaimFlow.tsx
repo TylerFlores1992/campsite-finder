@@ -47,7 +47,6 @@ const MAX_LOGIN_PAGES = 6;
  */
 const CARTED_BANNER = 'Added to cart';
 import { RC_CART_HOLD_MINUTES } from '@/lib/limits';
-import { rcTokenLiveness } from '@/lib/rc-token-liveness';
 
 /**
  * The hand-off, from the user's side.
@@ -249,12 +248,9 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
      * the same rule that makes an unconfirmed check fall back rather than refuse.
      */
     if (r.stage === 'token' && (r.detail as { captured?: boolean } | null)?.captured) {
-      // ONE definition, shared with `closeOnToken` in lib/native/rc-handoff. The comparison
-      // used to live here and only here, which is why the sibling consumer of this exact
-      // report still closed the sign-in window on a dead token until 2026-08-24. See
-      // lib/rc-token-liveness for the incident.
-      const liveness = rcTokenLiveness(r.detail);
-      if (liveness === 'expired') {
+      const d = r.detail as { expiresInSec?: unknown; decodable?: unknown } | null;
+      const secs = typeof d?.expiresInSec === 'number' ? d.expiresInSec : null;
+      if (secs != null && secs <= 0) {
         // DEAD, AND SAID SO. Silence here would leave the screen looking exactly as it did
         // on 08-21: an apparently ready hand-off over a session that cannot cart anything.
         setRcCheck('unconfirmed');
@@ -263,7 +259,7 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
           'Your ReserveCalifornia sign-in has expired. Sign in again before handing the site '
           + 'over — releasing now would put it back on the open market for anyone.',
         );
-      } else if (liveness === 'live') {
+      } else {
         setRcCheck('verified');
         // A live token means the sign-in is done, whatever the last stage was. Leaving
         // `captcha` on screen after a successful login would tell the user to solve a
@@ -272,23 +268,6 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
         setLoginStage(null);
         setLoginError(null);
       }
-      // `unknown` DELIBERATELY FALLS THROUGH AND CHANGES NOTHING (2026-08-24).
-      //
-      // This used to be a bare `else`, so an undecodable report set `verified` — which
-      // `mayRelease` reads directly, i.e. an unknown unlocked an irreversible act. The
-      // comment above already said `unconfirmed`; the CODE said `verified`, and the code
-      // is what ran.
-      //
-      // It is worse than a latent inconsistency because of HOW the reports arrive.
-      // `rc-inject.js` replays the token on every RC API call and those repeats carry no
-      // `expiresInSec` at all, so they read `unknown` — meaning the very next replay after
-      // a correct `expired` verdict would have wiped the warning, cleared the error and
-      // flipped the gate to `verified`. The one message telling a user their session is
-      // dead had a lifetime of about one API call.
-      //
-      // Falling through preserves whatever the first sighting decided, which is the only
-      // report that ever carried the facts. An unknown must never round to a verdict in
-      // EITHER direction: it does not grant `verified` and it does not revoke it.
     }
     // THE SIGN-IN'S OWN STAGES. Read from the same channel as everything else, so what the
     // form shows and what is recorded against the hold cannot disagree — the rule that made

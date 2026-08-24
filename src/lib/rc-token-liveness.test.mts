@@ -89,9 +89,6 @@ test('only `live` may close — the close agrees with the gate by construction',
 // ---------------------------------------------------------------------------
 
 const handoff = readFileSync(new URL('./native/rc-handoff.ts', import.meta.url), 'utf8');
-const claimFlow = readFileSync(
-  new URL('../components/v2/ClaimFlow.tsx', import.meta.url), 'utf8');
-
 test('closeOnToken goes through the shared rule, not its own captured check', () => {
   assert.match(handoff, /closeOnToken && r\.stage === 'token' && mayCloseOnToken\(r\.detail\)/,
     'the close condition must call mayCloseOnToken');
@@ -103,25 +100,14 @@ test('closeOnToken goes through the shared rule, not its own captured check', ()
     'closeOnToken must not read `captured` directly again');
 });
 
-test('the claim gate goes through the SAME rule', () => {
-  assert.match(claimFlow, /const liveness = rcTokenLiveness\(r\.detail\)/);
-  assert.match(claimFlow, /liveness === 'expired'/);
-  assert.match(claimFlow, /liveness === 'live'/,
-    'verified must require live — a bare else sends unknown to verified');
-});
-
-test('an unknown does NOT grant verified — the bare else is the regression', () => {
-  // Scoped to the token block: `} else {` occurs all over a React component, so an
-  // unscoped search would pass on any of them.
-  const start = claimFlow.indexOf("const liveness = rcTokenLiveness(r.detail)");
-  assert.ok(start > -1, 'anchor missing — re-anchor this guard, do not delete it');
-  const block = claimFlow.slice(start, start + 2600);
-  assert.doesNotMatch(block, /}\s*else\s*\{\s*\n\s*setRcCheck\('verified'\)/,
-    "an unqualified else after the expired arm sends `unknown` straight to verified, which "
-    + 'mayRelease reads as permission for an irreversible act');
-});
-
-test('both consumers import the shared module rather than copying the comparison', () => {
+test('closeOnToken imports the shared module rather than copying the comparison', () => {
   assert.match(handoff, /import \{ mayCloseOnToken \} from '@\/lib\/rc-token-liveness'/);
-  assert.match(claimFlow, /import \{ rcTokenLiveness \} from '@\/lib\/rc-token-liveness'/);
+});
+
+test('the GATE is deliberately not routed through this module — it has a different policy', () => {
+  // The gate verifies on `unknown` as well as `live`, guarded by claim-release-truth. If a
+  // future change routes it through `mayCloseOnToken`, older bundles lose the fast path.
+  const claim = readFileSync(new URL('../components/v2/ClaimFlow.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(claim, /mayCloseOnToken/,
+    'the gate must not adopt the close policy — see claim-release-truth.test.mts');
 });

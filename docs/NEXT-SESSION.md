@@ -58,24 +58,37 @@ The 08-24 hand-off failed, and the owner's own account is what diagnosed it:
 > *"I put login info in. Checked. Hit button. It opened RC for less than a second as if auto
 > login worked. Hit grab it. Then went to RC not logged in."*
 
-**Two defects, both presence-read-as-liveness, both fixed in #183.** Web-side, so it reaches
-already-installed apps on the merge — **no rebuild, no App Store review.**
+**ONE defect fixed in #183** — web-side, so it reaches already-installed apps on the merge,
+**no rebuild, no App Store review.**
 
-1. **`closeOnToken` tested `captured` alone.** A STALE token — the ordinary state, since it
-   comes from the SERVER and no local clear reaches it — was broadcast by `rc-inject.js` on
-   RC's first API call and closed the sign-in window in under a second. **The credentials
-   were never typed:** Okta's flow is several page loads and cannot finish that fast. The
-   claim gate had learned this on 08-21 (#152), AFTER `closeOnToken` shipped in #126, and
-   nothing carried it next door because **nothing tested either one.**
-2. **The gate's own `else` sent `unknown` to `verified`**, three lines under a comment
-   promising `unconfirmed`. Rebroadcasts carry no `expiresInSec`, so they read `unknown` —
-   meaning the next replay after a correct `expired` verdict wiped the warning and unlocked
-   `mayRelease`. **The message telling a user their session is dead lived about one API
-   call**, which is likely why the owner never saw it.
+**`closeOnToken` tested `captured` alone.** A STALE token — the ordinary state, since it comes
+from the SERVER and no local clear reaches it — was broadcast by `rc-inject.js` on RC's first
+API call and closed the sign-in window in under a second. **The credentials were never typed:**
+Okta's flow is several page loads and cannot finish that fast. The claim gate had learned this
+on 08-21 (#152), AFTER `closeOnToken` shipped in #126, and nothing carried it next door because
+**nothing tested `closeOnToken` at all.**
 
-`src/lib/rc-token-liveness.ts` is now the ONE definition both read, and
-`rc-token-liveness.test.mts` is the guard that never existed (11 tests, six mutations, each
-verified to apply and each caught).
+`src/lib/rc-token-liveness.ts` now classifies a token report three ways and `closeOnToken`
+closes on `live` only. `rc-token-liveness.test.mts` is the guard that never existed.
+
+### A SECOND FINDING, DELIBERATELY NOT FIXED — and my first fix for it was WRONG
+
+A rebroadcast carries `{ captured, length }` and no `expiresInSec`, so it classifies as
+`unknown`. The claim gate verifies on `unknown` as well as `live` — therefore **a replay
+arriving after a correct `expired` verdict re-enters that branch and clears the warning.** The
+message telling a user their session is dead lives about one API call. That is real, and it is
+plausibly why the owner never saw it on 08-24.
+
+**I first "fixed" this by making `unknown` stop verifying, and `claim-release-truth.test.mts`
+caught it.** That guard exists for a reason I had not weighed: **a bundle older than migration
+058 sends no `expiresInSec` at all**, so every report from it is `unknown` and refusing those
+takes the fast path from every such client at once. The rule is *"we could not tell, so we do
+not NEWLY refuse."* The gate is behaving as designed and is left byte-identical to master.
+
+**The honest remedy is to make `expired` STICKY for the run** — a replay then cannot undo a
+verdict the first sighting earned, and older bundles keep verifying. That is a deliberate
+change to a release-critical gate with its own guards, not a drive-by, and it is the next
+session's call.
 
 ### THE RE-TEST — NOT YET RUN, and it needs both a DB and a human
 
@@ -93,7 +106,9 @@ arrives.
 
 **The proof is in `client_reports`:** look for the login stages — `signin-open`, `email`,
 `password`, `submitted` — which were **entirely absent** on 08-24 because the window closed
-before any of them could run. Their presence is the fix working. Then `✓ Added to cart` and
+before any of them could run. Their presence is the fix working; their absence means it is not.
+Expect the "your sign-in has expired" warning to appear and then be cleared by a replay — that
+is the second finding above, still unfixed, and NOT a failure of this fix. Then `✓ Added to cart` and
 `cart read back`.
 
 **The claim link must be opened IN THE APP.** From a browser `canInject` is false and none of
