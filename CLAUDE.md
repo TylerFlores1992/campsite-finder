@@ -2606,9 +2606,14 @@ The sampler fired on the box for the first time, 19:34 PT, and produced this:
   candidate this file has asserted three times and never shown.
 - **BOT-SIDE, so it is not live until the box updates**, and the box cannot update while a hold
   is queued inside 6h of its release.
-- **Nothing was going to be sampled tomorrow morning anyway.** `startNativeSampling` has ONE
-  call site — the renewal's throwaway tab. `maybeAutoLogin` and the rehearsal are not sampled,
-  and if T−30 mints a token `planRenewal` stands down for the hour. **A queued test hold buys
+- ~~**Nothing was going to be sampled tomorrow morning anyway.** `startNativeSampling` has ONE
+  call site — the renewal's throwaway tab. `maybeAutoLogin` and the rehearsal are not sampled,~~
+  **STALE AS OF 2026-08-24: there are TWO call sites — `maybeAutoLogin` IS sampled now** (and it
+  produced the only reading this instrument has ever stored). Struck rather than deleted because
+  read as current it says the opposite of the truth. **The gap did not close, it MOVED: the T−3h
+  warm-up is the third Okta-navigating path and the one now carrying no sampler** — see "THE RAMP
+  WAS ORDERED" below. And the rest of the sentence still holds:
+  if T−30 mints a token `planRenewal` stands down for the hour. **A queued test hold buys
   the cart flow, not a leak reading**; do not treat the two as the same test.
 
 ### THE STALE TOKEN COMES FROM THE SERVER (2026-08-22) — every local candidate is eliminated
@@ -2956,26 +2961,167 @@ api.github.com        OK — the MCP tools work, so the denial is HOST-SCOPED
   patiently waiting. The 08-23 `GITHUB_TOKEN` watchdog is the same failure one layer up. What
   saved this one is that somebody wrote "check outbound access FIRST" into the handover.
 
+### THE RAMP WAS ORDERED, IT ARRIVED ON CUE, AND TRACK A HAD NO INSTRUMENT ON IT (2026-08-24 13:00 PT)
+Egress came back (camphawk.app 200, fly.io 200, supabase 401-with-no-key — all three of the
+blocked hosts answer; the proxy's `recentRelayFailures` now names only `mcp.vercel.com`,
+`mcp.sentry.dev` and `flyctl-metrics.fly.dev`). Both ordered readouts ran. **The experiment
+worked and the instrument was pointed somewhere else.**
+
+**THE MANUFACTURED RAMP HAPPENED, AT THE PREDICTED TIME AND THE PREDICTED SIZE.** From
+`chromium_memory_samples`, 2-minute cadence, PT:
+```
+04:58:51  commit 16%  free 9484  rc   287   {browser 49, renderer 110, gpu 98, utility 26}
+05:00:51  commit 77%  free 5738  rc  3233   {browser 269, renderer 2820, gpu 98,  utility 42}
+05:04:57  commit 83%  free 3645  rc  6653   {browser 535, renderer 5961, gpu 105, utility 48}
+05:08:57  commit 87%  free 3035  rc  8503   {browser 713, renderer 7627, gpu 105, utility 54}
+05:10:57  commit 89%  free 3071  rc  9338   {browser 779, renderer 8406, gpu 107, utility 42}
+05:11:56  commit 16%  free 9401  rc   258   <- gpu-process pid 7608 -> 12544
+```
+**9,338 MB, eleven minutes, ~840 MB/min, renderer 8,406 of 9,338 (90%)**, browser process 779,
+GPU/utility/crashpad flat throughout. It began 05:00:51, **two minutes after the T−3h warm-up
+window opened at 04:58:47**, and matches the 08-20 password-sign-in figure (9,434 MB, twelve
+minutes) almost exactly. **The 08-23 prediction was right on both halves** — see the T−30
+reading below — which is worth saying plainly, because the 08-22 handover made the same kind of
+prediction on the same kind of reasoning and was falsified.
+
+- **AND IT PRODUCED ZERO ROWS IN `native_alloc_readings`.** The readout's own header names this
+  case: *"a spike there with nothing here means the sampler could not answer — which is itself
+  a reading."* This is that, and the cause is in our source rather than in the browser.
+- **`maybeWarmupLogin` IS THE THIRD OKTA-NAVIGATING PATH AND THE ONLY UNSAMPLED ONE.** It opens
+  a tab, calls `attemptLogin`, and closes it in a `finally` (`rc-keepwarm.mjs` ~872-971) — with
+  **no `newCDPSession`, no `startNativeSampling`, no `readNativeProfile`.** `startNativeSampling`
+  has exactly two call sites: `maybeAutoLogin` (~1150) and the renewal's throwaway tab (~2626).
+  **CLAUDE.md's "`startNativeSampling` has ONE call site — the renewal's throwaway tab;
+  `maybeAutoLogin` and the rehearsal are not sampled" is STALE** — it has two, and the gap moved.
+- **THE UNSAMPLED PATH IS BY CONSTRUCTION THE MOST EXPENSIVE ONE.** The warm-up fires only when
+  Okta is **GONE**, which is precisely the full password variant — the 12-minute / 9.4 GB trip.
+  So the one Okta navigation guaranteed to be the big kind is the one nothing is watching.
+- **FIFTH INSTANCE OF THE HOUSE SHAPE, and the first where it cost an experiment somebody
+  deliberately set up.** `expireStaleHolds` lived in a feed only a live runner polls;
+  `reclaimLapsedHolds` lived inside `withRC`; the size-guard recycle was checked in the body of
+  the loop that stops advancing; `holdAtRisk`'s fixture filter reached two queries and not the
+  health route's copies. Here the instrument is fine and it is bolted to two of three doors.
+  **The 08-23 entry setting this test up even names the mechanism** — *"THE MECHANISM IS THE
+  T−3h WARM-UP, NOT THE RELEASE"* — so the path was identified in writing and the sampler was
+  never followed to it.
+
+**THE ONE READING THAT LANDED IS THE CHEAP T−30 SIGN-IN, AND IT MUST NOT SETTLE THE BUFFERING
+QUESTION.**
+```
+24/08, 07:29:15 PT  auto-login
+   free RAM moved -422 MB · renderer attributed 103 MB
+         69 MB  <V8 Heap>
+         27 MB  chrome.dll.pdb+0x9961707 <- chrome.dll.pdb+0x370aa42
+          4 MB  chrome.dll.pdb+0x9961707 <- chrome.dll.pdb+0x4e7485f
+```
+- **No `net::` frames, and no frame in a system dll** (`ws2_32`, `winhttp`, `mswsock`) — which
+  the readout names as the one thing that would confirm buffering for free. So the candidate
+  gets **no support here.**
+- **THAT IS NOT LICENCE TO CORRECT THE THREE BUFFERING ENTRIES.** The reading rule "anything but
+  `net::` ⇒ those entries need correcting" assumed a reading **of a real ramp**. This is not
+  one. `NATIVE_ALLOC_RAMP_MB` is **400**, so −422 MB cleared the bar by 22 MB: it is **4.5% of
+  the event under investigation**, on a **different code path** (cookie-answered vs password).
+  Retiring the candidate on it would be the 2026-08-19 false elimination one level up — a trace
+  of a navigation that barely moved says nothing about a 9 GB one, which is the exact reason the
+  three-way verdict refuses to speak without a RAM delta.
+- **THE SHAPES DISAGREE, WHICH IS THE SHARPER REASON.** Here the renderer is **103 of 422 MB
+  (24%)**; on the real ramps it is **90%** (8,406 of 9,338 today, 8,245 of 9,180 on 08-23). And
+  `<V8 Heap>` is 69 MB of the 103 — the largest single site — where the 9 GB events have a heap
+  trail flat at 15-18 MB. These are not the same event sampled at two sizes.
+- **AND SYMBOLIZATION IS ABSENT ON WINDOWS** (recorded 08-22), so "no `net::` frames" is partly a
+  property of the instrument. The offsets share one caller (`chrome.dll.pdb+0x9961707`) and are
+  stable for a build, so they are worth offline symbolization if this recurs — but a
+  system-dll frame was the reading that could have spoken without it, and none appeared.
+
+**THE RAM ARM DID NOT FIRE — THIRD CONSECUTIVE 9 GB RAMP, AND THE FLOOR IS STILL BEHAVING AS
+DESIGNED.** Free RAM bottomed at **3,035 MB** against the 2,000 floor, never within 1,035 MB:
+
+| | peak `rc` | free RAM at trough | COMMIT |
+|---|---|---|---|
+| 08-22 23:12 | 8,983 MB | 3,191 MB | 82% |
+| 08-23 07:31 | 9,180 MB | 3,328 MB | 88% |
+| **08-24 05:00** | **9,338 MB** | **3,035 MB** | **89%** |
+
+- **89% is the highest yet and is one point off ~90%, where Windows stops scheduling tasks** —
+  the 08-17 failure where both Scheduled Tasks went silent together. The margin is thinning
+  (82 → 88 → 89) and the trough is drifting down (3,191 → 3,328 → 3,035), slowly.
+- **The 08-19 arithmetic that set the floor to 2000 is still exactly right and still built on a
+  5,688 MB worst case.** The peak is 9,338 now — 64% higher. Same open question as the 08-24
+  side-lane entry; **still a question, not a patch.** Lowering the trip point is the change that
+  killed a working repair on 08-19.
+- **A BROWSER REPLACEMENT ENDED IT AGAIN — the `gpu-process` pid moved 7608 → 12544.** That
+  process is one per browser, so a replacement definitely occurred. **Fourth consecutive event
+  ended this way, and none of them by the arm.**
+- **THIS DOES NOT PROVE THE THROWAWAY-TAB CURE ON A 9 GB TRIP, AND IT IS THE TEMPTING READ.**
+  CLAUDE.md's rule is *"a spike that drains at tab close with no `♻ recycling` line is this
+  working"*. The warm-up **does** close its tab in a `finally` — but it also navigates to Okta,
+  which sets `visitedOkta` and fires the post-Okta recycle, so **the close and the replacement
+  coincide at ~05:11 and this event cannot separate them.** A changed gpu pid is a replacement,
+  not a tab close. The cure remains unproven at this size; what would settle it is a ramping
+  trip whose tab closes with no recycle line in `logs\rc-keepwarm.log`.
+
+**THE WARM-UP ITSELF WORKED, WHICH IS THE DESIGN VINDICATED AND THE ONE UNAMBIGUOUS WIN.** The
+T−30 sign-in at 07:29 cost **~106 MB of rc family with COMMIT flat at 16%** (234 → 340 MB in the
+2-minute series), i.e. the cheap cookie-answered kind, exactly as predicted — and the cart fired
+at **T+2s**. That is what the T−3h warm-up was built for: move the 9 GB password sign-in out of
+the window where a RAM-guard kill would hold the profile lock past 08:00. It did, and the
+morning was clean.
+
+**THE HOLD READOUT ANSWERED THE OTHER OPEN QUESTION — #171's TWO APP FIXES ARE PROVEN ON A REAL
+HOLD.** `TEST · 43129` (Morro Bay Lower Section) carted **T+2s**, claimed 15:02:13Z, `released`,
+and the hand-off reported:
+```
+TEST · 43129 [ios build 1.0 (21)]: ✓ Added to cart — opening your cart…
+    cart read back: 1 entry — RC confirms it is holding something
+```
+**`cart read back` is the reading nobody could force**, and it is RC's own answer rather than a
+status string we wrote ourselves. The handover called it "the whole verification"; it has
+landed, on iOS. **Still not exercised on Android.** Session healthy (token 44m, `okta=ALIVE`
+to 08-25 07:42), and the login rehearsal **PASSED** at 08-24 03:00.
+
+**FOUR REAL USER OFFERS ARE OUTSTANDING FOR 2026-08-25 08:00 PT** — Morro Bay `#96` (two
+different parks), Pfeiffer Big Sur `#SC10`, Carpinteria `#R330`, across **three different
+users**, all `offered` and none tapped as of 12:58 PT. Untapped offers do not block the
+02:00–05:00 update window (`nextHoldRelease` ignores `offered`); **a tap makes tomorrow a real
+morning with a stranger on the other end**, and changes what the SERIAL rules and the update
+window are protecting.
+
 ## Open / next session
 
 > **START AT `docs/NEXT-SESSION.md`** (rewritten 2026-08-23, 20:50 PT).
 >
-> **THE 08:15 PT CHECK-IN RAN ON 08-24 AND COULD NOT TAKE THE READING — EGRESS IS STILL
-> BLOCKED** (entry directly above). `camphawk.app`, `*.supabase.co` and `fly.io` all answer
-> **403 to CONNECT**; `api.github.com` works, so the denial is host-scoped and the MCP tools are
-> unaffected. The readouts failed **loudly** (exit 1, `DB query error`), so this is a clean
-> non-answer and **not** "the trip did not ramp". **Track A still has zero attributed readings**,
-> and nothing is known about the manufactured ramp, the warm-up, or `cart read back`. The rows
-> are in Postgres and are simply unread — **first action for the next session with egress is the
-> two readouts**, widening the 14-day window if time has passed. The locked campsite needs
-> nothing: `expire-holds.ts` sweeps from Fly every 60s.
+> **EGRESS IS BACK (2026-08-24 ~12:55 PT) AND BOTH READOUTS HAVE RUN.** All three formerly
+> blocked hosts answer — camphawk.app 200, fly.io 200, supabase 401-with-no-key — and the
+> proxy's `recentRelayFailures` now names only `mcp.vercel.com`, `mcp.sentry.dev` and
+> `flyctl-metrics.fly.dev`. Full reading in the entry directly above. The three headlines:
 >
-> **THE TWO APP FIXES SHIPPED (#171)** — the hand-off lands the user IN their cart and reads
-> the cart BACK there (stronger proof than the status string we wrote ourselves), and the
-> in-app sign-in now presses RC's own Log in control before hunting for a form. Web-side, so
-> they are already live in installed apps. **NEITHER HAS RUN AGAINST A REAL HOLD** — look for
-> `cart read back` in `scripts/rc-holds-readout.mts` after the next hand-off; that is the
-> whole verification and nobody can force it.
+> 1. **THE MANUFACTURED RAMP ARRIVED EXACTLY AS ORDERED — 9,338 MB, 05:00→05:11 PT, 89% COMMIT,
+>    renderer 90% — AND TRACK A RECORDED NOTHING FOR IT.** `maybeWarmupLogin` is the third
+>    Okta-navigating path and the only one with no sampler on it, and it is by construction the
+>    expensive one (it fires only when Okta is GONE, i.e. the password variant). **Track A still
+>    has zero readings of a real ramp.** Wiring the sampler onto that path is the obvious next
+>    move and is NOT done — see the entry for why it is the fifth instance of the house shape.
+> 2. **THE ONE READING THAT LANDED IS THE CHEAP T−30 SIGN-IN (−422 MB, 103 MB renderer) AND IT
+>    DOES NOT SETTLE BUFFERING EITHER WAY.** No `net::` and no system-dll frames, so the
+>    candidate gets no support — but it cleared the 400 MB bar by 22 MB, it is 4.5% of the event
+>    under investigation, it is a different code path, and its shape disagrees (renderer 24% here
+>    against 90% on real ramps; `<V8 Heap>` is its largest site). **Do NOT correct the three
+>    buffering entries on this reading.**
+> 3. **THE WARM-UP DESIGN IS VINDICATED AND THE MORNING WAS CLEAN.** The 9 GB trip landed at
+>    T−3h, the T−30 sign-in cost ~106 MB with COMMIT flat at 16%, and the cart fired at **T+2s**.
+>
+> **THE RAM ARM DID NOT FIRE — THIRD CONSECUTIVE 9 GB RAMP** (trough 3,035 MB against a 2,000
+> floor; 82% → 88% → **89%** COMMIT). A **browser replacement** ended it again (`gpu-process` pid
+> moved), as it did on 08-22 and 08-23. **Still a QUESTION, not a patch** — lowering the trip
+> point is the change that killed a working repair on 08-19.
+>
+> **#171 IS PROVEN ON A REAL HOLD.** `TEST · 43129` carted T+2s, claimed, released, and reported
+> **`cart read back: 1 entry`** on iOS build 1.0 (21) — RC's own answer, the verification the
+> last handover said nobody could force. **Still not exercised on Android.**
+>
+> **FOUR REAL USER OFFERS ARE OUTSTANDING FOR 08-25 08:00 PT**, across three users, none tapped
+> as of 12:58 PT. Untapped offers do not block the update window; **a tap makes tomorrow a real
+> morning with a stranger waiting**, which changes what the SERIAL rules are protecting.
 >
 > **THE BOX IS CURRENT — `6d4100b`, "updated and verified", 23 seconds end to end.** #169 is
 > live, so the native sampler's reading now lands in Postgres and **ramp #23 will be
