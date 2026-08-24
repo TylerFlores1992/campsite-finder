@@ -1892,3 +1892,225 @@ rejects notifications on any bound routine.
   not match `docs/LANES.md`'s `claude/side-<topic>`. Third session running. Worth fixing at the
   START of a side session, never mid-flight.
 
+
+---
+
+## 26. A PARK WATCH SENT 52 MESSAGES IN AN HOUR — `rc_hold_notified_for` IS ONE COLUMN FOR N DIVISIONS
+
+*Side lane, 2026-08-24 midday. Reported by the owner as "Melinda got six texts for her Morro
+Bay watch." It was 52, it was still firing when it was reported, and it is the failure the
+park-watch entry in CLAUDE.md predicted in as many words: "Watch for a duplicate or missing
+alert on that watch specifically."*
+
+**MAIN LANE: both bugs below are in `worker/poller.ts` and the fix for the first is a
+migration. Recorded here rather than fixed. The live flood is stopped by a DATA change.**
+
+### 26a. THE MEASUREMENT
+
+```
+watch 336d742c…  melinda.flores0501@yahoo.com  active
+  divisions: rc-2185 Morro Lottery · rc-582 Lower Section · rc-583 Upper Section
+  rc_hold_notified_for = 'rc-583|2026-8-25T8'     <- ONE value, three claimants
+
+coming_soon, 11:40 → 12:42 PT (62 minutes):
+  rc-2185   12 SMS + 12 email
+  rc-583    12 SMS + 12 email
+  ------------------------------------------------
+  52 messages, ALL for site 43191, ALL for one release (Aug 25 08:00)
+```
+
+Every ~5 minutes (`RC_HELD_CHECK_DEFAULT_MS = 300_000`), two divisions each. The release was
+**19 hours away**, so the run rate projected to **~460 more SMS and ~460 more email to one
+person** — against a Sole Proprietor A2P campaign capped near 1,000 segments/day to T-Mobile.
+This was a carrier-filtering risk, not merely an annoyance.
+
+### 26b. ROOT CAUSE — THE NAMESPACING TURNED "FIRST WINS" INTO A ROUND-ROBIN
+
+`loadWatches` expands a park watch to **one row per (watch, campground)**. But
+`rc_hold_notified_for` is **one column on the one `watches` row** (`worker/poller.ts:700`):
+
+```sql
+UPDATE watches SET rc_hold_notified_for = $2
+ WHERE id = $1 AND active = true AND rc_hold_notified_for IS DISTINCT FROM $2
+```
+
+with `key = scope.multi && scope.campgroundId ? `${campgroundId}|${hour}` : hour`.
+
+So per cycle:
+
+```
+rc-2185 : key 'rc-2185|H'  vs stored 'rc-583|H'   -> DISTINCT -> ALERT -> stores its own
+rc-583  : key 'rc-583|H'   vs stored 'rc-2185|H'  -> DISTINCT -> ALERT -> stores its own
+[5 minutes later, both again, forever]
+```
+
+**A single-valued column cannot hold N division markers.** The namespacing was added to stop
+one division *silencing* another — the comment above it says exactly that — and it kept the
+keys apart while leaving them sharing one slot. It converted a suppression bug into an
+amplification bug, which is strictly worse: the first is a missed alert, the second is a
+carrier ban.
+
+**THE SHAPE IS MIGRATION 026 EXACTLY.** The alert claim had this identical defect (one
+timestamp per WATCH) and was fixed by moving to a row per (watch, site). This column needs the
+same move — a row per (watch, campground) — or a JSON map keyed by campground. Either is a
+migration on the release-critical alert path.
+
+**PING-PONG REQUIRES TWO OR MORE DIVISIONS EACH FINDING A HELD UNIT.** That is what makes it
+rare and is why the path survived since migration 070 without firing. See 26d.
+
+### 26c. SECOND BUG — TWO DIVISIONS RETURNED THE SAME UNIT
+
+`rc-583` and `rc-2185` both reported **site 43191**, labelled **"Site #96"**. Ninety-six sits
+inside Upper Section's own 86-140 range and has no business appearing under "Morro Lottery
+sites". So the per-division grids are not filtering to their own units.
+
+**FIXING 26b ALONE STILL LEAVES TWO ALERTS FOR ONE SITE.** They are separate defects and the
+second is not cosmetic — it is the reason a two-division park could ping-pong at all.
+
+### 26d. WHY THE OTHER PARK WATCH DID NOT FLOOD — evidence, not reassurance
+
+`eb886697…` (tylerflores1992@gmail.com) is also a park watch: **rc-582 + rc-583**, marker
+`rc-583|2026-8-25T8`. It alerted **once** at 12:47:16 across three channels and did **not**
+repeat at 12:52.
+
+The discriminator is in the data: **`rc-582` produced ZERO coming_soon in 24 hours.** With only
+one producing division there is nothing to ping-pong against — it claims, the marker matches on
+the next cycle, silence.
+
+- **THAT IS A LIVE CONDITION, NOT A PROPERTY.** If any Lower Section site is locked before the
+  release, this watch starts ping-ponging immediately — and at **3 channels x 2 divisions x 12
+  cycles ≈ 72 messages/hour**, worse than Melinda's, because push is enabled on it.
+- Only **two** active park watches exist. There is no third exposure.
+
+### 26e. THE STOPGAP — a DATA change, reversible, owner-approved
+
+Melinda's watch trimmed to the single division whose site range actually contains #96:
+
+```sql
+DELETE FROM watch_campgrounds WHERE watch_id='336d742c…' AND campground_id <> 'rc-583';
+UPDATE watches SET rc_hold_notified_for='2026-8-25T8' WHERE id='336d742c…';
+```
+
+`multi_campground` is derived — `(COALESCE(array_length(e.ids,1),1) > 1)` — so one row makes it
+false, the key becomes the bare hour, and the marker was pre-set to that bare hour so it settles
+**without one final alert**. Verified through the poller's own expansion: one row, `rc-583`,
+`multi=false`.
+
+**SHE KEEPS the 08:00 availability alert for #96** and loses Lottery/Lower coverage until the
+real fix ships. Re-adding two rows restores it. `watches.campground_id` is still `rc-582`; that
+is the FALLBACK representative and only applies when the division list is empty, so it is
+harmless — but do not read it as the division being polled.
+
+### 26f. THE VERIFICATION WAS WRONG FIRST, AND THAT IS THE REUSABLE PART
+
+The first check asked "any coming_soon in the last 12 minutes?" on a **5-minute cadence**, so it
+necessarily swept up pre-fix rows and printed **`STILL FIRING — 4 in last 12 min`** over a fix
+that had worked. All four were timestamped 12:42:18, before the change.
+
+**A window wider than the interval you are testing cannot answer a before/after question.**
+Re-anchored strictly after the fix: `count since 12:43 = 0`.
+
+**AND SILENCE MEANS TWO THINGS.** "The claim held" and "the poller died" write the identical
+row count. The discriminator was that the **12:47 cycle demonstrably ran** — it alerted a
+DIFFERENT watch in that same cycle — plus `poller.shards 2/2 held` and
+`availability_observations` advancing at 12:45:42. Never report a flood as stopped on absence
+alone.
+
+### 26g. WHAT NOBODY HAD MEASURED, AND WHY IT WENT UNNOTICED FOR AN HOUR
+
+Nothing anywhere counts alerts **per watch**. Every suppression in `worker/claim.ts` is per
+(watch, site) — `RENOTIFY_WINDOW`, `CONTINUOUS_GAP`, `NUDGE_AFTER` — and `claimHoldNotification`
+is per (watch, release hour). A watch emitting 52 messages an hour trips no threshold, appears
+on no health check, and pages nobody. **The owner's phone was the monitoring.**
+
+A per-watch burst ceiling — N alerts per watch per hour, then a digest — would have capped this
+at source regardless of which claim was broken. That is a product decision on the most
+safety-critical path in the repo, so it is recorded, not built.
+
+---
+
+## Handover — 2026-08-24 midday (side lane)
+
+*Supersedes the 08-23 night block for STATE. §25 (Routines) and §26 (the park-watch flood)
+stand. Read 12:55 PT.*
+
+### EGRESS IS BACK, AND I WAS WRONG ABOUT NEEDING A NEW SESSION
+
+The block was the **CampHawk environment's Network access level**, set to `Trusted` —
+"allowlisted domains only: package registries, GitHub, cloud SDKs". The owner switched it to
+**Custom** with an allow-list, and **it took effect in the ALREADY-RUNNING session**. I had
+said a new session would be required; that was an assumption and it was wrong. Test with
+`curl -s -o /dev/null -w "%{http_code}" https://camphawk.app/api/health/status` rather than
+reasoning about when policy is applied.
+
+Domains added: `camphawk.app`, `*.supabase.co`, `*.fly.io`, `fly.io`, `api.machines.dev`,
+`*.recreation.gov`, `recreation.gov`, `*.reservecalifornia.com`, `*.usedirect.com`,
+`*.tylerapp.com`, `*.frame.claudeusercontent.com`, with "also include default package
+managers" ticked. Edited at **claude.ai/code** → cloud icon above the message box → gear on the
+environment. There is no settings URL for it and no documented mobile-app path.
+
+### THE ONE THING THAT NEEDS A DECISION
+
+**§26 — two bugs in `worker/poller.ts`, main lane's.** The live flood is stopped by a data
+change; the defects are untouched.
+
+1. `rc_hold_notified_for` is one column for N divisions → infinite round-robin. Needs a
+   migration (row per (watch, campground)), the same move migration 026 made.
+2. Two divisions returned the same unit. Fixing (1) alone still sends two alerts for one site.
+
+**AND A LIVE RISK TONIGHT:** `eb886697` (the owner's own Morro Bay watch, rc-582 + rc-583) is
+one locked Lower Section site away from the same flood at **~72 messages/hour**, because push
+is enabled on it. It has not fired because rc-582 has produced zero held units in 24h — a
+condition, not a property. Trimming it to `rc-583` is the same one-line stopgap and was offered,
+not taken.
+
+### State, read 12:55 PT
+
+| | |
+|---|---|
+| Master | `dd2ab82` (#178, #179, #182 landed while this session ran) |
+| This branch | rebased onto it; PR **#180** open, docs only |
+| Open issues | **#175, #174, #76, #14** |
+| Worker | `poller.shards 2/2 held`, `poller.capacity 1/8`, `autocart.rc_runner ok` |
+| Overall health | `degraded` — the ordinary state, every failure non-paging |
+| Routines | 4 active + 1 disabled (§25); 08:15 outcome binds to **CampHawk-Main** |
+
+### What this session did
+
+- **Consolidated the Routines 7 → 4** (§25). Two duplicates were UI-created and had to be
+  deleted by the owner — an agent can neither delete nor disable a `created_via: "http_api"`
+  routine.
+- **Diagnosed and stopped the park-watch flood** (§26). 52 messages in 62 minutes; ~460 more
+  prevented.
+- **Answered the auto-cart-states question** and did not act on it. Summary: adding a UseDirect
+  state's CATALOG is one entry in `USEDIRECT_PROVIDERS` plus one in `data-sources.ts` — genuinely
+  cheap. Adding HOLDS to the 9 states already detected is expensive and needs an account per
+  portal, a cart API host that is **not derivable** (RC's cart is `rdapi.reservecalifornia.com`,
+  a different host from its availability `rdrBase`), and another resident Chromium on the leaking
+  mini-PC. rec.gov auto-cart is already nationwide. **Every live watch is `reservecalifornia` or
+  `ridb`, so a new state's holds serve zero known users today** — measure demand first.
+
+### Open
+
+- **§26's two bugs** — main lane's, not filed as issues.
+- **#174, #175** — still unfolded main-lane corrections.
+- **CLAUDE.md names two deleted trigger IDs** (§25i), and **CampHawk-Main has never been told**
+  a routine fires into it at 08:15 — `ListAgents` shows no reachable peers across containers.
+- **A CI run can still turn `autocart.rc_session` RED** and print the destructive
+  `rc-login.bat` remedy. Recorded, not fixed.
+- **The live manage token `EQO2oXcQ`** — still unrotated. Owner's call, five sessions running.
+- **iOS `1.0 (5)`** — awaiting a decision. Release is AUTOMATIC on approval.
+- **The leak is not fixed** and remains the standing ask.
+
+### Traps
+
+- **A verification window wider than the cadence you are testing cannot answer a before/after
+  question** (§26f). It reported a working fix as broken.
+- **Silence means two things** — "it stopped" and "the poller died". Prove the cycle ran.
+- **`created_via` is invisible in the Routines UI** and decides whether an agent can act.
+- **`TEST · ` in the readout's `site` column** is the one unambiguous fixture marker.
+- **`claimed` in the readout is `claimed_at ?? released_at`** — `released` is the success state.
+- **Do NOT run `npm test`** — production DB, serialized between lanes.
+- **The branch name IS the lane token**, and `claude/camphawk-side-lane-status-iij2xm` still does
+  not match `docs/LANES.md`'s `claude/side-<topic>`. Fourth session running.
+
