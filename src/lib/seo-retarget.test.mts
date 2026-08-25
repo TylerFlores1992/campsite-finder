@@ -13,8 +13,17 @@ import {
 import type { Campground } from './types';
 
 /**
- * Guards the 2026-08-25 cancellation retarget — see the header of `seo.ts` for
- * the evidence it rests on.
+ * Guards what SURVIVED the 2026-08-25 cancellation retarget — and, more usefully,
+ * pins the part that was falsified so it is not re-tried by hand.
+ *
+ * THE ASSERTIONS ABOUT THE TITLE ARE INVERTED FROM WHAT THEY FIRST SAID, and that
+ * inversion IS the finding. The titles briefly carried "Cancellations"; Search
+ * Console answered within a day — a query filter for "cancel" returns NO DATA across
+ * 1,000 rows and 28 days, and 23 of the top 25 queries by impressions contain
+ * "camping", "campground" or "campsite". The retarget had removed the highest-
+ * frequency token in the real demand from every title on the site. The full account
+ * is in the header of `seo.ts`; the tests below are what stop it coming back
+ * silently.
  *
  * WHY A TEST AND NOT JUST THE UNIQUENESS CHECK. `scripts/seo-check.mts` already
  * proves titles and descriptions don't collide, and it would go on passing
@@ -62,17 +71,25 @@ const cg = (over: Partial<Campground> = {}): Campground =>
 
 // ---------------------------------------------------------------- the wording
 
-test('the campground title targets cancellations, not availability', () => {
-  const t = campgroundTitle(cg());
-  assert.match(t, /Cancellations/, 'the winnable qualifier must be in the title');
+test('the campground title keeps the word people actually search for', () => {
+  // A SHORT NAME, DELIBERATELY. With an 11-char brand, a 14-char place and a
+  // 21-char qualifier against a 65 target, only names of ~19 characters or less keep
+  // the full form — which is the measured 37.3%. A "Kirk Creek Campground" fixture
+  // falls to the name+place rung and would test nothing about the qualifier.
+  const t = campgroundTitle(cg({ name: 'Kirk Creek' }));
+  // "camping" is the load-bearing token: it is in 23 of the top 25 queries by
+  // impressions ("ohiopyle camping", "watkins glen state park camping", "camping in
+  // georgia"). Many campground NAMES do not contain it — "Ohiopyle State Park",
+  // "Clinch River Valley State Park" — so the qualifier is the only place it appears.
+  assert.match(t, /camping/i, 'the highest-frequency token in real demand must survive');
   assert.doesNotMatch(
     t,
-    /camping availability/i,
-    'reverting to the recreation.gov-owned query undoes the retarget',
+    /Cancellation/i,
+    'this was tried on 2026-08-25 and falsified the same day: a query filter for ' +
+      '"cancel" returns NO DATA. Do not reinstate it without Search Console showing ' +
+      'real impressions on cancellation-shaped queries. See the header of seo.ts.',
   );
-  // The name and place still survive — the retarget must not cost the two
-  // things that make 6,934 titles distinct from each other.
-  assert.match(t, /Kirk Creek Campground/);
+  assert.match(t, /Kirk Creek/);
   assert.match(t, /Big Sur, CA/);
 });
 
@@ -89,16 +106,30 @@ test('the title ladder drops the qualifier before the place', () => {
   // proves nothing either way.
   const long = cg({ name: 'Indian Lake State Park — Horseshoe' }); // 34 chars
   const t = campgroundTitle(long);
-  assert.doesNotMatch(t, /Cancellations/, 'qualifier should have been dropped first');
+  assert.doesNotMatch(t, /camping availability/, 'qualifier should have been dropped first');
   assert.match(t, /Big Sur, CA/, 'place must survive longer than the qualifier');
 });
 
-test('the meta description leads with the searcher problem, not the brochure', () => {
+test('the meta description leads with availability and still names the cancellation', () => {
   const d = campgroundDescription(cg());
-  assert.match(d, /booked solid\?/i, 'the snippet must answer the query it matched');
+  // Discovery intent, not failed-booking intent — every query this site receives is
+  // somebody looking for a campground, not somebody already blocked. The cancellation
+  // promise closes the sentence rather than opening it.
+  assert.match(d, /Live campsite availability/i);
   assert.match(d, /Kirk Creek Campground/, 'name carries uniqueness');
   assert.match(d, /Big Sur, CA/, 'place carries uniqueness');
   assert.ok(d.length <= 158, `descriptions over 158 get truncated (${d.length})`);
+
+  // KNOWN AND PRE-EXISTING, PINNED SO IT IS NOT MISTAKEN FOR A REGRESSION: on a row
+  // with several site types the 158-char clamp eats the tail, so the cancellation
+  // promise — the entire reason to subscribe — is truncated out of the snippet. It
+  // survives only on shorter rows. This predates the 2026-08-25 work (the clamp and
+  // the sentence order are both original) and is worth fixing on its own terms;
+  // reordering it was part of the falsified retarget and is NOT the fix.
+  const shortRow = campgroundDescription(cg({ siteTypes: [] }));
+  assert.match(shortRow, /cancelled/i, 'a row with no site types must still reach the promise');
+  const longRow = campgroundDescription(cg({ siteTypes: ['tent', 'rv', 'cabin'] }));
+  assert.doesNotMatch(longRow, /cancelled/i, 'if this now passes, the clamp was fixed — good, update this');
 });
 
 test('a campground with no place still gets a unique, non-empty description', () => {
@@ -107,10 +138,13 @@ test('a campground with no place still gets a unique, non-empty description', ()
   assert.match(d, /Kirk Creek Campground/);
 });
 
-test('state pages carry the same word as the campground pages', () => {
+test('state pages stay inventory-first', () => {
+  // /camping/california is the highest-impression page on the site (725 in 28 days,
+  // position 69.3) and its queries are pure discovery. It is the riskiest place on
+  // the site to spend a title on a phrasing nobody searches.
   const t = stateTitle('California', 869);
-  assert.match(t, /Cancellations/);
-  assert.doesNotMatch(t, /live availability \|/, 'the old inventory-first title is back');
+  assert.match(t, /Campgrounds/);
+  assert.doesNotMatch(t, /Cancellation/i, 'falsified 2026-08-25 — see seo.ts header');
   const d = stateDescription('California', 869);
   assert.ok(d.length <= 160, `state descriptions are capped at 160 (${d.length})`);
   assert.match(d, /869/, 'the count is what makes each state description distinct');
@@ -187,8 +221,9 @@ test('the campground page actually renders it, below the detail view', () => {
   );
 });
 
-test('the state page h1 leads with cancellations', () => {
+test('the state page h1 stays inventory-first', () => {
   const s = src(STATE_PAGE);
   const h1 = s.slice(s.indexOf('<h1'), s.indexOf('</h1>'));
-  assert.match(h1, /Campground cancellations in \{name\}/);
+  assert.match(h1, /Campgrounds in \{name\}/);
+  assert.doesNotMatch(h1, /cancellation/i, 'falsified 2026-08-25 — see seo.ts header');
 });

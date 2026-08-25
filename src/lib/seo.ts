@@ -1,4 +1,5 @@
 import type { Campground } from '@/lib/types';
+import { describePlain } from '@/components/v2/richText';
 import { normalizeStateCode } from '@/lib/coverage';
 
 /**
@@ -10,27 +11,50 @@ import { normalizeStateCode } from '@/lib/coverage';
  * That is fixed, and the uniqueness guards in `scripts/seo-check.mts` are what
  * keep it fixed — read them before changing any template here.
  *
- * RETARGETED AT CANCELLATION INTENT, 2026-08-25. The pages are genuinely in
- * Google's index (verified by search: /campground/233269 and /233710 both come
- * back), and in eight weeks not one organic visitor has ever created a watch —
- * every activated user traces to the owner's circle or a beta invite. So the
- * pages are crawled, and they are aimed at a query we cannot win.
+ * THE CANCELLATION RETARGET WAS TRIED AND FALSIFIED, 2026-08-25. Recorded in full
+ * because the reasoning was sound, the bet was reasonable, and the evidence killed
+ * it inside a day — and the next person to have this idea should find the answer
+ * here rather than re-running it across 6,934 pages.
  *
- * "kirk creek campground availability" is a query RECREATION.GOV OWNS. It is the
- * booking system: it has the backlinks, the freshness and the canonical answer,
- * and no amount of on-page work takes position one off it. Ranking second for a
- * query whose first result completes the user's task is worth nothing.
+ * THE BET: "<name> availability" is a query recreation.gov owns — it is the booking
+ * system, it has the backlinks and the canonical answer — whereas "<name>
+ * cancellations" is a query it has nothing to say about, and is literally this
+ * product. So the qualifier was changed from "camping availability" to
+ * "Cancellations" everywhere.
  *
- * The query recreation.gov has NOTHING to say about is the one that is literally
- * this product: "kirk creek campground cancellations". Someone typing that has
- * already tried to book, already failed, and is looking for exactly what we
- * sell. Low volume per page — but there are 6,934 pages, and the intent is as
- * high as intent gets.
+ * WHAT KILLED IT — two readings from the same Search Console session:
  *
- * So the qualifier is "Cancellations", not "camping availability". Availability
- * has not been abandoned; it moved to where there is room for it — the body copy
- * in `campgroundOpeningsHeading`/`campgroundOpeningsBody`, which a title tag's
- * ~60-character budget cannot hold alongside the name and the place.
+ *   1. Filtering all 1,000 query rows over 28 days for queries containing "cancel"
+ *      returns **NO DATA**. Not few impressions — none. That is weaker than "nobody
+ *      searches this" (we never ranked for it, and GSC drops very rare queries) and
+ *      much stronger than "we simply do not rank yet": 6,934 pages already carried
+ *      the word "cancelled" in their descriptions, and across 28 days that surfaced
+ *      against exactly zero cancellation-shaped searches.
+ *
+ *   2. **23 of the top 25 queries by impressions contain "camping", "campground" or
+ *      "campsite"** — "ohiopyle camping", "watkins glen state park camping", "camping
+ *      in georgia", "campgrounds with cabins". Every impression this site gets is a
+ *      DISCOVERY query. Nobody arrives having already failed to book; they arrive
+ *      looking for a campground.
+ *
+ * So the retarget removed the single highest-frequency token in the real demand from
+ * every title on the site, to chase a phrasing with no measurable demand at all. The
+ * qualifier is "camping availability" again.
+ *
+ * WHAT WAS KEPT, AND WHY IT IS NOT A HALF-REVERT. The cancellation ANGLE is right —
+ * it is what the product does and what makes it worth paying for. What was wrong was
+ * spending the TITLE on it, which is the one place that has to match the query. So it
+ * lives where there is room and where it costs no matching: the meta description
+ * (not a ranking factor, and it is the CTR pitch once position improves) and
+ * `campgroundOpeningsHeading`/`campgroundOpeningsBody`, which also happen to add ~200
+ * words of real content to pages that are frequently near-empty — the highest-
+ * impression page on the site, /campground/tnsc-TN-71, has ZERO photos and a ZERO
+ * character description.
+ *
+ * DO NOT REINSTATE "Cancellations" IN THE TITLE without new evidence, and the
+ * evidence that would justify it is specific: cancellation-shaped queries showing
+ * real impressions in Search Console. `worker`-side there is nothing to check; this
+ * is a Search Console question.
  *
  * HOW TO READ SEARCH CONSOLE — AND THE FIRST VERSION OF THIS RULE WAS WRONG.
  * It said: impressions holding steady while clicks stay at zero means the query
@@ -90,14 +114,14 @@ export function campgroundPlace(c: Campground): string {
   return [c.address?.city, state].filter(Boolean).join(', ');
 }
 
-/** The qualifier every campground title carries. See the file header for why
- *  it is this and not "camping availability". One constant, because the body
- *  copy and the state pages have to say the same word or the page reads as two
- *  documents stapled together. */
-const CANCEL_QUALIFIER = 'Cancellations';
+/** The qualifier every campground title carries — and the token that carries it is
+ *  "camping", which appears in 23 of the top 25 queries by impressions. See the file
+ *  header: this was briefly "Cancellations" and the change was falsified the same day.
+ *  One constant, so a future edit moves every surface at once instead of one. */
+const AVAILABILITY_QUALIFIER = 'camping availability';
 
 /**
- * "Kirk Creek Campground Cancellations — Big Sur, CA | CampHawk"
+ * "Kirk Creek Campground camping availability — Big Sur, CA | CampHawk"
  *
  * Name first, because that's what gets typed and what users scan for in the
  * SERP. Some catalog names are already ALL CAPS ("CROW VALLEY"); left as-is,
@@ -112,18 +136,13 @@ const CANCEL_QUALIFIER = 'Cancellations';
  * exists to fix. So the parts come off in order of what we can afford to lose:
  * the place, then the qualifier, and the name and brand survive to the end.
  *
- * THE QUALIFIER IS SHORTER NOW, AND THE SIDE BENEFIT IS MEASURED — BUT IT IS NOT
- * THE ONE YOU WOULD GUESS. "Cancellations" is 13 characters against "camping
- * availability"'s 20, so seven more characters of NAME and PLACE survive the
- * ladder. Across the live catalog (7,612 visible rows, 2026-08-25) that takes
- * the share of pages keeping the full name+qualifier+place form from **37.3% to
- * 58.0%** — 1,577 more pages carrying their most specific title.
- *
- * It does NOT reduce title collisions, which was the first guess and was wrong:
- * duplicates sit at 24 pages across 12 titles either way. They come from
- * campgrounds with genuinely identical names AND identical places, which no
- * amount of qualifier budget separates. Fixing those needs a new distinguishing
- * field, not a shorter word.
+ * A SHORTER QUALIFIER WOULD FIT MORE PAGES, AND THAT IS NOT A REASON TO PICK ONE.
+ * Measured on 2026-08-25: swapping in a 13-character qualifier took the share of
+ * pages keeping the full name+qualifier+place form from 37.3% to 58.0%. It did NOT
+ * reduce title collisions (24 pages across 12 titles either way — those are genuinely
+ * duplicate name+place, which no qualifier budget separates). Worth knowing if the
+ * wording ever changes again for a reason that actually holds; it was not enough to
+ * justify dropping the word people search for.
  *
  * The target is a soft one. Google truncates the SERP display by pixel width,
  * not characters, and over-length costs nothing but the tail being hidden —
@@ -139,9 +158,9 @@ export function campgroundTitle(c: Campground): string {
   // Park" exists in both TN and WI). Dropping the qualifier first costs a
   // keyword; dropping the place first costs a distinct page.
   const candidates = [
-    place ? `${c.name} ${CANCEL_QUALIFIER} — ${place}` : null,
+    place ? `${c.name} ${AVAILABILITY_QUALIFIER} — ${place}` : null,
     place ? `${c.name} — ${place}` : null,
-    `${c.name} ${CANCEL_QUALIFIER}`,
+    `${c.name} ${AVAILABILITY_QUALIFIER}`,
     c.name,
   ].filter((v): v is string => v !== null);
 
@@ -155,41 +174,33 @@ export function campgroundTitle(c: Campground): string {
 }
 
 /**
- * The SERP snippet — written for the person whose booking just failed.
+ * Prefers the provider's own description, which is real prose about the place.
+ * Falls back to a sentence built from the row so a campground with no
+ * description still gets something specific rather than nothing — an empty meta
+ * description makes Google invent one from the page, usually badly.
  *
- * IT USED TO PREFER THE PROVIDER'S OWN PROSE, and that was the right call while
- * the pages targeted "<name> availability": provider text is real, specific and
- * naturally unique, which is what the duplicate-description guard wants. It is
- * the wrong call now, and the reason is what a meta description is FOR.
- *
- * A description is not a ranking factor; it is the CTR pitch under the blue
- * link. Someone who has just been told "no sites available" and typed "kirk
- * creek campground cancellations" is scanning results for one thing: can this
- * page get me in? "Kirk Creek Campground is located on a bluff above the
- * Pacific…" is a lovely sentence that answers a question they did not ask, and
- * it is roughly what recreation.gov's own snippet already said one line above.
- *
- * So the answer leads, and the place follows it. The provider's prose is not
- * discarded — it is still the bulk of the page body, under the "About" heading,
- * where Google reads it for topical relevance and where a human who is not in a
- * hurry can read it too.
- *
- * UNIQUENESS IS CARRIED BY NAME + PLACE, and `scripts/seo-check.mts` is what
- * proves that holds across the whole catalog (it requires >95% distinct). A
- * template alone would be a duplicate-content generator, which is the exact
- * failure the file header opens with — so if that check ever drops, the fix is
- * a MORE distinguishing clause here, never a lower threshold there.
+ * IT LEADS WITH AVAILABILITY, NOT WITH "BOOKED SOLID?", AND THAT IS FROM THE DATA.
+ * It briefly led with the failed-booking framing as part of the cancellation
+ * retarget (see the file header for how that ended). Every query this site actually
+ * receives is a DISCOVERY query — "ohiopyle camping", "camping in georgia" — from
+ * somebody who has not tried to book anything yet. Opening a snippet by asking a
+ * browsing user whether they are already blocked answers a question they did not ask.
+ * The cancellation promise still closes the sentence, which is where it belongs.
  */
 export function campgroundDescription(c: Campground): string {
   const place = campgroundPlace(c);
   const where = place ? ` in ${place}` : '';
-  const types = (c.siteTypes ?? []).filter(Boolean).slice(0, 2).join(' and ');
 
+  const provider = describePlain(c.description);
+  if (provider && provider.length > 60) {
+    return clamp(provider);
+  }
+
+  const types = (c.siteTypes ?? []).filter(Boolean).slice(0, 3).join(', ');
   return clamp(
-    `${c.name}${where} booked solid? CampHawk rechecks it every 15 seconds and ` +
-      `alerts you the moment someone cancels. ` +
+    `Live campsite availability for ${c.name}${where}. ` +
       (types ? `${types} sites. ` : '') +
-      `Live availability is free.`,
+      `See what's open tonight, and get alerted the second a booked site is cancelled.`,
   );
 }
 
@@ -218,15 +229,19 @@ export function stateUrl(slug: string): string {
   return `${SITE_URL}/camping/${slug}`;
 }
 
+/** Inventory-first, because the state pages' own queries are "camping in georgia",
+ *  "campgrounds in wisconsin", "south carolina camping info" — discovery, every one.
+ *  /camping/california is the highest-impression page on the whole site (725 in 28
+ *  days), so it is also the riskiest place to spend the title on a phrasing nobody
+ *  searches. This briefly read "Campground Cancellations"; see the file header. */
 export function stateTitle(name: string, count: number): string {
-  return `${name} Campground Cancellations — ${count.toLocaleString()} watched | ${SITE_NAME}`;
+  return `${name} Campgrounds — ${count.toLocaleString()} with live availability | ${SITE_NAME}`;
 }
 
 export function stateDescription(name: string, count: number): string {
   return clamp(
-    `Every ${name} campground booked? CampHawk watches ${count.toLocaleString()} of them ` +
-      `around the clock and alerts you within seconds of a cancellation. ` +
-      `Live availability is free.`
+    `Live campsite availability for ${count.toLocaleString()} campgrounds across ${name}. ` +
+      `See what's open tonight, and get alerted the second a booked site is cancelled.`
   );
 }
 

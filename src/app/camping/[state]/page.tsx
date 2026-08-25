@@ -130,22 +130,23 @@ export default async function StateCampingPage({
           <span>{name}</span>
         </nav>
 
-        {/* The h1 leads with the intent, not the inventory. "Campgrounds in
-            California" is a query the booking portals and every listicle in the
-            outdoors industry already own; "campground cancellations in
-            California" is the one a person types AFTER the booking failed, and
-            it is the one this page can genuinely be the best answer to. Same
-            reasoning as the campground titles — see lib/seo.ts. */}
+        {/* Inventory-first. This briefly read "Campground cancellations in
+            {name}" as part of the 2026-08-25 retarget, which Search Console
+            falsified the same day: this page's own queries are "camping in
+            georgia", "campgrounds in wisconsin", "south carolina camping info" —
+            discovery, every one — and a filter for queries containing "cancel"
+            returns no data at all. See the header of lib/seo.ts. The cancellation
+            promise moved to the paragraph below, where it costs no matching. */}
         <h1 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em]">
-          Campground cancellations in {name}
+          Campgrounds in {name}
         </h1>
         <p className="mt-2 max-w-[70ch] text-ch-body leading-relaxed text-ch-ink-2">
           {/* Interpolations are joined INSIDE the strings. JSX strips whitespace
               between an expression and the next line, which rendered this as
               "across Oregon , in 93 towns ." */}
-          {`Booked out is rarely final. People cancel constantly, and the site goes straight back into the booking system — usually with no warning and often overnight. We watch live availability at ${campgrounds.length.toLocaleString()} bookable campgrounds across ${name}`}
+          {`We track live availability at ${campgrounds.length.toLocaleString()} bookable campgrounds across ${name}`}
           {towns > 0 ? `, in ${towns.toLocaleString()} towns` : ""}
-          {". Every one is rechecked every 15 seconds, around the clock, so when a booked site frees up you hear about it in seconds rather than finding out weeks later that it was open for an hour."}
+          {". Every one is rechecked every 15 seconds, around the clock. Booked out is rarely final — people cancel constantly, and the site drops back into the booking system with no warning, often overnight — so when one frees up you hear about it in seconds rather than finding out weeks later that it was open for an hour."}
         </p>
         <p className="mt-2 max-w-[70ch] text-ch-meta text-ch-muted">
           {`Booking goes through ${providers
