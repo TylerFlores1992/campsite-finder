@@ -1895,6 +1895,10 @@ rejects notifications on any bound routine.
 
 ---
 
+> **STATUS CLAIMS IN THIS SECTION ARE SUPERSEDED BY §28.** The fix shipped the same day
+> (#183, `d842dc0`, 14:36 PT) and BOTH defects are addressed. The measurements below stand;
+> "recorded, not fixed" does not. Read §28 before quoting any of this as current.
+
 ## 26. A PARK WATCH SENT 52 MESSAGES IN AN HOUR — `rc_hold_notified_for` IS ONE COLUMN FOR N DIVISIONS
 
 *Side lane, 2026-08-24 midday. Reported by the owner as "Melinda got six texts for her Morro
@@ -2335,6 +2339,11 @@ was still what stopped the flood — the fix came two hours later — but §26's
 fixed" framing was wrong from 14:36 onward and I repeated it seven hours late. **Both watches
 are restored to full coverage and nothing is owed.** Multi-division watches WORK.
 
+**§26 IS SUPERSEDED BY §28: the coming-soon fix SHIPPED the same day (#183, `d842dc0`, 14:36
+PT) and both defects are addressed. Multi-division watches WORK. What is left is data — Melinda's
+watch is still trimmed to one division by my stopgap and should be restored to all three, which
+is safe to do now.**
+
 **§27 is CLOSED OUT (see 27g): upgraded to Supabase Pro on 2026-08-24, $25/month, deadline
 cleared, and the admin Costs tab turned out to have no Supabase row and no Fly row — monthly
 recurring was understating by $30.11 and is now $70.11. `POLL_MS` remains open.**
@@ -2349,4 +2358,77 @@ the 11.81 GB is already spent so no change now averts the deadline.
 
 Immediate lever is `POLL_MS` in `scripts/auto-cart-bot/.env` (bot restart, no deploy). The real
 fix — not writing the heartbeat and both control-channel reads on every tick — is main lane's.
+
+
+---
+
+## 28. CORRECTION TO §26 — THE FIX SHIPPED THE SAME DAY, AND I SAID IT HAD NOT
+
+*Side lane, 2026-08-24 evening. §26 says the two coming-soon defects are "untouched" and need a
+migration. **That was true when written and false within two hours**, and I repeated it to the
+owner at ~21:30 as current state. This section is the correction; §26's measurements stand, its
+status claims do not.*
+
+### 28a. WHAT ACTUALLY SHIPPED
+
+**`d842dc0` — #183, committed 2026-08-24 14:36 PT** — *"One campsite is one text"*:
+
+- **Migration 067** adds `watches.rc_hold_notified_keys text[]`, backfilling any live legacy
+  claim as `<hour>|*`.
+- **`worker/hold-claim.ts`** is extracted from `poller.ts` (the same reason `claim.ts` was:
+  importing the poller starts it, so the decision governing how many texts a user gets was
+  untestable where it lived).
+- The claim is now **a SET keyed `<releaseHour>|<unitId>`**, one atomic
+  `UPDATE .. SET array_append(..) WHERE NOT (keys @> ARRAY[key])`.
+- **`worker/hold-claim.test.mts`, 7 tests**, real-DB.
+
+**BOTH of §26's defects are addressed, and the second one by the same stroke.** Keying on the
+UNIT means two divisions reporting the same unit compute the SAME key, so the duplicate
+collapses — there is an explicit test named *"the SAME unit found under two divisions is
+announced ONCE"*. §26c said "fixing the column alone still leaves two alerts for one site"; that
+was right about a campground-keyed fix and does not apply to the unit-keyed one that shipped.
+
+### 28b. HOW I GOT IT WRONG — read pre-rebase, answered post-rebase
+
+I read `worker/poller.ts:683-706` and quoted the single-column `UPDATE` as current. Between that
+read and the answer I ran `git rebase origin/master`, which **moved the function into
+`worker/hold-claim.ts`**. I never re-read. So I quoted code that had not existed in the tree for
+some minutes, with a line number that was by then pointing at something else.
+
+**A LINE NUMBER IS ONLY VALID FOR THE TREE YOU READ IT FROM.** Re-read anything you are about to
+quote as current state after a rebase, a merge, or a fetch — especially in a repo where the other
+lane ships several times a day. Every fact in §26's *measurement* half came from the database and
+is unaffected; every fact in its *status* half came from source and went stale.
+
+### 28c. THE TRIM WAS STILL REAL — the timeline, so neither party's work is misattributed
+
+```
+11:40 - 12:42 PT   the flood: 48 messages, 2 divisions, one site
+~12:43 PT          side lane trims Melinda's watch to rc-583  -> flood stops
+14:36 PT           main lane commits #183, the real fix
+```
+
+**The fix did not exist when the flood was stopped**, so the trim is what stopped it, and the
+~2 hours between them were covered by data rather than code. This was **concurrent discovery, not
+duplicated work** — but the two lanes were both on it without either knowing, which is what
+`docs/LANES.md` exists to prevent and what `ListAgents` returning no reachable peers made
+impossible to avoid here.
+
+### 28d. WHAT IS ACTUALLY LEFT — data, not code
+
+The code is fixed and deployed (`poller.shards 2/2 held`). What remains is the stopgap I applied,
+which is now unnecessary and is costing coverage:
+
+| watch | divisions now | should be | note |
+|---|---|---|---|
+| `336d742c` Melinda | `rc-583` | `rc-582, rc-583, rc-2185` | **trimmed by me; restore** |
+| `eb886697` owner | `rc-582, rc-583` | unchanged | never trimmed; **now safe** |
+
+Restoring Melinda's two rows is two `INSERT`s into `watch_campgrounds`. **It is safe to do now
+rather than after the release**, because the shipped claim is per-unit and the backfilled
+`<hour>|*` wildcard suppresses the 08:00 release for both watches regardless — §26e's
+"re-adding tonight restarts the flood" was reasoning about the OLD code and is superseded.
+
+**NOT DONE IN THIS SESSION**, because it is another user's watch and the correction landed at the
+end of the session rather than in the middle of it.
 
