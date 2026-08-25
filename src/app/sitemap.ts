@@ -59,6 +59,14 @@ async function stateEntries(): Promise<MetadataRoute.Sitemap> {
   const states = await statesWithPages();
   return [
     { url: `${BASE}/camping`, changeFrequency: 'weekly' as const, priority: 0.8 },
+    // The curated hub. Same priority as a state page rather than higher: it is
+    // an editorial page, and inflating priority on the one page we wrote by hand
+    // is the kind of signal Google discounts wholesale when it sees it.
+    {
+      url: `${BASE}/camping/hardest-to-book`,
+      changeFrequency: 'monthly' as const,
+      priority: 0.8,
+    },
     ...states
       .map(({ code }) => stateSlug(code))
       .filter((slug): slug is string => slug !== null)

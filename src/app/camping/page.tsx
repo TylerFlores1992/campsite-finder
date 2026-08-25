@@ -70,6 +70,21 @@ export default async function CampingIndexPage() {
         <p className="mt-2 max-w-[70ch] text-ch-body leading-relaxed text-ch-ink-2">
           {`We track live availability at ${total.toLocaleString()} bookable campgrounds across ${rows.length} states — national forests, state parks and everything in between. Pick a state to see what we cover there.`}
         </p>
+        {/* The curated hub, linked from the state index because a page nothing
+            points at is a sitemap entry rather than a destination — the same
+            reason this index exists for the 47 state pages. It goes ABOVE the
+            state grid: it is the highest-intent page on the site, and below a
+            47-row list is where links go to be ignored. */}
+        <p className="mt-4 max-w-[70ch] rounded-ch-card border border-ch-line bg-ch-card p-4 text-ch-body leading-relaxed text-ch-ink-2 shadow-ch-card">
+          {"Chasing somewhere that is never available? "}
+          <Link
+            href="/camping/hardest-to-book"
+            className="font-semibold text-ch-green hover:underline"
+          >
+            The campgrounds that are always booked
+          </Link>
+          {" covers Yosemite, Zion, Acadia and 15 more parks whose sites go in minutes — and how a cancellation is the realistic way in."}
+        </p>
 
         <ul className="mt-7 grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
           {rows.map((r) => (
