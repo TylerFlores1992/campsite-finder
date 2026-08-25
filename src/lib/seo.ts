@@ -32,9 +32,30 @@ import { normalizeStateCode } from '@/lib/coverage';
  * in `campgroundOpeningsHeading`/`campgroundOpeningsBody`, which a title tag's
  * ~60-character budget cannot hold alongside the name and the place.
  *
- * WHAT WOULD FALSIFY THIS: Search Console impressions on the campground pages
- * holding steady or rising while clicks stay at zero. That would mean the query
- * was never the problem and the snippet is. Check before changing it again.
+ * HOW TO READ SEARCH CONSOLE — AND THE FIRST VERSION OF THIS RULE WAS WRONG.
+ * It said: impressions holding steady while clicks stay at zero means the query
+ * was never the problem and the snippet is. That conflates two different faults,
+ * and the very first reading proved it. On 2026-08-25 the trailing 28 days were
+ * **14.9K impressions, 46 clicks, CTR 0.3%, AVERAGE POSITION 49.9** — and at
+ * position ~50 a CTR of 0.2-0.5% is exactly what a snippet is SUPPOSED to earn.
+ * Nothing was being passed over. Almost nothing was being seen.
+ *
+ * So the rule needs POSITION as its first term, and it is three-way:
+ *
+ *   impressions, poor CTR, position > 20  -> a RANKING problem. The snippet is
+ *                                            irrelevant; nobody reaches it. This
+ *                                            is where we were on 2026-08-25.
+ *   impressions, poor CTR, position < 10  -> a SNIPPET problem. Now the title and
+ *                                            description are the lever.
+ *   few impressions at any position       -> not matching the query at all: a
+ *                                            content or indexing problem.
+ *
+ * WHICH MEANS THIS CHANGE CANNOT BE JUDGED ON CLICKS, and judging it that way
+ * would retire it for the wrong reason. A retarget onto a less contested query
+ * buys POSITION first; clicks are downstream of that and arrive later, if at all.
+ * The metric for the next 6-10 weeks is **average position on /campground/***,
+ * not clicks and not CTR. If position does not move, the query was not the
+ * binding constraint — domain authority was — and the answer is links, not copy.
  */
 
 export const SITE_NAME = 'CampHawk';
