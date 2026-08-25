@@ -279,6 +279,22 @@ test('the long-lived resident target is sampled coarsely', () => {
     + 'default because they exist for one navigation and never accumulate');
 });
 
+test('the resident sampler says whether it armed, on the healthy path too', () => {
+  // "ARMED AND QUIETLY WORKING" AND "THIS CODE NEVER RAN" MUST NOT BE THE SAME SILENCE. The
+  // first version logged only on failure, and a trail that reports nothing is then
+  // indistinguishable from a trail that is not running — which is `status = 'sent'` meaning
+  // only "Twilio returned 2xx", and the watchdog that produced nothing for thirty consecutive
+  // firings. The whole value of this instrument is what it says when a ramp happens; that is
+  // worthless if nobody can confirm it was listening.
+  const body = code.slice(code.indexOf('async function warmResident'));
+  const at = body.indexOf('residentSampling');
+  assert.ok(at > -1, 'the resident sampler must exist');
+  const near = body.slice(at, at + 1200);
+  assert.match(near, /log\(`\s*alloc trail: \$\{residentSampling\.ok/,
+    'the arming must be announced on BOTH branches of one log call — a line that only fires on '
+    + 'failure makes a working instrument and an absent one produce identical output');
+});
+
 test('the trail contexts the bot sends are allow-listed on the server', () => {
   // THE CROSS-FILE AGREEMENT AGAIN, and the trail sends its context as a TEMPLATE LITERAL —
   // `trail-${r.name}` — so the literal scan below cannot see these. Derived from the register

@@ -2515,15 +2515,29 @@ async function warmResident() {
        * as happily as Performance does. A second session would double the thing that has twice
        * been measured failing under load.
        */
-      if (heapProbe) {
-        // COARSER THAN THE TRIP TABS, and see LONG_LIVED_INTERVAL for the measurement. This
-        // one is read every 20s for the life of the browser, and the response grows with every
-        // byte the renderer has ever allocated — so at 9 GB the fine setting would have us
-        // asking a dying renderer to serialize 16 MB, over and over, at the peak.
-        const residentSampling = await startNativeSampling(heapProbe, { intervalBytes: LONG_LIVED_INTERVAL });
-        if (residentSampling.ok) allocTrail.register('resident', heapProbe);
-        else log(`  (the resident renderer is not being sampled: ${residentSampling.why})`);
-      }
+      // COARSER THAN THE TRIP TABS, and see LONG_LIVED_INTERVAL for the measurement. This one
+      // is read every 20s for the life of the browser, and the response grows with every byte
+      // the renderer has ever allocated — so at 9 GB the fine setting would have us asking a
+      // dying renderer to serialize 16 MB, over and over, at the peak.
+      const residentSampling = heapProbe
+        ? await startNativeSampling(heapProbe, { intervalBytes: LONG_LIVED_INTERVAL })
+        : { ok: false, why: 'no CDP session on the resident page' };
+      if (residentSampling.ok) allocTrail.register('resident', heapProbe);
+      /**
+       * IT SAYS IT IS RUNNING, ON THE HEALTHY PATH TOO.
+       *
+       * The first version logged only on FAILURE, which makes "armed and quietly working" and
+       * "this code never ran" the same silence — the shape that made `status = 'sent'` mean only
+       * "Twilio returned 2xx", and that hid a watchdog which produced nothing through thirty
+       * consecutive firings. An instrument nobody can confirm is running is one nobody should
+       * believe when it reports nothing, which is exactly what this one will do most days.
+       *
+       * ONE LINE PER BROWSER OPEN, which is roughly hourly — cheap enough not to bury the log,
+       * and a recycle is precisely when you want to know the trail came back up with it.
+       */
+      log(`  alloc trail: ${residentSampling.ok
+        ? `resident renderer armed, ${residentSampling.why}`
+        : `resident renderer NOT sampled — ${residentSampling.why}`}`);
       mark('priming the token');
       const primed = await primeToken(page);
       log(`RC loaded and STAYING OPEN — token source: ${primed.source}`);

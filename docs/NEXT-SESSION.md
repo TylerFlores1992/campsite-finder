@@ -1,18 +1,16 @@
 # Next session — start here
 
-*Rewritten 2026-08-25, 11:45 PT. Supersedes the 08-24 version entirely.*
+*Rewritten 2026-08-25, evening. Supersedes the 11:45 version entirely.*
 
-> ## THERE IS ASSIGNED WORK THIS TIME. Ground yourself first (§0–§1), then start §2.
+> ## THE TRACK A TRAIL IS BUILT AND SHIPPED. The next session's job is to READ IT.
 >
-> The owner's instruction, verbatim: *"start track a trail do whatever we need to fix leak.
-> Update box when needed and do tests to stress test."*
+> The owner's instruction was *"start track a trail do whatever we need to fix leak. Update box
+> when needed and do tests to stress test."* The trail is built, mutation-guarded, proven
+> end-to-end against a real Chromium, merged, and on the box. **It is an INSTRUMENT, not a
+> cure.** Track B (§5) is still unstarted and still wants its own word.
 >
-> That is a **go-ahead for the leak work**, including bot-side changes and box updates. It is
-> **not** a go-ahead for Track B (§5) — that is still surgery on the release-critical login
-> path and wants its own word.
->
-> Read §0 and §1 before touching anything. §1 is short and it is the reason the obvious plan
-> (queue a hold, force a ramp, read the sampler) **does not work**.
+> **There is nothing to build until a ramp is read.** Ramps arrive ~3x a day unprompted. Do NOT
+> queue a test hold to force one — see §2.
 
 *Delete this file once the trail has captured a real ramp AND the App Store version has a
 decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
@@ -28,150 +26,99 @@ curl -sS "$HTTPS_PROXY/__agentproxy/status"        # recentRelayFailures names b
 curl -sS -m 12 -o /dev/null -w '%{http_code}\n' https://camphawk.app/
 ```
 
-**Egress was healthy 2026-08-25** — camphawk.app 200, Supabase reachable, bot commands
-answering. Only `mcp.vercel.com`, `mcp.sentry.dev` and `flyctl-metrics.fly.dev` are denied.
+**Egress was healthy all session 2026-08-25.** Only `flyctl-metrics.fly.dev`, `mcp.vercel.com`
+and `mcp.sentry.dev` are denied. **It has been revoked mid-session before** (08-23/08-24). If it
+is blocked: **report the hosts and stop.** Do not route around it.
 
-**It has been revoked mid-session before** (08-23/08-24: 403 to CONNECT for camphawk.app,
-`*.supabase.co` and `fly.io`, outliving a session restart). If it is blocked: **report the
-hosts and stop.** Do not retry or route around it. The readout scripts fail loudly on an
-unreachable DB (`DB query error`, exit 1), so an empty answer is always a real answer.
+### 0b. `NODE_USE_ENV_PROXY=1` OR NOTHING REACHES SUPABASE — INCLUDING `npm test`
 
-- **`notifications` is unreadable from an agent session** — RLS answers `policy context
-  unavailable`. It fails loudly. Do not plan a verification around it.
-- **`GITHUB_TOKEN` is a 14-character placeholder and `GET /user` returns 200.** That is a
-  false positive. Anything repo-scoped 403s. Use the GitHub MCP tools.
+This cost half an hour on 08-25 and it looks exactly like a revoked allowlist:
 
-### 0b. The four readings that tell you where things stand
+```
+DB query error: Host not in allowlist: mraeprivokvmxbvhwbbj.supabase.co
+```
+
+That is **not** a revocation. `npm run verify` does not set the variable, so in this sandbox it
+must be run as `NODE_USE_ENV_PROXY=1 npm run verify` or ~150 real-DB tests fail at once, across
+files that have nothing to do with each other. CI is unaffected — it is not behind this proxy.
+
+**And do not read an exit code through a pipe.** `npm run verify 2>&1 | tail -25` reports
+`tail`'s status, which is always 0, and the tail also cuts every `not ok` line. Redirect to a
+file and check `$?`. That is two separate readings of "green" that were neither.
+
+### 0c. The four readings
 
 ```bash
+NODE_USE_ENV_PROXY=1 npx tsx scripts/native-alloc-readout.mts    # Track A — THE ONE THAT MATTERS
+NODE_USE_ENV_PROXY=1 npx tsx scripts/chromium-memory-readout.mts # did a ramp happen at all?
 NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts        # the 8am flow
-NODE_USE_ENV_PROXY=1 npx tsx scripts/native-alloc-readout.mts    # Track A (widen the window)
-NODE_USE_ENV_PROXY=1 npx tsx scripts/chromium-memory-readout.mts # the ramp series
 NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status      # what the box is running
 ```
 
-All of these run **here**, in a sandbox session — `NEXT_PUBLIC_SUPABASE_URL` and
-`SUPABASE_SERVICE_ROLE_KEY` are already process env vars. **Not on the mini-PC**: nothing under
-`scripts/auto-cart-bot/` touches Supabase, and `VAR=1 npx …` is bash syntax that silently does
-nothing in cmd.
+---
 
-`NODE_USE_ENV_PROXY=1` is a sandbox-only prefix (it points Node's fetch at the agent proxy).
+## 1. THE ASSIGNMENT — read the next ramp
+
+`scripts/auto-cart-bot/rc-alloc-trail.mjs` samples the allocation profile **on the watchdog
+tick**, keeps a 20-minute window, and reports a segment's peak when it ends (plus a flush at
+teardown and in the runaway bail). Four renderers: `resident`, `renewal`, `auto-login`,
+`warmup`, each under its own context.
+
+### What to look for, and what each answer means
+
+| reading | what it says |
+|---|---|
+| `trail-resident` carries the gigabytes | **The allocation is on the resident page.** PR #142's throwaway-tab cure is aimed at the wrong renderer, which explains why ramps continued after it shipped. The cure is a different change. |
+| `trail-renewal` / `trail-warmup` carries them | The cure is aimed correctly and something else keeps the memory. Track B becomes the question. |
+| a ramp in `chromium_memory_samples`, nothing in `native_alloc_readings` | **Still a reading.** The trigger is wrong, and the next move is the trigger, not the sampler. |
+| `net::` frames or a SYSTEM dll (`ws2_32`, `winhttp`, `mswsock`) | the buffering candidate, asserted three times and never shown, finally confirmed. |
+
+**The renderer share is NOT the whole ramp.** `Memory.startSampling` is absent on the
+browser-process target — verified — and on 08-24 the browser process held 779 MB of 9,338. So
+~90% is the ceiling of what any of this can attribute, and the rendered line says so.
+
+### DO NOT queue a test hold to force a ramp
+
+Three arrived free of charge in thirty hours and the old instrument missed all three. A staged
+one locks a real campsite and would be missed identically if the trigger is wrong. **Wait.**
 
 ---
 
-## 1. WHY THE OBVIOUS PLAN DOES NOT WORK — read this before designing anything
+## 2. What was corrected on 2026-08-25, so it is not re-derived
 
-**Track A is blind to the ramps by construction.** Established 2026-08-25 and written up in
-`CLAUDE.md` → *"THE CONTENTION TEST RAN ITSELF, AND TRACK A WAS POINTED THE WRONG WAY"*.
+### 2a. THE PROFILE-RESET STORY IS WRONG ABOUT RC — and it was written in as fact first
 
-Three ramps happened on their own in 30 hours:
+The obvious explanation for the renewal tab reporting **17 MB** against an **8,052 MB** family
+is that CDP's all-time profile is reset by the navigation. It IS reset — by a navigation that
+swaps the **renderer** — and RC's does not. Measured:
 
 ```
-08-24 19:37→19:43   peak 7,250 MB   free 2,217   commit 95%   pid 15092
-08-25 02:30→02:40   peak 8,312 MB   free 2,473   commit 98%   pid  1296
-08-25 07:31→07:37   peak 7,471 MB   free 2,144   commit 99%   pid 13296
+a.probe2     -> b.probe2        (different SITE)   192 ->   1 MB   RENDERER SWAPPED
+www.rc.probe -> signin.rc.probe (SUBDOMAIN)        216 -> 217 MB   same renderer
 ```
 
-Track A has exactly three stored readings — one per ramp hour — and **every one says "this
-navigation did NOT ramp"**, and every one sits outside its ramp window.
+**Chromium isolates by SITE — scheme + eTLD+1 — not by origin.** `www.reservecalifornia.com` ->
+`signin.reservecalifornia.com` is a subdomain hop and keeps its renderer.
 
-**The cause:** `reportNativeAlloc` (`rc-keepwarm.mjs` ~1665) fires on the **return path**, after
-`attemptLogin`/`renewSession` returns, and is gated on `ramΔ ≤ −400 MB`. A trip killed mid-ramp
-never returns, so it never reports. The instrument therefore records, **by selection**, the cheap
-retry that *follows* a ramp.
+It was asserted in three files for about an hour, on the strength of a first experiment using
+`a.test`/`b.test` — two genuinely different sites, and not the navigation this product makes.
+**Only `alloc-trail-probe.mjs` refusing a verdict caught it.** Reproduce it in one command:
+`node scripts/auto-cart-bot/alloc-trail-probe.mjs` prints that table every run.
 
-### Three consequences, and they shape the whole job
+### 2b. The all-time total is NOT strictly monotonic
 
-1. **DO NOT queue a test hold to force a ramp.** Three arrived free of charge and were all
-   missed. A staged one would be missed identically, and it locks a real campsite to do it.
-2. **THE RAMPING RENDERER MAY NOT BE THE TAB WE SAMPLE.** On 08-25 02:31 the renewal's throwaway
-   tab reported **17 MB** of renderer allocation while the family's renderers reached **8,052 MB**
-   — and the climb continued for eight minutes after the reading was stored. **CANDIDATE, NOT A
-   FINDING:** the allocation is in the **resident page's** renderer, not the throwaway tab's.
-   If that is right, PR #142's "first cure" (move the Okta trip into a throwaway tab so the
-   renderer dies at close) is aimed at the wrong renderer — which would explain why ramps
-   continued after it shipped. **Do not write this in as fact. The trail is what settles it.**
-3. **THE GUARD IS NOT A USABLE REPORTING TRIGGER.** The RAM arm needs
-   `stalledMs > 60s && freeMb < 2000`. Troughs were 2,217 / 2,473 / 2,144 — it came within
-   **144 MB** and did not fire, on six consecutive ramps now. A trail that only prints when the
-   guard trips would print never.
+A real run stepped **955.4 -> 955.2 MB** between consecutive reads. Under a strict "any decrease
+is a renderer swap" rule that cut a 1,271 MB ramp into 954 and 319 and reported the larger half
+as the whole event. It splits on a **collapse** (under half) now. Do not "tidy" that back to a
+strict comparison — an instrument that halves the number it exists to report is worse than none.
 
----
+### 2c. The instrument was nearly part of the disease
 
-## 2. THE ASSIGNMENT — the Track A trail
-
-**Goal: one attributed reading from inside a real ramp.** Everything else follows from it.
-
-### 2a. The design, and why it is this shape
-
-The pattern already exists twice in the same function. `rc-keepwarm.mjs` ~2268 runs
-`setInterval(renew, WATCHDOG_MS = 10_000)` and on every tick it already:
-
-- samples the **heap trail** via `sampleHeap(heapProbe)` — CDP, and it **freezes** once the
-  browser stops answering (measured: newest sample 123s old against a 121s stall);
-- samples the **RAM trail** via `os.freemem()` — a syscall, so it never stops answering;
-- keeps the last `TRAIL_KEEP` of each and prints both when the RUNAWAY arm fires.
-
-**The native-allocation trail is the same move, one slot over**: sample
-`readNativeProfile(sampler)` on that tick, keep the last N, diff against the oldest.
-
-Three things it must get right, each of which is a way this quietly buys nothing:
-
-- **REPORT ON A TRIGGER THAT ACTUALLY FIRES.** Per §1.3, not the RAM arm. The strongest
-  candidate is the **post-Okta recycle** (`visitedOkta` → break → reopen): the `gpu-process`
-  pid changes across **all six** recorded ramps, so a browser replacement is the one event
-  observed to coincide with every single one. A free-RAM-drop threshold read off the RAM trail
-  (already sampled, already on this tick) is a reasonable second trigger. Consider both.
-- **SAMPLE THE RESIDENT RENDERER, NOT ONLY THE TAB.** See §1.2. `startNativeSampling` currently
-  has two call sites (`maybeAutoLogin` ~1232, the renewal tab ~2708) plus the warm-up (~950),
-  and all three sample the trip's own renderer. If the resident page is what ramps, none of
-  them can see it. **`Memory.startSampling` is absent on the browser-process target** — verified,
-  so a reading covers renderers only and the line must say so, as the current one does.
-- **FIRE-AND-FORGET WITH AN IN-FLIGHT FLAG.** The timer must never await: once the browser goes
-  quiet, every attempt costs its full timeout and they pile up one per tick. Copy `heapInFlight`.
-- **`TRAIL_KEEP = 12` IS TOO SHORT FOR THIS EVENT, and it is not obvious.** At a 10-second tick
-  that is **two minutes** of history; the ramps run **ten**. So a trail sized like the heap
-  trail cannot reach back to the onset — it would show the last fifth of the climb and no
-  baseline. That is exactly how the heap trail produced twelve byte-identical samples whose
-  newest was already 123s stale. Size the native trail for the event (~10 min of coverage), or
-  sample it on a slower sub-cadence than the tick. **Do not reuse `TRAIL_KEEP` unthinkingly.**
-
-`worker/warmup-sampler.test.mts` enumerates every `attemptLogin`/`renewSession` call and requires
-each to be sampled or listed in `EXCEPTIONS`. **Extend that guard rather than pinning the new
-trail specifically** — a guard that pins one path is the fifth instance of the house shape.
-
-### 2b. Shipping it to the box
-
-Bot-side, so it does nothing until the mini-PC updates.
-
-- **"Update now"** from Admin → System Health, or the quiet window **02:00–05:00 PT**.
-- **The 6h release gate is NOT liftable.** A queued hold within 6h of its release refuses the
-  update, and that refusal is correct — it is not the 08-12 deadlock.
-- **`autocart.bot_version` is a hint, not an answer.** `bot_commit` is COALESCEd and can sit
-  stale beside a live heartbeat. `git-status` through `bot_commands` is what answers "did it
-  land?".
-- Updates have been landing in **~24 seconds** when the lockfile has not moved.
-
-### 2c. Stress testing — what "stress" can honestly mean here
-
-The owner asked for stress tests. **The ramps are the stress, and they arrive ~3× a day
-unprompted.** So the test is: ship the trail, update the box, and read the next ramp.
-
-- **The series is the trigger to watch.** `chromium_memory_samples` at 2-minute cadence shows a
-  ramp as ~5 samples climbing over ~10 minutes. Poll the memory readout; when a ramp appears,
-  the trail should have a reading for it. **A ramp in the series with nothing in
-  `native_alloc_readings` means the trail missed it too** — which is itself the reading, and it
-  says the trigger is wrong.
-- **What would legitimately be staged:** nothing that locks a campsite. If a ramp must be
-  provoked, the mechanism is an Okta navigation with Okta GONE — and Okta's expiry is currently
-  **rolling** (our own liveness probe refreshes a 12h window; there is an absolute cap behind it
-  that has not been characterised). There is **no non-destructive lever** to end the Okta
-  session: `restart-rc` and `kill-chrome` leave the profile intact, and `rc-login.bat` kills the
-  Chromium the token lives in. **Wait for the cap; do not force it.**
-- **Do NOT lower or raise the RAM floor as part of this.** `keepwarm-recycle.test.mts` bounds it
-  1500–3000 with recorded reasoning, and moving the trip point is what killed a working repair
-  on 2026-08-19. If the trail's evidence argues for changing it, that is a separate, deliberate
-  change with its own write-up.
+`getAllTimeSamplingProfile`'s response grows **linearly with bytes ever allocated** (~1.7 KB per
+MB, measured). The resident page is read every 20s for the life of the browser, so at 9 GB each
+read would ask a dying renderer to serialize ~16 MB, repeatedly, at the peak. The long-lived
+target samples at **8 MB** resolution (`LONG_LIVED_INTERVAL`); the trip tabs keep 1 MB. Pinned,
+because reverting it looks like a tidy-up.
 
 ---
 
@@ -179,96 +126,93 @@ unprompted.** So the test is: ship the trail, update the box, and read the next 
 
 | | |
 |---|---|
-| Master | **`53f1476`** |
-| Branch | **`claude/main-lane-docs-0824` @ `07c8fe9` — PUSHED, UNMERGED.** Two commits ahead. Merge it first. |
-| Mini-PC | **`18bb337`** |
+| Master | see `git log`; the trail merged as **PR #193** |
+| Mini-PC | updated to the trail — confirm with `bot-ask git-status`, not `autocart.bot_version` |
 | Open PRs | none |
 | Open issues | **#76**, **#14** |
-| Migrations | highest applied **068**; next main-lane number is **069** (`070` is an old side-lane block claim). LANES.md's "next is 060" is stale. |
-| Holds | none live. The 08-25 release completed; `expire-holds.ts` sweeps from Fly every 60s. |
-
-The two unmerged commits are docs, comments and one guard — the corrections from 08-25. Nothing
-in them needs to reach the mini-PC.
+| Migrations | highest applied **068**; next main-lane number is **069** |
+| Holds | one **untapped** offer for 08-26 08:00 PT as of 12:40 PT. `offered` does not block the update window or `npm test`; a TAP changes both. |
 
 **Two check-ins are scheduled and enabled — do not create duplicates.**
-`trig_01NdJC1SvSDwxZZroAooVKnU` fires **07:40 PT** into a fresh session and notifies the owner's
-phone. `trig_01CzPKmDUz5MC3tbYFGMTS4a` fires **08:15 PT** into the persistent session with the
-outcome readout.
-
-### What happened on 2026-08-25, in one paragraph
-
-The 08:00 release worked: Morro Bay #96 carted at **T+2s**. The fairness line's first live
-contest resolved correctly (rank 1 never tapped, so `dueHolds` served rank 2). The owner
-deliberately did not claim, which measured something useful — **the unclaimed release at 45
-minutes is `expireStaleHolds(45)`, OURS**, with RC answering HTTP 200. So the expiry cascade was
-never blocked on RC's unmeasurable cart lapse; it is now purely the owner's call.
+`trig_01NdJC1SvSDwxZZroAooVKnU` fires **07:40 PT** into a fresh session;
+`trig_01CzPKmDUz5MC3tbYFGMTS4a` fires **08:15 PT** with the outcome readout.
 
 ---
 
-## 4. Serial rules — binding whenever a hold is queued
+## 4. Serial rules — and the one I broke
 
-From `docs/LANES.md`:
+From `docs/LANES.md`: no `npm test`, no second test hold, and nothing that restarts the box,
+while a hold is live.
 
-- **No `npm test`** while a hold is live (production DB; it races production's own sweeps).
-- **No second test hold.**
-- **Nothing that restarts the box** — "Update now", `update.bat`, `restart-rc`, `kill-chrome`.
-
-There is no side lane running as of 2026-08-25, so the box is yours — but check `ListAgents`
-before taking it.
+**AND DO NOT RUN `npm run verify` LOCALLY WHILE CI IS RUNNING.** I did, on 08-25, and CI failed
+one test — `rc-holds.test.mts`, *"a carted hold records how to RELEASE it"*, `Cannot read
+properties of null`. That suite sweeps `unit_id LIKE '__t%'`, i.e. **every** suite's fixtures,
+so my local run deleted CI's live row. It is issue **#76** and it is entirely self-inflicted:
+merging or pushing IS starting a test run. A re-run was legitimate here only because the diff
+cannot touch that file, the suite passed alone, and the mechanism is named — any one of those
+missing and it is a regression being waved through.
 
 ---
 
 ## 5. Track B — designed, NOT started, needs its own go-ahead
 
-Replay the Okta round trip over `ctx.request` following redirects, exchange the code ourselves:
-no page load, no renderer, no gigabytes. Three pieces already exist (we intercept `/authorize`
-in `force-login-prompt.mjs`, we read `code_verifier` off the token POST in `rc-token.mjs:108`,
-and okta-auth-js's `okta-transaction-storage` is known to the code).
+Replay the Okta round trip over `ctx.request` following redirects and exchange the code
+ourselves: no page load, no renderer, no gigabytes. Three pieces already exist
+(`force-login-prompt.mjs` intercepts `/authorize`, `rc-token.mjs:108` reads `code_verifier`,
+okta-auth-js's `okta-transaction-storage` is known to the code).
 
-**Still not started deliberately.** It is surgery on the one path between a queued hold and a
-missed cart, and **the renderer-only sampler cannot see the browser-process share** — 545 MB of
-2,046 on the one event where both were measured. If the growth is there, `ctx.request` may be
-the wrong lever entirely. The trail (§2) is what makes this decidable. Building it blind is how
-a repair gets credited to the wrong mechanism, which has happened three times.
+**Still deliberately unstarted.** It is surgery on the one path between a queued hold and a
+missed cart, and the renderer-only sampler cannot see the browser-process share. **§1's reading
+is what makes it decidable** — if the growth is on the resident page, `ctx.request` may be the
+wrong lever entirely. Building it blind is how a repair gets credited to the wrong mechanism,
+which has happened three times.
 
 ---
 
 ## 6. Recorded, not fixed — do not drive-by these
 
+- **NEITHER CONTAINMENT ARM CAN FIRE DURING A RAMP, and 08-25 established why.** The size arm
+  (`RC_MAX_FAMILY_MB = 1500`) sits in the LOOP BODY, and the ramp happens inside `renewSession`
+  which the loop is awaiting — so for the ten minutes that matter, control is past the check.
+  The RAM arm is exactly one condition short: the stall half is amply true, the **RAM** half
+  never trips (troughs 2,144-3,328 MB against a 2,000 floor, six ramps, closest 144 MB). The
+  size arm fires on the NEXT iteration once the renewal returns, which is the **leading
+  candidate** for the browser replacement that ends every ramp.
+  **Still a QUESTION, not a patch.** Moving the size scan into the timer would spawn PowerShell
+  there, and spawning is what fails first at 99% COMMIT; lowering the RAM floor is what killed a
+  working repair on 08-19 (`keepwarm-recycle.test.mts` bounds it 1500-3000 with the reasoning).
+  **The trail's reading is what should decide it** — and note the trail already reports from
+  exactly the moment the size arm breaks the loop, because the teardown flush takes the OPEN
+  segment.
 - **A CI run can turn `autocart.rc_session` RED.** The health route carries its own inline
-  `upcoming`/`imminent` counts that never got the `REAL_UNIT` filter, so test fixtures are
-  visible to it. The phone is safe (`holdAtRisk` IS filtered); the dashboard is not, and while
-  red it prints the destructive `rc-login.bat` remedy over a healthy session. Bounded to the
-  length of a run. **The honest fix is one definition instead of three.**
-- **The rec.gov `carted` SMS body overflows one segment for 19 campgrounds** (long names, and it
-  deliberately does not go through `fitOneSegment` — it is the 08-05 delivery control). Pinned by
-  `sms-body.test.mts`; changing it is a decision about the auto-cart path.
-- **A token rebroadcast can clear an `expired` verdict** in the claim gate. The honest remedy is
-  a sticky `expired` for the run, not refusing unknowns (that locks out older bundles).
-- **The live manage token `EQO2oXcQ`** — unrotated, still returns 200, and in git history.
-  Rotation is one DELETE from `action_tokens`. **Owner's call**, five sessions running.
-- **#76** — `rc-holds.test.mts`'s fixture sweep deletes a concurrent run's live rows.
-- **#14** — rec.gov timeout cascade.
+  `upcoming`/`imminent` counts that never got the `REAL_UNIT` filter. The phone is safe
+  (`holdAtRisk` IS filtered); the dashboard is not, and while red it prints the destructive
+  `rc-login.bat` remedy over a healthy session. **The honest fix is one definition, not three.**
+- **Three test suites sweep each other's fixtures** (`unit_id LIKE '__t%'`) and `npm test` runs
+  files concurrently. That is #76, and §4 above is what it looks like in practice.
+- **The rec.gov `carted` SMS body overflows one segment for 19 campgrounds.**
+- **A token rebroadcast can clear an `expired` verdict** in the claim gate.
+- **The live manage token `EQO2oXcQ`** — unrotated, in git history. One DELETE. **Owner's call.**
 
 ---
 
 ## 7. Traps that have actually fired
 
-- **`GITHUB_TOKEN` is a 14-character placeholder and `/user` returns 200.** A false positive.
-  Repo-scoped calls 403. Use the MCP tools. It once cost a CI watchdog that parsed the refusal
-  as "nothing terminal yet" and would have reported `TIMEOUT` on healthy CI.
-- **Verify a push against the remote, not local HEAD.** `echo $(git rev-parse --short HEAD)`
-  after a push echoes the local sha whatever happened. Use
-  `git fetch origin <branch> && git rev-parse origin/<branch>`. This cost a PR containing none
-  of its change.
-- **Read the readout's `site` column.** `TEST · ` in `unit_name` is written only by
-  `rc-test-hold.mts` and is the one unambiguous fixture marker.
-- **`claimed` in the readout is `claimed_at ?? released_at`.** A time there does not mean the
-  hold was claimed.
-- **A guard can pass vacuously.** Every mutation must be verified to APPLY (grep for it) as well
-  as to fail. Twenty-three instances of a guard anchored on the wrong thing are recorded in
-  `CLAUDE.md`; several matched an import line, a comment, or a function definition instead of
-  the call site.
+- **`NODE_USE_ENV_PROXY=1`, and never read an exit code through a pipe.** See §0b — both cost
+  real time on 08-25 and both produced confident wrong readings.
+- **`GITHUB_TOKEN` is a 14-character placeholder and `/user` returns 200.** A false positive;
+  anything repo-scoped 403s. Use the MCP tools.
+- **Verify a push against the remote**, not local HEAD:
+  `git fetch origin <branch> && git rev-parse origin/<branch>`.
+- **A branch cut from another feature branch conflicts after that branch is SQUASH-merged.**
+  Master carries one commit where the branch carries two, so a plain rebase replays both and
+  conflicts. `git rebase --onto origin/master <old-tip>` replays only your own work.
+- **Read the readout's `site` column.** `TEST · ` in `unit_name` is the one unambiguous fixture
+  marker.
+- **A guard can pass vacuously, and a mutation can fail to apply.** Grep for the mutation as
+  well as running the suite. Two of this session's guards were wrong at baseline: one anchored
+  on a comment line (and `code` strips comments), and one gave a ramp two samples so pruning
+  left one — proving the segment became unreportable rather than that the key was stable.
 - **`sqlit` interpolates, it does not bind**, and throws on a plain object. Stringify jsonb.
-- **No non-ASCII in `.ps1` files**, no `\"` inside a `powershell -Command` string in a `.bat`,
-  and no backticks in a SQL comment inside a template literal.
+- **No non-ASCII in `.ps1`**, no `\"` inside a `powershell -Command` string in a `.bat`, no
+  backticks in a SQL comment inside a template literal.
