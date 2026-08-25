@@ -36,6 +36,7 @@ import { leadDaysUntil } from './lead-time';
 import { heldCheckDue, clampHeldInterval, RC_HELD_CHECK_DEFAULT_MS } from './held-cadence';
 import { claimHoldNotification, releaseHoldClaims } from './hold-claim';
 import { rankHoldLine } from './hold-line';
+import { watchKey } from './watch-key';
 import { DueTracker, intervalForLead } from './poll-cadence';
 import { startRateProfile } from './rate-profile';
 import { findRCOpenUnit, findRCHeldUnits } from '../src/lib/availability/reservecalifornia';
@@ -833,6 +834,12 @@ async function cycle(): Promise<void> {
   const hotPairs = [...pairLead.values()].filter((l) => l <= RECGOV_HOT_LEAD_DAYS).length;
 
   const monthData = new Map<string, Awaited<ReturnType<typeof getAvailabilityFromRecGov>>>();
+  // KEYED BY (WATCH, CAMPGROUND) — `watchKey`, never a bare watch id. Since migration 070
+  // a park watch is SEVERAL rows of `watches` sharing one `w.id`, and these maps are
+  // written from a fan-out over those rows: on a shared key the last division to finish
+  // overwrote the others, and then every row read the survivor back. N divisions each
+  // claimed under their own campground namespace and alerted about ONE site, while the
+  // other divisions' real openings were discarded. Live on two watches on 2026-08-24.
   const rcResults = new Map<string, { dates: string[]; unitId: number; sleepingUnitId: number | null; name: string | null }>();
   const rcHeld = new Map<string, { dates: string[]; availableAt: string; unitId: number | null; name: string | null }[]>();
   const raResults = new Map<string, { dates: string[]; siteIds: number[]; start: string; end: string }>();
@@ -908,7 +915,7 @@ async function cycle(): Promise<void> {
           const required = Math.max(w.min_nights, nights.length);
           const open = await findRCOpenUnit(w.campground_id, w.start_date, w.end_date, required, w.muted_site_ids, flexOf(w));
           // Flexible watches report just the matched run; fixed report the whole stay.
-          if (open) rcResults.set(w.id, { dates: open.dates.length ? open.dates : nights, unitId: open.unitId, sleepingUnitId: open.sleepingUnitId, name: open.name });
+          if (open) rcResults.set(watchKey(w), { dates: open.dates.length ? open.dates : nights, unitId: open.unitId, sleepingUnitId: open.sleepingUnitId, name: open.name });
         },
         RECGOV_CONCURRENCY
       );
@@ -950,7 +957,7 @@ async function cycle(): Promise<void> {
             // ALL of them — see findRCHeldUnits. One grid fetch either way.
             const held = await findRCHeldUnits(
               w.campground_id, w.start_date, w.end_date, required, flexOf(w), w.muted_site_ids);
-            if (held.length) rcHeld.set(w.id, held.map((h) => ({ dates: h.dates, availableAt: h.availableAt, unitId: h.unitId, name: h.name })));
+            if (held.length) rcHeld.set(watchKey(w), held.map((h) => ({ dates: h.dates, availableAt: h.availableAt, unitId: h.unitId, name: h.name })));
           },
           RECGOV_CONCURRENCY
         );
@@ -962,7 +969,7 @@ async function cycle(): Promise<void> {
       raDueNow,
       async (w) => {
         const m = await probeFlexStay(w, (s, e, required) => findReserveAmericaOpen(w.campground_id, s, e, required));
-        if (m) raResults.set(w.id, { dates: m.dates, siteIds: m.result.siteIds, start: m.start, end: m.end });
+        if (m) raResults.set(watchKey(w), { dates: m.dates, siteIds: m.result.siteIds, start: m.start, end: m.end });
       },
       RECGOV_CONCURRENCY
     ),
@@ -972,7 +979,7 @@ async function cycle(): Promise<void> {
       gtcDueNow,
       async (w) => {
         const m = await probeFlexStay(w, (s, e, required) => findGoingToCampOpen(w.campground_id, s, e, required));
-        if (m) gtcResults.set(w.id, { dates: m.dates, resourceIds: m.result.resourceIds, start: m.start, end: m.end });
+        if (m) gtcResults.set(watchKey(w), { dates: m.dates, resourceIds: m.result.resourceIds, start: m.start, end: m.end });
       },
       RECGOV_CONCURRENCY
     ),
@@ -990,7 +997,7 @@ async function cycle(): Promise<void> {
           console.log(`[poller] TN/SC ${w.campground_id} (${s}..${e}): ${open ? `OPEN ${open.availableSites} sites` : 'no opening'}`);
           return open;
         });
-        if (m) tnscResults.set(w.id, { dates: m.dates, start: m.start, end: m.end });
+        if (m) tnscResults.set(watchKey(w), { dates: m.dates, start: m.start, end: m.end });
       },
       RECGOV_CONCURRENCY
     ),
@@ -1002,14 +1009,14 @@ async function cycle(): Promise<void> {
   // this loop, so the sampling no longer has a hole where the popular sites are.
   const observed: Array<{ w: WatchRow; hadOpening: boolean }> = [];
   for (const watch of mainWatches) {
-    const rc = rcResults.get(watch.id);
+    const rc = rcResults.get(watchKey(watch));
     const result: WatchResult =
       watch.campground_source === 'reserveamerica'
-        ? { dates: raResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
+        ? { dates: raResults.get(watchKey(watch))?.dates ?? [], campsiteId: null, campsiteName: null }
         : isGoingToCampSource(watch.campground_source)
-          ? { dates: gtcResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
+          ? { dates: gtcResults.get(watchKey(watch))?.dates ?? [], campsiteId: null, campsiteName: null }
         : isTnscSource(watch.campground_source)
-          ? { dates: tnscResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
+          ? { dates: tnscResults.get(watchKey(watch))?.dates ?? [], campsiteId: null, campsiteName: null }
         : isUseDirectSource(watch.campground_source)
           // Surface the RC unit as the mutable "site" (id + friendly label).
           // RC's own label for the unit ("Hook Up (E ) Campsite #L006"), not its
@@ -1153,7 +1160,7 @@ async function cycle(): Promise<void> {
     // dedup that matters is `claimHoldNotification`, which is keyed on the RELEASE TIME,
     // so a coming-soon heads-up still goes out at most once per release however many
     // ordinary availability alerts the same watch sends.
-    const heldUnits = rcHeld.get(w.id);
+    const heldUnits = rcHeld.get(watchKey(w));
     if (!heldUnits?.length) continue;
     // RECORD AN OFFER FOR EVERY held unit, so the watch page can list them all and each
     // has its own one-tap hold link — but ALERT about only the soonest. A text per site

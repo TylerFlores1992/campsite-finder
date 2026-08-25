@@ -27,7 +27,17 @@ import { query, mutate } from '../src/lib/db/client';
 import { orderLine, isContested, rankHoldLine } from './hold-line';
 import { dueHolds } from '../src/lib/rc-holds';
 
-const U = (n: string) => `__t${n}`;
+/**
+ * A sentinel unit id, NAMESPACED TO THIS SUITE.
+ *
+ * Non-numeric so the production hold runner can never cart one — the 2026-08-15 rule. The
+ * `ln` segment is the part this file added: `npm test` runs suites CONCURRENTLY, and the
+ * global `LIKE '__t%'` sweep several of them use deletes EVERY suite's fixtures, not its
+ * own. Three files already shared that blast radius; adding more made a sibling's rows
+ * vanish mid-run and failed an unrelated assertion in a way that reads exactly like a
+ * regression. This suite sweeps only what it created.
+ */
+const U = (n: string) => `__tln${n}`;
 const EARLY = 'test-hold-line-user-early';
 const LATE = 'test-hold-line-user-late';
 const W_EARLY = 'test-hold-line-watch-early';
@@ -48,7 +58,7 @@ function pacific(minutesFromNow: number): string {
 let campgroundId = '';
 
 async function sweep() {
-  await mutate(`DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_t%'`, []);
+  await mutate(`DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_tln%'`, []);
   await mutate(`DELETE FROM watches WHERE id = ANY($1::text[])`, [[W_EARLY, W_LATE]]);
   await mutate(`DELETE FROM users WHERE id = ANY($1::text[])`, [[EARLY, LATE]]);
 }

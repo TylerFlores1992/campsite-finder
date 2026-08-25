@@ -11,7 +11,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DueTracker, intervalForLead, HOT_LEAD_DAYS } from './poll-cadence';
 
-const w = (id: string, source: string, leadDays: number) => ({ id, source, leadDays });
+/** A poller row. `campground_id` defaults to the watch id, which is what a single-
+ *  campground watch effectively is — the interesting fixtures pass it explicitly. */
+const w = (id: string, source: string, leadDays: number, campground_id = id) =>
+  ({ id, campground_id, source, leadDays });
 
 test('nothing inside the hot window is ever slowed', () => {
   // THE ONE RULE THE DATA ACTUALLY FORCES. Feature E's roster clustered at 14-20 and
@@ -75,6 +78,59 @@ test('a hot watch is never skipped, however often the cycle runs', () => {
   for (let i = 0; i < 20; i++, now += 15_000) {
     assert.equal(t.due(hot, now).length, 1, `cycle ${i} must check a 3-day-out watch`);
   }
+});
+
+test('every division of a park watch gets its own slot — they share a watch id', () => {
+  // Since migration 070 `loadWatches` emits one row per (watch, campground), so a park
+  // watch is several rows all carrying the same `w.id`. Keyed on that id, the first row
+  // stamps `last[id] = now` and its siblings are then tested in the SAME call against a
+  // `prev` of now — `now - prev` is 0, which is under any tiered interval, so they are
+  // refused. And they stay refused for ever, because the first row keeps re-stamping the
+  // shared key every cycle: a silent alerting outage with no error anywhere.
+  //
+  // A TIERED LEAD IS WHAT EXPOSES IT, and that is worth stating precisely rather than
+  // claiming more than the evidence. Inside the hot window the interval is 0, and `0 >= 0`
+  // lets the siblings through by luck — so both of the park watches live on 2026-08-24
+  // (Morro Bay, ~11 days out) escape this one. A park watch for a stay a month away does
+  // not. The collision in the poller's RESULT MAPS has no such reprieve; see watch-key.ts.
+  const t = new DueTracker();
+  const park = [
+    w('watch-1', 'reservecalifornia', 40, 'rc-582'),
+    w('watch-1', 'reservecalifornia', 40, 'rc-2185'),
+    w('watch-1', 'reservecalifornia', 40, 'rc-583'),
+  ];
+  const now = 1_000_000;
+  assert.equal(t.due(park, now).length, 3,
+    'all three divisions must be checked — a shared key silently drops two of them');
+  assert.equal(t.due(park, now + 15_000).length, 0, 'a 40-day lead is on the 120s step');
+  assert.equal(t.due(park, now + 120_000).length, 3,
+    'and all three come due together, rather than one riding the others off the end');
+});
+
+test('inside the hot window every division is checked on every cycle', () => {
+  // The case the live park watches are in today. It happens to work even with a shared
+  // key, which is exactly why the bug above went unnoticed — do not read this passing as
+  // evidence the keying is sound.
+  const t = new DueTracker();
+  const park = [
+    w('watch-1', 'reservecalifornia', 3, 'rc-582'),
+    w('watch-1', 'reservecalifornia', 3, 'rc-583'),
+  ];
+  let now = 1_000_000;
+  for (let i = 0; i < 5; i++, now += 15_000) {
+    assert.equal(t.due(park, now).length, 2, `cycle ${i}`);
+  }
+});
+
+test('two watches on the SAME campground still keep their own cadence', () => {
+  // The other direction of the same key: two people watching one park must not share a
+  // slot either, or the second watcher rides the first's interval.
+  const t = new DueTracker();
+  const pair = [
+    w('watch-1', 'reservecalifornia', 200, 'rc-583'),
+    w('watch-2', 'reservecalifornia', 200, 'rc-583'),
+  ];
+  assert.equal(t.due(pair, 1_000_000).length, 2);
 });
 
 test('a backwards clock does not wedge a watch off', () => {
