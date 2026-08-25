@@ -39,6 +39,18 @@ export interface SmsBodyInput {
 
 export function smsBody(p: SmsBodyInput): string {
   const site = p.campsiteName ? ` Site ${p.campsiteName}` : '';
+  // THE NIGHTS THIS SITE COVERS, on every shape that has room for them (2026-08-24).
+  //
+  // Reported by the owner: the RC texts named a campground, a site and a RELEASE time and
+  // never said which nights — so "opens Tue 8:00 AM" was the only date in the message and
+  // read as the stay. `availableDates` is the matched nights (the same value the
+  // availability alert has always printed), so this is a formatting change, not new data.
+  //
+  // MEASURED, not assumed: the RC coming-soon body goes 128 -> 140 characters on a
+  // 43-character campground name, against a 160-character segment. Where a longer name
+  // would push it over, `fitOneSegment` trims the NAME — never the dates, never the link.
+  // A two-segment alert is the shape that was Undelivered/30007 thirteen times on 08-05.
+  const stay = p.availableDates.length ? ` for ${formatStayDates(p.availableDates)}` : '';
   // Trailing "Campground"/"CG" is noise in a 160-character budget — the name still reads.
   const name = p.campgroundName.replace(/\s+(campground|cg)\.?$/i, '');
 
@@ -48,7 +60,7 @@ export function smsBody(p: SmsBodyInput): string {
     // happened and points at a channel that works. A text that arrives beats a link
     // that doesn't.
     return fitOneSegment(
-      (n) => `CampHawk: ${n}${site} is HELD ~15 min. Open your email or the CampHawk app to claim it.`,
+      (n) => `CampHawk: ${n}${site}${stay} is HELD ~15 min. Open your email or the app to claim it.`,
       name,
     );
   }
@@ -65,12 +77,19 @@ export function smsBody(p: SmsBodyInput): string {
     // promise LESS than what is actually on offer.
     const when = p.formatReleaseTime(p.availableAt, true);
     return fitOneSegment(
-      (n) => `CampHawk: ${n}${site} opens ${when}. Open your email or the app to have us hold it.`,
+      (n) => `CampHawk: ${n}${site}${stay} opens ${when}. Open your email or the app to have us hold it.`,
       name,
     );
   }
 
   if (p.kind === 'hold_missed') {
+    // NO `${stay}` HERE, AND THAT IS MEASURED. This body already carries the provider URL
+    // (46 chars), so it is the tightest shape there is: 157 characters WITH the name
+    // already trimmed to "Morro Bay SP — Upper.". Adding the dates pushes it to 191 —
+    // `fitOneSegment` runs out of name to cut, returns the full body, and it goes out as
+    // TWO segments, which is the shape that was Undelivered/30007 thirteen times on
+    // 2026-08-05. Dates are worth less than delivery on the one message that says we
+    // failed somebody.
     // Says the thing plainly and then points at what still works. "Sorry" without a next
     // step wastes the one segment we get; the site really may still be free, and the
     // provider link is the same one an ordinary alert would have carried.
@@ -84,7 +103,7 @@ export function smsBody(p: SmsBodyInput): string {
   if (p.kind === 'coming_soon') {
     const when = p.formatReleaseTime(p.availableAt, true);
     return fitOneSegment(
-      (n) => `CampHawk: ${n}${site} was just cancelled, opens ${when}. We'll text when it's bookable.`,
+      (n) => `CampHawk: ${n}${site}${stay} was just cancelled, opens ${when}. We'll text when it's bookable.`,
       name,
     );
   }
@@ -92,7 +111,7 @@ export function smsBody(p: SmsBodyInput): string {
   // "Sep 4-6", not three ISO dates: they read as timestamps, cost ~24 characters, and —
   // beside a coming-soon text saying "opens Aug 6, 8:15 AM PT" — were read as a release
   // date rather than the nights of the stay.
-  const dates = formatStayDates(p.availableDates);
+
   // THE PROVIDER'S OWN URL, never our `/b/<token>` shortlink. Measured on one handset,
   // same segment count: recreation.gov link → Delivered; no link → Delivered;
   // camphawk.app/b/<token> → Undelivered 30007, ten for ten.
@@ -103,5 +122,5 @@ export function smsBody(p: SmsBodyInput): string {
   // like the first alert it reads as a duplicate, which is the complaint that produced
   // the feature.
   const lead = p.kind === 'still_open' ? 'STILL open for' : 'open for';
-  return fitOneSegment((n) => `CampHawk: ${n}${site} ${lead} ${dates}. Book: ${bookTxt}`, name);
+  return fitOneSegment((n) => `CampHawk: ${n}${site} ${lead} ${formatStayDates(p.availableDates)}. Book: ${bookTxt}`, name);
 }
