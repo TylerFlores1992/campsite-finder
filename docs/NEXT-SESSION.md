@@ -1,109 +1,74 @@
 # Next session — start here
 
-*Rewritten 2026-08-24, evening.*
+*Rewritten 2026-08-25.*
 
-> ## §0a IS YOUR WORK QUEUE. Start there.
+> ## THE OWNER'S FOUR-ITEM QUEUE IS DONE. §0a is now the record of it.
 >
-> Four items the owner assigned by name, in priority order. Check §0 (egress) first, then work
-> §0a top to bottom. Everything after §1 is context and standing state.
+> Check §0 (egress) first, then read §0a for what shipped and — more usefully — for the two
+> pieces deliberately NOT built, both of which are the owner's decision rather than work.
+> Everything after §1 is context and standing state.
 >
-> **QUEUE 4 (batching) is last on purpose** — it is a claim-key rethink on the alerting path,
-> the same surface that produced a 26-text storm on 08-24. Not a drive-by.
+> **The 08-25 08:00 PT release is UNREAD**: the queue was worked the evening before it. Run
+> the hold readout before anything else.
 
 *Delete this file once Track A has a reading from a real ramp AND the App Store version has a
 decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
 
 ---
 
-## 0a. THE WORK QUEUE — owner-assigned 2026-08-24 evening, DO THESE FIRST
+## 0a. THE OWNER'S FOUR-ITEM QUEUE — ALL FOUR SHIPPED (2026-08-25)
 
-Four items, in this order. All were specified by the owner in conversation; the reasoning
-below is the design agreed with them, not a fresh proposal.
+Assigned 2026-08-24 evening, worked top to bottom on `claude/main-lane-docs-0824`. Each is
+written up in full in `CLAUDE.md`; this is the index and what is LEFT.
 
----
+| # | ask | state |
+|---|---|---|
+| 1 | Fairness — earliest watch gets first dibs | **shipped** (migration 068, applied + read back) |
+| 2 | X on the offer card, de-emphasise stale hand-offs | **shipped** |
+| 3 | RC beta copy on the marketing site | **shipped** |
+| 4 | Multiple openings as one text | **shipped** |
 
-### QUEUE 1 — FAIRNESS: whoever watched first gets first dibs
+Full suite **1258/1258**. Every guard mutation-verified; three mutations survived their
+first round and are written up where they happened.
 
-**The problem is live, not hypothetical.** Measured 2026-08-24: unit `43191` (`#96`, Morro
-Bay, arrival 2026-09-04) was **offered to two different users** — `tylerflores1992` via Upper
-Section and `melinda.flores0501` via Morro Lottery. Same unit id, same 08:00 release. RC lists
-one physical site under more than one facility, so this is not a bug in our matching; it is
-two people being promised one campsite.
+### WHAT IS LEFT, AND IT IS THE OWNER'S CALL — NOT AN AGENT'S
 
-**The policy, as the owner specified it:**
+Two pieces were deliberately NOT built. Both are decisions rather than work.
 
-1. **Order by who created the watch first.** Earliest `watches.created_at` gets first dibs.
-2. **BOTH are still offered the hold** — nobody is silently excluded.
-3. **Rotate on OFFER, not on WIN.** Once someone is offered a site they go to the bottom and
-   everyone else moves up. *(This is the amendment that matters: rotating on wins lets a user
-   who never claims sit at the top for ever.)*
-4. **Cascade on expiry.** Cart it, offer to the first in line; if they do not claim and the
-   cart lapses (~15 min), cart again and offer the next.
-5. **State the policy plainly**, and **at the point of decision** — the offer screen should say
-   *"you're first in line"* or *"you're next if it isn't claimed"*. A policy page nobody reads
-   at 08:00 is not a policy.
+1. **THE EXPIRY CASCADE** (cart for the first in line; on a lapse, re-cart for the next).
+   Gated on **measuring RC's real cart lapse**, which is read off RC's own bundle as ~15
+   minutes and **has never been observed**, while `reclaimLapsedHolds` waits 180. Between
+   those two numbers we would re-cart a site RC may already have released to the public and
+   tell a second user we are holding something we are not. **Measure first.** The
+   round-robin does not depend on it and is live without it.
 
-**BEFORE BUILDING THE CASCADE, MEASURE THE LAPSE.** `RC_CART_HOLD_MINUTES` (~15) is read off
-RC's own bundle and **has never been observed** — CLAUDE.md flags it. `reclaimLapsedHolds`
-waits `HOLD_LAPSE_MIN` (180). Between those two numbers we would be re-carting a site RC may
-have already released to the public, and telling a second user we hold something we do not.
-**Measure the real lapse first; the round-robin (1-3, 5) does not depend on it and can ship
-without it.**
+2. **CROSS-CYCLE ALERT BATCHING.** Today two sites opening at 08:00:00 and 08:00:20 are two
+   cycles and stay two messages. Merging them needs a hold-back window, which buys fewer
+   texts with **LATENCY on the most latency-critical path in the product**. That is a
+   product trade, not a tidy-up. Within-cycle batching (the park-watch case, which is what
+   produced the reported three texts) is shipped and costs nothing.
 
-Main lane. Touches `worker/` and `src/lib/rc-holds.ts`.
+### THE BIGGEST FIND WAS NOT ON THE LIST
 
----
+Designing item 4 turned up that **a poller row has been a (watch, campground) since
+migration 070 while five result maps and the cadence tracker still keyed on the watch id**.
+Both live park watches are affected — the same two from the 26-text storm. The result-map
+half was **live**: N divisions alerting about ONE site while the others' real openings were
+silently discarded. The `DueTracker` half is **latent** (it escapes inside the hot window by
+arithmetic luck) and would silently stop polling divisions of any park watch more than 14
+days out. Fixed with `worker/watch-key.ts`; `DueTracker.due` now REQUIRES `campground_id`,
+so the fix cannot be half-applied.
 
-### QUEUE 2 — the offer card needs an X, and stale hand-offs must stop shouting
+### READ THIS BEFORE TRUSTING THE MORNING
 
-Owner, with a screenshot: the **"Open the hand-off again"** card (a released hold) sits at the
-top of `/watches` for ever, above the **"Hold it for me"** card, which is the one that is
-actually time-critical.
+**The 08-25 08:00 PT release had not happened when this was written** — the box clock read
+2026-08-24 21:21 PT. Five real offers were outstanding across three users and **one was
+tapped**. Nobody has read the outcome. Start with:
 
-- **Add an X to the "Hold it for me" card**, exactly like the released card already has, so an
-  offer can be dismissed from the watch page.
-- **De-emphasise a released hand-off after an hour.** If somebody has not opened it within an
-  hour they almost certainly do not want it. Shrink it, drop it below live offers, or collapse
-  it — and **consolidate** when there are several.
-- The live offer should outrank the finished one. Today the ordering is backwards.
-
-`src/components/v2/` (`HoldsPanel`). **Side-lane files per `docs/LANES.md`** — the owner is
-content for the main lane to take them; say which lane did it in the commit.
-
----
-
-### QUEUE 3 — RC auto-hold is in BETA and the product barely says so
-
-Say what RC auto-holding is, how it works, and that it is beta — on the marketing site and
-wherever a user meets it.
-
-- **Read the wording from `src/lib/autocart-beta.ts`**, which is already the ONE definition of
-  the beta label. Do not invent a second form of words; that module exists because a tester met
-  a button promising to take a real campsite off the market with nothing saying "beta".
-- **A caveat with no instruction changes nobody's morning** — the existing label names the
-  remedy ("set an alarm anyway"). Keep that property.
-- **NOT in SMS.** The coming-soon body is already 140/160 after this evening's dates change;
-  beta wording tips it to two segments, which is the shape that gets filtered. That decision is
-  already recorded in CLAUDE.md — do not re-take it.
-
-`src/app/(app)/` + `src/components/v2/`. **Side lane** per LANES.md.
-
----
-
-### QUEUE 4 — multiple openings should be ONE broader text
-
-"3 sites just opened at Morro Bay" instead of three separate texts.
-
-**This is the one that needs a real design pass, and it is why it is last.** It is a
-**claim-key rethink** on the alerting path — the same surface that produced the 26-texts-in-an-
-hour storm on 2026-08-24, where a fix for one missed alert (migration 070) made the failure
-*unbounded*. Needs a batching window, a decision about what the claim key becomes when one
-message covers N sites, and a real-DB test. **Do not do it as a drive-by at the end of a
-session.**
-
-Main lane. `worker/hold-claim.ts`, `worker/claim.ts`, `src/lib/notifications/`.
-
----
+```bash
+NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
+NODE_USE_ENV_PROXY=1 npx tsx scripts/native-alloc-readout.mts
+```
 
 ## 0. BEFORE ANYTHING: can you actually reach production?
 
