@@ -6,6 +6,7 @@ import { buttonClasses } from "@/components/ui/Button";
 import { stayLabel, releaseLabel } from "@/lib/hold-labels";
 import { RC_CART_HOLD_MINUTES } from "@/lib/limits";
 import { isFinishedHandoff, byUrgency } from "@/lib/hold-ordering";
+import { AUTOCART_BETA_LABEL, AUTOCART_BETA_NOTE_SHORT } from "@/lib/autocart-beta";
 
 /**
  * Sites CampHawk is holding for you — on the Watches tab, where you look for them.
@@ -308,9 +309,23 @@ function HoldRow({ hold, onRemoved }: { hold: MyHold; onRemoved: (id: string) =>
         </div>
       )}
       {offered && !confirming && hold.holdUrl && (
-        <Link href={hold.holdUrl} className={buttonClasses({ fullWidth: true, className: "mt-3" })}>
-          Hold it for me
-        </Link>
+        <>
+          {/* THE LABEL SITS ABOVE THE BUTTON, not under it. This card is one of the two
+              places somebody decides to rely on the bot instead of setting an alarm — the
+              other is the confirm screen, which carries the full note — and a caveat read
+              after the decision is no caveat. The SHORT form, because this is a dense list
+              and the long one would push the button off a phone screen. One definition:
+              `@/lib/autocart-beta`, never a paraphrase. */}
+          <p className="mt-3 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-ch-meta leading-normal text-ch-ink-2">
+            <span className="rounded-ch-chip bg-ch-sand px-1.5 py-0.5 text-ch-fine font-bold uppercase tracking-[.06em] text-ch-green-deep">
+              {AUTOCART_BETA_LABEL}
+            </span>
+            <span className="min-w-0 flex-1">{AUTOCART_BETA_NOTE_SHORT}</span>
+          </p>
+          <Link href={hold.holdUrl} className={buttonClasses({ fullWidth: true, className: "mt-2" })}>
+            Hold it for me
+          </Link>
+        </>
       )}
     </div>
   );

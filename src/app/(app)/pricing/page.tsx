@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/Button";
 import PricingSection from "@/components/v2/PricingSection";
+import RcHoldExplainer from "@/components/v2/RcHoldExplainer";
 
 /**
  * /pricing — the dedicated plans page.
@@ -43,6 +44,12 @@ export default function PricingPage() {
       <div className="mt-6">
         <PricingSection />
       </div>
+
+      {/* RC auto-hold was reachable only by RECEIVING AN ALERT, so the only way to find
+          out it existed was to already be using it. It belongs on the page where somebody
+          is deciding what a subscription buys them — and next to the honest-limits block
+          below, which is the objection it raises ("does it book things without asking?"). */}
+      <RcHoldExplainer className="mt-6" />
 
       {/* The same three honest-limit lines as the homepage. On a pricing page they
           pull extra weight: "does it book things without asking?" is the objection
