@@ -1,6 +1,6 @@
 # Next session — start here
 
-*Rewritten 2026-08-25, evening. Supersedes the 11:45 version entirely.*
+*Rewritten 2026-08-25 evening; state refreshed 15:05 PT. Supersedes the 11:45 version.*
 
 > ## THE TRACK A TRAIL IS BUILT AND SHIPPED. The next session's job is to READ IT.
 >
@@ -11,6 +11,10 @@
 >
 > **There is nothing to build until a ramp is read.** Ramps arrive ~3x a day unprompted. Do NOT
 > queue a test hold to force one — see §2.
+>
+> **READ §1a FIRST. There is a ramp in the series with no trail row against it, and it is NOT a
+> miss** — it happened twenty minutes before the box updated. Reading it as a failed trigger is
+> the one wrong turn available on day one.
 
 *Delete this file once the trail has captured a real ramp AND the App Store version has a
 decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
@@ -63,6 +67,43 @@ NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status      # what the box 
 tick**, keeps a 20-minute window, and reports a segment's peak when it ends (plus a flush at
 teardown and in the runaway bail). Four renderers: `resident`, `renewal`, `auto-login`,
 `warmup`, each under its own context.
+
+### 1a. THE TRAIL WAS ARMED AT 13:26:42 PT ON 2026-08-25 — READ EVERYTHING AGAINST THAT
+
+**The box moved to `64f9f92` at 13:26:42 PT** (`bot_update_requests.applied_at`, confirmed by
+`bot-ask git-status` → `HEAD 64f9f92 on master`). Everything before that instant was the OLD
+return-path instrument.
+
+**THE TRAP, AND IT IS ALREADY ON THE BOARD.** The series carries a ramp at **13:0x PT — peak
+9,113 MB, 99% COMMIT** — and `native_alloc_readings` has no `trail-*` row for it. The table
+below says that combination means *"the trigger is wrong."* **Here it does not.** That ramp ran
+about twenty minutes BEFORE the update; the trail was not on the box yet. What it did leave is a
+`renewal` **return-path** reading at 13:10:26 PT (−468 MB, renderer 13 MB) — the old instrument,
+doing the old thing, one last time.
+
+**So the trail has been live and has not yet seen a ramp.** As of 15:00:51 PT the box is flat at
+273 MB. There is nothing to read, and that is the expected state, not a fault.
+
+| ramp (PT) | peak `rc` | free | COMMIT | instrument |
+|---|---|---|---|---|
+| 08-24 19:37 | 7,250 MB | 2,217 | 95% | return-path (missed it) |
+| 08-25 02:30 | 8,312 MB | 2,473 | 99% | return-path (missed it) |
+| 08-25 07:31 | 7,471 MB | 2,144 | 99% | return-path (missed it) |
+| 08-25 13:0x | **9,113 MB** | 4,690 | **99%** | return-path — **20 min before the trail landed** |
+| next | — | — | — | **the trail. This is the reading.** |
+
+**CADENCE, STATED SO IT CAN BE FALSIFIED:** those four are ~7h, ~5h, ~5.5h apart, so the next is
+due roughly **18:00–19:00 PT on 08-25**. That is a prediction from four points, not a law — the
+08-22 handover made a prediction on comparable reasoning and was falsified the next morning.
+**Check `chromium_memory_samples` for the ramp FIRST, then look for its trail row.** A trail row
+with no ramp beside it means something different from a ramp with no trail row.
+
+**AND `applied_note` DOES NOT DESCRIBE THE UPDATE THAT LANDED.** The row reads
+`SKIP - outside the quiet window (15:00 PT…)` plus a libuv `UV_HANDLE_CLOSING` assertion — that
+is a LATER scheduled run writing its own verdict beside the new sha, the documented
+`appliedNote`/`appliedSha` trap, and the assertion is the known-harmless one (`auto-update.ps1`
+reads the verdict LINE, never the exit code). **`applied_sha` and `git-status` both say
+`64f9f92`. The update landed.**
 
 ### What to look for, and what each answer means
 
@@ -126,12 +167,13 @@ because reverting it looks like a tidy-up.
 
 | | |
 |---|---|
-| Master | see `git log`; the trail merged as **PR #193** |
-| Mini-PC | updated to the trail — confirm with `bot-ask git-status`, not `autocart.bot_version` |
+| Master | **`64f9f92`** — the trail merged as **#193**, its arming note as **#194**. Working tree clean, nothing unmerged. |
+| Mini-PC | **`64f9f92`**, applied **13:26:42 PT 08-25**. Box and master match. Confirm with `bot-ask git-status`, never `autocart.bot_version` (COALESCEd, can sit stale beside a live heartbeat). |
 | Open PRs | none |
 | Open issues | **#76**, **#14** |
 | Migrations | highest applied **068**; next main-lane number is **069** |
-| Holds | one **untapped** offer for 08-26 08:00 PT as of 12:40 PT. `offered` does not block the update window or `npm test`; a TAP changes both. |
+| Holds | one **untapped** offer — tyler, Morro Bay `#123`, releasing **08-26 08:00 PT**. `offered` blocks neither the update window nor `npm test`; **a TAP changes both.** |
+| RC session | healthy at 15:02 PT — token 35m, `okta=ALIVE` to 08-26 09:46Z. Login rehearsal **PASSED** 08-25 03:01. |
 
 **Two check-ins are scheduled and enabled — do not create duplicates.**
 `trig_01NdJC1SvSDwxZZroAooVKnU` fires **07:40 PT** into a fresh session;
