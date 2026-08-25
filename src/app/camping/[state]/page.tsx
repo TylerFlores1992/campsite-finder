@@ -6,6 +6,7 @@ import { campgroundsInState, groupByCity, statesWithPages } from "@/lib/stateCam
 import { SITE_NAME, SITE_URL, stateDescription, stateTitle, stateUrl } from "@/lib/seo";
 import { jsonLdScript } from "@/lib/jsonld";
 import { providerLabel } from "@/components/v2/providers";
+import { typesAvailableInState } from "@/lib/siteTypeHubs";
 
 /**
  * State landing page — /camping/oregon.
@@ -84,6 +85,7 @@ export default async function StateCampingPage({
   const groups = groupByCity(campgrounds);
   const towns = groups.filter((g) => g.city).length;
   const providers = [...new Set(campgrounds.map((c) => c.source))];
+  const types = await typesAvailableInState(data.code);
 
   const breadcrumb = {
     "@context": "https://schema.org",
@@ -130,6 +132,13 @@ export default async function StateCampingPage({
           <span>{name}</span>
         </nav>
 
+        {/* Inventory-first. This briefly read "Campground cancellations in
+            {name}" as part of the 2026-08-25 retarget, which Search Console
+            falsified the same day: this page's own queries are "camping in
+            georgia", "campgrounds in wisconsin", "south carolina camping info" —
+            discovery, every one — and a filter for queries containing "cancel"
+            returns no data at all. See the header of lib/seo.ts. The cancellation
+            promise moved to the paragraph below, where it costs no matching. */}
         <h1 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em]">
           Campgrounds in {name}
         </h1>
@@ -139,13 +148,36 @@ export default async function StateCampingPage({
               "across Oregon , in 93 towns ." */}
           {`We track live availability at ${campgrounds.length.toLocaleString()} bookable campgrounds across ${name}`}
           {towns > 0 ? `, in ${towns.toLocaleString()} towns` : ""}
-          {". Every one is checked around the clock, so when a booked site is cancelled you hear about it in seconds rather than finding out weeks later that it was free for an hour."}
+          {". Every one is rechecked every 15 seconds, around the clock. Booked out is rarely final — people cancel constantly, and the site drops back into the booking system with no warning, often overnight — so when one frees up you hear about it in seconds rather than finding out weeks later that it was open for an hour."}
         </p>
         <p className="mt-2 max-w-[70ch] text-ch-meta text-ch-muted">
           {`Booking goes through ${providers
             .map((p) => providerLabel(p, ""))
             .join(providers.length === 2 ? " and " : ", ")}. Searching is free.`}
         </p>
+
+        {types.length > 0 && (
+          /* Down-links to this state's accommodation-type pages. These are the
+             pages the Search Console data says we can rank for, and this is the
+             link that gets them crawled: /camping/california carries 725
+             impressions in 28 days and the type pages carry none, because they
+             did not exist until today. */
+          <p className="mt-2 max-w-[70ch] text-ch-meta text-ch-muted">
+            {"Looking for something specific? "}
+            {types.map((h, i) => (
+              <span key={h.slug}>
+                {i > 0 ? (i === types.length - 1 ? " or " : ", ") : ""}
+                <Link
+                  href={`/camping/${h.slug}/${state}`}
+                  className="font-semibold text-ch-green hover:underline"
+                >
+                  {`${name} ${h.label.toLowerCase()}`}
+                </Link>
+              </span>
+            ))}
+            {"."}
+          </p>
+        )}
 
         <div className="mt-6 flex flex-wrap gap-2">
           {/* Straight to the search screen, not the marketing home — someone on

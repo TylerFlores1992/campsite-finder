@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import CampgroundDetail from "@/components/v2/CampgroundDetail";
+import CampgroundOpenings from "@/components/v2/CampgroundOpenings";
 import { ridbSource } from "@/lib/sources/ridb";
 import { normalizeStateCode, stateName, stateSlug } from "@/lib/coverage";
 import { qualifyingStateCodes } from "@/lib/stateCampgrounds";
@@ -165,6 +166,17 @@ export default async function V2CampgroundPage({
         backLabel={backLabel}
         breadcrumb={breadcrumb}
       />
+      {/* Rendered HERE rather than inside CampgroundDetail so it stays a server
+          component — see its header. It sits below the detail view, which puts
+          it below the availability grid, which is where a visitor who has just
+          been told "no sites" is looking. */}
+      <div className="mx-auto max-w-[var(--ch-max)] px-5 pb-8">
+        <CampgroundOpenings
+          campground={campground}
+          stateName={hasStatePage ? sName : null}
+          stateSlug={hasStatePage ? sSlug : null}
+        />
+      </div>
     </>
   );
 }

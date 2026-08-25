@@ -2,6 +2,7 @@ import type { MetadataRoute } from 'next';
 import { query } from '@/lib/db/client';
 import { stateSlug } from '@/lib/coverage';
 import { statesWithPages } from '@/lib/stateCampgrounds';
+import { SITE_TYPE_HUBS, statesForType } from '@/lib/siteTypeHubs';
 
 /**
  * Sitemap, now including every campground.
@@ -59,6 +60,14 @@ async function stateEntries(): Promise<MetadataRoute.Sitemap> {
   const states = await statesWithPages();
   return [
     { url: `${BASE}/camping`, changeFrequency: 'weekly' as const, priority: 0.8 },
+    // The curated hub. Same priority as a state page rather than higher: it is
+    // an editorial page, and inflating priority on the one page we wrote by hand
+    // is the kind of signal Google discounts wholesale when it sees it.
+    {
+      url: `${BASE}/camping/hardest-to-book`,
+      changeFrequency: 'monthly' as const,
+      priority: 0.8,
+    },
     ...states
       .map(({ code }) => stateSlug(code))
       .filter((slug): slug is string => slug !== null)
@@ -68,6 +77,37 @@ async function stateEntries(): Promise<MetadataRoute.Sitemap> {
         priority: 0.8,
       })),
   ];
+}
+
+/**
+ * Accommodation-type hubs and their per-state children — /camping/cabins,
+ * /camping/group-camping, /camping/yurts. See lib/siteTypeHubs.ts for why these
+ * three exist and what the Search Console evidence for them is.
+ *
+ * THE STATE CHILDREN ARE ENUMERATED FROM `statesForType`, NOT FROM THE FULL STATE
+ * LIST. Only states clearing MIN_CAMPGROUNDS_FOR_STATE_PAGE render; listing the rest
+ * would submit ~80 URLs that 404, which is the fastest way to teach Google the
+ * sitemap is unreliable. Yurts qualify in four states and that is correct.
+ */
+async function siteTypeEntries(): Promise<MetadataRoute.Sitemap> {
+  const out: MetadataRoute.Sitemap = [];
+  for (const hub of SITE_TYPE_HUBS) {
+    out.push({
+      url: `${BASE}/camping/${hub.slug}`,
+      changeFrequency: 'weekly' as const,
+      priority: 0.8,
+    });
+    for (const { code } of await statesForType(hub.siteType)) {
+      const slug = stateSlug(code);
+      if (!slug) continue;
+      out.push({
+        url: `${BASE}/camping/${hub.slug}/${slug}`,
+        changeFrequency: 'weekly' as const,
+        priority: 0.7,
+      });
+    }
+  }
+  return out;
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
@@ -83,7 +123,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   try {
-    return [...staticPages, ...(await stateEntries()), ...(await campgroundEntries())];
+    return [
+      ...staticPages,
+      ...(await stateEntries()),
+      ...(await siteTypeEntries()),
+      ...(await campgroundEntries()),
+    ];
   } catch (err) {
     console.error('[sitemap] campground query failed, serving static only:', err);
     return staticPages;
