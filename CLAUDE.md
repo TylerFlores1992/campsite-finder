@@ -3474,6 +3474,112 @@ navigation did NOT ramp"**:
   within two minutes each time. What is new is the exposure: ~10 minutes at 95–99% COMMIT, three
   times a day, and ~90% is where Windows stopped scheduling both tasks on 08-17.
 
+### THE TRACK A TRAIL — BUILT 2026-08-25, and it corrected me twice on the way
+
+The owner's instruction: *"start track a trail do whatever we need to fix leak. Update box when
+needed and do tests to stress test."* The trail is built and mutation-guarded. **It is an
+INSTRUMENT, not a cure** — Track B is still unstarted and still wants its own word.
+
+`scripts/auto-cart-bot/rc-alloc-trail.mjs` samples the native allocation profile **on the
+watchdog tick** — the only code proven to keep executing while the loop is stalled, and a ramp
+IS the loop stalled — keeps a **time-bounded** window, and reports a segment's peak when it
+ends. Four renderers are registered: `resident`, `renewal`, `auto-login`, `warmup`, each
+reported under its own context (`trail-resident` and friends, allow-listed in
+`src/lib/native-alloc.ts`).
+
+- **THE RESIDENT PAGE IS SAMPLED FOR THE FIRST TIME, AND THAT IS THE POINT.** Every existing
+  `startNativeSampling` call site is on the TRIP's own tab. If the gigabytes are on the resident
+  renderer, **PR #142's throwaway-tab cure is aimed at the wrong renderer**, which would explain
+  why ramps continued after it shipped. Still a CANDIDATE; the trail is what settles it.
+- **`TRAIL_KEEP` WAS NOT REUSED.** 12 samples at a 10s tick is two minutes against a ten-minute
+  ramp — the shape that made the heap trail print twelve byte-identical samples already 123s
+  stale. This window is **20 minutes of wall clock**, and a test fails if it becomes a count.
+- **THE TRIGGER IS A SEGMENT ENDING**, plus a flush at teardown and in the runaway bail. Not the
+  RAM arm (six consecutive ramps, closest approach 144 MB) and not the post-Okta recycle, which
+  since the throwaway-tab change fires only for the **rehearsal** — the renewal and auto-login
+  both dropped `oktaTrip`. The bail's flush is **awaited and bounded**: `process.exit` kills a
+  fire-and-forget POST, and an unbounded wait delays releasing the profile lock, which is what
+  loses a cart at 08:00.
+
+#### THE PROFILE-RESET FINDING IS WRONG ABOUT RC, AND I WROTE IT IN AS FACT FIRST
+The obvious explanation for 17 MB reported against an 8,052 MB family is that CDP's all-time
+profile is reset by the navigation. **It is — and not by RC's.** Measured on a real Chromium:
+```
+a.probe2     -> b.probe2        (different SITE)   192 ->   1 MB   RENDERER SWAPPED
+www.rc.probe -> signin.rc.probe (SUBDOMAIN)        216 -> 217 MB   same renderer
+```
+**Chromium isolates by SITE — scheme + eTLD+1 — not by origin.** RC goes
+`www.reservecalifornia.com` -> `signin.reservecalifornia.com`, a subdomain hop, which keeps its
+renderer and its profile.
+- **It was written into three files as established fact for about an hour**, on the strength of
+  a first experiment that used `a.test`/`b.test` — two genuinely different sites, and not the
+  navigation this product makes. **Only `alloc-trail-probe.mjs` REFUSING A VERDICT caught it**:
+  its control did not reproduce the blindness, so it printed `THE QUESTION WAS NEVER REACHED`
+  instead of a pass. That refusal is the single most valuable thing built this session.
+- **Kept rather than deleted**, because it is the obvious first hypothesis, it is easy to
+  "confirm" with the wrong pair of hostnames, and the next reader will reach for it.
+- **What survives is the ESTABLISHED half**: the return-path report fires after the trip returns
+  and is gated at 400 MB, so a trip killed mid-ramp never reports. Six ramps missed that way.
+
+#### THE PROBE FOUND A REAL BUG IN THE TRAIL, BY BEING RUN
+`splitSegments` started a new segment on any DECREASE, on the reasoning that an all-time total
+is monotonic by construction. **It is not, quite.** A real run stepped **955.4 -> 955.2 MB**
+between two consecutive reads — fractions of a megabyte, invisible in a rounded log line, and
+enough to cut a 1,271 MB ramp into 954 and 319 and report the larger half as the whole event.
+**An instrument that halves the number it exists to report is worse than none.** It splits on a
+**collapse** now (under half), because a real swap resets to ~0.4% of what it held. Both
+directions are pinned: noise must not split, a collapse must.
+
+#### THE INSTRUMENT WAS ABOUT TO BECOME PART OF THE DISEASE, AND THAT WAS MEASURED TOO
+`Memory.getAllTimeSamplingProfile`'s response grows **linearly with bytes ever allocated**:
+```
+  373 MB allocated ->   245 entries -> 0.7 MB of JSON
+2,346 MB allocated -> 1,508 entries -> 4.0 MB of JSON
+```
+~1.7 KB per MB. The resident page is read every 20s **for the life of the browser**, so at the
+9 GB these ramps reach, each read would ask a renderer that is already eating the machine to
+serialize **~16 MB**, over and over, at the peak — the multi-GB heap snapshot and
+`response.body()` buffering in a third costume. The long-lived target samples at **8 MB
+resolution** instead of 1 MB (`LONG_LIVED_INTERVAL`), cutting the response by the same factor;
+the short-lived trip tabs keep the fine default because they exist for one navigation. Pinned,
+because reverting it looks like a tidy-up.
+
+#### PROVEN END TO END: 2 MB AGAINST 819 MB ON THE SAME EVENT
+`scripts/auto-cart-bot/alloc-trail-probe.mjs` drives the REAL trail against a REAL Chromium and
+runs the OLD reading as a control on the same event. It checks the control FIRST and refuses a
+verdict when the blindness does not reproduce.
+```
+CASE A — 800 MB allocated in the RESIDENT renderer during a tab trip
+   return-path reading on the tab (the old instrument):    2 MB
+   trail reading on the resident renderer:               819 MB
+CASE B — 800 MB allocated in the tab, return-path read never taken
+   trail reading on the trip renderer:                   767 MB
+```
+Case A reproduces the production 17-MB-against-8,052-MB shape exactly, with the old instrument
+blind and the trail seeing it. **It runs in the dev sandbox and imports `playwright-core`** —
+deliberately, unlike its siblings; "fixing" that import stops it running where it is useful.
+
+#### GUARDS
+`worker/alloc-trail.test.mts` (16 tests, **13 mutations**, each grep-verified to APPLY) and six
+new tests in `worker/warmup-sampler.test.mts` (**7 mutations**) — extended rather than pinned to
+the trail, because a guard that pins one path is the house shape this whole change exists to
+stop repeating. The general rules: every sampled renderer is on the trail, every registered
+target comes off it, the sampling happens in the TIMER and not the loop body, the bail awaits
+its report, the teardown takes the OPEN segment, and the contexts the two files use agree.
+**One of the new guards anchored on a comment line** — and `code` strips comments so a guard
+cannot fail on its own explanation — so it failed against a correct file. Twenty-fourth time.
+
+#### HOW TO READ THE NEXT RAMP
+The ramps arrive ~3x a day unprompted. **Do NOT queue a test hold to force one** — three arrived
+free in thirty hours and all three were missed, and a staged one locks a real campsite.
+- `chromium_memory_samples` shows a ramp as ~5 samples climbing over ~10 minutes.
+- `native_alloc_readings` should then carry a `trail-*` row for it. **Which context it lands
+  under is the finding**: `trail-resident` means the allocation is on the page PR #142 does not
+  touch; `trail-renewal`/`trail-warmup` means the cure is aimed correctly and something else
+  keeps the memory.
+- **A ramp in the series with nothing in `native_alloc_readings` is still a reading** — it says
+  the trigger is wrong, and the next move is the trigger rather than the sampler.
+
 ## Open / next session
 
 > **START AT `docs/NEXT-SESSION.md`. THERE IS ASSIGNED WORK: the Track A trail and the leak

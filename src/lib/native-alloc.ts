@@ -35,8 +35,32 @@ export interface NativeAllocInput {
  * Which trip produced the reading. Allow-listed on the way in, like `max_type` in 062:
  * this crosses the network from the box and is rendered on an admin page, and an
  * unrecognised value is a bug worth seeing as NULL rather than storing verbatim.
+ *
+ * TWO FAMILIES, AND THE SPLIT IS THE POINT RATHER THAN BOOKKEEPING.
+ *
+ * The bare names are the RETURN-PATH readings: taken after the trip returns, gated on the
+ * network trace's RAM delta. They are now known to be the weaker half — a trip killed
+ * mid-ramp never returns, so the instrument records by selection the cheap retry that follows
+ * a ramp. Six ramps have been missed that way.
+ *
+ * The `trail-` names are that fix, one per RENDERER, sampled on the watchdog tick instead of
+ * on the return path. `trail-resident` is the resident RC page, which nothing had ever
+ * sampled: every existing call site is on the trip own throwaway tab, and on 2026-08-25 02:31
+ * that tab reported 17 MB while the family renderers reached 8,052 MB. If the gigabytes turn
+ * out to be on the resident page, PR #142 throwaway-tab cure is aimed at the wrong renderer
+ * and that is why ramps continued after it shipped. The context is how a reading says which.
+ *
+ * SPELT TO MATCH the return-path names, so a readout showing `renewal` beside
+ * `trail-renewal` shows two instruments on one event rather than two events.
+ *
+ * A NAME THE BOT SENDS AND THIS SET LACKS STORES NULL — present in the table, absent from the
+ * readout, and looking exactly like the instrument working. `worker/warmup-sampler.test.mts`
+ * asserts the two files agree.
  */
-const CONTEXTS = new Set(['renewal', 'auto-login', 'rehearsal', 'warmup']);
+const CONTEXTS = new Set([
+  'renewal', 'auto-login', 'rehearsal', 'warmup',
+  'trail-resident', 'trail-renewal', 'trail-auto-login', 'trail-warmup',
+]);
 
 /** Nothing over this is stored. A 9 GB ramp aggregates to a handful of rows; a hundred is
  *  already a sampler behaving unexpectedly, and the tail is noise at these magnitudes. */

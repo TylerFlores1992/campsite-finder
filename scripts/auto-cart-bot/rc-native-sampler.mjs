@@ -99,6 +99,30 @@ const CDP_TIMEOUT_MS = Number(process.env.RC_SAMPLER_CDP_TIMEOUT_MS || 5_000);
  */
 const SAMPLING_INTERVAL = Number(process.env.RC_SAMPLER_INTERVAL_BYTES || 1_048_576);
 
+/**
+ * FOR A TARGET THAT IS SAMPLED FOR HOURS RATHER THAN FOR ONE TRIP.
+ *
+ * The all-time profile's response grows LINEARLY with bytes ever allocated — measured, because
+ * an instrument that becomes part of the disease is a mistake this repo has made in three
+ * different costumes (the multi-GB heap snapshot, `response.body()` buffering, `rcFamilyMb`
+ * spawning PowerShell at 99% COMMIT):
+ *
+ *      373 MB allocated ->   245 entries ->  0.7 MB of JSON
+ *    2,346 MB allocated -> 1,508 entries ->  4.0 MB of JSON
+ *
+ * That is ~1.7 KB per MB ever allocated. The resident RC page is sampled every 20s for the
+ * life of the browser, so at the 9 GB these ramps reach, each read would ask a renderer that
+ * is already eating the machine to serialize ~16 MB — repeatedly, at the worst possible
+ * moment.
+ *
+ * EIGHT TIMES COARSER, which cuts the response by the same factor and costs nothing that
+ * matters. The events being chased are GIGABYTES; this file's own note about the 1 MB default
+ * says a megabyte of resolution is three orders of magnitude finer than the signal, and eight
+ * still leaves three. The short-lived trip tabs keep the fine default — they exist for one
+ * navigation and never accumulate.
+ */
+export const LONG_LIVED_INTERVAL = Number(process.env.RC_SAMPLER_LONG_INTERVAL_BYTES || 8_388_608);
+
 /** How many allocation sites to report. The tail is noise at these magnitudes. */
 const TOP_N = 6;
 
@@ -124,19 +148,19 @@ function within(p, ms, what) {
  * @returns {Promise<{ok: boolean, why: string}>} Never throws: a browser that will not start
  *   sampling must not stop the keep-warm from running. The whole feature is diagnostic.
  */
-export async function startNativeSampling(cdp) {
+export async function startNativeSampling(cdp, { intervalBytes = SAMPLING_INTERVAL } = {}) {
   if (!cdp) return { ok: false, why: 'no CDP session' };
   try {
     await within(
       cdp.send('Memory.startSampling', {
-        samplingInterval: SAMPLING_INTERVAL,
+        samplingInterval: intervalBytes,
         // NOT suppressed. Randomness is what makes a Poisson sampler unbiased; suppressing it
         // is a determinism aid for tests and would skew a production attribution.
         suppressRandomness: false,
       }),
       CDP_TIMEOUT_MS, 'Memory.startSampling',
     );
-    return { ok: true, why: `sampling every ~${Math.round(SAMPLING_INTERVAL / 1024)} KB` };
+    return { ok: true, why: `sampling every ~${Math.round(intervalBytes / 1024)} KB` };
   } catch (e) {
     return { ok: false, why: e.message };
   }
