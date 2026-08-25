@@ -2228,9 +2228,54 @@ but `campgrounds` reading 73 million tuples, and `watch_campgrounds` being scann
 times, are both worth understanding before the next growth step. Recorded as observations, not
 findings.
 
+### 27g. CLOSED OUT — UPGRADED 2026-08-24, AND THE COSTS TAB HAD NO ROW FOR IT
+
+**The owner upgraded to Supabase Pro, $25/month.** The Aug 27 402 deadline is cleared. Health
+read **18 of 19 ok** immediately after, the single warn being the benign `autocart.bot_version`
+sha drift with nothing bot-side pending. So 27c's "upgrade AND fix" is now half done, and it is
+the half with the deadline on it.
+
+**AND THE ADMIN COSTS TAB HAD NO SUPABASE ROW AND NO FLY ROW AT ALL.** `cost_items` held eight
+rows and the only monthly recurring ones were Vercel ($20) and Claude ($20) — so the page that
+computes **Net/month**, goes red, and says *"Losing money"* was understating recurring cost by
+**$30.11**.
+
+```
+tracked before:  Vercel $20 + Claude $20                                   = $40.00
+actual:          + Supabase $25.00  + Fly.io worker $5.11                  = $70.11
+```
+
+**HOW THE GAP WAS CREATED IS THE REUSABLE PART, AND IT WAS A TIDY-UP.** Migration 024 seeded
+`Supabase` and `Fly.io worker` (along with Clerk, Mapbox and the Twilio number) at **$0**,
+precisely so the operator would just fill in amounts. CLAUDE.md records them being removed —
+*"the '$0.00 providers' note is resolved — 6 rows, none at zero, after a dedupe"* — which was
+the right call for the display and is what left no row and no reminder for two services that
+LATER started costing money. Migration 030 deliberately dropped `ended_at`, so **deleting a row
+is the only way to remove one**, and that is exactly what made the placeholder unrecoverable.
+**A zero-cost row is a reminder; deleting it buys a tidy table and a silent blind spot.**
+
+Both rows re-added, with the `started_at` choices stated so they can be corrected rather than
+trusted:
+
+- **Supabase** — `data`, $25.00/mo, `started_at 2026-08-24`. Exact: the upgrade date.
+- **Fly.io worker** — `hosting`, $5.11/mo, `started_at 2026-08-01`. **This one is a judgement
+  call.** $5.11 is the *upcoming* invoice read from the Fly billing page on 2026-08-24; the
+  prior invoice was **$0.00**, so Fly only just began accruing and dating it to the start of
+  the current billing month is the most defensible reading. It is not a measured start date.
+
+**`POLL_MS` REMAINS OPEN AND IS STILL WORTH DOING.** The upgrade removed the deadline, not the
+waste: 43,200 polls a day at four round trips each, servicing a feed for essentially one rec.gov
+watch. It is now a headroom-and-tidiness job rather than an emergency, which is a better place
+to make the change from — see 27e.
+
+
 ---
 
 ### Handover addendum — 2026-08-24 afternoon
+
+**§27 is CLOSED OUT (see 27g): upgraded to Supabase Pro on 2026-08-24, $25/month, deadline
+cleared, and the admin Costs tab turned out to have no Supabase row and no Fly row — monthly
+recurring was understating by $30.11 and is now $70.11. `POLL_MS` remains open.**
 
 **§27 supersedes nothing; it is new.** Supabase sent a Fair Use warning (11.81 GB of 5.5 GB,
 402 on **Aug 27**) and the cause is measured: **~60% of all database traffic is `bot.mjs`
