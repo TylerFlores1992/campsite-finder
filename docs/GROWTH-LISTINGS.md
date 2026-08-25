@@ -33,11 +33,28 @@ a fix.
 
 ## The positioning everything below is built from
 
-**The differentiator is auto-cart, not price.** The floor is free — Campflare covers
-10,000+ campgrounds at $0 — so "cheaper than Campnab" is not a wedge and should not
-appear anywhere. What no competitor does is *hold the site for you*: measured
-detection-to-cart is ~12 seconds, against Campsite Tonight's documented "up to every
-minute".
+**The differentiator is auto-cart AND non-rec.gov coverage — never price.**
+
+The floor is free, and it is lower than it looks. Campflare covers 10,000+ campgrounds
+at $0; Outdoorithm has a free tier across 44 reservation systems; and — the one that
+matters most — **Recreation.gov itself launched free Availability Alerts in July 2024**,
+official, on every reservable rec.gov location, capped at 3 active alerts. So on
+recreation.gov, "we will tell you when a site frees up" is now a feature the booking
+system gives away, and pitching it there competes with the source of truth.
+
+Two things survive that, and the copy should lead with them:
+
+1. **Auto-cart.** Nothing else holds the site for you. Measured detection-to-cart is
+   ~12 seconds. Recreation.gov will never build this — it would be carting against
+   itself.
+2. **The 13 non-rec.gov systems**, ReserveCalifornia above all. Rec.gov's alerts do not
+   cover them, and no state portal offers its own. This is not a hypothetical edge:
+   **12 of 13 live watches are ReserveCalifornia.** The paying customers are already
+   there.
+
+Do not claim a cancellation-detection speed for competitors we have not measured.
+"~12 seconds, measured" is ours and is true; anything comparative should quote only
+what the other party publishes about themselves.
 
 Do not claim a cancellation-detection speed for competitors we have not measured.
 "~12 seconds, measured" is ours and is true; anything comparative should quote only
@@ -98,10 +115,20 @@ worth more than every directory below combined.
 
 | Target | Existing piece | Angle |
 |---|---|---|
-| Happiest Outdoors | "The Best Camping Cancellation Apps: Campnab vs. Schnerp" | US-only tool they don't cover; auto-cart is a category none of their picks have |
-| Outdoorithm | "Free Campsite Cancellation Alerts — CampNab & CampFlare Alternative" | They rank for the comparison query; we're a missing entry |
-| Here & There (Substack) | "How to find campsite cancellations, for free" | Newsletter, replies to email, small enough to answer |
-| Hipcamp Journal | partnered with Campflare in 2023 | Long shot — they have an incumbent — but the auto-cart angle is genuinely new |
+| Happiest Outdoors | "The Best Camping Cancellation Apps: Campnab vs. Schnerp" | Independent, ranks for the comparison query, covers no tool that carts for you |
+| Here & There (Substack) | "How to find campsite cancellations, for free" | Small, replies to email, and the "for free" framing is one auto-cart genuinely answers |
+
+**THERE ARE ONLY TWO, AND THE REASON IS ITSELF THE FINDING.** An earlier draft of this
+file listed four and named Outdoorithm and Hipcamp. Both are wrong targets:
+**Outdoorithm is a direct competitor** ($12.99-$19/mo, free tier, 44 reservation
+systems, apps on both stores) and its "CampNab & CampFlare Alternative" page is its own
+marketing; **Hipcamp partnered with Campflare in 2023**, so it has an incumbent.
+Outdoor Status and Campsite Notifier are likewise products, not publishers.
+
+**The "best cancellation app" SERP is owned almost entirely by the products
+themselves, not by independent reviewers.** That is why this tier is two emails and not
+twenty, and it should be read as a limit on the strategy rather than a to-do list to
+pad. Do not email a competitor asking to be added to their comparison page.
 
 **Template — keep it short, lead with the thing they don't have, offer the demo:**
 
