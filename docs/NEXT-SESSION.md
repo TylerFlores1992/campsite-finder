@@ -1,15 +1,20 @@
 # Next session — start here
 
-*Rewritten 2026-08-25.*
+*Rewritten 2026-08-24, 23:00 PT.*
 
-> ## THE OWNER'S FOUR-ITEM QUEUE IS DONE. §0a is now the record of it.
+> ## START NOTHING. Get up to speed and report.
 >
-> Check §0 (egress) first, then read §0a for what shipped and — more usefully — for the two
-> pieces deliberately NOT built, both of which are the owner's decision rather than work.
-> Everything after §1 is context and standing state.
+> The owner's four-item queue is **done** (§0a). There is no assigned work waiting. Your job is
+> to read in, take the one reading nobody has taken, and tell them where things stand — then
+> wait.
 >
-> **The 08-25 08:00 PT release is UNREAD**: the queue was worked the evening before it. Run
-> the hold readout before anything else.
+> **THE 08-25 08:00 PT RELEASE IS UNREAD.** Five real offers were outstanding across three
+> users and **one was tapped**. That is the single thing worth doing unprompted, because it is
+> a reading that goes stale, not a change.
+>
+> Two things are explicitly the **owner's decision, not an agent's** — the expiry cascade and
+> cross-cycle batching (§0a). Do not start either. Track B (the leak cure) also needs an
+> explicit go-ahead.
 
 *Delete this file once Track A has a reading from a real ramp AND the App Store version has a
 decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
@@ -137,7 +142,12 @@ allowed, the command in §1b just works.
 
 ---
 
-## 1. THE COMING-SOON DEDUP IS BROKEN IN PRODUCTION — the one live user cost
+## 1. THE COMING-SOON DEDUP — FIXED AND DEPLOYED (kept for the reasoning)
+
+> **NOT a live fault.** Migration 067 is applied and the poller fix shipped as `d842dc0` (#183),
+> worker deploy verified. Kept because the *shape* of the mistake is the reusable part: a fix
+> for one missed alert made the failure unbounded. Read it before touching claim keys — it is
+> why item 4's batching deliberately did not merge claims.
 
 **26 texts and 26 emails in 62 minutes to one user**, alternating two divisions of Morro Bay,
 **every one for the same physical campsite** (unit 43191, same release hour, same dates).
@@ -376,13 +386,13 @@ The SERIAL rules in `docs/LANES.md` bind while the hold is live:
 
 | | |
 |---|---|
-| Master | **`8d2cb0f`** |
+| Master | **`da97f23`** |
 | Branch | merged; `claude/main-lane-docs-0824` carries this handover update |
 | Mini-PC | **`18bb337`** — updated 21:57 PT, "updated and verified", 24s. Box and web match. |
-| Open PRs | **none** — #187 merged 2026-08-24, worker redeployed and verified (`last beat 6s ago, 2/2 shards`) |
+| Open PRs | **none** — #187 (RC texts carry the nights) and #188 merged 2026-08-24; worker redeployed and verified (`last beat 6s ago, 2/2 shards`) |
 | Open issues | **#76**, **#14** (#174/#175 folded and closed 2026-08-23) |
 | Open holds | the 08-24 instrument has released; `expire-holds.ts` sweeps from Fly every 60s |
-| Migrations | highest applied **067** (the SMS-storm fix, applied to prod 08-24); next main-lane number is **068** (`070` is an old side-lane block claim). LANES.md's "next is 060" is stale. |
+| Migrations | highest applied **068** (`hold_line`, the fairness queue — applied and read back); next main-lane number is **069** (`070` is an old side-lane block claim). LANES.md's "next is 060" is stale. |
 
 **THAT LAST LINE WAS STALE BEFORE IT WAS READ, and it is worth keeping as the correction.** It
 said #183 was web-side and would not restart the pollers. The SMS-storm fix was added to the same
@@ -392,6 +402,12 @@ branch AFTER it was written, so the merge touched `worker/**` and `src/lib/db/**
 
 Master and the box differing is the ordinary drift `CLAUDE.md` documents — the merges since were
 docs-only, so there is nothing waiting to reach the mini-PC.
+
+**TWO CHECK-INS ARE ALREADY SCHEDULED AND ENABLED — do not create duplicates.**
+`trig_01NdJC1SvSDwxZZroAooVKnU` fires **07:40 PT** into a FRESH session and **notifies the
+owner's phone** (that is the one that can still save a hold, 20 min before the release).
+`trig_01CzPKmDUz5MC3tbYFGMTS4a` fires **08:15 PT** into the persistent session with the outcome
+readout, and its prompt already carries the 08-25 specifics.
 
 **`autocart.bot_version` is a hint, not an answer.** `bot_commit` is COALESCEd and can sit stale
 beside a live heartbeat. `git-status` through `bot_commands` is what answers "did it land?".
