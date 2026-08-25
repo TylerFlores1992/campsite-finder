@@ -130,33 +130,105 @@ themselves, not by independent reviewers.** That is why this tier is two emails 
 twenty, and it should be read as a limit on the strategy rather than a to-do list to
 pad. Do not email a competitor asking to be added to their comparison page.
 
-**Template — keep it short, lead with the thing they don't have, offer the demo:**
+### The two emails, ready to send
 
-> Subject: a cancellation tool that carts the site for you — for your <post title> roundup
->
-> Hi <name>,
->
-> I read your <post title> piece — the <specific detail from it> point is the bit most
-> of these comparisons miss.
->
-> I built CampHawk (camphawk.app), and there's one thing in it none of the tools you
-> covered do: when a site opens on Recreation.gov we don't just alert you, we add it
-> to your cart automatically. Measured detection-to-cart is about 12 seconds, so it's
-> held while you're still reaching for your phone. Everything else — 15-second
-> rechecks, SMS/email/push, flexible date windows across 8,000+ campgrounds on
-> Recreation.gov and 13 state systems — is table stakes by comparison.
->
-> Live search is free and needs no account if you want to poke at it:
-> camphawk.app/search. Happy to set you up with a free account for as long as you want
-> one, and happy to answer anything — including what it doesn't do well.
->
-> Either way, thanks for the roundup. It's the most useful one out there.
->
-> <name>
+**Send them separately, from your own address, as plain text.** No BCC, no signature
+block, no logo. These read as one person writing to another because that is what they
+have to be.
 
-**Rules:** one email, no follow-up before two weeks and never more than one; offer a
-free account unprompted; never ask for a link directly — ask to be considered. If they
-say no, that is the end of it.
+---
+
+#### 1. Kyle Frost — Here & There — `kyle@kylefrost.com`
+
+**Send this one first: it is the better fit by some distance.** His newsletter covers
+"tech and business insights" in the outdoor industry and he runs a studio doing outdoor
+recreation data work, so the engineering is the story he actually wants — and the
+rec.gov shift below is genuine news to a category writer, not a pitch.
+
+**VERIFY THE ADDRESS BEFORE SENDING.** `kyle@kylefrost.com` came from a search result,
+not from a page read directly (hereandthere.club is blocked from the agent's network).
+Check the about page at hereandthere.club/about, or just reply to any newsletter email —
+Substack replies go straight to the author's inbox and are a warmer route anyway.
+
+> **Subject:** Recreation.gov started shipping its own cancellation alerts — what it did to the category
+>
+> Hi Kyle,
+>
+> I read your "How to find campsite cancellations, for free" piece. I build a tool in
+> this space and wanted to pass on something you may not have from the outside.
+>
+> Recreation.gov quietly launched its own Availability Alerts in July 2024 — free,
+> official, capped at three. That reset the category: "we'll tell you when a site opens"
+> is now a feature the booking system gives away. What it does not do, and structurally
+> will not, is act for you. When a site frees up we put it in your cart automatically —
+> measured detection-to-cart is about 12 seconds — so it is held while you are still
+> reaching for your phone.
+>
+> The engineering has been the interesting half. Rec.gov rate-limits per egress IP, so
+> capacity is bought with machines rather than concurrency; we recheck every 15 seconds
+> across 8,000+ campgrounds on rec.gov and 13 state systems; and ReserveCalifornia needs
+> a headful browser because it fingerprints headless Chromium.
+>
+> It's camphawk.app — live search is free and needs no account. Happy to give you a full
+> account indefinitely if you want to poke at it, and happier still to hear what it does
+> badly.
+>
+> No ask. Your piece is the most honest thing written about this category and I thought
+> the rec.gov shift was worth sending your way.
+>
+> Tyler
+
+---
+
+#### 2. Taryn Eyton — Happiest Outdoors — `taryn@happiestoutdoors.ca`
+
+Address is publicly listed on her media kit (happiestoutdoors.ca/media-kit), so it is
+the right route.
+
+**A MODERATE FIT, AND THE EMAIL SAYS SO IN ITS SECOND LINE.** She is based in Squamish,
+BC and her audience skews Canadian; her post splits tools by which work in Canada, and
+CampHawk is US-only. Leading with that caveat is not modesty — it is what stops her
+spending five minutes discovering it herself and filing the sender as someone who did
+not read the post. She is a serious outdoors author (two books, Leave No Trace Master
+Educator), so the register is respectful and short.
+
+> **Subject:** A US-only cancellation tool for your roundup — one thing none of the others do
+>
+> Hi Taryn,
+>
+> Your camping cancellation apps piece is the comparison I send people to. Fair warning
+> before you read on: what I have built is US-only, so it belongs to the American half of
+> that post and not the Canadian one.
+>
+> CampHawk (camphawk.app) does what Campflare and Campsite Notifier do — watches booked
+> campgrounds, texts you the moment one is cancelled — and adds one thing none of them
+> do: on Recreation.gov it puts the site into your cart automatically. Measured, that is
+> about 12 seconds from the site opening to it being held, which is the difference
+> between hearing about a cancellation and actually getting it.
+>
+> It also covers 13 state park systems beyond rec.gov — ReserveCalifornia, Ohio,
+> Minnesota, Virginia and others — which matters more now that Recreation.gov ships its
+> own free alerts and the state portals still do not.
+>
+> Live search is free and needs no account if you want to try it: camphawk.app/search.
+> I will set you up with a full account for as long as you want one, and I would rather
+> hear what is wrong with it than not.
+>
+> Either way, thank you for the roundup. It is the only one that says which tools work
+> where.
+>
+> Tyler
+
+---
+
+**Rules for both:** one email each, no follow-up before two weeks and never more than
+one; offer the free account unprompted; **never ask for a link** — ask to be considered,
+or in Kyle's case ask for nothing at all. If they say no, or say nothing, that is the
+end of it. A second chase costs more than the link is worth.
+
+**Expect nothing.** Cold outreach to independent writers converts at maybe 10-20%. Two
+emails is realistically one link or none. One editorial link is still worth more than
+the whole of Tier 2.
 
 ---
 
