@@ -3189,12 +3189,36 @@ same 08:00 release, same three dates. Thirteen held-check cycles x two divisions
   w.multi_campground` **was passed** — so the storm was not merely untested, it was
   *required by a test*. Inverted now, guarded from both sides, and the reason written in.
   Reinstating the campground scope is the regression that looks like caution.
-- **THE SAME CAMPSITE REALLY IS IN TWO DIVISIONS, AND THAT IS RC'S DATA MODEL, NOT OUR BUG.**
-  `rc-2185`, `rc-583` and `rc-582` are all facilities of **park 680**, and RC lists one physical
-  site under more than one facility — a lottery pool and an ordinary pool carry the same unit.
-  `findRCHeldUnits` is facility-scoped and correct; the poller simply reaches the same campsite
-  twice per cycle. **So even after the storm is fixed, a campground-keyed claim still sends two
-  texts for one campsite.** That is why the key is the UNIT.
+- ~~**THE SAME CAMPSITE REALLY IS IN TWO DIVISIONS, AND THAT IS RC'S DATA MODEL, NOT OUR BUG.**
+  RC lists one physical site under more than one facility — a lottery pool and an ordinary pool
+  carry the same unit.~~ **FALSE, AND MEASURED FALSE TWICE (2026-08-25).** Asked RC directly for
+  every Morro Bay facility's September inventory:
+  ```
+  rc-2185  Morro Lottery sites        15 units  54946…54960   43191: no
+  rc-580   Group Sites                 2 units  43081,43082   43191: no
+  rc-582   Lower Section (1-85)       57 units  43098…43174   43191: no
+  rc-583   Upper Section (86-140)     36 units  43181…        43191: YES
+  ```
+  **Zero overlap. The lottery pool's fifteen units are its own**, and unit 43191 exists in
+  exactly one facility. So the poller was NOT reaching one campsite twice per cycle, and there
+  was never an RC data quirk to accommodate.
+- **THE REAL MECHANISM IS THE RESULT-MAP COLLISION, WHICH THIS SAME SESSION FOUND AND WROTE UP
+  SEPARATELY.** `rcHeld` was keyed on WATCH id while a poller row is a (watch, campground), so
+  the last division to finish won and every row then read the survivor — the rc-2185 row was
+  reading **rc-583's** held units and claiming them under its own namespace. That is why the
+  storm alternated two divisions for one unit, and it is why melinda's live hold row for unit
+  43191 still carries `campground_id = rc-2185` today: **her alert named the wrong campground,
+  and its booking link pointed at a facility the site is not in.** Fixed by `worker/watch-key.ts`
+  in #188, which merged AFTER that offer went out.
+- **TWO ENTRIES WRITTEN THE SAME DAY, ONE EXPLAINING THE OTHER, AND NOBODY JOINED THEM.** See
+  "A POLLER ROW IS A (WATCH, CAMPGROUND)" below — it describes exactly this collision, in the
+  same file, hours apart. The duplicate-facility story was **invented to explain an artifact of
+  our own bug**, and then recorded as RC's data model. It is the tidy-story-as-fact failure this
+  file exists to prevent, committed inside the write-up of the incident it caused.
+- **THE UNIT-KEYED CLAIM (MIGRATION 067) IS STILL RIGHT — for a different reason.** It is not
+  guarding against RC duplicating a site; it guards two different units sharing a release hour,
+  and two different USERS contending for one unit. **Do not "simplify" it back on the strength of
+  this correction.**
 - **THE FIX IS A SET, AND THE TWO CHEAPER FIXES ARE BOTH WRONG.** Reverting to an hour-only key
   kills the storm in one line and reinstates 070's bug. Keying on the unit alone collapses the
   duplicate correctly and **ping-pongs again** the moment two different units share an hour —
@@ -3364,6 +3388,92 @@ session took that from three to five, and a full run failed an assertion in
   — the rule (`docs/LANES.md`, one run at a time) does not cover a suite deleting a sibling's
   rows inside a single run.
 
+### THE CONTENTION TEST RAN ITSELF, AND TRACK A WAS POINTED THE WRONG WAY (2026-08-25)
+
+Asked to STAGE an RC contention test and a Track A ramp test. **Neither needed staging: both
+events happened on their own overnight.** The contention case behaved; Track A did not.
+
+#### THE FAIRNESS LINE'S FIRST LIVE CONTEST — IT WORKED
+Unit 43191 ("#96", Morro Bay Upper Section), 08-25 08:00 PT release, two users:
+
+    melinda  watch created 08-24 09:53:55   rank 1   status offered    requested_at NULL
+    tyler    watch created 08-24 12:45:30   rank 2   status requested  carted 08:00:03 (T+2s)
+
+- **The ordering is the owner's rule, applied correctly** — earliest watch first. Melinda took
+  rank 1 and was charged the rotation ticket (`hold_offer_seq` 0 → 118), which is the design:
+  the ticket is spent on being given first dibs, not on winning.
+- **She never tapped, so `dueHolds` served tyler and he carted at T+2s.** "Somebody who never
+  answered is not in the running" is true of the CART, exactly as designed.
+- **IT IS NOT TRUE OF THE NOTE, and that is the one defect.** `rankHoldLine` ranks `offered`
+  rows as well as `requested` ones — deliberately, since an untapped rival can still tap before
+  the release — and then wrote onto tyler's row *"their hold is the one being carted"*. It was
+  not, and never would be. `last_attempt_note` is read by `rc-holds-readout.mts` and by
+  **nothing user-facing** (checked, not assumed), so this cost nobody a campsite; what it costs
+  is a readout that states the opposite of what happened, on the morning somebody is
+  diagnosing. Wording is conditional now, guarded from both sides in `hold-line.test.mts`.
+
+#### RC HELD THE CART FOR 45 MINUTES — WE LET GO, RC DID NOT
+The owner deliberately did not claim, to see what happens. From the box's own log:
+
+    15:00:02  ✓ held #96 (2026-09-04) — entry 4147de1f-…
+    15:45:12  0 to hand over, 0 to cart, 1 to release
+    15:45:16  released #96 → HTTP 200
+
+**That is `expireStaleHolds(holdMinutes = 45)`, ours, to the second** — 45m13s after the cart.
+It is not RC lapsing anything.
+- **SO THE PREMISE BLOCKING THE EXPIRY CASCADE IS WRONG.** `hold-line.ts` and this file both say
+  the cascade waits on RC's real cart lapse, *"read off RC's own bundle as ~15 minutes and NEVER
+  OBSERVED"*, against a `reclaimLapsedHolds` that waits 180. **Neither number is what happens.**
+  We release at 45, precisely, with the entry key — so the moment the site goes back on the
+  market is a moment WE choose and already know. The cascade never needed RC's number.
+- **STATED AS A LOWER BOUND, because that is all it is.** RC accepted a precise removal at
+  T+45m and nothing in `watch_site_alerts` or `availability_observations` shows the site opening
+  between 08:00 and 08:45. Whether RC would have held it longer is still unmeasured, and a
+  `remove/cartentry` returning 200 is not by itself proof the entry was there.
+- **We tell users "held ~15 min" (`RC_CART_HOLD_MINUTES`) and hold it for 45.** Conservative in
+  the user's favour, but the two numbers are unrelated and one of them is now measured.
+
+#### TRACK A HAS SAMPLED THREE RAMPS AND CAUGHT NONE OF THEM
+Three ramps in 30 hours, from `chromium_memory_samples`, and **the box reached 99% COMMIT twice**:
+
+    08-24 19:37→19:43   peak 7,250 MB   free 2,217   commit 95%   pid 15092
+    08-25 02:30→02:40   peak 8,312 MB   free 2,473   commit 98%   pid  1296
+    08-25 07:31→07:37   peak 7,471 MB   free 2,144   commit 99%   pid 13296
+
+Track A has exactly three stored readings, one per ramp hour, and **every one says "this
+navigation did NOT ramp"**:
+
+    08-24 07:29  auto-login  ramΔ  -422 MB   renderer 103 MB
+    08-25 02:31  renewal     ramΔ  -671 MB   renderer  17 MB
+    08-25 07:43  auto-login  ramΔ  -412 MB   renderer 109 MB
+
+- **THE 07:43 READING IS AFTER THE RAMP ENDED AT 07:39, ON A DIFFERENT BROWSER.** pid 13296
+  ramped and was replaced by pid 3912; the sampled sign-in ran at 07:43 in pid 12584 and cost
+  109 MB. The keep-warm log shows why: 07:41 and 07:42 both failed with *"We're having trouble
+  loading the application"*, and 07:43 succeeded. **That is the 08-23 "the app-not-load failures
+  were the AFTERMATH" candidate confirmed** — they follow the recycle, they do not precede it.
+- **THE 02:31 RENEWAL READING IS INSIDE ITS RAMP AND DISAGREES BY TWO ORDERS OF MAGNITUDE** —
+  17 MB of renderer while the family's renderers went to 8,052 MB, and the climb continued for
+  eight minutes AFTER the reading was stored.
+- **THE CAUSE IS STRUCTURAL, NOT BAD LUCK.** `reportNativeAlloc` is called on the RETURN path,
+  after `attemptLogin`/`renewSession` returns and before the `finally` that closes the tab. **A
+  trip that is killed mid-ramp never returns, so it never reports** — and it is gated on
+  `ramΔ ≤ -400 MB`, so only a trip that both survived and moved bytes is ever stored. The
+  instrument therefore samples, by selection, the CHEAP retry that follows a ramp. That is the
+  fifth instance of the house shape and the first inside a diagnostic built to escape it.
+- **SO STAGING A RAMP WOULD HAVE PROVEN NOTHING.** Three arrived free of charge and the
+  instrument was blind to all three. **Do not queue a test hold to "force a ramp" until the
+  sampler reports from a TRAIL** — sampled on the watchdog tick while the browser still answers,
+  the way the heap trail and the RAM trail already do — rather than from the return path.
+- **THE RAM ARM DID NOT FIRE ON ANY OF THE THREE.** Troughs 2,217 / 2,473 / 2,144 MB against a
+  2,000 floor: it came within **144 MB** and did not act. That is now **six consecutive** 7–9 GB
+  ramps the arm has sat out, and the 08-19 arithmetic that chose 2,000 was written for a worst
+  case of 5,688 MB and an expected trough near 3,300. **What ends these is the post-Okta recycle
+  — the `gpu-process` pid changes across every one — not the arm.** Still a QUESTION and not a
+  patch: raising the floor is what killed a working repair on 08-19, and the box recovers fully
+  within two minutes each time. What is new is the exposure: ~10 minutes at 95–99% COMMIT, three
+  times a day, and ~90% is where Windows stopped scheduling both tasks on 08-17.
+
 ## Open / next session
 
 > **START AT `docs/NEXT-SESSION.md`.**
@@ -3374,40 +3484,47 @@ session took that from three to five, and a full run failed an assertion in
 > above. **Migration 068 is APPLIED to production and read back; the next main-lane number
 > is 069.**
 >
-> **THE ONE THING THAT NEEDS THE OWNER, NOT AN AGENT:** the expiry cascade (cart for the
-> first in line, and on a lapse re-cart for the next) is **gated on measuring RC's real cart
-> lapse**, which is read off RC's own bundle as ~15 minutes and **has never been observed**
-> while `reclaimLapsedHolds` waits 180. And cross-cycle alert batching (merging 08:00:00 and
-> 08:00:20 into one text) **buys fewer texts with LATENCY on the most latency-critical path
-> in the product** — that trade is theirs to make, not one to slip in behind a tidy-up.
+> **THE EXPIRY CASCADE IS NO LONGER BLOCKED ON A MEASUREMENT — only on the owner's call.**
+> It was gated on RC's real cart lapse (*"~15 minutes, never observed"*, against
+> `reclaimLapsedHolds`' 180). **On 2026-08-25 an unclaimed hold was released by
+> `expireStaleHolds(45)` — OURS, at 45 minutes, with the entry key, RC answering HTTP 200.**
+> So the moment a site returns to the market is one we choose and already know; the cascade
+> can hook our own release. See the 08-25 section above for the lower-bound caveat.
+> Cross-cycle alert batching (merging 08:00:00 and 08:00:20 into one text) is still theirs:
+> it **buys fewer texts with LATENCY on the most latency-critical path in the product**.
 >
-> **THE 08-25 08:00 PT RELEASE HAD NOT HAPPENED when this was written** — the box clock read
-> 2026-08-24 21:21 PT. Five real offers were outstanding across three users; **one was
-> tapped** (tyler, Morro Bay #96). Whatever happened at 08:00 is unread. Run
-> `rc-holds-readout.mts` first.
+> **THE 08-25 08:00 PT RELEASE HAPPENED AND WORKED.** Morro Bay #96 carted at **T+2s**, the
+> fairness line's first live contest resolved correctly, and the owner deliberately did not
+> claim — which is how the 45-minute release above got measured. The four untapped offers
+> expired, which is not a fault.
 >
-> **UNIT 43191 WAS OFFERED TO TWO USERS AND THE LATER WATCHER IS THE ONE WHO TAPPED.** That
-> is the live evidence behind the fairness line; the section above has the timestamps. Under
-> the new rule melinda is first in line and tyler is next — **but the line only decides
-> anything when BOTH tap**, and she had not, so tyler's hold is the one that carts.
+> **UNIT 43191 IS NOT A DUPLICATE-FACILITY CASE — that story was our own bug.** RC's
+> September inventory has ZERO overlap between the lottery pool and Upper Section, and 43191
+> is in Upper Section alone. Two users collided because **both watch the same park**; one
+> offer was mislabelled rc-2185 by the result-map collision `watch-key.ts` fixed. Corrected
+> in two places that stated the wrong cause as fact.
 >
-> **TRACK A STILL HAS ZERO READINGS FROM A REAL RAMP.** The only stored reading remains the
-> 08-24 cheap T−30 sign-in (−422 MB, 103 MB renderer), which **does not settle the buffering
-> question either way** — it is 4.5% of the event under investigation, on a different code
-> path, and its shape disagrees (renderer 24% here against 90% on real ramps). **Do NOT
-> correct the three buffering entries on it.** `maybeWarmupLogin` is sampled since #184, but
-> it only fires when Okta is GONE, and `nextHoldRelease` ignores `offered` — **so with no
-> tap there is no expensive trip to sample.**
+> **TRACK A STILL HAS ZERO READINGS FROM A REAL RAMP — and now we know WHY, which is the
+> useful part.** It has three stored readings and **three ramps happened in the same 30
+> hours**; every reading says *"this navigation did NOT ramp"* and every one sits outside its
+> ramp window. `reportNativeAlloc` fires on the RETURN path and is gated at −400 MB, so a
+> trip killed mid-ramp never reports and the instrument records, by selection, the CHEAP
+> retry that FOLLOWS a ramp. **Do not queue a test hold to force a ramp** — three arrived
+> free and were all missed. The fix is a TRAIL sampled on the watchdog tick, like the heap
+> and RAM trails. **Do NOT correct the three buffering entries on the readings that exist.**
 >
 > **THE LEAK IS NOT FIXED and remains the owner's standing ask.** Everything shipped is
 > containment or relocation. **Track B (replay the Okta trip over `ctx.request`, no
 > renderer) is designed and deliberately NOT started** — it is surgery on the
 > release-critical login path and needs an explicit go-ahead.
 >
-> **THE RAM ARM HAS NOT FIRED ON THREE CONSECUTIVE 9 GB RAMPS** (troughs 3,191 / 3,328 /
-> 3,035 MB against a 2,000 floor; COMMIT 82% → 88% → **89%**). A **browser replacement**
-> ended each. **Still a QUESTION, not a patch** — lowering the trip point is the change that
-> killed a working repair on 08-19.
+> **THE RAM ARM HAS NOW SAT OUT SIX CONSECUTIVE 7–9 GB RAMPS**, and the margin is gone:
+> troughs 3,191 / 3,328 / 3,035 then **2,217 / 2,473 / 2,144** against a 2,000 floor, with
+> **COMMIT reaching 99% twice on 08-24/25**. A **browser replacement** ends each — the
+> post-Okta recycle, not the arm. **Still a QUESTION, not a patch** (raising the trip point
+> is what killed a working repair on 08-19, and the box recovers within two minutes), but
+> the exposure is now ~10 minutes at 95–99% COMMIT three times a day, and ~90% is where
+> Windows stopped scheduling both tasks on 08-17.
 >
 > **A FIXTURE CAN STILL TURN `autocart.rc_session` RED** — the health route's own `upcoming`
 > and `imminent` counts never got the `REAL_UNIT` filter. Bounded to the length of a CI run,

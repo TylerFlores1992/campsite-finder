@@ -1,20 +1,29 @@
 # Next session — start here
 
-*Rewritten 2026-08-24, 23:00 PT.*
+*Rewritten 2026-08-24, 23:00 PT. Updated 2026-08-25, 11:30 PT — the 08-25 release is READ.*
 
 > ## START NOTHING. Get up to speed and report.
 >
-> The owner's four-item queue is **done** (§0a). There is no assigned work waiting. Your job is
-> to read in, take the one reading nobody has taken, and tell them where things stand — then
-> wait.
+> The owner's four-item queue is **done** (§0a). There is no assigned work waiting.
 >
-> **THE 08-25 08:00 PT RELEASE IS UNREAD.** Five real offers were outstanding across three
-> users and **one was tapped**. That is the single thing worth doing unprompted, because it is
-> a reading that goes stale, not a change.
+> **THE 08-25 08:00 PT RELEASE IS READ AND IT WORKED** — Morro Bay #96 carted at **T+2s**, the
+> fairness line's first live contest resolved correctly, and the owner deliberately did not
+> claim. Full write-up in `CLAUDE.md` → "THE CONTENTION TEST RAN ITSELF". Two things came out
+> of it that change what is worth doing next:
 >
-> Two things are explicitly the **owner's decision, not an agent's** — the expiry cascade and
-> cross-cycle batching (§0a). Do not start either. Track B (the leak cure) also needs an
-> explicit go-ahead.
+> 1. **The expiry cascade is no longer blocked on a measurement.** It was gated on RC's cart
+>    lapse; the release was actually `expireStaleHolds(45)` — ours, at 45 minutes, precisely.
+>    It is still the **owner's call**, but the reason to wait is gone.
+> 2. **Track A is blind to the ramps by construction.** Three ramps happened in 30 hours and
+>    all three were missed; the reading fires on the trip's RETURN path, so a trip killed
+>    mid-ramp never reports. **Do not queue a test hold to force a ramp** — it would be
+>    missed too. The fix is a trail sampled on the watchdog tick.
+>
+> **THE BOX REACHED 99% COMMIT TWICE** and the RAM arm's trough margin is down to 144 MB. Still
+> a QUESTION, not a patch — read the entry before touching the floor.
+>
+> Two things remain explicitly the **owner's decision, not an agent's** — the expiry cascade
+> and cross-cycle batching (§0a). Track B (the leak cure) also needs an explicit go-ahead.
 
 *Delete this file once Track A has a reading from a real ramp AND the App Store version has a
 decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
