@@ -3569,6 +3569,33 @@ its report, the teardown takes the OPEN segment, and the contexts the two files 
 **One of the new guards anchored on a comment line** — and `code` strips comments so a guard
 cannot fail on its own explanation — so it failed against a correct file. Twenty-fourth time.
 
+#### WHY A RAMP RUNS TO 9 GB UNCHECKED — NEITHER ARM CAN FIRE DURING ONE
+Read out of the resident loop's own ordering while wiring the trail, and it completes the
+picture the RAM-arm entries leave half-drawn. One iteration runs: preemption check -> closed
+window -> post-Okta recycle -> **size scan** -> expiry poll (**the renewal**) -> keepalive.
+
+- **THE SIZE ARM (`RC_MAX_FAMILY_MB = 1500`) IS STRUCTURALLY UNREACHABLE DURING A RAMP.** It
+  sits in the LOOP BODY and the ramp happens inside `renewSession`, which the loop is awaiting
+  — so for the ten minutes that matter, control is past the check and cannot come back to it.
+  That is the "a guard placed inside the thing it guards against" shape for the fourth time,
+  and the entry that recorded it for the RAM arm did not notice the size arm still had it.
+- **THE RAM ARM IS EXACTLY ONE CONDITION SHORT.** It needs `stalledMs > 60s` **and**
+  `freeMb < 2000`. During these ramps the first is amply true (a ten-minute renewal is a
+  ten-minute stall) — it is the **RAM** half that never trips, at troughs of 2,144-3,328 MB.
+- **SO NOTHING CONTAINS A RAMP WHILE IT RUNS.** The size arm fires on the NEXT iteration, once
+  the renewal returns, and breaks the loop into a reopen — which is the **leading candidate for
+  the browser replacement that ends every recorded ramp** (the `gpu-process` pid changes across
+  all six). Candidate, not established: the confirming `✗ RC Chromium at N MB` line sits outside
+  `tail-log`'s 16,000-character window.
+- **AND THE TRAIL NOW REPORTS FROM EXACTLY THAT MOMENT.** `flushAllocRamps({ final: true })` is
+  in the `finally` that this break lands in, so the mechanism that terminates the ramp is the
+  mechanism that stores its attribution. That is not luck — it is why the teardown flush takes
+  the OPEN segment.
+- **NOT ACTED ON, DELIBERATELY.** Moving the size scan into the timer would spawn PowerShell
+  there, and spawning is the thing that fails first at 99% COMMIT. Lowering the RAM floor is
+  what killed a working repair on 2026-08-19. Both are the deliberate decision `docs/LANES.md`
+  reserves for a session with evidence — which is what the trail is for.
+
 #### HOW TO READ THE NEXT RAMP
 The ramps arrive ~3x a day unprompted. **Do NOT queue a test hold to force one** — three arrived
 free in thirty hours and all three were missed, and a staged one locks a real campsite.
