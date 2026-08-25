@@ -35,6 +35,7 @@ import { SHARD_COUNT, LEASE_RENEW_MS, claimOrRenewShard, heldShard, ownsCampgrou
 import { leadDaysUntil } from './lead-time';
 import { heldCheckDue, clampHeldInterval, RC_HELD_CHECK_DEFAULT_MS } from './held-cadence';
 import { claimHoldNotification, releaseHoldClaims } from './hold-claim';
+import { rankHoldLine } from './hold-line';
 import { DueTracker, intervalForLead } from './poll-cadence';
 import { startRateProfile } from './rate-profile';
 import { findRCOpenUnit, findRCHeldUnits } from '../src/lib/availability/reservecalifornia';
@@ -1171,6 +1172,10 @@ async function cycle(): Promise<void> {
         nights: extra.dates.length || 1,
         releaseAt: extra.availableAt,
       }).catch(() => null);
+      // RANK THE LINE AFTER EVERY OFFER, including the ones that send no alert. A contest
+      // is only visible once the second offer exists, and it can arrive on any cycle — on
+      // 2026-08-24 the rival watch was created three hours after the first offer went out.
+      await rankHoldLine(extra.availableAt, String(extra.unitId)).catch(() => []);
     }
     const held = heldUnits[0];
     // A lock expiring in minutes is not a cancellation heads-up — see holdIsNewsworthy.
@@ -1262,6 +1267,10 @@ async function cycle(): Promise<void> {
           nights: held.dates.length || 1,
           releaseAt: held.availableAt,
         }).catch(() => null);
+        // Ranked whether or not `offerHold` returned an id: no row back means the user has
+        // already tapped, and a hold that has been ACCEPTED is exactly the one whose place
+        // in the line matters most.
+        await rankHoldLine(held.availableAt, String(held.unitId)).catch(() => []);
         // A missing hold link must never block the alert — the heads-up is useful on
         // its own, and the user can still book manually at 8am.
         if (offered) holdUrl = await actionUrlFor(w.id, 'hold', String(held.unitId)).catch(() => null);

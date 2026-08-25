@@ -158,10 +158,24 @@ export async function requestHold(watchId: string, unitId: string): Promise<Hold
 export async function dueHolds(leadSeconds = 60, graceMinutes = 20): Promise<HoldRequest[]> {
   try {
     return await query<HoldRequest>(
-      `SELECT * FROM rc_hold_requests
-        WHERE status = 'requested'
-          AND release_at <= to_char((NOW() + ($1 || ' seconds')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
-          AND release_at >= to_char((NOW() - ($2 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+      // ONE HOLD PER (release_at, unit_id) — see `worker/hold-line.ts`. RC lists the same
+      // physical campsite under more than one facility, so two people can each hold a
+      // correct offer for one site (measured 2026-08-24, unit 43191). Serving both would
+      // ask RC for the same unit twice: one cart succeeds and RC refuses the other in its
+      // own wording, which reads as a fault rather than as a queue.
+      //
+      // `line_rank` NULLS LAST, then `id`, so an unranked row (uncontested, or predating
+      // migration 068) still resolves deterministically instead of alternating between
+      // shards. A hold nobody tapped is not in this query at all, so the line only decides
+      // anything when two people BOTH asked.
+      `SELECT * FROM (
+         SELECT DISTINCT ON (release_at, unit_id) *
+           FROM rc_hold_requests
+          WHERE status = 'requested'
+            AND release_at <= to_char((NOW() + ($1 || ' seconds')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+            AND release_at >= to_char((NOW() - ($2 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+          ORDER BY release_at, unit_id, line_rank ASC NULLS LAST, id
+       ) q
         ORDER BY release_at ASC
         LIMIT 25`,
       [String(leadSeconds), String(graceMinutes)],

@@ -194,6 +194,12 @@ export interface HoldPreview {
   releaseAt: string;
   bookingUrl: string | null;
   alreadyRequested: boolean;
+  /**
+   * Where this hold stands when more than one person has been offered the same campsite.
+   * `null` means nobody else is in the running, which is the ordinary case — and a hold
+   * whose line has never been ranked reports `null` rather than guessing a position.
+   */
+  line: { rank: number; of: number } | null;
 }
 
 export async function previewHold(token: string): Promise<HoldPreview | null> {
@@ -206,10 +212,11 @@ export async function previewHold(token: string): Promise<HoldPreview | null> {
   const [h] = await query<{
     unit_id: string; unit_name: string | null; arrival_date: string; nights: number;
     release_at: string; status: string; name: string; source: string; reservations_url: string | null;
-    campground_id: string;
+    campground_id: string; line_rank: number | null; rel: string;
   }>(
     `SELECT r.unit_id, r.unit_name, r.arrival_date::text AS arrival_date, r.nights, r.release_at,
-            r.status, c.name, c.source, c.reservations_url, c.id AS campground_id
+            r.status, c.name, c.source, c.reservations_url, c.id AS campground_id,
+            r.line_rank, r.release_at AS rel
        FROM rc_hold_requests r JOIN campgrounds c ON c.id = r.campground_id
       WHERE r.watch_id = $1 AND r.unit_id = $2
         AND r.status IN ('offered', 'requested')
@@ -218,6 +225,28 @@ export async function previewHold(token: string): Promise<HoldPreview | null> {
     [row.watch_id, row.site_id]
   );
   if (!h) return null;
+
+  /**
+   * IS ANYBODY ELSE IN THE RUNNING FOR THIS EXACT CAMPSITE?
+   *
+   * Counted over DISTINCT USERS, not rows: RC lists one physical site under more than one
+   * facility, so a single person watching a park through two of its divisions holds two
+   * offers for one site and is not competing with themselves.
+   *
+   * Reported only when this hold actually carries a rank. An unranked row is one the
+   * poller has not looked at since migration 068, and saying "you're first" on a guess is
+   * the promise this whole change exists to stop making.
+   */
+  let line: { rank: number; of: number } | null = null;
+  if (h.line_rank != null) {
+    const [c] = await query<{ n: string }>(
+      `SELECT COUNT(DISTINCT user_id) AS n FROM rc_hold_requests
+        WHERE release_at = $1 AND unit_id = $2 AND status IN ('offered', 'requested')`,
+      [h.rel, h.unit_id]
+    );
+    const of = Number(c?.n ?? 0);
+    if (of > 1) line = { rank: h.line_rank, of };
+  }
 
   const { bookingLink } = await import('@/lib/booking-url');
   return {
@@ -233,6 +262,7 @@ export async function previewHold(token: string): Promise<HoldPreview | null> {
       source: h.source, reservationsUrl: h.reservations_url, campgroundId: h.campground_id,
     }) ?? h.reservations_url,
     alreadyRequested: h.status === 'requested',
+    line,
   };
 }
 
