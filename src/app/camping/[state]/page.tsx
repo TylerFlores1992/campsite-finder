@@ -6,6 +6,7 @@ import { campgroundsInState, groupByCity, statesWithPages } from "@/lib/stateCam
 import { SITE_NAME, SITE_URL, stateDescription, stateTitle, stateUrl } from "@/lib/seo";
 import { jsonLdScript } from "@/lib/jsonld";
 import { providerLabel } from "@/components/v2/providers";
+import { typesAvailableInState } from "@/lib/siteTypeHubs";
 
 /**
  * State landing page — /camping/oregon.
@@ -84,6 +85,7 @@ export default async function StateCampingPage({
   const groups = groupByCity(campgrounds);
   const towns = groups.filter((g) => g.city).length;
   const providers = [...new Set(campgrounds.map((c) => c.source))];
+  const types = await typesAvailableInState(data.code);
 
   const breadcrumb = {
     "@context": "https://schema.org",
@@ -153,6 +155,29 @@ export default async function StateCampingPage({
             .map((p) => providerLabel(p, ""))
             .join(providers.length === 2 ? " and " : ", ")}. Searching is free.`}
         </p>
+
+        {types.length > 0 && (
+          /* Down-links to this state's accommodation-type pages. These are the
+             pages the Search Console data says we can rank for, and this is the
+             link that gets them crawled: /camping/california carries 725
+             impressions in 28 days and the type pages carry none, because they
+             did not exist until today. */
+          <p className="mt-2 max-w-[70ch] text-ch-meta text-ch-muted">
+            {"Looking for something specific? "}
+            {types.map((h, i) => (
+              <span key={h.slug}>
+                {i > 0 ? (i === types.length - 1 ? " or " : ", ") : ""}
+                <Link
+                  href={`/camping/${h.slug}/${state}`}
+                  className="font-semibold text-ch-green hover:underline"
+                >
+                  {`${name} ${h.label.toLowerCase()}`}
+                </Link>
+              </span>
+            ))}
+            {"."}
+          </p>
+        )}
 
         <div className="mt-6 flex flex-wrap gap-2">
           {/* Straight to the search screen, not the marketing home — someone on

@@ -245,6 +245,54 @@ export function stateDescription(name: string, count: number): string {
   );
 }
 
+/* ------------------------------------------------- accommodation-type hubs
+ *
+ * /camping/cabins, /camping/group-camping, /camping/yurts and their per-state
+ * children. See `lib/siteTypeHubs.ts` for why these three types and no others.
+ *
+ * THE HEADING IS THE EXACT QUERY, which is the whole reason these pages exist.
+ * "Campgrounds with Cabins" is not a phrasing anyone chose for elegance — it is
+ * verbatim the highest-impression cabin query in Search Console, with "camp sites
+ * with cabins", "campsites with cabins" and "campground with cabins" as near
+ * neighbours. The state variant puts the state first because that is how the state
+ * queries read ("camping in georgia", "campgrounds in wisconsin").
+ *
+ * COUNTS GO IN THE TITLE for the same reason they do on the state pages: they make
+ * every title distinct, which is what `scripts/seo-check.mts` enforces, and they are
+ * true and re-derived on every build rather than written down once.
+ */
+
+export function siteTypeUrl(slug: string): string {
+  return `${SITE_URL}/camping/${slug}`;
+}
+
+export function siteTypeStateUrl(slug: string, stateSlugValue: string): string {
+  return `${SITE_URL}/camping/${slug}/${stateSlugValue}`;
+}
+
+export function siteTypeTitle(heading: string, campgrounds: number, states: number): string {
+  return `${heading} — ${campgrounds.toLocaleString()} in ${states} states | ${SITE_NAME}`;
+}
+
+export function siteTypeDescription(noun: string, campgrounds: number, states: number): string {
+  return clamp(
+    `Live availability for ${campgrounds.toLocaleString()} campgrounds with ${noun} across ` +
+      `${states} states. See what's open tonight, and get alerted the second a booked ` +
+      `site is cancelled.`,
+  );
+}
+
+export function siteTypeStateTitle(state: string, label: string, count: number): string {
+  return `${state} ${label} — ${count.toLocaleString()} with live availability | ${SITE_NAME}`;
+}
+
+export function siteTypeStateDescription(state: string, noun: string, count: number): string {
+  return clamp(
+    `Live availability for ${count.toLocaleString()} campgrounds with ${noun} in ${state}. ` +
+      `See what's open tonight, and get alerted the second a booked site is cancelled.`,
+  );
+}
+
 /* ------------------------------------------------------------------ body copy
  *
  * The section the retarget actually rests on.

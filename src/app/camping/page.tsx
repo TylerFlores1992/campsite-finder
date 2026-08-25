@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { stateName, stateSlug } from "@/lib/coverage";
 import { statesWithPages } from "@/lib/stateCampgrounds";
+import { SITE_TYPE_HUBS } from "@/lib/siteTypeHubs";
 import { SITE_NAME, SITE_URL } from "@/lib/seo";
 import { jsonLdScript } from "@/lib/jsonld";
 
@@ -70,6 +71,24 @@ export default async function CampingIndexPage() {
         <p className="mt-2 max-w-[70ch] text-ch-body leading-relaxed text-ch-ink-2">
           {`We track live availability at ${total.toLocaleString()} bookable campgrounds across ${rows.length} states — national forests, state parks and everything in between. Pick a state to see what we cover there.`}
         </p>
+        {/* Accommodation-type hubs. Above the state grid for the same reason as the
+            block below: these are the pages the Search Console data says we can
+            actually rank for — five of the top 25 queries are cabin variants, and the
+            pages already sitting on page one are cabins, wall tents and group camps.
+            See lib/siteTypeHubs.ts. */}
+        <ul className="mt-4 flex flex-wrap gap-2">
+          {SITE_TYPE_HUBS.map((h) => (
+            <li key={h.slug}>
+              <Link
+                href={`/camping/${h.slug}`}
+                className="inline-block rounded-ch-chip border border-ch-line bg-ch-card px-4 py-2 text-ch-body font-semibold text-ch-ink-2 hover:border-ch-green hover:text-ch-green"
+              >
+                {h.heading}
+              </Link>
+            </li>
+          ))}
+        </ul>
+
         {/* The curated hub, linked from the state index because a page nothing
             points at is a sitemap entry rather than a destination — the same
             reason this index exists for the 47 state pages. It goes ABOVE the
