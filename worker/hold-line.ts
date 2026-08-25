@@ -6,12 +6,26 @@
  * consequential would otherwise be unreachable from a test.
  *
  * THE PROBLEM IS LIVE. On 2026-08-24 unit 43191 ("#96", Morro Bay, arrival 2026-09-04)
- * was offered to two different users for the same 08:00 release — melinda.flores0501
- * through "Morro Lottery sites" and tylerflores1992 through "Upper Section". RC lists one
- * physical campsite under more than one facility, so both offers were correct and there
- * was still only one campsite. Nothing decided who got it: `dueHolds` had no de-dupe, so
- * had both tapped, the runner would have been handed both rows and asked RC for the same
- * unit twice.
+ * was offered to two different users for the same 08:00 release. Nothing decided who got
+ * it: `dueHolds` had no de-dupe, so had both tapped, the runner would have been handed
+ * both rows and asked RC for the same unit twice.
+ *
+ * WHY THEY COLLIDED — CORRECTED 2026-08-25. This header used to say RC lists one physical
+ * campsite under more than one facility, and that the two offers were therefore both
+ * correct. **Both halves are false.** RC's September inventory has ZERO overlap between
+ * the lottery pool (15 units, 54946…54960) and Upper Section (36 units), and 43191 is in
+ * Upper Section alone. The real reason is far more ordinary: **both users watch the same
+ * park, and both watches cover Upper Section.** One offer was then MISLABELLED rc-2185 by
+ * the result-map collision `worker/watch-key.ts` fixed in the same pull request, which is
+ * where the duplicate-facility story came from.
+ *
+ * That correction makes the line MORE load-bearing, not less. Contention is not an RC data
+ * quirk that happens to one park; it is what any two users watching one facility produce,
+ * so it scales with the product rather than staying rare.
+ *
+ * IT RAN FOR REAL ON 2026-08-25, and behaved. melinda (watch created 09:53) ranked 1 and
+ * tyler (12:45) ranked 2; melinda never tapped, so `dueHolds` correctly served tyler and
+ * he carted at T+2s. The one rough edge is the note below — see `behind`.
  *
  * A LINE is every live hold sharing one `(release_at, unit_id)` — one physical site at one
  * release moment. Ordered by:
@@ -198,10 +212,18 @@ export async function rankHoldLine(releaseAt: string, unitId: string): Promise<L
     const behind = ordered.slice(1).filter((c) => c.status === 'requested').map((c) => c.id);
     if (behind.length) {
       const { noteAttempt } = await import('../src/lib/rc-holds');
+      // CONDITIONAL, BECAUSE RANK 1 MAY NEVER TAP. The line ranks `offered` rows as well as
+      // `requested` ones — deliberately, since an untapped rival can still tap before the
+      // release — but `dueHolds` serves only the `requested`. On 2026-08-25 rank 1 never
+      // answered and rank 2 carted the site at T+2s, with this note already on his row
+      // asserting "their hold is the one being carted". It was not. The note is a
+      // diagnostic (`last_attempt_note` is read by `rc-holds-readout.mts` and by nothing
+      // user-facing), so this cost nobody a campsite — but a readout that states the
+      // opposite of what happened is how the next morning gets misdiagnosed.
       await noteAttempt(
         behind,
         'another watcher is ahead of you in line for this site — they watched it first, ' +
-        'so their hold is the one being carted',
+        'so if they also ask for it, theirs is the one we cart',
       ).catch(() => {});
     }
   }

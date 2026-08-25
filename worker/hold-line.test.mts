@@ -233,6 +233,16 @@ test('the hold left behind SAYS SO, or the readout reports the 2026-08-07 outage
     'dead runner. Suppressing it silently would manufacture that false alarm.');
   assert.equal(behind.status, 'requested',
     'noteAttempt records that something looked and did nothing; it must not move status');
+  // AND IT MUST NOT ASSERT SOMETHING THAT MAY NEVER HAPPEN. The line ranks `offered` rows
+  // too, so rank 1 may never tap — on 2026-08-25 that is exactly what happened, and rank 2
+  // carted the site at T+2s with this note on his row claiming the other hold "is the one
+  // being carted". `last_attempt_note` is the readout's evidence for what the runner did;
+  // a flat assertion about a cart that did not occur is how the next morning gets read
+  // backwards. The wording must stay CONDITIONAL.
+  assert.doesNotMatch(String(behind.note), /is the one being carted/,
+    'the note must not state that the hold ahead is being carted — it may never be tapped');
+  assert.match(String(behind.note), /if they also ask for it/,
+    'the note must say what happens IF the hold ahead is also requested');
 });
 
 test('an unranked hold is still served — nothing regresses for the uncontested case', async () => {
