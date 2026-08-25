@@ -5,6 +5,7 @@ import Link from "next/link";
 import { buttonClasses } from "@/components/ui/Button";
 import { stayLabel, releaseLabel } from "@/lib/hold-labels";
 import { RC_CART_HOLD_MINUTES } from "@/lib/limits";
+import { isFinishedHandoff, byUrgency } from "@/lib/hold-ordering";
 
 /**
  * Sites CampHawk is holding for you — on the Watches tab, where you look for them.
@@ -39,6 +40,8 @@ interface MyHold {
   cartedAt: string | null;
   claimUrl?: string;
   holdUrl?: string;
+  updatedAt: string | null;
+  dismissToken?: string;
 }
 
 export default function HoldsPanel({ className }: { className?: string }) {
@@ -75,6 +78,13 @@ export default function HoldsPanel({ className }: { className?: string }) {
   const visible = holds?.filter((h) => !dismissed.includes(h.id)) ?? [];
   if (visible.length === 0) return null;
 
+  // FINISHED HAND-OFFS ARE COLLAPSED, NOT DELETED. The row is still the only route back to
+  // a site somebody may have booked and want to check, so it stays reachable — it just
+  // stops occupying the space above a live offer. Consolidating them behind one line is
+  // what the owner asked for when there are several.
+  const live = visible.filter((h) => !isFinishedHandoff(h)).sort(byUrgency);
+  const finished = visible.filter(isFinishedHandoff).sort(byUrgency);
+
   return (
     <section className={className} aria-label="Sites we're holding">
       <h2 className="mb-2 font-ch-display text-ch-h font-bold">Holds</h2>
@@ -89,61 +99,84 @@ export default function HoldsPanel({ className }: { className?: string }) {
           The inner `min-w-0 flex-1` was already correct and could never have helped — it
           constrains the flex CHILD, and the overflow was the grid TRACK one level up. */}
       <div className="grid grid-cols-[minmax(0,1fr)] gap-2.5">
-        {visible.map((h) => (
+        {live.map((h) => (
           <HoldRow key={h.id} hold={h} onRemoved={(id) => setDismissed((d) => [...d, id])} />
         ))}
       </div>
+
+      {finished.length > 0 && (
+        <details className="mt-2.5">
+          <summary className="cursor-pointer rounded-ch-card border border-ch-line bg-ch-card px-3.5 py-2.5 text-ch-meta text-ch-ink-2">
+            {finished.length} finished hand-off{finished.length === 1 ? "" : "s"} — already
+            let go
+          </summary>
+          <div className="mt-2.5 grid grid-cols-[minmax(0,1fr)] gap-2.5">
+            {finished.map((h) => (
+              <HoldRow
+                key={h.id}
+                hold={h}
+                onRemoved={(id) => setDismissed((d) => [...d, id])}
+              />
+            ))}
+          </div>
+        </details>
+      )}
     </section>
   );
 }
 
 /**
- * "I'm done with this one" — the only remove this panel can honestly offer.
+ * "I'm done with this one" / "no thanks" — and why each row gets the control it gets.
  *
- * ## Why it is on `released` and nothing else
+ * ## `released`: the hand-off is over
  *
- * A released hold is FINISHED: the bot has already let go, the site is on
- * ReserveCalifornia for whoever gets there first, and nothing further will happen to the
- * row. It nonetheless sat in this list for ever, because `/api/rc-holds/mine` keeps
- * `carted`/`claiming`/`released` regardless of age and **nothing in the product had ever
- * called the PATCH that retires one** — `markClaimed` existed, with a comment explaining
- * that it distinguishes an abandoned hand-off from a completed one, and had no caller. So
- * every hand-off anyone has ever completed is still on their Watches tab. That is the
+ * The bot has already let go, the site is on ReserveCalifornia for whoever gets there
+ * first, and nothing further will happen to the row. It nonetheless sat in this list for
+ * ever, because `/api/rc-holds/mine` keeps `carted`/`claiming`/`released` regardless of age
+ * and **nothing in the product had ever called the PATCH that retires one**. That is the
  * space the owner reported this eating, and `claimed` is exactly the state for it.
  *
- * The other four statuses get NO remove, and the omission is the design:
+ * ## `offered`: THIS ONE NEEDED A SERVER-SIDE DECLINE FIRST
  *
- *   - `carted` / `claiming` — the bot is holding a real campsite in a real cart right now.
- *     Hiding that row does not release it; it takes the site off the market for every other
- *     camper and removes the only thing on screen still pointing at it. That is the
- *     2026-08-13 leak with a button on it.
- *   - `offered` / `requested` — there is no decline path server-side, so a remove here could
- *     only ever hide the row while the bot went on to cart the site at 08:00 anyway. A
- *     control that appears to cancel and does not is worse than no control. Giving these a
- *     real "no thanks" means a server-side decline (and freeing the capacity seat an
- *     `offered` row occupies), which is hold-lifecycle work, not panel work.
+ * This panel used to give `offered` no remove at all, and the reasoning was right at the
+ * time: there was no decline path, so an X could only ever hide the row while the bot went
+ * on to cart the site at 08:00 anyway, and **a control that appears to cancel and does not
+ * is worse than no control**. The owner asked for the X; the honest way to give it was to
+ * build `declineHold`, not to hide the card.
+ *
+ * It is not cosmetic. An `offered` row occupies a capacity seat — `holdWindowLoad` counts
+ * it, because the button is in an email we cannot retract — and since the fairness line it
+ * occupies a POSITION too, so declining moves the next person up. Hiding a card could
+ * never do either.
+ *
+ * ## `carted` / `claiming` get NO control, and the omission is the design
+ *
+ * The bot is holding a real campsite in a real cart right now. Hiding that row does not
+ * release it; it takes the site off the market for every other camper and removes the only
+ * thing on screen still pointing at it. That is the 2026-08-13 leak with a button on it.
+ *
+ * ## Why declining asks twice
+ *
+ * It cannot be undone — the offer is retracted, and a later tap on the emailed link finds
+ * nothing to act on. This is the same rule that gives the `hold` action a confirm page of
+ * its own rather than acting on a GET: the irreversible ones ask. Retiring a `released`
+ * row does not, because by then there is nothing left to lose.
  *
  * ## The token
  *
- * Read back out of `claimUrl`, which this row already holds — the same hold id + manage
- * token pair that authorises RELEASING the site. Never weaker than the authorisation for
- * the more consequential act on the same row.
+ * `dismissToken` is the watch's manage token — the same pair that authorises RELEASING the
+ * site. Never weaker than the authorisation for the more consequential act on the same
+ * row. It is minted server-side for the caller's own watches, which is why this no longer
+ * digs it back out of `claimUrl`: an `offered` row has no claim URL to dig in.
  */
-function removeToken(claimUrl: string | undefined): string | null {
-  if (!claimUrl) return null;
-  try {
-    return new URL(claimUrl, window.location.origin).searchParams.get("t");
-  } catch {
-    return null;
-  }
-}
-
 function HoldRow({ hold, onRemoved }: { hold: MyHold; onRemoved: (id: string) => void }) {
   const [removing, setRemoving] = useState(false);
-  const [removeError, setRemoveError] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const held = hold.status === "carted" || hold.status === "claiming";
   const released = hold.status === "released";
-  const token = released ? removeToken(hold.claimUrl) : null;
+  const offered = hold.status === "offered";
+  const token = (released || offered) && hold.dismissToken ? hold.dismissToken : null;
   // READY MEANS THERE IS SOMETHING TO PRESS, not that the hold exists. A `requested` hold
   // is real and important and there is nothing whatever for its owner to do until 08:00, so
   // giving it the same urgent styling as a site sitting in a cart teaches people to ignore
@@ -153,19 +186,33 @@ function HoldRow({ hold, onRemoved }: { hold: MyHold; onRemoved: (id: string) =>
   async function remove() {
     if (!token) return;
     setRemoving(true);
-    setRemoveError(false);
+    setRemoveError(null);
     try {
+      // DELETE declines an offer, PATCH retires a finished hand-off. Two verbs because
+      // they are two different acts on the server: one retracts a promise and frees a
+      // capacity seat, the other only files the row away.
       const r = await fetch("/api/rc-holds/claim", {
-        method: "PATCH",
+        method: offered ? "DELETE" : "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: hold.id, token }),
       });
-      if (!r.ok) { setRemoveError(true); return; }
+      if (!r.ok) {
+        // A 409 is the server refusing because the hold has moved on — most likely the
+        // bot already carted it. Saying "try again" there would be wrong twice over, so
+        // it says what happened and the next poll will show the real state.
+        setRemoveError(
+          r.status === 409
+            ? "Too late to withdraw this one — it has already been acted on."
+            : "Could not remove that just now. Try again in a moment.",
+        );
+        return;
+      }
       onRemoved(hold.id);
     } catch {
-      setRemoveError(true);
+      setRemoveError("Could not remove that just now. Try again in a moment.");
     } finally {
       setRemoving(false);
+      setConfirming(false);
     }
   }
 
@@ -196,10 +243,14 @@ function HoldRow({ hold, onRemoved }: { hold: MyHold; onRemoved: (id: string) =>
         {token && (
           <button
             type="button"
-            onClick={remove}
-            disabled={removing}
-            title="Remove from this list"
-            aria-label={`Remove ${hold.unitLabel} from this list`}
+            onClick={() => (offered ? setConfirming(true) : remove())}
+            disabled={removing || confirming}
+            title={offered ? "I don't want this one" : "Remove from this list"}
+            aria-label={
+              offered
+                ? `Don't hold ${hold.unitLabel} for me`
+                : `Remove ${hold.unitLabel} from this list`
+            }
             className="-my-1.5 -mr-1.5 grid size-8 shrink-0 cursor-pointer place-items-center rounded-full text-[15px] leading-none text-ch-ink-2 hover:bg-black/[.07] hover:text-ch-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ch-green disabled:opacity-50"
           >
             <span aria-hidden="true">✕</span>
@@ -225,11 +276,38 @@ function HoldRow({ hold, onRemoved }: { hold: MyHold; onRemoved: (id: string) =>
         </Link>
       )}
       {removeError && (
-        <p className="mt-2 text-ch-meta text-ch-ochre-ink">
-          Could not remove that just now. Try again in a moment.
-        </p>
+        <p className="mt-2 text-ch-meta text-ch-ochre-ink">{removeError}</p>
       )}
-      {hold.status === "offered" && hold.holdUrl && (
+      {/* THE SECOND ASK. Declining retracts the offer for good — a later tap on the emailed
+          link finds nothing to act on — so it is confirmed, exactly as the `hold` action
+          itself is. It also says what declining DOES, because "we'll let it go" is the part
+          that makes the choice a real one rather than a tidy-up. */}
+      {offered && confirming && (
+        <div className="mt-3 rounded-xl border border-ch-line bg-ch-card p-3">
+          <p className="text-ch-meta leading-normal text-ch-ink-2">
+            Drop this one? We won&rsquo;t try for {hold.unitLabel}, and if somebody else is
+            watching it they move up the queue. You can still book it yourself when it opens.
+          </p>
+          <div className="mt-2.5 flex gap-2">
+            <button
+              type="button"
+              onClick={remove}
+              disabled={removing}
+              className={buttonClasses({ variant: "quiet", className: "flex-1" })}
+            >
+              Yes, drop it
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              className={buttonClasses({ variant: "quiet", className: "flex-1" })}
+            >
+              Keep it
+            </button>
+          </div>
+        </div>
+      )}
+      {offered && !confirming && hold.holdUrl && (
         <Link href={hold.holdUrl} className={buttonClasses({ fullWidth: true, className: "mt-3" })}>
           Hold it for me
         </Link>
