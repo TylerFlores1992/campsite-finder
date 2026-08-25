@@ -18,7 +18,7 @@
 //   • NEVER a camphawk.app link (see sendSms, which throws on our own domain).
 //   • Provider URLs only, fragment stripped — a well-known destination, no redirect.
 
-import { fitOneSegment } from '@/lib/notifications/sms-fit';
+import { fitOneSegment, SMS_ONE_SEGMENT } from '@/lib/notifications/sms-fit';
 import { formatStayDates } from '@/lib/notifications/dates';
 import type { NotificationPayload } from '@/lib/notifications';
 
@@ -35,6 +35,9 @@ export interface SmsBodyInput {
   holdUrl?: string | null;
   /** Injected so this stays pure; `dispatchSms` passes its own formatter. */
   formatReleaseTime: (iso?: string | null, short?: boolean) => string;
+  /** Other sites that opened for the SAME watch in the SAME cycle — see
+   *  `worker/alert-batch.ts`. Present only on an `available`/`still_open` batch. */
+  alsoSites?: ReadonlyArray<{ campsiteName?: string | null }> | null;
 }
 
 export function smsBody(p: SmsBodyInput): string {
@@ -122,5 +125,40 @@ export function smsBody(p: SmsBodyInput): string {
   // like the first alert it reads as a duplicate, which is the complaint that produced
   // the feature.
   const lead = p.kind === 'still_open' ? 'STILL open for' : 'open for';
+
+  // A BATCH: several sites of one park opened in the same cycle (a park watch at an 08:00
+  // release). One text for one event, instead of one per division.
+  //
+  // TWO SHAPES, AND THE SECOND IS THE ONE THAT MATTERS. The names are worth having — "#96,
+  // #33" is what a reader checks against the map — but they are also the part that grows
+  // without bound, and a two-segment alert is the shape that was Undelivered/30007
+  // thirteen times on 2026-08-05. So the labels are attempted, MEASURED against the budget,
+  // and dropped for a bare count if they do not fit; only then does `fitOneSegment` start
+  // trimming the name. Losing the site numbers costs the reader a detail the email and the
+  // app both carry in full. Losing the message costs them the campsite.
+  //
+  // THE LINK IS THE LEAD SITE'S, AND THAT IS A KNOWN LIMIT rather than an oversight. A
+  // batch spans divisions of one park, and there is one URL slot: it points at the loop the
+  // FIRST-listed site is in, which is the site named first in the text. The others need the
+  // email (every one with its own link) or the app. Deriving a park-level URL by stripping
+  // a path segment is not done on purpose — inventing a provider URL shape from its parts
+  // is how `/Web/#!park/...` was written from memory twice and answered with RC's 404 both
+  // times, the second time burning a live test.
+  const others = p.alsoSites ?? [];
+  if (others.length) {
+    const count = 1 + others.length;
+    const labels = [p.campsiteName, ...others.map((o) => o.campsiteName)]
+      .filter((x): x is string => typeof x === 'string' && x.length > 0);
+    const build = (n: string, list: string) =>
+      `CampHawk: ${n} — ${count} sites ${lead} ${formatStayDates(p.availableDates)}${list}. Book: ${bookTxt}`;
+    // ALL of them or NONE. A partial list reads as the complete one, so a reader would
+    // check two site numbers against the map and never learn about the third.
+    if (labels.length === count) {
+      const withLabels = fitOneSegment((n) => build(n, `: ${labels.join(', ')}`), name);
+      if (withLabels.length <= SMS_ONE_SEGMENT) return withLabels;
+    }
+    return fitOneSegment((n) => build(n, ''), name);
+  }
+
   return fitOneSegment((n) => `CampHawk: ${n}${site} ${lead} ${formatStayDates(p.availableDates)}. Book: ${bookTxt}`, name);
 }

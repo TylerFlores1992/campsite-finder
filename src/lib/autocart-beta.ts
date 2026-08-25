@@ -49,3 +49,20 @@ export const AUTOCART_BETA_NOTE =
 /** The same thing with a character budget, for a push body or a card subtitle. */
 export const AUTOCART_BETA_NOTE_SHORT =
   'Beta — set an alarm too, in case we miss it.';
+
+/**
+ * The part that is specific to the settings card, where BOTH lanes are on screen.
+ *
+ * Recreation.gov auto-cart has been carting live sites for weeks and is not in testing;
+ * the ReserveCalifornia hold-and-hand-off path is. Labelling the whole feature "Beta"
+ * would put a warning on a paid product that mostly works, which is its own kind of
+ * untrue — so where the two appear together, the note says which one it is about.
+ *
+ * A SEPARATE CONSTANT RATHER THAN A SECOND NOTE. `AutoCartSettings` carried its own
+ * paraphrase of the beta wording for a while ("still under testing... finish the booking
+ * yourself rather than assuming it is done"), which is exactly the drift this module
+ * exists to prevent: two forms of words, and the careful one quietly stops being the one
+ * people read. Compose, never restate.
+ */
+export const AUTOCART_BETA_SCOPE =
+  'This is about ReserveCalifornia holds only — Recreation.gov auto-cart is not affected.';

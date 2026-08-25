@@ -38,6 +38,8 @@
 // thing to revisit if RA detections start looking late.
 
 /** Inside this many days, nothing changes — see limit (1) above. */
+
+import { watchKey } from './watch-key';
 export const HOT_LEAD_DAYS = Number(process.env.POLL_HOT_LEAD_DAYS ?? 14);
 
 /**
@@ -81,7 +83,14 @@ export function intervalForLead(leadDays: number, source: string, baseMs = 0): n
 /**
  * Tracks when each watch was last checked, so a cycle can skip the far-out ones.
  *
- * Keyed by watch id and PRUNED against the live set every cycle. Without the prune this
+ * KEYED BY (WATCH, CAMPGROUND), NOT BY WATCH — see `watch-key.ts`. Since migration 070 a
+ * park watch is several rows sharing one `w.id`, and this stamps `last[key] = now` for the
+ * first row it admits. The siblings are then tested in the SAME call against a `prev` of
+ * now: at the hot interval of 0 they scrape through, and at any tiered interval they are
+ * refused — on that cycle and on every cycle after, because the first row keeps re-stamping
+ * the shared key. Two of one live watch's three divisions were never polled at all.
+ *
+ * PRUNED against the live set every cycle. Without the prune this
  * grows for the life of the process as watches expire — small, but the poller is a
  * long-running 512MB machine that has already been killed once by memory pressure during
  * a catalog sync, and an unbounded map in the hot loop is not something to leave for
@@ -91,24 +100,25 @@ export class DueTracker {
   private last = new Map<string, number>();
 
   /** Watches from `all` that are due this cycle. Prunes anything no longer present. */
-  due<T extends { id: string; source: string; leadDays: number }>(
+  due<T extends { id: string; campground_id: string; source: string; leadDays: number }>(
     all: readonly T[],
     now: number,
     baseMs = 0,
   ): T[] {
-    const live = new Set(all.map((w) => w.id));
+    const live = new Set(all.map(watchKey));
     for (const id of this.last.keys()) if (!live.has(id)) this.last.delete(id);
 
     const out: T[] = [];
     for (const w of all) {
       const interval = intervalForLead(w.leadDays, w.source, baseMs);
-      const prev = this.last.get(w.id);
+      const key = watchKey(w);
+      const prev = this.last.get(key);
       // Never checked is always due: a fresh deploy must not sit out a full interval, and
       // a new watch must not wait five minutes for its first look.
       // A `prev` in the future (clock step on a resumed Fly machine) also counts as due —
       // failing toward checking costs one fetch.
       if (prev === undefined || prev > now || now - prev >= interval) {
-        this.last.set(w.id, now);
+        this.last.set(key, now);
         out.push(w);
       }
     }

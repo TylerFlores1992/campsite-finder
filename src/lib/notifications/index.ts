@@ -59,6 +59,28 @@ export interface NotificationPayload {
    *  promise into a routine alert and hide a real outage from the person best placed to
    *  report it. */
   kind?: 'available' | 'coming_soon' | 'carted' | 'still_open' | 'hold_missed';
+  /**
+   * Other sites that opened for the SAME watch in the SAME poller cycle.
+   *
+   * A park watch covers several of ReserveCalifornia's divisions, and at an 08:00 release
+   * every held site in the park frees at once — so one event became one alert per
+   * division. This carries the rest of them so it can be one message instead.
+   *
+   * THE CLAIMS ARE UNCHANGED. Every site still won its own `(watch, campground::site)`
+   * claim before any of this; only the sending is merged. Changing what a claim key means
+   * is what produced the 26-texts-in-an-hour storm on 2026-08-24, in a change that was
+   * also trying to reduce alerts. See `worker/alert-batch.ts`.
+   *
+   * Each entry keeps its OWN booking URL, because a deep link is per site and per
+   * division — the email lists them individually. The SMS cannot, so it names the park and
+   * a count; that channel's budget is one segment and a second one is not delivered.
+   */
+  alsoSites?: Array<{
+    campgroundName: string;
+    campsiteName: string | null;
+    campsiteId: string | null;
+    bookingUrl: string;
+  }> | null;
   /** For 'coming_soon': ISO-local release time (e.g. "2026-07-18T08:00:00"). */
   availableAt?: string | null;
   /** The one-tap CampHawk URL for this alert: "hold it for me" on a 'coming_soon',
@@ -218,7 +240,14 @@ async function dispatchEmail(payload: NotificationPayload, links: ActionLinks): 
             // Distinct subject on purpose: in a mailbox, an identical one six hours
             // later just looks like we sent the same alert twice.
             ? `⛺ Still available: ${payload.campgroundName}`
-            : `⛺ Campsite available: ${payload.campgroundName}`,
+            // A BATCH SAYS SO IN THE SUBJECT. In a mailbox, "Campsite available: Morro Bay
+            // SP" three times reads as three alerts sent by mistake; once, saying three,
+            // reads as one event. The park name comes from the LEAD opening, which is the
+            // division that reported first — every batch is one watch, so they are all
+            // divisions of the same park.
+            : payload.alsoSites?.length
+              ? `⛺ ${1 + payload.alsoSites.length} campsites available: ${payload.campgroundName}`
+              : `⛺ Campsite available: ${payload.campgroundName}`,
       html: buildEmailHtml(payload).replace('</body>', `${actionFooterHtml(links)}</body>`),
     });
     await logNotification(payload, 'email', 'sent');
@@ -282,6 +311,7 @@ async function dispatchSms(payload: NotificationPayload): Promise<void> {
       bookingUrl: payload.bookingUrl,
       availableAt: payload.availableAt,
       holdUrl: payload.holdUrl,
+      alsoSites: payload.alsoSites,
       formatReleaseTime,
     });
     // `sent` here still means only "Twilio accepted it" — the row is completed later
@@ -351,10 +381,18 @@ export function pushBody(payload: NotificationPayload): { title: string; body: s
   } else if (payload.kind === 'coming_soon') {
     title = `⏳ Opening soon: ${name}`;
     body = `${subject} was just cancelled — we'll alert you when it's bookable.`;
-  } else if (payload.kind === 'still_open') {
+  } else if (payload.kind === 'still_open' || !payload.kind || payload.kind === 'available') {
     const dates = formatStayDates(payload.availableDates);
-    title = `⛺ Still available: ${name}`;
-    body = `${subject} is still open for ${dates}. Tap to book.`;
+    const still = payload.kind === 'still_open';
+    const extra = payload.alsoSites?.length ?? 0;
+    title = still ? `⛺ Still available: ${name}` : `⛺ Available: ${name}`;
+    // A BATCH LEADS WITH THE COUNT, because on a lock screen that is the whole news: one
+    // park, several sites. Naming one of them and silently dropping the others is worse
+    // than naming none — the reader books the one they were told about and never learns
+    // the rest were free.
+    body = extra
+      ? `${1 + extra} sites ${still ? 'still open' : 'open'} for ${dates}. Tap to see them.`
+      : `${subject} ${still ? 'is still open' : 'open'} for ${dates}. Tap to book.`;
   } else {
     const dates = formatStayDates(payload.availableDates);
     title = `⛺ Available: ${name}`;
@@ -625,6 +663,28 @@ export function buildEmailHtml(payload: NotificationPayload): string {
     <p style="margin:0 0 8px;font-weight:600">Available dates:</p>
     <ul style="margin:0;padding-left:20px">${dateList}</ul>
   </div>
+
+  ${
+    // THE OTHER SITES, EACH WITH ITS OWN LINK. This is the channel with room for them, and
+    // it is why the SMS can honestly fall back to a count: a deep link is per site and per
+    // division, so a batched text pointing at one of them would send the reader to the
+    // wrong loop. Here every site keeps the exact link the un-batched alert would have had.
+    payload.alsoSites?.length
+      ? `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:20px;margin:20px 0">
+    <h3 style="margin:0 0 8px">Also open right now</h3>
+    <p style="margin:0 0 12px;color:#555">Same watch, same nights — these opened at the same moment.</p>
+    ${payload.alsoSites
+      .map(
+        (a) => `<p style="margin:0 0 10px">
+      <strong>${a.campsiteName ? `Site ${a.campsiteName}` : 'A site'}</strong>
+      <span style="color:#555"> — ${a.campgroundName}</span><br>
+      <a href="${a.bookingUrl}" style="color:#16a34a;font-weight:600">View &amp; book →</a>
+    </p>`,
+      )
+      .join('')}
+  </div>`
+      : ''
+  }
 
   <p style="color:#ef4444;font-weight:600">⏱ Cancellations go fast — book as soon as you can before someone else grabs it.</p>
 

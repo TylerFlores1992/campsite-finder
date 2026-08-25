@@ -158,10 +158,24 @@ export async function requestHold(watchId: string, unitId: string): Promise<Hold
 export async function dueHolds(leadSeconds = 60, graceMinutes = 20): Promise<HoldRequest[]> {
   try {
     return await query<HoldRequest>(
-      `SELECT * FROM rc_hold_requests
-        WHERE status = 'requested'
-          AND release_at <= to_char((NOW() + ($1 || ' seconds')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
-          AND release_at >= to_char((NOW() - ($2 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+      // ONE HOLD PER (release_at, unit_id) — see `worker/hold-line.ts`. RC lists the same
+      // physical campsite under more than one facility, so two people can each hold a
+      // correct offer for one site (measured 2026-08-24, unit 43191). Serving both would
+      // ask RC for the same unit twice: one cart succeeds and RC refuses the other in its
+      // own wording, which reads as a fault rather than as a queue.
+      //
+      // `line_rank` NULLS LAST, then `id`, so an unranked row (uncontested, or predating
+      // migration 068) still resolves deterministically instead of alternating between
+      // shards. A hold nobody tapped is not in this query at all, so the line only decides
+      // anything when two people BOTH asked.
+      `SELECT * FROM (
+         SELECT DISTINCT ON (release_at, unit_id) *
+           FROM rc_hold_requests
+          WHERE status = 'requested'
+            AND release_at <= to_char((NOW() + ($1 || ' seconds')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+            AND release_at >= to_char((NOW() - ($2 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+          ORDER BY release_at, unit_id, line_rank ASC NULLS LAST, id
+       ) q
         ORDER BY release_at ASC
         LIMIT 25`,
       [String(leadSeconds), String(graceMinutes)],
@@ -628,6 +642,55 @@ export async function lastRehearsal(): Promise<RehearsalRow | null> {
     `SELECT ran_at::text, ok, ok_at::text, detail, skipped_why FROM rc_login_rehearsal WHERE id = 1`,
   ).catch(() => []);
   return row ?? null;
+}
+
+/**
+ * "No thanks" — the user turned down an offer we made.
+ *
+ * WHY THIS HAD TO EXIST BEFORE THE BUTTON DID. `HoldsPanel` deliberately gave `offered`
+ * rows no remove control, and its header says why: with no server-side decline, an X could
+ * only ever hide the row while the bot went on regardless, and a control that appears to
+ * cancel and does not is worse than no control. So the owner's ask for an X on the "Hold
+ * it for me" card is answered by building the decline, not by hiding the card.
+ *
+ * IT IS NOT MERELY COSMETIC, AND THAT IS THE POINT. An `offered` row occupies a capacity
+ * seat (`holdWindowLoad` counts it, because the button is in an email we cannot retract),
+ * and since the fairness line it also occupies a POSITION — declining moves everybody
+ * behind you up, which is the one thing hiding a card could never do.
+ *
+ * `offered` ONLY, and the narrowness is the safety:
+ *   - `requested` is a commitment the bot is about to honour. Retracting it is a cancel,
+ *     which is a different act with a different confirmation, and getting it wrong at
+ *     07:59 loses a campsite.
+ *   - `carted`/`claiming` hold a real site in a real RC cart. Marking one of those
+ *     terminal does not release it — it takes the site off the market for everyone and
+ *     removes the last thing on screen still pointing at it. That is the 2026-08-13 leak
+ *     with a button on it.
+ *
+ * `expired` rather than a new status: it is already terminal, already excluded from
+ * `holdWindowLoad` and from `/api/rc-holds/mine`, and adding a seventh value to the
+ * lifecycle means a CHECK migration and every consumer that enumerates statuses. The
+ * NOTE is what keeps a decline distinguishable from a lapse in the readout.
+ *
+ * Returns false when nothing was declined, which the caller must not report as success —
+ * a row that has moved past `offered` has been acted on, and saying "removed" over a hold
+ * the bot is about to cart is the same lie the missing control was avoiding.
+ */
+export async function declineHold(id: string): Promise<boolean> {
+  try {
+    const rows = await mutate<{ id: string }>(
+      `UPDATE rc_hold_requests
+          SET status = 'expired', updated_at = NOW(),
+              last_attempt_note = 'declined by the user - they removed the offer from their watches page'
+        WHERE id = $1 AND status = 'offered'
+        RETURNING id`,
+      [id],
+    );
+    return rows.length > 0;
+  } catch (err) {
+    console.error('[rc-holds] declineHold failed:', (err as Error).message);
+    return false;
+  }
 }
 
 export async function markClaimed(id: string): Promise<void> {

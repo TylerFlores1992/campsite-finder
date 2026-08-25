@@ -35,6 +35,9 @@ import { SHARD_COUNT, LEASE_RENEW_MS, claimOrRenewShard, heldShard, ownsCampgrou
 import { leadDaysUntil } from './lead-time';
 import { heldCheckDue, clampHeldInterval, RC_HELD_CHECK_DEFAULT_MS } from './held-cadence';
 import { claimHoldNotification, releaseHoldClaims } from './hold-claim';
+import { rankHoldLine } from './hold-line';
+import { watchKey } from './watch-key';
+import { groupByWatch, alsoSitesFrom } from './alert-batch';
 import { DueTracker, intervalForLead } from './poll-cadence';
 import { startRateProfile } from './rate-profile';
 import { findRCOpenUnit, findRCHeldUnits } from '../src/lib/availability/reservecalifornia';
@@ -832,6 +835,12 @@ async function cycle(): Promise<void> {
   const hotPairs = [...pairLead.values()].filter((l) => l <= RECGOV_HOT_LEAD_DAYS).length;
 
   const monthData = new Map<string, Awaited<ReturnType<typeof getAvailabilityFromRecGov>>>();
+  // KEYED BY (WATCH, CAMPGROUND) — `watchKey`, never a bare watch id. Since migration 070
+  // a park watch is SEVERAL rows of `watches` sharing one `w.id`, and these maps are
+  // written from a fan-out over those rows: on a shared key the last division to finish
+  // overwrote the others, and then every row read the survivor back. N divisions each
+  // claimed under their own campground namespace and alerted about ONE site, while the
+  // other divisions' real openings were discarded. Live on two watches on 2026-08-24.
   const rcResults = new Map<string, { dates: string[]; unitId: number; sleepingUnitId: number | null; name: string | null }>();
   const rcHeld = new Map<string, { dates: string[]; availableAt: string; unitId: number | null; name: string | null }[]>();
   const raResults = new Map<string, { dates: string[]; siteIds: number[]; start: string; end: string }>();
@@ -907,7 +916,7 @@ async function cycle(): Promise<void> {
           const required = Math.max(w.min_nights, nights.length);
           const open = await findRCOpenUnit(w.campground_id, w.start_date, w.end_date, required, w.muted_site_ids, flexOf(w));
           // Flexible watches report just the matched run; fixed report the whole stay.
-          if (open) rcResults.set(w.id, { dates: open.dates.length ? open.dates : nights, unitId: open.unitId, sleepingUnitId: open.sleepingUnitId, name: open.name });
+          if (open) rcResults.set(watchKey(w), { dates: open.dates.length ? open.dates : nights, unitId: open.unitId, sleepingUnitId: open.sleepingUnitId, name: open.name });
         },
         RECGOV_CONCURRENCY
       );
@@ -949,7 +958,7 @@ async function cycle(): Promise<void> {
             // ALL of them — see findRCHeldUnits. One grid fetch either way.
             const held = await findRCHeldUnits(
               w.campground_id, w.start_date, w.end_date, required, flexOf(w), w.muted_site_ids);
-            if (held.length) rcHeld.set(w.id, held.map((h) => ({ dates: h.dates, availableAt: h.availableAt, unitId: h.unitId, name: h.name })));
+            if (held.length) rcHeld.set(watchKey(w), held.map((h) => ({ dates: h.dates, availableAt: h.availableAt, unitId: h.unitId, name: h.name })));
           },
           RECGOV_CONCURRENCY
         );
@@ -961,7 +970,7 @@ async function cycle(): Promise<void> {
       raDueNow,
       async (w) => {
         const m = await probeFlexStay(w, (s, e, required) => findReserveAmericaOpen(w.campground_id, s, e, required));
-        if (m) raResults.set(w.id, { dates: m.dates, siteIds: m.result.siteIds, start: m.start, end: m.end });
+        if (m) raResults.set(watchKey(w), { dates: m.dates, siteIds: m.result.siteIds, start: m.start, end: m.end });
       },
       RECGOV_CONCURRENCY
     ),
@@ -971,7 +980,7 @@ async function cycle(): Promise<void> {
       gtcDueNow,
       async (w) => {
         const m = await probeFlexStay(w, (s, e, required) => findGoingToCampOpen(w.campground_id, s, e, required));
-        if (m) gtcResults.set(w.id, { dates: m.dates, resourceIds: m.result.resourceIds, start: m.start, end: m.end });
+        if (m) gtcResults.set(watchKey(w), { dates: m.dates, resourceIds: m.result.resourceIds, start: m.start, end: m.end });
       },
       RECGOV_CONCURRENCY
     ),
@@ -989,7 +998,7 @@ async function cycle(): Promise<void> {
           console.log(`[poller] TN/SC ${w.campground_id} (${s}..${e}): ${open ? `OPEN ${open.availableSites} sites` : 'no opening'}`);
           return open;
         });
-        if (m) tnscResults.set(w.id, { dates: m.dates, start: m.start, end: m.end });
+        if (m) tnscResults.set(watchKey(w), { dates: m.dates, start: m.start, end: m.end });
       },
       RECGOV_CONCURRENCY
     ),
@@ -1000,15 +1009,26 @@ async function cycle(): Promise<void> {
   // (throttled) after the notify loop. Covers EVERY watch now that auto-cart shares
   // this loop, so the sampling no longer has a hole where the popular sites are.
   const observed: Array<{ w: WatchRow; hadOpening: boolean }> = [];
+  /**
+   * OPENINGS ARE COLLECTED HERE AND SENT AFTER THE LOOP, so several divisions of one park
+   * watch become ONE message instead of one per division. See `worker/alert-batch.ts`.
+   *
+   * THE LOOP BELOW IS OTHERWISE UNTOUCHED, and that is the whole safety argument: every
+   * site still wins or loses its own claim exactly when it did before, and
+   * `claimNotification` still runs on every cycle a site is open — it doubles as the
+   * "still open" observation, and a skipped call looks identical to the site vanishing.
+   * Only the `dispatchNotifications` call moved.
+   */
+  const openings: Array<{ payload: NotificationPayload; source: string; siteId: string | null }> = [];
   for (const watch of mainWatches) {
-    const rc = rcResults.get(watch.id);
+    const rc = rcResults.get(watchKey(watch));
     const result: WatchResult =
       watch.campground_source === 'reserveamerica'
-        ? { dates: raResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
+        ? { dates: raResults.get(watchKey(watch))?.dates ?? [], campsiteId: null, campsiteName: null }
         : isGoingToCampSource(watch.campground_source)
-          ? { dates: gtcResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
+          ? { dates: gtcResults.get(watchKey(watch))?.dates ?? [], campsiteId: null, campsiteName: null }
         : isTnscSource(watch.campground_source)
-          ? { dates: tnscResults.get(watch.id)?.dates ?? [], campsiteId: null, campsiteName: null }
+          ? { dates: tnscResults.get(watchKey(watch))?.dates ?? [], campsiteId: null, campsiteName: null }
         : isUseDirectSource(watch.campground_source)
           // Surface the RC unit as the mutable "site" (id + friendly label).
           // RC's own label for the unit ("Hook Up (E ) Campsite #L006"), not its
@@ -1075,7 +1095,10 @@ async function cycle(): Promise<void> {
       `[poller] AVAILABILITY: ${watch.campground_name} (${watch.campground_id}) — ${result.dates.join(', ')} — notifying watch ${watch.id}`
     );
     try {
-      await dispatchNotifications({
+      openings.push({
+        source: watch.campground_source,
+        siteId: result.campsiteId,
+        payload: {
         userId: watch.user_id,
         watchId: watch.id,
         campgroundId: watch.campground_id,
@@ -1127,20 +1150,51 @@ async function cycle(): Promise<void> {
         // The six-hour follow-up must not read like a fresh opening — worded the same,
         // it is indistinguishable from the hourly-repeat bug it replaces.
         kind: claim.reason === 'nudge' ? 'still_open' : 'available',
+        },
       });
-      notified++;
-      // A held site that just went live: clear the held marker so a future
-      // cancellation of the same site alerts again.
-      if (isUseDirectSource(watch.campground_source)) {
-        // Drop only THIS UNIT'S claims. A blanket clear would let one site going live
-        // re-open the claim for every other site releasing in the same hour, and they
-        // would all re-announce on the next cycle — the storm arriving by another door.
-        // Keyed on the unit to match claimHoldNotification; a unit-less source clears its
-        // one wildcard claim, which is the behaviour it has always had.
-        await releaseHoldClaims(watch.id, result.campsiteId).catch(() => {});
-      }
     } catch (err) {
-      console.error(`[poller] notification failed for watch ${watch.id}:`, err);
+      console.error(`[poller] queueing the alert failed for watch ${watch.id}:`, err);
+    }
+  }
+
+  // ONE MESSAGE PER WATCH PER CYCLE. A park watch that finds an opening in three of its
+  // divisions at an 08:00 release sent three of everything; it now sends one naming three
+  // sites. Grouping is by WATCH, which is one stay window the user manages as a unit —
+  // two watches on one park have different dates and stay separate.
+  for (const group of groupByWatch(openings.map((o) => ({ ...o, watchId: o.payload.watchId })))) {
+    const [lead, ...rest] = group;
+    const payload: NotificationPayload = rest.length
+      ? {
+          ...lead.payload,
+          // EACH SITE KEEPS ITS OWN LINK — see `alsoSitesFrom`, which exists as a tested
+          // function precisely because substituting the lead's URL here is invisible in a
+          // diff and sends the reader to a loop the site is not in.
+          alsoSites: alsoSitesFrom(rest.map((r) => r.payload)),
+        }
+      : lead.payload;
+    if (rest.length) {
+      console.log(
+        `[poller] BATCHED: watch ${lead.payload.watchId} — ${group.length} sites opened this cycle ` +
+        `(${group.map((g) => g.payload.campsiteName ?? g.payload.campgroundId).join(', ')}) — sending ONE alert`
+      );
+    }
+    try {
+      await dispatchNotifications(payload);
+      notified++;
+    } catch (err) {
+      console.error(`[poller] notification failed for watch ${lead.payload.watchId}:`, err);
+    }
+    // THE HELD MARKER IS CLEARED PER SITE, for EVERY member of the batch — not just the
+    // one the message led with. A blanket clear would let one site going live re-open the
+    // claim for every other site releasing in the same hour, and they would all
+    // re-announce on the next cycle; clearing only the lead would leave the others' held
+    // markers set for ever, so a later cancellation of those sites would never announce.
+    // Keyed on the unit to match claimHoldNotification; a unit-less source clears its one
+    // wildcard claim, which is the behaviour it has always had.
+    for (const member of group) {
+      if (isUseDirectSource(member.source)) {
+        await releaseHoldClaims(member.payload.watchId, member.siteId).catch(() => {});
+      }
     }
   }
 
@@ -1152,7 +1206,7 @@ async function cycle(): Promise<void> {
     // dedup that matters is `claimHoldNotification`, which is keyed on the RELEASE TIME,
     // so a coming-soon heads-up still goes out at most once per release however many
     // ordinary availability alerts the same watch sends.
-    const heldUnits = rcHeld.get(w.id);
+    const heldUnits = rcHeld.get(watchKey(w));
     if (!heldUnits?.length) continue;
     // RECORD AN OFFER FOR EVERY held unit, so the watch page can list them all and each
     // has its own one-tap hold link — but ALERT about only the soonest. A text per site
@@ -1171,6 +1225,10 @@ async function cycle(): Promise<void> {
         nights: extra.dates.length || 1,
         releaseAt: extra.availableAt,
       }).catch(() => null);
+      // RANK THE LINE AFTER EVERY OFFER, including the ones that send no alert. A contest
+      // is only visible once the second offer exists, and it can arrive on any cycle — on
+      // 2026-08-24 the rival watch was created three hours after the first offer went out.
+      await rankHoldLine(extra.availableAt, String(extra.unitId)).catch(() => []);
     }
     const held = heldUnits[0];
     // A lock expiring in minutes is not a cancellation heads-up — see holdIsNewsworthy.
@@ -1262,6 +1320,10 @@ async function cycle(): Promise<void> {
           nights: held.dates.length || 1,
           releaseAt: held.availableAt,
         }).catch(() => null);
+        // Ranked whether or not `offerHold` returned an id: no row back means the user has
+        // already tapped, and a hold that has been ACCEPTED is exactly the one whose place
+        // in the line matters most.
+        await rankHoldLine(held.availableAt, String(held.unitId)).catch(() => []);
         // A missing hold link must never block the alert — the heads-up is useful on
         // its own, and the user can still book manually at 8am.
         if (offered) holdUrl = await actionUrlFor(w.id, 'hold', String(held.unitId)).catch(() => null);

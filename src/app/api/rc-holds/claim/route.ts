@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db/client';
-import { startClaim, getHold, markClaimed } from '@/lib/rc-holds';
+import { startClaim, getHold, markClaimed, declineHold } from '@/lib/rc-holds';
 import { bookingLink } from '@/lib/booking-url';
 
 export const dynamic = 'force-dynamic';
@@ -119,6 +119,31 @@ export async function GET(req: NextRequest) {
     campgroundName: park.name,
     bookingUrl: park.url,
   });
+}
+
+/**
+ * "No thanks" — decline an offer that has not been taken up.
+ *
+ * Authorised by the SAME hold id + manage token that authorises releasing the site, per
+ * this route's own rule: never weaker than the authorisation for the more consequential
+ * act on the same row.
+ *
+ * `declineHold` refuses anything past `offered`, and a refusal is reported as one. Saying
+ * "removed" over a hold the bot is about to cart would be exactly the lie that kept this
+ * control off the panel in the first place.
+ */
+export async function DELETE(req: NextRequest) {
+  const { id, token } = await req.json().catch(() => ({}));
+  const hold = await authorise(String(id ?? ''), String(token ?? ''));
+  if (!hold) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  const declined = await declineHold(hold.id);
+  if (!declined) {
+    return NextResponse.json(
+      { error: 'this hold has already been acted on', status: hold.status },
+      { status: 409 },
+    );
+  }
+  return NextResponse.json({ ok: true });
 }
 
 /** The user's own session took it. Recorded so an abandoned hand-off is distinguishable

@@ -1,29 +1,74 @@
 # Next session — start here
 
-*Rewritten 2026-08-24, evening.*
+*Rewritten 2026-08-25.*
 
-> ## UPDATED 2026-08-24, EVENING — the two urgent items are DONE.
+> ## THE OWNER'S FOUR-ITEM QUEUE IS DONE. §0a is now the record of it.
 >
-> **THE SMS STORM IS FIXED AND ON FLY** (`d842dc0`, #183). Migration 067 was already applied;
-> the poller fix is deployed, the worker deploy reported success with a fresh heartbeat, and
-> **nothing re-announced** — all six watches carrying a claim still read their backfilled
-> `<hour>|*` wildcard. §1 is history, kept for its reasoning.
+> Check §0 (egress) first, then read §0a for what shipped and — more usefully — for the two
+> pieces deliberately NOT built, both of which are the owner's decision rather than work.
+> Everything after §1 is context and standing state.
 >
-> **#183 IS MERGED** — it carried the `closeOnToken` liveness fix as well.
->
-> **THE WARM-UP IS SAMPLED** (`18bb337`, #184) and **the box is on it**. Track A's third door
-> is closed; it still has zero readings of a real ramp, because the event has not happened
-> since. **It may not happen tomorrow either — see §1b.**
->
-> **Track B remains NOT started**, by the owner's explicit decision on 2026-08-24: wait for one
-> attributed reading first.
->
-> Health at handover: **19 of 19 ok**. Master `18bb337`, box `18bb337`.
+> **The 08-25 08:00 PT release is UNREAD**: the queue was worked the evening before it. Run
+> the hold readout before anything else.
 
 *Delete this file once Track A has a reading from a real ramp AND the App Store version has a
 decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
 
 ---
+
+## 0a. THE OWNER'S FOUR-ITEM QUEUE — ALL FOUR SHIPPED (2026-08-25)
+
+Assigned 2026-08-24 evening, worked top to bottom on `claude/main-lane-docs-0824`. Each is
+written up in full in `CLAUDE.md`; this is the index and what is LEFT.
+
+| # | ask | state |
+|---|---|---|
+| 1 | Fairness — earliest watch gets first dibs | **shipped** (migration 068, applied + read back) |
+| 2 | X on the offer card, de-emphasise stale hand-offs | **shipped** |
+| 3 | RC beta copy on the marketing site | **shipped** |
+| 4 | Multiple openings as one text | **shipped** |
+
+Full suite **1258/1258**. Every guard mutation-verified; three mutations survived their
+first round and are written up where they happened.
+
+### WHAT IS LEFT, AND IT IS THE OWNER'S CALL — NOT AN AGENT'S
+
+Two pieces were deliberately NOT built. Both are decisions rather than work.
+
+1. **THE EXPIRY CASCADE** (cart for the first in line; on a lapse, re-cart for the next).
+   Gated on **measuring RC's real cart lapse**, which is read off RC's own bundle as ~15
+   minutes and **has never been observed**, while `reclaimLapsedHolds` waits 180. Between
+   those two numbers we would re-cart a site RC may already have released to the public and
+   tell a second user we are holding something we are not. **Measure first.** The
+   round-robin does not depend on it and is live without it.
+
+2. **CROSS-CYCLE ALERT BATCHING.** Today two sites opening at 08:00:00 and 08:00:20 are two
+   cycles and stay two messages. Merging them needs a hold-back window, which buys fewer
+   texts with **LATENCY on the most latency-critical path in the product**. That is a
+   product trade, not a tidy-up. Within-cycle batching (the park-watch case, which is what
+   produced the reported three texts) is shipped and costs nothing.
+
+### THE BIGGEST FIND WAS NOT ON THE LIST
+
+Designing item 4 turned up that **a poller row has been a (watch, campground) since
+migration 070 while five result maps and the cadence tracker still keyed on the watch id**.
+Both live park watches are affected — the same two from the 26-text storm. The result-map
+half was **live**: N divisions alerting about ONE site while the others' real openings were
+silently discarded. The `DueTracker` half is **latent** (it escapes inside the hot window by
+arithmetic luck) and would silently stop polling divisions of any park watch more than 14
+days out. Fixed with `worker/watch-key.ts`; `DueTracker.due` now REQUIRES `campground_id`,
+so the fix cannot be half-applied.
+
+### READ THIS BEFORE TRUSTING THE MORNING
+
+**The 08-25 08:00 PT release had not happened when this was written** — the box clock read
+2026-08-24 21:21 PT. Five real offers were outstanding across three users and **one was
+tapped**. Nobody has read the outcome. Start with:
+
+```bash
+NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
+NODE_USE_ENV_PROXY=1 npx tsx scripts/native-alloc-readout.mts
+```
 
 ## 0. BEFORE ANYTHING: can you actually reach production?
 
@@ -331,10 +376,10 @@ The SERIAL rules in `docs/LANES.md` bind while the hold is live:
 
 | | |
 |---|---|
-| Master | **`18bb337`** |
+| Master | **`8d2cb0f`** |
 | Branch | merged; `claude/main-lane-docs-0824` carries this handover update |
 | Mini-PC | **`18bb337`** — updated 21:57 PT, "updated and verified", 24s. Box and web match. |
-| Open PRs | **#180 (side lane, notes)** only. #183 and #184 are merged. |
+| Open PRs | **none** — #187 merged 2026-08-24, worker redeployed and verified (`last beat 6s ago, 2/2 shards`) |
 | Open issues | **#76**, **#14** (#174/#175 folded and closed 2026-08-23) |
 | Open holds | the 08-24 instrument has released; `expire-holds.ts` sweeps from Fly every 60s |
 | Migrations | highest applied **067** (the SMS-storm fix, applied to prod 08-24); next main-lane number is **068** (`070` is an old side-lane block claim). LANES.md's "next is 060" is stale. |
