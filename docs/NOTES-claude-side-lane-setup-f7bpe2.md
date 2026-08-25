@@ -2114,3 +2114,132 @@ not taken.
 - **The branch name IS the lane token**, and `claude/camphawk-side-lane-status-iij2xm` still does
   not match `docs/LANES.md`'s `claude/side-<topic>`. Fourth session running.
 
+
+---
+
+## 27. SUPABASE EGRESS IS 2.1x THE FREE LIMIT, AND 60% OF IT IS ONE 2-SECOND LOOP
+
+*Side lane, 2026-08-24 afternoon. Supabase sent a Fair Use warning: **11.81 GB of 5.5 GB**, grace
+cut to **3 days (Aug 27)**, after which projects return **402** until upgraded. The owner asked
+whether an upgrade was needed. Measured rather than guessed.*
+
+**MAIN LANE: the dominant cost is `scripts/auto-cart-bot/bot.mjs` and the route it polls. The
+immediate lever is an env var on the mini-PC; the real fix is code.**
+
+### 27a. IT IS CALL COUNT, NOT PAYLOAD SIZE
+
+```
+live sample, 60s:      3.4 PostgREST requests / second   =  ~290,000 / day
+cumulative:            16,418,388 requests since 2026-05-22 (stats_reset)
+11.81 GB / ~8.7M req per month  =>  ~1.4 KB per request
+```
+
+1.4 KB is a small JSON body plus HTTP/TLS overhead. **Nothing is shipping large result sets on
+the hot path** — the bill is eight-and-a-half million round trips.
+
+**`pg_stat_statements` IS AVAILABLE AND IS THE INSTRUMENT.** `SELECT calls, rows, query FROM
+pg_stat_statements ORDER BY rows DESC` answers this in one query. Because every call goes through
+the `exec_select` / `exec_dml` RPCs, the top rows are PostgREST's own wrappers and the per-request
+`set_config(...)` — **summing `calls` on `query LIKE 'select set_config%'` gives total API
+requests**, which is the number that maps to the egress bill.
+
+### 27b. THE DOMINANT LOOP — FOUR ROUND TRIPS EVERY TWO SECONDS
+
+`bot.mjs:38` — `const POLL_MS = Number(process.env.POLL_MS || 2000)` — and each roster poll costs
+**four separate database requests**:
+
+| | |
+|---|---|
+| `UPDATE autocart_bot_heartbeat SET beat_at = NOW()` | fire-and-forget liveness beacon |
+| the roster `SELECT` | enrolled users + their pending jobs |
+| `botUpdateState()` | inside `botControlFor()` |
+| `claimBotCommands()` | inside `botControlFor()` — a `Promise.all` of two |
+
+```
+43,200 polls/day x 4  =  ~173,000 requests/day  =  2.0 req/sec
+                          ~59% of the measured 3.4 req/sec
+                          ~7 GB of the 11.81
+```
+
+**THE CADENCE IS CONFIRMED, NOT ASSUMED.** `autocart.bot` read *"last beat 1s ago"*, and
+`autocart_bot_heartbeat.beat_at` advanced **20.1s across a 20s window** with an age of 3.4s at
+sample time. The bot is genuinely polling at two seconds. The 59% is arithmetic on top of that
+(`POLL_MS` read from source x 4 call sites counted in source, over a measured total).
+
+**AND IT IS POLLING FOR ALMOST NOTHING.** Every live watch is `reservecalifornia` or `ridb`, with
+essentially ONE rec.gov watch; `autocart_jobs` holds 73 rows lifetime. Forty-three thousand polls
+a day to service a feed that is nearly always empty.
+
+### 27c. TUNING ALONE DOES NOT GET UNDER 5 GB — the arithmetic, stated so it is not re-derived
+
+```
+POLL_MS 2000 -> 15000 :  173k/day -> ~23k/day
+total                 :  290k/day -> ~140k/day
+projected             :  ~5.7 GB/month     <- still over the 5 GB free limit
+```
+
+**The free tier is simply tight for a 24/7 polling product** with two Fly shards, a mini-PC bot
+and a hold runner. Even after the fix you would sit permanently near the ceiling, and one
+incident clears it — §26's alert flood wrote 52 notifications plus every poller cycle behind it.
+
+**SO THE RECOMMENDATION WAS: UPGRADE *AND* FIX**, which are separate decisions.
+A 402 takes CampHawk dark — no alerting, no 08:00 carts — for paying subscribers, with the App
+Store review live. That is a bad trade against ~$25/mo, and Pro's egress allowance is roughly
+50x the free one. The fix is still worth doing: 43,200 polls/day for one watch is waste whatever
+plan pays for it.
+
+### 27d. THE ONE FACT THAT DECIDES THE TIMING, AND NOBODY IN A SESSION CAN SEE IT
+
+**When does the billing period reset?** The 11.81 GB is ALREADY SPENT — cutting the rate today
+cannot un-spend it. If the cycle rolls before Aug 27 there is room to fix and stay free; if it
+does not, the 402 lands regardless of what changes now. That is on the usage dashboard and it is
+the deciding fact. **Do not tell the owner a tuning change averts the deadline without it.**
+
+### 27e. THE LEVERS, CHEAPEST FIRST
+
+1. **`POLL_MS` on the mini-PC** — env var in `scripts/auto-cart-bot/.env`, read at process start,
+   so it needs a bot restart (`stop-all` then `start-all.bat`) and **no code change and no
+   deploy**. 10-15s costs up to ~13s of rec.gov auto-cart pickup latency on one watch, against a
+   detection loop already running at 15s. The control channel tolerates it (diagnostics arrive a
+   few seconds later) and so does `autocart.bot`, which warns at ~120s.
+2. **The four-round-trips-per-tick shape is the real defect.** The heartbeat write and the two
+   control-channel reads do not need to run on every poll — the heartbeat could be written every
+   Nth tick, and the control channel could ride a longer cadence than the job feed. That is
+   `scripts/auto-cart-bot/` plus `src/lib/bot-control.ts`, i.e. main lane, and it is the same
+   class of finding as `/api/rc-proxy` batching: a hot loop nobody had counted.
+3. **Do NOT reach for the roster query's shape.** It is one `SELECT` returning at most 200 rows
+   and it is not the problem; the problem is that it happens 43,200 times a day alongside three
+   siblings.
+
+### 27f. CATALOGUED WHILE LOOKING, NOT INVESTIGATED
+
+From `pg_stat_user_tables`, worth a look if anyone chases this further:
+
+```
+watch_campgrounds      3,624,469 seq scans on a 5-row table
+users                  1,259,030 seq scans
+watches                1,030,007 seq scans   (34.1M tuples read)
+rc_hold_requests         478,333 seq scans
+campgrounds                9,359 seq scans   (73.4M tuples read)  <- 8,037-row table
+```
+
+Sequential scans on tiny tables are cheap and produce no egress, so **none of this is the bill** —
+but `campgrounds` reading 73 million tuples, and `watch_campgrounds` being scanned 3.6 million
+times, are both worth understanding before the next growth step. Recorded as observations, not
+findings.
+
+---
+
+### Handover addendum — 2026-08-24 afternoon
+
+**§27 supersedes nothing; it is new.** Supabase sent a Fair Use warning (11.81 GB of 5.5 GB,
+402 on **Aug 27**) and the cause is measured: **~60% of all database traffic is `bot.mjs`
+polling the roster feed every 2 seconds at four round trips per poll.** Recommendation given
+to the owner was **upgrade AND fix** — tuning alone lands at ~5.7 GB against a 5 GB limit, and
+the 11.81 GB is already spent so no change now averts the deadline.
+
+**The deciding fact nobody in a session can see: when the billing period resets.**
+
+Immediate lever is `POLL_MS` in `scripts/auto-cart-bot/.env` (bot restart, no deploy). The real
+fix — not writing the heartbeat and both control-channel reads on every tick — is main lane's.
+
