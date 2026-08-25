@@ -19,6 +19,22 @@
  * would be the sixth instance in waiting: it would pass while a FIFTH path was added with no
  * instrument. This enumerates every call that navigates to Okta and requires each to be
  * sampled or to appear in EXCEPTIONS with a reason.
+ *
+ * ── AND THE SAMPLER ALONE WAS NOT ENOUGH (2026-08-25) ─────────────────────────────────────
+ *
+ * Wiring every door was necessary and did not produce a reading. Three more ramps arrived
+ * unprompted in thirty hours and the instrument missed all three, and the reason is WHEN it
+ * reads rather than which paths it covers: `reportNativeAlloc` fires on the RETURN path, so a
+ * trip killed mid-ramp never reports, and the instrument records by SELECTION the cheap retry
+ * that FOLLOWS a ramp. The leading candidate for the remainder is that the ramping renderer is
+ * not the one being sampled — every call site is on the trip's own tab and the RESIDENT page
+ * has never been sampled at all.
+ *
+ * `rc-alloc-trail.mjs` is the fix — sample on the watchdog tick, which is the only code proven
+ * to keep executing while the loop is stalled. The tests below extend the SAME general rule to
+ * it: every sampled renderer must be on the trail, every registered target must come off it,
+ * and the contexts the two files use must agree. Pinning "the renewal is on the trail" would
+ * be the same mistake one layer along.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -144,5 +160,139 @@ test('the warm-up uses the allow-listed context spelling', () => {
     assert.ok(allowed.has(c),
       `the bot sends context '${c}' and native-alloc.ts does not allow it — the row would `
       + 'store NULL and the reading would be unattributed');
+  }
+});
+
+/** The watchdog timer's body — the one place a reading is still taken while the loop is stuck. */
+function watchdogBody(): string {
+  const from = code.indexOf('const renew = setInterval(() => {');
+  assert.ok(from > -1, 'the watchdog timer must exist — anchor not found');
+  const to = code.indexOf('}, WATCHDOG_MS);', from);
+  assert.ok(to > from, 'the watchdog timer must be closed with its own cadence constant');
+  return code.slice(from, to);
+}
+
+/** Every renderer the bot registers for trail sampling, by the name it registers under. */
+function registeredTargets(): string[] {
+  return [...code.matchAll(/allocTrail\.register\('([^']+)'/g)].map((m) => m[1]);
+}
+
+test('every renderer that is sampled is also on the trail', () => {
+  // THE GENERAL RULE, and the reason it is general: the sampler was wired to every Okta door
+  // on 2026-08-24 and still produced nothing, because being started is not the same as being
+  // READ at a moment when the answer exists. A path that arms a sampler and never puts it on
+  // the trail can only ever produce a return-path reading, which is the blind kind.
+  const starts = [...code.matchAll(/startNativeSampling\(/g)].map((m) => m.index as number);
+  assert.ok(starts.length >= 4,
+    `expected the three Okta tabs plus the resident page, found ${starts.length}`);
+  for (const at of starts) {
+    const after = code.slice(at, at + 600);
+    assert.match(after, /allocTrail\.register\(/,
+      'a renderer is sampled here and never registered on the trail, so only the return-path '
+      + 'reading can ever come from it — and that one has now missed six ramps');
+  }
+});
+
+/**
+ * THE ONE TARGET THAT DOES NOT COME OFF, AND IT IS A DECISION.
+ *
+ * `resident` is the RC page the keep-warm holds open for the life of the browser. There is no
+ * close to unregister at, and the whole point of sampling it is that it spans the trips: if
+ * the gigabytes are there rather than in the throwaway tab, PR #142's cure is aimed at the
+ * wrong renderer. Its session dies with the context, and `readNativeProfile` answers null
+ * rather than throwing, so a stale registration costs a failed read and not a crash.
+ */
+const NO_UNREGISTER = new Set(['resident']);
+
+test('every trail target is unregistered, or is a recorded exception', () => {
+  // A tab's renderer dies with the tab. A registration left behind asks a dead target every
+  // sample interval for the life of the process — and worse, its buffer never becomes final,
+  // so the peak it holds is never reported. Silent both ways.
+  const off = new Set([...code.matchAll(/allocTrail\.unregister\('([^']+)'/g)].map((m) => m[1]));
+  for (const name of registeredTargets()) {
+    if (NO_UNREGISTER.has(name)) continue;
+    assert.ok(off.has(name),
+      `'${name}' is registered on the trail and never unregistered — add the unregister beside `
+      + 'the tab close, or add it to NO_UNREGISTER with the reason');
+  }
+});
+
+test('the trail is sampled in the watchdog timer, not in the loop it watches', () => {
+  // THE HOUSE SHAPE, five times recorded: a guard placed inside the thing it guards against.
+  // The size-guard recycle was checked in the body of the loop that stops advancing, so on all
+  // twenty ramps control never reached it. The ramps happen DURING a renewal, i.e. while the
+  // loop is not advancing, so a sample taken from the loop body is a sample never taken.
+  const body = watchdogBody();
+  assert.match(body, /allocTrail\.sample\(/,
+    'the trail must be sampled from the watchdog timer — the only code proven to still be '
+    + 'executing while the loop is stalled, which is exactly the window a ramp happens in');
+  assert.match(body, /flushAllocRamps\(/,
+    'and flushed from it, or a finished segment waits for a loop that is not advancing');
+});
+
+test('the runaway bail waits for the reading to leave the box', () => {
+  // `bail` calls process.exit(1), which kills an in-flight POST. Without the await the one
+  // reading this arm exists to capture dies with the process that captured it — the exact
+  // shape of the two 9 GB attributions lost to `tail-log`'s 16k window in August.
+  const body = watchdogBody();
+  const flush = body.indexOf('flushAllocRamps({ final: true })');
+  assert.ok(flush > -1, 'the bail must flush the OPEN segment — a ramp that kills the browser '
+    + 'never produces the renderer swap that would make its segment final');
+  const before = body.slice(0, flush);
+  assert.match(before.slice(-400), /await Promise\.race\(\[\s*$/,
+    'the flush must be awaited, and bounded — an unawaited POST dies with process.exit, and an '
+    + 'unbounded one delays releasing the profile lock, which is what loses a cart at 08:00');
+});
+
+test('the teardown takes the open segment, because a recycle replaces the browser', () => {
+  // Every `break` in the resident loop lands in that finally — the post-Okta recycle, the size
+  // guard, the runner's preemption — and each replaces the browser. That is the other way a
+  // ramp ends without a renderer swap we can see. `final: false` there would lose it.
+  // ANCHORED ON CODE, NOT ON A COMMENT. `code` has comment lines stripped — deliberately, so
+  // a guard cannot fail on its own explanation — and the first version of this test anchored
+  // on the comment above the flush and failed against a correct file. Twenty-fourth instance.
+  const fin = code.indexOf('} finally {', code.indexOf('async function warmResident'));
+  assert.ok(fin > -1, 'the resident loop must have a finally to flush the trail in');
+  const end = code.indexOf('releaseProfileLockIfMine', fin);
+  assert.ok(end > fin, 'the teardown must still release the profile lock');
+  const body = code.slice(fin, end);
+  assert.match(body, /flushAllocRamps\(\{ final: true \}\)/,
+    'the teardown must take the OPEN segment, or a browser replaced by a recycle takes the '
+    + 'reading with it — the trail does not survive that point');
+  assert.ok(body.indexOf('flushAllocRamps') < body.indexOf('ctx?.close()'),
+    'and it must run BEFORE the context closes, or the samples describe a browser that is gone');
+});
+
+test('the long-lived resident target is sampled coarsely', () => {
+  // MEASURED, not tuned: the all-time profile's response grows linearly with bytes ever
+  // allocated, at ~1.7 KB per MB (373 MB -> 0.7 MB of JSON; 2,346 MB -> 4.0 MB). The resident
+  // page is read every 20s for the LIFE of the browser, so at the 9 GB these ramps reach, the
+  // fine setting would have us asking a renderer that is already eating the machine to
+  // serialize ~16 MB, over and over, at the peak — the instrument becoming part of the
+  // disease, which this repo has shipped in three costumes already.
+  const body = code.slice(code.indexOf('async function warmResident'));
+  const at = body.indexOf('startNativeSampling(heapProbe');
+  assert.ok(at > -1, 'the resident renderer must be sampled — it is the one nothing used to '
+    + 'sample, and the leading candidate for where the gigabytes actually are');
+  assert.match(body.slice(at, at + 200), /intervalBytes: LONG_LIVED_INTERVAL/,
+    'the resident target must use the coarse interval; the short-lived trip tabs keep the fine '
+    + 'default because they exist for one navigation and never accumulate');
+});
+
+test('the trail contexts the bot sends are allow-listed on the server', () => {
+  // THE CROSS-FILE AGREEMENT AGAIN, and the trail sends its context as a TEMPLATE LITERAL —
+  // `trail-${r.name}` — so the literal scan below cannot see these. Derived from the register
+  // calls instead, which is the same rule stated about the values that actually reach the wire.
+  // A name outside the set stores NULL: in the table, absent from the readout, and looking
+  // exactly like the instrument working.
+  const set = /const CONTEXTS = new Set\(\[([^\]]*)\]\)/.exec(ALLOC);
+  assert.ok(set, 'native-alloc.ts must keep a CONTEXTS allow-list');
+  const allowed = new Set([...set[1].matchAll(/'([^']+)'/g)].map((m) => m[1]));
+  const targets = registeredTargets();
+  assert.ok(targets.length >= 4, `expected four sampled renderers, found ${targets.length}`);
+  for (const name of targets) {
+    assert.ok(allowed.has(`trail-${name}`),
+      `the trail reports renderer '${name}' as context 'trail-${name}' and native-alloc.ts does `
+      + 'not allow it — the row would store NULL and the reading would be unattributed');
   }
 });

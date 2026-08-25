@@ -73,8 +73,9 @@ import { sweepOrphanChromium } from './orphan-sweep.mjs';
 import { withForcedLoginPrompt } from './force-login-prompt.mjs';
 import { withNetworkTrace, describeTrace } from './okta-net-trace.mjs';
 import {
-  startNativeSampling, readNativeProfile, diffProfiles, renderProfile,
+  startNativeSampling, readNativeProfile, diffProfiles, renderProfile, LONG_LIVED_INTERVAL,
 } from './rc-native-sampler.mjs';
+import { createAllocTrail, describeAllocTrail } from './rc-alloc-trail.mjs';
 import { takeStorageCensus, takeIdbCensus, describeCensus } from './storage-census.mjs';
 import {
   installTokenCapture, readLiveToken, readTokenAnyOrigin, primeToken, renewSession, tokenSecondsLeft,
@@ -949,6 +950,11 @@ async function maybeWarmupLogin(ctx, page) {
   const sampler = await ctx.newCDPSession(tab).catch(() => null);
   const sampling = sampler ? await startNativeSampling(sampler) : { ok: false, why: 'no CDP session' };
   const profBefore = sampling.ok ? await readNativeProfile(sampler) : null;
+  // AND ON THE TRAIL, which is what sees a trip that never returns. The reading below is taken
+  // on the return path and is gated at 400 MB, so a ramp that kills the browser mid-trip
+  // reports nothing at all — that is six ramps missed. See rc-alloc-trail.mjs. Unregistered in
+  // the `finally`.
+  if (sampling.ok) allocTrail.register('warmup', sampler);
 
   lastWarmupSkip = null;
   warmup.spent += 1;
@@ -1048,6 +1054,11 @@ async function maybeWarmupLogin(ctx, page) {
     //
     // AFTER the reporting above, not before: `saveFailureShot` photographs this tab and the
     // profile read needs it alive, so closing first would cost both.
+    // OFF THE TRAIL BEFORE THE TAB GOES. The renderer dies with the tab, so a sampler left
+    // registered would ask a dead target every 20s for the life of the process. The BUFFER is
+    // kept deliberately — `takeRamps` reports a segment once its target is no longer open, so
+    // this is exactly what makes the tab's peak final and reportable on the next tick.
+    allocTrail.unregister('warmup');
     await tab.close().catch(() => {});
   }
   return true;
@@ -1231,6 +1242,11 @@ async function maybeAutoLogin(ctx, page) {
   const sampler = await ctx.newCDPSession(tab).catch(() => null);
   const sampling = sampler ? await startNativeSampling(sampler) : { ok: false, why: 'no CDP session' };
   const profBefore = sampling.ok ? await readNativeProfile(sampler) : null;
+  // AND ON THE TRAIL, which is what sees a trip that never returns. The reading below is taken
+  // on the return path and is gated at 400 MB, so a ramp that kills the browser mid-trip
+  // reports nothing at all — that is six ramps missed. See rc-alloc-trail.mjs. Unregistered in
+  // the `finally`.
+  if (sampling.ok) allocTrail.register('auto-login', sampler);
 
   lastAutoLoginSkip = null;
   autoLogin.spent += 1;
@@ -1453,6 +1469,11 @@ async function maybeAutoLogin(ctx, page) {
     //
     // AFTER the reporting above, not before: `saveFailureShot` photographs this tab, and
     // closing it first would leave the one picture of a failed 07:45 sign-in blank.
+    // OFF THE TRAIL BEFORE THE TAB GOES. The renderer dies with the tab, so a sampler left
+    // registered would ask a dead target every 20s for the life of the process. The BUFFER is
+    // kept deliberately — `takeRamps` reports a segment once its target is no longer open, so
+    // this is exactly what makes the tab's peak final and reportable on the next tick.
+    allocTrail.unregister('auto-login');
     await tab.close().catch(() => {});
     // THE ATTEMPT REACHED A VERDICT — clear the in-flight mark so the next process does not
     // read it as a kill and refund an attempt that was genuinely spent. In the `finally`
@@ -1660,15 +1681,67 @@ async function reportRehearsal(ok, detail, skippedWhy) {
  * Fire-and-forget. A diagnostic that can delay the renewal, or throw into it, is the mistake
  * `rcFamilyMb` would have made in the guard arm.
  */
+/**
+ * THE ALLOCATION TRAIL. See rc-alloc-trail.mjs for why the return-path reading below has now
+ * missed six ramps: it fires after the trip RETURNS and is gated at 400 MB, so a trip killed
+ * mid-ramp never reports — the instrument records, by selection, the cheap retry that FOLLOWS
+ * a ramp. And the leading candidate for the rest is that the ramping renderer is not the one
+ * being sampled at all, which is why this samples the RESIDENT page too.
+ *
+ * MODULE SCOPE, NOT INSIDE `warmResident`, and that is not tidiness. The three tabs that
+ * navigate to Okta live in three different top-level functions — `maybeWarmupLogin`,
+ * `maybeAutoLogin` and the renewal inside the resident loop — and a trail reachable from only
+ * one of them is the house shape this whole change exists to stop repeating: an instrument
+ * bolted to some of the doors. `worker/warmup-sampler.test.mts` enumerates them.
+ *
+ * It also means the trail OUTLIVES a browser recycle, which is the right way round: a new
+ * browser's first sample is small, the total DROPS, and `splitSegments` reads that as exactly
+ * what it is — a different renderer.
+ */
+const allocTrail = createAllocTrail();
+
+/**
+ * Store any ramp the trail has finished with.
+ *
+ * `final` is the difference between an ordinary tick and a teardown. On a tick only segments
+ * that have ENDED are taken — a renderer swap has happened, so the peak is known and final. At
+ * teardown and in the runaway bail the OPEN segment is taken too, because a browser replaced
+ * by a recycle and a process that exits are the two ways a ramp ends without our ever seeing
+ * the swap. Without that a nine-gigabyte ramp that kills the box reports nothing, which is the
+ * failure this file exists to end.
+ *
+ * THE CONTEXT NAMES THE RENDERER, and that is the open question it exists to settle: if the
+ * gigabytes are on the RESIDENT page rather than the trip's throwaway tab, PR #142's cure is
+ * aimed at the wrong renderer, which would explain why ramps continued after it shipped.
+ */
+function flushAllocRamps({ final = false } = {}) {
+  const sent = [];
+  for (const r of allocTrail.takeRamps({ final })) {
+    log(`✱ alloc trail [${r.name}]: ${Math.round(r.growthBytes / 1048576)} MB in that renderer `
+      + `over ${Math.round((r.endAt - r.startAt) / 1000)}s, free RAM ${r.ramDeltaMb} MB`);
+    for (const site of r.sites.slice(0, 6)) {
+      log(`    ${String(Math.round(site.bytes / 1048576)).padStart(6)} MB  ${site.site}`);
+    }
+    sent.push(reportNativeAlloc(`trail-${r.name}`,
+      { totalBytes: r.growthBytes, sites: r.sites }, r.ramDeltaMb));
+  }
+  // AWAITABLE, because the bail arm calls `process.exit(1)` and a fire-and-forget POST dies
+  // with the process — losing exactly the reading a 9 GB ramp produces. Ordinary tick callers
+  // ignore it, as they ignore every other diagnostic here.
+  return Promise.allSettled(sent);
+}
+
 const NATIVE_ALLOC_RAMP_MB = Number(process.env.RC_ALLOC_RAMP_MB || 400);
 
 function reportNativeAlloc(context, diff, ramMb) {
   // NOT A RAMP, OR WE COULD NOT TELL. `null` means the trace never closed, and an unknown
   // must not be stored as a ramp — the rule that keeps `unknown` from rounding to a verdict.
-  if (typeof ramMb !== 'number' || ramMb > -NATIVE_ALLOC_RAMP_MB) return;
-  if (!diff) return;
-  if (!TOKEN) return;
-  fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
+  // RESOLVED, NOT `undefined` — the runaway bail AWAITS this before `process.exit`, and a
+  // caller that awaits a refusal must not throw on it. Fire-and-forget callers ignore it.
+  if (typeof ramMb !== 'number' || ramMb > -NATIVE_ALLOC_RAMP_MB) return Promise.resolve();
+  if (!diff) return Promise.resolve();
+  if (!TOKEN) return Promise.resolve();
+  return fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
     body: JSON.stringify({
@@ -2320,6 +2393,13 @@ async function warmResident() {
       // Recorded on EVERY tick, including the healthy ones, because the sample before the ramp
       // is what gives the one during it a baseline to be a change from.
       ramTrail = [...ramTrail, { at: Date.now(), freeMb: Math.round(freeMb), step }].slice(-TRAIL_KEEP);
+      // The allocation trail rides the same tick and carries the same free-RAM reading, so the
+      // profile and the delta describe ONE window. A delta measured over a different window is
+      // the 2026-08-19 false elimination with extra steps. Fire-and-forget; never awaited.
+      allocTrail.sample(Date.now(), Math.round(freeMb));
+      // ENDED segments only here — see flushAllocRamps. A ramp whose renderer has been swapped
+      // away is final, and this is the moment its peak would otherwise be discarded.
+      flushAllocRamps();
       if (stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB && !bailing) {
         bailing = true;
         const why = `✗ RUNAWAY — stalled ${Math.round(stalledMs / 1000)}s with only ${Math.round(freeMb)} MB `
@@ -2348,6 +2428,19 @@ async function warmResident() {
           log(`  ${describeTrail(heapTrail, Date.now())}`);
           // The trail that never stops answering. See ramTrail.
           log(`  ${describeRamTrail(ramTrail, Date.now())}`);
+          // WHAT WAS ALLOCATING, not merely how much. This is the reading the whole Track A
+          // investigation has been waiting for, and this arm is one of the two places a ramp
+          // ends without our seeing the renderer swap — so the OPEN segment is taken too.
+          log(`  ${describeAllocTrail(allocTrail.buffers(), Date.now())}`);
+          // AWAITED, AND BOUNDED. `bail` calls process.exit, which kills an in-flight POST —
+          // so the one reading this arm exists to capture would be lost to the exit that
+          // captures it. Bounded because a diagnostic that can delay releasing the profile
+          // lock has inverted the priority, which is the mistake `rcFamilyMb` would have made
+          // in this same arm: the lock staying held past 08:00 is what loses a cart.
+          await Promise.race([
+            flushAllocRamps({ final: true }),
+            new Promise((r) => setTimeout(r, 4000)),
+          ]).catch(() => {});
           bail('  (see the runaway line above)');
         })();
         return;
@@ -2404,6 +2497,33 @@ async function warmResident() {
       // Before anything can go wrong with it. A failure returns null and the trip falls back
       // to negotiating one, which is strictly the old behaviour rather than a new risk.
       heapProbe = await attachHeapProbe(ctx, page).catch(() => null);
+      /**
+       * SAMPLE THE RESIDENT RENDERER TOO, AND THIS IS THE POINT OF THE WHOLE CHANGE.
+       *
+       * Every existing sampler call site is on the TRIP's own tab. On 2026-08-25 02:31 the
+       * renewal's tab reported 17 MB while the family's renderers reached 8,052 MB and went on
+       * climbing for eight minutes after the reading was stored. The obvious explanation —
+       * that the navigation resets CDP's all-time profile — was MEASURED AND DOES NOT APPLY
+       * here: Chromium isolates by site, and RC's www -> signin hop is a subdomain, which
+       * keeps its renderer (see rc-alloc-trail.mjs). What is left is that the allocation is on
+       * the RESIDENT page's renderer, which nothing has ever sampled — and if so, PR #142's
+       * throwaway-tab cure is aimed at the wrong renderer, which would explain why ramps
+       * continued after it shipped. Sampling both is what settles it.
+       *
+       * ON `heapProbe`'s SESSION rather than a second one: it is already attached to this
+       * page, already negotiated while the browser is healthy, and the Memory domain rides it
+       * as happily as Performance does. A second session would double the thing that has twice
+       * been measured failing under load.
+       */
+      if (heapProbe) {
+        // COARSER THAN THE TRIP TABS, and see LONG_LIVED_INTERVAL for the measurement. This
+        // one is read every 20s for the life of the browser, and the response grows with every
+        // byte the renderer has ever allocated — so at 9 GB the fine setting would have us
+        // asking a dying renderer to serialize 16 MB, over and over, at the peak.
+        const residentSampling = await startNativeSampling(heapProbe, { intervalBytes: LONG_LIVED_INTERVAL });
+        if (residentSampling.ok) allocTrail.register('resident', heapProbe);
+        else log(`  (the resident renderer is not being sampled: ${residentSampling.why})`);
+      }
       mark('priming the token');
       const primed = await primeToken(page);
       log(`RC loaded and STAYING OPEN — token source: ${primed.source}`);
@@ -2707,6 +2827,10 @@ async function warmResident() {
             const sampler = await ctx.newCDPSession(tab).catch(() => null);
             const sampling = sampler ? await startNativeSampling(sampler) : { ok: false, why: 'no CDP session' };
             const profBefore = sampling.ok ? await readNativeProfile(sampler) : null;
+            // AND ON THE TRAIL — see the identical registration in `maybeWarmupLogin`, and
+            // rc-alloc-trail.mjs for why the return-path reading below has missed six ramps.
+            // Unregistered in the `finally` that closes the tab.
+            if (sampling.ok) allocTrail.register('renewal', sampler);
             // COUNT THE BYTES. This is the first instrument that goes at the CAUSE rather than
             // the aftermath — see okta-net-trace.mjs. "Network/IPC buffering" has been the
             // leading candidate three times and was never once tested, though it is directly
@@ -2856,6 +2980,8 @@ async function warmResident() {
               // failed report can never leave the tab (and its gigabytes, on a bad trip)
               // parked in the browser for the resident page's lifetime.
               mark('renew:close-tab');
+              // OFF THE TRAIL BEFORE THE TAB GOES — see the same line in `maybeWarmupLogin`.
+              allocTrail.unregister('renewal');
               await tab.close().catch(() => {});
             }
           }
@@ -2871,6 +2997,15 @@ async function warmResident() {
     } catch (err) {
       log(`resident keep-warm error: ${err.message} — reopening in 30s`);
     } finally {
+      // BEFORE THE CONTEXT CLOSES AND BEFORE THE TIMER STOPS. Every `break` in the loop above
+      // lands here — the post-Okta recycle, the size guard, the runner's preemption — and each
+      // one replaces the browser, which is the other way a ramp ends without our ever seeing
+      // the renderer swap. The trail is per-`warmResident` and does not survive this point, so
+      // a reading not taken here is a reading lost. Bounded for the same reason as the bail.
+      await Promise.race([
+        flushAllocRamps({ final: true }),
+        new Promise((r) => setTimeout(r, 4000)),
+      ]).catch(() => {});
       await ctx?.close().catch(() => {});
       clearInterval(renew);
       releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
