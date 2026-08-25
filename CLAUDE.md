@@ -3476,7 +3476,8 @@ navigation did NOT ramp"**:
 
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`.**
+> **START AT `docs/NEXT-SESSION.md`. THERE IS ASSIGNED WORK: the Track A trail and the leak
+> (owner's go-ahead, 2026-08-25). Track B still is NOT covered by it.**
 >
 > **THE OWNER'S FOUR-ITEM QUEUE IS DONE (2026-08-24 evening → 08-25).** Fairness line,
 > offer-card dismissal + ordering, RC beta copy, and alert batching — all shipped with

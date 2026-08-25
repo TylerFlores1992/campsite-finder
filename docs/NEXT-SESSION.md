@@ -1,393 +1,177 @@
 # Next session — start here
 
-*Rewritten 2026-08-24, 23:00 PT. Updated 2026-08-25, 11:30 PT — the 08-25 release is READ.*
+*Rewritten 2026-08-25, 11:45 PT. Supersedes the 08-24 version entirely.*
 
-> ## START NOTHING. Get up to speed and report.
+> ## THERE IS ASSIGNED WORK THIS TIME. Ground yourself first (§0–§1), then start §2.
 >
-> The owner's four-item queue is **done** (§0a). There is no assigned work waiting.
+> The owner's instruction, verbatim: *"start track a trail do whatever we need to fix leak.
+> Update box when needed and do tests to stress test."*
 >
-> **THE 08-25 08:00 PT RELEASE IS READ AND IT WORKED** — Morro Bay #96 carted at **T+2s**, the
-> fairness line's first live contest resolved correctly, and the owner deliberately did not
-> claim. Full write-up in `CLAUDE.md` → "THE CONTENTION TEST RAN ITSELF". Two things came out
-> of it that change what is worth doing next:
+> That is a **go-ahead for the leak work**, including bot-side changes and box updates. It is
+> **not** a go-ahead for Track B (§5) — that is still surgery on the release-critical login
+> path and wants its own word.
 >
-> 1. **The expiry cascade is no longer blocked on a measurement.** It was gated on RC's cart
->    lapse; the release was actually `expireStaleHolds(45)` — ours, at 45 minutes, precisely.
->    It is still the **owner's call**, but the reason to wait is gone.
-> 2. **Track A is blind to the ramps by construction.** Three ramps happened in 30 hours and
->    all three were missed; the reading fires on the trip's RETURN path, so a trip killed
->    mid-ramp never reports. **Do not queue a test hold to force a ramp** — it would be
->    missed too. The fix is a trail sampled on the watchdog tick.
->
-> **THE BOX REACHED 99% COMMIT TWICE** and the RAM arm's trough margin is down to 144 MB. Still
-> a QUESTION, not a patch — read the entry before touching the floor.
->
-> Two things remain explicitly the **owner's decision, not an agent's** — the expiry cascade
-> and cross-cycle batching (§0a). Track B (the leak cure) also needs an explicit go-ahead.
+> Read §0 and §1 before touching anything. §1 is short and it is the reason the obvious plan
+> (queue a hold, force a ramp, read the sampler) **does not work**.
 
-*Delete this file once Track A has a reading from a real ramp AND the App Store version has a
+*Delete this file once the trail has captured a real ramp AND the App Store version has a
 decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
 
 ---
 
-## 0a. THE OWNER'S FOUR-ITEM QUEUE — ALL FOUR SHIPPED (2026-08-25)
+## 0. Ground yourself — in this order
 
-Assigned 2026-08-24 evening, worked top to bottom on `claude/main-lane-docs-0824`. Each is
-written up in full in `CLAUDE.md`; this is the index and what is LEFT.
-
-| # | ask | state |
-|---|---|---|
-| 1 | Fairness — earliest watch gets first dibs | **shipped** (migration 068, applied + read back) |
-| 2 | X on the offer card, de-emphasise stale hand-offs | **shipped** |
-| 3 | RC beta copy on the marketing site | **shipped** |
-| 4 | Multiple openings as one text | **shipped** |
-
-Full suite **1258/1258**. Every guard mutation-verified; three mutations survived their
-first round and are written up where they happened.
-
-### WHAT IS LEFT, AND IT IS THE OWNER'S CALL — NOT AN AGENT'S
-
-Two pieces were deliberately NOT built. Both are decisions rather than work.
-
-1. **THE EXPIRY CASCADE** (cart for the first in line; on a lapse, re-cart for the next).
-   Gated on **measuring RC's real cart lapse**, which is read off RC's own bundle as ~15
-   minutes and **has never been observed**, while `reclaimLapsedHolds` waits 180. Between
-   those two numbers we would re-cart a site RC may already have released to the public and
-   tell a second user we are holding something we are not. **Measure first.** The
-   round-robin does not depend on it and is live without it.
-
-2. **CROSS-CYCLE ALERT BATCHING.** Today two sites opening at 08:00:00 and 08:00:20 are two
-   cycles and stay two messages. Merging them needs a hold-back window, which buys fewer
-   texts with **LATENCY on the most latency-critical path in the product**. That is a
-   product trade, not a tidy-up. Within-cycle batching (the park-watch case, which is what
-   produced the reported three texts) is shipped and costs nothing.
-
-### THE BIGGEST FIND WAS NOT ON THE LIST
-
-Designing item 4 turned up that **a poller row has been a (watch, campground) since
-migration 070 while five result maps and the cadence tracker still keyed on the watch id**.
-Both live park watches are affected — the same two from the 26-text storm. The result-map
-half was **live**: N divisions alerting about ONE site while the others' real openings were
-silently discarded. The `DueTracker` half is **latent** (it escapes inside the hot window by
-arithmetic luck) and would silently stop polling divisions of any park watch more than 14
-days out. Fixed with `worker/watch-key.ts`; `DueTracker.due` now REQUIRES `campground_id`,
-so the fix cannot be half-applied.
-
-### READ THIS BEFORE TRUSTING THE MORNING
-
-**The 08-25 08:00 PT release had not happened when this was written** — the box clock read
-2026-08-24 21:21 PT. Five real offers were outstanding across three users and **one was
-tapped**. Nobody has read the outcome. Start with:
+### 0a. Can you reach production?
 
 ```bash
-NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
-NODE_USE_ENV_PROXY=1 npx tsx scripts/native-alloc-readout.mts
-```
-
-## 0. BEFORE ANYTHING: can you actually reach production?
-
-**YES, as of 2026-08-24 evening** — camphawk.app 200, fly.io 200, Supabase reachable, and both
-readouts plus several direct DB queries ran. `recentRelayFailures` names only `mcp.vercel.com`,
-`mcp.sentry.dev` and `flyctl-metrics.fly.dev`.
-
-**IT HAS BEEN REVOKED MID-SESSION BEFORE, so check anyway rather than assuming.** On 08-23
-20:15 PT and still at 08-24 08:15 PT the proxy answered **403 to CONNECT** for `camphawk.app`,
-`*.supabase.co` and `fly.io` — an org egress-policy denial that outlived a session restart.
-
-**ONE THING THE READOUTS CANNOT REACH EITHER WAY: `notifications`.** RLS answers `policy context
-unavailable` from an agent session. It fails loudly, so it is a clean non-answer — but do not
-plan a verification around reading that table. The claim-key column on `watches` is what is
-actually reachable, and it is the better evidence anyway.
-
-**`api.github.com` is NOT blocked, and the earlier claim that it was is wrong** (measured
-08-24). The CONNECT tunnel opens and the placeholder `GITHUB_TOKEN` *authenticates* — but access
-is **REPO-SCOPED**, and that distinction is the trap:
-
-```
-GET /user                                    200   <- returns the real account
-GET /rate_limit                              200
-GET /repos/<owner>/<repo>                    403   "GitHub access is not enabled for this session"
-GET /repos/<owner>/<repo>/commits/<sha>/check-runs   403   <- the CI-watchdog case
-```
-
-So **the natural smoke test succeeds and proves nothing.** `${#GITHUB_TOKEN}` is 14 and `/user`
-returning your own login is a **false positive**, which is worse than the presence check already
-documented in `CLAUDE.md` because it is a positive result rather than a mere absence. **Anything
-repo-scoped still goes through the MCP tools** — that conclusion is unchanged; only the reason
-for it is.
-
-```bash
-curl -sS "$HTTPS_PROXY/__agentproxy/status"        # recentRelayFailures names the blocked host
+curl -sS "$HTTPS_PROXY/__agentproxy/status"        # recentRelayFailures names blocked hosts
 curl -sS -m 12 -o /dev/null -w '%{http_code}\n' https://camphawk.app/
 ```
 
-- **Do not retry it and do not route around it.** Report the blocked host.
-- **Verified reassurance:** the readout scripts **fail loudly** on an unreachable DB
-  (`DB query error: TypeError: fetch failed`, exit 1). So an empty answer is a real answer and
-  never a network failure in disguise. That was tested, not assumed.
-- **If egress is still blocked, the check cannot happen.** Say so plainly, name the three hosts,
-  and stop — do not substitute a guess for the reading. **This is what happened on 08-24**, and
-  the loud failure is what made it a clean non-answer: `DB query error: TypeError: fetch failed`,
-  exit 1. **Widen the readout's 14-day window if enough time has passed** — the row outliving the
-  query that fetches it is the one way this reading still gets lost.
+**Egress was healthy 2026-08-25** — camphawk.app 200, Supabase reachable, bot commands
+answering. Only `mcp.vercel.com`, `mcp.sentry.dev` and `flyctl-metrics.fly.dev` are denied.
 
-### WHERE THE READOUT RUNS — asked 2026-08-24, and it is not obvious
+**It has been revoked mid-session before** (08-23/08-24: 403 to CONNECT for camphawk.app,
+`*.supabase.co` and `fly.io`, outliving a session restart). If it is blocked: **report the
+hosts and stop.** Do not retry or route around it. The readout scripts fail loudly on an
+unreachable DB (`DB query error`, exit 1), so an empty answer is always a real answer.
 
-**Right here, in a session like this one.** Checked: `NEXT_PUBLIC_SUPABASE_URL` and
-`SUPABASE_SERVICE_ROLE_KEY` are **already present as process env vars in this sandbox**, so
-nothing needs installing or configuring. **Only the network is blocked.** The moment egress is
-allowed, the command in §1b just works.
+- **`notifications` is unreadable from an agent session** — RLS answers `policy context
+  unavailable`. It fails loudly. Do not plan a verification around it.
+- **`GITHUB_TOKEN` is a 14-character placeholder and `GET /user` returns 200.** That is a
+  false positive. Anything repo-scoped 403s. Use the GitHub MCP tools.
 
-- **NOT the mini-PC.** Nothing under `scripts/auto-cart-bot/` touches Supabase — the bot only
-  ever talks to `camphawk.app` with `AUTOCART_TOKEN` — so the box almost certainly holds no
-  service-role key. And `VAR=1 npx …` is **bash syntax that silently does nothing in cmd**;
-  Windows needs `set "VAR=value"` on its own line first.
-- **`NODE_USE_ENV_PROXY=1` is a SANDBOX-ONLY prefix.** It points Node's fetch at the agent
-  proxy. On an ordinary machine it is unnecessary — just `npx tsx scripts/…`.
-- **There is NO admin UI for the attribution.** `native_alloc_readings` (066) has only its
-  library and migration. `chromium_memory_samples` has a panel; the reading that says *what
-  allocated* does not — so this script is the only way to see it. Worth closing eventually,
-  since it means the leak's key instrument cannot be checked from a phone.
-
----
-
-## 1. THE COMING-SOON DEDUP — FIXED AND DEPLOYED (kept for the reasoning)
-
-> **NOT a live fault.** Migration 067 is applied and the poller fix shipped as `d842dc0` (#183),
-> worker deploy verified. Kept because the *shape* of the mistake is the reusable part: a fix
-> for one missed alert made the failure unbounded. Read it before touching claim keys — it is
-> why item 4's batching deliberately did not merge claims.
-
-**26 texts and 26 emails in 62 minutes to one user**, alternating two divisions of Morro Bay,
-**every one for the same physical campsite** (unit 43191, same release hour, same dates).
-
-Migration 070 made `claimHoldNotification` write a **campground-namespaced** value into
-`rc_hold_notified_for` so two divisions would not silence each other. **That column holds ONE
-value**, so N divisions overwrite each other in turn and the dedup is **defeated outright** —
-unbounded, not off-by-one. The fix for one missed alert traded it for a storm.
-
-- **Migration 067 IS APPLIED to prod** (six rows backfilled, read back and verified). The column
-  is additive and unread until the poller ships — migration first, then the code, as documented.
-- **THE POLLER FIX IS NOT DEPLOYED.** It reaches Fly only on a merge to master. Until then **the
-  storm can recur on any multi-division watch with a held unit.** Watch `eb886697` is primed.
-- **Four real user offers were outstanding for 08-25 08:00 PT**, across three users. Untapped
-  offers do not block the update window; **a tap makes it a real morning with a stranger
-  waiting.**
-- The fix is a **set** (`watches.rc_hold_notified_keys`), keyed `<releaseHour>|<unitId>`. Both
-  cheaper fixes are wrong: hour-only reinstates 070's bug, unit-only ping-pongs again the moment
-  two units share an hour. `worker/hold-claim.ts` + real-DB test, six mutations.
-
-~~**This is the first thing to check on the next session: is that poller fix on master and on
-Fly?**~~ **ANSWERED 2026-08-24 evening: it is on both.** Merged as `d842dc0`, the worker deploy
-reported success, and `worker.heartbeat` read `last beat 11s ago, 13 watches` straight after —
-that workflow fails unless a fresh heartbeat lands, which is what makes the success meaningful.
-**Verified separately that nothing re-announced**, which is the risk the wildcard backfill exists
-to cover: all six watches carrying a claim still read `<hour>|*` afterwards, with no per-unit key
-appended. `eb886697`, the watch primed with `rc-583|2026-8-25T8`, is among them.
-
----
-
-## 1a. THE 08-24 TEST RAN. THE HOLD WAS LOST TO A BUG IN OUR SIGN-IN — FIXED, NOT RE-TESTED
-
-The 08-24 hand-off failed, and the owner's own account is what diagnosed it:
-
-> *"I put login info in. Checked. Hit button. It opened RC for less than a second as if auto
-> login worked. Hit grab it. Then went to RC not logged in."*
-
-**ONE defect fixed in #183** — web-side, so it reaches already-installed apps on the merge,
-**no rebuild, no App Store review.**
-
-**`closeOnToken` tested `captured` alone.** A STALE token — the ordinary state, since it comes
-from the SERVER and no local clear reaches it — was broadcast by `rc-inject.js` on RC's first
-API call and closed the sign-in window in under a second. **The credentials were never typed:**
-Okta's flow is several page loads and cannot finish that fast. The claim gate had learned this
-on 08-21 (#152), AFTER `closeOnToken` shipped in #126, and nothing carried it next door because
-**nothing tested `closeOnToken` at all.**
-
-`src/lib/rc-token-liveness.ts` now classifies a token report three ways and `closeOnToken`
-closes on `live` only. `rc-token-liveness.test.mts` is the guard that never existed.
-
-### A SECOND FINDING, DELIBERATELY NOT FIXED — and my first fix for it was WRONG
-
-A rebroadcast carries `{ captured, length }` and no `expiresInSec`, so it classifies as
-`unknown`. The claim gate verifies on `unknown` as well as `live` — therefore **a replay
-arriving after a correct `expired` verdict re-enters that branch and clears the warning.** The
-message telling a user their session is dead lives about one API call. That is real, and it is
-plausibly why the owner never saw it on 08-24.
-
-**I first "fixed" this by making `unknown` stop verifying, and `claim-release-truth.test.mts`
-caught it.** That guard exists for a reason I had not weighed: **a bundle older than migration
-058 sends no `expiresInSec` at all**, so every report from it is `unknown` and refusing those
-takes the fast path from every such client at once. The rule is *"we could not tell, so we do
-not NEWLY refuse."* The gate is behaving as designed and is left byte-identical to master.
-
-**The honest remedy is to make `expired` STICKY for the run** — a replay then cannot undo a
-verdict the first sighting earned, and older bundles keep verifying. That is a deliberate
-change to a release-critical gate with its own guards, not a drive-by, and it is the next
-session's call.
-
-### THE RE-TEST — NOT YET RUN, and it needs both a DB and a human
-
-Blocked on egress (§0). When it returns:
+### 0b. The four readings that tell you where things stand
 
 ```bash
-NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts --find --show 6   # never invent an id
-NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts --unit <id> --arrival <date> --watch <id>
+NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts        # the 8am flow
+NODE_USE_ENV_PROXY=1 npx tsx scripts/native-alloc-readout.mts    # Track A (widen the window)
+NODE_USE_ENV_PROXY=1 npx tsx scripts/chromium-memory-readout.mts # the ramp series
+NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status      # what the box is running
 ```
 
-**What should now happen, stated so it can be falsified:** the sign-in window **stays open**
-on the stale token instead of closing in under a second, `afterLoad` injects the credentials
-per page (bounded by `MAX_LOGIN_PAGES = 6`), and the window closes only once a **live** token
-arrives.
+All of these run **here**, in a sandbox session — `NEXT_PUBLIC_SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` are already process env vars. **Not on the mini-PC**: nothing under
+`scripts/auto-cart-bot/` touches Supabase, and `VAR=1 npx …` is bash syntax that silently does
+nothing in cmd.
 
-**The proof is in `client_reports`:** look for the login stages — `signin-open`, `email`,
-`password`, `submitted` — which were **entirely absent** on 08-24 because the window closed
-before any of them could run. Their presence is the fix working; their absence means it is not.
-Expect the "your sign-in has expired" warning to appear and then be cleared by a replay — that
-is the second finding above, still unfixed, and NOT a failure of this fix. Then `✓ Added to cart` and
-`cart read back`.
-
-**The claim link must be opened IN THE APP.** From a browser `canInject` is false and none of
-this is exercised. No session can do this — ask the owner.
+`NODE_USE_ENV_PROXY=1` is a sandbox-only prefix (it points Node's fetch at the agent proxy).
 
 ---
 
-## 1b. THE MANUFACTURED RAMP — IT ARRIVED, AND TRACK A RECORDED NOTHING
+## 1. WHY THE OBVIOUS PLAN DOES NOT WORK — read this before designing anything
 
-**Egress came back ~12:55 PT on 08-24 and both readouts ran.** The ramp happened exactly as
-ordered: **9,338 MB, 05:00:51→05:11 PT, 89% COMMIT, renderer 90% of it** — matching the 08-20
-password-sign-in figure almost exactly, and two minutes after the T−3h warm-up window opened.
-**The prediction was right on both halves.**
+**Track A is blind to the ramps by construction.** Established 2026-08-25 and written up in
+`CLAUDE.md` → *"THE CONTENTION TEST RAN ITSELF, AND TRACK A WAS POINTED THE WRONG WAY"*.
 
-**And `native_alloc_readings` has ZERO rows for it.** `maybeWarmupLogin` is the **third**
-Okta-navigating path and the only one with no sampler on it — and by construction it is the
-EXPENSIVE one, because it fires only when Okta is GONE, i.e. the full password variant.
-`startNativeSampling` had two call sites: `maybeAutoLogin` and the renewal's throwaway tab.
-
-~~**Wiring it onto the warm-up is the obvious next move and is NOT done.**~~ **DONE 2026-08-24
-evening — #184, `18bb337`, and the box is on it.** Three things, because sampling alone would
-have been inert: the sampler on the tab's own CDP session with a BEFORE profile, `attemptLogin`
-wrapped in `withNetworkTrace` (`reportNativeAlloc` refuses a reading whose RAM delta is missing,
-and the delta comes from the trace), and the report in the `finally` before the tab closes.
-Context `'warmup'`, which the server already allow-lists — anything else stores NULL and lands
-the reading unattributed.
-
-**THE GUARD IS GENERAL: `worker/warmup-sampler.test.mts` fails on a FIFTH unsampled path**, so
-this cannot recur one door along. `runLoginRehearsal` is a recorded EXCEPTION rather than a gap —
-it navigates to Okta but runs on the resident page, so there is no close to reclaim what it
-allocates; wiring it is a separate decision.
-
-### WHAT IS MISSING NOW IS THE EVENT, NOT THE INSTRUMENT — AND TOMORROW MAY NOT SUPPLY IT
-
-`maybeWarmupLogin` reads `nextHoldRelease()`, whose status filter is
-`('requested','carted','claiming')` — **never `offered`**. All four real offers for 08-25 08:00 PT
-were untapped at handover, so **if nobody taps, the warm-up stands down and there is no expensive
-trip to sample at all.** The renewal path has been sampled for weeks and has produced no reading,
-which is consistent with ramps having become much rarer.
-
-**A tap is the precondition for the measurement, and no session can produce one.** Do not read an
-empty `native-alloc-readout.mts` the next morning as a broken instrument — check whether a hold
-was ever tapped first.
-
-That is the fifth instance of the house shape — an instrument bolted to two of three doors — and
-the first where it cost an experiment somebody deliberately set up.
-
-**The one reading that DID land is the cheap T−30 sign-in** (−422 MB, 103 MB renderer). It shows
-no `net::` and no system-dll frames, so the buffering candidate gets **no support** — but **do
-NOT correct the three buffering entries on it**: it cleared the 400 MB bar by 22 MB, it is 4.5%
-of the event under investigation, it is a different code path, and its shape disagrees (renderer
-24% here against 90% on real ramps).
-
-**The warm-up design is vindicated and the morning was clean** — the 9 GB trip landed at T−3h,
-the T−30 sign-in cost ~106 MB with COMMIT flat at 16%, and the cart fired at **T+2s**.
-
-**#171 IS PROVEN ON A REAL HOLD.** `TEST · 43129` carted T+2s, claimed, released, and reported
-**`cart read back: 1 entry`** on iOS build 1.0 (21) — RC's own answer, the verification nobody
-could force. **Still not exercised on Android.**
-
-### The commands and the reading rules (unchanged, for the next ramp)
-
-### The commands and the reading rules
-
-A **real test hold** was queued to *manufacture* a memory ramp so Track A's native-allocation
-sampler finally gets a reading. It is an instrument, not a product test.
+Three ramps happened on their own in 30 hours:
 
 ```
-hold      3020e05a-8e3f-444b-8973-1426f3211760
-site      Morro Bay SP — Lower Section, unit 43129 (#33), arrival 2026-12-01
-releases  2026-08-24 07:58:47 PT
-claim     https://camphawk.app/claim/3020e05a-8e3f-444b-8973-1426f3211760?t=WNWD1BgU
-delete    npx tsx scripts/rc-test-hold.mts --delete 3020e05a-8e3f-444b-8973-1426f3211760
+08-24 19:37→19:43   peak 7,250 MB   free 2,217   commit 95%   pid 15092
+08-25 02:30→02:40   peak 8,312 MB   free 2,473   commit 98%   pid  1296
+08-25 07:31→07:37   peak 7,471 MB   free 2,144   commit 99%   pid 13296
 ```
 
-**Run these two, in this order:**
+Track A has exactly three stored readings — one per ramp hour — and **every one says "this
+navigation did NOT ramp"**, and every one sits outside its ramp window.
 
-```bash
-NODE_USE_ENV_PROXY=1 npx tsx scripts/native-alloc-readout.mts   # the attribution — the point
-NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts       # the hand-off + cart outcome
-```
+**The cause:** `reportNativeAlloc` (`rc-keepwarm.mjs` ~1665) fires on the **return path**, after
+`attemptLogin`/`renewSession` returns, and is gated on `ramΔ ≤ −400 MB`. A trip killed mid-ramp
+never returns, so it never reports. The instrument therefore records, **by selection**, the cheap
+retry that *follows* a ramp.
 
-There is also `/rc-status`, which runs the health endpoint and the hold readout and applies the
-reading rules. Use it if you want the health picture too.
+### Three consequences, and they shape the whole job
 
-### The timeline it was built around
-
-| PT | what |
-|---|---|
-| ~04:58:47 | **T−3h warm-up window opens** — fires only if Okta is GONE, then does the full password sign-in: the **12-minute, ~9,434 MB** trip, the biggest Okta navigation this system makes. **This is the experiment.** |
-| ~07:14 | `holdAtRisk` may ring the owner's phone if the session is dead. Not a fault. |
-| 07:28:47 | T−30 `maybeAutoLogin` |
-| 07:58:47 | release; the cart should fire within a few seconds |
-
-### Reading the result — the rules matter more than the numbers
-
-- **`net::` frames** → the network/IPC buffering candidate is **confirmed**, after three
-  `CLAUDE.md` entries asserted it with no evidence.
-- **Anything else** → those three entries need correcting. Say so.
-- **The line covers the RENDERER ONLY.** `Memory.startSampling` is absent on the browser target
-  (verified). The browser process's share is not in the figure, and the rendered line says so.
-- **A flat JS heap eliminates ordinary JS retention and NOTHING ELSE.** 640 MB of `Uint8Array`
-  reports `JSHeapUsedSize` = 0.0. Do not repeat the older, wider inference.
-- **"No readings yet" is a REAL ANSWER** — it means the trip did not ramp. The three-way verdict
-  deliberately refuses to speak without a RAM delta. It is not a broken sampler.
-- **A ~9 GB ramp that morning is the ORDERED OUTCOME, not an incident.** Do not open
-  `chromium_memory_samples`, read `peak_rc 9,180 / COMMIT 88%`, and write it up as the leak
-  recurring or the containment failing. Somebody asked for this ramp. (And per §24b the RAM arm
-  would not have fired on it anyway.)
-
-### The prediction, stated so it can be falsified
-
-The expensive trip should land at **~04:59 PT** (warm-up, Okta gone), making the 07:28:47
-sign-in the **cheap cookie-answered** kind. **Check where it actually landed rather than
-assuming** — the 08-22 handover predicted a quiet morning on exactly this reasoning and was
-falsified by a 9,180 MB ramp at T−30.
-
-**The precondition is DUE, not OBSERVED.** `okta_expires_at` was frozen at
-`2026-08-24T03:00:59Z` across four reads by two sessions — the **absolute cap**, not the rolling
-window our probe refreshes — so it was due to lapse ~20:01 PT on 08-23. **Nobody watched it
-expire.** If the warm-up did not fire, an Okta session outliving its stated cap is the first
-thing to check, and that would itself be a finding.
-
-### The second thing this morning can prove — and it needs a human
-
-#171 shipped the hand-off landing **in** the cart and **reading the cart back** there. Neither
-has run against a real hold. `rc-holds-readout.mts` prints **`cart read back`** when it happens.
-
-**It only fires if the claim link is opened IN THE APP.** From a browser `canInject` is false and
-the injected precart never runs, so it tests nothing. **No session can do this — ask the owner,
-do not investigate its absence.**
+1. **DO NOT queue a test hold to force a ramp.** Three arrived free of charge and were all
+   missed. A staged one would be missed identically, and it locks a real campsite to do it.
+2. **THE RAMPING RENDERER MAY NOT BE THE TAB WE SAMPLE.** On 08-25 02:31 the renewal's throwaway
+   tab reported **17 MB** of renderer allocation while the family's renderers reached **8,052 MB**
+   — and the climb continued for eight minutes after the reading was stored. **CANDIDATE, NOT A
+   FINDING:** the allocation is in the **resident page's** renderer, not the throwaway tab's.
+   If that is right, PR #142's "first cure" (move the Okta trip into a throwaway tab so the
+   renderer dies at close) is aimed at the wrong renderer — which would explain why ramps
+   continued after it shipped. **Do not write this in as fact. The trail is what settles it.**
+3. **THE GUARD IS NOT A USABLE REPORTING TRIGGER.** The RAM arm needs
+   `stalledMs > 60s && freeMb < 2000`. Troughs were 2,217 / 2,473 / 2,144 — it came within
+   **144 MB** and did not fire, on six consecutive ramps now. A trail that only prints when the
+   guard trips would print never.
 
 ---
 
-## 2. Serial rules — still binding whenever a hold is queued
+## 2. THE ASSIGNMENT — the Track A trail
 
-The SERIAL rules in `docs/LANES.md` bind while the hold is live:
+**Goal: one attributed reading from inside a real ramp.** Everything else follows from it.
 
-- **No `npm test`** (production DB, and it races production's own sweeps).
-- **No second test hold.**
-- **Nothing that restarts the box** — "Update now", `update.bat`, `restart-rc`, `kill-chrome`.
-- The updater's **6h release gate shut at 01:58:47 PT**. A *requested* update lifts the quiet
-  window but **never** that gate. A refusal there is correct, not the 08-12 deadlock.
+### 2a. The design, and why it is this shape
+
+The pattern already exists twice in the same function. `rc-keepwarm.mjs` ~2268 runs
+`setInterval(renew, WATCHDOG_MS = 10_000)` and on every tick it already:
+
+- samples the **heap trail** via `sampleHeap(heapProbe)` — CDP, and it **freezes** once the
+  browser stops answering (measured: newest sample 123s old against a 121s stall);
+- samples the **RAM trail** via `os.freemem()` — a syscall, so it never stops answering;
+- keeps the last `TRAIL_KEEP` of each and prints both when the RUNAWAY arm fires.
+
+**The native-allocation trail is the same move, one slot over**: sample
+`readNativeProfile(sampler)` on that tick, keep the last N, diff against the oldest.
+
+Three things it must get right, each of which is a way this quietly buys nothing:
+
+- **REPORT ON A TRIGGER THAT ACTUALLY FIRES.** Per §1.3, not the RAM arm. The strongest
+  candidate is the **post-Okta recycle** (`visitedOkta` → break → reopen): the `gpu-process`
+  pid changes across **all six** recorded ramps, so a browser replacement is the one event
+  observed to coincide with every single one. A free-RAM-drop threshold read off the RAM trail
+  (already sampled, already on this tick) is a reasonable second trigger. Consider both.
+- **SAMPLE THE RESIDENT RENDERER, NOT ONLY THE TAB.** See §1.2. `startNativeSampling` currently
+  has two call sites (`maybeAutoLogin` ~1232, the renewal tab ~2708) plus the warm-up (~950),
+  and all three sample the trip's own renderer. If the resident page is what ramps, none of
+  them can see it. **`Memory.startSampling` is absent on the browser-process target** — verified,
+  so a reading covers renderers only and the line must say so, as the current one does.
+- **FIRE-AND-FORGET WITH AN IN-FLIGHT FLAG.** The timer must never await: once the browser goes
+  quiet, every attempt costs its full timeout and they pile up one per tick. Copy `heapInFlight`.
+- **`TRAIL_KEEP = 12` IS TOO SHORT FOR THIS EVENT, and it is not obvious.** At a 10-second tick
+  that is **two minutes** of history; the ramps run **ten**. So a trail sized like the heap
+  trail cannot reach back to the onset — it would show the last fifth of the climb and no
+  baseline. That is exactly how the heap trail produced twelve byte-identical samples whose
+  newest was already 123s stale. Size the native trail for the event (~10 min of coverage), or
+  sample it on a slower sub-cadence than the tick. **Do not reuse `TRAIL_KEEP` unthinkingly.**
+
+`worker/warmup-sampler.test.mts` enumerates every `attemptLogin`/`renewSession` call and requires
+each to be sampled or listed in `EXCEPTIONS`. **Extend that guard rather than pinning the new
+trail specifically** — a guard that pins one path is the fifth instance of the house shape.
+
+### 2b. Shipping it to the box
+
+Bot-side, so it does nothing until the mini-PC updates.
+
+- **"Update now"** from Admin → System Health, or the quiet window **02:00–05:00 PT**.
+- **The 6h release gate is NOT liftable.** A queued hold within 6h of its release refuses the
+  update, and that refusal is correct — it is not the 08-12 deadlock.
+- **`autocart.bot_version` is a hint, not an answer.** `bot_commit` is COALESCEd and can sit
+  stale beside a live heartbeat. `git-status` through `bot_commands` is what answers "did it
+  land?".
+- Updates have been landing in **~24 seconds** when the lockfile has not moved.
+
+### 2c. Stress testing — what "stress" can honestly mean here
+
+The owner asked for stress tests. **The ramps are the stress, and they arrive ~3× a day
+unprompted.** So the test is: ship the trail, update the box, and read the next ramp.
+
+- **The series is the trigger to watch.** `chromium_memory_samples` at 2-minute cadence shows a
+  ramp as ~5 samples climbing over ~10 minutes. Poll the memory readout; when a ramp appears,
+  the trail should have a reading for it. **A ramp in the series with nothing in
+  `native_alloc_readings` means the trail missed it too** — which is itself the reading, and it
+  says the trigger is wrong.
+- **What would legitimately be staged:** nothing that locks a campsite. If a ramp must be
+  provoked, the mechanism is an Okta navigation with Okta GONE — and Okta's expiry is currently
+  **rolling** (our own liveness probe refreshes a 12h window; there is an absolute cap behind it
+  that has not been characterised). There is **no non-destructive lever** to end the Okta
+  session: `restart-rc` and `kill-chrome` leave the profile intact, and `rc-login.bat` kills the
+  Chromium the token lives in. **Wait for the cap; do not force it.**
+- **Do NOT lower or raise the RAM floor as part of this.** `keepwarm-recycle.test.mts` bounds it
+  1500–3000 with recorded reasoning, and moving the trip point is what killed a working repair
+  on 2026-08-19. If the trail's evidence argues for changing it, that is a separate, deliberate
+  change with its own write-up.
 
 ---
 
@@ -395,106 +179,57 @@ The SERIAL rules in `docs/LANES.md` bind while the hold is live:
 
 | | |
 |---|---|
-| Master | **`da97f23`** |
-| Branch | merged; `claude/main-lane-docs-0824` carries this handover update |
-| Mini-PC | **`18bb337`** — updated 21:57 PT, "updated and verified", 24s. Box and web match. |
-| Open PRs | **none** — #187 (RC texts carry the nights) and #188 merged 2026-08-24; worker redeployed and verified (`last beat 6s ago, 2/2 shards`) |
-| Open issues | **#76**, **#14** (#174/#175 folded and closed 2026-08-23) |
-| Open holds | the 08-24 instrument has released; `expire-holds.ts` sweeps from Fly every 60s |
-| Migrations | highest applied **068** (`hold_line`, the fairness queue — applied and read back); next main-lane number is **069** (`070` is an old side-lane block claim). LANES.md's "next is 060" is stale. |
+| Master | **`53f1476`** |
+| Branch | **`claude/main-lane-docs-0824` @ `07c8fe9` — PUSHED, UNMERGED.** Two commits ahead. Merge it first. |
+| Mini-PC | **`18bb337`** |
+| Open PRs | none |
+| Open issues | **#76**, **#14** |
+| Migrations | highest applied **068**; next main-lane number is **069** (`070` is an old side-lane block claim). LANES.md's "next is 060" is stale. |
+| Holds | none live. The 08-25 release completed; `expire-holds.ts` sweeps from Fly every 60s. |
 
-**THAT LAST LINE WAS STALE BEFORE IT WAS READ, and it is worth keeping as the correction.** It
-said #183 was web-side and would not restart the pollers. The SMS-storm fix was added to the same
-branch AFTER it was written, so the merge touched `worker/**` and `src/lib/db/**`, fired
-`worker-deploy.yml`, and restarted both machines — which is precisely how the fix reached Fly.
-**A note about a branch ages the moment the branch does; re-read the diff, not the note.**
+The two unmerged commits are docs, comments and one guard — the corrections from 08-25. Nothing
+in them needs to reach the mini-PC.
 
-Master and the box differing is the ordinary drift `CLAUDE.md` documents — the merges since were
-docs-only, so there is nothing waiting to reach the mini-PC.
+**Two check-ins are scheduled and enabled — do not create duplicates.**
+`trig_01NdJC1SvSDwxZZroAooVKnU` fires **07:40 PT** into a fresh session and notifies the owner's
+phone. `trig_01CzPKmDUz5MC3tbYFGMTS4a` fires **08:15 PT** into the persistent session with the
+outcome readout.
 
-**TWO CHECK-INS ARE ALREADY SCHEDULED AND ENABLED — do not create duplicates.**
-`trig_01NdJC1SvSDwxZZroAooVKnU` fires **07:40 PT** into a FRESH session and **notifies the
-owner's phone** (that is the one that can still save a hold, 20 min before the release).
-`trig_01CzPKmDUz5MC3tbYFGMTS4a` fires **08:15 PT** into the persistent session with the outcome
-readout, and its prompt already carries the 08-25 specifics.
+### What happened on 2026-08-25, in one paragraph
 
-**`autocart.bot_version` is a hint, not an answer.** `bot_commit` is COALESCEd and can sit stale
-beside a live heartbeat. `git-status` through `bot_commands` is what answers "did it land?".
+The 08:00 release worked: Morro Bay #96 carted at **T+2s**. The fairness line's first live
+contest resolved correctly (rank 1 never tapped, so `dueHolds` served rank 2). The owner
+deliberately did not claim, which measured something useful — **the unclaimed release at 45
+minutes is `expireStaleHolds(45)`, OURS**, with RC answering HTTP 200. So the expiry cascade was
+never blocked on RC's unmeasurable cart lapse; it is now purely the owner's call.
 
 ---
 
-## 4. The leak — the standing ask, still unmet
+## 4. Serial rules — binding whenever a hold is queued
 
-**Everything shipped is containment or relocation.** The size guard, the RAM arm, the heap trail,
-the post-Okta recycle, the orphan sweep, the throwaway tab, the warm-up. The box stays healthy.
-**The allocation still happens.** Do not read green instruments as a cure; the owner asked
-directly on 08-21 and was right to.
+From `docs/LANES.md`:
 
-**Established:** the ramp is triggered by the **Okta navigation** — a controlled comparison, not
-a correlation. It lands in the **renderer** (~90%) and the **browser process**.
+- **No `npm test`** while a hold is live (production DB; it races production's own sweeps).
+- **No second test hold.**
+- **Nothing that restarts the box** — "Update now", `update.bat`, `restart-rc`, `kill-chrome`.
 
-**Never observed: what allocates.**
-
-**The 08-23 shape:** an **eleven-minute climb on ONE renderer pid at ~400 MB/min**, not the short
-burst recorded on 08-17.
-
-### What changed on 2026-08-23 and weakens the case for waiting
-
-**Neither 9 GB ramp tripped the RAM arm.** The arm needs a stall **AND** free RAM under 2,000 MB;
-troughs were **3,191 and 3,328 MB**. A **browser replacement** ended both — the `gpu-process` pid
-changes across each. The box reached **88% COMMIT**, two points off where Windows stops
-scheduling.
-
-- **The floor is a QUESTION, not a patch.** It is behaving exactly as designed: 08-19 predicted
-  *"a trough near 3,300 MB"* and set the floor *below* it so a working renewal could not be
-  killed. What moved is the peak (5,688 → 9,180 MB). **Lowering the trip point is the change that
-  killed a working repair on 08-19.** The honest options — leave it and rely on the recycle, or
-  give the arm a second non-free-RAM trigger — differ in kind and are not a drive-by.
-- **What would settle what ended them:** a `♻ recycling` line in `logs\rc-keepwarm.log` at
-  14:41:5x, via `tail-log`. The post-Okta recycle is the leading candidate for the 08-23 ramp;
-  the 08-22 one coincides with a box update, so a `stop-all` is likelier there. **Both are
-  candidates.**
-
-### Track B — designed, NOT started, needs the owner's go-ahead
-
-Take the renderer out of the OAuth round trip: intercept `/authorize`, replay over `ctx.request`
-following redirects, exchange the code ourselves. Three pieces already exist. For the
-cookie-answered case it is a plain redirect chain, and **all twenty recorded ramps were
-renewals.** Leave the password case (Okta Identity Engine, CAPTCHA-exposed) in a browser.
-
-**Two reasons it has waited, and only one still holds.** The design reason stands: Track A's
-first reading could move the lever entirely — if the growth is buffering in the **browser
-process**, `ctx.request` may be wrong. The other reason was *"the box stays healthy"*, and 88%
-COMMIT with no guard firing weakens it. ~~**Take both to the owner honestly.**~~
-
-**TAKEN TO THE OWNER 2026-08-24 AND ANSWERED: wait for one attributed reading first.** Recorded
-as a decision so it is not re-litigated or quietly started. The deciding fact was the one worth
-repeating — **the sampler is renderer-only** (`Memory.startSampling` is absent on the browser
-target), and on the single event where both were measured the browser process held **545 MB of
-2,046**. So if the growth is there, `ctx.request` may not be the lever at all, and building it
-now is how a repair gets credited to the wrong mechanism — three times already.
-
-**What changes the answer:** one reading from a real ramp, which now needs a tapped hold (see
-§1b). If several mornings pass with no tap and no ramp, the wait itself becomes the cost, and
-that is worth putting back to the owner rather than drifting.
+There is no side lane running as of 2026-08-25, so the box is yours — but check `ListAgents`
+before taking it.
 
 ---
 
-## 5. The other live thread: iOS
+## 5. Track B — designed, NOT started, needs its own go-ahead
 
-**`1.0 (5)` awaits a decision** — same binary, rewritten App Review notes. **Release is
-AUTOMATIC**, so it can go live with no human step; you may find out by seeing it on the App
-Store. Read `docs/APP-STORE.md` §2d before touching anything.
+Replay the Okta round trip over `ctx.request` following redirects, exchange the code ourselves:
+no page load, no renderer, no gigabytes. Three pieces already exist (we intercept `/authorize`
+in `force-login-prompt.mjs`, we read `code_verifier` off the token POST in `rc-token.mjs:108`,
+and okta-auth-js's `okta-transaction-storage` is known to the code).
 
-- **Approved** → live, nothing to do; the `LINKOUT_BY_STORE.ios` flip already happened.
-- **Rejected on 3.1.1 again** → **that is the ANSWER, not a fourth process failure.** This is the
-  first submission where a reviewer can actually reach a link-out. It moves the decision to
-  StoreKit — weeks of native work, a new build, 15–30% — and goes to the owner as that decision.
-- **Rejected on something else** → treat on its own terms. §2a–§2d were each a different fault
-  from what the previous one looked like.
-
-**Android stays off.** `LINKOUT_BY_STORE.android` is `false` until Play PRODUCTION is live and
-US-only; the closed test is worldwide and the carve-outs are US-storefront only.
+**Still not started deliberately.** It is surgery on the one path between a queued hold and a
+missed cart, and **the renderer-only sampler cannot see the browser-process share** — 545 MB of
+2,046 on the one event where both were measured. If the growth is there, `ctx.request` may be
+the wrong lever entirely. The trail (§2) is what makes this decidable. Building it blind is how
+a repair gets credited to the wrong mechanism, which has happened three times.
 
 ---
 
@@ -504,11 +239,14 @@ US-only; the closed test is worldwide and the carve-outs are US-storefront only.
   `upcoming`/`imminent` counts that never got the `REAL_UNIT` filter, so test fixtures are
   visible to it. The phone is safe (`holdAtRisk` IS filtered); the dashboard is not, and while
   red it prints the destructive `rc-login.bat` remedy over a healthy session. Bounded to the
-  length of a run. **The honest fix is one definition instead of three** — deliberate, not a
-  drive-by.
-- **The live manage token `EQO2oXcQ`** — unrotated, still returns 200. In git history, so
-  scrubbing files is insufficient; rotation is one DELETE from `action_tokens`. **Owner's call**,
-  four sessions running.
+  length of a run. **The honest fix is one definition instead of three.**
+- **The rec.gov `carted` SMS body overflows one segment for 19 campgrounds** (long names, and it
+  deliberately does not go through `fitOneSegment` — it is the 08-05 delivery control). Pinned by
+  `sms-body.test.mts`; changing it is a decision about the auto-cart path.
+- **A token rebroadcast can clear an `expired` verdict** in the claim gate. The honest remedy is
+  a sticky `expired` for the run, not refusing unknowns (that locks out older bundles).
+- **The live manage token `EQO2oXcQ`** — unrotated, still returns 200, and in git history.
+  Rotation is one DELETE from `action_tokens`. **Owner's call**, five sessions running.
 - **#76** — `rc-holds.test.mts`'s fixture sweep deletes a concurrent run's live rows.
 - **#14** — rec.gov timeout cascade.
 
@@ -516,20 +254,21 @@ US-only; the closed test is worldwide and the carve-outs are US-storefront only.
 
 ## 7. Traps that have actually fired
 
-- **`GITHUB_TOKEN`/`GH_TOKEN` are SET and are 14-character PLACEHOLDERS.** `api.github.com`
-  refuses them; GitHub works only through the MCP tools. **The variable existing is the trap** —
-  check `${#GITHUB_TOKEN}` or read one response body. It cost a CI watchdog that parsed the
-  refusal as "nothing terminal yet" and would have reported `TIMEOUT` on healthy CI.
+- **`GITHUB_TOKEN` is a 14-character placeholder and `/user` returns 200.** A false positive.
+  Repo-scoped calls 403. Use the MCP tools. It once cost a CI watchdog that parsed the refusal
+  as "nothing terminal yet" and would have reported `TIMEOUT` on healthy CI.
+- **Verify a push against the remote, not local HEAD.** `echo $(git rev-parse --short HEAD)`
+  after a push echoes the local sha whatever happened. Use
+  `git fetch origin <branch> && git rev-parse origin/<branch>`. This cost a PR containing none
+  of its change.
 - **Read the readout's `site` column.** `TEST · ` in `unit_name` is written only by
-  `rc-test-hold.mts` and is the one unambiguous fixture marker — it was on screen for a day while
-  three documents called the 08-23 hold real.
-- **`claimed` in the readout is `claimed_at ?? released_at`.** A time there does not mean the hold
-  was claimed; `released` is the successful terminal state.
-- **`applied_note` and `applied_sha` describe DIFFERENT events.** Neither answers "did the update
-  land?" — `git-status` through `bot_commands` does.
-- **A health reading goes stale faster than a conclusion drawn from it.** Re-read before quoting.
-- **A guard that anchors on a token occurring twice breaks silently.** Twenty-two times now. When
-  one fails over unchanged behaviour, re-anchor **and verify it still fails against the
-  regression it exists for** — a re-anchor that quietly weakens a guard is worse than the break.
-- **Never invent an RC unit id.** `scripts/rc-test-hold.mts --find` is the only way; a real
-  numeric id LOCKS a real campsite.
+  `rc-test-hold.mts` and is the one unambiguous fixture marker.
+- **`claimed` in the readout is `claimed_at ?? released_at`.** A time there does not mean the
+  hold was claimed.
+- **A guard can pass vacuously.** Every mutation must be verified to APPLY (grep for it) as well
+  as to fail. Twenty-three instances of a guard anchored on the wrong thing are recorded in
+  `CLAUDE.md`; several matched an import line, a comment, or a function definition instead of
+  the call site.
+- **`sqlit` interpolates, it does not bind**, and throws on a plain object. Stringify jsonb.
+- **No non-ASCII in `.ps1` files**, no `\"` inside a `powershell -Command` string in a `.bat`,
+  and no backticks in a SQL comment inside a template literal.
