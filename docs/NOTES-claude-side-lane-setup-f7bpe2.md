@@ -1902,8 +1902,13 @@ Bay watch." It was 52, it was still firing when it was reported, and it is the f
 park-watch entry in CLAUDE.md predicted in as many words: "Watch for a duplicate or missing
 alert on that watch specifically."*
 
-**MAIN LANE: both bugs below are in `worker/poller.ts` and the fix for the first is a
-migration. Recorded here rather than fixed. The live flood is stopped by a DATA change.**
+~~**MAIN LANE: both bugs below are in `worker/poller.ts` and the fix for the first is a
+migration. Recorded here rather than fixed. The live flood is stopped by a DATA change.**~~
+
+**STRUCK — BOTH BUGS WERE FIXED AND DEPLOYED THE SAME DAY. SEE 26h.** The main lane shipped
+`d842dc0` (#183) at **14:36 PT**, roughly two hours after this was written: migration 067 plus
+`worker/hold-claim.ts`. Read 26h BEFORE acting on anything below, and do not go looking for an
+unfixed defect in `worker/poller.ts` — `claimHoldNotification` no longer lives there.
 
 ### 26a. THE MEASUREMENT
 
@@ -2026,6 +2031,57 @@ on no health check, and pages nobody. **The owner's phone was the monitoring.**
 A per-watch burst ceiling — N alerts per watch per hour, then a digest — would have capped this
 at source regardless of which claim was broken. That is a product decision on the most
 safety-critical path in the repo, so it is recorded, not built.
+
+### 26h. CORRECTION — FIXED AND DEPLOYED THE SAME DAY, AND THEIR FIX IS BETTER THAN MINE
+
+**Written 2026-08-24 21:30 PT, correcting this section's central claim.** Everything above about
+the mechanism and the measurement stands. What is wrong is the disposition: 26a-26g say the
+defects are recorded-not-fixed and that the remedy is a future migration. **Both were fixed and
+deployed on 2026-08-24.**
+
+```
+11:40 - 12:42 PT   the flood (52 messages)          <- measured in 26a
+12:43 PT           side lane trims Melinda's watch  <- the flood stops
+14:36 PT           d842dc0 (#183) committed         <- the REAL fix, main lane
+```
+
+**THE TRIM WAS STILL LOAD-BEARING, AND THE ORDER PROVES IT.** The fix landed nearly two hours
+after the flood stopped, so the stopgap is what ended it — this is not a case of crediting a
+repair to the wrong mechanism. But everything written afterwards about the defect being live was
+wrong from 14:36 onward, **and I repeated it to the owner at ~21:00 PT, seven hours late.**
+
+**HOW I GOT IT WRONG IS THE REUSABLE PART: I READ THE CODE BEFORE A REBASE AND ANSWERED AFTER
+ONE.** `claimHoldNotification` was at `worker/poller.ts:700` when I read it. #183 **moved it** to
+`worker/hold-claim.ts`, and my later `grep` for `rc_hold_notified_for` in `poller.ts` returned
+only the type and the SELECT — which I read as "the column is still there, so the bug is still
+there" instead of "the function has gone somewhere else". **A grep that returns fewer hits than
+before is a signal to find out why, not a confirmation of the previous reading.**
+
+**THEIR FIX IS STRICTLY BETTER THAN THE ONE 26b PROPOSES, AND IT IS WORTH SAYING WHY.** 26b says
+the column needs "a row per (watch, campground) — the same move migration 026 made". That would
+have fixed the round-robin **and left 26c intact**: two divisions reporting the same unit would
+still each hold their own claim and still send two texts for one campsite. The shipped fix keys
+on the **UNIT** instead — `rc_hold_notified_keys text[]`, key `<releaseHour>|<unitId>`, appended
+with `array_append` under a `NOT (... @> ARRAY[key])` guard — so the two divisions that both
+reported unit 43191 now compute the *same* key and only one wins. **One fix, both defects.**
+`releaseHoldClaims` is unit-scoped to match, and `worker/hold-claim.test.mts` carries 7 tests.
+
+**THE DEPLOY GUARD IS WHY NOTHING RE-ANNOUNCED.** Migration 067 backfills a live legacy claim as
+`<hour>|*` and the claim checks that wildcard too, so every watch mid-claim is suppressed for
+that release hour rather than sending one more alert the moment the poller ships. Both watches
+read `["2026-8-25T8|*"]`, which is why restoring divisions produced no alerts.
+
+**BOTH WATCHES ARE RESTORED TO FULL COVERAGE (2026-08-24 21:30 PT).** Melinda's `336d742c` is
+back to all three divisions (`rc-2185`, `rc-582`, `rc-583`); the owner's `eb886697` was never
+trimmed and keeps `rc-582` + `rc-583`. **No stopgap remains in place and nothing is owed.**
+
+**AND THIS WAS CONCURRENT DISCOVERY, NOT A RE-DERIVATION.** CLAUDE.md's own "26 TEXTS IN AN HOUR"
+entry documents the same storm; it did not exist when 26a was measured. Two lanes diagnosed one
+incident within hours of each other without knowing — which is the cost `docs/LANES.md` names,
+arriving in its expensive form. **A one-line message to the other session would have saved a
+duplicated investigation**, and `ListAgents` reports no reachable peers across cloud containers,
+so there is currently no cheap way to send one.
+
 
 ---
 
@@ -2272,6 +2328,12 @@ to make the change from — see 27e.
 ---
 
 ### Handover addendum — 2026-08-24 afternoon
+
+**§26 IS CORRECTED — SEE 26h. Both defects were FIXED AND DEPLOYED the same day** (`d842dc0`,
+#183, 14:36 PT: migration 067 + `worker/hold-claim.ts`, keyed on the UNIT). The trim at 12:43
+was still what stopped the flood — the fix came two hours later — but §26's "recorded, not
+fixed" framing was wrong from 14:36 onward and I repeated it seven hours late. **Both watches
+are restored to full coverage and nothing is owed.** Multi-division watches WORK.
 
 **§27 is CLOSED OUT (see 27g): upgraded to Supabase Pro on 2026-08-24, $25/month, deadline
 cleared, and the admin Costs tab turned out to have no Supabase row and no Fly row — monthly
