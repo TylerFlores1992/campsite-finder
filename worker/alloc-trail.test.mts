@@ -140,6 +140,36 @@ test('a ramp is reported ONCE, however often the flush runs', async () => {
   assert.equal(trail.takeRamps({ final: true }).length, 0, 'nor at teardown afterwards');
 });
 
+test('a ramp is not re-reported when the window prunes its first sample', async () => {
+  // THE BUG A SELF-REVIEW CAUGHT. `reported` first keyed on the segment's START, and the
+  // window prunes from the FRONT — so an aged-out first sample moves the start, changes the
+  // key, and the same ramp is stored again. A duplicate reading is worse than a missing one
+  // here: two rows for one event read as two events, and the whole investigation is a
+  // question about how often these happen.
+  //
+  // THREE SAMPLES IN THE RAMP, DELIBERATELY. The first version of this test used two, so
+  // pruning left a single sample, `rampOf` returned null, and the mutation SURVIVED — the
+  // test proved the segment became unreportable rather than that the key was stable. It has
+  // to still be a reportable ramp after the prune, or it is not testing the key at all.
+  const { trail } = harness([
+    { totalMb: 10 }, { totalMb: 800 }, { totalMb: 1500 }, { totalMb: 3 }, { totalMb: 10 },
+  ]);
+  trail.register('renewal', {});
+  for (const [i, free] of [9000, 7000, 6000, 9000, 8990].entries()) await tick(trail, i * 20_000, free);
+  assert.equal(trail.takeRamps().length, 1, 'reported once');
+
+  // Age the buffer past the first sample, exactly as the 20-minute window does. What is left
+  // of the ramp is 800 -> 1500 MB, still comfortably over the bar.
+  const live = trail.buffers().get('renewal')!;
+  const was = live.length;
+  live.shift();
+  assert.equal(live.length, was - 1, 'the prune must actually have happened');
+  assert.ok(rampOf(splitSegments(live)[0])!.growthBytes > 400 * MB,
+    'and what remains must still be a reportable ramp, or this tests nothing about the key');
+  assert.deepEqual(trail.takeRamps({ final: true }), [],
+    'the same ramp must not come back under a new key just because it got shorter');
+});
+
 test('an ordinary Okta trip is under the bar and is not stored', async () => {
   // Measured on the box 2026-08-25: two real renewals at 47 MB and 39 MB. Storing those would
   // bury the interesting rows exactly as the 16k log window already does.

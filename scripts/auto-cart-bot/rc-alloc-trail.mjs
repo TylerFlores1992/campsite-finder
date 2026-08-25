@@ -242,9 +242,20 @@ export function createAllocTrail({ read = readNativeProfile, windowMs = ALLOC_WI
   sampleMs = ALLOC_SAMPLE_MS, rampBytes = ALLOC_RAMP_BYTES } = {}) {
   /** @type {Map<string, {cdp: object|null, samples: Array, inFlight: boolean, lastAt: number}>} */
   const targets = new Map();
-  /** Segment start timestamps already reported, per target. Keyed on the START rather than a
-   *  counter because the window prunes from the front and segment INDEXES shift as it does —
-   *  a counter would re-report a ramp every time an old sample aged out. */
+  /**
+   * Segments already reported, per target, keyed on the segment's LAST sample time.
+   *
+   * NOT AN INDEX, because the window prunes from the front and segment indexes shift as it
+   * does — a counter would re-report a ramp every time an old sample aged out.
+   *
+   * AND NOT THE SEGMENT'S START EITHER, which was the first version and was wrong for exactly
+   * the same reason one layer in: pruning removes the segment's own first sample, so its start
+   * MOVES, the key changes, and the ramp is reported a second time under a new one. The END of
+   * an ended segment is fixed — nothing more is ever appended to it — which is the property a
+   * key needs. An OPEN segment's end does advance, and that is safe because an open segment is
+   * only ever taken with `final: true`, which happens at teardown and in the bail: after both,
+   * this target takes no further samples.
+   */
   const reported = new Map();
 
   const bufOf = (name) => targets.get(name)?.samples ?? [];
@@ -337,8 +348,8 @@ export function createAllocTrail({ read = readNativeProfile, windowMs = ALLOC_WI
           if (isOpen && !final) return;
           const r = rampOf(seg);
           if (!r || r.growthBytes < rampBytes) return;
-          if (done.has(r.startAt)) return;
-          done.add(r.startAt);
+          if (done.has(r.endAt)) return;
+          done.add(r.endAt);
           out.push({ name, ...r });
         });
         reported.set(name, done);
