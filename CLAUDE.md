@@ -3606,11 +3606,30 @@ free in thirty hours and all three were missed, and a staged one locks a real ca
   keeps the memory.
 - **A ramp in the series with nothing in `native_alloc_readings` is still a reading** — it says
   the trigger is wrong, and the next move is the trigger rather than the sampler.
+- **EXCEPT FOR THE ONE ALREADY ON THE BOARD, WHICH IS NOT A MISS.** The box moved to `64f9f92`
+  at **13:26:42 PT on 2026-08-25** (`bot_update_requests.applied_at`, confirmed by `git-status`).
+  The series carries a ramp at **13:0x PT — peak 9,113 MB, 99% COMMIT** — with no `trail-*` row,
+  and it ran **twenty minutes before the trail reached the box**. What it left instead is a
+  `renewal` RETURN-PATH reading at 13:10:26 (−468 MB, renderer 13 MB): the old instrument doing
+  the old thing one last time. **Applying the rule above to that ramp would retire a trigger
+  that has never yet been given an event.** Date every reading against 13:26:42.
+- **THE TRAIL HAS THEREFORE NOT YET SEEN A RAMP**, and at 15:00:51 PT the box was flat at
+  273 MB. Nothing to read is the expected state, not a fault.
+- **CADENCE, AS A FALSIFIABLE PREDICTION:** 08-24 19:37, 08-25 02:30, 07:31, 13:0x — ~7h, ~5h,
+  ~5.5h apart, so the next is due roughly **18:00–19:00 PT on 08-25**. Four points, not a law;
+  the 08-22 handover predicted a quiet morning on comparable reasoning and was falsified by a
+  9,180 MB ramp.
+- **`applied_note` DOES NOT DESCRIBE THE UPDATE THAT LANDED** — the row reads `SKIP - outside
+  the quiet window (15:00 PT…)` plus the known-harmless libuv `UV_HANDLE_CLOSING` assertion,
+  which is a LATER scheduled run writing beside the new sha. That is the documented
+  `appliedNote`/`appliedSha` trap. `applied_sha` and `git-status` both say `64f9f92`.
 
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`. THERE IS ASSIGNED WORK: the Track A trail and the leak
-> (owner's go-ahead, 2026-08-25). Track B still is NOT covered by it.**
+> **START AT `docs/NEXT-SESSION.md`. THE TRACK A TRAIL IS BUILT, MERGED (#193/#194) AND ON THE
+> BOX SINCE 13:26:42 PT 2026-08-25. The job now is to READ THE NEXT RAMP — see "HOW TO READ THE
+> NEXT RAMP" directly above, including the ramp that is already on the board and is NOT a miss.**
+> Track B is still NOT covered by the owner's go-ahead.
 >
 > **THE OWNER'S FOUR-ITEM QUEUE IS DONE (2026-08-24 evening → 08-25).** Fairness line,
 > offer-card dismissal + ordering, RC beta copy, and alert batching — all shipped with
