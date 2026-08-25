@@ -130,16 +130,22 @@ export default async function StateCampingPage({
           <span>{name}</span>
         </nav>
 
+        {/* The h1 leads with the intent, not the inventory. "Campgrounds in
+            California" is a query the booking portals and every listicle in the
+            outdoors industry already own; "campground cancellations in
+            California" is the one a person types AFTER the booking failed, and
+            it is the one this page can genuinely be the best answer to. Same
+            reasoning as the campground titles — see lib/seo.ts. */}
         <h1 className="font-ch-display text-ch-title font-extrabold tracking-[-.03em]">
-          Campgrounds in {name}
+          Campground cancellations in {name}
         </h1>
         <p className="mt-2 max-w-[70ch] text-ch-body leading-relaxed text-ch-ink-2">
           {/* Interpolations are joined INSIDE the strings. JSX strips whitespace
               between an expression and the next line, which rendered this as
               "across Oregon , in 93 towns ." */}
-          {`We track live availability at ${campgrounds.length.toLocaleString()} bookable campgrounds across ${name}`}
+          {`Booked out is rarely final. People cancel constantly, and the site goes straight back into the booking system — usually with no warning and often overnight. We watch live availability at ${campgrounds.length.toLocaleString()} bookable campgrounds across ${name}`}
           {towns > 0 ? `, in ${towns.toLocaleString()} towns` : ""}
-          {". Every one is checked around the clock, so when a booked site is cancelled you hear about it in seconds rather than finding out weeks later that it was free for an hour."}
+          {". Every one is rechecked every 15 seconds, around the clock, so when a booked site frees up you hear about it in seconds rather than finding out weeks later that it was open for an hour."}
         </p>
         <p className="mt-2 max-w-[70ch] text-ch-meta text-ch-muted">
           {`Booking goes through ${providers
