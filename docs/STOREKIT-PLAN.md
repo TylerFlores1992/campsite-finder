@@ -468,10 +468,24 @@ existing with a truthful answer of "none".~~
 > below draws about the rate, made one level earlier and got wrong in the act of writing it.
 > The advice to avoid the button would have blocked the very step it was describing.
 
-**WHAT IS STILL OUTSTANDING IS THE BANNER'S SECOND BULLET: accept the service fee terms and
-conditions.** The group is the prerequisite, not the enrolment. **A created account group is not
+~~**WHAT IS STILL OUTSTANDING IS THE BANNER'S SECOND BULLET: accept the service fee terms and
+conditions.** The group is the prerequisite, not the enrolment.~~ **A created account group is not
 an accepted rate** — same distinction as §9i's opening, one level in, and the point at which it
 would be easy to consider this done.
+
+> **DONE — ENROLLED, 2026-08-24.** The page now reads *"Your account group is enrolled for the
+> 15% service fee"* and lists it under **Programs and services you're enrolled in** with a
+> `View terms` link. **The two bullets resolved in one action**: saving the declaration carried
+> the terms with it rather than leaving a separate step, which is the opposite of what the
+> sentence above predicted. The general reasoning stands and only the sequencing was wrong.
+
+**§9d'S OPEN QUESTION IS NOW MOOT FOR THE PRICING, THOUGH STILL UNANSWERED ON ITS MERITS.** It
+asked whether this enrolment bears on the *auto-renewing subscription* rate specifically, since
+§9d's 10% + 5% comes from the subscriptions column and the banner is the general service-fee
+programme. **Both roads arrive at 15%**, so §1's price list — `$2.99 / $23.99 / $11.99 / $59.99`
+— is correct either way and nothing downstream depends on the answer. The `View terms` link on
+that page would settle the mechanism for anyone who needs it later; **do not record an answer
+without reading it.**
 
 ### 9h. The public merchant profile — the five fields, and the two that are decisions
 
