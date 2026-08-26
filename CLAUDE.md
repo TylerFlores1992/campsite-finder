@@ -3707,18 +3707,99 @@ the first time one physical site has had **two genuinely requested holds**:
   Diagnostic only — `last_attempt_note` has no user-facing reader — but it is the field the
   readout uses to tell a queue from an outage.
 
+### THE FAIRNESS LINE SERVED BOTH RIVALS — 14 SECONDS APART (2026-08-26)
+
+The first two-tapped contest ran, and the line **did not do the one thing it exists to do.**
+Both holds carted:
+
+    15:00:02  ✓ held #123 (2026-09-04) — entry ae877ae5-9ee1-479b-bec9-4d9f610ae718
+    15:00:13  0 to hand over, 1 to cart, 0 to release      <- the NEXT poll
+    15:00:17  ✓ held #123 (2026-09-04) — entry 6f0863e0-78d7-4cd2-9ec6-22ffc02f1351
+
+**Two distinct cart entries for one physical campsite, and RC accepted both.**
+
+- **THE DE-DUPE IS PER CALL, NOT PER CONTEST.** `dueHolds` uses
+  `DISTINCT ON (release_at, unit_id)`, which picks one row **within a single query**. The
+  runner polls every 15s. The instant rank 1 succeeded and left `requested`, rank 2 became
+  the top `requested` row for that unit and was served on the very next pass.
+- **THE HEADER STATES THE INTENT IT FAILS TO DELIVER**, which is why nobody caught it:
+  *"Serving both would ask RC for the same unit twice: one cart succeeds and RC refuses the
+  other in its own wording."* **RC did not refuse.** It issued a second reservation — so the
+  anticipated failure (a confusing error) was replaced by a worse one that looks like success.
+- **THE COST.** Two of the bot's ten cart slots for one site; **both users told their site is
+  held** when only one can have it; and the loser finds out at CHECKOUT, after being told it
+  was secured — the "user stops watching" failure the whole opt-in design is built around.
+- **`hold-line.test.mts` COULD NOT HAVE CAUGHT IT.** Its assertion calls `dueHolds` ONCE and
+  checks that one row comes back. That is true and always was. The bug is only visible across
+  **two successive calls with a status change in between**, which no test simulates.
+- **THE FIX IS NOT BUILT.** `dueHolds` must exclude any `(release_at, unit_id)` that already
+  has a LIVE hold — `carted` or `claiming` — so the rule becomes *one live hold per unit*
+  rather than *one served per call*. That is the most release-critical query in the product
+  and it is not a drive-by; it wants its own change, with a test that calls `dueHolds` twice.
+- **AND THE RANK-2 ROW CARRIED NO NOTE**, so from the readout the morning looks like two
+  clean carts rather than a contest that went wrong. `rankHoldLine` writes the "someone is
+  ahead of you" note only to rows already `requested`; this one was tapped fourteen seconds
+  after the line was ranked and nothing re-ranks afterwards.
+
+### A DEAD SESSION STILL STRANDS A CARTED SITE (2026-08-26) — the 08-13 leak, recurring
+Both carted rows were **still `carted` 78 minutes later**, with `released_at` NULL:
+
+    last_attempt_note : RC session is dead — needs a human sign-in
+    session           : no RC token at all — neither live nor stored
+    okta              : GONE
+
+The runner was alive and trying every 15s. **The release loop lives inside `withRC`**, so a
+dead session skips the whole callback and nothing lets go — exactly the 2026-08-13 finding,
+which `reclaimLapsedHolds` only half-fixed: it marks the row `expired` at `HOLD_LAPSE_MIN`
+(180 min) and **keeps `cart_key`, so it never releases the site on RC.**
+- **NOTHING WOULD HAVE REPAIRED IT.** `renewSession` skips with Okta GONE; `maybeAutoLogin`
+  only fires at T−30 of a release and the next was 23 hours away. The site was off the market
+  indefinitely.
+- **`test-login` IS THE REMOTE LEVER, AND IT WORKED IN THREE MINUTES.** Queued 09:18:30 →
+  session `ok` at **09:20:24** → the runner released both holds by **09:22:29**. It is
+  rationed to one per 6h on the box's own clock and refuses within 6h of a release, so it is
+  safe to reach for; it is the only remote thing that can restore a dead session, because the
+  renewal cannot when Okta is gone.
+
+### A PASSWORD SIGN-IN CAN BE CHEAP — 32 SECONDS AND ZERO MEMORY (2026-08-26)
+The same rehearsal is a controlled reading of the trip this file calls the expensive one:
+
+    16:19:27 Session before the test: DEAD — no token in localStorage
+    16:19:40     → password entered, submitting
+    16:19:43   (asked Okta for a fresh credential — rewrote 1 authorize request(s))
+    16:19:44 ✓ the bot can still sign itself in
+
+Okta was **GONE**, so this was the full password form with `prompt=login` forced — and the
+memory series is flat across it: `rc` 274-324 MB, **COMMIT 17% throughout**, free RAM never
+below 10,246 MB. No Track A reading, because there was nothing to report.
+
+- **SO "okta=GONE MEANS THE 12-MINUTE, 9,434 MB TRIP" IS NOT A LAW.** That figure (08-20) is
+  one observation of a trip that *struggled*; this one completed in 32 seconds for nothing.
+  **Duration and cost track each other**, which makes a retrying or stalling navigation the
+  better candidate than the password path itself. Do not write either in as the cause.
+- **THEREFORE A RAMP CANNOT BE MANUFACTURED ON DEMAND.** The plan of queueing a hold so the
+  T−3h warm-up fires a password sign-in **does not reliably produce one**, and this run is the
+  evidence. Combined with the standing rule (three ramps arrived free in 30h and all were
+  missed), the answer is unchanged: **wait for one; do not stage it.**
+- **AND THE BOX HAS BEEN QUIET FOR ~20 HOURS** — no ramp since 13:0x PT on 08-25, against a
+  cadence of ~5-7h before that. The trail has still never seen one. **That is not a cure**;
+  every "not reproduced this session" reading in this file was a window that missed one.
+
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`. TWO LIVE THREADS.**
+> **START AT `docs/NEXT-SESSION.md`. THE TOP ITEM IS A BUG, NOT A READING.**
 >
-> **1. READ THE 08-26 08:00 PT CONTEST.** Two genuinely tapped holds on one unit for the first
-> time — the fairness line's real test. Ranks and the expected outcome are in "THE FIRST
-> TWO-TAPPED CONTEST" above; a rank-2 row left `requested` is the line WORKING.
+> **1. `dueHolds` SERVED BOTH RIVALS AND THE BOT CARTED ONE CAMPSITE TWICE** (08-26, 14
+> seconds apart). The de-dupe is per QUERY, not per contest. Two users each told their site
+> is held; the loser finds out at checkout. **The fix is designed and NOT built** — see
+> "THE FAIRNESS LINE SERVED BOTH RIVALS" above. It is the release-critical query, so it
+> wants its own change and a test that calls `dueHolds` TWICE.
 >
-> **2. READ THE NEXT RAMP.** The Track A trail is built, merged (#193/#194) and on the box
-> since 13:26:42 PT on 2026-08-25 — see "HOW TO READ THE NEXT RAMP", including the ramp
-> already on the board that is NOT a miss. **No ramp has occurred since the trail landed**
-> (~16h quiet as of 08-26 05:00), so nothing to read is the expected state.
+> **2. READ THE NEXT RAMP — AND DO NOT TRY TO STAGE ONE.** The trail is armed (#193/#194,
+> on the box since 13:26:42 PT 08-25) and has never seen a ramp; the box has been quiet
+> ~20h. A password sign-in with Okta GONE was measured on 08-26 at **32 seconds and zero
+> memory**, so the "force the warm-up" plan does not work — see "A PASSWORD SIGN-IN CAN BE
+> CHEAP".
 >
 > Track B is still NOT covered by the owner's go-ahead.
 >
