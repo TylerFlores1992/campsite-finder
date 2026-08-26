@@ -3864,7 +3864,12 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
 > Release is AUTOMATIC. A 3.1.1 rejection now is the ANSWER, not a fourth process failure.
 >
 > **Egress was healthy all session** — camphawk.app 200, Supabase and both readouts fine.
-> Only `mcp.vercel.com`, `mcp.sentry.dev` and `flyctl-metrics.fly.dev` are denied. **It has
+> **FULLY OPEN as of 2026-08-26** — the owner had the last three hosts allowlisted and all
+> three now answer (`mcp.sentry.dev` 200, `mcp.vercel.com` 401, `flyctl-metrics.fly.dev` 404;
+> those are the SERVERS, not the gateway). **The MCP servers still do not work, and the reason
+> is now AUTH**: `mcp.sentry.dev/mcp` returns `401 invalid_token` and no `mcp__sentry__*` or
+> `mcp__vercel__*` tools exist — OAuth needs an INTERACTIVE session. Sentry would be empty
+> regardless: no `NEXT_PUBLIC_SENTRY_DSN` is set, so the SDK no-ops in production. **It has
 > been revoked mid-session before, so check rather than assume**; the readouts fail LOUDLY
 > on an unreachable DB, so an empty answer is a real answer.
 >
