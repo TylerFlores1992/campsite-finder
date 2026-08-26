@@ -180,3 +180,81 @@ predicted and IAP becomes the response.
 5. Submit.
 
 **Steps 2-4 are `src/lib`, a migration, and native config — MAIN LANE under `docs/LANES.md`.**
+
+---
+
+## 8. Step 2 in full — the products, ready to paste
+
+*Written 2026-08-24 once the W-9 cleared. Create these the moment Paid Applications goes
+Active. **Every price here assumes the Small Business Program at 15%** — if SBP is refused or
+slips, do not create them; the 30% column is different and pushes Auto-Cart yearly to $71.99,
+above Campsite Tonight's $59.99, which forfeits the positioning the tier was built on.*
+
+### The subscription group
+
+```
+Reference Name (internal):    CampHawk Subscriptions
+Display Name (shown to user): CampHawk
+```
+
+**LEVEL 1 IS THE TOP TIER, WHICH IS COUNTER-INTUITIVE AND EASY TO INVERT:**
+
+```
+Level 1  ->  Auto-Cart     upgrade: immediate, prorated
+Level 2  ->  Base          downgrade: deferred to renewal
+```
+
+Backwards, an upgrade becomes a deferred downgrade — the user pays more *and* waits until
+renewal for the feature. This is the Apple-side equivalent of `/api/stripe/plan`'s in-place
+prorated swap, which exists because a second checkout would double-bill.
+
+### The four products
+
+| Product ID | Reference Name | Duration | Price |
+|---|---|---|---|
+| `app.camphawk.mobile.base.monthly` | CampHawk Base Monthly | 1 Month | $2.99 |
+| `app.camphawk.mobile.base.yearly` | CampHawk Base Yearly | 1 Year | $23.99 |
+| `app.camphawk.mobile.autocart.monthly` | CampHawk Auto-Cart Monthly | 1 Month | $11.99 |
+| `app.camphawk.mobile.autocart.yearly` | CampHawk Auto-Cart Yearly | 1 Year | $59.99 |
+
+**PRODUCT IDS ARE PERMANENT AND UNREUSABLE.** They cannot be renamed, and a deleted id cannot
+be recreated. They also become hard-coded inputs on both the client and the webhook's
+product-id → tier mapping, so a typo here is a permanent scar.
+
+### Localisation — English (U.S.)
+
+Apple's limits are **30 characters** for the display name and **45** for the description; both
+sets below fit, but re-check in ASC rather than trusting this note.
+
+```
+Base (monthly AND yearly)
+  Display Name:  CampHawk Alerts
+  Description:   Instant alerts when campsites open up
+
+Auto-Cart (monthly AND yearly)
+  Display Name:  CampHawk Auto-Cart
+  Description:   Alerts plus we add the site to your cart
+```
+
+### Availability
+
+**United States only**, matching the app. Anything wider contradicts the US-only setting that
+`LINKOUT_BY_STORE.ios` depends on — see `docs/APP-STORE.md` §2c.
+
+### Introductory offer — KEEP THE FREE TRIAL (owner's call, 2026-08-24)
+
+**One week free, on all four products.** The reason is parity rather than growth: the Stripe
+path already has a `trialing` status, live rows use it, and `hasAutocartEntitlement` treats
+`trialing` as entitled. Shipping the app without a trial would make the two paths differ in a
+way a user can see and a support question nobody can answer cleanly.
+
+**It must be `trialing`, not `active`, in `subscriptions`** when the webhook writes it, or the
+two providers disagree about what a trial is while the entitlement query treats them alike.
+
+### Review assets — not draftable yet
+
+Each subscription needs a screenshot and review notes before submission. One screenshot of the
+paywall reused across all four is sufficient and is the cheapest approach. **Draft the notes
+once the paywall UI exists, not before** — §2d's whole lesson is that review assets describing
+something the reviewer cannot reach cost a round.
+
