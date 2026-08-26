@@ -2500,64 +2500,22 @@ consoles: **a rate in a table is not a rate on an account, and a screen that loo
 not a finished screen.** `STOREKIT-PLAN.md` now carries a standing note that Apple and Play have
 been collapsed into one shape three times and must not be again.
 
-### 29e. Not started, deliberately
+### 29e. The one place the caution paid — `Affects other tracks` names them if you ask
+
+`Publishing overview` staged the US-only change with an **`Affects other tracks`** badge that
+does not say which. The one track that must not change is **closed testing** — its worldwide
+availability is what the paid tester service requires (`docs/PLAY-STORE.md` §8). Expanding the
+row names them explicitly: **Open testing alone**, *"because they already share country
+targeting with production"*. Closed testing untouched.
+
+**A badge that cannot distinguish a harmless cascade from a damaging one is worth the two
+seconds.** Recorded as `PLAY-STORE.md` §1a with the real console path, since §1 already carried
+a note that its paths had cost two wrong guesses.
+
+### 29f. Not started, deliberately
 
 The migration (§2), the webhook (§5), the product-id → tier mapping and the paywall. All
 **main-lane** files. §9a's proration trap is the expensive one: Play has no subscription groups,
 so upgrade-vs-downgrade is stated by app code and no console screen can show the mistake.
 
 ---
-
-## 29. THE STORE BILLING EVENING — both consoles taken as far as they go (2026-08-24)
-
-The owner worked through App Store Connect and the Play Console with me reading each screen.
-Everything either console permits is now done. **The design and the arithmetic live in
-`docs/STOREKIT-PLAN.md`; that file's new `STATE AS OF` header is the summary — this section is
-only what a later reader needs that is not in there.**
-
-### 29a. The finding that changes the plan
-
-**Play will not create subscription products until an uploaded binary declares
-`com.android.vending.BILLING`** (`STOREKIT-PLAN.md` §9a-bis). The Subscriptions page's only call
-to action is `Upload a new APK`; there is no create button.
-
-It is **not** asking for a binary — `versionCode 18` is live in closed testing — it is asking for
-a property of one. Verified in the tree rather than assumed: no billing dependency in
-`package.json`, and the permission appears nowhere outside `node_modules`.
-
-**So Play's order is the reverse of the plan's §7**, and Play is now blocked on **native work**
-rather than on the console. Apple has no equivalent gate and creates products with no build at
-all.
-
-### 29b. FOUR TIMES I ASSERTED A CONSOLE STATE INSTEAD OF READING ONE
-
-Worth recording as a group, because the shape repeated within a single evening and every
-instance was cheap only because the owner had the screen open.
-
-| I said | Reality |
-|---|---|
-| §9d: Google gives 15% "with no enrolment" | An enrolment banner sat on their payments page. Read off Google's marketing table, never off the account. |
-| "Do not press `Start`" — the group existing already answers the associated-accounts question | It opens a **declaration dialog** with two unanswered questions. My advice would have blocked the step it described. |
-| After Save, the terms acceptance is a separate second step | Saving carried the terms with it; the banner's two bullets resolved in one action. |
-| The merchant account was the last gate on creating products | §9a-bis. |
-
-**The common form: a published rule, or a UI's appearance, treated as an account's state.** It is
-the house shape — `status = 'sent'` meaning only that Twilio returned 2xx, a demo password that
-was present but wrong, a `GITHUB_TOKEN` that is set and is a placeholder — arriving four times in
-one evening in a domain where nothing in the repo can verify anything. **In a vendor console the
-agent cannot see, assert nothing; describe what to look for and ask what it says.**
-
-### 29c. The one place the caution paid
-
-`Publishing overview` staged the US-only change with an **`Affects other tracks`** badge that does
-not say which. The one track that must not change is **closed testing** — its worldwide
-availability is required by the paid tester service (`docs/PLAY-STORE.md` §8). Expanding the row
-named the affected tracks explicitly: **Open testing alone.** Recorded as `PLAY-STORE.md` §1a,
-along with the real console path, since §1 already carried a note that its paths had cost two
-wrong guesses.
-
-### 29d. Nothing was built, and nothing in `src/` moved
-
-This session was **docs only** — `docs/STOREKIT-PLAN.md`, `docs/PLAY-STORE.md`, this file.
-No `worker/`, no `src/lib/`, no migration. The migration, the webhook, the product-id → tier
-mapping and the paywall are all unwritten and are **main lane's**.
