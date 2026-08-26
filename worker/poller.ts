@@ -33,7 +33,7 @@ import { getAvailabilityFromRecGov, hasAvailabilityInRange, recgovBreakerOpen } 
 import * as recgovScheduler from './recgov-scheduler';
 import { SHARD_COUNT, LEASE_RENEW_MS, claimOrRenewShard, heldShard, ownsCampground } from './shard';
 import { leadDaysUntil } from './lead-time';
-import { heldCheckDue, clampHeldInterval, RC_HELD_CHECK_DEFAULT_MS } from './held-cadence';
+import { heldCheckDue, clampHeldInterval, RC_HELD_CHECK_DEFAULT_MS, holdIsNewsworthy } from './held-cadence';
 import { claimHoldNotification, releaseHoldClaims } from './hold-claim';
 import { rankHoldLine } from './hold-line';
 import { watchKey } from './watch-key';
@@ -647,33 +647,15 @@ async function loadWatches(): Promise<WatchRow[]> {
  * for hours, so we must alert once, not every cycle). Does NOT touch
  * notification_sent_at, so the real "now available" alert still fires at release.
  */
-/**
- * A hold is only NEWS if it releases far enough out to be worth waiting for.
- *
- * The "coming soon" alert assumes RC's `Lock` is the overnight release — a cancelled
- * site held until ~8am the next day. Observed 2026-08-06, that assumption broke: the
- * owner got two texts a minute apart reading "opens Aug 6, 8:15 AM PT" and "opens Aug 6,
- * 8:16 AM PT", i.e. a lock roughly ONE MINUTE ahead that kept moving. A stable overnight
- * release cannot do that; a short lock being held and extended can — which is exactly
- * what a shopping cart is (our own bot does it via `extendShoppingCartTimer`).
- *
- * I could not observe a locked slice live to confirm the mechanism, so this does not
- * claim to know what `Lock` means in general. It only declines to describe a lock
- * expiring in minutes as "was just cancelled, opens at X".
- *
- * Suppressing these costs nothing: when the lock lapses the site becomes free, and the
- * ordinary availability alert fires within one poll cycle. The heads-up exists for the
- * case where that is HOURS away and the user needs to set an alarm.
- */
-const HOLD_MIN_LEAD_MS = 60 * 60_000;
-
-export function holdIsNewsworthy(availableAt: string, now = new Date()): boolean {
-  // RC sends ISO local (no zone). Treat it as wall-clock in the server's zone, which is
-  // what the formatter downstream already assumes — consistent beats subtly-different.
-  const at = new Date(availableAt).getTime();
-  if (!Number.isFinite(at)) return false;
-  return at - now.getTime() >= HOLD_MIN_LEAD_MS;
-}
+// `holdIsNewsworthy` LIVES IN `held-cadence.ts` NOW (2026-08-26).
+//
+// It was defined here, untested — importing this file STARTS the poller — and it read
+// RC's zone-less PACIFIC release time as if it were the server's zone, which on Fly is
+// UTC. That put every 08:00 release seven hours early and shut the coming-soon window at
+// midnight Pacific. The full account, and the three offers that fit it exactly, are in
+// `held-cadence.ts` beside the fix. It sits there rather than in a new file because that
+// module already owns the one-hour lead floor this function tests against, and the two
+// were being reasoned about separately.
 
 /**
  * Claim the right to send ONE "coming soon" for this watch's current hold.
