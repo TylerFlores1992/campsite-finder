@@ -285,7 +285,48 @@ except here it is code rather than configuration, so no console screen will show
 
 **This is the single most likely place to lose money quietly on the Play side.**
 
-### 9b. The products
+### 9a-bis. THE PRODUCTS CANNOT BE CREATED UNTIL A BUILD DECLARES THE BILLING PERMISSION
+
+*Found 2026-08-24 by opening the page, after every console prerequisite was satisfied.*
+
+`Monetize with Play → Products → Subscriptions` shows an empty state whose **only** call to
+action is **`Upload a new APK`**. There is no `Create subscription` button.
+
+**THE MERCHANT ACCOUNT WAS NOT THE LAST GATE, AND §9f SAID IT WAS.** That entry listed
+"⛔ Create the subscriptions — needs a Google payments merchant account first", which was true
+and incomplete. The merchant account, the account group, the 15% enrolment and the US-only
+country setting are all now done, and the page still refuses.
+
+**IT IS NOT ASKING FOR *A* BINARY — IT IS ASKING FOR A PROPERTY OF ONE.** An AAB has been
+uploaded and is live in closed testing (`versionCode 18`, `docs/PLAY-STORE.md` §0a), so "no
+build exists" cannot be the explanation. What Play requires is an uploaded binary declaring
+**`com.android.vending.BILLING`**, and that permission arrives with the Play Billing Library.
+**Verified in the tree rather than assumed**: no billing dependency of any kind in
+`package.json` — no Play Billing, no RevenueCat, nothing — and `com.android.vending.BILLING`
+appears nowhere outside `node_modules`. A Capacitor webview build pulls it in from nothing.
+
+**SO PLAY'S ORDER IS THE REVERSE OF THE ONE §7 RECOMMENDS:**
+
+```
+add the billing library  ->  build  ->  upload the AAB  ->  console unlocks  ->  create products
+```
+
+**AND APPLE DOES NOT WORK THIS WAY.** App Store Connect creates subscription products with no
+build at all. §8's walkthrough is therefore correct as written and §9b's is not reachable yet —
+one more place the two stores differ that this doc had collapsed into a single shape, alongside
+§10a's IAP requirement and §9a's missing subscription groups. **Do not generalise a console
+behaviour from one store to the other in here again; it has now been wrong three times.**
+
+**IT STRENGTHENS THE REVENUECAT RECOMMENDATION IN §3.** Their SDK brings the billing library
+with it, so one dependency clears the permission gate *and* the purchase plumbing. Wiring Play
+Billing directly clears the gate and still leaves the server side to build.
+
+**PRACTICAL CONSEQUENCE: Play is now blocked on NATIVE WORK, not on the console, and Apple is
+the store where more can happen sooner** — its products need only the Paid Applications
+agreement, with no build in the way. That reverses the sequencing assumption this section was
+written under.
+
+### 9b. The products (NOT YET CREATABLE — see §9a-bis)
 
 Play ids are lowercase and **permanent**, exactly like Apple's, and are a **separate namespace** —
 they do not have to match, and matching them buys nothing.
