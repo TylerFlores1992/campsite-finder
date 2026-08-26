@@ -2432,3 +2432,76 @@ rather than after the release**, because the shipped claim is per-unit and the b
 **NOT DONE IN THIS SESSION**, because it is another user's watch and the correction landed at the
 end of the session rather than in the middle of it.
 
+
+---
+
+## 29. STORE BILLING SETUP — 2026-08-24 evening (side lane)
+
+Two workstreams, both console work, both ending blocked on somebody else. **Docs only — nothing
+in `src/`, `worker/` or any main-lane file was touched.** Branch
+`claude/camphawk-side-lane-status-iij2xm`, PR **#180**.
+
+### 29a. §26's LAST OPEN ITEM IS CLOSED — Melinda's watch IS restored
+
+The tail of §28 ends *"NOT DONE IN THIS SESSION"*, and that sentence is **stale**. Read back
+from the database 2026-08-24, not assumed:
+
+```
+336d742c  Melinda  rep rc-582  parts [rc-2185, rc-582, rc-583]  active
+eb886697  owner    rep rc-582  parts [rc-582, rc-583]           active
+```
+
+**All three divisions are back.** Do not re-run the restore — it is another user's watch, and a
+second pass either duplicates `watch_campgrounds` rows or fails a constraint. Both watches are
+in the state §28 says they should be.
+
+**This is the same shape as §28 itself**: a status sentence that was true when written and false
+by the time it was read, with nothing marking the difference. The remedy is what was done here —
+query the table, don't trust the note.
+
+### 29b. What landed on the stores
+
+Everything both consoles allow. Full detail in `docs/STOREKIT-PLAN.md`, which now opens with a
+**STATE AS OF** block written for exactly this handover.
+
+| | Done tonight | Now waiting on |
+|---|---|---|
+| **Apple** | — | bank + Paid Applications agreement processing |
+| **Play** | merchant account · public merchant profile · account group + declaration · **15% service fee enrolled** · production track set **US-only** | bank micro-deposits, and a build |
+
+### 29c. THE FINDING WORTH CARRYING: Play products need a build, Apple's do not
+
+`Monetize with Play → Products → Subscriptions` offers **only `Upload a new APK`** — there is no
+create button, with every console prerequisite satisfied. Play requires an uploaded binary
+declaring **`com.android.vending.BILLING`**, which arrives with the Play Billing Library.
+Verified in the tree: no billing dependency in `package.json`, and the permission appears nowhere
+outside `node_modules`.
+
+**So Play's order is library → build → upload → products, and it is native work, not console
+work.** Apple creates products with no build at all. Written up as `STOREKIT-PLAN.md` §9a-bis.
+
+### 29d. FIVE CORRECTIONS IN ONE EVENING, ALL THE SAME SHAPE
+
+Recorded together because the pattern is the point, not any one of them:
+
+1. §9d said Google gives 15% *"with no enrolment"* — read off Google's published fee table and
+   never off this account. There is an enrolment.
+2. I told the owner **not to press `Manage account group`**, reasoning the group's existence
+   already answered the associated-accounts question. It opens a **declaration dialog** whose two
+   questions were blank; the advice would have blocked the step it described.
+3. I predicted accepting the service-fee terms was a **separate** step after saving the
+   declaration. Saving carried it.
+4. §9f said the merchant account was the **last** gate on creating products. §9a-bis is a second.
+5. I gave a per-store walkthrough that was right for Apple and unreachable for Play.
+
+**Every one is a state inferred from a published document or a UI's appearance instead of
+opened.** The house rule this repo already has — *presence is not liveness* — restated for
+consoles: **a rate in a table is not a rate on an account, and a screen that looks finished is
+not a finished screen.** `STOREKIT-PLAN.md` now carries a standing note that Apple and Play have
+been collapsed into one shape three times and must not be again.
+
+### 29e. Not started, deliberately
+
+The migration (§2), the webhook (§5), the product-id → tier mapping and the paywall. All
+**main-lane** files. §9a's proration trap is the expensive one: Play has no subscription groups,
+so upgrade-vs-downgrade is stated by app code and no console screen can show the mistake.
