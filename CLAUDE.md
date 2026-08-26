@@ -3624,11 +3624,102 @@ free in thirty hours and all three were missed, and a staged one locks a real ca
   which is a LATER scheduled run writing beside the new sha. That is the documented
   `appliedNote`/`appliedSha` trap. `applied_sha` and `git-status` both say `64f9f92`.
 
+### A DISPLAY CONVENTION IS NOT A TIME-ARITHMETIC CONVENTION (2026-08-26)
+
+Reported by the owner as *"still no offer"* on a watch added at 05:07 PT for an 08:00 PT
+release. **Nothing about the setup was wrong, and detection never failed.** The poller found
+the held unit on every pass and said so, in its own words, for two and a half hours:
+
+```
+12:29:52Z  watch 0d9c9892…: hold on Morro Bay SP — Upper Section
+           releases 2026-08-26T08:00:00 — too soon to be news, staying quiet
+```
+
+`holdIsNewsworthy` read RC's `Lock` with a bare `new Date(availableAt)`. **That field is a
+zone-less PACIFIC wall clock and Fly runs UTC**, so an 08:00 Pacific release was placed at
+08:00 UTC — 01:00 PT, seven hours early. The gate wants an hour of lead, so in practice
+**the coming-soon window shut at MIDNIGHT Pacific** instead of 07:00.
+
+- **THE COMMENT DEFENDING IT NAMED THE RIGHT FACT AND DREW THE WRONG CONCLUSION.** It read
+  *"treat it as wall-clock in the server's zone, which is what the formatter downstream
+  already assumes — consistent beats subtly-different."* The formatter only **displays** it,
+  and `now` is a real instant. **A display convention and a time-arithmetic convention are
+  not the same thing**, and "consistent" is the word that hid the difference. Every SQL call
+  site already converts with `AT TIME ZONE 'America/Los_Angeles'`; the one place doing the
+  arithmetic in JavaScript did not. Same seven-hour class of error this file already records
+  for SQL, arriving in the other language.
+- **THREE CONSECUTIVE OFFERS FIT THE BROKEN ARITHMETIC EXACTLY**, which is what turned a
+  hypothesis into a finding:
+  ```
+  tyler #123      offered 08-25 12:16 PT   computed lead +12h44m   sent
+  melinda #SC67   offered 08-25 22:47 PT   computed lead  +2h13m   sent
+  a watch created 08-26 05:08 PT           computed lead  -4h08m   REFUSED
+  ```
+- **THE LOSS IS SILENT AND LANDS IN THE WORST HOURS.** Anyone adding a watch — or any lock
+  first seen — between midnight and the release got no heads-up and no hold button, i.e.
+  exactly the window in which somebody sets up a watch for tomorrow morning.
+- **IT SURVIVED THREE WEEKS BECAUSE IT COULD NOT BE TESTED.** It lived in `poller.ts`, and
+  importing that file STARTS the poller. Moved to `held-cadence.ts`, which already owned the
+  one-hour lead floor this tests against — the floor and the test of it were being reasoned
+  about in two files. Same extraction, same reason, as `claim.ts`, `hold-claim.ts` and
+  `hold-line.ts`.
+- **THE CONVERSION TAKES TWO PASSES**, because the offset depends on the answer: the naive
+  timestamp sits 7-8 hours before the true instant, so a single pass is an hour out whenever
+  a DST transition falls in that gap — twice a year, silently.
+- **A ZONE-BEARING STRING IS PASSED THROUGH, NOT re-interpreted and NOT `NaN`.**
+  `holdIsNewsworthy` refuses on `NaN`, so if UseDirect ever started sending an offset, a
+  strict parser would switch off every coming-soon alert **silently** rather than failing
+  loudly. Same rule as `unknown` never rounding to a verdict.
+- **THE FIXTURES ARE THE REAL PRODUCTION TIMESTAMPS, NOT ROUND ONES.** The bug is a
+  seven-hour shift, so any fixture within seven hours of the boundary passes against both the
+  broken and the fixed version. Seven mutations, each grep-verified to APPLY and to fail.
+  **Two escaped the first round and both were gaps in the TEST, not the code**: no fixture
+  straddled a DST boundary, and nothing checked that the caller actually imports the fixed
+  function rather than keeping its own copy — the fix-present-but-inert shape, for the sixth
+  time. Both are guarded now, the second structurally.
+- **MEASURED END TO END.** Merged `011caa7` at **05:47 PT**; `worker-deploy.yml` fired and
+  both shards came back beating; **the offer landed at 05:50:55**, four minutes later, to a
+  watch that had been refused for forty-three minutes. **The instrument had been printing the
+  answer the whole time** — the fix took twenty minutes and finding it took one `flyctl logs`.
+
+### THE FIRST TWO-TAPPED CONTEST IS QUEUED FOR 2026-08-26 08:00 PT — outcome UNREAD
+Set up deliberately by the owner on a second account to exercise the fairness line, and it is
+the first time one physical site has had **two genuinely requested holds**:
+
+    unit 43086 "#123", rc-583 (Morro Bay Upper Section), release 08-26 08:00 PT
+
+    tylerflores1992      watch 08-24 12:45:30   ticket 0 -> 297   RANK 1   requested 05:02:40
+    iamtylerflores12345  watch 08-26 05:07:46   ticket 0          RANK 2   requested 05:51:09
+
+- **The ordering is the owner's rule applied literally.** Both users sat at ticket 0, so the
+  tiebreak was `watches.created_at` and the earlier watcher took first dibs.
+- **THE ROTATION CHARGED, AND THAT IS THE HALF WORTH READING.** `hold_offer_seq` on the
+  winner went 0 → 297 while the runner-up stayed 0, so the NEXT contest between them inverts.
+  Until now that rule had only ever been asserted by a test.
+- **EXPECTED AT 08:00:** `dueHolds` serves one row per (release, unit) — rank 1 — so the main
+  account carts and the rank-2 row stays `requested` and uncarted. **That is the line working,
+  not a failure**, and `requested`-past-its-release is otherwise the signature of a dead
+  runner. Read `last_attempt_note` before concluding anything.
+- **THE RANK-2 ROW CARRIES NO "someone is ahead of you" NOTE, and that is a real gap.**
+  `rankHoldLine` writes it only to rows already `requested`; at 05:50:55 the runner-up's row
+  was still `offered` and it was tapped fourteen seconds later. Nothing re-ranks the line
+  afterwards unless another offer for that unit arrives, so the note may never be written.
+  Diagnostic only — `last_attempt_note` has no user-facing reader — but it is the field the
+  readout uses to tell a queue from an outage.
+
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`. THE TRACK A TRAIL IS BUILT, MERGED (#193/#194) AND ON THE
-> BOX SINCE 13:26:42 PT 2026-08-25. The job now is to READ THE NEXT RAMP — see "HOW TO READ THE
-> NEXT RAMP" directly above, including the ramp that is already on the board and is NOT a miss.**
+> **START AT `docs/NEXT-SESSION.md`. TWO LIVE THREADS.**
+>
+> **1. READ THE 08-26 08:00 PT CONTEST.** Two genuinely tapped holds on one unit for the first
+> time — the fairness line's real test. Ranks and the expected outcome are in "THE FIRST
+> TWO-TAPPED CONTEST" above; a rank-2 row left `requested` is the line WORKING.
+>
+> **2. READ THE NEXT RAMP.** The Track A trail is built, merged (#193/#194) and on the box
+> since 13:26:42 PT on 2026-08-25 — see "HOW TO READ THE NEXT RAMP", including the ramp
+> already on the board that is NOT a miss. **No ramp has occurred since the trail landed**
+> (~16h quiet as of 08-26 05:00), so nothing to read is the expected state.
+>
 > Track B is still NOT covered by the owner's go-ahead.
 >
 > **THE OWNER'S FOUR-ITEM QUEUE IS DONE (2026-08-24 evening → 08-25).** Fairness line,

@@ -1,20 +1,21 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed 15:05 PT. Supersedes the 11:45 version.*
+*Rewritten 2026-08-25 evening; state refreshed 2026-08-26 06:00 PT.*
 
-> ## THE TRACK A TRAIL IS BUILT AND SHIPPED. The next session's job is to READ IT.
+> ## TWO LIVE THREADS. Ground yourself (§0), then read them in this order.
 >
-> The owner's instruction was *"start track a trail do whatever we need to fix leak. Update box
-> when needed and do tests to stress test."* The trail is built, mutation-guarded, proven
-> end-to-end against a real Chromium, merged, and on the box. **It is an INSTRUMENT, not a
-> cure.** Track B (§5) is still unstarted and still wants its own word.
+> **1. THE 08:00 PT CONTEST ON 08-26 — outcome UNREAD (§1).** Two genuinely tapped holds on
+> one campsite for the first time. The owner set it up on a second account to exercise the
+> fairness line. **A rank-2 row left `requested` is the line WORKING, not an outage.**
 >
-> **There is nothing to build until a ramp is read.** Ramps arrive ~3x a day unprompted. Do NOT
-> queue a test hold to force one — see §2.
+> **2. THE TRACK A RAMP (§2).** The trail is built, merged and on the box since 13:26:42 PT
+> on 08-25. **No ramp has occurred since** — ~16 hours quiet — so nothing to read is the
+> expected state, and §2a has the one reading that is already on the board and is NOT a miss.
 >
-> **READ §1a FIRST. There is a ramp in the series with no trail row against it, and it is NOT a
-> miss** — it happened twenty minutes before the box updated. Reading it as a failed trigger is
-> the one wrong turn available on day one.
+> **There is nothing to build until a ramp is read.** Ramps arrive unprompted. Do NOT queue a
+> test hold to force one — see §2.
+>
+> Track B (§6) is still unstarted and still wants its own word.
 
 *Delete this file once the trail has captured a real ramp AND the App Store version has a
 decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
@@ -61,14 +62,48 @@ NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status      # what the box 
 
 ---
 
-## 1. THE ASSIGNMENT — read the next ramp
+## 1. THE 08-26 08:00 PT CONTEST — read this first, it goes stale
+
+The fairness line's first real test. One physical site, two users, **both tapped**:
+
+    unit 43086 "#123", rc-583 (Morro Bay Upper Section), release 2026-08-26 08:00 PT
+
+    tylerflores1992      watch 08-24 12:45:30   ticket 0 -> 297   RANK 1   requested 05:02:40
+    iamtylerflores12345  watch 08-26 05:07:46   ticket 0          RANK 2   requested 05:51:09
+
+```bash
+NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
+```
+
+**What SHOULD have happened.** `dueHolds` serves one row per (release, unit) — the lowest
+`line_rank` among the `requested` ones — so the main account carts at ~T+2s and the rank-2 row
+stays `requested` and **uncarted**.
+
+**THAT IS THE LINE WORKING, AND IT LOOKS EXACTLY LIKE AN OUTAGE.** A `requested` hold sitting
+past its release is otherwise the signature of a dead runner (2026-08-07). The discriminator is
+`last_attempt_note` — and see the gap below, because on this particular row it may be empty.
+
+**THE ROTATION IS THE HALF WORTH READING.** `hold_offer_seq` on the winner went 0 → 297 while
+the runner-up stayed at 0, so the next contest between them inverts. Until now the "they go to
+the bottom of the list" rule had only ever been asserted by a test.
+
+**A REAL GAP, FOUND WHILE SETTING THIS UP.** `rankHoldLine` writes the "another watcher is ahead
+of you" note only to rows already `requested`. At 05:50:55 the runner-up's row was still
+`offered`; it was tapped fourteen seconds later, and nothing re-ranks the line unless another
+offer for that unit arrives. **So the rank-2 row may carry no note at all** — which is the one
+state the readout uses to tell a queue from an outage. Diagnostic only (no user-facing reader),
+recorded rather than fixed mid-flight.
+
+---
+
+## 2. THE ASSIGNMENT — read the next ramp
 
 `scripts/auto-cart-bot/rc-alloc-trail.mjs` samples the allocation profile **on the watchdog
 tick**, keeps a 20-minute window, and reports a segment's peak when it ends (plus a flush at
 teardown and in the runaway bail). Four renderers: `resident`, `renewal`, `auto-login`,
 `warmup`, each under its own context.
 
-### 1a. THE TRAIL WAS ARMED AT 13:26:42 PT ON 2026-08-25 — READ EVERYTHING AGAINST THAT
+### 2a. THE TRAIL WAS ARMED AT 13:26:42 PT ON 2026-08-25 — READ EVERYTHING AGAINST THAT
 
 **The box moved to `64f9f92` at 13:26:42 PT** (`bot_update_requests.applied_at`, confirmed by
 `bot-ask git-status` → `HEAD 64f9f92 on master`). Everything before that instant was the OLD
@@ -125,7 +160,7 @@ one locks a real campsite and would be missed identically if the trigger is wron
 
 ---
 
-## 2. What was corrected on 2026-08-25, so it is not re-derived
+## 3. What was corrected on 2026-08-25, so it is not re-derived
 
 ### 2a. THE PROFILE-RESET STORY IS WRONG ABOUT RC — and it was written in as fact first
 
@@ -163,17 +198,18 @@ because reverting it looks like a tidy-up.
 
 ---
 
-## 3. State
+## 4. State
 
 | | |
 |---|---|
-| Master | **`64f9f92`** — the trail merged as **#193**, its arming note as **#194**. Working tree clean, nothing unmerged. |
-| Mini-PC | **`64f9f92`**, applied **13:26:42 PT 08-25**. Box and master match. Confirm with `bot-ask git-status`, never `autocart.bot_version` (COALESCEd, can sit stale beside a live heartbeat). |
+| Master | **`011caa7`** (#196, the Pacific-wall-clock fix). Trail = #193/#194. Working tree clean. |
+| Mini-PC | **`64f9f92`**, applied 13:26:42 PT 08-25. **Deliberately BEHIND master** — #195/#196 are web/worker only and nothing in them needs the box. Confirm with `bot-ask git-status`, never `autocart.bot_version` (COALESCEd, can sit stale beside a live heartbeat). |
+| Fly worker | redeployed 05:47 PT 08-26 on #196; both shards beating (`shard 0/2`, `shard 1/2`). |
 | Open PRs | none |
 | Open issues | **#76**, **#14** |
 | Migrations | highest applied **068**; next main-lane number is **069** |
-| Holds | one **untapped** offer — tyler, Morro Bay `#123`, releasing **08-26 08:00 PT**. `offered` blocks neither the update window nor `npm test`; **a TAP changes both.** |
-| RC session | healthy at 15:02 PT — token 35m, `okta=ALIVE` to 08-26 09:46Z. Login rehearsal **PASSED** 08-25 03:01. |
+| Holds | **TWO TAPPED on one unit** for 08-26 08:00 PT — see §1. A tapped hold blocks `npm test`, box restarts and the update window until it resolves. |
+| RC session | **dead (no token) at 05:52 PT 08-26, which is NORMAL between releases.** Okta's ABSOLUTE cap expires **07:43:30** and the T−30 auto-login is **07:30** — **14 minutes of margin**. Expect the phone ~07:35 if unrepaired. **Do NOT run `rc-login.bat` on it** — that kills the Chromium the token lives in. |
 
 **Two check-ins are scheduled and enabled — do not create duplicates.**
 `trig_01NdJC1SvSDwxZZroAooVKnU` fires **07:40 PT** into a fresh session;
@@ -181,7 +217,7 @@ because reverting it looks like a tidy-up.
 
 ---
 
-## 4. Serial rules — and the one I broke
+## 5. Serial rules — and the one I broke
 
 From `docs/LANES.md`: no `npm test`, no second test hold, and nothing that restarts the box,
 while a hold is live.
@@ -196,7 +232,7 @@ missing and it is a regression being waved through.
 
 ---
 
-## 5. Track B — designed, NOT started, needs its own go-ahead
+## 6. Track B — designed, NOT started, needs its own go-ahead
 
 Replay the Okta round trip over `ctx.request` following redirects and exchange the code
 ourselves: no page load, no renderer, no gigabytes. Three pieces already exist
@@ -211,7 +247,7 @@ which has happened three times.
 
 ---
 
-## 6. Recorded, not fixed — do not drive-by these
+## 7. Recorded, not fixed — do not drive-by these
 
 - **NEITHER CONTAINMENT ARM CAN FIRE DURING A RAMP, and 08-25 established why.** The size arm
   (`RC_MAX_FAMILY_MB = 1500`) sits in the LOOP BODY, and the ramp happens inside `renewSession`
@@ -238,7 +274,7 @@ which has happened three times.
 
 ---
 
-## 7. Traps that have actually fired
+## 8. Traps that have actually fired
 
 - **`NODE_USE_ENV_PROXY=1`, and never read an exit code through a pipe.** See §0b — both cost
   real time on 08-25 and both produced confident wrong readings.
@@ -255,6 +291,17 @@ which has happened three times.
   well as running the suite. Two of this session's guards were wrong at baseline: one anchored
   on a comment line (and `code` strips comments), and one gave a ramp two samples so pruning
   left one — proving the segment became unreportable rather than that the key was stable.
+- **RC's `Lock` / `release_at` is a ZONE-LESS PACIFIC WALL CLOCK.** Never `new Date()` it for
+  arithmetic — the server is UTC and that is seven hours early. Use
+  `pacificWallClockToUtcMs` (`worker/held-cadence.ts`) in JS, `AT TIME ZONE
+  'America/Los_Angeles'` in SQL. This shut the coming-soon offer window at midnight Pacific
+  for three weeks (#196, 2026-08-26). **A display convention and a time-arithmetic
+  convention are not the same thing** — the comment defending the bug cited the formatter,
+  which only displays it.
+- **THE POLLER'S OWN LOG HAD THE ANSWER FOR TWO AND A HALF HOURS.** `flyctl logs -a
+  campsite-finder-worker --no-tail` printed `too soon to be news, staying quiet` on every
+  pass. Read the instrument before reasoning about the code; it cost twenty minutes to fix
+  and one command to find.
 - **`sqlit` interpolates, it does not bind**, and throws on a plain object. Stringify jsonb.
 - **No non-ASCII in `.ps1`**, no `\"` inside a `powershell -Command` string in a `.bat`, no
   backticks in a SQL comment inside a template literal.
