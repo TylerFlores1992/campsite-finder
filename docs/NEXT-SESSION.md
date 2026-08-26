@@ -1,19 +1,19 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed 2026-08-26 06:00 PT.*
+*Rewritten 2026-08-25 evening; state refreshed 2026-08-26 09:40 PT.*
 
-> ## TWO LIVE THREADS. Ground yourself (§0), then read them in this order.
+> ## ONE BUG, ONE READING, TWO LIVE TEST HOLDS.
 >
-> **1. THE 08:00 PT CONTEST ON 08-26 — outcome UNREAD (§1).** Two genuinely tapped holds on
-> one campsite for the first time. The owner set it up on a second account to exercise the
-> fairness line. **A rank-2 row left `requested` is the line WORKING, not an outage.**
+> **1. THE BUG (§1) — `dueHolds` carted one campsite TWICE.** The fairness line's first real
+> contest, 08-26. Both rivals were served, 14 seconds apart, and RC accepted both. **Designed,
+> NOT built.** This is the top item.
 >
-> **2. THE TRACK A RAMP (§2).** The trail is built, merged and on the box since 13:26:42 PT
-> on 08-25. **No ramp has occurred since** — ~16 hours quiet — so nothing to read is the
-> expected state, and §2a has the one reading that is already on the board and is NOT a miss.
+> **2. THE RAMP (§2).** The Track A trail is armed and has never seen one; the box has been
+> quiet ~20 hours. **Do NOT try to stage a ramp** — §2b has the measurement that retires the
+> obvious plan.
 >
-> **There is nothing to build until a ramp is read.** Ramps arrive unprompted. Do NOT queue a
-> test hold to force one — see §2.
+> **3. TWO TEST HOLDS ARE LIVE** (§1c), one per account, queued 09:36 PT 08-26. They lock two
+> real far-future sites and self-release ~45 min after carting.
 >
 > Track B (§6) is still unstarted and still wants its own word.
 
@@ -62,7 +62,69 @@ NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status      # what the box 
 
 ---
 
-## 1. THE 08-26 08:00 PT CONTEST — read this first, it goes stale
+## 1. THE DOUBLE-CART BUG — the top item, and it is not built
+
+The 08-26 contest ran and **the line failed at the one thing it exists for.** Both rivals'
+holds carted, from the box's own log:
+
+```
+15:00:02  ✓ held #123 (2026-09-04) — entry ae877ae5-9ee1-479b-bec9-4d9f610ae718
+15:00:13  0 to hand over, 1 to cart, 0 to release      <- the NEXT poll
+15:00:17  ✓ held #123 (2026-09-04) — entry 6f0863e0-78d7-4cd2-9ec6-22ffc02f1351
+```
+
+**`DISTINCT ON (release_at, unit_id)` de-dupes within ONE query.** The runner polls every 15s,
+so the moment rank 1 left `requested`, rank 2 became the top row for that unit.
+
+**The fix:** `dueHolds` must exclude any `(release_at, unit_id)` that already has a **live**
+hold (`carted` or `claiming`) — *one live hold per unit*, not *one served per call*.
+
+**Why the existing test could not catch it:** `hold-line.test.mts` calls `dueHolds` ONCE and
+asserts one row comes back. That is true and always was. **The new test must call it twice
+with a status change in between.**
+
+This is the most release-critical query in the product. Not a drive-by.
+
+### 1a. The rank-2 row carried no note, so the readout looks clean
+`rankHoldLine` writes "another watcher is ahead of you" only to rows already `requested`. The
+runner-up was `offered` when the line was ranked and was tapped fourteen seconds later; nothing
+re-ranks afterwards. **So a contest that went wrong reads as two successful carts.**
+
+### 1b. A dead session strands a carted site — the 08-13 leak, recurring
+Both carted rows sat `carted` for **78 minutes** with `released_at` NULL and
+`last_attempt_note = "RC session is dead — needs a human sign-in"`. The release loop lives
+inside `withRC`, so a dead session skips it; `reclaimLapsedHolds` only marks the row `expired`
+at 180 min and **keeps `cart_key`, never releasing on RC.**
+
+**`test-login` is the remote lever and it works**: queued 09:18:30 → session `ok` 09:20:24 →
+both released by 09:22:29. Rationed one per 6h on the box's clock, refuses within 6h of a
+release. It is the ONLY remote way to restore a dead session, because the renewal cannot when
+Okta is GONE.
+
+### 1c. TWO TEST HOLDS ARE LIVE — queued 09:36 PT 2026-08-26
+One per account, on **different** units so the double-cart is not re-triggered. Both carted
+with entry keys. Morro Bay Lower Section, arrival 2026-12-08, 1 night — far-future midweek,
+40 sites bookable that night.
+
+| account | unit | hold id | claim link |
+|---|---|---|---|
+| `tylerflores1992` | 43106 (#9) | `b7c567bf-454b-4b6e-9f80-8c057f26c3fd` | `camphawk.app/claim/b7c567bf-454b-4b6e-9f80-8c057f26c3fd?t=kYpzLQEI` |
+| `iamtylerflores12345` | 43112 (#15) | `888d3b3b-7961-4e0a-88d0-dd6580de30a7` | `camphawk.app/claim/888d3b3b-7961-4e0a-88d0-dd6580de30a7?t=rkK_5mF2` |
+
+**Open the claim link IN THE APP** — from a browser `canInject` is false and the injected
+precart is never exercised. Look for `✓ Added to cart` and `cart read back` in
+`client_reports`; `token captured` as the last line is NOT a successful cart.
+
+**`cart read back` is proven on iOS only — Android has never been exercised.** That is the
+open question these two can answer.
+
+They self-release ~45 min after carting via `expireStaleHolds(45)`, or
+`rc-test-hold.mts --delete <id>`. **A live hold blocks `npm test`, box restarts and the update
+window.**
+
+---
+
+## OLD — the contest write-up, kept for its timestamps
 
 The fairness line's first real test. One physical site, two users, **both tapped**:
 
@@ -202,14 +264,14 @@ because reverting it looks like a tidy-up.
 
 | | |
 |---|---|
-| Master | **`011caa7`** (#196, the Pacific-wall-clock fix). Trail = #193/#194. Working tree clean. |
+| Master | **`737f631`** (#197). Trail = #193/#194; the Pacific-wall-clock fix = #196. |
 | Mini-PC | **`64f9f92`**, applied 13:26:42 PT 08-25. **Deliberately BEHIND master** — #195/#196 are web/worker only and nothing in them needs the box. Confirm with `bot-ask git-status`, never `autocart.bot_version` (COALESCEd, can sit stale beside a live heartbeat). |
 | Fly worker | redeployed 05:47 PT 08-26 on #196; both shards beating (`shard 0/2`, `shard 1/2`). |
 | Open PRs | none |
 | Open issues | **#76**, **#14** |
 | Migrations | highest applied **068**; next main-lane number is **069** |
-| Holds | **TWO TAPPED on one unit** for 08-26 08:00 PT — see §1. A tapped hold blocks `npm test`, box restarts and the update window until it resolves. |
-| RC session | **dead (no token) at 05:52 PT 08-26, which is NORMAL between releases.** Okta's ABSOLUTE cap expires **07:43:30** and the T−30 auto-login is **07:30** — **14 minutes of margin**. Expect the phone ~07:35 if unrepaired. **Do NOT run `rc-login.bat` on it** — that kills the Chromium the token lives in. |
+| Holds | **TWO TEST HOLDS LIVE** (§1c), carted 09:37 PT 08-26, self-release ~10:22. Plus three untapped `offered` rows for 08-27 08:00 (`#R354`, `#SC58`, `#R314`) — `offered` blocks nothing; a TAP blocks `npm test`, box restarts and the update window. |
+| RC session | **healthy** — restored 09:20 PT 08-26 by an on-demand `test-login`; token 60m, `okta=ALIVE`. It goes dead between releases and that is NORMAL. **Do NOT run `rc-login.bat`** — `bot-ask test-login` is the safe remote lever (§1b). |
 
 **Two check-ins are scheduled and enabled — do not create duplicates.**
 `trig_01NdJC1SvSDwxZZroAooVKnU` fires **07:40 PT** into a fresh session;
