@@ -1,19 +1,19 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed 2026-08-26 09:40 PT.*
+*Rewritten 2026-08-25 evening; state refreshed 2026-08-26 12:25 PT.*
 
-> ## ONE BUG, ONE READING, TWO LIVE TEST HOLDS.
+> ## ONE BUG TO BUILD, ONE READING TO WAIT FOR.
 >
 > **1. THE BUG (§1) — `dueHolds` carted one campsite TWICE.** The fairness line's first real
-> contest, 08-26. Both rivals were served, 14 seconds apart, and RC accepted both. **Designed,
-> NOT built.** This is the top item.
+> contest, 08-26: both rivals served 14 seconds apart, two distinct RC cart entries, RC accepted
+> both. **Designed, NOT built.** This is the top item and it is the only assigned work.
 >
-> **2. THE RAMP (§2).** The Track A trail is armed and has never seen one; the box has been
-> quiet ~20 hours. **Do NOT try to stage a ramp** — §2b has the measurement that retires the
-> obvious plan.
+> **2. THE RAMP (§2).** The Track A trail is armed and has **still never seen a ramp** —
+> `trail-*` readings: **0**. The box has been quiet ~30 hours. **Do NOT try to stage one**;
+> §2b has the measurement that retires the obvious plan.
 >
-> **3. TWO TEST HOLDS ARE LIVE** (§1c), one per account, queued 09:36 PT 08-26. They lock two
-> real far-future sites and self-release ~45 min after carting.
+> **Nothing is live.** No holds, no open PRs, working tree clean. The two 08-26 test holds ran
+> and released themselves; what they did and did not prove is in §1c.
 >
 > Track B (§6) is still unstarted and still wants its own word.
 
@@ -120,26 +120,25 @@ both released by 09:22:29. Rationed one per 6h on the box's clock, refuses withi
 release. It is the ONLY remote way to restore a dead session, because the renewal cannot when
 Okta is GONE.
 
-### 1c. TWO TEST HOLDS ARE LIVE — queued 09:36 PT 2026-08-26
-One per account, on **different** units so the double-cart is not re-triggered. Both carted
-with entry keys. Morro Bay Lower Section, arrival 2026-12-08, 1 night — far-future midweek,
-40 sites bookable that night.
+### 1c. THE TWO TEST HOLDS RAN — and answered half of what they were for
 
-| account | unit | hold id | claim link |
-|---|---|---|---|
-| `tylerflores1992` | 43106 (#9) | `b7c567bf-454b-4b6e-9f80-8c057f26c3fd` | `camphawk.app/claim/b7c567bf-454b-4b6e-9f80-8c057f26c3fd?t=kYpzLQEI` |
-| `iamtylerflores12345` | 43112 (#15) | `888d3b3b-7961-4e0a-88d0-dd6580de30a7` | `camphawk.app/claim/888d3b3b-7961-4e0a-88d0-dd6580de30a7?t=rkK_5mF2` |
+Queued 09:36 PT 08-26, one per account, on **different** units so the double-cart was not
+re-triggered. Morro Bay Lower Section, unit 43106 (`tylerflores1992`) and 43112
+(`iamtylerflores12345`), arrival 2026-12-08.
 
-**Open the claim link IN THE APP** — from a browser `canInject` is false and the injected
-precart is never exercised. Look for `✓ Added to cart` and `cart read back` in
-`client_reports`; `token captured` as the last line is NOT a successful cart.
+**What they proved.** Both carted within seconds, and **both released cleanly at 45 minutes**
+(`released unclaimed — nobody came for it`) with the session healthy. That is
+`expireStaleHolds(45)` working end to end — the contrast with §1b, where a dead session left
+two rows stranded for 78 minutes, is the whole point.
 
-**`cart read back` is proven on iOS only — Android has never been exercised.** That is the
-open question these two can answer.
+**What they did NOT prove.** Neither claim link was opened in the app, so the hand-off was not
+exercised. **`cart read back` is still proven on iOS only; Android has never been run.** That
+remains the open question, and it needs a human with the app — no agent can do it.
 
-They self-release ~45 min after carting via `expireStaleHolds(45)`, or
-`rc-test-hold.mts --delete <id>`. **A live hold blocks `npm test`, box restarts and the update
-window.**
+To repeat the setup: `scripts/rc-test-hold.mts --find` for real unit ids (never invent one),
+then `--watch <id> --unit <n> --arrival <date> --in <min>`. Use the watch whose REPRESENTATIVE
+campground contains the unit, or the hold row is labelled with the wrong facility. **A live hold
+blocks `npm test`, box restarts and the update window.**
 
 ---
 
@@ -283,14 +282,14 @@ because reverting it looks like a tidy-up.
 
 | | |
 |---|---|
-| Master | **`737f631`** (#197). Trail = #193/#194; the Pacific-wall-clock fix = #196. |
+| Master | **`65efba5`** (#199). Trail = #193/#194; Pacific-wall-clock fix = #196; the double-cart write-up = #198. |
 | Mini-PC | **`64f9f92`**, applied 13:26:42 PT 08-25. **Deliberately BEHIND master** — #195/#196 are web/worker only and nothing in them needs the box. Confirm with `bot-ask git-status`, never `autocart.bot_version` (COALESCEd, can sit stale beside a live heartbeat). |
 | Fly worker | redeployed 05:47 PT 08-26 on #196; both shards beating (`shard 0/2`, `shard 1/2`). |
 | Open PRs | none |
 | Open issues | **#76**, **#14** |
 | Migrations | highest applied **068**; next main-lane number is **069** |
-| Holds | **TWO TEST HOLDS LIVE** (§1c), carted 09:37 PT 08-26, self-release ~10:22. Plus three untapped `offered` rows for 08-27 08:00 (`#R354`, `#SC58`, `#R314`) — `offered` blocks nothing; a TAP blocks `npm test`, box restarts and the update window. |
-| RC session | **healthy** — restored 09:20 PT 08-26 by an on-demand `test-login`; token 60m, `okta=ALIVE`. It goes dead between releases and that is NORMAL. **Do NOT run `rc-login.bat`** — `bot-ask test-login` is the safe remote lever (§1b). |
+| Holds | **None live.** The two 08-26 test holds released themselves at 45 min (§1c). Four untapped `offered` rows for 08-27 08:00 (`#27`, `#R354`, `#SC58`, `#R314`) — `offered` blocks nothing; a TAP blocks `npm test`, box restarts and the update window. |
+| RC session | **healthy at 12:17 PT 08-26** (`okta=ALIVE`), restored 09:20 by an on-demand `test-login`. It goes dead between releases and that is NORMAL. **Do NOT run `rc-login.bat`** — `bot-ask test-login` is the safe remote lever (§1b). |
 
 **Two check-ins are scheduled and enabled — do not create duplicates.**
 `trig_01NdJC1SvSDwxZZroAooVKnU` fires **07:40 PT** into a fresh session;
