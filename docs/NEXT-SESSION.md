@@ -31,8 +31,27 @@ curl -sS "$HTTPS_PROXY/__agentproxy/status"        # recentRelayFailures names b
 curl -sS -m 12 -o /dev/null -w '%{http_code}\n' https://camphawk.app/
 ```
 
-**Egress was healthy all session 2026-08-25.** Only `flyctl-metrics.fly.dev`, `mcp.vercel.com`
-and `mcp.sentry.dev` are denied. **It has been revoked mid-session before** (08-23/08-24). If it
+**Egress is fully open as of 2026-08-26 12:10 PT** — the owner had the last three hosts added
+to the allowlist, and all three now answer: `mcp.sentry.dev` 200, `mcp.vercel.com` 401,
+`flyctl-metrics.fly.dev` 404. Those are the SERVERS replying, not the gateway's 403, and the
+`flyctl` metrics warning is gone. `recentRelayFailures` should now be empty.
+
+**THE MCP SERVERS ARE STILL NOT USABLE, AND THE REASON HAS CHANGED — it is AUTH, not the
+network.** `POST https://mcp.sentry.dev/mcp` answers
+`401 {"error":"invalid_token","error_description":"Missing or invalid access token"}`, and no
+`mcp__sentry__*` or `mcp__vercel__*` tools appear in the tool list. Both need an OAuth pass in an
+INTERACTIVE session (`/mcp` or `claude mcp`); a sandbox session cannot run it. **Do not report
+these as blocked hosts** — that reading is stale, and it sends the next person to widen an
+allowlist that is already open.
+
+**AND SENTRY WOULD BE EMPTY EVEN THEN.** `NEXT_PUBLIC_SENTRY_DSN` is unset here (0 chars),
+`SENTRY_AUTH_TOKEN` too, and the served production HTML carries no Sentry reference — so
+`instrumentation.ts`, `instrumentation-client.ts` and `app/error.tsx` all no-op in production.
+`mcp.vercel.com` is the one worth authing: it would settle several "Vercel's env is
+authoritative and was not readable" items in `CLAUDE.md` (the autocart price ids,
+`CAMPFLARE_API_KEY`, and the Sentry DSN itself).
+
+**Egress has been revoked mid-session before** (08-23/08-24). If it
 is blocked: **report the hosts and stop.** Do not route around it.
 
 ### 0b. `NODE_USE_ENV_PROXY=1` OR NOTHING REACHES SUPABASE — INCLUDING `npm test`
