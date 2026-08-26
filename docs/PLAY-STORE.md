@@ -273,6 +273,47 @@ only**. Device locale is not a storefront check. Apple was restricted 2026-07-30
 **The flag needs BOTH conditions and still stays dark until then:** US-restricted AND the
 app actually live in a store.
 
+### 1a. THE REAL PATH, AND WHAT "AFFECTS OTHER TRACKS" MEANS (2026-08-24)
+
+Set, and written down because §1 above spent two wrong guesses on console paths.
+
+```
+Test and release -> Production -> Countries / regions -> Add countries / regions
+   -> United States -> Add
+Publishing overview -> Submit 1 change for review
+```
+
+**PRODUCTION HAD ZERO COUNTRIES, so this is an ADD and not a narrowing.** The staged change
+reads `Add 1 country / region: United States` with nothing to remove. That is the clean case:
+the "add the US first, then remove the others" ordering caution — Play refuses a track at zero
+countries — never came up, because there was nothing there.
+
+**IT IS STAGED, NOT APPLIED.** The change lands in *Publishing overview* under **Changes not yet
+submitted for review**, behind ~15 minutes of automated quick checks and then a manual
+`Submit N changes for review`. A country restriction is not instant and does not apply itself.
+
+**`Affects other tracks` EXPANDS AND NAMES THEM — read it rather than guessing.** The triangle
+beside the row opens:
+
+> *The following tracks will be updated because they already share country targeting with
+> production:* • **Open testing**
+
+**Open testing ONLY. CLOSED TESTING IS NOT AFFECTED**, so the closed track's worldwide access —
+which the paid tester service requires (§8) — survives this change untouched. That was the one
+real risk on this screen and the badge does not distinguish it from a harmless one, which is why
+the expansion is worth the two seconds. Open testing shares production's country targeting and is
+irrelevant here: no open beta is running, and §1's table already records that the setting only
+matters if one is.
+
+**`Managed publishing` IS OFF**, so approval puts the change live with no hold-and-release step.
+Correct for a country restriction — but it is a property of the whole console, not of this
+change, so anything else submitted while it is off also goes live the moment it clears.
+
+**THIS IS ONE OF THREE CONDITIONS ON `LINKOUT_BY_STORE.android`, AND THE OTHER TWO ARE STILL
+OPEN** — the closed track's global access must be withdrawn or the track closed, and the app must
+actually be live in production. Doing this does not license flipping the flag; see the block
+above and CLAUDE.md.
+
 ## 2. Listing fields
 
 Play limits differ from Apple's, and Play has **no keywords field** — the full
