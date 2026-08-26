@@ -398,6 +398,52 @@ than recreated.
 **Expect a day or two**, exactly as with Apple's banking. So Play turns out to have the same
 shape after all — form now, wait, then create products.
 
+### 9h. The public merchant profile — the five fields, and the two that are decisions
+
+*Written 2026-08-24 from the live form. Google Play Console → Settings → Payments profile.
+The owner reached this screen, so the merchant-account gate in §9f is now OPEN and being
+worked — that entry's ⛔ is spent.*
+
+| Field | Enter | Why |
+|---|---|---|
+| Business name *(required)* | `CampHawk` | **Public.** Appears on Play receipts. |
+| Website *(optional)* | `https://camphawk.app` | Fill it — an unreachable seller is a review risk. |
+| What do you sell | the digital-software / apps option | Category only; nothing downstream reads it. |
+| Customer support email *(required)* | `alerts@camphawk.app` | Already the published address on `/support`, `/privacy`, `/terms`, `/sources`. |
+| Credit card statement name *(required)* | `CAMPHAWK` | **Public.** This is the line on the buyer's card statement. |
+
+**THE TICKED CHECKBOX DOES NOT FILL THE BUSINESS NAME, AND THE RED ERROR IS NOT A BUG.**
+*"Use legal business info name, contact, address"* is checked and `Business name` is still
+flagged required and empty. For an **Individual** account type there is no legal *business*
+name to copy — the legal identity is a person — so the public name has to be typed. Do not
+untick the box trying to clear the error; that changes what address is used, which is the next
+paragraph.
+
+**`CAMPHAWK` ON THE STATEMENT IS A CHARGEBACK CONTROL, NOT COSMETICS.** A subscriber who sees
+an unfamiliar name against a recurring charge disputes it, and a dispute costs the fee plus the
+revenue plus standing with the processor. The statement line must be the name the buyer
+recognises from the app — never the legal name. Same argument as the seller name above, with a
+sharper consequence.
+
+**UNRESOLVED, AND WORTH THIRTY SECONDS BEFORE SUBMITTING: what does "Public merchant profile"
+publish?** The section is titled *Public*, the checkbox pulls in **contact and address**, and
+the address on file is a **home address**. Whether Google exposes it to buyers for a
+digital-only seller was **not determined** — there is an (i) tooltip beside *Public business
+information* on that screen, which is the cheapest way to find out and is right there. Recorded
+as an open question rather than answered from assumption; do not write a conclusion in here
+without reading it.
+
+**`alerts@camphawk.app` IS THE RIGHT ADDRESS AND ITS INBOUND ROUTING IS UNVERIFIED.** It is the
+address the site already publishes in four places and promises *"a human will answer"* against,
+so consistency argues for it. But it is also the **From** address for outbound alerts via Resend
+(`src/lib/notifications/email.ts:28`), and a send-only sender is not a mailbox. **This session
+could not check** — the container has no `dig`, `host` or `nslookup`, and an MX query returning
+nothing here is a missing binary rather than a missing record (verified: the control query for a
+domain that certainly has MX failed identically). Google will send merchant and dispute notices
+to whatever goes in this field, and buyers will email it. **Confirm mail to it actually lands
+somewhere read before relying on it; if not, use an address that does.** Presence is not
+liveness — the same shape as `status = 'sent'` meaning only "Twilio returned 2xx".
+
 ---
 
 ## 10. THE TWO STORES DO NOT HAVE THE SAME RULE, AND STORE BILLING NETS MORE THAN STRIPE
