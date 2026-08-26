@@ -325,10 +325,18 @@ load-bearing.
 | Standard | **10% + 5% billing fee** |
 
 **10% + 5% = 15% effective, and THE TWO ROWS ARE IDENTICAL — there is no $1M cliff for
-subscriptions.** That is the substantive difference from Apple: the Small Business Program
+subscriptions.** ~~That is the substantive difference from Apple: the Small Business Program
 form in §6.1 exists purely to buy 15% instead of 30%, and Google gives the same rate with no
-enrolment, no effective date and no annual reconfirmation. **So §1's price list is correct for
+enrolment, no effective date and no annual reconfirmation.~~ **So §1's price list is correct for
 both stores** — `$2.99 / $23.99 / $11.99 / $59.99`.
+
+> **"NO ENROLMENT" IS FALSIFIED — SEE §9i.** The Play Console's own payments page carries a
+> banner reading *"Enroll for the 15% service fee … To receive the new rate you will need to:
+> create an account group … accept the service fee terms and conditions."* **A rate published in
+> a table is not a rate applied to an account.** The price list is unaffected; the claim that
+> nothing had to be done to get 15% was read off Google's marketing page and never off this
+> account. Struck rather than deleted because it is the sentence a later reader would quote as
+> a reason to skip the enrolment.
 
 **THE 5% IS A *BILLING* FEE, NOT A SERVICE FEE**, and the distinction is why the number is
 written as two parts. It applies specifically when the purchase completes through Google Play
@@ -397,6 +405,42 @@ than recreated.
 
 **Expect a day or two**, exactly as with Apple's banking. So Play turns out to have the same
 shape after all — form now, wait, then create products.
+
+### 9i. THE 15% IS AN ENROLMENT, NOT A DEFAULT — and the payout path is still empty
+
+*Read off the live Payments profile page 2026-08-24, immediately after the merchant account was
+created. Two things are outstanding on it and neither is a wait — both are actions.*
+
+**1. ENROL FOR THE 15% SERVICE FEE.** The page's own banner:
+
+> *Enroll for the 15% service fee. You can now enroll for the 15% service fee in Play Console.
+> To receive the new rate you will need to: create an account group and let us know if you have
+> any associated developer accounts · accept the service fee terms and conditions.*
+
+`Manage account group` → create a group → declare associated developer accounts (**there are
+none**; one Play account, so the disclosure is "no") → accept the terms.
+
+**THIS IS THE PLAY EQUIVALENT OF APPLE'S SMALL BUSINESS PROGRAM AFTER ALL** (§6.1), and §9d said
+in as many words that it was not. Same shape, same cost (nothing), same consequence for skipping
+it. **A published fee table describes what Google offers; an account group describes what this
+account gets.** The repo has paid for that distinction repeatedly — a demo password that was
+present but wrong, `status = 'sent'` meaning only that Twilio returned 2xx, a `GITHUB_TOKEN` that
+is set and is a placeholder.
+
+**WHETHER IT CHANGES THE *SUBSCRIPTION* RATE IS NOT ESTABLISHED — do not write in that it does.**
+§9d's 10% + 5% comes from the auto-renewing-subscriptions column, and this banner is the general
+service-fee programme; they may be independent mechanisms. **The action is unambiguous either
+way** — enrolling is free and cannot make the rate worse — so do it, and do not go on to record
+"subscriptions are 15% because we enrolled" without reading the fee table back afterwards.
+
+**2. ADD A PAYMENT METHOD — "How you get paid" is EMPTY.** Earnings read `$0.00` against a `$1.00`
+payout threshold with no bank account attached. Same Chase account as Apple, same legal name and
+address as the W-9. **Nothing warns about this until there is money to send**, and the first
+subscriber is the wrong moment to discover it.
+
+**NEITHER OF THESE BLOCKS CREATING THE PRODUCTS**, so §9's product work can start as soon as the
+merchant account finishes provisioning. They block getting *paid* correctly, which is a different
+deadline and a quieter one.
 
 ### 9h. The public merchant profile — the five fields, and the two that are decisions
 
