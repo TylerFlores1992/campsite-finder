@@ -3796,8 +3796,8 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
 > wants its own change and a test that calls `dueHolds` TWICE.
 >
 > **2. READ THE NEXT RAMP — AND DO NOT TRY TO STAGE ONE.** The trail is armed (#193/#194,
-> on the box since 13:26:42 PT 08-25) and has never seen a ramp; the box has been quiet
-> ~20h. A password sign-in with Okta GONE was measured on 08-26 at **32 seconds and zero
+> on the box since 13:26:42 PT 08-25) and **`trail-*` readings are still ZERO**; the box has
+> been quiet ~30h as of 08-26 12:20 PT. A password sign-in with Okta GONE was measured on 08-26 at **32 seconds and zero
 > memory**, so the "force the warm-up" plan does not work — see "A PASSWORD SIGN-IN CAN BE
 > CHEAP".
 >
