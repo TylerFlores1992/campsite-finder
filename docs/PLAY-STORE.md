@@ -71,7 +71,24 @@ Internal testing has no such gate and can be published immediately — do that f
 to prove the AAB uploads cleanly and because it is where the **country restriction** can
 be set today.
 
-## 0c. Production access — APPLIED 2026-08-22 (owner-reported)
+## 0c. Production access — **GRANTED** (confirmed in console 2026-08-24)
+
+> **GRANTED, and read off the console rather than reported second-hand.** The Dashboard shows
+> *"Congratulations! Your app has been granted Google Play production access"*. Production
+> itself reads **Inactive** — access is granted, no production release is published yet.
+> Closed testing remains **Active, 1 track**; internal testing Active; open testing Inactive.
+>
+> **WHAT THIS UNBLOCKS:** §1's US-only country setting, which was verified on 2026-08-01 as
+> impossible ("You don't have access to production yet", no Countries/regions tab). It is now
+> reachable. And **Monetize with Play** is available, so the subscription products can be
+> created — see `docs/STOREKIT-PLAN.md` §9.
+>
+> **AND IT DEFUSES §1's TANGLE RATHER THAN RESOLVING IT.** §1 requires the worldwide closed
+> track to be withdrawn before `LINKOUT_BY_STORE.android` may flip. With Play Billing in the
+> app there is **no steering UI at all**, so that flag stays `false` permanently and the
+> precondition stops being a live decision. Do not withdraw the closed track for its sake.
+
+## 0c-prev. Production access — APPLIED 2026-08-22 (owner-reported)
 
 **The gate in §0 has been cleared and the application is in.** The owner drove the Play
 Console; the side-lane session supplied every copyable answer. Recorded here because it was

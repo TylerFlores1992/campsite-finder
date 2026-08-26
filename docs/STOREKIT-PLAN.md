@@ -258,3 +258,90 @@ paywall reused across all four is sufficient and is the cheapest approach. **Dra
 once the paywall UI exists, not before** — §2d's whole lesson is that review assets describing
 something the reviewer cannot reach cost a round.
 
+
+---
+
+## 9. Play Billing — the same job, a different data model
+
+*Added 2026-08-24, the evening Google Play **production access was granted** (see
+`docs/PLAY-STORE.md` §0c). This doc now covers both stores despite its name.*
+
+### 9a. PLAY HAS NO SUBSCRIPTION GROUPS, AND THAT IS THE TRAP
+
+Apple: four products in one group, levels decide upgrade vs downgrade, Apple prorates.
+
+**Play: TWO subscriptions, each with base plans underneath, and NO grouping concept at all.**
+
+```
+subscription  camphawk_base          base plans:  monthly · yearly
+subscription  camphawk_autocart      base plans:  monthly · yearly
+```
+
+There is no level, no ranking, and **nothing decides for you whether a switch is an upgrade or
+a downgrade.** The app states it at purchase time via the subscription-update parameters and a
+**proration mode**. Get that wrong and a user upgrading to Auto-Cart either pays twice or waits
+until renewal for the feature — the same failure Apple's Level 1/Level 2 inversion produces,
+except here it is code rather than configuration, so no console screen will show it to you.
+
+**This is the single most likely place to lose money quietly on the Play side.**
+
+### 9b. The products
+
+Play ids are lowercase and **permanent**, exactly like Apple's, and are a **separate namespace** —
+they do not have to match, and matching them buys nothing.
+
+| subscription | base plan | billing period | price | offer |
+|---|---|---|---|---|
+| `camphawk_base` | `monthly` | 1 month | $2.99 | `intro-free-week` |
+| `camphawk_base` | `yearly` | 1 year | $23.99 | `intro-free-week` |
+| `camphawk_autocart` | `monthly` | 1 month | $11.99 | `intro-free-week` |
+| `camphawk_autocart` | `yearly` | 1 year | $59.99 | `intro-free-week` |
+
+Names shown to users:
+
+```
+camphawk_base       ->  CampHawk Alerts
+camphawk_autocart   ->  CampHawk Auto-Cart
+```
+
+Renewal type **auto-renewing**; each base plan needs a **free-trial offer of 1 week**, matching
+Apple's introductory offer and the Stripe path's `trialing` status.
+
+### 9c. Availability
+
+**United States only**, on the PRODUCTION track — now settable for the first time (§0c). This
+matters far less than it did: with Play Billing there is no steering UI, so the US restriction is
+no longer the precondition for anything. Set it anyway for parity with Apple, but it is not
+load-bearing.
+
+### 9d. THE FEE IS PROBABLY 15%, AND THAT NEEDS CHECKING RATHER THAN ASSUMING
+
+Google has charged **15% on subscriptions from day one since 2022**, with **no equivalent of
+Apple's Small Business Program** — no form, no enrolment, no effective date. If that still
+holds, the §1 price list works unchanged for both stores.
+
+**DO NOT TREAT THAT AS SETTLED.** Google's fee structure has been under active change from the
+*Epic v. Google* injunction (US external links and alternative billing), and this note is
+written from knowledge with a May 2026 cutoff. **Read the current rate in the Play Console
+before creating the products.** If it is not 15%, the prices in the table above are wrong and
+§1's arithmetic has to be redone for Play separately.
+
+### 9e. Server — one webhook or two?
+
+Play sends **Real-time Developer Notifications** over Pub/Sub, which is a different shape from
+Apple's App Store Server Notifications and a second thing to operate.
+
+**This is the strongest argument for RevenueCat in §3.** It normalises both stores into one
+webhook, so `subscriptions` gains one `provider` value (`'play'`) and the entitlement query —
+which §2 establishes needs no change at all — keeps working for a third provider for free.
+Rolling it yourself means operating two notification pipelines, each silent when broken, with
+a paying customer losing entitlement as the failure mode.
+
+### 9f. What is NOT blocked any more, and what still is
+
+| | |
+|---|---|
+| ✅ Create the subscriptions | **Monetize with Play** is available now |
+| ✅ Set US-only on production | unblocked by the access grant |
+| ⛔ A production release | Production reads **Inactive**; needs a build |
+| ⛔ Anything client-side | needs the billing library and a new AAB |
