@@ -366,3 +366,83 @@ a paying customer losing entitlement as the failure mode.
 | ✅ Set US-only on production | unblocked by the access grant |
 | ⛔ A production release | Production reads **Inactive**; needs a build |
 | ⛔ Anything client-side | needs the billing library and a new AAB |
+
+---
+
+## 10. THE TWO STORES DO NOT HAVE THE SAME RULE, AND STORE BILLING NETS MORE THAN STRIPE
+
+*Added 2026-08-24 after the owner asked whether Play, like Apple, forbids selling only on the
+website. It does not, and the revenue comparison turned out to run the opposite way from the
+premise the whole plan started on.*
+
+### 10a. APPLE REQUIRES IAP. GOOGLE'S RULE ATTACHES TO IN-APP TRANSACTIONS ONLY
+
+**Apple — mandatory.** Guideline **3.1.3(b) Multiplatform** permits honouring content bought
+elsewhere *"provided those items are also available as in-app purchases within the app."* That
+**"also"** is the entire requirement, and an app that honours web subscriptions while offering
+no IAP fails it. This is exactly what `docs/APP-STORE.md` §2c and §2d record across three
+rejections — see §2c for why 3.1.3(b) is a restatement of the demand rather than a defence.
+
+**Google — narrower.** The Payments policy requires Google Play Billing for **purchases made
+inside the app**. There is no equivalent of Apple's "must also be available in-app" clause, so
+an app that sells nothing within itself and signs users into an account bought on the web is
+not making an in-app purchase for the policy to attach to.
+
+**Supporting evidence sits in Google's own fee schedule:** *"OR; 20% for external web links"* is
+a published line item. Google contemplates and prices external purchase flows. Apple's schedule
+has no such row.
+
+**THE GAP, STATED RATHER THAN PAPERED OVER.** For auto-renewing subscriptions Google's table
+lists only 10% + 5% and **no external-link rate**, so it cannot be told from the table alone
+whether external links are unavailable for subscriptions or merely not broken out. And
+`support.google.com` and `play.google` are **outside this environment's egress allowlist**
+(both returned `000` on 2026-08-24), so the Payments policy could not be read directly. **This
+section is a policy read from a May 2026 knowledge cutoff, not a verified quotation.** Confirm
+in the Play Console's policy status before treating "Play does not require it" as settled.
+
+### 10b. STORE BILLING NETS MORE THAN STRIPE ON EVERY PLAN — the premise was backwards
+
+The plan opened on the owner's framing: *"charge more to cover the profit stolen from Apple."*
+Run the arithmetic and the price rise more than covers the commission, because **Stripe's fixed
+$0.30 per transaction is punishing at these amounts.**
+
+Stripe US card pricing is **2.9% + $0.30**; both stores are **15%**:
+
+| plan | web (Stripe) | fee | **net** | store price | −15% | **net** | store advantage |
+|---|---|---|---|---|---|---|---|
+| Base monthly | $2.50 | $0.37 | **$2.13** | $2.99 | $0.45 | **$2.54** | **+$0.41** |
+| Base yearly | $20.00 | $0.88 | **$19.12** | $23.99 | $3.60 | **$20.39** | **+$1.27** |
+| Auto-Cart monthly | $10.00 | $0.59 | **$9.41** | $11.99 | $1.80 | **$10.19** | **+$0.78** |
+| Auto-Cart yearly | $50.00 | $1.75 | **$48.25** | $59.99 | $9.00 | **$50.99** | **+$2.74** |
+
+**THE REASON IS THE FIXED FEE, AND IT IS CLEAREST AS AN EFFECTIVE RATE:**
+
+```
+Stripe's effective rate on $2.50   =  $0.37 / $2.50  =  14.9%
+the stores' rate                   =                    15.0%
+```
+
+**On the base monthly plan Stripe already costs what Apple and Google cost.** The 30 cents is
+almost the whole fee at that price. Stripe only pulls ahead on the larger yearly charges
+(4.4% on $20, 3.5% on $50) — and a ~20% price rise closes even those.
+
+*(Approximate: Stripe Billing adds ~0.5% on top if in use, which widens the gap further. And
+this compares store-at-raised-price against web-at-current-price, which is the real comparison
+because §1 keeps web prices where they are.)*
+
+### 10c. WHAT THIS CHANGES — sequencing, not the plan
+
+The products are worth creating on both stores regardless: they net more than the web path,
+they convert better than "go to our website and come back", and on Play they permanently
+retire the `LINKOUT_BY_STORE.android` precondition (§9f, `docs/PLAY-STORE.md` §1).
+
+**What it does change is which store is BLOCKING.** If Play genuinely does not require Play
+Billing, then **Play is not gated on any of this** and could launch on the existing web-checkout
+model, while **Apple is the only store where IAP is a release gate**. That is worth knowing
+before committing an evening to the Play side — it is a revenue optimisation there and a
+compliance requirement on Apple.
+
+**AND IT RETIRES THE "PROFIT STOLEN BY APPLE" FRAMING.** At these price points the commission
+is not a loss to be absorbed; the fixed-fee structure of card processing means the stores are
+roughly at parity with Stripe on the small monthly plan and the price rise covers the rest.
+Nobody should re-derive this from the 15% figure alone and conclude the app path is worse.
