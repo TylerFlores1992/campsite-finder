@@ -442,6 +442,22 @@ subscriber is the wrong moment to discover it.
 merchant account finishes provisioning. They block getting *paid* correctly, which is a different
 deadline and a quieter one.
 
+**PROGRESS, 2026-08-24 evening.** Account group **`CampHawk`** exists, holding the one primary
+account (`7424004468450397856`, `tylerflores1992@gmail.com`). Bank account added; **waiting on
+micro-deposit verification** (typically 2–5 business days, and the amounts have to be entered
+back into the console — it does not verify itself).
+
+**DO NOT PRESS `Start` UNDER "Add developer accounts to your account group".** That empty state
+is for declaring *other* developer accounts you also control, and there are none. It reads like
+the next step in the enrolment and is not — it opens an invitation flow for an account that does
+not exist. The first of the banner's two requirements is **already satisfied** by the group
+existing with a truthful answer of "none".
+
+**WHAT IS STILL OUTSTANDING IS THE BANNER'S SECOND BULLET: accept the service fee terms and
+conditions.** The group is the prerequisite, not the enrolment. **A created account group is not
+an accepted rate** — same distinction as §9i's opening, one level in, and the point at which it
+would be easy to consider this done.
+
 ### 9h. The public merchant profile — the five fields, and the two that are decisions
 
 *Written 2026-08-24 from the live form. Google Play Console → Settings → Payments profile.
