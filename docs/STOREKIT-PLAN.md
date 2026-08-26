@@ -314,17 +314,38 @@ matters far less than it did: with Play Billing there is no steering UI, so the 
 no longer the precondition for anything. Set it anyway for parity with Apple, but it is not
 load-bearing.
 
-### 9d. THE FEE IS PROBABLY 15%, AND THAT NEEDS CHECKING RATHER THAN ASSUMING
+### 9d. THE FEE IS 15%, CONFIRMED FROM GOOGLE'S OWN TABLE (2026-08-24)
 
-Google has charged **15% on subscriptions from day one since 2022**, with **no equivalent of
-Apple's Small Business Program** — no form, no enrolment, no effective date. If that still
-holds, the §1 price list works unchanged for both stores.
+**Read off Google's service-fee page, not assumed.** CampHawk is US-only, so the **June 30,
+2026 US table** governs, and for auto-renewing subscriptions it reads:
 
-**DO NOT TREAT THAT AS SETTLED.** Google's fee structure has been under active change from the
-*Epic v. Google* injunction (US external links and alternative billing), and this note is
-written from knowledge with a May 2026 cutoff. **Read the current rate in the Play Console
-before creating the products.** If it is not 15%, the prices in the table above are wrong and
-§1's arithmetic has to be redone for Play separately.
+| | Auto-renewing subscriptions (new & existing installs) |
+|---|---|
+| First $1M (USD) of annual earnings | **10% + 5% billing fee** |
+| Standard | **10% + 5% billing fee** |
+
+**10% + 5% = 15% effective, and THE TWO ROWS ARE IDENTICAL — there is no $1M cliff for
+subscriptions.** That is the substantive difference from Apple: the Small Business Program
+form in §6.1 exists purely to buy 15% instead of 30%, and Google gives the same rate with no
+enrolment, no effective date and no annual reconfirmation. **So §1's price list is correct for
+both stores** — `$2.99 / $23.99 / $11.99 / $59.99`.
+
+**THE 5% IS A *BILLING* FEE, NOT A SERVICE FEE**, and the distinction is why the number is
+written as two parts. It applies specifically when the purchase completes through Google Play
+Billing, so it is the 5% an alternative billing system would save. Not worth pursuing at this
+volume; worth knowing the number is 10 + 5 rather than a flat 15.
+
+**AND EXTERNAL WEB LINKS NOW CARRY THEIR OWN FEE, WHICH CUTS AGAINST THE LINK-OUT.** For
+non-subscription transactions the same table reads *"25% + 5% billing fee OR 20% for external
+web links"* — so post-*Epic*, steering users to an outside purchase is not free, merely priced
+differently. For auto-renewing subscriptions **no external-link rate is listed at all**; only
+the 10% + 5%.
+
+That is worth recording because it reverses an intuition this repo has carried since §2c: the
+link-out was treated as the cheap path and IAP as the expensive one. At 15% through Play
+Billing, in-app is at worst competitive with linking out **and carries no anti-steering
+exposure** — which is the same conclusion §9f reaches from the other direction, arrived at
+independently.
 
 ### 9e. Server — one webhook or two?
 
