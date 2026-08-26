@@ -360,12 +360,43 @@ a paying customer losing entitlement as the failure mode.
 
 ### 9f. What is NOT blocked any more, and what still is
 
+**CORRECTED 2026-08-24, same evening: creating the subscriptions is NOT unblocked.** This table
+first said "Monetize with Play is available now" on the strength of the production-access grant.
+It is not — the page answers **"To monetize this app, set up a merchant account"** and every
+monetization item in the left nav (Products, Price experiments, Monetization setup) is inert
+until that clears. **Production access and monetization access are two separate gates**, and
+granting the first says nothing about the second.
+
 | | |
 |---|---|
-| ✅ Create the subscriptions | **Monetize with Play** is available now |
-| ✅ Set US-only on production | unblocked by the access grant |
+| ⛔ **Create the subscriptions** | needs a **Google payments merchant account** first |
+| ✅ Set US-only on production | genuinely unblocked by the access grant |
 | ⛔ A production release | Production reads **Inactive**; needs a build |
 | ⛔ Anything client-side | needs the billing library and a new AAB |
+
+### 9g. The merchant account — Play's equivalent of Paid Applications
+
+Same shape as Apple's §6.3, and it wants the same facts, so file them together:
+
+```
+Account type          Individual (sole proprietor)
+Legal name / address  MUST MATCH the W-9 filed with Apple — a mismatch is the
+                      usual cause of a stuck tax interview
+Tax interview         US
+Bank account          the same Chase account given to Apple
+```
+
+**THE PUBLIC SELLER NAME IS A REAL DECISION, NOT A FORM FIELD.** Google asks for a public-facing
+seller name and it appears on customers' **Google Play receipts**. Entering the legal name means
+a buyer's receipt for a CampHawk subscription reads *"Tyler Flores"*. `CampHawk` is the sensible
+entry — and note this is **NOT** the same field as Apple's "Business Name", which is specifically
+for a registered DBA and correctly left blank.
+
+An existing Google payments profile from another Google service can usually be linked rather
+than recreated.
+
+**Expect a day or two**, exactly as with Apple's banking. So Play turns out to have the same
+shape after all — form now, wait, then create products.
 
 ---
 
