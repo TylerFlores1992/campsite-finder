@@ -16,6 +16,13 @@ Play additionally on native code that does not exist.
 | **Apple** | W-9 active | Bank details + Paid Applications agreement processing | Small Business Program enrolment (§6.1), then the four products (§8) |
 | **Play** | Merchant account · account group + declaration · **15% service fee enrolled** · production set US-only · **bank verified** | — **nothing** | **A build declaring `com.android.vending.BILLING` (§9a-bis)** |
 
+> **UPDATE 2026-08-27 — §9a-ter.** The build now ASSERTS `com.android.vending.BILLING` in the
+> merged manifest, because the plugin's own Android manifest is **empty** and the permission
+> can only arrive three hops down a transitive chain (`purchases-hybrid-common` → `purchases`
+> → `com.android.billingclient:billing`). The last link sits on Google's Maven, which the agent
+> proxy denies, so it is **still unread** and the Codemagic runner is the only instrument.
+> **Two builds, in order: assertion alone must go RED, then the plugin makes it green.**
+
 **THE ONE FINDING THAT CHANGES THE PLAN IS §9a-bis.** Play will not let the subscription
 products be created at all until an uploaded binary declares the billing permission — so Play's
 order is library → build → upload → products, the reverse of §7, and it is now **native work
@@ -387,6 +394,86 @@ Billing directly clears the gate and still leaves the server side to build.
 the store where more can happen sooner** — its products need only the Paid Applications
 agreement, with no build in the way. That reverses the sequencing assumption this section was
 written under.
+
+### 9a-ter. THE PERMISSION IS THREE HOPS DOWN A TRANSITIVE CHAIN, AND THE BUILD NOW ASSERTS IT (2026-08-27)
+
+§3 closed with the one thing it had not read: *"UNVERIFIED, AND THE BUILD MUST SETTLE IT: that
+the plugin actually contributes `com.android.vending.BILLING` to the merged manifest."* Read
+from the published package, and it is **less** direct than that sentence assumes.
+
+**`@revenuecat/purchases-capacitor@13.4.2` SHIPS AN EMPTY ANDROID MANIFEST.**
+`android/src/main/AndroidManifest.xml` is `<manifest></manifest>` and nothing else — no
+permissions at all. So "the SDK brings the permission" is not a property of the thing
+`package.json` names. It can only arrive by AAR manifest merge from:
+
+```
+@revenuecat/purchases-capacitor 13.4.2
+  -> com.revenuecat.purchases:purchases-hybrid-common:18.32.1  (compile)
+    -> com.revenuecat.purchases:purchases:10.18.1              (compile)
+      -> com.android.billingclient:billing:8.3.0               (compile)
+```
+
+Each hop read off the Maven Central POMs, not recalled. **The consequence is the reason the
+assertion is worth having beyond this one build:** the permission belongs to a transitive
+dependency two levels below anything we declare, so a bump of `purchases-hybrid-common` can
+remove it with **no line of ours changing**, and the first sign would be the Play console
+quietly refusing to create products again — months later, with nothing red.
+
+**THE LAST LINK COULD NOT BE READ FROM AN AGENT SESSION, AND THAT IS NOT A DETAIL.**
+`com.android.billingclient` is published on Google's Maven, not Central. `maven.google.com`
+301s to `dl.google.com`, which the agent proxy denies at CONNECT with a 403 — an org policy
+denial. So whether billing 8.3.0's own manifest declares the permission is **still unread**,
+and the Codemagic runner is the only place it can be read. The instruction and the constraint
+happen to agree: assert it in the build, because the build is the only instrument there is.
+
+**WHAT SHIPPED** — one step in `android-release`, after the build, beside the three assertions
+already there (`docs/PLAY-STORE.md` §0b, `codemagic.yaml`):
+
+- Reads **the merged manifest** (`app/build/intermediates/*/merged_manifest*/release/*`) —
+  the merge result itself and what BOTH artifacts are built from — and **the built APK** via
+  `aapt2 dump permissions`. Two sources because they fail differently.
+- **Found, never hardcoded.** AGP moves its intermediates between versions, and a stale path
+  would find nothing and report it as no problem. If no merged release manifest is found at
+  all, the step FAILS and says so in different words from "the permission is absent" — the
+  two are different faults and the messages must not be confusable.
+- **`/release/` with slashes** in the filter, so `releaseUnitTest` — a different variant whose
+  manifest says nothing about what ships — cannot sweep in and fail builds for nothing.
+- **HONEST LIMIT:** Play receives the **AAB**, not the APK. Both come out of one Gradle
+  invocation and one merged manifest, so the APK is strong evidence — but it is evidence, not
+  identity, which is why the merged manifest is primary. The AAB's own manifest is protobuf
+  and not greppable; reading it needs bundletool, which is not guaranteed on the image.
+
+**IT ALSO PRINTS EVERY PERMISSION, FOR A SECOND REASON.** The same chain pulls
+`com.google.android.gms:play-services-ads-identifier:17.0.1`, the usual source of
+`com.google.android.gms.permission.AD_ID`. `docs/PLAY-STORE.md` §4 declares in bold *"No
+advertising or tracking anywhere. No ad SDK, no ad ID"*, and Play carries a **separate** AD_ID
+declaration. If it lands, both are wrong — and **every green `android-release` publishes**, so
+it would ship before anyone looked. That AAR is on the same blocked host, so this too is
+unread until a build reports it. **The step does NOT fail on it**: failing would block the
+billing gate this exists to clear, over a policy question that is the owner's.
+
+**THE ORDER MATTERS AND IT IS TWO BUILDS, NOT ONE.**
+
+```
+1. assertion only, no plugin   -> android-release MUST GO RED at the billing step
+2. add the plugin              -> android-release goes green, the AAB uploads itself,
+                                  the Subscriptions page gains its create button
+```
+
+Run 1 is not ceremony. A gate that has never been seen to fail is the vacuous-pass shape this
+repo has paid for two dozen times, and `docs/SETUP.md` already carries the rule from the
+jsx-spacing gate: *confirm a new gate can actually fail before trusting it.* It is also
+**diagnostic**: run 1 distinguishes "the permission is absent" (expected — §9a-bis verified it
+appears nowhere outside `node_modules`) from "the intermediates path does not resolve on AGP
+8.13", which is the genuinely unknown half and which the two messages tell apart. Run 1 fails
+before `publishing`, so it uploads nothing — and even if that ordering turned out otherwise,
+it would upload a binary of the same kind already live at versionCode 18.
+
+The shell logic was fixture-tested locally first — permission present, permission absent, no
+manifest at all, the singular bundle path, `releaseUnitTest` correctly excluded, and both
+`aapt2` arms — because a Codemagic run costs a build slot and a versionCode.
+`worker/codemagic-assertions.test.mts` pins it, and pins the three assertions that predate it,
+against ten mutations each verified to apply and to fail.
 
 ### 9b. The products (NOT YET CREATABLE — see §9a-bis)
 
