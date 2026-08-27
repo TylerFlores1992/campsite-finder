@@ -23,6 +23,11 @@ rather than a console task**. Apple has no such gate. §9b's product table is co
 **not yet reachable**; §8's Apple walkthrough is correct and reachable the moment the agreement
 clears.
 
+**THE NEXT SESSION'S JOB IS §11** — the Android build that clears §9a-bis. It carries a
+constraint this plan was written without: **the app is a remote webview** (`server.url =
+camphawk.app/search`), so a web deploy cannot add purchase capability and the paywall must
+detect the *plugin*, not the platform. Read §11 before §3.
+
 **NOTHING IN `src/` HAS CHANGED. There is no code for any of this.** The migration in §2, the
 webhook in §5, the product-id → tier mapping and the paywall are all unwritten, and all of it is
 **main-lane** territory (`src/lib/`, `src/lib/db/migrations/`).
@@ -705,3 +710,95 @@ compliance requirement on Apple.
 is not a loss to be absorbed; the fixed-fee structure of card processing means the stores are
 roughly at parity with Stripe on the small monthly plan and the price rise covers the rest.
 Nobody should re-derive this from the 15% figure alone and conclude the app path is worse.
+
+---
+
+## 11. THE ANDROID BUILD — the next session's job, and the constraint this plan did not carry
+
+*Written 2026-08-24 at the owner's direction to prepare an implementation session. Everything
+in both consoles is done (see **STATE AS OF**); Play's only remaining blocker is this.*
+
+### 11a. THE APP IS A REMOTE WEBVIEW, AND THAT CHANGES THE CLIENT DESIGN
+
+**Not in §3, and it should have been.** `capacitor.config.ts` sets
+`server.url = 'https://camphawk.app/search'` — the app is a thin native shell around the **live
+site**, not a bundled build. Three consequences the implementation has to be designed around:
+
+1. **A webview cannot invoke Play Billing.** The purchase must be made by native code and
+   reached over the Capacitor bridge. The pattern already exists — `NativeBridge.tsx`
+   dynamic-imports `@capacitor/*` guarded by `Capacitor.getPlatform()`, and Capacitor injects
+   its runtime into the remote page — so this is feasible and is not new ground.
+2. **A WEB DEPLOY CANNOT ADD PURCHASE CAPABILITY.** Everything else in this product reaches
+   installed apps on a `git push`; this does not. The paywall UI is web-side and instant, the
+   plugin behind it is in the binary and needs a release. **They will be out of step, on
+   purpose, for as long as it takes users to update.**
+3. **THEREFORE DETECT THE CAPABILITY, NOT THE PLATFORM.** `isNative` (a User-Agent marker,
+   `src/lib/native/context.tsx`) says the shell is CampHawk. It does **not** say the shell has
+   the purchases plugin. A paywall gated on `isNative` alone shows a Buy button that throws on
+   every app installed before the release. **A missing plugin must read as `unknown`, never as
+   "not subscribed" and never as a broken button** — the same rule §4 already states for a
+   failed entitlement lookup, applied one layer down.
+
+### 11b. What the build actually needs
+
+The gate is §9a-bis: an uploaded binary declaring **`com.android.vending.BILLING`**, which
+arrives with the Play Billing Library — pulled in by whichever plugin §3's undecided call
+lands on.
+
+```
+add the plugin  ->  npx cap sync android  ->  Codemagic `android-release`  ->  AAB
+   ->  upload (automatic, see below)  ->  Subscriptions page gains its create button
+   ->  create the four products (§9b)
+```
+
+**Facts about this build worth not re-deriving** (`codemagic.yaml`, `docs/PLAY-STORE.md` §0b):
+
+- `android/` is **gitignored and regenerated every build** — never edit it, change
+  `capacitor.config.ts` or the workflow instead.
+- `android-release` already asserts **targetSdk ≥ 36**, that the **InAppBrowser plugin is
+  installed**, and that the **APK is actually signed**. Adding a dependency must not break any
+  of the three.
+- `versionCode` comes from Codemagic's `PROJECT_BUILD_NUMBER` — shared across workflows, and
+  **not** the per-workflow `index`, which has been misquoted as the build number twice.
+- **Every green `android-release` uploads itself** to Play closed testing via the `google_play`
+  env group. So a build is a publish; there is no separate upload step to forget, and equally
+  no dry run.
+
+### 11c. ONE DEPENDENCY TREE, TWO PLATFORMS — the iOS risk is real and is recorded
+
+Adding an IAP plugin touches **both** apps. The Capacitor 8 upgrade already produced the
+failure this repeats: **v8 defaults iOS to Swift Package Manager**, which derives package
+identity from the last path segment, so `@capacitor/app` and `@capacitor-firebase/app` both
+claimed `app` and dependency resolution failed outright. The fix was
+`npx cap add ios --packagemanager cocoapods`, and **it must stay CocoaPods.**
+
+A new plugin is a new identity in that namespace. **Run the iOS workflow too**, or find out
+when a TestFlight build is needed for something else.
+
+### 11d. What must not break
+
+Beyond §4's list, which still stands in full:
+
+- **`cordova-plugin-inappbrowser`** — the RC hand-off. It is the only package of three that has
+  `executeScript`, and `codemagic.yaml` asserts it at `ios/capacitor-cordova-ios-plugins`
+  specifically. **Never widen that assertion to `grep -r ios/`**: `ios/App/App/public` holds our
+  own `cordova.InAppBrowser` probe and would pass with the plugin absent.
+- **`@capacitor-firebase/messaging`** — push. A dependency bump that moves Firebase is a push
+  outage, and push is an alert channel.
+
+### 11e. THE DECISION THAT IS NOT MINE TO MAKE
+
+§3 recommends **RevenueCat** over `@capacitor-community/in-app-purchases`, and §9a-bis
+strengthens it — their SDK brings the billing library *and* the purchase plumbing, where direct
+Play Billing clears the permission gate and leaves the entire server side to build.
+
+**It is still a third party in the payment path and the owner has not chosen.** Do not pick one
+by starting to install it.
+
+### 11f. THIS IS NOT SIDE-LANE WORK
+
+`package.json`, `capacitor.config.ts` and `codemagic.yaml` are not in either lane's list in
+`docs/LANES.md`, and the server half (§2's migration, §5's webhook) is squarely **main lane's**.
+A session doing this needs the owner's authorisation to cross, exactly as the park-watch work
+did.
+

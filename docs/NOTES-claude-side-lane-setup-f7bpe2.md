@@ -2519,3 +2519,53 @@ The migration (§2), the webhook (§5), the product-id → tier mapping and the 
 so upgrade-vs-downgrade is stated by app code and no console screen can show the mistake.
 
 ---
+
+---
+
+## 30. PLAY IS FULLY SET UP; THE ONLY BLOCKER LEFT IS A BUILD (2026-08-24, late)
+
+Continues §29. **Google is waiting on nothing.**
+
+```
+merchant account      done          account group + declaration   done
+15% service fee       ENROLLED      production track              US-only, submitted
+bank                  VERIFIED      subscription products         blocked on a build
+```
+
+### 30a. What the bank verification looked like
+
+`GOOGLE CO / ACCTVERIFY / $0.10`, a **single** deposit, entered at *Play Console → Settings →
+Payments profile → the bank card → Verify*. Full note in `STOREKIT-PLAN.md` §9i, including that
+**Apple has no equivalent** — their account goes Active with no deposit, so anyone watching a
+bank statement for an Apple credit is watching for something that never arrives.
+
+### 30b. THE FINDING THAT SHOULD DRIVE THE NEXT SESSION
+
+Written up as `STOREKIT-PLAN.md` **§11a**, and it is not in §3 where it belongs:
+
+**The app is a remote webview.** `capacitor.config.ts` points `server.url` at
+`https://camphawk.app/search`, so the shell wraps the live site. A webview cannot invoke Play
+Billing — the purchase crosses the Capacitor bridge — and the consequence is that **a web deploy
+cannot add purchase capability.** Everything else in this product reaches installed apps on a
+push; this does not.
+
+**So the paywall must detect the PLUGIN, not the platform.** `isNative` is a User-Agent marker;
+it says the shell is CampHawk, not that the shell can buy anything. Gated on `isNative` alone,
+every app installed before the release shows a Buy button that throws. **A missing plugin is
+`unknown`** — the rule §4 already states for a failed entitlement lookup, one layer down.
+
+### 30c. Still nobody's decision but the owner's
+
+**RevenueCat vs `@capacitor-community/in-app-purchases`** (§3, §11e). The billing-permission gate
+strengthens the RevenueCat case; it is still a third party in the payment path and it has not
+been chosen. **Installing one is choosing.**
+
+### 30d. Apple, for contrast
+
+Bank + Paid Applications were still processing at the end of this session. The `Subscriptions`
+page under *MONETIZATION* was never reported back, so **whether Apple's products are creatable is
+unknown** — not blocked, unknown. Apple needs no build for products, so it may well be the store
+that moves first.
+
+Confirmed by reading it back rather than quoting the doc: **US-only is genuinely set on Apple** —
+*App Availability: 1 Available, 174 Not Available*.
