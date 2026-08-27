@@ -132,6 +132,32 @@ test('the iOS InAppBrowser assertion stays SCOPED and is never widened to the wh
   // comment three lines above, and a naive scan would fail on the explanation.
   const body = code(ios[find(ios, 'InAppBrowser')]);
   assert.match(body, /ios\/capacitor-cordova-ios-plugins/, 'must check the real plugin directory');
-  assert.match(body, /CordovaPlugins/, 'sources landing is not enough — the Podfile must pull the pod in');
+  // ANCHORED ON THE COMPARISON, NOT THE TOKEN. `CordovaPlugins` also appears in this
+  // step's own error message, so a bare /CordovaPlugins/ match survived replacing the
+  // grep with `true ||` — verified, and it is the same anchoring mistake this repo has
+  // now made two dozen times. Pin the check itself.
+  assert.match(
+    body,
+    /grep -q "CordovaPlugins" ios\/App\/Podfile/,
+    'sources landing is not enough — the Podfile must pull the pod in',
+  );
   assert.ok(!/grep -r\w* ios\/\s/.test(body), 'must not be widened to a whole-tree grep');
+});
+
+test('the billing assertion looks in the right place, and filters the variant precisely', () => {
+  // Not a silent failure — a wrong search root makes every build fail on the no-manifest
+  // branch. It is pinned anyway because a build here is a PUBLISH: finding a typo in a
+  // test costs seconds, finding it in the workflow costs a build slot and a versionCode.
+  const body = code(android[find(android, 'Play Billing permission')]);
+  // ANCHORED ON THE ASSIGNMENT. The same `find app/build/intermediates ...` line appears
+  // again inside the FATAL branch that lists what the build DID produce, so a bare match
+  // on the find command survived corrupting the search root — the second time in one
+  // sitting that a guard here matched a token occurring twice.
+  assert.match(body, /MANIFESTS=\$\(find app\/build\/intermediates -type f -name AndroidManifest\.xml/);
+
+  // `*/merged_manifest*/release/*` is exact on purpose: the slashes are what exclude
+  // `releaseUnitTest`, a different variant whose manifest says nothing about what ships.
+  // Loosened to `*release*` it would sweep that in and fail builds for no reason —
+  // and the next person would "fix" it by dropping the check.
+  assert.match(body, /-path '\*\/merged_manifest\*\/release\/\*'/, 'the variant filter must stay anchored on /release/');
 });
