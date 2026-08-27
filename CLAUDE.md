@@ -2854,11 +2854,56 @@ They were the hold suites' sentinel fixtures, swept on the way out — the artif
 - **DIAGNOSED BOTH WAYS BEFORE BEING BELIEVED** — from the source (no `REAL_UNIT` in either
   inline query) and from the observation (fail → warn as the rows were swept). Either alone
   would have been a guess; the file's own history is full of the one that was.
-- **RECORDED, NOT FIXED.** It is a predicate in a safety-critical health path, and the two
-  honest remedies differ in kind: filter the counts in place, or route them through the
-  already-filtered helpers so there is ONE definition instead of three. Same call as the
-  `reclaimLapsedHolds` test question — not a change to make in passing, on a session whose job
-  was merging.
+- ~~**RECORDED, NOT FIXED.**~~ **FIXED 2026-08-27 (PR #202), by the second of the two named
+  remedies.** `holdsAhead(withinMinutes?)` and `holdsDueWithin(minutes)` in `src/lib/rc-holds.ts`
+  carry `REAL_UNIT` in their own bodies and replace all five inline counts, so there is ONE
+  definition rather than three copies of the same question. **No severity or threshold changed** —
+  it only stops fixtures being counted. A sixth count was found computed and discarded
+  (`Promise.all` had three entries, the destructuring took two) and removed.
+  `worker/health-hold-counts.test.mts` is real-DB for the predicate and structural for the route,
+  because the danger is a SIXTH copy appearing and no behavioural test can see one that has not
+  been written yet.
+
+### AND THE GUARD FOR THAT COULD NOT SEE THE FIXTURE THE FIX SHIPPED (2026-08-27)
+The test written for the entry above contained a `requested` hold on unit **`999000111`**, five
+minutes out. That is a numeric unit id in the one status `dueHolds` serves — **an instruction to
+the production runner to POST a precart for whatever real campsite carries that number.** The
+2026-08-15 incident, re-created by somebody who had just read the entry about it, in the fix for
+its sibling.
+- **IT SURVIVED ON TIMING, NOT ON DESIGN.** The feed's lead is 90s and the row sat 300s out, so it
+  would only have become due had the suite taken ~3.5 minutes to reach its sweep. Checked in the
+  database rather than reasoned: no fixture row, no live holds, and the CI run was cancelled the
+  moment it was spotted. **"Nothing happened" is not the finding; "nothing was stopping it" is.**
+- **`hold-fixture-safety.test.mts` WAS GREEN THROUGHOUT, AND IT IS THE GUARD FOR EXACTLY THIS.**
+  Three independent layers of its scope each let it through, and each is now fixed and
+  mutation-verified:
+  1. **`holdTestFiles()` selected on `offerHold|requestHold`** — describing "files that drive the
+     hold state machine" by the two helpers that happened to exist when it was written. **SIX
+     suites write `rc_hold_requests` with plain SQL and none of them was ever scanned.** The
+     selector asks about the CAPABILITY now: anything that writes the table is in scope, with no
+     import required, because a raw INSERT needs none.
+  2. **The line filter looked for `offer(`/`requestHold(`/`unit_id`.** Those describe where a unit
+     id is USED; a fixture id is as often DECLARED once at the top and referenced by name, and
+     `const REAL = '999000111';` carries none of them. A bare numeric constant declaration is in
+     scope now — checked against every file first, and it flags nothing that exists.
+  3. **The helper names were a fixed list**, so a suite calling its own `hold(`/`cartedHold(` was
+     invisible. The scan DERIVES the names from the file now: any function whose body contains
+     `INSERT INTO rc_hold_requests`. That cannot go stale when the next suite names its helper
+     something else.
+- **A WHOLE-FILE SCAN WAS TRIED AND REJECTED, on measurement rather than taste.** It flags
+  `'24'`/`'00'` from the `pacific()` helper in six files and an `appBuild: '19'` in a seventh —
+  and the guard's own comment already records that a version which cried wolf would be deleted,
+  taking the real finding with it.
+- **The fixture is now the shape `hold-fixture-invisibility.test.mts` established**, with the same
+  three independent reasons: `carted` and never `requested`, seconds old and not `claiming`, and
+  the id is `0` — one digit, under the two-digit floor, so no exemption is carved into the guard.
+  The positive assertion drops to `holdsAhead` alone and loses nothing: `REAL_UNIT` is ONE shared
+  constant, so breaking it fails there, and dropping it from `holdsDueWithin` alone is caught by
+  the sentinel test requiring that count to stay flat.
+- **Sweeps are scoped to the fixture WATCH, not the unit ids** — a bare `unit_id = '0'` would
+  reach any real row that ever carried it.
+- **`EVERY suite that writes rc_hold_requests is scanned` pins the widening**, because narrowing
+  the selector back would read as a tidy-up and would restore the hole in silence.
 
 ### A REAL TEST HOLD IS QUEUED FOR 2026-08-24 07:58:47 PT — to MANUFACTURE a ramp (2026-08-23)
 Track A has been armed for weeks and has never had a ramp to read, because ramps are rare
@@ -3796,10 +3841,20 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
 > wants its own change and a test that calls `dueHolds` TWICE.
 >
 > **2. READ THE NEXT RAMP — AND DO NOT TRY TO STAGE ONE.** The trail is armed (#193/#194,
-> on the box since 13:26:42 PT 08-25) and **`trail-*` readings are still ZERO**; the box has
-> been quiet ~30h as of 08-26 12:20 PT. A password sign-in with Okta GONE was measured on 08-26 at **32 seconds and zero
-> memory**, so the "force the warm-up" plan does not work — see "A PASSWORD SIGN-IN CAN BE
-> CHEAP".
+> on the box since 13:26:42 PT 08-25) and **`trail-*` readings are still ZERO**. A password
+> sign-in with Okta GONE was measured on 08-26 at **32 seconds and zero memory**, so the
+> "force the warm-up" plan does not work — see "A PASSWORD SIGN-IN CAN BE CHEAP".
+>
+> **THE TRAIL HAS NOW MISSED TWO RAMPS, NOT ONE (read 2026-08-27 13:40 PT).** Since it
+> landed there have been ramps on **08-25 20:22** (~3.6 GB) and **08-26 21:24→21:34
+> (9,112 MB, COMMIT 100%, one pid 7172 throughout)** — and `native_alloc_readings` holds
+> only the five old RETURN-PATH rows (3 `renewal`, 2 `auto-login`, newest 08-26 04:31).
+> **Two events, no `trail-*` row.** Per this file's own reading rule that is itself a
+> reading: it says the TRIGGER is wrong, and the next move is the trigger rather than the
+> sampler. Two candidates and the data does not separate them — CDP went quiet as the ramp
+> peaked (which has happened twice before, on two different calls), or the segment was split
+> below the 400 MB floor. **The box is alive and sampling** (newest `chromium_memory_samples`
+> row 08-27 13:36 PT, 2,019 rows in 60h), so this is not a dead instrument.
 >
 > Track B is still NOT covered by the owner's go-ahead.
 >
@@ -3851,9 +3906,12 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
 > the exposure is now ~10 minutes at 95–99% COMMIT three times a day, and ~90% is where
 > Windows stopped scheduling both tasks on 08-17.
 >
-> **A FIXTURE CAN STILL TURN `autocart.rc_session` RED** — the health route's own `upcoming`
-> and `imminent` counts never got the `REAL_UNIT` filter. Bounded to the length of a CI run,
-> and it prints the destructive `rc-login.bat` remedy while it lasts. Recorded, not fixed.
+> ~~**A FIXTURE CAN STILL TURN `autocart.rc_session` RED**~~ — **FIXED 2026-08-27, PR #202.**
+> The health route's five inline counts now go through `holdsAhead`/`holdsDueWithin`, which
+> carry `REAL_UNIT` in their own bodies. **And the fix's own test shipped a `requested`
+> fixture on a numeric unit id — the 2026-08-15 incident recreated inside the fix for its
+> sibling — which `hold-fixture-safety.test.mts` was green on.** That guard is widened in
+> three places and now derives the helper names from each file. Both entries above.
 >
 > **AND THREE TEST SUITES STILL SWEEP EACH OTHER'S FIXTURES** (`unit_id LIKE '__t%'`, and
 > `npm test` runs files concurrently). The two added this session were narrowed to their own
