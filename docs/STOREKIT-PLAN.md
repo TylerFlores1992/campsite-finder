@@ -14,7 +14,7 @@ Play additionally on native code that does not exist.
 | | Done | Waiting on the vendor | Blocked on us |
 |---|---|---|---|
 | **Apple** | W-9 active | Bank details + Paid Applications agreement processing | Small Business Program enrolment (§6.1), then the four products (§8) |
-| **Play** | Merchant account · account group + declaration · **15% service fee enrolled** · production set US-only | Bank micro-deposits | **A build declaring `com.android.vending.BILLING` (§9a-bis)** |
+| **Play** | Merchant account · account group + declaration · **15% service fee enrolled** · production set US-only · **bank verified** | — **nothing** | **A build declaring `com.android.vending.BILLING` (§9a-bis)** |
 
 **THE ONE FINDING THAT CHANGES THE PLAN IS §9a-bis.** Play will not let the subscription
 products be created at all until an uploaded binary declares the billing permission — so Play's
@@ -559,6 +559,25 @@ way** — enrolling is free and cannot make the rate worse — so do it, and do 
 payout threshold with no bank account attached. Same Chase account as Apple, same legal name and
 address as the W-9. **Nothing warns about this until there is money to send**, and the first
 subscriber is the wrong moment to discover it.
+
+> **DONE — VERIFIED 2026-08-24.** What arriving looks like, so the next reader is not waiting on
+> the wrong thing:
+>
+> ```
+> ORIG CO NAME: GOOGLE CO
+> ENTRY DESCR:  ACCTVERIFY
+> $0.10                       <- ONE deposit, not a pair; no ordering to get wrong
+> ```
+>
+> Entered at **Play Console → Settings → Payments profile → the bank card under *How you get
+> paid* → Verify**. Read the field label before typing: some Google forms want dollars (`0.10`)
+> and some want cents (`10`). **Google invalidates the deposit after a few failed attempts** and
+> reissues, which restarts the wait — so read the amount off the statement, and if the form
+> rejects a pending deposit, wait for it to post rather than guessing other amounts.
+>
+> **APPLE DOES NOT DO THIS.** Their bank validates without a test deposit and the account simply
+> moves to Active on the Business page. **Anyone waiting for an Apple micro-deposit is waiting
+> for something that is not coming** — watch the status, not the bank statement.
 
 **NEITHER OF THESE BLOCKS CREATING THE PRODUCTS**, so §9's product work can start as soon as the
 merchant account finishes provisioning. They block getting *paid* correctly, which is a different
