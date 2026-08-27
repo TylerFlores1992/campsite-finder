@@ -8,12 +8,20 @@
 > contest, 08-26: both rivals served 14 seconds apart, two distinct RC cart entries, RC accepted
 > both. **Designed, NOT built.** This is the top item and it is the only assigned work.
 >
-> **2. THE RAMP (§2).** The Track A trail is armed and has **still never seen a ramp** —
-> `trail-*` readings: **0**. The box has been quiet ~30 hours. **Do NOT try to stage one**;
-> §2b has the measurement that retires the obvious plan.
+> **2. THE RAMP (§2).** The Track A trail is armed and has **still never produced a reading** —
+> `trail-*`: **0**. **It has now MISSED TWO RAMPS, not one** (08-25 20:22, ~3.6 GB; and 08-26
+> 21:24→21:34 at **9,112 MB / 100% COMMIT**, one pid throughout), against five old
+> return-path rows whose newest is 08-26 04:31. The box is alive and sampling — 2,019
+> `chromium_memory_samples` rows in 60h, newest 08-27 13:36 PT — so this is a reading about
+> the **TRIGGER**, not a dead instrument, and the next move is the trigger rather than the
+> sampler. Two candidates the data cannot separate: CDP went quiet at the peak (it has, twice
+> before, on two different calls), or gaps split the segment under the 400 MB floor.
+> **Do NOT try to stage one**; §2b has the measurement that retires the obvious plan.
 >
-> **Nothing is live.** No holds, no open PRs, working tree clean. The two 08-26 test holds ran
-> and released themselves; what they did and did not prove is in §1c.
+> **Nothing is live.** No holds, working tree clean. **PR #202 is open** (health-route
+> `REAL_UNIT` + the fixture-safety widening) — it touches `src/lib/rc-holds.ts`, so merging
+> restarts both pollers. The two 08-26 test holds ran and released themselves; what they did
+> and did not prove is in §1c.
 >
 > Track B (§6) is still unstarted and still wants its own word.
 
@@ -342,10 +350,15 @@ which has happened three times.
   **The trail's reading is what should decide it** — and note the trail already reports from
   exactly the moment the size arm breaks the loop, because the teardown flush takes the OPEN
   segment.
-- **A CI run can turn `autocart.rc_session` RED.** The health route carries its own inline
-  `upcoming`/`imminent` counts that never got the `REAL_UNIT` filter. The phone is safe
-  (`holdAtRisk` IS filtered); the dashboard is not, and while red it prints the destructive
-  `rc-login.bat` remedy over a healthy session. **The honest fix is one definition, not three.**
+- ~~**A CI run can turn `autocart.rc_session` RED.**~~ **FIXED 2026-08-27 in PR #202** — the
+  five inline counts now go through `holdsAhead`/`holdsDueWithin`, which carry `REAL_UNIT` in
+  their own bodies. One definition, as the note asked for. **And the fix's own test shipped a
+  `requested` fixture on unit `999000111` — a numeric id in the one status `dueHolds` serves,
+  i.e. the 2026-08-15 incident recreated inside the fix for its sibling, with
+  `hold-fixture-safety.test.mts` green on it.** It survived on timing (the feed's lead is 90s;
+  the row sat 300s out). That guard is widened in three places — the file selector missed six
+  suites that INSERT with raw SQL, the line filter missed a bare `const` declaration, and the
+  helper names were a fixed list rather than derived per file. CLAUDE.md carries both entries.
 - **Three test suites sweep each other's fixtures** (`unit_id LIKE '__t%'`) and `npm test` runs
   files concurrently. That is #76, and §4 above is what it looks like in practice.
 - **The rec.gov `carted` SMS body overflows one segment for 19 campgrounds.**
