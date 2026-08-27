@@ -2,11 +2,14 @@
  * TWO PEOPLE, ONE CAMPSITE — the guard over the fairness line.
  *
  * THE MEASURED CASE, reproduced here. On 2026-08-24 unit 43191 ("#96", Morro Bay, arrival
- * 2026-09-04, releasing 08-25 08:00 PT) was offered to melinda.flores0501 through "Morro
- * Lottery sites" and to tylerflores1992 through "Upper Section". RC lists one physical
- * campsite under more than one facility, so both offers were correct and there was still
- * only one campsite. The LATER watcher is the one who tapped, and nothing in the system
- * had an opinion about that.
+ * 2026-09-04, releasing 08-25 08:00 PT) was offered to two different users for the same
+ * release, and nothing in the system had an opinion about who should get it.
+ *
+ * WHY THEY COLLIDED — CORRECTED 2026-08-26. This header used to say RC lists one physical
+ * campsite under more than one facility. That is false: RC's September inventory has ZERO
+ * overlap between the lottery pool and Upper Section. They collided because **both users
+ * watch the same park**, which makes contention ordinary rather than an RC quirk — it
+ * scales with the product.
  *
  * REAL DB ON PURPOSE. The ranking is a join across three tables and the de-dupe is a
  * `DISTINCT ON` inside `dueHolds`; a mock would test a copy of the SQL rather than the
@@ -254,4 +257,106 @@ test('an unranked hold is still served — nothing regresses for the uncontested
   const due = (await dueHolds(180, 20)).filter((h) => h.unit_id === U('9105'));
   assert.equal(due.length, 1);
   assert.equal(due[0].id, solo);
+});
+
+// ---------------------------------------------------------------------------
+// THE DE-DUPE WAS PER CALL, NOT PER CONTEST (fixed 2026-08-26).
+//
+// Every assertion above calls `dueHolds` ONCE, and one call has always returned one row.
+// That is why the suite passed while the bot carted one campsite TWICE on 08-26: the
+// runner polls every 15s, and the instant rank 1 left `requested` the `DISTINCT ON` had
+// nothing left to de-dupe against, so rank 2 was served on the next pass.
+//
+// **THESE TESTS MUST CALL IT TWICE.** A single call cannot see this bug, and a guard that
+// cannot see the bug is the shape this repo has paid for more than twenty times.
+// ---------------------------------------------------------------------------
+
+/** The whole point: serve, change status the way the runner would, serve again. */
+async function serve(unit: string) {
+  return (await dueHolds(180, 20)).filter((h) => h.unit_id === unit).map((h) => h.id);
+}
+
+test('ONCE THE WINNER IS CARTED, THE RUNNER-UP IS NOT SERVED — the 08-26 double-cart', async () => {
+  const soon = pacific(2);
+  const a = await offer(W_EARLY, EARLY, U('9201'), soon);
+  const b = await offer(W_LATE, LATE, U('9201'), soon);
+  await mutate(`UPDATE rc_hold_requests SET status = 'requested' WHERE id = ANY($1::text[])`, [[a, b]]);
+  await rankHoldLine(soon, U('9201'));
+
+  // CALL 1 — unchanged behaviour, and the only thing the old suite ever checked.
+  //
+  // WHICH of the two wins is deliberately NOT asserted here. Tests 1-11 own the ordering,
+  // and by this point in the file the rotation ticket has already been charged, so naming
+  // a winner would couple this test to the accumulated state of its siblings. What this
+  // test is about is the TEMPORAL rule, so it takes whoever won and carts them.
+  const first = await serve(U('9201'));
+  assert.equal(first.length, 1, 'exactly one of the two is served on the first pass');
+  const [winner] = first;
+  const loser = winner === a ? b : a;
+
+  // The runner carts it. This is the status change the old test never made.
+  await mutate(`UPDATE rc_hold_requests SET status = 'carted', carted_at = NOW() WHERE id = $1`, [winner]);
+
+  // CALL 2 — the bug. `DISTINCT ON` alone returns the loser here, 14 seconds later in
+  // production, and RC ACCEPTS the second cart rather than refusing it.
+  assert.deepEqual(await serve(U('9201')), [],
+    'a unit already in RC\'s cart must not be served to the next person in line — that is ' +
+    'two cart slots for one campsite and two users each told it is held');
+  assert.equal(
+    (await query<{ status: string }>(`SELECT status FROM rc_hold_requests WHERE id = $1`, [loser]))[0].status,
+    'requested', 'the loser is held back, NOT cancelled — the offer is still theirs if the cart lapses');
+});
+
+test('...and stays unserved through claiming, released and claimed', async () => {
+  // The hand-off states are the same double-book one step later: the winner is checking
+  // out right now. Only `carted` was the observed case; the others are the same fault.
+  for (const status of ['claiming', 'released', 'claimed']) {
+    await mutate(
+      `UPDATE rc_hold_requests SET status = $2 WHERE unit_id = $1 AND status <> 'requested'`,
+      [U('9201'), status]);
+    assert.deepEqual(await serve(U('9201')), [], `a ${status} hold must still block the line`);
+  }
+});
+
+test('A REFUSED CART DOES NOT BLOCK THE LINE — failed and expired are not "spoken for"', async () => {
+  // The dangerous over-correction. A cart RC refused never took the site, so blocking on it
+  // would deny the unit to somebody who could still get it. Exactly one row is `requested`
+  // at this point (the loser), so it must come back the moment nothing is carted.
+  for (const status of ['failed', 'expired']) {
+    await mutate(
+      `UPDATE rc_hold_requests SET status = $2 WHERE unit_id = $1 AND status <> 'requested'`,
+      [U('9201'), status]);
+    assert.equal((await serve(U('9201'))).length, 1,
+      `a ${status} hold never took the site, so the line must keep moving`);
+  }
+});
+test('THE BLOCK IS SCOPED TO (release_at, unit_id) — both halves, in one fixture', async () => {
+  // BOTH HALVES OR NEITHER. The first version of this test used a fresh `pacific(2)` per
+  // test, so its "different unit" row never shared a release_at with the carted one — and
+  // mutations dropping `unit_id` and dropping `release_at` from the scope BOTH survived.
+  // The scope is only exercised when the rows genuinely collide on one half and not the
+  // other, which means building all three against the same fixture.
+  const shared = pacific(2);
+  const other = pacific(1);
+
+  const carted = await offer(W_EARLY, EARLY, U('9210'), shared);
+  const sameReleaseOtherUnit = await offer(W_EARLY, EARLY, U('9211'), shared);
+  // The OTHER watch, because `rc_hold_requests_unique` is (watch_id, unit_id,
+  // arrival_date) and `offer()` uses one arrival — so one watch cannot hold the same unit
+  // twice. A second user watching the same site is the realistic shape anyway.
+  const sameUnitOtherRelease = await offer(W_LATE, LATE, U('9210'), other);
+  await mutate(`UPDATE rc_hold_requests SET status = 'requested' WHERE id = ANY($1::text[])`,
+    [[sameReleaseOtherUnit, sameUnitOtherRelease]]);
+  await mutate(`UPDATE rc_hold_requests SET status = 'carted', carted_at = NOW() WHERE id = $1`,
+    [carted]);
+
+  // Drop `unit_id` from the scope and ONE carted site silences every other site releasing
+  // at the same instant. Twenty holds share an 08:00, so that is far worse than the bug
+  // being fixed here.
+  assert.deepEqual(await serve(U('9211')), [sameReleaseOtherUnit],
+    'a different unit at the SAME release must still be served');
+
+  // Drop `release_at` and a cart today blocks the same campsite for every future release.
+  assert.deepEqual(await serve(U('9210')), [sameUnitOtherRelease],
+    'the same unit at a DIFFERENT release must still be served');
 });
