@@ -30,7 +30,30 @@ import { holdsAhead, holdsDueWithin } from '../src/lib/rc-holds';
 
 /** Namespaced to this suite — three older suites sweep `LIKE '__t%'` globally (issue #76). */
 const FIXTURE = '__thc0001';
-const REAL = '999000111';
+
+/**
+ * A NUMERIC FIXTURE IS AN INSTRUCTION TO LOCK A REAL CAMPSITE, so this one is built the way
+ * `hold-fixture-invisibility.test.mts` already established, for the same three reasons.
+ *
+ * The positive direction has to exist: `REAL_UNIT` made `false` would pass every negative
+ * assertion above it and silently switch off the health reporting these counts drive. So a
+ * numeric id must be shown coming back. Three independent reasons this row cannot cart:
+ *
+ *   1. It is `carted`, never `requested`. `dueHolds` — the ONLY path that POSTs a precart —
+ *      returns `requested` alone, and the runner is served nothing else.
+ *   2. Nothing else acts on it: `pendingClaims` takes `claiming`, and `expireStaleHolds`'s
+ *      release list takes `carted` older than 45 minutes. This one is seconds old.
+ *   3. The id is `0`. Real RC unit ids are positive integers in the thousands, and at one
+ *      digit it sits under `hold-fixture-safety.test.mts`'s two-digit floor, so that guard
+ *      needs no exemption carved into it.
+ *
+ * Reason 3 alone is the "vanishingly unlikely" reasoning this repo has been burned by, which
+ * is why it is third. THE FIRST DRAFT OF THIS FILE USED `999000111` AT `requested`, five
+ * minutes out — reachable by `dueHolds` the moment its release came inside the feed's 90s
+ * lead, and it survived only because the suite sweeps in seconds. That is the 2026-08-15
+ * incident being rewritten by somebody who had read the entry about it.
+ */
+const REAL = '0';
 const USER = 'test-health-counts-user';
 const WATCH = 'test-health-counts-watch';
 let campgroundId = '';
@@ -46,7 +69,9 @@ function pacific(minutesFromNow: number): string {
 }
 
 async function sweep() {
-  await mutate(`DELETE FROM rc_hold_requests WHERE unit_id IN ($1, $2)`, [FIXTURE, REAL]);
+  // SCOPED TO THE FIXTURE WATCH, not to the unit ids. `REAL` is `'0'`, and a bare
+  // `unit_id = '0'` would reach any real row that ever carried it.
+  await mutate(`DELETE FROM rc_hold_requests WHERE watch_id = $1`, [WATCH]);
   await mutate(`DELETE FROM watches WHERE id = $1`, [WATCH]);
   await mutate(`DELETE FROM users WHERE id = $1`, [USER]);
 }
@@ -63,11 +88,26 @@ before(async () => {
 });
 after(sweep);
 
+/** A `requested` fixture. SENTINEL IDS ONLY — see `REAL` above for why. */
 async function hold(unit: string, minutesOut: number) {
   await mutate(
     `INSERT INTO rc_hold_requests
        (watch_id, user_id, campground_id, unit_id, arrival_date, nights, release_at, status)
      VALUES ($1, $2, $3, $4, '2030-06-05', 1, $5, 'requested')`,
+    [WATCH, USER, campgroundId, unit, pacific(minutesOut)]);
+}
+
+/**
+ * The only shape a numeric id may take here. Straight to `carted` with `carted_at = NOW()` —
+ * never through `requested`, which would put it in front of the production runner for as long
+ * as the suite ran.
+ */
+async function cartedHold(unit: string, minutesOut: number) {
+  await mutate(
+    `INSERT INTO rc_hold_requests
+       (watch_id, user_id, campground_id, unit_id, arrival_date, nights, release_at,
+        status, carted_at)
+     VALUES ($1, $2, $3, $4, '2030-06-05', 1, $5, 'carted', NOW())`,
     [WATCH, USER, campgroundId, unit, pacific(minutesOut)]);
 }
 
@@ -89,22 +129,27 @@ test('A TEST FIXTURE IS INVISIBLE TO BOTH COUNTS — the 08-23 false alarm', asy
 test('A REAL HOLD IS STILL COUNTED — the filter must not blind the check entirely', async () => {
   // The dangerous over-correction: `AND false` would pass every negative assertion above
   // and switch off the whole morning's health reporting.
+  //
+  // ONLY `holdsAhead` IS EXERCISED HERE, and that is enough. `REAL_UNIT` is one shared
+  // constant, so breaking it breaks both helpers and this assertion catches it; dropping it
+  // from `holdsDueWithin` alone is caught by the sentinel test above, which requires that
+  // count to stay flat. A numeric `requested` row — the only fixture `holdsDueWithin` could
+  // count — is precisely what must never exist, so the guard is bought where it is free.
   const aheadBefore = await holdsAhead();
-  const dueBefore = await holdsDueWithin(10);
-  await hold(REAL, 5);
+  await cartedHold(REAL, 5);
   assert.equal(await holdsAhead(), aheadBefore + 1, 'a numeric unit id is a real hold');
   assert.equal(await holdsAhead(25), aheadBefore + 1, 'and it is imminent');
-  assert.equal(await holdsDueWithin(10), dueBefore + 1);
 });
 
 test('THE BOUND IS A BOUND — a hold far out is ahead but not imminent', async () => {
   // Why the bounded count exists at all: the token lives ~60 min, so the session is
   // legitimately dead most of the day. Counting any hold at all made this check FAIL every
   // night between tapping a hold and the morning it released.
-  await mutate(`DELETE FROM rc_hold_requests WHERE unit_id = $1`, [REAL]);
+  await mutate(`DELETE FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = $2`,
+    [WATCH, REAL]);
   const aheadBefore = await holdsAhead();
   const soonBefore = await holdsAhead(25);
-  await hold(REAL, 600);
+  await cartedHold(REAL, 600);
   assert.equal(await holdsAhead(), aheadBefore + 1, 'ten hours out is still ahead');
   assert.equal(await holdsAhead(25), soonBefore, 'but it is NOT within 25 minutes');
 });
