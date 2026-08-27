@@ -23,7 +23,8 @@ rather than a console task**. Apple has no such gate. §9b's product table is co
 **not yet reachable**; §8's Apple walkthrough is correct and reachable the moment the agreement
 clears.
 
-**THE NEXT SESSION'S JOB IS §11** — the Android build that clears §9a-bis. It carries a
+**THE LIBRARY IS DECIDED: RevenueCat** (`@revenuecat/purchases-capacitor`, §3). **THE NEXT
+SESSION'S JOB IS §11** — the Android build that clears §9a-bis. It carries a
 constraint this plan was written without: **the app is a remote webview** (`server.url =
 camphawk.app/search`), so a web deploy cannot add purchase capability and the paywall must
 detect the *plugin*, not the platform. Read §11 before §3.
@@ -147,6 +148,29 @@ No IAP plugin is installed today (Capacitor 8; `@capacitor/*` plus `cordova-plug
 |---|---|---|
 | **RevenueCat** `@revenuecat/purchases-capacitor` | Owns receipt validation, App Store Server Notifications, renewals, refunds, Play parity. **Free under $2,500/mo revenue** — nowhere near. One webhook to us. | A third party owns billing truth. Another vendor in the stack. |
 | `@capacitor-community/in-app-purchases` | No vendor. | **You build and operate receipt validation, ASSN v2 handling, renewal and refund reconciliation yourself** — the half where the bugs live. |
+
+> **DECIDED 2026-08-24: RevenueCat.** The owner chose it when the question was put with both
+> costs stated. §11e's "do not pick one by starting to install it" is discharged — installing it
+> is now the instruction.
+>
+> **AND `@capacitor-community/in-app-purchases` DOES NOT EXIST.** `npm view` answers **E404**.
+> The row above was written from memory and names a package that has never been published, so
+> the "no vendor" column was never a real option. The genuine alternative is
+> **`cordova-plugin-purchase`** (13.18.0) — which runs through Capacitor as a Cordova plugin,
+> the same mechanism `cordova-plugin-inappbrowser` already uses here, declares
+> `com.android.vending.BILLING` directly in its `plugin.xml`, states no Capacitor 8 support, and
+> whose own docs push you to a paid third party (Iaptic) to avoid building receipt validation.
+> **A comparison table is not evidence that both rows exist.**
+>
+> Verified at decision time: `@revenuecat/purchases-capacitor` **13.4.2**, published
+> **2026-08-25**, `peerDependencies: { "@capacitor/core": ">=8.0.0" }` against this repo's
+> `^8.5.0`.
+>
+> **UNVERIFIED, AND THE BUILD MUST SETTLE IT:** that the plugin actually contributes
+> `com.android.vending.BILLING` to the merged manifest. That permission is the *entire* gate
+> (§9a-bis), and "the SDK brings it" is an inference, not a reading. **Add an assertion to
+> `android-release` for the merged manifest**, beside the three it already carries — the same
+> discipline as asserting targetSdk rather than trusting Capacitor's default.
 
 **RECOMMENDATION: RevenueCat.** This repo's history is a catalogue of what happens when a
 one-person team operates infrastructure it cannot observe — a leaking mini-PC, a bot whose
@@ -792,8 +816,11 @@ Beyond §4's list, which still stands in full:
 strengthens it — their SDK brings the billing library *and* the purchase plumbing, where direct
 Play Billing clears the permission gate and leaves the entire server side to build.
 
-**It is still a third party in the payment path and the owner has not chosen.** Do not pick one
-by starting to install it.
+~~**It is still a third party in the payment path and the owner has not chosen.** Do not pick one
+by starting to install it.~~
+
+> **DECIDED 2026-08-24: RevenueCat** (see the box in §3, which also records that the named
+> alternative does not exist on npm). Install `@revenuecat/purchases-capacitor`.
 
 ### 11f. THIS IS NOT SIDE-LANE WORK
 
