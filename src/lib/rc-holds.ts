@@ -158,11 +158,41 @@ export async function requestHold(watchId: string, unitId: string): Promise<Hold
 export async function dueHolds(leadSeconds = 60, graceMinutes = 20): Promise<HoldRequest[]> {
   try {
     return await query<HoldRequest>(
-      // ONE HOLD PER (release_at, unit_id) — see `worker/hold-line.ts`. RC lists the same
-      // physical campsite under more than one facility, so two people can each hold a
-      // correct offer for one site (measured 2026-08-24, unit 43191). Serving both would
-      // ask RC for the same unit twice: one cart succeeds and RC refuses the other in its
-      // own wording, which reads as a fault rather than as a queue.
+      // ONE LIVE HOLD PER (release_at, unit_id) — see `worker/hold-line.ts`. Two people can
+      // each hold a correct offer for one campsite, simply by watching the same facility
+      // (measured 2026-08-24, unit 43191). Serving both asks RC for the same unit twice.
+      //
+      // ── `DISTINCT ON` ALONE WAS NOT THE RULE IT LOOKED LIKE (fixed 2026-08-26) ──
+      //
+      // It de-dupes within ONE query, and the runner polls every 15 seconds. So on 08-26
+      // the first contest to have two tapped holds served BOTH of them, fourteen seconds
+      // apart, from the box's own log:
+      //
+      //     15:00:02  held #123 - entry ae877ae5-...
+      //     15:00:13  0 to hand over, 1 to cart, 0 to release     <- the NEXT poll
+      //     15:00:17  held #123 - entry 6f0863e0-...
+      //
+      // The instant rank 1 succeeded and left `requested`, rank 2 became the top
+      // `requested` row for that unit and was served on the very next pass. **RC accepted
+      // both** — two distinct cart entries for one physical campsite — so the failure this
+      // comment used to anticipate ("RC refuses the other in its own wording") was replaced
+      // by a worse one that looks like success: two cart slots spent, two users each told
+      // their site is held, and the loser finding out at CHECKOUT.
+      //
+      // The `NOT EXISTS` makes the rule TEMPORAL rather than per-call: once any hold for
+      // this (release_at, unit_id) has reached RC's cart, nobody else is served.
+      //
+      // WHY THOSE FOUR STATUSES. `carted` and `claiming` are the site sitting in a cart.
+      // `released` and `claimed` are the hand-off — the winner is checking out right now,
+      // and carting under them is the same double-book one step later. Deliberately NOT
+      // `failed` or `expired`: a cart RC refused never took the site, and blocking on it
+      // would deny a retry to somebody who could still get it. `requested` is excluded for
+      // the same reason it always was — a hold whose attempt failed inside its window stays
+      // `requested` (see `reportCartFailure`), and that retry must keep working.
+      //
+      // THIS IS NOT THE EXPIRY CASCADE. Nothing here re-serves rank 2 when rank 1 lapses;
+      // by the time our own 45-minute sweep fires, `graceMinutes` has long closed the
+      // window anyway. The cascade remains a deliberate non-feature.
       //
       // `line_rank` NULLS LAST, then `id`, so an unranked row (uncontested, or predating
       // migration 068) still resolves deterministically instead of alternating between
@@ -170,10 +200,16 @@ export async function dueHolds(leadSeconds = 60, graceMinutes = 20): Promise<Hol
       // anything when two people BOTH asked.
       `SELECT * FROM (
          SELECT DISTINCT ON (release_at, unit_id) *
-           FROM rc_hold_requests
+           FROM rc_hold_requests r
           WHERE status = 'requested'
             AND release_at <= to_char((NOW() + ($1 || ' seconds')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
             AND release_at >= to_char((NOW() - ($2 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+            AND NOT EXISTS (
+              SELECT 1 FROM rc_hold_requests spoken
+               WHERE spoken.release_at = r.release_at
+                 AND spoken.unit_id    = r.unit_id
+                 AND spoken.status IN ('carted', 'claiming', 'released', 'claimed')
+            )
           ORDER BY release_at, unit_id, line_rank ASC NULLS LAST, id
        ) q
         ORDER BY release_at ASC
