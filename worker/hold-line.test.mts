@@ -27,7 +27,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { query, mutate } from '../src/lib/db/client';
-import { orderLine, isContested, rankHoldLine } from './hold-line';
+import { readFileSync } from 'node:fs';
+import { orderLine, isContested, rankHoldLine, BEHIND_NOTE } from './hold-line';
 import { dueHolds } from '../src/lib/rc-holds';
 
 /**
@@ -40,6 +41,15 @@ import { dueHolds } from '../src/lib/rc-holds';
  * vanish mid-run and failed an unrelated assertion in a way that reads exactly like a
  * regression. This suite sweeps only what it created.
  */
+/** Comments stripped — this file's subject quotes the broken shapes to explain them. */
+function code(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
+    .join('\n');
+}
+
 const U = (n: string) => `__tln${n}`;
 const EARLY = 'test-hold-line-user-early';
 const LATE = 'test-hold-line-user-late';
@@ -364,4 +374,104 @@ test('THE BLOCK IS SCOPED TO (release_at, unit_id) — both halves, in one fixtu
   // Drop `release_at` and a cart today blocks the same campsite for every future release.
   assert.deepEqual(await serve(U('9210')), [sameUnitOtherRelease],
     'the same unit at a DIFFERENT release must still be served');
+});
+
+// ---------------------------------------------------------------------------
+// THE NOTE NEVER REACHED A HOLD TAPPED AFTER THE LINE WAS RANKED (fixed 2026-08-28).
+//
+// Every test above sets BOTH rows to `requested` before calling `rankHoldLine`, so the
+// note is written on the first and only pass and the suite is green. Production does the
+// opposite: the poller offers both rows the evening before — `offered`, not `requested` —
+// ranks the line then, and the tap arrives hours later. `rankHoldLine` notes only rows
+// that are `requested` AT RANKING TIME, and for the primary held unit the rank call sat
+// inside a block gated by `claimHoldNotification`, which fires once per release. So there
+// was no second pass, ever.
+//
+// The runner-up's row then sits `requested` past its release with `last_attempt_note`
+// NULL — which `rc-holds-readout.mts` reports as "NOTHING has tried to act on this hold at
+// all", the 2026-08-07 dead-runner signature. The line manufactures that false alarm on
+// every contested morning.
+// ---------------------------------------------------------------------------
+
+const noteOf = async (id: string) =>
+  (await query<{ note: string | null; at: string | null }>(
+    `SELECT last_attempt_note AS note, last_attempt_at::text AS at
+       FROM rc_hold_requests WHERE id = $1`, [id]))[0];
+
+test('A HOLD TAPPED AFTER THE LINE WAS RANKED IS STILL TOLD IT IS BEHIND', async () => {
+  const ahead = await offer(W_EARLY, EARLY, U('9301'), RELEASE);
+  const late = await offer(W_LATE, LATE, U('9301'), RELEASE);
+
+  // THE EVENING BEFORE: both offered, neither tapped. This is the state the poller ranks
+  // in, and it is why every assertion above missed this — they rank `requested` rows.
+  const first = await rankHoldLine(RELEASE, U('9301'));
+  assert.equal(first.length, 2, 'both offers are ranked, tapped or not');
+  assert.equal((await noteOf(late)).note, null,
+    'an OFFERED hold is not told it is behind — nobody has asked for anything yet, and a ' +
+    'note on a row the user never tapped is a claim about a queue they are not in');
+
+  // THE NEXT MORNING: the runner-up taps. Nothing about the line has changed except this.
+  await mutate(`UPDATE rc_hold_requests SET status = 'requested' WHERE id = $1`, [late]);
+
+  await rankHoldLine(RELEASE, U('9301'));
+  assert.match(String((await noteOf(late)).note), /ahead of you in line/,
+    'the tap is what makes the note true, and it arrives AFTER the line was ranked — the ' +
+    'ordinary case, since an offer goes out the night before and is tapped at breakfast');
+  assert.equal((await holdRow(late)).status, 'requested',
+    'noting a hold must not move its status — it is behind, not cancelled');
+  // AND THE HOLD IN FRONT IS NEVER NOTED. It is not behind anybody, and telling rank 1 it
+  // is queued behind someone is worse than silence.
+  assert.equal((await noteOf(ahead)).note, null,
+    'the hold first in line has nobody ahead of it and must carry no note');
+});
+
+test('...and re-ranking an unchanged line does NOT rewrite the note', async () => {
+  // The poller now re-ranks every cycle — every 15 seconds, all night. Without the skip,
+  // `last_attempt_at` is stamped on each pass and permanently reads "0m ago", which
+  // destroys the one column that says WHEN the line last changed its mind. It is also the
+  // column the readout uses to tell "the runner TRIED 3m ago" from "nothing has looked".
+  const late = (await query<{ id: string }>(
+    `SELECT id FROM rc_hold_requests WHERE unit_id = $1 AND line_rank = 2`, [U('9301')]))[0].id;
+  const before = await noteOf(late);
+  assert.ok(before.at, 'precondition: the note was written by the test above');
+
+  for (let cycle = 0; cycle < 3; cycle++) await rankHoldLine(RELEASE, U('9301'));
+
+  const after = await noteOf(late);
+  assert.equal(after.at, before.at,
+    'a line that has not changed must not restamp last_attempt_at — the poller re-ranks ' +
+    'every cycle, so an unconditional write is ~2,400 pointless writes across one night ' +
+    'and leaves the age reading zero for ever');
+  assert.equal(after.note, before.note, 'and the note itself is unchanged');
+});
+
+test('BEHIND_NOTE SURVIVES noteAttempt\'s 300-CHARACTER TRUNCATION', () => {
+  // The skip above compares the stored value against this constant. `noteAttempt` slices
+  // to 300, so a longer note could never equal what was stored: the comparison would fail
+  // on every pass, the guard would silently stop guarding, and the churn would come back
+  // with nothing failing. A fix present and inert — the shape this repo keeps paying for.
+  assert.ok(BEHIND_NOTE.length <= 300,
+    `the note is ${BEHIND_NOTE.length} chars and noteAttempt stores only the first 300`);
+});
+
+test('THE POLLER RE-RANKS BEFORE THE CLAIM GATE — or hold-line.ts is perfect and inert', () => {
+  // THE HALF THAT ACTUALLY BROKE. `rankHoldLine` can note late tappers flawlessly and
+  // change nothing, because for the primary held unit it was only ever CALLED once: its
+  // call site sat inside the block guarded by `claimHoldNotification`, which is once per
+  // (watch, release, unit), and every later cycle `continue`s before reaching it.
+  //
+  // Comments stripped — the source quotes the shape it fixed, and a guard that matches its
+  // own explanation passes against code that does nothing.
+  const src = code(readFileSync(new URL('./poller.ts', import.meta.url), 'utf8'));
+  const claimIdx = src.indexOf('claimHoldNotification(w.id');
+  const rankIdx = src.indexOf('rankHoldLine(held.availableAt');
+  // BOTH ANCHORS ASSERTED PRESENT. A missing anchor makes indexOf return -1, and `-1 <
+  // claimIdx` is true — so a renamed call would PASS this test while proving nothing.
+  // That exact inversion has been recorded here more than twenty times.
+  assert.ok(claimIdx > -1, 'anchor lost: the claim gate is no longer called as claimHoldNotification(w.id');
+  assert.ok(rankIdx > -1, 'anchor lost: the primary held unit is no longer ranked on held.availableAt');
+  assert.ok(rankIdx < claimIdx,
+    'the primary held unit must be re-ranked ABOVE the claim gate. Below it, the line is ' +
+    'ranked exactly once in the life of an offer, so anyone who taps afterwards is never ' +
+    'told they are behind and their row reads as a dead runner at 08:15');
 });

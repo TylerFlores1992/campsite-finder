@@ -1221,6 +1221,26 @@ async function cycle(): Promise<void> {
       );
       continue;
     }
+    // RE-RANK BEFORE THE CLAIM GATE, or the line is ranked exactly ONCE (fixed 2026-08-28).
+    //
+    // The claim below is once per (watch, release, unit) and every later cycle `continue`s
+    // on it — so the `rankHoldLine` call further down, which sits inside the claim-winning
+    // block, ran a single time in the life of an offer. The extras loop above has always
+    // re-ranked every cycle; the PRIMARY held unit was the one that did not, purely because
+    // its rank call happened to sit behind a gate meant for the notification.
+    //
+    // What that cost: a rival tapping AFTER the line was ranked — i.e. overnight, the
+    // ordinary case — was never re-ranked and never told it was behind. Their row then sits
+    // `requested` past the release with `last_attempt_note` NULL, which the hold readout
+    // calls "NOTHING has tried to act on this hold at all": the 2026-08-07 dead-runner
+    // signature, manufactured on every contested morning.
+    //
+    // Cheap and idempotent: a SELECT that writes only when a rank, a frozen ticket or a
+    // note actually changes. With no offer row yet it returns [] and does nothing, which is
+    // the first cycle, every time.
+    if (held.unitId != null) {
+      await rankHoldLine(held.availableAt, String(held.unitId)).catch(() => []);
+    }
     // SCOPED BY UNIT, NOT BY CAMPGROUND. Passing the campground here is what produced the
     // 2026-08-24 storm: one physical campsite that RC lists under two facilities became two
     // claims and two texts, every cycle. See claimHoldNotification.
@@ -1305,6 +1325,11 @@ async function cycle(): Promise<void> {
         // Ranked whether or not `offerHold` returned an id: no row back means the user has
         // already tapped, and a hold that has been ACCEPTED is exactly the one whose place
         // in the line matters most.
+        //
+        // KEPT ALONGSIDE THE PRE-CLAIM RE-RANK ABOVE, which cannot replace it: on this one
+        // cycle the row is created HERE, after that call has already run and found nothing.
+        // Without this the freshly offered hold waits a full cycle to be ranked. The two are
+        // idempotent, so ranking twice on the claim-winning pass costs a SELECT.
         await rankHoldLine(held.availableAt, String(held.unitId)).catch(() => []);
         // A missing hold link must never block the alert — the heads-up is useful on
         // its own, and the user can still book manually at 8am.
