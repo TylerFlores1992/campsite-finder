@@ -44,7 +44,12 @@ let campgroundId = '';
 
 async function sweep() {
   await mutate(`DELETE FROM action_tokens WHERE watch_id = ANY($1::text[])`, [[W_EARLY, W_LATE]]);
-  await mutate(`DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_ttap%'`, []);
+  // AGE-GATED, per `fixture-sweep-scope.test.mts` — a per-suite prefix stops one suite
+  // wiping another's rows (issue #76's occurrence 2), but stops nothing when the same
+  // suite runs twice at once (occurrence 1). `offered_at` is the row's birth time and no
+  // status change moves it, unlike `updated_at`.
+  await mutate(`DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_ttap%'
+                 AND offered_at < NOW() - interval '10 minutes'`, []);
   await mutate(`DELETE FROM watches WHERE id = ANY($1::text[])`, [[W_EARLY, W_LATE]]);
   await mutate(`DELETE FROM users WHERE id = ANY($1::text[])`, [[EARLY, LATE]]);
 }
