@@ -620,6 +620,25 @@ Apple's introductory offer and the Stripe path's `trialing` status.
 > **Read the summary line, not the ID you typed.** The ID is what you meant; the Type line is
 > what Play will bill.
 
+> **THE OFFER'S `Entitlement` RADIO IS A REAL DECISION, AND THE WRONG ONE IS SILENT
+> (2026-08-28).** `Add offer` asks which users a free trial may be granted to:
+>
+> - `Never had this subscription` — never had **this** product (`camphawk_base`)
+> - **`Never had any subscription`** — never had **any** subscription in this app ← **correct**
+>
+> **Take the second.** Checked against the code rather than the label: `everSubscribed` is
+> `SELECT id FROM subscriptions WHERE user_id = $1 LIMIT 1` in
+> `src/app/api/subscription/status/route.ts` — **any row, any tier.** The app already believes
+> "ever subscribed to anything ⇒ no new trial", and `Pricing.tsx` and `Explore.tsx` both key
+> their trial-vs-resubscribe copy on it.
+>
+> **`Never had this subscription` would diverge in the direction that costs money.** Someone who
+> had Alerts would be granted a second free week by Play on Auto-Cart, while our own screens
+> showed them resubscribe copy offering no trial — the store giving away something the product
+> never advertised. Apple would not grant it either: introductory offers are **group-level** and
+> §8 puts both products in one group. The chosen option is the only one where Stripe, Apple and
+> Play agree.
+
 **VERIFIED IN THE CONSOLE 2026-08-28 — `camphawk_base` is created and correct:** `monthly`
 (Monthly, auto-renewing) and `yearly` (Yearly, auto-renewing), both **Active**, both **United
 States** only.
