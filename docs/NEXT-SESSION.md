@@ -161,7 +161,15 @@ NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status      # what the box 
 
 ---
 
-## 1. THE DOUBLE-CART BUG — the top item, and it is not built
+## 1. THE DOUBLE-CART BUG — ~~the top item, and it is not built~~ **FIXED IN #201**
+
+> **THIS HEADING SAID "it is not built" FOR TWO DAYS AFTER THE FIX LANDED.** Struck
+> rather than deleted: a "NOT built" on the top item is exactly the sentence a later
+> reader quotes as current state, which is the cost this handover exists to prevent.
+> Everything below is the ORIGINAL write-up, kept because its timestamps and its
+> account of why the old test could not catch it are still the record. **There is no
+> work in it.** `dueHolds` carries the temporal `NOT EXISTS` and `hold-line.test.mts`
+> calls it twice with a status change in between.
 
 The 08-26 contest ran and **the line failed at the one thing it exists for.** Both rivals'
 holds carted, from the box's own log:
@@ -369,16 +377,20 @@ because reverting it looks like a tidy-up.
 
 ## 4. State
 
+*Refreshed 2026-08-28 ~10:05 PT. Every row below was wrong for two days before this; re-read
+it rather than trusting it, and re-date it when you do.*
+
 | | |
 |---|---|
-| Master | **`65efba5`** (#199). Trail = #193/#194; Pacific-wall-clock fix = #196; the double-cart write-up = #198. |
-| Mini-PC | **`64f9f92`**, applied 13:26:42 PT 08-25. **Deliberately BEHIND master** — #195/#196 are web/worker only and nothing in them needs the box. Confirm with `bot-ask git-status`, never `autocart.bot_version` (COALESCEd, can sit stale beside a live heartbeat). |
-| Fly worker | redeployed 05:47 PT 08-26 on #196; both shards beating (`shard 0/2`, `shard 1/2`). |
+| Master | **`ce9c3e2`**. Recent: #201 double-cart, #202 health-route `REAL_UNIT`, #203 fixture-sweep scope (closed #76), #204 Routine IDs + egress-watchdog guard (closed #14, #181), #210/#211 the trail-silence discriminator. |
+| Mini-PC | **`5e399b3`**, applied 08:44:0x PT 08-28 in 25 seconds. Carries the trail-silence discriminator. Confirm with `bot-ask git-status`, never `autocart.bot_version` (COALESCEd, can sit stale beside a live heartbeat). |
+| Fly worker | redeployed on the #204 merge (`05ee4ff`) and again on later `worker/**` merges; both shards beating. |
 | Open PRs | none |
-| Open issues | **#76**, **#14** |
-| Migrations | highest applied **068**; next main-lane number is **069** |
-| Holds | **None live.** The two 08-26 test holds released themselves at 45 min (§1c). Four untapped `offered` rows for 08-27 08:00 (`#27`, `#R354`, `#SC58`, `#R314`) — `offered` blocks nothing; a TAP blocks `npm test`, box restarts and the update window. |
-| RC session | **healthy at 12:17 PT 08-26** (`okta=ALIVE`), restored 09:20 by an on-demand `test-login`. It goes dead between releases and that is NORMAL. **Do NOT run `rc-login.bat`** — `bot-ask test-login` is the safe remote lever (§1b). |
+| Open issues | **none — every issue is closed** |
+| Migrations | highest applied **070**; next main-lane number is **071** |
+| Holds | **None live, nothing queued.** All five offers for 08-28 08:00 PT expired untapped, including the three-way on unit `43187`. `offered` blocks nothing; a TAP blocks `npm test`, box restarts and the update window. |
+| RC session | **`warn` and that is CORRECT** — no token, `okta=ALIVE` with ~10h left. The token lives ~1h and the session is legitimately dead between releases; with nothing queued nothing repairs it until the next release's T−30. **Do NOT run `rc-login.bat`** — `bot-ask test-login` is the safe remote lever (§1b). |
+| Memory | **No ramp since 08:23 PT 08-28** (877 samples in 26h, zero over 1,200 MB, newest 298 MB). The last two onsets were 02:01 and 08:13, ~6h apart. |
 
 **Two check-ins are scheduled and enabled — do not create duplicates.**
 `trig_01NdJC1SvSDwxZZroAooVKnU` fires **07:40 PT** into a fresh session;
@@ -390,6 +402,14 @@ because reverting it looks like a tidy-up.
 
 From `docs/LANES.md`: no `npm test`, no second test hold, and nothing that restarts the box,
 while a hold is live.
+
+**TWO MORE COLLISIONS ON 08-28, BOTH MINE, AND THE SECOND IS A NEW RULE.** (a) A local
+`npm run verify` started at 09:38:05 while CI ran 09:37:21-09:40:41 — *while waiting for that
+exact run* — and both delete `rc-client-reports`' fixed `SENTINEL`. (b) Later the same morning
+I **pushed again 7.5 minutes after the previous push**, and cancel-on-push killed a run
+mid-suite; a killed run executes no cleanup, and its rows are seconds old, which is exactly the
+age #203's 10-minute gate spares. **A second push IS a second test run.** Do not lower that
+interval — it is what stops a starting run wiping a running one.
 
 **AND DO NOT RUN `npm run verify` LOCALLY WHILE CI IS RUNNING.** I did, on 08-25, and CI failed
 one test — `rc-holds.test.mts`, *"a carted hold records how to RELEASE it"*, `Cannot read
