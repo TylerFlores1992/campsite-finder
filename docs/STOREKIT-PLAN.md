@@ -247,6 +247,44 @@ setting RevenueCat up**, and it sits between "the products exist" and "anything 
 **None of it is blocked; none of it is written down.** Recorded when it was noticed rather than
 discovered as a surprise between working products and a paywall that cannot talk to them.
 
+### 4b. The RevenueCat console checklist — WRITTEN BLIND, so verify as you go
+
+**`revenuecat.com`, `docs.revenuecat.com` and `api.revenuecat.com` are ALL 403 at the agent
+proxy's CONNECT** (checked 2026-08-28), same as `maven.google.com` and `docs.codemagic.io`. So
+the steps below are **from general knowledge, not read off their documentation**, and this
+file's own §29d rule applies harder than usual: *a screen that looks finished is not a finished
+screen*. Where a step says **CONFIRM**, read the console and correct this list.
+
+1. **Project + Android app.** Package name `app.camphawk.mobile` — it must match, or RevenueCat
+   validates purchases against an app that does not exist.
+2. **The Play service-account credential. CONFIRM THE PERMISSIONS ON PLAY'S OWN SCREEN.**
+   RevenueCat needs to read subscription and purchase state, which is **not** what the Codemagic
+   publisher account is scoped to (*View app information* + *Release to testing tracks*,
+   `PLAY-STORE` §0b). **Add a SECOND service account rather than widening that one** — §0b's
+   credential gets rotated for CI reasons that have nothing to do with billing, and a rotation
+   that silently breaks entitlement lookups is the kind of failure this repo keeps paying for.
+   RevenueCat's own onboarding names the permissions it wants; take them from there, not here.
+3. **The four products. CONFIRM THE ID FORM.** Play identifies a purchasable thing as the
+   subscription *and* its base plan, so the id RevenueCat wants is expected to look like
+   `camphawk_base:monthly` rather than `camphawk_base`. **This is the single most likely place
+   to mistype something that then silently matches nothing.** Whatever form the console shows is
+   the form `§5`'s product-id → tier mapping must use — copy it, do not retype it.
+4. **Entitlements.** RevenueCat wants them; **our tier is still derived from the product id**
+   per §5, so entitlements are RevenueCat's bookkeeping and not a second source of truth.
+   Two definitions of who is entitled is the failure `hasAutocartEntitlement` exists to prevent.
+5. **The webhook** → `/api/webhooks/revenuecat`, with an Authorization value RevenueCat sends
+   and the route verifies. **Fails CLOSED**, and the route must be added to `isPublicRoute` in
+   `src/middleware.ts` or Clerk answers 404 — `/api/webhooks/twilio` is the working precedent
+   for both halves.
+6. **The public Android SDK key.**
+
+**AND STEP 6 IS BETTER THAN §11a FEARED.** `Purchases.configure({ apiKey })` is called from
+**JavaScript**, and this app is a remote webview serving its JS from camphawk.app — so the key
+is a web-side env var and **reaches installed apps on a `git push`**, with no release. What
+still needs a release is the *plugin*, which is already in the binary as of build 13. So the
+SDK key is not a build-time value here, and §11a's "a web deploy cannot add purchase capability"
+is about the plugin specifically, not about its configuration.
+
 ---
 
 ## 5. Server
