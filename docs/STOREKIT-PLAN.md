@@ -247,6 +247,59 @@ setting RevenueCat up**, and it sits between "the products exist" and "anything 
 **None of it is blocked; none of it is written down.** Recorded when it was noticed rather than
 discovered as a surprise between working products and a paywall that cannot talk to them.
 
+### 4b-progress. WHERE THE CONSOLE ACTUALLY GOT TO (2026-08-28)
+
+```
+[x] 1. Project created — named CampHawk, platform Capacitor
+[ ] 2. Google Play app  app.camphawk.mobile     <- RESUME HERE
+[ ] 3. Cloud service account `revenuecat-billing` + JSON key
+[ ] 4. Play Console invite + permissions
+[ ] 5. Upload the JSON to RevenueCat
+[ ] 6-9. products · entitlements · webhook · Vercel env vars
+    !  Email address not yet confirmed — RevenueCat gates actions on it.
+```
+
+**PLATFORM IS `Capacitor`, AND THE FIELD IS LABELLED "CATEGORY" IN PLACES.** The list is
+frameworks (Native Apple / Native Android / Web / Flutter / React Native / Unity / Kotlin
+Multiplatform / Capacitor), it is **multi-select**, and only Capacitor is correct:
+
+- **Not Native Apple or Native Android** — Capacitor covers both through the one plugin, which
+  is the one already in `package.json`. Ticking them buys setup docs for SDKs we do not use.
+- **NOT `Web`, and this is the one that could cause real trouble.** "Web" means RevenueCat's own
+  web billing. **CampHawk's web subscriptions go through Stripe, which is not in RevenueCat at
+  all**, so ticking it invites a second payment path competing with the one that is live and
+  selling. The remote webview does not change this: the UI is remote, the purchase is native
+  Play Billing over the bridge (§11a).
+
+**THE ONBOARDING WIZARD MUST BE SKIPPED — "Go to dashboard", not "Continue".** It offers a
+"suggested" setup *"based on our data"*, and two of its three suggestions are wrong for this
+product:
+
+- **A `Lifetime` One-Time Purchase that does not exist.** We sell four auto-renewing
+  subscriptions and nothing else.
+- **A SINGLE entitlement, "CampHawk Pro".** One yes/no cannot express two tiers, and
+  `hasAutocartEntitlement` exists precisely to distinguish them.
+- Its ids are RevenueCat placeholders (`monthly`, `yearly`), not Play's.
+
+**And the deeper reason: the Play app is not connected yet**, so RevenueCat cannot see the real
+products and anything the wizard creates is a placeholder to clean up later.
+
+**DO NOT PRESS "Mark all as done" ON THE DASHBOARD CHECKLIST.** It hides the list and configures
+nothing — a dashboard reading 6 of 6 over a project with no app, no credential and no products.
+That is this file's own recurring shape, offered as a button: **a screen that looks finished is
+not a finished screen.**
+
+**ENTITLEMENTS, WHEN STEP 7 ARRIVES — two, not one:**
+
+| entitlement | granted by |
+|---|---|
+| `alerts` | **all four** products — an Auto-Cart subscriber gets alerts too |
+| `autocart` | the two `camphawk_autocart` products only |
+
+That mirrors the two questions the app actually asks (`hasActiveSubscription` and
+`hasAutocartEntitlement`). Tier still comes from the product id per §5; these are RevenueCat's
+bookkeeping, never a second source of truth.
+
 ### 4b. The RevenueCat console checklist — WRITTEN BLIND, so verify as you go
 
 **`revenuecat.com`, `docs.revenuecat.com` and `api.revenuecat.com` are ALL 403 at the agent
