@@ -598,6 +598,43 @@ exists to tell apart differed only in hue. **Route any new status through
 rather than relying on red and a minus sign). Preset `admin-health` in
 `scripts/screenshot-component.mts` renders the tab with a warn and a fail in view.
 
+## THE EGRESS-CASCADE WATCHDOG (issue #14) — DONE SINCE JULY, UNGUARDED UNTIL 2026-08-27
+On 2026-07-22 a rec.gov-only throttle became a **full detection outage**: rec.gov shifted from
+fast 429s to slow 10s timeouts, the hanging sockets starved the pool, and every OTHER source
+began timing out too — while the **Supabase heartbeat kept succeeding**, so `msSinceAlive()`
+stayed fresh and the liveness watchdog never fired. Alerting was silently dead and a human
+typed `flyctl machine restart`.
+- **ALL FIVE ITEMS ON #14 ARE RESOLVED, and the issue text predates the scheduler by nine
+  days — audit the TREE, not the ticket.** (1) `RECGOV_TIMEOUT_MS` is **5000**, not 10s, with
+  a comment citing #14. (2) The concurrency cap is the scheduler's token bucket plus
+  single-flight, which is stronger than the semaphore the issue asked for. (3) Timeouts
+  already count toward the breaker — `recordRecgovOutcome(isThrottleError(err), …)`.
+  (4) `worker/liveness.ts` carries the external signal and the poller **exits 1** on it so Fly
+  reboots. (5) Proxying rec.gov was investigated and REJECTED.
+- **TWO EXTERNAL SIGNALS, AND THE SECOND IS THE ONE THAT MATTERS.** A 2026-07-24 outage had
+  ~all detects timing out while an *occasional* success kept resetting the zero-success timer,
+  so a staleness check alone never tripped and a human restarted it again. `msSinceExternalFetchOk()`
+  catches a hard wedge; **`externalFetchWedged()` — a rolling failure RATIO — is the only thing
+  that can see a FLAPPING one.** Do not "simplify" the pair back to one.
+- **IT SHIPPED WITH NOTHING TESTING IT FOR FIVE WEEKS, and the exposed half is the WIRING.**
+  `externalFetchWedged` can be perfect while `markExternalFetchResult(false)` quietly leaves
+  `canary.ts` — the ratio then can never reach its threshold, every test of the pure function
+  still passes, and the flapping watchdog is unreachable. Fifth instance of the
+  fix-present-and-inert shape. `worker/egress-watchdog.test.mts` pins both outcomes recorded,
+  both checks wired to an exit, `restart_policy` not `"no"` (an exit is worthless if Fly does
+  not bring the VM back), and the thresholds bounded from both sides.
+- **TWO DEFECTS IN THAT TEST ARE WORTH MORE THAN THE TEST.** (a) It was **order-dependent
+  through module state** — ten failures over a 60s window returned FALSE because earlier tests
+  had left eleven successes in the same window (real ratio 0.73). **A cache-busted dynamic
+  import does NOT isolate it** — measured; tsx dedupes the module regardless of the query
+  string. Fixed with a time barrier rather than a test-only reset export: production code
+  should not grow a hatch to make a test easier to write. (b) The staleness assertion compared
+  two values that were both ~0, so `0 >= 0` held and the mutation making a FAILURE reset the
+  clock **survived**. Ageing the success first is what separates the cases.
+- **WHAT IS STILL UNPROVEN: that any of it fires in anger.** The acceptance criterion is
+  behavioural and nobody can stage a rec.gov cascade. The guards prove the mechanism is wired,
+  not that the reboot has ever happened.
+
 ## rec.gov 429s — four fixes in one loop (2026-07-30)
 The breaker was flapping six times in thirteen minutes, so rec.gov watches went
 unchecked ~40% of the time and the "Recreation.gov isn't responding" banner flapped
@@ -3669,6 +3706,34 @@ free in thirty hours and all three were missed, and a staged one locks a real ca
   which is a LATER scheduled run writing beside the new sha. That is the documented
   `appliedNote`/`appliedSha` trap. `applied_sha` and `git-status` both say `64f9f92`.
 
+### "SEP 4-5" FOR A 4-6 WATCH IS CORRECT — the alert names the NIGHTS (2026-08-27)
+Reported by the owner: *"why is morro bay hold saying 4-5? i dont have a watch for those dates?
+I have 4-6 and 4-7 but not 4-5."* **Nothing is wrong, and the answer is worth writing down
+because it will be asked again.**
+- **`end_date` IS THE CHECKOUT DATE AND IS EXCLUSIVE** — `probeWholeStayOpen`'s own comment says
+  the stay is `[start, end)`. So a watch for **Sep 4 → Sep 6 is TWO NIGHTS**, the 4th and the
+  5th, and the row confirms it rather than the reasoning doing so: `arrival_date 2026-09-04,
+  nights 2`. `nights` is `held.dates.length` (`poller.ts`), and `formatStayDates` renders the
+  night list, so two consecutive nights collapse to `Sep 4-5`.
+- **THE USER IS THINKING ARRIVAL→DEPARTURE AND THE ALERT IS NAMING NIGHTS.** Both describe the
+  same stay. This is the same family as the 2026-08-06 *"open **for** Sep 4-6"* fix, where the
+  preposition was load-bearing — the arithmetic was never wrong, the reading was ambiguous.
+- **DELIBERATELY NOT "FIXED" IN SMS.** Naming nights is the right thing for a campsite, and the
+  coming-soon body is already 154 chars against a 160 one-segment budget AFTER `fitOneSegment`
+  trims the park name. Anything added there tips it into two segments — the shape that was
+  Undelivered/30007 thirteen times on 08-05. **Email has room and is where a "2 nights" gloss
+  would go**, if it is ever wanted; that is a product call, not a defect.
+- **AND THE SECOND HALF OF THE SAME REPORT WAS ALSO NOT A BUG, for a different reason.** The
+  owner's OTHER Morro Bay watch (`9f9f87df`, 09-04 → 09-07) got no offer for the same unit while
+  the 4-6 one did. `watch_campgrounds` has **no rows** for it — it predates park watches — so it
+  covers `rc-582` (Lower Section) ALONE, and unit 43187 (`#92`) is in `rc-583` (Upper Section,
+  sites 86-140). The park watches beside it list `["rc-582","rc-583"]`.
+  **A WATCH CREATED BEFORE MIGRATION 070 SILENTLY COVERS LESS OF A PARK THAN ITS NAME SUGGESTS**,
+  and nothing on the watches screen distinguishes the two. Recorded rather than fixed: the
+  honest remedies are to backfill `watch_campgrounds` for single-division watches (a data change
+  that would widen what people are alerted about without asking them) or to say "Lower Section
+  only" on the card. Both are decisions, not tidy-ups.
+
 ### A DISPLAY CONVENTION IS NOT A TIME-ARITHMETIC CONVENTION (2026-08-26)
 
 Reported by the owner as *"still no offer"* on a watch added at 05:07 PT for an 08:00 PT
@@ -3913,10 +3978,21 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
 > sibling — which `hold-fixture-safety.test.mts` was green on.** That guard is widened in
 > three places and now derives the helper names from each file. Both entries above.
 >
-> **AND THREE TEST SUITES STILL SWEEP EACH OTHER'S FIXTURES** (`unit_id LIKE '__t%'`, and
-> `npm test` runs files concurrently). The two added this session were narrowed to their own
-> prefixes; the pre-existing three were left alone deliberately. Expect an occasional
-> unrelated red that is not a regression — see the section above.
+> ~~**AND THREE TEST SUITES STILL SWEEP EACH OTHER'S FIXTURES**~~ — **FIXED 2026-08-27, PR
+> #203, closing issue #76.** Four suites shared the `__t` prefix and three swept all of it, so
+> a STARTING run deleted a RUNNING one's rows. Every suite now has its own prefix (`__trh`,
+> `__teh`, `__tfi`, `__tcap` beside `__tln`/`__tdc`) **and** an age gate on `offered_at`, and
+> both halves are needed: the prefix stops one suite wiping another, the age gate stops two
+> runs of the SAME suite. `hold-line` and `hold-decline` already had prefixes and no gate —
+> the new guard found them. **So an unrelated red is no longer the expected state**; treat one
+> as a regression rather than as this.
+>
+> **ONE TRANSITIONAL HAZARD, and it reproduced while the fix was being verified.** `__trh`
+> still matches `__t%`, so a BRANCH that has not picked up #203 still sweeps master's rows.
+> A local `npm run verify` at 03:44 UTC lost `once the window has closed, a cart failure IS
+> final` to a side-lane CI run doing exactly that, and passed alone immediately after. **Until
+> every live branch has rebased, that specific red is still #76 and not a regression** — check
+> for an overlapping run on a branch behind master before treating it as one.
 >
 > **iOS:** `1.0 (5)` resubmitted 2026-08-22 with corrected notes — `docs/APP-STORE.md` §2d.
 > Release is AUTOMATIC. A 3.1.1 rejection now is the ANSWER, not a fourth process failure.
@@ -3931,10 +4007,26 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
 > been revoked mid-session before, so check rather than assume**; the readouts fail LOUDLY
 > on an unreachable DB, so an empty answer is a real answer.
 >
-> **Master is `18bb337`; this work is on `claude/main-lane-docs-0824`.** Merging it fires the
-> worker deploy (it touches `worker/**`), which restarts both pollers — **keep it away from
-> an 08:00 release**. **Delete `docs/NEXT-SESSION.md` once Track A has a reading from a real
-> ramp AND the App Store version has a decision**; it is a handover, not a permanent doc.
+> **STATE AT 2026-08-27 20:45 PT.** Master is **`87b5f99`**. Merged this session: **#202**
+> (health-route `REAL_UNIT` + the fixture-safety widening), **#191** (outreach timing docs),
+> **#180** (Play Billing gate, STOREKIT-PLAN, side-lane §25/§26 notes). **#203 is OPEN**
+> (fixture sweep scope, closes #76) — `worker/` test files only, so it does NOT fire a worker
+> deploy.
+>
+> **MERGING #180 MEANS THE NEXT ANDROID BUILD FAILS, ON PURPOSE.** `codemagic.yaml` now
+> asserts `com.android.vending.BILLING` reaches the merged manifest, and
+> `@revenuecat/purchases-capacitor` is not a dependency yet — so the step exits 1 until
+> RevenueCat lands. That is the gate working (Play's Subscriptions page has no create button
+> without it) and it does block an Android hotfix meanwhile.
+>
+> **FOUR OFFERS ARE OUTSTANDING FOR 2026-08-28 08:00 PT, and one unit is offered THREE
+> times.** Unit `43187` (`#92`, Morro Bay Upper Section) is offered to tylerflores1992,
+> iamtylerflores12345 and melinda — three users, one campsite. **That is the first
+> three-way contest**, and it is the real test of #201's one-live-hold-per-unit rule. Nobody
+> had tapped as of 20:25 PT.
+>
+> **Delete `docs/NEXT-SESSION.md` once Track A has a reading from a real ramp AND the App
+> Store version has a decision**; it is a handover, not a permanent doc.
 
 ### THE APP'S RC SESSION IS BEING MEASURED NOW — no renewal built yet (migration 058, 2026-08-13)
 The mobile claim flow needs a live RC session inside the InAppBrowser data store, and the
@@ -6367,7 +6459,8 @@ normalisation can drop it. `worker/update-guard.test.mts` fails on any non-ASCII
 - Same mismatch through the other door: Node writes UTF-8 and the console is cp437, so
   `supervise.ps1` sets `[Console]::OutputEncoding` — otherwise every em dash lands in
   `logs\rc-keepwarm.log` as `TCo`, and those files are the post-mortem record.
-- **The pre-flight Routine moved 07:30 → 07:40 PT** (`trig_015nU7BciNU5GKimmgXjvAZG`). At
+- **The pre-flight Routine moved 07:30 → 07:40 PT** (now
+  `trig_01NdJC1SvSDwxZZroAooVKnU` — the ID it carried then was deleted 2026-08-23). At
   07:30 it now collides with `maybeAutoLogin` and would report "dead" during the repair —
   the 08-09 cry-wolf exactly. At 07:40 it reports the outcome with 20 minutes to act.
 
@@ -6855,15 +6948,38 @@ one with time to spare.
   `mini-pc\rc-check.bat`, or `mini-pc\rc-login.bat` if the session is the problem.
 - `offered` → nobody tapped. Not a fault.
 
-**Two Routines cover this daily** — delete both once the flow has proven itself:
-- `trig_015nU7BciNU5GKimmgXjvAZG` — **07:30 PT pre-flight**, the one that can actually
-  save a hold. Reads **both** `autocart.rc_session` and `autocart.rc_runner` from
-  `/api/health/status` — they are different failures, and a green runner says nothing
-  about the session (that gap is the whole 08-07 story). Deliberately needs no repo and no
-  DB, just the public endpoint, so it cannot fail the way a clone-dependent check did on
-  its first run.
-- `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
-  what actually happened. This one is a post-mortem by construction; 08:00 has passed.
+**Two Routines cover this daily.** Both were DELETED AND RECREATED on 2026-08-23, so the
+IDs below are the second set — **the ones this file named until 2026-08-27 no longer
+exist** (issue #181). Verified against `list_triggers` before being written down.
+- **`trig_01NdJC1SvSDwxZZroAooVKnU`** — **07:40 PT pre-flight** (`40 14 * * *`), the one
+  that can actually save a hold, and **the only one that reaches the phone**. Reads
+  **both** `autocart.rc_session` and `autocart.rc_runner` from `/api/health/status` — they
+  are different failures, and a green runner says nothing about the session (that gap is
+  the whole 08-07 story). Deliberately needs no repo and no DB, just the public endpoint,
+  so it cannot fail the way a clone-dependent check did on its first run.
+- **`trig_01CzPKmDUz5MC3tbYFGMTS4a`** — **08:15 PT outcome** (`15 15 * * *`), reads the
+  hold readout and says what actually happened. A post-mortem by construction; 08:00 has
+  passed. **Bound to the CampHawk-Main session** via `persistent_session_id`, so it dies
+  with that session and re-pointing it needs another delete-and-recreate.
+- **WHY THEY WERE REPLACED RATHER THAN EDITED, and why it will happen again.**
+  `update_trigger` accepts only `name`, `prompt`, `cron_expression`, `run_once_at`,
+  `enabled` and `model`. It CANNOT change `notifications` or `persistent_session_id` — so
+  adding push to the pre-flight, and binding the outcome to a session, each required a
+  delete-and-recreate. **There was no edit that would have preserved the IDs**, which is
+  why an ID written into this file is a fact with a short shelf life.
+- **PUSH AND IN-SESSION REPORTING ARE MUTUALLY EXCLUSIVE** — the server rejects
+  `notifications` on any bound Routine. That is why only the pre-flight rings the phone.
+- **THE PROMPTS THEMSELVES GO STALE, AND ONE WAS TEACHING A REFUTED STORY.** On 2026-08-27
+  the 08:15 prompt still opened with a block headed *"TOMORROW (2026-08-25) SPECIFICALLY"*
+  which asserted *"RC lists one physical site under more than one facility, so this is not a
+  matching bug"* — the duplicate-facility explanation this file measured FALSE (zero
+  inventory overlap; the collision was our own result-map bug, fixed in #188). A daily
+  Routine firing a refuted cause into a fresh session is the same shape as a docs PR sitting
+  open carrying a correction: **it teaches the next reader the wrong thing, on a schedule.**
+  `prompt` IS editable, so this one is cheap to fix — check both prompts when a finding here
+  is corrected.
+- **DELETE-ONCE-PROVEN: re-take that decision deliberately rather than by neglect.** The
+  flow has now worked on 08-12, 08-13, 08-16, 08-23, 08-24 and 08-26.
 **Docs current to 2026-08-18 (seventh pass).** **THE ORPHAN SWEEP IS BUILT** — the keep-warm
 now kills any Chromium on `.rc-bot-profile` the moment it takes the lock, which is the one
 placement that is safe (the hold runner drives the same directory, so a sweep at plain startup

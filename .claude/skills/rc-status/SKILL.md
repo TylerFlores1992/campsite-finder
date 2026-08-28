@@ -46,6 +46,26 @@ they need different fixes:
 Neither is fixable from a web session — the bot is on the owner's mini-PC. Ask them to run
 `mini-pc\rc-check.bat`, or `mini-pc\rc-login.bat` if the session is the problem.
 
+**TWO ROWS FOR ONE UNIT AT ONE RELEASE IS THE FAIRNESS LINE, NOT A DUPLICATE.** Several
+users can watch the same park, so one campsite can be offered to more than one of them.
+Since #201 `dueHolds` serves ONE live hold per (release, unit): the winner carts and the
+rival's row stays `requested` and uncarted. **That is the line working** — and it looks
+exactly like the broken state above, so read `last_attempt_note` before calling it a fault.
+Before #201 the de-dupe was per QUERY and both rivals were served 14 seconds apart, so two
+people were told the same site was held.
+
+**THE ALERT NAMES THE NIGHTS, NOT THE CHECKOUT DATE.** `end_date` is exclusive, so a watch
+for Sep 4 → Sep 6 is two nights and the text reads `Sep 4-5`. A user reporting *"I don't
+have a watch for those dates"* is almost always this. Check `nights` and `arrival_date` on
+the row — a 4→6 watch stores `arrival_date 2026-09-04, nights 2` — before treating it as a
+bug. Reported and investigated 2026-08-27; nothing was wrong.
+
+**A WATCH CREATED BEFORE MIGRATION 070 COVERS LESS OF A PARK THAN ITS NAME SUGGESTS.** Park
+watches expand through `watch_campgrounds`; an older watch has no rows there and so covers
+its single division only. That is why one Morro Bay watch can get an offer while another
+with a wider date range gets nothing — the site was in the division the second one does not
+watch. Nothing on the watches screen distinguishes them.
+
 ## Reading the health checks — where people get it wrong
 
 **A stale session verdict is not a dead one, and only `dead` matters near a release.**

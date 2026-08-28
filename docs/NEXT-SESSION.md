@@ -1,29 +1,62 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed 2026-08-26 12:25 PT.*
+*Rewritten 2026-08-25 evening; state refreshed **2026-08-27 20:50 PT**.*
 
-> ## ONE BUG TO BUILD, ONE READING TO WAIT FOR.
+> ## NOTHING IS ASSIGNED. THE TOP BUG IS FIXED AND THE READING IS STILL WAITING.
 >
-> **1. THE BUG (§1) — `dueHolds` carted one campsite TWICE.** The fairness line's first real
-> contest, 08-26: both rivals served 14 seconds apart, two distinct RC cart entries, RC accepted
-> both. **Designed, NOT built.** This is the top item and it is the only assigned work.
+> **1. ~~`dueHolds` carted one campsite TWICE~~ — FIXED and MERGED (#201).** The de-dupe was
+> per QUERY, not per contest, so the rival was served on the very next 15s poll. `dueHolds` now
+> excludes any `(release_at, unit_id)` that already has a LIVE hold, and the guard calls it
+> TWICE with a status change in between — which the old test could not have caught. §1 is kept
+> for the history; there is no work in it.
+>
+> **1b. THE FIRST THREE-WAY CONTEST IS QUEUED FOR 2026-08-28 08:00 PT, and it is the thing to
+> read tomorrow.** Unit `43187` (`#92`, Morro Bay Upper Section) is offered to **three
+> different users** — tylerflores1992, iamtylerflores12345 and melinda — for one campsite, all
+> `offered` and none tapped as of 20:25 PT. Two more offers exist (`#SC77` rc-611, and #92 on a
+> second watch). **If two or more tap, that is the first live exercise of #201.** Expect ONE
+> cart and the other rows left `requested` and uncarted: that is the line working, not a dead
+> runner. Read `last_attempt_note` before concluding anything.
 >
 > **2. THE RAMP (§2).** The Track A trail is armed and has **still never produced a reading** —
-> `trail-*`: **0**. **It has now MISSED TWO RAMPS, not one** (08-25 20:22, ~3.6 GB; and 08-26
-> 21:24→21:34 at **9,112 MB / 100% COMMIT**, one pid throughout), against five old
-> return-path rows whose newest is 08-26 04:31. The box is alive and sampling — 2,019
-> `chromium_memory_samples` rows in 60h, newest 08-27 13:36 PT — so this is a reading about
-> the **TRIGGER**, not a dead instrument, and the next move is the trigger rather than the
-> sampler. Two candidates the data cannot separate: CDP went quiet at the peak (it has, twice
-> before, on two different calls), or gaps split the segment under the 400 MB floor.
-> **Do NOT try to stage one**; §2b has the measurement that retires the obvious plan.
+> `trail-*`: **0**. **It has now MISSED TWO RAMPS** (08-25 20:22, ~3.6 GB; and 08-26
+> 21:24→21:34 at **9,112 MB / 100% COMMIT**, one pid throughout), against five old return-path
+> rows whose newest is 08-26 04:31. The box is alive and sampling — 2,019
+> `chromium_memory_samples` rows in 60h — so this is a reading about the **TRIGGER**, not a
+> dead instrument, and the next move is the trigger rather than the sampler. Two candidates the
+> data cannot separate: CDP went quiet at the peak (it has, twice, on two different calls), or
+> gaps split the segment under the 400 MB floor. **Do NOT try to stage one**; §2b has the
+> measurement that retires the obvious plan.
 >
-> **Nothing is live.** No holds, working tree clean. **PR #202 is open** (health-route
-> `REAL_UNIT` + the fixture-safety widening) — it touches `src/lib/rc-holds.ts`, so merging
-> restarts both pollers. The two 08-26 test holds ran and released themselves; what they did
-> and did not prove is in §1c.
+> **3. WHAT IS OPEN RIGHT NOW.** Master is **`50cafa8`**. **PR #204** is the only open PR
+> (Routine IDs, the nights answer, and a guard for the egress watchdog — closes #181 and
+> #14); docs plus one `worker/` test file, so it does NOT fire a worker deploy. **Every
+> GitHub issue is closed or closing.** No live holds.
 >
-> Track B (§6) is still unstarted and still wants its own word.
+> **4. MERGING #180 MEANS THE NEXT ANDROID BUILD FAILS, ON PURPOSE.** Already merged.
+> `codemagic.yaml` asserts `com.android.vending.BILLING` reaches the merged manifest, and
+> `@revenuecat/purchases-capacitor` is not a dependency yet — so it exits 1 until RevenueCat
+> lands. Play's Subscriptions page has no create button without that permission, so the gate is
+> the point; it does block an Android hotfix meanwhile.
+>
+> **5. THE REAL WORK LEFT, in the order it is worth doing.**
+> - **Track B (§6)** — replay the Okta trip over `ctx.request`, no renderer. Designed,
+>   deliberately not started, **needs the owner's explicit go-ahead.** It is surgery on the
+>   one path between a queued hold and a missed cart.
+> - **The trail's TRIGGER** (§2). Two ramps missed. The next move is the trigger, not the
+>   sampler — and the owner has said they do not want more aftermath instrumentation, so
+>   ask before building.
+> - **`rankHoldLine`'s note never reaches a row tapped after ranking.** Diagnostic only
+>   (`last_attempt_note` has no user-facing reader), but it means a broken contest reads as
+>   two clean carts in the readout. Small.
+> - **`reclaimLapsedHolds` marks a hold `expired` while KEEPING `cart_key`**, so it never
+>   releases on RC. The premise that blocked it — "RC's cart lapse is unmeasured" — is
+>   **retired**: on 08-25 `expireStaleHolds(45)` released an unclaimed hold at exactly 45
+>   minutes, HTTP 200, with the entry key. The moment a site returns to the market is one we
+>   choose and already know.
+> - **`cart read back` is unproven on ANDROID.** Needs a human with the app on a real hold.
+> - **A watch created before migration 070 covers less of a park than its name suggests** —
+>   see the entry in CLAUDE.md. Backfill or say so on the card; both are decisions.
 
 *Delete this file once the trail has captured a real ramp AND the App Store version has a
 decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
@@ -359,8 +392,18 @@ which has happened three times.
   the row sat 300s out). That guard is widened in three places — the file selector missed six
   suites that INSERT with raw SQL, the line filter missed a bare `const` declaration, and the
   helper names were a fixed list rather than derived per file. CLAUDE.md carries both entries.
-- **Three test suites sweep each other's fixtures** (`unit_id LIKE '__t%'`) and `npm test` runs
-  files concurrently. That is #76, and §4 above is what it looks like in practice.
+- ~~**Three test suites sweep each other's fixtures**~~ **FIXED 2026-08-27 in PR #203, closing
+  #76.** Each suite has its own prefix now (`__trh`, `__teh`, `__tfi`, `__tcap` beside
+  `__tln`/`__tdc`) AND an age gate on `offered_at`; both halves are needed, because a prefix
+  stops one suite wiping another and does nothing about two runs of the SAME suite.
+  `hold-line` and `hold-decline` already had prefixes and no gate — the new guard found them.
+  **§4 above is history now, not a live hazard**: treat an unrelated red as a regression.
+- **A watch created before migration 070 silently covers less of a park than its name
+  suggests.** `9f9f87df` (Morro Bay, 09-04 → 09-07) has NO `watch_campgrounds` rows, so it
+  watches `rc-582` alone while the park watches beside it cover `rc-582` + `rc-583`. That is
+  why it got no offer for `#92` while the 4-6 watch did. Nothing on the watches screen tells
+  the two apart. The honest remedies are a backfill (which widens what people are alerted
+  about without asking them) or saying "Lower Section only" on the card — both decisions.
 - **The rec.gov `carted` SMS body overflows one segment for 19 campgrounds.**
 - **A token rebroadcast can clear an `expired` verdict** in the claim gate.
 - **The live manage token `EQO2oXcQ`** — unrotated, in git history. One DELETE. **Owner's call.**
