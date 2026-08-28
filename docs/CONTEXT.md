@@ -3214,7 +3214,8 @@ and still buy an **18-minute silence** in the only window where somebody can act
 > In the gap the alarm fires at T−25 while the login still waits for T−15 — the 2026-08-09
 > cry-wolf bug exactly. Land them together.
 
-> **The pre-flight Routine moved 07:30 → 07:40 PT** (`trig_015nU7BciNU5GKimmgXjvAZG`). At
+> **The pre-flight Routine moved 07:30 → 07:40 PT** (now
+> `trig_01NdJC1SvSDwxZZroAooVKnU` — the ID it carried then was deleted 2026-08-23). At
 > 07:30 it now collides with `maybeAutoLogin` and would report "dead" during the very repair
 > that fixes it. At 07:40 it reports the OUTCOME with 20 minutes to act.
 
