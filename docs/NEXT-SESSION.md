@@ -18,15 +18,22 @@
 > cart and the other rows left `requested` and uncarted: that is the line working, not a dead
 > runner. Read `last_attempt_note` before concluding anything.
 >
-> **2. THE RAMP (§2).** The Track A trail is armed and has **still never produced a reading** —
-> `trail-*`: **0**. **It has now MISSED TWO RAMPS** (08-25 20:22, ~3.6 GB; and 08-26
-> 21:24→21:34 at **9,112 MB / 100% COMMIT**, one pid throughout), against five old return-path
-> rows whose newest is 08-26 04:31. The box is alive and sampling — 2,019
-> `chromium_memory_samples` rows in 60h — so this is a reading about the **TRIGGER**, not a
-> dead instrument, and the next move is the trigger rather than the sampler. Two candidates the
-> data cannot separate: CDP went quiet at the peak (it has, twice, on two different calls), or
-> gaps split the segment under the 400 MB floor. **Do NOT try to stage one**; §2b has the
-> measurement that retires the obvious plan.
+> **2. THE RAMP (§2) — THE NEXT ONE ANSWERS A QUESTION NOW.** The trail has produced no
+> reading across **four** ramps (08-25 20:22, 08-26 21:24 at 9,112 MB / 100% COMMIT, 08-28
+> 02:01 at 8,981 MB, 08-28 08:13 at 6,264 MB). The "segment never ends" theory is **ruled
+> out** — on 08-28 02:01 `max_pid` went 14596 → 7812 at 02:15, so the teardown ran and
+> `final: true` does include the open segment. **#210 shipped the discriminator and the box
+> has it (`5e399b3`, applied 08-28 08:44).** After the next ramp, read the teardown line in
+> `logs\rc-keepwarm.log`:
+>
+> - `EMPTY — that renderer answered no CDP call at all` → the trail needs a different
+>   **transport**, not a different trigger.
+> - segments present, growth under 400 MB → **the sampling profiler cannot see these bytes**,
+>   Track A is measuring a quantity that excludes the leak, and Track B stops being optional.
+> - a `trail-*` row in `native_alloc_readings` → the bar was crossed and it finally worked.
+>
+> Ramp cadence is **11 onsets in 6 days, gaps 5-28h**, so expect an answer within a day.
+> **Do NOT try to stage one**; §2b has the measurement that retires the obvious plan.
 >
 > **3. WHAT IS OPEN RIGHT NOW.** Master is **`50cafa8`**. **PR #204** is the only open PR
 > (Routine IDs, the nights answer, and a guard for the egress watchdog — closes #181 and
