@@ -2573,9 +2573,17 @@ because `supervise.ps1` happened to restart the process in time.
 
 ### THE TRAIL'S SILENCE IS INSTRUMENTED, AND THE BOX HAS IT (2026-08-28)
 Four ramps have now passed with **zero `trail-*` readings**: 08-25 20:22 (~3.6 GB), 08-26
-21:24 (9,112 MB / 100% COMMIT), 08-28 02:01 (8,981 MB / 99%) and 08-28 08:13 (6,264 MB / 99%,
-which resolved on its own before the box updated). Onsets over six days: **eleven, gaps of
-5-28 hours**, so a missed one is not rare — it is most of them.
+21:24 (9,112 MB / 100% COMMIT), 08-28 02:01 (8,981 MB / 99%) and 08-28 08:13→08:23
+(**8,987 MB / 99%**, which resolved on its own at 08:25 — twenty minutes before the box
+updated). Onsets over six days: **eleven, gaps of 5-28 hours**, so a missed one is not rare —
+it is most of them.
+- **THAT LAST PEAK WAS FIRST RECORDED AS 6,264 MB, FROM A MID-CLIMB SAMPLE.** The ramp was
+  still rising when it was read. A ramp takes ~10 minutes and the sampler runs every 2, so
+  **any figure taken while one is in progress is a lower bound, not a peak** — wait for
+  `max_pid` to change before quoting a number.
+- **NO RAMP HAS HAPPENED SINCE THE BOX UPDATED (checked 09:17 PT).** Flat at 285-470 MB since
+  08:44. **The diagnostic is armed and has never run**, so a quiet `native_alloc_readings` is
+  the expected state and NOT a fifth failure — do not read it as one.
 - **THE "SEGMENT NEVER ENDS" EXPLANATION IS RULED OUT, and that is the useful part.** The
   theory was that `takeRamps` only takes ENDED segments on an ordinary tick, so a ramp on the
   long-lived resident renderer is never taken. For 08-28 02:01 that is false: `max_pid` went
@@ -4164,7 +4172,7 @@ code never implemented.
 >
 > **FOUR RAMPS MISSED, AND THE SILENCE IS NOW INSTRUMENTED (2026-08-28 08:44 PT).**
 > 08-25 20:22 (~3.6 GB), 08-26 21:24 (9,112 MB / 100%), 08-28 02:01 (8,981 MB / 99%) and
-> 08-28 08:13 (6,264 MB / 99%) all passed with no `trail-*` row. **The "segment never ends"
+> 08-28 08:13 (8,987 MB / 99%) all passed with no `trail-*` row. **The "segment never ends"
 > explanation is RULED OUT** — on 08-28 02:01 `max_pid` went 14596 → 7812 at 02:15, so the
 > teardown ran and `final: true` does include the open segment; the trigger fired and stored
 > nothing. **#210 makes a silent final flush print `describeAllocTrail`, and the box has it
@@ -4274,7 +4282,20 @@ code never implemented.
 > been revoked mid-session before, so check rather than assume**; the readouts fail LOUDLY
 > on an unreachable DB, so an empty answer is a real answer.
 >
-> **STATE AT 2026-08-27 21:30 PT.** Master is **`05ee4ff`** and **EVERY GITHUB ISSUE IS
+> **STATE AT 2026-08-28 09:20 PT.** Master is **`43a4033`**, the mini-PC is on **`5e399b3`**,
+> **every GitHub issue is closed and no PR is open.** Merged 08-28: **#202** (health-route
+> `REAL_UNIT` + the fixture-safety widening), **#191**, **#180**, **#203** (closed #76),
+> **#204** (closed #181 and #14), **#210** (the trail's silence), **#211** (docs).
+>
+> **THE 08-28 RELEASE PASSED WITH NOTHING CARTED.** All five offers expired unclaimed —
+> nobody tapped, which is not a fault. The three-way contest on unit 43187 did NOT happen,
+> so #201's one-live-hold-per-unit rule is still untested in anger.
+>
+> **`autocart.rc_session` WARNS AND THAT IS THE UPDATE'S DOING.** The 08:44 box update kills
+> the Chromium the token lives in. Nothing is queued, and `maybeAutoLogin` restores it at
+> T−30 of the next release. 18 of 19 checks ok.
+>
+> *(historical, 2026-08-27 21:30 PT.)* Master was **`05ee4ff`** and **EVERY GITHUB ISSUE WAS
 > CLOSED.** Merged: **#202** (health-route `REAL_UNIT` + the fixture-safety widening),
 > **#191** (outreach timing docs), **#180** (Play Billing gate, STOREKIT-PLAN, side-lane
 > §25/§26 notes), **#203** (fixture sweep scope, closed #76), **#204** (Routine IDs, the
