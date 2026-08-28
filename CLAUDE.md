@@ -2595,6 +2595,35 @@ had just written was gone.
   conditions: the diff is two Markdown files and cannot touch that code, the suite passes
   alone, and the mechanism is named with timestamps on both sides.
 
+#### AND IT HAPPENED AGAIN AN HOUR LATER, BY A DIFFERENT MECHANISM: A CANCELLED RUN'S LITTER
+The same PR failed CI a second time, 5 of 1381, and **this one is not a local verify — nobody
+ran one.** The run timestamps settle it:
+```
+33190834414  8bb0535  created 16:37:17Z  ->  CANCELLED 16:44:52Z   (7m35s in, mid-suite)
+33191426746  5de434b  created 16:44:51Z      job started 16:45:35Z  ->  FAILURE 16:48:56Z
+```
+- **I PUSHED TWICE INSIDE ONE SUITE'S RUNTIME.** `npm test` takes ~2.5 minutes and the whole
+  `verify` job ~4; the second push landed 7.5 minutes after the first, and GitHub's
+  cancel-on-push killed the older run **while it was executing**. A killed run runs no `after()`
+  and no cleanup, so its working set stays in the production database.
+- **THOSE ROWS ARE EXACTLY THE AGE #203's GATE PROTECTS.** The sweep is
+  `offered_at < NOW() - interval '10 minutes'`, chosen so a CONCURRENT run's live rows are
+  spared. A cancelled run's rows are seconds old and indistinguishable from a live run's — so
+  the next run's `before()` deliberately leaves them, and they poison it for ten minutes.
+- **THAT IS A TRADE #203 MADE ON PURPOSE, AND IT IS THE RIGHT ONE.** Shortening the gate
+  reinstates issue #76, where a STARTING run wiped a RUNNING one. The cost is a ten-minute
+  window after any cancelled run in which the next run can fail on litter. **Do not "fix" this
+  by lowering the interval.**
+- **CONFIRMED BY RE-RUNNING LOCALLY ON THE SAME SHA once no CI was in flight: 1381/1381.**
+  That is the discriminator between litter and a regression, and it was taken rather than
+  assumed.
+- **THE OPERATIONAL RULE IS THE WHOLE REMEDY, and it is a second one: do not push again while
+  your own CI is still running.** `docs/LANES.md` says one test run at a time and both lanes
+  read that as "don't run two commands". **A second push IS a second run**, and cancel-on-push
+  does not make it safe — it makes the first run die in a state that harms the second. Second
+  time in one day the rule was broken by the person enforcing it, and the first time it was
+  idling; this time it was impatience.
+
 ### THE TRAIL'S SILENCE IS INSTRUMENTED, AND THE BOX HAS IT (2026-08-28)
 Four ramps have now passed with **zero `trail-*` readings**: 08-25 20:22 (~3.6 GB), 08-26
 21:24 (9,112 MB / 100% COMMIT), 08-28 02:01 (8,981 MB / 99%) and 08-28 08:13→08:23

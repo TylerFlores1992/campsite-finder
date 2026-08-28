@@ -1,6 +1,6 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed **2026-08-28 09:35 PT**.*
+*Rewritten 2026-08-25 evening; state refreshed **2026-08-28 09:55 PT**.*
 
 > ## NOTHING IS ASSIGNED. THE TOP BUG IS FIXED AND THE READING IS STILL WAITING.
 >
@@ -32,17 +32,21 @@
 >   Track A is measuring a quantity that excludes the leak, and Track B stops being optional.
 > - a `trail-*` row in `native_alloc_readings` → the bar was crossed and it finally worked.
 >
-> **NOTHING HAS RAMPED SINCE THE BOX UPDATED at 08:44 PT** — flat at 285-470 MB, checked
-> 09:17. The diagnostic has never run, so an empty `native_alloc_readings` is expected and is
-> NOT a fifth miss. Ramp cadence is **11 onsets in 6 days, gaps 5-28h**, so expect an answer
-> within a day.
+> **NOTHING HAS RAMPED SINCE THE BOX UPDATED at 08:44 PT.** Checked 09:48 against the series
+> itself: **877 samples in 26h, ZERO over 1,200 MB since 08:23**, newest 298 MB. The
+> diagnostic has never run, so an empty `native_alloc_readings` is expected and is NOT a fifth
+> miss. Ramp cadence is **11 onsets in 6 days, gaps 5-28h** (the last two were 02:01 and 08:13,
+> ~6h apart), so expect an answer within a day.
 > **Do NOT try to stage one**; §2b has the measurement that retires the obvious plan.
 >
 > **3. WHAT IS OPEN RIGHT NOW: NOTHING.** Master is **`43a4033`**, the mini-PC is on
 > **`5e399b3`**, **every GitHub issue is closed and no PR is open.** No live holds, no queued
-> offers. Health is 18/19 — the one warn is `autocart.rc_session`, which is the 08:44 box
-> update killing the Chromium the token lives in; `maybeAutoLogin` repairs it at T−30 of the
-> next release and nothing is queued before then.
+> offers. Health is 17/19 at 09:48 and **both warns are the documented benign cases**:
+> `autocart.rc_session` (no token, but `okta=ALIVE` with 612m left — the token lives ~1h and is
+> legitimately dead between releases, and a repair would be the cheap cookie-answered one), and
+> `autocart.bot_version` (box `5e399b3` vs web `43a4033`, **"No bot-side code in the gap"** —
+> the case this file records as not worth acting on). Nothing is queued, so nothing repairs the
+> session before the next release's T−30.
 >
 > **DO NOT RUN `npm run verify` WHILE CI IS RUNNING — INCLUDING WHILE WAITING FOR IT.** Both
 > hit the production DB. On 08-28 a docs-only PR failed on `rc-client-reports.test.mts`
@@ -52,6 +56,15 @@
 > mutually destructive between two runs of itself, as are `sync-claim` and `ridb-photos`.
 > Recorded, not fixed. A re-run is the right response when the diff cannot touch the code, the
 > suite passes alone, and the overlap is named.
+>
+> **AND DO NOT PUSH AGAIN WHILE YOUR OWN CI IS STILL RUNNING — A SECOND PUSH IS A SECOND RUN.**
+> The same PR failed a second time with no local verify anywhere near it: a push 7.5 minutes
+> after the previous one triggered cancel-on-push, which killed a run **mid-suite**. A killed
+> run runs no cleanup, and its rows are seconds old — which is exactly the age #203's
+> `offered_at < NOW() - interval '10 minutes'` gate deliberately spares, so the next run
+> inherits them. **Do not lower that interval**; it is what stops a starting run wiping a
+> running one (issue #76). Re-running locally on the same sha with no CI in flight gave
+> 1381/1381, which is how litter was told from a regression.
 >
 > **`worker/**` IS A WORKER-DEPLOY TRIGGER PATH.** "Only test files" is NOT an exemption — that
 > was asserted twice on 08-27 and was wrong both times. Read `paths:` in `worker-deploy.yml`
