@@ -367,7 +367,7 @@ and incomplete. The merchant account, the account group, the 15% enrolment and t
 country setting are all now done, and the page still refuses.
 
 **IT IS NOT ASKING FOR *A* BINARY — IT IS ASKING FOR A PROPERTY OF ONE.** An AAB has been
-uploaded and is live in closed testing (`versionCode 18`, `docs/PLAY-STORE.md` §0a), so "no
+uploaded and is live in closed testing (`versionCode 18` — but see the correction below), so "no
 build exists" cannot be the explanation. What Play requires is an uploaded binary declaring
 **`com.android.vending.BILLING`**, and that permission arrives with the Play Billing Library.
 **Verified in the tree rather than assumed**: no billing dependency of any kind in
@@ -389,6 +389,30 @@ behaviour from one store to the other in here again; it has now been wrong three
 **IT STRENGTHENS THE REVENUECAT RECOMMENDATION IN §3.** Their SDK brings the billing library
 with it, so one dependency clears the permission gate *and* the purchase plumbing. Wiring Play
 Billing directly clears the gate and still leaves the server side to build.
+
+> **TWO CORRECTIONS FROM THE CODEMAGIC BUILD LIST, read off the console 2026-08-28.**
+>
+> 1. **The `docs/PLAY-STORE.md` §0a citation above is wrong.** That file contains **no mention
+>    of `versionCode` anywhere** (`grep -in versioncode` returns nothing). The number came from
+>    `CLAUDE.md` instead. A citation that names a section which does not carry the fact is worse
+>    than no citation — it reads as verified and survives a check that stops at the section name.
+> 2. **What is live is probably 19, not 18.** The build list shows `Android · signed AAB +
+>    APK #11` producing artifacts labelled **#19** and, being green (it emitted both an `.aab`
+>    and an `.apk`), publishing them. **Whether Play accepted it is UNREAD** — nobody in a
+>    session can open the Play Console. The argument in this section is unaffected either way:
+>    a binary is live, and it declares no billing permission.
+>
+> **AND THE SAME LIST IS DIRECT EVIDENCE FOR THE BUILD-NUMBER TRAP §11b RECORDS AS MISQUOTED
+> TWICE.** The per-workflow index is not the version code, and the counter is shared:
+>
+> ```
+> Android · signed AAB + APK #10   ->  app-release.aab #18 / app-release.apk #18
+> Android · signed AAB + APK #11   ->  app-release.aab #19 / app-release.apk #19
+> iOS · TestFlight        #10   ->  App.ipa #21
+> ```
+>
+> `#10` and `#11` are the workflow's own counters; **18, 19, 21 are `PROJECT_BUILD_NUMBER`**,
+> running across both workflows. Two builds numbered `#10` carry version codes 18 and 21.
 
 **PRACTICAL CONSEQUENCE: Play is now blocked on NATIVE WORK, not on the console, and Apple is
 the store where more can happen sooner** — its products need only the Paid Applications
