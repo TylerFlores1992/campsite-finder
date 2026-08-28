@@ -221,6 +221,42 @@ Educator), so the register is respectful and short.
 
 ---
 
+### Timing: send now, and what to do when one replies
+
+**DO NOT WAIT FOR THE APPS.** The obvious worry is that auto-cart only really works
+once the apps ship — that is true of the ReserveCalifornia hold hand-off, which needs
+the in-app webview, and **neither email claims it.** What they claim is
+Recreation.gov auto-cart, which runs on the mini-PC against the user's own rec.gov
+account, is connected through camphawk.app/connect on the web, and has never involved
+an app at all.
+
+Verified against production on 2026-08-25: **38 successful carts, most recent
+2026-08-24**, with real detection-to-cart latencies of 9, 10, 10, 10, 11, 12 and 13
+seconds. "About 12 seconds" is honest and slightly conservative.
+
+**THE REAL RISK IS THE REVIEWER TESTING THE WRONG LANE.** Only 1 of 13 active watches
+is on recreation.gov; almost everyone watches ReserveCalifornia, which routes to the
+BETA hold flow and shows no auto-cart. A writer who signs up, picks an RC park and sees
+no carting would reasonably conclude the headline feature does not work.
+
+So when one of them replies:
+
+  - Set up the account, then **name a recreation.gov campground to try it on.**
+    `supportsAutoCart` is `source === 'ridb'` and nothing else; that is the lane the
+    claim is about.
+  - Say up front that RC auto-hold is **beta** and that auto-cart is Recreation.gov
+    only. Both are in the product copy already; hearing it from you first costs
+    nothing and buys the benefit of the doubt on everything else.
+  - **Be ready for the credentials question, especially from Kyle** — he runs an
+    outdoor-recreation data studio and will ask immediately. The honest answer:
+    enrolment stores the user's recreation.gov password on a machine you control, via
+    Windows DPAPI scoped to the current user, because carting requires acting as them
+    on rec.gov. Do not soften it; a writer who finds that out for himself writes a
+    different piece than one you told.
+  - Worth knowing before you offer: 2 of 6 enrolled accounts are session-verified
+    right now, so the rec.gov keep-warm is not holding for everyone. If a reviewer's
+    session lapses their cart fails silently from their point of view.
+
 **Rules for both:** one email each, no follow-up before two weeks and never more than
 one; offer the free account unprompted; **never ask for a link** — ask to be considered,
 or in Kyle's case ask for nothing at all. If they say no, or say nothing, that is the
