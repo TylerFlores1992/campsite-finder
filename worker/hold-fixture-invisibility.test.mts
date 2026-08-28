@@ -34,7 +34,7 @@ let userId = '';
 let campgroundId = '';
 
 /** The same sentinel shape the hold suites use, and that `hold-fixture-safety` enforces. */
-const U = (n: string) => `__t${n}`;
+const U = (n: string) => `__tfi${n}`;
 
 /** Pacific wall-clock, `minutes` from now - the zone-less shape `release_at` stores. */
 function pacific(minutes: number): string {
@@ -48,7 +48,15 @@ function pacific(minutes: number): string {
 }
 
 before(async () => {
-  await mutate(`DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_t%'`).catch(() => {});
+  // AGE-GATED, BECAUSE A SWEEP CANNOT TELL LITTER FROM A LIVE RUN BY THE ID ALONE (#76).
+  // `npm test` runs on every push, so two CI runs overlap routinely — and before this,
+  // a starting run DELETED a running one's working set, then logged "swept N fixture(s)
+  // left by an earlier run", which reads as self-healing at the exact moment it is
+  // destroying a live run. The victim died on a null several statements from the cause.
+  // `offered_at` is the row's birth time and no status change moves it, so a concurrent
+  // run's rows are seconds old and protected while real litter is minutes old.
+  await mutate(`DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_tfi%'
+                 AND offered_at < NOW() - interval '10 minutes'`).catch(() => {});
   const [u] = await query<{ id: string }>(`SELECT id FROM users LIMIT 1`);
   const [c] = await query<{ id: string }>(
     `SELECT id FROM campgrounds WHERE source = 'reservecalifornia' ORDER BY id LIMIT 1`);

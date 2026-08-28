@@ -41,7 +41,7 @@ const ARRIVAL = '2031-05-01';
  * A real RC unit id is numeric, so a sentinel cannot name a real campsite if a run aborts
  * before its cleanup. Enforced by `worker/hold-fixture-safety.test.mts`.
  */
-const U = (n: string) => `__t${n}`;
+const U = (n: string) => `__tcap${n}`;
 
 before(async () => {
   const [u] = await query<{ id: string }>(`SELECT id FROM users LIMIT 1`);

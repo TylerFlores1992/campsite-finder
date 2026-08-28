@@ -65,7 +65,7 @@ const pacific = (offsetMinutes: number) => {
  *
  * Kept short and obviously not-a-unit so it is recognisable in `rc-holds-readout.mts` output.
  */
-const U = (n: string) => `__t${n}`;
+const U = (n: string) => `__trh${n}`;
 
 before(async () => {
   // SWEEP FIRST. A run that dies before `after()` leaves its fixtures behind, and until
@@ -76,8 +76,16 @@ before(async () => {
   // Matched on the sentinel, never on the watch id: the leaked rows belong to a PREVIOUS
   // run's watch, which this process has never seen. Deleted rather than expired so a rerun
   // starts from the same blank slate `after()` would have left.
+  // AGE-GATED, BECAUSE A SWEEP CANNOT TELL LITTER FROM A LIVE RUN BY THE ID ALONE (#76).
+  // `npm test` runs on every push, so two CI runs overlap routinely — and before this,
+  // a starting run DELETED a running one's working set, then logged "swept N fixture(s)
+  // left by an earlier run", which reads as self-healing at the exact moment it is
+  // destroying a live run. The victim died on a null several statements from the cause.
+  // `offered_at` is the row's birth time and no status change moves it, so a concurrent
+  // run's rows are seconds old and protected while real litter is minutes old.
   const swept = await mutate<{ id: string }>(
-    `DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_t%' RETURNING id`,
+    `DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_trh%'
+       AND offered_at < NOW() - interval '10 minutes' RETURNING id`,
   ).catch(() => []);
   if (swept.length) console.log(`swept ${swept.length} hold fixture(s) left by an earlier run`);
 
