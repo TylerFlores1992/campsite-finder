@@ -212,6 +212,25 @@ the plan below still applies — only §5 grows substantially.
 
 - **RevenueCat webhook → `/api/webhooks/revenuecat`**, mapping `INITIAL_PURCHASE`, `RENEWAL`,
   `CANCELLATION`, `EXPIRATION`, `BILLING_ISSUE` onto `subscriptions.status`.
+- **`BILLING_ISSUE` IS TWO STATES ON PLAY, AND ONLY THE SECOND REVOKES ACCESS (2026-08-28).**
+  Read off the `Add base plan` screen while creating `camphawk_base/monthly`: Play applies a
+  **7-day grace period** and then a **32-day account hold** (auto-calculated, 60-day combined
+  maximum). They are opposites for entitlement:
+
+  | Play state | payment | user should |
+  |---|---|---|
+  | grace period | failed, retrying | **keep full access** — they have not lapsed |
+  | account hold | given up | lose access |
+
+  **A naive `BILLING_ISSUE -> not subscribed` cuts off a paying customer for a week over a card
+  that is about to retry successfully.** That is the same failure family as `unknown` rounding to
+  "not subscribed" in §4 — the direction that shows a paywall to somebody who is paying. Grace
+  must read as subscribed. RevenueCat exposes the distinction through the entitlement's
+  expiry/billing-issue detection rather than through the event name alone, so **the event name is
+  not sufficient input** to this decision.
+
+  Recorded now because these two numbers live on a console screen that nothing in the codebase
+  reads, and the consequence lands in a webhook written weeks later.
 - **Signature verification fails CLOSED**, and the route must be added to `isPublicRoute` in
   `src/middleware.ts` or Clerk 404s it — see `/api/webhooks/twilio`, which is the working
   precedent for both.
