@@ -414,6 +414,31 @@ Billing directly clears the gate and still leaves the server side to build.
 > `#10` and `#11` are the workflow's own counters; **18, 19, 21 are `PROJECT_BUILD_NUMBER`**,
 > running across both workflows. Two builds numbered `#10` carry version codes 18 and 21.
 
+> **ANSWERED 2026-08-28 BY TWO BUILDS. THE GATE IS CLEARED.**
+>
+> ```
+> build 12  cbeb709  no billing dep    FAILED at the assertion   aab 11.07 MB  Publishing  5s
+> build 13  6c04a93  + RevenueCat      finished, green           aab 13.36 MB  Publishing 44s
+> ```
+>
+> **Run 1 was the diagnostic and it earned its keep.** It failed with `MISSING` against both
+> merged manifests *and* the APK — `CHECKED=3`, so all three read paths worked and it failed on
+> the answer rather than on "could not look". That is the *"confirm a new gate can actually fail
+> before trusting it"* rule satisfied with evidence, on a repo that once read an `ENOENT` crash
+> as a check firing.
+>
+> **Run 2 proves the transitive chain §9a-ter could not read.** The permission is not declared by
+> anything we wrote: `package.json` was the only change, and the binary grew **+2.3 MB**. That
+> is `com.android.billingclient:billing` arriving through the AAR manifest merge, which is
+> exactly the hop that `maven.google.com` being 403 at the proxy made unreadable from a session.
+> **The build was the only place that question could be answered, and it answered it.**
+>
+> **INFERENCE, NOT A READING — a failing build appears NOT to publish.** `Publishing` took
+> **5s** on the failed run and **44s** on the green one uploading 13 MB. That is the shape of a
+> skip against a real upload, and it is the first evidence either way for the assumption the
+> `publishing:` block records as *"EXPECTED, NOT READ"*. It is a duration, not a log line.
+> **Do not promote it to a fact without opening that step.**
+
 **PRACTICAL CONSEQUENCE: Play is now blocked on NATIVE WORK, not on the console, and Apple is
 the store where more can happen sooner** — its products need only the Paid Applications
 agreement, with no build in the way. That reverses the sequencing assumption this section was
