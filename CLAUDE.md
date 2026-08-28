@@ -2571,6 +2571,30 @@ because `supervise.ps1` happened to restart the process in time.
   in the file, which was `maybeAutoLogin`'s only by luck of ordering, and a second caller above
   it made it read a different function. Twentieth time.
 
+### #203 DOES NOT COVER A FIXED SENTINEL, AND I PROVED IT BY BREAKING THE RULE (2026-08-28)
+A docs-only PR (#212) failed CI on `rc-client-reports.test.mts` — *"an empty batch is a no-op,
+not a write"*, `Cannot read properties of undefined (reading 'client_reports')`. A row the test
+had just written was gone.
+- **IT IS NOT #76.** That suite's `SENTINEL` is `__camphawk-clientreport-test__`, which does not
+  match `\_\_t%`, and a scan of every remote branch found **none** still carrying the global
+  sweep — the transitional hazard recorded on 08-27 is over.
+- **IT WAS TWO CONCURRENT RUNS OF THE SAME SUITE, AND THE SECOND ONE WAS MINE.** CI ran
+  09:37:21-09:40:41 PT; I started a local `npm run verify` at 09:38:05 **to pass the time while
+  waiting for that exact CI run**. Both use the same fixed `SENTINEL` and both `DELETE FROM
+  rc_hold_requests WHERE unit_id = $1` on the way in.
+- **SO `docs/LANES.md`'s RULE WAS BROKEN BY THE PERSON WHO HAD SPENT THE DAY ENFORCING IT**,
+  and in the least suspicious way available: idling. Waiting on CI is exactly when a local
+  verify feels free, and it is exactly when it is not.
+- **#203 COVERS `LIKE` PREFIX SWEEPS IN THE HOLD SUITES AND NOTHING ELSE.** A suite with a
+  single FIXED sentinel deleted by exact id is mutually destructive between two runs of itself,
+  and the per-suite prefix plus age gate does not reach it. Same for `sync-claim` and
+  `ridb-photos`, which failed the same way on #206. **Recorded, not fixed** — the honest remedy
+  is a per-RUN component in these sentinels, and that is a change to several real-DB suites
+  which should not be made while passing time.
+- **A RE-RUN IS THE CORRECT RESPONSE HERE and is not a shrug**, by the file's own three
+  conditions: the diff is two Markdown files and cannot touch that code, the suite passes
+  alone, and the mechanism is named with timestamps on both sides.
+
 ### THE TRAIL'S SILENCE IS INSTRUMENTED, AND THE BOX HAS IT (2026-08-28)
 Four ramps have now passed with **zero `trail-*` readings**: 08-25 20:22 (~3.6 GB), 08-26
 21:24 (9,112 MB / 100% COMMIT), 08-28 02:01 (8,981 MB / 99%) and 08-28 08:13→08:23

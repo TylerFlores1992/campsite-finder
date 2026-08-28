@@ -44,6 +44,15 @@
 > update killing the Chromium the token lives in; `maybeAutoLogin` repairs it at T−30 of the
 > next release and nothing is queued before then.
 >
+> **DO NOT RUN `npm run verify` WHILE CI IS RUNNING — INCLUDING WHILE WAITING FOR IT.** Both
+> hit the production DB. On 08-28 a docs-only PR failed on `rc-client-reports.test.mts`
+> because a local verify started at 09:38:05 overlapped a CI run at 09:37:21-09:40:41, and
+> both delete the same fixed `SENTINEL`. **#203 does not cover this** — it fixed `LIKE` prefix
+> sweeps in the hold suites; a suite with one fixed sentinel deleted by exact id is still
+> mutually destructive between two runs of itself, as are `sync-claim` and `ridb-photos`.
+> Recorded, not fixed. A re-run is the right response when the diff cannot touch the code, the
+> suite passes alone, and the overlap is named.
+>
 > **`worker/**` IS A WORKER-DEPLOY TRIGGER PATH.** "Only test files" is NOT an exemption — that
 > was asserted twice on 08-27 and was wrong both times. Read `paths:` in `worker-deploy.yml`
 > before claiming a merge is deploy-free.
