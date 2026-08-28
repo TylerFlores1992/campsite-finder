@@ -1,22 +1,44 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed **2026-08-28 09:55 PT**.*
+*Rewritten 2026-08-25 evening; state refreshed **2026-08-28 15:50 PT**.*
 
-> ## NOTHING IS ASSIGNED. THE TOP BUG IS FIXED AND THE READING IS STILL WAITING.
+> ## NOTHING IS ASSIGNED. A REAL HOLD IS QUEUED FOR THE MORNING, AND THE READING IS STILL WAITING.
 >
-> **1. ~~`dueHolds` carted one campsite TWICE~~ — FIXED and MERGED (#201).** The de-dupe was
-> per QUERY, not per contest, so the rival was served on the very next 15s poll. `dueHolds` now
-> excludes any `(release_at, unit_id)` that already has a LIVE hold, and the guard calls it
-> TWICE with a status change in between — which the old test could not have caught. §1 is kept
-> for the history; there is no work in it.
+> **0. THE 08-29 08:00 PT RELEASE IS LIVE AND THE OWNER WANTS THE SITE.** Unit `43189`
+> (`#94`, Morro Bay SP — Upper Section, arrival 2026-09-04), tapped 2026-08-28 11:46 PT by
+> `tylerflores1992@gmail.com`. **Nothing further is needed from anyone.** The box needs no
+> update (#214 was worker- and web-side only) and `maybeAutoLogin` restores the session at
+> T−30, i.e. 07:30 PT.
 >
-> **1b. THE THREE-WAY CONTEST DID NOT HAPPEN — nobody tapped.** All five offers for 2026-08-28
-> 08:00 PT expired unclaimed, including unit `43187` (`#92`, Morro Bay Upper Section) offered
-> to three different users. **Not a fault**: an untapped offer is the ordinary outcome. But it
-> means **#201's one-live-hold-per-unit rule is still untested in anger** — the next time two
-> or more people tap the same unit is its first live exercise. Expect ONE cart and the other
-> rows left `requested` and uncarted; that is the line working, not a dead runner. Read
-> `last_attempt_note` before concluding anything.
+> The line, as the production poller wrote it after #214 deployed:
+>
+> ```
+> rank 1  tylerflores1992@gmail.com      offered
+> rank 2  tylerflores1992@gmail.com      requested   <- the tapped row, and what dueHolds serves
+> rank 3  melinda.flores0501@yahoo.com   offered
+> rank 4  iamtylerflores12345@yahoo.com  offered
+> ```
+>
+> **If a rival taps overnight, expect ONE cart and the other rows left `requested` and
+> uncarted. That is the line working, not a dead runner** — read `last_attempt_note` first;
+> it now carries "another watcher is ahead of you". That would also be **#201's
+> one-live-hold-per-unit rule's first live exercise**, which is still untested in anger.
+>
+> **1. THE OWNER RANKS FIRST BY DESIGN NOW (migration 069, #214).** `users.line_priority` is
+> read ahead of the rotation ticket and watch age; `tylerflores1992@gmail.com` is the only
+> flagged account. **This is a deliberate thumb on the scale, not a bug** — it was asked for
+> and reaffirmed after the cost was shown. `melinda.flores0501` (a paying subscriber) is
+> family, which settled it; `suziegrieve03` and `cam1234123` are NOT family and also lose to
+> it, which was raised and accepted. Full entry in `CLAUDE.md`; the reasoning is in migration
+> 069's own header so it reads as a decision rather than something to "fix".
+>
+> **Do not "make priority consistent" with `line_seq` by freezing it onto the hold** — that
+> would pin a revoked override onto every hold in flight, and the asymmetry is documented at
+> the read site.
+>
+> **THE MAIN LANE'S MIGRATION BLOCK IS FULL.** 069 took the last of 060-069 and the side lane
+> holds 070. **Claim a new block out loud before taking a number** — `071` is what both lanes
+> would reach for, and a duplicate is a collision git merges cleanly and Postgres does not.
 >
 > **2. THE RAMP (§2) — THE NEXT ONE ANSWERS A QUESTION NOW.** The trail has produced no
 > reading across **four** ramps (08-25 20:22, 08-26 21:24 at 9,112 MB / 100% COMMIT, 08-28
@@ -32,21 +54,29 @@
 >   Track A is measuring a quantity that excludes the leak, and Track B stops being optional.
 > - a `trail-*` row in `native_alloc_readings` → the bar was crossed and it finally worked.
 >
-> **NOTHING HAS RAMPED SINCE THE BOX UPDATED at 08:44 PT.** Checked 09:48 against the series
-> itself: **877 samples in 26h, ZERO over 1,200 MB since 08:23**, newest 298 MB. The
+> **STILL NOTHING SINCE THE BOX UPDATED at 08:44 PT — re-checked 2026-08-28 12:00 PT**:
+> 110 samples since the update, peak **469 MB**, newest 12:01. The three ramps inside the
+> last 40h (08-26 21:24 at 9,112 MB, 08-28 02:01 at 8,981 MB, 08-28 08:13 at 8,987 MB) are
+> all the ALREADY-RECORDED ones and all predate the update; the 08:13 one ended ~08:25,
+> nineteen minutes before it. **Quote the "since 08:23" qualifier if you quote the count** —
+> without it "zero over 1,200 MB in 26h" is false, because that window contains two 9 GB
+> ramps. The
 > diagnostic has never run, so an empty `native_alloc_readings` is expected and is NOT a fifth
 > miss. Ramp cadence is **11 onsets in 6 days, gaps 5-28h** (the last two were 02:01 and 08:13,
 > ~6h apart), so expect an answer within a day.
 > **Do NOT try to stage one**; §2b has the measurement that retires the obvious plan.
 >
-> **3. WHAT IS OPEN RIGHT NOW: NOTHING.** Master is **`43a4033`**, the mini-PC is on
-> **`5e399b3`**, **every GitHub issue is closed and no PR is open.** No live holds, no queued
-> offers. Health is 17/19 at 09:48 and **both warns are the documented benign cases**:
-> `autocart.rc_session` (no token, but `okta=ALIVE` with 612m left — the token lives ~1h and is
-> legitimately dead between releases, and a repair would be the cheap cookie-answered one), and
-> `autocart.bot_version` (box `5e399b3` vs web `43a4033`, **"No bot-side code in the gap"** —
-> the case this file records as not worth acting on). Nothing is queued, so nothing repairs the
-> session before the next release's T−30.
+> **3. WHAT IS OPEN RIGHT NOW: NOTHING.** Master is **`ba0753d`**, the mini-PC is on
+> **`5e399b3`**, **every GitHub issue is closed and no PR is open.** One tapped hold and three
+> untapped offers for 08-29 08:00 PT (§0). Health is 17/19 at 15:50 and **both warns are the
+> documented benign cases**: `autocart.rc_session` (no token, `okta=ALIVE` — the token lives
+> ~1h and is legitimately dead between releases, and a repair would be the cheap
+> cookie-answered one), and `autocart.bot_version` (box `5e399b3` vs web `ba0753d`, **"No
+> bot-side code in the gap"** — the case this file records as not worth acting on).
+>
+> **`detect:ridb` FLIPS TO A THIRD WARN INTERMITTENTLY** — *"recgov: backing off — our
+> throttle breaker is open"*. It read `ok` and `warn` in two samples sixty seconds apart on
+> 08-28. That is the breaker doing its job, not a new fault; do not chase it unless it sticks.
 >
 > **DO NOT RUN `npm run verify` WHILE CI IS RUNNING — INCLUDING WHILE WAITING FOR IT.** Both
 > hit the production DB. On 08-28 a docs-only PR failed on `rc-client-reports.test.mts`

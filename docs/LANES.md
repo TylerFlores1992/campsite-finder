@@ -101,7 +101,13 @@ recorded as fact; the other half would come from evidence quietly disappearing.
 
 ## Migrations
 
-`src/lib/db/migrations/NNN_name.sql`. Currently at **059**, so the next is **060**.
+`src/lib/db/migrations/NNN_name.sql`. **Highest is `070_watch_campgrounds.sql` (side lane);
+the main lane's block 060-069 is FULL** — `069_line_priority.sql` took the last of it on
+2026-08-28.
+
+**So the next migration on either side needs a NEW block claimed out loud.** Do not simply
+take `071`: that is the number both lanes would reach for, and it is exactly the collision
+below.
 
 **Two sessions each writing `060_*.sql` is a collision git merges CLEANLY and Postgres does
 not.** Different filenames, no conflict, both land — and then whichever runner applies them
