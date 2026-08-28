@@ -1626,3 +1626,946 @@ token — worth correcting on the next side session rather than mid-flight.
 This file is continued rather than replaced. §24 corrects §23 in place, and a correction living
 in a different file from the claim it corrects is how the Feature E note got re-derived three
 times.
+
+---
+
+## 25. THE ROUTINES WERE CONSOLIDATED — 7 to 4, AND TWO WERE DUPLICATES NOBODY HAD NOTICED
+
+*Side lane, 2026-08-23 evening. The owner's report: "none of them fire back to a session we are
+still using, a lot flag red a lot and I'm guessing they are stale and crying wolf." All three
+halves of that were correct, and the duplication was visible in the Routines list itself.*
+
+### 25a. TWO EXACT DUPLICATE PAIRS, FIRING THE SAME CRON MINUTE
+
+| kept / rebuilt | duplicate, created 2026-08-13 |
+|---|---|
+| `trig_015nU7…` RC runner pre-flight, `40 14 * * *` | `trig_01DHDm…` "07:40 PT pre-flight", `40 14 * * *` |
+| `trig_01KvxP…` RC 8am hold — did it cart?, `15 15 * * *` | `trig_01SygA…` "RC 08:15 PT outcome", `15 15 * * *` |
+
+The two duplicates were created **two minutes apart** (12:38:52 and 12:40:25) by one session
+that did not know the originals existed — **and CLAUDE.md documents both originals by ID**, in
+the "Two Routines cover this daily" block. So every morning alert had been arriving twice for
+ten days, from a pair of routines the repo's own memory file already named.
+
+**This is §24a's shape one level out**: the fact was on screen (two identical cron expressions
+in the Routines list) and was read past, while the authoritative record sat in a file nobody
+re-checked before creating.
+
+### 25b. `created_via` DECIDES WHAT AN AGENT MAY TOUCH — AND IT IS NOT VISIBLE IN THE UI
+
+Both duplicates were `created_via: "http_api"`, i.e. made through the claude.ai Routines UI.
+**An agent can neither delete nor disable those.** Both calls are refused outright:
+
+```
+delete_trigger: this routine was created via "http_api", not by an agent. Agents can only
+delete routines they created (via create_trigger), or a routine may delete itself from its
+own session.
+update_trigger: … A routine's own session may still disable itself (enabled=false only).
+```
+
+Only `created_via: "meta_mcp"` routines — the ones an agent made — are agent-editable. **So the
+set of routines an agent can INVENTORY is not the set it can ACT on**, and nothing in the list
+view distinguishes them. Budget for the owner having to delete UI-created routines by hand; say
+so up front rather than discovering it halfway through a consolidation. (The owner deleted both
+on request, confirmed by re-listing.)
+
+### 25c. TWO FIELDS ARE CREATE-ONLY, SO "EDIT THE ROUTINE" IS OFTEN "REPLACE IT"
+
+`update_trigger` accepts only `name`, `prompt`, `cron_expression`, `run_once_at`, `enabled` and
+`model`. It **cannot** change:
+
+- **`notifications`** — so adding push to an existing routine needs a delete+recreate.
+- **`persistent_session_id`** — so binding a routine to a session, or RE-POINTING one at a new
+  session, also needs a delete+recreate.
+
+That is why two trigger IDs changed in this pass, and it is the part with an ongoing cost: when
+CampHawk-Main is replaced, the 08:15 routine cannot be edited to follow it. It has to be rebuilt.
+
+### 25d. PUSH AND IN-SESSION ARE MUTUALLY EXCLUSIVE — the design constraint
+
+**The server rejects `notifications` on any routine bound to a session** (self-bind or
+`persistent_session_id`); they are accepted only for `create_new_session_on_fire`. So a routine
+either reaches the phone **or** lands in a conversation someone is reading. Never both.
+
+The split taken, and the reasoning:
+
+- **The 07:40 pre-flight KEEPS push** and stays a fresh session. Its entire product is reaching
+  a human with twenty minutes in which a hold can still be saved. A finding that lands silently
+  in a conversation at 07:40 is worth nothing.
+- **The 08:15 outcome is BOUND** to CampHawk-Main. Nothing can be saved by then — it is a
+  post-mortem — so being read matters more than being pushed.
+
+**A bound routine dies with its session, silently.** The evidence was already in the list: the
+dead `send_later` from 08-11 carries `ended_reason: auto_disabled_session_gone`. Against that,
+the Wheel routine has been bound to `session_01AZmkidxhboQaFN6TDBex2q` since **2026-08-03** and
+last fired **08-21**, so binding is durable exactly as long as the session is. **The failure mode
+is a self-disable with no alarm** — the same shape as the Windows Scheduled Tasks that stopped on
+2026-08-17 and wrote nothing, and the same reason it is recorded here rather than trusted.
+
+### 25e. THE NIGHTLY OPS REVIEW WAS GUARANTEED TO REPORT FALSE PROBLEMS — DISABLED
+
+`trig_01GRLZ…`, cron `7 14 * * *` (07:07 PT). Its prompt is dated **2026-07-28** and two of its
+checks describe a world that no longer exists:
+
+1. *"Feature E accrual … Healthy is ~1,000 rows/hr across ~502 probe targets."* Feature E was
+   **fully stopped 2026-07-30** — all 502 `probe_targets` rows are `active = false` and
+   `PROBE_ENABLED` is `"false"`. It reported a catastrophic-looking zero **every night, by
+   design.**
+2. *"Expect EXACTLY ONE machine started and one stopped."* **Sharding went live 2026-08-02 at
+   `SHARD_COUNT = 2`** — two machines in iad, both running, `min_machines_running` tracking it.
+   The CORRECT state tripped this check nightly.
+
+It also still authorises itself to *"commit and push such fixes to master"*, which
+`docs/LANES.md` (2026-08-15) forbids outright and `.claude/hooks/push-guard.mjs` would block.
+
+**DISABLED, not deleted**, so the run history and the prompt survive for whoever rewrites it.
+Note it still shows a `next_run_at` — that is a stale computed field, not an armed schedule.
+
+### 25f. THE HEALTH WATCH HAD INHERITED THE CI FIXTURE RED, WITH THE DESTRUCTIVE REMEDY ATTACHED
+
+It fired **every 2 hours, push AND email**, and its prompt was otherwise good — it already said
+to stay silent when green. What made it cry wolf was the 08-23 finding it did not know about:
+the health route's own inline `upcoming`/`imminent` counts never received the `REAL_UNIT`
+filter, so **any CI run turns `autocart.rc_session` red** citing *"4 hold(s) ahead and the next
+is within 25 min"*, and the detail prints `mini-pc\rc-login.bat` — **which force-kills the
+Chromium the live RC token lives in.** Every merge fires CI. Twelve chances a day to send
+somebody to destroy a healthy session.
+
+Cut to **every 6 hours** and the prompt now carries three named rules, each for a false alarm
+that has actually happened:
+
+1. **UNREACHABLE IS NOT DOWN** — HTTP 000 or a proxy 403 to CONNECT is the sandbox network
+   policy. Verified 2026-08-23: camphawk.app, `*.supabase.co` and fly.io were ALL 403 at the
+   gateway while the site was fine. Report "could not check — egress blocked", never an outage.
+2. **A `rc_session` fail citing N holds may be FIXTURES** — re-check two minutes later, and
+   never print `rc-login.bat` on that basis. A real hold carries RC's own label (`#W123`); a
+   fixture's `unit_name` starts `TEST · `.
+3. **`rc_session` warn/dead is usually CORRECT** — the token lives ~60 minutes.
+
+The same three went into the new pre-flight prompt, and the fixture rule plus §24a's `TEST · `
+marker and the `claimed = claimed_at ?? released_at` trap went into the new outcome prompt.
+
+### 25g. THE CART CANARY WAS FIRING AT THE RELEASE MINUTE
+
+`trig_012s8e…` ran at `0 15 * * *` = **08:00 PT exactly** — the minute the runner is carting and
+the box is under load. Moved to **14:00 PT** (`0 21 * * *`). Nothing else changed; it remains a
+genuinely valuable check that RC has not altered the cart internals the design depends on.
+
+**Its double-notify was NOT fixed**: the routine carries push+email AND the script itself emails
+the owner via `--notify`, so one failure arrives twice. Removing the routine-level notification
+needs a delete+recreate (25c), which was not worth spending on a cosmetic duplicate.
+
+### 25h. THE END STATE
+
+| Routine | Fires (PT) | Reports to |
+|---|---|---|
+| `trig_01NdJC1SvSDwxZZroAooVKnU` RC pre-flight | 07:40 | **phone** — push + email |
+| `trig_01CzPKmDUz5MC3tbYFGMTS4a` RC 08:15 outcome | 08:15 | **CampHawk-Main**, bound |
+| `trig_01Vmg72qxMMSucjfUERr8rYv` health watch | 23:12 / 05:12 / 11:12 / 17:12 | phone, faults only |
+| `trig_012s8ekj1nEjoQTdRY21PGRM` cart canary | 14:00 | phone, failures only |
+| `trig_01GRLZziuYX38yrYgf2Eq4UA` nightly ops review | — | **DISABLED** |
+
+`trig_01HqLPXsYHF7yBG9GmXe8GCV` (Wheel check-ins) is not CampHawk and was not touched.
+
+Notification volume: **~14 pushes a day down to at most 4 scheduled fires**, three of which are
+silent unless something is genuinely wrong. And the morning sequence no longer collides — it was
+07:07, 07:40 x2, 08:00 and 08:15 x2 inside seventy minutes.
+
+### 25i. DOC DRIFT THIS PASS CREATED, IN A MAIN-LANE FILE
+
+**CLAUDE.md's "Two Routines cover this daily" block names `trig_015nU7BciNU5GKimmgXjvAZG` and
+`trig_01KvxPSzmrwKHZ8CY3tDgbnj`. Both are now DELETED**, replaced by `trig_01NdJC…` and
+`trig_01CzPK…` respectively. Filed as an issue rather than edited, per the one-writer rule.
+
+**And CampHawk-Main was never told** that a routine now fires into its session at 08:15.
+`ListAgents` reports no reachable peers across cloud containers, so `SendMessage` could not
+deliver. Whoever reads this next should say so to that session.
+
+### 25j. AN OPEN HYPOTHESIS WORTH ONE COMMAND
+
+**The routine-fired sessions may share this container's egress block.** The health watch runs in
+`env_01NNXGWqS3cK1KTqhy4dH3JF` — the same environment as this session, which cannot reach
+camphawk.app, supabase.co or fly.io — and it last fired at 02:12:32Z, two minutes after this
+session started and found them all blocked.
+
+If routine sessions are also getting HTTP 000, **a share of the red flags were never about
+CampHawk at all** and the fix is the egress policy, not any routine. The prompts now refuse to
+report a 000 as an outage either way, so the failure direction is safe. But it is untested, and
+the cheap test is to read what the next health-watch firing actually says.
+
+---
+
+## Handover — 2026-08-23 night (side lane)
+
+*Supersedes the evening block above for STATE only; its §25 and the "START HERE" hold entry
+still stand. Read at 20:40 PT.*
+
+### START HERE: the hold releases at 07:58:47 PT and it is an INSTRUMENT
+
+Unchanged from the evening block — **read it there in full.** The one-line version:
+`TEST · 43129`, Morro Bay SP — Lower Section, releases **2026-08-24 07:58:47 PT**, queued by the
+main lane (#176) **to manufacture a ramp for Track A**. The T−3h warm-up opens **~04:59 PT** with
+Okta gone, forcing the ~9.4 GB password Okta trip. **A 9 GB ramp tomorrow morning is the ordered
+outcome, not an incident.** It locks a real campsite; the LANES.md SERIAL rules bind until it
+clears; the updater's 6h release gate shut at 01:58:47 PT.
+
+**Its status could NOT be re-read tonight** — see the environment note below. The last reading
+was `requested` at 14:39 PT.
+
+### THE ENVIRONMENT BLOCKED EVERY LIVE READING — VERIFY YOURS BEFORE DIAGNOSING
+
+```
+camphawk.app/api/health/status  ->  000
+supabase.co                     ->  000
+api.github.com                  ->  200
+```
+
+The agent proxy names it itself: `curl -sS "$HTTPS_PROXY/__agentproxy/status"` lists
+`connect_rejected · "gateway answered 403 to CONNECT"` for `camphawk.app:443`,
+`mraeprivokvmxbvhwbbj.supabase.co:443`, `fly.io:443`, `mcp.vercel.com` and `mcp.sentry.dev`.
+`selective: false`, `toolScoped: false` — a blanket policy. The proxy README says explicitly not
+to retry a 403 but to report it.
+
+**CampHawk is not down. It could not be looked at.** Both readouts were run and died on the
+network rather than on logic (`DB query error: TypeError: fetch failed`), so no hold status, no
+health, no memory series this session. `/rc-status` fails the same way. **Check your own egress
+first**, and never report an outage from a 000.
+
+### State — GitHub-only, read 20:40 PT
+
+| | |
+|---|---|
+| Master | `8cbff92`, identical on origin and locally |
+| Open PRs | **none** (before this branch's) |
+| Open issues | **#175, #174, #76, #14** — unchanged |
+| Mini-PC | `6d4100b` as of the 14:39 PT reading; **not re-verifiable tonight** |
+
+**Three open findings were re-verified in source**, since live state was unavailable:
+
+- **#175 stands** — `rc-keepwarm.mjs:2241` is still `stalledMs > MEM_STALL_MS && freeMb <
+  LOW_RAM_MB`, an AND, with `LOW_RAM_MB = 2000` (`:470`) and `MEM_STALL_MS = 60_000` (`:480`).
+  Free RAM bottomed at 3,191 / 3,328 MB on the two 9 GB ramps, so the arm still cannot fire.
+- **#174 stands** — `CLAUDE.md:2663` and `NEXT-SESSION.md:126` still call hold `45719` a real
+  morning, while `CLAUDE.md:4608` and `:4697` call the same unit synthetic.
+- **The fixture red stands** — `REAL_UNIT` exists only in `src/lib/rc-holds.ts`; the health
+  route's own `upcoming` count is `status IN (…) AND release_at >= now`, unfiltered.
+
+`LINKOUT_BY_STORE` is `{ios: true, android: false}`, as documented.
+
+### What this session did
+
+**Consolidated the Routines, 7 to 4 — §25 above is the write-up.** Nothing in the repo changed
+except this notes file; no code, no migrations, no bot commands, nothing on the box.
+
+The reusable parts, in case §25 is too long to read at 07:30: `created_via: "http_api"`
+routines cannot be deleted OR disabled by an agent (the owner removed both duplicates by hand);
+`update_trigger` cannot change `notifications` or `persistent_session_id`, so those edits are
+delete-and-recreate; and **push and in-session reporting are mutually exclusive** — the server
+rejects notifications on any bound routine.
+
+### Open
+
+- **#174, #175** — main lane's to fold, deliberately left as issues.
+- **CLAUDE.md names two deleted trigger IDs** (§25i) — filed as an issue this session.
+- **CampHawk-Main has not been told** a routine now fires into it at 08:15 (§25i).
+- **#76** — `rc-holds.test.mts`'s fixture sweep deletes a concurrent run's live rows.
+- **#14** — rec.gov timeout cascade.
+- **A CI run can still turn `autocart.rc_session` RED**, printing the destructive
+  `rc-login.bat` remedy. Bounded to the length of a run. Recorded, not fixed.
+- **The live manage token `EQO2oXcQ`** — still unrotated, still in git history. **Owner's call,
+  four sessions running.**
+- **iOS `1.0 (5)`** — awaiting a decision, same binary, rewritten notes. **Release is AUTOMATIC**
+  on approval. A 3.1.1 rejection now is the ANSWER, not a fourth process failure.
+- **The leak is not fixed and remains the standing ask.** Everything shipped is containment or
+  relocation.
+
+### Traps, including one new one
+
+- **`created_via` is invisible in the Routines UI** and decides whether an agent can act. Do not
+  promise a routine cleanup before checking it. **NEW this session.**
+- **Read the readout's `site` column** — `TEST · ` is the one unambiguous fixture marker.
+- **`claimed` in the readout is `claimed_at ?? released_at`** — a time there does not mean
+  claimed. `released` is the successful terminal state.
+- **A health reading goes stale faster than a conclusion drawn from it.**
+- **Do NOT run `npm test`** — production DB, serialized between lanes, and a hold is queued.
+- **The branch name IS the lane token**, and `claude/camphawk-side-lane-status-iij2xm` still does
+  not match `docs/LANES.md`'s `claude/side-<topic>`. Third session running. Worth fixing at the
+  START of a side session, never mid-flight.
+
+
+---
+
+> **STATUS CLAIMS IN THIS SECTION ARE SUPERSEDED BY §28.** The fix shipped the same day
+> (#183, `d842dc0`, 14:36 PT) and BOTH defects are addressed. The measurements below stand;
+> "recorded, not fixed" does not. Read §28 before quoting any of this as current.
+
+## 26. A PARK WATCH SENT 52 MESSAGES IN AN HOUR — `rc_hold_notified_for` IS ONE COLUMN FOR N DIVISIONS
+
+*Side lane, 2026-08-24 midday. Reported by the owner as "Melinda got six texts for her Morro
+Bay watch." It was 52, it was still firing when it was reported, and it is the failure the
+park-watch entry in CLAUDE.md predicted in as many words: "Watch for a duplicate or missing
+alert on that watch specifically."*
+
+~~**MAIN LANE: both bugs below are in `worker/poller.ts` and the fix for the first is a
+migration. Recorded here rather than fixed. The live flood is stopped by a DATA change.**~~
+
+**STRUCK — BOTH BUGS WERE FIXED AND DEPLOYED THE SAME DAY. SEE 26h.** The main lane shipped
+`d842dc0` (#183) at **14:36 PT**, roughly two hours after this was written: migration 067 plus
+`worker/hold-claim.ts`. Read 26h BEFORE acting on anything below, and do not go looking for an
+unfixed defect in `worker/poller.ts` — `claimHoldNotification` no longer lives there.
+
+### 26a. THE MEASUREMENT
+
+```
+watch 336d742c…  melinda.flores0501@yahoo.com  active
+  divisions: rc-2185 Morro Lottery · rc-582 Lower Section · rc-583 Upper Section
+  rc_hold_notified_for = 'rc-583|2026-8-25T8'     <- ONE value, three claimants
+
+coming_soon, 11:40 → 12:42 PT (62 minutes):
+  rc-2185   12 SMS + 12 email
+  rc-583    12 SMS + 12 email
+  ------------------------------------------------
+  52 messages, ALL for site 43191, ALL for one release (Aug 25 08:00)
+```
+
+Every ~5 minutes (`RC_HELD_CHECK_DEFAULT_MS = 300_000`), two divisions each. The release was
+**19 hours away**, so the run rate projected to **~460 more SMS and ~460 more email to one
+person** — against a Sole Proprietor A2P campaign capped near 1,000 segments/day to T-Mobile.
+This was a carrier-filtering risk, not merely an annoyance.
+
+### 26b. ROOT CAUSE — THE NAMESPACING TURNED "FIRST WINS" INTO A ROUND-ROBIN
+
+`loadWatches` expands a park watch to **one row per (watch, campground)**. But
+`rc_hold_notified_for` is **one column on the one `watches` row** (`worker/poller.ts:700`):
+
+```sql
+UPDATE watches SET rc_hold_notified_for = $2
+ WHERE id = $1 AND active = true AND rc_hold_notified_for IS DISTINCT FROM $2
+```
+
+with `key = scope.multi && scope.campgroundId ? `${campgroundId}|${hour}` : hour`.
+
+So per cycle:
+
+```
+rc-2185 : key 'rc-2185|H'  vs stored 'rc-583|H'   -> DISTINCT -> ALERT -> stores its own
+rc-583  : key 'rc-583|H'   vs stored 'rc-2185|H'  -> DISTINCT -> ALERT -> stores its own
+[5 minutes later, both again, forever]
+```
+
+**A single-valued column cannot hold N division markers.** The namespacing was added to stop
+one division *silencing* another — the comment above it says exactly that — and it kept the
+keys apart while leaving them sharing one slot. It converted a suppression bug into an
+amplification bug, which is strictly worse: the first is a missed alert, the second is a
+carrier ban.
+
+**THE SHAPE IS MIGRATION 026 EXACTLY.** The alert claim had this identical defect (one
+timestamp per WATCH) and was fixed by moving to a row per (watch, site). This column needs the
+same move — a row per (watch, campground) — or a JSON map keyed by campground. Either is a
+migration on the release-critical alert path.
+
+**PING-PONG REQUIRES TWO OR MORE DIVISIONS EACH FINDING A HELD UNIT.** That is what makes it
+rare and is why the path survived since migration 070 without firing. See 26d.
+
+### 26c. SECOND BUG — TWO DIVISIONS RETURNED THE SAME UNIT
+
+`rc-583` and `rc-2185` both reported **site 43191**, labelled **"Site #96"**. Ninety-six sits
+inside Upper Section's own 86-140 range and has no business appearing under "Morro Lottery
+sites". So the per-division grids are not filtering to their own units.
+
+**FIXING 26b ALONE STILL LEAVES TWO ALERTS FOR ONE SITE.** They are separate defects and the
+second is not cosmetic — it is the reason a two-division park could ping-pong at all.
+
+### 26d. WHY THE OTHER PARK WATCH DID NOT FLOOD — evidence, not reassurance
+
+`eb886697…` (tylerflores1992@gmail.com) is also a park watch: **rc-582 + rc-583**, marker
+`rc-583|2026-8-25T8`. It alerted **once** at 12:47:16 across three channels and did **not**
+repeat at 12:52.
+
+The discriminator is in the data: **`rc-582` produced ZERO coming_soon in 24 hours.** With only
+one producing division there is nothing to ping-pong against — it claims, the marker matches on
+the next cycle, silence.
+
+- **THAT IS A LIVE CONDITION, NOT A PROPERTY.** If any Lower Section site is locked before the
+  release, this watch starts ping-ponging immediately — and at **3 channels x 2 divisions x 12
+  cycles ≈ 72 messages/hour**, worse than Melinda's, because push is enabled on it.
+- Only **two** active park watches exist. There is no third exposure.
+
+### 26e. THE STOPGAP — a DATA change, reversible, owner-approved
+
+Melinda's watch trimmed to the single division whose site range actually contains #96:
+
+```sql
+DELETE FROM watch_campgrounds WHERE watch_id='336d742c…' AND campground_id <> 'rc-583';
+UPDATE watches SET rc_hold_notified_for='2026-8-25T8' WHERE id='336d742c…';
+```
+
+`multi_campground` is derived — `(COALESCE(array_length(e.ids,1),1) > 1)` — so one row makes it
+false, the key becomes the bare hour, and the marker was pre-set to that bare hour so it settles
+**without one final alert**. Verified through the poller's own expansion: one row, `rc-583`,
+`multi=false`.
+
+**SHE KEEPS the 08:00 availability alert for #96** and loses Lottery/Lower coverage until the
+real fix ships. Re-adding two rows restores it. `watches.campground_id` is still `rc-582`; that
+is the FALLBACK representative and only applies when the division list is empty, so it is
+harmless — but do not read it as the division being polled.
+
+### 26f. THE VERIFICATION WAS WRONG FIRST, AND THAT IS THE REUSABLE PART
+
+The first check asked "any coming_soon in the last 12 minutes?" on a **5-minute cadence**, so it
+necessarily swept up pre-fix rows and printed **`STILL FIRING — 4 in last 12 min`** over a fix
+that had worked. All four were timestamped 12:42:18, before the change.
+
+**A window wider than the interval you are testing cannot answer a before/after question.**
+Re-anchored strictly after the fix: `count since 12:43 = 0`.
+
+**AND SILENCE MEANS TWO THINGS.** "The claim held" and "the poller died" write the identical
+row count. The discriminator was that the **12:47 cycle demonstrably ran** — it alerted a
+DIFFERENT watch in that same cycle — plus `poller.shards 2/2 held` and
+`availability_observations` advancing at 12:45:42. Never report a flood as stopped on absence
+alone.
+
+### 26g. WHAT NOBODY HAD MEASURED, AND WHY IT WENT UNNOTICED FOR AN HOUR
+
+Nothing anywhere counts alerts **per watch**. Every suppression in `worker/claim.ts` is per
+(watch, site) — `RENOTIFY_WINDOW`, `CONTINUOUS_GAP`, `NUDGE_AFTER` — and `claimHoldNotification`
+is per (watch, release hour). A watch emitting 52 messages an hour trips no threshold, appears
+on no health check, and pages nobody. **The owner's phone was the monitoring.**
+
+A per-watch burst ceiling — N alerts per watch per hour, then a digest — would have capped this
+at source regardless of which claim was broken. That is a product decision on the most
+safety-critical path in the repo, so it is recorded, not built.
+
+### 26h. CORRECTION — FIXED AND DEPLOYED THE SAME DAY, AND THEIR FIX IS BETTER THAN MINE
+
+**Written 2026-08-24 21:30 PT, correcting this section's central claim.** Everything above about
+the mechanism and the measurement stands. What is wrong is the disposition: 26a-26g say the
+defects are recorded-not-fixed and that the remedy is a future migration. **Both were fixed and
+deployed on 2026-08-24.**
+
+```
+11:40 - 12:42 PT   the flood (52 messages)          <- measured in 26a
+12:43 PT           side lane trims Melinda's watch  <- the flood stops
+14:36 PT           d842dc0 (#183) committed         <- the REAL fix, main lane
+```
+
+**THE TRIM WAS STILL LOAD-BEARING, AND THE ORDER PROVES IT.** The fix landed nearly two hours
+after the flood stopped, so the stopgap is what ended it — this is not a case of crediting a
+repair to the wrong mechanism. But everything written afterwards about the defect being live was
+wrong from 14:36 onward, **and I repeated it to the owner at ~21:00 PT, seven hours late.**
+
+**HOW I GOT IT WRONG IS THE REUSABLE PART: I READ THE CODE BEFORE A REBASE AND ANSWERED AFTER
+ONE.** `claimHoldNotification` was at `worker/poller.ts:700` when I read it. #183 **moved it** to
+`worker/hold-claim.ts`, and my later `grep` for `rc_hold_notified_for` in `poller.ts` returned
+only the type and the SELECT — which I read as "the column is still there, so the bug is still
+there" instead of "the function has gone somewhere else". **A grep that returns fewer hits than
+before is a signal to find out why, not a confirmation of the previous reading.**
+
+**THEIR FIX IS STRICTLY BETTER THAN THE ONE 26b PROPOSES, AND IT IS WORTH SAYING WHY.** 26b says
+the column needs "a row per (watch, campground) — the same move migration 026 made". That would
+have fixed the round-robin **and left 26c intact**: two divisions reporting the same unit would
+still each hold their own claim and still send two texts for one campsite. The shipped fix keys
+on the **UNIT** instead — `rc_hold_notified_keys text[]`, key `<releaseHour>|<unitId>`, appended
+with `array_append` under a `NOT (... @> ARRAY[key])` guard — so the two divisions that both
+reported unit 43191 now compute the *same* key and only one wins. **One fix, both defects.**
+`releaseHoldClaims` is unit-scoped to match, and `worker/hold-claim.test.mts` carries 7 tests.
+
+**THE DEPLOY GUARD IS WHY NOTHING RE-ANNOUNCED.** Migration 067 backfills a live legacy claim as
+`<hour>|*` and the claim checks that wildcard too, so every watch mid-claim is suppressed for
+that release hour rather than sending one more alert the moment the poller ships. Both watches
+read `["2026-8-25T8|*"]`, which is why restoring divisions produced no alerts.
+
+**BOTH WATCHES ARE RESTORED TO FULL COVERAGE (2026-08-24 21:30 PT).** Melinda's `336d742c` is
+back to all three divisions (`rc-2185`, `rc-582`, `rc-583`); the owner's `eb886697` was never
+trimmed and keeps `rc-582` + `rc-583`. **No stopgap remains in place and nothing is owed.**
+
+**AND THIS WAS CONCURRENT DISCOVERY, NOT A RE-DERIVATION.** CLAUDE.md's own "26 TEXTS IN AN HOUR"
+entry documents the same storm; it did not exist when 26a was measured. Two lanes diagnosed one
+incident within hours of each other without knowing — which is the cost `docs/LANES.md` names,
+arriving in its expensive form. **A one-line message to the other session would have saved a
+duplicated investigation**, and `ListAgents` reports no reachable peers across cloud containers,
+so there is currently no cheap way to send one.
+
+
+---
+
+## Handover — 2026-08-24 midday (side lane)
+
+*Supersedes the 08-23 night block for STATE. §25 (Routines) and §26 (the park-watch flood)
+stand. Read 12:55 PT.*
+
+### EGRESS IS BACK, AND I WAS WRONG ABOUT NEEDING A NEW SESSION
+
+The block was the **CampHawk environment's Network access level**, set to `Trusted` —
+"allowlisted domains only: package registries, GitHub, cloud SDKs". The owner switched it to
+**Custom** with an allow-list, and **it took effect in the ALREADY-RUNNING session**. I had
+said a new session would be required; that was an assumption and it was wrong. Test with
+`curl -s -o /dev/null -w "%{http_code}" https://camphawk.app/api/health/status` rather than
+reasoning about when policy is applied.
+
+Domains added: `camphawk.app`, `*.supabase.co`, `*.fly.io`, `fly.io`, `api.machines.dev`,
+`*.recreation.gov`, `recreation.gov`, `*.reservecalifornia.com`, `*.usedirect.com`,
+`*.tylerapp.com`, `*.frame.claudeusercontent.com`, with "also include default package
+managers" ticked. Edited at **claude.ai/code** → cloud icon above the message box → gear on the
+environment. There is no settings URL for it and no documented mobile-app path.
+
+### THE ONE THING THAT NEEDS A DECISION
+
+**§26 — two bugs in `worker/poller.ts`, main lane's.** The live flood is stopped by a data
+change; the defects are untouched.
+
+1. `rc_hold_notified_for` is one column for N divisions → infinite round-robin. Needs a
+   migration (row per (watch, campground)), the same move migration 026 made.
+2. Two divisions returned the same unit. Fixing (1) alone still sends two alerts for one site.
+
+**AND A LIVE RISK TONIGHT:** `eb886697` (the owner's own Morro Bay watch, rc-582 + rc-583) is
+one locked Lower Section site away from the same flood at **~72 messages/hour**, because push
+is enabled on it. It has not fired because rc-582 has produced zero held units in 24h — a
+condition, not a property. Trimming it to `rc-583` is the same one-line stopgap and was offered,
+not taken.
+
+### State, read 12:55 PT
+
+| | |
+|---|---|
+| Master | `dd2ab82` (#178, #179, #182 landed while this session ran) |
+| This branch | rebased onto it; PR **#180** open, docs only |
+| Open issues | **#175, #174, #76, #14** |
+| Worker | `poller.shards 2/2 held`, `poller.capacity 1/8`, `autocart.rc_runner ok` |
+| Overall health | `degraded` — the ordinary state, every failure non-paging |
+| Routines | 4 active + 1 disabled (§25); 08:15 outcome binds to **CampHawk-Main** |
+
+### What this session did
+
+- **Consolidated the Routines 7 → 4** (§25). Two duplicates were UI-created and had to be
+  deleted by the owner — an agent can neither delete nor disable a `created_via: "http_api"`
+  routine.
+- **Diagnosed and stopped the park-watch flood** (§26). 52 messages in 62 minutes; ~460 more
+  prevented.
+- **Answered the auto-cart-states question** and did not act on it. Summary: adding a UseDirect
+  state's CATALOG is one entry in `USEDIRECT_PROVIDERS` plus one in `data-sources.ts` — genuinely
+  cheap. Adding HOLDS to the 9 states already detected is expensive and needs an account per
+  portal, a cart API host that is **not derivable** (RC's cart is `rdapi.reservecalifornia.com`,
+  a different host from its availability `rdrBase`), and another resident Chromium on the leaking
+  mini-PC. rec.gov auto-cart is already nationwide. **Every live watch is `reservecalifornia` or
+  `ridb`, so a new state's holds serve zero known users today** — measure demand first.
+
+### Open
+
+- **§26's two bugs** — main lane's, not filed as issues.
+- **#174, #175** — still unfolded main-lane corrections.
+- **CLAUDE.md names two deleted trigger IDs** (§25i), and **CampHawk-Main has never been told**
+  a routine fires into it at 08:15 — `ListAgents` shows no reachable peers across containers.
+- **A CI run can still turn `autocart.rc_session` RED** and print the destructive
+  `rc-login.bat` remedy. Recorded, not fixed.
+- **The live manage token `EQO2oXcQ`** — still unrotated. Owner's call, five sessions running.
+- **iOS `1.0 (5)`** — awaiting a decision. Release is AUTOMATIC on approval.
+- **The leak is not fixed** and remains the standing ask.
+
+### Traps
+
+- **A verification window wider than the cadence you are testing cannot answer a before/after
+  question** (§26f). It reported a working fix as broken.
+- **Silence means two things** — "it stopped" and "the poller died". Prove the cycle ran.
+- **`created_via` is invisible in the Routines UI** and decides whether an agent can act.
+- **`TEST · ` in the readout's `site` column** is the one unambiguous fixture marker.
+- **`claimed` in the readout is `claimed_at ?? released_at`** — `released` is the success state.
+- **Do NOT run `npm test`** — production DB, serialized between lanes.
+- **The branch name IS the lane token**, and `claude/camphawk-side-lane-status-iij2xm` still does
+  not match `docs/LANES.md`'s `claude/side-<topic>`. Fourth session running.
+
+
+---
+
+## 27. SUPABASE EGRESS IS 2.1x THE FREE LIMIT, AND 60% OF IT IS ONE 2-SECOND LOOP
+
+*Side lane, 2026-08-24 afternoon. Supabase sent a Fair Use warning: **11.81 GB of 5.5 GB**, grace
+cut to **3 days (Aug 27)**, after which projects return **402** until upgraded. The owner asked
+whether an upgrade was needed. Measured rather than guessed.*
+
+**MAIN LANE: the dominant cost is `scripts/auto-cart-bot/bot.mjs` and the route it polls. The
+immediate lever is an env var on the mini-PC; the real fix is code.**
+
+### 27a. IT IS CALL COUNT, NOT PAYLOAD SIZE
+
+```
+live sample, 60s:      3.4 PostgREST requests / second   =  ~290,000 / day
+cumulative:            16,418,388 requests since 2026-05-22 (stats_reset)
+11.81 GB / ~8.7M req per month  =>  ~1.4 KB per request
+```
+
+1.4 KB is a small JSON body plus HTTP/TLS overhead. **Nothing is shipping large result sets on
+the hot path** — the bill is eight-and-a-half million round trips.
+
+**`pg_stat_statements` IS AVAILABLE AND IS THE INSTRUMENT.** `SELECT calls, rows, query FROM
+pg_stat_statements ORDER BY rows DESC` answers this in one query. Because every call goes through
+the `exec_select` / `exec_dml` RPCs, the top rows are PostgREST's own wrappers and the per-request
+`set_config(...)` — **summing `calls` on `query LIKE 'select set_config%'` gives total API
+requests**, which is the number that maps to the egress bill.
+
+### 27b. THE DOMINANT LOOP — FOUR ROUND TRIPS EVERY TWO SECONDS
+
+`bot.mjs:38` — `const POLL_MS = Number(process.env.POLL_MS || 2000)` — and each roster poll costs
+**four separate database requests**:
+
+| | |
+|---|---|
+| `UPDATE autocart_bot_heartbeat SET beat_at = NOW()` | fire-and-forget liveness beacon |
+| the roster `SELECT` | enrolled users + their pending jobs |
+| `botUpdateState()` | inside `botControlFor()` |
+| `claimBotCommands()` | inside `botControlFor()` — a `Promise.all` of two |
+
+```
+43,200 polls/day x 4  =  ~173,000 requests/day  =  2.0 req/sec
+                          ~59% of the measured 3.4 req/sec
+                          ~7 GB of the 11.81
+```
+
+**THE CADENCE IS CONFIRMED, NOT ASSUMED.** `autocart.bot` read *"last beat 1s ago"*, and
+`autocart_bot_heartbeat.beat_at` advanced **20.1s across a 20s window** with an age of 3.4s at
+sample time. The bot is genuinely polling at two seconds. The 59% is arithmetic on top of that
+(`POLL_MS` read from source x 4 call sites counted in source, over a measured total).
+
+**AND IT IS POLLING FOR ALMOST NOTHING.** Every live watch is `reservecalifornia` or `ridb`, with
+essentially ONE rec.gov watch; `autocart_jobs` holds 73 rows lifetime. Forty-three thousand polls
+a day to service a feed that is nearly always empty.
+
+### 27c. TUNING ALONE DOES NOT GET UNDER 5 GB — the arithmetic, stated so it is not re-derived
+
+```
+POLL_MS 2000 -> 15000 :  173k/day -> ~23k/day
+total                 :  290k/day -> ~140k/day
+projected             :  ~5.7 GB/month     <- still over the 5 GB free limit
+```
+
+**The free tier is simply tight for a 24/7 polling product** with two Fly shards, a mini-PC bot
+and a hold runner. Even after the fix you would sit permanently near the ceiling, and one
+incident clears it — §26's alert flood wrote 52 notifications plus every poller cycle behind it.
+
+**SO THE RECOMMENDATION WAS: UPGRADE *AND* FIX**, which are separate decisions.
+A 402 takes CampHawk dark — no alerting, no 08:00 carts — for paying subscribers, with the App
+Store review live. That is a bad trade against ~$25/mo, and Pro's egress allowance is roughly
+50x the free one. The fix is still worth doing: 43,200 polls/day for one watch is waste whatever
+plan pays for it.
+
+### 27d. THE ONE FACT THAT DECIDES THE TIMING, AND NOBODY IN A SESSION CAN SEE IT
+
+**When does the billing period reset?** The 11.81 GB is ALREADY SPENT — cutting the rate today
+cannot un-spend it. If the cycle rolls before Aug 27 there is room to fix and stay free; if it
+does not, the 402 lands regardless of what changes now. That is on the usage dashboard and it is
+the deciding fact. **Do not tell the owner a tuning change averts the deadline without it.**
+
+### 27e. THE LEVERS, CHEAPEST FIRST
+
+1. **`POLL_MS` on the mini-PC** — env var in `scripts/auto-cart-bot/.env`, read at process start,
+   so it needs a bot restart (`stop-all` then `start-all.bat`) and **no code change and no
+   deploy**. 10-15s costs up to ~13s of rec.gov auto-cart pickup latency on one watch, against a
+   detection loop already running at 15s. The control channel tolerates it (diagnostics arrive a
+   few seconds later) and so does `autocart.bot`, which warns at ~120s.
+2. **The four-round-trips-per-tick shape is the real defect.** The heartbeat write and the two
+   control-channel reads do not need to run on every poll — the heartbeat could be written every
+   Nth tick, and the control channel could ride a longer cadence than the job feed. That is
+   `scripts/auto-cart-bot/` plus `src/lib/bot-control.ts`, i.e. main lane, and it is the same
+   class of finding as `/api/rc-proxy` batching: a hot loop nobody had counted.
+3. **Do NOT reach for the roster query's shape.** It is one `SELECT` returning at most 200 rows
+   and it is not the problem; the problem is that it happens 43,200 times a day alongside three
+   siblings.
+
+### 27f. CATALOGUED WHILE LOOKING, NOT INVESTIGATED
+
+From `pg_stat_user_tables`, worth a look if anyone chases this further:
+
+```
+watch_campgrounds      3,624,469 seq scans on a 5-row table
+users                  1,259,030 seq scans
+watches                1,030,007 seq scans   (34.1M tuples read)
+rc_hold_requests         478,333 seq scans
+campgrounds                9,359 seq scans   (73.4M tuples read)  <- 8,037-row table
+```
+
+Sequential scans on tiny tables are cheap and produce no egress, so **none of this is the bill** —
+but `campgrounds` reading 73 million tuples, and `watch_campgrounds` being scanned 3.6 million
+times, are both worth understanding before the next growth step. Recorded as observations, not
+findings.
+
+### 27g. CLOSED OUT — UPGRADED 2026-08-24, AND THE COSTS TAB HAD NO ROW FOR IT
+
+**The owner upgraded to Supabase Pro, $25/month.** The Aug 27 402 deadline is cleared. Health
+read **18 of 19 ok** immediately after, the single warn being the benign `autocart.bot_version`
+sha drift with nothing bot-side pending. So 27c's "upgrade AND fix" is now half done, and it is
+the half with the deadline on it.
+
+**AND THE ADMIN COSTS TAB HAD NO SUPABASE ROW AND NO FLY ROW AT ALL.** `cost_items` held eight
+rows and the only monthly recurring ones were Vercel ($20) and Claude ($20) — so the page that
+computes **Net/month**, goes red, and says *"Losing money"* was understating recurring cost by
+**$30.11**.
+
+```
+tracked before:  Vercel $20 + Claude $20                                   = $40.00
+actual:          + Supabase $25.00  + Fly.io worker $5.11                  = $70.11
+```
+
+**HOW THE GAP WAS CREATED IS THE REUSABLE PART, AND IT WAS A TIDY-UP.** Migration 024 seeded
+`Supabase` and `Fly.io worker` (along with Clerk, Mapbox and the Twilio number) at **$0**,
+precisely so the operator would just fill in amounts. CLAUDE.md records them being removed —
+*"the '$0.00 providers' note is resolved — 6 rows, none at zero, after a dedupe"* — which was
+the right call for the display and is what left no row and no reminder for two services that
+LATER started costing money. Migration 030 deliberately dropped `ended_at`, so **deleting a row
+is the only way to remove one**, and that is exactly what made the placeholder unrecoverable.
+**A zero-cost row is a reminder; deleting it buys a tidy table and a silent blind spot.**
+
+Both rows re-added, with the `started_at` choices stated so they can be corrected rather than
+trusted:
+
+- **Supabase** — `data`, $25.00/mo, `started_at 2026-08-24`. Exact: the upgrade date.
+- **Fly.io worker** — `hosting`, $5.11/mo, `started_at 2026-08-01`. **This one is a judgement
+  call.** $5.11 is the *upcoming* invoice read from the Fly billing page on 2026-08-24; the
+  prior invoice was **$0.00**, so Fly only just began accruing and dating it to the start of
+  the current billing month is the most defensible reading. It is not a measured start date.
+
+**`POLL_MS` REMAINS OPEN AND IS STILL WORTH DOING.** The upgrade removed the deadline, not the
+waste: 43,200 polls a day at four round trips each, servicing a feed for essentially one rec.gov
+watch. It is now a headroom-and-tidiness job rather than an emergency, which is a better place
+to make the change from — see 27e.
+
+
+---
+
+### Handover addendum — 2026-08-24 afternoon
+
+**§26 IS CORRECTED — SEE 26h. Both defects were FIXED AND DEPLOYED the same day** (`d842dc0`,
+#183, 14:36 PT: migration 067 + `worker/hold-claim.ts`, keyed on the UNIT). The trim at 12:43
+was still what stopped the flood — the fix came two hours later — but §26's "recorded, not
+fixed" framing was wrong from 14:36 onward and I repeated it seven hours late. **Both watches
+are restored to full coverage and nothing is owed.** Multi-division watches WORK.
+
+**§26 IS SUPERSEDED BY §28: the coming-soon fix SHIPPED the same day (#183, `d842dc0`, 14:36
+PT) and both defects are addressed. Multi-division watches WORK. What is left is data — Melinda's
+watch is still trimmed to one division by my stopgap and should be restored to all three, which
+is safe to do now.**
+
+**§27 is CLOSED OUT (see 27g): upgraded to Supabase Pro on 2026-08-24, $25/month, deadline
+cleared, and the admin Costs tab turned out to have no Supabase row and no Fly row — monthly
+recurring was understating by $30.11 and is now $70.11. `POLL_MS` remains open.**
+
+**§27 supersedes nothing; it is new.** Supabase sent a Fair Use warning (11.81 GB of 5.5 GB,
+402 on **Aug 27**) and the cause is measured: **~60% of all database traffic is `bot.mjs`
+polling the roster feed every 2 seconds at four round trips per poll.** Recommendation given
+to the owner was **upgrade AND fix** — tuning alone lands at ~5.7 GB against a 5 GB limit, and
+the 11.81 GB is already spent so no change now averts the deadline.
+
+**The deciding fact nobody in a session can see: when the billing period resets.**
+
+Immediate lever is `POLL_MS` in `scripts/auto-cart-bot/.env` (bot restart, no deploy). The real
+fix — not writing the heartbeat and both control-channel reads on every tick — is main lane's.
+
+
+---
+
+## 28. CORRECTION TO §26 — THE FIX SHIPPED THE SAME DAY, AND I SAID IT HAD NOT
+
+*Side lane, 2026-08-24 evening. §26 says the two coming-soon defects are "untouched" and need a
+migration. **That was true when written and false within two hours**, and I repeated it to the
+owner at ~21:30 as current state. This section is the correction; §26's measurements stand, its
+status claims do not.*
+
+### 28a. WHAT ACTUALLY SHIPPED
+
+**`d842dc0` — #183, committed 2026-08-24 14:36 PT** — *"One campsite is one text"*:
+
+- **Migration 067** adds `watches.rc_hold_notified_keys text[]`, backfilling any live legacy
+  claim as `<hour>|*`.
+- **`worker/hold-claim.ts`** is extracted from `poller.ts` (the same reason `claim.ts` was:
+  importing the poller starts it, so the decision governing how many texts a user gets was
+  untestable where it lived).
+- The claim is now **a SET keyed `<releaseHour>|<unitId>`**, one atomic
+  `UPDATE .. SET array_append(..) WHERE NOT (keys @> ARRAY[key])`.
+- **`worker/hold-claim.test.mts`, 7 tests**, real-DB.
+
+**BOTH of §26's defects are addressed, and the second one by the same stroke.** Keying on the
+UNIT means two divisions reporting the same unit compute the SAME key, so the duplicate
+collapses — there is an explicit test named *"the SAME unit found under two divisions is
+announced ONCE"*. §26c said "fixing the column alone still leaves two alerts for one site"; that
+was right about a campground-keyed fix and does not apply to the unit-keyed one that shipped.
+
+### 28b. HOW I GOT IT WRONG — read pre-rebase, answered post-rebase
+
+I read `worker/poller.ts:683-706` and quoted the single-column `UPDATE` as current. Between that
+read and the answer I ran `git rebase origin/master`, which **moved the function into
+`worker/hold-claim.ts`**. I never re-read. So I quoted code that had not existed in the tree for
+some minutes, with a line number that was by then pointing at something else.
+
+**A LINE NUMBER IS ONLY VALID FOR THE TREE YOU READ IT FROM.** Re-read anything you are about to
+quote as current state after a rebase, a merge, or a fetch — especially in a repo where the other
+lane ships several times a day. Every fact in §26's *measurement* half came from the database and
+is unaffected; every fact in its *status* half came from source and went stale.
+
+### 28c. THE TRIM WAS STILL REAL — the timeline, so neither party's work is misattributed
+
+```
+11:40 - 12:42 PT   the flood: 48 messages, 2 divisions, one site
+~12:43 PT          side lane trims Melinda's watch to rc-583  -> flood stops
+14:36 PT           main lane commits #183, the real fix
+```
+
+**The fix did not exist when the flood was stopped**, so the trim is what stopped it, and the
+~2 hours between them were covered by data rather than code. This was **concurrent discovery, not
+duplicated work** — but the two lanes were both on it without either knowing, which is what
+`docs/LANES.md` exists to prevent and what `ListAgents` returning no reachable peers made
+impossible to avoid here.
+
+### 28d. WHAT IS ACTUALLY LEFT — data, not code
+
+The code is fixed and deployed (`poller.shards 2/2 held`). What remains is the stopgap I applied,
+which is now unnecessary and is costing coverage:
+
+| watch | divisions now | should be | note |
+|---|---|---|---|
+| `336d742c` Melinda | `rc-583` | `rc-582, rc-583, rc-2185` | **trimmed by me; restore** |
+| `eb886697` owner | `rc-582, rc-583` | unchanged | never trimmed; **now safe** |
+
+Restoring Melinda's two rows is two `INSERT`s into `watch_campgrounds`. **It is safe to do now
+rather than after the release**, because the shipped claim is per-unit and the backfilled
+`<hour>|*` wildcard suppresses the 08:00 release for both watches regardless — §26e's
+"re-adding tonight restarts the flood" was reasoning about the OLD code and is superseded.
+
+**NOT DONE IN THIS SESSION**, because it is another user's watch and the correction landed at the
+end of the session rather than in the middle of it.
+
+
+---
+
+## 29. STORE BILLING SETUP — 2026-08-24 evening (side lane)
+
+Two workstreams, both console work, both ending blocked on somebody else. **Docs only — nothing
+in `src/`, `worker/` or any main-lane file was touched.** Branch
+`claude/camphawk-side-lane-status-iij2xm`, PR **#180**.
+
+### 29a. §26's LAST OPEN ITEM IS CLOSED — Melinda's watch IS restored
+
+The tail of §28 ends *"NOT DONE IN THIS SESSION"*, and that sentence is **stale**. Read back
+from the database 2026-08-24, not assumed:
+
+```
+336d742c  Melinda  rep rc-582  parts [rc-2185, rc-582, rc-583]  active
+eb886697  owner    rep rc-582  parts [rc-582, rc-583]           active
+```
+
+**All three divisions are back.** Do not re-run the restore — it is another user's watch, and a
+second pass either duplicates `watch_campgrounds` rows or fails a constraint. Both watches are
+in the state §28 says they should be.
+
+**This is the same shape as §28 itself**: a status sentence that was true when written and false
+by the time it was read, with nothing marking the difference. The remedy is what was done here —
+query the table, don't trust the note.
+
+### 29b. What landed on the stores
+
+Everything both consoles allow. Full detail in `docs/STOREKIT-PLAN.md`, which now opens with a
+**STATE AS OF** block written for exactly this handover.
+
+| | Done tonight | Now waiting on |
+|---|---|---|
+| **Apple** | — | bank + Paid Applications agreement processing |
+| **Play** | merchant account · public merchant profile · account group + declaration · **15% service fee enrolled** · production track set **US-only** | bank micro-deposits, and a build |
+
+### 29c. THE FINDING WORTH CARRYING: Play products need a build, Apple's do not
+
+`Monetize with Play → Products → Subscriptions` offers **only `Upload a new APK`** — there is no
+create button, with every console prerequisite satisfied. Play requires an uploaded binary
+declaring **`com.android.vending.BILLING`**, which arrives with the Play Billing Library.
+Verified in the tree: no billing dependency in `package.json`, and the permission appears nowhere
+outside `node_modules`.
+
+**So Play's order is library → build → upload → products, and it is native work, not console
+work.** Apple creates products with no build at all. Written up as `STOREKIT-PLAN.md` §9a-bis.
+
+### 29d. FIVE CORRECTIONS IN ONE EVENING, ALL THE SAME SHAPE
+
+Recorded together because the pattern is the point, not any one of them:
+
+1. §9d said Google gives 15% *"with no enrolment"* — read off Google's published fee table and
+   never off this account. There is an enrolment.
+2. I told the owner **not to press `Manage account group`**, reasoning the group's existence
+   already answered the associated-accounts question. It opens a **declaration dialog** whose two
+   questions were blank; the advice would have blocked the step it described.
+3. I predicted accepting the service-fee terms was a **separate** step after saving the
+   declaration. Saving carried it.
+4. §9f said the merchant account was the **last** gate on creating products. §9a-bis is a second.
+5. I gave a per-store walkthrough that was right for Apple and unreachable for Play.
+
+**Every one is a state inferred from a published document or a UI's appearance instead of
+opened.** The house rule this repo already has — *presence is not liveness* — restated for
+consoles: **a rate in a table is not a rate on an account, and a screen that looks finished is
+not a finished screen.** `STOREKIT-PLAN.md` now carries a standing note that Apple and Play have
+been collapsed into one shape three times and must not be again.
+
+### 29e. The one place the caution paid — `Affects other tracks` names them if you ask
+
+`Publishing overview` staged the US-only change with an **`Affects other tracks`** badge that
+does not say which. The one track that must not change is **closed testing** — its worldwide
+availability is what the paid tester service requires (`docs/PLAY-STORE.md` §8). Expanding the
+row names them explicitly: **Open testing alone**, *"because they already share country
+targeting with production"*. Closed testing untouched.
+
+**A badge that cannot distinguish a harmless cascade from a damaging one is worth the two
+seconds.** Recorded as `PLAY-STORE.md` §1a with the real console path, since §1 already carried
+a note that its paths had cost two wrong guesses.
+
+### 29f. Not started, deliberately
+
+The migration (§2), the webhook (§5), the product-id → tier mapping and the paywall. All
+**main-lane** files. §9a's proration trap is the expensive one: Play has no subscription groups,
+so upgrade-vs-downgrade is stated by app code and no console screen can show the mistake.
+
+---
+
+---
+
+## 30. PLAY IS FULLY SET UP; THE ONLY BLOCKER LEFT IS A BUILD (2026-08-24, late)
+
+Continues §29. **Google is waiting on nothing.**
+
+```
+merchant account      done          account group + declaration   done
+15% service fee       ENROLLED      production track              US-only, submitted
+bank                  VERIFIED      subscription products         blocked on a build
+```
+
+### 30a. What the bank verification looked like
+
+`GOOGLE CO / ACCTVERIFY / $0.10`, a **single** deposit, entered at *Play Console → Settings →
+Payments profile → the bank card → Verify*. Full note in `STOREKIT-PLAN.md` §9i, including that
+**Apple has no equivalent** — their account goes Active with no deposit, so anyone watching a
+bank statement for an Apple credit is watching for something that never arrives.
+
+### 30b. THE FINDING THAT SHOULD DRIVE THE NEXT SESSION
+
+Written up as `STOREKIT-PLAN.md` **§11a**, and it is not in §3 where it belongs:
+
+**The app is a remote webview.** `capacitor.config.ts` points `server.url` at
+`https://camphawk.app/search`, so the shell wraps the live site. A webview cannot invoke Play
+Billing — the purchase crosses the Capacitor bridge — and the consequence is that **a web deploy
+cannot add purchase capability.** Everything else in this product reaches installed apps on a
+push; this does not.
+
+**So the paywall must detect the PLUGIN, not the platform.** `isNative` is a User-Agent marker;
+it says the shell is CampHawk, not that the shell can buy anything. Gated on `isNative` alone,
+every app installed before the release shows a Buy button that throws. **A missing plugin is
+`unknown`** — the rule §4 already states for a failed entitlement lookup, one layer down.
+
+### 30c. Still nobody's decision but the owner's
+
+**RevenueCat vs `@capacitor-community/in-app-purchases`** (§3, §11e). The billing-permission gate
+strengthens the RevenueCat case; it is still a third party in the payment path and it has not
+been chosen. **Installing one is choosing.**
+
+### 30d. Apple, for contrast
+
+Bank + Paid Applications were still processing at the end of this session. The `Subscriptions`
+page under *MONETIZATION* was never reported back, so **whether Apple's products are creatable is
+unknown** — not blocked, unknown. Apple needs no build for products, so it may well be the store
+that moves first.
+
+Confirmed by reading it back rather than quoting the doc: **US-only is genuinely set on Apple** —
+*App Availability: 1 Available, 174 Not Available*.

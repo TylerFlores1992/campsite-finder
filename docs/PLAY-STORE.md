@@ -71,7 +71,24 @@ Internal testing has no such gate and can be published immediately — do that f
 to prove the AAB uploads cleanly and because it is where the **country restriction** can
 be set today.
 
-## 0c. Production access — APPLIED 2026-08-22 (owner-reported)
+## 0c. Production access — **GRANTED** (confirmed in console 2026-08-24)
+
+> **GRANTED, and read off the console rather than reported second-hand.** The Dashboard shows
+> *"Congratulations! Your app has been granted Google Play production access"*. Production
+> itself reads **Inactive** — access is granted, no production release is published yet.
+> Closed testing remains **Active, 1 track**; internal testing Active; open testing Inactive.
+>
+> **WHAT THIS UNBLOCKS:** §1's US-only country setting, which was verified on 2026-08-01 as
+> impossible ("You don't have access to production yet", no Countries/regions tab). It is now
+> reachable. And **Monetize with Play** is available, so the subscription products can be
+> created — see `docs/STOREKIT-PLAN.md` §9.
+>
+> **AND IT DEFUSES §1's TANGLE RATHER THAN RESOLVING IT.** §1 requires the worldwide closed
+> track to be withdrawn before `LINKOUT_BY_STORE.android` may flip. With Play Billing in the
+> app there is **no steering UI at all**, so that flag stays `false` permanently and the
+> precondition stops being a live decision. Do not withdraw the closed track for its sake.
+
+## 0c-prev. Production access — APPLIED 2026-08-22 (owner-reported)
 
 **The gate in §0 has been cleared and the application is in.** The owner drove the Play
 Console; the side-lane session supplied every copyable answer. Recorded here because it was
@@ -255,6 +272,47 @@ only**. Device locale is not a storefront check. Apple was restricted 2026-07-30
 
 **The flag needs BOTH conditions and still stays dark until then:** US-restricted AND the
 app actually live in a store.
+
+### 1a. THE REAL PATH, AND WHAT "AFFECTS OTHER TRACKS" MEANS (2026-08-24)
+
+Set, and written down because §1 above spent two wrong guesses on console paths.
+
+```
+Test and release -> Production -> Countries / regions -> Add countries / regions
+   -> United States -> Add
+Publishing overview -> Submit 1 change for review
+```
+
+**PRODUCTION HAD ZERO COUNTRIES, so this is an ADD and not a narrowing.** The staged change
+reads `Add 1 country / region: United States` with nothing to remove. That is the clean case:
+the "add the US first, then remove the others" ordering caution — Play refuses a track at zero
+countries — never came up, because there was nothing there.
+
+**IT IS STAGED, NOT APPLIED.** The change lands in *Publishing overview* under **Changes not yet
+submitted for review**, behind ~15 minutes of automated quick checks and then a manual
+`Submit N changes for review`. A country restriction is not instant and does not apply itself.
+
+**`Affects other tracks` EXPANDS AND NAMES THEM — read it rather than guessing.** The triangle
+beside the row opens:
+
+> *The following tracks will be updated because they already share country targeting with
+> production:* • **Open testing**
+
+**Open testing ONLY. CLOSED TESTING IS NOT AFFECTED**, so the closed track's worldwide access —
+which the paid tester service requires (§8) — survives this change untouched. That was the one
+real risk on this screen and the badge does not distinguish it from a harmless one, which is why
+the expansion is worth the two seconds. Open testing shares production's country targeting and is
+irrelevant here: no open beta is running, and §1's table already records that the setting only
+matters if one is.
+
+**`Managed publishing` IS OFF**, so approval puts the change live with no hold-and-release step.
+Correct for a country restriction — but it is a property of the whole console, not of this
+change, so anything else submitted while it is off also goes live the moment it clears.
+
+**THIS IS ONE OF THREE CONDITIONS ON `LINKOUT_BY_STORE.android`, AND THE OTHER TWO ARE STILL
+OPEN** — the closed track's global access must be withdrawn or the track closed, and the app must
+actually be live in production. Doing this does not license flipping the flag; see the block
+above and CLAUDE.md.
 
 ## 2. Listing fields
 

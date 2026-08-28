@@ -439,6 +439,136 @@ workflows:
           else
             echo "apksigner not found; relied on the filename check above"
           fi
+      - name: Assert the Play Billing permission is in the merged manifest
+        # THIS IS THE GATE, not a nicety. `Monetize with Play -> Products -> Subscriptions`
+        # offers only "Upload a new APK" and has NO create button until an uploaded binary
+        # declares com.android.vending.BILLING. Every other prerequisite — merchant account,
+        # account group, 15% enrolment, US-only production, verified bank — was done on
+        # 2026-08-24 and the page still refused. See docs/STOREKIT-PLAN.md 9a-bis.
+        #
+        # NOTHING WE WROTE DECLARES THIS PERMISSION, AND NEITHER DOES THE PLUGIN.
+        # @revenuecat/purchases-capacitor ships an EMPTY android/src/main/AndroidManifest.xml
+        # — read, not assumed, 2026-08-27. The permission can only arrive by AAR manifest
+        # merge, three hops below the thing package.json names:
+        #
+        #   @revenuecat/purchases-capacitor 13.4.2
+        #     -> com.revenuecat.purchases:purchases-hybrid-common:18.32.1  (compile)
+        #       -> com.revenuecat.purchases:purchases:10.18.1              (compile)
+        #         -> com.android.billingclient:billing:8.3.0               (compile)
+        #
+        # So it is a property of a TRANSITIVE dependency: a version bump of
+        # purchases-hybrid-common can remove it without one line of ours changing, and the
+        # first sign would be the Play console quietly refusing to create products again.
+        # That is exactly why targetSdkVersion is asserted above rather than trusted to
+        # Capacitor's default, and this is the same discipline one layer out.
+        #
+        # PLACEMENT IS LOAD-BEARING. The merged manifest is a BUILD OUTPUT, so this cannot
+        # run before the build.
+        #
+        # EXPECTED, NOT READ: that a failing script skips the `publishing:` block, so a
+        # binary without billing never reaches Play. docs.codemagic.io is blocked from the
+        # session that wrote this (403 at the proxy), so that is an INFERENCE — the exact
+        # kind this step exists to stop trusting. It does not have to be true for the first
+        # run to be safe: that run happens on a tree with no billing dependency at all, so
+        # any AAB it uploaded would be the same kind already live at versionCode 18 and
+        # would change nothing. Confirm it from a build log before relying on it further.
+        #
+        # TWO SOURCES, BECAUSE THEY FAIL DIFFERENTLY, and "we could not look" must never
+        # read as "we looked and it was fine" — a green that proves nothing is the failure
+        # this repo keeps paying for. If neither source could be read, this step FAILS.
+        #
+        # HONEST LIMIT: Play receives the AAB, not the APK. Both come out of one Gradle
+        # invocation and one merged manifest, so the APK is strong evidence — but it is
+        # evidence, not identity, which is why the merged manifest is the primary check.
+        # The AAB's own manifest is protobuf-encoded and not greppable; reading it would
+        # need bundletool, which is not guaranteed on this image.
+        script: |
+          set -e
+          cd android
+          PERM=com.android.vending.BILLING
+          CHECKED=0
+          MISSING=""
+
+          # 1. THE MERGED MANIFEST — the merge result itself, and what BOTH artifacts are
+          #    built from. Found rather than hardcoded: AGP moves its intermediates between
+          #    versions, and a stale path would find nothing and report it as no problem.
+          #    `*/merged_manifest*/release/*` matches both the APK and bundle outputs while
+          #    excluding `releaseUnitTest`, which is a different variant.
+          MANIFESTS=$(find app/build/intermediates -type f -name AndroidManifest.xml \
+                        -path '*/merged_manifest*/release/*' 2>/dev/null | sort || true)
+          if [ -z "$MANIFESTS" ]; then
+            echo "FATAL: no merged RELEASE manifest under app/build/intermediates."
+            echo "This is NOT 'the permission is absent' — it is 'this check could not read"
+            echo "anything', and that must never pass as a green. AGP most likely moved the"
+            echo "intermediates path; every AndroidManifest.xml it did produce:"
+            find app/build/intermediates -type f -name AndroidManifest.xml 2>/dev/null | head -30
+            exit 1
+          fi
+          for M in $MANIFESTS; do
+            CHECKED=$((CHECKED + 1))
+            if grep -q "$PERM" "$M"; then
+              echo "  ok       $M"
+            else
+              echo "  MISSING  $M"
+              MISSING="$MISSING $M"
+            fi
+          done
+
+          # 2. THE BUILT APK — what actually shipped, independent of intermediate paths.
+          #    Located exactly as the signing step locates apksigner.
+          APK=$(find app/build/outputs/apk/release -name '*.apk' 2>/dev/null | head -1)
+          AAPT=$(ls -d "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/*/aapt2 2>/dev/null | tail -1)
+          if [ -n "$AAPT" ] && [ -n "$APK" ]; then
+            CHECKED=$((CHECKED + 1))
+            if "$AAPT" dump permissions "$APK" | grep -q "$PERM"; then
+              echo "  ok       $APK (aapt2)"
+            else
+              echo "  MISSING  $APK (aapt2)"
+              MISSING="$MISSING $APK"
+            fi
+          else
+            echo "  skipped  APK check (aapt2=${AAPT:-not found}, apk=${APK:-none})"
+          fi
+
+          if [ "$CHECKED" -eq 0 ]; then
+            echo "FATAL: neither the merged manifest nor the APK could be read."
+            exit 1
+          fi
+          if [ -n "$MISSING" ]; then
+            echo ""
+            echo "FATAL: $PERM is NOT declared by this build:$MISSING"
+            echo "Play will refuse to create subscription products for it — the Subscriptions"
+            echo "page will still offer only 'Upload a new APK' with no create button."
+            echo "Expected it to arrive transitively via com.android.billingclient:billing."
+            echo "Check that @revenuecat/purchases-capacitor is in package.json AND that"
+            echo "'npx cap sync android' ran before the build."
+            exit 1
+          fi
+          echo "$PERM present in $CHECKED source(s)."
+
+          # WHAT ELSE DID THE MERGE BRING? Printed rather than inferred, because the same
+          # dependency tree pulls com.google.android.gms:play-services-ads-identifier, and
+          # docs/PLAY-STORE.md section 4 declares in bold "No advertising or tracking
+          # anywhere. No ad SDK, no ad ID". If AD_ID lands here, that Data Safety form and
+          # Play's separate AD_ID declaration are both wrong — and every green build on this
+          # workflow PUBLISHES, so it would ship before anyone looked.
+          #
+          # DELIBERATELY NOT A FAILURE. Failing would block the billing gate this step
+          # exists to clear, over a policy question that is the owner's to answer.
+          FIRST=$(echo "$MANIFESTS" | head -1)
+          echo ""
+          echo "--- every permission in $FIRST ---"
+          PERMS=$(tr -d '\n' < "$FIRST" | tr '<' '\n' \
+                    | grep '^uses-permission' \
+                    | sed -n 's/.*android:name="\([^"]*\)".*/  \1/p' | sort -u)
+          echo "$PERMS"
+          if echo "$PERMS" | grep -q 'permission.AD_ID'; then
+            echo ""
+            echo "NOTE: com.google.android.gms.permission.AD_ID is in the merged manifest."
+            echo "docs/PLAY-STORE.md section 4 currently declares no ad ID is collected, and"
+            echo "Play asks about AD_ID separately. Either update those declarations or strip"
+            echo "the permission. NOT failing the build for it — see the comment above."
+          fi
     artifacts:
       - android/app/build/outputs/**/*.aab
       - android/app/build/outputs/**/*.apk
