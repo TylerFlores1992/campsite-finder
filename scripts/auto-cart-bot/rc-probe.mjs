@@ -211,6 +211,70 @@ const CART_LADDER = args.has('--cart-ladder');
  * So: fire N mints at once, count DISTINCT keys. Nothing else changes.
  */
 const CONCURRENT_MINT = args.has('--concurrent-mint');
+/**
+ * --cart-lapse: how long does RC hold a cart entry before dropping it BY ITSELF?
+ *
+ * THE NUMBER TWO FEATURES ARE BLOCKED ON, AND NOBODY HAS EVER WATCHED IT HAPPEN.
+ * `RC_CART_HOLD_MINUTES` is 15 and its own comment says it was read off RC's bundle and
+ * never observed; `limits.ts` calls it "the best available number and not a measurement"
+ * and lists the run of confidently-held figures here that turned out wrong.
+ *
+ * WHAT WE DO KNOW BOUNDS IT ONLY FROM BELOW. On 2026-08-25 an unclaimed hold was still in
+ * the cart at **45 minutes**, when our own `expireStaleHolds(45)` removed it and RC
+ * answered HTTP 200. So the bundle's 15 is out by at least 3x and there is no upper bound
+ * at all. That matters because `HOLD_LAPSE_MIN` (180) justifies itself as "far enough past
+ * both that 'RC has released this by itself' is safe to act on even if the real number is
+ * several times what the bundle claims" -- and three of those "several times" are already
+ * spent.
+ *
+ * TWO THINGS UNBLOCK ON IT:
+ *   • `reclaimLapsedHolds` marks a row `expired` at 180 min while KEEPING `cart_key`, and
+ *     nothing ever releases it afterwards -- `expireStaleHolds` only selects `carted`. If
+ *     RC's real lapse is past 180 the site is stranded. (Measured 2026-08-27: this has
+ *     never actually fired. The worst margin was 82 min, and only because a human queued
+ *     `test-login`.) A retry bound for the fix needs THIS number.
+ *   • The expiry cascade -- handing an unclaimed hold to the next person in line -- needs
+ *     to know when the site is genuinely back on the market.
+ *
+ * THE EXPERIMENT. Cart one unit into a FRESH cart, then simply do not let go, and poll the
+ * cart until RC does. Report a BRACKET (last seen present, first seen absent), because a
+ * poll every N minutes cannot do better than that and pretending otherwise is how "~15
+ * minutes" got written down in the first place.
+ *
+ * THE CONTROL IS STEP 2, AND WITHOUT IT THE RUN IS WORTHLESS. Read the cart back and match
+ * the entry before starting the clock. A precart that silently failed would otherwise
+ * report "gone at minute 0" -- an instant, dramatic, completely fake answer. Same reason
+ * `--cart-cap` has its step 3 and `--concurrent-mint` refuses a verdict when no submit was
+ * accepted.
+ *
+ * AN UNREADABLE CART IS NOT AN EMPTY ONE. `listCartEntries` returns `{entries: []}` on a
+ * non-200 or an unparseable body, which is right for cleanup and **exactly wrong here**,
+ * where empty IS the signal -- it would turn one blip into "RC dropped the cart". This mode
+ * therefore uses its own strict read with three outcomes (PRESENT / ABSENT / UNKNOWN) and
+ * an UNKNOWN never advances the verdict. Same rule as `unknown` never rounding to
+ * "signed-out", and the third instance of RC's cart shape faking an empty cart.
+ *
+ * SAFETY -- this locks ONE real campsite for as long as the run lasts, by design:
+ *   • Pick a far-future midweek site nobody wants, and get the id from
+ *     `scripts/rc-test-hold.mts --find`. NEVER invent one: an invented id can collide with
+ *     a real site, which is the rule broken on 2026-08-17.
+ *   • It REFUSES to start if a hold releases within the run's own maximum plus an hour --
+ *     it would otherwise still be holding a cart at 08:00, spending one of the ten cart
+ *     slots the product's capacity is built on.
+ *   • Released in a `finally`, including on a throw, on the max-duration exit, and on
+ *     SIGINT -- an interrupted run is the likeliest way this strands the very site it is
+ *     measuring.
+ *   • `RC_LAPSE_MAX_MIN` caps it (default 240). Reaching the cap is a LOWER BOUND and is
+ *     reported as one, never as "RC holds carts forever".
+ *
+ *   RC_LAPSE_UNIT=12345 RC_ARRIVAL=2026-12-15 RC_NIGHTS=1 \
+ *     node rc-probe.mjs --cart-lapse --headful
+ */
+const CART_LAPSE = args.has('--cart-lapse');
+/** Minutes between cart reads. The answer can only ever be this precise. */
+const LAPSE_POLL_MIN = Number(process.env.RC_LAPSE_POLL_MIN ?? 5);
+/** Give up after this long and report a LOWER BOUND. */
+const LAPSE_MAX_MIN = Number(process.env.RC_LAPSE_MAX_MIN ?? 240);
 
 /**
  * A MODE FLAG THIS BUILD DOES NOT KNOW IS AN ERROR, NOT A NO-OP.
@@ -224,7 +288,7 @@ const CONCURRENT_MINT = args.has('--concurrent-mint');
  * quiet window, or a human), so this is the normal state of things rather than an edge case.
  */
 const KNOWN_FLAGS = new Set([
-  '--cart-cap', '--cart-ladder', '--concurrent-mint', '--headful', '--handoff', '--release',
+  '--cart-cap', '--cart-ladder', '--concurrent-mint', '--cart-lapse', '--headful', '--handoff', '--release',
   '--cart', '--capture', '--real-profile', '--test-login', '--save-login', '--find',
 ]);
 for (const a of process.argv.slice(2)) {
@@ -1463,6 +1527,209 @@ try {
           catch {}
         }, savedKey);
         log('   restored the session\'s cart pointer.');
+      }
+    }
+  }
+
+  if (signedIn && CART_LAPSE) {
+    const unitId = String(process.env.RC_LAPSE_UNIT || '').trim();
+    const arrival = process.env.RC_ARRIVAL;
+    const nights = Number(process.env.RC_NIGHTS ?? 1);
+    if (!unitId || !arrival) {
+      log('\nSkipping --cart-lapse: set RC_LAPSE_UNIT and RC_ARRIVAL (see header).');
+      log('   Get the unit id from `scripts/rc-test-hold.mts --find` -- never invent one.');
+    } else {
+      step(6, 'How long does RC hold a cart entry BY ITSELF?');
+      log(`   Carting unit ${unitId} for ${arrival} (${nights} night) into a FRESH cart,`);
+      log(`   then reading the cart every ${LAPSE_POLL_MIN} min for up to ${LAPSE_MAX_MIN} min.`);
+      log('   THIS LOCKS ONE REAL CAMPSITE for the whole run. It is released at the end.\n');
+
+      // REFUSE NEAR A RELEASE. This run holds a cart for hours; at 08:00 that is one of the
+      // ten cart slots `RC_HOLD_CAPACITY` is built on, spent on a measurement. The feed is
+      // the only thing that knows, and an UNREACHABLE feed refuses too -- "we could not
+      // find out" is not permission, the same rule the updater's release check follows.
+      const guard = await (async () => {
+        const token = process.env.AUTOCART_TOKEN;
+        if (!token) return { ok: false, why: 'no AUTOCART_TOKEN, so the release check cannot run' };
+        try {
+          const base = (process.env.CAMPHAWK_URL || 'https://camphawk.app').replace(/\/$/, '');
+          const res = await fetch(`${base}/api/auto-cart/rc-holds`, {
+            headers: { authorization: `Bearer ${token}`, 'x-bot-role': 'rc-probe' },
+          });
+          if (!res.ok) return { ok: false, why: `the feed answered ${res.status}` };
+          const j = await res.json();
+          if (!j?.nextRelease) return { ok: true, why: 'no hold is queued' };
+          const mins = (Date.parse(String(j.nextRelease).replace(' ', 'T')) - Date.now()) / 60000;
+          if (!Number.isFinite(mins)) return { ok: false, why: `could not read nextRelease (${j.nextRelease})` };
+          const need = LAPSE_MAX_MIN + 60;
+          if (mins > 0 && mins < need) {
+            return { ok: false, why: `a hold releases in ${Math.round(mins)} min and this run needs ${need}` };
+          }
+          return { ok: true, why: `the next release is ${Math.round(mins)} min away` };
+        } catch (e) {
+          return { ok: false, why: `the feed was unreachable (${e.message})` };
+        }
+      })();
+      if (!guard.ok) {
+        log(`   x REFUSING TO START -- ${guard.why}.`);
+        log('     This probe holds a real cart for hours; starting it blind to the next');
+        log('     release is how a measurement costs a cart slot at 08:00. Re-run when a');
+        log('     release is further away, or lower RC_LAPSE_MAX_MIN.');
+      } else {
+      log(`   release check: ${guard.why}.\n`);
+
+      const savedKey = await page.evaluate(() => {
+        try { return localStorage.getItem('shoppingCartKey'); } catch { return null; }
+      });
+      /** Set once the cart is confirmed to hold our entry; drives the `finally` release. */
+      let held = null;
+      let onSigint = null;
+      try {
+        const r = await precartInPage(page, { unitId: Number(unitId), arrival, nights, cartKey: NO_CART });
+        const cartKey = r?.submitted?.v?.cartKey || r?.finalKey || null;
+        const err = r?.submitted?.v?.error || r?.error || '';
+        // (placeId, facilityId) off the LOAD response -- RC's cart entries carry NO unit
+        // field, and matching on the unit id is the mistake that reported an empty cart for
+        // a full one three times and left six real campsites locked.
+        const locked = (() => {
+          try { return (JSON.parse(r.loadedFull)?.Result ?? {}).LockedShoppingCart ?? null; }
+          catch { return null; }
+        })();
+        log(`   precart: cart ${cartKey ? String(cartKey).slice(0, 8) + '...' : '(none)'}` +
+            `${err ? ` -- ${String(err).slice(0, 90)}` : ''}`);
+
+        const headers = await page.evaluate(() => {
+          const ls = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+          const t = ls('ssoAccessToken') || ls('accessToken');
+          return { 'Content-Type': 'application/json', accesstoken: t, authorization: 'Bearer ' + t,
+                   installationsidentity: 'cali', storeid: '111' };
+        });
+
+        /**
+         * PRESENT / ABSENT / UNKNOWN -- never the two-valued read.
+         *
+         * `listCartEntries` collapses "RC said the cart is empty" and "we could not read the
+         * cart" into `entries: []`. That is correct for cleanup and fatal here, because
+         * ABSENT is the thing being measured: one 502 would end the run with a fabricated
+         * number. So this parses for itself and treats any shape it does not understand as
+         * UNKNOWN.
+         */
+        const readCart = async () => {
+          try {
+            const resp = await ctx.request.post(CART_LOAD, {
+              headers, data: { shoppingCartKey: cartKey }, timeout: 30_000,
+            }).catch(() => null);
+            if (!resp) return { state: 'UNKNOWN', why: 'the request threw' };
+            if (!resp.ok()) return { state: 'UNKNOWN', why: `HTTP ${resp.status()}` };
+            let parsed;
+            try { parsed = JSON.parse(await resp.text()); }
+            catch { return { state: 'UNKNOWN', why: 'the body did not parse' }; }
+            const res = parsed?.Result;
+            if (res == null) return { state: 'UNKNOWN', why: 'no Result in the response' };
+            const list = res.CartEntry?.$values ?? (Array.isArray(res.CartEntry) ? res.CartEntry : null);
+            if (!Array.isArray(list)) return { state: 'UNKNOWN', why: 'CartEntry was not a list' };
+            const hit = locked
+              ? list.find((e) => Number(e.PlaceId) === Number(locked.PlaceId) &&
+                                 Number(e.FacilityId) === Number(locked.FacilityId))
+              : null;
+            return { state: hit ? 'PRESENT' : 'ABSENT', count: list.length, entryKey: hit?.CartEntryKey ?? null };
+          } catch (e) {
+            return { state: 'UNKNOWN', why: e.message };
+          }
+        };
+
+        // THE CONTROL. Without it a failed precart reports "gone at minute 0".
+        const first = await readCart();
+        if (first.state !== 'PRESENT') {
+          log(`   x THE QUESTION WAS NEVER REACHED -- the cart does not hold our entry`);
+          log(`     (read back: ${first.state}${first.why ? ` -- ${first.why}` : ''}).`);
+          log('     Nothing was measured and nothing is being held. Check the unit id is real');
+          log('     and bookable for that date (`rc-test-hold.mts --find`), and that RC_ARRIVAL');
+          log('     is a date RC will accept. Do NOT read this as "RC dropped it instantly".');
+        } else {
+          held = { cartKey, entryKey: first.entryKey };
+          // Release on Ctrl-C too. An interrupted run is the likeliest way this strands the
+          // campsite it exists to measure, and `finally` does not run on SIGINT.
+          onSigint = () => {
+            log('\n   interrupted -- releasing the site before exiting.');
+            releaseEntry(ctx.request, headers, held.cartKey, held.entryKey)
+              .then((x) => log(`   released -> HTTP ${x.status}`))
+              .catch(() => log(`   x COULD NOT RELEASE -- cart ${held.cartKey}, entry ${held.entryKey}`))
+              .finally(() => process.exit(130));
+          };
+          process.once('SIGINT', onSigint);
+
+          const started = Date.now();
+          const mins = () => (Date.now() - started) / 60000;
+          let lastPresent = 0;
+          let firstAbsent = null;
+          let unknowns = 0;
+          log(`   t+0.0 min  PRESENT (cart holds ${first.count})  -- clock started\n`);
+
+          while (mins() < LAPSE_MAX_MIN) {
+            await page.waitForTimeout(LAPSE_POLL_MIN * 60_000);
+            const t = mins();
+            const c = await readCart();
+            if (c.state === 'PRESENT') {
+              lastPresent = t;
+              if (firstAbsent != null) {
+                // Worth its own line: a cart that came BACK means one of the reads was
+                // lying, and the bracket below would have been wrong.
+                log(`   t+${t.toFixed(1)} min  PRESENT again -- the ABSENT at t+${firstAbsent.toFixed(1)} was spurious`);
+                firstAbsent = null;
+              } else {
+                log(`   t+${t.toFixed(1)} min  PRESENT (cart holds ${c.count})`);
+              }
+            } else if (c.state === 'ABSENT') {
+              if (firstAbsent == null) {
+                firstAbsent = t;
+                log(`   t+${t.toFixed(1)} min  ABSENT -- confirming on the next read`);
+              } else {
+                log(`   t+${t.toFixed(1)} min  ABSENT again -- confirmed\n`);
+                log(`+ RC DROPPED THE CART BETWEEN t+${lastPresent.toFixed(1)} AND t+${firstAbsent.toFixed(1)} MINUTES.`);
+                log(`  The poll interval is ${LAPSE_POLL_MIN} min, so that bracket is the whole precision.`);
+                log(`  RC_CART_HOLD_MINUTES is ${'15'} and was never observed; this is the observation.`);
+                held = null; // RC let go; there is nothing left to release.
+                break;
+              }
+            } else {
+              unknowns += 1;
+              // NOT counted as either. One blip must never become the answer.
+              log(`   t+${t.toFixed(1)} min  unknown -- ${c.why} (not counted)`);
+            }
+          }
+
+          if (held && firstAbsent == null) {
+            log(`\n! NO LAPSE IN ${LAPSE_MAX_MIN} MINUTES -- this is a LOWER BOUND, not the answer.`);
+            log(`  RC still held the entry at t+${lastPresent.toFixed(1)} min. Re-run with a larger`);
+            log('  RC_LAPSE_MAX_MIN to bound it from above. Do NOT record "RC holds carts');
+            log('  forever" -- nothing here says that.');
+          }
+          if (unknowns) log(`  (${unknowns} read(s) could not be interpreted and were skipped.)`);
+        }
+      } finally {
+        if (onSigint) process.removeListener('SIGINT', onSigint);
+        if (held) {
+          try {
+            const h = await page.evaluate(() => {
+              const ls = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+              const t = ls('ssoAccessToken') || ls('accessToken');
+              return { 'Content-Type': 'application/json', accesstoken: t, authorization: 'Bearer ' + t,
+                       installationsidentity: 'cali', storeid: '111' };
+            });
+            const rel = await releaseEntry(ctx.request, h, held.cartKey, held.entryKey);
+            log(`\n   released unit ${unitId} from ${String(held.cartKey).slice(0, 8)}... -> HTTP ${rel.status}`);
+          } catch (e) {
+            log(`\n   x COULD NOT RELEASE unit ${unitId}: ${e.message}`);
+            log(`     Remove it by hand -- cart ${held.cartKey}, entry ${held.entryKey}.`);
+          }
+        }
+        await page.evaluate((k) => {
+          try { if (k) localStorage.setItem('shoppingCartKey', k); else localStorage.removeItem('shoppingCartKey'); }
+          catch {}
+        }, savedKey);
+        log('   restored the session\'s cart pointer.');
+      }
       }
     }
   }

@@ -16,8 +16,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const SRC = readFileSync('scripts/auto-cart-bot/rc-probe.mjs', 'utf8');
+// SCOPED TO THIS MODE'S BLOCK, AND THE END ANCHOR IS LOAD-BEARING. It used to run to
+// `if (signedIn && (CART_CAP || CART_LADDER))`, which was the next block at the time;
+// `--cart-lapse` was then inserted between the two, and because that mode ALSO refuses a
+// verdict with the words "THE QUESTION WAS NEVER REACHED", deleting this block's own copy
+// left every assertion below still matching. Verified 2026-08-27: the suite passed 15/15
+// against a probe whose concurrent-mint verdict had been removed. Anchor on the NEXT block,
+// whatever it is, and re-check this line when one is added.
 const BLOCK = SRC.slice(SRC.indexOf('if (signedIn && CONCURRENT_MINT)'),
-                        SRC.indexOf('if (signedIn && (CART_CAP || CART_LADDER))'));
+                        SRC.indexOf('if (signedIn && CART_LAPSE)'));
 const code = BLOCK.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
 
 test('the mints actually overlap', () => {

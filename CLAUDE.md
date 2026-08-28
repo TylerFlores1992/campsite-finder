@@ -3922,6 +3922,55 @@ status counts: expired=34  offered=5  failed=5  released=1
 - **The cheap containment needs no number**: raising `HOLD_LAPSE_MIN` widens the window the
   session has to recover in, and it is one env var. That is a decision, not a tidy-up.
 
+#### `rc-probe.mjs --cart-lapse` IS BUILT TO TAKE THAT MEASUREMENT (2026-08-27) — NOT YET RUN
+Cart one unit into a FRESH cart, then simply do not let go, and poll until RC does. It
+reports a **bracket** (last seen present, first seen absent), because a poll every N minutes
+cannot do better and pretending otherwise is how `15` got written down in the first place.
+
+    RC_LAPSE_UNIT=<from --find> RC_ARRIVAL=2026-12-15 RC_NIGHTS=1 \
+      node rc-probe.mjs --cart-lapse --headful
+
+- **DELIBERATELY NOT THROUGH THE HOLD PIPELINE.** A queued hold is released by
+  `expireStaleHolds(45)` at minute 45, so it can never measure past the number we already
+  have — and raising that default would change production behaviour for every user to run an
+  experiment. The probe uses `.rc-probe-profile`, so it does not take the keep-warm's
+  Chromium either.
+- **THE CONTROL IS THE READ-BACK BEFORE THE CLOCK STARTS.** A precart that silently failed
+  leaves an empty cart, and polling that reports RC dropping it within seconds — an instant,
+  dramatic, entirely fabricated answer to the one question being asked. It refuses with
+  `THE QUESTION WAS NEVER REACHED` instead. Same discipline as `--cart-cap`'s step 3.
+- **AN UNREADABLE CART IS NOT AN EMPTY ONE, AND THIS IS THE THIRD TIME.**
+  `listCartEntries` returns `{entries: []}` on a non-200 or an unparseable body and
+  `findCartEntry` returns `{found: false}` on any throw — right for CLEANUP, fatal here,
+  where ABSENT is the signal. One 502 would become "RC dropped the cart". The mode does its
+  own strict read with **PRESENT / ABSENT / UNKNOWN**, an UNKNOWN advances nothing, and a
+  first ABSENT only arms a confirmation. A cart that comes BACK is logged as spurious rather
+  than quietly dropped, because it means one of the two reads was lying.
+- **IT REFUSES TO START within `RC_LAPSE_MAX_MIN + 60` of a release**, and refuses just as
+  hard when the feed is unreachable — "we could not find out" is not permission. Holding a
+  cart across 08:00 spends one of the ten slots `RC_HOLD_CAPACITY` is built on.
+- **RUNNING OUT OF TIME IS A LOWER BOUND** and says so. "RC holds carts forever" is the same
+  class of claim as the 15 this replaces.
+- **It locks ONE real campsite for the run.** Far-future midweek, id from
+  `scripts/rc-test-hold.mts --find` — **never invented**, which is the 2026-08-17 rule. It
+  releases in a `finally`, on the max-duration exit, and on **SIGINT** (an interrupted run is
+  the likeliest way this strands the site it is measuring, and `finally` does not cover it).
+- `worker/cart-lapse.test.mts`, 15 tests, **ten mutations each verified to apply and to
+  fail.** Two survived the first round and both were the same recorded mistake — pinning a
+  CONDITION rather than what it returns. `/!resp\.ok\(\)/` passed against a branch flipped
+  from UNKNOWN to ABSENT, and `ok: false` counted `>= 4` passed against the unreachable-feed
+  branch flipped to `ok: true` with four refusals still behind it. **A count is not a
+  pairing.** Three more failed at baseline by describing a shape the probe does not have
+  (a `state:` key that is really a ternary, a `} else {` that first occurs far above, and
+  Playwright's `ok()` where this branch uses `fetch`'s `ok` property).
+- **AND IT BROKE A NEIGHBOURING GUARD BY BEING INSERTED, WHICH IS THE 25th TIME.**
+  `concurrent-mint.test.mts` sliced from its own block to `if (signedIn && (CART_CAP ||
+  CART_LADDER))`, and `--cart-lapse` went between them — so its `BLOCK` swallowed the new
+  code, which contains the same `THE QUESTION WAS NEVER REACHED` string. **Verified: the
+  suite passed 15/15 against a probe whose concurrent-mint verdict had been deleted.**
+  Re-anchored on the next block and re-verified failing. A guard that slices between two
+  anchors is broken by anything inserted between them, silently and in the passing direction.
+
 ### A PASSWORD SIGN-IN CAN BE CHEAP — 32 SECONDS AND ZERO MEMORY (2026-08-26)
 The same rehearsal is a controlled reading of the trip this file calls the expensive one:
 
@@ -3979,6 +4028,14 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
 > mutation-verified guards, full suite **1258/1258**. Details in the five sections directly
 > above. **Migration 068 is APPLIED to production and read back; the next main-lane number
 > is 069.**
+>
+> **THE NEXT ACTION IS ONE PROBE RUN, AND IT NEEDS A BOX AND A QUIET MORNING.**
+> `rc-probe.mjs --cart-lapse` (built 2026-08-27, **never run**) measures how long RC holds a
+> cart by itself — the number that unblocks both the stranding fix and the expiry cascade,
+> and the one `RC_CART_HOLD_MINUTES = 15` has been guessing at since the beginning. It is
+> **bot-side**, so the mini-PC must update first, and it **refuses to start** within
+> `RC_LAPSE_MAX_MIN + 60` of a release. Get the unit id from `rc-test-hold.mts --find`;
+> it locks one real campsite for the run.
 >
 > **THE EXPIRY CASCADE IS NO LONGER BLOCKED ON A MEASUREMENT — only on the owner's call.**
 > It was gated on RC's real cart lapse (*"~15 minutes, never observed"*, against
