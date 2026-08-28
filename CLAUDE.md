@@ -598,6 +598,43 @@ exists to tell apart differed only in hue. **Route any new status through
 rather than relying on red and a minus sign). Preset `admin-health` in
 `scripts/screenshot-component.mts` renders the tab with a warn and a fail in view.
 
+## THE EGRESS-CASCADE WATCHDOG (issue #14) — DONE SINCE JULY, UNGUARDED UNTIL 2026-08-27
+On 2026-07-22 a rec.gov-only throttle became a **full detection outage**: rec.gov shifted from
+fast 429s to slow 10s timeouts, the hanging sockets starved the pool, and every OTHER source
+began timing out too — while the **Supabase heartbeat kept succeeding**, so `msSinceAlive()`
+stayed fresh and the liveness watchdog never fired. Alerting was silently dead and a human
+typed `flyctl machine restart`.
+- **ALL FIVE ITEMS ON #14 ARE RESOLVED, and the issue text predates the scheduler by nine
+  days — audit the TREE, not the ticket.** (1) `RECGOV_TIMEOUT_MS` is **5000**, not 10s, with
+  a comment citing #14. (2) The concurrency cap is the scheduler's token bucket plus
+  single-flight, which is stronger than the semaphore the issue asked for. (3) Timeouts
+  already count toward the breaker — `recordRecgovOutcome(isThrottleError(err), …)`.
+  (4) `worker/liveness.ts` carries the external signal and the poller **exits 1** on it so Fly
+  reboots. (5) Proxying rec.gov was investigated and REJECTED.
+- **TWO EXTERNAL SIGNALS, AND THE SECOND IS THE ONE THAT MATTERS.** A 2026-07-24 outage had
+  ~all detects timing out while an *occasional* success kept resetting the zero-success timer,
+  so a staleness check alone never tripped and a human restarted it again. `msSinceExternalFetchOk()`
+  catches a hard wedge; **`externalFetchWedged()` — a rolling failure RATIO — is the only thing
+  that can see a FLAPPING one.** Do not "simplify" the pair back to one.
+- **IT SHIPPED WITH NOTHING TESTING IT FOR FIVE WEEKS, and the exposed half is the WIRING.**
+  `externalFetchWedged` can be perfect while `markExternalFetchResult(false)` quietly leaves
+  `canary.ts` — the ratio then can never reach its threshold, every test of the pure function
+  still passes, and the flapping watchdog is unreachable. Fifth instance of the
+  fix-present-and-inert shape. `worker/egress-watchdog.test.mts` pins both outcomes recorded,
+  both checks wired to an exit, `restart_policy` not `"no"` (an exit is worthless if Fly does
+  not bring the VM back), and the thresholds bounded from both sides.
+- **TWO DEFECTS IN THAT TEST ARE WORTH MORE THAN THE TEST.** (a) It was **order-dependent
+  through module state** — ten failures over a 60s window returned FALSE because earlier tests
+  had left eleven successes in the same window (real ratio 0.73). **A cache-busted dynamic
+  import does NOT isolate it** — measured; tsx dedupes the module regardless of the query
+  string. Fixed with a time barrier rather than a test-only reset export: production code
+  should not grow a hatch to make a test easier to write. (b) The staleness assertion compared
+  two values that were both ~0, so `0 >= 0` held and the mutation making a FAILURE reset the
+  clock **survived**. Ageing the success first is what separates the cases.
+- **WHAT IS STILL UNPROVEN: that any of it fires in anger.** The acceptance criterion is
+  behavioural and nobody can stage a rec.gov cascade. The guards prove the mechanism is wired,
+  not that the reboot has ever happened.
+
 ## rec.gov 429s — four fixes in one loop (2026-07-30)
 The breaker was flapping six times in thirteen minutes, so rec.gov watches went
 unchecked ~40% of the time and the "Recreation.gov isn't responding" banner flapped

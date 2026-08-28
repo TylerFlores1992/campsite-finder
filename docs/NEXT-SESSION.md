@@ -28,9 +28,10 @@
 > gaps split the segment under the 400 MB floor. **Do NOT try to stage one**; §2b has the
 > measurement that retires the obvious plan.
 >
-> **3. WHAT IS OPEN RIGHT NOW.** Master is **`87b5f99`**. **PR #203** (fixture sweep scope,
-> closes #76) is open and green-pending — `worker/` test files only, so it does NOT fire a
-> worker deploy. No live holds; four untapped offers for tomorrow.
+> **3. WHAT IS OPEN RIGHT NOW.** Master is **`50cafa8`**. **PR #204** is the only open PR
+> (Routine IDs, the nights answer, and a guard for the egress watchdog — closes #181 and
+> #14); docs plus one `worker/` test file, so it does NOT fire a worker deploy. **Every
+> GitHub issue is closed or closing.** No live holds.
 >
 > **4. MERGING #180 MEANS THE NEXT ANDROID BUILD FAILS, ON PURPOSE.** Already merged.
 > `codemagic.yaml` asserts `com.android.vending.BILLING` reaches the merged manifest, and
@@ -38,7 +39,24 @@
 > lands. Play's Subscriptions page has no create button without that permission, so the gate is
 > the point; it does block an Android hotfix meanwhile.
 >
-> Track B (§6) is still unstarted and still wants its own word.
+> **5. THE REAL WORK LEFT, in the order it is worth doing.**
+> - **Track B (§6)** — replay the Okta trip over `ctx.request`, no renderer. Designed,
+>   deliberately not started, **needs the owner's explicit go-ahead.** It is surgery on the
+>   one path between a queued hold and a missed cart.
+> - **The trail's TRIGGER** (§2). Two ramps missed. The next move is the trigger, not the
+>   sampler — and the owner has said they do not want more aftermath instrumentation, so
+>   ask before building.
+> - **`rankHoldLine`'s note never reaches a row tapped after ranking.** Diagnostic only
+>   (`last_attempt_note` has no user-facing reader), but it means a broken contest reads as
+>   two clean carts in the readout. Small.
+> - **`reclaimLapsedHolds` marks a hold `expired` while KEEPING `cart_key`**, so it never
+>   releases on RC. The premise that blocked it — "RC's cart lapse is unmeasured" — is
+>   **retired**: on 08-25 `expireStaleHolds(45)` released an unclaimed hold at exactly 45
+>   minutes, HTTP 200, with the entry key. The moment a site returns to the market is one we
+>   choose and already know.
+> - **`cart read back` is unproven on ANDROID.** Needs a human with the app on a real hold.
+> - **A watch created before migration 070 covers less of a park than its name suggests** —
+>   see the entry in CLAUDE.md. Backfill or say so on the card; both are decisions.
 
 *Delete this file once the trail has captured a real ramp AND the App Store version has a
 decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
