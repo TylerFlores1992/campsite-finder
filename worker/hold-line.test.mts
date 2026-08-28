@@ -61,7 +61,12 @@ function pacific(minutesFromNow: number): string {
 let campgroundId = '';
 
 async function sweep() {
-  await mutate(`DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_tln%'`, []);
+  // AGE-GATED (#76): a per-suite prefix stops another suite wiping these rows and
+  // does nothing about a second run of THIS suite, which CI produces on every push.
+  // `offered_at` is the row's birth time and no status change moves it, so a live
+  // run's rows are seconds old and protected while real litter is minutes old.
+  await mutate(`DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_tln%'
+                 AND offered_at < NOW() - interval '10 minutes'`, []);
   await mutate(`DELETE FROM watches WHERE id = ANY($1::text[])`, [[W_EARLY, W_LATE]]);
   await mutate(`DELETE FROM users WHERE id = ANY($1::text[])`, [[EARLY, LATE]]);
 }
