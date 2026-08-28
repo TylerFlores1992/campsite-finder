@@ -4050,6 +4050,58 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
   cadence of ~5-7h before that. The trail has still never seen one. **That is not a cure**;
   every "not reproduced this session" reading in this file was a window that missed one.
 
+### `reclaimLapsedHolds` KEPT `cart_key` AND NEVER USED IT — the premise it rested on is retired (2026-08-28)
+Its own header already said the row's `cart_key`/`cart_entry_key` were kept "so a later
+healthy pass could still try" — and nothing did. `expireStaleHolds`'s `toRelease` query
+(the only thing that ever asks the bot to release a site) selects `status = 'carted'` only.
+The moment `reclaimLapsedHolds` flipped a stuck row to `expired` at `HOLD_LAPSE_MIN` (180
+min), it left the runner's retry list **for ever** — the comment described an intention the
+code never implemented.
+- **THE ASSUMPTION BEHIND `expired` WAS "RC PROBABLY DROPPED IT BY ITSELF."** That premise
+  is the one 2026-08-25's `--cart-lapse` sibling measurement retires: RC did **not** lapse an
+  unclaimed cart on its own inside 45 minutes — `expireStaleHolds(45)` released it, HTTP 200,
+  ours. So a hold that could not be released because the RC session was dead is not "probably
+  gone by itself" — it is most likely still locked, on a real campsite, with nobody able to
+  book it. Silently declaring it `expired` was very likely stranding the site, not tidying a
+  row.
+- **THE FIX: STOP TERMINATING IT.** `reclaimLapsedHolds` no longer touches `status`. The row
+  stays `carted`, which keeps it in `expireStaleHolds`'s retry list on every poll — the
+  runner will actually ask RC to let go the next time the session is healthy, however long
+  that takes. Costs nothing extra: since 2026-08-13 every hold mints its OWN cart, so a stuck
+  row occupies only its own cart, never a shared pool other holds are waiting on — the
+  capacity-leak motivation this function was ORIGINALLY built for (2026-08-13, RC's cart cap
+  was 2 and per-hold carts did not exist yet) no longer applies the way it did.
+  `reclaimLapsedHolds` now only writes ONE diagnostic `last_attempt_note` (idempotent — a
+  second sweep over an already-noted row is silent, or a hold stuck for days would get the
+  identical note rewritten, and logged as newly "stuck", every 60 seconds forever).
+- **CAPACITY IS HANDLED SEPARATELY, WITHOUT TERMINATING THE ROW.** `holdWindowLoad`
+  (`src/lib/rc-holds.ts`) now excludes a `carted` row directly by age
+  (`carted_at < NOW() - HOLD_LAPSE_MIN minutes`), so a hold nobody can free up still stops
+  making a genuinely new offer for the SAME release read as full — the one real thing the
+  old `expired` status bought — without needing the row to be terminal to get it.
+- **`HOLD_LAPSE_MIN` MOVED to `src/lib/limits.ts`.** It used to live in
+  `worker/expire-holds.ts`, read only by that file and its test. `holdWindowLoad` needed the
+  same number, and `rc-holds.ts` already imports things `expire-holds.ts` imports FROM — a
+  same-direction import would have made the two files import each other. `limits.ts` is a
+  leaf both sides already read (`RC_HOLD_CAPACITY` lives there for the identical reason).
+- **THE CLAIM SCREEN NEEDED NO CHANGE.** `ClaimFlow.tsx`'s `status === 'carted'` branch
+  already renders the full "sign in and hand it over" flow — so a hold that stays `carted`
+  past 180 minutes is now something the claim link can still complete, rather than falling
+  into the `expired` branch's "back on the open market" copy while possibly still locked in
+  our own cart. That comment block (owned by the side lane, `src/components/v2/`) still
+  narrates the retired mechanism; not touched here — lane boundary, and it is a documentation
+  staleness, not a functional one.
+- `worker/rc-hold-capacity.test.mts`'s existing test rewritten around the new behaviour
+  (status stays `carted`, keys survive, `holdWindowLoad` excludes by age, a second sweep is
+  silent) — asserted against a **baseline**, not an assumed-empty window, since this file's
+  own earlier tests share one release window and leave rows `offered` in it.
+- **NOT VERIFIED AGAINST THE REAL BOT.** This is Fly-worker- and web-only — no
+  `scripts/auto-cart-bot/*` file changed, so it needs no mini-PC update, only the ordinary
+  worker deploy `src/lib/notifications/**`/`worker/**` already trigger. What is unverified is
+  the real-world claim itself (RC not auto-lapsing past 45 min) generalising past the one
+  2026-08-25 measurement — treat it the way this file treats every number read off a bundle
+  or a single observation: the best available reading, not a law.
+
 ## Open / next session
 
 > **START AT `docs/NEXT-SESSION.md`. THE TOP ITEM IS A BUG, NOT A READING.**

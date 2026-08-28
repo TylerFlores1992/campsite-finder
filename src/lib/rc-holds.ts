@@ -10,6 +10,7 @@
 
 import { query, mutate } from '@/lib/db/client';
 import { RC_RUNNER_STALE_MS } from '@/lib/health-thresholds';
+import { HOLD_LAPSE_MIN } from '@/lib/limits';
 
 export type HoldStatus =
   | 'offered' | 'requested' | 'carted' | 'claiming' | 'released' | 'claimed' | 'expired' | 'failed';
@@ -86,6 +87,14 @@ export async function offerHold(input: {
  * room for this one" and not "is the window busy". Without that, a re-alert for a hold
  * already offered would be judged against its own row and quietly lose its button.
  *
+ * A `carted` ROW STUCK PAST `HOLD_LAPSE_MIN` DOES NOT COUNT EITHER, and it is the one
+ * status excluded without being terminal. Since 2026-08-28 `reclaimLapsedHolds` no longer
+ * marks these `expired` — it keeps retrying their release forever, because RC does not
+ * appear to lapse a cart on its own (see that function's header). Counting them here
+ * anyway would let a hold nobody can free up make a genuinely new offer for the SAME
+ * release read as full, which is the one case this exclusion exists to prevent — the
+ * capacity question is "is a seat REACHABLE", not "does a row still say carted".
+ *
  * Not a lock. Two poller shards could both read `capacity - 1` and both offer; at a
  * handful of holds a day that is a fair trade against a transaction, and the failure is
  * one offer over, not a wrong cart.
@@ -99,12 +108,13 @@ export async function holdWindowLoad(
       `SELECT COUNT(*) AS n FROM rc_hold_requests
         WHERE release_at = $1
           AND status IN ('offered', 'requested', 'carted', 'claiming')
+          AND NOT (status = 'carted' AND carted_at < NOW() - ($5 || ' minutes')::interval)
           AND NOT ($2 IS NOT NULL AND watch_id = $2 AND unit_id = $3 AND arrival_date = $4::date)`,
       // `watch_id`/`unit_id`/`release_at` are all TEXT (release_at is RC's zone-less
       // Pacific wall-clock, which is why it is never a timestamp). Only `arrival_date` is a
       // real date, and it is cast so a malformed one fails loudly here rather than matching
       // nothing and silently reporting an empty window as room to spare.
-      [releaseAt, exclude?.watchId ?? null, exclude?.unitId ?? '', exclude?.arrivalDate ?? '1970-01-01'],
+      [releaseAt, exclude?.watchId ?? null, exclude?.unitId ?? '', exclude?.arrivalDate ?? '1970-01-01', String(HOLD_LAPSE_MIN)],
     );
     return Number(row?.n ?? 0);
   } catch (err) {

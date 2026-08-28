@@ -14,6 +14,15 @@
  *      skips it; `expireStaleHolds` hands the runner a list and never changes a status.
  *      The seats leaked, and with a ceiling of two that is the entire fleet held by nobody.
  *
+ * THE FIX FOR #2 WAS ITSELF WRONG, AND CORRECTED 2026-08-28. It marked the stuck row
+ * `expired` — which silently removed it from `expireStaleHolds`'s `toRelease` query
+ * forever, since that query only ever selects `status = 'carted'`. `reclaimLapsedHolds`'s
+ * header has the full account: RC does not appear to lapse an unclaimed cart on its own
+ * (measured 2026-08-25, `--cart-lapse`'s sibling finding), so "expired, assuming RC
+ * dropped it" was very likely leaving a real campsite locked forever. The row now stays
+ * `carted` — so the runner keeps retrying its release — and only stops COUNTING toward
+ * `RC_HOLD_CAPACITY`, via `holdWindowLoad` excluding it directly by age.
+ *
  * Hits the REAL database, like the rest of the hold suite — the logic being protected is
  * inside the SQL, and the 2026-08-13 leak was invisible to anything that mocked it.
  *
@@ -25,8 +34,8 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { query, mutate } from '../src/lib/db/client';
 import { offerHold, holdWindowLoad, markCarted } from '../src/lib/rc-holds';
-import { reclaimLapsedHolds, HOLD_LAPSE_MIN } from './expire-holds';
-import { RC_HOLD_CAPACITY, RC_SITES_PER_CART, RC_MAX_CARTS } from '../src/lib/limits';
+import { reclaimLapsedHolds } from './expire-holds';
+import { RC_HOLD_CAPACITY, RC_SITES_PER_CART, RC_MAX_CARTS, HOLD_LAPSE_MIN } from '../src/lib/limits';
 
 let watchId: string;
 let userId: string;
@@ -114,9 +123,16 @@ test('a read failure fails CLOSED, so a wobble cannot over-promise', async () =>
   assert.ok(load >= RC_HOLD_CAPACITY, 'a failed count must never look like it has room');
 });
 
-test('a carted hold that could never be released stops holding a seat', async () => {
+test('a carted hold that could never be released stops counting toward capacity, but is never given up on', async () => {
   // THE LEAK. Two of these on 2026-08-13 were the whole fleet, held for nobody, because
   // the release loop needs an RC session and the session is dead most of the day.
+  //
+  // BASELINE, NOT ZERO: this file's own tests share one WINDOW and accumulate state in
+  // it (U('7001')/U('7002') are still `offered` from earlier in this file), so the load
+  // right before this test's own offer is not necessarily 0. Assert the DELTA this test's
+  // own row causes, not an absolute count that depends on run order.
+  const baseline = await holdWindowLoad(WINDOW);
+
   await offer(U('7003'));
   const [h] = await query<{ id: string }>(
     `SELECT id FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = $2`, [watchId, U('7003')]);
@@ -124,24 +140,37 @@ test('a carted hold that could never be released stops holding a seat', async ()
   await markCarted(h.id, '11111111-2222-3333-4444-555555555555', 'entry-1');
 
   // Fresh: still ours, still holding a seat. Nothing may reclaim it yet.
-  let lapsed = await reclaimLapsedHolds();
-  assert.equal(lapsed.some((x) => x.id === h.id), false, 'a hold carted seconds ago is live, not lapsed');
+  let stuck = await reclaimLapsedHolds();
+  assert.equal(stuck.some((x) => x.id === h.id), false, 'a hold carted seconds ago is live, not stuck');
+  assert.equal(await holdWindowLoad(WINDOW), baseline + 1, 'fresh: still counts toward capacity');
 
-  // Old enough that RC has certainly dropped the cart on its own timer.
+  // Old enough that a dead RC session, not a quick lapse on RC's side, is the likely reason.
   await mutate(
     `UPDATE rc_hold_requests SET carted_at = NOW() - ($2 || ' minutes')::interval WHERE id = $1`,
     [h.id, String(HOLD_LAPSE_MIN + 5)],
   );
-  lapsed = await reclaimLapsedHolds();
-  assert.equal(lapsed.some((x) => x.id === h.id), true, 'a stuck hold must be reclaimed');
+  stuck = await reclaimLapsedHolds();
+  assert.equal(stuck.some((x) => x.id === h.id), true, 'a stuck hold must be noted');
 
-  const [after_] = await query<{ status: string; cart_key: string | null; error: string | null }>(
-    `SELECT status, cart_key, error FROM rc_hold_requests WHERE id = $1`, [h.id]);
-  assert.equal(after_.status, 'expired');
-  // THE KEYS SURVIVE. We did not release this — RC lapsed it — so the evidence stays, and a
-  // later healthy pass could still try. Wiping them would destroy the only record of what
-  // we were holding.
-  assert.ok(after_.cart_key, 'cart_key must not be cleared by the reclaim');
-  // And the note must not claim we released it, because we did not.
-  assert.match(String(after_.error), /could not release|assuming/i);
+  const [after_] = await query<{ status: string; cart_key: string | null; note: string | null }>(
+    `SELECT status, cart_key, last_attempt_note AS note FROM rc_hold_requests WHERE id = $1`, [h.id]);
+  // THE STATUS MUST STAY `carted`. Flipping it to `expired` is what removed the row from
+  // `expireStaleHolds`'s retry list forever — the bug this test now exists to catch.
+  assert.equal(after_.status, 'carted', 'must stay carted, or the runner stops retrying the release');
+  // THE KEYS SURVIVE, as before — they are what the retry needs, not merely forensics now.
+  assert.ok(after_.cart_key, 'cart_key must not be cleared');
+  assert.match(String(after_.note), /still not released/i);
+
+  // CAPACITY IS FREED WITHOUT TERMINATING THE ROW. holdWindowLoad excludes it by age
+  // directly, so a genuinely new offer for the same release does not read as full because
+  // of a hold nobody can free up.
+  assert.equal(await holdWindowLoad(WINDOW), baseline,
+    'stuck long enough: must stop blocking a new offer for this release');
+
+  // IDEMPOTENT: a second sweep over an already-noted row reports nothing new — or a stuck
+  // hold would get its note rewritten, and be logged as newly "stuck", every 60 seconds
+  // forever.
+  const again = await reclaimLapsedHolds();
+  assert.equal(again.some((x) => x.id === h.id), false,
+    'an already-noted row must not be reported again on every sweep');
 });
