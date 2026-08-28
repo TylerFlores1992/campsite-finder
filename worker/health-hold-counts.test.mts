@@ -113,6 +113,13 @@ async function cartedHold(unit: string, minutesOut: number) {
 
 test('A TEST FIXTURE IS INVISIBLE TO BOTH COUNTS — the 08-23 false alarm', async () => {
   const aheadBefore = await holdsAhead();
+  // A BOUNDED ASSERTION NEEDS A BOUNDED BASELINE. This used to check `holdsAhead(25)`
+  // against the UNBOUNDED baseline, which is only the same number while every live hold
+  // happens to be within 25 minutes of releasing — i.e. while the table is empty. It went
+  // red on 2026-08-28 the moment a real hold was tapped for a release 19 hours out, on a
+  // branch that could not touch it, and read exactly like a regression. `THE BOUND IS A
+  // BOUND` below already did this correctly; these two did not.
+  const imminentBefore = await holdsAhead(25);
   const dueBefore = await holdsDueWithin(10);
 
   // The exact thing CI inserts: a non-numeric sentinel unit, imminent.
@@ -120,7 +127,7 @@ test('A TEST FIXTURE IS INVISIBLE TO BOTH COUNTS — the 08-23 false alarm', asy
 
   assert.equal(await holdsAhead(), aheadBefore,
     'a fixture must not count as a hold ahead — it is what turned autocart.rc_session red');
-  assert.equal(await holdsAhead(25), aheadBefore,
+  assert.equal(await holdsAhead(25), imminentBefore,
     'nor as an IMMINENT one, which is the count that drives the fail level');
   assert.equal(await holdsDueWithin(10), dueBefore,
     'nor as one the runner has failed to cart');
@@ -136,9 +143,11 @@ test('A REAL HOLD IS STILL COUNTED — the filter must not blind the check entir
   // count to stay flat. A numeric `requested` row — the only fixture `holdsDueWithin` could
   // count — is precisely what must never exist, so the guard is bought where it is free.
   const aheadBefore = await holdsAhead();
+  // Bounded baseline for the bounded assertion — see the note above.
+  const imminentBefore = await holdsAhead(25);
   await cartedHold(REAL, 5);
   assert.equal(await holdsAhead(), aheadBefore + 1, 'a numeric unit id is a real hold');
-  assert.equal(await holdsAhead(25), aheadBefore + 1, 'and it is imminent');
+  assert.equal(await holdsAhead(25), imminentBefore + 1, 'and it is imminent');
 });
 
 test('THE BOUND IS A BOUND — a hold far out is ahead but not imminent', async () => {
