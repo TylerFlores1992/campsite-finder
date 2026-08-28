@@ -226,6 +226,29 @@ the plan below still applies — only §5 grows substantially.
 
 ---
 
+## 4a. REVENUECAT'S OWN WIRING IS NOT IN THIS PLAN, AND IT IS NOT SMALL (2026-08-28)
+
+§3 chose RevenueCat and §5 describes the webhook it will send us. **Nothing here describes
+setting RevenueCat up**, and it sits between "the products exist" and "anything can be bought":
+
+1. **A RevenueCat project**, with the Android app registered against `app.camphawk.mobile`.
+2. **A Google Play service-account credential given to RevenueCat**, so it can read purchase
+   and subscription state. **This is probably NOT the Codemagic publisher account** — that one
+   is deliberately scoped to *View app information* + *Release to testing tracks* (`PLAY-STORE`
+   §0b), and reading subscription state is a different permission. **Whether to widen that
+   account or add a second is unresolved**, and the answer should be read off Play's permission
+   screen rather than inferred. A second account is the safer default: §0b's credential is
+   rotated for CI reasons that have nothing to do with billing.
+3. **Products mapped to entitlements** — the four Play ids on one side, and whatever
+   `hasAutocartEntitlement` needs on the other. This is where §9a's tier decision becomes data.
+4. **The public SDK key** in the app, which is a build-time value in a **remote-webview** app —
+   so re-read §11a before deciding where it lives.
+
+**None of it is blocked; none of it is written down.** Recorded when it was noticed rather than
+discovered as a surprise between working products and a paywall that cannot talk to them.
+
+---
+
 ## 5. Server
 
 - **RevenueCat webhook → `/api/webhooks/revenuecat`**, mapping `INITIAL_PURCHASE`, `RENEWAL`,
