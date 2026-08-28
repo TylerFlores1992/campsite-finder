@@ -336,6 +336,18 @@ export async function performAction(token: string): Promise<ActionResult> {
           message: 'That hold is no longer available — the site may have already been released, or the request expired.',
         };
       }
+      // RE-RANK RIGHT NOW, NOT ON THE NEXT POLLER PASS. `rankHoldLine` only writes the
+      // "someone is ahead of you" note to rows already `requested` — this row was still
+      // `offered` a moment ago, so whatever the last poller pass wrote (or didn't) is stale
+      // until something re-ranks the line. The poller only re-ranks while it is still
+      // walking the "held" branch for this unit, and that branch stops the instant the
+      // release passes — which is exactly when a tap this close to 08:00 lands. On
+      // 2026-08-25 the runner-up tapped fourteen seconds after the last poller rank pass and
+      // never got a note at all, so a genuine contest read as two clean carts in the
+      // readout. Awaited rather than fire-and-forget: a serverless function can be frozen
+      // the instant the response is sent, so a background call here is not guaranteed to run.
+      const { rankHoldLine } = await import('../../../worker/hold-line');
+      await rankHoldLine(req.release_at, String(req.unit_id)).catch(() => []);
       const when = req.release_at.replace('T', ' ').slice(0, 16);
       const site = `site ${req.unit_name ?? req.unit_id} at ${campgroundName ?? 'this campground'}`;
 
