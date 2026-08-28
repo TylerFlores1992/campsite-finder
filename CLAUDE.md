@@ -837,6 +837,15 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
   secret `FLY_API_TOKEN`. The build-image-locally workaround in SETUP.md is now only
   the fallback for when the Action itself is broken. Roster/data-only changes need no
   deploy at all (the poller reads `probe_targets` live).
+- **A `worker/*.test.mts` FIRES A WORKER DEPLOY AND RESTARTS BOTH POLLERS (2026-08-27).**
+  `worker/**` is the FIRST entry in the workflow's `paths:` list, so "docs plus one test
+  file" is a worker deploy — there is no test-file exemption. PR #204 asserted the opposite
+  in its own body (*"No `src/lib`, so no worker deploy"*), and the handover repeated it;
+  merging it deployed on `05ee4ff` and bounced both machines. Harmless that night (nothing
+  queued, the release 10h out, and the workflow fails unless a fresh heartbeat lands — it
+  came back in ~3 min, 2/2 shards held). **`docs/LANES.md` already said this in as many
+  words** and was right; the PR body was the thing that drifted. **A merge-scope claim is
+  not evidence — read `paths:`.** Same family as `6006428` claiming a fix it never made.
 - **Non-secret worker tunables** live in `worker/fly.toml [env]`.
 
 ## Web-session gotchas (this environment)
@@ -3871,6 +3880,48 @@ which `reclaimLapsedHolds` only half-fixed: it marks the row `expired` at `HOLD_
   safe to reach for; it is the only remote thing that can restore a dead session, because the
   renewal cannot when Okta is gone.
 
+#### THE STRANDING HAS NEVER ACTUALLY HAPPENED — MEASURED, AND THE MARGIN IS 98 MINUTES (2026-08-27)
+The entry above is the standing account of `reclaimLapsedHolds`' half-fix, and the handover
+carried it as the top actionable bug. **Checked against production rather than reasoned:
+there is not one stranded row, and there never has been.**
+```
+rc_hold_requests WHERE cart_entry_key IS NOT NULL AND released_at IS NULL AND status <> 'released'
+  failed  TEST · 43112  carted 08-26 16:36Z   released after  53 min
+  failed  TEST · 43106  carted 08-26 16:36Z   released after  45 min
+  failed  #123          carted 08-26 15:00Z   released after  82 min   <- the dead-session pair
+  failed  #123          carted 08-26 15:00Z   released after  82 min
+  failed  #96           carted 08-25 15:00Z   released after  45 min
+status counts: expired=34  offered=5  failed=5  released=1
+```
+- **ZERO `expired` rows carry a cart entry key**, which is the shape the stranding would
+  leave. So the 180-minute lapse sweep has never once fired on a row it could strand — every
+  carted hold was released first, by us, via `expireStaleHolds`.
+- **`failed` + *"released unclaimed — nobody came for it"* IS THE CORRECT RECORD, NOT A BUG**,
+  and it is what a naive query mistakes for the stranded shape. `route.ts` splits the two
+  releases deliberately: `forClaim` → `markReleased` (the hand-off worked), a bare timeout
+  release → `markFailed` with that note. `markFailed` does not stamp `released_at`, so
+  filtering on `released_at IS NULL` catches five rows that were all released properly.
+  **Read the writer before calling a row stranded.**
+- **THE MARGIN IS 98 MINUTES AND IT COST A HUMAN.** Worst observed is the 08-26 pair at
+  **82 min** against `HOLD_LAPSE_MIN` 180 — and it only got there because somebody queued
+  `test-login`. Unattended, `renewSession` was skipping (Okta GONE) and `maybeAutoLogin` was
+  23 hours away, so nothing was going to release those rows before the sweep expired them.
+- **AND THE SWEEP'S SAFETY ARGUMENT IS DISPROVED, WHICH IS THE PART TO CARRY FORWARD.**
+  `HOLD_LAPSE_MIN`'s comment justifies 180 as *"far enough past both that 'RC has released
+  this by itself' is safe to act on even if the real number is several times what the bundle
+  claims"* — resting on RC dropping a cart at ~15 min. **On 08-25 RC still held #96 at
+  exactly 45 minutes** (our own `expireStaleHolds(45)` removed it, HTTP 200). So the bundle's
+  15 is out by at least 3x, three of the "several times" of margin are already spent, and
+  **RC's real lapse has no upper bound at all.**
+- **SO IT IS LATENT, NOT LIVE — DO NOT FIX IT BLIND.** The obvious remedy (let the runner's
+  release list pick up lapsed-but-unreleased rows) needs a retry bound, and the only honest
+  source for that bound is RC's real cart lapse, which is exactly the number nobody has
+  measured. Building on it is what `hold-line.ts` already refuses to do for the expiry
+  cascade. **Measure the lapse first** — let one test hold sit past 45 minutes without our
+  sweep touching it and watch when RC lets go.
+- **The cheap containment needs no number**: raising `HOLD_LAPSE_MIN` widens the window the
+  session has to recover in, and it is one env var. That is a decision, not a tidy-up.
+
 ### A PASSWORD SIGN-IN CAN BE CHEAP — 32 SECONDS AND ZERO MEMORY (2026-08-26)
 The same rehearsal is a controlled reading of the trip this file calls the expensive one:
 
@@ -3935,6 +3986,12 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
 > `expireStaleHolds(45)` — OURS, at 45 minutes, with the entry key, RC answering HTTP 200.**
 > So the moment a site returns to the market is one we choose and already know; the cascade
 > can hook our own release. See the 08-25 section above for the lower-bound caveat.
+> **DO NOT CARRY THIS OVER TO `reclaimLapsedHolds`' STRANDING — they need different numbers.**
+> The cascade hooks OUR release, whose timing we choose, so it needs no figure from RC. A
+> retry bound for the stranding needs RC's OWN lapse, which is still unmeasured and which the
+> 45-minute observation only bounds from BELOW. The handover treated one retirement as
+> retiring both; it does not. (And the stranding has never once fired — see the 08-27
+> measurement above.)
 > Cross-cycle alert batching (merging 08:00:00 and 08:00:20 into one text) is still theirs:
 > it **buys fewer texts with LATENCY on the most latency-critical path in the product**.
 >
@@ -4007,11 +4064,17 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
 > been revoked mid-session before, so check rather than assume**; the readouts fail LOUDLY
 > on an unreachable DB, so an empty answer is a real answer.
 >
-> **STATE AT 2026-08-27 20:45 PT.** Master is **`87b5f99`**. Merged this session: **#202**
-> (health-route `REAL_UNIT` + the fixture-safety widening), **#191** (outreach timing docs),
-> **#180** (Play Billing gate, STOREKIT-PLAN, side-lane §25/§26 notes). **#203 is OPEN**
-> (fixture sweep scope, closes #76) — `worker/` test files only, so it does NOT fire a worker
-> deploy.
+> **STATE AT 2026-08-27 21:30 PT.** Master is **`05ee4ff`** and **EVERY GITHUB ISSUE IS
+> CLOSED.** Merged: **#202** (health-route `REAL_UNIT` + the fixture-safety widening),
+> **#191** (outreach timing docs), **#180** (Play Billing gate, STOREKIT-PLAN, side-lane
+> §25/§26 notes), **#203** (fixture sweep scope, closed #76), **#204** (Routine IDs, the
+> nights answer, the egress-watchdog guard — closed #181 and #14).
+>
+> **#203 AND #204 BOTH SAID "`worker/` test files only, so no worker deploy". BOTH WERE
+> WRONG.** `worker/**` is the first entry in the workflow's `paths:` list. Merging #204
+> deployed on `05ee4ff` and bounced both machines; it came back clean (heartbeat 4s, 2/2
+> shards held, deploy `success`). See the Deploy section — the claim is now corrected there,
+> and `docs/LANES.md` had it right all along.
 >
 > **MERGING #180 MEANS THE NEXT ANDROID BUILD FAILS, ON PURPOSE.** `codemagic.yaml` now
 > asserts `com.android.vending.BILLING` reaches the merged manifest, and
@@ -4019,11 +4082,17 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
 > RevenueCat lands. That is the gate working (Play's Subscriptions page has no create button
 > without it) and it does block an Android hotfix meanwhile.
 >
-> **FOUR OFFERS ARE OUTSTANDING FOR 2026-08-28 08:00 PT, and one unit is offered THREE
+> **FIVE OFFERS ARE OUTSTANDING FOR 2026-08-28 08:00 PT, and one unit is offered THREE
 > times.** Unit `43187` (`#92`, Morro Bay Upper Section) is offered to tylerflores1992,
-> iamtylerflores12345 and melinda — three users, one campsite. **That is the first
-> three-way contest**, and it is the real test of #201's one-live-hold-per-unit rule. Nobody
-> had tapped as of 20:25 PT.
+> iamtylerflores12345 and melinda — three users, one campsite. **That would be the first
+> three-way contest**, and the real test of #201's one-live-hold-per-unit rule. **NOBODY HAD
+> TAPPED AS OF 21:13 PT**, and the 08-27 release before it expired all fourteen of its offers
+> untapped — which is not a fault. **So the contest is contingent, not scheduled**: two of
+> those three must tap before 08:00 or there is nothing to arbitrate. `nextHoldRelease`
+> ignores `offered`, so nothing is queued and **the 02:00–05:00 PT update window is open.**
+> Health at 21:13: runner polling 15s ago, session live (token 59m, `okta=ALIVE`), watchdog
+> firing both tasks, rehearsal PASSED 03:01. `bot_version` warn only — box 1d behind with **no
+> bot-side code in the gap**, which is the documented not-worth-acting-on case.
 >
 > **Delete `docs/NEXT-SESSION.md` once Track A has a reading from a real ramp AND the App
 > Store version has a decision**; it is a handover, not a permanent doc.
