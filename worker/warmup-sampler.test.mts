@@ -256,7 +256,13 @@ test('the teardown takes the open segment, because a recycle replaces the browse
   const end = code.indexOf('releaseProfileLockIfMine', fin);
   assert.ok(end > fin, 'the teardown must still release the profile lock');
   const body = code.slice(fin, end);
-  assert.match(body, /flushAllocRamps\(\{ final: true \}\)/,
+  // ANCHORED ON THE PROPERTY, NOT THE EXPRESSION. This pinned the literal
+  // `flushAllocRamps({ final: true })` and broke on 2026-08-28 when `describeIfEmpty: true`
+  // was added beside it — a change that alters nothing about what this test guards. That is
+  // the twenty-fifth time a guard here has been invalidated by an addition rather than a
+  // regression, so it now asserts that the teardown asks for the open segment however the
+  // call is spelled.
+  assert.match(body, /flushAllocRamps\(\{[^}]*\bfinal:\s*true\b[^}]*\}\)/,
     'the teardown must take the OPEN segment, or a browser replaced by a recycle takes the '
     + 'reading with it — the trail does not survive that point');
   assert.ok(body.indexOf('flushAllocRamps') < body.indexOf('ctx?.close()'),

@@ -1714,7 +1714,7 @@ const allocTrail = createAllocTrail();
  * gigabytes are on the RESIDENT page rather than the trip's throwaway tab, PR #142's cure is
  * aimed at the wrong renderer, which would explain why ramps continued after it shipped.
  */
-function flushAllocRamps({ final = false } = {}) {
+function flushAllocRamps({ final = false, describeIfEmpty = false } = {}) {
   const sent = [];
   for (const r of allocTrail.takeRamps({ final })) {
     log(`✱ alloc trail [${r.name}]: ${Math.round(r.growthBytes / 1048576)} MB in that renderer `
@@ -1724,6 +1724,37 @@ function flushAllocRamps({ final = false } = {}) {
     }
     sent.push(reportNativeAlloc(`trail-${r.name}`,
       { totalBytes: r.growthBytes, sites: r.sites }, r.ramDeltaMb));
+  }
+  // A FINAL FLUSH THAT REPORTS NOTHING MUST SAY WHY. This is the reading that has been
+  // missing, and the reason three real ramps have produced zero `trail-*` rows:
+  //
+  //   08-25 20:22 (~3.6 GB) · 08-26 21:24 (9,112 MB, 100% COMMIT) · 08-28 02:01 (8,981 MB)
+  //
+  // The obvious explanation — that the segment never ENDS, so it is never taken — is RULED
+  // OUT for the last one: `max_pid` went 14596 -> 7812 at 02:15, so the browser really was
+  // replaced, this `finally` really did run, and `final: true` really does include the open
+  // segment. The trigger fired and stored nothing anyway.
+  //
+  // Which leaves two possibilities that look identical from here, and need opposite fixes:
+  //
+  //   * `EMPTY — that renderer answered no CDP call at all` — the browser stopped answering
+  //     as it grew, which has happened twice before on two different CDP calls. The trail
+  //     then needs a different transport, not a different trigger.
+  //   * SEGMENTS PRESENT, growth under the 400 MB bar — the sampling profiler cannot see
+  //     these bytes. Every reading ever taken says this is the likely one: 13-109 MB
+  //     attributed against events of 5-9 GB. It would mean Track A is measuring a quantity
+  //     that structurally excludes the leak, and no threshold tuning can rescue it.
+  //
+  // SILENT ON THE ORDINARY PATH, because this fires on every reopen — the post-Okta recycle,
+  // the size guard, the runner's preemption — which is many times an hour, and `tail-log`
+  // returns only the last 16,000 characters. Noise here destroys the record it is meant to
+  // preserve, which is exactly how the 08-23 attributions were lost.
+  //
+  // `describeIfEmpty` rather than always: the BAIL arm already logs `describeAllocTrail`
+  // unconditionally, so making this unconditional would print the same text twice, adjacent,
+  // and read as a bug.
+  if (final && describeIfEmpty && sent.length === 0) {
+    log(`  ${describeAllocTrail(allocTrail.buffers(), Date.now())}`);
   }
   // AWAITABLE, because the bail arm calls `process.exit(1)` and a fire-and-forget POST dies
   // with the process — losing exactly the reading a 9 GB ramp produces. Ordinary tick callers
@@ -3016,8 +3047,14 @@ async function warmResident() {
       // one replaces the browser, which is the other way a ramp ends without our ever seeing
       // the renderer swap. The trail is per-`warmResident` and does not survive this point, so
       // a reading not taken here is a reading lost. Bounded for the same reason as the bail.
+      //
+      // `describeIfEmpty` because THIS is the arm a real ramp actually lands in. The bail
+      // needs a stall AND free RAM under 2,000 MB, and the 08-28 ramp bottomed at 4,191 MB —
+      // so it never fired, and this `finally` is where that browser was replaced. Without the
+      // description a 9 GB ramp leaves nothing but silence here, which is indistinguishable
+      // from a quiet night.
       await Promise.race([
-        flushAllocRamps({ final: true }),
+        flushAllocRamps({ final: true, describeIfEmpty: true }),
         new Promise((r) => setTimeout(r, 4000)),
       ]).catch(() => {});
       await ctx?.close().catch(() => {});
