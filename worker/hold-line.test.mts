@@ -121,8 +121,8 @@ const holdRow = async (id: string) =>
 
 test('never given first dibs outranks anyone who has, however long ago', () => {
   const out = orderLine([
-    { id: 'b', userId: 'B', status: 'offered', offerSeq: 1, watchCreatedAt: '2019-01-01' },
-    { id: 'a', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2025-01-01' },
+    { id: 'b', userId: 'B', status: 'offered', offerSeq: 1, watchCreatedAt: '2019-01-01', priority: 0 },
+    { id: 'a', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2025-01-01', priority: 0 },
   ]);
   // A watched three years later and still goes first: otherwise a new watcher starts at
   // the back of a queue that has never served them, which is not a queue.
@@ -131,8 +131,8 @@ test('never given first dibs outranks anyone who has, however long ago', () => {
 
 test('among people who have never had first dibs, earliest watch wins', () => {
   const out = orderLine([
-    { id: 'late', userId: 'B', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-08-24T19:45' },
-    { id: 'early', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-08-24T16:53' },
+    { id: 'late', userId: 'B', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-08-24T19:45', priority: 0 },
+    { id: 'early', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-08-24T16:53', priority: 0 },
   ]);
   // The measured pair, in the owner's stated order.
   assert.deepEqual(out.map((c) => c.id), ['early', 'late']);
@@ -140,15 +140,15 @@ test('among people who have never had first dibs, earliest watch wins', () => {
 
 test('among people who have, longest-ago wins — that is the rotation', () => {
   const out = orderLine([
-    { id: 'recent', userId: 'B', status: 'offered', offerSeq: 9, watchCreatedAt: '2019-01-01' },
-    { id: 'ancient', userId: 'A', status: 'offered', offerSeq: 2, watchCreatedAt: '2025-01-01' },
+    { id: 'recent', userId: 'B', status: 'offered', offerSeq: 9, watchCreatedAt: '2019-01-01', priority: 0 },
+    { id: 'ancient', userId: 'A', status: 'offered', offerSeq: 2, watchCreatedAt: '2025-01-01', priority: 0 },
   ]);
   assert.deepEqual(out.map((c) => c.id), ['ancient', 'recent'],
     'the rotation ticket must outrank watch age, or rotation does nothing');
 });
 
 test('identical on every field, the order is still deterministic', () => {
-  const same = { userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-01-01' };
+  const same = { userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-01-01', priority: 0 };
   assert.deepEqual(orderLine([{ id: 'z', ...same }, { id: 'a', ...same }]).map((c) => c.id), ['a', 'z'],
     'two shards ranking the same line must agree, or the ranks flap every cycle');
 });
@@ -157,7 +157,7 @@ test('one person holding two offers for one site is NOT a contest', () => {
   // RC lists the same campsite under more than one facility, so a park watcher can hold
   // two correct offers for one site. Counting rows rather than people would rotate them
   // for competing with themselves.
-  const mine = { status: 'offered', offerSeq: 0, watchCreatedAt: '2026-01-01' };
+  const mine = { status: 'offered', offerSeq: 0, watchCreatedAt: '2026-01-01', priority: 0 };
   assert.equal(isContested([{ id: 'a', userId: 'A', ...mine }, { id: 'b', userId: 'A', ...mine }]), false);
   assert.equal(isContested([{ id: 'a', userId: 'A', ...mine }, { id: 'b', userId: 'B', ...mine }]), true);
 });
@@ -474,4 +474,113 @@ test('THE POLLER RE-RANKS BEFORE THE CLAIM GATE — or hold-line.ts is perfect a
     'the primary held unit must be re-ranked ABOVE the claim gate. Below it, the line is ' +
     'ranked exactly once in the life of an offer, so anyone who taps afterwards is never ' +
     'told they are behind and their row reads as a dead runner at 08:15');
+});
+
+// ------------------------------------------------- the priority override (migration 069)
+
+test('PRIORITY OUTRANKS EVERYTHING BELOW IT — the worst ticket and the latest watch', () => {
+  // The whole point of the flag: a flagged user wins from the worst possible position.
+  // If this only passed with a good ticket it would not be an override, it would be a
+  // tiebreak, and the owner asked for an override.
+  const out = orderLine([
+    { id: 'fair', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2019-01-01', priority: 0 },
+    { id: 'flagged', userId: 'B', status: 'offered', offerSeq: 999, watchCreatedAt: '2026-08-28', priority: 1 },
+  ]);
+  assert.deepEqual(out.map((c) => c.id), ['flagged', 'fair']);
+});
+
+test('HIGHER PRIORITY SORTS FIRST, NOT LAST — the sign of the comparison', () => {
+  // EVERY OTHER TERM IN `orderLine` IS ASCENDING: a lower ticket and an earlier watch both
+  // win. Priority is the one that is descending, so `a.priority - b.priority` reads as
+  // natural and is exactly backwards — it would rank the flagged account LAST, which
+  // presents as "the flag does nothing" rather than as an error. Asserted on its own, with
+  // every other field identical, so nothing else can carry the result.
+  const same = { status: 'offered', offerSeq: 5, watchCreatedAt: '2026-01-01' };
+  const out = orderLine([
+    { id: 'plain', userId: 'A', ...same, priority: 0 },
+    { id: 'flagged', userId: 'B', ...same, priority: 1 },
+  ]);
+  assert.equal(out[0]!.id, 'flagged',
+    'a higher line_priority must rank FIRST; reversed, the flag silently demotes the ' +
+    'account it was set on and looks like it was never applied');
+});
+
+test('priority beats a ZERO ticket — the case that actually decides real lines', () => {
+  // `hold_offer_seq` is NULL for anyone never given first dibs, and the mapper reads NULL
+  // as 0, which outranks every used ticket by design. On 2026-08-28 two live beta accounts
+  // (suziegrieve03, cam1234123) were in exactly that state, so "beats a zero" IS the
+  // production case — a flag that only beat spent tickets would lose every contest that
+  // included a newcomer.
+  const out = orderLine([
+    { id: 'newcomer', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2020-01-01', priority: 0 },
+    { id: 'flagged', userId: 'B', status: 'offered', offerSeq: 901, watchCreatedAt: '2026-08-28', priority: 1 },
+  ]);
+  assert.deepEqual(out.map((c) => c.id), ['flagged', 'newcomer']);
+});
+
+test('between two flagged accounts, the higher number wins and then the fair rule resumes', () => {
+  const out = orderLine([
+    { id: 'one', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2019-01-01', priority: 1 },
+    { id: 'two', userId: 'B', status: 'offered', offerSeq: 9, watchCreatedAt: '2026-01-01', priority: 2 },
+    { id: 'alsoOne', userId: 'C', status: 'offered', offerSeq: 0, watchCreatedAt: '2018-01-01', priority: 1 },
+  ]);
+  // 2 first; then the two 1s fall through to the ticket and the watch date, unchanged.
+  assert.deepEqual(out.map((c) => c.id), ['two', 'alsoOne', 'one'],
+    'equal priority must fall through to the rotation ticket and watch age, not swallow them');
+});
+
+test('WITH NOBODY FLAGGED THE ORDER IS EXACTLY WHAT IT WAS — the default is inert', () => {
+  // Migration 069 defaults every existing row to 0. If that default changed any ordering,
+  // it would silently re-rank every live line the moment it was applied.
+  const line = [
+    { id: 'recent', userId: 'B', status: 'offered', offerSeq: 9, watchCreatedAt: '2019-01-01', priority: 0 },
+    { id: 'ancient', userId: 'A', status: 'offered', offerSeq: 2, watchCreatedAt: '2025-01-01', priority: 0 },
+    { id: 'newcomer', userId: 'C', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-01-01', priority: 0 },
+  ];
+  assert.deepEqual(orderLine(line).map((c) => c.id), ['newcomer', 'ancient', 'recent'],
+    'the fair rule — zero ticket first, then longest-ago, then watch age — must be untouched');
+});
+
+test('NEITHER THE NOTE NOR THE OFFER SCREEN STATES A REASON ANY MORE', () => {
+  // BOTH USED TO EXPLAIN THE ORDERING, and priority makes the explanation false. The note
+  // said "they watched it first"; the offer screen said "you started watching first" and
+  // "Somebody started watching it before you". Under the flag the account ahead may simply
+  // be flagged, so all three assert something untrue — the note to whoever is diagnosing at
+  // 08:15, and the screen to a user deciding whether to set an alarm.
+  assert.ok(!/watched it first|started watching/i.test(BEHIND_NOTE),
+    `BEHIND_NOTE must not claim WHY somebody is ahead: ${BEHIND_NOTE}`);
+
+  const ui = code(readFileSync(new URL('../src/components/v2/HoldConfirm.tsx', import.meta.url), 'utf8'));
+  // ANCHOR ASSERTED PRESENT FIRST. Without this the test passes if the component is
+  // renamed, moved or deleted — a guard that inspects nothing is indistinguishable from
+  // one that approves, which this repo has recorded more than twenty times.
+  assert.ok(ui.includes('first in line for this site'),
+    'anchor lost: HoldConfirm no longer tells the user their position at all');
+  assert.ok(!/started watching (first|it before)/i.test(ui),
+    'the offer screen must state the RANK, which is always true, and not the REASON, ' +
+    'which under line_priority is not');
+});
+
+test('a flagged user is ranked first in a REAL line, worst ticket and latest watch', async () => {
+  // REAL-DB, because the flag has to survive the SQL and the mapper as well as the
+  // comparator: `u.line_priority` must actually be SELECTed and carried onto the candidate.
+  // A pure test of `orderLine` passes perfectly while the query never reads the column —
+  // the fix-present-and-inert shape, which is why both halves are pinned.
+  const unit = U('9110');
+  // LATE is the later watch, so without the flag it ranks second. Give it the worse ticket
+  // too, so nothing but the flag can put it first.
+  await mutate(`UPDATE users SET hold_offer_seq = 900 WHERE id = $1`, [LATE]);
+  await mutate(`UPDATE users SET hold_offer_seq = 1   WHERE id = $1`, [EARLY]);
+  await mutate(`UPDATE users SET line_priority = 1 WHERE id = $1`, [LATE]);
+  try {
+    const early = await offer(W_EARLY, EARLY, unit, RELEASE);
+    const late = await offer(W_LATE, LATE, unit, RELEASE);
+    const line = await rankHoldLine(RELEASE, unit);
+    assert.deepEqual(line.map((m) => m.id), [late, early],
+      'the flagged account must be ranked 1 even with the worse ticket and the later watch');
+    assert.equal((await holdRow(late)).line_rank, 1);
+    assert.equal((await holdRow(early)).line_rank, 2);
+  } finally {
+    await mutate(`UPDATE users SET line_priority = 0 WHERE id = $1`, [LATE]);
+  }
 });

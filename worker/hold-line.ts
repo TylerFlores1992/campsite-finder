@@ -75,9 +75,17 @@ import { query, mutate } from '../src/lib/db/client';
  * can never equal this one, the skip below never matches, and the churn guard silently
  * stops guarding — a fix present and inert, which is the shape this repo has paid for
  * repeatedly. Pinned by a test.
+ *
+ * IT NO LONGER SAYS WHY (2026-08-28). It used to read "they watched it first", which was
+ * true while watch age decided every contest. Migration 069 added `users.line_priority`,
+ * so the account ahead may be there because it is flagged — and the old wording would then
+ * assert something false to whoever reads this at 08:15 trying to work out what happened.
+ * State the POSITION, which is always true, and not the REASON, which is not. Changing the
+ * text costs one rewrite per hold already carrying the old note, then it matches and the
+ * churn guard skips it as before.
  */
 export const BEHIND_NOTE =
-  'another watcher is ahead of you in line for this site — they watched it first, ' +
+  'another watcher is ahead of you in line for this site, ' +
   'so if they also ask for it, theirs is the one we cart';
 
 export interface LineMember {
@@ -98,10 +106,20 @@ export interface LineCandidate {
   offerSeq: number;
   /** `watches.created_at`, as an ISO string. */
   watchCreatedAt: string;
+  /**
+   * `users.line_priority` — the deliberate override. Higher is ranked first, ahead of
+   * everything else here. 0 is the default and means "no override", so a line in which
+   * nobody is flagged orders exactly as it did before migration 069.
+   */
+  priority: number;
 }
 
 /**
  * The ordering rule, pure.
+ *
+ * PRIORITY FIRST, AND IT IS A THUMB ON THE SCALE — see migration 069 for who asked, who
+ * loses, and why it is a named column rather than a hand-edited ticket. Everything below
+ * it is the fair rule and is unchanged.
  *
  * A ZERO TICKET SORTS FIRST, and that is the whole rotation. A user who has never been
  * given first dibs outranks one who has, however long ago — otherwise a new watcher would
@@ -109,6 +127,10 @@ export interface LineCandidate {
  */
 export function orderLine<T extends LineCandidate>(candidates: readonly T[]): T[] {
   return [...candidates].sort((a, b) => {
+    // DESCENDING, unlike every other term here: for the ticket and the watch date lower
+    // means earlier, but a priority is a rank and higher wins. Getting this one backwards
+    // would silently put the flagged account LAST, which reads as the flag not working.
+    if (a.priority !== b.priority) return b.priority - a.priority;
     if (a.offerSeq !== b.offerSeq) return a.offerSeq - b.offerSeq;
     // Both never given first dibs, or both given it at the same moment: the owner's rule.
     if (a.watchCreatedAt !== b.watchCreatedAt) return a.watchCreatedAt < b.watchCreatedAt ? -1 : 1;
@@ -140,10 +162,20 @@ export async function rankHoldLine(releaseAt: string, unitId: string): Promise<L
     const rows = await query<{
       id: string; user_id: string; status: string;
       live_seq: string | null; line_seq: string | null; watch_created_at: string;
+      line_priority: number | null;
       line_rank: number | null; line_rotated_at: string | null; last_attempt_note: string | null;
     }>(
       `SELECT h.id, h.user_id, h.status,
               u.hold_offer_seq AS live_seq, h.line_seq,
+              -- READ LIVE, NOT FROZEN ONTO THE HOLD the way line_seq is, and the asymmetry
+              -- is deliberate. The ticket is frozen because RANKING ITSELF SPENDS IT: a live
+              -- read would sort the winner below the person they just beat on the very next
+              -- cycle, flipping ranks under a reader. Nothing here charges a priority, so
+              -- that failure cannot arise; it changes only when a human changes it, and
+              -- when they do, taking effect on the next cycle is the point of changing it.
+              -- Do not "make this consistent" by adding a frozen column — that would pin a
+              -- revoked override onto every hold already in flight.
+              u.line_priority,
               -- FORCED TO UTC AND ZERO-PADDED, because this is compared as a STRING. An
               -- offset-bearing format sorts by text and would rank two watches created a
               -- minute apart in different offsets backwards.
@@ -165,6 +197,9 @@ export async function rankHoldLine(releaseAt: string, unitId: string): Promise<L
       // else on the next pass.
       offerSeq: r.line_seq != null ? Number(r.line_seq) : Number(r.live_seq ?? 0),
       watchCreatedAt: r.watch_created_at,
+      // NULL COALESCES TO 0, i.e. no override. A box mid-deploy, or any row predating
+      // migration 069, must rank by the fair rule rather than by an absent number.
+      priority: Number(r.line_priority ?? 0),
       lineRank: r.line_rank,
       rotatedAt: r.line_rotated_at,
       frozen: r.line_seq != null,
