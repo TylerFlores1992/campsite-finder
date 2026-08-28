@@ -148,12 +148,26 @@ export default function HoldConfirm({ preview }: { preview: HoldPreview }) {
 /**
  * "Am I actually going to get this one?" — stated at the point of decision.
  *
- * RC lists one physical campsite under more than one facility, so two people can each be
- * offered the same site for the same release and both offers be correct (measured
- * 2026-08-24, unit 43191 at Morro Bay). Both are still offered — nobody is silently
- * excluded — but only one is first in line, and somebody deciding whether to rely on the
- * bot instead of setting an alarm needs to know which they are BEFORE they decide. A
- * policy page nobody reads at 08:00 is not a policy.
+ * Two people can each be offered the same site for the same release and both offers be
+ * correct: they simply both watch the same park, and both watches cover the same facility
+ * (measured 2026-08-24, unit 43191 at Morro Bay). Both are still offered — nobody is
+ * silently excluded — but only one is first in line, and somebody deciding whether to rely
+ * on the bot instead of setting an alarm needs to know which they are BEFORE they decide.
+ * A policy page nobody reads at 08:00 is not a policy.
+ *
+ * THIS COMMENT USED TO SAY RC LISTS ONE CAMPSITE UNDER TWO FACILITIES. It does not —
+ * measured 2026-08-25, RC's September inventory has ZERO overlap between Morro Bay's
+ * lottery pool and Upper Section, and 43191 is in Upper Section alone. That story was
+ * invented to explain an artifact of our own result-map collision, which `watch-key.ts`
+ * fixed in #188. `worker/hold-line.ts`'s header was corrected then and this copy of it was
+ * not, which is the correction-that-never-landed shape this project keeps paying for.
+ *
+ * IT NO LONGER STATES A REASON (2026-08-28). Both branches used to explain the ordering —
+ * "you started watching first", "Somebody started watching it before you". Migration 069
+ * added `users.line_priority`, a deliberate override, so neither sentence is reliably true
+ * any more, and this is the screen a user reads at the moment they decide whether to set
+ * an alarm. The RANK is still stated, because that is what they need and it is always
+ * true. Do not reintroduce the reason without also reading `orderLine`.
  *
  * THE SECOND-PLACE WORDING PROMISES ONLY WHAT IS BUILT. It says we cart it for them if
  * the person ahead does not ASK for a hold, which is exactly what happens today: the line
@@ -171,14 +185,13 @@ function LineNote({ line }: { line: { rank: number; of: number } | null }) {
       {line.rank === 1 ? (
         <>
           <strong className="font-bold">You&rsquo;re first in line for this site.</strong>{' '}
-          {people} watching it too, but you started watching first — so this one is yours to
-          take.
+          {people} watching it too, but this one is yours to take.
         </>
       ) : (
         <>
           <strong className="font-bold">You&rsquo;re next in line for this site.</strong>{' '}
-          Somebody started watching it before you, so they get first refusal. If they
-          don&rsquo;t ask us to hold it, we&rsquo;ll cart it for you instead.
+          Somebody else gets first refusal. If they don&rsquo;t ask us to hold it,
+          we&rsquo;ll cart it for you instead.
         </>
       )}
     </p>
