@@ -1,6 +1,6 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed **2026-08-27 20:50 PT**.*
+*Rewritten 2026-08-25 evening; state refreshed **2026-08-28 09:35 PT**.*
 
 > ## NOTHING IS ASSIGNED. THE TOP BUG IS FIXED AND THE READING IS STILL WAITING.
 >
@@ -10,13 +10,13 @@
 > TWICE with a status change in between — which the old test could not have caught. §1 is kept
 > for the history; there is no work in it.
 >
-> **1b. THE FIRST THREE-WAY CONTEST IS QUEUED FOR 2026-08-28 08:00 PT, and it is the thing to
-> read tomorrow.** Unit `43187` (`#92`, Morro Bay Upper Section) is offered to **three
-> different users** — tylerflores1992, iamtylerflores12345 and melinda — for one campsite, all
-> `offered` and none tapped as of 20:25 PT. Two more offers exist (`#SC77` rc-611, and #92 on a
-> second watch). **If two or more tap, that is the first live exercise of #201.** Expect ONE
-> cart and the other rows left `requested` and uncarted: that is the line working, not a dead
-> runner. Read `last_attempt_note` before concluding anything.
+> **1b. THE THREE-WAY CONTEST DID NOT HAPPEN — nobody tapped.** All five offers for 2026-08-28
+> 08:00 PT expired unclaimed, including unit `43187` (`#92`, Morro Bay Upper Section) offered
+> to three different users. **Not a fault**: an untapped offer is the ordinary outcome. But it
+> means **#201's one-live-hold-per-unit rule is still untested in anger** — the next time two
+> or more people tap the same unit is its first live exercise. Expect ONE cart and the other
+> rows left `requested` and uncarted; that is the line working, not a dead runner. Read
+> `last_attempt_note` before concluding anything.
 >
 > **2. THE RAMP (§2) — THE NEXT ONE ANSWERS A QUESTION NOW.** The trail has produced no
 > reading across **four** ramps (08-25 20:22, 08-26 21:24 at 9,112 MB / 100% COMMIT, 08-28
@@ -38,10 +38,15 @@
 > within a day.
 > **Do NOT try to stage one**; §2b has the measurement that retires the obvious plan.
 >
-> **3. WHAT IS OPEN RIGHT NOW.** Master is **`50cafa8`**. **PR #204** is the only open PR
-> (Routine IDs, the nights answer, and a guard for the egress watchdog — closes #181 and
-> #14); docs plus one `worker/` test file, so it does NOT fire a worker deploy. **Every
-> GitHub issue is closed or closing.** No live holds.
+> **3. WHAT IS OPEN RIGHT NOW: NOTHING.** Master is **`43a4033`**, the mini-PC is on
+> **`5e399b3`**, **every GitHub issue is closed and no PR is open.** No live holds, no queued
+> offers. Health is 18/19 — the one warn is `autocart.rc_session`, which is the 08:44 box
+> update killing the Chromium the token lives in; `maybeAutoLogin` repairs it at T−30 of the
+> next release and nothing is queued before then.
+>
+> **`worker/**` IS A WORKER-DEPLOY TRIGGER PATH.** "Only test files" is NOT an exemption — that
+> was asserted twice on 08-27 and was wrong both times. Read `paths:` in `worker-deploy.yml`
+> before claiming a merge is deploy-free.
 >
 > **4. MERGING #180 MEANS THE NEXT ANDROID BUILD FAILS, ON PURPOSE.** Already merged.
 > `codemagic.yaml` asserts `com.android.vending.BILLING` reaches the merged manifest, and
