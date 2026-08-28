@@ -6,39 +6,57 @@ implementation. Read "What only a human can do" before planning a session around
 
 ---
 
-## STATE AS OF 2026-08-24, END OF EVENING — read this first
+## STATE AS OF 2026-08-28 — read this first
 
-Everything both consoles allow was done. **Both stores are now waiting on someone else**, and
-Play additionally on native code that does not exist.
+**PLAY'S CONSOLE WORK IS FINISHED. Every remaining blocker on both stores is CODE or a vendor.**
 
 | | Done | Waiting on the vendor | Blocked on us |
 |---|---|---|---|
 | **Apple** | W-9 active | Bank details + Paid Applications agreement processing | Small Business Program enrolment (§6.1), then the four products (§8) |
-| **Play** | Merchant account · account group + declaration · **15% service fee enrolled** · production set US-only · **bank verified** | — **nothing** | **A build declaring `com.android.vending.BILLING` (§9a-bis)** |
+| **Play** | merchant account · account group · **15% enrolled** · US-only · bank verified · **billing permission shipped** · **4 base plans + 4 offers ACTIVE** | — **nothing** | — **nothing in the console** |
 
-> **UPDATE 2026-08-27 — §9a-ter.** The build now ASSERTS `com.android.vending.BILLING` in the
-> merged manifest, because the plugin's own Android manifest is **empty** and the permission
-> can only arrive three hops down a transitive chain (`purchases-hybrid-common` → `purchases`
-> → `com.android.billingclient:billing`). The last link sits on Google's Maven, which the agent
-> proxy denies, so it is **still unread** and the Codemagic runner is the only instrument.
-> **Two builds, in order: assertion alone must go RED, then the plugin makes it green.**
+**WHAT CLEARED PLAY, 2026-08-28.** `@revenuecat/purchases-capacitor` 13.4.2 went into
+`package.json`, and **two Codemagic builds in order** settled §9a-ter's unread transitive chain:
 
-**THE ONE FINDING THAT CHANGES THE PLAN IS §9a-bis.** Play will not let the subscription
-products be created at all until an uploaded binary declares the billing permission — so Play's
-order is library → build → upload → products, the reverse of §7, and it is now **native work
-rather than a console task**. Apple has no such gate. §9b's product table is correct and
-**not yet reachable**; §8's Apple walkthrough is correct and reachable the moment the agreement
-clears.
+```
+build 12  cbeb709  no billing dep   FAILED at the assertion (CHECKED=3)   aab 11.07 MB
+build 13  6c04a93  + RevenueCat     green, published                      aab 13.36 MB
+```
 
-**THE LIBRARY IS DECIDED: RevenueCat** (`@revenuecat/purchases-capacitor`, §3). **THE NEXT
-SESSION'S JOB IS §11** — the Android build that clears §9a-bis. It carries a
-constraint this plan was written without: **the app is a remote webview** (`server.url =
-camphawk.app/search`), so a web deploy cannot add purchase capability and the paywall must
-detect the *plugin*, not the platform. Read §11 before §3.
+Run 1 was the diagnostic — it proved the gate could fail before anything trusted it, and it
+failed on the *answer* rather than on being unable to read. Run 2 grew the binary **+2.3 MB**
+with `package.json` as the only change, which is `com.android.billingclient:billing` arriving by
+AAR manifest merge — the hop that `maven.google.com` being 403 at the proxy made unreadable from
+any session. **The Codemagic runner was the only instrument that could answer it, and it did.**
 
-**NOTHING IN `src/` HAS CHANGED. There is no code for any of this.** The migration in §2, the
-webhook in §5, the product-id → tier mapping and the paywall are all unwritten, and all of it is
-**main-lane** territory (`src/lib/`, `src/lib/db/migrations/`).
+**THE PRODUCTS ARE LIVE** (§9b), all **Active**, all **United States**:
+
+```
+camphawk_base      monthly  Monthly, auto-renewing  + intro-free-week
+                   yearly   Yearly,  auto-renewing  + intro-free-week
+camphawk_autocart  monthly  Monthly, auto-renewing  + intro-free-week
+                   yearly   Yearly,  auto-renewing  + intro-free-week
+```
+
+**ONE THING UNVERIFIED, AND IT IS THE ONLY ONE:** the four **prices** were never read back from
+the console — the base-plan list shows duration and region but no amount. §9b wants $2.99 /
+$23.99 / $11.99 / $59.99. `Countries / regions: United States` proves *a* price exists, not that
+it is the right one. **Open each base plan and read the amount** before anything charges anybody.
+
+**EVERYTHING LEFT ON PLAY IS CODE**, and all of it is **main-lane** (`src/lib/`,
+`src/lib/db/migrations/`): the §2 migration, the §5 webhook (**with the grace-period split** —
+`BILLING_ISSUE` is two states and only account hold revokes access), the product-id → tier
+mapping, and the §11a paywall that must detect the **plugin**, not the platform.
+
+**THE §9a PRORATION TRAP IS NOW THE EXPENSIVE ONE.** Play has no subscription groups, so
+upgrade-vs-downgrade is stated by app code. No console screen can show that mistake, and every
+console screen that *could* have caught anything has now been passed.
+
+**iOS HAS NOT BEEN BUILT SINCE REVENUECAT ENTERED THE DEPENDENCY TREE.** §11c: Capacitor 8
+defaults iOS to SPM, where `@capacitor/app` and `@capacitor-firebase/app` already collided on
+identity `app` once and broke resolution outright. A new plugin is a new identity in that
+namespace. **Run `iOS · TestFlight` on this branch** rather than discovering it when a TestFlight
+build is needed for something else.
 
 **TWO THINGS TO CARRY FORWARD RATHER THAN RE-DERIVE:**
 
