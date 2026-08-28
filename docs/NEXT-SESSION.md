@@ -46,9 +46,11 @@
 > - **The trail's TRIGGER** (§2). Two ramps missed. The next move is the trigger, not the
 >   sampler — and the owner has said they do not want more aftermath instrumentation, so
 >   ask before building.
-> - **`rankHoldLine`'s note never reaches a row tapped after ranking.** Diagnostic only
->   (`last_attempt_note` has no user-facing reader), but it means a broken contest reads as
->   two clean carts in the readout. Small.
+> - ~~**`rankHoldLine`'s note never reaches a row tapped after ranking.**~~ **FIXED
+>   2026-08-28.** The cause was not in `hold-line.ts` at all: the primary held unit's
+>   `rankHoldLine` call sat inside the block gated by `claimHoldNotification`, so the line
+>   was ranked exactly ONCE per offer and no later tap was ever seen. It re-ranks above the
+>   gate now, like the extras loop always has.
 > - **`reclaimLapsedHolds` marks a hold `expired` while KEEPING `cart_key`**, so it never
 >   releases on RC. The premise that blocked it — "RC's cart lapse is unmeasured" — is
 >   **retired**: on 08-25 `expireStaleHolds(45)` released an unclaimed hold at exactly 45
@@ -145,10 +147,20 @@ with a status change in between.**
 
 This is the most release-critical query in the product. Not a drive-by.
 
-### 1a. The rank-2 row carried no note, so the readout looks clean
-`rankHoldLine` writes "another watcher is ahead of you" only to rows already `requested`. The
+### 1a. ~~The rank-2 row carried no note~~ — FIXED 2026-08-28
+`rankHoldLine` wrote "another watcher is ahead of you" only to rows already `requested`. The
 runner-up was `offered` when the line was ranked and was tapped fourteen seconds later; nothing
-re-ranks afterwards. **So a contest that went wrong reads as two successful carts.**
+re-ranked afterwards. **So a contest that went wrong read as two successful carts.**
+
+**The cause was the CALL SITE, not the function.** For the primary held unit `rankHoldLine` sat
+inside the block gated by `claimHoldNotification` — once per (watch, release, unit) — so the
+line was ranked a single time in the life of an offer. The extras loop has always re-ranked
+every cycle. It now re-ranks above the gate, and rows already carrying the note are skipped so
+a per-cycle rank cannot restamp `last_attempt_at` every 15s all night.
+
+**Measured, not assumed: the behavioural test does not catch this.** It passes against
+master's `hold-line.ts`; only the structural guard (`rankHoldLine` before
+`claimHoldNotification(w.id` in stripped source) fails against the real defect.
 
 ### 1b. A dead session strands a carted site — the 08-13 leak, recurring
 Both carted rows sat `carted` for **78 minutes** with `released_at` NULL and
@@ -208,12 +220,11 @@ past its release is otherwise the signature of a dead runner (2026-08-07). The d
 the runner-up stayed at 0, so the next contest between them inverts. Until now the "they go to
 the bottom of the list" rule had only ever been asserted by a test.
 
-**A REAL GAP, FOUND WHILE SETTING THIS UP.** `rankHoldLine` writes the "another watcher is ahead
-of you" note only to rows already `requested`. At 05:50:55 the runner-up's row was still
-`offered`; it was tapped fourteen seconds later, and nothing re-ranks the line unless another
-offer for that unit arrives. **So the rank-2 row may carry no note at all** — which is the one
-state the readout uses to tell a queue from an outage. Diagnostic only (no user-facing reader),
-recorded rather than fixed mid-flight.
+**A REAL GAP, FOUND WHILE SETTING THIS UP — FIXED 2026-08-28, see §1a.** `rankHoldLine` wrote
+the "another watcher is ahead of you" note only to rows already `requested`. At 05:50:55 the
+runner-up's row was still `offered`; it was tapped fourteen seconds later, and nothing re-ranked
+the line unless another offer for that unit arrived. **So the rank-2 row could carry no note at
+all** — which is the one state the readout uses to tell a queue from an outage.
 
 ---
 

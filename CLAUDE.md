@@ -3855,10 +3855,65 @@ Both holds carted:
   has a LIVE hold — `carted` or `claiming` — so the rule becomes *one live hold per unit*
   rather than *one served per call*. That is the most release-critical query in the product
   and it is not a drive-by; it wants its own change, with a test that calls `dueHolds` twice.
+  - ~~**THE FIX IS NOT BUILT.**~~ **BUILT AND MERGED (#201).** `dueHolds` carries a
+    `NOT EXISTS` over `('carted','claiming','released','claimed')`, which makes the rule
+    TEMPORAL rather than per-call, and `hold-line.test.mts` calls `dueHolds` twice with a
+    status change in between. Struck rather than deleted: "the fix is designed and NOT
+    built" is exactly the sentence a later reader quotes as current state, and it survived
+    at the top of **Open / next session** for two days after the fix landed.
 - **AND THE RANK-2 ROW CARRIED NO NOTE**, so from the readout the morning looks like two
   clean carts rather than a contest that went wrong. `rankHoldLine` writes the "someone is
   ahead of you" note only to rows already `requested`; this one was tapped fourteen seconds
   after the line was ranked and nothing re-ranks afterwards.
+
+#### AND THE REASON NOTHING RE-RANKS WAS A GATE MEANT FOR THE NOTIFICATION (2026-08-28)
+The sentence above ends *"nothing re-ranks afterwards"* and stops there. **Where that came
+from is one line in `poller.ts`, and it is not in `hold-line.ts` at all.**
+- **`rankHoldLine` for the PRIMARY held unit sat inside the block gated by
+  `claimHoldNotification`**, which is once per (watch, release, unit); every later cycle
+  `continue`s on that claim without reaching it. So the line was ranked **exactly once in
+  the life of an offer** — at the moment the alert went out.
+- **THE EXTRAS LOOP HAS ALWAYS RE-RANKED EVERY CYCLE.** `heldUnits.slice(1)` calls it
+  unconditionally, with a comment saying why (*"a contest is only visible once the second
+  offer exists, and it can arrive on any cycle"*). The reasoning was written down, correct,
+  and applied to the rarer of the two paths. The primary unit missed it purely because its
+  call happened to be inside a gate that exists for the TEXT, not for the ranking.
+- **SO THE LOSS LANDS ON THE ORDINARY CASE, NOT AN EDGE.** An offer goes out the evening
+  before and is tapped at breakfast. Every tap after the ranking pass — which is nearly all
+  of them — leaves a row `requested` past its release with `last_attempt_note` **NULL**,
+  which `rc-holds-readout.mts` prints as *"NOTHING has tried to act on this hold at all"*.
+  That is the 2026-08-07 dead-runner signature, manufactured by the line on every contested
+  morning. Diagnostic only (`last_attempt_note` has no user-facing reader), and the field a
+  human reads at 08:15 to tell a queue from an outage.
+- **THE FIX IS THE CALL SITE: re-rank ABOVE the claim gate**, so it runs every cycle like
+  the extras path. The in-block call is KEPT — on the claim-winning cycle the offer row is
+  created *after* the pre-claim call has already run and found nothing, so without it a
+  fresh offer waits a full cycle to be ranked.
+- **AND THAT MAKES THE NOTE WRITE PER-CYCLE, WHICH NEEDED ITS OWN GUARD.** `noteAttempt`
+  stamps `last_attempt_at = NOW()` unconditionally, so ranking every 15s all night would
+  leave that column permanently reading "0m ago" — destroying the one signal that says WHEN
+  the line last changed its mind, and the same column the readout uses for *"the runner
+  TRIED 3m ago"*. Rows already carrying the note are skipped, compared against an exported
+  `BEHIND_NOTE` constant so no test can pin a copy of the wording.
+  - **THE CONSTANT MUST STAY UNDER `noteAttempt`'s 300-CHARACTER SLICE.** Past it the
+    stored value can never equal the constant, the skip never matches, and the churn guard
+    silently stops guarding — fix-present-and-inert, pinned by its own test.
+- **THE DB TEST DOES NOT CATCH THIS BUG, AND THAT IS MEASURED RATHER THAN ASSUMED.** The
+  new "tapped after ranking" test PASSES against master's `hold-line.ts` — verified by
+  running it under the mutation that restores master's exact filter. `rankHoldLine` always
+  noted late tappers *when called*; it was never called. **Only the STRUCTURAL guard
+  (`rankHoldLine` appears before `claimHoldNotification(w.id` in stripped source) fails
+  against the real defect.** The behavioural test is a property guard, not a reproduction,
+  and calling it one would be the twenty-fifth instance of a guard credited with catching
+  something it cannot see.
+- Five mutations, each verified to APPLY and to fail: the call moved back below the claim,
+  the note-skip dropped, the constant pushed past 300 chars, `rankHoldLine` early-returning
+  when no rank changed, and the `requested` filter dropped so `offered` rows are noted too.
+- **AND THE MUTATION RUN ITSELF COST THE FIX ONCE.** `git checkout <file>` was used to
+  revert each mutation while the fix was still UNCOMMITTED, so it reverted to HEAD and
+  deleted the change under test — after which two mutations reported "did not apply"
+  against a file that no longer contained the code they targeted. **Commit before mutating**,
+  or the reverts are indistinguishable from the fix never having been written.
 
 ### A DEAD SESSION STILL STRANDS A CARTED SITE (2026-08-26) — the 08-13 leak, recurring
 Both carted rows were **still `carted` 78 minutes later**, with `released_at` NULL:
@@ -3999,11 +4054,17 @@ below 10,246 MB. No Track A reading, because there was nothing to report.
 
 > **START AT `docs/NEXT-SESSION.md`. THE TOP ITEM IS A BUG, NOT A READING.**
 >
-> **1. `dueHolds` SERVED BOTH RIVALS AND THE BOT CARTED ONE CAMPSITE TWICE** (08-26, 14
-> seconds apart). The de-dupe is per QUERY, not per contest. Two users each told their site
-> is held; the loser finds out at checkout. **The fix is designed and NOT built** — see
-> "THE FAIRNESS LINE SERVED BOTH RIVALS" above. It is the release-critical query, so it
-> wants its own change and a test that calls `dueHolds` TWICE.
+> ~~**1. `dueHolds` SERVED BOTH RIVALS AND THE BOT CARTED ONE CAMPSITE TWICE** … the fix is
+> designed and NOT built.~~ **BUILT AND MERGED IN #201, AND THIS ENTRY WAS STALE FOR TWO
+> DAYS AT THE TOP OF THE LIST.** `dueHolds` carries the temporal `NOT EXISTS`; the suite
+> calls it twice with a status change in between. Struck, not deleted — a "NOT built" on the
+> top item is read as current state, which is the cost this file exists to prevent.
+>
+> **1. THE FAIRNESS LINE'S NOTE NEVER REACHED A LATE TAPPER — FIXED 2026-08-28.** The
+> primary held unit was re-ranked only once, because its `rankHoldLine` call sat behind
+> `claimHoldNotification`. Every overnight tap therefore left a `requested` row with
+> `last_attempt_note` NULL — the dead-runner signature, on every contested morning. See
+> "AND THE REASON NOTHING RE-RANKS WAS A GATE MEANT FOR THE NOTIFICATION".
 >
 > **2. READ THE NEXT RAMP — AND DO NOT TRY TO STAGE ONE.** The trail is armed (#193/#194,
 > on the box since 13:26:42 PT 08-25) and **`trail-*` readings are still ZERO**. A password
