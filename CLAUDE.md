@@ -2571,6 +2571,45 @@ because `supervise.ps1` happened to restart the process in time.
   in the file, which was `maybeAutoLogin`'s only by luck of ordering, and a second caller above
   it made it read a different function. Twentieth time.
 
+### THE TRAIL'S SILENCE IS INSTRUMENTED, AND THE BOX HAS IT (2026-08-28)
+Four ramps have now passed with **zero `trail-*` readings**: 08-25 20:22 (~3.6 GB), 08-26
+21:24 (9,112 MB / 100% COMMIT), 08-28 02:01 (8,981 MB / 99%) and 08-28 08:13 (6,264 MB / 99%,
+which resolved on its own before the box updated). Onsets over six days: **eleven, gaps of
+5-28 hours**, so a missed one is not rare — it is most of them.
+- **THE "SEGMENT NEVER ENDS" EXPLANATION IS RULED OUT, and that is the useful part.** The
+  theory was that `takeRamps` only takes ENDED segments on an ordinary tick, so a ramp on the
+  long-lived resident renderer is never taken. For 08-28 02:01 that is false: `max_pid` went
+  **14596 -> 7812 at 02:15**, two minutes after the peak, so the browser really was replaced,
+  `warmResident`'s `finally` really did run, and `final: true` really does include the open
+  segment. **The trigger fired and stored nothing anyway.**
+- **TWO POSSIBILITIES REMAIN, THEY LOOK IDENTICAL FROM OUTSIDE, AND THEY NEED OPPOSITE FIXES.**
+  Either the renderer answered no CDP call at all — the browser going quiet as it grows, which
+  has happened twice before on two different calls, and which means the trail needs a different
+  TRANSPORT rather than a different trigger — or segments are present with growth under the
+  400 MB bar, which would mean **the sampling profiler cannot see these bytes and Track A is
+  measuring a quantity that structurally excludes the leak.**
+- **EVERY READING EVER TAKEN POINTS AT THE SECOND ONE.** 13-109 MB of renderer attribution
+  against events of 5-9 GB; the newest is 08-28 02:02, `free RAM -640 MB · renderer 16 MB`.
+  **Do not treat that as settled** — it is the leading candidate, not a finding, and the whole
+  point of the line below is that it can be told apart rather than argued about.
+- **THE DISCRIMINATOR IS LIVE ON THE BOX SINCE 2026-08-28 08:44** (`5e399b3`, requested and
+  applied in 25 seconds). `flushAllocRamps` takes `describeIfEmpty`, and `warmResident`'s
+  teardown passes it — so a final flush that stores nothing prints `describeAllocTrail`.
+  **The teardown, not the bail:** the bail needs a stall AND free RAM under 2,000 MB, and the
+  08-28 ramp bottomed at **4,191 MB**, so it never fired. The teardown is where that browser
+  was replaced.
+- **HOW TO READ THE NEXT ONE.** In `logs\rc-keepwarm.log`, at the teardown following a ramp:
+  `EMPTY — that renderer answered no CDP call at all` is the transport answer; a line naming
+  segments with sub-400 MB growth is the profiler answer. **A `trail-*` row appearing in
+  `native_alloc_readings` is the third outcome and the best one** — it means the bar was
+  crossed and the attribution is finally stored.
+- **`describeIfEmpty` IS NOT UNCONDITIONAL, AND BOTH REASONS MATTER.** The bail already logs
+  `describeAllocTrail`, so an unconditional version prints the same text twice and reads as a
+  bug; and the teardown fires on **every** reopen — the post-Okta recycle, the size guard, the
+  runner's preemption — while `tail-log` returns only the last 16,000 characters. Noise there
+  destroys the record it exists to preserve, which is exactly how the 08-23 attributions were
+  lost.
+
 ### THE LEAK — WHERE IT ACTUALLY STANDS (2026-08-22)
 **Read this before building anything memory-related. Nothing shipped so far is a cure.** The size
 guard, the RAM arm, the heap trail, the post-Okta recycle, the orphan sweep, the throwaway tab and
@@ -4123,16 +4162,17 @@ code never implemented.
 > sign-in with Okta GONE was measured on 08-26 at **32 seconds and zero memory**, so the
 > "force the warm-up" plan does not work — see "A PASSWORD SIGN-IN CAN BE CHEAP".
 >
-> **THE TRAIL HAS NOW MISSED TWO RAMPS, NOT ONE (read 2026-08-27 13:40 PT).** Since it
-> landed there have been ramps on **08-25 20:22** (~3.6 GB) and **08-26 21:24→21:34
-> (9,112 MB, COMMIT 100%, one pid 7172 throughout)** — and `native_alloc_readings` holds
-> only the five old RETURN-PATH rows (3 `renewal`, 2 `auto-login`, newest 08-26 04:31).
-> **Two events, no `trail-*` row.** Per this file's own reading rule that is itself a
-> reading: it says the TRIGGER is wrong, and the next move is the trigger rather than the
-> sampler. Two candidates and the data does not separate them — CDP went quiet as the ramp
-> peaked (which has happened twice before, on two different calls), or the segment was split
-> below the 400 MB floor. **The box is alive and sampling** (newest `chromium_memory_samples`
-> row 08-27 13:36 PT, 2,019 rows in 60h), so this is not a dead instrument.
+> **FOUR RAMPS MISSED, AND THE SILENCE IS NOW INSTRUMENTED (2026-08-28 08:44 PT).**
+> 08-25 20:22 (~3.6 GB), 08-26 21:24 (9,112 MB / 100%), 08-28 02:01 (8,981 MB / 99%) and
+> 08-28 08:13 (6,264 MB / 99%) all passed with no `trail-*` row. **The "segment never ends"
+> explanation is RULED OUT** — on 08-28 02:01 `max_pid` went 14596 → 7812 at 02:15, so the
+> teardown ran and `final: true` does include the open segment; the trigger fired and stored
+> nothing. **#210 makes a silent final flush print `describeAllocTrail`, and the box has it
+> (`5e399b3`).** Read the teardown line in `logs\rc-keepwarm.log` after the next ramp:
+> `EMPTY — that renderer answered no CDP call at all` means the trail needs a different
+> TRANSPORT; segments with sub-400 MB growth means the sampling profiler cannot see these
+> bytes at all and Track A is measuring the wrong quantity. A `trail-*` row appearing is the
+> third and best outcome. **Full entry: "THE TRAIL'S SILENCE IS INSTRUMENTED".**
 >
 > Track B is still NOT covered by the owner's go-ahead.
 >
