@@ -598,6 +598,37 @@ camphawk_autocart   ->  CampHawk Auto-Cart
 Renewal type **auto-renewing**; each base plan needs a **free-trial offer of 1 week**, matching
 Apple's introductory offer and the Stripe path's `trialing` status.
 
+> **THE BILLING PERIOD DROPDOWN DEFAULTS TO MONTHLY, AND THE ID DOES NOT CORRECT IT
+> (2026-08-28).** Caught one click from `Activate` on `camphawk_autocart / yearly`, which read:
+>
+> ```
+> Draft · yearly                  <- the permanent base plan ID
+> Type: Monthly, auto-renewing    <- the actual billing period
+> ```
+>
+> **A base plan named `yearly` billing monthly at $59.99 charges twelve times the intended
+> price.** Nothing in the console objects — the ID is a free-text string and Play never compares
+> it to the period. The two `monthly` plans are correct *by accident* because Monthly is the
+> default; **both `yearly` plans are wrong unless someone actively changed the dropdown.**
+>
+> **THE PERIOD IS FIXED AT CREATION.** The remedy is Delete and recreate, not edit.
+>
+> **AND `Delete` EXISTS ONLY WHILE THE PLAN IS A DRAFT.** That is what made this cheap to fix
+> and is the reason to read the Type line *before* pressing Activate rather than after. An
+> activated base plan can be deactivated; the ID and the period are permanent.
+>
+> **Read the summary line, not the ID you typed.** The ID is what you meant; the Type line is
+> what Play will bill.
+
+**VERIFIED IN THE CONSOLE 2026-08-28 — `camphawk_base` is created and correct:** `monthly`
+(Monthly, auto-renewing) and `yearly` (Yearly, auto-renewing), both **Active**, both **United
+States** only.
+
+**Region availability is not "leave the price blank".** Every non-US region errored with a red
+`Set a price` until they were removed through **`Manage country / region availability`** — an
+unpriced region is an *error*, not an opt-out. §9c's "United States only" is an explicit
+availability change.
+
 ### 9c. Availability
 
 **United States only**, on the PRODUCTION track — now settable for the first time (§0c). This
