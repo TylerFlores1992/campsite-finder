@@ -439,6 +439,39 @@ Billing directly clears the gate and still leaves the server side to build.
 > `publishing:` block records as *"EXPECTED, NOT READ"*. It is a duration, not a log line.
 > **Do not promote it to a fact without opening that step.**
 
+> **CONFIRMED IN THE CONSOLE 2026-08-28: `Create subscription` IS THERE.** The page that
+> offered only `Upload a new APK` now reads *"Sell content or services on a recurring or prepaid
+> basis"* with a live create button. **Closed testing was enough** — the binary did not need to
+> be on production or open testing, which was an open question when this section was written.
+>
+> **NO `AD_ID`, so `docs/PLAY-STORE.md` §4 STANDS.** The flagged risk did not materialise. The
+> whole RevenueCat chain added **exactly one** permission:
+>
+> ```
+> android.permission.ACCESS_NETWORK_STATE                          webview
+> android.permission.INTERNET                                      webview
+> android.permission.POST_NOTIFICATIONS                            push
+> android.permission.WAKE_LOCK                                     push
+> com.google.android.c2dm.permission.RECEIVE                       push
+> app.camphawk.mobile.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION     AndroidX
+> com.android.vending.BILLING                                      <- the only addition
+> ```
+>
+> **AND AGP EMITS BOTH SPELLINGS AT ONCE — the wildcard was load-bearing.** The two manifests
+> the assertion read are in *different directories*, singular and plural:
+>
+> ```
+> app/build/intermediates/merged_manifest /release/processReleaseMainManifest/AndroidManifest.xml
+> app/build/intermediates/merged_manifests/release/processReleaseManifest    /AndroidManifest.xml
+> ```
+>
+> The step's comment justified `find`ing rather than hardcoding on the grounds that *"AGP moves
+> its intermediates between versions, and a stale path would find nothing and report it as no
+> problem."* The real reason turns out to be stronger: **AGP uses both names simultaneously, in
+> one build.** `*/merged_manifest*/release/*` catches both because of the trailing wildcard.
+> **Anyone tidying that glob to a concrete path would silently check one source instead of two**
+> — and the check would still print `ok` and still pass.
+
 **PRACTICAL CONSEQUENCE: Play is now blocked on NATIVE WORK, not on the console, and Apple is
 the store where more can happen sooner** — its products need only the Paid Applications
 agreement, with no build in the way. That reverses the sequencing assumption this section was
