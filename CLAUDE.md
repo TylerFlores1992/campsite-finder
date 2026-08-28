@@ -4202,9 +4202,113 @@ code never implemented.
   2026-08-25 measurement — treat it the way this file treats every number read off a bundle
   or a single observation: the best available reading, not a law.
 
+### ONE ACCOUNT ALWAYS GETS FIRST DIBS (migration 069, 2026-08-28) — a deliberate thumb on the scale
+The owner asked to always rank number one in the hold line, and reaffirmed it after being shown
+who is on the other side of it. `users.line_priority` (integer, default 0) is read by
+`orderLine` **ahead of** the rotation ticket and watch age, so a flagged account ranks first
+from the worst possible position. **Built, merged (#214, `ba0753d`), deployed, and PROVEN on the
+live line.**
+- **WHO LOSES, RECORDED BECAUSE IT WAS ASKED AND ANSWERED, NOT TO RE-LITIGATE IT.** In the live
+  line for unit 43189 the accounts ahead were `melinda.flores0501` (a paying subscriber —
+  active, base tier, grandfathered) and `iamtylerflores12345` (the owner's own test account).
+  **Melinda is family, which is what settled it.** Two accounts that are NOT family also compete
+  in future lines: `suziegrieve03` (3 active watches, more than anyone) and `cam1234123` — both
+  beta users, both holding a NULL ticket, which reads as 0 and would otherwise outrank
+  everybody. That was raised once, accepted, and is written into migration 069's header so a
+  later reader finds a decision rather than a bug.
+- **A COLUMN, NOT A HAND-EDITED TICKET.** The cheap route was `UPDATE users SET hold_offer_seq
+  = 0`, and it is strictly worse: invisible at the ranking site, it drifts back the moment the
+  rotation charges the ticket again, and the next person reading the line sees a number where a
+  decision belongs. The override has a name, ONE enforcer (`orderLine`) and a test.
+- **THE COPY HAD TO CHANGE WITH IT, AND THAT WAS THE REAL WORK.** Two surfaces asserted *why*
+  somebody was ahead, and priority makes both false: `BEHIND_NOTE` said *"they watched it
+  first"* (read by whoever diagnoses at 08:15), and **`HoldConfirm.tsx`'s `LineNote` — which is
+  USER-FACING** — said *"you started watching first"* and *"Somebody started watching it before
+  you"*, on the screen where a person decides whether to trust the bot instead of setting an
+  alarm. Both now state the POSITION, which is always true, and not the REASON, which is not.
+  **Shipping the flag without this would have made the app tell a real user something untrue at
+  the moment of decision.**
+- **PRIORITY IS READ LIVE, NOT FROZEN ONTO THE HOLD like `line_seq`, and the asymmetry is
+  deliberate.** The ticket is frozen because RANKING ITSELF SPENDS IT — a live read sorts the
+  winner below the person they just beat on the next cycle. Nothing charges a priority, so that
+  failure cannot arise, and taking effect on the next cycle is the POINT of changing it. **Do
+  not "make this consistent" by adding a frozen column** — that would pin a revoked override
+  onto every hold already in flight.
+- **THE ROTATION STILL CHARGES THE FLAGGED ACCOUNT.** Winning as rank 1 raises
+  `hold_offer_seq` every contest, so removing the flag drops that account to last for a while.
+  That is correct — they have been winning — and it makes switching it off honest rather than
+  abrupt. Left deliberately.
+- **PROVEN ON THE LIVE LINE, which is stronger than the deploy's own self-report.** After the
+  worker deploy the production poller re-ranked unit 43189 by itself:
+  ```
+  rank 1  tylerflores1992@gmail.com      offered
+  rank 2  tylerflores1992@gmail.com      requested   <- the tapped row
+  rank 3  melinda.flores0501@yahoo.com   offered
+  rank 4  iamtylerflores12345@yahoo.com  offered
+  ```
+  **A poller on the old code cannot produce that ordering** — it does not even SELECT
+  `u.line_priority` — so the re-rank is independent evidence the new code is live, of the kind
+  a green deploy step is not.
+- **`dueHolds` SERVES THE LOWEST RANK AMONG `requested` ROWS**, so rank 1 being an untapped
+  offer is harmless: the tapped row at rank 2 is what gets carted.
+- Eight mutations, each grep-verified to APPLY before its red was trusted — including the
+  priority comparison reversed (it is the ONE descending term, so `a - b` reads natural and
+  silently demotes the flagged account, presenting as "the flag does nothing"), and
+  `u.line_priority` dropped from the SELECT, which is the fix-present-and-inert shape.
+- **`suziegrieve03` AND `cam1234123` HOLD A NULL TICKET, WHICH READS AS 0.** That is why the
+  guard specifically tests "priority beats a ZERO ticket": a flag that only beat spent tickets
+  would lose every contest containing a newcomer, which is the production case.
+
+#### AND A PRE-EXISTING TEST DEFECT SURFACED THE MOMENT A REAL HOLD EXISTED
+`health-hold-counts.test.mts` compared `holdsAhead(25)` — **bounded** — against `holdsAhead()`
+— **unbounded** — as its baseline. Those agree only while every live hold happens to be within
+25 minutes of releasing, i.e. **while the table is empty**, which is how it was written in #202
+and how it passed for five days.
+- It went red the moment a hold was tapped for a release **19 hours out**, on a branch whose
+  diff could not touch it, and read exactly like a regression.
+- **VERIFIED FAILING ON `aea82d4` WITH NONE OF THE BRANCH'S CHANGES** — that check is what
+  separated it from a regression, and it took one command. `THE BOUND IS A BOUND`, three tests
+  further down the SAME FILE, already took a bounded baseline; these two simply did not follow
+  it.
+- Re-verified against three mutations (`REAL_UNIT` not filtering, `REAL_UNIT` as `AND false` —
+  the dangerous over-correction — and the bound ignored) so the rebaseline is not a weakening.
+- **THE GENERAL SHAPE: a real-DB guard whose baseline is a DIFFERENT query than its assertion
+  is only correct on an empty table.** There may be more of these; they will surface one live
+  hold at a time.
+
+#### THE `HoldConfirm.tsx` HEADER STILL CARRIED THE REFUTED DUPLICATE-FACILITY STORY
+It read *"RC lists one physical campsite under more than one facility, so two people can each be
+offered the same site"*. **Measured false on 2026-08-25** — zero inventory overlap; the
+collision was our own result-map bug, fixed by `watch-key.ts` in #188. `worker/hold-line.ts`'s
+header was corrected then and **this copy of it was not**, so the file kept teaching the wrong
+cause. Corrected while changing the copy beside it. Same shape as the two docs PRs that sat
+open carrying the Feature E correction: **a correction applied to one copy is not applied.**
+
+#### TWO SMALL TRAPS PAID FOR AGAIN
+- **BACKTICKS IN A SQL COMMENT COST A BUILD, for at least the third time.** These queries are
+  template literals, so a backtick in a `--` comment terminates the string and the parse error
+  surfaces on an unrelated line. The park-watch entry already warns about this in as many words
+  and it still happened, inside a comment explaining the very field being added. `tsc` catches
+  it; nothing else does.
+- **A SEMICOLON INSIDE A SQL STRING LITERAL BREAKS A NAIVE SPLITTER.** Migrations here are
+  applied by hand, and the obvious way is to split the file on `;` — which cuts a statement in
+  half when one is hiding in a `COMMENT ON ... IS '...'`. Cost one failed apply. 069 now says so
+  in the file.
+- **The health endpoint's checks are keyed `name`, NOT `id`.** A summary filtering on `c.id`
+  prints `undefined` for every check and silently drops the ones you were looking for.
+
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`. THE TOP ITEM IS A BUG, NOT A READING.**
+> **START AT `docs/NEXT-SESSION.md`. NOTHING IS ASSIGNED; THE TOP ITEM IS A READING.**
+>
+> **0. A REAL HOLD IS QUEUED FOR 2026-08-29 08:00 PT, AND THE OWNER WANTS THE SITE.** Unit
+> `43189` (`#94`, Morro Bay Upper Section), tapped 2026-08-28 11:46 PT by
+> `tylerflores1992@gmail.com`, who is now `line_priority = 1` and ranks 1-2 in a four-row
+> line. `dueHolds` serves their `requested` row. **Nothing further is needed** — the box
+> needs no update (this change was worker- and web-side only) and `maybeAutoLogin` restores
+> the session at 07:30. If a rival taps overnight, expect ONE cart and the other rows left
+> `requested` with the "someone is ahead of you" note: **that is the line working, not a dead
+> runner.** Read `last_attempt_note` before concluding anything.
 >
 > ~~**1. `dueHolds` SERVED BOTH RIVALS AND THE BOT CARTED ONE CAMPSITE TWICE** … the fix is
 > designed and NOT built.~~ **BUILT AND MERGED IN #201, AND THIS ENTRY WAS STALE FOR TWO
@@ -4212,7 +4316,7 @@ code never implemented.
 > calls it twice with a status change in between. Struck, not deleted — a "NOT built" on the
 > top item is read as current state, which is the cost this file exists to prevent.
 >
-> **1. THE FAIRNESS LINE'S NOTE NEVER REACHED A LATE TAPPER — FIXED 2026-08-28.** The
+> ~~**1. THE FAIRNESS LINE'S NOTE NEVER REACHED A LATE TAPPER**~~ — FIXED 2026-08-28. The
 > primary held unit was re-ranked only once, because its `rankHoldLine` call sat behind
 > `claimHoldNotification`. Every overnight tap therefore left a `requested` row with
 > `last_attempt_note` NULL — the dead-runner signature, on every contested morning. See
@@ -4240,8 +4344,14 @@ code never implemented.
 > **THE OWNER'S FOUR-ITEM QUEUE IS DONE (2026-08-24 evening → 08-25).** Fairness line,
 > offer-card dismissal + ordering, RC beta copy, and alert batching — all shipped with
 > mutation-verified guards, full suite **1258/1258**. Details in the five sections directly
-> above. **Migration 068 is APPLIED to production and read back; the next main-lane number
-> is 069.**
+> above. **Migration 068 is APPLIED to production and read back.**
+>
+> **THE MAIN LANE'S MIGRATION BLOCK IS NOW FULL. `069_line_priority.sql` used the last
+> number in it (`docs/LANES.md`: main 060-069, side 070+, and the side lane has used 070).
+> The next main-lane migration must CLAIM A NEW BLOCK OUT LOUD before taking a number** —
+> two sessions each writing `071_*.sql` is a collision git merges cleanly and Postgres does
+> not, with no failure at merge time at all. `worker/migration-numbers.test.mts` catches a
+> duplicate but cannot stop one being written.
 >
 > **THE NEXT ACTION IS ONE PROBE RUN, AND IT NEEDS A BOX AND A QUIET MORNING.**
 > `rc-probe.mjs --cart-lapse` (built 2026-08-27, **never run**) measures how long RC holds a
@@ -4335,18 +4445,26 @@ code never implemented.
 > been revoked mid-session before, so check rather than assume**; the readouts fail LOUDLY
 > on an unreachable DB, so an empty answer is a real answer.
 >
-> **STATE AT 2026-08-28 09:20 PT.** Master is **`43a4033`**, the mini-PC is on **`5e399b3`**,
+> **STATE AT 2026-08-28 15:50 PT.** Master is **`ba0753d`**, the mini-PC is on **`5e399b3`**,
 > **every GitHub issue is closed and no PR is open.** Merged 08-28: **#202** (health-route
 > `REAL_UNIT` + the fixture-safety widening), **#191**, **#180**, **#203** (closed #76),
-> **#204** (closed #181 and #14), **#210** (the trail's silence), **#211** (docs).
+> **#204** (closed #181 and #14), **#210** (the trail's silence), **#211** (docs), **#213**
+> (docs), **#214** (the hold-line priority override + the bounded-baseline test fix).
+>
+> **#214 FIRED A WORKER DEPLOY AND IT WENT GREEN** — both machines restarted, 2/2 shards
+> held, heartbeat 8s, and the workflow's own "Verify the poller is actually alive" step
+> passed. **The stronger evidence is the live re-rank**, which a poller on the old code
+> could not have produced.
 >
 > **THE 08-28 RELEASE PASSED WITH NOTHING CARTED.** All five offers expired unclaimed —
 > nobody tapped, which is not a fault. The three-way contest on unit 43187 did NOT happen,
-> so #201's one-live-hold-per-unit rule is still untested in anger.
+> so #201's one-live-hold-per-unit rule is still untested in anger. **The 08-29 08:00
+> release is the next chance** — one row tapped so far, three untapped offers behind it.
 >
-> **`autocart.rc_session` WARNS AND THAT IS THE UPDATE'S DOING.** The 08:44 box update kills
-> the Chromium the token lives in. Nothing is queued, and `maybeAutoLogin` restores it at
-> T−30 of the next release. 18 of 19 checks ok.
+> **`autocart.rc_session` WARNS AND IT IS THE ORDINARY BETWEEN-RELEASES STATE.** The token
+> lives ~1h and `okta=ALIVE`; `maybeAutoLogin` restores it at T−30. `autocart.bot_version`
+> warns because the box is on `5e399b3` against web `ba0753d` — **"No bot-side code in the
+> gap", which is the documented not-worth-acting-on case.** 17 of 19 ok.
 >
 > *(historical, 2026-08-27 21:30 PT.)* Master was **`05ee4ff`** and **EVERY GITHUB ISSUE WAS
 > CLOSED.** Merged: **#202** (health-route `REAL_UNIT` + the fixture-safety widening),
