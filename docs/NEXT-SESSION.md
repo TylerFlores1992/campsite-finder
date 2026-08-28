@@ -1,6 +1,6 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed **2026-08-27 20:50 PT**.*
+*Rewritten 2026-08-25 evening; state refreshed **2026-08-28 09:55 PT**.*
 
 > ## NOTHING IS ASSIGNED. THE TOP BUG IS FIXED AND THE READING IS STILL WAITING.
 >
@@ -10,17 +10,17 @@
 > TWICE with a status change in between — which the old test could not have caught. §1 is kept
 > for the history; there is no work in it.
 >
-> **1b. THE FIRST THREE-WAY CONTEST IS QUEUED FOR 2026-08-28 08:00 PT, and it is the thing to
-> read tomorrow.** Unit `43187` (`#92`, Morro Bay Upper Section) is offered to **three
-> different users** — tylerflores1992, iamtylerflores12345 and melinda — for one campsite, all
-> `offered` and none tapped as of 20:25 PT. Two more offers exist (`#SC77` rc-611, and #92 on a
-> second watch). **If two or more tap, that is the first live exercise of #201.** Expect ONE
-> cart and the other rows left `requested` and uncarted: that is the line working, not a dead
-> runner. Read `last_attempt_note` before concluding anything.
+> **1b. THE THREE-WAY CONTEST DID NOT HAPPEN — nobody tapped.** All five offers for 2026-08-28
+> 08:00 PT expired unclaimed, including unit `43187` (`#92`, Morro Bay Upper Section) offered
+> to three different users. **Not a fault**: an untapped offer is the ordinary outcome. But it
+> means **#201's one-live-hold-per-unit rule is still untested in anger** — the next time two
+> or more people tap the same unit is its first live exercise. Expect ONE cart and the other
+> rows left `requested` and uncarted; that is the line working, not a dead runner. Read
+> `last_attempt_note` before concluding anything.
 >
 > **2. THE RAMP (§2) — THE NEXT ONE ANSWERS A QUESTION NOW.** The trail has produced no
 > reading across **four** ramps (08-25 20:22, 08-26 21:24 at 9,112 MB / 100% COMMIT, 08-28
-> 02:01 at 8,981 MB, 08-28 08:13 at 6,264 MB). The "segment never ends" theory is **ruled
+> 02:01 at 8,981 MB, 08-28 08:13→08:23 at **8,987 MB**). The "segment never ends" theory is **ruled
 > out** — on 08-28 02:01 `max_pid` went 14596 → 7812 at 02:15, so the teardown ran and
 > `final: true` does include the open segment. **#210 shipped the discriminator and the box
 > has it (`5e399b3`, applied 08-28 08:44).** After the next ramp, read the teardown line in
@@ -32,13 +32,43 @@
 >   Track A is measuring a quantity that excludes the leak, and Track B stops being optional.
 > - a `trail-*` row in `native_alloc_readings` → the bar was crossed and it finally worked.
 >
-> Ramp cadence is **11 onsets in 6 days, gaps 5-28h**, so expect an answer within a day.
+> **NOTHING HAS RAMPED SINCE THE BOX UPDATED at 08:44 PT.** Checked 09:48 against the series
+> itself: **877 samples in 26h, ZERO over 1,200 MB since 08:23**, newest 298 MB. The
+> diagnostic has never run, so an empty `native_alloc_readings` is expected and is NOT a fifth
+> miss. Ramp cadence is **11 onsets in 6 days, gaps 5-28h** (the last two were 02:01 and 08:13,
+> ~6h apart), so expect an answer within a day.
 > **Do NOT try to stage one**; §2b has the measurement that retires the obvious plan.
 >
-> **3. WHAT IS OPEN RIGHT NOW.** Master is **`50cafa8`**. **PR #204** is the only open PR
-> (Routine IDs, the nights answer, and a guard for the egress watchdog — closes #181 and
-> #14); docs plus one `worker/` test file, so it does NOT fire a worker deploy. **Every
-> GitHub issue is closed or closing.** No live holds.
+> **3. WHAT IS OPEN RIGHT NOW: NOTHING.** Master is **`43a4033`**, the mini-PC is on
+> **`5e399b3`**, **every GitHub issue is closed and no PR is open.** No live holds, no queued
+> offers. Health is 17/19 at 09:48 and **both warns are the documented benign cases**:
+> `autocart.rc_session` (no token, but `okta=ALIVE` with 612m left — the token lives ~1h and is
+> legitimately dead between releases, and a repair would be the cheap cookie-answered one), and
+> `autocart.bot_version` (box `5e399b3` vs web `43a4033`, **"No bot-side code in the gap"** —
+> the case this file records as not worth acting on). Nothing is queued, so nothing repairs the
+> session before the next release's T−30.
+>
+> **DO NOT RUN `npm run verify` WHILE CI IS RUNNING — INCLUDING WHILE WAITING FOR IT.** Both
+> hit the production DB. On 08-28 a docs-only PR failed on `rc-client-reports.test.mts`
+> because a local verify started at 09:38:05 overlapped a CI run at 09:37:21-09:40:41, and
+> both delete the same fixed `SENTINEL`. **#203 does not cover this** — it fixed `LIKE` prefix
+> sweeps in the hold suites; a suite with one fixed sentinel deleted by exact id is still
+> mutually destructive between two runs of itself, as are `sync-claim` and `ridb-photos`.
+> Recorded, not fixed. A re-run is the right response when the diff cannot touch the code, the
+> suite passes alone, and the overlap is named.
+>
+> **AND DO NOT PUSH AGAIN WHILE YOUR OWN CI IS STILL RUNNING — A SECOND PUSH IS A SECOND RUN.**
+> The same PR failed a second time with no local verify anywhere near it: a push 7.5 minutes
+> after the previous one triggered cancel-on-push, which killed a run **mid-suite**. A killed
+> run runs no cleanup, and its rows are seconds old — which is exactly the age #203's
+> `offered_at < NOW() - interval '10 minutes'` gate deliberately spares, so the next run
+> inherits them. **Do not lower that interval**; it is what stops a starting run wiping a
+> running one (issue #76). Re-running locally on the same sha with no CI in flight gave
+> 1381/1381, which is how litter was told from a regression.
+>
+> **`worker/**` IS A WORKER-DEPLOY TRIGGER PATH.** "Only test files" is NOT an exemption — that
+> was asserted twice on 08-27 and was wrong both times. Read `paths:` in `worker-deploy.yml`
+> before claiming a merge is deploy-free.
 >
 > **4. MERGING #180 MEANS THE NEXT ANDROID BUILD FAILS, ON PURPOSE.** Already merged.
 > `codemagic.yaml` asserts `com.android.vending.BILLING` reaches the merged manifest, and

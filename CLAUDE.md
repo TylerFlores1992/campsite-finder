@@ -2571,11 +2571,72 @@ because `supervise.ps1` happened to restart the process in time.
   in the file, which was `maybeAutoLogin`'s only by luck of ordering, and a second caller above
   it made it read a different function. Twentieth time.
 
+### #203 DOES NOT COVER A FIXED SENTINEL, AND I PROVED IT BY BREAKING THE RULE (2026-08-28)
+A docs-only PR (#212) failed CI on `rc-client-reports.test.mts` — *"an empty batch is a no-op,
+not a write"*, `Cannot read properties of undefined (reading 'client_reports')`. A row the test
+had just written was gone.
+- **IT IS NOT #76.** That suite's `SENTINEL` is `__camphawk-clientreport-test__`, which does not
+  match `\_\_t%`, and a scan of every remote branch found **none** still carrying the global
+  sweep — the transitional hazard recorded on 08-27 is over.
+- **IT WAS TWO CONCURRENT RUNS OF THE SAME SUITE, AND THE SECOND ONE WAS MINE.** CI ran
+  09:37:21-09:40:41 PT; I started a local `npm run verify` at 09:38:05 **to pass the time while
+  waiting for that exact CI run**. Both use the same fixed `SENTINEL` and both `DELETE FROM
+  rc_hold_requests WHERE unit_id = $1` on the way in.
+- **SO `docs/LANES.md`'s RULE WAS BROKEN BY THE PERSON WHO HAD SPENT THE DAY ENFORCING IT**,
+  and in the least suspicious way available: idling. Waiting on CI is exactly when a local
+  verify feels free, and it is exactly when it is not.
+- **#203 COVERS `LIKE` PREFIX SWEEPS IN THE HOLD SUITES AND NOTHING ELSE.** A suite with a
+  single FIXED sentinel deleted by exact id is mutually destructive between two runs of itself,
+  and the per-suite prefix plus age gate does not reach it. Same for `sync-claim` and
+  `ridb-photos`, which failed the same way on #206. **Recorded, not fixed** — the honest remedy
+  is a per-RUN component in these sentinels, and that is a change to several real-DB suites
+  which should not be made while passing time.
+- **A RE-RUN IS THE CORRECT RESPONSE HERE and is not a shrug**, by the file's own three
+  conditions: the diff is two Markdown files and cannot touch that code, the suite passes
+  alone, and the mechanism is named with timestamps on both sides.
+
+#### AND IT HAPPENED AGAIN AN HOUR LATER, BY A DIFFERENT MECHANISM: A CANCELLED RUN'S LITTER
+The same PR failed CI a second time, 5 of 1381, and **this one is not a local verify — nobody
+ran one.** The run timestamps settle it:
+```
+33190834414  8bb0535  created 16:37:17Z  ->  CANCELLED 16:44:52Z   (7m35s in, mid-suite)
+33191426746  5de434b  created 16:44:51Z      job started 16:45:35Z  ->  FAILURE 16:48:56Z
+```
+- **I PUSHED TWICE INSIDE ONE SUITE'S RUNTIME.** `npm test` takes ~2.5 minutes and the whole
+  `verify` job ~4; the second push landed 7.5 minutes after the first, and GitHub's
+  cancel-on-push killed the older run **while it was executing**. A killed run runs no `after()`
+  and no cleanup, so its working set stays in the production database.
+- **THOSE ROWS ARE EXACTLY THE AGE #203's GATE PROTECTS.** The sweep is
+  `offered_at < NOW() - interval '10 minutes'`, chosen so a CONCURRENT run's live rows are
+  spared. A cancelled run's rows are seconds old and indistinguishable from a live run's — so
+  the next run's `before()` deliberately leaves them, and they poison it for ten minutes.
+- **THAT IS A TRADE #203 MADE ON PURPOSE, AND IT IS THE RIGHT ONE.** Shortening the gate
+  reinstates issue #76, where a STARTING run wiped a RUNNING one. The cost is a ten-minute
+  window after any cancelled run in which the next run can fail on litter. **Do not "fix" this
+  by lowering the interval.**
+- **CONFIRMED BY RE-RUNNING LOCALLY ON THE SAME SHA once no CI was in flight: 1381/1381.**
+  That is the discriminator between litter and a regression, and it was taken rather than
+  assumed.
+- **THE OPERATIONAL RULE IS THE WHOLE REMEDY, and it is a second one: do not push again while
+  your own CI is still running.** `docs/LANES.md` says one test run at a time and both lanes
+  read that as "don't run two commands". **A second push IS a second run**, and cancel-on-push
+  does not make it safe — it makes the first run die in a state that harms the second. Second
+  time in one day the rule was broken by the person enforcing it, and the first time it was
+  idling; this time it was impatience.
+
 ### THE TRAIL'S SILENCE IS INSTRUMENTED, AND THE BOX HAS IT (2026-08-28)
 Four ramps have now passed with **zero `trail-*` readings**: 08-25 20:22 (~3.6 GB), 08-26
-21:24 (9,112 MB / 100% COMMIT), 08-28 02:01 (8,981 MB / 99%) and 08-28 08:13 (6,264 MB / 99%,
-which resolved on its own before the box updated). Onsets over six days: **eleven, gaps of
-5-28 hours**, so a missed one is not rare — it is most of them.
+21:24 (9,112 MB / 100% COMMIT), 08-28 02:01 (8,981 MB / 99%) and 08-28 08:13→08:23
+(**8,987 MB / 99%**, which resolved on its own at 08:25 — twenty minutes before the box
+updated). Onsets over six days: **eleven, gaps of 5-28 hours**, so a missed one is not rare —
+it is most of them.
+- **THAT LAST PEAK WAS FIRST RECORDED AS 6,264 MB, FROM A MID-CLIMB SAMPLE.** The ramp was
+  still rising when it was read. A ramp takes ~10 minutes and the sampler runs every 2, so
+  **any figure taken while one is in progress is a lower bound, not a peak** — wait for
+  `max_pid` to change before quoting a number.
+- **NO RAMP HAS HAPPENED SINCE THE BOX UPDATED (checked 09:17 PT).** Flat at 285-470 MB since
+  08:44. **The diagnostic is armed and has never run**, so a quiet `native_alloc_readings` is
+  the expected state and NOT a fifth failure — do not read it as one.
 - **THE "SEGMENT NEVER ENDS" EXPLANATION IS RULED OUT, and that is the useful part.** The
   theory was that `takeRamps` only takes ENDED segments on an ordinary tick, so a ramp on the
   long-lived resident renderer is never taken. For 08-28 02:01 that is false: `max_pid` went
@@ -4164,7 +4225,7 @@ code never implemented.
 >
 > **FOUR RAMPS MISSED, AND THE SILENCE IS NOW INSTRUMENTED (2026-08-28 08:44 PT).**
 > 08-25 20:22 (~3.6 GB), 08-26 21:24 (9,112 MB / 100%), 08-28 02:01 (8,981 MB / 99%) and
-> 08-28 08:13 (6,264 MB / 99%) all passed with no `trail-*` row. **The "segment never ends"
+> 08-28 08:13 (8,987 MB / 99%) all passed with no `trail-*` row. **The "segment never ends"
 > explanation is RULED OUT** — on 08-28 02:01 `max_pid` went 14596 → 7812 at 02:15, so the
 > teardown ran and `final: true` does include the open segment; the trigger fired and stored
 > nothing. **#210 makes a silent final flush print `describeAllocTrail`, and the box has it
@@ -4274,7 +4335,20 @@ code never implemented.
 > been revoked mid-session before, so check rather than assume**; the readouts fail LOUDLY
 > on an unreachable DB, so an empty answer is a real answer.
 >
-> **STATE AT 2026-08-27 21:30 PT.** Master is **`05ee4ff`** and **EVERY GITHUB ISSUE IS
+> **STATE AT 2026-08-28 09:20 PT.** Master is **`43a4033`**, the mini-PC is on **`5e399b3`**,
+> **every GitHub issue is closed and no PR is open.** Merged 08-28: **#202** (health-route
+> `REAL_UNIT` + the fixture-safety widening), **#191**, **#180**, **#203** (closed #76),
+> **#204** (closed #181 and #14), **#210** (the trail's silence), **#211** (docs).
+>
+> **THE 08-28 RELEASE PASSED WITH NOTHING CARTED.** All five offers expired unclaimed —
+> nobody tapped, which is not a fault. The three-way contest on unit 43187 did NOT happen,
+> so #201's one-live-hold-per-unit rule is still untested in anger.
+>
+> **`autocart.rc_session` WARNS AND THAT IS THE UPDATE'S DOING.** The 08:44 box update kills
+> the Chromium the token lives in. Nothing is queued, and `maybeAutoLogin` restores it at
+> T−30 of the next release. 18 of 19 checks ok.
+>
+> *(historical, 2026-08-27 21:30 PT.)* Master was **`05ee4ff`** and **EVERY GITHUB ISSUE WAS
 > CLOSED.** Merged: **#202** (health-route `REAL_UNIT` + the fixture-safety widening),
 > **#191** (outreach timing docs), **#180** (Play Billing gate, STOREKIT-PLAN, side-lane
 > §25/§26 notes), **#203** (fixture sweep scope, closed #76), **#204** (Routine IDs, the
