@@ -3045,6 +3045,67 @@ out"** while the cart control asked them to **log in** — RC contradicting itse
   and "came from the marker" tests staged the IDENTICAL state and both went green measuring
   nothing. Caught by reading the fixture rather than the assertion.
 
+### THE RETEST CARTED NOTHING AND SAID IT HAD — THE MARKER COULD NOT NAME ITS SITE (2026-08-29)
+A second Android hand-off an hour after the first, on a different park, reported
+`✓ Added to cart` for a site it never touched. Three separate defects, and the retest was
+worthless because of the first.
+```
+cart-verified {"entries":1,"attached":null,"keySource":"localStorage"}
+session       {"opens":20,"firstOpenAgoSec":3553,"storedExpiresInSec":116}
+log           "precart load ok — cart key in hand"
+status        "RC declined (200) — cart is already added"
+```
+- **`alreadyCarted()` WAS `!!sessionStorage.getItem(DONE)` — IT ASKED WHETHER *ANYTHING* HAD
+  BEEN CARTED IN THIS WEBVIEW.** The session was 59 minutes and 20 opens old and still held
+  the FIRST hand-off's marker, so the bundle short-circuited and announced success for unit
+  4756 on the strength of having carted 43793. **A success message over an uncarted site is
+  the worst output this screen has** — the user stops watching a site nobody is holding.
+  Scoped on `unitId` now, plus a clear at the source when a new claim link arrives.
+  - **A MARKER THAT CANNOT NAME ITS UNIT ACTS RATHER THAN SUPPRESSING.** That is one written
+    by an older bundle, and the directions are not symmetric: wrongly "carted" claims a site
+    we do not hold; wrongly "not carted" re-submits, RC answers "cart is already added", and
+    the cost is the checkout affordance on a cart that is genuinely ours. Same rule as
+    `unknown` never rounding to a verdict that suppresses action.
+- **THE TOKEN HAD ~2 MINUTES LEFT** (`storedExpiresInSec` 134 → 116 across the flow) and the
+  precart was refused. `rcHandoffStep` checked that a token EXISTED, never that it would
+  still be alive when the cart fired — **presence is not liveness, restated for the claim
+  screen**, and the ordering is what makes it expensive: the failure lands AFTER the bot has
+  released, so the site returns to the open market with nobody holding it. The gate now takes
+  the remaining life (`MIN_TOKEN_SECONDS_FOR_HANDOFF`, 90s) and sends the user to sign in
+  FIRST. **An unknown expiry behaves exactly as before** — a client that reports none must not
+  start being bounced, which is the `unconfirmed`-proceeds rule.
+  - **A DEADLINE, NOT THE REPORTED SECONDS.** `expiresInSec` is a snapshot from when the
+    report was written and the user may sit on the screen for minutes; the gate asks how long
+    is left NOW.
+- **THE READOUT WAS READING THE OLDEST REPORT.** The bundle re-injects on every navigation, so
+  one hand-off writes several `cart-verified` rows; `find` returned the first, written by
+  whatever bundle the webview had cached. **So the run that finally carried `keySource` was
+  reported as not carrying it, and the instrument built that morning was written off as
+  undeployed.** `findLast` is the whole fix.
+- **AND THE DEPLOY HAD NOT LANDED WHEN THE TEST RAN.** I merged #221 and queued the retest
+  without confirming Vercel had shipped it — so the first half of the run used the old bundle.
+  `curl -sI camphawk.app/api/rc-precart` (max-age 300) is the check, and it takes one command.
+- **WHAT THE NEW FIELDS DID SAY, on the first hand-off's cart: `keySource: localStorage` and
+  `attached: null`.** So RC's own SPA *did* have the key — which **weakens** the leading
+  "the page cannot see it" theory — and RC does not return `CustomerId` on that endpoint, so
+  `attached` cannot discriminate and needs replacing with something that can. **The
+  reachability cause is still not established.**
+- **SEVEN MUTATIONS, and the two that mattered SURVIVED the first round.** The marker tests
+  staged a fresh fragment, so `readFragment`'s clear removed the stale marker before
+  `alreadyCarted` was ever consulted — the scoping check could be deleted outright and both
+  still passed. Re-done with no fragment and the job supplied through the stash, which is the
+  path a reload or a re-injection actually takes. **A third guard, on the clear itself, then
+  survived twice more**: asserting it through its EFFECT cannot work, because the unit check
+  produces the same outcome and a successful cart overwrites the marker anyway. It needs a
+  DECLINED submit, so nothing is written and what remains is exactly what the clear did.
+- **AND A NEIGHBOURING GUARD FAILED OVER A COMMENT.** `rc-login-script.test.mts` bounded
+  "a captured token clears the captcha prompt" with a **500-character window**, which a new
+  comment pushed past — the `rehearsal.test.mts` proximity-window shape again. Re-anchoring
+  took three attempts, each verified by mutation: stripping comments was not enough, and
+  bounding on the next `setRcCheck(` still reached into the `login-result` handler below,
+  which has its own `setLoginStage(null)`. Bounded on the branch's own closing brace.
+  **A window measured in characters is a guess about layout.**
+
 ### A REAL CAMPSITE IS LOCKED AND WE CANNOT RELEASE IT (2026-08-29)
 The cost of the run above, recorded rather than tidied away. Pfeiffer Big Sur, Weyland Camp
 **#W079 (unit 43793), arrival 2026-12-01** — the bot carted at T+2s, released cleanly at

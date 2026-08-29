@@ -106,6 +106,14 @@
     if (!m) return null;
     const data = { unitId: +m[1], arrivalDate: m[2], nights: +m[3], sleepingUnitId: m[4] ? +m[4] : null };
     try { sessionStorage.setItem(STASH, JSON.stringify(data)); } catch {}
+    // A NEW JOB RETIRES THE OLD RUN'S MARKER. Belt and braces with `alreadyCarted`'s unit
+    // check: this clears it at the source when a fresh claim link arrives, that one catches
+    // a marker reached by any other route. Either alone would have fixed 08-29; both means
+    // the next reader has to break two things to bring it back.
+    try {
+      const prev = JSON.parse(sessionStorage.getItem(DONE) || 'null');
+      if (prev && prev.unitId !== data.unitId) sessionStorage.removeItem(DONE);
+    } catch {}
     history.replaceState(null, '', location.pathname + location.search);
     return data;
   }
@@ -122,9 +130,34 @@
   function onCartPage() {
     try { return /\/customers\/shoppingcart/i.test(location.pathname); } catch { return false; }
   }
-  function alreadyCarted() { try { return !!sessionStorage.getItem(DONE); } catch { return false; } }
-  function rememberCarted(key) {
-    try { sessionStorage.setItem(DONE, JSON.stringify({ cartKey: key || '', at: Date.now() })); } catch {}
+  /**
+   * Did THIS run cart THIS site?
+   *
+   * IT USED TO ASK ONLY "HAS ANYTHING BEEN CARTED IN THIS WEBVIEW SESSION", AND ON
+   * 2026-08-29 THAT COST A WHOLE TEST. The marker is `sessionStorage`, which outlives a
+   * single hand-off: a second claim in the same webview 59 minutes later (`opens: 20`) found
+   * the FIRST hand-off's marker, short-circuited, and displayed `✓ Added to cart` for a site
+   * it never touched. A success message over an uncarted site is the worst output this
+   * screen has — the user stops watching a site nobody is holding.
+   *
+   * A MARKER THAT CANNOT NAME ITS UNIT DOES NOT COUNT. That is a marker written by an older
+   * bundle, and the two failure directions are not symmetric: wrongly "carted" claims a site
+   * we do not hold, while wrongly "not carted" re-submits and RC answers "cart is already
+   * added" — which costs the checkout affordance on a cart that is genuinely ours, and
+   * nothing else. Absence of evidence about WHICH unit is not evidence it was this one, so
+   * it acts. Same rule as `unknown` never rounding to a verdict that suppresses action.
+   */
+  function alreadyCarted(unitId) {
+    try {
+      const m = JSON.parse(sessionStorage.getItem(DONE) || 'null');
+      if (!m || m.unitId == null) return false;
+      return m.unitId === unitId;
+    } catch { return false; }
+  }
+  function rememberCarted(key, unitId) {
+    try {
+      sessionStorage.setItem(DONE, JSON.stringify({ cartKey: key || '', unitId: unitId, at: Date.now() }));
+    } catch {}
   }
   /**
    * Take them to the cart, rather than telling them where it is.
@@ -399,7 +432,7 @@
         carted = true;
         // BEFORE THE NAVIGATION, AND BEFORE ANYTHING ELSE THAT CAN THROW. This is what stops
         // the re-injection on the cart page from submitting a second time — see DONE.
-        rememberCarted(newKey);
+        rememberCarted(newKey, job.unitId);
         setState('carted');
         // `✓ Added to cart` STAYS AS THE LEADING TOKEN. `client_reports` is read for it,
         // `ClaimFlow` matches on it to offer checkout, and `rc-holds-readout` calls it "the
@@ -621,7 +654,7 @@
   // to the `carted` guard inside `addToCart` would work today and depends on a callback
   // ordering nothing states. Deciding here means the re-submit is impossible rather than
   // merely prevented.
-  if (alreadyCarted()) {
+  if (alreadyCarted(job.unitId)) {
     carted = true;
     setState('carted');
     // Same correction as the one at the submit — see the comment there. Both sites said

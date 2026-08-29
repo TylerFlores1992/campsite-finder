@@ -57,7 +57,7 @@ function makePage(opts: {
   /** Where this document is. The cart page is a different job from the park page. */
   pathname?: string;
   /** A `camphawk_rc_done` marker already in the session, i.e. this run carted earlier. */
-  carted?: { cartKey: string };
+  carted?: { cartKey: string; unitId?: number };
   /** What the cart read-back answers. Defaults to RC reporting one entry. */
   cartBody?: string;
 }) {
@@ -194,6 +194,8 @@ function makePage(opts: {
 }
 
 const JOB = '#camphawk-rc=45725_2026-09-13_2_';
+/** The unit `JOB` names. Derived rather than repeated, so the two cannot drift apart. */
+const JOB_UNIT = Number(JOB.match(/camphawk-rc=(\d+)/)![1]);
 
 test('a session with NO cart key still reaches both cart POSTs', async () => {
   // THE REGRESSION. Before this fix the script bailed here with "Click the 🛒 cart icon
@@ -341,7 +343,7 @@ test('a re-injection on the cart page does NOT submit again', async () => {
   // back "cart is already added" — a REJECTION, which would overwrite a true success with a
   // failure message on the very screen the user is reading. That is the failure the
   // `carting || carted` guard exists for, arriving through the one door it cannot close.
-  const page = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED } });
+  const page = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED, unitId: JOB_UNIT } });
   page.run();
   page.sendToken();
   await page.settle();
@@ -357,7 +359,7 @@ test('the cart is READ BACK on the cart page, which the status string never was'
   // `✓ Added to cart` is judged on the submit's own `IsSuccess` — our word for what we think
   // happened, and `content-rc.js` calls it "one step weaker than rc-cart.mjs, which re-reads
   // the cart". Landing there is exactly where that gap closes.
-  const page = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED } });
+  const page = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED, unitId: JOB_UNIT } });
   page.run();
   page.sendToken();
   await page.settle();
@@ -376,7 +378,7 @@ test('an answer we cannot read is NEVER reported as an empty cart', async () => 
   // evidence: it would report "RC holds nothing" for an answer we simply could not parse.
   // `entries: 0` is a real and alarming reading and must stay distinguishable from silence.
   const page = makePage({
-    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED },
+    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED, unitId: JOB_UNIT },
     // PARSES, BUT IS NOT A CART. The discriminating input: an unparseable body never
     // reaches the shape test at all, so it cannot tell a careful reader from a careless
     // one. RC answering 200 with something else entirely is the case that can.
@@ -394,7 +396,7 @@ test('an answer we cannot read is NEVER reported as an empty cart', async () => 
 
 test('an unparseable answer is not a cart either', async () => {
   const page = makePage({
-    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED },
+    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED, unitId: JOB_UNIT },
     cartBody: '<html>Access Denied</html>',
   });
   page.run();
@@ -407,7 +409,7 @@ test('an unparseable answer is not a cart either', async () => {
 
 test('an EMPTY cart is reported as itself — the reading that matters most', async () => {
   const page = makePage({
-    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED },
+    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED, unitId: JOB_UNIT },
     cartBody: JSON.stringify({ Result: { CartEntry: { $values: [] } } }),
   });
   page.run();
@@ -453,7 +455,7 @@ test('nothing is read back on the park page, even after carting', async () => {
   // page — an extra POST on the one path where latency is the product, for an answer we
   // are about to get somewhere it means more. Both halves are checked separately because a
   // test that only ever exercises one cannot tell you the other was deleted.
-  const page = makePage({ hash: JOB, carted: { cartKey: MINTED } });
+  const page = makePage({ hash: JOB, carted: { cartKey: MINTED, unitId: JOB_UNIT } });
   page.run();
   page.sendToken();
   await page.settle();
@@ -552,7 +554,7 @@ test('the read-back says WHERE the key came from — localStorage is what RC\'s 
   // and the key falls through to the marker — so this test and the next one would stage the
   // SAME state and both pass while measuring nothing.
   const page = makePage({
-    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED }, storedCartKey: MINTED,
+    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED, unitId: JOB_UNIT }, storedCartKey: MINTED,
   });
   page.run();
   page.sendToken();
@@ -570,7 +572,7 @@ test('a key that came only from OUR marker is reported as such', async () => {
   // `localStorage` does not — so RC's own SPA has no idea this cart exists. `entries: 1`
   // is still true and still the wrong thing to report on its own.
   // No `storedCartKey`: localStorage is empty and only our marker knows the key.
-  const page = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED } });
+  const page = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED, unitId: JOB_UNIT } });
   page.run();
   page.sendToken();
   await page.settle();
@@ -585,7 +587,7 @@ test('a key that came only from OUR marker is reported as such', async () => {
 
 test('CustomerId 0 is reported as NOT attached, and a missing field as null', async () => {
   const anon = makePage({
-    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED },
+    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED, unitId: JOB_UNIT },
     cartBody: JSON.stringify({
       Result: { CustomerId: 0, CartEntry: { $values: [{ CartEntryKey: 'abc' }] } },
     }),
@@ -600,7 +602,7 @@ test('CustomerId 0 is reported as NOT attached, and a missing field as null', as
   // attached" have different fixes, and the second would send somebody chasing a customer
   // association that was never in question. Same rule as `unknown` never rounding to
   // `signed-out`.
-  const quiet = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED } });
+  const quiet = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED, unitId: JOB_UNIT } });
   quiet.run();
   quiet.sendToken();
   await quiet.settle();
@@ -613,7 +615,7 @@ test('the banner never claims the page in front of the user shows the cart', asy
   // 2026-08-29 it was false while every other signal said success. `✓ Added to cart` stays —
   // client_reports is read for it and ClaimFlow matches on it — but the tail must not assert
   // something we have watched be wrong.
-  const page = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED } });
+  const page = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED, unitId: JOB_UNIT } });
   page.run();
   page.sendToken();
   await page.settle();
@@ -623,4 +625,125 @@ test('the banner never claims the page in front of the user shows the cart', asy
   assert.doesNotMatch(page.status.textContent, /this is your cart/i,
     'the cart can be real and unreachable — asserting the page shows it leaves somebody '
     + 'staring at an empty screen being told to check out');
+});
+
+// ---------------------------------------------------------------------------
+// THE CARTED MARKER MUST NAME ITS SITE (2026-08-29).
+//
+// The second Android test of the day carted nothing and said `✓ Added to cart` anyway. The
+// marker is `sessionStorage`, which outlives a hand-off: the webview was 59 minutes and 20
+// opens old, still holding the FIRST hand-off's marker, so `alreadyCarted()` short-circuited
+// for a completely different site. A success message over an uncarted site is the worst
+// output this screen has — the user stops watching a site nobody is holding.
+// ---------------------------------------------------------------------------
+
+test('a NEW claim link retires the previous run\'s marker', async () => {
+  // The first of the two defences, on the path where a fresh fragment arrives.
+  const page = makePage({
+    hash: JOB, pathname: CART_PATH,
+    // A different unit entirely — the morning's hand-off, still in this webview session.
+    carted: { cartKey: MINTED, unitId: 999999 },
+  });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.ok(page.calls.some((c) => c.url === SUBMIT),
+    'a marker for unit 999999 says nothing about this job and must not stop it carting — '
+    + 'that is exactly how the 08-29 retest reported success for a site it never touched');
+});
+
+test('the clear is pinned DIRECTLY, because the unit check hides it', async () => {
+  // Asserting the clear through its EFFECT (a submit happening) cannot see it: the unit
+  // check produces the same outcome, so deleting the clear passes. Verified by mutation.
+  // Two overlapping defences are worth having and each needs its own observation, or one of
+  // them silently stops existing.
+  // THE SUBMIT MUST FAIL, or this cannot see the clear at all: a successful cart calls
+  // `rememberCarted` and overwrites the marker with THIS unit, which looks identical to the
+  // clear having worked. Found by mutation — the first version passed with the clear
+  // deleted. A declined submit leaves nothing written, so what remains is exactly what the
+  // clear did or did not do.
+  const page = makePage({
+    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED, unitId: 999999 },
+    submitBody: JSON.stringify({ Result: { IsSuccess: false, ErrorMessage: 'nope' } }),
+  });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.equal(page.session.get('camphawk_rc_done'), undefined,
+    "a new claim link must retire the previous run's marker at the SOURCE. The stale one is "
+    + 'for unit 999999; leaving it means every later check has to keep out-arguing it.');
+});
+
+test('and WITHOUT a fresh fragment, the unit check alone still catches it', async () => {
+  // THE ISOLATING FIXTURE, and writing it is what exposed a hole in the two tests above.
+  // Both originally staged a fragment, so `readFragment`'s clear removed the stale marker
+  // before `alreadyCarted` was ever consulted — the scoping check could be deleted outright
+  // and both still passed. Verified by mutation, which is the only way this is ever found.
+  //
+  // The cart page reached by any other route (a reload, a back-navigation, the re-injection
+  // on `loadstop`) has NO fragment: the job comes from the stash. That is the path where the
+  // unit comparison is the only thing standing between us and a success message over a site
+  // nobody carted.
+  const page = makePage({
+    hash: '', pathname: CART_PATH, carted: { cartKey: MINTED, unitId: 999999 },
+  });
+  page.session.set('camphawk_rc', JSON.stringify({
+    unitId: JOB_UNIT, arrivalDate: '2026-09-13', nights: 2, sleepingUnitId: null,
+  }));
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.ok(page.calls.some((c) => c.url === SUBMIT),
+    'with no fragment to trigger the clear, `alreadyCarted` must compare units itself');
+});
+
+test('a marker for THIS site still suppresses the re-submit', async () => {
+  // The property the marker exists for, and it must survive the scoping. A second submit on
+  // a site we already hold comes back "cart is already added" — a rejection that would
+  // overwrite a true success on the screen the user is reading.
+  const page = makePage({
+    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED, unitId: JOB_UNIT },
+  });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.ok(!page.calls.some((c) => c.url === SUBMIT),
+    'the same site must not be submitted twice');
+  assert.match(page.status.textContent, /Added to cart/);
+});
+
+test('a marker that cannot name its unit ACTS rather than claiming a cart', async () => {
+  // Written by an older bundle. The two failure directions are not symmetric: wrongly
+  // "carted" claims a site we do not hold and the user stops watching; wrongly "not carted"
+  // re-submits and costs a checkout affordance. Absence of evidence about WHICH unit is not
+  // evidence it was this one.
+  // NO FRAGMENT, for the same reason as the test above: with one, the clear fires and the
+  // legacy marker never reaches the unit check.
+  const page = makePage({ hash: '', pathname: CART_PATH, carted: { cartKey: MINTED } });
+  page.session.set('camphawk_rc', JSON.stringify({
+    unitId: JOB_UNIT, arrivalDate: '2026-09-13', nights: 2, sleepingUnitId: null,
+  }));
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.ok(page.calls.some((c) => c.url === SUBMIT),
+    'a legacy marker must not be trusted to mean THIS site is held');
+});
+
+test('the marker records which unit it carted', async () => {
+  const page = makePage({ hash: JOB });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  const mark = JSON.parse(page.session.get('camphawk_rc_done') ?? 'null');
+  assert.ok(mark, 'a successful cart must still leave a durable marker');
+  assert.equal(mark.unitId, JOB_UNIT,
+    'without the unit the marker cannot be scoped, and the next hand-off in this webview '
+    + 'inherits it');
 });

@@ -277,9 +277,15 @@ if (handed.length) {
     //
     // Printed as its own line rather than folded into the outcome: `entries: 0` is a
     // SUCCESS report shape carrying a failure, and it must be impossible to skim past.
-    const verified = h.client_reports?.find((r) => r.stage === 'cart-verified')?.detail as
+    // THE NEWEST, NOT THE FIRST — and reading the first cost a diagnosis on 2026-08-29.
+    // The bundle re-injects on every navigation, so one hand-off produces several
+    // `cart-verified` reports; `find` returned the OLDEST, which was written by whichever
+    // bundle version the webview had cached at the time. The run that finally carried
+    // `keySource` was reported as not carrying it, and the instrument built that morning was
+    // written off as not deployed. `findLast` is the whole fix.
+    const verified = h.client_reports?.findLast((r) => r.stage === 'cart-verified')?.detail as
       | { entries?: number; keySource?: string; attached?: boolean | null } | undefined;
-    const unverified = h.client_reports?.find((r) => r.stage === 'cart-unverified')?.detail as
+    const unverified = h.client_reports?.findLast((r) => r.stage === 'cart-unverified')?.detail as
       | { reason?: string } | undefined;
     if (verified && typeof verified.entries === 'number') {
       console.log(verified.entries > 0

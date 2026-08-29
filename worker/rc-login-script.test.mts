@@ -346,11 +346,28 @@ test('a captured token clears the captcha prompt', () => {
   // Leaving `captcha` on screen after a successful sign-in tells the user to solve a
   // challenge that is no longer there — the same shape as instructing an app user to
   // "switch to your ReserveCalifornia tab" in an app with no tabs.
-  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
+  // COMMENTS STRIPPED FIRST, and that is the whole repair. This was a raw 500-character
+  // proximity window, so on 2026-08-29 a comment added between the two calls pushed them
+  // apart and the guard failed over behaviour that had not changed — the same shape as
+  // `rehearsal.test.mts`'s `[\s\S]{0,220}` window. A guard that fails when somebody explains
+  // the code gets "fixed" by deleting the explanation.
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8')
+    .split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
+  // BOUNDED BY THE NEXT STATE TRANSITION, not by a character count. Verified by mutation:
+  // deleting the `setLoginStage(null)` in this branch left another one inside the old
+  // 500-character window, so the guard passed against the regression it exists for. A window
+  // measured in characters is a guess about layout; the next `setRcCheck(` is the actual end
+  // of this branch's work.
   const at = src.indexOf("setRcCheck('verified')");
   assert.ok(at !== -1);
-  const after = src.slice(at, at + 500);
-  assert.match(after, /setLoginStage\(null\)/);
+  // THE BRANCH CLOSE, and getting here took three attempts, each verified by mutation. A
+  // 500-character window reached into the `login-result` handler below, which has its own
+  // `setLoginStage(null)` — so did bounding on the next `setRcCheck(`. Both passed against
+  // the deletion they exist to catch. The `else {` block ends at its own dedented brace.
+  const next = src.indexOf('\n      }', at);
+  const after = src.slice(at, next === -1 ? undefined : next);
+  assert.match(after, /setLoginStage\(null\)/,
+    'a captured token must clear the captcha prompt in the SAME branch that accepts it');
 });
 
 test('the form stays mounted while the sign-in runs', () => {
