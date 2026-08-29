@@ -300,6 +300,49 @@ That mirrors the two questions the app actually asks (`hasActiveSubscription` an
 `hasAutocartEntitlement`). Tier still comes from the product id per §5; these are RevenueCat's
 bookkeeping, never a second source of truth.
 
+### 4d. THE CONSOLE WORK IS COMPLETE (2026-08-29)
+
+```
+Valid credentials      ✓
+Connected to Google    ✓  projects/camp-501802/topics/revenuecat-notifications
+Last received          ✓  2026-08-29 17:49 UTC   (Play's own test notification)
+Products               ✓  four, imported, Published
+Entitlements           ✓  alerts (all four) · autocart (the two autocart products)
+Webhook                ✓  camphawk.app/api/webhooks/revenuecat, HMAC signing ON
+```
+
+**RTDN NEEDED A PLAY-SIDE STEP THAT NOTHING ELSE MENTIONS.** RevenueCat's *"Connect to
+Google"* only wires THEIR half. Play must separately be told to publish, at
+**Play Console → Monetize with Play → Monetization setup → Real-time developer
+notifications**: tick **Enable real-time notifications** (it is off, and the Topic name field
+is inert until it is on), paste the topic, and set Notification content to *"Subscriptions,
+voided purchases, and all one-time products"* — it defaults to subscriptions-only.
+
+**AND THE TOPIC NEEDS `google-play-developer-notifications@system.gserviceaccount.com` AS
+`Pub/Sub Publisher`.** Without it Play's test reports *"Test notification couldn't be sent"*
+and names three possible causes at once, and a REAL notification would simply never arrive —
+no error anywhere, just a topic nobody publishes to. **Play's own test is the only thing that
+distinguishes a working RTDN from a silent one**, so send it rather than assuming.
+
+**WHAT FIXED THE CREDENTIAL IS NOT KNOWN, AND SHOULD NOT BE GUESSED.** Four things changed
+before `Valid credentials` appeared — account-level Play permissions, the two Cloud IAM roles,
+the two APIs, and a regenerated key — inside a documented 24-36h propagation window. The honest
+record is "these four, in that window". Crediting one is the mistake this file has made three
+times.
+
+**`Track new purchases from server-to-server notifications` IS DELIBERATELY OFF.** RevenueCat
+ignores purchases the SDK has not posted, which is what we want: enabling it brings in their
+App User ID detection rules, and their own docs warn the SDK's `obfuscatedExternalAccountId`
+can then *"cause unintended overwrites"*. We bind `app_user_id` to the Clerk id, so off keeps
+one identity story. Turn it on only if a real purchase is ever observed going missing.
+
+**STILL OPEN AND NOT BLOCKING: Play's `Pause` is ENABLED and nothing handles it.** Subscription
+settings → Pause. It lets a subscriber suspend billing for weeks; `SUBSCRIPTION_PAUSED` is not
+in the webhook's granting set and what Play reports as the expiry for a paused subscription is
+**unverified**, so the entitlement outcome would be decided by accident either way. Either
+disable it or handle the state deliberately — it is one more state next to grace periods,
+account holds, trials and proration.
+
 ### 4b. The RevenueCat console checklist — WRITTEN BLIND, so verify as you go
 
 **`revenuecat.com`, `docs.revenuecat.com` and `api.revenuecat.com` are ALL 403 at the agent
