@@ -266,6 +266,35 @@ workflows:
         - camphawk_upload
       vars:
         PACKAGE_NAME: "app.camphawk.mobile"
+        # SIDELOAD ESCAPE HATCH FOR THE BILLING GATE — "false" everywhere except a
+        # deliberate one-off build. Read by "Assert the Play Billing permission" below.
+        #
+        # WHY IT EXISTS. The billing gate blocks the whole workflow, and on 2026-08-29
+        # that blocked the wrong thing. A real campsite was lost because the owner's phone
+        # ran a build with no cordova-plugin-inappbrowser, so the RC hand-off could not
+        # sign in or cart; the plugin entered package.json on 2026-08-18 and the last Play
+        # upload is versionCode 18 from 2026-08-08, so NO installable build has ever
+        # contained it. The only way to get one is this workflow, and the gate — added for
+        # Play Subscriptions, a different project — fails it before an APK can be
+        # sideloaded. The gate was guarding Play; it was also, incidentally, guarding the
+        # user's phone against being fixed.
+        #
+        # WHY IT IS SAFE, and this is the part that matters: it does NOT skip the check.
+        # The check still runs and still reports. What changes is the remedy — instead of
+        # failing the build it DELETES THE AAB. Play receives the AAB and nothing else
+        # (see `publishing.google_play`), so with no AAB in the artifacts there is nothing
+        # for Play to be given. A billing-less binary still cannot reach the Subscriptions
+        # page. The APK survives, which is the only thing a sideload needs.
+        #
+        # So the failure direction is preserved: the thing the gate exists to prevent is
+        # prevented by REMOVING THE ARTIFACT rather than by failing, which is strictly
+        # more direct — a failing build relies on Codemagic skipping `publishing:` when a
+        # script exits non-zero, and that behaviour is an INFERENCE this file already
+        # flags as never having been read from a build log.
+        #
+        # SET IT TO "true" FOR ONE BUILD, THEN PUT IT BACK. Leaving it on means the next
+        # green build silently uploads nothing to Play and looks like it published.
+        CH_SIDELOAD_ONLY: "false"
       # Capacitor 7's own Android library compiles with `sourceCompatibility 21`, so a
       # runner whose default JDK is older dies at :capacitor-android:compileReleaseJavaWithJavac
       # with `error: invalid source release: 21` — AFTER 91 Gradle tasks have run, which
@@ -542,9 +571,27 @@ workflows:
             echo "Expected it to arrive transitively via com.android.billingclient:billing."
             echo "Check that @revenuecat/purchases-capacitor is in package.json AND that"
             echo "'npx cap sync android' ran before the build."
-            exit 1
+            if [ "${CH_SIDELOAD_ONLY:-false}" = "true" ]; then
+              # THE ARTIFACT IS THE GATE NOW. Deleting the AAB is what keeps a
+              # billing-less binary off Play — more direct than failing the build, which
+              # relies on `publishing:` being skipped, an inference never read from a log.
+              # The APK is left alone: sideloading it is the entire point of this mode.
+              echo ""
+              echo "CH_SIDELOAD_ONLY=true — NOT failing. Deleting the AAB instead, so Play"
+              echo "cannot be given a build without $PERM. The APK is kept for sideloading."
+              find app/build/outputs -type f -name '*.aab' -print -delete 2>/dev/null || true
+              REMAINING=$(find app/build/outputs -type f -name '*.aab' 2>/dev/null | wc -l | tr -d ' ')
+              if [ "$REMAINING" != "0" ]; then
+                echo "FATAL: an AAB survived the delete — refusing to leave one publishable."
+                exit 1
+              fi
+              echo "No AAB remains. Sideload the APK from this build's artifacts."
+            else
+              exit 1
+            fi
+          else
+            echo "$PERM present in $CHECKED source(s)."
           fi
-          echo "$PERM present in $CHECKED source(s)."
 
           # WHAT ELSE DID THE MERGE BRING? Printed rather than inferred, because the same
           # dependency tree pulls com.google.android.gms:play-services-ads-identifier, and
