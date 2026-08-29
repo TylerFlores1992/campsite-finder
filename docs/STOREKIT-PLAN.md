@@ -16,28 +16,51 @@ probe and the SDK call) and `src/components/v2/StorePaywall.tsx` (the paywall) l
 `worker/store-plans.test.mts` — 19 tests, 18 mutations each verified to APPLY and to fail.
 The paywall is mounted in `PricingSection`'s native branch.
 
-**IT IS SWITCHED OFF, AND THE SWITCH IS WAITING ON ONE THING SOMEBODY HAS TO READ.**
-`STORE_PURCHASE_ENABLED = false` in `StorePaywall.tsx`, because §9b's price read-back never
-happened:
+**IT IS ON.** `STORE_PURCHASE_ENABLED = true` since 2026-08-29, and Play in-app purchase is
+live on any Android build carrying the plugin (build 13+).
 
-> Open each of the four base plans in Play Console and read **both** the amount and the
-> **Type** line, against §9b's table — $2.99 / $23.99 / $11.99 / $59.99, and Monthly for
-> `monthly`, Yearly for `yearly`. Then flip the constant to `true`.
+**WHAT UNBLOCKED IT, WITH ITS PROVENANCE.** §9b's price read-back happened: the owner opened
+all four base plans and reported the **Type** line and the amount correct — $2.99 / $23.99 /
+$11.99 / $59.99, Monthly for `monthly`, Yearly for `yearly`. **That is a human reading of a
+console nobody in this repo can see, and it is the only kind of evidence a vendor console
+admits.** Nothing here independently verifies it and nothing can. Recorded as a reading on a
+date, not as a fact the codebase established — the distinction this file's own house rule
+exists for.
 
-**The paywall cannot catch a wrong period, and that is why the switch exists rather than
-trusting the screen.** It prints the store's own `priceString`, so a wrong *amount* would
-show — but "$59.99" reads identically whether Play bills it once a year or once a month,
-and §9b caught exactly that (`Draft · yearly / Type: Monthly, auto-renewing`) one click from
-Activate. Only `camphawk_base` was verified afterwards. It is a web-side constant, so the
-flip is a push to master — no rebuild, no review.
+**TURNING IT BACK OFF IS ONE CONSTANT AND A PUSH** — web-side, no rebuild, no store review,
+and it reaches installed apps immediately.
+
+**WHO CAN ACTUALLY BUY, WHICH IS NARROWER THAN "it is on":**
+
+- **Android, build 13+, US storefront.** The base plans are United States only (§9c), so a
+  non-US closed tester's `getOfferings()` returns nothing → `unavailable` → the existing
+  fallback copy. That degrades correctly with no region check of ours anywhere.
+- **NOT iOS.** `NEXT_PUBLIC_REVENUECAT_IOS_KEY` is unset — verified in the deployed bundle,
+  not assumed — and Apple's four products do not exist yet (§8). A missing key is
+  `unavailable`, so iOS keeps the §2c link-out untouched.
+- **NOT Play production, which reads Inactive.** The closed test is the audience today.
+
+**AND THE SWITCH WAS HALF-OFF UNTIL THE SAME CHANGE FIXED IT.** `useStorePurchases()` is
+called above `StorePaywall`'s early return — React forbids a conditional hook — so while the
+flag was `false` the SDK was still configured and offerings still fetched on any build with
+the plugin. Nothing could be bought; RevenueCat was told who the user was regardless. The
+flag is a hook parameter now, and the disabled branch **returns** before the bring-up.
+**A switch whose name overstates what it switches off is the gap this repo keeps paying for**,
+and the guard for it had to be re-anchored once: an index comparison passed against a mutation
+that kept `if (!enabled)` in position and dropped the `return`. Position was never the
+property; the return is.
+
+**`NEXT_PUBLIC_REVENUECAT_ANDROID_KEY` IS CONFIRMED SET — read out of the SERVED BUNDLE**, not
+from Vercel (403 at the agent proxy). `NEXT_PUBLIC_*` is inlined at build time, so the
+compiled chunk on `c6d6873` carries `"android" === r ? "goog_pJJOzaIydd…" : f`. **That is a
+check anyone can repeat without console access**, and it is stronger than reading a dashboard
+field: it proves the value reached the build users are actually running.
 
 **WHAT THIS SESSION COULD NOT DO, rather than guessed at:**
 
 | | why |
 |---|---|
-| read the four Play prices | no console access — assert nothing about a screen you cannot see |
 | run `iOS · TestFlight` (§11c) | `codemagic.yaml` has no `triggering:` block, so builds start by hand, and `api.codemagic.io` is 403 at the agent proxy |
-| confirm `NEXT_PUBLIC_REVENUECAT_ANDROID_KEY` is set on Vercel | `vercel.com` is 403 at the proxy. **A missing key is `unavailable`, not a broken button** — the paywall renders the existing link-out — so a wrong answer here costs a silent no-sale, not an error |
 
 **STILL OPEN ON THE SERVER, both recorded when #218 shipped and neither touched here:**
 HMAC is **reported, not enforced** (`verifyHmac` returns `null` for "cannot judge"; promote
