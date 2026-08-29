@@ -118,8 +118,10 @@ upgrade-vs-downgrade is stated by app code. No console screen can show that mist
 console screen that *could* have caught anything has now been passed.
 
 ~~**iOS HAS NOT BEEN BUILT SINCE REVENUECAT ENTERED THE DEPENDENCY TREE.**~~ **BUILT AND GREEN
-2026-08-29 — `iOS · TestFlight` #11 on `73b3a3c`, App.ipa 12.07 MB, every step passing including
-"Assert the InAppBrowser plugin is actually installed".** That commit's `package.json` carries
+2026-08-29 — `iOS · TestFlight` #11 on `73b3a3c` COMPILED, App.ipa 12.07 MB, with "Assert the
+InAppBrowser plugin is actually installed" passing.** (**It is NOT a fully green build** — see
+§11c: post-processing failed at *App Store Connect distribution*, which is downstream of every
+question §11c asks.) That commit's `package.json` carries
 `"@revenuecat/purchases-capacitor": "^13.4.2"` (checked with `git show 73b3a3c:package.json`), so
 the plugin really was in the tree that built. **§11c's SPM identity-collision risk is closed by
 measurement, not by argument** — see the section itself. Struck rather than deleted, because "iOS
@@ -1427,12 +1429,29 @@ claimed `app` and dependency resolution failed outright. The fix was
 A new plugin is a new identity in that namespace. **Run the iOS workflow too**, or find out
 when a TestFlight build is needed for something else.
 
-**RUN, AND IT PASSED (2026-08-29).** `iOS · TestFlight` #11 built `73b3a3c` — the commit whose
-`package.json` carries `@revenuecat/purchases-capacitor` — green end to end, App.ipa 12.07 MB,
-with the InAppBrowser assertion passing. **So the collision did not happen**, and the reason is
+**RUN, AND IT COMPILED (2026-08-29).** `iOS · TestFlight` #11 built `73b3a3c` — the commit whose
+`package.json` carries `@revenuecat/purchases-capacitor` — through *Capacitor sync*, *Assert the
+InAppBrowser plugin is actually installed*, *Build the IPA* and *Publishing*, producing an
+**App.ipa of 12.07 MB**. **So the collision did not happen**, and the reason is
 that the build is still CocoaPods: `CapacitorApp` / `CapacitorFirebaseApp` / `RevenuecatPurchasesCapacitor`
 are three distinct pod names, and CocoaPods has no identity restriction to trip over. The risk was
-real and correctly recorded; what retires it is one green build, not the reasoning.
+real and correctly recorded; what retires it is one build that compiled, not the reasoning.
+
+**AND I CALLED IT "GREEN END TO END", WHICH IT IS NOT.** The build reads **"Finished with
+post-processing failed"**: every build step passed and the IPA was produced, then **App Store
+Connect distribution** failed in post-processing. That is a **separate fault, downstream of the
+compile** — an SPM identity collision fails at dependency RESOLUTION, before a single file is
+compiled and long before there is an `.ipa` to upload, so a 12.07 MB artifact settles §11c
+whatever ASC then said about it. **The two must not be merged into one verdict in either
+direction**: "the iOS build is fine" is wrong, and "RevenueCat broke iOS" is wrong. What is true
+is that the app builds and the upload does not.
+
+**THE ASC ERROR TEXT HAS NOT BEEN READ — do not write a cause in here.** It was seen only as a
+screenshot too low-resolution to transcribe, and the plausible candidates (an app icon with an
+alpha channel, a missing usage-description key, an expired or mismatched provisioning profile,
+ASC rejecting a duplicate build number) need completely different fixes. Paste the red block from
+the *App Store Connect distribution* step before anyone acts on it. `api.codemagic.io` is 403 at
+the agent proxy, so no session here can fetch that log itself.
 
 **THE RULE THAT MADE IT SAFE IS UNCHANGED AND IS THE PART TO KEEP.** This passed *because* iOS is
 on CocoaPods. **Do not "modernise" to SPM** — a fourth plugin whose last path segment is `app` (or
