@@ -1485,6 +1485,25 @@ beta review. Two separate forms, and §2 has already been misread once over exac
 "same words, different page" distinction (the app-level *General → App Review* item versus the
 version page). Filling one has never filled the other.
 
+**FILLED AND SAVED 2026-08-29**, all of it: Feedback Email, the four contact fields, plus the
+optional Beta App Description, Marketing URL and `https://camphawk.app/privacy` (both checked 200
+before being recommended). **License Agreement left blank on purpose** — blank falls back to
+Apple's standard EULA, which is what this app wants; typing one in creates a document nobody
+maintains.
+
+**"Sign-in required" IS TICKED AND `tylerflores1992@yahoo.com` IS THE REVIEWER'S ACCOUNT — which
+is the field that has already cost one rejection.** On 2026-08-14 App Review quoted a password
+Clerk answered `422 incorrect_password` for, so the reviewer never got in and §2's whole
+business-model argument went unread. **Nothing in App Store Connect validates that password**; it
+is checked when a reviewer fails to use it. Beta review hits the identical wall.
+- **The check is to sign in at camphawk.app in a private window** — end to end, exposes no
+  secret, and it also exercises whether **Clerk Device Trust** is still off. If that has been
+  switched back on, a valid password from an unrecognised device triggers an emailed one-time
+  code, and **every review device is unrecognised by construction** (§2a).
+- **`api.clerk.com` is 403 at the agent CONNECT tunnel**, so no session here can run the
+  `POST /v1/users/<id>/verify_password` check that would have caught it in 2026. That is an org
+  policy denial, not a missing credential — `CLERK_SECRET_KEY` is present and live.
+
 **AND IT IS THE 2026-08-14 SHAPE FOR THE THIRD TIME.** That rejection was a demo password nobody
 had tried; 08-22 was review notes nobody had read back; this is a beta-review form nobody had
 opened. Each time the artefact was correct and the console was not, and each time the failure
