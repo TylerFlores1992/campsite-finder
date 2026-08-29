@@ -119,9 +119,10 @@ console screen that *could* have caught anything has now been passed.
 
 ~~**iOS HAS NOT BEEN BUILT SINCE REVENUECAT ENTERED THE DEPENDENCY TREE.**~~ **BUILT AND GREEN
 2026-08-29 — `iOS · TestFlight` #11 on `73b3a3c` COMPILED, App.ipa 12.07 MB, with "Assert the
-InAppBrowser plugin is actually installed" passing.** (**It is NOT a fully green build** — see
-§11c: post-processing failed at *App Store Connect distribution*, which is downstream of every
-question §11c asks.) That commit's `package.json` carries
+InAppBrowser plugin is actually installed" passing.** (**It is NOT a fully green build**: post-processing
+failed at *App Store Connect distribution* — the binary uploaded and ASC finished processing it,
+then **TestFlight beta review refused it for empty Test Information fields**, which is a web form,
+not a build fault. One console fix, and it blocks every iOS build until it is done. §11c.) That commit's `package.json` carries
 `"@revenuecat/purchases-capacitor": "^13.4.2"` (checked with `git show 73b3a3c:package.json`), so
 the plugin really was in the tree that built. **§11c's SPM identity-collision risk is closed by
 measurement, not by argument** — see the section itself. Struck rather than deleted, because "iOS
@@ -1446,12 +1447,49 @@ whatever ASC then said about it. **The two must not be merged into one verdict i
 direction**: "the iOS build is fine" is wrong, and "RevenueCat broke iOS" is wrong. What is true
 is that the app builds and the upload does not.
 
-**THE ASC ERROR TEXT HAS NOT BEEN READ — do not write a cause in here.** It was seen only as a
-screenshot too low-resolution to transcribe, and the plausible candidates (an app icon with an
-alpha channel, a missing usage-description key, an expired or mismatched provisioning profile,
-ASC rejecting a duplicate build number) need completely different fixes. Paste the red block from
-the *App Store Connect distribution* step before anyone acts on it. `api.codemagic.io` is 403 at
-the agent proxy, so no session here can fetch that log itself.
+**READ 2026-08-29, AND IT IS AN EMPTY CONSOLE FIELD — NOT THE BUILD, NOT THE UPLOAD.** The log
+gets further than any of my guesses: it found the app (`6794772605`, `app.camphawk.mobile`),
+found the freshly uploaded build, waited out processing, and reported **"App Store Connect
+finished processing build `73f42b95-e164-40e1-8d0f-d4f0aae459d0`"**. It then failed on the very
+last action:
+
+```
+Submit build '73f42b95-e164-40e1-8d0f-d4f0aae459d0' to TestFlight beta review
+Failure: Complete test information is required to submit application
+        CampHawk: Campsite Alerts build for external testing.
+App is missing required Beta App Information: Feedback Email.
+App is missing required Beta App Review Information: First Name, Last Name, Phone Number, Email.
+Fill in test information at https://appstoreconnect.apple.com/apps/6794772605/testflight/test-info
+```
+
+**SO THE BINARY IS UPLOADED AND PROCESSED.** Codemagic's `submit_to_testflight` asks for
+**external** distribution, and Apple gates external testing behind beta review, which refuses
+without those fields. **Internal testers do not go through beta review**, so the build is
+expected to be installable by the team already — expected, not verified, because nobody here can
+see TestFlight (§29d).
+
+**ALL FOUR OF MY CANDIDATES WERE WRONG** — alpha channel in the icon, a missing usage-description
+key, a provisioning-profile mismatch, a duplicate build number. Every one of them fails BEFORE
+upload; this failed after processing completed. Writing the most plausible of them in would have
+sent the next reader into the signing configuration for a fault that is four text boxes in a web
+form. **That is the whole reason the cause was left blank for one message.**
+
+**FILL IT ONCE AND IT STOPS RECURRING:** <https://appstoreconnect.apple.com/apps/6794772605/testflight/test-info>
+— *Feedback Email*, plus *Beta App Review Information* (first name, last name, phone, email).
+Until then **every** `iOS · TestFlight` run ends this way, with a perfectly good build sitting in
+ASC and a red workflow above it.
+
+**THIS IS NOT THE "App Review Information" §2 RECORDS AS FILLED.** That one is on the **version**
+page and governs App Store review; this one is under **TestFlight → Test Information** and governs
+beta review. Two separate forms, and §2 has already been misread once over exactly this kind of
+"same words, different page" distinction (the app-level *General → App Review* item versus the
+version page). Filling one has never filled the other.
+
+**AND IT IS THE 2026-08-14 SHAPE FOR THE THIRD TIME.** That rejection was a demo password nobody
+had tried; 08-22 was review notes nobody had read back; this is a beta-review form nobody had
+opened. Each time the artefact was correct and the console was not, and each time the failure
+surfaced only when Apple refused it. **The repo cannot see any of these fields** — they are worth
+a periodic human read rather than an assumption that they were done once.
 
 **THE RULE THAT MADE IT SAFE IS UNCHANGED AND IS THE PART TO KEEP.** This passed *because* iOS is
 on CocoaPods. **Do not "modernise" to SPM** — a fourth plugin whose last path segment is `app` (or
