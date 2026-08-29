@@ -154,6 +154,15 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
    */
   const [rcCheck, setRcCheck] = useState<RcCheck>('idle');
   /**
+   * When this webview's RC token dies, as an ABSOLUTE instant — not the seconds we were told.
+   *
+   * `expiresInSec` is a snapshot taken when the report was written, and the user may sit on
+   * this screen for minutes before tapping. Storing the deadline means the gate asks "how
+   * long is left NOW", which is the only version of the question that matters: on 08-29 the
+   * reported figure fell 134 -> 116 across a single hand-off and the precart was refused.
+   */
+  const [tokenDeadline, setTokenDeadline] = useState<number | null>(null);
+  /**
    * What the injected sign-in last said about itself, and RC's own words when it failed.
    *
    * `loginStage` is the raw stage name so the form can act on `captcha` — the one report the
@@ -287,6 +296,9 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
         );
       } else {
         setRcCheck('verified');
+        // The DEADLINE, so a long pause on this screen is counted against it. `null` when we
+        // could not decode one — the gate must not act on a number it does not have.
+        setTokenDeadline(secs != null ? Date.now() + secs * 1000 : null);
         // A live token means the sign-in is done, whatever the last stage was. Leaving
         // `captcha` on screen after a successful login would tell the user to solve a
         // challenge that is no longer there — the same class of mistake as the claim screen
@@ -916,7 +928,11 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
       No new mechanism. The gate is `rcHandoffStep`, and the way through it is `prepareRc`,
       both already built for the pre-release screen.
     */
-    const step = rcHandoffStep(canInject, rcCheck);
+    // THE THIRD ARGUMENT IS THE POINT, and without it the gate's liveness check is inert —
+    // the fix-present-and-unwired shape this repo has paid for repeatedly. Computed at
+    // render, so a user who read the screen for two minutes is judged on what is left now.
+    const tokenSecsLeft = tokenDeadline != null ? (tokenDeadline - Date.now()) / 1000 : null;
+    const step = rcHandoffStep(canInject, rcCheck, tokenSecsLeft);
     return (
       <Shell>
         <SiteCard

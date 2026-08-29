@@ -46,13 +46,48 @@ export type HandoffStep = 'sign-in' | 'waiting' | 'finish';
  *   inferred from the platform or the user agent.
  * @param rcCheck   What the report channel has said about a session in that webview.
  */
-export function rcHandoffStep(canInject: boolean, rcCheck: RcCheck): HandoffStep {
+/**
+ * How much token life the hand-off actually needs, in seconds.
+ *
+ * MEASURED, NOT CHOSEN. On 2026-08-29 a hand-off ran with `storedExpiresInSec` falling
+ * 134 -> 116 across the flow, and its precart was refused. The work between "hand it over"
+ * and a cart RC accepts is a release round trip, a `load`, and a `submit` — seconds of
+ * network on a phone at 08:00, and every one of them authenticated with this token.
+ *
+ * Deliberately SMALL. This gate stands between a user and a site that is already theirs,
+ * and a threshold set generously would turn "your token has 4 minutes" into "sign in again"
+ * on a session that would have worked perfectly. 90s is comfortably more than the observed
+ * flow and comfortably less than anything a healthy sign-in produces (RC issues 60 minutes).
+ */
+export const MIN_TOKEN_SECONDS_FOR_HANDOFF = 90;
+
+export function rcHandoffStep(
+  canInject: boolean,
+  rcCheck: RcCheck,
+  /**
+   * Life left in the token this webview holds, if we know it. **`undefined` means we do not
+   * know and must not act** — an unknown expiry has to behave exactly as it did before this
+   * parameter existed, or every client that does not report one starts being sent to sign in
+   * again. Same rule as `unconfirmed` proceeding.
+   */
+  tokenExpiresInSec?: number | null,
+): HandoffStep {
   // NOTHING TO SIGN INTO. Without an injectable webview the hand-off opens the SYSTEM
   // browser, which carries the user's own real RC session — the reason the manual flow works
   // at all. Asking them to "sign in" here would open that browser, navigate away from this
   // screen, and report nothing back, so the gate could never lift.
   if (!canInject) return 'finish';
   if (rcCheck === 'opening') return 'waiting';
+  // A TOKEN ABOUT TO EXPIRE IS NOT A SESSION — it is a session that will fail mid-cart,
+  // AFTER the bot has let go, which is the one ordering that loses the site outright. This
+  // is the owner's own step 3 ("verify they're in fact signed in"): we were checking that a
+  // token EXISTED, never that it would still be alive when the cart fired. Presence is not
+  // liveness, restated for the claim screen.
+  //
+  // It fires only on a NUMBER we were given. `null`/`undefined` fall through untouched.
+  if (typeof tokenExpiresInSec === 'number' && tokenExpiresInSec < MIN_TOKEN_SECONDS_FOR_HANDOFF) {
+    return 'sign-in';
+  }
   // VERIFIED IS THE FAST PATH; UNCONFIRMED IS NOT A BLOCKER. A confirmed token is the exact
   // fact the precart needs, so it goes straight through. But "we could not confirm a session"
   // and "there is no session" are different facts, and only the second would justify standing

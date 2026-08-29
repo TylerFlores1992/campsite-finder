@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { rcFragment, rcHandoffUrl } from '../src/lib/native/rc-handoff';
 import { handoffCopy } from '../src/lib/claim-copy';
-import { rcHandoffStep } from '../src/lib/claim-gate';
+import { rcHandoffStep, MIN_TOKEN_SECONDS_FOR_HANDOFF } from '../src/lib/claim-gate';
 
 test('the fragment matches what the extension actually parses', () => {
   // extension/content-rc.js is the consumer. If the shape here drifts from the regex
@@ -452,7 +452,12 @@ test('the released screen actually uses the gate', () => {
   const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8');
   const released = src.slice(src.indexOf("state.status === 'released'"));
   assert.ok(released.length > 0, "the released branch must still exist");
-  assert.match(released, /rcHandoffStep\(canInject, rcCheck\)/, 'the released screen must consult the gate');
+  // ANCHORED ON THE CALLEE, NOT AN EXACT ARGUMENT LIST. The first version pinned
+  // `rcHandoffStep(canInject, rcCheck)` verbatim, and adding the token-liveness argument on
+  // 2026-08-29 broke it over a change that made the gate STRONGER. A guard that fails when
+  // its subject improves gets relaxed by whoever it inconveniences.
+  assert.match(released, /rcHandoffStep\(\s*canInject,\s*rcCheck/,
+    'the released screen must consult the gate');
   assert.match(released, /onClick=\{prepareRc\}/, 'and must offer the sign-in that lifts it');
 });
 
@@ -666,4 +671,57 @@ test('the stale-app warning is rendered, and ABOVE the instruction it corrects',
   const rendered = branch.slice(notice, instruction).replace(/<[^>]*>/g, '');
   assert.match(rendered, /update CampHawk/i, 'say what to do about it, not just that it is broken');
   assert.match(rendered, /ReserveCalifornia now/i, 'and what to do RIGHT NOW, while the site is still held');
+});
+
+// ---------------------------------------------------------------------------
+// A TOKEN ABOUT TO EXPIRE IS NOT A SESSION (2026-08-29).
+//
+// A hand-off ran with `storedExpiresInSec` falling 134 -> 116 across the flow and RC refused
+// the precart. The gate was checking that a token EXISTED, never that it would still be
+// alive when the cart fired — presence is not liveness, restated for the claim screen. The
+// ordering is what makes it expensive: the failure lands AFTER the bot has released, so the
+// site goes back on the open market with nobody holding it.
+// ---------------------------------------------------------------------------
+
+test('a token with seconds left sends the user to sign in FIRST, not after the release', () => {
+  assert.equal(rcHandoffStep(true, 'verified', 30), 'sign-in',
+    'thirty seconds cannot survive a release round trip plus load plus submit — and finding '
+    + 'that out after the bot let go is how the site is lost');
+  assert.equal(rcHandoffStep(true, 'verified', MIN_TOKEN_SECONDS_FOR_HANDOFF - 1), 'sign-in');
+});
+
+test('a healthy token is untouched — this gate must not block a working hand-off', () => {
+  // RC issues 60 minutes. The threshold exists for the pathological case and must be nowhere
+  // near an ordinary session, or it becomes the thing standing between a user and their site.
+  assert.equal(rcHandoffStep(true, 'verified', 3600), 'finish');
+  assert.equal(rcHandoffStep(true, 'verified', MIN_TOKEN_SECONDS_FOR_HANDOFF), 'finish',
+    'the boundary itself passes — the check is "under", not "at or under"');
+});
+
+test('an UNKNOWN expiry behaves exactly as before the parameter existed', () => {
+  // The rule that keeps this safe. A client that reports no expiry — an older app, a token
+  // that would not decode — must not start being sent back to sign in. Same posture as
+  // `unconfirmed` proceeding, and as `unknown` never rounding to `signed-out`.
+  assert.equal(rcHandoffStep(true, 'verified'), 'finish', 'omitted');
+  assert.equal(rcHandoffStep(true, 'verified', null), 'finish', 'explicitly unknown');
+  assert.equal(rcHandoffStep(true, 'unconfirmed', null), 'finish');
+});
+
+test('a short token cannot override the no-injection escape hatch', () => {
+  // Without an injectable webview the hand-off uses the SYSTEM browser and its own session,
+  // which this token says nothing about. Sending them to a sign-in they cannot complete
+  // would be a gate that never lifts — the failure `canInject` is checked first to avoid.
+  assert.equal(rcHandoffStep(false, 'verified', 5), 'finish');
+});
+
+test('THE GATE IS WIRED — ClaimFlow passes the remaining life, or the check is inert', () => {
+  // The shape this repo keeps paying for: a correct function nothing calls with the argument
+  // that makes it work. `rcHandoffStep(canInject, rcCheck)` type-checks fine and silently
+  // restores the old behaviour.
+  const src = readFileSync(new URL('../src/components/v2/ClaimFlow.tsx', import.meta.url), 'utf8');
+  assert.match(src, /rcHandoffStep\(canInject,\s*rcCheck,\s*tokenSecsLeft\)/,
+    'the third argument must actually be passed at the call site');
+  assert.match(src, /setTokenDeadline\(secs != null \? Date\.now\(\) \+ secs \* 1000 : null\)/,
+    'and a DEADLINE must be recorded, not the reported seconds — the user can sit on this '
+    + 'screen for minutes, and a stale snapshot would pass a token that has since died');
 });
