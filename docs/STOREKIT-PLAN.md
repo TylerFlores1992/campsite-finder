@@ -368,6 +368,40 @@ screen*. Where a step says **CONFIRM**, read the console and correct this list.
    premium. Do not enumerate all four ids: an exhaustive list silently mis-tiers a fifth
    product added later, where a prefix test degrades to `base` and stays honest.
 
+### 4b-corrections. THREE THINGS IN §4b WERE WRONG — from RevenueCat's own guide (2026-08-28)
+
+The owner pasted RevenueCat's *"Step-by-step guide for creating your Play service credentials"*,
+which this session could not reach (all three of their hosts are 403 at the agent proxy). It
+contradicts three instructions given above. **Their doc wins; §4b was written blind and said so.**
+
+| §4b said | The guide says |
+|---|---|
+| skip the Cloud grant-access step, **no IAM roles needed** | grant **`Pub/Sub Editor`** and **`Monitoring Viewer`** |
+| **do not** tick `Manage store presence` | it is one of **four required** permissions |
+| grant under **App** permissions | App permissions to *add the app*, then the four under **Account permissions** |
+
+**THE ACCOUNT-LEVEL SCOPE IS THE LIKELY CAUSE OF THE FAILING CHECK.** The app-level grant made
+both catalog reads pass and left `Can validate Google Play subscription purchases` red.
+
+**ALSO REQUIRED IN CLOUD:** enable `pubsub.googleapis.com` and
+`playdeveloperreporting.googleapis.com` (`androidpublisher` was already on from `PLAY-STORE`
+§0b). **After changing IAM roles, REGENERATE the JSON key** — their error table says so
+explicitly, and re-uploading is cheap next to a day spent on a credential.
+
+**THE 36-HOUR WINDOW IS DOCUMENTED, AND IT REFRAMES THE RED BANNER.** *"It can take up to 36
+hours for your Play Service Credentials to work properly."* A red validation minutes after
+granting is the **stated normal**, not a fault — so the instinct to widen permissions until it
+goes green is chasing a clock.
+
+**AND THERE IS A DOCUMENTED WORKAROUND WORTH KNOWING:** in Play Console →
+Monetize → Products → Subscriptions, **change any product's description and save**. Their guide
+says this activates new credentials *"right away (or very shortly)"*. Revert afterwards.
+
+**ON `Manage store presence`, THE OBJECTION IN §4b STANDS ON THE MERITS** — Play's own
+description includes *"edit pricing; manage in-app products"*, which is WRITE access to the four
+products. It is granted because the vendor requires it, not because it is minimal. Worth
+knowing if the permission is ever audited: it is their requirement, not our choice.
+
 3b. **(superseded) CONFIRM THE ID FORM.** Play identifies a purchasable thing as the
    subscription *and* its base plan, so the id RevenueCat wants is expected to look like
    `camphawk_base:monthly` rather than `camphawk_base`. **This is the single most likely place
