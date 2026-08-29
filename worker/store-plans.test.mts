@@ -269,12 +269,21 @@ test('the paywall never sells on a failed status lookup', () => {
     /if \(unknown\) return <>\{fallback\}<\/>;/,
     'unknown must render the fallback, never a Buy button'
   );
-  // Ordering is the assertion, not presence: a guard placed after the plans render is
-  // unreachable and merely looks right.
-  const guard = src.indexOf('if (unknown) return');
-  const render = src.indexOf('store.plans.map');
-  assert.ok(guard > -1 && render > -1, 'both anchors must exist');
-  assert.ok(guard < render, 'the unknown guard must precede the plan buttons');
+  // NOT AN ORDERING ASSERTION, AND THE FIRST DRAFT WAS ONE. It asserted the guard appears
+  // before `store.plans.map`, and the mutation that moved it to the last line before the
+  // render PASSED — because this component renders buy buttons from a single return, so
+  // EVERY position before it is correct and the assertion could not fail for any real
+  // defect. A guard anchored on the wrong thing, which CLAUDE.md records twenty-five times.
+  //
+  // What can actually go wrong is the sense of the test and the source of the flag, so
+  // those are what is pinned. `!unknown` reads as caution and sells to exactly the people
+  // it must refuse; a locally-invented `unknown` is the flag present and permanently false.
+  assert.doesNotMatch(src, /if \(!unknown\)/, 'inverted: this would sell ONLY on a failed lookup');
+  assert.match(
+    src,
+    /const \{ unknown \} = useSubscription\(\);/,
+    'the flag must come from useSubscription, which is the only thing that reports it'
+  );
 });
 
 test('a cancelled purchase is not reported as an error', () => {
