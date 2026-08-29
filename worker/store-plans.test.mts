@@ -255,11 +255,42 @@ test('an anonymous RevenueCat id can never be configured with', () => {
   );
 });
 
-test('the paywall is off until the four Play prices have been read back', () => {
-  // §9b: the amounts were never read from the console, and a base plan named `yearly` that
-  // bills MONTHLY charges twelve times the intended price with nothing objecting. This
-  // screen prints the store's price string and cannot see the PERIOD.
-  assert.match(code(PAYWALL), /export const STORE_PURCHASE_ENABLED = false/);
+test('the switch has two enforcers, and the probe is one of them', () => {
+  // THIS REPLACES A GUARD THAT ASSERTED THE SWITCH WAS `false`. That was a ONE-TIME GATE —
+  // "do not sell until somebody reads the four Play base plans" — and it was satisfied on
+  // 2026-08-29 when the owner read them. Keeping it would have meant a test that can only
+  // ever be deleted, and deleting it silently is how the reason gets lost. What survives is
+  // the pair of invariants that outlive the flag's VALUE.
+  const paywall = code(PAYWALL);
+  const purchases = code(PURCHASES);
+
+  // 1. The component honours it — the line a reader looks for.
+  assert.match(paywall, /if \(!STORE_PURCHASE_ENABLED\) return <>\{fallback\}<\/>;/);
+
+  // 2. The PROBE honours it, which the component alone cannot deliver. `useStorePurchases`
+  //    is called above the early return because React forbids a conditional hook, so with
+  //    the flag off the SDK was still configured and offerings still fetched on any build
+  //    carrying the plugin. Nothing could be bought; RevenueCat was told who the user was
+  //    anyway. A switch whose name overstates what it switches off is the gap this repo
+  //    keeps paying for.
+  assert.match(paywall, /useStorePurchases\(STORE_PURCHASE_ENABLED\)/, 'the flag must reach the hook');
+  assert.match(
+    purchases,
+    /if \(!enabled\) \{[\s\S]{0,120}status: 'unavailable'/,
+    'the hook must stand down when disabled, not merely render nothing'
+  );
+  // AND IT MUST SHORT-CIRCUIT, NOT MERELY SET STATE. This started life as an index
+  // comparison — `if (!enabled)` appears before `bringUp(userId)` — and a mutation that
+  // kept the branch in place, kept it before the call, and DROPPED THE `return` sailed
+  // straight through it: the SDK ran anyway while the assertion still held. That is the
+  // second positional guard in this file to miss a real defect, both mine.
+  //
+  // Position was never the property. The RETURN is.
+  assert.match(
+    purchases,
+    /if \(!enabled\) \{[\s\S]{0,140}status: 'unavailable'[\s\S]{0,40}return;[\s\S]{0,20}\}/,
+    'the disabled branch must RETURN — a branch that only sets state still reaches the SDK'
+  );
 });
 
 test('the paywall never sells on a failed status lookup', () => {

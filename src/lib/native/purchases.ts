@@ -247,13 +247,30 @@ async function buy(
  * there is no Clerk id to bind the purchase to (see `bringUp`), and the surfaces already
  * send a signed-out visitor to sign up.
  */
-export function useStorePurchases(): StorePurchaseState & {
+export function useStorePurchases(enabled: boolean): StorePurchaseState & {
   purchase: (plan: StorePlanOffer, current: CurrentSubscription) => Promise<PurchaseOutcome>;
 } {
   const { isLoaded, isSignedIn, userId } = useAuth();
   const [state, setState] = useState<StorePurchaseState>({ status: 'probing' });
 
   useEffect(() => {
+    // THE FLAG IS A PARAMETER BECAUSE A HOOK CANNOT BE CALLED CONDITIONALLY, AND THE
+    // OBVIOUS PLACEMENT LEAVES THE SWITCH HALF-OFF.
+    //
+    // `StorePaywall` reads `STORE_PURCHASE_ENABLED` and returns its fallback — but the
+    // hook runs ABOVE that return, because React requires it to. So with the switch off
+    // the SDK was still configured and offerings still fetched on any build carrying the
+    // plugin: nothing could be BOUGHT, and RevenueCat was nevertheless being told who
+    // this user was and asked what we sell, on a screen that renders none of it.
+    //
+    // Harmless in itself. The reason it is fixed is that somebody reading
+    // `STORE_PURCHASE_ENABLED = false` would reasonably conclude nothing talks to
+    // RevenueCat, and that conclusion would have been wrong — a switch whose name
+    // overstates what it switches off is the gap this repo keeps paying for.
+    if (!enabled) {
+      setState({ status: 'unavailable', reason: 'disabled' });
+      return;
+    }
     if (!isLoaded) return;
     if (!isSignedIn || !userId) {
       setState({ status: 'unavailable', reason: 'signed out' });
@@ -277,7 +294,7 @@ export function useStorePurchases(): StorePurchaseState & {
     return () => {
       cancelled = true;
     };
-  }, [isLoaded, isSignedIn, userId]);
+  }, [enabled, isLoaded, isSignedIn, userId]);
 
   const purchase = useCallback(
     async (plan: StorePlanOffer, current: CurrentSubscription): Promise<PurchaseOutcome> => {

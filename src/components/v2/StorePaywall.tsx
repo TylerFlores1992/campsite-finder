@@ -32,12 +32,17 @@ import { useSubscription } from "./useSubscription";
  * amount would show — but "$59.99" reads identically whether Play bills it once a year or
  * once a month. The period is invisible here and visible only on the console's Type line.
  *
- * So: open all four base plans, read the **Type** line and the amount against §9b's table
- * ($2.99 / $23.99 / $11.99 / $59.99), then flip this to `true`. It is a web-side constant,
- * so that flip is a push to master — no rebuild, no store review — and it reaches installed
- * apps immediately. Same shape and same reasoning as `LINKOUT_BY_STORE`.
+ * **CHECKED AND FLIPPED 2026-08-29.** The owner read all four base plans in the console —
+ * the **Type** line as well as the amount — and reported them correct against §9b's table.
+ * That is a HUMAN READING OF A SCREEN NOBODY HERE CAN SEE, recorded as such: it is the only
+ * kind of evidence available for a vendor console, and it is what this switch was waiting
+ * for. Nothing in this repo independently verifies it, and nothing can.
+ *
+ * It is a web-side constant, so turning it back off is a push to master — no rebuild, no
+ * store review — and reaches installed apps immediately. Same shape and same reasoning as
+ * `LINKOUT_BY_STORE`.
  */
-export const STORE_PURCHASE_ENABLED = false;
+export const STORE_PURCHASE_ENABLED = true;
 
 /** How long to wait for the webhook before saying so. The store grants the entitlement
  *  on-device instantly; OUR row is written by `/api/webhooks/revenuecat`, which is a
@@ -101,7 +106,7 @@ export interface StorePaywallProps {
 }
 
 export default function StorePaywall({ fallback = null, current, className = "" }: StorePaywallProps) {
-  const store = useStorePurchases();
+  const store = useStorePurchases(STORE_PURCHASE_ENABLED);
   const { unknown } = useSubscription();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
 
@@ -128,9 +133,15 @@ export default function StorePaywall({ fallback = null, current, className = "" 
     [store, current]
   );
 
-  // EVERY "cannot sell" PATH RENDERS THE CALLER'S OWN COPY. The switch below, an older
-  // binary, a browser, a missing key, a store with nothing published — all of them leave
-  // the screen exactly as it was before this component existed.
+  // EVERY "cannot sell" PATH RENDERS THE CALLER'S OWN COPY. The switch, an older binary, a
+  // browser, a missing key, a store with nothing published — all of them leave the screen
+  // exactly as it was before this component existed.
+  //
+  // KEPT DELIBERATELY, THOUGH THE HOOK NOW HONOURS THE FLAG TOO. With `enabled` false the
+  // hook reports `unavailable` and the check below would catch it anyway — so this reads
+  // as redundant, and it is the line a reader looks for when asking "can this thing sell?".
+  // It is also the enforcer that survives somebody changing the hook's signature. Two
+  // enforcers for one flag, in the same shape as the entitlement's six.
   if (!STORE_PURCHASE_ENABLED) return <>{fallback}</>;
 
   // A FAILED STATUS LOOKUP NEVER SELLS. `useSubscription` reports `subscribed: false`
