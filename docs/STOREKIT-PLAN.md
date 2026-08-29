@@ -391,6 +391,68 @@ is about the plugin specifically, not about its configuration.
 
 ---
 
+## 4c. THE REAL WEBHOOK PAYLOAD, READ OFF A TEST EVENT (2026-08-28)
+
+Captured from RevenueCat's own `Send test event`, so the field names below are **read, not
+recalled**. Response was 404 — the route does not exist yet, which is correct.
+
+```jsonc
+{
+  "api_version": "1.0",
+  "event": {                              // <- NESTED. The event is not at the top level.
+    "type": "TEST",                       // INITIAL_PURCHASE | RENEWAL | CANCELLATION | ...
+    "id": "072FA074-BE5B-4722-9983-...",  // event UUID
+    "environment": "SANDBOX",             // or PRODUCTION
+    "app_user_id": "63o43cb0-...",        // OUR Clerk user id, once the SDK sets it
+    "original_app_user_id": "63o43cb0-...",
+    "product_id": "test_product",         // real: camphawk_base:monthly
+    "store": "APP_STORE",                 // or PLAY_STORE
+    "period_type": "NORMAL",              // or TRIAL / INTRO
+    "original_transaction_id": null,      // -> subscriptions.store_transaction_id
+    "transaction_id": null,
+    "expiration_at_ms": 1787982006612,
+    "purchased_at_ms": 1787982006612,
+    "entitlement_ids": null,
+    "subscriber_attributes": { "$email": { "value": "..." }, ... }
+  }
+}
+```
+
+**FOUR THINGS THAT CHANGE THE ROUTE, none of which I would have written from memory:**
+
+1. **`environment` CAN BE `SANDBOX`, AND THE PRODUCTION WEBHOOK RECEIVES IT.** The integration
+   is configured for *Both Production and Sandbox* — deliberately, so test purchases are
+   visible. **A sandbox event must never grant a real entitlement**, or anyone with a test
+   device mints themselves a paid subscription. This is the single most dangerous field in the
+   payload and it is easy not to notice, because it is `SANDBOX` in the only sample anyone
+   looks at.
+2. **`type: "TEST"` EXISTS** and carries `product_id: "test_product"` with a `app_user_id` that
+   matches no real user. It must be acknowledged **200 and ignored** — 200 because a non-2xx
+   makes RevenueCat retry a message that will never be processable.
+3. **`period_type: "TRIAL"` IS HOW THE FREE WEEK ARRIVES.** It maps to our `status =
+   'trialing'`, which is what `hasActiveSubscription` already accepts alongside `'active'`, and
+   matches Stripe's `trialing`. Reading only `type` would put a trialing subscriber on
+   `'active'` and lose the distinction the whole `intro-free-week` offer depends on.
+4. **`event.id` IS THE IDEMPOTENCY KEY.** RevenueCat retries, so the same event arrives more
+   than once; without dedupe on this a retry re-runs whatever the handler does.
+
+**Mapping to migration 071:** `store` (`PLAY_STORE`/`APP_STORE`) → `provider`
+(`'google'`/`'apple'`), and **`original_transaction_id` → `store_transaction_id`** — the stable
+id that survives renewals, which is why 071's unique index is on it rather than on
+`transaction_id`.
+
+**AUTH IS A RAW `Authorization` HEADER, NO `Bearer`.** RevenueCat's own field help: *"RevenueCat
+will send an HTTP Authorization header with this value in each POST request."* So the check is
+an exact comparison against `REVENUECAT_WEBHOOK_AUTH`, failing closed. **HMAC signing is a
+separate toggle** on the same screen, off by default, and worth enabling — both existing
+webhooks here verify a signature, and a static header value is replayable by anyone who ever
+sees it in a log.
+
+**DO NOT READ `store: "APP_STORE"` IN THE TEST EVENT AS MEANINGFUL.** This is a Play-only
+project; the test event is synthetic and says App Store anyway.
+
+---
+
 ## 5. Server
 
 - **RevenueCat webhook → `/api/webhooks/revenuecat`**, mapping `INITIAL_PURCHASE`, `RENEWAL`,
