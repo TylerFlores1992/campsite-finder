@@ -294,7 +294,7 @@ workflows:
         #
         # SET IT TO "true" FOR ONE BUILD, THEN PUT IT BACK. Leaving it on means the next
         # green build silently uploads nothing to Play and looks like it published.
-        CH_SIDELOAD_ONLY: "false"
+        CH_SIDELOAD_ONLY: "true"
       # Capacitor 7's own Android library compiles with `sourceCompatibility 21`, so a
       # runner whose default JDK is older dies at :capacitor-android:compileReleaseJavaWithJavac
       # with `error: invalid source release: 21` — AFTER 91 Gradle tasks have run, which
