@@ -336,12 +336,12 @@ App User ID detection rules, and their own docs warn the SDK's `obfuscatedExtern
 can then *"cause unintended overwrites"*. We bind `app_user_id` to the Clerk id, so off keeps
 one identity story. Turn it on only if a real purchase is ever observed going missing.
 
-**STILL OPEN AND NOT BLOCKING: Play's `Pause` is ENABLED and nothing handles it.** Subscription
-settings → Pause. It lets a subscriber suspend billing for weeks; `SUBSCRIPTION_PAUSED` is not
-in the webhook's granting set and what Play reports as the expiry for a paused subscription is
-**unverified**, so the entitlement outcome would be decided by accident either way. Either
-disable it or handle the state deliberately — it is one more state next to grace periods,
-account holds, trials and proration.
+**PLAY'S `Pause` IS DISABLED (2026-08-29).** It lets a subscriber suspend billing for weeks,
+and nothing handles it: `SUBSCRIPTION_PAUSED` is not in the webhook's granting set, and what
+Play reports as the expiry for a paused subscription was never verified — so the entitlement
+outcome would have been decided by accident either way. **Turning it back on is a decision that
+needs `SUBSCRIPTION_PAUSED` handled and tested first**, not a setting to flip because it looks
+like a feature. It is one more state next to grace periods, account holds, trials and proration.
 
 ### 4b. The RevenueCat console checklist — WRITTEN BLIND, so verify as you go
 
