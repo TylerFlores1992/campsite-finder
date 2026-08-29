@@ -60,7 +60,7 @@ field: it proves the value reached the build users are actually running.
 
 | | why |
 |---|---|
-| run `iOS · TestFlight` (§11c) | `codemagic.yaml` has no `triggering:` block, so builds start by hand, and `api.codemagic.io` is 403 at the agent proxy |
+| run `iOS · TestFlight` (§11c) | `codemagic.yaml` has no `triggering:` block, so builds start by hand, and `api.codemagic.io` is 403 at the agent proxy. **The owner ran it the same day and it went green on `73b3a3c` — see §11c.** |
 
 **STILL OPEN ON THE SERVER, both recorded when #218 shipped and neither touched here:**
 HMAC is **reported, not enforced** (`verifyHmac` returns `null` for "cannot judge"; promote
@@ -117,11 +117,14 @@ mapping, and the §11a paywall that must detect the **plugin**, not the platform
 upgrade-vs-downgrade is stated by app code. No console screen can show that mistake, and every
 console screen that *could* have caught anything has now been passed.
 
-**iOS HAS NOT BEEN BUILT SINCE REVENUECAT ENTERED THE DEPENDENCY TREE.** §11c: Capacitor 8
-defaults iOS to SPM, where `@capacitor/app` and `@capacitor-firebase/app` already collided on
-identity `app` once and broke resolution outright. A new plugin is a new identity in that
-namespace. **Run `iOS · TestFlight` on this branch** rather than discovering it when a TestFlight
-build is needed for something else.
+~~**iOS HAS NOT BEEN BUILT SINCE REVENUECAT ENTERED THE DEPENDENCY TREE.**~~ **BUILT AND GREEN
+2026-08-29 — `iOS · TestFlight` #11 on `73b3a3c`, App.ipa 12.07 MB, every step passing including
+"Assert the InAppBrowser plugin is actually installed".** That commit's `package.json` carries
+`"@revenuecat/purchases-capacitor": "^13.4.2"` (checked with `git show 73b3a3c:package.json`), so
+the plugin really was in the tree that built. **§11c's SPM identity-collision risk is closed by
+measurement, not by argument** — see the section itself. Struck rather than deleted, because "iOS
+is unbuilt with RevenueCat in the tree" is exactly the sentence a later reader would quote as a
+reason to hold a release.
 
 **TWO THINGS TO CARRY FORWARD RATHER THAN RE-DERIVE:**
 
@@ -1423,6 +1426,18 @@ claimed `app` and dependency resolution failed outright. The fix was
 
 A new plugin is a new identity in that namespace. **Run the iOS workflow too**, or find out
 when a TestFlight build is needed for something else.
+
+**RUN, AND IT PASSED (2026-08-29).** `iOS · TestFlight` #11 built `73b3a3c` — the commit whose
+`package.json` carries `@revenuecat/purchases-capacitor` — green end to end, App.ipa 12.07 MB,
+with the InAppBrowser assertion passing. **So the collision did not happen**, and the reason is
+that the build is still CocoaPods: `CapacitorApp` / `CapacitorFirebaseApp` / `RevenuecatPurchasesCapacitor`
+are three distinct pod names, and CocoaPods has no identity restriction to trip over. The risk was
+real and correctly recorded; what retires it is one green build, not the reasoning.
+
+**THE RULE THAT MADE IT SAFE IS UNCHANGED AND IS THE PART TO KEEP.** This passed *because* iOS is
+on CocoaPods. **Do not "modernise" to SPM** — a fourth plugin whose last path segment is `app` (or
+`purchases`, or anything already claimed) breaks resolution outright there, and the failure is a
+dependency-resolution error rather than a compile error, so it looks like a broken lockfile.
 
 ### 11d. What must not break
 
