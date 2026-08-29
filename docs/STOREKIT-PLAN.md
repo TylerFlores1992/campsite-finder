@@ -6,7 +6,49 @@ implementation. Read "What only a human can do" before planning a session around
 
 ---
 
-## STATE AS OF 2026-08-28 — read this first
+## STATE AS OF 2026-08-29 — read this first
+
+**THE CLIENT EXISTS NOW. Play's remaining blockers are ONE console reading and two open
+server items — no code is missing.**
+
+`src/lib/store-plans.ts` (the §9a decision), `src/lib/native/purchases.ts` (the capability
+probe and the SDK call) and `src/components/v2/StorePaywall.tsx` (the paywall) landed with
+`worker/store-plans.test.mts` — 19 tests, 18 mutations each verified to APPLY and to fail.
+The paywall is mounted in `PricingSection`'s native branch.
+
+**IT IS SWITCHED OFF, AND THE SWITCH IS WAITING ON ONE THING SOMEBODY HAS TO READ.**
+`STORE_PURCHASE_ENABLED = false` in `StorePaywall.tsx`, because §9b's price read-back never
+happened:
+
+> Open each of the four base plans in Play Console and read **both** the amount and the
+> **Type** line, against §9b's table — $2.99 / $23.99 / $11.99 / $59.99, and Monthly for
+> `monthly`, Yearly for `yearly`. Then flip the constant to `true`.
+
+**The paywall cannot catch a wrong period, and that is why the switch exists rather than
+trusting the screen.** It prints the store's own `priceString`, so a wrong *amount* would
+show — but "$59.99" reads identically whether Play bills it once a year or once a month,
+and §9b caught exactly that (`Draft · yearly / Type: Monthly, auto-renewing`) one click from
+Activate. Only `camphawk_base` was verified afterwards. It is a web-side constant, so the
+flip is a push to master — no rebuild, no review.
+
+**WHAT THIS SESSION COULD NOT DO, rather than guessed at:**
+
+| | why |
+|---|---|
+| read the four Play prices | no console access — assert nothing about a screen you cannot see |
+| run `iOS · TestFlight` (§11c) | `codemagic.yaml` has no `triggering:` block, so builds start by hand, and `api.codemagic.io` is 403 at the agent proxy |
+| confirm `NEXT_PUBLIC_REVENUECAT_ANDROID_KEY` is set on Vercel | `vercel.com` is 403 at the proxy. **A missing key is `unavailable`, not a broken button** — the paywall renders the existing link-out — so a wrong answer here costs a silent no-sale, not an error |
+
+**STILL OPEN ON THE SERVER, both recorded when #218 shipped and neither touched here:**
+HMAC is **reported, not enforced** (`verifyHmac` returns `null` for "cannot judge"; promote
+it to a rejection once a live event logs clean), and **out-of-order delivery is unhandled** —
+RevenueCat retries, so an older event can land after a newer one and regress a status. That
+one needs the event timestamp stored, i.e. another migration, and **the main lane's 060-069
+block is full** (§ `docs/LANES.md`), so it needs a new block claimed out loud.
+
+---
+
+## STATE AS OF 2026-08-28
 
 **PLAY'S CONSOLE WORK IS FINISHED. Every remaining blocker on both stores is CODE or a vendor.**
 
@@ -1381,6 +1423,86 @@ by starting to install it.~~
 
 > **DECIDED 2026-08-24: RevenueCat** (see the box in §3, which also records that the named
 > alternative does not exist on npm). Install `@revenuecat/purchases-capacitor`.
+
+### 11g. THE CLIENT, AND THE TWO THINGS WORTH NOT RE-DERIVING (2026-08-29)
+
+**THE DOUBLE CHARGE IS NOT THE PRORATION MODE. IT IS PASSING NO CHANGE INFO AT ALL.**
+§9a says the expensive mistake is stating upgrade-vs-downgrade wrongly, and that is true as
+far as it goes — but it is the second-worst outcome. `Purchases.purchasePackage` with no
+`storeProductChangeInfo` is a request for a **new, independent subscription**: somebody
+paying for Alerts who taps Auto-Cart then holds **both**, and Play bills **both**, every
+month, with each console screen showing only its own. And that is the **default** — it is
+what you get by writing the obvious call. `decidePurchase` therefore returns the whole
+instruction rather than an optional extra, and `store-plans.test.mts` asserts over all
+sixteen (from, to) pairs that an existing store subscription can never produce a plain buy.
+
+**THE MODES, DECIDED:**
+
+| change | mode | why |
+|---|---|---|
+| tier up (`base` → `autocart`) | `WITH_TIME_PRORATION` | immediate, remaining time **credited** |
+| term lengthening (monthly → yearly) | `WITH_TIME_PRORATION` | same |
+| tier down | `DEFERRED` | they have **already paid** for Auto-Cart through the period |
+| term shortening (yearly → monthly) | `DEFERRED` | we do not refund eleven months |
+| current plan unparseable | `DEFERRED` | neither charges now nor removes access now |
+
+`CHARGE_PRORATED_PRICE` WAS CONSIDERED AND REJECTED IN WRITING, because it looks like the
+more precise answer and somebody will propose it again. It keeps the billing date stable and
+charges only the difference — genuinely nicer for base/monthly → autocart/monthly. But it is
+documented **upgrade-only** *and* holds the billing cycle fixed, so it cannot express a
+change that also switches monthly↔yearly. Adopting it means two upgrade modes chosen by a
+second condition, on the one path nobody can test before it bills a real person. **One mode
+that always credits beats two that are usually exact.**
+
+**`Capacitor.isPluginAvailable('Purchases')` IS A FALSE POSITIVE — read out of
+`@capacitor/core`, not assumed.** §11a's rule is "detect the capability, not the platform",
+and the obvious way to obey it does not work:
+
+```js
+// @capacitor/core, dist/index.cjs.js
+const isPluginAvailable = (pluginName) => {
+    const plugin = registeredPlugins.get(pluginName);
+    if (plugin?.platforms.has(getPlatform())) return true;   // <- a JS impl counts
+    if (getPluginHeader(pluginName)) return true;            // <- the native one
+    return false;
+};
+```
+
+`@revenuecat/purchases-capacitor` registers a **web** implementation whose every method
+throws `Web not supported in this plugin`, so the first branch answers **true in a desktop
+browser**. Presence is not liveness, one more time.
+
+**`Capacitor.PluginHeaders` is the real test** — the list the native bridge publishes of
+plugins compiled into *this binary*. Absent on the web entirely, and carrying no `Purchases`
+entry in any CampHawk Android install before build 13. It is not in `@capacitor/core`'s
+public types, so it is read defensively and an unexpected shape reads as "no plugin".
+
+**EVERY FAILURE IS `unavailable` AND RENDERS THE CALLER'S EXISTING COPY** — never "not
+subscribed", never a button that throws. An old binary, a browser, a missing key, an SDK that
+will not configure, and **a store with nothing published** all take that path. The last one is
+not hypothetical: it is exactly what iOS reports today, since Apple's four products do not
+exist yet (§8), so the iOS link-out (§2c) keeps working untouched with no platform check
+anywhere.
+
+**A FAILED STATUS LOOKUP NEVER SELLS.** `useSubscription` reports `subscribed: false`
+alongside `unknown: true`, so all five surfaces' `!subscribed` test reads a Clerk or database
+blip as a non-subscriber. That is survivable for a sentence pointing at the website — it is
+what ships today — and **not** survivable for a Buy button, which would sell a paying
+subscriber a second subscription on a second provider. The guard lives inside `StorePaywall`
+rather than at the call sites, so a sixth surface cannot forget it.
+
+**THE PAYWALL OWNS ITS FALLBACK COPY rather than exposing a `useStoreCanSell()` hook.**
+"Subscriptions are managed at camphawk.app" is *false* the moment a Buy button appears beside
+it, so the copy and the control are one decision. Splitting them across a hook and a component
+is two probes of the SDK and two chances to leave a screen telling somebody to go to the
+website directly above a control that charges them here.
+
+**AND A COMPLETED PURCHASE IS NEVER REPORTED AS FAILED.** The store takes the money and grants
+the entitlement on-device; our own row is written by a webhook that is a separate hop and can
+be retried. `waitForEntitlement` polls `/api/subscription/status` and, on running out of
+attempts, says *"your payment went through, it can take a moment to show up"* — because
+telling somebody a completed purchase failed is how they buy it a second time. Same reason
+`userCancelled` returns to idle with no banner at all.
 
 ### 11f. THIS IS NOT SIDE-LANE WORK
 
