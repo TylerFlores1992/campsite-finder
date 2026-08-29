@@ -345,7 +345,30 @@ screen*. Where a step says **CONFIRM**, read the console and correct this list.
    credential gets rotated for CI reasons that have nothing to do with billing, and a rotation
    that silently breaks entitlement lookups is the kind of failure this repo keeps paying for.
    RevenueCat's own onboarding names the permissions it wants; take them from there, not here.
-3. **The four products. CONFIRM THE ID FORM.** Play identifies a purchasable thing as the
+3. **The four products. ANSWERED 2026-08-28 — IMPORT, NEVER TYPE.** RevenueCat's importer found
+   all four and states the rule on the screen: *"RevenueCat will import selected products with
+   an identifier formatted as `<product_id>:<base_plan_id>`, and will use that identifier to
+   refer to it in the dashboard."*
+
+   ```
+   camphawk_base:monthly        Active
+   camphawk_base:yearly         Active
+   camphawk_autocart:monthly    Active
+   camphawk_autocart:yearly     Active
+   ```
+
+   **USE `Import`, NOT `+ New`.** Import pulls the ids straight from Play, so the string
+   arrives exactly as Google has it and the retyping risk disappears rather than being
+   carefully avoided.
+
+   **THE TIER MAPPING FOR §5 FOLLOWS, AND KEEPS THE SAFE FAILURE DIRECTION.** Split on the
+   FIRST colon and read the part before it: `camphawk_autocart` → `'autocart'`, **everything
+   else → `'base'`** — including anything unrecognised. That mirrors `tierForPriceId`, whose
+   rule is that an unknown id fails as *"paying but treated as base"*, never as silent free
+   premium. Do not enumerate all four ids: an exhaustive list silently mis-tiers a fifth
+   product added later, where a prefix test degrades to `base` and stays honest.
+
+3b. **(superseded) CONFIRM THE ID FORM.** Play identifies a purchasable thing as the
    subscription *and* its base plan, so the id RevenueCat wants is expected to look like
    `camphawk_base:monthly` rather than `camphawk_base`. **This is the single most likely place
    to mistype something that then silently matches nothing.** Whatever form the console shows is
