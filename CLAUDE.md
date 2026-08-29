@@ -2972,6 +2972,95 @@ written, which is what stopped the second one being written up as "RC reworded i
   read-back have run only against the bundle in a stub page. The next hand-off answers it by
   itself — look for `cart read back` in `rc-holds-readout.mts`.
 
+### `cart read back` NEVER PROVED THE OWNER COULD REACH THE CART (2026-08-29)
+The first Android hand-off reported the two lines this repo treats as proof — and the owner,
+holding the phone, said the cart was empty and RC was asking them to log in.
+
+```
+TEST · 43793 [android build 1.0 (25)]: ✓ Added to cart — opening your cart…
+    cart read back: 1 entry — RC confirms it is holding something
+```
+
+**RC'S OWN INVENTORY SETTLED IT, AND BOTH HALVES ARE TRUE AT ONCE.** `rc-test-hold.mts --find`
+re-asked RC for Weyland Camp's 2026-12-01 inventory: **unit 43793 was gone and the count had
+dropped 39 → 38.** So the reservation is real. And the owner's account menu offered **"Log
+out"** while the cart control asked them to **log in** — RC contradicting itself, on one screen.
+**The cart exists, and the page cannot show it.**
+
+- **THE READ-BACK IS RC'S ANSWER TO *OUR* QUESTION, ASKED WITH *OUR* KEY.** It POSTs
+  `webaccesscustomer/load/shoppingcart` with a `shoppingCartKey` we supply. `entries: 1` means
+  RC holds something under that key; it says **nothing** about whether RC's own SPA — which
+  reads `localStorage["shoppingCartKey"]` to decide which cart it is showing — knows the cart
+  exists. The readout called it *"stronger still: RC's own answer, not our status string"*.
+  Half right, and the wrong half is load-bearing.
+- **THE COST IS THE WORST SHAPE THIS PRODUCT HAS.** A site is locked, and the user is told it
+  is theirs. That is strictly worse than failing: it takes the campsite off the market AND
+  makes them stop watching — the rule every claim-screen decision has been governed by since
+  2026-08-09.
+- **AND iOS IS NOT THE WORKING CONTROL IT LOOKS LIKE.** Reading the two iOS runs against each
+  other is what makes this a finding rather than an Android bug:
+
+  | | evidence | human looked at RC's cart page? |
+  |---|---|---|
+  | 08-13 iOS | `✓ Added to cart` only — **the read-back did not exist yet** | **YES** — exact unit and dates confirmed |
+  | 08-24 iOS | `✓ Added to cart` + `cart read back: 1 entry` | **no** |
+  | 08-29 Android | `✓ Added to cart` + `cart read back: 1 entry` | **yes — and it was NOT there** |
+
+  **So `cart read back` has never once been corroborated by a human, on any platform.** The
+  only visually-confirmed run predates the instrument *and* predates the code path: the cart
+  navigation and the read-back both arrived on 2026-08-23 (#171), and 08-13's status line was
+  *"review & check out on ReserveCalifornia"* with no navigation at all. **08-24 has exactly
+  today's evidence and was written up as "the whole verification".** It may have had this same
+  defect and nobody would know.
+- **THE CAUSE IS NOT ESTABLISHED — do not write one in.** Candidates, none tested: the cart is
+  free-floating with `CustomerId: 0` and RC's page refuses to show an unattached cart to a
+  signed-in user; or the SPA holds its cart in memory from page load and our `localStorage`
+  write lands too late for it. **Ruled out by reading the code, not guessed:** the write DID
+  have a key to write — `cart-verified` fell back to `mark.cartKey` only if localStorage were
+  empty, and a run with neither would have reported `cart-unverified`.
+- **WHAT SHIPPED IS AN INSTRUMENT AND HONEST COPY, NOT A CURE.** Every candidate fix is
+  unverified and the known-dead list here is long — cross-session cart adoption fails
+  (2026-08-06), `?shoppingCartKey=` in the URL does nothing, `empty/shoppingcart` is forbidden.
+  Guessing at the mechanism is how a repair gets credited to the wrong one, which has happened
+  three times.
+  1. **`cart-verified` now reports `keySource` and `attached`**, both from data already in hand
+     and neither costing a request. `keySource: 'marker'` means localStorage did NOT have the
+     key, i.e. RC's page cannot see the cart. `attached: false` means `CustomerId: 0`.
+     **`attached` is a BOOLEAN, never the id** — a customer id is not a credential, but the
+     standing rule is not to collect a value you would then have to filter. **`null` is "RC did
+     not tell us", never `false`.**
+  2. **The banner stops claiming the page shows it.** `✓ Added to cart` STAYS — `client_reports`
+     is read for it and `ClaimFlow` matches on it — but *"this is your cart. Check the dates and
+     check out"* was an assertion **about the page** and it has been observed false. Both call
+     sites changed; fixing one would leave the other telling the old story on every reload.
+  3. **The readout says what the line does and does not establish**, and names the only proof of
+     reachability there is: a human looking at RC's cart page.
+- **THE NEXT HAND-OFF ANSWERS IT BY ITSELF**, which is why no cure was guessed at. Web-side —
+  `/api/rc-precart` serves the bundle, so it reaches installed apps on a push, no rebuild.
+- `worker/rc-precart-cart-key.test.mts`, four new guards, four mutations each verified to APPLY
+  and to fail: `keySource` hardcoded to `localStorage`, `attached` coerced to `false` when RC
+  said nothing, the banner claim restored, and `keySource` dropped from the report.
+  **TWO OF THE FOUR WERE WRONG WHEN FIRST WRITTEN AND WOULD HAVE PASSED VACUOUSLY** — `makePage`
+  leaves `localStorage` empty unless `storedCartKey` is passed, so the "came from localStorage"
+  and "came from the marker" tests staged the IDENTICAL state and both went green measuring
+  nothing. Caught by reading the fixture rather than the assertion.
+
+### A REAL CAMPSITE IS LOCKED AND WE CANNOT RELEASE IT (2026-08-29)
+The cost of the run above, recorded rather than tidied away. Pfeiffer Big Sur, Weyland Camp
+**#W079 (unit 43793), arrival 2026-12-01** — the bot carted at T+2s, released cleanly at
+19:32:18Z, and the phone's own session re-carted it into a cart the owner cannot open.
+- **NOTHING WE HAVE CAN LET GO OF IT.** The hold row's `cart_key` is the BOT's, already
+  released. The phone minted its own, and `cartkey {"captured":true}` records **that a key
+  existed, never its value** — deliberately, and correctly. So there is no key to send a
+  `remove/cartentry` with.
+- It lapses when RC drops the cart. **That number is still unmeasured**: our own
+  `expireStaleHolds(45)` removed one at exactly 45 minutes on 08-25, which bounds it from
+  BELOW only. `rc-probe.mjs --cart-lapse` exists to measure it and has still never been run.
+- **Harm is small and that is luck, not design** — a December midweek night with 38 other sites
+  free. A test on a popular site would have taken one somebody wanted.
+- **THE RULE THIS EARNS: a hand-off test is not over when the readout says it worked.** Ask for
+  the cart page. Until 08-29 nobody had, on any run with the instrument attached.
+
 ### THE FIXTURE COUNT IN THE HEALTH ROUTE WAS NEVER FILTERED (2026-08-23, evening)
 Merging two PRs fired CI on master, CI runs `npm test` against the production DB, and
 `autocart.rc_session` went **warn → fail** for the length of the run:
@@ -3339,9 +3428,14 @@ and the hand-off reported:
 TEST · 43129 [ios build 1.0 (21)]: ✓ Added to cart — opening your cart…
     cart read back: 1 entry — RC confirms it is holding something
 ```
-**`cart read back` is the reading nobody could force**, and it is RC's own answer rather than a
+~~**`cart read back` is the reading nobody could force**, and it is RC's own answer rather than a
 status string we wrote ourselves. The handover called it "the whole verification"; it has
-landed, on iOS. **Still not exercised on Android.** Session healthy (token 44m, `okta=ALIVE`
+landed, on iOS.~~ **THAT READING IS RETIRED — see "`cart read back` NEVER PROVED THE OWNER COULD
+REACH THE CART" (2026-08-29).** It is RC's answer to OUR question with OUR key, and on 08-29 it
+read 1 entry while the owner was shown an empty cart and a sign-in prompt. **This run was never
+corroborated by anyone looking at RC's cart page**, so it may have had the same defect. Struck
+rather than deleted: "the whole verification" is exactly the sentence a later reader quotes.
+**Still not exercised on Android.** Session healthy (token 44m, `okta=ALIVE`
 to 08-25 07:42), and the login rehearsal **PASSED** at 08-24 03:00.
 
 **FOUR REAL USER OFFERS ARE OUTSTANDING FOR 2026-08-25 08:00 PT** — Morro Bay `#96` (two

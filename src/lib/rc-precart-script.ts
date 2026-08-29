@@ -472,9 +472,16 @@ export function cartVerifier(): string {
     '  window.__camphawkRcVerifying = true;',
     // The adopted key first: `content-rc.js` writes RC's own answer there, which is the key
     // the SPA is showing. The marker is the fallback for a cart RC minted on the submit.
-    '  var key = "";',
+    // WHERE THE KEY CAME FROM IS THE DISCRIMINATOR, and it was being computed and thrown
+    // away. `localStorage` is what RC's own SPA reads to decide which cart it is showing;
+    // the marker is ours. So a read-back that succeeded on the MARKER means RC is holding a
+    // reservation the page in front of the user cannot see — which is exactly the state
+    // reported on 2026-08-29, where `cart read back: 1 entry` sat beside a cart UI asking a
+    // signed-in user to log in. Reporting only `entries` cannot tell those apart.
+    '  var key = "", keySource = "none";',
     '  try { key = localStorage.getItem("shoppingCartKey") || ""; } catch (e) {}',
-    '  if (!key) key = mark.cartKey || "";',
+    '  if (key) keySource = "localStorage";',
+    '  if (!key) { key = mark.cartKey || ""; if (key) keySource = "marker"; }',
     '  if (!key) { R.send("cart-unverified", { reason: "no cart key was recorded, so there is nothing to read back" }); return; }',
     '  var CART_LOAD = "https://rdapi.reservecalifornia.com/api/webaccesscustomer/load/shoppingcart";',
     '  var asked = false;',
@@ -502,8 +509,19 @@ export function cartVerifier(): string {
     // A SHAPE WE DO NOT RECOGNISE IS NOT AN EMPTY CART. `listCartEntries` defaults to `[]`
     // here, which is right for cleanup and wrong for evidence: it would report "RC holds
     // nothing" for an answer we simply could not read.
-    '      if (n === null) R.send("cart-unverified", { reason: "RC answered, but not with a cart we could read", status: o.status });',
-    '      else R.send("cart-verified", { entries: n, status: o.status });',
+    // IS THE CART ATTACHED TO THE ACCOUNT? RC's carts are free-floating GUID objects and an
+    // unclaimed one carries `CustomerId: 0` — which is a candidate explanation for a cart
+    // the owner cannot reach, and it is already sitting in the payload being parsed.
+    // A BOOLEAN, never the id: a customer id is not a credential, but the standing rule is
+    // not to collect a value you would then have to filter, and `attached` answers the
+    // question the id was wanted for. `null` means RC did not tell us, never `false`.
+    '      var attached = null;',
+    '      try {',
+    '        var res2 = JSON.parse(o.text); res2 = res2 && res2.Result ? res2.Result : res2;',
+    '        if (res2 && typeof res2.CustomerId === "number") attached = res2.CustomerId > 0;',
+    '      } catch (e) {}',
+    '      if (n === null) R.send("cart-unverified", { reason: "RC answered, but not with a cart we could read", status: o.status, keySource: keySource });',
+    '      else R.send("cart-verified", { entries: n, status: o.status, keySource: keySource, attached: attached });',
     '    }).catch(function () {',
     '      R.send("cart-unverified", { reason: "the cart read-back could not be sent" });',
     '    });',

@@ -523,3 +523,104 @@ test('a token we cannot decode still counts — "we could not tell" is not "sign
   const R = vm.runInContext('window.__camphawkRc', page.sandbox) as { signedIn: () => boolean };
   assert.equal(R.signedIn(), true);
 });
+
+// ---------------------------------------------------------------------------
+// A CART RC HOLDS IS NOT A CART THE OWNER CAN REACH (2026-08-29).
+//
+// The first Android hand-off reported `✓ Added to cart` and `cart read back: 1 entry`, and
+// was written up as a success on the strength of those two lines. The owner, looking at
+// that same page, saw an empty cart and a prompt to log in — while RC's own account menu
+// offered "Log out". RC's inventory settled who was right: the unit vanished from the
+// bookable list and the count dropped 39 -> 38, so the reservation was real and the page
+// could not show it.
+//
+// `entries` alone cannot express that, and the readout was calling it "RC's own answer, not
+// our status string" — true, and it is RC's answer to OUR question, asked with OUR key.
+// Two fields already present in the response and in local state close the gap:
+//
+//   * `keySource` — `localStorage` is what RC's SPA reads to decide which cart it shows.
+//     A read-back that only worked from our own `marker` means the page cannot see it.
+//   * `attached`  — RC carts are free-floating GUIDs and an unclaimed one carries
+//     `CustomerId: 0`. A cart with no account on it is a candidate for the same symptom.
+//
+// Guarded because the failure is SILENT and reads as a success: the run that produced it
+// would have been filed as "Android proven" if the owner had not been holding the phone.
+// ---------------------------------------------------------------------------
+
+test('the read-back says WHERE the key came from — localStorage is what RC\'s page reads', async () => {
+  // `storedCartKey` is the whole fixture. Without it `makePage` leaves localStorage empty
+  // and the key falls through to the marker — so this test and the next one would stage the
+  // SAME state and both pass while measuring nothing.
+  const page = makePage({
+    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED }, storedCartKey: MINTED,
+  });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  const verified = page.reports.find((r) => r.stage === 'cart-verified');
+  assert.ok(verified, 'the read-back must still report');
+  assert.equal(verified.detail?.keySource, 'localStorage',
+    'the submit writes localStorage, so a healthy run reads its key back from there — and '
+    + 'saying so is the only way a run that DID NOT can be told apart');
+});
+
+test('a key that came only from OUR marker is reported as such', async () => {
+  // The reachability failure, staged: RC holds the cart, our marker knows the key, and
+  // `localStorage` does not — so RC's own SPA has no idea this cart exists. `entries: 1`
+  // is still true and still the wrong thing to report on its own.
+  // No `storedCartKey`: localStorage is empty and only our marker knows the key.
+  const page = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED } });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  const verified = page.reports.find((r) => r.stage === 'cart-verified');
+  assert.ok(verified, 'it must still read the cart back — the marker is a legitimate source');
+  assert.equal(verified.detail?.keySource, 'marker',
+    'and it must SAY the key did not come from localStorage, or a cart the owner cannot '
+    + 'see is indistinguishable from one they can');
+  assert.equal(verified.detail?.entries, 1, 'the entry count is unchanged and still true');
+});
+
+test('CustomerId 0 is reported as NOT attached, and a missing field as null', async () => {
+  const anon = makePage({
+    hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED },
+    cartBody: JSON.stringify({
+      Result: { CustomerId: 0, CartEntry: { $values: [{ CartEntryKey: 'abc' }] } },
+    }),
+  });
+  anon.run();
+  anon.sendToken();
+  await anon.settle();
+  assert.equal(anon.reports.find((r) => r.stage === 'cart-verified')?.detail?.attached, false,
+    'a free-floating cart with no account on it must say so');
+
+  // NULL, NEVER FALSE, when RC does not tell us. "We could not tell" and "it is not
+  // attached" have different fixes, and the second would send somebody chasing a customer
+  // association that was never in question. Same rule as `unknown` never rounding to
+  // `signed-out`.
+  const quiet = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED } });
+  quiet.run();
+  quiet.sendToken();
+  await quiet.settle();
+  assert.equal(quiet.reports.find((r) => r.stage === 'cart-verified')?.detail?.attached, null,
+    'RC said nothing about CustomerId, so neither may we');
+});
+
+test('the banner never claims the page in front of the user shows the cart', async () => {
+  // "this is your cart. Check the dates and check out." was a claim ABOUT THE PAGE, and on
+  // 2026-08-29 it was false while every other signal said success. `✓ Added to cart` stays —
+  // client_reports is read for it and ClaimFlow matches on it — but the tail must not assert
+  // something we have watched be wrong.
+  const page = makePage({ hash: JOB, pathname: CART_PATH, carted: { cartKey: MINTED } });
+  page.run();
+  page.sendToken();
+  await page.settle();
+
+  assert.match(page.status.textContent, /✓ Added to cart/,
+    'the leading token is load-bearing and must survive any rewording of the tail');
+  assert.doesNotMatch(page.status.textContent, /this is your cart/i,
+    'the cart can be real and unreachable — asserting the page shows it leaves somebody '
+    + 'staring at an empty screen being told to check out');
+});
