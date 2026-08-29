@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import Pricing from "./Pricing";
+import StorePaywall from "./StorePaywall";
 import { buttonClasses } from "@/components/ui/Button";
 import { SubscribeLink, SubscribeSentence } from "./nativeSubscribe";
 import { useSubscription } from "./useSubscription";
@@ -115,14 +116,31 @@ export default function PricingSection() {
           email alerts; the Auto-Cart plan adds automatic carting on Recreation.gov. Live
           search keeps working either way.
         </p>
-        <p className="mt-2 max-w-[58ch] text-ch-meta leading-normal text-ch-green-deep">
-          <SubscribeSentence /> Once yours is active, everything works here.
-        </p>
-        {/* Renders nothing where LINKOUT_BY_STORE is off for this store. See nativeSubscribe.tsx —
-            steering out is US-storefront-only, so it stays dark until app
-            availability is restricted to the US. Never shown to a subscriber:
-            prompting someone who already pays reads as a billing failure. */}
-        {!subscribed && <SubscribeLink className="mt-3 text-ch-body text-ch-green-deep" />}
+        {/* IN-APP PURCHASE WHERE THIS BINARY CAN ACTUALLY DO IT, and the old copy
+            everywhere else — one component decides both, because "Subscriptions are
+            managed at camphawk.app" is false the moment a Buy button sits beside it.
+            StorePaywall renders the fallback for a browser, an app older than the build
+            that added the plugin, a store with nothing published, and while the price
+            check in its header is outstanding. See docs/STOREKIT-PLAN.md §11a.
+
+            NEVER TO A SUBSCRIBER: the `subscribed` branch returns far above this, and
+            the link is separately gated, because prompting someone who already pays
+            reads as a billing failure (and is what hid the link-out from a reviewer —
+            docs/APP-STORE.md §2d). */}
+        <StorePaywall
+          className="mt-3"
+          fallback={
+            <>
+              <p className="max-w-[58ch] text-ch-meta leading-normal text-ch-green-deep">
+                <SubscribeSentence /> Once yours is active, everything works here.
+              </p>
+              {/* Renders nothing where LINKOUT_BY_STORE is off for this store. See
+                  nativeSubscribe.tsx — steering out is US-storefront-only, so it stays
+                  dark until app availability is restricted to the US. */}
+              <SubscribeLink className="mt-3 text-ch-body text-ch-green-deep" />
+            </>
+          }
+        />
       </div>
     );
   }
