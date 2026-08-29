@@ -167,11 +167,37 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
   const [loginError, setLoginError] = useState<string | null>(null);
   /** Does THIS binary have an injectable webview? Probed without opening one. */
   const [canInject, setCanInject] = useState(false);
+  /**
+   * RUNNING IN THE APP, AND THE APP CANNOT INJECT — a binary that is too old, or built
+   * without the Cordova plugin. NOT the same as a plain browser, and that difference is
+   * what this exists for.
+   *
+   * On 2026-08-29 the bot carted #94 at T+6s and the owner lost the site anyway: their
+   * phone was on `1.0 (1)`, Capacitor's DEFAULT versionCode, i.e. a local debug build with
+   * no Cordova plugins. `canInject` was false, so the claim screen rendered the
+   * plain-browser copy — which is CORRECT for a browser and, inside the app, is
+   * indistinguishable from working. Nothing anywhere said "this build cannot cart for
+   * you". They believed it was handled, and it was not.
+   *
+   * A browser is `nativeShell: false` and the manual path is the right answer there, so
+   * this must never fire on one — a warning shown to every desktop user is noise, and
+   * noise is what gets a warning deleted.
+   *
+   * BOTH FALSE UNTIL THE PROBE ANSWERS, so a slow probe shows nothing rather than
+   * flashing a warning at someone whose app is fine; and a probe that THROWS leaves this
+   * false, because "we could not tell" must not be rendered as "your app is broken". Same
+   * rule as `unknown` never rounding to `signed-out`.
+   */
+  const [staleShell, setStaleShell] = useState(false);
 
   useEffect(() => {
     let live = true;
     void rcHandoffDiagnostics()
-      .then((d) => { if (live) setCanInject(d.inAppBrowser === 'present'); })
+      .then((d) => {
+        if (!live) return;
+        setCanInject(d.inAppBrowser === 'present');
+        setStaleShell(d.nativeShell === 'true' && d.inAppBrowser !== 'present');
+      })
       .catch(() => {});
     return () => { live = false; };
   }, []);
@@ -350,6 +376,27 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
             platform: d.platform ?? 'unknown',
             appBuild: d.appBuild ?? 'unknown',
             nativeShell: d.nativeShell ?? 'unknown',
+            // THE CAPABILITY, NOT JUST THE PLATFORM — these were computed here and thrown
+            // away, and their absence cost a real campsite on 2026-08-29. That morning the
+            // bot carted #94 at T+6s and the phone never signed in or carted, and the only
+            // clue in the whole record was `appBuild: "1.0 (1)"` — Capacitor's DEFAULT
+            // versionCode, i.e. a local debug build with no Cordova plugins. The cause had
+            // to be inferred from a version number three files away from the thing that
+            // actually decides: `inAppBrowser`.
+            //
+            // `canInject` is exactly `inAppBrowser === 'present'`, so recording it makes the
+            // hand-off say why it took the manual path instead of leaving it to be deduced.
+            // `iabModule` separates "the plugin is absent from this binary" from "it is
+            // present but had not clobbered the global when we looked" — a timing answer and
+            // an installation answer, which is the distinction `rcHandoffDiagnostics` was
+            // written for and which this report was silently discarding.
+            //
+            // `capPlugins` is deliberately NOT carried: it is a long comma-joined list, and
+            // `client_reports` keeps only the TAIL of 40 entries — the trim that ate
+            // `✓ Added to cart` off the front of both 2026-08-13 hand-offs.
+            inAppBrowser: d.inAppBrowser ?? 'unknown',
+            iabModule: d.iabModule ?? 'unknown',
+            cordova: d.cordova ?? 'unknown',
             ua: d.ua ?? '',
           },
         });
@@ -636,6 +683,36 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
               : null
           }
         />
+
+        {/*
+          THE APP CANNOT CART, AND IT MUST SAY SO — this is the 2026-08-29 loss.
+
+          The bot did its half perfectly that morning: #94 was carted at T+6s and held. What
+          failed was the phone, and it failed SILENTLY, because a build with no injectable
+          webview renders the plain-browser copy — which is the correct copy for a browser
+          and, inside the app, looks exactly like a working hand-off. The owner read a screen
+          that never mentioned the words "sign in for you" or "cart", believed it was
+          handled, and the site went back on the market.
+
+          So the notice names three things, in the order they are needed: that this build
+          will not do it, what to do INSTEAD RIGHT NOW (the release is live and manual still
+          works — the site is not lost yet), and the actual remedy afterwards. A caveat with
+          no instruction changes nobody's morning; that rule is why the auto-hold beta label
+          names an alarm clock rather than just warning.
+
+          ABOVE the "when you tap the green button" paragraph deliberately. That paragraph is
+          the instruction they are about to act on, and a correction printed underneath the
+          thing it corrects is read second or not at all — the same ordering argument that
+          puts the beta label above the promise rather than below it.
+        */}
+        {staleShell && (
+          <Notice tone="warn">
+            This version of the app cannot sign in or add to your cart for you. Do that
+            yourself on ReserveCalifornia now — the site stays held until you tap the green
+            button, so it is not lost. Afterwards, update CampHawk from the Play Store so
+            the next one is automatic.
+          </Notice>
+        )}
 
         <p className="mt-4 text-ch-body leading-relaxed text-ch-ink-2">
           When you tap the green button we let go and you take it. That swap takes a couple
