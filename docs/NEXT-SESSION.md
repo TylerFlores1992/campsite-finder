@@ -407,20 +407,22 @@ because reverting it looks like a tidy-up.
 
 ## 4. State
 
-*Refreshed 2026-08-28 ~10:05 PT. Every row below was wrong for two days before this; re-read
-it rather than trusting it, and re-date it when you do.*
+*Refreshed **2026-08-28 22:15 PT**, against production. This table has twice been left
+describing a state the repo had left behind, and one of those rows was **"Holds: none live"
+while a real hold was queued** — which reads as permission to run `npm test` and restart the
+box. **Re-read it rather than trusting it, and re-date it when you do.***
 
 | | |
 |---|---|
-| Master | **`ce9c3e2`**. Recent: #201 double-cart, #202 health-route `REAL_UNIT`, #203 fixture-sweep scope (closed #76), #204 Routine IDs + egress-watchdog guard (closed #14, #181), #210/#211 the trail-silence discriminator. |
-| Mini-PC | **`5e399b3`**, applied 08:44:0x PT 08-28 in 25 seconds. Carries the trail-silence discriminator. Confirm with `bot-ask git-status`, never `autocart.bot_version` (COALESCEd, can sit stale beside a live heartbeat). |
-| Fly worker | redeployed on the #204 merge (`05ee4ff`) and again on later `worker/**` merges; both shards beating. |
+| Master | **`41fed49`** (#215). Recent: #201 double-cart, #202 health-route `REAL_UNIT`, #203 fixture-sweep scope (closed #76), #204 Routine IDs + egress-watchdog guard (closed #14, #181), #207 re-rank on tap, #209 `reclaimLapsedHolds`, #210/#211 the trail-silence discriminator, #214 the hold-line priority override (migration 069). |
+| Mini-PC | **`5e399b3`**, applied 08:44 PT 08-28 in 25 seconds. Carries the trail-silence discriminator. **Deliberately behind master — nothing since is bot-side**, which is what `autocart.bot_version`'s warn is saying. Confirm with `bot-ask git-status`, never that check (COALESCEd, can sit stale beside a live heartbeat). |
+| Fly worker | redeployed on every `worker/**` merge since #204; both shards beating. |
 | Open PRs | none |
 | Open issues | **none — every issue is closed** |
-| Migrations | highest applied **070**; next main-lane number is **071** |
-| Holds | **None live, nothing queued.** All five offers for 08-28 08:00 PT expired untapped, including the three-way on unit `43187`. `offered` blocks nothing; a TAP blocks `npm test`, box restarts and the update window. |
-| RC session | **`warn` and that is CORRECT** — no token, `okta=ALIVE` with ~10h left. The token lives ~1h and the session is legitimately dead between releases; with nothing queued nothing repairs it until the next release's T−30. **Do NOT run `rc-login.bat`** — `bot-ask test-login` is the safe remote lever (§1b). |
-| Memory | **No ramp since 08:23 PT 08-28** (877 samples in 26h, zero over 1,200 MB, newest 298 MB). The last two onsets were 02:01 and 08:13, ~6h apart. |
+| Migrations | highest applied **070**. **The main lane's block 060-069 is FULL** — `069_line_priority.sql` took the last number. The next main-lane migration must **claim a new block out loud** before taking a number; two lanes both reaching for `071` is a collision git merges cleanly and Postgres does not. |
+| Holds | **ONE LIVE HOLD — `requested`, unit `43189` (`#94`, Morro Bay Upper Section, arrival 2026-09-04), releasing 2026-08-29 08:00 PT**, tapped 18:46:34Z by `tylerflores1992` (who now carries `line_priority = 1`). **Four untapped offers sit behind it**, two of them on the same unit for two other accounts. **So the serial rules are ON**: no `npm test`, no second test hold, nothing that restarts the box, and the 02:00-05:00 update window is shut (the 6h release gate is not liftable). |
+| RC session | **Healthy at 22:13 PT** — `OK for 2h12m`, token 59m, `okta=ALIVE` to 17:01Z. The rehearsal PASSED at 03:01 on both 08-28 and 08-29. `maybeAutoLogin` covers the release at T−30 (07:30 PT). |
+| Memory | **No ramp since 08:23 PT 08-28 — ~14 hours quiet**, the longest stretch yet (1,011 samples in 30h, zero over 1,200 MB, newest 277 MB). Within the recorded 5-28h gap range, so it is not evidence of a cure. **Track A still has zero `trail-*` readings**; the discriminator has never run. |
 
 **Two check-ins are scheduled and enabled — do not create duplicates.**
 `trig_01NdJC1SvSDwxZZroAooVKnU` fires **07:40 PT** into a fresh session;
