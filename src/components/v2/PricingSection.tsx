@@ -123,12 +123,15 @@ export default function PricingSection() {
             that added the plugin, a store with nothing published, and while the price
             check in its header is outstanding. See docs/STOREKIT-PLAN.md §11a.
 
-            NEVER TO A SUBSCRIBER: the `subscribed` branch returns far above this, and
-            the link is separately gated, because prompting someone who already pays
-            reads as a billing failure (and is what hid the link-out from a reviewer —
-            docs/APP-STORE.md §2d). */}
+            NEVER TO A SUBSCRIBER, and the `subscribed` early return far above is the
+            WHOLE reason — prompting someone who already pays reads as a billing failure
+            (and gating on it is what hid the link-out from a reviewer, docs/APP-STORE.md
+            §2d). The `!subscribed &&` that used to sit on the link here was dead code
+            behind that return; it is gone rather than left looking load-bearing.
+            StorePaywall additionally refuses on `unknown`, which the early return does
+            NOT cover — a failed status lookup reports `subscribed: false`. */}
         <StorePaywall
-          className="mt-3"
+          className="mt-2"
           fallback={
             <>
               <p className="max-w-[58ch] text-ch-meta leading-normal text-ch-green-deep">
