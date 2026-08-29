@@ -278,22 +278,45 @@ if (handed.length) {
     // Printed as its own line rather than folded into the outcome: `entries: 0` is a
     // SUCCESS report shape carrying a failure, and it must be impossible to skim past.
     const verified = h.client_reports?.find((r) => r.stage === 'cart-verified')?.detail as
-      | { entries?: number } | undefined;
+      | { entries?: number; keySource?: string; attached?: boolean | null } | undefined;
     const unverified = h.client_reports?.find((r) => r.stage === 'cart-unverified')?.detail as
       | { reason?: string } | undefined;
     if (verified && typeof verified.entries === 'number') {
       console.log(verified.entries > 0
-        ? `      cart read back: ${verified.entries} entr${verified.entries === 1 ? 'y' : 'ies'} — RC confirms it is holding something`
+        ? `      cart read back: ${verified.entries} entr${verified.entries === 1 ? 'y' : 'ies'} — RC holds this under the key WE asked with`
         : '      ⚠ cart read back: EMPTY. RC accepted the submit and is holding nothing.');
+      // THE TWO FIELDS THAT SAY WHETHER THE OWNER CAN REACH IT. Added 2026-08-29 after a
+      // read-back of 1 entry sat beside a cart UI asking a signed-in user to log in.
+      // `marker` means the key came from OUR marker and not from `localStorage`, i.e. RC's
+      // own SPA has no idea this cart exists. `attached: false` means CustomerId 0 — a
+      // free-floating cart with no account on it. Either is a reachability failure that
+      // `entries` alone reports as a success.
+      if (verified.keySource && verified.keySource !== 'localStorage') {
+        console.log(`      ⚠ the key came from ${verified.keySource}, NOT localStorage — RC's own`
+          + " page reads localStorage to decide which cart it is showing, so the owner may see nothing");
+      }
+      if (verified.attached === false) {
+        console.log('      ⚠ the cart carries CustomerId 0 — it is not attached to the account');
+      }
+      if (verified.keySource === undefined) {
+        console.log('      (pre-2026-08-29 report: it cannot say whether the owner could reach this)');
+      }
     } else if (unverified?.reason) {
       // NOT A FAILURE. The cart may be perfectly fine; we could not ask. Same rule as
       // `unknown` never rounding to `signed-out`.
       console.log(`      cart not read back: ${unverified.reason}`);
     }
   }
-  console.log("  '✓ Added to cart' is the one that proves the RC cart POSTs work on mobile.");
-  console.log('  PROVEN on iOS (twice, 2026-08-13). NOT yet on Android — read the platform tag.');
-  console.log("  'cart read back' is stronger still: RC's own answer, not our status string.");
+  console.log("  '✓ Added to cart' proves the two RC cart POSTs fired and RC accepted them.");
+  console.log('  Seen on iOS (2026-08-13, 08-24) and on Android (2026-08-29).');
+  // THE CORRECTION OF 2026-08-29. This block used to call `cart read back` "stronger still:
+  // RC's own answer, not our status string". It is RC's answer to OUR question, asked with
+  // OUR key — and on 08-29 it read 1 entry while the owner, on that same page, was shown a
+  // sign-in prompt and an empty cart. Neither line establishes the owner can check out.
+  console.log("  'cart read back' is RC's answer to OUR question, with OUR key. It does NOT");
+  console.log('  establish the owner can SEE or check out that cart — 2026-08-29 it read 1');
+  console.log('  entry while the cart UI asked a signed-in user to log in. The only proof of');
+  console.log("  reachability is a human looking at RC's cart page. Ask for it."); 
 }
 
 // The one state that is unambiguously broken: the user said yes, the moment came and

@@ -410,8 +410,15 @@
         // which was already an improvement on naming a place instead of a control — and it
         // is still an instruction to go and navigate. We know the cart exists, so we can
         // take them to it. Owner, 2026-08-23.
+        // "THIS IS YOUR CART" WAS A CLAIM ABOUT THE PAGE, AND IT WAS FALSE ONCE.
+        // 2026-08-29, Android: RC held the reservation (its own inventory dropped, and the
+        // unit vanished from the bookable list) while the cart UI asked a SIGNED-IN user to
+        // log in — the account menu offered "Log out" in the same breath. So the cart can be
+        // real and unreachable, and asserting otherwise leaves somebody staring at an empty
+        // page being told to check out. Say what is true — the site is held — and give the
+        // one remedy that costs nothing.
         setStatus(onCartPage()
-          ? '✓ Added to cart — this is your cart. Check the dates and check out.'
+          ? '✓ Added to cart — check the dates and check out. If this page looks empty, reload it: the site is held.'
           : '✓ Added to cart — opening your cart…');
         // LAST, so a status the report channel needs is already written and every line above
         // has run. Delayed — see CART_NAV_DELAY_MS.
@@ -617,8 +624,11 @@
   if (alreadyCarted()) {
     carted = true;
     setState('carted');
+    // Same correction as the one at the submit — see the comment there. Both sites said
+    // "this is your cart"; fixing one would leave the other telling the old story on every
+    // reload, which is the shape that keeps a corrected finding alive in this repo.
     setStatus(onCartPage()
-      ? '✓ Added to cart — this is your cart. Check the dates and check out.'
+      ? '✓ Added to cart — check the dates and check out. If this page looks empty, reload it: the site is held.'
       : '✓ Added to cart — open your cart to check out.');
   } else {
     chrome.storage.local.get({ accepted: false, enabled: false }, ({ accepted, enabled }) => {
