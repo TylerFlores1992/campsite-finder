@@ -10,6 +10,7 @@
 
 import { query, mutate } from '@/lib/db/client';
 import { RC_RUNNER_STALE_MS } from '@/lib/health-thresholds';
+import { HOLD_LAPSE_MIN } from '@/lib/limits';
 
 export type HoldStatus =
   | 'offered' | 'requested' | 'carted' | 'claiming' | 'released' | 'claimed' | 'expired' | 'failed';
@@ -86,6 +87,14 @@ export async function offerHold(input: {
  * room for this one" and not "is the window busy". Without that, a re-alert for a hold
  * already offered would be judged against its own row and quietly lose its button.
  *
+ * A `carted` ROW STUCK PAST `HOLD_LAPSE_MIN` DOES NOT COUNT EITHER, and it is the one
+ * status excluded without being terminal. Since 2026-08-28 `reclaimLapsedHolds` no longer
+ * marks these `expired` — it keeps retrying their release forever, because RC does not
+ * appear to lapse a cart on its own (see that function's header). Counting them here
+ * anyway would let a hold nobody can free up make a genuinely new offer for the SAME
+ * release read as full, which is the one case this exclusion exists to prevent — the
+ * capacity question is "is a seat REACHABLE", not "does a row still say carted".
+ *
  * Not a lock. Two poller shards could both read `capacity - 1` and both offer; at a
  * handful of holds a day that is a fair trade against a transaction, and the failure is
  * one offer over, not a wrong cart.
@@ -99,12 +108,13 @@ export async function holdWindowLoad(
       `SELECT COUNT(*) AS n FROM rc_hold_requests
         WHERE release_at = $1
           AND status IN ('offered', 'requested', 'carted', 'claiming')
+          AND NOT (status = 'carted' AND carted_at < NOW() - ($5 || ' minutes')::interval)
           AND NOT ($2 IS NOT NULL AND watch_id = $2 AND unit_id = $3 AND arrival_date = $4::date)`,
       // `watch_id`/`unit_id`/`release_at` are all TEXT (release_at is RC's zone-less
       // Pacific wall-clock, which is why it is never a timestamp). Only `arrival_date` is a
       // real date, and it is cast so a malformed one fails loudly here rather than matching
       // nothing and silently reporting an empty window as room to spare.
-      [releaseAt, exclude?.watchId ?? null, exclude?.unitId ?? '', exclude?.arrivalDate ?? '1970-01-01'],
+      [releaseAt, exclude?.watchId ?? null, exclude?.unitId ?? '', exclude?.arrivalDate ?? '1970-01-01', String(HOLD_LAPSE_MIN)],
     );
     return Number(row?.n ?? 0);
   } catch (err) {
@@ -158,11 +168,41 @@ export async function requestHold(watchId: string, unitId: string): Promise<Hold
 export async function dueHolds(leadSeconds = 60, graceMinutes = 20): Promise<HoldRequest[]> {
   try {
     return await query<HoldRequest>(
-      // ONE HOLD PER (release_at, unit_id) — see `worker/hold-line.ts`. RC lists the same
-      // physical campsite under more than one facility, so two people can each hold a
-      // correct offer for one site (measured 2026-08-24, unit 43191). Serving both would
-      // ask RC for the same unit twice: one cart succeeds and RC refuses the other in its
-      // own wording, which reads as a fault rather than as a queue.
+      // ONE LIVE HOLD PER (release_at, unit_id) — see `worker/hold-line.ts`. Two people can
+      // each hold a correct offer for one campsite, simply by watching the same facility
+      // (measured 2026-08-24, unit 43191). Serving both asks RC for the same unit twice.
+      //
+      // ── `DISTINCT ON` ALONE WAS NOT THE RULE IT LOOKED LIKE (fixed 2026-08-26) ──
+      //
+      // It de-dupes within ONE query, and the runner polls every 15 seconds. So on 08-26
+      // the first contest to have two tapped holds served BOTH of them, fourteen seconds
+      // apart, from the box's own log:
+      //
+      //     15:00:02  held #123 - entry ae877ae5-...
+      //     15:00:13  0 to hand over, 1 to cart, 0 to release     <- the NEXT poll
+      //     15:00:17  held #123 - entry 6f0863e0-...
+      //
+      // The instant rank 1 succeeded and left `requested`, rank 2 became the top
+      // `requested` row for that unit and was served on the very next pass. **RC accepted
+      // both** — two distinct cart entries for one physical campsite — so the failure this
+      // comment used to anticipate ("RC refuses the other in its own wording") was replaced
+      // by a worse one that looks like success: two cart slots spent, two users each told
+      // their site is held, and the loser finding out at CHECKOUT.
+      //
+      // The `NOT EXISTS` makes the rule TEMPORAL rather than per-call: once any hold for
+      // this (release_at, unit_id) has reached RC's cart, nobody else is served.
+      //
+      // WHY THOSE FOUR STATUSES. `carted` and `claiming` are the site sitting in a cart.
+      // `released` and `claimed` are the hand-off — the winner is checking out right now,
+      // and carting under them is the same double-book one step later. Deliberately NOT
+      // `failed` or `expired`: a cart RC refused never took the site, and blocking on it
+      // would deny a retry to somebody who could still get it. `requested` is excluded for
+      // the same reason it always was — a hold whose attempt failed inside its window stays
+      // `requested` (see `reportCartFailure`), and that retry must keep working.
+      //
+      // THIS IS NOT THE EXPIRY CASCADE. Nothing here re-serves rank 2 when rank 1 lapses;
+      // by the time our own 45-minute sweep fires, `graceMinutes` has long closed the
+      // window anyway. The cascade remains a deliberate non-feature.
       //
       // `line_rank` NULLS LAST, then `id`, so an unranked row (uncontested, or predating
       // migration 068) still resolves deterministically instead of alternating between
@@ -170,10 +210,16 @@ export async function dueHolds(leadSeconds = 60, graceMinutes = 20): Promise<Hol
       // anything when two people BOTH asked.
       `SELECT * FROM (
          SELECT DISTINCT ON (release_at, unit_id) *
-           FROM rc_hold_requests
+           FROM rc_hold_requests r
           WHERE status = 'requested'
             AND release_at <= to_char((NOW() + ($1 || ' seconds')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
             AND release_at >= to_char((NOW() - ($2 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+            AND NOT EXISTS (
+              SELECT 1 FROM rc_hold_requests spoken
+               WHERE spoken.release_at = r.release_at
+                 AND spoken.unit_id    = r.unit_id
+                 AND spoken.status IN ('carted', 'claiming', 'released', 'claimed')
+            )
           ORDER BY release_at, unit_id, line_rank ASC NULLS LAST, id
        ) q
         ORDER BY release_at ASC
@@ -301,6 +347,70 @@ export function isRealUnitId(unitId: string | null | undefined): boolean {
  * a live session to be RELEASED to its owner, and losing the session between carting and
  * claiming would strand the site in the bot's cart.
  */
+/**
+ * HOW MANY HOLDS ARE AHEAD OF US — the ONE definition, carrying `REAL_UNIT`.
+ *
+ * ── WHY THIS EXISTS (2026-08-27) ──
+ *
+ * The 2026-08-18 fixture fix put `REAL_UNIT` into `nextHoldRelease` and `holdAtRisk`, so a
+ * test fixture could no longer make the bot sign in or ring the owner's phone. It did not
+ * reach `/api/health/status`, which carries **five** hand-rolled copies of the same
+ * question and none of them filtered.
+ *
+ * The cost is not an untidy dashboard. `npm test` runs against the production database, so
+ * CI on any pull request briefly inserts non-terminal holds — and on 2026-08-23 that turned
+ * `autocart.rc_session` from warn to **fail** with the detail *"run mini-pc\rc-login.bat …
+ * 4 hold(s) ahead"*. Ninety seconds later there were zero. **`rc-login.bat` force-kills the
+ * Chromium the RC token lives in**, so the check printed a destructive remedy over a
+ * session with nothing wrong with it — the 2026-08-16 cry-wolf reached by a new route, and
+ * the check a 07:30 pre-flight Routine reads.
+ *
+ * A rule applied to one consumer and not to its siblings is how that happened, so this is
+ * one function rather than a sixth predicate. `worker/health-hold-counts.test.mts` fails if
+ * the route grows another inline count.
+ *
+ * FAILURE DIRECTION IS DELIBERATELY UNCHANGED — 0 on a read error, exactly as the inline
+ * `queryOne` copies produced. These feed a DASHBOARD, and a health check that goes red on a
+ * database blip is the cry-wolf failure this fix is about. `rcBotUsable` and
+ * `holdWindowLoad` fail CLOSED because they gate an ACTION; this reports one.
+ */
+const HOLD_LIVE = `status IN ('requested','carted','claiming')`;
+const NOW_PACIFIC = `to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`;
+
+/**
+ * Live holds whose release is still ahead. `withinMinutes` bounds how far ahead — omit it
+ * for "any hold at all still coming".
+ *
+ * A hold thirteen hours out is not evidence that anything is wrong: the token lives ~60
+ * minutes, so the session is legitimately dead for most of the day and `maybeAutoLogin`
+ * signs in at T−30. That is why the callers ask for a bounded count as well as a total.
+ */
+export async function holdsAhead(withinMinutes?: number): Promise<number> {
+  const bound = withinMinutes == null ? '' :
+    `AND release_at <= to_char((NOW() + ($1 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`;
+  const rows = await query<{ n: string }>(
+    `SELECT count(*) AS n FROM rc_hold_requests
+      WHERE ${HOLD_LIVE} AND ${REAL_UNIT}
+        AND release_at >= ${NOW_PACIFIC} ${bound}`,
+    withinMinutes == null ? [] : [String(withinMinutes)],
+  ).catch(() => []);
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * `requested` holds whose release is at most `minutes` away — INCLUDING ones already past,
+ * which is the point: a hold the runner should have carted and has not is what this counts.
+ */
+export async function holdsDueWithin(minutes: number): Promise<number> {
+  const rows = await query<{ n: string }>(
+    `SELECT count(*) AS n FROM rc_hold_requests
+      WHERE status = 'requested' AND ${REAL_UNIT}
+        AND release_at <= to_char((NOW() + ($1 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`,
+    [String(minutes)],
+  ).catch(() => []);
+  return Number(rows[0]?.n ?? 0);
+}
+
 export async function nextHoldRelease(): Promise<string | null> {
   const [row] = await query<{ release_at: string }>(
     `SELECT release_at FROM rc_hold_requests

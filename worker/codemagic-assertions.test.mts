@@ -161,3 +161,63 @@ test('the billing assertion looks in the right place, and filters the variant pr
   // and the next person would "fix" it by dropping the check.
   assert.match(body, /-path '\*\/merged_manifest\*\/release\/\*'/, 'the variant filter must stay anchored on /release/');
 });
+
+/**
+ * THE SIDELOAD LEVER — the billing gate was blocking the wrong thing, and it cost a site.
+ *
+ * On 2026-08-29 the owner lost a real campsite because their phone ran a build with no
+ * cordova-plugin-inappbrowser: the RC hand-off could not sign in or cart, and the claim
+ * screen showed the plain-browser copy with nothing saying why. The plugin entered
+ * package.json on 2026-08-18 and the last Play upload is versionCode 18 from 2026-08-08,
+ * so NO installable build has ever contained it. This workflow is the only way to make
+ * one — and the billing gate, added on 2026-08-27 for a DIFFERENT project (Play
+ * Subscriptions), fails the whole build before an APK can be sideloaded.
+ *
+ * So the gate now has one named, opt-in mode. It does not skip the check; it changes the
+ * REMEDY from "fail the build" to "delete the AAB". Play is given the AAB and nothing
+ * else, so removing it is a stricter block than failing — a failing build relies on
+ * Codemagic skipping `publishing:` on a non-zero exit, which codemagic.yaml itself records
+ * as an inference never read from a build log.
+ */
+test('the sideload lever is OFF by default', () => {
+  // A lever left on is the whole risk: the next green build would upload nothing to Play
+  // and look exactly like one that published. Pinned as the literal default in the file.
+  assert.match(
+    yaml,
+    /CH_SIDELOAD_ONLY:\s*"false"/,
+    'CH_SIDELOAD_ONLY must default to "false" in codemagic.yaml',
+  );
+});
+
+test('the sideload lever DELETES the AAB rather than skipping the billing check', () => {
+  const body = code(android[find(android, 'Billing')]);
+  assert.ok(body.length > 0, 'the billing step must have a script body to guard');
+
+  // THE CHECK STILL RUNS. If the lever ever became an early `exit 0` or wrapped the whole
+  // step, a binary with no BILLING permission could reach Play and the Subscriptions page
+  // would silently refuse to create products again — the exact failure this gate exists
+  // for, restored by the thing meant to work around it.
+  assert.match(body, /MISSING="\$MISSING/, 'the permission check itself must still run');
+
+  // THE ARTIFACT IS THE BLOCK. Pinned on the delete, not on the branch that guards it:
+  // pinning `if [ "$CH_SIDELOAD_ONLY" ...]` would still pass if the body stopped deleting.
+  assert.match(
+    body,
+    /find app\/build\/outputs -type f -name '\*\.aab' -print -delete/,
+    'sideload mode must DELETE the AAB, so Play cannot be given a billing-less build',
+  );
+  // And it must PROVE the delete worked rather than assume it — a surviving AAB is
+  // publishable, and "we ran a delete" is not "nothing is left".
+  assert.match(body, /REMAINING/, 'the delete must be verified, not assumed');
+
+  // THE APK MUST SURVIVE — it is the only reason this mode exists. A delete widened to
+  // `-name '*.ap*'` or to the whole outputs directory would pass every assertion above and
+  // leave nothing to sideload.
+  assert.ok(
+    !/-name '\*\.apk'\s+-delete/.test(body) && !/rm -rf app\/build\/outputs/.test(body),
+    'the APK must never be deleted — sideloading it is the point of this mode',
+  );
+
+  // WITHOUT THE LEVER, NOTHING CHANGES. The default path still fails the build.
+  assert.match(body, /else\n\s*exit 1/, 'with the lever off, a missing permission still fails the build');
+});

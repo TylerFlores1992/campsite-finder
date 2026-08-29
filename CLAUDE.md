@@ -598,6 +598,43 @@ exists to tell apart differed only in hue. **Route any new status through
 rather than relying on red and a minus sign). Preset `admin-health` in
 `scripts/screenshot-component.mts` renders the tab with a warn and a fail in view.
 
+## THE EGRESS-CASCADE WATCHDOG (issue #14) — DONE SINCE JULY, UNGUARDED UNTIL 2026-08-27
+On 2026-07-22 a rec.gov-only throttle became a **full detection outage**: rec.gov shifted from
+fast 429s to slow 10s timeouts, the hanging sockets starved the pool, and every OTHER source
+began timing out too — while the **Supabase heartbeat kept succeeding**, so `msSinceAlive()`
+stayed fresh and the liveness watchdog never fired. Alerting was silently dead and a human
+typed `flyctl machine restart`.
+- **ALL FIVE ITEMS ON #14 ARE RESOLVED, and the issue text predates the scheduler by nine
+  days — audit the TREE, not the ticket.** (1) `RECGOV_TIMEOUT_MS` is **5000**, not 10s, with
+  a comment citing #14. (2) The concurrency cap is the scheduler's token bucket plus
+  single-flight, which is stronger than the semaphore the issue asked for. (3) Timeouts
+  already count toward the breaker — `recordRecgovOutcome(isThrottleError(err), …)`.
+  (4) `worker/liveness.ts` carries the external signal and the poller **exits 1** on it so Fly
+  reboots. (5) Proxying rec.gov was investigated and REJECTED.
+- **TWO EXTERNAL SIGNALS, AND THE SECOND IS THE ONE THAT MATTERS.** A 2026-07-24 outage had
+  ~all detects timing out while an *occasional* success kept resetting the zero-success timer,
+  so a staleness check alone never tripped and a human restarted it again. `msSinceExternalFetchOk()`
+  catches a hard wedge; **`externalFetchWedged()` — a rolling failure RATIO — is the only thing
+  that can see a FLAPPING one.** Do not "simplify" the pair back to one.
+- **IT SHIPPED WITH NOTHING TESTING IT FOR FIVE WEEKS, and the exposed half is the WIRING.**
+  `externalFetchWedged` can be perfect while `markExternalFetchResult(false)` quietly leaves
+  `canary.ts` — the ratio then can never reach its threshold, every test of the pure function
+  still passes, and the flapping watchdog is unreachable. Fifth instance of the
+  fix-present-and-inert shape. `worker/egress-watchdog.test.mts` pins both outcomes recorded,
+  both checks wired to an exit, `restart_policy` not `"no"` (an exit is worthless if Fly does
+  not bring the VM back), and the thresholds bounded from both sides.
+- **TWO DEFECTS IN THAT TEST ARE WORTH MORE THAN THE TEST.** (a) It was **order-dependent
+  through module state** — ten failures over a 60s window returned FALSE because earlier tests
+  had left eleven successes in the same window (real ratio 0.73). **A cache-busted dynamic
+  import does NOT isolate it** — measured; tsx dedupes the module regardless of the query
+  string. Fixed with a time barrier rather than a test-only reset export: production code
+  should not grow a hatch to make a test easier to write. (b) The staleness assertion compared
+  two values that were both ~0, so `0 >= 0` held and the mutation making a FAILURE reset the
+  clock **survived**. Ageing the success first is what separates the cases.
+- **WHAT IS STILL UNPROVEN: that any of it fires in anger.** The acceptance criterion is
+  behavioural and nobody can stage a rec.gov cascade. The guards prove the mechanism is wired,
+  not that the reboot has ever happened.
+
 ## rec.gov 429s — four fixes in one loop (2026-07-30)
 The breaker was flapping six times in thirteen minutes, so rec.gov watches went
 unchecked ~40% of the time and the "Recreation.gov isn't responding" banner flapped
@@ -800,6 +837,15 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
   secret `FLY_API_TOKEN`. The build-image-locally workaround in SETUP.md is now only
   the fallback for when the Action itself is broken. Roster/data-only changes need no
   deploy at all (the poller reads `probe_targets` live).
+- **A `worker/*.test.mts` FIRES A WORKER DEPLOY AND RESTARTS BOTH POLLERS (2026-08-27).**
+  `worker/**` is the FIRST entry in the workflow's `paths:` list, so "docs plus one test
+  file" is a worker deploy — there is no test-file exemption. PR #204 asserted the opposite
+  in its own body (*"No `src/lib`, so no worker deploy"*), and the handover repeated it;
+  merging it deployed on `05ee4ff` and bounced both machines. Harmless that night (nothing
+  queued, the release 10h out, and the workflow fails unless a fresh heartbeat lands — it
+  came back in ~3 min, 2/2 shards held). **`docs/LANES.md` already said this in as many
+  words** and was right; the PR body was the thing that drifted. **A merge-scope claim is
+  not evidence — read `paths:`.** Same family as `6006428` claiming a fix it never made.
 - **Non-secret worker tunables** live in `worker/fly.toml [env]`.
 
 ## Web-session gotchas (this environment)
@@ -2525,6 +2571,106 @@ because `supervise.ps1` happened to restart the process in time.
   in the file, which was `maybeAutoLogin`'s only by luck of ordering, and a second caller above
   it made it read a different function. Twentieth time.
 
+### #203 DOES NOT COVER A FIXED SENTINEL, AND I PROVED IT BY BREAKING THE RULE (2026-08-28)
+A docs-only PR (#212) failed CI on `rc-client-reports.test.mts` — *"an empty batch is a no-op,
+not a write"*, `Cannot read properties of undefined (reading 'client_reports')`. A row the test
+had just written was gone.
+- **IT IS NOT #76.** That suite's `SENTINEL` is `__camphawk-clientreport-test__`, which does not
+  match `\_\_t%`, and a scan of every remote branch found **none** still carrying the global
+  sweep — the transitional hazard recorded on 08-27 is over.
+- **IT WAS TWO CONCURRENT RUNS OF THE SAME SUITE, AND THE SECOND ONE WAS MINE.** CI ran
+  09:37:21-09:40:41 PT; I started a local `npm run verify` at 09:38:05 **to pass the time while
+  waiting for that exact CI run**. Both use the same fixed `SENTINEL` and both `DELETE FROM
+  rc_hold_requests WHERE unit_id = $1` on the way in.
+- **SO `docs/LANES.md`'s RULE WAS BROKEN BY THE PERSON WHO HAD SPENT THE DAY ENFORCING IT**,
+  and in the least suspicious way available: idling. Waiting on CI is exactly when a local
+  verify feels free, and it is exactly when it is not.
+- **#203 COVERS `LIKE` PREFIX SWEEPS IN THE HOLD SUITES AND NOTHING ELSE.** A suite with a
+  single FIXED sentinel deleted by exact id is mutually destructive between two runs of itself,
+  and the per-suite prefix plus age gate does not reach it. Same for `sync-claim` and
+  `ridb-photos`, which failed the same way on #206. **Recorded, not fixed** — the honest remedy
+  is a per-RUN component in these sentinels, and that is a change to several real-DB suites
+  which should not be made while passing time.
+- **A RE-RUN IS THE CORRECT RESPONSE HERE and is not a shrug**, by the file's own three
+  conditions: the diff is two Markdown files and cannot touch that code, the suite passes
+  alone, and the mechanism is named with timestamps on both sides.
+
+#### AND IT HAPPENED AGAIN AN HOUR LATER, BY A DIFFERENT MECHANISM: A CANCELLED RUN'S LITTER
+The same PR failed CI a second time, 5 of 1381, and **this one is not a local verify — nobody
+ran one.** The run timestamps settle it:
+```
+33190834414  8bb0535  created 16:37:17Z  ->  CANCELLED 16:44:52Z   (7m35s in, mid-suite)
+33191426746  5de434b  created 16:44:51Z      job started 16:45:35Z  ->  FAILURE 16:48:56Z
+```
+- **I PUSHED TWICE INSIDE ONE SUITE'S RUNTIME.** `npm test` takes ~2.5 minutes and the whole
+  `verify` job ~4; the second push landed 7.5 minutes after the first, and GitHub's
+  cancel-on-push killed the older run **while it was executing**. A killed run runs no `after()`
+  and no cleanup, so its working set stays in the production database.
+- **THOSE ROWS ARE EXACTLY THE AGE #203's GATE PROTECTS.** The sweep is
+  `offered_at < NOW() - interval '10 minutes'`, chosen so a CONCURRENT run's live rows are
+  spared. A cancelled run's rows are seconds old and indistinguishable from a live run's — so
+  the next run's `before()` deliberately leaves them, and they poison it for ten minutes.
+- **THAT IS A TRADE #203 MADE ON PURPOSE, AND IT IS THE RIGHT ONE.** Shortening the gate
+  reinstates issue #76, where a STARTING run wiped a RUNNING one. The cost is a ten-minute
+  window after any cancelled run in which the next run can fail on litter. **Do not "fix" this
+  by lowering the interval.**
+- **CONFIRMED BY RE-RUNNING LOCALLY ON THE SAME SHA once no CI was in flight: 1381/1381.**
+  That is the discriminator between litter and a regression, and it was taken rather than
+  assumed.
+- **THE OPERATIONAL RULE IS THE WHOLE REMEDY, and it is a second one: do not push again while
+  your own CI is still running.** `docs/LANES.md` says one test run at a time and both lanes
+  read that as "don't run two commands". **A second push IS a second run**, and cancel-on-push
+  does not make it safe — it makes the first run die in a state that harms the second. Second
+  time in one day the rule was broken by the person enforcing it, and the first time it was
+  idling; this time it was impatience.
+
+### THE TRAIL'S SILENCE IS INSTRUMENTED, AND THE BOX HAS IT (2026-08-28)
+Four ramps have now passed with **zero `trail-*` readings**: 08-25 20:22 (~3.6 GB), 08-26
+21:24 (9,112 MB / 100% COMMIT), 08-28 02:01 (8,981 MB / 99%) and 08-28 08:13→08:23
+(**8,987 MB / 99%**, which resolved on its own at 08:25 — twenty minutes before the box
+updated). Onsets over six days: **eleven, gaps of 5-28 hours**, so a missed one is not rare —
+it is most of them.
+- **THAT LAST PEAK WAS FIRST RECORDED AS 6,264 MB, FROM A MID-CLIMB SAMPLE.** The ramp was
+  still rising when it was read. A ramp takes ~10 minutes and the sampler runs every 2, so
+  **any figure taken while one is in progress is a lower bound, not a peak** — wait for
+  `max_pid` to change before quoting a number.
+- **NO RAMP HAS HAPPENED SINCE THE BOX UPDATED (checked 09:17 PT).** Flat at 285-470 MB since
+  08:44. **The diagnostic is armed and has never run**, so a quiet `native_alloc_readings` is
+  the expected state and NOT a fifth failure — do not read it as one.
+- **THE "SEGMENT NEVER ENDS" EXPLANATION IS RULED OUT, and that is the useful part.** The
+  theory was that `takeRamps` only takes ENDED segments on an ordinary tick, so a ramp on the
+  long-lived resident renderer is never taken. For 08-28 02:01 that is false: `max_pid` went
+  **14596 -> 7812 at 02:15**, two minutes after the peak, so the browser really was replaced,
+  `warmResident`'s `finally` really did run, and `final: true` really does include the open
+  segment. **The trigger fired and stored nothing anyway.**
+- **TWO POSSIBILITIES REMAIN, THEY LOOK IDENTICAL FROM OUTSIDE, AND THEY NEED OPPOSITE FIXES.**
+  Either the renderer answered no CDP call at all — the browser going quiet as it grows, which
+  has happened twice before on two different calls, and which means the trail needs a different
+  TRANSPORT rather than a different trigger — or segments are present with growth under the
+  400 MB bar, which would mean **the sampling profiler cannot see these bytes and Track A is
+  measuring a quantity that structurally excludes the leak.**
+- **EVERY READING EVER TAKEN POINTS AT THE SECOND ONE.** 13-109 MB of renderer attribution
+  against events of 5-9 GB; the newest is 08-28 02:02, `free RAM -640 MB · renderer 16 MB`.
+  **Do not treat that as settled** — it is the leading candidate, not a finding, and the whole
+  point of the line below is that it can be told apart rather than argued about.
+- **THE DISCRIMINATOR IS LIVE ON THE BOX SINCE 2026-08-28 08:44** (`5e399b3`, requested and
+  applied in 25 seconds). `flushAllocRamps` takes `describeIfEmpty`, and `warmResident`'s
+  teardown passes it — so a final flush that stores nothing prints `describeAllocTrail`.
+  **The teardown, not the bail:** the bail needs a stall AND free RAM under 2,000 MB, and the
+  08-28 ramp bottomed at **4,191 MB**, so it never fired. The teardown is where that browser
+  was replaced.
+- **HOW TO READ THE NEXT ONE.** In `logs\rc-keepwarm.log`, at the teardown following a ramp:
+  `EMPTY — that renderer answered no CDP call at all` is the transport answer; a line naming
+  segments with sub-400 MB growth is the profiler answer. **A `trail-*` row appearing in
+  `native_alloc_readings` is the third outcome and the best one** — it means the bar was
+  crossed and the attribution is finally stored.
+- **`describeIfEmpty` IS NOT UNCONDITIONAL, AND BOTH REASONS MATTER.** The bail already logs
+  `describeAllocTrail`, so an unconditional version prints the same text twice and reads as a
+  bug; and the teardown fires on **every** reopen — the post-Okta recycle, the size guard, the
+  runner's preemption — while `tail-log` returns only the last 16,000 characters. Noise there
+  destroys the record it exists to preserve, which is exactly how the 08-23 attributions were
+  lost.
+
 ### THE LEAK — WHERE IT ACTUALLY STANDS (2026-08-22)
 **Read this before building anything memory-related. Nothing shipped so far is a cure.** The size
 guard, the RAM arm, the heap trail, the post-Okta recycle, the orphan sweep, the throwaway tab and
@@ -2854,11 +3000,56 @@ They were the hold suites' sentinel fixtures, swept on the way out — the artif
 - **DIAGNOSED BOTH WAYS BEFORE BEING BELIEVED** — from the source (no `REAL_UNIT` in either
   inline query) and from the observation (fail → warn as the rows were swept). Either alone
   would have been a guess; the file's own history is full of the one that was.
-- **RECORDED, NOT FIXED.** It is a predicate in a safety-critical health path, and the two
-  honest remedies differ in kind: filter the counts in place, or route them through the
-  already-filtered helpers so there is ONE definition instead of three. Same call as the
-  `reclaimLapsedHolds` test question — not a change to make in passing, on a session whose job
-  was merging.
+- ~~**RECORDED, NOT FIXED.**~~ **FIXED 2026-08-27 (PR #202), by the second of the two named
+  remedies.** `holdsAhead(withinMinutes?)` and `holdsDueWithin(minutes)` in `src/lib/rc-holds.ts`
+  carry `REAL_UNIT` in their own bodies and replace all five inline counts, so there is ONE
+  definition rather than three copies of the same question. **No severity or threshold changed** —
+  it only stops fixtures being counted. A sixth count was found computed and discarded
+  (`Promise.all` had three entries, the destructuring took two) and removed.
+  `worker/health-hold-counts.test.mts` is real-DB for the predicate and structural for the route,
+  because the danger is a SIXTH copy appearing and no behavioural test can see one that has not
+  been written yet.
+
+### AND THE GUARD FOR THAT COULD NOT SEE THE FIXTURE THE FIX SHIPPED (2026-08-27)
+The test written for the entry above contained a `requested` hold on unit **`999000111`**, five
+minutes out. That is a numeric unit id in the one status `dueHolds` serves — **an instruction to
+the production runner to POST a precart for whatever real campsite carries that number.** The
+2026-08-15 incident, re-created by somebody who had just read the entry about it, in the fix for
+its sibling.
+- **IT SURVIVED ON TIMING, NOT ON DESIGN.** The feed's lead is 90s and the row sat 300s out, so it
+  would only have become due had the suite taken ~3.5 minutes to reach its sweep. Checked in the
+  database rather than reasoned: no fixture row, no live holds, and the CI run was cancelled the
+  moment it was spotted. **"Nothing happened" is not the finding; "nothing was stopping it" is.**
+- **`hold-fixture-safety.test.mts` WAS GREEN THROUGHOUT, AND IT IS THE GUARD FOR EXACTLY THIS.**
+  Three independent layers of its scope each let it through, and each is now fixed and
+  mutation-verified:
+  1. **`holdTestFiles()` selected on `offerHold|requestHold`** — describing "files that drive the
+     hold state machine" by the two helpers that happened to exist when it was written. **SIX
+     suites write `rc_hold_requests` with plain SQL and none of them was ever scanned.** The
+     selector asks about the CAPABILITY now: anything that writes the table is in scope, with no
+     import required, because a raw INSERT needs none.
+  2. **The line filter looked for `offer(`/`requestHold(`/`unit_id`.** Those describe where a unit
+     id is USED; a fixture id is as often DECLARED once at the top and referenced by name, and
+     `const REAL = '999000111';` carries none of them. A bare numeric constant declaration is in
+     scope now — checked against every file first, and it flags nothing that exists.
+  3. **The helper names were a fixed list**, so a suite calling its own `hold(`/`cartedHold(` was
+     invisible. The scan DERIVES the names from the file now: any function whose body contains
+     `INSERT INTO rc_hold_requests`. That cannot go stale when the next suite names its helper
+     something else.
+- **A WHOLE-FILE SCAN WAS TRIED AND REJECTED, on measurement rather than taste.** It flags
+  `'24'`/`'00'` from the `pacific()` helper in six files and an `appBuild: '19'` in a seventh —
+  and the guard's own comment already records that a version which cried wolf would be deleted,
+  taking the real finding with it.
+- **The fixture is now the shape `hold-fixture-invisibility.test.mts` established**, with the same
+  three independent reasons: `carted` and never `requested`, seconds old and not `claiming`, and
+  the id is `0` — one digit, under the two-digit floor, so no exemption is carved into the guard.
+  The positive assertion drops to `holdsAhead` alone and loses nothing: `REAL_UNIT` is ONE shared
+  constant, so breaking it fails there, and dropping it from `holdsDueWithin` alone is caught by
+  the sentinel test requiring that count to stay flat.
+- **Sweeps are scoped to the fixture WATCH, not the unit ids** — a bare `unit_id = '0'` would
+  reach any real row that ever carried it.
+- **`EVERY suite that writes rc_hold_requests is scanned` pins the widening**, because narrowing
+  the selector back would read as a tidy-up and would restore the hole in silence.
 
 ### A REAL TEST HOLD IS QUEUED FOR 2026-08-24 07:58:47 PT — to MANUFACTURE a ramp (2026-08-23)
 Track A has been armed for weeks and has never had a ramp to read, because ramps are rare
@@ -3624,18 +3815,551 @@ free in thirty hours and all three were missed, and a staged one locks a real ca
   which is a LATER scheduled run writing beside the new sha. That is the documented
   `appliedNote`/`appliedSha` trap. `applied_sha` and `git-status` both say `64f9f92`.
 
+### "SEP 4-5" FOR A 4-6 WATCH IS CORRECT — the alert names the NIGHTS (2026-08-27)
+Reported by the owner: *"why is morro bay hold saying 4-5? i dont have a watch for those dates?
+I have 4-6 and 4-7 but not 4-5."* **Nothing is wrong, and the answer is worth writing down
+because it will be asked again.**
+- **`end_date` IS THE CHECKOUT DATE AND IS EXCLUSIVE** — `probeWholeStayOpen`'s own comment says
+  the stay is `[start, end)`. So a watch for **Sep 4 → Sep 6 is TWO NIGHTS**, the 4th and the
+  5th, and the row confirms it rather than the reasoning doing so: `arrival_date 2026-09-04,
+  nights 2`. `nights` is `held.dates.length` (`poller.ts`), and `formatStayDates` renders the
+  night list, so two consecutive nights collapse to `Sep 4-5`.
+- **THE USER IS THINKING ARRIVAL→DEPARTURE AND THE ALERT IS NAMING NIGHTS.** Both describe the
+  same stay. This is the same family as the 2026-08-06 *"open **for** Sep 4-6"* fix, where the
+  preposition was load-bearing — the arithmetic was never wrong, the reading was ambiguous.
+- **DELIBERATELY NOT "FIXED" IN SMS.** Naming nights is the right thing for a campsite, and the
+  coming-soon body is already 154 chars against a 160 one-segment budget AFTER `fitOneSegment`
+  trims the park name. Anything added there tips it into two segments — the shape that was
+  Undelivered/30007 thirteen times on 08-05. **Email has room and is where a "2 nights" gloss
+  would go**, if it is ever wanted; that is a product call, not a defect.
+- **AND THE SECOND HALF OF THE SAME REPORT WAS ALSO NOT A BUG, for a different reason.** The
+  owner's OTHER Morro Bay watch (`9f9f87df`, 09-04 → 09-07) got no offer for the same unit while
+  the 4-6 one did. `watch_campgrounds` has **no rows** for it — it predates park watches — so it
+  covers `rc-582` (Lower Section) ALONE, and unit 43187 (`#92`) is in `rc-583` (Upper Section,
+  sites 86-140). The park watches beside it list `["rc-582","rc-583"]`.
+  **A WATCH CREATED BEFORE MIGRATION 070 SILENTLY COVERS LESS OF A PARK THAN ITS NAME SUGGESTS**,
+  and nothing on the watches screen distinguishes the two. Recorded rather than fixed: the
+  honest remedies are to backfill `watch_campgrounds` for single-division watches (a data change
+  that would widen what people are alerted about without asking them) or to say "Lower Section
+  only" on the card. Both are decisions, not tidy-ups.
+
+### A DISPLAY CONVENTION IS NOT A TIME-ARITHMETIC CONVENTION (2026-08-26)
+
+Reported by the owner as *"still no offer"* on a watch added at 05:07 PT for an 08:00 PT
+release. **Nothing about the setup was wrong, and detection never failed.** The poller found
+the held unit on every pass and said so, in its own words, for two and a half hours:
+
+```
+12:29:52Z  watch 0d9c9892…: hold on Morro Bay SP — Upper Section
+           releases 2026-08-26T08:00:00 — too soon to be news, staying quiet
+```
+
+`holdIsNewsworthy` read RC's `Lock` with a bare `new Date(availableAt)`. **That field is a
+zone-less PACIFIC wall clock and Fly runs UTC**, so an 08:00 Pacific release was placed at
+08:00 UTC — 01:00 PT, seven hours early. The gate wants an hour of lead, so in practice
+**the coming-soon window shut at MIDNIGHT Pacific** instead of 07:00.
+
+- **THE COMMENT DEFENDING IT NAMED THE RIGHT FACT AND DREW THE WRONG CONCLUSION.** It read
+  *"treat it as wall-clock in the server's zone, which is what the formatter downstream
+  already assumes — consistent beats subtly-different."* The formatter only **displays** it,
+  and `now` is a real instant. **A display convention and a time-arithmetic convention are
+  not the same thing**, and "consistent" is the word that hid the difference. Every SQL call
+  site already converts with `AT TIME ZONE 'America/Los_Angeles'`; the one place doing the
+  arithmetic in JavaScript did not. Same seven-hour class of error this file already records
+  for SQL, arriving in the other language.
+- **THREE CONSECUTIVE OFFERS FIT THE BROKEN ARITHMETIC EXACTLY**, which is what turned a
+  hypothesis into a finding:
+  ```
+  tyler #123      offered 08-25 12:16 PT   computed lead +12h44m   sent
+  melinda #SC67   offered 08-25 22:47 PT   computed lead  +2h13m   sent
+  a watch created 08-26 05:08 PT           computed lead  -4h08m   REFUSED
+  ```
+- **THE LOSS IS SILENT AND LANDS IN THE WORST HOURS.** Anyone adding a watch — or any lock
+  first seen — between midnight and the release got no heads-up and no hold button, i.e.
+  exactly the window in which somebody sets up a watch for tomorrow morning.
+- **IT SURVIVED THREE WEEKS BECAUSE IT COULD NOT BE TESTED.** It lived in `poller.ts`, and
+  importing that file STARTS the poller. Moved to `held-cadence.ts`, which already owned the
+  one-hour lead floor this tests against — the floor and the test of it were being reasoned
+  about in two files. Same extraction, same reason, as `claim.ts`, `hold-claim.ts` and
+  `hold-line.ts`.
+- **THE CONVERSION TAKES TWO PASSES**, because the offset depends on the answer: the naive
+  timestamp sits 7-8 hours before the true instant, so a single pass is an hour out whenever
+  a DST transition falls in that gap — twice a year, silently.
+- **A ZONE-BEARING STRING IS PASSED THROUGH, NOT re-interpreted and NOT `NaN`.**
+  `holdIsNewsworthy` refuses on `NaN`, so if UseDirect ever started sending an offset, a
+  strict parser would switch off every coming-soon alert **silently** rather than failing
+  loudly. Same rule as `unknown` never rounding to a verdict.
+- **THE FIXTURES ARE THE REAL PRODUCTION TIMESTAMPS, NOT ROUND ONES.** The bug is a
+  seven-hour shift, so any fixture within seven hours of the boundary passes against both the
+  broken and the fixed version. Seven mutations, each grep-verified to APPLY and to fail.
+  **Two escaped the first round and both were gaps in the TEST, not the code**: no fixture
+  straddled a DST boundary, and nothing checked that the caller actually imports the fixed
+  function rather than keeping its own copy — the fix-present-but-inert shape, for the sixth
+  time. Both are guarded now, the second structurally.
+- **MEASURED END TO END.** Merged `011caa7` at **05:47 PT**; `worker-deploy.yml` fired and
+  both shards came back beating; **the offer landed at 05:50:55**, four minutes later, to a
+  watch that had been refused for forty-three minutes. **The instrument had been printing the
+  answer the whole time** — the fix took twenty minutes and finding it took one `flyctl logs`.
+
+### THE FIRST TWO-TAPPED CONTEST IS QUEUED FOR 2026-08-26 08:00 PT — outcome UNREAD
+Set up deliberately by the owner on a second account to exercise the fairness line, and it is
+the first time one physical site has had **two genuinely requested holds**:
+
+    unit 43086 "#123", rc-583 (Morro Bay Upper Section), release 08-26 08:00 PT
+
+    tylerflores1992      watch 08-24 12:45:30   ticket 0 -> 297   RANK 1   requested 05:02:40
+    iamtylerflores12345  watch 08-26 05:07:46   ticket 0          RANK 2   requested 05:51:09
+
+- **The ordering is the owner's rule applied literally.** Both users sat at ticket 0, so the
+  tiebreak was `watches.created_at` and the earlier watcher took first dibs.
+- **THE ROTATION CHARGED, AND THAT IS THE HALF WORTH READING.** `hold_offer_seq` on the
+  winner went 0 → 297 while the runner-up stayed 0, so the NEXT contest between them inverts.
+  Until now that rule had only ever been asserted by a test.
+- **EXPECTED AT 08:00:** `dueHolds` serves one row per (release, unit) — rank 1 — so the main
+  account carts and the rank-2 row stays `requested` and uncarted. **That is the line working,
+  not a failure**, and `requested`-past-its-release is otherwise the signature of a dead
+  runner. Read `last_attempt_note` before concluding anything.
+- **THE RANK-2 ROW CARRIES NO "someone is ahead of you" NOTE, and that is a real gap.**
+  `rankHoldLine` writes it only to rows already `requested`; at 05:50:55 the runner-up's row
+  was still `offered` and it was tapped fourteen seconds later. Nothing re-ranks the line
+  afterwards unless another offer for that unit arrives, so the note may never be written.
+  Diagnostic only — `last_attempt_note` has no user-facing reader — but it is the field the
+  readout uses to tell a queue from an outage.
+
+### THE FAIRNESS LINE SERVED BOTH RIVALS — 14 SECONDS APART (2026-08-26)
+
+The first two-tapped contest ran, and the line **did not do the one thing it exists to do.**
+Both holds carted:
+
+    15:00:02  ✓ held #123 (2026-09-04) — entry ae877ae5-9ee1-479b-bec9-4d9f610ae718
+    15:00:13  0 to hand over, 1 to cart, 0 to release      <- the NEXT poll
+    15:00:17  ✓ held #123 (2026-09-04) — entry 6f0863e0-78d7-4cd2-9ec6-22ffc02f1351
+
+**Two distinct cart entries for one physical campsite, and RC accepted both.**
+
+- **THE DE-DUPE IS PER CALL, NOT PER CONTEST.** `dueHolds` uses
+  `DISTINCT ON (release_at, unit_id)`, which picks one row **within a single query**. The
+  runner polls every 15s. The instant rank 1 succeeded and left `requested`, rank 2 became
+  the top `requested` row for that unit and was served on the very next pass.
+- **THE HEADER STATES THE INTENT IT FAILS TO DELIVER**, which is why nobody caught it:
+  *"Serving both would ask RC for the same unit twice: one cart succeeds and RC refuses the
+  other in its own wording."* **RC did not refuse.** It issued a second reservation — so the
+  anticipated failure (a confusing error) was replaced by a worse one that looks like success.
+- **THE COST.** Two of the bot's ten cart slots for one site; **both users told their site is
+  held** when only one can have it; and the loser finds out at CHECKOUT, after being told it
+  was secured — the "user stops watching" failure the whole opt-in design is built around.
+- **`hold-line.test.mts` COULD NOT HAVE CAUGHT IT.** Its assertion calls `dueHolds` ONCE and
+  checks that one row comes back. That is true and always was. The bug is only visible across
+  **two successive calls with a status change in between**, which no test simulates.
+- **THE FIX IS NOT BUILT.** `dueHolds` must exclude any `(release_at, unit_id)` that already
+  has a LIVE hold — `carted` or `claiming` — so the rule becomes *one live hold per unit*
+  rather than *one served per call*. That is the most release-critical query in the product
+  and it is not a drive-by; it wants its own change, with a test that calls `dueHolds` twice.
+  - ~~**THE FIX IS NOT BUILT.**~~ **BUILT AND MERGED (#201).** `dueHolds` carries a
+    `NOT EXISTS` over `('carted','claiming','released','claimed')`, which makes the rule
+    TEMPORAL rather than per-call, and `hold-line.test.mts` calls `dueHolds` twice with a
+    status change in between. Struck rather than deleted: "the fix is designed and NOT
+    built" is exactly the sentence a later reader quotes as current state, and it survived
+    at the top of **Open / next session** for two days after the fix landed.
+- **AND THE RANK-2 ROW CARRIED NO NOTE**, so from the readout the morning looks like two
+  clean carts rather than a contest that went wrong. `rankHoldLine` writes the "someone is
+  ahead of you" note only to rows already `requested`; this one was tapped fourteen seconds
+  after the line was ranked and nothing re-ranks afterwards.
+
+#### AND THE REASON NOTHING RE-RANKS WAS A GATE MEANT FOR THE NOTIFICATION (2026-08-28)
+The sentence above ends *"nothing re-ranks afterwards"* and stops there. **Where that came
+from is one line in `poller.ts`, and it is not in `hold-line.ts` at all.**
+- **`rankHoldLine` for the PRIMARY held unit sat inside the block gated by
+  `claimHoldNotification`**, which is once per (watch, release, unit); every later cycle
+  `continue`s on that claim without reaching it. So the line was ranked **exactly once in
+  the life of an offer** — at the moment the alert went out.
+- **THE EXTRAS LOOP HAS ALWAYS RE-RANKED EVERY CYCLE.** `heldUnits.slice(1)` calls it
+  unconditionally, with a comment saying why (*"a contest is only visible once the second
+  offer exists, and it can arrive on any cycle"*). The reasoning was written down, correct,
+  and applied to the rarer of the two paths. The primary unit missed it purely because its
+  call happened to be inside a gate that exists for the TEXT, not for the ranking.
+- **SO THE LOSS LANDS ON THE ORDINARY CASE, NOT AN EDGE.** An offer goes out the evening
+  before and is tapped at breakfast. Every tap after the ranking pass — which is nearly all
+  of them — leaves a row `requested` past its release with `last_attempt_note` **NULL**,
+  which `rc-holds-readout.mts` prints as *"NOTHING has tried to act on this hold at all"*.
+  That is the 2026-08-07 dead-runner signature, manufactured by the line on every contested
+  morning. Diagnostic only (`last_attempt_note` has no user-facing reader), and the field a
+  human reads at 08:15 to tell a queue from an outage.
+- **THE FIX IS THE CALL SITE: re-rank ABOVE the claim gate**, so it runs every cycle like
+  the extras path. The in-block call is KEPT — on the claim-winning cycle the offer row is
+  created *after* the pre-claim call has already run and found nothing, so without it a
+  fresh offer waits a full cycle to be ranked.
+- **AND THAT MAKES THE NOTE WRITE PER-CYCLE, WHICH NEEDED ITS OWN GUARD.** `noteAttempt`
+  stamps `last_attempt_at = NOW()` unconditionally, so ranking every 15s all night would
+  leave that column permanently reading "0m ago" — destroying the one signal that says WHEN
+  the line last changed its mind, and the same column the readout uses for *"the runner
+  TRIED 3m ago"*. Rows already carrying the note are skipped, compared against an exported
+  `BEHIND_NOTE` constant so no test can pin a copy of the wording.
+  - **THE CONSTANT MUST STAY UNDER `noteAttempt`'s 300-CHARACTER SLICE.** Past it the
+    stored value can never equal the constant, the skip never matches, and the churn guard
+    silently stops guarding — fix-present-and-inert, pinned by its own test.
+- **THE DB TEST DOES NOT CATCH THIS BUG, AND THAT IS MEASURED RATHER THAN ASSUMED.** The
+  new "tapped after ranking" test PASSES against master's `hold-line.ts` — verified by
+  running it under the mutation that restores master's exact filter. `rankHoldLine` always
+  noted late tappers *when called*; it was never called. **Only the STRUCTURAL guard
+  (`rankHoldLine` appears before `claimHoldNotification(w.id` in stripped source) fails
+  against the real defect.** The behavioural test is a property guard, not a reproduction,
+  and calling it one would be the twenty-fifth instance of a guard credited with catching
+  something it cannot see.
+- Five mutations, each verified to APPLY and to fail: the call moved back below the claim,
+  the note-skip dropped, the constant pushed past 300 chars, `rankHoldLine` early-returning
+  when no rank changed, and the `requested` filter dropped so `offered` rows are noted too.
+- **AND THE MUTATION RUN ITSELF COST THE FIX ONCE.** `git checkout <file>` was used to
+  revert each mutation while the fix was still UNCOMMITTED, so it reverted to HEAD and
+  deleted the change under test — after which two mutations reported "did not apply"
+  against a file that no longer contained the code they targeted. **Commit before mutating**,
+  or the reverts are indistinguishable from the fix never having been written.
+
+### A DEAD SESSION STILL STRANDS A CARTED SITE (2026-08-26) — the 08-13 leak, recurring
+Both carted rows were **still `carted` 78 minutes later**, with `released_at` NULL:
+
+    last_attempt_note : RC session is dead — needs a human sign-in
+    session           : no RC token at all — neither live nor stored
+    okta              : GONE
+
+The runner was alive and trying every 15s. **The release loop lives inside `withRC`**, so a
+dead session skips the whole callback and nothing lets go — exactly the 2026-08-13 finding,
+which `reclaimLapsedHolds` only half-fixed: it marks the row `expired` at `HOLD_LAPSE_MIN`
+(180 min) and **keeps `cart_key`, so it never releases the site on RC.**
+- **NOTHING WOULD HAVE REPAIRED IT.** `renewSession` skips with Okta GONE; `maybeAutoLogin`
+  only fires at T−30 of a release and the next was 23 hours away. The site was off the market
+  indefinitely.
+- **`test-login` IS THE REMOTE LEVER, AND IT WORKED IN THREE MINUTES.** Queued 09:18:30 →
+  session `ok` at **09:20:24** → the runner released both holds by **09:22:29**. It is
+  rationed to one per 6h on the box's own clock and refuses within 6h of a release, so it is
+  safe to reach for; it is the only remote thing that can restore a dead session, because the
+  renewal cannot when Okta is gone.
+
+#### THE STRANDING HAS NEVER ACTUALLY HAPPENED — MEASURED, AND THE MARGIN IS 98 MINUTES (2026-08-27)
+The entry above is the standing account of `reclaimLapsedHolds`' half-fix, and the handover
+carried it as the top actionable bug. **Checked against production rather than reasoned:
+there is not one stranded row, and there never has been.**
+```
+rc_hold_requests WHERE cart_entry_key IS NOT NULL AND released_at IS NULL AND status <> 'released'
+  failed  TEST · 43112  carted 08-26 16:36Z   released after  53 min
+  failed  TEST · 43106  carted 08-26 16:36Z   released after  45 min
+  failed  #123          carted 08-26 15:00Z   released after  82 min   <- the dead-session pair
+  failed  #123          carted 08-26 15:00Z   released after  82 min
+  failed  #96           carted 08-25 15:00Z   released after  45 min
+status counts: expired=34  offered=5  failed=5  released=1
+```
+- **ZERO `expired` rows carry a cart entry key**, which is the shape the stranding would
+  leave. So the 180-minute lapse sweep has never once fired on a row it could strand — every
+  carted hold was released first, by us, via `expireStaleHolds`.
+- **`failed` + *"released unclaimed — nobody came for it"* IS THE CORRECT RECORD, NOT A BUG**,
+  and it is what a naive query mistakes for the stranded shape. `route.ts` splits the two
+  releases deliberately: `forClaim` → `markReleased` (the hand-off worked), a bare timeout
+  release → `markFailed` with that note. `markFailed` does not stamp `released_at`, so
+  filtering on `released_at IS NULL` catches five rows that were all released properly.
+  **Read the writer before calling a row stranded.**
+- **THE MARGIN IS 98 MINUTES AND IT COST A HUMAN.** Worst observed is the 08-26 pair at
+  **82 min** against `HOLD_LAPSE_MIN` 180 — and it only got there because somebody queued
+  `test-login`. Unattended, `renewSession` was skipping (Okta GONE) and `maybeAutoLogin` was
+  23 hours away, so nothing was going to release those rows before the sweep expired them.
+- **AND THE SWEEP'S SAFETY ARGUMENT IS DISPROVED, WHICH IS THE PART TO CARRY FORWARD.**
+  `HOLD_LAPSE_MIN`'s comment justifies 180 as *"far enough past both that 'RC has released
+  this by itself' is safe to act on even if the real number is several times what the bundle
+  claims"* — resting on RC dropping a cart at ~15 min. **On 08-25 RC still held #96 at
+  exactly 45 minutes** (our own `expireStaleHolds(45)` removed it, HTTP 200). So the bundle's
+  15 is out by at least 3x, three of the "several times" of margin are already spent, and
+  **RC's real lapse has no upper bound at all.**
+- **SO IT IS LATENT, NOT LIVE — DO NOT FIX IT BLIND.** The obvious remedy (let the runner's
+  release list pick up lapsed-but-unreleased rows) needs a retry bound, and the only honest
+  source for that bound is RC's real cart lapse, which is exactly the number nobody has
+  measured. Building on it is what `hold-line.ts` already refuses to do for the expiry
+  cascade. **Measure the lapse first** — let one test hold sit past 45 minutes without our
+  sweep touching it and watch when RC lets go.
+- **The cheap containment needs no number**: raising `HOLD_LAPSE_MIN` widens the window the
+  session has to recover in, and it is one env var. That is a decision, not a tidy-up.
+
+#### `rc-probe.mjs --cart-lapse` IS BUILT TO TAKE THAT MEASUREMENT (2026-08-27) — NOT YET RUN
+Cart one unit into a FRESH cart, then simply do not let go, and poll until RC does. It
+reports a **bracket** (last seen present, first seen absent), because a poll every N minutes
+cannot do better and pretending otherwise is how `15` got written down in the first place.
+
+    RC_LAPSE_UNIT=<from --find> RC_ARRIVAL=2026-12-15 RC_NIGHTS=1 \
+      node rc-probe.mjs --cart-lapse --headful
+
+- **DELIBERATELY NOT THROUGH THE HOLD PIPELINE.** A queued hold is released by
+  `expireStaleHolds(45)` at minute 45, so it can never measure past the number we already
+  have — and raising that default would change production behaviour for every user to run an
+  experiment. The probe uses `.rc-probe-profile`, so it does not take the keep-warm's
+  Chromium either.
+- **THE CONTROL IS THE READ-BACK BEFORE THE CLOCK STARTS.** A precart that silently failed
+  leaves an empty cart, and polling that reports RC dropping it within seconds — an instant,
+  dramatic, entirely fabricated answer to the one question being asked. It refuses with
+  `THE QUESTION WAS NEVER REACHED` instead. Same discipline as `--cart-cap`'s step 3.
+- **AN UNREADABLE CART IS NOT AN EMPTY ONE, AND THIS IS THE THIRD TIME.**
+  `listCartEntries` returns `{entries: []}` on a non-200 or an unparseable body and
+  `findCartEntry` returns `{found: false}` on any throw — right for CLEANUP, fatal here,
+  where ABSENT is the signal. One 502 would become "RC dropped the cart". The mode does its
+  own strict read with **PRESENT / ABSENT / UNKNOWN**, an UNKNOWN advances nothing, and a
+  first ABSENT only arms a confirmation. A cart that comes BACK is logged as spurious rather
+  than quietly dropped, because it means one of the two reads was lying.
+- **IT REFUSES TO START within `RC_LAPSE_MAX_MIN + 60` of a release**, and refuses just as
+  hard when the feed is unreachable — "we could not find out" is not permission. Holding a
+  cart across 08:00 spends one of the ten slots `RC_HOLD_CAPACITY` is built on.
+- **RUNNING OUT OF TIME IS A LOWER BOUND** and says so. "RC holds carts forever" is the same
+  class of claim as the 15 this replaces.
+- **It locks ONE real campsite for the run.** Far-future midweek, id from
+  `scripts/rc-test-hold.mts --find` — **never invented**, which is the 2026-08-17 rule. It
+  releases in a `finally`, on the max-duration exit, and on **SIGINT** (an interrupted run is
+  the likeliest way this strands the site it is measuring, and `finally` does not cover it).
+- `worker/cart-lapse.test.mts`, 15 tests, **ten mutations each verified to apply and to
+  fail.** Two survived the first round and both were the same recorded mistake — pinning a
+  CONDITION rather than what it returns. `/!resp\.ok\(\)/` passed against a branch flipped
+  from UNKNOWN to ABSENT, and `ok: false` counted `>= 4` passed against the unreachable-feed
+  branch flipped to `ok: true` with four refusals still behind it. **A count is not a
+  pairing.** Three more failed at baseline by describing a shape the probe does not have
+  (a `state:` key that is really a ternary, a `} else {` that first occurs far above, and
+  Playwright's `ok()` where this branch uses `fetch`'s `ok` property).
+- **AND IT BROKE A NEIGHBOURING GUARD BY BEING INSERTED, WHICH IS THE 25th TIME.**
+  `concurrent-mint.test.mts` sliced from its own block to `if (signedIn && (CART_CAP ||
+  CART_LADDER))`, and `--cart-lapse` went between them — so its `BLOCK` swallowed the new
+  code, which contains the same `THE QUESTION WAS NEVER REACHED` string. **Verified: the
+  suite passed 15/15 against a probe whose concurrent-mint verdict had been deleted.**
+  Re-anchored on the next block and re-verified failing. A guard that slices between two
+  anchors is broken by anything inserted between them, silently and in the passing direction.
+
+### A PASSWORD SIGN-IN CAN BE CHEAP — 32 SECONDS AND ZERO MEMORY (2026-08-26)
+The same rehearsal is a controlled reading of the trip this file calls the expensive one:
+
+    16:19:27 Session before the test: DEAD — no token in localStorage
+    16:19:40     → password entered, submitting
+    16:19:43   (asked Okta for a fresh credential — rewrote 1 authorize request(s))
+    16:19:44 ✓ the bot can still sign itself in
+
+Okta was **GONE**, so this was the full password form with `prompt=login` forced — and the
+memory series is flat across it: `rc` 274-324 MB, **COMMIT 17% throughout**, free RAM never
+below 10,246 MB. No Track A reading, because there was nothing to report.
+
+- **SO "okta=GONE MEANS THE 12-MINUTE, 9,434 MB TRIP" IS NOT A LAW.** That figure (08-20) is
+  one observation of a trip that *struggled*; this one completed in 32 seconds for nothing.
+  **Duration and cost track each other**, which makes a retrying or stalling navigation the
+  better candidate than the password path itself. Do not write either in as the cause.
+- **THEREFORE A RAMP CANNOT BE MANUFACTURED ON DEMAND.** The plan of queueing a hold so the
+  T−3h warm-up fires a password sign-in **does not reliably produce one**, and this run is the
+  evidence. Combined with the standing rule (three ramps arrived free in 30h and all were
+  missed), the answer is unchanged: **wait for one; do not stage it.**
+- **AND THE BOX HAS BEEN QUIET FOR ~20 HOURS** — no ramp since 13:0x PT on 08-25, against a
+  cadence of ~5-7h before that. The trail has still never seen one. **That is not a cure**;
+  every "not reproduced this session" reading in this file was a window that missed one.
+
+### `reclaimLapsedHolds` KEPT `cart_key` AND NEVER USED IT — the premise it rested on is retired (2026-08-28)
+Its own header already said the row's `cart_key`/`cart_entry_key` were kept "so a later
+healthy pass could still try" — and nothing did. `expireStaleHolds`'s `toRelease` query
+(the only thing that ever asks the bot to release a site) selects `status = 'carted'` only.
+The moment `reclaimLapsedHolds` flipped a stuck row to `expired` at `HOLD_LAPSE_MIN` (180
+min), it left the runner's retry list **for ever** — the comment described an intention the
+code never implemented.
+- **THE ASSUMPTION BEHIND `expired` WAS "RC PROBABLY DROPPED IT BY ITSELF."** That premise
+  is the one 2026-08-25's `--cart-lapse` sibling measurement retires: RC did **not** lapse an
+  unclaimed cart on its own inside 45 minutes — `expireStaleHolds(45)` released it, HTTP 200,
+  ours. So a hold that could not be released because the RC session was dead is not "probably
+  gone by itself" — it is most likely still locked, on a real campsite, with nobody able to
+  book it. Silently declaring it `expired` was very likely stranding the site, not tidying a
+  row.
+- **THE FIX: STOP TERMINATING IT.** `reclaimLapsedHolds` no longer touches `status`. The row
+  stays `carted`, which keeps it in `expireStaleHolds`'s retry list on every poll — the
+  runner will actually ask RC to let go the next time the session is healthy, however long
+  that takes. Costs nothing extra: since 2026-08-13 every hold mints its OWN cart, so a stuck
+  row occupies only its own cart, never a shared pool other holds are waiting on — the
+  capacity-leak motivation this function was ORIGINALLY built for (2026-08-13, RC's cart cap
+  was 2 and per-hold carts did not exist yet) no longer applies the way it did.
+  `reclaimLapsedHolds` now only writes ONE diagnostic `last_attempt_note` (idempotent — a
+  second sweep over an already-noted row is silent, or a hold stuck for days would get the
+  identical note rewritten, and logged as newly "stuck", every 60 seconds forever).
+- **CAPACITY IS HANDLED SEPARATELY, WITHOUT TERMINATING THE ROW.** `holdWindowLoad`
+  (`src/lib/rc-holds.ts`) now excludes a `carted` row directly by age
+  (`carted_at < NOW() - HOLD_LAPSE_MIN minutes`), so a hold nobody can free up still stops
+  making a genuinely new offer for the SAME release read as full — the one real thing the
+  old `expired` status bought — without needing the row to be terminal to get it.
+- **`HOLD_LAPSE_MIN` MOVED to `src/lib/limits.ts`.** It used to live in
+  `worker/expire-holds.ts`, read only by that file and its test. `holdWindowLoad` needed the
+  same number, and `rc-holds.ts` already imports things `expire-holds.ts` imports FROM — a
+  same-direction import would have made the two files import each other. `limits.ts` is a
+  leaf both sides already read (`RC_HOLD_CAPACITY` lives there for the identical reason).
+- **THE CLAIM SCREEN NEEDED NO CHANGE.** `ClaimFlow.tsx`'s `status === 'carted'` branch
+  already renders the full "sign in and hand it over" flow — so a hold that stays `carted`
+  past 180 minutes is now something the claim link can still complete, rather than falling
+  into the `expired` branch's "back on the open market" copy while possibly still locked in
+  our own cart. That comment block (owned by the side lane, `src/components/v2/`) still
+  narrates the retired mechanism; not touched here — lane boundary, and it is a documentation
+  staleness, not a functional one.
+- `worker/rc-hold-capacity.test.mts`'s existing test rewritten around the new behaviour
+  (status stays `carted`, keys survive, `holdWindowLoad` excludes by age, a second sweep is
+  silent) — asserted against a **baseline**, not an assumed-empty window, since this file's
+  own earlier tests share one release window and leave rows `offered` in it.
+- **NOT VERIFIED AGAINST THE REAL BOT.** This is Fly-worker- and web-only — no
+  `scripts/auto-cart-bot/*` file changed, so it needs no mini-PC update, only the ordinary
+  worker deploy `src/lib/notifications/**`/`worker/**` already trigger. What is unverified is
+  the real-world claim itself (RC not auto-lapsing past 45 min) generalising past the one
+  2026-08-25 measurement — treat it the way this file treats every number read off a bundle
+  or a single observation: the best available reading, not a law.
+
+### ONE ACCOUNT ALWAYS GETS FIRST DIBS (migration 069, 2026-08-28) — a deliberate thumb on the scale
+The owner asked to always rank number one in the hold line, and reaffirmed it after being shown
+who is on the other side of it. `users.line_priority` (integer, default 0) is read by
+`orderLine` **ahead of** the rotation ticket and watch age, so a flagged account ranks first
+from the worst possible position. **Built, merged (#214, `ba0753d`), deployed, and PROVEN on the
+live line.**
+- **WHO LOSES, RECORDED BECAUSE IT WAS ASKED AND ANSWERED, NOT TO RE-LITIGATE IT.** In the live
+  line for unit 43189 the accounts ahead were `melinda.flores0501` (a paying subscriber —
+  active, base tier, grandfathered) and `iamtylerflores12345` (the owner's own test account).
+  **Melinda is family, which is what settled it.** Two accounts that are NOT family also compete
+  in future lines: `suziegrieve03` (3 active watches, more than anyone) and `cam1234123` — both
+  beta users, both holding a NULL ticket, which reads as 0 and would otherwise outrank
+  everybody. That was raised once, accepted, and is written into migration 069's header so a
+  later reader finds a decision rather than a bug.
+- **A COLUMN, NOT A HAND-EDITED TICKET.** The cheap route was `UPDATE users SET hold_offer_seq
+  = 0`, and it is strictly worse: invisible at the ranking site, it drifts back the moment the
+  rotation charges the ticket again, and the next person reading the line sees a number where a
+  decision belongs. The override has a name, ONE enforcer (`orderLine`) and a test.
+- **THE COPY HAD TO CHANGE WITH IT, AND THAT WAS THE REAL WORK.** Two surfaces asserted *why*
+  somebody was ahead, and priority makes both false: `BEHIND_NOTE` said *"they watched it
+  first"* (read by whoever diagnoses at 08:15), and **`HoldConfirm.tsx`'s `LineNote` — which is
+  USER-FACING** — said *"you started watching first"* and *"Somebody started watching it before
+  you"*, on the screen where a person decides whether to trust the bot instead of setting an
+  alarm. Both now state the POSITION, which is always true, and not the REASON, which is not.
+  **Shipping the flag without this would have made the app tell a real user something untrue at
+  the moment of decision.**
+- **PRIORITY IS READ LIVE, NOT FROZEN ONTO THE HOLD like `line_seq`, and the asymmetry is
+  deliberate.** The ticket is frozen because RANKING ITSELF SPENDS IT — a live read sorts the
+  winner below the person they just beat on the next cycle. Nothing charges a priority, so that
+  failure cannot arise, and taking effect on the next cycle is the POINT of changing it. **Do
+  not "make this consistent" by adding a frozen column** — that would pin a revoked override
+  onto every hold already in flight.
+- **THE ROTATION STILL CHARGES THE FLAGGED ACCOUNT.** Winning as rank 1 raises
+  `hold_offer_seq` every contest, so removing the flag drops that account to last for a while.
+  That is correct — they have been winning — and it makes switching it off honest rather than
+  abrupt. Left deliberately.
+- **PROVEN ON THE LIVE LINE, which is stronger than the deploy's own self-report.** After the
+  worker deploy the production poller re-ranked unit 43189 by itself:
+  ```
+  rank 1  tylerflores1992@gmail.com      offered
+  rank 2  tylerflores1992@gmail.com      requested   <- the tapped row
+  rank 3  melinda.flores0501@yahoo.com   offered
+  rank 4  iamtylerflores12345@yahoo.com  offered
+  ```
+  **A poller on the old code cannot produce that ordering** — it does not even SELECT
+  `u.line_priority` — so the re-rank is independent evidence the new code is live, of the kind
+  a green deploy step is not.
+- **`dueHolds` SERVES THE LOWEST RANK AMONG `requested` ROWS**, so rank 1 being an untapped
+  offer is harmless: the tapped row at rank 2 is what gets carted.
+- Eight mutations, each grep-verified to APPLY before its red was trusted — including the
+  priority comparison reversed (it is the ONE descending term, so `a - b` reads natural and
+  silently demotes the flagged account, presenting as "the flag does nothing"), and
+  `u.line_priority` dropped from the SELECT, which is the fix-present-and-inert shape.
+- **`suziegrieve03` AND `cam1234123` HOLD A NULL TICKET, WHICH READS AS 0.** That is why the
+  guard specifically tests "priority beats a ZERO ticket": a flag that only beat spent tickets
+  would lose every contest containing a newcomer, which is the production case.
+
+#### AND A PRE-EXISTING TEST DEFECT SURFACED THE MOMENT A REAL HOLD EXISTED
+`health-hold-counts.test.mts` compared `holdsAhead(25)` — **bounded** — against `holdsAhead()`
+— **unbounded** — as its baseline. Those agree only while every live hold happens to be within
+25 minutes of releasing, i.e. **while the table is empty**, which is how it was written in #202
+and how it passed for five days.
+- It went red the moment a hold was tapped for a release **19 hours out**, on a branch whose
+  diff could not touch it, and read exactly like a regression.
+- **VERIFIED FAILING ON `aea82d4` WITH NONE OF THE BRANCH'S CHANGES** — that check is what
+  separated it from a regression, and it took one command. `THE BOUND IS A BOUND`, three tests
+  further down the SAME FILE, already took a bounded baseline; these two simply did not follow
+  it.
+- Re-verified against three mutations (`REAL_UNIT` not filtering, `REAL_UNIT` as `AND false` —
+  the dangerous over-correction — and the bound ignored) so the rebaseline is not a weakening.
+- **THE GENERAL SHAPE: a real-DB guard whose baseline is a DIFFERENT query than its assertion
+  is only correct on an empty table.** There may be more of these; they will surface one live
+  hold at a time.
+
+#### THE `HoldConfirm.tsx` HEADER STILL CARRIED THE REFUTED DUPLICATE-FACILITY STORY
+It read *"RC lists one physical campsite under more than one facility, so two people can each be
+offered the same site"*. **Measured false on 2026-08-25** — zero inventory overlap; the
+collision was our own result-map bug, fixed by `watch-key.ts` in #188. `worker/hold-line.ts`'s
+header was corrected then and **this copy of it was not**, so the file kept teaching the wrong
+cause. Corrected while changing the copy beside it. Same shape as the two docs PRs that sat
+open carrying the Feature E correction: **a correction applied to one copy is not applied.**
+
+#### TWO SMALL TRAPS PAID FOR AGAIN
+- **BACKTICKS IN A SQL COMMENT COST A BUILD, for at least the third time.** These queries are
+  template literals, so a backtick in a `--` comment terminates the string and the parse error
+  surfaces on an unrelated line. The park-watch entry already warns about this in as many words
+  and it still happened, inside a comment explaining the very field being added. `tsc` catches
+  it; nothing else does.
+- **A SEMICOLON INSIDE A SQL STRING LITERAL BREAKS A NAIVE SPLITTER.** Migrations here are
+  applied by hand, and the obvious way is to split the file on `;` — which cuts a statement in
+  half when one is hiding in a `COMMENT ON ... IS '...'`. Cost one failed apply. 069 now says so
+  in the file.
+- **The health endpoint's checks are keyed `name`, NOT `id`.** A summary filtering on `c.id`
+  prints `undefined` for every check and silently drops the ones you were looking for.
+
 ## Open / next session
 
-> **START AT `docs/NEXT-SESSION.md`. THE TRACK A TRAIL IS BUILT, MERGED (#193/#194) AND ON THE
-> BOX SINCE 13:26:42 PT 2026-08-25. The job now is to READ THE NEXT RAMP — see "HOW TO READ THE
-> NEXT RAMP" directly above, including the ramp that is already on the board and is NOT a miss.**
+> **START AT `docs/NEXT-SESSION.md`. NOTHING IS ASSIGNED; THE TOP ITEM IS A READING.**
+>
+> **0. A REAL HOLD IS QUEUED FOR 2026-08-29 08:00 PT, AND THE OWNER WANTS THE SITE.** Unit
+> `43189` (`#94`, Morro Bay Upper Section), tapped 2026-08-28 11:46 PT by
+> `tylerflores1992@gmail.com`, who is now `line_priority = 1` and ranks 1-2 in a four-row
+> line. `dueHolds` serves their `requested` row. **Nothing further is needed** — the box
+> needs no update (this change was worker- and web-side only) and `maybeAutoLogin` restores
+> the session at 07:30. If a rival taps overnight, expect ONE cart and the other rows left
+> `requested` with the "someone is ahead of you" note: **that is the line working, not a dead
+> runner.** Read `last_attempt_note` before concluding anything.
+>
+> ~~**1. `dueHolds` SERVED BOTH RIVALS AND THE BOT CARTED ONE CAMPSITE TWICE** … the fix is
+> designed and NOT built.~~ **BUILT AND MERGED IN #201, AND THIS ENTRY WAS STALE FOR TWO
+> DAYS AT THE TOP OF THE LIST.** `dueHolds` carries the temporal `NOT EXISTS`; the suite
+> calls it twice with a status change in between. Struck, not deleted — a "NOT built" on the
+> top item is read as current state, which is the cost this file exists to prevent.
+>
+> ~~**1. THE FAIRNESS LINE'S NOTE NEVER REACHED A LATE TAPPER**~~ — FIXED 2026-08-28. The
+> primary held unit was re-ranked only once, because its `rankHoldLine` call sat behind
+> `claimHoldNotification`. Every overnight tap therefore left a `requested` row with
+> `last_attempt_note` NULL — the dead-runner signature, on every contested morning. See
+> "AND THE REASON NOTHING RE-RANKS WAS A GATE MEANT FOR THE NOTIFICATION".
+>
+> **2. READ THE NEXT RAMP — AND DO NOT TRY TO STAGE ONE.** The trail is armed (#193/#194,
+> on the box since 13:26:42 PT 08-25) and **`trail-*` readings are still ZERO**. A password
+> sign-in with Okta GONE was measured on 08-26 at **32 seconds and zero memory**, so the
+> "force the warm-up" plan does not work — see "A PASSWORD SIGN-IN CAN BE CHEAP".
+>
+> **FOUR RAMPS MISSED, AND THE SILENCE IS NOW INSTRUMENTED (2026-08-28 08:44 PT).**
+> 08-25 20:22 (~3.6 GB), 08-26 21:24 (9,112 MB / 100%), 08-28 02:01 (8,981 MB / 99%) and
+> 08-28 08:13 (8,987 MB / 99%) all passed with no `trail-*` row. **The "segment never ends"
+> explanation is RULED OUT** — on 08-28 02:01 `max_pid` went 14596 → 7812 at 02:15, so the
+> teardown ran and `final: true` does include the open segment; the trigger fired and stored
+> nothing. **#210 makes a silent final flush print `describeAllocTrail`, and the box has it
+> (`5e399b3`).** Read the teardown line in `logs\rc-keepwarm.log` after the next ramp:
+> `EMPTY — that renderer answered no CDP call at all` means the trail needs a different
+> TRANSPORT; segments with sub-400 MB growth means the sampling profiler cannot see these
+> bytes at all and Track A is measuring the wrong quantity. A `trail-*` row appearing is the
+> third and best outcome. **Full entry: "THE TRAIL'S SILENCE IS INSTRUMENTED".**
+>
 > Track B is still NOT covered by the owner's go-ahead.
 >
 > **THE OWNER'S FOUR-ITEM QUEUE IS DONE (2026-08-24 evening → 08-25).** Fairness line,
 > offer-card dismissal + ordering, RC beta copy, and alert batching — all shipped with
 > mutation-verified guards, full suite **1258/1258**. Details in the five sections directly
-> above. **Migration 068 is APPLIED to production and read back; the next main-lane number
-> is 069.**
+> above. **Migration 068 is APPLIED to production and read back.**
+>
+> **THE MAIN LANE'S MIGRATION BLOCK IS NOW FULL. `069_line_priority.sql` used the last
+> number in it (`docs/LANES.md`: main 060-069, side 070+, and the side lane has used 070).
+> The next main-lane migration must CLAIM A NEW BLOCK OUT LOUD before taking a number** —
+> two sessions each writing `071_*.sql` is a collision git merges cleanly and Postgres does
+> not, with no failure at merge time at all. `worker/migration-numbers.test.mts` catches a
+> duplicate but cannot stop one being written.
+>
+> **THE NEXT ACTION IS ONE PROBE RUN, AND IT NEEDS A BOX AND A QUIET MORNING.**
+> `rc-probe.mjs --cart-lapse` (built 2026-08-27, **never run**) measures how long RC holds a
+> cart by itself — the number that unblocks both the stranding fix and the expiry cascade,
+> and the one `RC_CART_HOLD_MINUTES = 15` has been guessing at since the beginning. It is
+> **bot-side**, so the mini-PC must update first, and it **refuses to start** within
+> `RC_LAPSE_MAX_MIN + 60` of a release. Get the unit id from `rc-test-hold.mts --find`;
+> it locks one real campsite for the run.
 >
 > **THE EXPIRY CASCADE IS NO LONGER BLOCKED ON A MEASUREMENT — only on the owner's call.**
 > It was gated on RC's real cart lapse (*"~15 minutes, never observed"*, against
@@ -3643,6 +4367,12 @@ free in thirty hours and all three were missed, and a staged one locks a real ca
 > `expireStaleHolds(45)` — OURS, at 45 minutes, with the entry key, RC answering HTTP 200.**
 > So the moment a site returns to the market is one we choose and already know; the cascade
 > can hook our own release. See the 08-25 section above for the lower-bound caveat.
+> **DO NOT CARRY THIS OVER TO `reclaimLapsedHolds`' STRANDING — they need different numbers.**
+> The cascade hooks OUR release, whose timing we choose, so it needs no figure from RC. A
+> retry bound for the stranding needs RC's OWN lapse, which is still unmeasured and which the
+> 45-minute observation only bounds from BELOW. The handover treated one retirement as
+> retiring both; it does not. (And the stranding has never once fired — see the 08-27
+> measurement above.)
 > Cross-cycle alert batching (merging 08:00:00 and 08:00:20 into one text) is still theirs:
 > it **buys fewer texts with LATENCY on the most latency-critical path in the product**.
 >
@@ -3679,27 +4409,95 @@ free in thirty hours and all three were missed, and a staged one locks a real ca
 > the exposure is now ~10 minutes at 95–99% COMMIT three times a day, and ~90% is where
 > Windows stopped scheduling both tasks on 08-17.
 >
-> **A FIXTURE CAN STILL TURN `autocart.rc_session` RED** — the health route's own `upcoming`
-> and `imminent` counts never got the `REAL_UNIT` filter. Bounded to the length of a CI run,
-> and it prints the destructive `rc-login.bat` remedy while it lasts. Recorded, not fixed.
+> ~~**A FIXTURE CAN STILL TURN `autocart.rc_session` RED**~~ — **FIXED 2026-08-27, PR #202.**
+> The health route's five inline counts now go through `holdsAhead`/`holdsDueWithin`, which
+> carry `REAL_UNIT` in their own bodies. **And the fix's own test shipped a `requested`
+> fixture on a numeric unit id — the 2026-08-15 incident recreated inside the fix for its
+> sibling — which `hold-fixture-safety.test.mts` was green on.** That guard is widened in
+> three places and now derives the helper names from each file. Both entries above.
 >
-> **AND THREE TEST SUITES STILL SWEEP EACH OTHER'S FIXTURES** (`unit_id LIKE '__t%'`, and
-> `npm test` runs files concurrently). The two added this session were narrowed to their own
-> prefixes; the pre-existing three were left alone deliberately. Expect an occasional
-> unrelated red that is not a regression — see the section above.
+> ~~**AND THREE TEST SUITES STILL SWEEP EACH OTHER'S FIXTURES**~~ — **FIXED 2026-08-27, PR
+> #203, closing issue #76.** Four suites shared the `__t` prefix and three swept all of it, so
+> a STARTING run deleted a RUNNING one's rows. Every suite now has its own prefix (`__trh`,
+> `__teh`, `__tfi`, `__tcap` beside `__tln`/`__tdc`) **and** an age gate on `offered_at`, and
+> both halves are needed: the prefix stops one suite wiping another, the age gate stops two
+> runs of the SAME suite. `hold-line` and `hold-decline` already had prefixes and no gate —
+> the new guard found them. **So an unrelated red is no longer the expected state**; treat one
+> as a regression rather than as this.
+>
+> **ONE TRANSITIONAL HAZARD, and it reproduced while the fix was being verified.** `__trh`
+> still matches `__t%`, so a BRANCH that has not picked up #203 still sweeps master's rows.
+> A local `npm run verify` at 03:44 UTC lost `once the window has closed, a cart failure IS
+> final` to a side-lane CI run doing exactly that, and passed alone immediately after. **Until
+> every live branch has rebased, that specific red is still #76 and not a regression** — check
+> for an overlapping run on a branch behind master before treating it as one.
 >
 > **iOS:** `1.0 (5)` resubmitted 2026-08-22 with corrected notes — `docs/APP-STORE.md` §2d.
 > Release is AUTOMATIC. A 3.1.1 rejection now is the ANSWER, not a fourth process failure.
 >
 > **Egress was healthy all session** — camphawk.app 200, Supabase and both readouts fine.
-> Only `mcp.vercel.com`, `mcp.sentry.dev` and `flyctl-metrics.fly.dev` are denied. **It has
+> **FULLY OPEN as of 2026-08-26** — the owner had the last three hosts allowlisted and all
+> three now answer (`mcp.sentry.dev` 200, `mcp.vercel.com` 401, `flyctl-metrics.fly.dev` 404;
+> those are the SERVERS, not the gateway). **The MCP servers still do not work, and the reason
+> is now AUTH**: `mcp.sentry.dev/mcp` returns `401 invalid_token` and no `mcp__sentry__*` or
+> `mcp__vercel__*` tools exist — OAuth needs an INTERACTIVE session. Sentry would be empty
+> regardless: no `NEXT_PUBLIC_SENTRY_DSN` is set, so the SDK no-ops in production. **It has
 > been revoked mid-session before, so check rather than assume**; the readouts fail LOUDLY
 > on an unreachable DB, so an empty answer is a real answer.
 >
-> **Master is `18bb337`; this work is on `claude/main-lane-docs-0824`.** Merging it fires the
-> worker deploy (it touches `worker/**`), which restarts both pollers — **keep it away from
-> an 08:00 release**. **Delete `docs/NEXT-SESSION.md` once Track A has a reading from a real
-> ramp AND the App Store version has a decision**; it is a handover, not a permanent doc.
+> **STATE AT 2026-08-28 15:50 PT.** Master is **`ba0753d`**, the mini-PC is on **`5e399b3`**,
+> **every GitHub issue is closed and no PR is open.** Merged 08-28: **#202** (health-route
+> `REAL_UNIT` + the fixture-safety widening), **#191**, **#180**, **#203** (closed #76),
+> **#204** (closed #181 and #14), **#210** (the trail's silence), **#211** (docs), **#213**
+> (docs), **#214** (the hold-line priority override + the bounded-baseline test fix).
+>
+> **#214 FIRED A WORKER DEPLOY AND IT WENT GREEN** — both machines restarted, 2/2 shards
+> held, heartbeat 8s, and the workflow's own "Verify the poller is actually alive" step
+> passed. **The stronger evidence is the live re-rank**, which a poller on the old code
+> could not have produced.
+>
+> **THE 08-28 RELEASE PASSED WITH NOTHING CARTED.** All five offers expired unclaimed —
+> nobody tapped, which is not a fault. The three-way contest on unit 43187 did NOT happen,
+> so #201's one-live-hold-per-unit rule is still untested in anger. **The 08-29 08:00
+> release is the next chance** — one row tapped so far, three untapped offers behind it.
+>
+> **`autocart.rc_session` WARNS AND IT IS THE ORDINARY BETWEEN-RELEASES STATE.** The token
+> lives ~1h and `okta=ALIVE`; `maybeAutoLogin` restores it at T−30. `autocart.bot_version`
+> warns because the box is on `5e399b3` against web `ba0753d` — **"No bot-side code in the
+> gap", which is the documented not-worth-acting-on case.** 17 of 19 ok.
+>
+> *(historical, 2026-08-27 21:30 PT.)* Master was **`05ee4ff`** and **EVERY GITHUB ISSUE WAS
+> CLOSED.** Merged: **#202** (health-route `REAL_UNIT` + the fixture-safety widening),
+> **#191** (outreach timing docs), **#180** (Play Billing gate, STOREKIT-PLAN, side-lane
+> §25/§26 notes), **#203** (fixture sweep scope, closed #76), **#204** (Routine IDs, the
+> nights answer, the egress-watchdog guard — closed #181 and #14).
+>
+> **#203 AND #204 BOTH SAID "`worker/` test files only, so no worker deploy". BOTH WERE
+> WRONG.** `worker/**` is the first entry in the workflow's `paths:` list. Merging #204
+> deployed on `05ee4ff` and bounced both machines; it came back clean (heartbeat 4s, 2/2
+> shards held, deploy `success`). See the Deploy section — the claim is now corrected there,
+> and `docs/LANES.md` had it right all along.
+>
+> **MERGING #180 MEANS THE NEXT ANDROID BUILD FAILS, ON PURPOSE.** `codemagic.yaml` now
+> asserts `com.android.vending.BILLING` reaches the merged manifest, and
+> `@revenuecat/purchases-capacitor` is not a dependency yet — so the step exits 1 until
+> RevenueCat lands. That is the gate working (Play's Subscriptions page has no create button
+> without it) and it does block an Android hotfix meanwhile.
+>
+> **FIVE OFFERS ARE OUTSTANDING FOR 2026-08-28 08:00 PT, and one unit is offered THREE
+> times.** Unit `43187` (`#92`, Morro Bay Upper Section) is offered to tylerflores1992,
+> iamtylerflores12345 and melinda — three users, one campsite. **That would be the first
+> three-way contest**, and the real test of #201's one-live-hold-per-unit rule. **NOBODY HAD
+> TAPPED AS OF 21:13 PT**, and the 08-27 release before it expired all fourteen of its offers
+> untapped — which is not a fault. **So the contest is contingent, not scheduled**: two of
+> those three must tap before 08:00 or there is nothing to arbitrate. `nextHoldRelease`
+> ignores `offered`, so nothing is queued and **the 02:00–05:00 PT update window is open.**
+> Health at 21:13: runner polling 15s ago, session live (token 59m, `okta=ALIVE`), watchdog
+> firing both tasks, rehearsal PASSED 03:01. `bot_version` warn only — box 1d behind with **no
+> bot-side code in the gap**, which is the documented not-worth-acting-on case.
+>
+> **Delete `docs/NEXT-SESSION.md` once Track A has a reading from a real ramp AND the App
+> Store version has a decision**; it is a handover, not a permanent doc.
 
 ### THE APP'S RC SESSION IS BEING MEASURED NOW — no renewal built yet (migration 058, 2026-08-13)
 The mobile claim flow needs a live RC session inside the InAppBrowser data store, and the
@@ -6132,7 +6930,8 @@ normalisation can drop it. `worker/update-guard.test.mts` fails on any non-ASCII
 - Same mismatch through the other door: Node writes UTF-8 and the console is cp437, so
   `supervise.ps1` sets `[Console]::OutputEncoding` — otherwise every em dash lands in
   `logs\rc-keepwarm.log` as `TCo`, and those files are the post-mortem record.
-- **The pre-flight Routine moved 07:30 → 07:40 PT** (`trig_015nU7BciNU5GKimmgXjvAZG`). At
+- **The pre-flight Routine moved 07:30 → 07:40 PT** (now
+  `trig_01NdJC1SvSDwxZZroAooVKnU` — the ID it carried then was deleted 2026-08-23). At
   07:30 it now collides with `maybeAutoLogin` and would report "dead" during the repair —
   the 08-09 cry-wolf exactly. At 07:40 it reports the outcome with 20 minutes to act.
 
@@ -6620,15 +7419,38 @@ one with time to spare.
   `mini-pc\rc-check.bat`, or `mini-pc\rc-login.bat` if the session is the problem.
 - `offered` → nobody tapped. Not a fault.
 
-**Two Routines cover this daily** — delete both once the flow has proven itself:
-- `trig_015nU7BciNU5GKimmgXjvAZG` — **07:30 PT pre-flight**, the one that can actually
-  save a hold. Reads **both** `autocart.rc_session` and `autocart.rc_runner` from
-  `/api/health/status` — they are different failures, and a green runner says nothing
-  about the session (that gap is the whole 08-07 story). Deliberately needs no repo and no
-  DB, just the public endpoint, so it cannot fail the way a clone-dependent check did on
-  its first run.
-- `trig_01KvxPSzmrwKHZ8CY3tDgbnj` — **08:15 PT outcome**, reads the hold readout and says
-  what actually happened. This one is a post-mortem by construction; 08:00 has passed.
+**Two Routines cover this daily.** Both were DELETED AND RECREATED on 2026-08-23, so the
+IDs below are the second set — **the ones this file named until 2026-08-27 no longer
+exist** (issue #181). Verified against `list_triggers` before being written down.
+- **`trig_01NdJC1SvSDwxZZroAooVKnU`** — **07:40 PT pre-flight** (`40 14 * * *`), the one
+  that can actually save a hold, and **the only one that reaches the phone**. Reads
+  **both** `autocart.rc_session` and `autocart.rc_runner` from `/api/health/status` — they
+  are different failures, and a green runner says nothing about the session (that gap is
+  the whole 08-07 story). Deliberately needs no repo and no DB, just the public endpoint,
+  so it cannot fail the way a clone-dependent check did on its first run.
+- **`trig_01CzPKmDUz5MC3tbYFGMTS4a`** — **08:15 PT outcome** (`15 15 * * *`), reads the
+  hold readout and says what actually happened. A post-mortem by construction; 08:00 has
+  passed. **Bound to the CampHawk-Main session** via `persistent_session_id`, so it dies
+  with that session and re-pointing it needs another delete-and-recreate.
+- **WHY THEY WERE REPLACED RATHER THAN EDITED, and why it will happen again.**
+  `update_trigger` accepts only `name`, `prompt`, `cron_expression`, `run_once_at`,
+  `enabled` and `model`. It CANNOT change `notifications` or `persistent_session_id` — so
+  adding push to the pre-flight, and binding the outcome to a session, each required a
+  delete-and-recreate. **There was no edit that would have preserved the IDs**, which is
+  why an ID written into this file is a fact with a short shelf life.
+- **PUSH AND IN-SESSION REPORTING ARE MUTUALLY EXCLUSIVE** — the server rejects
+  `notifications` on any bound Routine. That is why only the pre-flight rings the phone.
+- **THE PROMPTS THEMSELVES GO STALE, AND ONE WAS TEACHING A REFUTED STORY.** On 2026-08-27
+  the 08:15 prompt still opened with a block headed *"TOMORROW (2026-08-25) SPECIFICALLY"*
+  which asserted *"RC lists one physical site under more than one facility, so this is not a
+  matching bug"* — the duplicate-facility explanation this file measured FALSE (zero
+  inventory overlap; the collision was our own result-map bug, fixed in #188). A daily
+  Routine firing a refuted cause into a fresh session is the same shape as a docs PR sitting
+  open carrying a correction: **it teaches the next reader the wrong thing, on a schedule.**
+  `prompt` IS editable, so this one is cheap to fix — check both prompts when a finding here
+  is corrected.
+- **DELETE-ONCE-PROVEN: re-take that decision deliberately rather than by neglect.** The
+  flow has now worked on 08-12, 08-13, 08-16, 08-23, 08-24 and 08-26.
 **Docs current to 2026-08-18 (seventh pass).** **THE ORPHAN SWEEP IS BUILT** — the keep-warm
 now kills any Chromium on `.rc-bot-profile` the moment it takes the lock, which is the one
 placement that is safe (the hold runner drives the same directory, so a sweep at plain startup

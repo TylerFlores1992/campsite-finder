@@ -25,13 +25,27 @@ import { join } from 'node:path';
 
 const DIR = join(import.meta.dirname, '.');
 
-/** Files that drive the hold state machine, and so can create a row `dueHolds` will return. */
+/**
+ * Files that can create a row `dueHolds` will return.
+ *
+ * A RAW INSERT COUNTS, AND LEAVING IT OUT IS HOW THIS GUARD MISSED A REAL ONE. The first
+ * version selected on `offerHold|requestHold`, describing "files that drive the hold state
+ * machine" by the two helpers that happened to exist when it was written. Six suites write
+ * `rc_hold_requests` with plain SQL instead and none of them was ever scanned - so on
+ * 2026-08-27 `health-hold-counts.test.mts` shipped a `requested` fixture on unit `999000111`,
+ * INSERTed directly, and this test went green. It survived only because the feed's lead is 90
+ * seconds and the suite sweeps in seconds; nothing about it was safe by design.
+ *
+ * The selector is therefore about the CAPABILITY, not the idiom: anything that writes the
+ * table is in scope. The rc-holds import is no longer required either - a raw INSERT needs
+ * no import, which is exactly the case that escaped.
+ */
 function holdTestFiles(): string[] {
   return readdirSync(DIR)
     .filter((f) => f.endsWith('.test.mts'))
     .filter((f) => {
       const src = readFileSync(join(DIR, f), 'utf8');
-      return /from '\.\.\/src\/lib\/rc-holds'/.test(src) && /offerHold|requestHold/.test(src);
+      return /offerHold|requestHold/.test(src) || /INSERT INTO rc_hold_requests/i.test(src);
     });
 }
 
@@ -60,9 +74,32 @@ test('no hold fixture uses a numeric unit id', () => {
     // that has nothing to do with holds. A guard that cries wolf is a guard somebody deletes,
     // and it would take the real finding with it. The digit floor stays at 2 rather than being
     // raised to dodge those, because a short real unit id is exactly the collision that hurts.
+    // THE SCAN FOLLOWS THE FILE'S OWN INSERT HELPERS, not a fixed list of names. `offer(` and
+    // `requestHold(` are the two that happened to exist when this was written; a suite that
+    // calls its helper `hold(` or `cartedHold(` was invisible, and a whole-file scan is not the
+    // answer either - it flags `'24'`/`'00'` from the `pacific()` helper in six files and an
+    // `appBuild: '19'` in a seventh. Any function whose body writes `rc_hold_requests` is a way
+    // to create the dangerous row, so its call sites are exactly the lines worth reading, and
+    // this cannot go stale when somebody names the next one differently.
+    const inserters = [...src.matchAll(
+      /(?:async\s+)?function\s+(\w+)\s*\([^)]*\)[^{]*\{([\s\S]*?)\n\}/g)]
+      .filter((m) => /INSERT INTO rc_hold_requests/i.test(m[2]))
+      .map((m) => m[1]);
+    const callsAnInserter = inserters.length
+      ? new RegExp(`\\b(?:${inserters.join('|')})\\(`)
+      : /(?!)/;
+
     const hits = src
       .split('\n')
-      .filter((l) => /\boffer\(|\brequestHold\(|unit_id/.test(l))
+      .filter((l) => /\boffer\(|\brequestHold\(|unit_id/.test(l)
+        || callsAnInserter.test(l)
+        // AND A BARE NUMERIC CONSTANT, because that is the shape that got through. The three
+        // tokens above describe where a unit id is USED; a fixture id is just as often DECLARED
+        // once at the top and referenced by name, and `const REAL = '999000111';` carries none
+        // of them. Checked against every file this scans before being added - it flags nothing
+        // that exists, so it buys the case with no cry-wolf. The two-digit floor below still
+        // applies, which is what keeps the fixed one-digit form green.
+        || /^\s*(?:const|let|var)\s+\w+\s*(?::[^=]*)?=\s*'\d+'\s*;/.test(l))
       // An id already inside the sentinel helper is the FIXED form, and its digits are still
       // digits - so they must come out before the scan or the guard flags its own remedy and
       // can never go green. Removing the whole `U('...')` call rather than just the quotes
@@ -75,6 +112,24 @@ test('no hold fixture uses a numeric unit id', () => {
       `numeric, so a leaked fixture would tell the production runner to cart a real site. ` +
       `Wrap it in the file's non-numeric sentinel helper.`,
     );
+  }
+});
+
+test('EVERY suite that writes rc_hold_requests is scanned', () => {
+  // PINS THE 2026-08-27 WIDENING. The selector used to require `offerHold|requestHold`, so the
+  // six suites that INSERT with plain SQL were never read - and one of them shipped a
+  // `requested` fixture on a nine-digit unit id with this test green. Narrowing it back would
+  // look like a tidy-up and would restore that hole silently, so the coverage is asserted
+  // rather than left to the selector's wording.
+  const scanned = new Set(holdTestFiles());
+  const writers = readdirSync(DIR)
+    .filter((f) => f.endsWith('.test.mts'))
+    .filter((f) => /INSERT INTO rc_hold_requests/i.test(readFileSync(join(DIR, f), 'utf8')));
+  assert.ok(writers.length > 0, 'expected some suite to insert holds - has the table been renamed?');
+  for (const f of writers) {
+    assert.ok(scanned.has(f),
+      `${f} writes rc_hold_requests but is not scanned for numeric unit ids - it can create `
+      + `the exact row the production runner would POST to ReserveCalifornia`);
   }
 });
 

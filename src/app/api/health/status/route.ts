@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { query, queryOne } from '@/lib/db/client';
+import { holdsAhead, holdsDueWithin } from '@/lib/rc-holds';
 import { getShardCoverage, getPollerCapacity } from '@/lib/capacity';
 import { pushConfigStatus } from '@/lib/notifications/push';
 import {
@@ -299,33 +300,23 @@ export async function GET() {
                 okta_alive, okta_expires_at::text, okta_checked_at::text
            FROM rc_runner_heartbeat WHERE id = 1`,
       ),
-      queryOne<{ n: string }>(
-        `SELECT count(*) AS n FROM rc_hold_requests
-          WHERE status = 'requested'
-            AND release_at <= to_char((NOW() + interval '10 minutes') AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`
-      ),
+      // THROUGH `src/lib/rc-holds` — see `holdsAhead`. These were five hand-rolled copies
+      // of the same question, and none of them carried the `REAL_UNIT` filter, so a CI run
+      // inserting test fixtures could turn this check RED and print `rc-login.bat` over a
+      // healthy session. One definition, filtered once.
+      holdsDueWithin(10),
       // Anything still ahead of us. A dead session matters for a hold due TOMORROW too —
       // in fact that is the only case a human can still save, which is the entire reason
       // for reporting session health rather than waiting for the runner to fail.
-      queryOne<{ n: string }>(
-        `SELECT count(*) AS n FROM rc_hold_requests
-          WHERE status IN ('requested','carted','claiming')
-            AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`
-      ),
+      holdsAhead(),
       // AND HOW MANY ARE IMMINENT. A hold thirteen hours out is not evidence of anything:
       // the token only lives ~60 minutes, so the session is legitimately dead for most of
       // the day and `maybeAutoLogin` signs in at T-30. Counting any hold at all made this
       // check FAIL every single night between tapping a hold and the morning it releases.
-      queryOne<{ n: string }>(
-        `SELECT count(*) AS n FROM rc_hold_requests
-          WHERE status IN ('requested','carted','claiming')
-            AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
-            AND release_at <= to_char((NOW() + ($1 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`,
-        [String(RC_SESSION_REPAIR_SPENT_MIN)],
-      ),
+      holdsAhead(RC_SESSION_REPAIR_SPENT_MIN),
     ]);
     const age = ageMs(beat?.beat_at);
-    const pending = Number(due?.n ?? 0);
+    const pending = due;
     const stale = !beat || age > RC_RUNNER_STALE_MS;
     checks.push({
       name: 'autocart.rc_runner',
@@ -352,8 +343,8 @@ export async function GET() {
     //     read: the absence of an answer is not a good answer.
     const sessionAge = ageMs(beat?.session_at);
     const sessionStale = !beat?.session_at || sessionAge > RC_SESSION_STALE_MS;
-    const ahead = Number(upcoming?.n ?? 0);
-    const soon = Number(imminent?.n ?? 0);
+    const ahead = upcoming;
+    const soon = imminent;
     const dead = beat?.session_ok === false;
     // THE REPAIR IS SPENT TWO WAYS, and the clock is the weaker one. The keep-warm saying
     // the sign-in was attempted and refused is definitive at any distance; otherwise we
@@ -549,26 +540,20 @@ export async function GET() {
       queryOne<{ ran_at: string | null; ok: boolean | null; ok_at: string | null; detail: string | null; skipped_why: string | null }>(
         `SELECT ran_at::text, ok, ok_at::text, detail, skipped_why FROM rc_login_rehearsal WHERE id = 1`,
       ),
-      queryOne<{ n: string }>(
-        `SELECT count(*) AS n FROM rc_hold_requests
-          WHERE status IN ('requested','carted','claiming')
-            AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`
-      ),
-      // AND HOW MANY ARE IMMINENT. A hold thirteen hours out is not evidence of anything:
-      // the token only lives ~60 minutes, so the session is legitimately dead for most of
-      // the day and `maybeAutoLogin` signs in at T-30. Counting any hold at all made this
-      // check FAIL every single night between tapping a hold and the morning it releases.
-      queryOne<{ n: string }>(
-        `SELECT count(*) AS n FROM rc_hold_requests
-          WHERE status IN ('requested','carted','claiming')
-            AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
-            AND release_at <= to_char((NOW() + ($1 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`,
-        [String(RC_SESSION_CRITICAL_MIN)],
-      ),
+      holdsAhead(),
+      // THE IMMINENT COUNT USED TO BE COMPUTED HERE AND THROWN AWAY (removed 2026-08-27).
+      // `Promise.all` had three entries and the destructuring took two, so a bounded count
+      // on `RC_SESSION_CRITICAL_MIN` was queried on every health request and never read —
+      // a wasted round trip, and a trap for anyone who "fixed" the destructuring and
+      // silently changed this check's severity along with it.
+      //
+      // Whether `autocart.rc_login` SHOULD fail on imminence rather than on any hold ahead
+      // is a real question and a deliberate one; it is not a tidy-up, so the level below is
+      // left exactly as it was.
     ]);
     const age = ageMs(row?.ran_at);
     const fault = rehearsalFault(row, Number.isFinite(age) ? age : null);
-    const ahead = Number(upcoming?.n ?? 0);
+    const ahead = upcoming;
     checks.push({
       name: 'autocart.rc_login',
       // Auto-cart, not alerting — see the `pages` field on Check.

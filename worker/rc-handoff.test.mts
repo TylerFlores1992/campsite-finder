@@ -581,3 +581,89 @@ test('every claim state renders the place', () => {
   // line is better than a wrong one.
   assert.match(src, /place\?: string \| null;/, 'the prop must tolerate an older payload');
 });
+
+/**
+ * THE APP FAILED SILENTLY AND A REAL CAMPSITE WAS LOST — 2026-08-29.
+ *
+ * The bot's half was flawless: unit 43189 (`#94`, Morro Bay Upper Section) was carted at
+ * T+6s and held for five minutes. The phone never signed in and never carted, and the owner
+ * lost the site.
+ *
+ * The cause was a binary with no Cordova InAppBrowser — `appBuild: "1.0 (1)"`, which is
+ * Capacitor's DEFAULT versionCode and therefore a local debug build, not a Codemagic one
+ * (that workflow sets versionCode from PROJECT_BUILD_NUMBER and asserts the plugin). With no
+ * plugin `canInject` is false, and the claim screen rendered the plain-browser copy — the
+ * RIGHT copy for a browser, and inside the app indistinguishable from a working hand-off.
+ *
+ * Two defects, and the second is the expensive one:
+ *   1. `notePlatform` computed the capability and threw it away, so the whole record of that
+ *      morning was a version number that had to be decoded three files away.
+ *   2. Nothing told the user. The screen that exists to say what is happening said nothing
+ *      about the one thing that was not happening.
+ */
+test('the platform report carries the CAPABILITY, not just the platform', () => {
+  // `appBuild` alone cannot answer "can this binary inject?" — it is a proxy that needs a
+  // reader who knows Capacitor's default versionCode. `inAppBrowser` IS the answer, it is
+  // already computed by the same `rcHandoffDiagnostics()` call, and it was being discarded.
+  const body = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(l)).join('\n');
+
+  const report = body.slice(body.indexOf("stage: 'platform'"));
+  assert.ok(report.length > 0, "the platform report must exist to be guarded");
+  const detail = report.slice(0, report.indexOf('},'));
+
+  assert.match(detail, /inAppBrowser: d\.inAppBrowser/, 'the capability itself must be reported');
+  assert.match(detail, /iabModule: d\.iabModule/,
+    'separates "absent from this binary" from "present but not yet clobbered"');
+  // `canInject` is exactly this comparison, so the report and the gate cannot disagree.
+  assert.match(body, /d\.inAppBrowser === 'present'/, 'the gate reads the same field it reports');
+});
+
+test('a native shell that cannot inject is DETECTED, and a browser is not', () => {
+  const body = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(l)).join('\n');
+
+  // BOTH HALVES, PINNED AS ONE EXPRESSION. Either alone is a different, wrong feature: the
+  // shell test alone warns every app user including the ones whose app works, and the
+  // capability test alone warns every desktop browser — where the manual path is correct and
+  // the warning is pure noise. A warning that cries wolf is a warning somebody deletes.
+  assert.match(
+    body,
+    /setStaleShell\(\s*d\.nativeShell === 'true' && d\.inAppBrowser !== 'present'\s*\)/,
+    'the notice must require BOTH a native shell and a missing plugin',
+  );
+
+  // A PROBE THAT HAS NOT ANSWERED, OR THREW, MUST NOT ACCUSE THE APP. `useState(false)` is
+  // what makes "we could not tell" render as nothing rather than as "your app is broken" —
+  // the same rule that stops `unknown` rounding to `signed-out`.
+  assert.match(body, /const \[staleShell, setStaleShell\] = useState\(false\)/,
+    'it must default to false, so a slow or failed probe shows no warning');
+});
+
+test('the stale-app warning is rendered, and ABOVE the instruction it corrects', () => {
+  const body = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(l)).join('\n');
+
+  // SCOPED TO THE `carted` BRANCH, measured inside it rather than across the file. A guard
+  // that anchors on the first match anywhere reads the import list or a sibling branch and
+  // passes whatever the markup does — the failure this repo has now recorded ~25 times.
+  const start = body.indexOf("state.status === 'carted'");
+  assert.ok(start > -1, 'the carted branch must exist to be guarded');
+  const branch = body.slice(start, body.indexOf("state.status === 'claiming'"));
+  assert.ok(branch.length > 0, 'the carted branch must be bounded by the next branch');
+
+  const notice = branch.indexOf('staleShell &&');
+  const instruction = branch.indexOf('When you tap the green button');
+  assert.ok(notice > -1, 'a build that cannot cart must SAY SO on the screen that promises it');
+  assert.ok(instruction > -1, 'the instruction paragraph must exist to be ordered against');
+  assert.ok(
+    notice < instruction,
+    'the correction must precede the instruction it corrects, or it is read second or not at all',
+  );
+
+  // IT MUST NAME THE REMEDY. A caveat with no instruction changes nobody's morning — the
+  // rule the auto-hold beta label already follows by naming an alarm clock.
+  const rendered = branch.slice(notice, instruction).replace(/<[^>]*>/g, '');
+  assert.match(rendered, /update CampHawk/i, 'say what to do about it, not just that it is broken');
+  assert.match(rendered, /ReserveCalifornia now/i, 'and what to do RIGHT NOW, while the site is still held');
+});

@@ -114,3 +114,21 @@ export const RC_CART_HOLD_MINUTES = 15;
 export const RC_SITES_PER_CART = 2;
 export const RC_MAX_CARTS = 10;
 export const RC_HOLD_CAPACITY = RC_SITES_PER_CART * RC_MAX_CARTS;
+
+/**
+ * Minutes after carting past which a `carted` hold stops counting toward
+ * `RC_HOLD_CAPACITY` for its own release — see `holdWindowLoad` — even though
+ * `worker/expire-holds.ts` keeps retrying its release forever.
+ *
+ * LIVED IN `worker/expire-holds.ts` UNTIL 2026-08-28, where only `reclaimLapsedHolds`
+ * read it. `holdWindowLoad` (in `src/lib/rc-holds.ts`) needed the same number, and
+ * `rc-holds.ts` already imports things `expire-holds.ts` imports FROM — putting the
+ * constant there would have made the two files import each other. This is the leaf
+ * both sides can read without creating that cycle, same reason `RC_HOLD_CAPACITY`
+ * lives here rather than in either.
+ *
+ * WHY 180: three hours is meant to be obviously past any real cart lapse, not a
+ * measured one — see `reclaimLapsedHolds`'s header for what is and is not known
+ * about how long RC actually holds an unclaimed cart.
+ */
+export const HOLD_LAPSE_MIN = Number(process.env.HOLD_LAPSE_MIN ?? 180);

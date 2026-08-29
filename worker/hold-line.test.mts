@@ -2,11 +2,14 @@
  * TWO PEOPLE, ONE CAMPSITE — the guard over the fairness line.
  *
  * THE MEASURED CASE, reproduced here. On 2026-08-24 unit 43191 ("#96", Morro Bay, arrival
- * 2026-09-04, releasing 08-25 08:00 PT) was offered to melinda.flores0501 through "Morro
- * Lottery sites" and to tylerflores1992 through "Upper Section". RC lists one physical
- * campsite under more than one facility, so both offers were correct and there was still
- * only one campsite. The LATER watcher is the one who tapped, and nothing in the system
- * had an opinion about that.
+ * 2026-09-04, releasing 08-25 08:00 PT) was offered to two different users for the same
+ * release, and nothing in the system had an opinion about who should get it.
+ *
+ * WHY THEY COLLIDED — CORRECTED 2026-08-26. This header used to say RC lists one physical
+ * campsite under more than one facility. That is false: RC's September inventory has ZERO
+ * overlap between the lottery pool and Upper Section. They collided because **both users
+ * watch the same park**, which makes contention ordinary rather than an RC quirk — it
+ * scales with the product.
  *
  * REAL DB ON PURPOSE. The ranking is a join across three tables and the de-dupe is a
  * `DISTINCT ON` inside `dueHolds`; a mock would test a copy of the SQL rather than the
@@ -24,7 +27,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { query, mutate } from '../src/lib/db/client';
-import { orderLine, isContested, rankHoldLine } from './hold-line';
+import { readFileSync } from 'node:fs';
+import { orderLine, isContested, rankHoldLine, BEHIND_NOTE } from './hold-line';
 import { dueHolds } from '../src/lib/rc-holds';
 
 /**
@@ -37,6 +41,15 @@ import { dueHolds } from '../src/lib/rc-holds';
  * vanish mid-run and failed an unrelated assertion in a way that reads exactly like a
  * regression. This suite sweeps only what it created.
  */
+/** Comments stripped — this file's subject quotes the broken shapes to explain them. */
+function code(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
+    .join('\n');
+}
+
 const U = (n: string) => `__tln${n}`;
 const EARLY = 'test-hold-line-user-early';
 const LATE = 'test-hold-line-user-late';
@@ -58,7 +71,12 @@ function pacific(minutesFromNow: number): string {
 let campgroundId = '';
 
 async function sweep() {
-  await mutate(`DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_tln%'`, []);
+  // AGE-GATED (#76): a per-suite prefix stops another suite wiping these rows and
+  // does nothing about a second run of THIS suite, which CI produces on every push.
+  // `offered_at` is the row's birth time and no status change moves it, so a live
+  // run's rows are seconds old and protected while real litter is minutes old.
+  await mutate(`DELETE FROM rc_hold_requests WHERE unit_id LIKE '\\_\\_tln%'
+                 AND offered_at < NOW() - interval '10 minutes'`, []);
   await mutate(`DELETE FROM watches WHERE id = ANY($1::text[])`, [[W_EARLY, W_LATE]]);
   await mutate(`DELETE FROM users WHERE id = ANY($1::text[])`, [[EARLY, LATE]]);
 }
@@ -103,8 +121,8 @@ const holdRow = async (id: string) =>
 
 test('never given first dibs outranks anyone who has, however long ago', () => {
   const out = orderLine([
-    { id: 'b', userId: 'B', status: 'offered', offerSeq: 1, watchCreatedAt: '2019-01-01' },
-    { id: 'a', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2025-01-01' },
+    { id: 'b', userId: 'B', status: 'offered', offerSeq: 1, watchCreatedAt: '2019-01-01', priority: 0 },
+    { id: 'a', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2025-01-01', priority: 0 },
   ]);
   // A watched three years later and still goes first: otherwise a new watcher starts at
   // the back of a queue that has never served them, which is not a queue.
@@ -113,8 +131,8 @@ test('never given first dibs outranks anyone who has, however long ago', () => {
 
 test('among people who have never had first dibs, earliest watch wins', () => {
   const out = orderLine([
-    { id: 'late', userId: 'B', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-08-24T19:45' },
-    { id: 'early', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-08-24T16:53' },
+    { id: 'late', userId: 'B', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-08-24T19:45', priority: 0 },
+    { id: 'early', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-08-24T16:53', priority: 0 },
   ]);
   // The measured pair, in the owner's stated order.
   assert.deepEqual(out.map((c) => c.id), ['early', 'late']);
@@ -122,15 +140,15 @@ test('among people who have never had first dibs, earliest watch wins', () => {
 
 test('among people who have, longest-ago wins — that is the rotation', () => {
   const out = orderLine([
-    { id: 'recent', userId: 'B', status: 'offered', offerSeq: 9, watchCreatedAt: '2019-01-01' },
-    { id: 'ancient', userId: 'A', status: 'offered', offerSeq: 2, watchCreatedAt: '2025-01-01' },
+    { id: 'recent', userId: 'B', status: 'offered', offerSeq: 9, watchCreatedAt: '2019-01-01', priority: 0 },
+    { id: 'ancient', userId: 'A', status: 'offered', offerSeq: 2, watchCreatedAt: '2025-01-01', priority: 0 },
   ]);
   assert.deepEqual(out.map((c) => c.id), ['ancient', 'recent'],
     'the rotation ticket must outrank watch age, or rotation does nothing');
 });
 
 test('identical on every field, the order is still deterministic', () => {
-  const same = { userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-01-01' };
+  const same = { userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-01-01', priority: 0 };
   assert.deepEqual(orderLine([{ id: 'z', ...same }, { id: 'a', ...same }]).map((c) => c.id), ['a', 'z'],
     'two shards ranking the same line must agree, or the ranks flap every cycle');
 });
@@ -139,7 +157,7 @@ test('one person holding two offers for one site is NOT a contest', () => {
   // RC lists the same campsite under more than one facility, so a park watcher can hold
   // two correct offers for one site. Counting rows rather than people would rotate them
   // for competing with themselves.
-  const mine = { status: 'offered', offerSeq: 0, watchCreatedAt: '2026-01-01' };
+  const mine = { status: 'offered', offerSeq: 0, watchCreatedAt: '2026-01-01', priority: 0 };
   assert.equal(isContested([{ id: 'a', userId: 'A', ...mine }, { id: 'b', userId: 'A', ...mine }]), false);
   assert.equal(isContested([{ id: 'a', userId: 'A', ...mine }, { id: 'b', userId: 'B', ...mine }]), true);
 });
@@ -254,4 +272,315 @@ test('an unranked hold is still served — nothing regresses for the uncontested
   const due = (await dueHolds(180, 20)).filter((h) => h.unit_id === U('9105'));
   assert.equal(due.length, 1);
   assert.equal(due[0].id, solo);
+});
+
+// ---------------------------------------------------------------------------
+// THE DE-DUPE WAS PER CALL, NOT PER CONTEST (fixed 2026-08-26).
+//
+// Every assertion above calls `dueHolds` ONCE, and one call has always returned one row.
+// That is why the suite passed while the bot carted one campsite TWICE on 08-26: the
+// runner polls every 15s, and the instant rank 1 left `requested` the `DISTINCT ON` had
+// nothing left to de-dupe against, so rank 2 was served on the next pass.
+//
+// **THESE TESTS MUST CALL IT TWICE.** A single call cannot see this bug, and a guard that
+// cannot see the bug is the shape this repo has paid for more than twenty times.
+// ---------------------------------------------------------------------------
+
+/** The whole point: serve, change status the way the runner would, serve again. */
+async function serve(unit: string) {
+  return (await dueHolds(180, 20)).filter((h) => h.unit_id === unit).map((h) => h.id);
+}
+
+test('ONCE THE WINNER IS CARTED, THE RUNNER-UP IS NOT SERVED — the 08-26 double-cart', async () => {
+  const soon = pacific(2);
+  const a = await offer(W_EARLY, EARLY, U('9201'), soon);
+  const b = await offer(W_LATE, LATE, U('9201'), soon);
+  await mutate(`UPDATE rc_hold_requests SET status = 'requested' WHERE id = ANY($1::text[])`, [[a, b]]);
+  await rankHoldLine(soon, U('9201'));
+
+  // CALL 1 — unchanged behaviour, and the only thing the old suite ever checked.
+  //
+  // WHICH of the two wins is deliberately NOT asserted here. Tests 1-11 own the ordering,
+  // and by this point in the file the rotation ticket has already been charged, so naming
+  // a winner would couple this test to the accumulated state of its siblings. What this
+  // test is about is the TEMPORAL rule, so it takes whoever won and carts them.
+  const first = await serve(U('9201'));
+  assert.equal(first.length, 1, 'exactly one of the two is served on the first pass');
+  const [winner] = first;
+  const loser = winner === a ? b : a;
+
+  // The runner carts it. This is the status change the old test never made.
+  await mutate(`UPDATE rc_hold_requests SET status = 'carted', carted_at = NOW() WHERE id = $1`, [winner]);
+
+  // CALL 2 — the bug. `DISTINCT ON` alone returns the loser here, 14 seconds later in
+  // production, and RC ACCEPTS the second cart rather than refusing it.
+  assert.deepEqual(await serve(U('9201')), [],
+    'a unit already in RC\'s cart must not be served to the next person in line — that is ' +
+    'two cart slots for one campsite and two users each told it is held');
+  assert.equal(
+    (await query<{ status: string }>(`SELECT status FROM rc_hold_requests WHERE id = $1`, [loser]))[0].status,
+    'requested', 'the loser is held back, NOT cancelled — the offer is still theirs if the cart lapses');
+});
+
+test('...and stays unserved through claiming, released and claimed', async () => {
+  // The hand-off states are the same double-book one step later: the winner is checking
+  // out right now. Only `carted` was the observed case; the others are the same fault.
+  for (const status of ['claiming', 'released', 'claimed']) {
+    await mutate(
+      `UPDATE rc_hold_requests SET status = $2 WHERE unit_id = $1 AND status <> 'requested'`,
+      [U('9201'), status]);
+    assert.deepEqual(await serve(U('9201')), [], `a ${status} hold must still block the line`);
+  }
+});
+
+test('A REFUSED CART DOES NOT BLOCK THE LINE — failed and expired are not "spoken for"', async () => {
+  // The dangerous over-correction. A cart RC refused never took the site, so blocking on it
+  // would deny the unit to somebody who could still get it. Exactly one row is `requested`
+  // at this point (the loser), so it must come back the moment nothing is carted.
+  for (const status of ['failed', 'expired']) {
+    await mutate(
+      `UPDATE rc_hold_requests SET status = $2 WHERE unit_id = $1 AND status <> 'requested'`,
+      [U('9201'), status]);
+    assert.equal((await serve(U('9201'))).length, 1,
+      `a ${status} hold never took the site, so the line must keep moving`);
+  }
+});
+test('THE BLOCK IS SCOPED TO (release_at, unit_id) — both halves, in one fixture', async () => {
+  // BOTH HALVES OR NEITHER. The first version of this test used a fresh `pacific(2)` per
+  // test, so its "different unit" row never shared a release_at with the carted one — and
+  // mutations dropping `unit_id` and dropping `release_at` from the scope BOTH survived.
+  // The scope is only exercised when the rows genuinely collide on one half and not the
+  // other, which means building all three against the same fixture.
+  const shared = pacific(2);
+  const other = pacific(1);
+
+  const carted = await offer(W_EARLY, EARLY, U('9210'), shared);
+  const sameReleaseOtherUnit = await offer(W_EARLY, EARLY, U('9211'), shared);
+  // The OTHER watch, because `rc_hold_requests_unique` is (watch_id, unit_id,
+  // arrival_date) and `offer()` uses one arrival — so one watch cannot hold the same unit
+  // twice. A second user watching the same site is the realistic shape anyway.
+  const sameUnitOtherRelease = await offer(W_LATE, LATE, U('9210'), other);
+  await mutate(`UPDATE rc_hold_requests SET status = 'requested' WHERE id = ANY($1::text[])`,
+    [[sameReleaseOtherUnit, sameUnitOtherRelease]]);
+  await mutate(`UPDATE rc_hold_requests SET status = 'carted', carted_at = NOW() WHERE id = $1`,
+    [carted]);
+
+  // Drop `unit_id` from the scope and ONE carted site silences every other site releasing
+  // at the same instant. Twenty holds share an 08:00, so that is far worse than the bug
+  // being fixed here.
+  assert.deepEqual(await serve(U('9211')), [sameReleaseOtherUnit],
+    'a different unit at the SAME release must still be served');
+
+  // Drop `release_at` and a cart today blocks the same campsite for every future release.
+  assert.deepEqual(await serve(U('9210')), [sameUnitOtherRelease],
+    'the same unit at a DIFFERENT release must still be served');
+});
+
+// ---------------------------------------------------------------------------
+// THE NOTE NEVER REACHED A HOLD TAPPED AFTER THE LINE WAS RANKED (fixed 2026-08-28).
+//
+// Every test above sets BOTH rows to `requested` before calling `rankHoldLine`, so the
+// note is written on the first and only pass and the suite is green. Production does the
+// opposite: the poller offers both rows the evening before — `offered`, not `requested` —
+// ranks the line then, and the tap arrives hours later. `rankHoldLine` notes only rows
+// that are `requested` AT RANKING TIME, and for the primary held unit the rank call sat
+// inside a block gated by `claimHoldNotification`, which fires once per release. So there
+// was no second pass, ever.
+//
+// The runner-up's row then sits `requested` past its release with `last_attempt_note`
+// NULL — which `rc-holds-readout.mts` reports as "NOTHING has tried to act on this hold at
+// all", the 2026-08-07 dead-runner signature. The line manufactures that false alarm on
+// every contested morning.
+// ---------------------------------------------------------------------------
+
+const noteOf = async (id: string) =>
+  (await query<{ note: string | null; at: string | null }>(
+    `SELECT last_attempt_note AS note, last_attempt_at::text AS at
+       FROM rc_hold_requests WHERE id = $1`, [id]))[0];
+
+test('A HOLD TAPPED AFTER THE LINE WAS RANKED IS STILL TOLD IT IS BEHIND', async () => {
+  const ahead = await offer(W_EARLY, EARLY, U('9301'), RELEASE);
+  const late = await offer(W_LATE, LATE, U('9301'), RELEASE);
+
+  // THE EVENING BEFORE: both offered, neither tapped. This is the state the poller ranks
+  // in, and it is why every assertion above missed this — they rank `requested` rows.
+  const first = await rankHoldLine(RELEASE, U('9301'));
+  assert.equal(first.length, 2, 'both offers are ranked, tapped or not');
+  assert.equal((await noteOf(late)).note, null,
+    'an OFFERED hold is not told it is behind — nobody has asked for anything yet, and a ' +
+    'note on a row the user never tapped is a claim about a queue they are not in');
+
+  // THE NEXT MORNING: the runner-up taps. Nothing about the line has changed except this.
+  await mutate(`UPDATE rc_hold_requests SET status = 'requested' WHERE id = $1`, [late]);
+
+  await rankHoldLine(RELEASE, U('9301'));
+  assert.match(String((await noteOf(late)).note), /ahead of you in line/,
+    'the tap is what makes the note true, and it arrives AFTER the line was ranked — the ' +
+    'ordinary case, since an offer goes out the night before and is tapped at breakfast');
+  assert.equal((await holdRow(late)).status, 'requested',
+    'noting a hold must not move its status — it is behind, not cancelled');
+  // AND THE HOLD IN FRONT IS NEVER NOTED. It is not behind anybody, and telling rank 1 it
+  // is queued behind someone is worse than silence.
+  assert.equal((await noteOf(ahead)).note, null,
+    'the hold first in line has nobody ahead of it and must carry no note');
+});
+
+test('...and re-ranking an unchanged line does NOT rewrite the note', async () => {
+  // The poller now re-ranks every cycle — every 15 seconds, all night. Without the skip,
+  // `last_attempt_at` is stamped on each pass and permanently reads "0m ago", which
+  // destroys the one column that says WHEN the line last changed its mind. It is also the
+  // column the readout uses to tell "the runner TRIED 3m ago" from "nothing has looked".
+  const late = (await query<{ id: string }>(
+    `SELECT id FROM rc_hold_requests WHERE unit_id = $1 AND line_rank = 2`, [U('9301')]))[0].id;
+  const before = await noteOf(late);
+  assert.ok(before.at, 'precondition: the note was written by the test above');
+
+  for (let cycle = 0; cycle < 3; cycle++) await rankHoldLine(RELEASE, U('9301'));
+
+  const after = await noteOf(late);
+  assert.equal(after.at, before.at,
+    'a line that has not changed must not restamp last_attempt_at — the poller re-ranks ' +
+    'every cycle, so an unconditional write is ~2,400 pointless writes across one night ' +
+    'and leaves the age reading zero for ever');
+  assert.equal(after.note, before.note, 'and the note itself is unchanged');
+});
+
+test('BEHIND_NOTE SURVIVES noteAttempt\'s 300-CHARACTER TRUNCATION', () => {
+  // The skip above compares the stored value against this constant. `noteAttempt` slices
+  // to 300, so a longer note could never equal what was stored: the comparison would fail
+  // on every pass, the guard would silently stop guarding, and the churn would come back
+  // with nothing failing. A fix present and inert — the shape this repo keeps paying for.
+  assert.ok(BEHIND_NOTE.length <= 300,
+    `the note is ${BEHIND_NOTE.length} chars and noteAttempt stores only the first 300`);
+});
+
+test('THE POLLER RE-RANKS BEFORE THE CLAIM GATE — or hold-line.ts is perfect and inert', () => {
+  // THE HALF THAT ACTUALLY BROKE. `rankHoldLine` can note late tappers flawlessly and
+  // change nothing, because for the primary held unit it was only ever CALLED once: its
+  // call site sat inside the block guarded by `claimHoldNotification`, which is once per
+  // (watch, release, unit), and every later cycle `continue`s before reaching it.
+  //
+  // Comments stripped — the source quotes the shape it fixed, and a guard that matches its
+  // own explanation passes against code that does nothing.
+  const src = code(readFileSync(new URL('./poller.ts', import.meta.url), 'utf8'));
+  const claimIdx = src.indexOf('claimHoldNotification(w.id');
+  const rankIdx = src.indexOf('rankHoldLine(held.availableAt');
+  // BOTH ANCHORS ASSERTED PRESENT. A missing anchor makes indexOf return -1, and `-1 <
+  // claimIdx` is true — so a renamed call would PASS this test while proving nothing.
+  // That exact inversion has been recorded here more than twenty times.
+  assert.ok(claimIdx > -1, 'anchor lost: the claim gate is no longer called as claimHoldNotification(w.id');
+  assert.ok(rankIdx > -1, 'anchor lost: the primary held unit is no longer ranked on held.availableAt');
+  assert.ok(rankIdx < claimIdx,
+    'the primary held unit must be re-ranked ABOVE the claim gate. Below it, the line is ' +
+    'ranked exactly once in the life of an offer, so anyone who taps afterwards is never ' +
+    'told they are behind and their row reads as a dead runner at 08:15');
+});
+
+// ------------------------------------------------- the priority override (migration 069)
+
+test('PRIORITY OUTRANKS EVERYTHING BELOW IT — the worst ticket and the latest watch', () => {
+  // The whole point of the flag: a flagged user wins from the worst possible position.
+  // If this only passed with a good ticket it would not be an override, it would be a
+  // tiebreak, and the owner asked for an override.
+  const out = orderLine([
+    { id: 'fair', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2019-01-01', priority: 0 },
+    { id: 'flagged', userId: 'B', status: 'offered', offerSeq: 999, watchCreatedAt: '2026-08-28', priority: 1 },
+  ]);
+  assert.deepEqual(out.map((c) => c.id), ['flagged', 'fair']);
+});
+
+test('HIGHER PRIORITY SORTS FIRST, NOT LAST — the sign of the comparison', () => {
+  // EVERY OTHER TERM IN `orderLine` IS ASCENDING: a lower ticket and an earlier watch both
+  // win. Priority is the one that is descending, so `a.priority - b.priority` reads as
+  // natural and is exactly backwards — it would rank the flagged account LAST, which
+  // presents as "the flag does nothing" rather than as an error. Asserted on its own, with
+  // every other field identical, so nothing else can carry the result.
+  const same = { status: 'offered', offerSeq: 5, watchCreatedAt: '2026-01-01' };
+  const out = orderLine([
+    { id: 'plain', userId: 'A', ...same, priority: 0 },
+    { id: 'flagged', userId: 'B', ...same, priority: 1 },
+  ]);
+  assert.equal(out[0]!.id, 'flagged',
+    'a higher line_priority must rank FIRST; reversed, the flag silently demotes the ' +
+    'account it was set on and looks like it was never applied');
+});
+
+test('priority beats a ZERO ticket — the case that actually decides real lines', () => {
+  // `hold_offer_seq` is NULL for anyone never given first dibs, and the mapper reads NULL
+  // as 0, which outranks every used ticket by design. On 2026-08-28 two live beta accounts
+  // (suziegrieve03, cam1234123) were in exactly that state, so "beats a zero" IS the
+  // production case — a flag that only beat spent tickets would lose every contest that
+  // included a newcomer.
+  const out = orderLine([
+    { id: 'newcomer', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2020-01-01', priority: 0 },
+    { id: 'flagged', userId: 'B', status: 'offered', offerSeq: 901, watchCreatedAt: '2026-08-28', priority: 1 },
+  ]);
+  assert.deepEqual(out.map((c) => c.id), ['flagged', 'newcomer']);
+});
+
+test('between two flagged accounts, the higher number wins and then the fair rule resumes', () => {
+  const out = orderLine([
+    { id: 'one', userId: 'A', status: 'offered', offerSeq: 0, watchCreatedAt: '2019-01-01', priority: 1 },
+    { id: 'two', userId: 'B', status: 'offered', offerSeq: 9, watchCreatedAt: '2026-01-01', priority: 2 },
+    { id: 'alsoOne', userId: 'C', status: 'offered', offerSeq: 0, watchCreatedAt: '2018-01-01', priority: 1 },
+  ]);
+  // 2 first; then the two 1s fall through to the ticket and the watch date, unchanged.
+  assert.deepEqual(out.map((c) => c.id), ['two', 'alsoOne', 'one'],
+    'equal priority must fall through to the rotation ticket and watch age, not swallow them');
+});
+
+test('WITH NOBODY FLAGGED THE ORDER IS EXACTLY WHAT IT WAS — the default is inert', () => {
+  // Migration 069 defaults every existing row to 0. If that default changed any ordering,
+  // it would silently re-rank every live line the moment it was applied.
+  const line = [
+    { id: 'recent', userId: 'B', status: 'offered', offerSeq: 9, watchCreatedAt: '2019-01-01', priority: 0 },
+    { id: 'ancient', userId: 'A', status: 'offered', offerSeq: 2, watchCreatedAt: '2025-01-01', priority: 0 },
+    { id: 'newcomer', userId: 'C', status: 'offered', offerSeq: 0, watchCreatedAt: '2026-01-01', priority: 0 },
+  ];
+  assert.deepEqual(orderLine(line).map((c) => c.id), ['newcomer', 'ancient', 'recent'],
+    'the fair rule — zero ticket first, then longest-ago, then watch age — must be untouched');
+});
+
+test('NEITHER THE NOTE NOR THE OFFER SCREEN STATES A REASON ANY MORE', () => {
+  // BOTH USED TO EXPLAIN THE ORDERING, and priority makes the explanation false. The note
+  // said "they watched it first"; the offer screen said "you started watching first" and
+  // "Somebody started watching it before you". Under the flag the account ahead may simply
+  // be flagged, so all three assert something untrue — the note to whoever is diagnosing at
+  // 08:15, and the screen to a user deciding whether to set an alarm.
+  assert.ok(!/watched it first|started watching/i.test(BEHIND_NOTE),
+    `BEHIND_NOTE must not claim WHY somebody is ahead: ${BEHIND_NOTE}`);
+
+  const ui = code(readFileSync(new URL('../src/components/v2/HoldConfirm.tsx', import.meta.url), 'utf8'));
+  // ANCHOR ASSERTED PRESENT FIRST. Without this the test passes if the component is
+  // renamed, moved or deleted — a guard that inspects nothing is indistinguishable from
+  // one that approves, which this repo has recorded more than twenty times.
+  assert.ok(ui.includes('first in line for this site'),
+    'anchor lost: HoldConfirm no longer tells the user their position at all');
+  assert.ok(!/started watching (first|it before)/i.test(ui),
+    'the offer screen must state the RANK, which is always true, and not the REASON, ' +
+    'which under line_priority is not');
+});
+
+test('a flagged user is ranked first in a REAL line, worst ticket and latest watch', async () => {
+  // REAL-DB, because the flag has to survive the SQL and the mapper as well as the
+  // comparator: `u.line_priority` must actually be SELECTed and carried onto the candidate.
+  // A pure test of `orderLine` passes perfectly while the query never reads the column —
+  // the fix-present-and-inert shape, which is why both halves are pinned.
+  const unit = U('9110');
+  // LATE is the later watch, so without the flag it ranks second. Give it the worse ticket
+  // too, so nothing but the flag can put it first.
+  await mutate(`UPDATE users SET hold_offer_seq = 900 WHERE id = $1`, [LATE]);
+  await mutate(`UPDATE users SET hold_offer_seq = 1   WHERE id = $1`, [EARLY]);
+  await mutate(`UPDATE users SET line_priority = 1 WHERE id = $1`, [LATE]);
+  try {
+    const early = await offer(W_EARLY, EARLY, unit, RELEASE);
+    const late = await offer(W_LATE, LATE, unit, RELEASE);
+    const line = await rankHoldLine(RELEASE, unit);
+    assert.deepEqual(line.map((m) => m.id), [late, early],
+      'the flagged account must be ranked 1 even with the worse ticket and the later watch');
+    assert.equal((await holdRow(late)).line_rank, 1);
+    assert.equal((await holdRow(early)).line_rank, 2);
+  } finally {
+    await mutate(`UPDATE users SET line_priority = 0 WHERE id = $1`, [LATE]);
+  }
 });
