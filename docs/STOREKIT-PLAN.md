@@ -310,7 +310,35 @@ screen*. Where a step says **CONFIRM**, read the console and correct this list.
 
 1. **Project + Android app.** Package name `app.camphawk.mobile` — it must match, or RevenueCat
    validates purchases against an app that does not exist.
-2. **The Play service-account credential. CONFIRM THE PERMISSIONS ON PLAY'S OWN SCREEN.**
+2. **The Play service-account credential. ANSWERED 2026-08-28 — REVENUECAT NAMES THEM ITSELF.**
+   Its `Debug error` dialog checks **three capabilities separately** and prints the fix:
+
+   ```
+   ✗ Can validate Google Play subscription purchases
+       Tip: Grant this service account app access plus "View financial data, orders, and
+       cancellation survey response" and "Manage orders and subscriptions"
+   ✓ Can read the Google Play in-app product catalog
+   ✓ Can read the Google Play subscription catalog and base plans
+   ```
+
+   **So the set is: App access → `View app information (read-only)`, plus Financial data →
+   `View financial data` AND `Manage orders and subscriptions`.** Read off the console, not
+   recalled. Play's own description of `View financial data` is the corroboration — it says in
+   as many words *"…access the **Purchases API**…"*, which is how a purchase is validated.
+
+   **THE THREE-WAY BREAKDOWN IS THE USEFUL PART, AND IT IS BETTER THAN OUR OWN DIAGNOSTICS.**
+   Two greens with one red proved, without any guessing, that the JSON was valid, the invite
+   had landed and app access had saved — leaving exactly one cause. A single "we were unable to
+   validate your credentials" banner would have been the four-causes-one-message shape this
+   repo keeps paying for. **Always open `Debug error` rather than re-uploading the key.**
+
+   **NOTHING RELEASE-RELATED, AND THAT IS THE POINT OF THE SECOND ACCOUNT.**
+   `codemagic-publisher` can ship builds and cannot see money; `revenuecat-billing` can see
+   money and cannot ship builds. Do NOT tick `Manage store presence` — its own description
+   includes *"edit pricing; manage in-app products"*, i.e. WRITE access to the four products,
+   which RevenueCat only ever needs to read.
+
+2b. **(superseded) CONFIRM THE PERMISSIONS ON PLAY'S OWN SCREEN.**
    RevenueCat needs to read subscription and purchase state, which is **not** what the Codemagic
    publisher account is scoped to (*View app information* + *Release to testing tracks*,
    `PLAY-STORE` §0b). **Add a SECOND service account rather than widening that one** — §0b's
