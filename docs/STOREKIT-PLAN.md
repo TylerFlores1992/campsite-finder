@@ -6,39 +6,57 @@ implementation. Read "What only a human can do" before planning a session around
 
 ---
 
-## STATE AS OF 2026-08-24, END OF EVENING — read this first
+## STATE AS OF 2026-08-28 — read this first
 
-Everything both consoles allow was done. **Both stores are now waiting on someone else**, and
-Play additionally on native code that does not exist.
+**PLAY'S CONSOLE WORK IS FINISHED. Every remaining blocker on both stores is CODE or a vendor.**
 
 | | Done | Waiting on the vendor | Blocked on us |
 |---|---|---|---|
 | **Apple** | W-9 active | Bank details + Paid Applications agreement processing | Small Business Program enrolment (§6.1), then the four products (§8) |
-| **Play** | Merchant account · account group + declaration · **15% service fee enrolled** · production set US-only · **bank verified** | — **nothing** | **A build declaring `com.android.vending.BILLING` (§9a-bis)** |
+| **Play** | merchant account · account group · **15% enrolled** · US-only · bank verified · **billing permission shipped** · **4 base plans + 4 offers ACTIVE** | — **nothing** | — **nothing in the console** |
 
-> **UPDATE 2026-08-27 — §9a-ter.** The build now ASSERTS `com.android.vending.BILLING` in the
-> merged manifest, because the plugin's own Android manifest is **empty** and the permission
-> can only arrive three hops down a transitive chain (`purchases-hybrid-common` → `purchases`
-> → `com.android.billingclient:billing`). The last link sits on Google's Maven, which the agent
-> proxy denies, so it is **still unread** and the Codemagic runner is the only instrument.
-> **Two builds, in order: assertion alone must go RED, then the plugin makes it green.**
+**WHAT CLEARED PLAY, 2026-08-28.** `@revenuecat/purchases-capacitor` 13.4.2 went into
+`package.json`, and **two Codemagic builds in order** settled §9a-ter's unread transitive chain:
 
-**THE ONE FINDING THAT CHANGES THE PLAN IS §9a-bis.** Play will not let the subscription
-products be created at all until an uploaded binary declares the billing permission — so Play's
-order is library → build → upload → products, the reverse of §7, and it is now **native work
-rather than a console task**. Apple has no such gate. §9b's product table is correct and
-**not yet reachable**; §8's Apple walkthrough is correct and reachable the moment the agreement
-clears.
+```
+build 12  cbeb709  no billing dep   FAILED at the assertion (CHECKED=3)   aab 11.07 MB
+build 13  6c04a93  + RevenueCat     green, published                      aab 13.36 MB
+```
 
-**THE LIBRARY IS DECIDED: RevenueCat** (`@revenuecat/purchases-capacitor`, §3). **THE NEXT
-SESSION'S JOB IS §11** — the Android build that clears §9a-bis. It carries a
-constraint this plan was written without: **the app is a remote webview** (`server.url =
-camphawk.app/search`), so a web deploy cannot add purchase capability and the paywall must
-detect the *plugin*, not the platform. Read §11 before §3.
+Run 1 was the diagnostic — it proved the gate could fail before anything trusted it, and it
+failed on the *answer* rather than on being unable to read. Run 2 grew the binary **+2.3 MB**
+with `package.json` as the only change, which is `com.android.billingclient:billing` arriving by
+AAR manifest merge — the hop that `maven.google.com` being 403 at the proxy made unreadable from
+any session. **The Codemagic runner was the only instrument that could answer it, and it did.**
 
-**NOTHING IN `src/` HAS CHANGED. There is no code for any of this.** The migration in §2, the
-webhook in §5, the product-id → tier mapping and the paywall are all unwritten, and all of it is
-**main-lane** territory (`src/lib/`, `src/lib/db/migrations/`).
+**THE PRODUCTS ARE LIVE** (§9b), all **Active**, all **United States**:
+
+```
+camphawk_base      monthly  Monthly, auto-renewing  + intro-free-week
+                   yearly   Yearly,  auto-renewing  + intro-free-week
+camphawk_autocart  monthly  Monthly, auto-renewing  + intro-free-week
+                   yearly   Yearly,  auto-renewing  + intro-free-week
+```
+
+**ONE THING UNVERIFIED, AND IT IS THE ONLY ONE:** the four **prices** were never read back from
+the console — the base-plan list shows duration and region but no amount. §9b wants $2.99 /
+$23.99 / $11.99 / $59.99. `Countries / regions: United States` proves *a* price exists, not that
+it is the right one. **Open each base plan and read the amount** before anything charges anybody.
+
+**EVERYTHING LEFT ON PLAY IS CODE**, and all of it is **main-lane** (`src/lib/`,
+`src/lib/db/migrations/`): the §2 migration, the §5 webhook (**with the grace-period split** —
+`BILLING_ISSUE` is two states and only account hold revokes access), the product-id → tier
+mapping, and the §11a paywall that must detect the **plugin**, not the platform.
+
+**THE §9a PRORATION TRAP IS NOW THE EXPENSIVE ONE.** Play has no subscription groups, so
+upgrade-vs-downgrade is stated by app code. No console screen can show that mistake, and every
+console screen that *could* have caught anything has now been passed.
+
+**iOS HAS NOT BEEN BUILT SINCE REVENUECAT ENTERED THE DEPENDENCY TREE.** §11c: Capacitor 8
+defaults iOS to SPM, where `@capacitor/app` and `@capacitor-firebase/app` already collided on
+identity `app` once and broke resolution outright. A new plugin is a new identity in that
+namespace. **Run `iOS · TestFlight` on this branch** rather than discovering it when a TestFlight
+build is needed for something else.
 
 **TWO THINGS TO CARRY FORWARD RATHER THAN RE-DERIVE:**
 
@@ -208,10 +226,333 @@ the plan below still applies — only §5 grows substantially.
 
 ---
 
+## 4a. REVENUECAT'S OWN WIRING IS NOT IN THIS PLAN, AND IT IS NOT SMALL (2026-08-28)
+
+§3 chose RevenueCat and §5 describes the webhook it will send us. **Nothing here describes
+setting RevenueCat up**, and it sits between "the products exist" and "anything can be bought":
+
+1. **A RevenueCat project**, with the Android app registered against `app.camphawk.mobile`.
+2. **A Google Play service-account credential given to RevenueCat**, so it can read purchase
+   and subscription state. **This is probably NOT the Codemagic publisher account** — that one
+   is deliberately scoped to *View app information* + *Release to testing tracks* (`PLAY-STORE`
+   §0b), and reading subscription state is a different permission. **Whether to widen that
+   account or add a second is unresolved**, and the answer should be read off Play's permission
+   screen rather than inferred. A second account is the safer default: §0b's credential is
+   rotated for CI reasons that have nothing to do with billing.
+3. **Products mapped to entitlements** — the four Play ids on one side, and whatever
+   `hasAutocartEntitlement` needs on the other. This is where §9a's tier decision becomes data.
+4. **The public SDK key** in the app, which is a build-time value in a **remote-webview** app —
+   so re-read §11a before deciding where it lives.
+
+**None of it is blocked; none of it is written down.** Recorded when it was noticed rather than
+discovered as a surprise between working products and a paywall that cannot talk to them.
+
+### 4b-progress. WHERE THE CONSOLE ACTUALLY GOT TO (2026-08-28)
+
+```
+[x] 1. Project created — named CampHawk, platform Capacitor
+[ ] 2. Google Play app  app.camphawk.mobile     <- RESUME HERE
+[ ] 3. Cloud service account `revenuecat-billing` + JSON key
+[ ] 4. Play Console invite + permissions
+[ ] 5. Upload the JSON to RevenueCat
+[ ] 6-9. products · entitlements · webhook · Vercel env vars
+    !  Email address not yet confirmed — RevenueCat gates actions on it.
+```
+
+**PLATFORM IS `Capacitor`, AND THE FIELD IS LABELLED "CATEGORY" IN PLACES.** The list is
+frameworks (Native Apple / Native Android / Web / Flutter / React Native / Unity / Kotlin
+Multiplatform / Capacitor), it is **multi-select**, and only Capacitor is correct:
+
+- **Not Native Apple or Native Android** — Capacitor covers both through the one plugin, which
+  is the one already in `package.json`. Ticking them buys setup docs for SDKs we do not use.
+- **NOT `Web`, and this is the one that could cause real trouble.** "Web" means RevenueCat's own
+  web billing. **CampHawk's web subscriptions go through Stripe, which is not in RevenueCat at
+  all**, so ticking it invites a second payment path competing with the one that is live and
+  selling. The remote webview does not change this: the UI is remote, the purchase is native
+  Play Billing over the bridge (§11a).
+
+**THE ONBOARDING WIZARD MUST BE SKIPPED — "Go to dashboard", not "Continue".** It offers a
+"suggested" setup *"based on our data"*, and two of its three suggestions are wrong for this
+product:
+
+- **A `Lifetime` One-Time Purchase that does not exist.** We sell four auto-renewing
+  subscriptions and nothing else.
+- **A SINGLE entitlement, "CampHawk Pro".** One yes/no cannot express two tiers, and
+  `hasAutocartEntitlement` exists precisely to distinguish them.
+- Its ids are RevenueCat placeholders (`monthly`, `yearly`), not Play's.
+
+**And the deeper reason: the Play app is not connected yet**, so RevenueCat cannot see the real
+products and anything the wizard creates is a placeholder to clean up later.
+
+**DO NOT PRESS "Mark all as done" ON THE DASHBOARD CHECKLIST.** It hides the list and configures
+nothing — a dashboard reading 6 of 6 over a project with no app, no credential and no products.
+That is this file's own recurring shape, offered as a button: **a screen that looks finished is
+not a finished screen.**
+
+**ENTITLEMENTS, WHEN STEP 7 ARRIVES — two, not one:**
+
+| entitlement | granted by |
+|---|---|
+| `alerts` | **all four** products — an Auto-Cart subscriber gets alerts too |
+| `autocart` | the two `camphawk_autocart` products only |
+
+That mirrors the two questions the app actually asks (`hasActiveSubscription` and
+`hasAutocartEntitlement`). Tier still comes from the product id per §5; these are RevenueCat's
+bookkeeping, never a second source of truth.
+
+### 4d. THE CONSOLE WORK IS COMPLETE (2026-08-29)
+
+```
+Valid credentials      ✓
+Connected to Google    ✓  projects/camp-501802/topics/revenuecat-notifications
+Last received          ✓  2026-08-29 17:49 UTC   (Play's own test notification)
+Products               ✓  four, imported, Published
+Entitlements           ✓  alerts (all four) · autocart (the two autocart products)
+Webhook                ✓  camphawk.app/api/webhooks/revenuecat, HMAC signing ON
+```
+
+**RTDN NEEDED A PLAY-SIDE STEP THAT NOTHING ELSE MENTIONS.** RevenueCat's *"Connect to
+Google"* only wires THEIR half. Play must separately be told to publish, at
+**Play Console → Monetize with Play → Monetization setup → Real-time developer
+notifications**: tick **Enable real-time notifications** (it is off, and the Topic name field
+is inert until it is on), paste the topic, and set Notification content to *"Subscriptions,
+voided purchases, and all one-time products"* — it defaults to subscriptions-only.
+
+**AND THE TOPIC NEEDS `google-play-developer-notifications@system.gserviceaccount.com` AS
+`Pub/Sub Publisher`.** Without it Play's test reports *"Test notification couldn't be sent"*
+and names three possible causes at once, and a REAL notification would simply never arrive —
+no error anywhere, just a topic nobody publishes to. **Play's own test is the only thing that
+distinguishes a working RTDN from a silent one**, so send it rather than assuming.
+
+**WHAT FIXED THE CREDENTIAL IS NOT KNOWN, AND SHOULD NOT BE GUESSED.** Four things changed
+before `Valid credentials` appeared — account-level Play permissions, the two Cloud IAM roles,
+the two APIs, and a regenerated key — inside a documented 24-36h propagation window. The honest
+record is "these four, in that window". Crediting one is the mistake this file has made three
+times.
+
+**`Track new purchases from server-to-server notifications` IS DELIBERATELY OFF.** RevenueCat
+ignores purchases the SDK has not posted, which is what we want: enabling it brings in their
+App User ID detection rules, and their own docs warn the SDK's `obfuscatedExternalAccountId`
+can then *"cause unintended overwrites"*. We bind `app_user_id` to the Clerk id, so off keeps
+one identity story. Turn it on only if a real purchase is ever observed going missing.
+
+**PLAY'S `Pause` IS DISABLED (2026-08-29).** It lets a subscriber suspend billing for weeks,
+and nothing handles it: `SUBSCRIPTION_PAUSED` is not in the webhook's granting set, and what
+Play reports as the expiry for a paused subscription was never verified — so the entitlement
+outcome would have been decided by accident either way. **Turning it back on is a decision that
+needs `SUBSCRIPTION_PAUSED` handled and tested first**, not a setting to flip because it looks
+like a feature. It is one more state next to grace periods, account holds, trials and proration.
+
+### 4b. The RevenueCat console checklist — WRITTEN BLIND, so verify as you go
+
+**`revenuecat.com`, `docs.revenuecat.com` and `api.revenuecat.com` are ALL 403 at the agent
+proxy's CONNECT** (checked 2026-08-28), same as `maven.google.com` and `docs.codemagic.io`. So
+the steps below are **from general knowledge, not read off their documentation**, and this
+file's own §29d rule applies harder than usual: *a screen that looks finished is not a finished
+screen*. Where a step says **CONFIRM**, read the console and correct this list.
+
+1. **Project + Android app.** Package name `app.camphawk.mobile` — it must match, or RevenueCat
+   validates purchases against an app that does not exist.
+2. **The Play service-account credential. ANSWERED 2026-08-28 — REVENUECAT NAMES THEM ITSELF.**
+   Its `Debug error` dialog checks **three capabilities separately** and prints the fix:
+
+   ```
+   ✗ Can validate Google Play subscription purchases
+       Tip: Grant this service account app access plus "View financial data, orders, and
+       cancellation survey response" and "Manage orders and subscriptions"
+   ✓ Can read the Google Play in-app product catalog
+   ✓ Can read the Google Play subscription catalog and base plans
+   ```
+
+   **So the set is: App access → `View app information (read-only)`, plus Financial data →
+   `View financial data` AND `Manage orders and subscriptions`.** Read off the console, not
+   recalled. Play's own description of `View financial data` is the corroboration — it says in
+   as many words *"…access the **Purchases API**…"*, which is how a purchase is validated.
+
+   **THE THREE-WAY BREAKDOWN IS THE USEFUL PART, AND IT IS BETTER THAN OUR OWN DIAGNOSTICS.**
+   Two greens with one red proved, without any guessing, that the JSON was valid, the invite
+   had landed and app access had saved — leaving exactly one cause. A single "we were unable to
+   validate your credentials" banner would have been the four-causes-one-message shape this
+   repo keeps paying for. **Always open `Debug error` rather than re-uploading the key.**
+
+   **NOTHING RELEASE-RELATED, AND THAT IS THE POINT OF THE SECOND ACCOUNT.**
+   `codemagic-publisher` can ship builds and cannot see money; `revenuecat-billing` can see
+   money and cannot ship builds. Do NOT tick `Manage store presence` — its own description
+   includes *"edit pricing; manage in-app products"*, i.e. WRITE access to the four products,
+   which RevenueCat only ever needs to read.
+
+2b. **(superseded) CONFIRM THE PERMISSIONS ON PLAY'S OWN SCREEN.**
+   RevenueCat needs to read subscription and purchase state, which is **not** what the Codemagic
+   publisher account is scoped to (*View app information* + *Release to testing tracks*,
+   `PLAY-STORE` §0b). **Add a SECOND service account rather than widening that one** — §0b's
+   credential gets rotated for CI reasons that have nothing to do with billing, and a rotation
+   that silently breaks entitlement lookups is the kind of failure this repo keeps paying for.
+   RevenueCat's own onboarding names the permissions it wants; take them from there, not here.
+3. **The four products. ANSWERED 2026-08-28 — IMPORT, NEVER TYPE.** RevenueCat's importer found
+   all four and states the rule on the screen: *"RevenueCat will import selected products with
+   an identifier formatted as `<product_id>:<base_plan_id>`, and will use that identifier to
+   refer to it in the dashboard."*
+
+   ```
+   camphawk_base:monthly        Active
+   camphawk_base:yearly         Active
+   camphawk_autocart:monthly    Active
+   camphawk_autocart:yearly     Active
+   ```
+
+   **USE `Import`, NOT `+ New`.** Import pulls the ids straight from Play, so the string
+   arrives exactly as Google has it and the retyping risk disappears rather than being
+   carefully avoided.
+
+   **THE TIER MAPPING FOR §5 FOLLOWS, AND KEEPS THE SAFE FAILURE DIRECTION.** Split on the
+   FIRST colon and read the part before it: `camphawk_autocart` → `'autocart'`, **everything
+   else → `'base'`** — including anything unrecognised. That mirrors `tierForPriceId`, whose
+   rule is that an unknown id fails as *"paying but treated as base"*, never as silent free
+   premium. Do not enumerate all four ids: an exhaustive list silently mis-tiers a fifth
+   product added later, where a prefix test degrades to `base` and stays honest.
+
+### 4b-corrections. THREE THINGS IN §4b WERE WRONG — from RevenueCat's own guide (2026-08-28)
+
+The owner pasted RevenueCat's *"Step-by-step guide for creating your Play service credentials"*,
+which this session could not reach (all three of their hosts are 403 at the agent proxy). It
+contradicts three instructions given above. **Their doc wins; §4b was written blind and said so.**
+
+| §4b said | The guide says |
+|---|---|
+| skip the Cloud grant-access step, **no IAM roles needed** | grant **`Pub/Sub Editor`** and **`Monitoring Viewer`** |
+| **do not** tick `Manage store presence` | it is one of **four required** permissions |
+| grant under **App** permissions | App permissions to *add the app*, then the four under **Account permissions** |
+
+**THE ACCOUNT-LEVEL SCOPE IS THE LIKELY CAUSE OF THE FAILING CHECK.** The app-level grant made
+both catalog reads pass and left `Can validate Google Play subscription purchases` red.
+
+**ALSO REQUIRED IN CLOUD:** enable `pubsub.googleapis.com` and
+`playdeveloperreporting.googleapis.com` (`androidpublisher` was already on from `PLAY-STORE`
+§0b). **After changing IAM roles, REGENERATE the JSON key** — their error table says so
+explicitly, and re-uploading is cheap next to a day spent on a credential.
+
+**THE 36-HOUR WINDOW IS DOCUMENTED, AND IT REFRAMES THE RED BANNER.** *"It can take up to 36
+hours for your Play Service Credentials to work properly."* A red validation minutes after
+granting is the **stated normal**, not a fault — so the instinct to widen permissions until it
+goes green is chasing a clock.
+
+**AND THERE IS A DOCUMENTED WORKAROUND WORTH KNOWING:** in Play Console →
+Monetize → Products → Subscriptions, **change any product's description and save**. Their guide
+says this activates new credentials *"right away (or very shortly)"*. Revert afterwards.
+
+**ON `Manage store presence`, THE OBJECTION IN §4b STANDS ON THE MERITS** — Play's own
+description includes *"edit pricing; manage in-app products"*, which is WRITE access to the four
+products. It is granted because the vendor requires it, not because it is minimal. Worth
+knowing if the permission is ever audited: it is their requirement, not our choice.
+
+3b. **(superseded) CONFIRM THE ID FORM.** Play identifies a purchasable thing as the
+   subscription *and* its base plan, so the id RevenueCat wants is expected to look like
+   `camphawk_base:monthly` rather than `camphawk_base`. **This is the single most likely place
+   to mistype something that then silently matches nothing.** Whatever form the console shows is
+   the form `§5`'s product-id → tier mapping must use — copy it, do not retype it.
+4. **Entitlements.** RevenueCat wants them; **our tier is still derived from the product id**
+   per §5, so entitlements are RevenueCat's bookkeeping and not a second source of truth.
+   Two definitions of who is entitled is the failure `hasAutocartEntitlement` exists to prevent.
+5. **The webhook** → `/api/webhooks/revenuecat`, with an Authorization value RevenueCat sends
+   and the route verifies. **Fails CLOSED**, and the route must be added to `isPublicRoute` in
+   `src/middleware.ts` or Clerk answers 404 — `/api/webhooks/twilio` is the working precedent
+   for both halves.
+6. **The public Android SDK key.**
+
+**AND STEP 6 IS BETTER THAN §11a FEARED.** `Purchases.configure({ apiKey })` is called from
+**JavaScript**, and this app is a remote webview serving its JS from camphawk.app — so the key
+is a web-side env var and **reaches installed apps on a `git push`**, with no release. What
+still needs a release is the *plugin*, which is already in the binary as of build 13. So the
+SDK key is not a build-time value here, and §11a's "a web deploy cannot add purchase capability"
+is about the plugin specifically, not about its configuration.
+
+---
+
+## 4c. THE REAL WEBHOOK PAYLOAD, READ OFF A TEST EVENT (2026-08-28)
+
+Captured from RevenueCat's own `Send test event`, so the field names below are **read, not
+recalled**. Response was 404 — the route does not exist yet, which is correct.
+
+```jsonc
+{
+  "api_version": "1.0",
+  "event": {                              // <- NESTED. The event is not at the top level.
+    "type": "TEST",                       // INITIAL_PURCHASE | RENEWAL | CANCELLATION | ...
+    "id": "072FA074-BE5B-4722-9983-...",  // event UUID
+    "environment": "SANDBOX",             // or PRODUCTION
+    "app_user_id": "63o43cb0-...",        // OUR Clerk user id, once the SDK sets it
+    "original_app_user_id": "63o43cb0-...",
+    "product_id": "test_product",         // real: camphawk_base:monthly
+    "store": "APP_STORE",                 // or PLAY_STORE
+    "period_type": "NORMAL",              // or TRIAL / INTRO
+    "original_transaction_id": null,      // -> subscriptions.store_transaction_id
+    "transaction_id": null,
+    "expiration_at_ms": 1787982006612,
+    "purchased_at_ms": 1787982006612,
+    "entitlement_ids": null,
+    "subscriber_attributes": { "$email": { "value": "..." }, ... }
+  }
+}
+```
+
+**FOUR THINGS THAT CHANGE THE ROUTE, none of which I would have written from memory:**
+
+1. **`environment` CAN BE `SANDBOX`, AND THE PRODUCTION WEBHOOK RECEIVES IT.** The integration
+   is configured for *Both Production and Sandbox* — deliberately, so test purchases are
+   visible. **A sandbox event must never grant a real entitlement**, or anyone with a test
+   device mints themselves a paid subscription. This is the single most dangerous field in the
+   payload and it is easy not to notice, because it is `SANDBOX` in the only sample anyone
+   looks at.
+2. **`type: "TEST"` EXISTS** and carries `product_id: "test_product"` with a `app_user_id` that
+   matches no real user. It must be acknowledged **200 and ignored** — 200 because a non-2xx
+   makes RevenueCat retry a message that will never be processable.
+3. **`period_type: "TRIAL"` IS HOW THE FREE WEEK ARRIVES.** It maps to our `status =
+   'trialing'`, which is what `hasActiveSubscription` already accepts alongside `'active'`, and
+   matches Stripe's `trialing`. Reading only `type` would put a trialing subscriber on
+   `'active'` and lose the distinction the whole `intro-free-week` offer depends on.
+4. **`event.id` IS THE IDEMPOTENCY KEY.** RevenueCat retries, so the same event arrives more
+   than once; without dedupe on this a retry re-runs whatever the handler does.
+
+**Mapping to migration 071:** `store` (`PLAY_STORE`/`APP_STORE`) → `provider`
+(`'google'`/`'apple'`), and **`original_transaction_id` → `store_transaction_id`** — the stable
+id that survives renewals, which is why 071's unique index is on it rather than on
+`transaction_id`.
+
+**AUTH IS A RAW `Authorization` HEADER, NO `Bearer`.** RevenueCat's own field help: *"RevenueCat
+will send an HTTP Authorization header with this value in each POST request."* So the check is
+an exact comparison against `REVENUECAT_WEBHOOK_AUTH`, failing closed. **HMAC signing is a
+separate toggle** on the same screen, off by default, and worth enabling — both existing
+webhooks here verify a signature, and a static header value is replayable by anyone who ever
+sees it in a log.
+
+**DO NOT READ `store: "APP_STORE"` IN THE TEST EVENT AS MEANINGFUL.** This is a Play-only
+project; the test event is synthetic and says App Store anyway.
+
+---
+
 ## 5. Server
 
 - **RevenueCat webhook → `/api/webhooks/revenuecat`**, mapping `INITIAL_PURCHASE`, `RENEWAL`,
   `CANCELLATION`, `EXPIRATION`, `BILLING_ISSUE` onto `subscriptions.status`.
+- **`BILLING_ISSUE` IS TWO STATES ON PLAY, AND ONLY THE SECOND REVOKES ACCESS (2026-08-28).**
+  Read off the `Add base plan` screen while creating `camphawk_base/monthly`: Play applies a
+  **7-day grace period** and then a **32-day account hold** (auto-calculated, 60-day combined
+  maximum). They are opposites for entitlement:
+
+  | Play state | payment | user should |
+  |---|---|---|
+  | grace period | failed, retrying | **keep full access** — they have not lapsed |
+  | account hold | given up | lose access |
+
+  **A naive `BILLING_ISSUE -> not subscribed` cuts off a paying customer for a week over a card
+  that is about to retry successfully.** That is the same failure family as `unknown` rounding to
+  "not subscribed" in §4 — the direction that shows a paywall to somebody who is paying. Grace
+  must read as subscribed. RevenueCat exposes the distinction through the entitlement's
+  expiry/billing-issue detection rather than through the event name alone, so **the event name is
+  not sufficient input** to this decision.
+
+  Recorded now because these two numbers live on a console screen that nothing in the codebase
+  reads, and the consequence lands in a webhook written weeks later.
 - **Signature verification fails CLOSED**, and the route must be added to `isPublicRoute` in
   `src/middleware.ts` or Clerk 404s it — see `/api/webhooks/twilio`, which is the working
   precedent for both.
@@ -367,7 +708,7 @@ and incomplete. The merchant account, the account group, the 15% enrolment and t
 country setting are all now done, and the page still refuses.
 
 **IT IS NOT ASKING FOR *A* BINARY — IT IS ASKING FOR A PROPERTY OF ONE.** An AAB has been
-uploaded and is live in closed testing (`versionCode 18`, `docs/PLAY-STORE.md` §0a), so "no
+uploaded and is live in closed testing (`versionCode 18` — but see the correction below), so "no
 build exists" cannot be the explanation. What Play requires is an uploaded binary declaring
 **`com.android.vending.BILLING`**, and that permission arrives with the Play Billing Library.
 **Verified in the tree rather than assumed**: no billing dependency of any kind in
@@ -389,6 +730,88 @@ behaviour from one store to the other in here again; it has now been wrong three
 **IT STRENGTHENS THE REVENUECAT RECOMMENDATION IN §3.** Their SDK brings the billing library
 with it, so one dependency clears the permission gate *and* the purchase plumbing. Wiring Play
 Billing directly clears the gate and still leaves the server side to build.
+
+> **TWO CORRECTIONS FROM THE CODEMAGIC BUILD LIST, read off the console 2026-08-28.**
+>
+> 1. **The `docs/PLAY-STORE.md` §0a citation above is wrong.** That file contains **no mention
+>    of `versionCode` anywhere** (`grep -in versioncode` returns nothing). The number came from
+>    `CLAUDE.md` instead. A citation that names a section which does not carry the fact is worse
+>    than no citation — it reads as verified and survives a check that stops at the section name.
+> 2. **What is live is probably 19, not 18.** The build list shows `Android · signed AAB +
+>    APK #11` producing artifacts labelled **#19** and, being green (it emitted both an `.aab`
+>    and an `.apk`), publishing them. **Whether Play accepted it is UNREAD** — nobody in a
+>    session can open the Play Console. The argument in this section is unaffected either way:
+>    a binary is live, and it declares no billing permission.
+>
+> **AND THE SAME LIST IS DIRECT EVIDENCE FOR THE BUILD-NUMBER TRAP §11b RECORDS AS MISQUOTED
+> TWICE.** The per-workflow index is not the version code, and the counter is shared:
+>
+> ```
+> Android · signed AAB + APK #10   ->  app-release.aab #18 / app-release.apk #18
+> Android · signed AAB + APK #11   ->  app-release.aab #19 / app-release.apk #19
+> iOS · TestFlight        #10   ->  App.ipa #21
+> ```
+>
+> `#10` and `#11` are the workflow's own counters; **18, 19, 21 are `PROJECT_BUILD_NUMBER`**,
+> running across both workflows. Two builds numbered `#10` carry version codes 18 and 21.
+
+> **ANSWERED 2026-08-28 BY TWO BUILDS. THE GATE IS CLEARED.**
+>
+> ```
+> build 12  cbeb709  no billing dep    FAILED at the assertion   aab 11.07 MB  Publishing  5s
+> build 13  6c04a93  + RevenueCat      finished, green           aab 13.36 MB  Publishing 44s
+> ```
+>
+> **Run 1 was the diagnostic and it earned its keep.** It failed with `MISSING` against both
+> merged manifests *and* the APK — `CHECKED=3`, so all three read paths worked and it failed on
+> the answer rather than on "could not look". That is the *"confirm a new gate can actually fail
+> before trusting it"* rule satisfied with evidence, on a repo that once read an `ENOENT` crash
+> as a check firing.
+>
+> **Run 2 proves the transitive chain §9a-ter could not read.** The permission is not declared by
+> anything we wrote: `package.json` was the only change, and the binary grew **+2.3 MB**. That
+> is `com.android.billingclient:billing` arriving through the AAR manifest merge, which is
+> exactly the hop that `maven.google.com` being 403 at the proxy made unreadable from a session.
+> **The build was the only place that question could be answered, and it answered it.**
+>
+> **INFERENCE, NOT A READING — a failing build appears NOT to publish.** `Publishing` took
+> **5s** on the failed run and **44s** on the green one uploading 13 MB. That is the shape of a
+> skip against a real upload, and it is the first evidence either way for the assumption the
+> `publishing:` block records as *"EXPECTED, NOT READ"*. It is a duration, not a log line.
+> **Do not promote it to a fact without opening that step.**
+
+> **CONFIRMED IN THE CONSOLE 2026-08-28: `Create subscription` IS THERE.** The page that
+> offered only `Upload a new APK` now reads *"Sell content or services on a recurring or prepaid
+> basis"* with a live create button. **Closed testing was enough** — the binary did not need to
+> be on production or open testing, which was an open question when this section was written.
+>
+> **NO `AD_ID`, so `docs/PLAY-STORE.md` §4 STANDS.** The flagged risk did not materialise. The
+> whole RevenueCat chain added **exactly one** permission:
+>
+> ```
+> android.permission.ACCESS_NETWORK_STATE                          webview
+> android.permission.INTERNET                                      webview
+> android.permission.POST_NOTIFICATIONS                            push
+> android.permission.WAKE_LOCK                                     push
+> com.google.android.c2dm.permission.RECEIVE                       push
+> app.camphawk.mobile.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION     AndroidX
+> com.android.vending.BILLING                                      <- the only addition
+> ```
+>
+> **AND AGP EMITS BOTH SPELLINGS AT ONCE — the wildcard was load-bearing.** The two manifests
+> the assertion read are in *different directories*, singular and plural:
+>
+> ```
+> app/build/intermediates/merged_manifest /release/processReleaseMainManifest/AndroidManifest.xml
+> app/build/intermediates/merged_manifests/release/processReleaseManifest    /AndroidManifest.xml
+> ```
+>
+> The step's comment justified `find`ing rather than hardcoding on the grounds that *"AGP moves
+> its intermediates between versions, and a stale path would find nothing and report it as no
+> problem."* The real reason turns out to be stronger: **AGP uses both names simultaneously, in
+> one build.** `*/merged_manifest*/release/*` catches both because of the trailing wildcard.
+> **Anyone tidying that glob to a concrete path would silently check one source instead of two**
+> — and the check would still print `ok` and still pass.
 
 **PRACTICAL CONSEQUENCE: Play is now blocked on NATIVE WORK, not on the console, and Apple is
 the store where more can happen sooner** — its products need only the Paid Applications
@@ -496,6 +919,56 @@ camphawk_autocart   ->  CampHawk Auto-Cart
 
 Renewal type **auto-renewing**; each base plan needs a **free-trial offer of 1 week**, matching
 Apple's introductory offer and the Stripe path's `trialing` status.
+
+> **THE BILLING PERIOD DROPDOWN DEFAULTS TO MONTHLY, AND THE ID DOES NOT CORRECT IT
+> (2026-08-28).** Caught one click from `Activate` on `camphawk_autocart / yearly`, which read:
+>
+> ```
+> Draft · yearly                  <- the permanent base plan ID
+> Type: Monthly, auto-renewing    <- the actual billing period
+> ```
+>
+> **A base plan named `yearly` billing monthly at $59.99 charges twelve times the intended
+> price.** Nothing in the console objects — the ID is a free-text string and Play never compares
+> it to the period. The two `monthly` plans are correct *by accident* because Monthly is the
+> default; **both `yearly` plans are wrong unless someone actively changed the dropdown.**
+>
+> **THE PERIOD IS FIXED AT CREATION.** The remedy is Delete and recreate, not edit.
+>
+> **AND `Delete` EXISTS ONLY WHILE THE PLAN IS A DRAFT.** That is what made this cheap to fix
+> and is the reason to read the Type line *before* pressing Activate rather than after. An
+> activated base plan can be deactivated; the ID and the period are permanent.
+>
+> **Read the summary line, not the ID you typed.** The ID is what you meant; the Type line is
+> what Play will bill.
+
+> **THE OFFER'S `Entitlement` RADIO IS A REAL DECISION, AND THE WRONG ONE IS SILENT
+> (2026-08-28).** `Add offer` asks which users a free trial may be granted to:
+>
+> - `Never had this subscription` — never had **this** product (`camphawk_base`)
+> - **`Never had any subscription`** — never had **any** subscription in this app ← **correct**
+>
+> **Take the second.** Checked against the code rather than the label: `everSubscribed` is
+> `SELECT id FROM subscriptions WHERE user_id = $1 LIMIT 1` in
+> `src/app/api/subscription/status/route.ts` — **any row, any tier.** The app already believes
+> "ever subscribed to anything ⇒ no new trial", and `Pricing.tsx` and `Explore.tsx` both key
+> their trial-vs-resubscribe copy on it.
+>
+> **`Never had this subscription` would diverge in the direction that costs money.** Someone who
+> had Alerts would be granted a second free week by Play on Auto-Cart, while our own screens
+> showed them resubscribe copy offering no trial — the store giving away something the product
+> never advertised. Apple would not grant it either: introductory offers are **group-level** and
+> §8 puts both products in one group. The chosen option is the only one where Stripe, Apple and
+> Play agree.
+
+**VERIFIED IN THE CONSOLE 2026-08-28 — `camphawk_base` is created and correct:** `monthly`
+(Monthly, auto-renewing) and `yearly` (Yearly, auto-renewing), both **Active**, both **United
+States** only.
+
+**Region availability is not "leave the price blank".** Every non-US region errored with a red
+`Set a price` until they were removed through **`Manage country / region availability`** — an
+unpriced region is an *error*, not an opt-out. §9c's "United States only" is an explicit
+availability change.
 
 ### 9c. Availability
 
