@@ -1504,6 +1504,21 @@ is checked when a reviewer fails to use it. Beta review hits the identical wall.
   `POST /v1/users/<id>/verify_password` check that would have caught it in 2026. That is an org
   policy denial, not a missing credential — `CLERK_SECRET_KEY` is present and live.
 
+**AND THE NEXT BUILD WENT CLEAN — `iOS · TestFlight` #12, 2026-08-29, 5m03s, status `finished`
+with no post-processing failure and *App Store Connect distribution* green at 2m43s.** So the
+whole chain is now measured end to end: compile, sign, upload, ASC processing, **and submission to
+TestFlight beta review**, with `@revenuecat/purchases-capacitor` in the tree throughout.
+
+**IT RAN ON `f3f36e3`, WHICH CONTAINS NONE OF THIS — AND THAT IS THE POINT, NOT AN ANOMALY.** The
+fix was four fields in a web form; **nothing in the repository changed to make this build pass**,
+and nothing in the repository could have. A later reader diffing `73b3a3c` against `f3f36e3`
+looking for what fixed it will find an unrelated RC cart-key commit and conclude something
+mysterious happened. **The console is the fix, and the console is invisible from here.**
+
+**SUBMITTED IS NOT APPROVED.** The step that failed was *submit to beta review*, so what this
+build proves is that Apple accepted the submission. External testing still waits on Apple's
+review; internal testers never did.
+
 **AND IT IS THE 2026-08-14 SHAPE FOR THE THIRD TIME.** That rejection was a demo password nobody
 had tried; 08-22 was review notes nobody had read back; this is a beta-review form nobody had
 opened. Each time the artefact was correct and the console was not, and each time the failure
