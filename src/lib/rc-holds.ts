@@ -165,7 +165,18 @@ export async function requestHold(watchId: string, unitId: string): Promise<Hold
  * The window opens slightly BEFORE the release so the bot is already asking when the site
  * frees, rather than starting to think about it a second late.
  */
-export async function dueHolds(leadSeconds = 60, graceMinutes = 20): Promise<HoldRequest[]> {
+/**
+ * How long past its release a hold stays retryable.
+ *
+ * `dueHolds` keeps serving a `requested` hold for this long after its release, because the
+ * cart can fail transiently — a slow RC, a session mid-repair — and the site is usually still
+ * there minutes later. It was written as the literal 20 in three places; one number in three
+ * copies is how `nextHoldRelease` came to disagree with `dueHolds` about whether a hold still
+ * existed (2026-08-30), which cost the session repair its whole retry window.
+ */
+export const HOLD_GRACE_MIN = 20;
+
+export async function dueHolds(leadSeconds = 60, graceMinutes = HOLD_GRACE_MIN): Promise<HoldRequest[]> {
   try {
     return await query<HoldRequest>(
       // ONE LIVE HOLD PER (release_at, unit_id) — see `worker/hold-line.ts`. Two people can
@@ -411,13 +422,38 @@ export async function holdsDueWithin(minutes: number): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
+/**
+ * ── IT WENT BLIND THE INSTANT A RELEASE PASSED (2026-08-30) ────────────────────────────
+ * This required `release_at >= NOW()`, while `dueHolds` keeps serving the same hold for
+ * HOLD_GRACE_MIN afterwards. So for the whole retry window the bot was told there was no
+ * hold at all — and `maybeAutoLogin`, the only thing that types a password and repairs a
+ * dead session, stood down with `no hold is queued` while the runner was still trying to
+ * cart. Watched live on the third hand-off test of the day:
+ *
+ *     18:56:12  release
+ *     18:57:08     auto-login stood down: no hold is queued    ← the hold was `requested`
+ *     18:57:45  ✗ no fresher token — got as far as: no-signin-control
+ *     18:57:56  ⚠ RC SESSION IS DEAD
+ *
+ * THE TELL THAT THIS WAS A BUG AND NOT A CHOICE: `maybeAutoLogin` already carries
+ * `if (mins < -20) … 'past the retry window'`, a guard written for exactly the past-release
+ * case — and it could NEVER FIRE, because `release` was always null by then. Written,
+ * shipped, unreachable. Now it is the thing that bounds the window, which is where the
+ * decision belongs.
+ *
+ * The other consumer is the `test-login` and update gate in `lib/bot-commands.ts`, which
+ * refuses within 6h of a release. A just-passed release now keeps those refused for a few
+ * more minutes, which is correct: a hold inside its grace window is still live work, and an
+ * update would stop the runner mid-retry.
+ */
 export async function nextHoldRelease(): Promise<string | null> {
   const [row] = await query<{ release_at: string }>(
     `SELECT release_at FROM rc_hold_requests
       WHERE status IN ('requested', 'carted', 'claiming')
         AND ${REAL_UNIT}
-        AND release_at >= to_char(NOW() AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
+        AND release_at >= to_char((NOW() - ($1 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')
       ORDER BY release_at ASC LIMIT 1`,
+    [String(HOLD_GRACE_MIN)],
   ).catch(() => []);
   return row?.release_at ?? null;
 }
@@ -836,7 +872,7 @@ export async function markClaimed(id: string): Promise<void> {
  * notifies the user either way.
  */
 export async function reportCartFailure(
-  id: string, error: string, graceMinutes = 20, cartKey?: string | null,
+  id: string, error: string, graceMinutes = HOLD_GRACE_MIN, cartKey?: string | null,
 ): Promise<{ state: 'retry' | 'failed' | 'already-failed'; hold: HoldRequest | null }> {
   const stillOpen = `release_at >= to_char((NOW() - ($3 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles', 'YYYY-MM-DD"T"HH24:MI:SS')`;
   const rows = await mutate<HoldRequest & { status: HoldStatus }>(
