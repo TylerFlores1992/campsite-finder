@@ -31,8 +31,9 @@ const TOKEN_LIFE_MIN = 60;
 
 const LEAD = num(keepwarm, 'AUTOLOGIN_LEAD_MIN');
 const CART_HOLD = Number(keepwarm.match(/const CART_HOLD_MIN = (\d+);/)![1]);
+const MARGIN = num(keepwarm, 'AUTOLOGIN_MARGIN_MIN');
 // Derived in the source, so read the expression rather than a literal.
-const MIN_TOKEN = LEAD + CART_HOLD + 5;
+const MIN_TOKEN = LEAD + CART_HOLD + MARGIN;
 
 test('the bot mirrors the real cart-hold length', () => {
   // rc-keepwarm.mjs is plain .mjs and cannot import a .ts constant, so it carries a copy.
@@ -68,12 +69,106 @@ test('"already covered" means covered through the claim, not through the cart', 
     MIN_TOKEN >= LEAD + CART_HOLD,
     `a token judged "covering" a hold at T-${LEAD} must outlive T+${CART_HOLD}`,
   );
-  // It is DERIVED in the source. A literal here would pass while the source drifted.
+  // It is DERIVED in the source. A literal here would pass while the source drifted — and
+  // the `+ 5` it used to end in was a SECOND, disagreeing copy of the margin once the live
+  // calculation's own margin moved to 15.
   assert.match(
     keepwarm,
-    /RC_AUTOLOGIN_MIN_TOKEN_MIN \|\| AUTOLOGIN_LEAD_MIN \+ CART_HOLD_MIN \+ 5/,
-    'the threshold must be derived from the lead, not chosen',
+    /RC_AUTOLOGIN_MIN_TOKEN_MIN \|\| AUTOLOGIN_LEAD_MIN \+ CART_HOLD_MIN \+ AUTOLOGIN_MARGIN_MIN/,
+    'the threshold must be derived from the lead and the live margin, not chosen',
   );
+});
+
+test('the headroom closes the stand-down band rather than narrowing it', () => {
+  /**
+   * THE 2026-08-30 LOSS, as the inequality that would have prevented it.
+   *
+   * A token lives ~60 minutes and "covers" a hold when it outlives release + CART_HOLD +
+   * MARGIN. At T−LEAD the token exists, so it was minted somewhere in (T−LEAD−60, T−LEAD].
+   * The band in which the bot STANDS DOWN instead of signing in is therefore
+   *
+   *     (60 − CART_HOLD − MARGIN) − LEAD    minutes wide,
+   *
+   * and inside it the real slack runs from zero upward. At MARGIN = 5 that band was ten
+   * minutes: about one release morning in six, with slack uniform on 0–10 minutes. One of
+   * them had TWO SECONDS, and the deferred sign-in ran into the release.
+   *
+   * A band of zero or less is the only version that cannot be lost by seconds. This asserts
+   * the property, not the number 15, so raising LEAD or CART_HOLD later fails here rather
+   * than silently reopening the band.
+   */
+  const bandMin = (TOKEN_LIFE_MIN - CART_HOLD - MARGIN) - LEAD;
+  assert.ok(
+    bandMin <= 0,
+    `the stand-down band is ${bandMin}m wide — a token minted in it is called "covering" ` +
+    `with as little as zero slack, which is what lost a campsite on 2026-08-30. ` +
+    `MARGIN must be at least ${TOKEN_LIFE_MIN - CART_HOLD - LEAD}.`,
+  );
+
+  // And not so large that a token freshly minted AT T−LEAD fails its own check — that would
+  // make every sign-in immediately insufficient and spend both attempts every morning.
+  assert.ok(
+    TOKEN_LIFE_MIN >= LEAD + CART_HOLD + MARGIN,
+    `a token minted at T-${LEAD} must satisfy the requirement it was minted to satisfy`,
+  );
+});
+
+test('the coverage check reads SECONDS, never rounded minutes', () => {
+  /**
+   * THE MECHANISM OF THE 2026-08-30 LOSS. `minutesUntil` rounds, so the requirement stepped
+   * in whole minutes while the token decayed continuously; a deficit smaller than the step
+   * sat inside the rounding error and read as covered for twenty-one minutes.
+   *
+   * Structural, because the arithmetic is guarded in session-coverage.test.mts and the thing
+   * that broke was the WIRING — the pure function was correct and was handed the wrong unit.
+   */
+  const call = keepwarm.match(/const needSec = tokenSecondsNeeded\(\s*(\w+)\s*,/);
+  assert.ok(call, 'the auto-login must compute its requirement with tokenSecondsNeeded');
+  assert.equal(call![1], 'secs',
+    'the requirement must be computed from secondsUntil(), not from the rounded `mins`');
+  assert.match(
+    keepwarm,
+    /const secs = secondsUntil\(release\);/,
+    'and `secs` must come from the seconds primitive, not from `mins * 60`',
+  );
+  // minutesUntil must be DERIVED from the seconds primitive, so there is one clock reading
+  // and not two that can disagree across the second they are taken in.
+  assert.match(
+    keepwarm,
+    /function minutesUntil\(releaseAt\) \{\s*const s = secondsUntil\(releaseAt\);/,
+    'minutesUntil must derive from secondsUntil',
+  );
+});
+
+test('an unhandled throw is distinguishable from a guard, and frees the profile', () => {
+  /**
+   * On 2026-08-30 the keep-warm exited 1 eighteen seconds before a release and NEITHER bail
+   * arm could have fired (free RAM 4768 MB against a 2000 floor; a 526s stall against a 720s
+   * wedge threshold). Node exits 1 on an unhandled throw too, and nothing registered a
+   * handler — so "a guard fired" and "it crashed" were one exit code with no way to separate
+   * them.
+   *
+   * The lock release is the half a crash never did: an unhandled throw left the profile
+   * locked for STALE_MS with nothing alive to renew it, which is how a repair keeps the hold
+   * runner off the profile past 08:00.
+   */
+  for (const ev of ['uncaughtException', 'unhandledRejection']) {
+    assert.ok(
+      keepwarm.includes(`process.on('${ev}'`),
+      `${ev} must be handled, or a crash is indistinguishable from a bail`,
+    );
+  }
+  const body = keepwarm.slice(
+    keepwarm.indexOf('function diedUnhandled('),
+    keepwarm.indexOf("process.on('uncaughtException'"),
+  );
+  assert.ok(body.length > 0, 'diedUnhandled must be defined above its registration');
+  assert.match(body, /releaseProfileLockIfMine\(PROFILE_DIR, LOCK_OWNER\)/,
+    'a crash must release the profile lock, or the hold runner is locked out for STALE_MS');
+  assert.match(body, /writeFileSync\(ABNORMAL_EXIT_MARKER/,
+    'a crash must leave the abnormal-exit marker, or the rehearsal tests our own restart');
+  assert.match(body, /process\.exit\(1\)/,
+    'registering a handler stops Node exiting on its own — the exit must be explicit');
 });
 
 test('the alarm fallback stays just inside the login window', () => {

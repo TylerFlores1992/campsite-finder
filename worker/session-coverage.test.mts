@@ -21,7 +21,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { requiredTokenSeconds, sessionAcceptable } from '../scripts/auto-cart-bot/session-coverage.mjs';
+import { tokenSecondsNeeded, sessionAcceptable } from '../scripts/auto-cart-bot/session-coverage.mjs';
 
 const BOT = join(import.meta.dirname, '..', 'scripts', 'auto-cart-bot');
 const read = (f: string) => readFileSync(join(BOT, f), 'utf8');
@@ -60,19 +60,38 @@ test('a dead session is never acceptable, whatever the coverage says', () => {
 
 test('the token requirement is measured from where we stand, not from the lead', () => {
   // At T−30 this reproduces the old constant exactly (30 + 15 + 5 = 50)...
-  assert.equal(requiredTokenSeconds(30, 15, 5), 50 * 60);
+  assert.equal(tokenSecondsNeeded(30 * 60, 15, 5), 50 * 60);
   // ...and at T−5 it asks for 25 minutes rather than the same 50. Demanding fifty minutes of
   // token to cover twenty minutes of work is how a good session reads as insufficient and
   // buys a sign-in the ration exists to protect.
-  assert.equal(requiredTokenSeconds(5, 15, 5), 25 * 60);
+  assert.equal(tokenSecondsNeeded(5 * 60, 15, 5), 25 * 60);
+});
+
+test('the requirement is exact in seconds, not a sixty-second staircase', () => {
+  // THE 2026-08-30 BUG. `minutesUntil` rounded, so the requirement stepped in whole minutes
+  // while the token decayed continuously — and a deficit smaller than the step read as
+  // covered. Reconstructed from the box's own log: at 07:29:44 the release was 1816s away
+  // and the token had at most 3014s left, against a true requirement of 3016s. It was short,
+  // and rounding 1816 up to 30 minutes said otherwise.
+  assert.equal(tokenSecondsNeeded(1816, 15, 5), 3016);
+  // Rounded minutes would have asked for exactly 3000 and called 3014 "covering".
+  assert.ok(tokenSecondsNeeded(1816, 15, 5) > 3014,
+    'a token 2s short must not read as covering');
+
+  // And the staircase must not reappear: one second closer to the release must move the
+  // requirement by one second, not by nothing and then by sixty.
+  for (const s of [1801, 1816, 1830, 1859]) {
+    assert.equal(tokenSecondsNeeded(s + 1, 15, 5) - tokenSecondsNeeded(s, 15, 5), 1,
+      `the requirement must track the clock second by second (at ${s}s)`);
+  }
 });
 
 test('past the release the requirement never shrinks below cart hold plus margin', () => {
   // dueHolds keeps handing a hold back for 20 minutes after its release. A negative
-  // `minsUntilRelease` must not subtract from what the CLAIM still needs — the bot has to be
+  // `secsUntilRelease` must not subtract from what the CLAIM still needs — the bot has to be
   // able to run remove/cartentry when the user taps.
-  assert.equal(requiredTokenSeconds(-10, 15, 5), 20 * 60);
-  assert.equal(requiredTokenSeconds(0, 15, 5), 20 * 60);
+  assert.equal(tokenSecondsNeeded(-10 * 60, 15, 5), 20 * 60);
+  assert.equal(tokenSecondsNeeded(0, 15, 5), 20 * 60);
 });
 
 // ─── the wiring ───────────────────────────────────────────────────────────────────────
@@ -176,13 +195,56 @@ test('the hold runner stands off the profile after repeated dead-session passes'
     'the stand-off must be checked before the profile is requested');
 });
 
-test('the stand-off is shorter than the window a hold stays retryable', () => {
-  // dueHolds hands a hold back for 20 minutes past its release. Standing off longer than that
-  // would trade a repairable session for a guaranteed miss.
+test('the stand-off outlasts the repair it waits for, and stays inside the grace window', () => {
+  /**
+   * THIS GUARD USED TO PIN THE BUG, and that is the part worth keeping.
+   *
+   * It read `ms >= 60_000` ("shorter than a keep-warm cycle buys it no uninterrupted time")
+   * and `ms <= 5 * 60_000` ("must stay well inside the 20-minute cart grace window"). The
+   * upper bound is EXACTLY `RENEW_FLOOR_MS` — so it required the stand-off to be no longer
+   * than the floor it has to outlast, and the fix could not be made without the guard going
+   * red. Same shape as `held-offer-scope.test.mts` requiring the alert storm.
+   *
+   * Both bounds came from the wrong model. The 60-second expiry poll is not what repairs a
+   * dead session; `planRenewal` is, and it will not attempt more often than RENEW_FLOOR_MS
+   * — five minutes. So "three uninterrupted keep-warm cycles" bought nothing at all: the
+   * stand-off could expire before the repair was allowed to start.
+   *
+   * WATCHED LIVE 2026-08-30. A test hold made the runner demand the Chromium profile; the
+   * keep-warm closed a browser holding a token the SPA had been silently re-minting (so it
+   * lived in page memory, not localStorage) and the session died. Two strikes, a three-minute
+   * stand-off, and at the end of it: `RC session is dead — needs a human sign-in`. Deleting
+   * the hold — removing the pressure entirely — repaired it in about FIVE minutes with no
+   * password typed. The floor, to the minute.
+   *
+   * The upper bound is real and stays: `dueHolds` hands a hold back for 20 minutes past its
+   * release, and standing off past that trades a repairable session for a guaranteed miss.
+   */
   const src = read('rc-hold-runner.mjs');
-  const m = src.match(/RC_DEAD_SESSION_BACKOFF_MS \|\| ([\d_]+)/);
-  assert.ok(m, 'the back-off must be a named constant');
-  const ms = Number(m![1].replace(/_/g, ''));
-  assert.ok(ms >= 60_000, 'shorter than a keep-warm cycle buys it no uninterrupted time');
-  assert.ok(ms <= 5 * 60_000, 'must stay well inside the 20-minute cart grace window');
+  const sched = read('renewal-schedule.mjs');
+
+  const floorM = sched.match(/export const RENEW_FLOOR_MS = (\d+) \* 60_000;/);
+  assert.ok(floorM, 'could not read RENEW_FLOOR_MS');
+  const floorMs = Number(floorM![1]) * 60_000;
+
+  // DERIVED IN THE SOURCE, never mirrored. A literal large enough today drifts silently the
+  // moment the floor moves — which is how this constant came to be too short.
+  const m = src.match(/RC_DEAD_SESSION_BACKOFF_MS \|\| RENEW_FLOOR_MS \+ ([0-9_]+)/);
+  assert.ok(m, 'the stand-off must be derived from RENEW_FLOOR_MS, not chosen');
+  const ms = floorMs + Number(m![1].replace(/_/g, ''));
+
+  assert.ok(
+    ms > floorMs,
+    `a ${ms / 60_000}m stand-off cannot wait out a repair gated at ${floorMs / 60_000}m`,
+  );
+  // Room for the renewal to COMPLETE, not merely to start: the authorize round trip has been
+  // observed at 45-60s.
+  assert.ok(ms - floorMs >= 45_000, 'leave the renewal room to finish, not merely to begin');
+
+  const graceM = readFileSync('src/lib/rc-holds.ts', 'utf8').match(/graceMinutes\s*=\s*(\d+)/);
+  const graceMs = (graceM ? Number(graceM[1]) : 20) * 60_000;
+  assert.ok(
+    ms < graceMs / 2,
+    `a ${ms / 60_000}m stand-off eats too much of the ${graceMs / 60_000}m grace window`,
+  );
 });
