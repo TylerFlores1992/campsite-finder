@@ -1239,6 +1239,43 @@ async function maybeAutoLogin(ctx, page) {
   const needSec = tokenSecondsNeeded(secs, CART_HOLD_MIN, AUTOLOGIN_MARGIN_MIN);
   const covers = (left) => left != null && left > needSec;
 
+  /**
+   * ── A SIGN-IN IS DESTRUCTIVE, SO NEAR THE RELEASE IT NEEDS A HIGHER BAR (2026-08-30) ──
+   *
+   * `attemptLogin` DROPS the stored token before hunting for a sign-in form — it has to,
+   * because RC's SPA renders signed-in while a token is present and then there is no form to
+   * find. So the repair destroys the thing it is repairing, and a repair that fails leaves
+   * the session WORSE than not trying. Measured, on the third hand-off test of the day:
+   *
+   *     18:52:39  ♻ kept warm — token exp in 30m
+   *     18:54:38  ⏰ hold releases in 2m and the session will not cover it — signing in
+   *     18:54:43      → signed in, but the token will not cover the hold — dropping it
+   *     18:56:02    the previous sign-in attempt was killed before it reached a verdict
+   *     18:56:31  RC loaded and STAYING OPEN — token source: none
+   *
+   * That 30-minute token was ADEQUATE: it outlived the release plus the whole cart hold, so
+   * the cart and the release-on-claim were both covered. It was only short of the safety
+   * MARGIN. We threw it away two minutes before the release, the sign-in died mid-flight,
+   * and the hold had nothing left to cart with.
+   *
+   * THE MARGIN IS NOT WRONG AND IS NOT REVERTED — it is what stops a token from arriving at
+   * the claim with nothing to spare, and far from the release a refresh is cheap and, if it
+   * fails, RECOVERABLE. What was wrong is spending it as a gamble at a moment with no runway
+   * left to lose. So the margin governs while there is time to recover, and inside that
+   * window only a genuinely INADEQUATE token justifies the destruction.
+   *
+   * RECOVERABLE IS DERIVED, NOT CHOSEN. A failed attempt cannot be retried for
+   * `AUTOLOGIN_RETRY_GAP_MS` (8m), and the retry itself needs time to run — the cheap
+   * cookie-answered sign-in is ~11s but the password variant has been measured at minutes.
+   * So the runway needed to survive one failure is the gap plus a couple of minutes.
+   *
+   * Same shape as the T−3h warm-up: move the expensive, failure-prone act away from the
+   * moment that cannot absorb a failure.
+   */
+  const adequateSec = tokenSecondsNeeded(secs, CART_HOLD_MIN, 0);
+  const recoveryMs = AUTOLOGIN_RETRY_GAP_MS + 2 * 60_000;
+  const recoverable = secs * 1000 > recoveryMs;
+
   const { token } = await readLiveToken(page).catch(() => ({ token: null }));
   const left = tokenSecondsLeft(token);
   if (covers(left)) {
@@ -1249,6 +1286,19 @@ async function maybeAutoLogin(ctx, page) {
     return autoLoginSkip(
       `the token covers this hold (${Math.round(left / 60)}m left, needs ${Math.round(needSec / 60)}m, `
       + `slack ${Math.round((left - needSec) / 60)}m)`);
+  }
+
+  /**
+   * UNDER THE MARGIN BUT STILL ADEQUATE, AND TOO LATE TO GAMBLE — see above. Keeping a token
+   * that covers the cart and its whole hold beats destroying it for a fresher one we might
+   * not get. The failure direction is "we did nothing", which is the status quo; the other
+   * direction lost a cart.
+   */
+  if (!recoverable && left != null && left > adequateSec) {
+    return autoLoginSkip(
+      `the token is under the margin (${Math.round(left / 60)}m left, prefer `
+      + `${Math.round(needSec / 60)}m) but still covers the cart and its ${CART_HOLD_MIN}m hold, `
+      + `and the release is too close to risk a sign-in — signing in DROPS this token`);
   }
 
   if (autoLogin.spent >= AUTOLOGIN_MAX_ATTEMPTS) {
