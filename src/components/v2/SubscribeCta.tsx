@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSyncExternalStore } from "react";
-import { SubscribeLink, SubscribeSentence } from "./nativeSubscribe";
+import { StorePlansLink, SubscribeLink, SubscribeSentence } from "./nativeSubscribe";
 import { useIsNativeApp } from "@/lib/native/context";
 import { buttonClasses } from "@/components/ui/Button";
 import { useSubscription } from "./useSubscription";
@@ -109,9 +109,14 @@ export default function SubscribeCta({
         </div>
       );
     }
+    // EXACTLY ONE OF THE TWO LINKS RENDERS, and neither is a price. `SubscribeLink` is
+    // the US-storefront steer out (iOS today); `StorePlansLink` is the route to the
+    // in-app paywall (Android today). Before 2026-08-30 only the first existed, so on
+    // Android — where steering is deliberately off — this paragraph was a statement with
+    // no way to act on it, in front of a purchase flow that was switched on and working.
     return (
       <p className={`text-ch-fine leading-normal text-ch-ink-2 ${className}`}>
-        <SubscribeSentence /> <SubscribeLink />
+        <SubscribeSentence /> <SubscribeLink /> <StorePlansLink />
       </p>
     );
   }
