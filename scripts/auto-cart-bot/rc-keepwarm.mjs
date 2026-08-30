@@ -79,7 +79,7 @@ import { createAllocTrail, describeAllocTrail } from './rc-alloc-trail.mjs';
 import { takeStorageCensus, takeIdbCensus, describeCensus } from './storage-census.mjs';
 import {
   installTokenCapture, readLiveToken, readTokenAnyOrigin, primeToken, renewSession, tokenSecondsLeft,
-  dropStoredToken,
+  dropStoredToken, persistLiveToken,
   readAuthFacts, oktaSessionAlive, authCookieSummary,
   // Bounded page.evaluate — the census runs inside a page we already suspect of hanging.
   evaluateWithin,
@@ -2712,7 +2712,26 @@ async function warmResident() {
         // wait out a 60s lock timeout at 08:00:00 would lose exactly the thing we are
         // keeping the session alive FOR.
         if (profileRequested(PROFILE_DIR)) {
-          log('→ hold runner wants the profile — closing and standing down');
+          /**
+           * WRITE THE TOKEN DOWN BEFORE LETTING GO OF IT — see `persistLiveToken`.
+           *
+           * The capture hook's copy lives in PAGE MEMORY and dies with this browser, so a
+           * handover was destroying a perfectly good session and manufacturing the dead
+           * session the runner then reported. Measured twice on 2026-08-30:
+           *
+           *     18:08:52  → hold runner wants the profile — closing and standing down
+           *     18:09:36  RC loaded and STAYING OPEN — token source: none
+           *
+           * AWAITED, and this is the whole point: the close is what destroys it, so a
+           * fire-and-forget write races the thing it exists to survive. It is bounded by
+           * `evaluateWithin` and every failure path returns 'no-token', so a browser that
+           * will not answer costs one timeout and never blocks the yield indefinitely —
+           * the runner is asking because a site releases in seconds.
+           */
+          const kept = await persistLiveToken(page);
+          log('→ hold runner wants the profile — closing and standing down'
+            + (kept === 'written' ? ' (token written to storage so it survives the handover)'
+              : kept === 'no-token' ? ' (no live token to write down)' : ''));
           break;
         }
         // A VISIBLE WINDOW GETS CLOSED. It is headful by design (RC fingerprints headless

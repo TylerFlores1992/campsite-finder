@@ -521,6 +521,58 @@ export async function dropStoredToken(page) {
      { fallback: { snapshot: {}, cleared: [] } }).catch(() => ({ snapshot: {}, cleared: [] }));
 }
 
+/**
+ * WRITE THE LIVE TOKEN INTO STORAGE, so a handover cannot destroy it.
+ *
+ * ── THE DEFECT (measured 2026-08-30, twice, and it cost two hand-off tests) ────────────
+ * One Chromium profile, two processes. The keep-warm holds it resident; the hold runner
+ * preempts it whenever it has work. From the box's own log:
+ *
+ *     18:08:26  ♻ kept warm — token exp in 46m; renewed=no; src=live
+ *     18:08:39  auto-login stood down: the token covers this hold (46m left, needs 32m, slack 14m)
+ *     18:08:52  → hold runner wants the profile — closing and standing down
+ *     18:09:36  RC loaded and STAYING OPEN — token source: none        ← gone
+ *
+ * A perfectly good 46-minute token, correctly judged sufficient, destroyed by the handover
+ * it triggered. The runner then reports a dead session, strikes twice, stands off — and the
+ * keep-warm has nothing to repair because from its side nothing was wrong until the close.
+ * A QUEUED HOLD DESTROYS ITS OWN SESSION. That is self-sustaining and it is why two tests
+ * and (very plausibly) one real 08:00 cart were lost.
+ *
+ * `readLiveToken` prefers `window.__camphawkRcToken` — the capture hook's copy, taken off
+ * RC's own outbound Authorization header. That lives in PAGE MEMORY and dies with the page.
+ * `localStorage` survives, and is what the next process reads. So the fix is to write down
+ * what we already hold, before we let go of it.
+ *
+ * THE SHAPE IS NOT GUESSED. `readLiveToken` returns `localStorage.getItem('ssoAccessToken')`
+ * DIRECTLY as the token — no parsing, no envelope — so these keys hold a bare JWT and
+ * writing one back is exactly what a reader expects to find.
+ *
+ * IT ONLY EVER ADDS. A token already in storage is left alone: RC's own SDK owns those keys,
+ * and overwriting a value it wrote with one we merely observed is how a working session gets
+ * corrupted by its own safety net. And an absent or unreadable token writes NOTHING rather
+ * than an empty string — `readLiveToken` treats `''` as falsy, but a caller reading the raw
+ * key would see a token-shaped nothing.
+ *
+ * @returns {Promise<'written'|'already-stored'|'no-token'>} what it did, for the log line.
+ */
+export async function persistLiveToken(page) {
+  return evaluateWithin(page, ({ rcKeys }) => {
+    try {
+      for (const k of rcKeys) {
+        const existing = localStorage.getItem(k);
+        if (existing) return 'already-stored';
+      }
+      const live = window.__camphawkRcToken;
+      if (typeof live !== 'string' || !live) return 'no-token';
+      localStorage.setItem(rcKeys[0], live);
+      return 'written';
+    } catch {
+      return 'no-token';
+    }
+  }, { rcKeys: RC_TOKEN_KEYS }, { fallback: 'no-token' }).catch(() => 'no-token');
+}
+
 /** Put back exactly what `dropStoredToken` took. */
 export async function restoreStoredToken(page, snapshot) {
   await evaluateWithin(page, (s) => {

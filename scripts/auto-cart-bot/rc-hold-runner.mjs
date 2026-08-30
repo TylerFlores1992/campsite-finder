@@ -38,7 +38,7 @@ import { exitWhenDrained } from './exit-clean.mjs';
 import { makeControlChannel } from './control-channel.mjs';
 // Pure module, no imports and no side effects — see renewal-schedule.mjs. Imported for the
 // one constant that bounds this file's stand-off from below.
-import { RENEW_FLOOR_MS } from './renewal-schedule.mjs';
+import { RENEW_MIN_GAP_MS } from './renewal-schedule.mjs';
 
 // The token lives in scripts/auto-cart-bot/.env alongside the rec.gov bot's. Without
 // this the runner answered `feed 401` — which reads exactly like a wrong token, not a
@@ -331,27 +331,42 @@ const LOCK_WAIT_MS = Number(process.env.RC_PROFILE_LOCK_WAIT_MS || 60_000);
  * it. Standing off longer than the grace window would trade a fixable session for a
  * guaranteed miss.
  *
- * ── AND IT MUST BE LONGER THAN THE REPAIR IT WAITS FOR (2026-08-30) ────────────────────
+ * ── AND IT MUST OUTLAST A *FAILED* RENEWAL'S RETRY (2026-08-30) ───────────────────────
  * It was 180_000, on the reasoning that three minutes "buys three uninterrupted keep-warm
- * cycles". The 60-second expiry poll is not what repairs a dead session — `planRenewal` is,
- * and it will not attempt more often than `RENEW_FLOOR_MS`, which is FIVE minutes. So the
- * stand-off could expire, the runner could take the profile again, and the renewal never got
- * its turn: exactly the spiral this constant exists to break, surviving the cure.
+ * cycles". The 60-second expiry poll is not what repairs a dead session — `planRenewal` is.
  *
- * Watched live on 2026-08-30. A test hold made the runner demand the profile, the keep-warm
- * closed the browser holding a token the SPA had been silently re-minting (`src=live`, so it
- * lived in page memory and not localStorage), and the session went dead. Two strikes, a
- * three-minute stand-off, and at the end of it: `RC session is dead — needs a human sign-in`.
- * Deleting the hold — i.e. removing the pressure entirely — repaired it in about FIVE
- * minutes with no password typed, which is the floor, to the minute.
+ * It was then briefly `RENEW_FLOOR_MS + 60s`, on the reasoning that the floor (5m) is how
+ * often a renewal may attempt. THAT WAS SIZED FOR A RENEWAL THAT SUCCEEDS, and the one case
+ * this constant exists for is the one where it does not. Measured the same afternoon:
  *
- * So the floor plus one renewal's own duration (the authorize round trip runs ~45–60s), and
- * still comfortably inside the twenty-minute grace. Derived from the constant rather than
- * mirrored, because two numbers in two files with nothing holding them together is how this
- * one came to be too short in the first place.
+ *     18:11:51  ✗ no fresher token (none → none), got as far as: no-signin-control
+ *     18:12:15     renewal stood down: only 0m since the last attempt (floor is 5m)
+ *     18:17:20     renewal stood down: nothing has changed since the attempt 5m ago
+ *     18:22:22  renewing the session — the app holds no usable token (src=none)
+ *     18:23:09  ✓ renewed by authorize: none → 3579s
+ *
+ * A failed attempt does not retry at the floor. It retries at `RENEW_MIN_GAP_MS` — TEN
+ * minutes — because nothing has changed since it last tried. So a six-minute stand-off
+ * expires at 18:15:57, the runner retakes the profile, and the 18:22 retry that would have
+ * fixed it never gets a browser. The repair took eleven minutes and the stand-off covered
+ * six of them.
+ *
+ * So: the gap, plus one renewal's own duration (the authorize round trip runs ~45–60s).
+ * Derived from the constant rather than mirrored, because two numbers in two files with
+ * nothing holding them together is how this came to be too short twice.
+ *
+ * THE UPPER BOUND HAD TO MOVE WITH IT, AND THAT IS A REAL TRADE, NOT A FORMALITY. The old
+ * ceiling was half the twenty-minute grace, which eleven minutes breaks. What the ceiling is
+ * actually protecting is the ability to still CART once the stand-off ends — and a cart is
+ * seconds (T+1.6s and T+2s are the measured ones), reached on a 15s poll. So the honest
+ * bound is "leave several polls plus a cart", not "half". What is genuinely given up is
+ * blind time: eleven minutes in which a hold that might now be cartable is not attempted.
+ * That is defensible only because a stand-off needs TWO consecutive dead-session passes to
+ * arm, which is a strong signal rather than a blip — and because with `persistLiveToken`
+ * writing the token down before every handover, arming it at all should now be rare.
  */
 const DEAD_SESSION_BACKOFF_MS = Number(
-  process.env.RC_DEAD_SESSION_BACKOFF_MS || RENEW_FLOOR_MS + 60_000,
+  process.env.RC_DEAD_SESSION_BACKOFF_MS || RENEW_MIN_GAP_MS + 60_000,
 );
 const DEAD_SESSION_STRIKES = Number(process.env.RC_DEAD_SESSION_STRIKES || 2);
 let deadSessionStrikes = 0;
