@@ -3201,7 +3201,10 @@ has to mean alive through the **release**, not through the cart: at 20 the bot s
 with 21 minutes left, calls the hold covered, skips its ONE login, carts at T−0 with ~6
 minutes of token and then **fails the claim** — the user taps "I'm ready" and nobody
 releases the unit. Reachable by signing in by hand an hour before a release, which is
-exactly what the pre-flight asks for. It is `LEAD + CART_HOLD_MIN + 5` now.
+exactly what the pre-flight asks for. It is `LEAD + CART_HOLD_MIN + AUTOLOGIN_MARGIN_MIN`
+now — the margin was a literal 5 until 2026-08-30 and is 15. **And the constant is read by
+no code path**: it is the written form of the inequality `tokenSecondsNeeded` obeys, kept
+derived so it cannot become a second, disagreeing number beside the real one.
 
 `AUTOCART_ALARM_AFTER_MIN` moved 12 → **25** with it. That is the fallback branch (the
 keep-warm reporting nothing at all); a login that fails still rings at once on the

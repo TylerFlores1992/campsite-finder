@@ -3045,6 +3045,133 @@ out"** while the cart control asked them to **log in** — RC contradicting itse
   and "came from the marker" tests staged the IDENTICAL state and both went green measuring
   nothing. Caught by reading the fixture rather than the assertion.
 
+### A CAMPSITE WAS LOST TO A TWO-SECOND MARGIN, AND THE FIXES FOR IT CAUSED TWO MORE (2026-08-30)
+Four defects in one day, all on the path between a queued hold and a cart, **and two were
+created by the fixes shipped earlier the same day.** Merged as #230, #234, #235; box `65f5583`.
+
+**1. THE COVERAGE CHECK ROUNDED, AND A TWO-SECOND DEFICIT READ AS COVERED.** `minutesUntil`
+returned `Math.round(...)`, so the requirement was a SIXTY-SECOND STAIRCASE against a token
+that decays continuously. From the box's own two lines:
+
+    07:29:44  "the token covers this hold (50m left, needs 50m)"   <- left in (3000, 3030]s
+    07:51:58  "the session will not cover it — signing in"          <- left <= 1680s
+
+which brackets the expiry at 08:19:44–08:19:58 against a requirement of 08:20:00. **Two to
+sixteen seconds short**, called covered twenty-two times across twenty-one minutes — the whole
+safe window — then correctly refused at T−8, when signing in is the worst move available. The
+Okta navigation ran into the release and the site went to somebody else. `tokenSecondsNeeded`
+takes SECONDS and was RENAMED for it: passing minutes to a seconds parameter under-requires by
+sixty and stands the login down silently.
+
+**2. A CRASH AND A BAIL WERE THE SAME EXIT CODE.** `process.exit(1)` appears once, in the
+watchdog's `bail()` — and Node exits 1 on an unhandled throw with **no handler registered
+anywhere in that process**. Neither arm could have fired (RUNAWAY needs free RAM under 2000 MB
+and the box had **4,768**; WEDGED needs 720s against 526s). Handlers now name it and **release
+the profile lock**, which a crash never did: an unhandled throw held it for `STALE_MS` with
+nothing alive to renew, so a crash at 07:53 keeps the runner off the profile past 08:00.
+
+**3. A QUEUED HOLD DESTROYED ITS OWN SESSION.** Measured twice:
+
+    18:08:26  kept warm — token exp in 46m
+    18:08:52  -> hold runner wants the profile — closing and standing down
+    18:09:36  RC loaded and STAYING OPEN — token source: none
+
+`readLiveToken` prefers `window.__camphawkRcToken`, the capture hook's copy off RC's own
+outbound header, which lives in PAGE MEMORY and dies with the browser. `persistLiveToken`
+writes it to `localStorage`, **awaited, immediately before the yield**, because the close is
+what destroys it. The shape is not guessed: `readLiveToken` returns
+`localStorage.getItem('ssoAccessToken')` DIRECTLY as the token, so the key holds a bare JWT. It
+only ever ADDS; a token already stored is left alone, because RC's own SDK owns those keys.
+
+**4. THE AUTO-LOGIN IS A DESTRUCTIVE REPAIR, AND THE HEADROOM MADE IT FIRE ON A HEALTHY
+SESSION.** Self-inflicted by fix 1's companion change (margin 5 → 15):
+
+    18:52:39  kept warm — token exp in 30m
+    18:54:38  hold releases in 2m and the session will not cover it — signing in
+    18:54:43      -> signed in, but the token will not cover the hold — dropping it
+    18:56:31  RC loaded and STAYING OPEN — token source: none
+
+`attemptLogin` **drops the stored token** before hunting for a sign-in form — it must, because
+RC's SPA renders signed-in while a token is present. So the repair destroys what it repairs.
+That 30-minute token was **adequate** — it outlived the release plus the whole cart hold — and
+short only of the MARGIN. **The reasoning error was mine and it is specific: an extra sign-in
+was argued to cost ~400 MB and eleven seconds. It also costs the token you already hold.** The
+margin is NOT reverted; inside `AUTOLOGIN_RETRY_GAP_MS + 2m` of the release, only a genuinely
+INADEQUATE token justifies the destruction.
+
+**AND `nextHoldRelease` WENT BLIND THE INSTANT A RELEASE PASSED.** It required
+`release_at >= NOW()` while `dueHolds` keeps serving the same hold for `HOLD_GRACE_MIN`. So for
+the whole 20-minute retry window the bot was told there was no hold, and `maybeAutoLogin` — the
+only thing that types a password — stood down with `no hold is queued` while the runner was
+still trying to cart. **THE TELL:** `maybeAutoLogin` already carried
+`if (mins < -20) … 'past the retry window'`, written for exactly that case and **unreachable**,
+because `release` was always null. The grace was the literal 20 in three places; it is
+`HOLD_GRACE_MIN` now.
+
+- **THE STAND-OFF WAS SHORTER THAN THE REPAIR IT WAITS FOR** — corrected in the 2026-08-15
+  death-spiral entry. Sized on the renewal FLOOR, which assumes success; a failed renewal
+  retries at the GAP. Measured: failed 18:11:51, stood down 18:17:20, retried **18:22:22**.
+- **THE EXISTING GUARD PINNED THE BUG.** `session-coverage.test.mts` asserted
+  `ms <= 5 * 60_000` — exactly `RENEW_FLOOR_MS` — requiring the stand-off to be no longer than
+  the cadence it must outlast, so the fix could not be made without it going red.
+- **THE SESSION REPAIRS ITSELF ONCE THE HOLD IS REMOVED — three times, ~5-10 min**, unattended,
+  no password. That is the evidence the churn is the cause, not RC.
+- **CI FAILED ONCE AND IT WAS THE LANES RULE.** The side lane merged #236 at 19:17:02, starting
+  a master `npm test` on the production DB, overlapping this PR's 19:19:35–19:24:09 run. The
+  identical merged tree passes **1482/1482** locally, CI's exact count. **`ListAgents` shows
+  only sessions on THIS machine** — an empty list is not exclusive use of the database.
+- **`git checkout` DESTROYED UNCOMMITTED WORK THREE TIMES IN ONE DAY** — twice reverting a
+  mutation (`git checkout -- <file>` goes to HEAD, i.e. the fix's absence) and once moving
+  content between branches (`git checkout <branch> -- <file>` overwrites the working copy).
+  **Commit before mutating; revert a mutation by EDIT.**
+
+#### `keySource` ANSWERED IT AND THE LEADING THEORY IS DEAD (2026-08-30)
+The instrument built above did its job on the first hand-off that reached it, and it **refutes
+the explanation this entry was written around.** Android, build 1.0 (25), unit 43832:
+
+```
+injected       {"job":true,"href":".../Customers/ShoppingCart"}
+banner         "✓ Added to cart — check the dates and check out…"
+token          {"captured":true,"length":939,"decodable":true,"expiresInSec":3534}
+cart-verified  {"status":200,"entries":1,"attached":null,"keySource":"localStorage"}
+```
+and the owner, looking at RC on that phone, got **"Please login or create account to continue
+booking"** on RC's home page.
+
+- **`keySource: "localStorage"` KILLS THE CART-KEY THEORY.** The entry above says
+  `keySource: 'marker'` would mean "RC's page cannot see the cart", and that was the leading
+  candidate for the empty cart. It read **localStorage** — the key was exactly where RC's own
+  SPA looks — and the page still refused. **Stop citing the cart key as the cause.**
+- **NOR IS IT A MISSING SESSION.** The same run captured a live 939-character token with
+  **3,534 seconds left**, decodable, and `storedToken: "jwt"` in the app's own store.
+- **SO THE NARROW STATEMENT IS: RC hands back `entries: 1` for our key while its UI treats the
+  session as signed out.** RC's login state therefore lives somewhere OTHER than the token we
+  capture, and completing Okta's flow does not populate it. Consistent with the 2026-08-06
+  session-bound-cart finding, except it is the LOGIN that is not transferring, not the cart.
+- **NO MECHANISM IS NAMED HERE ON PURPOSE.** Three mechanisms were guessed on 2026-08-30 and
+  each cost a test. What would settle it is the census that already exists on the bot
+  (`storage-census.mjs`) and not in the app: key NAMES and cookie NAMES on RC's origin after an
+  in-app sign-in, never values, against what a normal RC login leaves behind. That turns "the
+  login did not take" into "this key is missing". **NOT BUILT.**
+
+#### AND THE SAME RUN PROVED THREE ANDROID FIRSTS (2026-08-30)
+Struck from the open-questions list, because each had never been observed on Android:
+- **THE IN-APP RC SIGN-IN WORKS.** `signin-missing {candidates:6}` → `email` → `password` →
+  `submitted` → `/login/callback` → a 939-char token, the identical shape iOS produced on
+  2026-08-09. Every previous Android attempt died before this.
+- **THE TWO RC CART POSTS FIRE AND RC ACCEPTS THEM FROM ANDROID** — `job:true` and
+  `✓ Added to cart`. Previously proven on iOS only (2026-08-13).
+- **THE WHOLE CHAIN RUNS**: bot carts (T+11s) → user claims → bot releases → the user's own
+  session re-carts. Bot side is clean: carted 19:51:10Z, released 20:11:24Z.
+- **AND THE SITE IS NOW LOCKED IN A CART WE CANNOT RELEASE**, exactly as on 08-29: the phone
+  minted its own key and `cartkey {"captured":true}` records THAT it existed and never its
+  value, deliberately. It lapses on RC's own schedule — both 08-29 sites were bookable again
+  within a day.
+- **RC ITSELF WAS DEGRADED FOR ~20 MINUTES MID-TEST** ("We're having trouble loading the
+  application", on the phone AND a PC) while `www.reservecalifornia.com` answered **200 in
+  0.39s** from here. A healthy edge over a broken app tier: worth knowing, because the 08:00
+  path talks to their API and never loads the SPA.
+
 ### THE RETEST CARTED NOTHING AND SAID IT HAD — THE MARKER COULD NOT NAME ITS SITE (2026-08-29)
 A second Android hand-off an hour after the first, on a different park, reported
 `✓ Added to cart` for a site it never touched. Three separate defects, and the retest was
@@ -5123,8 +5250,13 @@ reading of the result, and it made the next thirty minutes look healthy.
   **The keep-warm never survived 35 seconds, so the repair could never complete** — the
   component that fixes the session was starved by the component that needs it, and it
   sustains itself (dead session → cart fails → hold stays `requested` → runner keeps asking).
-  Two strikes then a 3-minute stand-off; **shorter than the 20-minute cart grace window on
-  purpose**, so it can never trade a repairable session for a guaranteed miss.
+  Two strikes then a stand-off, **shorter than the 20-minute cart grace window on purpose**,
+  so it can never trade a repairable session for a guaranteed miss.
+  **IT WAS THREE MINUTES AND THAT NUMBER WAS WRONG TWICE (2026-08-30).** Three minutes bought
+  "three uninterrupted keep-warm cycles" — but the 60-second expiry poll is not what repairs a
+  dead session; `planRenewal` is. It was then sized on `RENEW_FLOOR_MS` (5m), which assumes the
+  renewal SUCCEEDS — and the case this exists for is the one where it FAILS, which retries at
+  `RENEW_MIN_GAP_MS` (**10m**), measured. It is `RENEW_MIN_GAP_MS + 60s` now, derived in source.
 - **Five silent `return false` gates are now six named sentences**, consecutive repeats
   collapsed (asked every 60s — 1,440 identical lines a day hides the answer as well as
   printing nothing). Diagnosing this took a `tail-log` off the box and 120 lines of
@@ -7103,7 +7235,9 @@ stands, because repeated logins from this address are what cost 12h of IP block 
   token with 21 minutes left, calls the hold covered, skips its ONE login, carts at T−0
   with ~6 minutes of token and then **fails the claim** — the user taps "I'm ready" and
   nobody releases the unit. Reachable by signing in by hand an hour before a release, i.e.
-  exactly what the 07:30 pre-flight asks for. Now `LEAD + CART_HOLD_MIN + 5`.
+  exactly what the 07:30 pre-flight asks for. Now `LEAD + CART_HOLD_MIN + AUTOLOGIN_MARGIN_MIN`
+  — the margin was a literal 5 until 2026-08-30 and is 15; a literal here became a SECOND,
+  disagreeing copy of it the moment the live calculation's margin moved.
 - **`ALARM_AFTER_MIN` 12 → 25 must move WITH the lead.** It is the fallback branch (the
   keep-warm reporting nothing at all); a login that fails still rings at once on the
   `auto sign-in failed` branch. At 12 against a lead of 30 it satisfies "inside the lead"
@@ -7944,6 +8078,43 @@ reasons are ours.
   THE VERDICT.** Both text blocks and the reasoning for the resubmission are still in
   `docs/APP-STORE.md` §2d, which is accurate about what was SENT; what is stale is the framing
   that a rejection is what would decide IAP.
+
+### A WEB DEPLOY CANNOT ADD PURCHASE CAPABILITY — folded in 2026-08-30, written 08-24
+**This contradicts a rule stated all over this file** ("web-side, so it reaches installed apps
+on a push, no rebuild"), which is true of everything EXCEPT buying, so it is the exception that
+has to be carried next to the rule rather than in a plan document.
+
+`capacitor.config.ts` points `server.url` at `https://camphawk.app/search`, so the shell wraps
+the live site. **A webview cannot invoke Play Billing** — the purchase crosses the Capacitor
+bridge — so purchase capability arrives only in a BUILD.
+
+- **THE PAYWALL MUST DETECT THE PLUGIN, NOT THE PLATFORM.** `isNative` is a User-Agent marker:
+  it says the shell is CampHawk, not that the shell can buy anything. Gated on `isNative`
+  alone, **every app installed before the release shows a Buy button that throws.**
+- **A MISSING PLUGIN IS `unknown`**, never "cannot buy" — the same rule a failed entitlement
+  lookup already follows, one layer down.
+- **Play products need a BUILD before they can be created; Apple's do not.** The two stores
+  differ here and the asymmetry decides the order of work.
+- **`STORE_PURCHASE_ENABLED`, `IN_APP_PURCHASE_BY_STORE` and `LINKOUT_BY_STORE` are three
+  different switches.** `IN_APP_PURCHASE_BY_STORE` is deliberately NOT the complement of
+  `LINKOUT_BY_STORE` — US rules let an app do both, so once Apple's products exist iOS should
+  carry the paywall AND keep the §2c link-out. Deriving one from the other reads tidier and is
+  wrong about the future.
+
+**THIS SAT UNFOLDED FOR SIX DAYS AND SAID SO ITSELF.** The side lane's note reads *"Written up
+as `STOREKIT-PLAN.md` §11a, and it is not in §3 where it belongs"* — it flagged its own
+misplacement on 2026-08-24 and nobody moved it. Same shape as the IAP decision below.
+
+### THE SIDE LANE'S NOTES ARE REFERENCED BY NOTHING — read them before trusting this file
+`docs/LANES.md` says the side lane records findings in `docs/NOTES-<its-branch>.md` and **the
+main lane folds them in**. As of 2026-08-30 that file is **2,571 lines** and is referenced by
+CLAUDE.md, LANES.md and NEXT-SESSION.md a total of **zero** times — so the fold-in has no
+trigger and depends on somebody remembering a filename nothing names.
+
+**Two of its findings were unfolded when this was written** (§29c and §30b, both 08-24, both
+store-related, both above). **Check that file's newest sections against this one** before
+concluding this file is current; a finding that lives only there is a finding the next session
+will re-derive. `ls docs/NOTES-*.md`.
 
 ### APPLE IAP WAS DECIDED ON 2026-08-24, AND THIS FILE DID NOT CARRY IT FOR SIX DAYS
 **The owner decided to add In-App Purchase and raise prices to absorb Apple's commission.** It is

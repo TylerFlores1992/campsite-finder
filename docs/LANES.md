@@ -92,6 +92,15 @@ three files after it most likely to be appended to from both sides at once.
 `docs/NEXT-SESSION.md`.** The side lane records findings in `docs/NOTES-<its-branch>.md` and
 the main lane folds them in.
 
+**THE FOLD-IN HAD NO TRIGGER, AND TWO FINDINGS SAT UNFOLDED FOR SIX DAYS (2026-08-30).** That
+notes file reached 2,571 lines while being referenced by `CLAUDE.md`, this file and
+`docs/NEXT-SESSION.md` a total of **zero** times — so the obligation depended on somebody
+remembering a filename nothing named. One of the stranded findings had even flagged its own
+misplacement in its own text. **So: `ls docs/NOTES-*.md` and diff its newest sections against
+`CLAUDE.md` at the START of a main-lane session, not when you happen to think of it.** A
+finding that lives in one file only is a finding the next session re-derives from scratch —
+which is the cost this whole one-writer rule exists to avoid, arriving from the other side.
+
 This is not tidiness. `CLAUDE.md` is ~1,200 lines of append-heavy, hard-won evidence; both
 sessions will want to write it, and appends to the same region are exactly the conflict a
 tired resolution gets wrong. **A finding deleted in a merge reads precisely like a finding
