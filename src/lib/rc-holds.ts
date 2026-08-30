@@ -880,7 +880,30 @@ export interface ClientReport {
 /** Keep the tail, not the head. The interesting part of a hand-off is always the end —
  *  "✓ Added to cart" or "RC declined" — and the token rebroadcasts at the start are the
  *  bulkiest and least informative. */
-const CLIENT_REPORT_CAP = 40;
+/**
+ * How many client reports a hold keeps, and WHY IT IS NO LONGER A PLAIN TAIL.
+ *
+ * A whole hand-off does not fit in 40. The 2026-08-24 iOS run — the one that worked, and the
+ * baseline every later run is compared against — used **all forty** to cover: arriving signed
+ * out, the Okta round trip, the cart, and the cart page. The 08-29 Android run therefore lost
+ * its cart sequence off the FRONT, and a line-by-line comparison against the baseline was
+ * simply not possible: the decisive middle had been deleted.
+ *
+ * This is the THIRD time the tail-trim has eaten the evidence. `✓ Added to cart` was trimmed
+ * off the front of both 2026-08-13 hand-offs, and the platform tag was trimmed from every
+ * summary until migration 064 gave it columns. Each time the fix was to rescue one field.
+ *
+ * SO KEEP BOTH ENDS. A hand-off's decisive moments are at the START (platform, the arriving
+ * session, whether a sign-in was needed) and at the END (the submit, the navigation, the cart
+ * read-back). The middle is `token` rebroadcasts, which `rc-inject.js` emits on every RC call
+ * and which are already collapsed into `repeated` entries.
+ *
+ * THE ARRAY IS THEREFORE NOT NECESSARILY CONTIGUOUS. A reader who assumes it is will misread
+ * a sequence — which is why the readout says so when the cap is reached.
+ */
+const CLIENT_REPORT_HEAD = 20;
+const CLIENT_REPORT_TAIL = 60;
+const CLIENT_REPORT_CAP = CLIENT_REPORT_HEAD + CLIENT_REPORT_TAIL;
 
 /**
  * Record what the USER'S DEVICE did during the hand-off.
@@ -926,11 +949,18 @@ export async function recordClientReports(id: string, reports: ClientReport[]): 
   await mutate(
     `UPDATE rc_hold_requests
         SET client_reports = (
-              SELECT COALESCE(jsonb_agg(x), '[]'::jsonb)
+              -- HEAD AND TAIL, in order, dropping only the middle. row_number() over the
+              -- concatenated array keeps the original sequence; the window count(*) is what
+              -- makes "the last N" expressible without a second scan.
+              -- (No backticks in here: this is a template literal and one would end it.)
+              SELECT COALESCE(jsonb_agg(x ORDER BY rn), '[]'::jsonb)
                 FROM (
-                  SELECT x FROM jsonb_array_elements(client_reports || $2::jsonb) AS t(x)
-                   OFFSET GREATEST(0, jsonb_array_length(client_reports || $2::jsonb) - $3)
+                  SELECT x,
+                         row_number() OVER () AS rn,
+                         count(*)     OVER () AS n
+                    FROM jsonb_array_elements(client_reports || $2::jsonb) AS t(x)
                 ) s
+               WHERE rn <= $8 OR rn > n - $3
             ),
             client_last_stage  = $4,
             client_last_note   = COALESCE($5, client_last_note),
@@ -938,7 +968,10 @@ export async function recordClientReports(id: string, reports: ClientReport[]): 
             client_app_build   = COALESCE($7, client_app_build),
             client_reported_at = NOW()
       WHERE id = $1`,
-    [id, JSON.stringify(reports), CLIENT_REPORT_CAP, reports[reports.length - 1].stage, note, plat, build],
+    // $3 is the TAIL length, not the cap — the head is $8. Passing the cap here would keep
+    // the last 80 as well as the first 20 and quietly double the column.
+    [id, JSON.stringify(reports), CLIENT_REPORT_TAIL, reports[reports.length - 1].stage, note,
+     plat, build, CLIENT_REPORT_HEAD],
   ).catch((e) => console.error('[rc-holds] recordClientReports failed:', e.message));
 }
 

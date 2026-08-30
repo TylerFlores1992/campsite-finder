@@ -47,11 +47,21 @@ before(fixture);
 after(async () => { await mutate(`DELETE FROM rc_hold_requests WHERE id = $1`, [HOLD]); });
 
 test('the platform outlives a trim that discards the report carrying it', async () => {
-  // Exactly the shape of a real hand-off: the platform first, then far more than the cap.
+  // THE PLATFORM IS BURIED IN THE MIDDLE, and that is deliberate as of 2026-08-29.
+  //
+  // This used to put it FIRST, because the trim kept only the tail and anything at the head
+  // was doomed. The trim now keeps the head as well, so a first-position platform report
+  // always survives and that fixture could no longer stage the failure it exists for — the
+  // precondition below would fail, correctly.
+  //
+  // The column is still load-bearing, because the head is only 20: a platform reported by a
+  // later batch, or after a long first flood, still lands in the discarded middle. That is
+  // the case staged here, and it is the one a second device joining a hand-off produces.
   await recordClientReports(HOLD, [
-    say(0, 'platform', { platform: 'android', appBuild: '19' }),
-    ...Array.from({ length: 60 }, (_, i) => say(i + 1, 'token', { captured: true })),
-    say(99, 'status', { status: '✓ Added to cart' }),
+    ...Array.from({ length: 40 }, (_, i) => say(i, 'token', { captured: true })),
+    say(40, 'platform', { platform: 'android', appBuild: '19' }),
+    ...Array.from({ length: 120 }, (_, i) => say(i + 41, 'token', { captured: true })),
+    say(999, 'status', { status: '✓ Added to cart' }),
   ]);
 
   const [row] = await query<{

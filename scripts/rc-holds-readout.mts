@@ -313,6 +313,16 @@ if (handed.length) {
       console.log(`      cart not read back: ${unverified.reason}`);
     }
   }
+  // THE ARRAY CAN HAVE A HOLE IN IT, and a reader who assumes otherwise misreads the order.
+  // The trim keeps the head and the tail and drops the middle, so a hand-off longer than the
+  // cap is reported with a gap. Saying so is what stops the next person reconstructing a
+  // sequence that never happened — the 08-29 comparison was attempted against a trace whose
+  // decisive middle had been deleted, and nothing on screen said so.
+  const capped = holds.filter((h) => (h.client_reports?.length ?? 0) >= 80);
+  if (capped.length > 0) {
+    console.log(`  NOTE: ${capped.length} hold(s) are at the report cap — the MIDDLE of those`);
+    console.log('  traces is dropped, head and tail kept. Do not read them as contiguous.');
+  }
   console.log("  '✓ Added to cart' proves the two RC cart POSTs fired and RC accepted them.");
   console.log('  Seen on iOS (2026-08-13, 08-24) and on Android (2026-08-29).');
   // THE CORRECTION OF 2026-08-29. This block used to call `cart read back` "stronger still:

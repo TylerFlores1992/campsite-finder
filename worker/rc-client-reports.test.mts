@@ -12,6 +12,7 @@
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { query, mutate } from '../src/lib/db/client';
 import { recordClientReports } from '../src/lib/rc-holds';
 
@@ -94,19 +95,22 @@ test('the verdict comes from an outcome line, not merely the last line', async (
   assert.equal(row.client_last_stage, 'reinjected', 'the raw last stage is still recorded');
 });
 
-test('a flood is capped, keeping the TAIL', async () => {
+test('a flood is still CAPPED — an unbounded array slows the 08:00 write', async () => {
   const id = await fixture();
   if (!id) return;
   await mutate(`UPDATE rc_hold_requests SET client_reports = '[]'::jsonb WHERE id = $1`, [id]);
 
-  // The end of a hand-off is the part that matters; the token rebroadcasts at the start
-  // are the bulkiest and least informative. An unbounded array on a row the cart path also
-  // writes is a way to make the 08:00 write slow.
-  await recordClientReports(id, Array.from({ length: 100 }, (_, i) => ({ n: i, stage: `s${i}`, detail: null })));
+  // The bound is the point: this row is written on the cart path, and an array that grows
+  // without limit is a way to make the one write that must be fast, slow.
+  //
+  // IT USED TO ASSERT "the tail is kept, not the head", and that assertion WAS the defect —
+  // see the head-and-tail test below. Widened rather than deleted, because the CAP is a real
+  // property and dropping the test with the behaviour would leave nothing bounding it.
+  await recordClientReports(id, Array.from({ length: 300 }, (_, i) => ({ n: i, stage: `s${i}`, detail: null })));
   const row = await read(id);
-  assert.ok(row.client_reports.length <= 40, `capped, got ${row.client_reports.length}`);
+  assert.ok(row.client_reports.length <= 80, `capped, got ${row.client_reports.length}`);
   const last = row.client_reports[row.client_reports.length - 1] as { stage: string };
-  assert.equal(last.stage, 's99', 'the tail is kept, not the head');
+  assert.equal(last.stage, 's299', 'the newest report is always kept');
 });
 
 test('an empty batch is a no-op, not a write', async () => {
@@ -116,4 +120,66 @@ test('an empty batch is a no-op, not a write', async () => {
   await recordClientReports(id, []);
   const afterRow = await read(id);
   assert.equal(afterRow.client_reports.length, before.client_reports.length);
+});
+
+// ---------------------------------------------------------------------------
+// A WHOLE HAND-OFF MUST FIT (2026-08-29).
+//
+// The trim kept the last 40 and nothing else. The 2026-08-24 iOS run — the baseline every
+// later run is compared against — used ALL FORTY to cover arriving signed out, the Okta
+// round trip, the cart, and the cart page. So the 08-29 Android run lost its cart sequence
+// off the FRONT, and a line-by-line comparison against the baseline was impossible: the
+// decisive middle had already been deleted by the time anyone looked.
+//
+// THIRD TIME THE TAIL-TRIM HAS EATEN THE EVIDENCE. `✓ Added to cart` went off the front of
+// both 2026-08-13 hand-offs, and the platform tag was gone from every summary until
+// migration 064 gave it columns. Rescuing one field at a time does not fix the shape.
+//
+// REAL-DB, because the trim is one SQL statement and a test asserting against a copy of it
+// would assert the copy.
+// ---------------------------------------------------------------------------
+
+test('a long hand-off keeps BOTH ends — the head is where the platform and sign-in live', async () => {
+  const id = await fixture();
+  if (!id) return;
+  // `fixture()` upserts the SAME row for every test in this file, so without this the "first
+  // report" is the previous test's flood. Found by the assertion reading a null detail.
+  await mutate(`UPDATE rc_hold_requests SET client_reports = '[]'::jsonb WHERE id = $1`, [id]);
+
+  // 200 reports: far past the cap, and numbered so their positions are checkable.
+  for (let batch = 0; batch < 10; batch++) {
+    await recordClientReports(id, Array.from({ length: 20 }, (_, i) => ({
+      n: batch * 20 + i, stage: 'session', detail: { n: batch * 20 + i },
+    })));
+  }
+
+  const kept = (await read(id)).client_reports as { detail: { n: number } }[];
+  assert.ok(kept.length > 40,
+    `the cap must exceed the 40 that could not hold one hand-off — got ${kept.length}`);
+
+  // THE HEAD SURVIVED. This is the half the old trim deleted, and it carries the platform
+  // report, the arriving session state, and whether a sign-in was needed at all.
+  assert.equal(kept[0].detail.n, 0,
+    'the FIRST report must survive — it is the one that says which device this was');
+
+  // THE TAIL SURVIVED. `✓ Added to cart` and `cart-verified` land here.
+  assert.equal(kept[kept.length - 1].detail.n, 199,
+    'the newest report must survive — the cart outcome is the last thing to happen');
+
+  // AND THE ORDER IS INTACT ACROSS THE GAP. `jsonb_agg` without an explicit ORDER BY is not
+  // guaranteed to preserve it, and a reordered trace is worse than a trimmed one: it invites
+  // a reconstruction of a sequence that never happened.
+  const ns = kept.map((r) => r.detail.n);
+  assert.deepEqual(ns, [...ns].sort((a, b) => a - b), 'reports must stay in order');
+});
+
+test('the ORDER BY is pinned STRUCTURALLY, because behaviour cannot see it', () => {
+  // `jsonb_agg` without an explicit ORDER BY follows the scan order, and for this input that
+  // is already sorted — so removing it passes every behavioural assertion above. Verified by
+  // mutation. Postgres does not promise that ordering, and a trace reordered by a future plan
+  // change is worse than a trimmed one: it invites reconstructing a sequence that never
+  // happened. When behaviour cannot distinguish, pin the source.
+  const src = readFileSync(new URL('../src/lib/rc-holds.ts', import.meta.url), 'utf8');
+  assert.match(src, /jsonb_agg\(x ORDER BY rn\)/,
+    'the aggregate must order explicitly by the row number the window assigned');
 });
