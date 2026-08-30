@@ -3045,6 +3045,53 @@ out"** while the cart control asked them to **log in** — RC contradicting itse
   and "came from the marker" tests staged the IDENTICAL state and both went green measuring
   nothing. Caught by reading the fixture rather than the assertion.
 
+#### `keySource` ANSWERED IT AND THE LEADING THEORY IS DEAD (2026-08-30)
+The instrument built above did its job on the first hand-off that reached it, and it **refutes
+the explanation this entry was written around.** Android, build 1.0 (25), unit 43832:
+
+```
+injected       {"job":true,"href":".../Customers/ShoppingCart"}
+banner         "✓ Added to cart — check the dates and check out…"
+token          {"captured":true,"length":939,"decodable":true,"expiresInSec":3534}
+cart-verified  {"status":200,"entries":1,"attached":null,"keySource":"localStorage"}
+```
+and the owner, looking at RC on that phone, got **"Please login or create account to continue
+booking"** on RC's home page.
+
+- **`keySource: "localStorage"` KILLS THE CART-KEY THEORY.** The entry above says
+  `keySource: 'marker'` would mean "RC's page cannot see the cart", and that was the leading
+  candidate for the empty cart. It read **localStorage** — the key was exactly where RC's own
+  SPA looks — and the page still refused. **Stop citing the cart key as the cause.**
+- **NOR IS IT A MISSING SESSION.** The same run captured a live 939-character token with
+  **3,534 seconds left**, decodable, and `storedToken: "jwt"` in the app's own store.
+- **SO THE NARROW STATEMENT IS: RC hands back `entries: 1` for our key while its UI treats the
+  session as signed out.** RC's login state therefore lives somewhere OTHER than the token we
+  capture, and completing Okta's flow does not populate it. Consistent with the 2026-08-06
+  session-bound-cart finding, except it is the LOGIN that is not transferring, not the cart.
+- **NO MECHANISM IS NAMED HERE ON PURPOSE.** Three mechanisms were guessed on 2026-08-30 and
+  each cost a test. What would settle it is the census that already exists on the bot
+  (`storage-census.mjs`) and not in the app: key NAMES and cookie NAMES on RC's origin after an
+  in-app sign-in, never values, against what a normal RC login leaves behind. That turns "the
+  login did not take" into "this key is missing". **NOT BUILT.**
+
+#### AND THE SAME RUN PROVED THREE ANDROID FIRSTS (2026-08-30)
+Struck from the open-questions list, because each had never been observed on Android:
+- **THE IN-APP RC SIGN-IN WORKS.** `signin-missing {candidates:6}` → `email` → `password` →
+  `submitted` → `/login/callback` → a 939-char token, the identical shape iOS produced on
+  2026-08-09. Every previous Android attempt died before this.
+- **THE TWO RC CART POSTS FIRE AND RC ACCEPTS THEM FROM ANDROID** — `job:true` and
+  `✓ Added to cart`. Previously proven on iOS only (2026-08-13).
+- **THE WHOLE CHAIN RUNS**: bot carts (T+11s) → user claims → bot releases → the user's own
+  session re-carts. Bot side is clean: carted 19:51:10Z, released 20:11:24Z.
+- **AND THE SITE IS NOW LOCKED IN A CART WE CANNOT RELEASE**, exactly as on 08-29: the phone
+  minted its own key and `cartkey {"captured":true}` records THAT it existed and never its
+  value, deliberately. It lapses on RC's own schedule — both 08-29 sites were bookable again
+  within a day.
+- **RC ITSELF WAS DEGRADED FOR ~20 MINUTES MID-TEST** ("We're having trouble loading the
+  application", on the phone AND a PC) while `www.reservecalifornia.com` answered **200 in
+  0.39s** from here. A healthy edge over a broken app tier: worth knowing, because the 08:00
+  path talks to their API and never loads the SPA.
+
 ### THE RETEST CARTED NOTHING AND SAID IT HAD — THE MARKER COULD NOT NAME ITS SITE (2026-08-29)
 A second Android hand-off an hour after the first, on a different park, reported
 `✓ Added to cart` for a site it never touched. Three separate defects, and the retest was
