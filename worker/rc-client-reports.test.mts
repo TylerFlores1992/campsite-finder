@@ -149,7 +149,7 @@ test('a long hand-off keeps BOTH ends — the head is where the platform and sig
   // 200 reports: far past the cap, and numbered so their positions are checkable.
   for (let batch = 0; batch < 10; batch++) {
     await recordClientReports(id, Array.from({ length: 20 }, (_, i) => ({
-      stage: 'session', detail: { n: batch * 20 + i },
+      n: batch * 20 + i, stage: 'session', detail: { n: batch * 20 + i },
     })));
   }
 
