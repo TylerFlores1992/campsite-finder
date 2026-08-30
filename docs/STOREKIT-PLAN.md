@@ -6,7 +6,23 @@ implementation. Read "What only a human can do" before planning a session around
 
 ---
 
-## STATE AS OF 2026-08-29 — read this first
+## STATE AS OF 2026-08-30 — read this first
+
+**WHY THIS FILE EXISTS, BECAUSE IT KEEPS BEING FORGOTTEN: the owner decided on 2026-08-24 that
+APPLE IN-APP PURCHASE IS MANDATORY and that prices rise to absorb the commission** (§10a, and
+the subtitle above). That decision is not conditional on Apple's verdict on the 08-22
+resubmission, and it did not wait for it.
+- **`docs/APP-STORE.md` §2c and `CLAUDE.md` both carried the pre-decision 08-19 reasoning until
+  2026-08-30**, which frames StoreKit as a hypothetical fallback and the question as open. Both
+  are corrected and now point here. **If you find a fourth place saying the question is open,
+  that is the bug** — fold it in or strike it, do not re-derive the answer from it.
+- **Apple IAP IS NOT BUILT.** §8's four products do not exist in App Store Connect, no
+  `NEXT_PUBLIC_REVENUECAT_IOS_KEY` is set (verified absent in the deployed bundle — no `appl_`
+  key anywhere in it), and no App Store app is configured in RevenueCat. **Everything shipped so
+  far is Play.**
+- **What it needs is smaller than §2c estimated.** RevenueCat is the StoreKit layer and is
+  already in the iOS binary; the server half is provider-agnostic. See `CLAUDE.md` → "APPLE IAP
+  WAS DECIDED ON 2026-08-24".
 
 **THE CLIENT EXISTS NOW. Play's remaining blockers are ONE console reading and two open
 server items — no code is missing.**

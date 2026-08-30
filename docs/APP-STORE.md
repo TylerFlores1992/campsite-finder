@@ -498,11 +498,37 @@ service. **Having no purchase mechanism was never a defence; it was the finding.
 
 The genuine allowance is the US link-out one, and nothing else.
 
-### If Apple insists on IAP anyway
+### ~~If Apple insists on IAP anyway~~ — SUPERSEDED 2026-08-24: IAP IS BEING BUILT
 
-The fallback is StoreKit: weeks of native work, a new build, a new review, and 15–30%
+**This section's reasoning is dated 2026-08-19 and was overtaken five days later. Read as
+current it says the question is open and StoreKit is a hypothetical — it is neither.** Struck
+rather than deleted because that is exactly how it was misread on 2026-08-30.
+
+~~The fallback is StoreKit: weeks of native work, a new build, a new review, and 15–30%
 commission on every subscription. That is why the free option goes first — a round trip costs
-days, and being wrong about it costs only those days.
+days, and being wrong about it costs only those days.~~
+
+**THE OWNER DECIDED ON 2026-08-24 TO ADD IN-APP PURCHASE AND RAISE PRICES TO ABSORB THE
+COMMISSION.** The design, the arithmetic and the console steps are in **`docs/STOREKIT-PLAN.md`**
+— a file this one did not reference anywhere until now, which is why the decision kept getting
+re-litigated from this section instead.
+
+- **`STOREKIT-PLAN.md` §10a — "Apple — mandatory."** 3.1.3(b) permits honouring content bought
+  elsewhere *"provided those items are also available as in-app purchases within the app"*, and
+  that **"also"** is the whole requirement. No link-out satisfies it.
+- **§10b found the premise backwards.** Stripe's flat **$0.30 per transaction** costs more at
+  these amounts than a 15% store commission: store billing nets **+$0.41 / +$1.27 / +$0.78 /
+  +$2.74** per plan. IAP is the better deal, not a tax.
+- **The raised prices are already live on Play** — $2.99 / $23.99 / $11.99 / $59.99 against the
+  web's $2.50 / $20 / $10 / $50. Four products exist *because* this was decided.
+- **The link-out is NOT retired by this and must stay.** It is what the 08-22 resubmission
+  argues, US apps may offer both, and it is the only thing selling to iOS users until Apple's
+  products exist. `LINKOUT_BY_STORE.ios` stays `true`.
+- **What iOS IAP still needs is console work plus one env var, not weeks.** RevenueCat is the
+  StoreKit layer and is already compiled into the iOS binary (`iOS · TestFlight` #12), and the
+  server half is provider-agnostic and shipped in #218. See `CLAUDE.md` → "APPLE IAP WAS DECIDED
+  ON 2026-08-24" for the remaining list, the two preconditions to check, and the missing
+  RevenueCat assertion on the iOS build.
 
 ### Resolution Center reply
 
