@@ -120,3 +120,37 @@ test('the link-out survives for the store that still needs it', () => {
   // "superseded" would leave iOS non-subscribers with nothing at all.
   assert.match(ctaCode, /<SubscribeLink \/>/, 'iOS still needs the steer out');
 });
+
+// ─── THE SENTENCE BESIDE THE LINK (2026-08-30, hours after the link shipped) ──────────
+
+test('the sentence does not say "managed at camphawk.app" where the app can sell', () => {
+  // Observed on a real device: "Subscriptions are managed at camphawk.app. See plans" —
+  // the sentence sending a user to a website while the link beside it opened an in-app
+  // purchase. StorePaywall's own header had already written the rule down and it was read
+  // as being about that component rather than about this string.
+  // ANCHORED ON THE BRANCH, NOT THE IDENTIFIER. The first version compared
+  // `indexOf('canSell')` — which finds the `const canSell = …` DECLARATION at the top of
+  // the function, above everything — so a mutation that moved the real test below both
+  // website branches passed. `canSell` occurs twice; only one occurrence is the decision.
+  const fn = body(nativeCode, 'export function useSubscribeSentence');
+  const canSellAt = fn.indexOf('if (canSell)');
+  const camphawkAt = fn.indexOf('camphawk.app');
+  assert.ok(canSellAt > -1, 'the sentence must BRANCH on whether the app can sell');
+  assert.ok(camphawkAt > -1, 'the other two cases still name the website');
+  assert.ok(canSellAt < camphawkAt,
+    'the canSell branch must come BEFORE any branch that names the website');
+});
+
+test('the in-app case names no website at all', () => {
+  // Not "shorter copy" — a sentence that mentions camphawk.app while a buy route sits
+  // beside it is the same defect in a milder costume.
+  const fn = body(nativeCode, 'export function useSubscribeSentence');
+  const inApp = fn.slice(fn.indexOf('if (canSell)'), fn.indexOf('return linkout'));
+  assert.doesNotMatch(inApp, /camphawk\.app/, 'the in-app sentence must not steer out');
+});
+
+test('both website cases survive — iOS still has nowhere else to go', () => {
+  const fn = body(nativeCode, 'export function useSubscribeSentence');
+  assert.match(fn, /set up at camphawk\.app/, 'the link-out sentence must stay for iOS');
+  assert.match(fn, /managed at camphawk\.app/, 'the no-route sentence must stay');
+});

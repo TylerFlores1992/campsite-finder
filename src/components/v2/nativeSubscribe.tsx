@@ -105,11 +105,28 @@ export function SubscribeLink({
 
 /**
  * One sentence for the surfaces that just need a line of copy, so the wording is
- * defined once rather than drifting across five screens. Returns the no-link
- * version when steering is off, which is what ships today.
+ * defined once rather than drifting across five screens.
+ *
+ * ── THREE CASES, AND THE FIRST WAS ADDED HOURS AFTER IT BECAME WRONG (2026-08-30) ───
+ * `StorePlansLink` put a route to the in-app paywall beside this sentence on Android, and
+ * the sentence still read **"Subscriptions are managed at camphawk.app."** — which is
+ * false the moment a buy route sits next to it, and sends a user who can purchase here to
+ * a website instead. Observed on a real device within minutes of shipping the link.
+ *
+ * **`StorePaywall`'s own header had already written the rule down** — *"'Subscriptions are
+ * managed at camphawk.app' is false the moment a Buy button sits beside it"* — and it was
+ * read as being about that component rather than about this string. A rule recorded for
+ * one caller is not recorded; the same lesson `rehearsal.mjs` taught about a hazard
+ * documented for one caller of `attemptLogin` and not the release-critical one.
+ *
+ * ORDER IS LOAD-BEARING: `canSell` is tested FIRST, so a shell that can take the money is
+ * never told to go elsewhere — the same precedence `NewWatch`'s gate uses.
  */
 export function useSubscribeSentence(): string {
-  return useNativeLinkout()
+  const canSell = useStoreCanSell();
+  const linkout = useNativeLinkout();
+  if (canSell) return "Watching needs a subscription.";
+  return linkout
     ? "Subscriptions are set up at camphawk.app — it takes a minute, and everything works here straight after."
     : "Subscriptions are managed at camphawk.app.";
 }
