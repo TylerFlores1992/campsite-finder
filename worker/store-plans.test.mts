@@ -20,14 +20,18 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
+  APPLE_PRODUCT_ID,
+  APPLE_PRODUCT_PREFIX,
   PLAY_SUBSCRIPTION_ID,
   decidePurchase,
   planForProductId,
   replacementModeFor,
+  tierForStoreProductId,
   type BillingInterval,
   type PlanTier,
   type StoreReplacementMode,
 } from '../src/lib/store-plans';
+import { tierForProductId } from '../src/lib/revenuecat';
 
 const PURCHASES = readFileSync('src/lib/native/purchases.ts', 'utf8');
 const PAYWALL = readFileSync('src/components/v2/StorePaywall.tsx', 'utf8');
@@ -335,5 +339,96 @@ test('running out of polls is never reported as a failed purchase', () => {
     src,
     /waitForEntitlement\(\)\)\s*\?\s*\{ kind: "done" \}\s*:\s*\{ kind: "error"/,
     'a slow webhook must not become an error'
+  );
+});
+
+
+// ─── APPLE PRODUCT IDS ────────────────────────────────────────────────────────────────
+//
+// Both parsers split on `:` and were Play-only until 2026-08-30. Run against §8's four
+// ids they returned tier 'base' for ALL FOUR — both Auto-Cart products included — and
+// null from planForProductId. Nothing caught it because no test had ever fed an Apple id
+// to either function, which is the actual defect these tests exist to close.
+
+/** §8's table, written out rather than derived from APPLE_PRODUCT_ID. Deriving them from
+ *  the constant under test would make every assertion below agree with whatever the
+ *  constant says, including a typo — and §8 records that these ids are PERMANENT and
+ *  unreusable, so a typo is not a bug, it is a scar. */
+const APPLE_FROM_THE_PLAN: Array<[string, PlanTier, BillingInterval]> = [
+  ['app.camphawk.mobile.base.monthly', 'base', 'monthly'],
+  ['app.camphawk.mobile.base.yearly', 'base', 'yearly'],
+  ['app.camphawk.mobile.autocart.monthly', 'autocart', 'monthly'],
+  ['app.camphawk.mobile.autocart.yearly', 'autocart', 'yearly'],
+];
+
+test('the constant matches §8 exactly — these ids can never be renamed', () => {
+  for (const [id, tier, interval] of APPLE_FROM_THE_PLAN) {
+    assert.equal(APPLE_PRODUCT_ID[tier][interval], id);
+  }
+});
+
+test('every Apple product id parses to its own tier and interval', () => {
+  for (const [id, tier, interval] of APPLE_FROM_THE_PLAN) {
+    assert.deepEqual(planForProductId(id), { tier, interval }, id);
+    assert.equal(tierForStoreProductId(id), tier, id);
+  }
+});
+
+test('the webhook tiers an Apple Auto-Cart purchase as autocart — the bug that was live', () => {
+  // The exact regression: $11.99 or $59.99 paid, written to the database as `base`, and
+  // the subscriber silently denied the feature. It fails in the safe direction, so it
+  // would never have surfaced as a complaint about free premium — only as one about
+  // missing auto-cart, which reads like a dozen other faults.
+  assert.equal(tierForProductId('app.camphawk.mobile.autocart.monthly'), 'autocart');
+  assert.equal(tierForProductId('app.camphawk.mobile.autocart.yearly'), 'autocart');
+  assert.equal(tierForProductId('app.camphawk.mobile.base.monthly'), 'base');
+});
+
+test('Play ids are unchanged — this fix must not move the store that is live', () => {
+  assert.deepEqual(planForProductId('camphawk_base:monthly'), { tier: 'base', interval: 'monthly' });
+  assert.deepEqual(planForProductId('camphawk_autocart:yearly'), {
+    tier: 'autocart',
+    interval: 'yearly',
+  });
+  assert.equal(tierForProductId('camphawk_autocart:yearly'), 'autocart');
+  assert.equal(tierForProductId('camphawk_base:monthly'), 'base');
+});
+
+test('a NEW BASE PLAN under an existing subscription keeps its tier', () => {
+  // The reason tierForStoreProductId answers the tier ALONE. `planForProductId(id)?.tier`
+  // is the tidy one-liner and it returns null here — because the INTERVAL is unfamiliar —
+  // downgrading a real Auto-Cart subscriber to base. The tier is knowable; the interval
+  // is not; conflating them loses the half we have.
+  assert.equal(tierForProductId('camphawk_autocart:weekly'), 'autocart');
+  assert.equal(tierForStoreProductId('camphawk_autocart:weekly'), 'autocart');
+  assert.equal(planForProductId('camphawk_autocart:weekly'), null);
+});
+
+test('an unknown product is null, and the webhook degrades it to base', () => {
+  for (const id of ['camphawk_pro:monthly', 'app.camphawk.mobile.pro.monthly', 'rubbish', '', null]) {
+    assert.equal(tierForStoreProductId(id), null, String(id));
+    assert.equal(planForProductId(id), null, String(id));
+    assert.equal(tierForProductId(id), 'base', String(id));
+  }
+});
+
+test('the two id namespaces cannot collide', () => {
+  // Apple ids are prefixed with the bundle id and Play ids are not, which is what lets one
+  // parser serve both. A Play id must never start with the Apple prefix.
+  for (const id of Object.values(PLAY_SUBSCRIPTION_ID)) {
+    assert.equal(id.startsWith(APPLE_PRODUCT_PREFIX), false, id);
+  }
+});
+
+test('the webhook does not re-implement the id shape', () => {
+  // STRUCTURAL, because the behavioural tests above pass against a second copy that
+  // happens to agree today. Two parsers is how one store gets taught to one caller and
+  // not the other — which is precisely what this change repaired.
+  const rc = code(readFileSync('src/lib/revenuecat.ts', 'utf8'));
+  assert.match(rc, /tierForStoreProductId/, 'revenuecat.ts must delegate the shape rule');
+  assert.doesNotMatch(
+    rc.slice(rc.indexOf('export function tierForProductId')),
+    /split\(/,
+    'tierForProductId must not parse the id itself'
   );
 });
