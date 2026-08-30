@@ -7885,11 +7885,11 @@ and no way to act.
   until Play PRODUCTION is live and US-only.** A **STORE** check (device OS names the store
   exactly), never a country check — country is ASC availability, and device locale would not
   do that job.
-- **WHAT IS NOT ESTABLISHED:** whether a link-out ALONE clears 3.1.1 with no IAP at all.
-  Apple's "Next Steps" still demands IAP and sits directly above their own link-out
-  allowance; the two do not agree. A number of US subscription apps operate this way
-  post-injunction — a pattern, not a guarantee. The fallback is StoreKit: weeks of native
-  work, a new build, and 15-30% commission, which is why the free option goes first.
+- ~~**WHAT IS NOT ESTABLISHED:** whether a link-out ALONE clears 3.1.1 with no IAP at all …
+  The fallback is StoreKit … which is why the free option goes first.~~ **SUPERSEDED BY A
+  DECISION ON 2026-08-24: APPLE IAP IS MANDATORY AND IS BEING BUILT.** Struck, not deleted —
+  read as current this says the question is open and StoreKit is a hypothetical fallback, and
+  it is neither. See "APPLE IAP WAS DECIDED ON 2026-08-24" below.
 - `worker/store-linkout.test.mts`, seven mutations each verified applied — including **iOS
   matched before Android in the UA sniff**, which would enable Android steering through the
   back door and defeat the flag entirely.
@@ -7939,11 +7939,63 @@ reasons are ours.
   **NOT verifiable from here:** that the notes saved, and that the sign-out steps behave as
   written on the device — nobody here can read ASC, and the on-device check is exactly what §2a
   and §2d were both caused by skipping.
-- **THIS ROUND FINALLY TESTS WHETHER LINK-OUT ALONE CLEARS 3.1.1 WITH NO IAP.** §2c recorded
-  that as unestablished and it stayed that way, because the reviewer never saw a link-out. This
-  is the first submission where they can. **A rejection now is the real answer** and moves the
-  decision to StoreKit — weeks of native work, a new build, and 15-30% — rather than another
-  notes round. Both text blocks and the full reasoning are in `docs/APP-STORE.md` §2d.
+- ~~**THIS ROUND FINALLY TESTS WHETHER LINK-OUT ALONE CLEARS 3.1.1 WITH NO IAP** … a rejection
+  moves the decision to StoreKit.~~ **THE DECISION WAS TAKEN TWO DAYS LATER AND DID NOT WAIT FOR
+  THE VERDICT.** Both text blocks and the reasoning for the resubmission are still in
+  `docs/APP-STORE.md` §2d, which is accurate about what was SENT; what is stale is the framing
+  that a rejection is what would decide IAP.
+
+### APPLE IAP WAS DECIDED ON 2026-08-24, AND THIS FILE DID NOT CARRY IT FOR SIX DAYS
+**The owner decided to add In-App Purchase and raise prices to absorb Apple's commission.** It is
+recorded in `docs/STOREKIT-PLAN.md` — in the subtitle of the file (*"Written 2026-08-24 on the
+owner's decision to add In-App Purchase and raise prices"*) and argued in **§10a: "Apple —
+mandatory."** Guideline **3.1.3(b)** permits honouring content bought elsewhere *"provided those
+items are also available as in-app purchases within the app"*, and that **"also"** is the whole
+requirement: an app that honours web subscriptions while offering no IAP fails it, however good
+the link-out is.
+- **THE PRICE RISE ALREADY SHIPPED, WHICH IS THE PROOF THE DECISION WAS ACTED ON.** Play sells
+  $2.99 / $23.99 / $11.99 / $59.99 against the web's $2.50 / $20 / $10 / $50 — those are the
+  raised prices from that decision, live and human-verified in the console on 08-29. **A reader
+  who thinks IAP is undecided is looking at four products that only exist because it was.**
+- **AND §10b FOUND THE PREMISE BACKWARDS, WHICH IS WHY THIS IS NOT A GRUDGING CONCESSION.** At
+  these amounts Stripe's flat **$0.30 per transaction** costs more than a 15% store commission:
+  store billing nets **+$0.41 / +$1.27 / +$0.78 / +$2.74** per plan. IAP is the better deal on
+  every plan, not a tax to be minimised.
+- **WHY IT WAS MISSED, AND IT IS THE SHAPE THIS FILE EXISTS FOR.** The decision lives only in
+  `STOREKIT-PLAN.md`. **CLAUDE.md carried the 08-19 reasoning unchanged, `docs/APP-STORE.md`
+  §2c still frames StoreKit as "the fallback … if Apple insists anyway", and APP-STORE.md does
+  not reference `STOREKIT-PLAN.md` anywhere at all.** So the three files a session reads first
+  all describe a question that was closed on 08-24, and the file holding the answer is
+  unreachable from any of them. **Read as current, they say "wait for Apple's verdict" — which
+  is six days of not building the thing that was decided.**
+- **IT COST EXACTLY THAT ON 2026-08-30**: asked where Apple stood, this session read §2c and
+  reported the decision as open, twice, until the owner said *"I am fairly sure we decided we
+  need IAP."* **They were right and the docs were why.** Same family as the Feature E correction
+  found independently three times because nobody folded it in.
+- **FOUR REJECTION LETTERS, NOT THREE**, and the count matters because two of them are the same
+  guideline: §2a **08-14** (2.1, the reviewer could not sign in), §2b **08-16** (2.1, information
+  needed), §2c **08-19** (3.1.1, IAP), §2d **08-22** (3.1.1 again, on the same build — the
+  link-out was live and invisible to a subscriber demo account). The 08-22 resubmission's verdict
+  is **still unread**; nobody here can see App Store Connect.
+- **WHAT IOS IAP ACTUALLY NEEDS NOW IS MUCH LESS THAN "weeks of native work".** That estimate
+  predates RevenueCat entering the dependency tree. **RevenueCat IS the StoreKit layer and it is
+  already compiled into the iOS binary** — `iOS · TestFlight` #12 built and shipped it. The
+  server half is provider-agnostic and shipped in #218: `provider`, `store_transaction_id`, and a
+  webhook whose `providerForStore` already maps `APP_STORE → apple`. What is left is console
+  work plus one env var: four auto-renewable subscriptions in ASC (§8 has them ready to paste),
+  an In-App Purchase key, the App Store app added in RevenueCat against the **same two
+  entitlements**, and `NEXT_PUBLIC_REVENUECAT_IOS_KEY` on Vercel — after which the paywall lights
+  up on a deploy, with **no rebuild**.
+- **TWO PRECONDITIONS TO CHECK RATHER THAN ASSUME.** Apple requires the **Paid Applications
+  agreement** active with banking and tax complete before IAP products can be created — unknown
+  from here. And Apple **has subscription groups**, which Play does not, so the §9a proration
+  trap that has no console safety net on Play does have one on Apple.
+- **ONE REAL GAP IF THIS IS BUILT: nothing asserts the RevenueCat pod reached the iOS binary.**
+  `codemagic.yaml` asserts the Play Billing permission on Android and asserts InAppBrowser on
+  iOS, and there is no iOS equivalent for RevenueCat. So the key could be set, the products
+  created, and the SDK silently absent — presenting as a paywall that says `unavailable`, which
+  is indistinguishable from a region or entitlement problem. **Add that assertion before the
+  console work**, not after.
 - **THE NOTES FIELD CAP IS 3,999, VERIFIED** — App Store Connect says *"Must be less than 4000
   characters"* and its counter read `-18` against a 4,018-character draft, i.e. it counts
   newlines exactly as `wc -c` does. A local count is therefore trustworthy; no need to
