@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSyncExternalStore } from "react";
-import { StorePlansLink, SubscribeLink, SubscribeSentence } from "./nativeSubscribe";
+import { StorePlansLink, SubscribeLink, SubscribeSentence, useStoreCanSell } from "./nativeSubscribe";
 import { useIsNativeApp } from "@/lib/native/context";
 import { buttonClasses } from "@/components/ui/Button";
 import { useSubscription } from "./useSubscription";
@@ -82,6 +82,7 @@ export default function SubscribeCta({
 }: SubscribeCtaProps) {
   const { gate, everSubscribed } = useAccountGate();
   const isNative = useIsNativeApp();
+  const canSell = useStoreCanSell();
   const returnTo = useReturnTo(fallbackReturnTo);
 
   if (gate === "loading" || gate === "ready") return null;
@@ -114,9 +115,25 @@ export default function SubscribeCta({
     // in-app paywall (Android today). Before 2026-08-30 only the first existed, so on
     // Android — where steering is deliberately off — this paragraph was a statement with
     // no way to act on it, in front of a purchase flow that was switched on and working.
+    // WHERE THE APP CAN SELL, THIS IS A BUTTON — because it is standing in the exact
+    // position `/new`'s "Start watching" submit occupies, and the WEB branch below
+    // replaces that control with a full-width `Button`. A paragraph of grey `text-ch-fine`
+    // in a primary control's slot is why the owner read `/new` twice and said "there is
+    // no start watch". They were right: the control was there and did not look like one.
+    if (canSell) {
+      return (
+        <div className={`${row} ${className}`}>
+          <StorePlansLink variant="button" fullWidth={fullWidth} />
+        </div>
+      );
+    }
+    // NO ROUTE TO SELL: the sentence is the honest shape, because there is genuinely
+    // nothing to press. `SubscribeLink` is the US-storefront steer out (iOS today) and
+    // renders nothing where steering is off — which on Android, before 2026-08-30, left
+    // this paragraph a statement with no way to act on it.
     return (
       <p className={`text-ch-fine leading-normal text-ch-ink-2 ${className}`}>
-        <SubscribeSentence /> <SubscribeLink /> <StorePlansLink />
+        <SubscribeSentence /> <SubscribeLink />
       </p>
     );
   }
