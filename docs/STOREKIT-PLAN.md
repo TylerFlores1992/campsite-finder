@@ -682,6 +682,38 @@ predicted and IAP becomes the response.
 
 ## 8. Step 2 in full — the products, ready to paste
 
+**GATE STATUS, READ IN THE CONSOLE 2026-08-30 (a human reading of a screen nobody here can
+see — §29d):**
+
+| | |
+|---|---|
+| Paid Apps Agreement | **Active**, Aug 25 2026 – Jul 25 2027 |
+| Bank account | **Active** — JPMorgan Chase, USD |
+| Tax form (W-9) | **Active**, submitted Aug 25 |
+| **Small Business Program** | **SUBMITTED 2026-08-30, PENDING** — *"we will email you about your status soon"* |
+
+**So the products are BLOCKED on SBP and on nothing else.** The 08-28 state table above says
+Paid Applications was still processing; it is not, and the only outstanding gate is the
+commission rate.
+
+**"175 Countries or Regions" on the agreements page is the AGREEMENT'S territory coverage, not
+app availability.** The app is United States only and Step 4's product availability must match
+it — `LINKOUT_BY_STORE.ios` depends on that, not on this row.
+
+**WHAT IS AND IS NOT REVERSIBLE, because the two are treated as one and only one of them is
+permanent.** Product IDs cannot be renamed and a deleted one cannot be recreated. **Prices
+can be changed**, and with zero subscribers changing four of them costs nothing. So the
+irreversible half of §8 does not depend on SBP at all; only the price column does. That is a
+reason to know the real cost of waiting, **not** a licence to jump the gate — the rule below
+was written deliberately.
+
+**TWO STEPS ARE NOT BLOCKED AND WERE STARTED WHILE WAITING:** the In-App Purchase key (Users
+and Access → Integrations) and adding the App Store app in RevenueCat. Neither needs a product
+to exist. **Stop before Products → Import** — importing an empty set leaves nobody sure later
+whether it worked. And **do not set `NEXT_PUBLIC_REVENUECAT_IOS_KEY` yet**: with no products
+the paywall renders `unavailable`, which is exactly what iOS does today, so the deploy would
+prove nothing and would spoil the clean "no `appl_` in the bundle" reading that verifies it.
+
 *Written 2026-08-24 once the W-9 cleared. Create these the moment Paid Applications goes
 Active. **Every price here assumes the Small Business Program at 15%** — if SBP is refused or
 slips, do not create them; the 30% column is different and pushes Auto-Cart yearly to $71.99,
