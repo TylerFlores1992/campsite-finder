@@ -1201,8 +1201,17 @@ async function maybeAutoLogin(ctx, page) {
     saveAutoLogin(autoLogin);
   }
 
-  const mins = minutesUntil(release);
-  if (mins == null) return autoLoginSkip(`could not read the release time (${release})`);
+  /**
+   * ONE CLOCK READING, in seconds, with the rounded minutes derived from it.
+   *
+   * Two reads would be two different instants — harmless in a log line, and not harmless in
+   * the window gates, where a hold could be inside the lead by one measure and outside by
+   * the other. `secs` is what the coverage check below must use; `mins` is for the gates and
+   * for printing, where a rounded minute is what a reader wants.
+   */
+  const secs = secondsUntil(release);
+  if (secs == null) return autoLoginSkip(`could not read the release time (${release})`);
+  const mins = Math.round(secs / 60);
   if (mins > AUTOLOGIN_LEAD_MIN) {
     return autoLoginSkip(`the release is ${Math.round(mins)}m away, outside the ${AUTOLOGIN_LEAD_MIN}m lead`);
   }
@@ -1219,17 +1228,14 @@ async function maybeAutoLogin(ctx, page) {
    *
    * The requirement is the same sentence the constant's own comment gives, evaluated now:
    * alive until the release, plus the cart hold, plus margin.
-   */
-  /**
-   * IN SECONDS, NEVER ROUNDED MINUTES — see `tokenSecondsNeeded`. `mins` above is fine for
-   * the window gates and the log text; it is not fine here, because rounding turns the
+   *
+   * AND IN SECONDS, NEVER ROUNDED MINUTES — see `tokenSecondsNeeded`. `mins` is fine for the
+   * window gates and the log text; it is not fine here, because rounding turns the
    * requirement into a sixty-second staircase against a token that decays continuously, and
    * a deficit smaller than the step then reads as covered. That cost a campsite on
    * 2026-08-30: a token two to sixteen seconds short was called covered twenty-two times
    * across twenty-one minutes, and the sign-in it deferred ran INTO the release.
    */
-  const secs = secondsUntil(release);
-  if (secs == null) return autoLoginSkip(`could not read the release time (${release})`);
   const needSec = tokenSecondsNeeded(secs, CART_HOLD_MIN, AUTOLOGIN_MARGIN_MIN);
   const covers = (left) => left != null && left > needSec;
 
