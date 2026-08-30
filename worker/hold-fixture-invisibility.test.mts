@@ -26,8 +26,9 @@
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { query, mutate } from '../src/lib/db/client';
-import { offerHold, requestHold, nextHoldRelease, holdAtRisk } from '../src/lib/rc-holds';
+import { offerHold, requestHold, nextHoldRelease, holdAtRisk, HOLD_GRACE_MIN } from '../src/lib/rc-holds';
 
 let watchId = '';
 let userId = '';
@@ -149,4 +150,80 @@ test('a REAL numeric unit id is still seen by both — the filter is not a blank
     await mutate(`DELETE FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = $2`,
       [watchId, UNREACHABLE_NUMERIC]).catch(() => {});
   }
+});
+
+test('a hold still inside its grace window is NOT invisible once the release passes', async () => {
+  /**
+   * ── THE 2026-08-30 BLIND SPOT ─────────────────────────────────────────────────────────
+   * `nextHoldRelease` required `release_at >= NOW()`, while `dueHolds` keeps serving the same
+   * hold for HOLD_GRACE_MIN afterwards. So the instant a release passed, the bot was told
+   * there was no hold — and `maybeAutoLogin`, the only thing that types a password and
+   * repairs a dead session, stood down with `no hold is queued` while the runner was still
+   * retrying the cart:
+   *
+   *     18:56:12  release
+   *     18:57:08     auto-login stood down: no hold is queued    ← the hold was `requested`
+   *     18:57:56  ⚠ RC SESSION IS DEAD
+   *
+   * The tell that this was a bug: `maybeAutoLogin` already carried a `mins < -20` guard for
+   * the past-release case, and it could never fire because `release` was always null.
+   *
+   * REAL-DB, because the fix is one predicate inside one SQL statement and a test asserting a
+   * copy would assert the copy.
+   */
+  await offerHold({
+    watchId, userId, campgroundId, unitId: UNREACHABLE_NUMERIC, unitName: '#test',
+    // PAST, but inside the grace window — the state that used to be invisible.
+    arrivalDate: '2026-09-04', nights: 2, releaseAt: pacific(-(HOLD_GRACE_MIN - 5)),
+  });
+  // Straight to `carted` for the same three reasons as the test above: `dueHolds` serves
+  // only `requested`, so a numeric row never reaches the live runner.
+  await mutate(
+    `UPDATE rc_hold_requests SET status = 'carted', carted_at = NOW()
+      WHERE watch_id = $1 AND unit_id = $2`, [watchId, UNREACHABLE_NUMERIC]);
+  try {
+    assert.ok(
+      await nextHoldRelease(),
+      'a hold whose release has passed but is still inside the grace window must remain ' +
+      'visible — it is exactly when the session repair is most needed',
+    );
+  } finally {
+    await mutate(`DELETE FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = $2`,
+      [watchId, UNREACHABLE_NUMERIC]).catch(() => {});
+  }
+});
+
+test('a hold PAST the grace window really is gone — the window is a window', async () => {
+  // The other side, so widening cannot become "forever". A hold `dueHolds` will no longer
+  // serve must not keep the update gate shut or the warm-up armed indefinitely.
+  await offerHold({
+    watchId, userId, campgroundId, unitId: UNREACHABLE_NUMERIC, unitName: '#test',
+    arrivalDate: '2026-09-04', nights: 2, releaseAt: pacific(-(HOLD_GRACE_MIN + 10)),
+  });
+  await mutate(
+    `UPDATE rc_hold_requests SET status = 'carted', carted_at = NOW()
+      WHERE watch_id = $1 AND unit_id = $2`, [watchId, UNREACHABLE_NUMERIC]);
+  try {
+    assert.equal(
+      await nextHoldRelease(), null,
+      'a hold past the grace window is finished and must not be reported as upcoming',
+    );
+  } finally {
+    await mutate(`DELETE FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = $2`,
+      [watchId, UNREACHABLE_NUMERIC]).catch(() => {});
+  }
+});
+
+test('the grace window is ONE number, shared with dueHolds', () => {
+  // It was the literal 20 in three places, and `nextHoldRelease` disagreeing with `dueHolds`
+  // about whether a hold still existed is the whole defect above.
+  const src = readFileSync('src/lib/rc-holds.ts', 'utf8');
+  assert.match(src, /export const HOLD_GRACE_MIN = \d+;/, 'the grace must be a named export');
+  assert.match(src, /dueHolds\(leadSeconds = 60, graceMinutes = HOLD_GRACE_MIN\)/,
+    'dueHolds must take its default from the shared constant');
+  assert.match(src, /\[String\(HOLD_GRACE_MIN\)\]/,
+    'nextHoldRelease must bound its window with the same constant');
+  // No stray literal left behind pretending to be the grace.
+  assert.ok(!/graceMinutes = 20/.test(src),
+    'no copy of the grace window may survive as a literal');
 });

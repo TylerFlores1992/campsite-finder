@@ -256,6 +256,67 @@ test('the stand-off outlasts a FAILED renewal\'s retry, and still leaves room to
   );
 });
 
+test('an ADEQUATE token is never destroyed when there is no runway to recover', () => {
+  /**
+   * THE 2026-08-30 THIRD FAILURE, and it was self-inflicted by the margin raised that morning.
+   *
+   * `attemptLogin` DROPS the stored token before hunting for a sign-in form — it must, because
+   * RC's SPA renders signed-in while a token is present and then there is no form to find. So
+   * the repair destroys the thing it repairs, and a failed repair leaves the session WORSE
+   * than not trying:
+   *
+   *     18:52:39  ♻ kept warm — token exp in 30m
+   *     18:54:38  ⏰ hold releases in 2m and the session will not cover it — signing in
+   *     18:54:43      → signed in, but the token will not cover the hold — dropping it
+   *     18:56:31  RC loaded and STAYING OPEN — token source: none
+   *
+   * The 30-minute token was ADEQUATE — it outlived the release plus the whole cart hold, so
+   * both the cart and the release-on-claim were covered. It was only under the safety margin.
+   *
+   * The margin is NOT reverted and this does not make it inert: it still governs while there
+   * is time to recover from a failed sign-in, which is where a refresh is cheap. What it may
+   * no longer do is spend a destructive gamble at a moment with no runway.
+   */
+  const src = read('rc-keepwarm.mjs');
+  const fnAt = src.indexOf('async function maybeAutoLogin');
+  assert.ok(fnAt > -1, 'maybeAutoLogin must still exist — anchor not found');
+  const fn = src.slice(fnAt, src.indexOf('\nasync function ', fnAt + 10));
+
+  // ADEQUATE = the claim's real requirement: alive through the release and the whole cart
+  // hold, because that is when remove/cartentry must still run. NO margin — a margin here
+  // would make this guard the very thing it exists to override.
+  assert.match(
+    fn, /const adequateSec = tokenSecondsNeeded\(secs, CART_HOLD_MIN, 0\)/,
+    'adequacy must be cart hold with NO margin',
+  );
+
+  // DERIVED FROM THE RETRY GAP, not chosen. Surviving one failed sign-in needs the gap plus
+  // time for the retry to run.
+  assert.match(
+    fn, /const recoveryMs = AUTOLOGIN_RETRY_GAP_MS \+ [0-9_]+ \* 60_000;/,
+    'the runway must be derived from AUTOLOGIN_RETRY_GAP_MS',
+  );
+
+  // THE GUARD ITSELF, and BOTH conditions. Without `!recoverable` it would refuse every
+  // margin-driven refresh including the cheap recoverable ones the margin exists for;
+  // without the adequacy test it would keep a token that cannot cover the claim at all.
+  const guard = fn.match(/if \(!recoverable && left != null && left > adequateSec\) \{/);
+  assert.ok(guard, 'the stand-down must require BOTH no-runway AND an adequate token');
+
+  // AND IT MUST SIT AFTER the "covers" return, or a fully-covering token takes this branch
+  // and reports itself as merely adequate — true, but the wrong sentence in the log a human
+  // reads at 07:50.
+  const coversAt = fn.indexOf('the token covers this hold');
+  const guardAt = fn.indexOf('if (!recoverable && left != null && left > adequateSec)');
+  assert.ok(coversAt > -1 && guardAt > coversAt,
+    'the adequacy stand-down must come after the full-coverage stand-down');
+
+  // ...and BEFORE anything spends an attempt, or the guard is decoration.
+  const spendAt = fn.indexOf('autoLogin.spent >= AUTOLOGIN_MAX_ATTEMPTS');
+  assert.ok(spendAt > -1 && guardAt < spendAt,
+    'the stand-down must come before the attempt budget is consulted');
+});
+
 test('the token is written to storage BEFORE the profile is handed over', () => {
   /**
    * THE DEFECT THIS PINS, measured twice on 2026-08-30 and the cause of two lost hand-off
