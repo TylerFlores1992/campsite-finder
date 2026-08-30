@@ -221,3 +221,70 @@ test('the sideload lever DELETES the AAB rather than skipping the billing check'
   // WITHOUT THE LEVER, NOTHING CHANGES. The default path still fails the build.
   assert.match(body, /else\n\s*exit 1/, 'with the lever off, a missing permission still fails the build');
 });
+
+// ─── THE iOS RevenueCat POD (2026-08-30) ──────────────────────────────────────────────
+//
+// Android proves RevenueCat landed via the BILLING permission — the plugin's own android
+// manifest is EMPTY, so that permission can only have arrived through the
+// purchases-hybrid-common -> purchases chain. iOS had no equivalent assertion at all until
+// this date, so the pod could be absent from every build and nothing would say so.
+
+test('the iOS build asserts the RevenueCat pod, not just InAppBrowser', () => {
+  const step = ios[find(ios, 'RevenueCat plugin')];
+  const body = code(step);
+
+  // THE POD NAME IS THE ARTIFACT. @capacitor/cli's fixName() maps
+  // '@revenuecat/purchases-capacitor' to exactly this; a wrong name is an assertion that
+  // can never pass, which is the opposite failure and just as bad.
+  assert.match(body, /RevenuecatPurchasesCapacitor/, 'the derived pod name must be checked');
+
+  // BOTH HALVES, because they are different facts. The Podfile is what we ASKED for; the
+  // lock file is what CocoaPods actually RESOLVED. A pod can be named and still fail to
+  // come down, and only the second catches that.
+  //
+  // ANCHORED ON THE COMMANDS, NOT THE PATHS. The first version of this test matched
+  // /Podfile\.lock/ anywhere in the step — and the FAILURE MESSAGE says "NOT in
+  // Podfile.lock", so replacing the grep with `true` left the token in place and the guard
+  // passed against a step that no longer checked the lock file at all. Verified by
+  // mutation. Twenty-somethingth instance of a guard anchored on a token that occurs twice.
+  assert.match(body, /grep -q "pod '\$POD'" ios\/App\/Podfile\b/, 'the Podfile must be grepped');
+  assert.match(body, /grep -q "\$POD" ios\/App\/Podfile\.lock/, 'the lock file must be grepped');
+
+  // IT MUST BE ABLE TO FAIL, AND MUST HAVE NO WAY OUT. `exit 1` being present proved
+  // nothing — an early `exit 0` inserted above it left every other assertion true. A step
+  // whose whole job is to fail the build has no legitimate reason to exit 0 early.
+  assert.match(body, /exit 1/, 'a missing pod must fail the build');
+  assert.doesNotMatch(body, /exit 0/, 'no early success path — that neuters the assertion');
+  assert.match(body, /set -e/, 'an unchecked command must not be able to pass silently');
+});
+
+test('the RevenueCat assertion is not widened to a whole-tree grep', () => {
+  // ios/App/App/public holds our own web bundle, which contains the literal string
+  // '@revenuecat/purchases-capacitor' in the dynamic import that loads the SDK. So
+  // `grep -r ios/` passes with the pod entirely absent — the same trap already documented
+  // for InAppBrowser, with a different string.
+  const body = code(ios[find(ios, 'RevenueCat plugin')]);
+  assert.ok(!/grep -r\w*\s+["']?RevenuecatPurchasesCapacitor["']?\s+ios\/\s*$/m.test(body),
+    'must not grep the whole ios/ tree — the web bundle contains the package name');
+  assert.ok(!/\bios\/App\/App\/public\b/.test(body),
+    'must never read the web bundle as evidence the native pod installed');
+});
+
+test('the assertion runs AFTER the sync that creates the Podfile', () => {
+  // Ordering is the whole thing: before `cap sync ios` there is no Podfile and no lock
+  // file, so the step would fail on every build for the wrong reason — and the natural
+  // "fix" for that is to weaken it.
+  assert.ok(
+    find(ios, 'RevenueCat plugin') > find(ios, 'Capacitor sync'),
+    'the RevenueCat assertion must come after Capacitor sync',
+  );
+});
+
+test('the RevenueCat assertion runs BEFORE the IPA is built', () => {
+  // A build that ships and then reports the plugin missing has already cost the upload,
+  // the processing wait and a TestFlight slot.
+  assert.ok(
+    find(ios, 'RevenueCat plugin') < find(ios, 'Build the IPA'),
+    'assert before building, not after',
+  );
+});

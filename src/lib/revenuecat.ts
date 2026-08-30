@@ -10,6 +10,9 @@
 
 import { timingSafeEqual, createHmac } from 'crypto';
 import type { PlanTier } from './stripe-plans';
+// `store-plans.ts` is a pure leaf with no imports of its own — importing it here does
+// not drag `server-only` or the SDK into the webhook or into tsx's test runner.
+import { tierForStoreProductId } from './store-plans';
 
 /** The event, as it arrives. Nested under `event` — the envelope is `{api_version, event}`. */
 export interface RcEvent {
@@ -30,17 +33,24 @@ export type RcProvider = 'google' | 'apple';
 /**
  * Which tier a product id implies.
  *
- * Play ids arrive as `<product_id>:<base_plan_id>` (RevenueCat states this on the import
- * screen), so the tier is the part before the FIRST colon.
+ * **THIS SPLIT ON `:` AND WAS PLAY-ONLY UNTIL 2026-08-30**, which made it wrong for every
+ * Apple id in §8: `app.camphawk.mobile.autocart.yearly` has no colon, so the whole string
+ * failed the `=== 'camphawk_autocart'` test and **both Auto-Cart products returned `base`**.
+ * Measured against the real function, not reasoned about. The shape rule now lives once, in
+ * `store-plans.ts`, so a third store cannot be taught to one caller and not the other.
  *
- * A PREFIX TEST, NOT A LIST OF THE FOUR IDS. An exhaustive list silently mis-tiers a
- * fifth product added later; this degrades to 'base', which is the same failure
- * direction `tierForPriceId` chose — "paying but treated as base", never silent free
- * premium.
+ * THE DEGRADATION IS UNCHANGED AND IS THE POINT OF THE `?? 'base'`. An id we do not
+ * recognise is not an error and does not throw — it becomes `base`, the same failure
+ * direction `tierForPriceId` chose: "paying but treated as base", never silent free premium.
+ *
+ * **AND IT DELIBERATELY DOES NOT ASK FOR THE INTERVAL.** `planForProductId(id)?.tier` reads
+ * as the tidy one-liner and is a real downgrade bug: a new base plan under an existing
+ * subscription — `camphawk_autocart:weekly` — is a genuine Auto-Cart purchase, and that
+ * expression returns null for it because the INTERVAL is unfamiliar, costing the subscriber
+ * the feature they bought. `tierForStoreProductId` answers the tier alone for that reason.
  */
 export function tierForProductId(productId: string | null | undefined): PlanTier {
-  if (!productId) return 'base';
-  return productId.split(':')[0] === 'camphawk_autocart' ? 'autocart' : 'base';
+  return tierForStoreProductId(productId) ?? 'base';
 }
 
 /** `store` → migration 071's `provider`. Unknown stores are not ours to record. */

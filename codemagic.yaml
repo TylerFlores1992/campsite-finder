@@ -109,6 +109,51 @@ workflows:
             exit 1
           }
           echo "InAppBrowser present in $DIR and wired into the Podfile."
+      - name: Assert the RevenueCat plugin is actually installed
+        # THE iOS COUNTERPART TO THE ANDROID BILLING ASSERTION, and until 2026-08-30 there
+        # was none. Android proves RevenueCat landed by checking com.android.vending.BILLING
+        # reached the merged manifest — the plugin's own android manifest is EMPTY, so that
+        # permission can only have come from the purchases-hybrid-common -> purchases chain.
+        # iOS had no equivalent, so the pod could be absent and nothing would say so.
+        #
+        # WHAT THAT FAILURE LOOKS LIKE, which is why it needs an assertion rather than a
+        # runtime check: `bringUp` in src/lib/native/purchases.ts returns
+        # {ok:false, reason:'no purchases plugin in this build'} and the paywall renders
+        # `unavailable` — WHICH IS ALSO WHAT A MISSING API KEY, A NON-US STOREFRONT AND AN
+        # EMPTY OFFERING LOOK LIKE. Four causes, one screen, and the app still builds,
+        # ships and passes review.
+        #
+        # POD NAME DERIVED, NOT REMEMBERED — the mistake this file's previous assertion
+        # records paying for twice. @capacitor/cli's own fixName() maps the package name
+        # '@revenuecat/purchases-capacitor' to 'RevenuecatPurchasesCapacitor'
+        # (dist/plugin.js: / -> _, - -> _, @ -> '', _x -> X, then capitalise), and
+        # generatePodFile writes `pod '<that>', :path => ...` for any plugin whose
+        # package.json has a `capacitor` key. It has one: {"ios":{"src":"ios"}}.
+        #
+        # DO NOT "simplify" this to `grep -r ios/`. ios/App/App/public holds our own web
+        # bundle, which contains the string '@revenuecat/purchases-capacitor' in the dynamic
+        # import that loads the SDK — so a whole-tree grep passes with the pod entirely
+        # absent. Exactly the trap documented for InAppBrowser above, with a different
+        # string. An assertion that cannot fail is worse than none: it reads as proof.
+        script: |
+          set -e
+          POD=RevenuecatPurchasesCapacitor
+          grep -q "pod '$POD'" ios/App/Podfile || {
+            echo "$POD is NOT in ios/App/Podfile."
+            echo "Check that @revenuecat/purchases-capacitor is in package.json and that"
+            echo "'npx cap sync ios' ran before this step."
+            cat ios/App/Podfile || true
+            exit 1
+          }
+          # Requested is not installed. The Podfile is what we asked for; the lock file is
+          # what CocoaPods actually resolved, and a pod can be named and still fail to come
+          # down. Same distinction as "the sources landed" vs "the Podfile pulls them in".
+          grep -q "$POD" ios/App/Podfile.lock || {
+            echo "$POD is in the Podfile but NOT in Podfile.lock — it did not install."
+            echo "In-app purchase would be silently unavailable on every iOS install."
+            exit 1
+          }
+          echo "$POD is in the Podfile and resolved in Podfile.lock."
       - name: Declare export compliance
         # The app uses only standard HTTPS/TLS (camphawk.app, Clerk, Stripe) — exempt
         # encryption. Declaring this up front lets TestFlight accept the build without

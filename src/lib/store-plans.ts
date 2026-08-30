@@ -51,9 +51,82 @@ export const PLAY_SUBSCRIPTION_ID: Record<PlanTier, string> = {
 };
 
 /**
+ * Apple product ids (§8), which are a DIFFERENT SHAPE, and that is the whole reason this
+ * section exists.
+ *
+ *     Play    `camphawk_autocart:yearly`              <subscriptionId>:<basePlanId>
+ *     Apple   `app.camphawk.mobile.autocart.yearly`   dot-separated, bundle-id prefixed
+ *
+ * **THE PARSERS BELOW SPLIT ON `:` AND WERE PLAY-ONLY UNTIL 2026-08-30.** Run against §8's
+ * four ids they returned `tier: 'base'` for **all four** — including both Auto-Cart products
+ * — and `null` from `planForProductId` for all four. Measured, not reasoned: an Apple
+ * Auto-Cart subscriber paying $11.99 or $59.99 would have been written to the database as
+ * tier `base` and silently denied the feature they bought.
+ *
+ * It failed in the deliberate "paying but treated as base, never silent free premium"
+ * direction, so nobody would have got premium free — but it was wrong on **every** Apple
+ * purchase, not an edge case, and nothing tested it because no test fed an Apple id to
+ * either function.
+ */
+export const APPLE_PRODUCT_PREFIX = 'app.camphawk.mobile.';
+
+export const APPLE_PRODUCT_ID: Record<PlanTier, Record<BillingInterval, string>> = {
+  base: {
+    monthly: `${APPLE_PRODUCT_PREFIX}base.monthly`,
+    yearly: `${APPLE_PRODUCT_PREFIX}base.yearly`,
+  },
+  autocart: {
+    monthly: `${APPLE_PRODUCT_PREFIX}autocart.monthly`,
+    yearly: `${APPLE_PRODUCT_PREFIX}autocart.yearly`,
+  },
+};
+
+/**
+ * The two segments of a store product id — tier and interval — for EITHER store, or null
+ * for a segment we do not recognise.
+ *
+ * **THEY ARE RETURNED SEPARATELY AND MUST STAY THAT WAY.** `tierForProductId` (the webhook)
+ * needs the tier alone and must NOT lose it because the interval is unfamiliar: a fifth base
+ * plan under `camphawk_autocart` — say `camphawk_autocart:weekly` — is a real Auto-Cart
+ * purchase, and folding the two decisions together would downgrade that subscriber to `base`.
+ * That is a live regression risk, not a hypothetical: it is exactly what a tidy
+ * `planForProductId(id)?.tier` would do.
+ */
+function segmentsOf(productId: string): { tier: string; interval: string | undefined } {
+  if (productId.startsWith(APPLE_PRODUCT_PREFIX)) {
+    const [tier, interval] = productId.slice(APPLE_PRODUCT_PREFIX.length).split('.');
+    return { tier, interval };
+  }
+  const [tier, interval] = productId.split(':');
+  return { tier, interval };
+}
+
+/**
+ * Which tier a store product id implies, independent of its interval, or null when the id
+ * is not one of ours.
+ *
+ * A STRUCTURAL TEST, NOT A LIST OF THE EIGHT IDS. An exhaustive list silently mis-tiers a
+ * ninth product added later; this returns null, and the webhook's caller degrades that to
+ * `base` — "paying but treated as base", never silent free premium.
+ */
+export function tierForStoreProductId(productId: string | null | undefined): PlanTier | null {
+  if (!productId) return null;
+  const { tier } = segmentsOf(productId);
+  if (productId.startsWith(APPLE_PRODUCT_PREFIX)) {
+    return tier === 'autocart' ? 'autocart' : tier === 'base' ? 'base' : null;
+  }
+  return tier === PLAY_SUBSCRIPTION_ID.autocart
+    ? 'autocart'
+    : tier === PLAY_SUBSCRIPTION_ID.base
+      ? 'base'
+      : null;
+}
+
+/**
  * What a store product identifier means, or null when we cannot tell.
  *
  * Play ids reach us as `<subscriptionId>:<basePlanId>` — `camphawk_autocart:yearly`.
+ * Apple ids as `app.camphawk.mobile.<tier>.<interval>` (§8). Both shapes, one parser.
  *
  * NULL RATHER THAN A GUESS. An unrecognised id is "we could not tell", and every caller
  * here treats that as a reason to be careful rather than as a fact about the user. The
@@ -63,15 +136,10 @@ export function planForProductId(
   productId: string | null | undefined
 ): { tier: PlanTier; interval: BillingInterval } | null {
   if (!productId) return null;
-  const [subscriptionId, basePlanId] = productId.split(':');
-  const tier: PlanTier | null =
-    subscriptionId === PLAY_SUBSCRIPTION_ID.autocart
-      ? 'autocart'
-      : subscriptionId === PLAY_SUBSCRIPTION_ID.base
-        ? 'base'
-        : null;
+  const tier = tierForStoreProductId(productId);
+  const { interval: segment } = segmentsOf(productId);
   const interval: BillingInterval | null =
-    basePlanId === 'monthly' ? 'monthly' : basePlanId === 'yearly' ? 'yearly' : null;
+    segment === 'monthly' ? 'monthly' : segment === 'yearly' ? 'yearly' : null;
   if (!tier || !interval) return null;
   return { tier, interval };
 }
