@@ -195,13 +195,56 @@ test('the hold runner stands off the profile after repeated dead-session passes'
     'the stand-off must be checked before the profile is requested');
 });
 
-test('the stand-off is shorter than the window a hold stays retryable', () => {
-  // dueHolds hands a hold back for 20 minutes past its release. Standing off longer than that
-  // would trade a repairable session for a guaranteed miss.
+test('the stand-off outlasts the repair it waits for, and stays inside the grace window', () => {
+  /**
+   * THIS GUARD USED TO PIN THE BUG, and that is the part worth keeping.
+   *
+   * It read `ms >= 60_000` ("shorter than a keep-warm cycle buys it no uninterrupted time")
+   * and `ms <= 5 * 60_000` ("must stay well inside the 20-minute cart grace window"). The
+   * upper bound is EXACTLY `RENEW_FLOOR_MS` — so it required the stand-off to be no longer
+   * than the floor it has to outlast, and the fix could not be made without the guard going
+   * red. Same shape as `held-offer-scope.test.mts` requiring the alert storm.
+   *
+   * Both bounds came from the wrong model. The 60-second expiry poll is not what repairs a
+   * dead session; `planRenewal` is, and it will not attempt more often than RENEW_FLOOR_MS
+   * — five minutes. So "three uninterrupted keep-warm cycles" bought nothing at all: the
+   * stand-off could expire before the repair was allowed to start.
+   *
+   * WATCHED LIVE 2026-08-30. A test hold made the runner demand the Chromium profile; the
+   * keep-warm closed a browser holding a token the SPA had been silently re-minting (so it
+   * lived in page memory, not localStorage) and the session died. Two strikes, a three-minute
+   * stand-off, and at the end of it: `RC session is dead — needs a human sign-in`. Deleting
+   * the hold — removing the pressure entirely — repaired it in about FIVE minutes with no
+   * password typed. The floor, to the minute.
+   *
+   * The upper bound is real and stays: `dueHolds` hands a hold back for 20 minutes past its
+   * release, and standing off past that trades a repairable session for a guaranteed miss.
+   */
   const src = read('rc-hold-runner.mjs');
-  const m = src.match(/RC_DEAD_SESSION_BACKOFF_MS \|\| ([\d_]+)/);
-  assert.ok(m, 'the back-off must be a named constant');
-  const ms = Number(m![1].replace(/_/g, ''));
-  assert.ok(ms >= 60_000, 'shorter than a keep-warm cycle buys it no uninterrupted time');
-  assert.ok(ms <= 5 * 60_000, 'must stay well inside the 20-minute cart grace window');
+  const sched = read('renewal-schedule.mjs');
+
+  const floorM = sched.match(/export const RENEW_FLOOR_MS = (\d+) \* 60_000;/);
+  assert.ok(floorM, 'could not read RENEW_FLOOR_MS');
+  const floorMs = Number(floorM![1]) * 60_000;
+
+  // DERIVED IN THE SOURCE, never mirrored. A literal large enough today drifts silently the
+  // moment the floor moves — which is how this constant came to be too short.
+  const m = src.match(/RC_DEAD_SESSION_BACKOFF_MS \|\| RENEW_FLOOR_MS \+ ([0-9_]+)/);
+  assert.ok(m, 'the stand-off must be derived from RENEW_FLOOR_MS, not chosen');
+  const ms = floorMs + Number(m![1].replace(/_/g, ''));
+
+  assert.ok(
+    ms > floorMs,
+    `a ${ms / 60_000}m stand-off cannot wait out a repair gated at ${floorMs / 60_000}m`,
+  );
+  // Room for the renewal to COMPLETE, not merely to start: the authorize round trip has been
+  // observed at 45-60s.
+  assert.ok(ms - floorMs >= 45_000, 'leave the renewal room to finish, not merely to begin');
+
+  const graceM = readFileSync('src/lib/rc-holds.ts', 'utf8').match(/graceMinutes\s*=\s*(\d+)/);
+  const graceMs = (graceM ? Number(graceM[1]) : 20) * 60_000;
+  assert.ok(
+    ms < graceMs / 2,
+    `a ${ms / 60_000}m stand-off eats too much of the ${graceMs / 60_000}m grace window`,
+  );
 });

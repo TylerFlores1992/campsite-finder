@@ -36,6 +36,9 @@ import { spawn, execFileSync } from 'node:child_process';
 import { loadEnv, envSource, looksLikePlaceholder } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 import { makeControlChannel } from './control-channel.mjs';
+// Pure module, no imports and no side effects — see renewal-schedule.mjs. Imported for the
+// one constant that bounds this file's stand-off from below.
+import { RENEW_FLOOR_MS } from './renewal-schedule.mjs';
 
 // The token lives in scripts/auto-cart-bot/.env alongside the rec.gov bot's. Without
 // this the runner answered `feed 401` — which reads exactly like a wrong token, not a
@@ -324,11 +327,32 @@ const LOCK_WAIT_MS = Number(process.env.RC_PROFILE_LOCK_WAIT_MS || 60_000);
  * it) and two in a row means nothing is getting the chance to.
  *
  * THE BACK-OFF IS DELIBERATELY SHORTER THAN THE CART GRACE WINDOW. `dueHolds` keeps handing
- * a hold back for 20 minutes after its release, so a three-minute stand-off costs at most
- * three minutes of that and buys three uninterrupted keep-warm cycles. Standing off longer
- * than the grace window would trade a fixable session for a guaranteed miss.
+ * a hold back for 20 minutes after its release, so the stand-off costs at most that much of
+ * it. Standing off longer than the grace window would trade a fixable session for a
+ * guaranteed miss.
+ *
+ * ── AND IT MUST BE LONGER THAN THE REPAIR IT WAITS FOR (2026-08-30) ────────────────────
+ * It was 180_000, on the reasoning that three minutes "buys three uninterrupted keep-warm
+ * cycles". The 60-second expiry poll is not what repairs a dead session — `planRenewal` is,
+ * and it will not attempt more often than `RENEW_FLOOR_MS`, which is FIVE minutes. So the
+ * stand-off could expire, the runner could take the profile again, and the renewal never got
+ * its turn: exactly the spiral this constant exists to break, surviving the cure.
+ *
+ * Watched live on 2026-08-30. A test hold made the runner demand the profile, the keep-warm
+ * closed the browser holding a token the SPA had been silently re-minting (`src=live`, so it
+ * lived in page memory and not localStorage), and the session went dead. Two strikes, a
+ * three-minute stand-off, and at the end of it: `RC session is dead — needs a human sign-in`.
+ * Deleting the hold — i.e. removing the pressure entirely — repaired it in about FIVE
+ * minutes with no password typed, which is the floor, to the minute.
+ *
+ * So the floor plus one renewal's own duration (the authorize round trip runs ~45–60s), and
+ * still comfortably inside the twenty-minute grace. Derived from the constant rather than
+ * mirrored, because two numbers in two files with nothing holding them together is how this
+ * one came to be too short in the first place.
  */
-const DEAD_SESSION_BACKOFF_MS = Number(process.env.RC_DEAD_SESSION_BACKOFF_MS || 180_000);
+const DEAD_SESSION_BACKOFF_MS = Number(
+  process.env.RC_DEAD_SESSION_BACKOFF_MS || RENEW_FLOOR_MS + 60_000,
+);
 const DEAD_SESSION_STRIKES = Number(process.env.RC_DEAD_SESSION_STRIKES || 2);
 let deadSessionStrikes = 0;
 let profileStandOffUntil = 0;
