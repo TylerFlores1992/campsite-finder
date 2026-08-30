@@ -18,7 +18,7 @@ import { AUTOCART_BETA_LABEL, AUTOCART_BETA_NOTE } from "@/lib/autocart-beta";
 import { divisionLabel, dropRedundantState, parseCampgroundName, placeLabel } from "./campground-name";
 import { addDays, formatRange, nightsBetween, thisWeekendRange, todayISO } from "@/components/ui/date";
 import { useIsNativeApp } from "@/lib/native/context";
-import { useNativeLinkout, SUBSCRIBE_HREF } from "./nativeSubscribe";
+import { useNativeLinkout, useStoreCanSell, StorePlansLink, SUBSCRIBE_HREF } from "./nativeSubscribe";
 import SubscribeCta, { useAccountGate } from "./SubscribeCta";
 import type { Campground } from "@/lib/types";
 import { WATCH_LIMIT, MAX_DIVISIONS_PER_WATCH } from "@/lib/limits";
@@ -91,6 +91,7 @@ export default function NewWatch({
   const router = useRouter();
   const isNative = useIsNativeApp();
   const linkout = useNativeLinkout();
+  const canSell = useStoreCanSell();
   const { gate } = useAccountGate();
 
   const [campgroundId, setCampgroundId] = useState<string | null>(initialCampgroundId ?? null);
@@ -921,7 +922,18 @@ export default function NewWatch({
         {needsSubscription && (
           <p className="mt-2.5 text-ch-fine leading-normal text-ch-ochre-ink">
             {isNative ? (
-              linkout ? (
+              // THE SHARPEST MOMENT IN THE PRODUCT TO OFFER A PLAN: a campground and dates
+              // are already entered and the server has just refused the submit. Until
+              // 2026-08-30 an Android user was told here to go to a website — plain text,
+              // no link — while a working in-app paywall sat two routes away with nothing
+              // pointing at it. `canSell` is checked FIRST because a shell that can buy
+              // should never be sent outside.
+              canSell ? (
+                <>
+                  Watches need a subscription — nothing you&apos;ve entered is lost.{" "}
+                  <StorePlansLink />
+                </>
+              ) : linkout ? (
                 <>
                   Watches need a subscription.{" "}
                   <a href={SUBSCRIBE_HREF} data-native-external="true" className="font-bold underline">
