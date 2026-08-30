@@ -195,56 +195,105 @@ test('the hold runner stands off the profile after repeated dead-session passes'
     'the stand-off must be checked before the profile is requested');
 });
 
-test('the stand-off outlasts the repair it waits for, and stays inside the grace window', () => {
+test('the stand-off outlasts a FAILED renewal\'s retry, and still leaves room to cart', () => {
   /**
    * THIS GUARD USED TO PIN THE BUG, and that is the part worth keeping.
    *
    * It read `ms >= 60_000` ("shorter than a keep-warm cycle buys it no uninterrupted time")
    * and `ms <= 5 * 60_000` ("must stay well inside the 20-minute cart grace window"). The
-   * upper bound is EXACTLY `RENEW_FLOOR_MS` — so it required the stand-off to be no longer
-   * than the floor it has to outlast, and the fix could not be made without the guard going
-   * red. Same shape as `held-offer-scope.test.mts` requiring the alert storm.
+   * upper bound was EXACTLY `RENEW_FLOOR_MS` — so it required the stand-off to be no longer
+   * than the repair cadence it has to outlast, and the fix could not be made without the
+   * guard going red. Same shape as `held-offer-scope.test.mts` requiring the alert storm.
    *
-   * Both bounds came from the wrong model. The 60-second expiry poll is not what repairs a
-   * dead session; `planRenewal` is, and it will not attempt more often than RENEW_FLOOR_MS
-   * — five minutes. So "three uninterrupted keep-warm cycles" bought nothing at all: the
-   * stand-off could expire before the repair was allowed to start.
+   * THEN THE FIRST FIX WAS ALSO WRONG, AND THE SAME AFTERNOON MEASURED IT. Sizing on
+   * `RENEW_FLOOR_MS` assumes the renewal SUCCEEDS. The case this constant exists for is the
+   * one where it does not, and a failed attempt does not retry at the floor:
    *
-   * WATCHED LIVE 2026-08-30. A test hold made the runner demand the Chromium profile; the
-   * keep-warm closed a browser holding a token the SPA had been silently re-minting (so it
-   * lived in page memory, not localStorage) and the session died. Two strikes, a three-minute
-   * stand-off, and at the end of it: `RC session is dead — needs a human sign-in`. Deleting
-   * the hold — removing the pressure entirely — repaired it in about FIVE minutes with no
-   * password typed. The floor, to the minute.
+   *     18:11:51  ✗ no fresher token — got as far as: no-signin-control
+   *     18:17:20     renewal stood down: nothing has changed since the attempt 5m ago
+   *     18:22:22  renewing the session …
+   *     18:23:09  ✓ renewed by authorize: none → 3579s
    *
-   * The upper bound is real and stays: `dueHolds` hands a hold back for 20 minutes past its
-   * release, and standing off past that trades a repairable session for a guaranteed miss.
+   * It retries at RENEW_MIN_GAP_MS — TEN minutes. A six-minute stand-off expired before the
+   * retry, the runner retook the profile, and the repair that worked never got a browser.
+   *
+   * THE UPPER BOUND IS NO LONGER "HALF THE GRACE", and the reason is written down so the
+   * next reader does not take the change for a weakening. What the ceiling protects is the
+   * ability to still CART once the stand-off ends. A cart is seconds — T+1.6s and T+2s are
+   * the measured ones — reached on a 15-second poll. So the bound is "several polls plus a
+   * cart", not half the window. What is genuinely spent is blind time, and that is affordable
+   * only because arming this needs TWO consecutive dead-session passes.
    */
   const src = read('rc-hold-runner.mjs');
   const sched = read('renewal-schedule.mjs');
 
-  const floorM = sched.match(/export const RENEW_FLOOR_MS = (\d+) \* 60_000;/);
-  assert.ok(floorM, 'could not read RENEW_FLOOR_MS');
-  const floorMs = Number(floorM![1]) * 60_000;
+  const gapM = sched.match(/export const RENEW_MIN_GAP_MS = (\d+) \* 60_000;/);
+  assert.ok(gapM, 'could not read RENEW_MIN_GAP_MS');
+  const gapMs = Number(gapM![1]) * 60_000;
 
   // DERIVED IN THE SOURCE, never mirrored. A literal large enough today drifts silently the
-  // moment the floor moves — which is how this constant came to be too short.
-  const m = src.match(/RC_DEAD_SESSION_BACKOFF_MS \|\| RENEW_FLOOR_MS \+ ([0-9_]+)/);
-  assert.ok(m, 'the stand-off must be derived from RENEW_FLOOR_MS, not chosen');
-  const ms = floorMs + Number(m![1].replace(/_/g, ''));
+  // moment the cadence moves — which is how this constant came to be too short twice.
+  const m = src.match(/RC_DEAD_SESSION_BACKOFF_MS \|\| RENEW_MIN_GAP_MS \+ ([0-9_]+)/);
+  assert.ok(m, 'the stand-off must be derived from RENEW_MIN_GAP_MS, not chosen');
+  const ms = gapMs + Number(m![1].replace(/_/g, ''));
 
   assert.ok(
-    ms > floorMs,
-    `a ${ms / 60_000}m stand-off cannot wait out a repair gated at ${floorMs / 60_000}m`,
+    ms > gapMs,
+    `a ${ms / 60_000}m stand-off expires before a failed renewal retries at ${gapMs / 60_000}m`,
   );
   // Room for the renewal to COMPLETE, not merely to start: the authorize round trip has been
   // observed at 45-60s.
-  assert.ok(ms - floorMs >= 45_000, 'leave the renewal room to finish, not merely to begin');
+  assert.ok(ms - gapMs >= 45_000, 'leave the renewal room to finish, not merely to begin');
 
+  // AND ENOUGH GRACE LEFT TO ACTUALLY CART.
   const graceM = readFileSync('src/lib/rc-holds.ts', 'utf8').match(/graceMinutes\s*=\s*(\d+)/);
   const graceMs = (graceM ? Number(graceM[1]) : 20) * 60_000;
+  const CART_ROOM_MS = 5 * 60_000;
   assert.ok(
-    ms < graceMs / 2,
-    `a ${ms / 60_000}m stand-off eats too much of the ${graceMs / 60_000}m grace window`,
+    ms + CART_ROOM_MS <= graceMs,
+    `a ${ms / 60_000}m stand-off leaves under ${CART_ROOM_MS / 60_000}m of the ` +
+    `${graceMs / 60_000}m grace window to notice and cart`,
   );
+});
+
+test('the token is written to storage BEFORE the profile is handed over', () => {
+  /**
+   * THE DEFECT THIS PINS, measured twice on 2026-08-30 and the cause of two lost hand-off
+   * tests. `readLiveToken` prefers `window.__camphawkRcToken` — the capture hook's copy, off
+   * RC's own outbound header — which lives in PAGE MEMORY and dies with the browser:
+   *
+   *     18:08:26  ♻ kept warm — token exp in 46m
+   *     18:08:52  → hold runner wants the profile — closing and standing down
+   *     18:09:36  RC loaded and STAYING OPEN — token source: none
+   *
+   * A queued hold destroyed its own session, then the runner reported that session dead.
+   *
+   * STRUCTURAL, and the ORDER is the whole property: writing after the break, or not
+   * awaiting, both leave the token to die with the page while the diff looks correct. That
+   * is the fix-present-but-inert shape this file's header is about.
+   */
+  const src = read('rc-keepwarm.mjs');
+
+  const yieldAt = src.indexOf("log('→ hold runner wants the profile");
+  assert.ok(yieldAt > -1, 'the profile yield must still exist — anchor not found');
+  const guardAt = src.lastIndexOf('if (profileRequested(PROFILE_DIR)) {', yieldAt);
+  assert.ok(guardAt > -1, 'the yield must sit under profileRequested()');
+
+  const block = src.slice(guardAt, yieldAt);
+  assert.match(
+    block, /await persistLiveToken\(page\)/,
+    'the live token must be written to storage BEFORE the yield is logged and the loop breaks',
+  );
+
+  // AWAITED, not fire-and-forget: the close is what destroys the token, so an unawaited
+  // write races the very thing it exists to survive.
+  assert.ok(
+    !/(?<!await )persistLiveToken\(page\)/.test(src.slice(guardAt, src.indexOf('break;', yieldAt))),
+    'persistLiveToken must be awaited',
+  );
+
+  // And it must be imported from the module that owns the token keys, not reimplemented —
+  // a second copy of `ssoAccessToken` is a second thing to keep in step.
+  assert.match(src, /persistLiveToken,?[^}]*} from '\.\/rc-token\.mjs'|persistLiveToken/,
+    'persistLiveToken must come from rc-token.mjs');
 });
