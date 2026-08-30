@@ -21,7 +21,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { requiredTokenSeconds, sessionAcceptable } from '../scripts/auto-cart-bot/session-coverage.mjs';
+import { tokenSecondsNeeded, sessionAcceptable } from '../scripts/auto-cart-bot/session-coverage.mjs';
 
 const BOT = join(import.meta.dirname, '..', 'scripts', 'auto-cart-bot');
 const read = (f: string) => readFileSync(join(BOT, f), 'utf8');
@@ -60,19 +60,38 @@ test('a dead session is never acceptable, whatever the coverage says', () => {
 
 test('the token requirement is measured from where we stand, not from the lead', () => {
   // At T−30 this reproduces the old constant exactly (30 + 15 + 5 = 50)...
-  assert.equal(requiredTokenSeconds(30, 15, 5), 50 * 60);
+  assert.equal(tokenSecondsNeeded(30 * 60, 15, 5), 50 * 60);
   // ...and at T−5 it asks for 25 minutes rather than the same 50. Demanding fifty minutes of
   // token to cover twenty minutes of work is how a good session reads as insufficient and
   // buys a sign-in the ration exists to protect.
-  assert.equal(requiredTokenSeconds(5, 15, 5), 25 * 60);
+  assert.equal(tokenSecondsNeeded(5 * 60, 15, 5), 25 * 60);
+});
+
+test('the requirement is exact in seconds, not a sixty-second staircase', () => {
+  // THE 2026-08-30 BUG. `minutesUntil` rounded, so the requirement stepped in whole minutes
+  // while the token decayed continuously — and a deficit smaller than the step read as
+  // covered. Reconstructed from the box's own log: at 07:29:44 the release was 1816s away
+  // and the token had at most 3014s left, against a true requirement of 3016s. It was short,
+  // and rounding 1816 up to 30 minutes said otherwise.
+  assert.equal(tokenSecondsNeeded(1816, 15, 5), 3016);
+  // Rounded minutes would have asked for exactly 3000 and called 3014 "covering".
+  assert.ok(tokenSecondsNeeded(1816, 15, 5) > 3014,
+    'a token 2s short must not read as covering');
+
+  // And the staircase must not reappear: one second closer to the release must move the
+  // requirement by one second, not by nothing and then by sixty.
+  for (const s of [1801, 1816, 1830, 1859]) {
+    assert.equal(tokenSecondsNeeded(s + 1, 15, 5) - tokenSecondsNeeded(s, 15, 5), 1,
+      `the requirement must track the clock second by second (at ${s}s)`);
+  }
 });
 
 test('past the release the requirement never shrinks below cart hold plus margin', () => {
   // dueHolds keeps handing a hold back for 20 minutes after its release. A negative
-  // `minsUntilRelease` must not subtract from what the CLAIM still needs — the bot has to be
+  // `secsUntilRelease` must not subtract from what the CLAIM still needs — the bot has to be
   // able to run remove/cartentry when the user taps.
-  assert.equal(requiredTokenSeconds(-10, 15, 5), 20 * 60);
-  assert.equal(requiredTokenSeconds(0, 15, 5), 20 * 60);
+  assert.equal(tokenSecondsNeeded(-10 * 60, 15, 5), 20 * 60);
+  assert.equal(tokenSecondsNeeded(0, 15, 5), 20 * 60);
 });
 
 // ─── the wiring ───────────────────────────────────────────────────────────────────────

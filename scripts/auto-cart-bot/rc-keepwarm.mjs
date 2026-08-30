@@ -86,7 +86,7 @@ import {
 } from './rc-token.mjs';
 import { hasCredentials, attemptLogin, clickSignInControl } from './rc-autologin.mjs';
 import { shouldRehearse, shouldRehearseOnDemand, rehearsalSlot } from './rehearsal.mjs';
-import { requiredTokenSeconds } from './session-coverage.mjs';
+import { tokenSecondsNeeded } from './session-coverage.mjs';
 import { planRenewal, recordRenewal, newRenewalState, makeSkipLogger } from './renewal-schedule.mjs';
 import { settleBudget, budgetForRelease, MAX_KILL_REFUNDS } from './autologin-budget.mjs';
 import { warmupPlan, warmupWindowOpen } from './autologin-warmup.mjs';
@@ -192,15 +192,50 @@ const AUTOLOGIN_LEAD_MIN = Number(process.env.RC_AUTOLOGIN_LEAD_MIN || 30);
  * auto-login looks. Moving L to 30 without moving this would have made it worse — a
  * 25-minute token at T−30 dies at T−5, before the cart itself.
  *
- * The +5 is margin for a login that takes a while and for the token's life being ~60
- * rather than exactly 60.
+ * The margin covers a login that takes a while and the token's life being ~60 rather than
+ * exactly 60. It is `AUTOLOGIN_MARGIN_MIN`, derived immediately below — a literal here
+ * would let the two disagree, which is how a dead constant starts teaching the wrong
+ * number to whoever reads it next.
+ *
+ * IT IS ALSO UNREAD BY ANY CODE PATH, and is kept as the written form of the inequality the
+ * live calculation obeys. Deriving it from the margin is what stops it becoming a second,
+ * disagreeing number sitting next to the real one.
  */
-const AUTOLOGIN_MIN_TOKEN_MIN = Number(
-  process.env.RC_AUTOLOGIN_MIN_TOKEN_MIN || AUTOLOGIN_LEAD_MIN + CART_HOLD_MIN + 5,
-);
 
-/** The margin inside `AUTOLOGIN_MIN_TOKEN_MIN`, named so the live calculation can reuse it. */
-const AUTOLOGIN_MARGIN_MIN = Number(process.env.RC_AUTOLOGIN_MARGIN_MIN || 5);
+/**
+ * ── THE HEADROOM, AND WHY TEN IS NOT A CHOSEN NUMBER (2026-08-30) ──────────────────────
+ * It was 5, and 5 is not a margin — it is a coin flip with extra steps. The stand-down band
+ * is only ten minutes wide, and here is the whole derivation:
+ *
+ *   A token lives ~60 minutes. Coverage needs it alive until release + CART_HOLD + margin,
+ *   i.e. minted no earlier than T−(60 − CART_HOLD − margin). At T−LEAD the token exists at
+ *   all, so it was minted in (T−90, T−30]. With margin 5 that makes it "covering" only when
+ *   it was minted in [T−40, T−30] — TEN MINUTES OUT OF SIXTY, so roughly one release morning
+ *   in six — and inside that band the real slack is uniform on 0 to 10 minutes.
+ *
+ * So half of the stand-downs this branch produces have under five minutes of slack, and on
+ * 2026-08-30 one had TWO SECONDS. There is no number between 5 and 15 that makes the band
+ * safe; there is only a number that makes it narrower. Fifteen is exactly
+ * `60 − CART_HOLD − LEAD + margin` at today's constants — it closes the band rather than
+ * shrinking it, which is the only version of this decision that cannot be lost by seconds.
+ *
+ * WHAT IT COSTS, STATED: on ~1 morning in 6 the bot signs in at T−30 where it used to stand
+ * down. It NEVER adds a second sign-in to a morning — the other five in six already sign in
+ * there, so the per-release budget is untouched and the household IP (twelve-hour block,
+ * 2026-08-06) sees no more logins than before. Measured cost of that sign-in: −422 MB
+ * (2026-08-24), −412 MB (08-25), −408 MB (the 08-30 warm-up).
+ *
+ * AND THE ARGUMENT DELIBERATELY DOES NOT REST ON PREDICTING THAT COST. A password sign-in
+ * was 32 seconds and no memory on 08-26; the 08-30 one took 39 GB of COMMIT. What is
+ * predictable is WHERE the unpredictable act lands: at T−30 a guard kill has thirty minutes
+ * and a supervisor restart to recover from (2026-08-20 did exactly that and still carted at
+ * T+2s); at T−8 it has eight minutes, and on 08-30 it had none.
+ */
+const AUTOLOGIN_MARGIN_MIN = Number(process.env.RC_AUTOLOGIN_MARGIN_MIN || 15);
+
+const AUTOLOGIN_MIN_TOKEN_MIN = Number(
+  process.env.RC_AUTOLOGIN_MIN_TOKEN_MIN || AUTOLOGIN_LEAD_MIN + CART_HOLD_MIN + AUTOLOGIN_MARGIN_MIN,
+);
 
 /**
  * How many sign-ins one release may cost, and how far apart.
@@ -351,6 +386,45 @@ async function sessionLive(ctx, page) {
 export const BUSY = Symbol('rc-profile-busy');
 
 const LOCK_OWNER = 'rc-keepwarm';
+
+/**
+ * ── A CRASH AND A BAIL WERE THE SAME EXIT CODE (2026-08-30) ────────────────────────────
+ * `process.exit(1)` appears exactly once in this file, inside the watchdog's `bail()`. So an
+ * exit of 1 read as "a guard fired" — and Node exits 1 on an unhandled throw too, with no
+ * handler registered anywhere in this process to say otherwise.
+ *
+ * On 2026-08-30 the keep-warm exited 1 at 07:59:42, eighteen seconds before a release, and
+ * neither bail arm could have fired: RUNAWAY needs free RAM under 2000 MB and the box had
+ * 4768 MB; WEDGED needs a 720s stall and the loop had logged 526s earlier. The box was at
+ * 97–99% COMMIT for eight minutes, which is the state in which spawning fails — so an
+ * unhandled throw is the leading candidate and there was NO WAY TO TELL, because the only
+ * record was a stack on stderr in a log the hold runner's retry loop then overwrote.
+ *
+ * The handlers do not change what happens; they change what it says. Same three steps as
+ * `bail()`, in the same order and for the same reasons:
+ *
+ *   • the ABNORMAL-EXIT MARKER, so the next process knows it is coming up after a kill and
+ *     the login rehearsal stands down instead of testing our own restart and reporting it
+ *     as a broken sign-in;
+ *   • RELEASE THE PROFILE LOCK. This is the half a crash never did. An unhandled throw left
+ *     the lock held for STALE_MS (10 minutes) with nothing alive to renew it, so a crash at
+ *     07:53 keeps the hold runner off the profile past 08:00 — the documented way to lose a
+ *     cart to a repair;
+ *   • exit 1, preserving the supervisor's restart behaviour exactly.
+ *
+ * REGISTERING A HANDLER STOPS NODE EXITING BY ITSELF, so the exit is explicit. Everything
+ * before it is wrapped: a handler that throws while reporting a throw is a silent hang.
+ */
+function diedUnhandled(kind, err) {
+  try { log(`✗ ${kind} — the keep-warm is exiting: ${err?.stack || err?.message || String(err)}`); }
+  catch { /* the log is best effort; the lock is not */ }
+  try { fs.writeFileSync(ABNORMAL_EXIT_MARKER, String(Date.now())); } catch { /* ignore */ }
+  try { releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER); } catch { /* ignore */ }
+  process.exit(1);
+}
+process.on('uncaughtException', (err) => diedUnhandled('UNCAUGHT EXCEPTION', err));
+process.on('unhandledRejection', (err) => diedUnhandled('UNHANDLED REJECTION', err));
+
 /** Comfortably inside STALE_MS, so a long sign-in never reads as abandoned. */
 const RENEW_MS = 2 * 60_000;
 /**
@@ -640,21 +714,33 @@ async function warmOnce() {
  * reading is not a negative reading.
  */
 /**
- * Minutes until an RC-style Pacific wall-clock timestamp. Both sides are compared as
+ * SECONDS until an RC-style Pacific wall-clock timestamp. Both sides are compared as
  * wall-clock in the same zone, so the offset cancels; never `new Date()` on a zone-less
  * string, which reads it in whatever zone this box happens to be in.
+ *
+ * THIS IS THE PRIMITIVE, AND THE ROUNDED VERSION BELOW IS DERIVED FROM IT. It used to be the
+ * other way round, and the rounding reached the one comparison that cannot afford it — see
+ * `tokenSecondsNeeded`. Anything deciding whether a token COVERS a hold must use this;
+ * `minutesUntil` is for window gates and log text, where a rounded minute is what a reader
+ * wants and half a minute changes nothing.
  */
-function minutesUntil(releaseAt) {
+function secondsUntil(releaseAt) {
   try {
     const p = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
     }).formatToParts(new Date()).reduce((a, x) => ((a[x.type] = x.value), a), {});
     const now = `${p.year}-${p.month}-${p.day}T${p.hour === '24' ? '00' : p.hour}:${p.minute}:${p.second}`;
-    return Math.round((Date.parse(`${releaseAt}Z`) - Date.parse(`${now}Z`)) / 60000);
+    return Math.round((Date.parse(`${releaseAt}Z`) - Date.parse(`${now}Z`)) / 1000);
   } catch {
     return null;
   }
+}
+
+/** Minutes until the same, for window gates and for printing. Null propagates as null. */
+function minutesUntil(releaseAt) {
+  const s = secondsUntil(releaseAt);
+  return s == null ? null : Math.round(s / 60);
 }
 
 /**
@@ -1134,14 +1220,29 @@ async function maybeAutoLogin(ctx, page) {
    * The requirement is the same sentence the constant's own comment gives, evaluated now:
    * alive until the release, plus the cart hold, plus margin.
    */
-  const needSec = requiredTokenSeconds(mins, CART_HOLD_MIN, AUTOLOGIN_MARGIN_MIN);
+  /**
+   * IN SECONDS, NEVER ROUNDED MINUTES — see `tokenSecondsNeeded`. `mins` above is fine for
+   * the window gates and the log text; it is not fine here, because rounding turns the
+   * requirement into a sixty-second staircase against a token that decays continuously, and
+   * a deficit smaller than the step then reads as covered. That cost a campsite on
+   * 2026-08-30: a token two to sixteen seconds short was called covered twenty-two times
+   * across twenty-one minutes, and the sign-in it deferred ran INTO the release.
+   */
+  const secs = secondsUntil(release);
+  if (secs == null) return autoLoginSkip(`could not read the release time (${release})`);
+  const needSec = tokenSecondsNeeded(secs, CART_HOLD_MIN, AUTOLOGIN_MARGIN_MIN);
   const covers = (left) => left != null && left > needSec;
 
   const { token } = await readLiveToken(page).catch(() => ({ token: null }));
   const left = tokenSecondsLeft(token);
   if (covers(left)) {
+    /**
+     * THE SLACK IS PRINTED, and it is the number that matters. "50m left, needs 50m" was the
+     * whole log record of a decision that was losing by seconds, and it read as comfortable.
+     */
     return autoLoginSkip(
-      `the token covers this hold (${Math.round(left / 60)}m left, needs ${Math.round(needSec / 60)}m)`);
+      `the token covers this hold (${Math.round(left / 60)}m left, needs ${Math.round(needSec / 60)}m, `
+      + `slack ${Math.round((left - needSec) / 60)}m)`);
   }
 
   if (autoLogin.spent >= AUTOLOGIN_MAX_ATTEMPTS) {

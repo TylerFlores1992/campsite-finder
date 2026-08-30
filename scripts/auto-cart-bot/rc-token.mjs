@@ -739,7 +739,7 @@ export function isRenewal({ previous, next, before, after }) {
   //
   // `> 0` rather than a comfortable margin, deliberately. The bar is "usable at all"; a
   // stricter floor would start rejecting genuine renewals that happen to arrive late, and
-  // `requiredTokenSeconds` already owns the question of whether a live token is long enough.
+  // `tokenSecondsNeeded` already owns the question of whether a live token is long enough.
   if (after <= 0) return false;
   return before == null || after > before;
 }
