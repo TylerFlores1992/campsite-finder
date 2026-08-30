@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 // One direction only — StorePaywall does not import this file, so there is no cycle.
 import { STORE_PURCHASE_ENABLED } from "./StorePaywall";
+import { buttonClasses } from "@/components/ui/Button";
 
 import { useNativePlatform } from "@/lib/native/context";
 
@@ -105,11 +106,28 @@ export function SubscribeLink({
 
 /**
  * One sentence for the surfaces that just need a line of copy, so the wording is
- * defined once rather than drifting across five screens. Returns the no-link
- * version when steering is off, which is what ships today.
+ * defined once rather than drifting across five screens.
+ *
+ * ── THREE CASES, AND THE FIRST WAS ADDED HOURS AFTER IT BECAME WRONG (2026-08-30) ───
+ * `StorePlansLink` put a route to the in-app paywall beside this sentence on Android, and
+ * the sentence still read **"Subscriptions are managed at camphawk.app."** — which is
+ * false the moment a buy route sits next to it, and sends a user who can purchase here to
+ * a website instead. Observed on a real device within minutes of shipping the link.
+ *
+ * **`StorePaywall`'s own header had already written the rule down** — *"'Subscriptions are
+ * managed at camphawk.app' is false the moment a Buy button sits beside it"* — and it was
+ * read as being about that component rather than about this string. A rule recorded for
+ * one caller is not recorded; the same lesson `rehearsal.mjs` taught about a hazard
+ * documented for one caller of `attemptLogin` and not the release-critical one.
+ *
+ * ORDER IS LOAD-BEARING: `canSell` is tested FIRST, so a shell that can take the money is
+ * never told to go elsewhere — the same precedence `NewWatch`'s gate uses.
  */
 export function useSubscribeSentence(): string {
-  return useNativeLinkout()
+  const canSell = useStoreCanSell();
+  const linkout = useNativeLinkout();
+  if (canSell) return "Watching needs a subscription.";
+  return linkout
     ? "Subscriptions are set up at camphawk.app — it takes a minute, and everything works here straight after."
     : "Subscriptions are managed at camphawk.app.";
 }
@@ -183,22 +201,45 @@ export function useStoreCanSell(): boolean {
  * The route to the paywall. Renders nothing where the shell cannot sell, so it is safe to
  * place beside `SubscribeLink` — on any given store exactly one of the two appears.
  *
- * "See plans" AND NOT "Subscribe", because this link is honest in both outcomes: the page
- * shows four purchasable plans where the store is ready and what the subscription includes
- * where it is not. A button promising a purchase it cannot always deliver is the claim-copy
- * rule this repo has applied since 2026-08-09.
+ * "See plans" AND NOT "Subscribe", because this is honest in both outcomes: the page shows
+ * four purchasable plans where the store is ready and what the subscription includes where
+ * it is not. A control promising a purchase it cannot always deliver is the claim-copy rule
+ * this repo has applied since 2026-08-09.
+ *
+ * ── TWO SHAPES, ONE GATE, AND THE SHAPE IS THE BUG THAT WAS REPORTED (2026-08-30) ───
+ * The owner's words, twice, looking at `/new`: **"there is no start watch."** They were
+ * right, and it is not a missing button — `SubscribeCta` REPLACES the submit control for a
+ * non-subscriber, on web and in the app alike. On the WEB that replacement is a full-width
+ * `Button`. In the app it was a `<p>` of `text-ch-fine` grey copy with an inline underline.
+ * **Same gate, same position, and one of them does not look like a control.**
+ *
+ * That was correct while the app could not sell and steering was off: there was genuinely
+ * nothing to press, so a sentence was the honest shape. Android sells now, and the
+ * replacement for a primary action has to be a primary action.
+ *
+ * `variant` therefore exists so both shapes share ONE gate. Two components would be two
+ * places to forget `useStoreCanSell`, and the failure of the forgotten one is a buy button
+ * on a shell that cannot buy.
  */
 export function StorePlansLink({
   label = "See plans",
   className = "",
+  variant = "link",
+  fullWidth = false,
 }: {
   label?: string;
   className?: string;
+  variant?: "link" | "button";
+  fullWidth?: boolean;
 }) {
   const canSell = useStoreCanSell();
   if (!canSell) return null;
+  const shape =
+    variant === "button"
+      ? buttonClasses({ fullWidth })
+      : "font-bold underline underline-offset-2";
   return (
-    <Link href="/pricing" className={`font-bold underline underline-offset-2 ${className}`}>
+    <Link href="/pricing" className={`${shape} ${className}`}>
       {label}
     </Link>
   );

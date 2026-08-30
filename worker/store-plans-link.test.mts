@@ -98,7 +98,11 @@ test('it does NOT probe the store — one configure, in the paywall', () => {
 test('the shared non-subscriber CTA mounts it', () => {
   // Covers Explore and the Watches account wall. Without this an Android non-subscriber
   // reads a sentence with no way to act on it — SubscribeLink returns null there.
-  assert.match(ctaCode, /<StorePlansLink \/>/, 'SubscribeCta must offer the route');
+  // ANCHORED ON THE MOUNT, NOT THE PROP LIST. The first version matched the bare
+  // self-closing `<StorePlansLink />` and broke the moment the component took
+  // `variant`/`fullWidth` — a guard failing over a change to something it does not care
+  // about. What it exists to pin is that this surface offers the route at all.
+  assert.match(ctaCode, /<StorePlansLink[\s/>]/, 'SubscribeCta must offer the route');
   assert.match(ctaCode, /import \{[^}]*StorePlansLink[^}]*\} from "\.\/nativeSubscribe"/);
 });
 
@@ -119,4 +123,76 @@ test('the link-out survives for the store that still needs it', () => {
   // iOS sells nothing in-app yet, so SubscribeLink is its only route. Deleting it as
   // "superseded" would leave iOS non-subscribers with nothing at all.
   assert.match(ctaCode, /<SubscribeLink \/>/, 'iOS still needs the steer out');
+});
+
+// ─── THE SENTENCE BESIDE THE LINK (2026-08-30, hours after the link shipped) ──────────
+
+test('the sentence does not say "managed at camphawk.app" where the app can sell', () => {
+  // Observed on a real device: "Subscriptions are managed at camphawk.app. See plans" —
+  // the sentence sending a user to a website while the link beside it opened an in-app
+  // purchase. StorePaywall's own header had already written the rule down and it was read
+  // as being about that component rather than about this string.
+  // ANCHORED ON THE BRANCH, NOT THE IDENTIFIER. The first version compared
+  // `indexOf('canSell')` — which finds the `const canSell = …` DECLARATION at the top of
+  // the function, above everything — so a mutation that moved the real test below both
+  // website branches passed. `canSell` occurs twice; only one occurrence is the decision.
+  const fn = body(nativeCode, 'export function useSubscribeSentence');
+  const canSellAt = fn.indexOf('if (canSell)');
+  const camphawkAt = fn.indexOf('camphawk.app');
+  assert.ok(canSellAt > -1, 'the sentence must BRANCH on whether the app can sell');
+  assert.ok(camphawkAt > -1, 'the other two cases still name the website');
+  assert.ok(canSellAt < camphawkAt,
+    'the canSell branch must come BEFORE any branch that names the website');
+});
+
+test('the in-app case names no website at all', () => {
+  // Not "shorter copy" — a sentence that mentions camphawk.app while a buy route sits
+  // beside it is the same defect in a milder costume.
+  const fn = body(nativeCode, 'export function useSubscribeSentence');
+  const inApp = fn.slice(fn.indexOf('if (canSell)'), fn.indexOf('return linkout'));
+  assert.doesNotMatch(inApp, /camphawk\.app/, 'the in-app sentence must not steer out');
+});
+
+test('both website cases survive — iOS still has nowhere else to go', () => {
+  const fn = body(nativeCode, 'export function useSubscribeSentence');
+  assert.match(fn, /set up at camphawk\.app/, 'the link-out sentence must stay for iOS');
+  assert.match(fn, /managed at camphawk\.app/, 'the no-route sentence must stay');
+});
+
+// ─── THE SHAPE IN THE SUBMIT BUTTON'S SLOT (2026-08-30) ──────────────────────────────
+//
+// Reported twice, looking at /new: "there is no start watch." Correct — SubscribeCta
+// REPLACES the submit control for a non-subscriber, on web and in the app alike. The web
+// replacement is a full-width Button; the native one was a <p> of text-ch-fine grey copy.
+// Same gate, same position, and one of them does not look like a control.
+
+test('where the app can sell, the replacement is a BUTTON not a sentence', () => {
+  const fn = body(ctaCode, 'export default function SubscribeCta');
+  const branch = fn.slice(fn.indexOf('if (canSell)'), fn.indexOf('text-ch-fine'));
+  assert.ok(branch.length > 0, 'the canSell branch must come before the sentence branch');
+  assert.match(branch, /variant="button"/, 'it must render as a button, not an inline link');
+  assert.match(branch, /fullWidth=\{fullWidth\}/,
+    'it stands in a full-width submit control slot and must honour it');
+});
+
+test('both shapes share ONE gate', () => {
+  // Two components would be two places to forget useStoreCanSell, and the failure of the
+  // forgotten one is a buy control on a shell that cannot buy.
+  const fn = body(nativeCode, 'export function StorePlansLink');
+  assert.match(fn, /const canSell = useStoreCanSell\(\)/, 'one gate for both shapes');
+  assert.match(fn, /if \(!canSell\) return null/);
+  assert.match(fn, /variant === "button"/, 'the button shape lives behind that same gate');
+  assert.doesNotMatch(nativeCode, /export function StorePlansButton/,
+    'a second component is a second place to forget the gate');
+});
+
+test('the no-route case keeps the sentence, and keeps the iOS steer', () => {
+  // Where nothing can be pressed, a sentence is the honest shape. Turning it into a button
+  // that leads to a page which cannot sell is the claim-copy failure inverted.
+  const fn = body(ctaCode, 'export default function SubscribeCta');
+  const tail = fn.slice(fn.indexOf('text-ch-fine'));
+  assert.match(tail, /<SubscribeSentence \/>/, 'the sentence survives for iOS');
+  assert.match(tail, /<SubscribeLink \/>/, 'iOS still needs its steer out');
+  assert.doesNotMatch(tail, /<StorePlansLink/,
+    'the plans link must not also sit in the branch that cannot sell');
 });
