@@ -707,6 +707,43 @@ irreversible half of §8 does not depend on SBP at all; only the price column do
 reason to know the real cost of waiting, **not** a licence to jump the gate — the rule below
 was written deliberately.
 
+**THE APPLE-SIDE CONSOLE WORK THAT DOES NOT NEED SBP IS FINISHED (2026-08-30), and both
+credentials validated on the FIRST attempt** — against Play, where `Valid credentials` took
+four changes inside a 24-36h propagation window and which of them fixed it was never
+established.
+
+```
+In-App Purchase key        valid   SubscriptionKey_T3BKACT29G   validates transactions
+App Store Connect API key  valid   AuthKey_X6SX7K8Z5Y           imports products, price changes
+Vendor number              set                                  pulls REAL financial reports
+Server notifications       set     production + sandbox         Apple's RTDN equivalent
+```
+
+**THEY ARE TWO DIFFERENT KEYS FROM TWO DIFFERENT TABS OF ONE PAGE, and the first walkthrough
+of this sent the owner past the second.** `appstoreconnect.apple.com/access/integrations/api`
+has an **In-App Purchase** tab and an **App Store Connect API** tab; the first validates
+transactions, the second is what `Products -> Import` needs. Uploading only the first leaves
+an import that returns nothing — **indistinguishable from "no products exist yet"**, which is
+the state this account is in anyway, so it would not have been spotted.
+
+**VENDOR NUMBER IS OPTIONAL AND WORTH SETTING.** Without it RevenueCat estimates proceeds;
+with it, it reads Apple's own financial reports. §10b's whole case for IAP is an arithmetic
+model of the commission — this is what lets it be checked against reality rather than re-run.
+
+**APPLE'S SERVER NOTIFICATIONS ARE THE PLAY RTDN TRAP AGAIN, AND THE SAVE ALMOST LIED.**
+RevenueCat wires only their half; Apple must separately be pointed at their URL
+(ASC -> the app -> App Information -> App Store Server Notifications, production AND sandbox).
+The first paste was **truncated to 13 characters of a 32-character token** — RevenueCat elides
+that field in its UI, so a text-selection copy grabs the rendered string rather than the value.
+- **Apple rejecting it was LUCK, not validation.** A truncated token is still a well-formed
+  `https://` URL; the "must be formatted correctly" error had no business firing. Had it saved,
+  it would have received nothing for ever, **and Apple has no "send test notification" button**
+  — unlike Play, where their own test is what proved the topic worked. RevenueCat's *"No
+  notifications received"* line would read exactly as it legitimately does before any purchase.
+- **So compare the TAIL of the saved URL against RevenueCat's, character for character.** The
+  save succeeding is not the check. Use the copy icon, never a text selection.
+- It never offered a notification **version**, so there was no V1/V2 choice to get wrong here.
+
 **TWO STEPS ARE NOT BLOCKED AND WERE STARTED WHILE WAITING:** the In-App Purchase key (Users
 and Access → Integrations) and adding the App Store app in RevenueCat. Neither needs a product
 to exist. **Stop before Products → Import** — importing an empty set leaves nobody sure later
