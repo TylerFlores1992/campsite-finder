@@ -42,26 +42,65 @@
 > fails while reporting `close {reason:'settled'}`, this was the wrong half and the fill is
 > next. Full write-up: CLAUDE.md → "BISECTED BY HAND, AND IT IS THE CLOSE TIMING".
 >
-> ### THE NEXT HAND-OFF IS THE TEST, AND HERE IS HOW TO READ IT
+> ### THE TEST NEEDS NO HOLD ANY MORE — TWO BUTTONS IN THE ADMIN PANEL
 >
-> The fix is LIVE (merged #240, `6331471`, web-side so installed apps have it). Nothing else
-> is needed to exercise it — open a claim link **in the app**, and the `close` report's
-> `reason` names which path it took:
+> The fix is LIVE (#240, `6331471`, web-side so installed apps have it). Reaching it used to
+> need a live 8am hold, i.e. **locking a real campsite** and shutting the update window. It
+> does not now: the admin probe drives the same `openRcHandoff` seam with no hold, and it
+> just never passed `closeOnToken`.
+>
+> **Admin → System Health → Alerting → "Can we sign in to RC in the app?"**, and it must be
+> opened **from inside the CampHawk app** — from a browser `canInject` is false and it tests
+> nothing.
+>
+> | button | what it is |
+> |---|---|
+> | **Open ReserveCalifornia** | the CONTROL, unchanged — window stays open, which is what bisected this on 08-31 |
+> | **Open it and close like the claim screen** | the claim screen's behaviour: `closeOnToken: true`, so the deferred close runs |
+>
+> **SIGN OUT OF RC IN THAT WEBVIEW FIRST, or the run measures nothing** — a live session
+> closes on the home page, never reaches the callback, and reports `token` for the innocent
+> reason. Then read the final `close` line in the panel:
 >
 > | reason | means |
 > |---|---|
 > | `settled` | RC left the callback under its own steam — **the fix working** |
-> | `token` | closed immediately; the already-signed-in path, unchanged behaviour |
-> | `timeout` | RC never left the callback in 10s — the backstop fired |
+> | `timeout` | RC never left it in 10s — the backstop fired, and that is itself a finding |
+> | `token` | closed at once. **AMBIGUOUS — read the stages above it.** |
 >
-> **`settled` + a reachable cart = solved.** **`settled` + still "Please login" = this was the
-> wrong half**, and the remaining suspect is the scripted fill (the working bisect was
-> hand-typed). **`token` where you expected `settled`** means `isMidSignIn` stopped matching —
-> RC moved its callback path.
+> **`token` is two different things.** With no `signin-open`/`email`/`password` before it you
+> were simply already signed in: correct, unchanged, and not a test. After a real sign-in it
+> means `isMidSignIn` has stopped matching — RC moved its callback path and the 08-31 bug is
+> back **with nothing else red**. The readout says which and marks the bad one.
 >
-> Read it with `NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts`. **And ask a human
-> to look at RC's cart page** — that is still the only proof of reachability, and `cart read
-> back` is not it.
+> **THEN OPEN RC'S CART PAGE AND LOOK FOR YOUR NAME IN THE CORNER.** That is still the only
+> proof of reachability there has ever been. `cart read back` is RC answering OUR question
+> with OUR key, and on 08-29 it said one entry over a cart nobody could open.
+>
+> ### AND THE SECOND INSTRUMENT IS BUILT, so one press splits the whole space
+>
+> Phase 1 below is done. `sessionProbe` read `ssoAccessToken`/`accessToken` — **RC's OWN
+> copies** — while okta-auth-js decides login state from its own `okta-` store. It now
+> reports that store's **names, count, token shape and expiry; never a value**, plus the
+> ORIGIN it was taken on. Both the admin panel and `rc-holds-readout.mts` print it.
+>
+> **THE ORIGIN IS NOT DECORATION — read the right one.** `localStorage` is per-origin and a
+> sign-in walks across two; hold 43832 produced **eleven** `session` reports, from both
+> `www.reservecalifornia.com` and `signin.reservecalifornia.com`. The readout scores the
+> **last** report on **RC's own** origin: the last, because the question is what the store
+> holds AFTER the sign-in, and the first is the park page where an empty store is the correct
+> and boring answer; RC's own origin, because a census on the signin origin describes storage
+> the SPA never reads. Scoring either wrong one manufactures a false confirmation.
+>
+> - **`okta-` empty beside a live `ssoAccessToken`** ⇒ the SDK never finished its half; the
+>   fix is in the sign-in completion.
+> - **`okta-` populated** ⇒ the SPA has everything and the problem is the **free-floating
+>   cart** (`CustomerId: 0`, 08-06). Different investigation. `attached` reads `null` because
+>   RC does not return `CustomerId` there, so **it cannot discriminate and still needs
+>   replacing.**
+>
+> A real hand-off records the same facts against the hold for free, so the next 08:00 answers
+> it too — but nobody has to wait for one, and nobody has to lock a campsite to ask.
 >
 > ### A RED WORKER DEPLOY MAY BE A HEALTHY FLEET (issue #243)
 >
@@ -91,10 +130,10 @@
 >
 > ### The plan
 >
-> **Phase 1 — one instrument, one hand-off, splits the space.** Extend `sessionProbe` to report
-> the `okta-*` keys: **names, count and token-shape only, never values.** Narrowed to the
-> discriminating question rather than a general dump. Web-side, so it reaches the installed app
-> on a push — no rebuild, no review.
+> ~~**Phase 1 — one instrument, one hand-off, splits the space.** Extend `sessionProbe` to
+> report the `okta-*` keys.~~ **BUILT 2026-08-31 — see the block at the top.** Struck rather
+> than deleted, because read as current it sends the next session to build an instrument that
+> is already live and already printed by the readout.
 >
 > - **`okta-*` EMPTY while `ssoAccessToken` holds a live JWT** ⇒ hypothesis confirmed; the fix
 >   is in the sign-in completion (close on the SDK store being populated, token capture as

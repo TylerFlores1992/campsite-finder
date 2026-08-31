@@ -398,6 +398,60 @@ export function sessionProbe(): string {
     // silent re-mint that beat us to the injection.
     '  var stored = get("ssoAccessToken") || get("accessToken");',
     '  var sf = stored ? R.jwtFacts(stored) : null;',
+    // THE STORE THAT ACTUALLY DECIDES WHETHER RC LOOKS SIGNED IN.
+    //
+    // `ssoAccessToken` and `accessToken` above are RC's OWN copies. okta-auth-js keeps its
+    // own under the `okta-` prefix and decides login state from THAT on boot — which is
+    // exactly why `dropStoredToken` had to be widened past those two keys on 2026-08-15,
+    // after a clear that touched only them "never asked RC anything".
+    //
+    // So every reading this probe has ever taken was blind to the one store that matters,
+    // and that is the gap under investigation: on 2026-08-30 a hand-off reported
+    // `storedToken: "jwt"` with 3,534 seconds on it while RC's own page asked the user to
+    // log in. Those two facts are only contradictory if you assume one store.
+    //
+    // WHAT SPLITS THE SPACE: `okta-` holding no live token beside a live `ssoAccessToken`
+    // means the SDK never finished its half, and the fix is in the sign-in completion.
+    // `okta-` populated means the SPA has everything it needs and the problem is elsewhere
+    // — the free-floating cart (`CustomerId: 0`, 2026-08-06). Different investigations.
+    //
+    // NAMES, COUNT AND SHAPE. NEVER A VALUE. Every value in this store is or contains the
+    // session, and this repo has published a credential twice by collecting a field it then
+    // had to filter — an OAuth code on 2026-08-09, a password on 08-16. A key name is
+    // structural (`okta-token-storage`, `okta-cache-storage`), a count is a count, and a
+    // locally-decoded `exp` identifies a corpse without being replayable. The token itself
+    // is never read out, only matched against and measured.
+    //
+    // AND THE COUNT ALONE WOULD MISLEAD, which is why the shape is reported beside it. The
+    // 08-15 sweep found exactly one `okta-` key and it was `okta-original-uri-storage`, a
+    // redirect breadcrumb with no token in it. "One key" and "a session" are not the same
+    // reading, and a probe that reported only the number would have said they were.
+    '  var oktaNames = [], oktaTok = "none", oktaExp = null, oktaN = 0;',
+    '  try {',
+    '    for (var oi = 0; oi < localStorage.length; oi++) {',
+    '      var ok = localStorage.key(oi);',
+    '      if (!ok || String(ok).slice(0, 5).toLowerCase() !== "okta-") continue;',
+    '      oktaN++;',
+    // Bounded on both axes: eight names, forty characters each. okta-auth-js uses a handful
+    // of fixed names, so anything past that is not this library and is not worth the room.
+    '      if (oktaNames.length < 8) oktaNames.push(String(ok).slice(0, 40));',
+    '      if (oktaTok === "jwt") continue;',
+    '      var oraw = get(ok) || "";',
+    // The token sits INSIDE a JSON envelope (`okta-token-storage` holds accessToken and
+    // idToken objects), so the entry is matched rather than parsed — a shape that cannot
+    // break on a structure change we have never actually looked at.
+    '      var om = oraw.match(/eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]*/);',
+    // A NON-MATCHING ENTRY LEAVES THIS `none`, and that is the 08-15 finding encoded.
+    // `okta-original-uri-storage` holds a redirect URL; calling that "opaque" would report
+    // a token we could not read where there is no token at all, and those are the two
+    // readings this field exists to separate. `opaque` is reserved for something genuinely
+    // JWT-shaped that will not decode.
+    '      if (!om) continue;',
+    '      var of2 = R.jwtFacts(om[0]);',
+    '      if (of2 && of2.decodable) { oktaTok = "jwt"; oktaExp = of2.expiresInSec; }',
+    '      else oktaTok = "opaque";',
+    '    }',
+    '  } catch (e) {}',
     '  var secs = function (ms) { return Math.round(ms / 1000); };',
     '  R.send("session", {',
     '    marker: prev ? "present" : "absent",',
@@ -407,6 +461,26 @@ export function sessionProbe(): string {
     '    prevTokenExpiresInSec: prev && typeof prev.tokenExp === "number" ? Math.round(prev.tokenExp - now / 1000) : null,',
     '    storedToken: !stored ? "none" : (sf && sf.decodable ? "jwt" : "opaque"),',
     '    storedExpiresInSec: sf ? sf.expiresInSec : null,',
+    // PRESENCE IS NOT LIVENESS, restated for the SDK store. An `okta-` entry holding a token
+    // that expired yesterday is a different finding from one holding a live token, and
+    // reporting only the shape would merge them — the failure `status = 'sent'` is the
+    // house example of.
+    // WHICH ORIGIN THIS READING IS FROM, and without it the reading is uninterpretable.
+    // `localStorage` is per-ORIGIN, and a sign-in walks across two: RC's SPA lives on
+    // `www.reservecalifornia.com` and Okta's form on `signin.reservecalifornia.com`. Eleven
+    // `session` reports came off one real hand-off (hold 43832), from both — so an okta
+    // census taken on the signin origin describes a DIFFERENT store, and reading it as the
+    // SPA's would say "the SDK store is empty" about storage the SPA never uses. That is a
+    // false confirmation of the leading hypothesis, which is the most expensive kind.
+    //
+    // `R.href()` is origin + pathname and never the query, which is load-bearing here: the
+    // callback document's URL carries `?code=`, an exchangeable OAuth authorization code
+    // (2026-08-09).
+    '    at: R.href(),',
+    '    oktaKeys: oktaN,',
+    '    oktaNames: oktaNames.join(","),',
+    '    oktaToken: oktaTok,',
+    '    oktaExpiresInSec: oktaExp,',
     '  });',
     // The LIVE token is the one RC actually sends, caught off its own requests by
     // rc-inject.js. Recording its expiry — never the token — is what gives the NEXT open

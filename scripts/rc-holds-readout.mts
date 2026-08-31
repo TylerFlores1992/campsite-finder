@@ -28,6 +28,7 @@
  * extra morning of holds, silently.
  */
 import { query } from '../src/lib/db/client';
+import { closeReasonReading } from '../src/lib/rc-token-liveness';
 
 const hours = Number(process.argv.find((a) => a.startsWith('--hours='))?.split('=')[1] ?? 24);
 
@@ -311,6 +312,76 @@ if (handed.length) {
       // NOT A FAILURE. The cart may be perfectly fine; we could not ask. Same rule as
       // `unknown` never rounding to `signed-out`.
       console.log(`      cart not read back: ${unverified.reason}`);
+    }
+
+    // WHY THE SIGN-IN WINDOW CLOSED (2026-08-31, #240). The bug was that we destroyed the
+    // webview ~2s in, while RC was still on `/login/callback` completing its OAuth
+    // exchange — so the session authenticated its own API calls and rendered SIGNED OUT.
+    // Every close names its reason now, and this is where that reason gets read.
+    //
+    // `token` IS AMBIGUOUS AND THE STAGES DISAMBIGUATE IT. With no sign-in before it, the
+    // user was already signed in and an immediate close is the correct, unchanged path.
+    // With a full sign-in before it, `isMidSignIn` has stopped matching — RC has moved its
+    // callback path and the 08-31 bug is back with nothing else red.
+    const closeReason = (h.client_reports ?? [])
+      .findLast((r) => r.stage === 'close')?.detail?.reason as string | undefined;
+    if (closeReason) {
+      const signedInHere = (h.client_reports ?? []).some(
+        (r) => r.stage === 'password' || r.stage === 'submitted' || r.stage === 'signin-open',
+      );
+      // THE READING IS A SHARED FUNCTION, not four lines of ternary here. The branch that
+      // says "the bug is back" cannot be reached without a real hand-off in the database, so
+      // written inline it would have shipped having never once run — and it is the branch
+      // that matters. `src/lib/rc-token-liveness.closeReasonReading` is guarded directly.
+      const reading = closeReasonReading(closeReason, signedInHere);
+      const mark = reading.level === 'warn' ? '⚠ ' : '';
+      console.log(`      ${mark}sign-in window closed: ${closeReason} — ${reading.text}`);
+    }
+
+    // THE STORE THAT DECIDES WHETHER RC LOOKS SIGNED IN (2026-08-31). `storedToken` is RC's
+    // OWN copy; okta-auth-js decides login state from its own `okta-` store, so a live
+    // `storedToken` beside an empty `okta-` store is the split this was built to see.
+    //
+    // THE LAST ONE ON RC'S OWN ORIGIN, and both halves of that were got wrong first.
+    //
+    // THE LAST, because the question is what the store holds AFTER the sign-in — that is the
+    // state RC renders its header from, and it is the whole complaint. The FIRST report is
+    // taken on the park page before anyone has signed in, where an empty okta store is the
+    // correct and uninteresting answer. Reading the first is the same mistake that cost a
+    // diagnosis on 2026-08-29 in this very block, and `cart-verified` above already carries
+    // the `findLast` fix for it.
+    //
+    // ON RC'S OWN ORIGIN, because `localStorage` is per-origin and a sign-in walks across
+    // two. One real hand-off (hold 43832) produced ELEVEN session reports, from both
+    // `www.reservecalifornia.com` and `signin.reservecalifornia.com`. A census taken on the
+    // signin origin describes storage RC's SPA never reads, so scoring it would report "the
+    // SDK store is empty" about the wrong store — a false confirmation of the leading
+    // hypothesis, which is the most expensive kind of wrong.
+    type SessionDetail = {
+      at?: string; oktaToken?: string; oktaKeys?: number; oktaNames?: string;
+      oktaExpiresInSec?: number | null; storedToken?: string;
+    };
+    const sessions = (h.client_reports ?? [])
+      .filter((r) => r.stage === 'session')
+      .map((r) => r.detail as SessionDetail | null)
+      .filter((d): d is SessionDetail => !!d);
+    // A report with no `at` predates this field; it is still usable, just not attributable,
+    // so it is the fallback rather than being silently dropped.
+    const sess = sessions.findLast((d) => (d.at ?? '').includes('www.reservecalifornia.com'))
+      ?? sessions.findLast((d) => d.at === undefined);
+    if (sess && sess.oktaToken !== undefined) {
+      const live = typeof sess.oktaExpiresInSec === 'number' && sess.oktaExpiresInSec > 0;
+      if (sess.oktaToken === 'jwt' && live) {
+        console.log(`      okta store: a LIVE token, ${sess.oktaKeys} key(s) — the SDK has what it needs,`
+          + ' so a signed-out-looking page is NOT a missing session');
+      } else if (sess.oktaToken === 'jwt') {
+        console.log(`      ⚠ okta store: a token that expired ${Math.abs(sess.oktaExpiresInSec ?? 0)}s ago`);
+      } else {
+        console.log(`      ⚠ okta store: NO token in ${sess.oktaKeys} okta- key(s)`
+          + `${sess.oktaNames ? ` (${sess.oktaNames})` : ''}`
+          + `${sess.storedToken === 'jwt' ? ", while RC's own copy holds one" : ''}`
+          + ' — the SDK never finished its half of the sign-in');
+      }
     }
   }
   // THE ARRAY CAN HAVE A HOLE IN IT, and a reader who assumes otherwise misreads the order.

@@ -52,7 +52,14 @@ function clean(raw: unknown): ClientReport[] {
     const out: Record<string, unknown> = {};
     if (detail && typeof detail === 'object') {
       for (const [k, v] of Object.entries(detail as Record<string, unknown>)) {
-        if (Object.keys(out).length >= 8) break;
+        // TWELVE, BECAUSE THE `session` REPORT IS NOW ELEVEN AND SILENT TRUNCATION OF A
+        // DIAGNOSTIC IS THE FAILURE THIS WHOLE INVESTIGATION KEEPS PAYING FOR. Object key
+        // order is insertion order, so the four `okta*` fields added on 2026-08-31 sit at
+        // the END — under the old ceiling they were exactly what got dropped, and the
+        // instrument would have reported nothing while looking like it had run. Bounded
+        // still: each value is truncated to 300 characters and the report count is capped
+        // above, so this is a slightly wider bound, not an open one.
+        if (Object.keys(out).length >= 14) break;
         if (typeof v === 'string') out[k] = v.slice(0, 300);
         else if (typeof v === 'number' || typeof v === 'boolean' || v === null) out[k] = v;
       }
