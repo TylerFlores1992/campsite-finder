@@ -475,9 +475,9 @@ NOT sharing, so every answer below is "collected, not shared".
 | Play data type | Collected | Optional? | Purpose | Notes |
 | --- | --- | --- | --- | --- |
 | Personal info → **Email address** | Yes | Required | App functionality, Account management | `users.email`, from Clerk at sign-up |
-| Personal info → **User IDs** | Yes | Required | App functionality, Account management | Clerk user id |
+| Personal info → **User IDs** | Yes | Required | App functionality, Account management | Clerk user id. Also sent to **RevenueCat** as the App User ID (`purchases.ts:120`) — the webhook keys on `app_user_id` |
 | Personal info → **Phone number** | Yes | **Optional** | App functionality | Only if the user opts into SMS alerts |
-| Financial info → **Purchase history** | Yes | Required | App functionality | Subscription status + Stripe ids. **Payment info is NOT collected** — Stripe Checkout handles cards; no card data reaches our servers |
+| Financial info → **Purchase history** | Yes | Required | App functionality | Subscription status + the billing processor's ids: Stripe ids for a web purchase, `provider` + `store_transaction_id` for a **Play purchase via RevenueCat** (migration 071) — a store purchase never touches Stripe. **Payment info is NOT collected** — Google Play and Stripe Checkout each handle cards; none reaches our servers |
 | Location → **Approximate location** | Yes | Optional | App functionality | IP-derived to centre a first search. **Processed ephemerally — never stored** |
 | Location → **Precise location** | Yes | Optional | App functionality | Only when the user taps "use my location". **Processed ephemerally — never stored** |
 | App activity → **Other user-generated content** | Yes | Required | App functionality | The watches themselves: campground + dates + filters |
@@ -490,27 +490,28 @@ religious beliefs, sexual orientation, other personal info, health, fitness, mes
 photos, videos, audio, files, calendar, contacts, in-app search history, installed apps,
 web browsing history.
 
-> **THIS TABLE PREDATES REVENUECAT AND IS NOW INCOMPLETE (found 2026-08-30).** The four Play
-> products are LIVE and every purchase goes through RevenueCat, so this is the more urgent of
-> the two store forms — Apple's has no products yet.
+> **THE TWO ROWS ARE CORRECTED (2026-08-30). THE "SHARED" ANSWER IS THE OPEN QUESTION AND IT
+> IS DELIBERATELY LEFT OPEN.** *User IDs* and *Purchase history* now name RevenueCat and no
+> longer claim Stripe handles a Play purchase — it does not; those land as
+> `store_transaction_id` + `provider` (migration 071).
 >
-> - **Personal info → User IDs.** `src/lib/native/purchases.ts:120` calls
->   `Purchases.configure({ apiKey, appUserID: userId })` with the **Clerk user id**. That is
->   deliberate and cannot be dropped: the webhook keys on `app_user_id`, and the module refuses
->   to configure anonymously rather than orphan a purchase.
-> - **Financial info → Purchase history.** The Notes column names *"Subscription status + Stripe
->   ids"*. Play purchases do not touch Stripe at all — they land as
->   `store_transaction_id` + `provider` (migration from #218) via the RevenueCat webhook.
+> **WHAT IS NOT DECIDED: whether either row stays "collected, not shared".** This section's own
+> rule at the top says a processor acting on our behalf is not sharing. RevenueCat reads as a
+> billing processor by that rule — but it is a distinct third party receiving a user identifier,
+> and **answering this wrong is a Data-safety violation, not a listing nit.**
+> - **Do not copy the Stripe answer across on the assumption they are alike.** Stripe is reached
+>   server-to-server from our own backend; RevenueCat is an SDK **inside the app** that is handed
+>   the user id on the device, which is the fact pattern Play's definition turns on.
+> - **It could not be checked from the agent session that wrote this**: `support.google.com` and
+>   `play.google` are outside this environment's egress allowlist (both returned `000` on
+>   2026-08-24, re-confirmed 08-30). **Read Play's current definition in the console before the
+>   next submission.**
 >
-> **Whether either row's "Collected / not shared" answer CHANGES is the real question, and it is
-> not obvious.** Play's own rule is at the top of this section: a processor acting on our behalf
-> is not "sharing". RevenueCat is a billing processor by that reading — but it is a distinct
-> third party receiving a user identifier, and answering this wrong is a Data-safety violation
-> rather than a listing nit. **Decide it against Play's current definition before the next
-> submission; do not copy the Stripe answer across on the assumption they are alike.**
+> **THIS IS THE MORE URGENT OF THE TWO STORE FORMS.** Play's four products are LIVE and a real
+> purchase has been made through them (2026-08-30); Apple's do not exist yet.
 >
-> The same omission exists in `docs/APP-STORE.md` §1 and is recorded there too — deliberately in
-> both, because a correction applied to one copy is not applied.
+> The same correction is applied in `docs/APP-STORE.md` §1 — in both, deliberately, because a
+> correction applied to one copy is not applied.
 
 **Security practices section:**
 
