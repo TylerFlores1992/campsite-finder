@@ -89,19 +89,38 @@ test('only `live` may close — the close agrees with the gate by construction',
 // ---------------------------------------------------------------------------
 
 const handoff = readFileSync(new URL('./native/rc-handoff.ts', import.meta.url), 'utf8');
-test('closeOnToken goes through the shared rule, not its own captured check', () => {
-  assert.match(handoff, /closeOnToken && r\.stage === 'token' && mayCloseOnToken\(r\.detail\)/,
-    'the close condition must call mayCloseOnToken');
+const liveness = readFileSync(new URL('./rc-token-liveness.ts', import.meta.url), 'utf8');
+
+// RE-ANCHORED 2026-08-31, NOT RELAXED. These pinned the close condition by its exact
+// EXPRESSION — `closeOnToken && r.stage === 'token' && mayCloseOnToken(r.detail)` — and the
+// import line naming `mayCloseOnToken` specifically. The deferred-close fix moved that
+// decision into `rcCloseAction`, which calls `mayCloseOnToken` itself, so the property both
+// tests exist for is INTACT and both anchors were invalidated by a change that preserved it.
+// Twenty-sixth time a guard here has anchored on the wrong thing.
+//
+// The property is "the close goes through the shared liveness rule and rc-handoff does not
+// reimplement it", so that is what is asserted now: the handler delegates, the decision
+// consults the rule, and rc-handoff still reads no `captured` of its own.
+test('the close goes through the shared rule, not rc-handoff\'s own captured check', () => {
+  assert.match(handoff, /rcCloseAction\(\{/,
+    'the message handler must delegate the close decision');
+  assert.match(liveness, /export function rcCloseAction[\s\S]{0,600}mayCloseOnToken\(detail\)/,
+    'rcCloseAction must consult the shared liveness rule');
   // The regression, stated as the thing that must NOT be there: a bare captured test
   // gating the close. Comments quoting the old form are stripped first so the guard is
   // never "fixed" by deleting the explanation of why it exists.
   const code = handoff.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
   assert.doesNotMatch(code, /closeOnToken &&[^)]*\{ captured\?: boolean \}/,
     'closeOnToken must not read `captured` directly again');
+  assert.doesNotMatch(code, /r\.detail[\s\S]{0,40}captured/,
+    'rc-handoff must not judge a token itself — that is the shared module\'s job');
 });
 
-test('closeOnToken imports the shared module rather than copying the comparison', () => {
-  assert.match(handoff, /import \{ mayCloseOnToken \} from '@\/lib\/rc-token-liveness'/);
+test('rc-handoff imports the shared module rather than copying the comparison', () => {
+  // Named imports, not the whole line: the SET grows (isMidSignIn arrived with the deferred
+  // close) and pinning the literal import statement is what broke this guard once already.
+  assert.match(handoff, /import \{[^}]*\brcCloseAction\b[^}]*\} from '@\/lib\/rc-token-liveness'/);
+  assert.match(handoff, /import \{[^}]*\bisMidSignIn\b[^}]*\} from '@\/lib\/rc-token-liveness'/);
 });
 
 test('the GATE is deliberately not routed through this module — it has a different policy', () => {
