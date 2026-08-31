@@ -8203,10 +8203,18 @@ the link-out is.
   an In-App Purchase key, the App Store app added in RevenueCat against the **same two
   entitlements**, and `NEXT_PUBLIC_REVENUECAT_IOS_KEY` on Vercel — after which the paywall lights
   up on a deploy, with **no rebuild**.
-- **TWO PRECONDITIONS TO CHECK RATHER THAN ASSUME.** Apple requires the **Paid Applications
+- ~~**TWO PRECONDITIONS TO CHECK RATHER THAN ASSUME.** Apple requires the **Paid Applications
   agreement** active with banking and tax complete before IAP products can be created — unknown
-  from here. And Apple **has subscription groups**, which Play does not, so the §9a proration
-  trap that has no console safety net on Play does have one on Apple.
+  from here.~~ **IT IS NOT UNKNOWN AND HAS NOT BEEN SINCE 2026-08-25 — `docs/STOREKIT-PLAN.md`
+  §6.1 has it off the console: Paid Applications ACTIVE (Aug 25 2026 – Jul 25 2027), bank
+  account ACTIVE, W-9 ACTIVE.** The single outstanding Apple gate is the **Small Business
+  Program**, submitted 2026-08-30 and pending — i.e. the commission rate, not the ability to
+  create products. **This is the shape the owner named on 08-30: the fact was recorded, in the
+  file that owns it, and the file a session reads first said it was unknown.** §6.1 is the
+  authority for Apple's gates; do not re-derive them from here.
+- **The second precondition stands unchanged:** Apple **has subscription groups**, which Play
+  does not, so the §9a proration trap that has no console safety net on Play does have one on
+  Apple.
 - ~~**ONE REAL GAP IF THIS IS BUILT: nothing asserts the RevenueCat pod reached the iOS
   binary.**~~ **CLOSED 2026-08-30 IN #231** — `codemagic.yaml`'s iOS workflow now carries
   *"Assert the RevenueCat plugin is actually installed"*, which greps `ios/App/Podfile` for
