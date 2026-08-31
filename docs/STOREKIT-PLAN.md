@@ -491,7 +491,7 @@ That mirrors the two questions the app actually asks (`hasActiveSubscription` an
 `hasAutocartEntitlement`). Tier still comes from the product id per §5; these are RevenueCat's
 bookkeeping, never a second source of truth.
 
-### 4d. THE CONSOLE WORK IS COMPLETE (2026-08-29)
+### 4d. THE PLAY CONSOLE WORK IS COMPLETE (2026-08-29, **the Offering row added 2026-08-31**)
 
 ```
 Valid credentials      ✓
@@ -499,8 +499,20 @@ Connected to Google    ✓  projects/camp-501802/topics/revenuecat-notifications
 Last received          ✓  2026-08-29 17:49 UTC   (Play's own test notification)
 Products               ✓  four, imported, Published
 Entitlements           ✓  alerts (all four) · autocart (the two autocart products)
+Offering               ✓  one, marked CURRENT, four custom packages   <- ADDED 08-31
 Webhook                ✓  camphawk.app/api/webhooks/revenuecat, HMAC signing ON
 ```
+
+> **THIS CHECKLIST SAID "COMPLETE" WHILE MISSING THE ROW THAT BLOCKED THE PAYWALL FOR AN
+> HOUR.** It was written 08-29 and ran Products → Entitlements → Webhook; the Offering — the
+> only one of the three RevenueCat concepts the SDK actually sells from — was absent, so a
+> console satisfying every line of it still returned `no packages offered` and the paywall
+> rendered its fallback. The write-up went in at the top of this file on 08-30 and **this
+> checklist was not updated with it**, which is the "a correction applied to one copy is not
+> applied" rule: the copy a reader works FROM kept teaching the incomplete sequence.
+>
+> **It matters now because the iOS half will be worked from this list**, and iOS needs its own
+> offering — or its own packages on this one — exactly as Play did. See §4e.
 
 **RTDN NEEDED A PLAY-SIDE STEP THAT NOTHING ELSE MENTIONS.** RevenueCat's *"Connect to
 Google"* only wires THEIR half. Play must separately be told to publish, at
@@ -533,6 +545,75 @@ Play reports as the expiry for a paused subscription was never verified — so t
 outcome would have been decided by accident either way. **Turning it back on is a decision that
 needs `SUBSCRIPTION_PAUSED` handled and tested first**, not a setting to flip because it looks
 like a feature. It is one more state next to grace periods, account holds, trials and proration.
+
+### 4e. THE iOS CONSOLE SEQUENCE, IN ORDER — staged 2026-08-31 while SBP is pending
+
+**DO NOT START AT STEP 1 UNTIL THE SBP EMAIL LANDS.** §8's rule is not a formality: product
+IDs are permanent and prices are not, so the irreversible half does not depend on SBP — but
+at 30% the price column is different and Auto-Cart yearly goes to $71.99, above Campsite
+Tonight's $59.99, which forfeits the positioning the tier was built on. **Checked in the
+owner's inbox 2026-08-31: only Apple's acknowledgement of 2026-08-30 17:55 UTC exists
+("we'll review your details and email you with your enrollment status soon"), with no
+timeline and no decision.**
+
+**EVERY NUMBERED STEP BELOW IS GATED, INCLUDING THE ONES THAT LOOK INDEPENDENT.** Step 5 fills
+each package's App Store row, which needs the products imported (3), which needs them created
+(1) — so the chain is transitive and there is no head of it to start on. The two things that
+genuinely are not gated were both already done (the In-App Purchase key, and adding the App
+Store app in RevenueCat), plus the review assets noted at the end of this section.
+
+```
+GATED ON SBP
+ 1  ASC     subscription group + the four products                        §8
+ 2  ASC     localisation, availability (US only), 1-week free trial       §8
+ 3  RC      Products -> Import                                            §8
+ 4  RC      attach entitlements: alerts (all four), autocart (two)        §4d
+ 5  RC      THE OFFERING — fill each package's App Store row              below
+ 6  Vercel  NEXT_PUBLIC_REVENUECAT_IOS_KEY                                below
+ 7  verify  grep the deployed bundle for an `appl_` key                   below
+```
+
+**STEP 5 IS NOT A NEW OFFERING, AND THAT IS THE NON-OBVIOUS PART.** The four packages already
+exist in the one CURRENT offering and each carries **one product per app** — Play's is filled,
+and the top of this file records the App Store and Test Store rows being deliberately left
+empty because Apple's products did not exist. So iOS is four **edits**, not a second offering:
+open each package and set its App Store product.
+
+```
+Offering  default  "Standard plans"  (already CURRENT — do not create a second one)
+  base_monthly      Play ✓ camphawk_base:monthly       -> App Store: app.camphawk.mobile.base.monthly
+  base_yearly       Play ✓ camphawk_base:yearly        -> App Store: app.camphawk.mobile.base.yearly
+  autocart_monthly  Play ✓ camphawk_autocart:monthly   -> App Store: app.camphawk.mobile.autocart.monthly
+  autocart_yearly   Play ✓ camphawk_autocart:yearly    -> App Store: app.camphawk.mobile.autocart.yearly
+```
+
+**A SECOND OFFERING WOULD BREAK PLAY.** Only one can be CURRENT and `bringUp` reads
+`offerings?.current?.availablePackages` — so making an iOS-only offering current takes Play's
+packages out of `current` and Android silently falls back to `unavailable`, which is the same
+copy a healthy pre-IAP iOS shows. **That failure renders as ordinary UI on a platform nobody
+would be testing at the time**, which is this file's most-repeated shape.
+
+**STEP 6 AND 7 ARE ONE ACT.** `NEXT_PUBLIC_*` is inlined at BUILD time, so setting the Vercel
+var changes nothing until a deploy; and the check is not the Vercel dashboard (403 at the agent
+proxy) but the served bundle, which proves the value reached the build users actually run:
+
+```
+for c in $(curl -s https://camphawk.app/pricing |
+           grep -oE '/_next/static/chunks/[A-Za-z0-9_./-]+\.js' | sort -u); do
+  curl -s "https://camphawk.app$c" | grep -o 'appl_[A-Za-z0-9]*' && echo "  ^ in $c"
+done
+```
+
+**Verified 2026-08-31, before any of this ran: 18 chunks, `goog_` present, `appl_` absent** —
+so the reading is clean and a later `appl_` hit is unambiguous. Do step 7 only after step 5,
+or the key goes live against an offering with no Apple products and the paywall reports
+`no packages offered` — indistinguishable from the key never having been set.
+
+**ONE THING §8 DEFERRED IS NOW UNBLOCKED.** It says *"draft the review notes once the paywall
+UI exists, not before"*. `src/components/v2/StorePaywall.tsx` exists and renders real prices
+on Play, so the screenshot and notes each subscription needs can be produced now, from a real
+Android paywall, and reused across all four products. That is the one review asset that does
+not wait on SBP.
 
 ### 4b. The RevenueCat console checklist — WRITTEN BLIND, so verify as you go
 
@@ -794,11 +875,19 @@ see — §29d):**
 | Paid Apps Agreement | **Active**, Aug 25 2026 – Jul 25 2027 |
 | Bank account | **Active** — JPMorgan Chase, USD |
 | Tax form (W-9) | **Active**, submitted Aug 25 |
-| **Small Business Program** | **SUBMITTED 2026-08-30, PENDING** — *"we will email you about your status soon"* |
+| **Small Business Program** | **SUBMITTED 2026-08-30 17:55 UTC, STILL PENDING at 2026-08-31** — *"we'll review your details and email you with your enrollment status soon"*, no timeline given |
 
-**So the products are BLOCKED on SBP and on nothing else.** The 08-28 state table above says
-Paid Applications was still processing; it is not, and the only outstanding gate is the
-commission rate.
+**So the products are BLOCKED on SBP and on nothing else.**
+
+> **RE-CHECKED 2026-08-31 IN THE OWNER'S INBOX, NOT BY ASKING** — Apple's acknowledgement is
+> the only mail from `apple.com` in the last three days, so the decision has not arrived. That
+> is a cheap check and it is repeatable: search `from:apple.com newer_than:3d`, and expect the
+> verdict to come from `developer@email.apple.com`, the same sender as the acknowledgement.
+> **The ordered sequence for the moment it lands is §4e**, which also records the two things
+> that are NOT gated on it.
+
+The 08-28 state table above says Paid Applications was still processing; it is not, and the
+only outstanding gate is the commission rate.
 
 **"175 Countries or Regions" on the agreements page is the AGREEMENT'S territory coverage, not
 app availability.** The app is United States only and Step 4's product availability must match
