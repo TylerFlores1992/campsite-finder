@@ -81,8 +81,16 @@
 >
 > Phase 1 below is done. `sessionProbe` read `ssoAccessToken`/`accessToken` — **RC's OWN
 > copies** — while okta-auth-js decides login state from its own `okta-` store. It now
-> reports that store's **names, count, token shape and expiry; never a value**. Both the
-> admin panel and `rc-holds-readout.mts` print it.
+> reports that store's **names, count, token shape and expiry; never a value**, plus the
+> ORIGIN it was taken on. Both the admin panel and `rc-holds-readout.mts` print it.
+>
+> **THE ORIGIN IS NOT DECORATION — read the right one.** `localStorage` is per-origin and a
+> sign-in walks across two; hold 43832 produced **eleven** `session` reports, from both
+> `www.reservecalifornia.com` and `signin.reservecalifornia.com`. The readout scores the
+> **last** report on **RC's own** origin: the last, because the question is what the store
+> holds AFTER the sign-in, and the first is the park page where an empty store is the correct
+> and boring answer; RC's own origin, because a census on the signin origin describes storage
+> the SPA never reads. Scoring either wrong one manufactures a false confirmation.
 >
 > - **`okta-` empty beside a live `ssoAccessToken`** ⇒ the SDK never finished its half; the
 >   fix is in the sign-in completion.
