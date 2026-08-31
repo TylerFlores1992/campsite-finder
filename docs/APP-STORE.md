@@ -88,6 +88,31 @@ Information* — not the app-level "General → App Review" nav item. It is one 
 fields Apple lets you edit while the version sits in *Waiting for Review*, so it can be
 corrected without giving up the queue position.
 
+> **THERE IS A SECOND FORM WITH ALMOST THE SAME NAME, AND IT IS NOT IN THIS FILE.**
+> **TestFlight → Test Information** (*Beta App Review Information* + *Feedback Email*) governs
+> **beta** review; the *App Review Information* described here is on the **version page** and
+> governs **App Store** review. **Filling one has never filled the other**, and on 2026-08-29
+> every `iOS · TestFlight` run failed at *submit to beta review* — after a clean compile, a
+> successful upload and completed ASC processing — purely because those four contact fields were
+> empty. Four plausible build-side causes were all wrong; the fault was a web form.
+>
+> It was filled and saved 2026-08-29 and **`iOS · TestFlight` #12 then went clean**, so the whole
+> chain (compile → sign → upload → ASC processing → submission to beta review) is measured. That
+> build ran on `f3f36e3`, which contains none of the fix — **the console was the fix, and nothing
+> in the repository could have made it pass.**
+>
+> **The write-up lives in `docs/STOREKIT-PLAN.md` §11c, not here**, which is the misplacement this
+> pointer exists to stop: this file is the one whose job is *"everything App Store Connect asks
+> for that isn't a build"*, and until 2026-08-30 it did not contain the words "TestFlight" or
+> "Beta App Review" anywhere. §2 has already been misread once over exactly this kind of
+> same-words-different-page distinction (the app-level *General → App Review* item versus the
+> version page).
+>
+> **Both forms carry a Sign-In password that nothing in App Store Connect validates**, and a bad
+> one there caused the 08-14 rejection. Beta review hits the identical wall. The check is to sign
+> in at camphawk.app in a private window — end to end, exposes no secret, and it also exercises
+> whether Clerk Device Trust is still off (§2a).
+
 Three parts, all filled in and saved as of 2026-08-08:
 - **Sign-In Information** — "Sign-in required" ticked, username `tylerflores1992@yahoo.com`
   and a real password. **This is the field that matters**; a reviewer who cannot sign in
