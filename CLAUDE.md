@@ -8162,6 +8162,41 @@ store-related, both above). **Check that file's newest sections against this one
 concluding this file is current; a finding that lives only there is a finding the next session
 will re-derive. `ls docs/NOTES-*.md`.
 
+### PLAY IN-APP PURCHASE WORKS — a real purchase, read back out of RevenueCat (2026-08-30)
+**First end-to-end exercise of any of the store work.** A licence-tester purchase from the app:
+the paywall rendered four plans at Play's own `priceString` ($2.99 / $23.99 / $11.99 / $59.99 —
+the first machine-readable confirmation of `docs/STOREKIT-PLAN.md` §9b's table, which until now
+rested on a human reading a console), Play accepted it, and a second tap answered **"You're
+already on this plan"**.
+- **THAT STRING IS THE EVIDENCE, AND IT BEATS A DASHBOARD SCREENSHOT.** It is not Play's
+  wording — it is `decidePurchase`'s, reachable only because `readCurrentStoreProduct()` asked
+  `getCustomerInfo()` and got `camphawk_base:monthly` back. **Our code read the purchase out of
+  RevenueCat.**
+- **NO `subscriptions` ROW APPEARED, AND THAT IS THE GUARD WORKING.** `ignoreReason` drops every
+  event whose `environment !== 'PRODUCTION'`; granting on a sandbox event would let anyone with
+  a test device mint a paid subscription. So `subscribed` stays false and the app still gates
+  watching. **Expect exactly this from a licence-tester purchase — do not hunt a broken
+  webhook.** Still unproven: webhook → row → `hasAutocartEntitlement`, which only a REAL
+  production purchase exercises, and Play production reads **Inactive**.
+- **THREE SEPARATE THINGS MADE THE PAYWALL UNUSABLE, ALL WITH A GREEN CONSOLE.** (1) No route in
+  the app reached `/pricing` at all (#236). (2) The route, once added, was a paragraph of grey
+  text in the slot the submit button occupies — read twice as *"there is no start watch"* (#237).
+  (3) **No OFFERING existed in RevenueCat**, so `bringUp` returned `no packages offered` and the
+  paywall rendered its fallback — the same copy iOS legitimately shows, so nothing looked wrong.
+  **Offerings appear NOWHERE in STOREKIT-PLAN's console checklist**; §4d records Products and
+  Entitlements and stops. Products = what exists; Entitlements = what it grants; **Offering =
+  what the app may sell.** Four custom packages in one CURRENT offering; details in the plan.
+- **A GREEN CONSOLE IS NOT A WORKING PURCHASE FLOW.** Every step of the console work was correct
+  throughout all three. The only thing that found any of them was opening the app and trying to
+  buy something.
+- **`is_beta` RETURNS TRUE FROM `hasActiveSubscription` BEFORE IT READS THE SUBSCRIPTIONS TABLE**
+  (`src/lib/auth.ts:42`), so **no beta tester can ever see a paywall** — they read as subscribed
+  everywhere. Test with a non-beta non-subscriber. The Play licence tester (a Google account) and
+  the CampHawk account (Clerk) are separate identities and need not match.
+- **Sandbox-only rough edge, recorded so it is not filed as a hang:** after a successful purchase
+  the paywall shows *"Confirming your subscription…"* and waits for a server change that
+  deliberately never comes. A production purchase flips it.
+
 ### APPLE IAP WAS DECIDED ON 2026-08-24, AND THIS FILE DID NOT CARRY IT FOR SIX DAYS
 **The owner decided to add In-App Purchase and raise prices to absorb Apple's commission.** It is
 recorded in `docs/STOREKIT-PLAN.md` — in the subtitle of the file (*"Written 2026-08-24 on the

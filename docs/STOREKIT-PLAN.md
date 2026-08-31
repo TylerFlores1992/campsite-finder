@@ -6,6 +6,103 @@ implementation. Read "What only a human can do" before planning a session around
 
 ---
 
+## THE PLAY CHAIN IS PROVEN AS FAR AS SANDBOX GOES (2026-08-30 evening)
+
+**A real purchase was made from the app and the app read it back out of RevenueCat.** First
+end-to-end exercise of anything in this file.
+
+| link | what proved it |
+|---|---|
+| paywall renders REAL Play prices | four plans, $2.99 / $23.99 / $11.99 / $59.99, off the store's own `priceString` |
+| Play accepted the purchase | the buy sheet completed; "Confirming your subscription…" |
+| **RevenueCat recorded the entitlement** | **"You're already on this plan"** on a second tap |
+| the webhook correctly IGNORED it | `subscriptions` still holds 3 rows, all `stripe`, none with a `store_transaction_id` |
+| the app still gates watching | `/new` still offers "See plans" |
+
+- **THE THIRD ROW IS THE REAL EVIDENCE AND IT BEATS A DASHBOARD SCREENSHOT.** *"You're already
+  on this plan"* is not Play's wording — it is `decidePurchase`'s, and it can only fire because
+  `readCurrentStoreProduct()` asked `getCustomerInfo()` and got `camphawk_base:monthly` back.
+  **Our code read the purchase out of RevenueCat**, which is the whole front half of the chain
+  in one string.
+- **AND THE PRICES ARE THE FIRST MACHINE-READABLE CONFIRMATION OF §9b's TABLE.** They are
+  `priceString` off Play, not anything we typed. Until now that table rested on a human reading
+  a console (§29d); all four match.
+- **THE MISSING ROW IS THE GUARD WORKING, NOT A FAILURE.** `ignoreReason` drops every event
+  whose `environment !== 'PRODUCTION'`, and a sandbox purchase granting a real subscription
+  would let anyone with a test device mint one. So no row, so `subscribed` stays false, so the
+  app still asks for a subscription. **Expect exactly this from a licence-tester purchase and
+  do not go hunting for a broken webhook.**
+- **STILL UNPROVEN: webhook → `subscriptions` row → `hasAutocartEntitlement`.** Only a REAL
+  production purchase exercises it, and Play production reads **Inactive**. Its substitute is 17
+  tests and 13 mutations (#218).
+- **A SANDBOX-ONLY ROUGH EDGE, RECORDED SO IT IS NOT FILED AS A HANG.** After a successful
+  purchase the paywall shows *"Confirming your subscription…"* and waits for the server to
+  reflect it — which in sandbox deliberately never happens. A production purchase flips it.
+- **THE ACCOUNT MATTERS AND THE OBVIOUS ONE DOES NOT WORK.** `hasActiveSubscription` returns
+  true on `is_beta` **before it looks at the subscriptions table** (`src/lib/auth.ts:42`), so
+  every beta tester reads as subscribed and can never see a paywall. Test with a
+  non-beta, non-subscriber account; `iamtylerflores12345@yahoo.com` is one. The Play licence
+  tester is a separate identity (Google) from the CampHawk account (Clerk) and they need not
+  match.
+
+### OFFERINGS WERE NEVER IN THIS PLAN, AND THAT IS WHAT BLOCKED THE PAYWALL FOR AN HOUR
+
+§4d's console checklist records **Products ✓** and **Entitlements ✓** and **stops**. There is no
+Offerings step anywhere in this file, and `Offering` as a RevenueCat concept appeared in it
+zero times.
+
+`bringUp` reads `offerings?.current?.availablePackages` and returns
+`{ ok: false, reason: 'no packages offered' }` on an empty list — so with products imported,
+entitlements attached and credentials green, the paywall rendered its **fallback**, which is
+the same copy iOS legitimately shows today. **Nothing looked broken.** That is the shape this
+repo keeps paying for: a correct component reporting a real state that reads as "nothing to
+see here".
+
+**The three concepts are not interchangeable and only the third is what the SDK sells:**
+Products = what exists in the store · Entitlements = what a product grants · **Offering = what
+the app is allowed to offer**, made of Packages.
+
+```
+Offering  default   "Standard plans"   MUST be marked CURRENT — getOfferings().current
+  base_monthly      Alerts, monthly      -> camphawk_base:monthly
+  base_yearly       Alerts, yearly       -> camphawk_base:yearly
+  autocart_monthly  Auto-Cart, monthly   -> camphawk_autocart:monthly
+  autocart_yearly   Auto-Cart, yearly    -> camphawk_autocart:yearly
+```
+
+- **CUSTOM IDENTIFIERS, NOT THE STANDARD ONES.** RevenueCat's identifier picker offers Annual,
+  Monthly and so on — one slot each — and there are FOUR products across two tiers. Two tiers
+  cannot both be "Annual". The picker has a Custom option; use it for all four rather than
+  mixing. The code never reads these: it carries the identifier as `packageId` and derives tier
+  and interval from the **product** id, so what matters is only that all four products sit in
+  the one current offering.
+- **A NON-CURRENT OFFERING IS INVISIBLE TO THE APP** and looks identical to no offering at all.
+  Check the ⋯ menu: if it offers "Make current", it is not.
+- **The "not backwards compatible … Android SDK v6+" warning is informational.** It is about
+  Play's `product:base_plan` id shape; `@revenuecat/purchases-capacitor` 13.4.2 is far past v6,
+  and RevenueCat's own SDK Compatibility panel reads `13.4.2 (100%)` across live installs. **Do
+  not select a fallback product.**
+- **Leave the Test Store and App Store rows empty.** A package may carry one product per app and
+  carrying only Play's is fine. Apple's four do not exist yet (§8).
+- **DISPLAY NAME IS REQUIRED** on the offering, and nothing reads it.
+- **After saving, force-close the app.** The probe runs once per signed-in session and
+  RevenueCat caches offerings, so a reload does not necessarily re-fetch.
+
+### AND THE PAYWALL HAD NO ROUTE AT ALL UNTIL THE SAME EVENING (#236, #237)
+
+Before the offering was even reachable, `STORE_PURCHASE_ENABLED` had been true since 08-29 with
+**no path in the app to `/pricing`** — nav, logo, `PricingLink`, `PlanOptionsButton` and
+`NewWatch`'s gate all suppress it when native, every one a correct pre-IAP fix that outlived its
+reason. Then the route existed and was a **paragraph of grey text in the slot where the submit
+button lives**, which the owner read twice as *"there is no start watch."* Full write-ups in
+`CLAUDE.md`.
+
+**THE COMMON SHAPE ACROSS ALL THREE — worth reading before the iOS half.** The console work was
+complete and correct at every step, and the feature was still unusable, three times over, for
+three different reasons that each rendered as ordinary UI. **A green console is not a working
+purchase flow.** The only thing that found any of them was somebody opening the app and trying
+to buy something.
+
 ## STATE AS OF 2026-08-30 — read this first
 
 **WHY THIS FILE EXISTS, BECAUSE IT KEEPS BEING FORGOTTEN: the owner decided on 2026-08-24 that
