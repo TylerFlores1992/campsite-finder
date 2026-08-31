@@ -871,8 +871,11 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
 
 ## Web-session gotchas (this environment)
 - **Node `fetch` needs `NODE_USE_ENV_PROXY=1`** to reach Supabase / reservation portals.
-  - **THAT INCLUDES `npm test` AND `npm run verify`, AND THE FAILURE IMPERSONATES AN EGRESS
-    REVOCATION (2026-08-31).** A bare `npm test` fails **190 of 1,522** — every real-DB suite
+  - **THAT INCLUDES EVERY STAGE OF `npm run verify` — `npm test` AND `npm run build` — AND
+    THE FAILURE IMPERSONATES AN EGRESS REVOCATION (2026-08-31).** The build reads the catalog
+    while collecting page data, so it dies on `/camping/group-camping/[state]` with a raw SQL
+    dump and `Failed to collect page data`, which reads as a broken page rather than a missing
+    variable. Prefix the whole `verify`, not one stage of it. A bare `npm test` fails **190 of 1,522** — every real-DB suite
     at once — with `DB query error: Host not in allowlist: <project>.supabase.co. Add this
     host to your network egress settings to allow access.` **Nothing is wrong with egress.**
     `curl` reaches Supabase in the same second, and `$HTTPS_PROXY/__agentproxy/status` names
@@ -3380,9 +3383,27 @@ be true on 08-30 without either being wrong.
   a different investigation. Note `attached` reads `null` because RC does not return
   `CustomerId` on `load/shoppingcart`, so **that field cannot discriminate and still needs
   replacing with something that can.**
-- `src/lib/rc-signin-probe.test.mts`, **eight mutations, each verified to APPLY and to fail** —
-  including the value reported, the breadcrumb called `opaque`, the expiry dropped, the flag
-  taken but never passed on, and either cap put back.
+- **THE READOUT'S GLOSS IS A PURE FUNCTION** (`closeReasonReading`), for the reason `claim.ts`,
+  `hold-line.ts` and `held-cadence.ts` were: inline in `rc-holds-readout.mts`, the branch that
+  says *the bug is back* cannot be reached without a real hand-off in the database, so the one
+  branch that matters would have shipped having never once run. The signed-in flag is passed
+  IN, from the stages — deriving it from the reason would make the discriminator circular and
+  that branch unreachable.
+  - **`timeout` stays `info`.** It is a real finding and not a regression, and dressing the
+    backstop as red is the cry-wolf failure this file has fixed three times.
+  - **An unrecognised reason is reported as itself.** A bundle older than #240 sends none at
+    all and a later one may send a fourth; folding it into a known verdict is how an absent
+    reading becomes a negative.
+- `src/lib/rc-signin-probe.test.mts`, **fourteen mutations, each verified to APPLY and to
+  fail** — including the value reported, the breadcrumb called `opaque`, the expiry dropped,
+  the flag taken but never passed on, either cap put back, the regression downgraded to
+  `info`, `timeout` promoted to a warning, and the readout keeping its own copy of the gloss.
+  - **ONE "SURVIVED" AND IT WAS THE MUTATION, NOT THE GUARD.** The unrecognised-reason test
+    passed against a mutation that injected `isMitSignIn` where the assertion looks for
+    `isMidSignIn` — a typo in the mutation string, so the intended change never applied and
+    the green proved nothing. Redone with the regression wording verbatim and caught. **The
+    mutation harness now asserts the file actually CHANGED**, not merely that the anchor
+    matched; an anchor can match and the replacement be a no-op.
 - **THE GUARDS ARE UNDER `src/`, NOT `worker/`, DELIBERATELY.** `npm test` globs both, but
   `worker/**` is the FIRST entry in `worker-deploy.yml`'s `paths:`, so a guard over two web
   modules would restart both poller machines. Checked against the workflow rather than
