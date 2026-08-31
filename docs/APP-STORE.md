@@ -6,9 +6,9 @@ claim comes from, so it can be re-checked when something changes. Getting these 
 is a rejection, and getting them *stale* is worse: the label keeps saying something the
 app stopped doing.
 
-Last audited 2026-07-28 — **and §1 has NOT been re-audited since RevenueCat joined the
-dependency tree (2026-08-29); see the note under "Third parties that receive data".** Sections
-2a–2d carry their own dates and are current; the privacy labels in §1 are the stale part.
+Last audited 2026-07-28. **§1's RevenueCat rows were corrected 2026-08-30** (third-party
+list, User ID, Purchase History); the REST of §1 has not been re-audited since, and the
+date above is deliberately not restamped for a partial check.
 
 ---
 
@@ -26,9 +26,9 @@ Transparency does not apply** and the app must not show an ATT prompt.
 | --- | --- | --- |
 | **Contact Info → Email Address** | `users.email`, set from Clerk at sign-up (`lib/auth.ts` `syncUser`). Alerts are emailed here. | App Functionality |
 | **Contact Info → Phone Number** | `users.phone`, optional, entered by the user for SMS alerts (`v2/SmsAlerts.tsx`, migration `005`). | App Functionality |
-| **Identifiers → User ID** | The Clerk user id, primary key of `users`. | App Functionality |
+| **Identifiers → User ID** | The Clerk user id, primary key of `users`. Also sent to **RevenueCat** as the App User ID (`purchases.ts:120`) — the webhook keys on `app_user_id`, and the module refuses to configure anonymously rather than orphan a purchase. | App Functionality |
 | **Identifiers → Device ID** | FCM push tokens in `push_tokens` (migration `023`), registered by the app via `POST /api/user/push-token`. | App Functionality |
-| **Purchases → Purchase History** | Subscription *status* plus Stripe customer/subscription ids in `subscriptions`. **No card data ever reaches our servers** — Stripe Checkout handles payment entirely. | App Functionality |
+| **Purchases → Purchase History** | Subscription *status* plus the billing processor's ids in `subscriptions` — Stripe customer/subscription ids for a web purchase, `provider` + `store_transaction_id` for a store purchase (migration 071). **No card data ever reaches our servers**: Stripe Checkout, Apple and Google each handle payment entirely. | App Functionality |
 | **Other Data** | The watches a user creates (campground + dates) and saved favourites. This is the product's own data, tied to the account. | App Functionality |
 
 ### Data not linked to you
@@ -48,28 +48,27 @@ Transparency does not apply** and the app must not show an ATT prompt.
 
 ### Third parties that receive data
 
-Clerk (auth), Stripe (payments), Supabase (database), Resend (email), Twilio (SMS),
-Firebase Cloud Messaging (push), Mapbox (geocoding — receives the place text typed and
-map coordinates), Sentry (diagnostics), Vercel (hosting, coarse IP location).
+Clerk (auth), Stripe (web payments), **RevenueCat (store subscriptions — receives the Clerk
+user id as the App User ID, and purchase history once a store product exists)**, Supabase
+(database), Resend (email), Twilio (SMS), Firebase Cloud Messaging (push), Mapbox
+(geocoding — receives the place text typed and map coordinates), Sentry (diagnostics),
+Vercel (hosting, coarse IP location).
 
-> **RevenueCat IS MISSING FROM THAT LIST AND FROM THE PURCHASES ROW ABOVE (found 2026-08-30).**
-> The SDK is compiled into the iOS binary (`iOS · TestFlight` #12) and the Android one, and
-> `src/lib/native/purchases.ts:120` calls `Purchases.configure({ apiKey, appUserID: userId })`
-> with the **Clerk user id** — deliberately, because the webhook keys on `app_user_id` and the
-> module refuses to configure anonymously rather than orphan a purchase. So RevenueCat receives
-> an *Identifiers → User ID* today, and *Purchases → Purchase History* the moment Apple's four
-> products exist. **Neither is declared**, and the *Purchases → Purchase History* row above names
-> Stripe alone.
+> **THE TABLE AND THE LIST ABOVE ARE CORRECTED (2026-08-30); ONE QUESTION IS NOT MINE TO
+> CLOSE.** RevenueCat is now named in the third-party list, in *Identifiers → User ID* and in
+> *Purchases → Purchase History*. What is NOT settled is whether receiving the Clerk user id
+> makes RevenueCat a **processor** (acting on our behalf, which is not "sharing") or a third
+> party in its own right. Apple's label has no "shared" axis so this bites hardest on Play —
+> see `docs/PLAY-STORE.md` §4, where the same question is recorded against the same rows.
 >
-> **This section is stamped "Last audited 2026-07-28", which predates RevenueCat entering the
-> dependency tree by a month** — so the omission is not an oversight in the reasoning, it is the
-> audit date doing exactly what the header warns about, inverted: the label does not say
-> something the app stopped doing, it fails to say something the app started doing.
+> **HOW THIS HAPPENED IS THE REUSABLE PART.** The line above reads *"Last audited 2026-07-28"*,
+> which predates RevenueCat entering the dependency tree by a month. **The header's own warning
+> is about a label that keeps claiming something the app stopped doing; this was the inverse** —
+> a label silently failing to mention something the app started doing. An audit date does not
+> decay visibly, and nothing in CI can see a store form.
 >
-> **Update this list and the Purchases row BEFORE the first IAP submission**, and update Play's
-> Data safety form in `docs/PLAY-STORE.md` §4 in the same change — it does not mention
-> RevenueCat either, and Play's products are already live, so that form is the more urgent of
-> the two. Neither is a code change; both are console forms.
+> **The audit date is NOT restamped.** What was re-checked on 2026-08-30 is the RevenueCat
+> question alone, and saying otherwise would assert a full re-audit that did not happen.
 
 ### Account deletion
 
