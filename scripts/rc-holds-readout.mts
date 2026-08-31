@@ -339,13 +339,36 @@ if (handed.length) {
     }
 
     // THE STORE THAT DECIDES WHETHER RC LOOKS SIGNED IN (2026-08-31). `storedToken` is RC's
-    // OWN copy; okta-auth-js decides login state from its own `okta-` store, so a hand-off
-    // reporting a live `storedToken` beside an empty `okta-` store is the split this was
-    // built to see. Only the FIRST session report is read: later ones are written by
-    // re-injections after the sign-in has completed, and would answer a different question.
-    const sess = (h.client_reports ?? []).find((r) => r.stage === 'session')?.detail as
-      | { oktaToken?: string; oktaKeys?: number; oktaNames?: string; oktaExpiresInSec?: number | null;
-          storedToken?: string } | undefined;
+    // OWN copy; okta-auth-js decides login state from its own `okta-` store, so a live
+    // `storedToken` beside an empty `okta-` store is the split this was built to see.
+    //
+    // THE LAST ONE ON RC'S OWN ORIGIN, and both halves of that were got wrong first.
+    //
+    // THE LAST, because the question is what the store holds AFTER the sign-in — that is the
+    // state RC renders its header from, and it is the whole complaint. The FIRST report is
+    // taken on the park page before anyone has signed in, where an empty okta store is the
+    // correct and uninteresting answer. Reading the first is the same mistake that cost a
+    // diagnosis on 2026-08-29 in this very block, and `cart-verified` above already carries
+    // the `findLast` fix for it.
+    //
+    // ON RC'S OWN ORIGIN, because `localStorage` is per-origin and a sign-in walks across
+    // two. One real hand-off (hold 43832) produced ELEVEN session reports, from both
+    // `www.reservecalifornia.com` and `signin.reservecalifornia.com`. A census taken on the
+    // signin origin describes storage RC's SPA never reads, so scoring it would report "the
+    // SDK store is empty" about the wrong store — a false confirmation of the leading
+    // hypothesis, which is the most expensive kind of wrong.
+    type SessionDetail = {
+      at?: string; oktaToken?: string; oktaKeys?: number; oktaNames?: string;
+      oktaExpiresInSec?: number | null; storedToken?: string;
+    };
+    const sessions = (h.client_reports ?? [])
+      .filter((r) => r.stage === 'session')
+      .map((r) => r.detail as SessionDetail | null)
+      .filter((d): d is SessionDetail => !!d);
+    // A report with no `at` predates this field; it is still usable, just not attributable,
+    // so it is the fallback rather than being silently dropped.
+    const sess = sessions.findLast((d) => (d.at ?? '').includes('www.reservecalifornia.com'))
+      ?? sessions.findLast((d) => d.at === undefined);
     if (sess && sess.oktaToken !== undefined) {
       const live = typeof sess.oktaExpiresInSec === 'number' && sess.oktaExpiresInSec > 0;
       if (sess.oktaToken === 'jwt' && live) {

@@ -74,6 +74,7 @@ function jwt(expDeltaSec: number): string {
 }
 
 interface SessionDetail {
+  at?: string;
   storedToken?: string;
   oktaKeys?: number;
   oktaNames?: string;
@@ -99,6 +100,7 @@ function probe(store: Record<string, string>): { detail: SessionDetail; wire: st
   ctx.window = ctx;
   ctx.__camphawkRc = {
     send: (stage: string, d: Record<string, unknown>) => sent.push([stage, d]),
+    href: () => 'https://www.reservecalifornia.com/park/690/612',
     jwtFacts(t: string) {
       const out: { decodable: boolean; expiresInSec: number | null } =
         { decodable: false, expiresInSec: null };
@@ -198,6 +200,9 @@ test('a store that cannot be read reports nothing rather than a zero', () => {
   ctx.window = ctx;
   ctx.__camphawkRc = {
     send: (stage: string, d: Record<string, unknown>) => sent.push([stage, d]),
+    // `href` is installed by `reporter()` alongside `send`, so a partially-built R is not a
+    // real state — but the stub has to model the whole shape or it tests a different object.
+    href: () => 'https://www.reservecalifornia.com/',
     jwtFacts: () => ({ decodable: false, expiresInSec: null }),
     onToken: null,
   };
@@ -289,4 +294,44 @@ test('the readout ROUTES through the shared reading rather than keeping its own 
   // The signed-in flag must come from the STAGES. Deriving it from the reason would make the
   // discriminator circular and the warn branch unreachable.
   assert.match(src, /stage === 'password'|stage === 'submitted'|stage === 'signin-open'/);
+});
+
+// ---------------------------------------------------------------------------
+// 5. The reading is only interpretable if you know WHICH store it came from, and
+//    WHEN. Both were got wrong on the first pass and both are caught by real data.
+// ---------------------------------------------------------------------------
+
+test('the census says which ORIGIN it was taken on', () => {
+  // localStorage is per-origin and a sign-in walks across two — RC's SPA on
+  // www.reservecalifornia.com, Okta's form on signin.reservecalifornia.com. One real
+  // hand-off (hold 43832) produced ELEVEN session reports from both. Without this field a
+  // census taken on the signin origin reads as the SPA's store being empty, which is a FALSE
+  // CONFIRMATION of the leading hypothesis.
+  const { detail } = probe({ ssoAccessToken: jwt(3500) });
+  assert.equal(typeof detail.at, 'string');
+  assert.match(detail.at!, /^https:\/\/www\.reservecalifornia\.com/);
+});
+
+test('and never with the query string, because the callback carries an OAuth code', () => {
+  // `R.href()` is origin + pathname by construction. Pinned here because this report is the
+  // one taken ON the callback document, where `?code=` is exchangeable for the session —
+  // published once already, on 2026-08-09, by reporting location.href.
+  const { detail } = probe({});
+  assert.ok(!(detail.at ?? '').includes('?'), 'no query string may reach the report');
+});
+
+test('the readout scores the LAST session on RC OWN origin, not the first', () => {
+  // THE FIRST is the park page before anyone has signed in, where an empty okta store is the
+  // correct and uninteresting answer — so scoring it would report the bug on every healthy
+  // hand-off. Reading the first is also the exact mistake that cost a diagnosis on 08-29, in
+  // this same block, which is why `cart-verified` beside it already uses findLast.
+  const src = code(readFileSync(new URL('../../scripts/rc-holds-readout.mts', import.meta.url), 'utf8'));
+  const i = src.indexOf('const sessions =');
+  assert.ok(i > -1, 'the readout must still gather the session reports');
+  const block = src.slice(i, i + 700);
+  assert.match(block, /findLast/, 'the newest reading is the one that answers the question');
+  assert.doesNotMatch(block, /sessions\.find\(/,
+    'the FIRST session report is pre-sign-in and would report the bug on every healthy run');
+  assert.match(block, /www\.reservecalifornia\.com/,
+    'and it must be scoped to RC own origin, or it scores the wrong localStorage');
 });

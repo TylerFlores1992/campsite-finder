@@ -465,6 +465,18 @@ export function sessionProbe(): string {
     // that expired yesterday is a different finding from one holding a live token, and
     // reporting only the shape would merge them — the failure `status = 'sent'` is the
     // house example of.
+    // WHICH ORIGIN THIS READING IS FROM, and without it the reading is uninterpretable.
+    // `localStorage` is per-ORIGIN, and a sign-in walks across two: RC's SPA lives on
+    // `www.reservecalifornia.com` and Okta's form on `signin.reservecalifornia.com`. Eleven
+    // `session` reports came off one real hand-off (hold 43832), from both — so an okta
+    // census taken on the signin origin describes a DIFFERENT store, and reading it as the
+    // SPA's would say "the SDK store is empty" about storage the SPA never uses. That is a
+    // false confirmation of the leading hypothesis, which is the most expensive kind.
+    //
+    // `R.href()` is origin + pathname and never the query, which is load-bearing here: the
+    // callback document's URL carries `?code=`, an exchangeable OAuth authorization code
+    // (2026-08-09).
+    '    at: R.href(),',
     '    oktaKeys: oktaN,',
     '    oktaNames: oktaNames.join(","),',
     '    oktaToken: oktaTok,',

@@ -59,7 +59,7 @@ function clean(raw: unknown): ClientReport[] {
         // instrument would have reported nothing while looking like it had run. Bounded
         // still: each value is truncated to 300 characters and the report count is capped
         // above, so this is a slightly wider bound, not an open one.
-        if (Object.keys(out).length >= 12) break;
+        if (Object.keys(out).length >= 14) break;
         if (typeof v === 'string') out[k] = v.slice(0, 300);
         else if (typeof v === 'number' || typeof v === 'boolean' || v === null) out[k] = v;
       }
