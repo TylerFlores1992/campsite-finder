@@ -42,6 +42,34 @@
 > fails while reporting `close {reason:'settled'}`, this was the wrong half and the fill is
 > next. Full write-up: CLAUDE.md → "BISECTED BY HAND, AND IT IS THE CLOSE TIMING".
 >
+> ### THE NEXT HAND-OFF IS THE TEST, AND HERE IS HOW TO READ IT
+>
+> The fix is LIVE (merged #240, `6331471`, web-side so installed apps have it). Nothing else
+> is needed to exercise it — open a claim link **in the app**, and the `close` report's
+> `reason` names which path it took:
+>
+> | reason | means |
+> |---|---|
+> | `settled` | RC left the callback under its own steam — **the fix working** |
+> | `token` | closed immediately; the already-signed-in path, unchanged behaviour |
+> | `timeout` | RC never left the callback in 10s — the backstop fired |
+>
+> **`settled` + a reachable cart = solved.** **`settled` + still "Please login" = this was the
+> wrong half**, and the remaining suspect is the scripted fill (the working bisect was
+> hand-typed). **`token` where you expected `settled`** means `isMidSignIn` stopped matching —
+> RC moved its callback path.
+>
+> Read it with `NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts`. **And ask a human
+> to look at RC's cart page** — that is still the only proof of reachability, and `cart read
+> back` is not it.
+>
+> ### A RED WORKER DEPLOY MAY BE A HEALTHY FLEET (issue #243)
+>
+> The post-deploy step restarts pre-deploy machine IDs, and Fly *replaces* an unreachable
+> machine rather than updating it — so the id is gone, the state reads empty, and it tries to
+> start a machine that does not exist. **Check `/api/health/status` before treating a red
+> worker deploy as an outage**; on 08-31 the fleet was 2/2 shards and beating throughout.
+>
 > ### AND A SEPARATE RISK NOTHING MEASURES
 >
 > RC's app took **three attempts and ~5 minutes** to render, including its own "trouble

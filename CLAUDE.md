@@ -841,11 +841,32 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
   `worker/**` is the FIRST entry in the workflow's `paths:` list, so "docs plus one test
   file" is a worker deploy — there is no test-file exemption. PR #204 asserted the opposite
   in its own body (*"No `src/lib`, so no worker deploy"*), and the handover repeated it;
-  merging it deployed on `05ee4ff` and bounced both machines. Harmless that night (nothing
+  merging it deployed on `05ee4ff` and bounced both machines. **AND IT HAPPENED AGAIN ON
+  2026-08-31**, from the other direction: a PR described as *"web-side — reaches installed apps
+  on a push, no rebuild"* — true of the APP — carried one `worker/*.test.mts`, so the merge
+  restarted both pollers. **"No rebuild" and "no worker deploy" are different claims and the
+  first does not imply the second.** Harmless that night (nothing
   queued, the release 10h out, and the workflow fails unless a fresh heartbeat lands — it
   came back in ~3 min, 2/2 shards held). **`docs/LANES.md` already said this in as many
   words** and was right; the PR body was the thing that drifted. **A merge-scope claim is
   not evidence — read `paths:`.** Same family as `6006428` claiming a fix it never made.
+- **THE DEPLOY GOES RED OVER A HEALTHY FLEET WHEN FLY *REPLACES* A MACHINE (issue #243,
+  2026-08-31).** The workflow's post-deploy step restarts the machines that were running
+  BEFORE the deploy, by id. Fly replaces rather than updates any machine that is unreachable
+  at deploy time (`Skipped lease for unreachable machine 84ed237b2d1e48` → `Replacing … by new
+  machine` → the new one is `891e737f632d58`), so the old id is gone, `select(.id == $id)`
+  matches nothing, `$state` is the **empty string**, `"" != "started"` is true, and it tries
+  to start a machine that does not exist: `failed to obtain lease: machine not found`.
+  - **AN EMPTY STATE MEANS "GONE" AND IS READ AS "STOPPED".** The absent-reading-as-a-negative
+    shape, for the umpteenth time in this file.
+  - **THE DEPLOY ITSELF WAS COMPLETELY FINE.** Both machines rebuilt, both health checks
+    passed, `poller.shards` 2/2 held, heartbeat 14s. **Verify the fleet before reading a red
+    worker deploy as an outage** — `/api/health/status` is the authority, not the tick.
+  - **IT IS THE INVERSE OF THE TRAP THAT WORKFLOW EXISTS FOR**, which is why it is worth
+    fixing rather than tolerating: the deploy is built to fail when *alerting is dead behind a
+    green deploy*, and this fails when *alerting is fine*. That is the cry-wolf failure fixed
+    three times elsewhere here, and the cost is that the next genuinely red deploy gets
+    skimmed. **Do not weaken the heartbeat check while fixing it** — that half worked.
 - **Non-secret worker tunables** live in `worker/fly.toml [env]`.
 
 ## Web-session gotchas (this environment)
