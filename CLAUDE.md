@@ -3265,10 +3265,32 @@ cart-verified {"status":200,"entries":1,"attached":null,"keySource":"localStorag
   that it carries `CustomerId: 0`. If the SDK store turns out to be populated, this is where the
   investigation goes instead — and it is a different fix entirely.
 - **THE TRACE HIT THE 80-REPORT CAP AND THE MIDDLE WAS DROPPED**, which the readout says out
-  loud. The token rebroadcast ate ~63 of 80 slots **after** the consecutive-duplicate collapse,
-  because `token` and `cartkey` alternate and only consecutive repeats collapse. **We are
-  destroying the evidence this investigation runs on, on every hand-off.** Worth fixing beside
-  the instrument, not after it.
+  loud. ~~The token rebroadcast ate ~63 of 80 slots **after** the consecutive-duplicate
+  collapse, because `token` and `cartkey` alternate and only consecutive repeats collapse.~~
+  **BOTH HALVES OF THAT ARE FALSE, MEASURED AGAINST THE ROW ITSELF (2026-08-31).** Struck
+  rather than deleted: it would send the next reader to re-fix a collapse that works, and it
+  names a mechanism that was repaired on 2026-08-13.
+  - **The collapse is NOT consecutive-only.** `NOISY = { token, cartkey }` are deduped against
+    everything already sent in the document, not against the previous line — that is exactly
+    the 08-13 fix, and the entry above quotes its own evidence of it working
+    (`repeated {of: token, times: 34}`).
+  - **`token` occupies SIX of the eighty slots on hold 43832, not sixty-three.** Counted:
+    `repeated:14 injected:11 session:11 idle:10 reinjected:9 token:6 banner:5 …`, with
+    `tokenx34`, `tokenx29`, `tokenx13`, `tokenx2` and `tokenx1` all folded. The rebroadcast is
+    the one thing that is NOT eating the trace.
+  - **WHAT FILLS IT IS NAVIGATION COUNT.** `injected:11` and `session:11` — the bundle
+    re-injects on every `loadstop` and a sign-in walks across eleven documents, each costing
+    an `injected`, a `session`, a `reinjected` and a first-sighting `token`. **The reporter's
+    re-install guard is `window.__camphawkRc`, which is per-DOCUMENT**, so a real navigation
+    takes the whole dedup table with it and the next page starts counting again. Candidate,
+    not established: nobody has instrumented which of the eleven are RC's own SPA transitions
+    and which are true navigations.
+  - **IT IS NOT CURRENTLY EATING ANYTHING THAT MATTERS**, which is why this is a note and not
+    a fix. The trim keeps **head 20 + tail 60** (`CLIENT_REPORT_HEAD`/`_TAIL`), not the tail of
+    40 the 08-20 entry describes — so `platform` (n:0) and the first `session` (n:2) survive at
+    the front, and `close`, `cart-verified` and the outcome survive at the back. Only the
+    middle goes. **Checked before relying on it, because putting an instrument at the head of
+    a tail-only trim is exactly what made `notePlatform` invisible for weeks.**
 
 #### BISECTED BY HAND, AND IT IS THE CLOSE TIMING — `/login/callback` (2026-08-31)
 The owner ran the ADMIN probe, which calls `openRcHandoff` with **no `closeOnToken`**, so its
@@ -3377,6 +3399,18 @@ be true on 08-30 without either being wrong.
   instrument would have reported nothing while looking like it had run. Both are 12 now, and
   **the guard DERIVES the required width from what the probe actually sends**, so the next field
   added fails there rather than disappearing in production.
+- **THE READING IS SCOPED TO AN ORIGIN AND TO THE END OF THE RUN, and both were got wrong on
+  the first pass — caught by querying the real rows rather than reasoning about them.** Hold
+  43832 stored **eleven** `session` reports, from BOTH `www.reservecalifornia.com` and
+  `signin.reservecalifornia.com`. `localStorage` is per-origin, so a census taken on the signin
+  origin describes storage RC's SPA never reads: scoring it would report *"the SDK store is
+  empty"* about the wrong store — **a false confirmation of the leading hypothesis, which is
+  the most expensive kind of wrong.** The census reports its origin now.
+  - And it took the FIRST report, which is the park page **before anyone signs in**, where an
+    empty okta store is the correct and uninteresting answer — so it would have flagged the bug
+    on every healthy hand-off. The question is what the store holds AFTER. Same first-not-last
+    mistake that cost a diagnosis on 2026-08-29, **in the same block of the same file**, which
+    is why `cart-verified` two lines above already carries the `findLast` fix for it.
 - **HOW TO READ IT:** `okta-` holding no live token beside a live `ssoAccessToken` means the SDK
   never finished its half and the fix is in the sign-in completion. `okta-` populated means the
   SPA has everything and the problem is the **free-floating cart** (`CustomerId: 0`, 08-06) —
