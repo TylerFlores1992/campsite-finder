@@ -3176,6 +3176,117 @@ booking"** on RC's home page.
   may carry this identical defect and nobody would know. The comparison has no working control
   on either side; only the app-side census would produce one.
 
+#### THE FULL 80-REPORT TRACE, READ 2026-08-31 — the sign-in WORKS and the probe is blind
+The whole `client_reports` sequence for hold `TEST · 43832` was pulled and read in order. It
+moves this from "no mechanism named" to **one named, testable hypothesis**, and it does it by
+eliminating the two things everyone assumes first.
+```
+submitted   {}
+injected    href=.../login/callback   session {opens:32, storedToken:"none"}
+signin-open {}
+injected    href=.../login/callback   session {opens:33, storedToken:"jwt", storedExpiresInSec:3598}
+token       {captured:true, length:939, decodable:true, expiresInSec:3598}
+closed      {}                                   <- we close ~2s after the token appears
+injected    href=.../park/690/612      session {opens:34, storedToken:"jwt", ...:3536}
+   [ two cart POSTs ] log "precart load ok — cart key in hand"
+status      "✓ Added to cart"
+injected    href=.../Customers/ShoppingCart  session {opens:35, storedToken:"jwt", ...:3534}
+cart-verified {"status":200,"entries":1,"attached":null,"keySource":"localStorage"}
+```
+- **RC'S OWN SPA COMPLETED ITS HALF OF THE LOGIN.** `storedToken` goes `none` → `jwt` with a
+  full 3,598s across ONE second on the callback page. **We did not write that** — the app-side
+  bundle never writes a token; `persistLiveToken` is the BOT. So RC's app minted and stored its
+  own copy. "The sign-in did not take" is eliminated.
+- **AND RC'S SPA IS AUTHENTICATING ITS OWN TRAFFIC THROUGHOUT.** `rc-inject.js` rebroadcasts on
+  every RC API call carrying an `accesstoken` header, and the trace collapses
+  `repeated {"of":"token","times":34}` then `29` — **sixty-plus authenticated calls**, against
+  the two our precart makes. The SPA has the token and is using it. "There is no session" is
+  eliminated, from a second direction and more strongly than the token facts alone.
+- **SO THE NARROW STATEMENT SHARPENS: RC's app is making authenticated calls with a live token
+  while its own UI renders signed out.** Those are not the same state, and something decides the
+  second one that we have never looked at.
+- **THE HYPOTHESIS — LABELLED AS ONE, because three mechanisms were guessed on 08-30 and each
+  cost a test.** `sessionProbe` reads exactly two keys, `ssoAccessToken` and `accessToken`
+  (`rc-precart-script.ts`, the `var stored = get("ssoAccessToken") || get("accessToken")` line).
+  **Those are RC's OWN copies.** This file's 2026-08-15 entry already establishes that
+  **okta-auth-js namespaces its own store under `okta-` and that is what it decides from on
+  boot** — which is exactly why `dropStoredToken` had to be widened past those two keys, and
+  why the two-key clear "never asked RC anything". So **`storedToken: "jwt"` reports RC's copy
+  and says NOTHING about the store that drives the header name and the cart page's login
+  prompt.** Every reading taken so far is blind to the one that matters.
+- **THE SUSPECT IF THAT HOLDS IS `closeOnToken`.** We close the sign-in webview the instant the
+  token is captured — two seconds, per the trace — and okta-auth-js's `parseFromUrl()` →
+  `tokenManager.setTokens()` may not have finished. That would leave RC's own copy written and
+  the SDK's store empty, which is precisely the split above. **Not established**; the instrument
+  below is what would establish it. Note `closeOnToken` was itself a fix for a real bug (the
+  08-12 "stranded when it WORKED"), so it is not to be simply removed.
+- **THE OTHER BRANCH IS THE FREE-FLOATING CART.** `attached: null` means RC does not return
+  `CustomerId` on `load/shoppingcart`, so that field **cannot discriminate and needs replacing
+  with something that can**. The cart is minted with `NO_CART` and the 2026-08-06 finding is
+  that it carries `CustomerId: 0`. If the SDK store turns out to be populated, this is where the
+  investigation goes instead — and it is a different fix entirely.
+- **THE TRACE HIT THE 80-REPORT CAP AND THE MIDDLE WAS DROPPED**, which the readout says out
+  loud. The token rebroadcast ate ~63 of 80 slots **after** the consecutive-duplicate collapse,
+  because `token` and `cartkey` alternate and only consecutive repeats collapse. **We are
+  destroying the evidence this investigation runs on, on every hand-off.** Worth fixing beside
+  the instrument, not after it.
+
+#### BISECTED BY HAND, AND IT IS THE CLOSE TIMING — `/login/callback` (2026-08-31)
+The owner ran the ADMIN probe, which calls `openRcHandoff` with **no `closeOnToken`**, so its
+window stays open. That one difference is the whole experiment.
+```
+attempt 1   froze during loading — had to force-close the app
+attempt 2   RC's "trouble loading the application" screen
+attempt 3   (~5 min later) RC rendered — NOT signed in
+   signed in by hand, staying on the page:
+      -> TYLER in the header, account menu with LOGOUT
+      -> cart page reachable · Your Reservations reachable
+   pressed Done, reopened it:
+      -> NAME STILL THERE
+```
+- **SO A CLOSE AND A REOPEN ARE INNOCENT.** The UI-visible session survives both. That was
+  genuinely not certain: it was equally possible the webview could never hold one, in which
+  case the entire in-app design was wrong. It can.
+- **THE ONLY VARIABLE LEFT IS *WHEN* WE CLOSE, AND THE TRACE SAYS WHERE WE WERE:**
+  ```
+  injected  href=.../login/callback     <- Okta has redirected back; RC's SPA is booting
+  token     {"ageSec":2, "expiresInSec":3598}
+  closed    {}                          <- we destroy the webview, 2s in
+  ```
+  `/login/callback` is where RC completes the OAuth exchange and bootstraps its customer
+  session. **We were killing the webview in the middle of it** — which is why the token was
+  real and the *page* was not: RC's SPA had a token and never finished becoming signed in.
+- **THE DOUBT, STATED SO NOBODY RE-DISCOVERS IT.** The manual sign-in was also HAND-TYPED
+  rather than script-driven. That is not thought to matter — the scripted sign-in produced a
+  genuine 939-char token and RC's SPA persisted its own copy a second later — but it is **not
+  eliminated.** If a hand-off still fails while reporting `close {reason:'settled'}`, this was
+  the wrong half and the fill is the next suspect.
+- **FIXED: the close is DEFERRED while RC is still in the flow** (`isMidSignIn` +
+  `rcCloseAction` in `src/lib/rc-token-liveness.ts`). A live token off the callback still
+  closes at once — the already-signed-in path, i.e. 2026-08-12's stranded-when-it-worked case,
+  is unchanged. On the callback it arms a **bounded** settle timer and closes when RC leaves
+  the flow under its own steam.
+  - **THE TIMEOUT IS NOT OPTIONAL.** "Wait for RC to finish" unbounded is 08-12 by another
+    door: a callback that never resolves strands the user on a page with no way back.
+  - **THE MATCH IS DELIBERATELY NARROW** — Okta's host and `/login/callback` only. Waiting on
+    anything unrecognised would make EVERY already-signed-in hand-off sit through the timeout,
+    trading a bug for every user against a rare one. **The cost of narrow, named:** if RC moves
+    its callback path this silently stops matching and the bug returns with nothing red.
+  - **EVERY CLOSE NAMES ITS REASON** — `token` (ordinary), `settled` (RC finished; the fix
+    working), `timeout` (RC never finished). Without it, *a fix that never fired* and *a fix
+    that worked* produce the identical report, which is the shape this file keeps recording.
+  - **THE DECISION IS A PURE FUNCTION, for the reason `claim.ts` and `hold-line.ts` were.** It
+    lived inline in an InAppBrowser `message` handler, reachable only from a native webview —
+    which is how `closeOnToken` shipped in #126 with nothing testing it, stayed wrong until
+    08-24, and carried this bug from #126 to 08-31.
+  - `worker/rc-signin-close.test.mts`, **12 mutations, each verified to APPLY and to fail** —
+    including the caller reverting to its inline test, which is the fix-present-and-inert shape
+    a guard on the pure function alone would sail past.
+- **A SEPARATE RISK, RECORDED BECAUSE IT KEEPS READING AS BACKGROUND NOISE:** RC's app took
+  **three attempts and ~5 minutes** to render, including its own "trouble loading" screen. The
+  same thing happened mid-test on 08-30. **At 08:00 that loses the site on its own**, whatever
+  we fix about login state, and nothing in this repo measures it.
+
 #### AND THE SAME RUN PROVED THREE ANDROID FIRSTS (2026-08-30)
 Struck from the open-questions list, because each had never been observed on Android:
 - **THE IN-APP RC SIGN-IN WORKS.** `signin-missing {candidates:6}` → `email` → `password` →

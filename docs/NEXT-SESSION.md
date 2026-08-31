@@ -1,6 +1,109 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed **2026-08-30 13:30 PT**.*
+*Rewritten 2026-08-25 evening; state refreshed **2026-08-31 06:00 PT**.*
+
+> ## THE ONE OPEN THING: THE HAND-OFF LEAVES RC LOOKING SIGNED OUT
+>
+> The bot is fine. It carts, it releases, the user's own session re-carts, and RC confirms it
+> holds the reservation. **What fails is that RC's page then shows no name in the corner and
+> asks the user to log in when they open the cart.** A site is locked and the person told it is
+> theirs cannot reach it — the worst shape this product has, because it also makes them stop
+> watching.
+>
+> ### What the 08-31 trace eliminated
+>
+> The full 80-report `client_reports` sequence was read in order (CLAUDE.md → "THE FULL
+> 80-REPORT TRACE"). Two obvious explanations are **out**:
+>
+> - **"The sign-in did not take."** No — `storedToken` goes `none` → `jwt` with a full 3,598s
+>   in one second on the callback page, and **the app-side bundle never writes a token**, so
+>   RC's own SPA minted and stored that.
+> - **"There is no session."** No — `rc-inject.js` rebroadcasts on every RC API call carrying an
+>   `accesstoken` header, and the trace collapses **sixty-plus** of them against the two our
+>   precart makes. RC's app is authenticating its own traffic throughout.
+>
+> So: **RC's app is making authenticated calls with a live token while its own UI renders signed
+> out.** Something decides the second state that nobody has looked at.
+>
+> ### BISECTED 2026-08-31 — it is the CLOSE TIMING, and the fix is built
+>
+> The owner ran the ADMIN probe, which passes **no `closeOnToken`** so its window stays open.
+> Signed in by hand: **TYLER in the header**, account menu with LOGOUT, cart reachable, Your
+> Reservations reachable. Pressed Done, reopened: **name still there.** So a close and a reopen
+> are INNOCENT — the only variable left is *when*, and the trace shows us closing 2s in while
+> still on `/login/callback`, the page where RC completes its OAuth exchange.
+>
+> **Fixed** — `isMidSignIn` + `rcCloseAction` defer the close until RC leaves the flow, with a
+> bounded timer, and every close names its reason (`token` / `settled` / `timeout`). Web-side,
+> so it reaches the installed app on a push. **The next hand-off is the test**, and the reason
+> is what it will say.
+>
+> **STILL NOT ELIMINATED:** the manual sign-in was hand-typed, not script-driven. If a hand-off
+> fails while reporting `close {reason:'settled'}`, this was the wrong half and the fill is
+> next. Full write-up: CLAUDE.md → "BISECTED BY HAND, AND IT IS THE CLOSE TIMING".
+>
+> ### AND A SEPARATE RISK NOTHING MEASURES
+>
+> RC's app took **three attempts and ~5 minutes** to render, including its own "trouble
+> loading" screen — the same as mid-test on 08-30. **At 08:00 that loses the site on its own**,
+> whatever we fix about login state.
+>
+> ### The hypothesis that led here — kept for the reasoning
+>
+> `sessionProbe` reads exactly two keys, `ssoAccessToken` and `accessToken`. **Those are RC's
+> OWN copies.** CLAUDE.md's 08-15 entry already establishes that **okta-auth-js keeps its own
+> store under `okta-` and decides login state from THAT on boot** — which is why
+> `dropStoredToken` had to be widened past those two keys. **So every reading taken so far is
+> blind to the store that drives the header name and the cart page's login prompt.**
+>
+> If that holds, the suspect is **`closeOnToken`**: the trace shows the sign-in webview closing
+> ~2s after the token is captured, which may be before okta-auth-js's `parseFromUrl()` →
+> `tokenManager.setTokens()` completes. **It is not to be simply deleted** — it was itself the
+> fix for the 08-12 "stranded when it WORKED" bug.
+>
+> ### The plan
+>
+> **Phase 1 — one instrument, one hand-off, splits the space.** Extend `sessionProbe` to report
+> the `okta-*` keys: **names, count and token-shape only, never values.** Narrowed to the
+> discriminating question rather than a general dump. Web-side, so it reaches the installed app
+> on a push — no rebuild, no review.
+>
+> - **`okta-*` EMPTY while `ssoAccessToken` holds a live JWT** ⇒ hypothesis confirmed; the fix
+>   is in the sign-in completion (close on the SDK store being populated, token capture as
+>   fallback, with a timeout so a hang cannot strand anyone at 08:00).
+> - **`okta-*` POPULATED** ⇒ the SPA has everything and the problem is the **free-floating
+>   cart** (`CustomerId: 0`, the 08-06 finding). Different investigation, different fix. Note
+>   `attached` reads `null` because RC does not return `CustomerId` on `load/shoppingcart`, so
+>   **that field cannot discriminate and needs replacing with something that can.**
+>
+> **Phase 2 — the fix, chosen by the reading, not before.**
+>
+> **Phase 3 — the acceptance test is a human looking at RC's cart page.** Nothing else has ever
+> proved reachability, and `cart read back` demonstrably does not (08-29).
+>
+> ### Worth fixing beside it
+>
+> **The trace hit the 80-report cap and the middle was dropped.** The token rebroadcast ate ~63
+> of 80 slots *after* the consecutive-duplicate collapse, because `token` and `cartkey`
+> alternate and only consecutive repeats collapse. **We are destroying the evidence this
+> investigation runs on, on every hand-off.**
+>
+> ### Cheaper than any of it: bisect the flow by hand
+>
+> The instrument needs a hand-off to produce a reading, and a hand-off needs a human. That human
+> can answer most of this for free while they are there, by checking RC's page at each step
+> instead of only at the end:
+>
+> 1. Immediately after the in-app sign-in completes, **before anything is carted — is the name
+>    in the top-right of RC's page?**
+> 2. If yes: it is present after sign-in and lost later. Check again after the webview closes
+>    and reopens, and again after the cart POSTs. **Whichever step loses it is the bug**, and
+>    that is a much smaller search than the whole flow.
+> 3. If no: the sign-in never produced a UI-visible session at all, which points straight at the
+>    SDK-store hypothesis and makes Phase 1 a confirmation rather than a search.
+>
+> **This is the highest-value thing anyone can do and it costs one hand-off.** It does not need
+> a build, a deploy, or the instrument.
 
 > ### READ THIS FIRST — 2026-08-30 SUPERSEDES ITEM 0 BELOW
 >
@@ -15,12 +118,12 @@
 > four defects, **two of them caused by the earlier fixes of the same day**. Full write-up:
 > CLAUDE.md → "A CAMPSITE WAS LOST TO A TWO-SECOND MARGIN".
 >
-> **The open question is the Android hand-off, and it is NOT the bot.** The bot carts and
-> releases correctly. The user's own session re-carts, RC returns `entries: 1` — and RC's UI
-> still says "Please login", with no name in the corner. `keySource: "localStorage"` **kills
-> the cart-key theory** that the 08-29 entry was written around. No mechanism is named; three
-> were guessed on 08-30 and each cost a test. The next instrument is a storage census in the
-> app (key NAMES only), which does not exist. See CLAUDE.md → "`keySource` ANSWERED IT".
+> **The open question is the hand-off, and it is NOT the bot** — see the block at the very top
+> of this file, which supersedes this paragraph. `keySource: "localStorage"` killed the
+> cart-key theory; the 08-31 trace then eliminated "the sign-in did not take" and "there is no
+> session" as well, and named the `okta-*` SDK store as the thing nothing has looked at.
+> **It is NOT Android-specific**: neither injected script carries a functional platform branch,
+> and no iOS run was ever corroborated by a human either.
 >
 > **`ListAgents` cannot see the side lane** — it lists only sessions on THIS machine. An empty
 > list is not exclusive use of the production database; a side-lane merge cost a CI run on
