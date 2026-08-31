@@ -3153,6 +3153,28 @@ booking"** on RC's home page.
   (`storage-census.mjs`) and not in the app: key NAMES and cookie NAMES on RC's origin after an
   in-app sign-in, never values, against what a normal RC login leaves behind. That turns "the
   login did not take" into "this key is missing". **NOT BUILT.**
+- **AND "WHAT IS DIFFERENT ON ANDROID?" HAS AN ANSWER FROM THE SOURCE: NOTHING IN THE CART OR
+  LOGIN PATH.** Asked to compare the platforms, the honest reading is that our code does not
+  branch on one. `rc-precart-script.ts` and `rc-login-script.ts` contain **no functional
+  platform branch at all** — the only platform-aware line in either is the report TRANSPORT
+  (prefer the raw `cordova_iab` global, fall back to `window.webkit.messageHandlers.cordova_iab`
+  on iOS), which is diagnostics and cannot affect a cart. The only other differences are two
+  `openRcHandoff` open flags, both cosmetic: `hardwareback=no` (Android's back button walks RC's
+  history) and `presentationstyle=fullscreen` (iOS only; Android ignores it, its InAppBrowser is
+  already full-height). **So a platform-specific bug would have to live in RC or in the webview,
+  not in anything we wrote.**
+- **THE ONE REAL PLATFORM DIFFERENCE POINTS THE WRONG WAY, WHICH IS WHY IT IS NOT THE ANSWER.**
+  Android's `CookieManager` is **process-wide** and the InAppBrowser shares it with the app's
+  main WebView; iOS's WKWebView has its own `WKWebsiteDataStore` and its own ITP rules. That
+  predicts Android sessions being MORE durable than iOS ones, not less — and it is why the
+  08-09 persistence tests were repeated on iOS rather than inferred from Android. **Reaching
+  for it to explain an Android-only symptom is reasoning backwards.**
+- **AND THE PREMISE OF THE COMPARISON IS ITSELF RETIRED: iOS WAS NEVER SHOWN TO WORK.** "iOS
+  worked, so compare" rests on `cart read back: 1 entry` from 08-24 — the same line Android
+  produced on 08-29 and 08-30 over a cart the owner could not open. **No iOS run with that
+  instrument attached has ever been corroborated by a human looking at RC's cart page**, so it
+  may carry this identical defect and nobody would know. The comparison has no working control
+  on either side; only the app-side census would produce one.
 
 #### AND THE SAME RUN PROVED THREE ANDROID FIRSTS (2026-08-30)
 Struck from the open-questions list, because each had never been observed on Android:
