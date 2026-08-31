@@ -28,6 +28,7 @@
  * extra morning of holds, silently.
  */
 import { query } from '../src/lib/db/client';
+import { closeReasonReading } from '../src/lib/rc-token-liveness';
 
 const hours = Number(process.argv.find((a) => a.startsWith('--hours='))?.split('=')[1] ?? 24);
 
@@ -328,16 +329,13 @@ if (handed.length) {
       const signedInHere = (h.client_reports ?? []).some(
         (r) => r.stage === 'password' || r.stage === 'submitted' || r.stage === 'signin-open',
       );
-      const gloss = closeReason === 'settled'
-        ? 'RC left the sign-in flow under its own steam — the deferred close working'
-        : closeReason === 'timeout'
-          ? 'RC never left the sign-in flow in time — the backstop fired, and that is a finding'
-          : signedInHere
-            ? 'closed IMMEDIATELY after a real sign-in — isMidSignIn is no longer matching,'
-              + ' so RC has moved its callback path and the 08-31 bug is back'
-            : 'closed at once with no sign-in in this run — the already-signed-in path, unchanged';
-      const mark = closeReason === 'token' && signedInHere ? '⚠ ' : '';
-      console.log(`      ${mark}sign-in window closed: ${closeReason} — ${gloss}`);
+      // THE READING IS A SHARED FUNCTION, not four lines of ternary here. The branch that
+      // says "the bug is back" cannot be reached without a real hand-off in the database, so
+      // written inline it would have shipped having never once run — and it is the branch
+      // that matters. `src/lib/rc-token-liveness.closeReasonReading` is guarded directly.
+      const reading = closeReasonReading(closeReason, signedInHere);
+      const mark = reading.level === 'warn' ? '⚠ ' : '';
+      console.log(`      ${mark}sign-in window closed: ${closeReason} — ${reading.text}`);
     }
 
     // THE STORE THAT DECIDES WHETHER RC LOOKS SIGNED IN (2026-08-31). `storedToken` is RC's

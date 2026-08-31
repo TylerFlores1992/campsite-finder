@@ -28,6 +28,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { sessionProbe } from './rc-precart-script';
+import { closeReasonReading } from './rc-token-liveness';
 
 const admin = readFileSync(new URL('../components/admin/AdminTabs.tsx', import.meta.url), 'utf8');
 
@@ -230,4 +231,62 @@ test('both report routes accept every field the session probe sends', () => {
       `${rel} caps detail at ${m![1]} but the session probe sends ${fields} fields, so`
       + ' the last ones are dropped in silence');
   }
+});
+
+// ---------------------------------------------------------------------------
+// 4. Reading the close reason. `token` is the ambiguous one and the stages settle it.
+// ---------------------------------------------------------------------------
+
+test('settled and timeout each mean exactly one thing, and neither is a regression', () => {
+  for (const signedIn of [true, false]) {
+    const settled = closeReasonReading('settled', signedIn);
+    assert.equal(settled.level, 'info');
+    assert.match(settled.text, /own steam|deferred close working/);
+
+    // A REAL FINDING, BUT NOT AN ALARM. Dressing the backstop as a regression is the
+    // cry-wolf failure this repo has fixed three times, most expensively at 07:33 on 08-16.
+    const timeout = closeReasonReading('timeout', signedIn);
+    assert.equal(timeout.level, 'info', 'the backstop firing must not be reported as red');
+    assert.match(timeout.text, /never left/);
+  }
+});
+
+test('THE REGRESSION: `token` AFTER a real sign-in is the 08-31 bug returning', () => {
+  const r = closeReasonReading('token', true);
+  assert.equal(r.level, 'warn', 'this is the one case that must stand out');
+  assert.match(r.text, /isMidSignIn/,
+    'and it must name the mechanism, because the symptom is invisible everywhere else');
+});
+
+test('but `token` with NO sign-in is the already-signed-in path and is fine', () => {
+  // Reporting this as a warning would put a red line on every ordinary hand-off by a user
+  // whose session was already live — far and away the common case — and a warning that
+  // fires on the normal path is one nobody reads on the morning it is true.
+  const r = closeReasonReading('token', false);
+  assert.equal(r.level, 'info');
+  assert.match(r.text, /already-signed-in|unchanged/);
+});
+
+test('an unrecognised reason is reported as itself, never folded into a known one', () => {
+  // A bundle older than #240 sends no reason at all, and a later one may send a fourth.
+  // Guessing which known case it resembles is how an absent reading becomes a negative.
+  const r = closeReasonReading('something-new', true);
+  assert.equal(r.level, 'info');
+  assert.doesNotMatch(r.text, /isMidSignIn|deferred close working/,
+    'an unknown reason must not borrow another reading verdict');
+});
+
+test('the readout ROUTES through the shared reading rather than keeping its own copy', () => {
+  // THE FIX-PRESENT-BUT-INERT SHAPE. `closeReasonReading` can be perfect while the readout
+  // keeps the ternary it was extracted from, and every test above would still pass — which
+  // is how `closeOnToken` shipped guarded-but-wrong in #126.
+  const src = code(readFileSync(new URL('../../scripts/rc-holds-readout.mts', import.meta.url), 'utf8'));
+  assert.match(src, /import \{ closeReasonReading \} from '\.\.\/src\/lib\/rc-token-liveness'/);
+  assert.match(src, /closeReasonReading\(closeReason, signedInHere\)/,
+    'the readout must ASK, not decide');
+  assert.match(src, /reading\.level === 'warn'/,
+    'and it must take the severity from the reading, or the one case that matters is unmarked');
+  // The signed-in flag must come from the STAGES. Deriving it from the reason would make the
+  // discriminator circular and the warn branch unreachable.
+  assert.match(src, /stage === 'password'|stage === 'submitted'|stage === 'signin-open'/);
 });

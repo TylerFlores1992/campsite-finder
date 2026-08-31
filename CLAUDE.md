@@ -871,6 +871,21 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
 
 ## Web-session gotchas (this environment)
 - **Node `fetch` needs `NODE_USE_ENV_PROXY=1`** to reach Supabase / reservation portals.
+  - **THAT INCLUDES `npm test` AND `npm run verify`, AND THE FAILURE IMPERSONATES AN EGRESS
+    REVOCATION (2026-08-31).** A bare `npm test` fails **190 of 1,522** — every real-DB suite
+    at once — with `DB query error: Host not in allowlist: <project>.supabase.co. Add this
+    host to your network egress settings to allow access.` **Nothing is wrong with egress.**
+    `curl` reaches Supabase in the same second, and `$HTTPS_PROXY/__agentproxy/status` names
+    only `vercel.com`; it is Node's fetch going direct because the variable is not set.
+  - **THE MESSAGE IS THE TRAP, and it points at the one hazard this file tells you to check.**
+    "Host not in allowlist … add this host to your network egress settings" reads as the
+    documented mid-session revocation — which HAS happened (2026-08-23/24, three hosts, and it
+    survived a session boundary) — so the natural response is to report blocked egress and
+    stop. **The discriminator is one `curl` to the same host**: reachable there and refused in
+    Node is the missing variable, refused in both is the real thing.
+  - The suite passes 1,522 with the variable set. **Prefix it, or read 190 failures as a
+    regression in whatever you just touched** — which is the more expensive misreading, since
+    the failures land in `claim.test.mts` and the hold suites, i.e. the alerting code.
 - **`GITHUB_TOKEN`/`GH_TOKEN` ARE SET AND ARE 14-CHARACTER PLACEHOLDERS (2026-08-23).** Direct
   `api.github.com` calls with them are answered *"GitHub access is not enabled for this session.
   An org admin must connect the Claude GitHub App"* — **GitHub works ONLY through the MCP tools.**
@@ -3307,6 +3322,71 @@ attempt 3   (~5 min later) RC rendered — NOT signed in
   **three attempts and ~5 minutes** to render, including its own "trouble loading" screen. The
   same thing happened mid-test on 08-30. **At 08:00 that loses the site on its own**, whatever
   we fix about login state, and nothing in this repo measures it.
+
+##### TESTING IT NEEDED A LOCKED CAMPSITE, AND NOW IT DOES NOT (2026-08-31)
+The fix above is live and web-side, and the only way to reach it was a live 8am hold — which
+means locking a real campsite, blocking `npm test`, the box's updates and the 02:00-05:00
+window, and waiting. **The instrument that removes all of that already existed and was one
+argument short.** The admin probe opens RC through the same `openRcHandoff` seam with **no
+hold**; it simply never passed `closeOnToken`, which is the entire variable.
+- **TWO BUTTONS NOW, DIFFERING IN EXACTLY THAT.** The historic one is **kept as the CONTROL** —
+  its window stays open, and that is precisely what let the 08-31 bisect sign in by hand and go
+  looking at RC's header, cart and Your Reservations. **Do not unify them.** The finding came
+  from the difference, and a comparison with no control is how a repair gets credited to the
+  wrong mechanism, which has happened three times here.
+- **`onClick={run}` WOULD HAVE MADE THE CONTROL RUN THE VARIANT.** React hands the synthetic
+  MouseEvent to the first parameter and it is truthy, so both buttons would have been one probe
+  wearing two labels — a broken experiment reporting as a working one. Arrow wrappers, pinned.
+- **THE `close` REASON IS AMBIGUOUS IN ONE DIRECTION AND THE STAGES SETTLE IT.** `settled` is
+  RC leaving the callback under its own steam (the fix working) and `timeout` is the backstop.
+  **`token` means two different things**: with no `signin-open`/`email`/`password` before it,
+  the user was already signed in and an immediate close is the correct unchanged path; after a
+  real sign-in it means `isMidSignIn` has stopped matching, RC has moved its callback path, and
+  the 08-31 bug is back **with nothing else red**. The readout prints that gloss rather than
+  leaving the next reader to derive it, and marks the second case.
+- **AND THE PROBE MUST BE RUN FROM A SIGNED-OUT WEBVIEW OR IT MEASURES NOTHING** — a live
+  session closes on the home page, never reaches the callback, and reports `token` for the
+  innocent reason. Said on the panel, because a run that cannot exercise the deferral is
+  indistinguishable from one that did and passed.
+
+##### THE PROBE WAS BLIND TO THE STORE THAT DECIDES (2026-08-31)
+`sessionProbe` read `ssoAccessToken` and `accessToken` — **RC's OWN copies**. okta-auth-js keeps
+its own under `okta-` and decides login state from THAT on boot, which is exactly why
+`dropStoredToken` had to be widened past those two keys on 2026-08-15 after a clear that touched
+only them "never asked RC anything". **So every reading this probe has ever taken was blind to
+the one store that drives the header name and the cart page's login prompt** — and that is why
+`storedToken: "jwt"` with 3,534 seconds on it and *"Please login or create account"* could both
+be true on 08-30 without either being wrong.
+- **NAMES, COUNT AND SHAPE. NEVER A VALUE.** Every value there is or contains the session, and
+  this repo has published a credential twice by collecting a field it then had to filter — an
+  OAuth code on 08-09, a password on 08-16. The token is matched against and measured; it is
+  never carried. Guarded against the WHOLE wire payload, not the fields somebody remembered.
+- **A NON-TOKEN ENTRY REPORTS `none`, NOT `opaque`, AND THAT IS THE 08-15 FINDING ENCODED.**
+  That sweep found exactly one `okta-` key and it was `okta-original-uri-storage`, a redirect
+  breadcrumb. "One key" and "a session" are different readings, so the count and the shape are
+  printed together and `opaque` is reserved for something genuinely JWT-shaped that will not
+  decode. The first version called the breadcrumb `opaque` and was caught by running it.
+- **PRESENCE IS NOT LIVENESS, restated one store along.** An `okta-` entry holding a token that
+  died yesterday is a different finding from a live one, so the expiry rides beside the shape.
+- **THE CAPS WOULD HAVE EATEN IT IN SILENCE.** Object key order is insertion order, so the four
+  `okta*` fields sit at the END of an 11-field `session` detail — and the report routes capped
+  at **8** (hold path) and **10** (admin path). They were exactly what got dropped, and the
+  instrument would have reported nothing while looking like it had run. Both are 12 now, and
+  **the guard DERIVES the required width from what the probe actually sends**, so the next field
+  added fails there rather than disappearing in production.
+- **HOW TO READ IT:** `okta-` holding no live token beside a live `ssoAccessToken` means the SDK
+  never finished its half and the fix is in the sign-in completion. `okta-` populated means the
+  SPA has everything and the problem is the **free-floating cart** (`CustomerId: 0`, 08-06) —
+  a different investigation. Note `attached` reads `null` because RC does not return
+  `CustomerId` on `load/shoppingcart`, so **that field cannot discriminate and still needs
+  replacing with something that can.**
+- `src/lib/rc-signin-probe.test.mts`, **eight mutations, each verified to APPLY and to fail** —
+  including the value reported, the breadcrumb called `opaque`, the expiry dropped, the flag
+  taken but never passed on, and either cap put back.
+- **THE GUARDS ARE UNDER `src/`, NOT `worker/`, DELIBERATELY.** `npm test` globs both, but
+  `worker/**` is the FIRST entry in `worker-deploy.yml`'s `paths:`, so a guard over two web
+  modules would restart both poller machines. Checked against the workflow rather than
+  remembered — this file records getting that claim wrong twice.
 
 #### AND THE SAME RUN PROVED THREE ANDROID FIRSTS (2026-08-30)
 Struck from the open-questions list, because each had never been observed on Android:

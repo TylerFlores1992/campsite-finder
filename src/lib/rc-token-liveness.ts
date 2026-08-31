@@ -209,3 +209,71 @@ export function rcCloseAction(opts: {
   if (!isMidSignIn(currentUrl)) return 'close';
   return timerArmed ? 'wait' : 'arm';
 }
+
+/**
+ * WHAT A `close` REPORT'S REASON ACTUALLY TELLS YOU.
+ *
+ * The sibling of `rcCloseAction`: that decides what the window does, this decides what a
+ * human reading the trace afterwards should conclude. Extracted for the reason the decision
+ * itself was — it lived inline in `scripts/rc-holds-readout.mts`, where the one branch that
+ * says "the bug is back" could not be exercised without a real hand-off in the database, so
+ * the block that matters most would have shipped having never once run.
+ *
+ * ## `token` IS AMBIGUOUS AND EVERYTHING ELSE IS NOT
+ *
+ * `settled` and `timeout` mean exactly one thing each. `token` means two, and they are
+ * opposites:
+ *
+ *  - with NO sign-in in the run, the user was already signed in, the token arrived on RC's
+ *    first API call from a page that is not the callback, and closing at once is the correct
+ *    unchanged behaviour — the 2026-08-12 "stranded when it WORKED" fix doing its job.
+ *  - AFTER a real sign-in, it means `isMidSignIn` did not match the page we were on. RC has
+ *    moved its callback path, the deferral silently stopped applying, and the 08-31 bug is
+ *    back **with nothing else red**. `isMidSignIn`'s own header names this as the cost of
+ *    matching narrowly; this is the thing that would show it.
+ *
+ * So the reason alone cannot be read, and a readout that printed it bare would leave the
+ * next person to derive the distinction at 08:15 on a morning something is wrong.
+ *
+ * `level` is `warn` for exactly that one case and `info` for everything else — including
+ * `timeout`, which is a real finding but not a regression, and must not be dressed as one.
+ * Crying wolf on an ordinary reading is the failure this repo has fixed three times.
+ */
+export type CloseReading = { level: 'info' | 'warn'; text: string };
+
+/**
+ * @param reason      the `close` report's reason, as reported.
+ * @param signedInRun did a sign-in actually happen in this run? Taken from the STAGES, not
+ *   guessed from the reason — that is the whole discriminator.
+ */
+export function closeReasonReading(reason: string, signedInRun: boolean): CloseReading {
+  if (reason === 'settled') {
+    return {
+      level: 'info',
+      text: 'RC left the sign-in flow under its own steam — the deferred close working',
+    };
+  }
+  if (reason === 'timeout') {
+    return {
+      level: 'info',
+      text: 'RC never left the sign-in flow in time — the backstop fired, and that is a finding',
+    };
+  }
+  if (reason === 'token') {
+    return signedInRun
+      ? {
+        level: 'warn',
+        text: 'closed IMMEDIATELY after a real sign-in — isMidSignIn is no longer matching, so'
+          + ' RC has moved its callback path and the 08-31 bug is back',
+      }
+      : {
+        level: 'info',
+        text: 'closed at once with no sign-in in this run — the already-signed-in path, unchanged',
+      };
+  }
+  // AN UNRECOGNISED REASON IS REPORTED AS ITSELF, never folded into one of the three above.
+  // A bundle older than #240 sends no reason at all, and a future one may send a fourth;
+  // guessing which of the known cases it resembles is how an absent reading becomes a
+  // negative — the shape this file records more often than any other.
+  return { level: 'info', text: `unrecognised close reason — reported as sent, not interpreted` };
+}
