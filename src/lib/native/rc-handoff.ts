@@ -118,7 +118,7 @@
 
 // The one definition of "is this token evidence of a usable session?", shared with the
 // claim gate. NOT a native plugin, so a module-scope import is fine here.
-import { mayCloseOnToken } from '@/lib/rc-token-liveness';
+import { rcCloseAction, isMidSignIn } from '@/lib/rc-token-liveness';
 
 export interface RcHandoff {
   /** The RC page to land on — the loop, never the park or the cart. See lib/booking-url. */
@@ -286,6 +286,19 @@ const IAB_OPTIONS = [
   'closebuttoncaption=Done',
 ].join(',');
 
+/**
+ * How long the sign-in window may sit on Okta's callback after a live token before we close
+ * it anyway. See the deferred close in `open` — this bounds "wait for RC to finish", so a
+ * callback that never resolves cannot strand the user on a page with no way back.
+ *
+ * Ten seconds: RC's own bootstrap off the callback is a redirect and an API call or two, so
+ * a healthy one is far inside this and closes on `settled` long before the timer. It is a
+ * backstop for the pathological case, not a delay anybody should normally experience — and
+ * it is only ever reached on a sign-in that already succeeded, never on the cart path, where
+ * `closeOnToken` is false.
+ */
+const SIGN_IN_SETTLE_MS = 10_000;
+
 async function injectableWebView(): Promise<null | {
   open: (
     url: string, code: string, onReport?: (r: RcReport) => void, closeOnToken?: boolean,
@@ -307,6 +320,28 @@ async function injectableWebView(): Promise<null | {
         addEventListener: (e: string, cb: (ev?: unknown) => void) => void;
         executeScript: (d: { code: string }, cb?: (r: unknown) => void) => void;
         close?: () => void;
+      };
+      // WHERE THE WEBVIEW IS, so `closeOnToken` can ask whether RC has FINISHED with the
+      // token as well as whether the token is real. See isMidSignIn for the trace that
+      // made this necessary. Seeded with the URL we opened, so the already-signed-in path
+      // — no Okta, no callback — has a definite answer from the first message onward and
+      // never waits. Only a NON-EMPTY loadstop URL replaces it: the plugin can report an
+      // empty one, and an empty string would throw away the last thing we did know.
+      let lastUrl = url;
+      let settleTimer: ReturnType<typeof setTimeout> | null = null;
+      let closedAlready = false;
+      // ONE closer, so every path clears the timer and every path names its reason. Three
+      // reasons, and they are the whole diagnostic: `token` is the ordinary already-signed-in
+      // close, `settled` is RC leaving the callback under its own steam (the fix working),
+      // and `timeout` is RC never leaving it. A hand-off that still fails will say which of
+      // the three it took, which is what tells the next reader whether this was the right
+      // half of the problem.
+      const closeOnce = (reason: 'token' | 'settled' | 'timeout') => {
+        if (closedAlready) return;
+        closedAlready = true;
+        if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+        onReport?.({ n: 0, stage: 'close', detail: { reason } });
+        try { ref.close?.(); } catch { /* the user can close it themselves */ }
       };
       // THE REPORT CHANNEL, wired BEFORE the first injection — the plugin fires `message`
       // for anything the page posts through `cordova_iab`, and the injected reporter's very
@@ -338,8 +373,28 @@ async function injectableWebView(): Promise<null | {
           // definition both now share, so this window closes exactly when the gate would
           // flip to `verified` — never on `expired`, which is what has to stay open so the
           // sign-in can run, and never on `unknown`.
-          if (closeOnToken && r.stage === 'token' && mayCloseOnToken(r.detail)) {
-            try { ref.close?.(); } catch { /* the user can close it themselves */ }
+          //
+          // AND NOT WHILE RC IS STILL FINISHING (2026-08-31). A live token is necessary and
+          // was never sufficient: on the `/login/callback` page RC's SPA is still completing
+          // the OAuth exchange, and closing there left a session that authenticated its own
+          // API calls while rendering SIGNED OUT — no name in the header, and a cart the
+          // owner was told was theirs and could not open. `isMidSignIn` carries the trace
+          // and the hand-bisect that established it.
+          const action = rcCloseAction({
+            closeOnToken, stage: r.stage, detail: r.detail,
+            currentUrl: lastUrl, timerArmed: settleTimer !== null,
+          });
+          if (action === 'close') {
+            closeOnce('token');
+          } else if (action === 'arm' && !closedAlready) {
+            // THE TIMEOUT IS NOT OPTIONAL. "Wait for RC to leave the callback" with no bound
+            // is the 2026-08-12 stranded-when-it-worked bug by another door: if RC never
+            // leaves, the window never closes and the user is left on a page with nothing
+            // telling them to go back. Bounded, the worst case is a slow close.
+            settleTimer = setTimeout(() => {
+              settleTimer = null;
+              closeOnce('timeout');
+            }, SIGN_IN_SETTLE_MS);
           }
         });
         // Host-side facts the page cannot report about itself. `n: 0` marks them as ours;
@@ -349,7 +404,14 @@ async function injectableWebView(): Promise<null | {
           const e = ev as { message?: string; code?: number } | undefined;
           onReport({ n: 0, stage: 'loaderror', detail: { message: e?.message ?? '', code: e?.code ?? null } });
         });
-        ref.addEventListener('exit', () => onReport({ n: 0, stage: 'closed', detail: null }));
+        // A USER-DRIVEN CLOSE ENDS THE DEFERRAL TOO. Without this a pending timer fires on a
+        // webview that is already gone — calling `close()` on a dead ref and, worse, emitting
+        // a `close` report claiming a reason that never happened.
+        ref.addEventListener('exit', () => {
+          closedAlready = true;
+          if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+          onReport({ n: 0, stage: 'closed', detail: null });
+        });
       }
       // `loadstop`, not `loadstart` — RC is a SPA and its token only exists once the app
       // has booted and made its first API call. Injecting earlier reads an empty
@@ -364,6 +426,10 @@ async function injectableWebView(): Promise<null | {
         // handed to `afterLoad` because a sign-in walks across several pages and the caller
         // has to be able to tell them apart — see the note below.
         const at = String((ev as { url?: string } | undefined)?.url ?? '');
+        if (at) lastUrl = at;
+        // RC HAS LEFT THE SIGN-IN FLOW — this is the signal the deferred close waits for, and
+        // it is RC's own rather than a guess at how long its bootstrap takes.
+        if (settleTimer && at && !isMidSignIn(at)) closeOnce('settled');
         // A SECOND, ONE-OFF INJECTION — this is where a credential goes, and the reason it is
         // separate from `code`.
         //

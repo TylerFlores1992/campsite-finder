@@ -25,7 +25,30 @@
 > So: **RC's app is making authenticated calls with a live token while its own UI renders signed
 > out.** Something decides the second state that nobody has looked at.
 >
-> ### The hypothesis — a hypothesis, not a finding
+> ### BISECTED 2026-08-31 — it is the CLOSE TIMING, and the fix is built
+>
+> The owner ran the ADMIN probe, which passes **no `closeOnToken`** so its window stays open.
+> Signed in by hand: **TYLER in the header**, account menu with LOGOUT, cart reachable, Your
+> Reservations reachable. Pressed Done, reopened: **name still there.** So a close and a reopen
+> are INNOCENT — the only variable left is *when*, and the trace shows us closing 2s in while
+> still on `/login/callback`, the page where RC completes its OAuth exchange.
+>
+> **Fixed** — `isMidSignIn` + `rcCloseAction` defer the close until RC leaves the flow, with a
+> bounded timer, and every close names its reason (`token` / `settled` / `timeout`). Web-side,
+> so it reaches the installed app on a push. **The next hand-off is the test**, and the reason
+> is what it will say.
+>
+> **STILL NOT ELIMINATED:** the manual sign-in was hand-typed, not script-driven. If a hand-off
+> fails while reporting `close {reason:'settled'}`, this was the wrong half and the fill is
+> next. Full write-up: CLAUDE.md → "BISECTED BY HAND, AND IT IS THE CLOSE TIMING".
+>
+> ### AND A SEPARATE RISK NOTHING MEASURES
+>
+> RC's app took **three attempts and ~5 minutes** to render, including its own "trouble
+> loading" screen — the same as mid-test on 08-30. **At 08:00 that loses the site on its own**,
+> whatever we fix about login state.
+>
+> ### The hypothesis that led here — kept for the reasoning
 >
 > `sessionProbe` reads exactly two keys, `ssoAccessToken` and `accessToken`. **Those are RC's
 > OWN copies.** CLAUDE.md's 08-15 entry already establishes that **okta-auth-js keeps its own

@@ -3231,6 +3231,62 @@ cart-verified {"status":200,"entries":1,"attached":null,"keySource":"localStorag
   destroying the evidence this investigation runs on, on every hand-off.** Worth fixing beside
   the instrument, not after it.
 
+#### BISECTED BY HAND, AND IT IS THE CLOSE TIMING — `/login/callback` (2026-08-31)
+The owner ran the ADMIN probe, which calls `openRcHandoff` with **no `closeOnToken`**, so its
+window stays open. That one difference is the whole experiment.
+```
+attempt 1   froze during loading — had to force-close the app
+attempt 2   RC's "trouble loading the application" screen
+attempt 3   (~5 min later) RC rendered — NOT signed in
+   signed in by hand, staying on the page:
+      -> TYLER in the header, account menu with LOGOUT
+      -> cart page reachable · Your Reservations reachable
+   pressed Done, reopened it:
+      -> NAME STILL THERE
+```
+- **SO A CLOSE AND A REOPEN ARE INNOCENT.** The UI-visible session survives both. That was
+  genuinely not certain: it was equally possible the webview could never hold one, in which
+  case the entire in-app design was wrong. It can.
+- **THE ONLY VARIABLE LEFT IS *WHEN* WE CLOSE, AND THE TRACE SAYS WHERE WE WERE:**
+  ```
+  injected  href=.../login/callback     <- Okta has redirected back; RC's SPA is booting
+  token     {"ageSec":2, "expiresInSec":3598}
+  closed    {}                          <- we destroy the webview, 2s in
+  ```
+  `/login/callback` is where RC completes the OAuth exchange and bootstraps its customer
+  session. **We were killing the webview in the middle of it** — which is why the token was
+  real and the *page* was not: RC's SPA had a token and never finished becoming signed in.
+- **THE DOUBT, STATED SO NOBODY RE-DISCOVERS IT.** The manual sign-in was also HAND-TYPED
+  rather than script-driven. That is not thought to matter — the scripted sign-in produced a
+  genuine 939-char token and RC's SPA persisted its own copy a second later — but it is **not
+  eliminated.** If a hand-off still fails while reporting `close {reason:'settled'}`, this was
+  the wrong half and the fill is the next suspect.
+- **FIXED: the close is DEFERRED while RC is still in the flow** (`isMidSignIn` +
+  `rcCloseAction` in `src/lib/rc-token-liveness.ts`). A live token off the callback still
+  closes at once — the already-signed-in path, i.e. 2026-08-12's stranded-when-it-worked case,
+  is unchanged. On the callback it arms a **bounded** settle timer and closes when RC leaves
+  the flow under its own steam.
+  - **THE TIMEOUT IS NOT OPTIONAL.** "Wait for RC to finish" unbounded is 08-12 by another
+    door: a callback that never resolves strands the user on a page with no way back.
+  - **THE MATCH IS DELIBERATELY NARROW** — Okta's host and `/login/callback` only. Waiting on
+    anything unrecognised would make EVERY already-signed-in hand-off sit through the timeout,
+    trading a bug for every user against a rare one. **The cost of narrow, named:** if RC moves
+    its callback path this silently stops matching and the bug returns with nothing red.
+  - **EVERY CLOSE NAMES ITS REASON** — `token` (ordinary), `settled` (RC finished; the fix
+    working), `timeout` (RC never finished). Without it, *a fix that never fired* and *a fix
+    that worked* produce the identical report, which is the shape this file keeps recording.
+  - **THE DECISION IS A PURE FUNCTION, for the reason `claim.ts` and `hold-line.ts` were.** It
+    lived inline in an InAppBrowser `message` handler, reachable only from a native webview —
+    which is how `closeOnToken` shipped in #126 with nothing testing it, stayed wrong until
+    08-24, and carried this bug from #126 to 08-31.
+  - `worker/rc-signin-close.test.mts`, **12 mutations, each verified to APPLY and to fail** —
+    including the caller reverting to its inline test, which is the fix-present-and-inert shape
+    a guard on the pure function alone would sail past.
+- **A SEPARATE RISK, RECORDED BECAUSE IT KEEPS READING AS BACKGROUND NOISE:** RC's app took
+  **three attempts and ~5 minutes** to render, including its own "trouble loading" screen. The
+  same thing happened mid-test on 08-30. **At 08:00 that loses the site on its own**, whatever
+  we fix about login state, and nothing in this repo measures it.
+
 #### AND THE SAME RUN PROVED THREE ANDROID FIRSTS (2026-08-30)
 Struck from the open-questions list, because each had never been observed on Android:
 - **THE IN-APP RC SIGN-IN WORKS.** `signin-missing {candidates:6}` → `email` → `password` →
