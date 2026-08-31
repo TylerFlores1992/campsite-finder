@@ -312,6 +312,56 @@ if (handed.length) {
       // `unknown` never rounding to `signed-out`.
       console.log(`      cart not read back: ${unverified.reason}`);
     }
+
+    // WHY THE SIGN-IN WINDOW CLOSED (2026-08-31, #240). The bug was that we destroyed the
+    // webview ~2s in, while RC was still on `/login/callback` completing its OAuth
+    // exchange — so the session authenticated its own API calls and rendered SIGNED OUT.
+    // Every close names its reason now, and this is where that reason gets read.
+    //
+    // `token` IS AMBIGUOUS AND THE STAGES DISAMBIGUATE IT. With no sign-in before it, the
+    // user was already signed in and an immediate close is the correct, unchanged path.
+    // With a full sign-in before it, `isMidSignIn` has stopped matching — RC has moved its
+    // callback path and the 08-31 bug is back with nothing else red.
+    const closeReason = (h.client_reports ?? [])
+      .findLast((r) => r.stage === 'close')?.detail?.reason as string | undefined;
+    if (closeReason) {
+      const signedInHere = (h.client_reports ?? []).some(
+        (r) => r.stage === 'password' || r.stage === 'submitted' || r.stage === 'signin-open',
+      );
+      const gloss = closeReason === 'settled'
+        ? 'RC left the sign-in flow under its own steam — the deferred close working'
+        : closeReason === 'timeout'
+          ? 'RC never left the sign-in flow in time — the backstop fired, and that is a finding'
+          : signedInHere
+            ? 'closed IMMEDIATELY after a real sign-in — isMidSignIn is no longer matching,'
+              + ' so RC has moved its callback path and the 08-31 bug is back'
+            : 'closed at once with no sign-in in this run — the already-signed-in path, unchanged';
+      const mark = closeReason === 'token' && signedInHere ? '⚠ ' : '';
+      console.log(`      ${mark}sign-in window closed: ${closeReason} — ${gloss}`);
+    }
+
+    // THE STORE THAT DECIDES WHETHER RC LOOKS SIGNED IN (2026-08-31). `storedToken` is RC's
+    // OWN copy; okta-auth-js decides login state from its own `okta-` store, so a hand-off
+    // reporting a live `storedToken` beside an empty `okta-` store is the split this was
+    // built to see. Only the FIRST session report is read: later ones are written by
+    // re-injections after the sign-in has completed, and would answer a different question.
+    const sess = (h.client_reports ?? []).find((r) => r.stage === 'session')?.detail as
+      | { oktaToken?: string; oktaKeys?: number; oktaNames?: string; oktaExpiresInSec?: number | null;
+          storedToken?: string } | undefined;
+    if (sess && sess.oktaToken !== undefined) {
+      const live = typeof sess.oktaExpiresInSec === 'number' && sess.oktaExpiresInSec > 0;
+      if (sess.oktaToken === 'jwt' && live) {
+        console.log(`      okta store: a LIVE token, ${sess.oktaKeys} key(s) — the SDK has what it needs,`
+          + ' so a signed-out-looking page is NOT a missing session');
+      } else if (sess.oktaToken === 'jwt') {
+        console.log(`      ⚠ okta store: a token that expired ${Math.abs(sess.oktaExpiresInSec ?? 0)}s ago`);
+      } else {
+        console.log(`      ⚠ okta store: NO token in ${sess.oktaKeys} okta- key(s)`
+          + `${sess.oktaNames ? ` (${sess.oktaNames})` : ''}`
+          + `${sess.storedToken === 'jwt' ? ", while RC's own copy holds one" : ''}`
+          + ' — the SDK never finished its half of the sign-in');
+      }
+    }
   }
   // THE ARRAY CAN HAVE A HOLE IN IT, and a reader who assumes otherwise misreads the order.
   // The trim keeps the head and the tail and drops the middle, so a hand-off longer than the

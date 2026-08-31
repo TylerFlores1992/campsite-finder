@@ -1261,7 +1261,14 @@ function RcWebviewTest() {
     flushTimer.current = setTimeout(() => { void record(); }, 2000);
   }
 
-  async function run() {
+  /**
+   * @param closeOnToken Close the window ourselves once a live token arrives — the claim
+   *   screen's behaviour, and THE ONE VARIABLE UNDER TEST. `false` is the historic probe:
+   *   the window stays open, which is what let the 08-31 bisect sign in by hand and go
+   *   looking at RC's header, cart and Your Reservations. Keep both; a comparison needs
+   *   its control.
+   */
+  async function run(closeOnToken: boolean) {
     await inspect();
     setResult('opening…');
     setReports([]);
@@ -1284,7 +1291,7 @@ function RcWebviewTest() {
     // site and lock it — the standing rule that carting is harmful without a hand-off.
     const how = await openRcHandoff(
       { url: 'https://www.reservecalifornia.com/' },
-      { onReport },
+      { onReport, closeOnToken },
     );
     setResult(
       how === 'injected'
@@ -1328,12 +1335,66 @@ function RcWebviewTest() {
         storage was emptied (iOS caps it around 7 days without interaction), which renewing
         cannot fix. Nothing here carts anything.
       </p>
+      {/*
+        HOW TO READ THE CLOSE — the 2026-08-31 question, and the reason the second button
+        exists. Every close now names its reason, and the three are a real diagnostic
+        rather than a log line.
+      */}
+      <p className="mb-2 text-ch-fine text-ch-muted">
+        <strong>To test the close, sign OUT of RC in this webview first.</strong> The second
+        button reproduces the claim screen: it closes the window itself once your token is
+        live, and since the fix it waits for RC to leave its <code>/login/callback</code>
+        page before doing so — because closing there left a session that authenticated its
+        own API calls while rendering signed out, which is the bug. Watch the final{' '}
+        <code>close</code> line: <code>reason: settled</code> is RC finishing under its own
+        steam, <strong>the fix working</strong>; <code>reason: timeout</code> is RC never
+        leaving in 10s, so the backstop fired; <code>reason: token</code> is an immediate
+        close. <strong><code>token</code> means two different things and the stages above it
+        are the discriminator</strong> — with no <code>signin-open</code>/<code>email</code>/
+        <code>password</code> before it you were simply already signed in, which is the
+        unchanged path and fine; with a full sign-in before it,{' '}
+        <code>isMidSignIn</code> has stopped matching and RC has moved its callback path.{' '}
+        <strong>Then go and open RC&rsquo;s cart page and look for your name in the corner.</strong>{' '}
+        That is the only proof of reachability there has ever been — <code>cart read back</code>{' '}
+        is RC answering our question with our key, and on 08-29 it said one entry over a cart
+        nobody could open.
+      </p>
+      {/*
+        TWO BUTTONS, ONE VARIABLE. They differ ONLY in `closeOnToken`, which is the whole
+        of the 2026-08-31 fix: whether we take the window down ourselves when a live token
+        arrives, and — since #240 — whether we WAIT for RC to leave `/login/callback` first.
+
+        The left one is the historic probe and is the CONTROL. Its window stays open, which
+        is exactly what made it the instrument that bisected this: signed into it by hand,
+        RC showed TYLER in the header, the cart opened, Your Reservations opened, and the
+        session survived a Done-and-reopen. Do not "unify" these into one button — the
+        finding came from the difference between them, and a comparison with no control is
+        how a repair gets credited to the wrong mechanism.
+
+        The right one is the claim screen's behaviour, reachable WITHOUT A HOLD. That is the
+        point: this seam was otherwise only reachable through a live 8am hold, so testing it
+        meant locking a real campsite and blocking the box's update window. The same
+        argument this panel already makes for the sign-in question applies word for word to
+        the close.
+
+        ARROW WRAPPERS, NOT `onClick={run}`. A bare handler reference hands React's
+        MouseEvent to the first parameter, which is truthy — so the control button would
+        silently run the variant and the two would be the same probe wearing different
+        labels. Exactly the class of silent defect this file keeps paying for.
+      */}
       <button
         type="button"
-        onClick={run}
+        onClick={() => void run(false)}
         className="rounded-ch border border-ch-line px-3 py-1.5 text-ch-meta font-bold text-ch-ink hover:bg-ch-surface"
       >
         Open ReserveCalifornia
+      </button>
+      <button
+        type="button"
+        onClick={() => void run(true)}
+        className="mt-2 ml-2 rounded-ch border border-ch-line px-3 py-1.5 text-ch-meta font-bold text-ch-ink hover:bg-ch-surface"
+      >
+        Open it and close like the claim screen
       </button>
       <button
         type="button"
