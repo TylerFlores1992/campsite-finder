@@ -6,7 +6,9 @@ claim comes from, so it can be re-checked when something changes. Getting these 
 is a rejection, and getting them *stale* is worse: the label keeps saying something the
 app stopped doing.
 
-Last audited 2026-07-28.
+Last audited 2026-07-28 — **and §1 has NOT been re-audited since RevenueCat joined the
+dependency tree (2026-08-29); see the note under "Third parties that receive data".** Sections
+2a–2d carry their own dates and are current; the privacy labels in §1 are the stale part.
 
 ---
 
@@ -49,6 +51,25 @@ Transparency does not apply** and the app must not show an ATT prompt.
 Clerk (auth), Stripe (payments), Supabase (database), Resend (email), Twilio (SMS),
 Firebase Cloud Messaging (push), Mapbox (geocoding — receives the place text typed and
 map coordinates), Sentry (diagnostics), Vercel (hosting, coarse IP location).
+
+> **RevenueCat IS MISSING FROM THAT LIST AND FROM THE PURCHASES ROW ABOVE (found 2026-08-30).**
+> The SDK is compiled into the iOS binary (`iOS · TestFlight` #12) and the Android one, and
+> `src/lib/native/purchases.ts:120` calls `Purchases.configure({ apiKey, appUserID: userId })`
+> with the **Clerk user id** — deliberately, because the webhook keys on `app_user_id` and the
+> module refuses to configure anonymously rather than orphan a purchase. So RevenueCat receives
+> an *Identifiers → User ID* today, and *Purchases → Purchase History* the moment Apple's four
+> products exist. **Neither is declared**, and the *Purchases → Purchase History* row above names
+> Stripe alone.
+>
+> **This section is stamped "Last audited 2026-07-28", which predates RevenueCat entering the
+> dependency tree by a month** — so the omission is not an oversight in the reasoning, it is the
+> audit date doing exactly what the header warns about, inverted: the label does not say
+> something the app stopped doing, it fails to say something the app started doing.
+>
+> **Update this list and the Purchases row BEFORE the first IAP submission**, and update Play's
+> Data safety form in `docs/PLAY-STORE.md` §4 in the same change — it does not mention
+> RevenueCat either, and Play's products are already live, so that form is the more urgent of
+> the two. Neither is a code change; both are console forms.
 
 ### Account deletion
 
@@ -527,8 +548,10 @@ re-litigated from this section instead.
 - **What iOS IAP still needs is console work plus one env var, not weeks.** RevenueCat is the
   StoreKit layer and is already compiled into the iOS binary (`iOS · TestFlight` #12), and the
   server half is provider-agnostic and shipped in #218. See `CLAUDE.md` → "APPLE IAP WAS DECIDED
-  ON 2026-08-24" for the remaining list, the two preconditions to check, and the missing
-  RevenueCat assertion on the iOS build.
+  ON 2026-08-24" for the remaining list and the two preconditions to check. ~~and the missing
+  RevenueCat assertion on the iOS build~~ — **that assertion landed 2026-08-30 in #231**
+  (`codemagic.yaml`, "Assert the RevenueCat plugin is actually installed"), so it is no longer
+  outstanding. What IS outstanding is §1's third-party list, below.
 
 ### Resolution Center reply
 

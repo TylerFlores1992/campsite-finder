@@ -110,20 +110,31 @@ recorded as fact; the other half would come from evidence quietly disappearing.
 
 ## Migrations
 
-`src/lib/db/migrations/NNN_name.sql`. **Highest is `070_watch_campgrounds.sql` (side lane);
-the main lane's block 060-069 is FULL** — `069_line_priority.sql` took the last of it on
-2026-08-28.
+`src/lib/db/migrations/NNN_name.sql`. **Highest is `071_subscription_provider.sql` (MAIN
+lane, #218, 2026-08-29).** The main lane's original block 060-069 filled on 2026-08-28 with
+`069_line_priority.sql`, and the side lane holds `070_watch_campgrounds.sql`.
 
-**So the next migration on either side needs a NEW block claimed out loud.** Do not simply
-take `071`: that is the number both lanes would reach for, and it is exactly the collision
-below.
+> **AND 071 IS EXACTLY THE NUMBER THIS SECTION SAID NOT TO TAKE.** It read *"Do not simply
+> take `071`: that is the number both lanes would reach for"*, and the next main-lane
+> migration took 071 the following day without claiming a block. **Nothing collided — the
+> side lane happened not to write one that week — so this is a near miss, not an incident**,
+> and `worker/migration-numbers.test.mts` was green throughout because there was in fact no
+> duplicate. The lesson is only that a warning phrased as "do not take the obvious next
+> number" loses to the obvious next number, and that the fix is to have a claimed block
+> standing at all times rather than a prohibition.
+
+**BLOCKS AS OF 2026-08-30, claimed here so neither lane has to ask: main `072–079`, side
+`080+`.** Take the next free number INSIDE YOUR OWN BLOCK and do not reach past its end
+without claiming a new one out loud. **Two sessions each writing the same number is a
+collision git merges CLEANLY and Postgres does not.**
 
 **Two sessions each writing `060_*.sql` is a collision git merges CLEANLY and Postgres does
 not.** Different filenames, no conflict, both land — and then whichever runner applies them
 decides what "060" meant. There is no failure at merge time at all.
 
 - **Default: the side lane creates no migrations.**
-- If it must, **claim a block out loud** first — main `060–069`, side `070+`.
+- If it must, take the next free number in **`080+`** (its block above). A lane that needs to
+  go past the end of its block **claims a new one out loud** first, and edits this line.
 
 `worker/migration-numbers.test.mts` asserts every number is claimed exactly once. It
 deliberately does **not** assert contiguity: a gap is not a defect, and a test that fails on

@@ -4628,12 +4628,16 @@ open carrying the Feature E correction: **a correction applied to one copy is no
 > mutation-verified guards, full suite **1258/1258**. Details in the five sections directly
 > above. **Migration 068 is APPLIED to production and read back.**
 >
-> **THE MAIN LANE'S MIGRATION BLOCK IS NOW FULL. `069_line_priority.sql` used the last
-> number in it (`docs/LANES.md`: main 060-069, side 070+, and the side lane has used 070).
-> The next main-lane migration must CLAIM A NEW BLOCK OUT LOUD before taking a number** —
-> two sessions each writing `071_*.sql` is a collision git merges cleanly and Postgres does
-> not, with no failure at merge time at all. `worker/migration-numbers.test.mts` catches a
-> duplicate but cannot stop one being written.
+> ~~**THE MAIN LANE'S MIGRATION BLOCK IS NOW FULL … must CLAIM A NEW BLOCK OUT LOUD before
+> taking a number**~~ — **A BLOCK IS CLAIMED NOW: main `072–079`, side `080+`
+> (`docs/LANES.md`), and the highest migration is `071_subscription_provider.sql`.** Take the
+> next free number inside your own block.
+> **AND 071 IS THE NUMBER `docs/LANES.md` SPECIFICALLY SAID NOT TO TAKE** — #218 took it the
+> next day without claiming anything. Nothing collided, because the side lane happened not to
+> write one that week, so it is a near miss rather than an incident and
+> `worker/migration-numbers.test.mts` was correctly green. **The lesson is that a prohibition
+> on the obvious next number loses to the obvious next number**; a standing claimed block is
+> what replaces it. That test catches a duplicate and cannot stop one being written.
 >
 > **THE NEXT ACTION IS ONE PROBE RUN, AND IT NEEDS A BOX AND A QUIET MORNING.**
 > `rc-probe.mjs --cart-lapse` (built 2026-08-27, **never run**) measures how long RC holds a
@@ -5161,10 +5165,25 @@ The phone rang at **07:33 PT, 27 minutes before the release that then worked per
 - **BOT-SIDE.** Needs `update.bat`, "Update now", or a quiet window; nothing changes until the
   box moves.
 
-### A TypeError PUBLISHED A USER'S PASSWORD (2026-08-16) — and the feature is REVERTED
-An in-app RC sign-in (the user types credentials on the claim screen, we inject them into the
-webview) was built, shipped, failed three times in one night, and was **reverted**. Two findings
-outlived it.
+### A TypeError PUBLISHED A USER'S PASSWORD (2026-08-16) — ~~and the feature is REVERTED~~
+~~An in-app RC sign-in (the user types credentials on the claim screen, we inject them into the
+webview) was built, shipped, failed three times in one night, and was **reverted**.~~
+**THE REVERT LASTED TWO DAYS. THE FEATURE HAS BEEN LIVE SINCE 2026-08-18 AND THIS SECTION SAID
+OTHERWISE FOR THIRTEEN.** `src/lib/rc-login-script.ts` was re-added in **#126 (08-18)**, improved
+by **#147 (08-20)** and **#171 (08-23)**, is imported by `ClaimFlow.tsx` and
+`rc-precart-script.ts`, and **ran in production on Android on 2026-08-30** — `signin-missing` →
+`email` → `password` → `submitted` → a 939-char token. Struck rather than deleted: read as
+current, the heading says the in-app sign-in does not exist, and it is the code any
+iOS-versus-Android comparison is actually about. **It cost exactly that on 08-30**, when
+comparing the two platforms began from "the feature is reverted".
+- **AND THIS FILE ALREADY DOCUMENTED BOTH RE-LANDINGS IN DETAIL.** "THE IN-APP OKTA FILL:
+  REACT'S `_valueTracker`" (#147) and "THE HAND-OFF LANDS IN THE CART NOW, AND THE SIGN-IN NEVER
+  PRESSED ANYTHING" (#171) are both ABOVE this entry, and both describe code this entry says was
+  removed. **The file contained its own refutation twice and it was read past** — the unit-45719
+  shape. **When a feature comes back, strike the entry that says it is gone**; a newer entry
+  beside it is not a correction, because nothing makes a reader of the old one aware of it.
+
+Two findings outlived the revert and both are still true.
 - **THE LEAK. `window.__chRcLogin("<email>", "<password>")` was undefined**, and WebKit formats
   that as `X is not a function. (In 'SOURCE', 'X' is undefined)` — **where SOURCE is the failing
   expression, verbatim.** The bundle's global `error` listener reported it and a real
@@ -5191,9 +5210,13 @@ outlived it.
   the control", "no password field", "Okta rejected it" and "signed in" were the same nothing. A
   real run reported `injected`, `session`, `idle` and stopped, **indistinguishable from the
   sign-in never being invoked.**
-- **Both fixes live unmerged on `claude/rc-login-fix` (PR #78)** — once per PAGE keyed on
-  origin+path with a redirect-loop bound, and `login-result`/`signin-missing` reports. **Do not
-  merge it onto the reverted claim screen**; re-land the feature first.
+- ~~**Both fixes live unmerged on `claude/rc-login-fix` (PR #78)**~~ — **BOTH ARE LIVE, AND #78
+  IS CLOSED-NOT-MERGED (2026-08-17).** They arrived through the re-landing instead, not through
+  that branch: the per-navigation `afterLoad` is back (`ClaimFlow.tsx` carries the comment
+  recording that the once-per-hand-off flag defeated it), and `login-result`/`signin-missing`
+  are both in the served bundle — Android reported both on 08-30. **There is nothing to fold
+  in.** Read as an open task, this line sends the next session to a closed PR for code that is
+  already running.
 - **THE REVERT WAS THE RIGHT CALL AND WAS THE OWNER'S.** Two real holds released nine hours
   later and the claim screen is what takes them; a fourth overnight attempt would have put a
   half-tested gate in front of the one control that matters at 08:00. The reverted flow is not
@@ -7796,9 +7819,10 @@ one `localStorage` pointer counted as one distinct cart. Both instruments now re
 they have not earned. Also: **RC auto-hold is labelled BETA** — the entitlement was never the
 gate (`is_beta` has entitled it since migration 032), what was missing was that nothing SAID so
 and nothing on `/new` revealed the feature existed; and `supportsRcHold` now stops the poller
-offering a hold on the nine UseDirect portals the bot has **no account for**. **Open: fold PR #78
-back in after re-landing the in-app sign-in; the box needs an update for the parallel carting and
-the 07:33 alarm fix.**
+offering a hold on the nine UseDirect portals the bot has **no account for**. **Open: ~~fold PR #78
+back in after re-landing the in-app sign-in~~ — DISCHARGED: #78 is closed and its two fixes
+shipped with #126/#147/#171; the box needs an update for the parallel carting and the 07:33
+alarm fix.**
 
 *(Previous pass.)* **Docs current to 2026-08-16 (second pass).** **THE 08:00 HAND-OFF WORKED END TO END** — both
 holds carted at T+43s and T+49s, both claimed, `✓ Added to cart` reported on iOS, and
@@ -7809,9 +7833,9 @@ complaining about. Fixed in PR #80 — **bot-side, so it needs `update.bat`, "Up
 quiet window before it means anything.** Also this pass: **a TypeError published a user's
 ReserveCalifornia password** (WebKit quotes the failing source expression; `scrub()` sailed past
 it exactly as it sailed past an OAuth code on 08-09), and the in-app sign-in that produced it is
-**REVERTED** — its two real fixes sit unmerged on `claude/rc-login-fix` (PR #78) and must NOT be
-merged onto the reverted claim screen. **Open: fold PR #78 back in after re-landing the feature;
-`autocart.bot_version` should be checked before trusting the 07:33 fix is live.**
+**REVERTED** *(for two days — re-landed 2026-08-18 in #126; PR #78 is closed and its fixes are
+live, so that "Open" is discharged).* **Open: `autocart.bot_version` should be checked before
+trusting the 07:33 fix is live.**
 
 *(Previous pass.)* **Docs current to 2026-08-16.** **THE RENEWAL RUNS ON THE BOX** — `✓ renewed by authorize:
 none → 3580s` at 01:53:05 UTC, from a genuinely token-less profile, no credential typed. The
@@ -8161,12 +8185,30 @@ the link-out is.
   agreement** active with banking and tax complete before IAP products can be created — unknown
   from here. And Apple **has subscription groups**, which Play does not, so the §9a proration
   trap that has no console safety net on Play does have one on Apple.
-- **ONE REAL GAP IF THIS IS BUILT: nothing asserts the RevenueCat pod reached the iOS binary.**
-  `codemagic.yaml` asserts the Play Billing permission on Android and asserts InAppBrowser on
-  iOS, and there is no iOS equivalent for RevenueCat. So the key could be set, the products
-  created, and the SDK silently absent — presenting as a paywall that says `unavailable`, which
-  is indistinguishable from a region or entitlement problem. **Add that assertion before the
-  console work**, not after.
+- ~~**ONE REAL GAP IF THIS IS BUILT: nothing asserts the RevenueCat pod reached the iOS
+  binary.**~~ **CLOSED 2026-08-30 IN #231** — `codemagic.yaml`'s iOS workflow now carries
+  *"Assert the RevenueCat plugin is actually installed"*, which greps `ios/App/Podfile` for
+  `pod 'RevenuecatPurchasesCapacitor'` and then checks the LOCK file, because the Podfile is
+  what we asked for and the lock is what CocoaPods resolved. **The pod name is DERIVED from
+  `@capacitor/cli`'s own `fixName()`, not remembered** — the mistake the InAppBrowser assertion
+  above records paying for twice. And it must never be widened to `grep -r ios/`:
+  `ios/App/App/public` holds our own web bundle, which contains the literal string
+  `@revenuecat/purchases-capacitor` in the dynamic import that loads the SDK, so a whole-tree
+  grep passes with the pod entirely absent. **An assertion that cannot fail is worse than none
+  — it reads as proof.** The failure it guards is still worth knowing: `bringUp` returns
+  `{ok:false, reason:'no purchases plugin in this build'}` and the paywall renders
+  `unavailable`, which is **also** what a missing API key, a non-US storefront and an empty
+  offering look like. Four causes, one screen, and the app still builds, ships and passes review.
+- **THE REMAINING iOS GAP IS A DISCLOSURE ONE, AND IT IS IN NEITHER STORE FORM.** RevenueCat is
+  now compiled into both binaries and `src/lib/native/purchases.ts:120` configures it with
+  **`appUserID` = the Clerk user id** — so it receives an *Identifiers → User ID* and, once
+  products exist, *Purchases → Purchase History*. **`docs/APP-STORE.md` §1 does not list it
+  among "Third parties that receive data" and `docs/PLAY-STORE.md` §4 (Data safety) does not
+  mention it at all** — checked, not assumed: neither file contains the string. §1 is stamped
+  *"Last audited 2026-07-28"*, which predates RevenueCat entering the tree by a month. A label
+  that keeps saying something the app stopped doing is the failure §1's own header warns about,
+  arriving from the other direction: it now omits something the app started doing. **Fix both
+  forms before the first IAP submission on either store**, not after a rejection.
 - **THE NOTES FIELD CAP IS 3,999, VERIFIED** — App Store Connect says *"Must be less than 4000
   characters"* and its counter read `-18` against a 4,018-character draft, i.e. it counts
   newlines exactly as `wc -c` does. A local count is therefore trustworthy; no need to

@@ -284,8 +284,18 @@ re-triggered. Morro Bay Lower Section, unit 43106 (`tylerflores1992`) and 43112
 two rows stranded for 78 minutes, is the whole point.
 
 **What they did NOT prove.** Neither claim link was opened in the app, so the hand-off was not
-exercised. **`cart read back` is still proven on iOS only; Android has never been run.** That
-remains the open question, and it needs a human with the app — no agent can do it.
+exercised. ~~**`cart read back` is still proven on iOS only; Android has never been run.**~~
+**ANSWERED 2026-08-29 AND 08-30, AND THE ANSWER RETIRES THE INSTRUMENT RATHER THAN EXTENDING
+IT.** Android ran it four times and reported `cart read back: 1 entry` — while the owner,
+holding the phone, was shown an empty cart and a sign-in prompt. So the reading is RC's answer
+to OUR question asked with OUR key, and says nothing about whether RC's own page can see the
+cart. **It has never once been corroborated by a human on any platform**, iOS included: the
+only visually-confirmed run (08-13) predates both the read-back and the cart navigation. See
+`CLAUDE.md` → "`cart read back` NEVER PROVED THE OWNER COULD REACH THE CART".
+**The live open question is the one under it:** RC returns `entries: 1` for our key while its
+UI treats the session as signed out — with `keySource: "localStorage"` (so the SPA had the key)
+and a live 939-char token (so there is a session). **Both leading theories are dead and no
+mechanism is named.** It still needs a human with the app.
 
 To repeat the setup: `scripts/rc-test-hold.mts --find` for real unit ids (never invent one),
 then `--watch <id> --unit <n> --arrival <date> --in <min>`. Use the watch whose REPRESENTATIVE
