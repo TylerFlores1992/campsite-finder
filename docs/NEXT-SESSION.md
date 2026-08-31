@@ -1,6 +1,30 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed **2026-08-28 15:50 PT**.*
+*Rewritten 2026-08-25 evening; state refreshed **2026-08-30 13:30 PT**.*
+
+> ### READ THIS FIRST — 2026-08-30 SUPERSEDES ITEM 0 BELOW
+>
+> **The 08-29 release is long past and there are ZERO live holds and zero offers.** Item 0 and
+> the older State rows describe 08-28. They are kept for the reasoning, not the state.
+>
+> **THE SERIAL RULES ARE OFF.** `npm test`, a test hold, and a box update are all fine — the
+> 6h release gate is open because nothing is queued. The 08-28 table said the opposite and
+> would have stopped you for no reason.
+>
+> **Master and the mini-PC are both `65f5583`.** Six fixes landed 08-30 (#230, #234, #235) from
+> four defects, **two of them caused by the earlier fixes of the same day**. Full write-up:
+> CLAUDE.md → "A CAMPSITE WAS LOST TO A TWO-SECOND MARGIN".
+>
+> **The open question is the Android hand-off, and it is NOT the bot.** The bot carts and
+> releases correctly. The user's own session re-carts, RC returns `entries: 1` — and RC's UI
+> still says "Please login", with no name in the corner. `keySource: "localStorage"` **kills
+> the cart-key theory** that the 08-29 entry was written around. No mechanism is named; three
+> were guessed on 08-30 and each cost a test. The next instrument is a storage census in the
+> app (key NAMES only), which does not exist. See CLAUDE.md → "`keySource` ANSWERED IT".
+>
+> **`ListAgents` cannot see the side lane** — it lists only sessions on THIS machine. An empty
+> list is not exclusive use of the production database; a side-lane merge cost a CI run on
+> 08-30. Announce before merging, as `docs/LANES.md` requires.
 
 > ## NOTHING IS ASSIGNED. A REAL HOLD IS QUEUED FOR THE MORNING, AND THE READING IS STILL WAITING.
 >
@@ -260,8 +284,18 @@ re-triggered. Morro Bay Lower Section, unit 43106 (`tylerflores1992`) and 43112
 two rows stranded for 78 minutes, is the whole point.
 
 **What they did NOT prove.** Neither claim link was opened in the app, so the hand-off was not
-exercised. **`cart read back` is still proven on iOS only; Android has never been run.** That
-remains the open question, and it needs a human with the app — no agent can do it.
+exercised. ~~**`cart read back` is still proven on iOS only; Android has never been run.**~~
+**ANSWERED 2026-08-29 AND 08-30, AND THE ANSWER RETIRES THE INSTRUMENT RATHER THAN EXTENDING
+IT.** Android ran it four times and reported `cart read back: 1 entry` — while the owner,
+holding the phone, was shown an empty cart and a sign-in prompt. So the reading is RC's answer
+to OUR question asked with OUR key, and says nothing about whether RC's own page can see the
+cart. **It has never once been corroborated by a human on any platform**, iOS included: the
+only visually-confirmed run (08-13) predates both the read-back and the cart navigation. See
+`CLAUDE.md` → "`cart read back` NEVER PROVED THE OWNER COULD REACH THE CART".
+**The live open question is the one under it:** RC returns `entries: 1` for our key while its
+UI treats the session as signed out — with `keySource: "localStorage"` (so the SPA had the key)
+and a live 939-char token (so there is a session). **Both leading theories are dead and no
+mechanism is named.** It still needs a human with the app.
 
 To repeat the setup: `scripts/rc-test-hold.mts --find` for real unit ids (never invent one),
 then `--watch <id> --unit <n> --arrival <date> --in <min>`. Use the watch whose REPRESENTATIVE
@@ -414,13 +448,13 @@ box. **Re-read it rather than trusting it, and re-date it when you do.***
 
 | | |
 |---|---|
-| Master | **`41fed49`** (#215). Recent: #201 double-cart, #202 health-route `REAL_UNIT`, #203 fixture-sweep scope (closed #76), #204 Routine IDs + egress-watchdog guard (closed #14, #181), #207 re-rank on tap, #209 `reclaimLapsedHolds`, #210/#211 the trail-silence discriminator, #214 the hold-line priority override (migration 069). |
-| Mini-PC | **`5e399b3`**, applied 08:44 PT 08-28 in 25 seconds. Carries the trail-silence discriminator. **Deliberately behind master — nothing since is bot-side**, which is what `autocart.bot_version`'s warn is saying. Confirm with `bot-ask git-status`, never that check (COALESCEd, can sit stale beside a live heartbeat). |
+| Master | **`65f5583`** (#235), 2026-08-30. Recent: #230 seconds-based coverage + headroom + crash handlers, #234 `persistLiveToken` + stand-off resize, #235 no destructive repair near a release + `nextHoldRelease` grace window. Side lane: #236 Play IAP paywall route. |
+| Mini-PC | **`65f5583`**, applied 12:47 PT 08-30 in ~22 seconds, confirmed by `bot-ask git-status` (never `autocart.bot_version` — COALESCEd, can sit stale beside a live heartbeat). **Level with master.** |
 | Fly worker | redeployed on every `worker/**` merge since #204; both shards beating. |
-| Open PRs | none |
+| Open PRs | **#238** (docs: the `keySource` correction) and this audit's PR. |
 | Open issues | **none — every issue is closed** |
 | Migrations | highest applied **070**. **The main lane's block 060-069 is FULL** — `069_line_priority.sql` took the last number. The next main-lane migration must **claim a new block out loud** before taking a number; two lanes both reaching for `071` is a collision git merges cleanly and Postgres does not. |
-| Holds | **ONE LIVE HOLD — `requested`, unit `43189` (`#94`, Morro Bay Upper Section, arrival 2026-09-04), releasing 2026-08-29 08:00 PT**, tapped 18:46:34Z by `tylerflores1992` (who now carries `line_priority = 1`). **Four untapped offers sit behind it**, two of them on the same unit for two other accounts. **So the serial rules are ON**: no `npm test`, no second test hold, nothing that restarts the box, and the 02:00-05:00 update window is shut (the 6h release gate is not liftable). |
+| Holds | **NONE. Zero live holds, zero offers** (checked 13:30 PT 08-30). The 08-29 release passed; four test holds were run and deleted on 08-30 and **no campsite was ever locked by them**. Two sites ARE locked in the owner's own phone cart from the hand-off tests — unreleasable by design (we never store the phone's key) and they lapse on RC's schedule, as both 08-29 sites did within a day. |
 | RC session | **Healthy at 22:13 PT** — `OK for 2h12m`, token 59m, `okta=ALIVE` to 17:01Z. The rehearsal PASSED at 03:01 on both 08-28 and 08-29. `maybeAutoLogin` covers the release at T−30 (07:30 PT). |
 | Memory | **No ramp since 08:23 PT 08-28 — ~14 hours quiet**, the longest stretch yet (1,011 samples in 30h, zero over 1,200 MB, newest 277 MB). Within the recorded 5-28h gap range, so it is not evidence of a cure. **Track A still has zero `trail-*` readings**; the discriminator has never run. |
 

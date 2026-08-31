@@ -6,7 +6,9 @@ claim comes from, so it can be re-checked when something changes. Getting these 
 is a rejection, and getting them *stale* is worse: the label keeps saying something the
 app stopped doing.
 
-Last audited 2026-07-28.
+Last audited 2026-07-28 — **and §1 has NOT been re-audited since RevenueCat joined the
+dependency tree (2026-08-29); see the note under "Third parties that receive data".** Sections
+2a–2d carry their own dates and are current; the privacy labels in §1 are the stale part.
 
 ---
 
@@ -50,6 +52,25 @@ Clerk (auth), Stripe (payments), Supabase (database), Resend (email), Twilio (SM
 Firebase Cloud Messaging (push), Mapbox (geocoding — receives the place text typed and
 map coordinates), Sentry (diagnostics), Vercel (hosting, coarse IP location).
 
+> **RevenueCat IS MISSING FROM THAT LIST AND FROM THE PURCHASES ROW ABOVE (found 2026-08-30).**
+> The SDK is compiled into the iOS binary (`iOS · TestFlight` #12) and the Android one, and
+> `src/lib/native/purchases.ts:120` calls `Purchases.configure({ apiKey, appUserID: userId })`
+> with the **Clerk user id** — deliberately, because the webhook keys on `app_user_id` and the
+> module refuses to configure anonymously rather than orphan a purchase. So RevenueCat receives
+> an *Identifiers → User ID* today, and *Purchases → Purchase History* the moment Apple's four
+> products exist. **Neither is declared**, and the *Purchases → Purchase History* row above names
+> Stripe alone.
+>
+> **This section is stamped "Last audited 2026-07-28", which predates RevenueCat entering the
+> dependency tree by a month** — so the omission is not an oversight in the reasoning, it is the
+> audit date doing exactly what the header warns about, inverted: the label does not say
+> something the app stopped doing, it fails to say something the app started doing.
+>
+> **Update this list and the Purchases row BEFORE the first IAP submission**, and update Play's
+> Data safety form in `docs/PLAY-STORE.md` §4 in the same change — it does not mention
+> RevenueCat either, and Play's products are already live, so that form is the more urgent of
+> the two. Neither is a code change; both are console forms.
+
 ### Account deletion
 
 **Yes, in-app.** Settings → **Delete account** (`v2/DeleteAccount.tsx` →
@@ -66,6 +87,31 @@ matters.
 Information* — not the app-level "General → App Review" nav item. It is one of the
 fields Apple lets you edit while the version sits in *Waiting for Review*, so it can be
 corrected without giving up the queue position.
+
+> **THERE IS A SECOND FORM WITH ALMOST THE SAME NAME, AND IT IS NOT IN THIS FILE.**
+> **TestFlight → Test Information** (*Beta App Review Information* + *Feedback Email*) governs
+> **beta** review; the *App Review Information* described here is on the **version page** and
+> governs **App Store** review. **Filling one has never filled the other**, and on 2026-08-29
+> every `iOS · TestFlight` run failed at *submit to beta review* — after a clean compile, a
+> successful upload and completed ASC processing — purely because those four contact fields were
+> empty. Four plausible build-side causes were all wrong; the fault was a web form.
+>
+> It was filled and saved 2026-08-29 and **`iOS · TestFlight` #12 then went clean**, so the whole
+> chain (compile → sign → upload → ASC processing → submission to beta review) is measured. That
+> build ran on `f3f36e3`, which contains none of the fix — **the console was the fix, and nothing
+> in the repository could have made it pass.**
+>
+> **The write-up lives in `docs/STOREKIT-PLAN.md` §11c, not here**, which is the misplacement this
+> pointer exists to stop: this file is the one whose job is *"everything App Store Connect asks
+> for that isn't a build"*, and until 2026-08-30 it did not contain the words "TestFlight" or
+> "Beta App Review" anywhere. §2 has already been misread once over exactly this kind of
+> same-words-different-page distinction (the app-level *General → App Review* item versus the
+> version page).
+>
+> **Both forms carry a Sign-In password that nothing in App Store Connect validates**, and a bad
+> one there caused the 08-14 rejection. Beta review hits the identical wall. The check is to sign
+> in at camphawk.app in a private window — end to end, exposes no secret, and it also exercises
+> whether Clerk Device Trust is still off (§2a).
 
 Three parts, all filled in and saved as of 2026-08-08:
 - **Sign-In Information** — "Sign-in required" ticked, username `tylerflores1992@yahoo.com`
@@ -527,8 +573,10 @@ re-litigated from this section instead.
 - **What iOS IAP still needs is console work plus one env var, not weeks.** RevenueCat is the
   StoreKit layer and is already compiled into the iOS binary (`iOS · TestFlight` #12), and the
   server half is provider-agnostic and shipped in #218. See `CLAUDE.md` → "APPLE IAP WAS DECIDED
-  ON 2026-08-24" for the remaining list, the two preconditions to check, and the missing
-  RevenueCat assertion on the iOS build.
+  ON 2026-08-24" for the remaining list and the two preconditions to check. ~~and the missing
+  RevenueCat assertion on the iOS build~~ — **that assertion landed 2026-08-30 in #231**
+  (`codemagic.yaml`, "Assert the RevenueCat plugin is actually installed"), so it is no longer
+  outstanding. What IS outstanding is §1's third-party list, below.
 
 ### Resolution Center reply
 

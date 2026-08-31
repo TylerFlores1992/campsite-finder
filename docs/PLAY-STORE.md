@@ -490,6 +490,28 @@ religious beliefs, sexual orientation, other personal info, health, fitness, mes
 photos, videos, audio, files, calendar, contacts, in-app search history, installed apps,
 web browsing history.
 
+> **THIS TABLE PREDATES REVENUECAT AND IS NOW INCOMPLETE (found 2026-08-30).** The four Play
+> products are LIVE and every purchase goes through RevenueCat, so this is the more urgent of
+> the two store forms — Apple's has no products yet.
+>
+> - **Personal info → User IDs.** `src/lib/native/purchases.ts:120` calls
+>   `Purchases.configure({ apiKey, appUserID: userId })` with the **Clerk user id**. That is
+>   deliberate and cannot be dropped: the webhook keys on `app_user_id`, and the module refuses
+>   to configure anonymously rather than orphan a purchase.
+> - **Financial info → Purchase history.** The Notes column names *"Subscription status + Stripe
+>   ids"*. Play purchases do not touch Stripe at all — they land as
+>   `store_transaction_id` + `provider` (migration from #218) via the RevenueCat webhook.
+>
+> **Whether either row's "Collected / not shared" answer CHANGES is the real question, and it is
+> not obvious.** Play's own rule is at the top of this section: a processor acting on our behalf
+> is not "sharing". RevenueCat is a billing processor by that reading — but it is a distinct
+> third party receiving a user identifier, and answering this wrong is a Data-safety violation
+> rather than a listing nit. **Decide it against Play's current definition before the next
+> submission; do not copy the Stripe answer across on the assumption they are alike.**
+>
+> The same omission exists in `docs/APP-STORE.md` §1 and is recorded there too — deliberately in
+> both, because a correction applied to one copy is not applied.
+
 **Security practices section:**
 
 | Question | Answer |

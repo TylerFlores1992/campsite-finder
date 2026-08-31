@@ -87,13 +87,20 @@ block is full** (§ `docs/LANES.md`), so it needs a new block claimed out loud.
 
 ---
 
-## STATE AS OF 2026-08-28
+## STATE AS OF 2026-08-28 — **the Apple row is SUPERSEDED, see §6.1**
 
 **PLAY'S CONSOLE WORK IS FINISHED. Every remaining blocker on both stores is CODE or a vendor.**
 
+> **THE APPLE ROW BELOW IS TWO DAYS STALE AND READING IT AS CURRENT UNDERSTATES WHAT IS DONE.**
+> Paid Applications is **Active** (Aug 25 2026 – Jul 25 2027), the bank account is **Active**
+> and the W-9 is **Active** — §6.1 records all three off the console. **The only outstanding
+> Apple gate is the Small Business Program**, submitted 2026-08-30 and pending. Left in place
+> rather than edited because the table is dated and the correction belongs where the evidence
+> is; **§6.1 is the authority for Apple's gates, not this row.**
+
 | | Done | Waiting on the vendor | Blocked on us |
 |---|---|---|---|
-| **Apple** | W-9 active | Bank details + Paid Applications agreement processing | Small Business Program enrolment (§6.1), then the four products (§8) |
+| **Apple** | W-9 active | ~~Bank details + Paid Applications agreement processing~~ — **both Active since Aug 25; SBP pending (§6.1)** | Small Business Program enrolment (§6.1), then the four products (§8) |
 | **Play** | merchant account · account group · **15% enrolled** · US-only · bank verified · **billing permission shipped** · **4 base plans + 4 offers ACTIVE** | — **nothing** | — **nothing in the console** |
 
 **WHAT CLEARED PLAY, 2026-08-28.** `@revenuecat/purchases-capacitor` 13.4.2 went into
