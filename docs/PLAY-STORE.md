@@ -186,7 +186,8 @@ is the likelier half, and which reaches installed apps with no store release.
 > **GRANTED, and read off the console rather than reported second-hand.** The Dashboard shows
 > *"Congratulations! Your app has been granted Google Play production access"*. Production
 > itself reads **Inactive** — access is granted, no production release is published yet.
-> **(Still true as of 2026-09-01. Release 25 is STAGED and unsubmitted — see §0d.)**
+> **(Still true as of 2026-09-01: nothing is PUBLISHED yet. Release 25 was submitted that day
+> and is IN REVIEW — see §0d.)**
 > Closed testing remains **Active, 1 track**; internal testing Active; open testing Inactive.
 >
 > **WHAT THIS UNBLOCKS:** §1's US-only country setting, which was verified on 2026-08-01 as
