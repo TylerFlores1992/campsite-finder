@@ -2,7 +2,36 @@
 
 *Rewritten 2026-08-25 evening; state refreshed **2026-09-01 evening**.*
 
-> ## READ FIRST — TWO REAL-SITE HAND-OFFS RAN 2026-09-01, AND THE PLATFORMS DIVERGED
+> ## READ FIRST — THE ANDROID HAND-OFF DEFECT IS EXPLAINED FROM RC'S SOURCE AND FIXED (#249)
+>
+> **RC's sign-in is two steps, and we closed between them.** Okta's callback writes
+> `ssoAccessToken` (the token we capture) and then awaits `GetSSOLoggedInUser`; only that
+> response writes **`customerId`**, which is the ONE key RC boots `isLoggedIn` from — and
+> `token captured` is the moment that request LEAVES, so every close rule raced its response.
+> Android's InAppBrowser kills the in-flight request on close (`about:blank`); iOS's only
+> dismisses the view. **That is the entire platform difference.** Full entry: CLAUDE.md →
+> "RC'S SIGN-IN IS TWO STEPS"; mechanism in `docs/PLATFORM-PARITY.md` §2a.
+>
+> **The fix: the window closes on `rc-session { loggedIn: true }` (= `customerId`) and on
+> nothing else. No timer.** The claim gate flips on the same signal. The census now reads
+> `customerId`, both tokens separately, and RC's real okta store (`@secure.s.okta-*`).
+>
+> **CORRECTIONS to the 09-01-evening readings below**, which are kept for the record:
+> the okta-store census was reading the wrong key (false negative every time); "Keep me
+> signed in" decides the NEXT sign-in's cost, not the header; cookies are irrelevant to RC's
+> login state. The keep-signed-in instrument is still right and still worth reading.
+>
+> **THE TEST — both phones.** Same procedure as below. New readout lines per hand-off:
+> `RC login: customerId PRESENT/ABSENT` and `close: session`. **Expected: both PRESENT, both
+> headers showing the name.** If Android reads ABSENT with the window closed, check the
+> `close` reason — `timeout`/`token` means a cached pre-#249 host. **Ask for the cart screen
+> on both** regardless.
+>
+> **#249 TOUCHED THE iOS BASELINE** (`rc-handoff.ts`, `rc-precart-script.ts`, `ClaimFlow.tsx`).
+> The change makes iOS wait for a signal it was already winning by luck; if iOS regresses, the
+> `close` reason and the `RC login` line will say why, and the revert is the PR.
+
+> ## (superseded, kept for the record) TWO REAL-SITE HAND-OFFS RAN 2026-09-01, AND THE PLATFORMS DIVERGED
 >
 > **iOS worked. Android did not.** Both carted at T+2s, both reported `✓ Added to cart` and
 > `cart read back: 1 entry`. On the iPhone RC's header carried the owner's name and the cart

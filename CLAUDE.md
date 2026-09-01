@@ -4935,6 +4935,72 @@ disturbing the working one.
 - **IF iOS REGRESSES, REVERT `rc-login-script.ts` ALONE.** Reverting the whole PR would take
   the parity work with it, which is the half that stops this recurring.
 
+### RC'S SIGN-IN IS TWO STEPS, AND EVERY CLOSE RULE WE EVER SHIPPED RACED THE SECOND (2026-09-01, #249)
+The Android "no name, cart asks to log in" defect, open since 2026-08-29, **is explained from
+RC's own source and fixed** — and two of the readings I gave the owner the same evening were
+wrong. Found by fetching RC's SPA bundle (`index-BvrbWbr2.js`) and reading how it decides it is
+signed in, which nobody had done in a month of instrumenting our side of it.
+- **THE MECHANISM, from RC's code.** Okta's callback fires the `ProcessSSOLogin` thunk: it
+  writes `ssoCustomerName` + **`ssoAccessToken`** (the 939-char JWT we capture) with
+  `isLoggedIn: false`, then **awaits `GET WebAccessCustomer/SSO/GetSSOLoggedInUser`**. Only
+  that RESPONSE (`Ks`) writes **`customerId`**, `customerName`, **`accessToken` (RC's OWN
+  token, distinct from Okta's)** and `customerDetail`, sets `isLoggedIn: true`, and navigates
+  **client-side**. On boot: **`isLoggedIn: !!localStorage.getItem("customerId")`**. The header
+  name is `customerName`. The cart page's axios client requires RC's `accessToken`, and with it
+  null dispatches **`customerLogOut`, which also deletes `ssoAccessToken`** — the login prompt,
+  and why the Okta token has seemed to vanish.
+- **WE CLOSED BETWEEN THE STEPS, EVERY TIME.** `rc-inject.js` captures the token off RC's
+  outbound `accesstoken` header, and the first such call after the callback IS step two's
+  request. So `token captured` marks the instant step two LEAVES, and `closeOnToken` (#126),
+  the liveness gate (#152) and the `/login/callback` deferral with a 10s timer (#240) were all
+  the same race with different fuses. `settled` could never fire — the post-login navigation
+  is client-side, no `loadstop` — so both platforms closed on `timeout` every run.
+- **THE PLATFORM DIFFERENCE IS IN THE INAPPBROWSER PLUGIN.** Android's `closeDialog` navigates
+  the WebView to `about:blank`, killing the in-flight step-two request. iOS's `close` only
+  dismisses the view controller; the WKWebView keeps running until torn down later, so the
+  request finishes and writes `customerId`. **Not our code, not cookies, not the webview's
+  storage.** Read out of `node_modules/cordova-plugin-inappbrowser/src/{android,ios}`.
+- **TWO OF MY OWN 09-01 READINGS WERE WRONG, stated plainly.** (1) *"okta store empty — the
+  SDK never finished its half"*: RC wraps okta-auth-js's store in secure-ls under
+  **`@secure.s.okta-token-storage`**, and the census tested a bare `okta-` PREFIX, so it never
+  looked at the real store. False negative every time it printed, on both platforms.
+  (2) *"Keep me signed in" as the leading candidate*: it decides whether the NEXT sign-in is
+  cookie-answered (the 08-09 measurement stands); it does not decide the header. Right
+  observation, wrong mechanism — and I called it the leading candidate. (3) The cookie-store
+  theory is retired: RC writes no session cookies (the only `document.cookie` in its bundle is
+  axios's XSRF helper).
+- **THE FIX (A): close on `customerId`, and on nothing else.** The bundle reports
+  `rc-session { loggedIn }` — `!!customerId`, a BOOLEAN, never the id — on install and when it
+  flips. `rcCloseAction` closes on `true`; a token, live or not, on any page, is no longer a
+  reason; `isMidSignIn` and the settle timer are GONE, with a guard asserting exactly one
+  `setTimeout` remains (the load watchdog). **No timer closes a sign-in window any more — the
+  backstop WAS the defect.** If step two never finishes the bundle shows a notice in the window
+  ("when you see your name at the top, tap Done") and reports `settle-timeout { held: true }`;
+  that is the configuration the 08-31 hand bisect proved works. Already-signed-in pages close
+  at once (RC boots with `customerId`, reported on install).
+- **(B) THE CLAIM GATE FLIPS ON `rc-session`, NOT THE TOKEN.** `setRcCheck('verified')` moved
+  out of the token branch; the token still carries the deadline. This is the owner's
+  "verify they're in fact signed in" done against the fact RC itself uses.
+- **(C) THE CENSUS READS THE KEYS RC DECIDES ON.** `rcLoggedIn`, `ssoToken` and `rcToken`
+  reported separately (`storedToken: "jwt"` was satisfied by either and could not discriminate);
+  okta keys matched ANYWHERE in the name; a populated secure-ls store reads `encoded`, a third
+  shape between `jwt` and `none`. Route caps 14 → 18. `rcSessionReading` names the defect state
+  — *customerId ABSENT beside an Okta token* — as itself.
+- **EVERY OBSERVATION FITS**: the bisect (window left open → step two finishes → name shows,
+  survives Done + reopen), cart POSTs succeeding on both (the API accepts the Okta token alone),
+  the cart page prompting (interceptor, no RC token), RC's slow web tier making step two slow
+  enough to lose the race.
+- **NOT MEASURED YET:** that `customerId` was in fact absent after the failing Android run — no
+  earlier census read it. The mechanism is from RC's source and #249's first hand-off reads the
+  key directly; that run is the confirmation. **Guarded 14 ways**, each mutation grep-verified
+  to apply: the host ignoring the decision, closing on a token again, growing a timer back, the
+  gate flipping on the token, the id VALUE reported, the census reverting to a prefix, and more.
+  `rc-session-close.test.mts` drives the real seam with a stub InAppBrowser and a fake clock.
+- **TWO HARNESS DEFECTS CAUGHT BY RUNNING THEM.** The reporter's 500ms poll kept the sandbox
+  alive and hung the suite (unref'd now); and `window` inside a vm context is the contextified
+  proxy, not the raw sandbox, so a message with `source: ctx` correctly failed the reporter's
+  cross-frame check — the guard was right and the stub was wrong.
+
 ### WHERE iOS AND ANDROID ACTUALLY DIFFER — AUDITED, AND THE ANSWER REFRAMES THE QUESTION (2026-09-01)
 Asked for a deep search after the fourth "whoops, another difference" in three weeks. Full
 inventory in **`docs/PLATFORM-PARITY.md`**; the audit itself is the finding.
@@ -5006,6 +5072,15 @@ landed on 08-29, so **the iPhone binary does not contain it at all.**
 
 
 > **START AT `docs/NEXT-SESSION.md`. NOTHING IS ASSIGNED; THE TOP ITEM IS A READING.**
+>
+> **-2. #249 IS THE FIX FOR THE ANDROID HAND-OFF — TEST IT ON BOTH PHONES.** Close on RC's own
+> `customerId`; no timer; see "RC'S SIGN-IN IS TWO STEPS". The readout prints `RC login:
+> customerId PRESENT/ABSENT` per hand-off now. **Expected:** both phones `PRESENT`, both
+> headers showing the name, `close: session`. An Android run reading `ABSENT beside an Okta
+> token` with the window closed means the host is a cached pre-#249 one — check `close`'s
+> reason. **Web-side, no rebuild.** It touched the iOS baseline again (`rc-handoff.ts`,
+> `rc-precart-script.ts`, `ClaimFlow.tsx`); if iOS regresses, the revert is the whole PR and
+> the reason will be in `close`'s reason.
 >
 > **-1. THE TWO-PHONE HAND-OFF TEST IS SET UP AND DELIBERATELY NOT RUN (2026-09-01 evening).**
 > The owner did not have the iPhone to hand, so this waits for tonight. #248 is merged/open

@@ -16,7 +16,8 @@ It has two halves, and **the split is the whole point**:
   scanner can find it, and a test cannot enforce it. It is written down instead.
 
 **IF YOU ARE HERE BECAUSE SOMETHING WORKS ON ONE PHONE AND NOT THE OTHER, START WITH THE
-SECOND HALF.** The first half has never been the cause.
+SECOND HALF.** The first half has never been the cause. **And read §2a first: the one that
+cost a month was a two-step sign-in and a plugin that kills in-flight requests on close.**
 
 ---
 
@@ -96,39 +97,62 @@ than trusting the suite.
 
 Identical code, different behaviour. **Every one of these has cost us something.**
 
-### 2a. The password manager decides which Okta page you land on — MEASURED 2026-09-01
+### 2a. THE ONE THAT WAS THE BUG — RC's sign-in is two steps and the plugins kill step two differently (RESOLVED 2026-09-01, #249)
 
-The one that produced this file. Two hand-offs eleven minutes apart:
+Read out of RC's own bundle (`index-BvrbWbr2.js`), not inferred:
+
+```
+step 1  Okta callback  -> localStorage.ssoAccessToken (the JWT we capture), isLoggedIn: false
+                          then:  GET WebAccessCustomer/SSO/GetSSOLoggedInUser?uniqueIdentifier=<sub>&email=<email>
+step 2  its RESPONSE   -> customerId, customerName, accessToken (RC's OWN token), customerDetail
+                          isLoggedIn: true, then a CLIENT-SIDE navigation to oktaOriginalUri
+boot                   isLoggedIn: !!localStorage.getItem("customerId")
+```
+
+The header name is `customerName`; the cart page's API client requires RC's `accessToken` and,
+when it is null, dispatches `customerLogOut` — which also deletes `ssoAccessToken`. So a session
+cut off between the steps has a working Okta token (the cart POSTs succeed), no name, a login
+prompt on the cart page, and a token that then vanishes.
+
+**We were closing between the steps.** `rc-inject.js` captures the token off RC's outbound
+`accesstoken` header, and the first such call after the callback IS step two's request — so
+`token captured` marks the instant step two LEAVES, and every close rule we ever shipped was a
+race against its response. #240's 10s timer could never `settle` (client-side navigation, no
+`loadstop`) and fired on both platforms every time.
+
+**The platform difference is in the InAppBrowser plugin, not in our code or the webviews'
+storage.** Android's `closeDialog` navigates the WebView to `about:blank`, killing the in-flight
+request instantly. iOS's `close` only dismisses the view controller; the WKWebView keeps running
+until it is torn down later, so a request in flight finishes and writes `customerId`. That is why
+iOS survived the same close and Android did not.
+
+**Fixed by closing on RC's own signal.** The bundle reports `rc-session { loggedIn }` —
+`!!customerId`, a boolean — on install and when it flips; the host closes on `true` and on
+nothing else; no timer closes a sign-in window any more. If step two never finishes, a notice
+inside the window says "when you see your name, tap Done", which is the configuration the 08-31
+hand bisect proved works.
+
+### 2a′. The password manager decides which Okta page you land on — REAL, but not the cause
 
 ```
 iOS      signin-missing {candidates:6} → email → password → submitted
 Android  signin-open {}                →         password → submitted
 ```
 
-Android never reached Okta's **identifier** page, so `chFind(CH_PW_SELS)` matched first and
-the caller skipped the email step. Okta renders **"Keep me signed in" on the identifier
-step** — no page, no checkbox, and `chKeepSignedIn` silently found nothing to tick. That box
-is what issues the `idx` cookie; CLAUDE.md measured on 2026-08-09 that without it Okta issues
-nothing persistent (`okta=GONE(404)` before, ~12h session after).
+Android skipped Okta's identifier page because a password field was already present, and "Keep
+me signed in" lives on the identifier step — so on that path nothing ticks it. **This decides
+whether the NEXT sign-in is cookie-answered or a password form** (CLAUDE.md, 2026-08-09). It
+does NOT decide the header name; that is `customerId`, above. It was reported as the leading
+candidate on 09-01 evening and it was the wrong explanation for the empty header. Still
+path-dependent, not platform-dependent, and still worth reporting (`keep-signed-in`).
 
-Result: a perfectly good 939-char access token — **so the cart POSTs succeed** — with no
-session for RC's SPA to render a name from. The owner saw `✓ Added to cart` and a header
-asking him to log in.
+### 2b. Cookie stores — RETIRED as an explanation for RC's login state
 
-**IT IS PATH-DEPENDENT, NOT PLATFORM-DEPENDENT.** iOS fails identically on any run where Okta
-remembers the account. Which page you land on is decided by the device's password manager and
-Okta's own cookies, not by our code.
-
-### 2b. Cookie stores
-
-- **iOS**: `WKWebsiteDataStore`, per-app, with ITP (~7 days of no interaction purges it).
-- **Android**: a **process-wide `CookieManager`** shared between the InAppBrowser and the main
-  WebView, persisted on teardown rather than synchronously.
-
-**This predicts Android being MORE durable, not less** — which is why the 2026-08-09
-persistence tests were repeated on iOS rather than inferred from Android, and why reaching
-for it to explain an Android-only symptom is reasoning backwards. Recorded so nobody reaches
-for it again without new evidence.
+RC writes no session cookies of its own (the only `document.cookie` in its bundle is axios's
+XSRF helper); its login state is localStorage, above. Okta's cookies decide only whether the
+next sign-in needs a password. The CookieManager/WKWebsiteDataStore theory predicted the wrong
+direction anyway (Android more durable, not less) and is recorded here so nobody reaches for it
+again without new evidence.
 
 ### 2c. Two native implementations behind one plugin
 
