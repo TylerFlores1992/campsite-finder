@@ -71,7 +71,26 @@ Internal testing has no such gate and can be published immediately — do that f
 to prove the AAB uploads cleanly and because it is where the **country restriction** can
 be set today.
 
-## 0d. THE PRODUCTION RELEASE IS STAGED, NOT PUBLISHED — 2026-09-01
+## 0d. RELEASE 25 IS **IN REVIEW** — submitted 2026-09-01
+
+*Publishing overview* reads **Changes in review** — *"Your changes are now in review. We may find
+additional issues when reviewing your app."* One item: **Production · 25 (1.0) · Start full
+rollout**, United States only.
+
+- **`Remove changes` IS AVAILABLE** while it sits in review, so the submission is reversible up
+  until approval. That is the lever if something needs to go in ahead of it.
+- **`Managed publishing` is OFF, so approval publishes immediately** at 100% to the US — there is
+  no hold-and-release step, and nobody is asked a second time.
+- **THE DATA SAFETY QUESTION WENT UNANSWERED INTO THIS SUBMISSION.** §4's open item — whether
+  RevenueCat receiving the Clerk user id counts as *Shared* — was not resolved before Submit. It
+  is **editable independently of the binary and needs no new release**, so it can be corrected
+  after the fact; what it costs is that the app publishes with a declaration that does not
+  mention RevenueCat while Play's four products are already taking money. **Close it rather than
+  letting approval close it by default.**
+
+### The staging history, and the reading rule it produced
+
+
 
 Release **25 (1.0)** is created, has passed Play's quick checks, and is sitting in
 *Publishing overview* under **Changes not yet submitted for review** with a live
