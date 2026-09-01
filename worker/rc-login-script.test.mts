@@ -218,8 +218,18 @@ test('the sign-in control is matched on text, over anchors and buttons only', ()
 
 test('"Keep me signed in" is ticked, because the idx cookie depends on it', () => {
   // No tick, no Okta session, and the whole renewal path has nothing to renew against.
-  assert.match(loginScript(), /function chKeepSignedIn/);
-  assert.match(loginScript(), /chKeepSignedIn\(\)/);
+  //
+  // RE-ANCHORED 2026-09-01, NOT RELAXED. This pinned the literal expression
+  // `chKeepSignedIn()`, so giving the function an argument that names WHICH step called it
+  // failed the guard over behaviour that had not changed at all — the shape CLAUDE.md
+  // records more than twenty times. The property is that BOTH steps tick, so assert that,
+  // and count the call sites so deleting one still fails.
+  const src = loginScript();
+  assert.match(src, /function chKeepSignedIn/);
+  const calls = src.match(/chKeepSignedIn\(/g) ?? [];
+  // Three: the definition and the two call sites. Fewer means a step stopped ticking.
+  assert.equal(calls.length, 3,
+    `expected the definition and both call sites to tick; found ${calls.length} occurrence(s)`);
 });
 
 test('Enter submits, not a button click', () => {
@@ -867,4 +877,102 @@ test('the wait is bounded, and a real miss is still reported', async () => {
   assert.ok(SIGNIN_WAIT_MS >= 5_000, 'shorter than the SPA takes to boot and this is the bug again');
   assert.ok(SIGNIN_WAIT_MS <= 20_000,
     'the form hunt waits again after this one — a long wait here is a user watching a calendar');
+});
+
+// ── "KEEP ME SIGNED IN" WAS A SILENT NO-OP ─────────────────────────────────────────────
+//
+// 2026-09-01. Two hand-offs eleven minutes apart on the same code: iOS carted and RC's
+// header carried the owner's name; Android carted and RC asked him to log in. Their traces
+// matched on every recorded field — `✓ Added to cart`, `cart read back: 1 entry`,
+// `close: timeout`, the same okta-store census. The instruments did not measure the thing
+// that differed, which is the failure this repo records more often than any other.
+//
+// The stages diverged upstream:
+//
+//     iOS      signin-missing → email → password → submitted
+//     Android  signin-open    →         password → submitted
+//
+// Android never reached Okta's IDENTIFIER page: a password field was already present, so
+// the caller skipped the email step. Okta renders "Keep me signed in" on the identifier
+// step — so there was no checkbox in the DOM, `chKeepSignedIn` found nothing, and returned
+// a boolean NOBODY READ. "Ticked it" and "there was no box" were the same silence.
+//
+// That is load-bearing rather than cosmetic: this repo measured on 2026-08-09 that the box
+// is what makes Okta issue a persistent session (`okta=GONE(404)` before it was ticked, a
+// ~12h session after), and the function's own comment says the `idx` cookie comes from it.
+// A run without it still completes the OAuth exchange and mints a good access token — which
+// is why the cart POSTs succeed — while leaving nothing for RC's SPA to render a name from.
+test('the keep-signed-in tick reports itself, including when there is no box', async () => {
+  const ctx = stubContext();
+  vm.runInContext(REACT_STUB, ctx);
+  // THE ANDROID PATH, MODELLED EXACTLY: a password field is already on the page, so the
+  // email step is skipped — and there is not one checkbox anywhere.
+  vm.runInContext(`
+    var pw = makeInput('');
+    window = {
+      __camphawkRc: { send: function (s, d) { said.push([s, d]); } },
+      __camphawkRcToken: null,
+    };
+    document = {
+      querySelector: function (s) { return /pass/i.test(s) ? pw : null; },
+      querySelectorAll: function () { return []; },
+    };
+  `, ctx);
+  vm.runInContext(loginScript(), ctx);
+  await vm.runInContext(`window.__chRcLogin("a@b.com", "hunter2!")`, ctx) as Promise<unknown>;
+
+  const said = [...(ctx.said as [string, Record<string, unknown>][])];
+  const keep = said.find((s) => s[0] === 'keep-signed-in');
+  assert.ok(keep, `the tick must report; got stages ${JSON.stringify(said.map((s) => s[0]))}`);
+  assert.equal(keep![1].ticked, false, 'there was no checkbox, so nothing can have been ticked');
+  // ZERO IS THE WHOLE FINDING and must be reported as a number, not merely as "not ticked".
+  // "The page never offered the option" and "the box was there and the selector missed it"
+  // are a flow problem and a selector problem respectively, and they have nothing to do with
+  // each other. Collapsing them puts the next reader on the wrong hunt.
+  assert.equal(keep![1].boxes, 0, 'the candidate count separates a missing page from a missed match');
+  assert.ok(!JSON.stringify(said).includes('hunter2!'), 'no report may carry the password');
+});
+
+test('a box that IS there is ticked, and says so', async () => {
+  const ctx = stubContext();
+  vm.runInContext(REACT_STUB, ctx);
+  vm.runInContext(`
+    var pw = makeInput('');
+    var box = { offsetParent: {}, checked: false, name: 'rememberMe', id: '', clicks: 0,
+                click: function () { this.clicks++; this.checked = true; } };
+    window = {
+      __camphawkRc: { send: function (s, d) { said.push([s, d]); } },
+      __camphawkRcToken: null,
+    };
+    document = {
+      querySelector: function (s) { return /pass/i.test(s) ? pw : null; },
+      querySelectorAll: function (s) { return /checkbox/.test(s) ? [box] : []; },
+    };
+    theBox = box;
+  `, ctx);
+  vm.runInContext(loginScript(), ctx);
+  await vm.runInContext(`window.__chRcLogin("a@b.com", "hunter2!")`, ctx) as Promise<unknown>;
+
+  const said = [...(ctx.said as [string, Record<string, unknown>][])];
+  const keep = said.find((s) => s[0] === 'keep-signed-in');
+  assert.ok(keep, 'the tick must report on the success path too, not only on the miss');
+  assert.equal(keep![1].ticked, true, 'a visible, unchecked, name-matching box must be clicked');
+  // AND THE COUNT MUST REFLECT THE PAGE. Found by mutation: hardcoding `boxes: 0` passed the
+  // whole suite, because the no-box test asserts zero (trivially true) and this one only ever
+  // checked `ticked`. A permanently-zero count reads as "Okta never offered the option" on
+  // EVERY run — the exact branch that sends the next reader to fix the flow instead of the
+  // selector. The count is only worth reporting if it is measured.
+  assert.equal(keep![1].boxes, 1, 'the count must be the real number of candidates on the page');
+  // The report must describe what HAPPENED, not what was intended. Asserting the click
+  // separately is what stops a report that always says `ticked: true`.
+  assert.equal((ctx.theBox as { clicks: number }).clicks, 1, 'the box must actually be clicked once');
+});
+
+test('both call sites name where they were — a tick on the password step is a different fact', () => {
+  // The `at` field is what turns "not ticked" into "not ticked ON THE PASSWORD STEP, having
+  // skipped the identifier" — which is the Android trace. Without it the two call sites are
+  // indistinguishable in the record and the readout cannot say which path the run took.
+  const src = loginScript();
+  assert.match(src, /chKeepSignedIn\('email'\)/, 'the identifier step must name itself');
+  assert.match(src, /chKeepSignedIn\('password'\)/, 'the password step must name itself');
 });

@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { isMidSignIn, rcCloseAction } from '../src/lib/rc-token-liveness';
+import { isMidSignIn, rcCloseAction, keepSignedInReading, signInPathReading } from '../src/lib/rc-token-liveness';
 
 const LIVE = { captured: true, expiresInSec: 3598 };
 const CALLBACK = 'https://www.reservecalifornia.com/login/callback?code=abc&state=xyz';
@@ -172,4 +172,132 @@ test('every close names a reason, and the three are distinguishable', () => {
   for (const reason of ['token', 'settled', 'timeout']) {
     assert.match(src, new RegExp(`closeOnce\\('${reason}'\\)`), reason);
   }
+});
+
+// ── READING THE "KEEP ME SIGNED IN" REPORT ─────────────────────────────────────────────
+//
+// The reading is a pure function for the same reason `closeReasonReading` is: the branch
+// that matters — "there was no checkbox on the page at all" — cannot be reached without a
+// real hand-off in the database, so written inline in `rc-holds-readout.mts` it would ship
+// having never once run. That is the branch the 2026-09-01 Android trace lands on.
+
+test('a tick that happened reads as a tick, and names the step', () => {
+  const r = keepSignedInReading({ ticked: true, boxes: 1, matched: true, at: 'email' });
+  assert.equal(r.level, 'info', 'a successful tick is not a warning');
+  assert.match(r.text, /ticked/);
+  assert.match(r.text, /email/, 'which step ticked it is the difference between the two paths');
+});
+
+test('NO CHECKBOX and A MISSED CHECKBOX are different findings', () => {
+  const none = keepSignedInReading({ ticked: false, boxes: 0, at: 'password' });
+  const missed = keepSignedInReading({ ticked: false, boxes: 3, matched: false, at: 'password' });
+
+  assert.equal(none.level, 'warn');
+  assert.equal(missed.level, 'warn');
+  // The two need OPPOSITE fixes — one is the flow skipping Okta's identifier step, the other
+  // is our selector no longer matching an attribute Okta reworded. A reading that collapsed
+  // them would put the next reader on the wrong hunt, which is the whole cost this file
+  // keeps paying. They must not produce the same sentence.
+  assert.notEqual(none.text, missed.text,
+    'a missing page and a missed match must not read identically');
+  assert.match(none.text, /identifier step/,
+    'the zero case must name WHY the box was absent — that is the Android trace');
+  assert.match(missed.text, /selector/,
+    'the non-zero case must point at the selector, not at the flow');
+  assert.ok(!/selector/.test(none.text),
+    'the zero case must NOT send anyone to widen a selector — there was no box to match');
+});
+
+test('the zero case is stated as a candidate, not as a finding', () => {
+  // Three mechanisms have been guessed at in this area and each cost a test. The 08-09
+  // measurement supports this one and does not establish it: what is established is that
+  // the tick did not happen. The wording has to carry that, or the next reader records an
+  // inference as a fact — which is how the duplicate-facility story got into two files.
+  const none = keepSignedInReading({ ticked: false, boxes: 0, at: 'password' });
+  assert.match(none.text, /likely/,
+    'the consequence is inferred from one prior measurement and must be hedged');
+});
+
+test('an absent count does not read as a missed match', () => {
+  // `boxes` is undefined for a bundle older than this change. Defaulting it to anything
+  // other than "no box" would report a selector problem that nobody can act on, over a run
+  // that never told us. The absent-reading-as-a-negative shape, for the umpteenth time.
+  const r = keepSignedInReading({ ticked: false });
+  assert.match(r.text, /no checkbox on the page at all/,
+    'an unreported count must take the no-box branch, not the missed-match one');
+});
+
+test('the readout actually USES both readings — a pure function nothing calls is inert', () => {
+  // FOUND BY MUTATION 2026-09-01, and it covered the sibling too. Replacing the readout's
+  // `keepSignedInReading(keep)` call with a literal passed the entire suite: every test
+  // above exercises the function directly, so none of them can see the one caller stop
+  // calling it. That is the fix-present-and-inert shape — the version that looks right in
+  // review and changes nothing — and CLAUDE.md records it costing this repo five separate
+  // times, including `6006428`, which claimed a fix it never made.
+  //
+  // `closeReasonReading` had exactly the same exposure and was never guarded either. Both
+  // are pinned here, because the argument for extracting them ("the branch that matters
+  // cannot be reached without a real hand-off") is precisely the argument for why nothing
+  // else will notice if the caller drops them.
+  const src = readFileSync('scripts/rc-holds-readout.mts', 'utf8')
+    // Comments quote these names to explain them; a guard that matched its own explanation
+    // would be satisfied by a file that only talked about calling them.
+    .replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  for (const fn of ['keepSignedInReading', 'closeReasonReading']) {
+    assert.match(src, new RegExp(`${fn}\\(`),
+      `${fn} must be CALLED by the readout, not merely imported`);
+  }
+  // And the result has to reach the screen. Calling it and discarding the answer is the
+  // same outcome with an extra step.
+  assert.match(src, /\$\{r\.level === 'warn' \? '⚠ ' : ''\}\$\{r\.text\}/,
+    'the keep-signed-in reading must be PRINTED, severity and all');
+  assert.match(src, /sign-in window closed: \$\{closeReason\} — \$\{reading\.text\}/,
+    'the close reading must be PRINTED');
+});
+
+// ── WHICH OKTA PATH A RUN TOOK ─────────────────────────────────────────────────────────
+
+test('the two Okta paths are distinguishable, and neither is keyed on platform', () => {
+  const ios = signInPathReading(['injected', 'signin-missing', 'email', 'password', 'submitted']);
+  const android = signInPathReading(['injected', 'signin-open', 'password', 'submitted']);
+  assert.ok(ios && android);
+  assert.match(ios!, /IDENTIFIER-FIRST/);
+  assert.match(android!, /PASSWORD-FIRST/);
+  // The password-first line must NAME the consequence, or it is trivia. It is the
+  // precondition for the keep-signed-in miss directly below it in the readout.
+  assert.match(android!, /Keep me signed in/,
+    'the reading has to say WHY the path matters, not merely which one it was');
+});
+
+test('a run with no sign-in gets NO path reading', () => {
+  // An already-signed-in hand-off never visits Okta. Reporting a path over it would invent
+  // one nobody took — the absent-reading-as-a-negative shape.
+  assert.equal(signInPathReading(['injected', 'session', 'idle', 'token']), null);
+  assert.equal(signInPathReading([]), null);
+});
+
+test('the path is derived from the STAGES, never from the platform', () => {
+  // THE WHOLE POINT. iOS takes the password-first route whenever Okta remembers the account,
+  // so keying this on the device would encode the exact confusion it exists to end — and
+  // would make an Android-only symptom look platform-caused when it is path-caused.
+  const src = readFileSync('src/lib/rc-token-liveness.ts', 'utf8');
+  const at = src.indexOf('export function signInPathReading');
+  assert.ok(at > -1, 'anchor not found');
+  const body = src.slice(at, src.indexOf('\n}', at));
+  assert.doesNotMatch(body, /ios|android|platform/i,
+    'the path reading must not consult the platform');
+  assert.match(body, /stages\.includes\('email'\)/,
+    "the discriminator is whether Okta's identifier page was reached");
+});
+
+test('the readout prints the path ABOVE the keep-signed-in line', () => {
+  // Order is the argument: password-first is the PRECONDITION for the box being absent, so
+  // reading the consequence first leaves the reader deriving the cause backwards.
+  const src = readFileSync('scripts/rc-holds-readout.mts', 'utf8')
+    .replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const p = src.indexOf('signInPathReading(');
+  const k = src.indexOf('keepSignedInReading(');
+  assert.ok(p > -1, 'the readout must call signInPathReading — a reading nothing prints is inert');
+  assert.ok(k > -1 && p < k, 'the path must be printed before the keep-signed-in reading');
 });
