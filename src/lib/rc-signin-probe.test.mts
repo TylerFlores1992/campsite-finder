@@ -80,6 +80,9 @@ interface SessionDetail {
   oktaNames?: string;
   oktaToken?: string;
   oktaExpiresInSec?: number | null;
+  ssoToken?: string;
+  rcToken?: string;
+  rcLoggedIn?: boolean;
 }
 
 /** Run the REAL emitted bundle against a stub localStorage and return its `session` report. */
@@ -239,28 +242,35 @@ test('both report routes accept every field the session probe sends', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Reading the close reason. `token` is the ambiguous one and the stages settle it.
+// 4. Reading the close reason. Since #249 there is one ordinary reason, `session`; every
+//    other reason is a pre-#249 host and is named as the race it was.
 // ---------------------------------------------------------------------------
 
-test('settled and timeout each mean exactly one thing, and neither is a regression', () => {
+test('`session` is the ordinary close and reads as such', () => {
   for (const signedIn of [true, false]) {
-    const settled = closeReasonReading('settled', signedIn);
-    assert.equal(settled.level, 'info');
-    assert.match(settled.text, /own steam|deferred close working/);
-
-    // A REAL FINDING, BUT NOT AN ALARM. Dressing the backstop as a regression is the
-    // cry-wolf failure this repo has fixed three times, most expensively at 07:33 on 08-16.
-    const timeout = closeReasonReading('timeout', signedIn);
-    assert.equal(timeout.level, 'info', 'the backstop firing must not be reported as red');
-    assert.match(timeout.text, /never left/);
+    const r = closeReasonReading('session', signedIn);
+    assert.equal(r.level, 'info');
+    assert.match(r.text, /customerId/, 'it must name the signal RC actually decides on');
   }
 });
 
-test('THE REGRESSION: `token` AFTER a real sign-in is the 08-31 bug returning', () => {
+test('`timeout` and `settled` are pre-#249 hosts racing step two, and say so', () => {
+  // These were read as "the backstop fired" / "the fix working" until 09-01. Both were the
+  // race: `settled` could never fire (RC's post-login navigation is client-side) and
+  // `timeout` fired on both platforms every time. A cached old host can still send them,
+  // and reading one as a new bug would send the next person hunting a defect that is the
+  // one already fixed.
+  for (const reason of ['timeout', 'settled']) {
+    const r = closeReasonReading(reason, true);
+    assert.equal(r.level, 'warn', reason);
+    assert.match(r.text, /pre-#249|step two/, reason);
+  }
+});
+
+test('`token` AFTER a real sign-in cut step two off — a pre-#240 host', () => {
   const r = closeReasonReading('token', true);
   assert.equal(r.level, 'warn', 'this is the one case that must stand out');
-  assert.match(r.text, /isMidSignIn/,
-    'and it must name the mechanism, because the symptom is invisible everywhere else');
+  assert.match(r.text, /step two|cut off/);
 });
 
 test('but `token` with NO sign-in is the already-signed-in path and is fine', () => {
@@ -269,16 +279,16 @@ test('but `token` with NO sign-in is the already-signed-in path and is fine', ()
   // fires on the normal path is one nobody reads on the morning it is true.
   const r = closeReasonReading('token', false);
   assert.equal(r.level, 'info');
-  assert.match(r.text, /already-signed-in|unchanged/);
+  assert.match(r.text, /already-signed-in/);
 });
 
 test('an unrecognised reason is reported as itself, never folded into a known one', () => {
-  // A bundle older than #240 sends no reason at all, and a later one may send a fourth.
-  // Guessing which known case it resembles is how an absent reading becomes a negative.
+  // A host may one day send a fifth reason. Guessing which known case it resembles is how
+  // an absent reading becomes a negative.
   const r = closeReasonReading('something-new', true);
   assert.equal(r.level, 'info');
-  assert.doesNotMatch(r.text, /isMidSignIn|deferred close working/,
-    'an unknown reason must not borrow another reading verdict');
+  assert.doesNotMatch(r.text, /customerId|step two|pre-#249/,
+    'an unknown reason must not borrow another reading\'s verdict');
 });
 
 test('the readout ROUTES through the shared reading rather than keeping its own copy', () => {
@@ -339,4 +349,211 @@ test('the readout scores the LAST session on RC OWN origin, not the first', () =
     'the FIRST session report is pre-sign-in and would report the bug on every healthy run');
   assert.match(block, /www\.reservecalifornia\.com/,
     'and it must be scoped to RC own origin, or it scores the wrong localStorage');
+});
+
+// ---------------------------------------------------------------------------
+// 5. THE CENSUS READS THE KEYS RC ACTUALLY DECIDES ON (2026-09-01, #249).
+//
+//    Read out of RC's bundle: `isLoggedIn: !!localStorage.getItem("customerId")`; the Okta
+//    JWT is `ssoAccessToken` (step one) and RC's own token is `accessToken` (step two, beside
+//    `customerId`); and okta-auth-js's store is wrapped by secure-ls under `@secure.s.`, so a
+//    prefix test on `okta-` never saw it. Every reading before this change was blind to all
+//    three, which is how two hand-offs with opposite outcomes produced identical censuses.
+// ---------------------------------------------------------------------------
+
+test('rcLoggedIn is customerId, as a boolean, and nothing else', () => {
+  const signedIn = probe({ ssoAccessToken: jwt(3500), accessToken: jwt(3500), customerId: 'MTIzNDU=' });
+  assert.equal(signedIn.detail.rcLoggedIn, true);
+  assert.ok(!signedIn.wire.includes('MTIzNDU='), 'the customer id VALUE must never cross the wire');
+
+  // THE 09-01 STATE: Okta's token present, RC's absent, customerId absent. This is the
+  // state that renders signed out over a locked campsite, and `storedToken: "jwt"` alone
+  // called it signed in.
+  const cutOff = probe({ ssoAccessToken: jwt(3500) });
+  assert.equal(cutOff.detail.rcLoggedIn, false);
+  assert.equal(cutOff.detail.storedToken, 'jwt', 'the old field still reads jwt — which is why it could not discriminate');
+});
+
+test('the two tokens are reported separately — step one and step two are different facts', () => {
+  const cutOff = probe({ ssoAccessToken: jwt(3500) });
+  assert.equal(cutOff.detail.ssoToken, 'jwt');
+  assert.equal(cutOff.detail.rcToken, 'none');
+
+  const full = probe({ ssoAccessToken: jwt(3500), accessToken: jwt(3400), customerId: '1' });
+  assert.equal(full.detail.ssoToken, 'jwt');
+  assert.equal(full.detail.rcToken, 'jwt');
+
+  const out = probe({});
+  assert.equal(out.detail.ssoToken, 'none');
+  assert.equal(out.detail.rcToken, 'none');
+  assert.equal(out.detail.rcLoggedIn, false);
+});
+
+test("RC's real okta store is under `@secure.s.` and is COUNTED, not skipped", () => {
+  // `customerLogOut` in RC's bundle removes `@secure.s.okta-token-storage` and
+  // `@secure.s.okta-cache-storage`. A prefix test saw neither.
+  const { detail } = probe({
+    ssoAccessToken: jwt(3500),
+    'okta-original-uri-storage': '{"uri":"/park/690/612"}',
+    '@secure.s.okta-token-storage': 'U2FsdGVkX1+' + 'x'.repeat(200),
+    '@secure.s.okta-cache-storage': 'U2FsdGVkX1+' + 'y'.repeat(60),
+  });
+  assert.equal(detail.oktaKeys, 3, 'all three okta keys must be counted, wherever the prefix sits');
+  assert.match(detail.oktaNames ?? '', /@secure\.s\.okta-token-storage/);
+});
+
+test('an ENCODED token store is a third shape — present and unreadable, never `none`', () => {
+  // secure-ls encodes its values, so the JWT regex cannot match. Reporting that as `none`
+  // is the breadcrumb reading applied to the wrong key: it printed "the SDK never finished
+  // its half" over a store that was populated. `encoded` says what it is.
+  const { detail } = probe({
+    ssoAccessToken: jwt(3500),
+    '@secure.s.okta-token-storage': 'U2FsdGVkX1+' + 'x'.repeat(200),
+  });
+  assert.equal(detail.oktaToken, 'encoded');
+
+  // But the breadcrumb alone is still `none` — one key and no token store is not a session.
+  const crumb = probe({ ssoAccessToken: jwt(3500), 'okta-original-uri-storage': '/park/1/2' });
+  assert.equal(crumb.detail.oktaToken, 'none');
+  assert.equal(crumb.detail.oktaKeys, 1);
+});
+
+test('a readable JWT in the store still wins over `encoded`', () => {
+  const live = jwt(3500);
+  const { detail } = probe({
+    'okta-token-storage': JSON.stringify({ accessToken: { accessToken: live } }),
+    '@secure.s.okta-cache-storage': 'U2FsdGVkX1+' + 'z'.repeat(100),
+  });
+  assert.equal(detail.oktaToken, 'jwt', 'a decodable token is the stronger reading');
+});
+
+// ---------------------------------------------------------------------------
+// 6. THE REPORTER WATCHES customerId AND REPORTS IT — the signal the host closes on.
+//    Behavioural: the real emitted reporter runs in a sandbox with a fake clock, and the
+//    assertions are on what it SENDS, not on the text of the source.
+// ---------------------------------------------------------------------------
+
+import { reporter } from './rc-precart-script';
+import { mock } from 'node:test';
+
+function reporterPage(store: Record<string, string>) {
+  const sent: Array<{ stage: string; detail: Record<string, unknown> | null }> = [];
+  const data: Record<string, string> = { ...store };
+  const ls = {
+    get length() { return Object.keys(data).length; },
+    key: (i: number) => Object.keys(data)[i] ?? null,
+    getItem: (k: string) => (Object.prototype.hasOwnProperty.call(data, k) ? data[k] : null),
+    setItem: (k: string, v: string) => { data[k] = v; },
+    removeItem: (k: string) => { delete data[k]; },
+  };
+  const created: Record<string, unknown>[] = [];
+  const byId: Record<string, Record<string, unknown>> = {};
+  const listeners: Record<string, ((e: unknown) => void)[]> = {};
+  const ctx: Record<string, unknown> = {
+    localStorage: ls,
+    sessionStorage: { getItem: () => null },
+    location: { origin: 'https://www.reservecalifornia.com', pathname: '/park/690/612', hash: '' },
+    document: {
+      getElementById: (id: string) => byId[id] ?? null,
+      createElement: () => {
+        const el: Record<string, unknown> = {
+          setAttribute(_k: string, _v: string) {}, remove() { delete byId[String(el.id)]; },
+        };
+        created.push(el); return el;
+      },
+      body: { appendChild: (el: Record<string, unknown>) => { byId[String(el.id)] = el; } },
+      documentElement: {},
+    },
+    console: { log: () => {}, error: () => {} },
+    // The bridge: the real reporter posts JSON strings through it.
+    cordova_iab: { postMessage: (s: string) => { const r = JSON.parse(s); sent.push({ stage: r.stage, detail: r.detail }); } },
+    // UNREF'D, or the reporter's 500ms poll keeps the test process alive for ever — a run
+    // that never exits is not a failing test, it is a hung suite.
+    setInterval: (fn: () => void, ms: number) => {
+      const h = setInterval(fn, ms) as unknown as { unref?: () => void };
+      h.unref?.();
+      return h;
+    },
+    clearInterval, setTimeout, clearTimeout,
+    atob: (x: string) => Buffer.from(x, 'base64').toString('binary'),
+    JSON, Date, Math, String, Object, Array, Number,
+    addEventListener: (e: string, cb: (x: unknown) => void) => { (listeners[e] ??= []).push(cb); },
+  };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(reporter(), ctx);
+  const fire = (e: string, ev: unknown) => (listeners[e] ?? []).forEach((cb) => cb(ev));
+  // `window` INSIDE the context is vm's contextified proxy, not the raw sandbox object — so
+  // a message whose `source` is the raw `ctx` fails the reporter's `e.source !== window`
+  // guard, exactly as a cross-frame message should. Found by running it: the token report
+  // never arrived and the listener was provably registered. Fire with the inner window.
+  const win = vm.runInContext('window', ctx) as unknown;
+  return { sent, data, fire, byId, win };
+}
+
+test('rc-session is reported on install, from customerId, as a boolean', () => {
+  const out = reporterPage({ ssoAccessToken: 'x' });
+  const first = out.sent.find((r) => r.stage === 'rc-session');
+  assert.ok(first, 'the host closes on this report — it must be sent without being asked');
+  assert.equal(first!.detail?.loggedIn, false);
+
+  const signed = reporterPage({ customerId: 'MTIz' });
+  const s = signed.sent.find((r) => r.stage === 'rc-session');
+  assert.equal(s?.detail?.loggedIn, true, 'a page that boots signed in must say so at once — the 08-12 stranded case');
+  assert.ok(!JSON.stringify(signed.sent).includes('MTIz'), 'the id value never crosses the wire');
+});
+
+test('rc-session is re-reported when customerId APPEARS — once, not every tick', (t) => {
+  t.after(() => mock.timers.reset());
+  mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'] });
+  const out = reporterPage({ ssoAccessToken: 'x' });
+  assert.equal(out.sent.filter((r) => r.stage === 'rc-session').length, 1);
+
+  mock.timers.tick(2_000);
+  assert.equal(out.sent.filter((r) => r.stage === 'rc-session').length, 1, 'no change, no report');
+
+  // Step two lands: RC writes customerId.
+  out.data.customerId = 'MTIz';
+  mock.timers.tick(1_000);
+  const rc = out.sent.filter((r) => r.stage === 'rc-session');
+  assert.equal(rc.length, 2, 'the flip must be reported exactly once');
+  assert.equal(rc[1].detail?.loggedIn, true);
+
+  mock.timers.tick(30_000);
+  assert.equal(out.sent.filter((r) => r.stage === 'rc-session').length, 2, 'and never again while unchanged');
+});
+
+test('a token with no customerId for 30s shows the hold notice and reports it — and never closes', (t) => {
+  t.after(() => mock.timers.reset());
+  mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'] });
+  const out = reporterPage({ ssoAccessToken: 'x' });
+  // rc-inject broadcasts the captured token as a window message.
+  out.fire('message', { source: out.win, data: { __camphawk_token: 'eyJhbGciOiJSUzI1NiJ9.eyJleHAiOjk5OTk5OTk5OTl9.sig' } });
+  assert.ok(out.sent.some((r) => r.stage === 'token'), 'the token must have been seen');
+
+  mock.timers.tick(20_000);
+  assert.ok(!out.sent.some((r) => r.stage === 'settle-timeout'), 'too early for a notice');
+  assert.ok(!out.byId['camphawk-rc-hold'], 'no notice yet');
+
+  mock.timers.tick(12_000);
+  const st = out.sent.find((r) => r.stage === 'settle-timeout');
+  assert.ok(st, 'the stalled sign-in must be reported');
+  assert.equal(st!.detail?.held, true, 'HELD — the window is not closed, the user is told');
+  assert.ok(out.byId['camphawk-rc-hold'], 'the notice must be on the page, where the user is looking');
+  assert.equal(out.sent.filter((r) => r.stage === 'settle-timeout').length, 1);
+
+  // Step two finally lands: the notice goes and the session is reported.
+  out.data.customerId = 'MTIz';
+  mock.timers.tick(1_000);
+  assert.ok(!out.byId['camphawk-rc-hold'], 'the notice must be removed once RC finishes');
+  assert.equal(out.sent.filter((r) => r.stage === 'rc-session' && r.detail?.loggedIn === true).length, 1);
+});
+
+test('no token, no notice — a signed-out page that nobody is signing into is not "stalled"', (t) => {
+  t.after(() => mock.timers.reset());
+  mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'] });
+  const out = reporterPage({});
+  mock.timers.tick(120_000);
+  assert.ok(!out.sent.some((r) => r.stage === 'settle-timeout'));
+  assert.ok(!out.byId['camphawk-rc-hold']);
 });

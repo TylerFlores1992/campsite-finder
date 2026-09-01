@@ -295,7 +295,13 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
           + 'over — releasing now would put it back on the open market for anyone.',
         );
       } else {
-        setRcCheck('verified');
+        // NOT `verified` — NOT ANY MORE (2026-09-01, #249). A live Okta token is step ONE of
+        // RC's sign-in; `verified` used to flip here and was the token-only check the owner
+        // objected to, and it was wrong in the way that matters: a token exists in exactly
+        // the state where RC renders signed out (step two cut off). The gate now flips on
+        // `rc-session { loggedIn: true }` below, which is RC's own `customerId`. The token
+        // still carries the deadline, because expiry is a separate fact the gate needs.
+        //
         // The DEADLINE, so a long pause on this screen is counted against it. `null` when we
         // could not decode one — the gate must not act on a number it does not have.
         setTokenDeadline(secs != null ? Date.now() + secs * 1000 : null);
@@ -306,6 +312,26 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
         setLoginStage(null);
         setLoginError(null);
       }
+    }
+    // RC'S OWN VERDICT, AND THE ONLY THING THAT FLIPS THE GATE (2026-09-01). `loggedIn` is
+    // `!!localStorage.customerId` on RC's origin — the expression RC's SPA boots
+    // `isLoggedIn` from, and the key only step two of its sign-in writes. This is the
+    // owner's "verify they're in fact signed in" done against the fact RC itself uses,
+    // rather than against a token RC has not finished with. Strictly `true`: a bundle older
+    // than #249 sends no such stage and must not flip anything.
+    if (r.stage === 'rc-session' && (r.detail as { loggedIn?: unknown } | null)?.loggedIn === true) {
+      setRcCheck('verified');
+      setLoginStage(null);
+      setLoginError(null);
+    }
+    // RC IS STILL FINISHING, AND THE WINDOW HAS SAID SO TO THE USER. The bundle shows its own
+    // notice inside the webview (that is where the user is looking); this mirrors it on the
+    // screen underneath for when they come back. Nothing is closed and nothing is refused.
+    if (r.stage === 'settle-timeout') {
+      setLoginError(
+        'ReserveCalifornia is still finishing your sign-in. In the RC window, wait until your '
+        + 'name shows at the top, then tap Done.',
+      );
     }
     // THE SIGN-IN'S OWN STAGES. Read from the same channel as everything else, so what the
     // form shows and what is recorded against the hold cannot disagree — the rule that made

@@ -28,7 +28,7 @@
  * extra morning of holds, silently.
  */
 import { query } from '../src/lib/db/client';
-import { closeReasonReading, keepSignedInReading, signInPathReading } from '../src/lib/rc-token-liveness';
+import { closeReasonReading, keepSignedInReading, signInPathReading, rcSessionReading } from '../src/lib/rc-token-liveness';
 
 const hours = Number(process.argv.find((a) => a.startsWith('--hours='))?.split('=')[1] ?? 24);
 
@@ -314,15 +314,12 @@ if (handed.length) {
       console.log(`      cart not read back: ${unverified.reason}`);
     }
 
-    // WHY THE SIGN-IN WINDOW CLOSED (2026-08-31, #240). The bug was that we destroyed the
-    // webview ~2s in, while RC was still on `/login/callback` completing its OAuth
-    // exchange — so the session authenticated its own API calls and rendered SIGNED OUT.
-    // Every close names its reason now, and this is where that reason gets read.
-    //
-    // `token` IS AMBIGUOUS AND THE STAGES DISAMBIGUATE IT. With no sign-in before it, the
-    // user was already signed in and an immediate close is the correct, unchanged path.
-    // With a full sign-in before it, `isMidSignIn` has stopped matching — RC has moved its
-    // callback path and the 08-31 bug is back with nothing else red.
+    // WHY THE SIGN-IN WINDOW CLOSED. Since #249 (2026-09-01) the only ordinary reason is
+    // `session` — RC's own SPA reported `customerId` present. `token`, `settled` and
+    // `timeout` are pre-#249 hosts, each a race against RC's step-two request, and the
+    // reading names them as such rather than folding them in. `token` is still read against
+    // the stages: with no sign-in in the run it was the (accidentally safe) already-signed-in
+    // path; after a real sign-in it cut step two off.
     const closeReason = (h.client_reports ?? [])
       .findLast((r) => r.stage === 'close')?.detail?.reason as string | undefined;
     if (closeReason) {
@@ -380,6 +377,7 @@ if (handed.length) {
     type SessionDetail = {
       at?: string; oktaToken?: string; oktaKeys?: number; oktaNames?: string;
       oktaExpiresInSec?: number | null; storedToken?: string;
+      ssoToken?: string; rcToken?: string; rcLoggedIn?: boolean;
     };
     const sessions = (h.client_reports ?? [])
       .filter((r) => r.stage === 'session')
@@ -389,6 +387,16 @@ if (handed.length) {
     // so it is the fallback rather than being silently dropped.
     const sess = sessions.findLast((d) => (d.at ?? '').includes('www.reservecalifornia.com'))
       ?? sessions.findLast((d) => d.at === undefined);
+    // RC'S OWN LOGIN STATE, FIRST — it is the fact the header and the cart page render from
+    // (2026-09-01). Taken from the last `rc-session` report if the bundle sent one, else from
+    // the census; both carry `rcLoggedIn` = `!!customerId` on RC's origin.
+    const lastRcSession = (h.client_reports ?? [])
+      .findLast((r) => r.stage === 'rc-session')?.detail as { loggedIn?: boolean } | undefined;
+    const rcRead = rcSessionReading({
+      rcLoggedIn: typeof lastRcSession?.loggedIn === 'boolean' ? lastRcSession.loggedIn : sess?.rcLoggedIn,
+      ssoToken: sess?.ssoToken, rcToken: sess?.rcToken,
+    });
+    if (rcRead) console.log(`      ${rcRead.level === 'warn' ? '⚠ ' : ''}${rcRead.text}`);
     if (sess && sess.oktaToken !== undefined) {
       const live = typeof sess.oktaExpiresInSec === 'number' && sess.oktaExpiresInSec > 0;
       if (sess.oktaToken === 'jwt' && live) {
@@ -396,6 +404,8 @@ if (handed.length) {
           + ' so a signed-out-looking page is NOT a missing session');
       } else if (sess.oktaToken === 'jwt') {
         console.log(`      ⚠ okta store: a token that expired ${Math.abs(sess.oktaExpiresInSec ?? 0)}s ago`);
+      } else if (sess.oktaToken === 'encoded') {
+        console.log(`      okta store: ${sess.oktaKeys} key(s), token store present but ENCODED (secure-ls) — populated, unreadable by design`);
       } else {
         console.log(`      ⚠ okta store: NO token in ${sess.oktaKeys} okta- key(s)`
           + `${sess.oktaNames ? ` (${sess.oktaNames})` : ''}`

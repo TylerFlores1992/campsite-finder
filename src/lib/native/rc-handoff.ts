@@ -118,7 +118,7 @@
 
 // The one definition of "is this token evidence of a usable session?", shared with the
 // claim gate. NOT a native plugin, so a module-scope import is fine here.
-import { rcCloseAction, isMidSignIn } from '@/lib/rc-token-liveness';
+import { rcCloseAction } from '@/lib/rc-token-liveness';
 
 export interface RcHandoff {
   /** The RC page to land on — the loop, never the park or the cart. See lib/booking-url. */
@@ -286,18 +286,17 @@ const IAB_OPTIONS = [
   'closebuttoncaption=Done',
 ].join(',');
 
-/**
- * How long the sign-in window may sit on Okta's callback after a live token before we close
- * it anyway. See the deferred close in `open` — this bounds "wait for RC to finish", so a
- * callback that never resolves cannot strand the user on a page with no way back.
- *
- * Ten seconds: RC's own bootstrap off the callback is a redirect and an API call or two, so
- * a healthy one is far inside this and closes on `settled` long before the timer. It is a
- * backstop for the pathological case, not a delay anybody should normally experience — and
- * it is only ever reached on a sign-in that already succeeded, never on the cart path, where
- * `closeOnToken` is false.
+/*
+ * THERE IS NO SETTLE TIMER ANY MORE (2026-09-01, #249). One lived here from #240 to #249: a
+ * 10s fuse armed on the first live token while on `/login/callback`. It was a race against
+ * RC's own step-two request (`GetSSOLoggedInUser`), which `token captured` marks the START
+ * of — and both platforms lost it every time (`close: timeout`, never `settled`, because RC's
+ * post-login navigation is client-side). The window now closes on RC's own signal,
+ * `rc-session { loggedIn: true }`, and on nothing else; see `rcCloseAction`. A sign-in that
+ * never finishes leaves the window OPEN with a notice, which is the configuration the 08-31
+ * hand bisect proved works. Do not put a timer back "as a backstop" — the backstop was the
+ * defect.
  */
-const SIGN_IN_SETTLE_MS = 10_000;
 
 /**
  * How long the webview may sit with NO `loadstop` at all before we take it down ourselves.
@@ -364,29 +363,18 @@ async function injectableWebView(): Promise<null | {
         executeScript: (d: { code: string }, cb?: (r: unknown) => void) => void;
         close?: () => void;
       };
-      // WHERE THE WEBVIEW IS, so `closeOnToken` can ask whether RC has FINISHED with the
-      // token as well as whether the token is real. See isMidSignIn for the trace that
-      // made this necessary. Seeded with the URL we opened, so the already-signed-in path
-      // — no Okta, no callback — has a definite answer from the first message onward and
-      // never waits. Only a NON-EMPTY loadstop URL replaces it: the plugin can report an
-      // empty one, and an empty string would throw away the last thing we did know.
-      let lastUrl = url;
-      let settleTimer: ReturnType<typeof setTimeout> | null = null;
       let closedAlready = false;
       // HAS THIS WEBVIEW EVER RENDERED ANYTHING? The load watchdog and the `loaderror` arm
       // both turn on this one fact, and they need opposite things from it: the watchdog only
       // guards the FIRST load, and `loaderror` only acts BEFORE one. See each for why.
       let everLoaded = false;
-      // ONE closer, so every path clears the timer and every path names its reason. Three
-      // reasons, and they are the whole diagnostic: `token` is the ordinary already-signed-in
-      // close, `settled` is RC leaving the callback under its own steam (the fix working),
-      // and `timeout` is RC never leaving it. A hand-off that still fails will say which of
-      // the three it took, which is what tells the next reader whether this was the right
-      // half of the problem.
-      const closeOnce = (reason: 'token' | 'settled' | 'timeout' | 'never-loaded' | 'load-error') => {
+      // ONE closer, and every path names its reason. `session` is the ordinary close — RC's
+      // own SPA reported `customerId` present. The other two are the load watchdog. A
+      // hand-off that still fails will say which it took; `closeReasonReading` turns the
+      // reason into a sentence, and knows the pre-#249 reasons an old cached host can send.
+      const closeOnce = (reason: 'session' | 'never-loaded' | 'load-error') => {
         if (closedAlready) return;
         closedAlready = true;
-        if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
         onReport?.({ n: 0, stage: 'close', detail: { reason } });
         try { ref.close?.(); } catch { /* the user can close it themselves */ }
       };
@@ -413,50 +401,25 @@ async function injectableWebView(): Promise<null | {
           if (!data || data.camphawk !== 'rc-precart') return;
           const r = data as unknown as RcReport;
           onReport(r);
-          // CLOSE ONCE WE HAVE WHAT WE CAME FOR — sign-in only.
+          // CLOSE WHEN RC SAYS IT IS SIGNED IN — sign-in path only.
           //
           // The caller's screen is UNDERNEATH this webview, so a user who was already signed
-          // in got a token captured instantly, the gate flipped, and they saw none of it:
-          // they were left sitting on RC's home page with nothing telling them to go back.
-          // Observed 2026-08-12 on the first real run. The state changed correctly and the
-          // interface never said so, which is indistinguishable from it not working.
+          // in must not be left sitting on RC's home page with nothing telling them to go back
+          // (observed 2026-08-12). That case closes at once: RC boots with `customerId`
+          // present and the bundle reports `rc-session { loggedIn: true }` on install.
           //
-          // NEVER on the cart path. There `closeOnToken` is false, because the token is the
-          // MIDDLE of that job — closing on it would kill the webview before the two cart
-          // POSTs it exists to make.
+          // NEVER on the cart path. There `closeOnToken` is false, because the window IS the
+          // job — closing it for any reason kills the two cart POSTs it exists to make.
           //
-          // PRESENCE IS NOT LIVENESS. This tested `captured` alone until 2026-08-24, so a
-          // STALE token — the ordinary state here, since it comes from the SERVER and no
-          // local clear reaches it — closed the sign-in window in under a second and read
-          // as "auto login worked". The credentials were never typed, and the site was
-          // then handed over against no session at all. The gate next door had learned
-          // this on 08-21 (#152) and this sibling had not. `mayCloseOnToken` is the one
-          // definition both now share, so this window closes exactly when the gate would
-          // flip to `verified` — never on `expired`, which is what has to stay open so the
-          // sign-in can run, and never on `unknown`.
-          //
-          // AND NOT WHILE RC IS STILL FINISHING (2026-08-31). A live token is necessary and
-          // was never sufficient: on the `/login/callback` page RC's SPA is still completing
-          // the OAuth exchange, and closing there left a session that authenticated its own
-          // API calls while rendering SIGNED OUT — no name in the header, and a cart the
-          // owner was told was theirs and could not open. `isMidSignIn` carries the trace
-          // and the hand-bisect that established it.
-          const action = rcCloseAction({
-            closeOnToken, stage: r.stage, detail: r.detail,
-            currentUrl: lastUrl, timerArmed: settleTimer !== null,
-          });
-          if (action === 'close') {
-            closeOnce('token');
-          } else if (action === 'arm' && !closedAlready) {
-            // THE TIMEOUT IS NOT OPTIONAL. "Wait for RC to leave the callback" with no bound
-            // is the 2026-08-12 stranded-when-it-worked bug by another door: if RC never
-            // leaves, the window never closes and the user is left on a page with nothing
-            // telling them to go back. Bounded, the worst case is a slow close.
-            settleTimer = setTimeout(() => {
-              settleTimer = null;
-              closeOnce('timeout');
-            }, SIGN_IN_SETTLE_MS);
-          }
+          // NOT ON THE TOKEN, live or otherwise (2026-09-01). Three generations of this handler
+          // closed on `token captured` in some form, and all three raced RC's step-two request
+          // — the token is captured off that very request's header, so "token captured" is
+          // the moment step two LEAVES. `rcCloseAction` carries the mechanism, read out of
+          // RC's own bundle. Closing before `customerId` is written leaves RC rendering signed
+          // out over a locked campsite, on Android every time (its plugin kills the in-flight
+          // request with `about:blank`) and on iOS whenever step two is slow.
+          const action = rcCloseAction({ closeOnToken, stage: r.stage, detail: r.detail });
+          if (action === 'close') closeOnce('session');
         });
         // Host-side facts the page cannot report about itself. `n: 0` marks them as ours;
         // the page's own reports are numbered from 1, so a gap means a dropped message
@@ -476,12 +439,10 @@ async function injectableWebView(): Promise<null | {
             closeOnce('load-error');
           }
         });
-        // A USER-DRIVEN CLOSE ENDS THE DEFERRAL TOO. Without this a pending timer fires on a
-        // webview that is already gone — calling `close()` on a dead ref and, worse, emitting
-        // a `close` report claiming a reason that never happened.
+        // A USER-DRIVEN CLOSE disarms the load watchdog and marks the window gone, so nothing
+        // later calls `close()` on a dead ref or reports a close that never happened.
         ref.addEventListener('exit', () => {
           closedAlready = true;
-          if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
           disarmLoadTimer();
           onReport({ n: 0, stage: 'closed', detail: null });
         });
@@ -504,10 +465,6 @@ async function injectableWebView(): Promise<null | {
         everLoaded = true;
         disarmLoadTimer();
         const at = String((ev as { url?: string } | undefined)?.url ?? '');
-        if (at) lastUrl = at;
-        // RC HAS LEFT THE SIGN-IN FLOW — this is the signal the deferred close waits for, and
-        // it is RC's own rather than a guess at how long its bootstrap takes.
-        if (settleTimer && at && !isMidSignIn(at)) closeOnce('settled');
         // A SECOND, ONE-OFF INJECTION — this is where a credential goes, and the reason it is
         // separate from `code`.
         //

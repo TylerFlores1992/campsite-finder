@@ -1,27 +1,28 @@
 /**
  * WHEN MAY THE SIGN-IN WEBVIEW CLOSE?
  *
- * The 2026-08-31 bug: `closeOnToken` fired on the first live token, which arrives while RC
- * is still on Okta's `/login/callback` finishing its own OAuth exchange. Killing the webview
- * there left a session that authenticated its own API calls while rendering SIGNED OUT — no
- * name in the header, and a cart the owner had been told was theirs and could not open.
+ * Three generations of this decision closed on the TOKEN in some form, and all three raced
+ * RC's own second sign-in step. Read out of RC's bundle on 2026-09-01: its sign-in writes
+ * `ssoAccessToken` (the JWT we capture) on Okta's callback with `isLoggedIn: false`, then
+ * awaits `GetSSOLoggedInUser`, and only that RESPONSE writes `customerId` — the one key RC
+ * boots `isLoggedIn` from. The token is captured off step two's own request header, so
+ * "token captured" is the instant step two LEAVES. #240's 10s timer on `/login/callback` was
+ * the same race with a longer fuse; `settled` could never fire (client-side navigation) and
+ * both platforms closed on `timeout`. Android's plugin kills the in-flight request on close
+ * (`about:blank`); iOS's only dismisses the view controller. That is the whole platform story.
  *
- * Bisected by hand in the app: the ADMIN probe passes no `closeOnToken`, so its window stays
- * open — a manual sign-in there showed the name, and it SURVIVED a close and a reopen. So
- * close/reopen is innocent and the timing is the variable.
- *
- * These guard the decision (`rcCloseAction`) and, separately, that the hand-off actually
- * USES it. Both halves are needed: this repo has shipped a correct pure function with an
- * inert call site more than once, and a guard on the function alone would pass against it.
+ * The rule now: close on `rc-session { loggedIn: true }` — RC's own `customerId` — and on
+ * NOTHING else. No timer. These guard the decision (`rcCloseAction`), the readings, and
+ * that the host actually USES it. `rc-session-close.test.mts` drives the seam behaviourally.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { isMidSignIn, rcCloseAction, keepSignedInReading, signInPathReading } from '../src/lib/rc-token-liveness';
+import {
+  rcCloseAction, keepSignedInReading, signInPathReading, rcSessionReading,
+} from '../src/lib/rc-token-liveness';
 
 const LIVE = { captured: true, expiresInSec: 3598 };
-const CALLBACK = 'https://www.reservecalifornia.com/login/callback?code=abc&state=xyz';
-const PARK = 'https://www.reservecalifornia.com/park/690/612';
 
 /** Strip comments — a guard must never pass or fail on the prose explaining it. */
 function code(path: string): string {
@@ -30,86 +31,44 @@ function code(path: string): string {
     .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 }
 
-// ── isMidSignIn ────────────────────────────────────────────────────────────────────────
-
-test("Okta's callback is mid sign-in — the page the 08-31 bug closed on", () => {
-  assert.equal(isMidSignIn(CALLBACK), true);
-  // Without the query too: the OAuth code must never be needed to make this decision.
-  assert.equal(isMidSignIn('https://www.reservecalifornia.com/login/callback'), true);
-});
-
-test("Okta's own host is mid sign-in whatever the path", () => {
-  assert.equal(isMidSignIn('https://signin.reservecalifornia.com/oauth2/v1/authorize'), true);
-  assert.equal(isMidSignIn('https://signin.reservecalifornia.com/'), true);
-});
-
-test("RC's ordinary pages are NOT mid sign-in, so the signed-in path still closes at once", () => {
-  // This is the 2026-08-12 stranded-when-it-worked case: already signed in, token captured
-  // on RC's first API call, no Okta and no callback. It must close instantly, as it did
-  // before this change — a version that waited here would reintroduce that bug for everyone.
-  assert.equal(isMidSignIn(PARK), false);
-  assert.equal(isMidSignIn('https://www.reservecalifornia.com/'), false);
-  assert.equal(isMidSignIn('https://www.reservecalifornia.com/Customers/ShoppingCart'), false);
-});
-
-test('an unrecognisable URL is NOT mid sign-in — narrow on purpose', () => {
-  // The plugin's loadstop event is the source and it can report an empty string. Waiting on
-  // anything unparseable would make every already-signed-in hand-off sit through the settle
-  // timeout. The cost of narrow is recorded in the module: if RC moves its callback path
-  // this silently stops matching, and the `close` report's reason is what would show it.
-  assert.equal(isMidSignIn(''), false);
-  assert.equal(isMidSignIn('not a url'), false);
-});
-
 // ── rcCloseAction ──────────────────────────────────────────────────────────────────────
 
-test('a live token on the callback ARMS rather than closing', () => {
+test("RC reporting signed in closes the window — that is the whole rule", () => {
   assert.equal(rcCloseAction({
-    closeOnToken: true, stage: 'token', detail: LIVE, currentUrl: CALLBACK, timerArmed: false,
-  }), 'arm');
-});
-
-test('a live token anywhere else closes immediately', () => {
-  assert.equal(rcCloseAction({
-    closeOnToken: true, stage: 'token', detail: LIVE, currentUrl: PARK, timerArmed: false,
+    closeOnToken: true, stage: 'rc-session', detail: { loggedIn: true, at: 'https://www.reservecalifornia.com/park/690/612' },
   }), 'close');
 });
 
-test('the timer is armed ONCE — a rebroadcast must not push the deadline out', () => {
-  // rc-inject.js replays the token on every RC API call, sixty-plus during a bootstrap. If
-  // each one re-armed, the timeout could never fire and "wait for RC" would be unbounded.
-  assert.equal(rcCloseAction({
-    closeOnToken: true, stage: 'token', detail: LIVE, currentUrl: CALLBACK, timerArmed: true,
-  }), 'wait');
+test('RC reporting NOT signed in never closes, however live the token is', () => {
+  // The 09-01 state exactly: an Okta token present, `customerId` absent. Closing here is the
+  // defect — RC renders signed out over a locked campsite.
+  assert.equal(rcCloseAction({ closeOnToken: true, stage: 'rc-session', detail: { loggedIn: false } }), 'wait');
 });
 
-test('the cart path never closes on a token, callback or not', () => {
-  // closeOnToken is false there because the token is the MIDDLE of that job — closing on it
-  // would kill the webview before the two RC cart POSTs it exists to make.
-  for (const currentUrl of [CALLBACK, PARK]) {
-    assert.equal(rcCloseAction({
-      closeOnToken: false, stage: 'token', detail: LIVE, currentUrl, timerArmed: false,
-    }), 'wait', currentUrl);
+test('a LIVE token is not a reason to close — on any page', () => {
+  // Every previous generation closed on this. A live token is step ONE of RC's sign-in, and
+  // it is captured off step two's own request, so closing on it races step two's response.
+  assert.equal(rcCloseAction({ closeOnToken: true, stage: 'token', detail: LIVE }), 'wait');
+});
+
+test('the signal is STRICTLY true — a missing or malformed field never closes', () => {
+  // A bundle older than #249 sends no `rc-session` at all; a malformed one is not a reading.
+  for (const detail of [null, undefined, {}, { loggedIn: 'true' }, { loggedIn: 1 }, { loggedIn: null }]) {
+    assert.equal(rcCloseAction({ closeOnToken: true, stage: 'rc-session', detail }), 'wait', JSON.stringify(detail));
   }
 });
 
-test('an expired or unreadable token never closes, on any page', () => {
-  // The 2026-08-24 failure: a STALE token closed the window in under a second and read as
-  // "auto login worked" with no credential ever typed.
-  for (const detail of [{ captured: true, expiresInSec: 0 }, { captured: true }, null]) {
-    for (const currentUrl of [CALLBACK, PARK]) {
-      assert.equal(rcCloseAction({
-        closeOnToken: true, stage: 'token', detail, currentUrl, timerArmed: false,
-      }), 'wait', `${JSON.stringify(detail)} @ ${currentUrl}`);
-    }
+test('the cart path never closes, whatever RC reports', () => {
+  // closeOnToken is false there because the window IS the job — closing it for any reason
+  // kills the two RC cart POSTs it exists to make.
+  for (const stage of ['rc-session', 'token', 'session']) {
+    assert.equal(rcCloseAction({ closeOnToken: false, stage, detail: { loggedIn: true, ...LIVE } }), 'wait', stage);
   }
 });
 
-test('a non-token stage is never a close', () => {
-  for (const stage of ['session', 'banner', 'status', 'cart-verified']) {
-    assert.equal(rcCloseAction({
-      closeOnToken: true, stage, detail: LIVE, currentUrl: PARK, timerArmed: false,
-    }), 'wait', stage);
+test('no other stage is a close', () => {
+  for (const stage of ['session', 'banner', 'status', 'cart-verified', 'settle-timeout', 'injected']) {
+    assert.equal(rcCloseAction({ closeOnToken: true, stage, detail: { loggedIn: true } }), 'wait', stage);
   }
 });
 
@@ -117,61 +76,99 @@ test('a non-token stage is never a close', () => {
 
 test('the hand-off routes its close through rcCloseAction, not its own copy', () => {
   // THE FIX-PRESENT-BUT-INERT SHAPE. rcCloseAction can be perfect while the message handler
-  // keeps the old `mayCloseOnToken(r.detail)` test beside it, and every test above still
-  // passes. Pinned structurally because no behavioural test can reach an InAppBrowser.
+  // keeps a token test beside it, and every test above still passes. Pinned structurally
+  // because no behavioural test can reach a real InAppBrowser.
   const src = code('src/lib/native/rc-handoff.ts');
   assert.match(src, /rcCloseAction\(\{/, 'the handler must call the shared decision');
-  assert.doesNotMatch(
-    src, /if \(closeOnToken && r\.stage === 'token'/,
-    'the inline decision must be gone, not merely duplicated',
-  );
+  assert.doesNotMatch(src, /if \(closeOnToken && r\.stage === 'token'/, 'the inline decision must be gone');
+  assert.doesNotMatch(src, /closeOnce\('token'\)/, 'nothing may close on a token any more');
 });
 
-test('the settle timer is bounded, and the bound is sane', () => {
-  // Unbounded is the 2026-08-12 stranded-when-it-worked bug by another door.
+test('THERE IS NO SETTLE TIMER, and none may come back as a "backstop"', () => {
+  // The backstop WAS the defect: a timer that closes before RC's step two returns is the
+  // 09-01 race by construction, on both platforms. The only timer left is the load watchdog,
+  // which guards a page that never rendered and disarms on the first loadstop.
   const src = code('src/lib/native/rc-handoff.ts');
-  const m = src.match(/SIGN_IN_SETTLE_MS\s*=\s*([\d_]+)/);
-  assert.ok(m, 'SIGN_IN_SETTLE_MS must be a literal that can be read');
-  const ms = Number(m![1].replace(/_/g, ''));
-  assert.ok(ms >= 3_000, `too short to let RC finish its bootstrap: ${ms}ms`);
-  assert.ok(ms <= 30_000, `long enough to read as stranded: ${ms}ms`);
-  assert.match(src, /setTimeout\([\s\S]{0,200}SIGN_IN_SETTLE_MS\)/, 'the timer must use it');
+  assert.doesNotMatch(src, /SIGN_IN_SETTLE_MS|settleTimer/, 'no settle timer');
+  assert.doesNotMatch(src, /closeOnce\('timeout'\)|closeOnce\('settled'\)/, 'no timed or URL-driven close');
+  assert.doesNotMatch(src, /isMidSignIn/, 'the URL heuristic must not come back');
+  // Exactly one setTimeout: the load watchdog.
+  const timers = src.match(/setTimeout\(/g) ?? [];
+  assert.equal(timers.length, 1, `expected only the load watchdog; found ${timers.length} setTimeout(s)`);
+  assert.match(src, /LOAD_WATCHDOG_MS\)/, 'and it must be the load watchdog');
 });
 
-test("RC leaving the sign-in flow closes the window — that is the fix's whole point", () => {
+test('every close names a reason, and the ordinary one is `session`', () => {
   const src = code('src/lib/native/rc-handoff.ts');
-  assert.match(
-    src, /if \(settleTimer && at && !isMidSignIn\(at\)\) closeOnce\('settled'\)/,
-    'loadstop must close a deferred window once RC is off the callback',
-  );
+  assert.match(src, /stage: 'close', detail: \{ reason \}/);
+  for (const reason of ['session', 'never-loaded', 'load-error']) {
+    assert.match(src, new RegExp(`closeOnce\\('${reason}'\\)`), reason);
+  }
 });
 
-test('a non-empty loadstop URL is what updates lastUrl', () => {
-  // The plugin can report an empty URL, and assigning it would throw away the last thing we
-  // knew — sending the decision to "not mid sign-in" and closing mid-callback again.
-  assert.match(code('src/lib/native/rc-handoff.ts'), /if \(at\) lastUrl = at;/);
-});
-
-test('a user-driven exit cancels the pending close', () => {
-  // Otherwise the timer fires on a webview that is gone: close() on a dead ref, and a `close`
-  // report naming a reason that never happened.
+test('a user-driven exit marks the window gone and disarms the watchdog', () => {
   const src = code('src/lib/native/rc-handoff.ts');
   const exit = src.slice(src.indexOf("addEventListener('exit'"));
   assert.ok(exit.length > 0, 'the exit listener must exist');
-  assert.match(exit.slice(0, 300), /clearTimeout\(settleTimer\)/);
   assert.match(exit.slice(0, 300), /closedAlready = true/);
+  assert.match(exit.slice(0, 300), /disarmLoadTimer\(\)/);
 });
 
-test('every close names a reason, and the three are distinguishable', () => {
-  // A hand-off that still fails must say WHICH path it took. `token` is the ordinary
-  // already-signed-in close, `settled` is RC finishing under its own steam (the fix
-  // working), `timeout` is RC never finishing. Without the reason, a fix that never fired
-  // and a fix that worked produce the identical report.
-  const src = code('src/lib/native/rc-handoff.ts');
-  assert.match(src, /stage: 'close', detail: \{ reason \}/);
-  for (const reason of ['token', 'settled', 'timeout']) {
-    assert.match(src, new RegExp(`closeOnce\\('${reason}'\\)`), reason);
-  }
+// ── the bundle reports the signal, and only as a boolean ───────────────────────────────
+
+test('the bundle reports rc-session from customerId, as a BOOLEAN, and shows a notice if step two never finishes', () => {
+  const src = readFileSync('src/lib/rc-precart-script.ts', 'utf8');
+  assert.match(src, /localStorage\.getItem\("customerId"\)/, 'the signal is RC\'s own key');
+  assert.match(src, /send\("rc-session", \{ loggedIn: v, at: href\(\) \}\)/,
+    'reported as a boolean — never the id');
+  assert.doesNotMatch(src, /customerId: *get\(|customerId\) *\}|send\([^)]*customerId[^)]*getItem/,
+    'the customer id value must never be reported');
+  assert.match(src, /send\("settle-timeout", \{ held: true/, 'a stalled step two is reported, not closed');
+  assert.match(src, /camphawk-rc-hold/, 'and the user is told what to do inside the window');
+  assert.match(src, /tap Done/, 'the notice must name the action');
+});
+
+// ── the claim gate reads RC's signal, not the token (B) ────────────────────────────────
+
+test("the claim gate flips to verified on rc-session, and NOT on the token", () => {
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8')
+    .split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
+  // The rc-session branch flips the gate...
+  const rc = src.indexOf("r.stage === 'rc-session'");
+  assert.ok(rc > -1, 'the rc-session branch must exist');
+  assert.match(src.slice(rc, rc + 300), /setRcCheck\('verified'\)/, 'rc-session must flip the gate');
+  assert.match(src.slice(rc, rc + 120), /loggedIn === true/, 'strictly true — an old bundle sends nothing');
+  // ...and the token branch no longer does. Bounded to the token branch's own block.
+  const tok = src.indexOf("r.stage === 'token' && (r.detail as { captured?: boolean }");
+  assert.ok(tok > -1, 'the token branch must still exist — it carries the deadline');
+  const tokEnd = src.indexOf("r.stage === 'rc-session'", tok);
+  assert.doesNotMatch(src.slice(tok, tokEnd), /setRcCheck\('verified'\)/,
+    'a token must not flip the gate — that is the token-only check the owner objected to');
+});
+
+// ── reading RC's session state ─────────────────────────────────────────────────────────
+
+test('customerId present reads as signed in', () => {
+  const r = rcSessionReading({ rcLoggedIn: true, ssoToken: 'jwt', rcToken: 'jwt' });
+  assert.ok(r); assert.equal(r!.level, 'info'); assert.match(r!.text, /PRESENT/);
+});
+
+test('an Okta token with NO customerId is THE 09-01 DEFECT and is named as such', () => {
+  const r = rcSessionReading({ rcLoggedIn: false, ssoToken: 'jwt', rcToken: 'none' });
+  assert.ok(r); assert.equal(r!.level, 'warn');
+  assert.match(r!.text, /step two|GetSSOLoggedInUser/, 'it must name the mechanism');
+});
+
+test('no token and no customerId is plainly signed out, not a defect', () => {
+  const r = rcSessionReading({ rcLoggedIn: false, ssoToken: 'none' });
+  assert.ok(r); assert.equal(r!.level, 'info'); assert.match(r!.text, /plainly signed out/);
+});
+
+test('a census older than #249 produces NO reading', () => {
+  // Inventing a state from a bundle that never measured one is the absent-reading-as-a-
+  // negative shape.
+  assert.equal(rcSessionReading({}), null);
+  assert.equal(rcSessionReading({ ssoToken: 'jwt' }), null);
 });
 
 // ── READING THE "KEEP ME SIGNED IN" REPORT ─────────────────────────────────────────────
@@ -244,7 +241,7 @@ test('the readout actually USES both readings — a pure function nothing calls 
     // would be satisfied by a file that only talked about calling them.
     .replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
 
-  for (const fn of ['keepSignedInReading', 'closeReasonReading']) {
+  for (const fn of ['keepSignedInReading', 'closeReasonReading', 'rcSessionReading', 'signInPathReading']) {
     assert.match(src, new RegExp(`${fn}\\(`),
       `${fn} must be CALLED by the readout, not merely imported`);
   }
