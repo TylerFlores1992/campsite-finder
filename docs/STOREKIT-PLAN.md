@@ -33,7 +33,8 @@ end-to-end exercise of anything in this file.
   app still asks for a subscription. **Expect exactly this from a licence-tester purchase and
   do not go hunting for a broken webhook.**
 - **STILL UNPROVEN: webhook → `subscriptions` row → `hasAutocartEntitlement`.** Only a REAL
-  production purchase exercises it, and Play production reads **Inactive**. Its substitute is 17
+  production purchase exercises it. **Play production release 25 is STAGED and unsubmitted as of
+  2026-09-01** (`docs/PLAY-STORE.md` §0d) — one button away, not published. Its substitute is 17
   tests and 13 mutations (#218).
 - **A SANDBOX-ONLY ROUGH EDGE, RECORDED SO IT IS NOT FILED AS A HANG.** After a successful
   purchase the paywall shows *"Confirming your subscription…"* and waits for the server to
@@ -151,7 +152,8 @@ and it reaches installed apps immediately.
 - **NOT iOS.** `NEXT_PUBLIC_REVENUECAT_IOS_KEY` is unset — verified in the deployed bundle,
   not assumed — and Apple's four products do not exist yet (§8). A missing key is
   `unavailable`, so iOS keeps the §2c link-out untouched.
-- **NOT Play production, which reads Inactive.** The closed test is the audience today.
+- **NOT Play production.** Release 25 is created, has passed quick checks, and is STAGED in
+  Publishing overview awaiting `Submit` (§0d). The closed test is still the audience today.
 
 **AND THE SWITCH WAS HALF-OFF UNTIL THE SAME CHANGE FIXED IT.** `useStorePurchases()` is
 called above `StorePaywall`'s early return — React forbids a conditional hook — so while the
@@ -1391,7 +1393,7 @@ granting the first says nothing about the second.
 |---|---|
 | ⛔ **Create the subscriptions** | needs a **Google payments merchant account** first |
 | ✅ Set US-only on production | genuinely unblocked by the access grant |
-| ⛔ A production release | Production reads **Inactive**; needs a build |
+| 🔶 A production release | release 25 STAGED, unsubmitted as of 2026-09-01 (§0d) |
 | ⛔ Anything client-side | needs the billing library and a new AAB |
 
 ### 9g. The merchant account — Play's equivalent of Paid Applications

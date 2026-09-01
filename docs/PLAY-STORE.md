@@ -71,11 +71,123 @@ Internal testing has no such gate and can be published immediately — do that f
 to prove the AAB uploads cleanly and because it is where the **country restriction** can
 be set today.
 
+## 0d. RELEASE 25 IS **IN REVIEW** — submitted 2026-09-01
+
+*Publishing overview* reads **Changes in review** — *"Your changes are now in review. We may find
+additional issues when reviewing your app."* One item: **Production · 25 (1.0) · Start full
+rollout**, United States only.
+
+- **`Remove changes` IS AVAILABLE** while it sits in review, so the submission is reversible up
+  until approval. That is the lever if something needs to go in ahead of it.
+- **`Managed publishing` is OFF, so approval publishes immediately** at 100% to the US — there is
+  no hold-and-release step, and nobody is asked a second time.
+- **THE DATA SAFETY QUESTION WENT UNANSWERED INTO THIS SUBMISSION.** §4's open item — whether
+  RevenueCat receiving the Clerk user id counts as *Shared* — was not resolved before Submit. It
+  is **editable independently of the binary and needs no new release**, so it can be corrected
+  after the fact; what it costs is that the app publishes with a declaration that does not
+  mention RevenueCat while Play's four products are already taking money. **Close it rather than
+  letting approval close it by default.**
+
+### The staging history, and the reading rule it produced
+
+
+
+Release **25 (1.0)** is created, has passed Play's quick checks, and is sitting in
+*Publishing overview* under **Changes not yet submitted for review** with a live
+`Submit 1 change for review` button. **Nothing has been sent to Google.** United States only,
+`Start full rollout`.
+
+> ~~**PRODUCTION IS LIVE.** `Test and release -> Production -> Track summary` reads
+> `Active · Latest release: 25 (1.0) · 1 country / region · 4 installs`, so CampHawk is
+> published.~~ **WRONG, AND CORRECTED WITHIN THE HOUR.** Struck rather than deleted, because
+> "we are live" is exactly the sentence a later reader quotes as current state.
+
+**THE TRACK SUMMARY IS NOT THE AUTHORITY ON SUBMISSION STATE, AND I ASSERTED THAT IT WAS.**
+Four surfaces, and the split is not three-to-one by luck:
+
+| surface | reads | about |
+|---|---|---|
+| **Publishing overview** | *Changes not yet submitted for review* · `Submit 1 change` | **submission** |
+| App list | *Update status: Not yet sent for review* · *App status: Closed testing* | **submission** |
+| Dashboard checklist | *Send the release to Google for review* — unticked (3 of 5) | **submission** |
+| Production -> Track summary | `Active · Latest release: 25 (1.0) · 4 installs` | **track configuration** |
+
+**The three that agree are all describing submission; the one that disagreed is describing the
+TRACK.** `Active` flipped from `Inactive` when the track gained countries and a draft release —
+it does not mean a release is published, and `Latest release` names the newest release *attached*
+rather than the newest *live*. **The reasoning that picked it was that it had changed**, which is
+a reason to look, never a reason to believe.
+
+**SO: READ `Publishing overview` FOR "HAS THIS SHIPPED?"** It is the screen whose entire job is
+that question, and it is unambiguous in both directions.
+
+**The `4 installs` figure is unexplained and was NOT resolved** — plausibly the closed test's
+installs rolled into the track view. It is not evidence of a production release, and chasing it
+is not worth the time; do not read it as one.
+
+**NO STAGED ROLLOUT WAS OFFERED.** No rollout-percentage field on *Create production release ->
+Preview and confirm*, and the staged change reads **`Start full rollout`**. **A first production
+release appears to go out at 100%** — plausibly because there is no prior release to roll out
+over, though that was NOT confirmed against Google's documentation (`support.google.com` is
+outside this environment's egress allowlist). **Expect a percentage on the next release.**
+
+**TWO RECOMMENDED ACTIONS ON THE RELEASE, NEITHER BLOCKING** — the edge-to-edge pair in §0e. And
+the two bundle warnings were benign and shipped deliberately: no deobfuscation file (Capacitor
+ships `minifyEnabled false`, so there is nothing to deobfuscate) and no native debug symbols
+(affects crash *readability*, never crash *rate*).
+
+**WHAT IS ACTUALLY LEFT: press Submit — and settle Data safety FIRST.** `Managed publishing` is
+**off**, so approval publishes immediately with no hold-and-release step. Both changes batch into
+this one screen, and §4's open question — whether RevenueCat receiving the Clerk user id counts
+as *Shared* — should be answered before the app is public rather than after.
+
+**WHAT BECOMES LOAD-BEARING THE MOMENT IT PUBLISHES:**
+
+1. **The webhook's back half, which has never executed.** `ignoreReason` drops non-`PRODUCTION`
+   events, so every test to date left no row. The chain event -> `subscriptions` ->
+   `hasAutocartEntitlement` runs for the first time on a stranger's purchase, carrying two known
+   gaps: **HMAC is reported, not enforced**, and **out-of-order delivery is unhandled**.
+2. **Data safety stops being a form and becomes a live declaration.**
+3. **`LINKOUT_BY_STORE.android` still stays `false`.** Two of its three conditions are met and
+   the third is moot — with Play Billing in the app there is no steering UI at all. **Publishing
+   is not a reason to revisit the flag.**
+
+### 0e. THE EDGE-TO-EDGE RECOMMENDATIONS — recorded, NOT diagnosed
+
+Release 25 carries two Play "recommended actions", both `User experience`, neither blocking:
+
+```
+Edge-to-edge may not display for all users
+Your app uses deprecated APIs or parameters for edge-to-edge
+```
+
+**Android 15 (API 35) enforces edge-to-edge for apps targeting it**, and §0a raised us to
+`targetSdkVersion 36` to clear Play's API-level deadline — so this arrives as a consequence of
+that bump rather than of anything anyone wrote. The app draws under the status and navigation
+bars unless insets are handled.
+
+**WHY THIS IS NOT A ONE-LINE FIX HERE, and why nothing is proposed:** the app is a **remote
+webview** (`server.url`), so the content under those bars is a web page, and the inset handling
+could belong in the native shell, in CSS (`viewport-fit=cover` plus `env(safe-area-inset-*)`),
+or in both. **Which one is wrong has not been established**, and nobody has looked at the app on
+an Android 15 device to see whether anything actually renders badly. Two warnings from a static
+scan are not an observation.
+
+**The honest next step is to LOOK at it** — a real Android 15+ handset, checking whether the
+header tucks under the status bar or the footer under the gesture bar. `docs/SETUP.md` records
+that the sandboxed browser cannot render this stack faithfully, so a screenshot from CI would
+not settle it either.
+
+**It is cosmetic until proven otherwise**, and it costs a web deploy to fix if it is CSS — which
+is the likelier half, and which reaches installed apps with no store release.
+
 ## 0c. Production access — **GRANTED** (confirmed in console 2026-08-24)
 
 > **GRANTED, and read off the console rather than reported second-hand.** The Dashboard shows
 > *"Congratulations! Your app has been granted Google Play production access"*. Production
 > itself reads **Inactive** — access is granted, no production release is published yet.
+> **(Still true as of 2026-09-01: nothing is PUBLISHED yet. Release 25 was submitted that day
+> and is IN REVIEW — see §0d.)**
 > Closed testing remains **Active, 1 track**; internal testing Active; open testing Inactive.
 >
 > **WHAT THIS UNBLOCKS:** §1's US-only country setting, which was verified on 2026-08-01 as
@@ -288,6 +400,13 @@ reads `Add 1 country / region: United States` with nothing to remove. That is th
 the "add the US first, then remove the others" ordering caution — Play refuses a track at zero
 countries — never came up, because there was nothing there.
 
+> **IT APPLIED — CONFIRMED IN THE CONSOLE 2026-09-01.** `Production -> Countries / regions`
+> reads **Targeted (1) · United States · ✓ Targeted** ("Includes 7 locations" — the US
+> territories, not an over-wide setting). **Nobody recorded the outcome for a week**, so the
+> paragraph below stood as the last word and reads as though the change may still be sitting
+> unsubmitted. It is not: this is settled, and `LINKOUT_BY_STORE.android`'s first condition is
+> met. The reasoning below is kept because it is how the change was made, not as open state.
+
 **IT IS STAGED, NOT APPLIED.** The change lands in *Publishing overview* under **Changes not yet
 submitted for review**, behind ~15 minutes of automated quick checks and then a manual
 `Submit N changes for review`. A country restriction is not instant and does not apply itself.
@@ -490,28 +609,45 @@ religious beliefs, sexual orientation, other personal info, health, fitness, mes
 photos, videos, audio, files, calendar, contacts, in-app search history, installed apps,
 web browsing history.
 
-> **THE TWO ROWS ARE CORRECTED (2026-08-30). THE "SHARED" ANSWER IS THE OPEN QUESTION AND IT
-> IS DELIBERATELY LEFT OPEN.** *User IDs* and *Purchase history* now name RevenueCat and no
-> longer claim Stripe handles a Play purchase — it does not; those land as
-> `store_transaction_id` + `provider` (migration 071).
+> **ANSWERED 2026-09-01: RevenueCat IS A SERVICE PROVIDER, SO NOTHING ON THIS FORM CHANGES.**
+> Both rows stay **collected, not shared**. Read off Google's own exemption list, reached from
+> the `View exemptions` link under the *'Shared'* definition on the Data safety Overview page:
 >
-> **WHAT IS NOT DECIDED: whether either row stays "collected, not shared".** This section's own
-> rule at the top says a processor acting on our behalf is not sharing. RevenueCat reads as a
-> billing processor by that rule — but it is a distinct third party receiving a user identifier,
-> and **answering this wrong is a Data-safety violation, not a listing nit.**
-> - **Do not copy the Stripe answer across on the assumption they are alike.** Stripe is reached
->   server-to-server from our own backend; RevenueCat is an SDK **inside the app** that is handed
->   the user id on the device, which is the fact pattern Play's definition turns on.
-> - **It could not be checked from the agent session that wrote this**: `support.google.com` and
->   `play.google` are outside this environment's egress allowlist (both returned `000` on
->   2026-08-24, re-confirmed 08-30). **Read Play's current definition in the console before the
->   next submission.**
+> > **Service providers.** Transferring user data to a "service provider" that processes it on
+> > behalf of the developer. *"Service provider" means an entity that processes user data on
+> > behalf of the developer and based on the developer's instructions.*
+> >
+> > **"Third party"** means any organization other than the first party **or its service
+> > providers**.
 >
-> **THIS IS THE MORE URGENT OF THE TWO STORE FORMS.** Play's four products are LIVE and a real
-> purchase has been made through them (2026-08-30); Apple's do not exist yet.
+> RevenueCat processes subscription state on our behalf, on our instructions — we configure it
+> with the Clerk user id, it records purchases and reports entitlements back to us. That is the
+> same relationship Stripe, Twilio, Resend and Sentry already have, and they are all declared
+> *not shared* on exactly this reasoning. **A second exemption covers the residual worry
+> independently**: RevenueCat's aggregate benchmarks fall under *Anonymous data* even if they
+> were counted as its own use.
 >
-> The same correction is applied in `docs/APP-STORE.md` §1 — in both, deliberately, because a
-> correction applied to one copy is not applied.
+> **THE ROWS' NOTES WERE STILL WRONG AND ARE FIXED ABOVE (2026-08-30)** — *Purchase history*
+> claimed Stripe handles every purchase, which is false for a Play purchase (`provider` +
+> `store_transaction_id`, migration 071). **Accuracy of our own record and the console answer
+> are different questions**, and only the second one turned out to need nothing.
+>
+> **THE TEST IS THE RELATIONSHIP, NOT THE TRANSPORT — and the session that answered this
+> argued the opposite twice before reading the page.** It reasoned that Stripe is reached
+> server-to-server from our backend while RevenueCat is an SDK handed the user id **on the
+> device**, and that this was "the fact pattern Play's definition turns on". **It is not.**
+> Google's list explicitly counts *"From your app libraries and SDKs"* and *"On-device transfer
+> to another app"* as sharing in the general case; what exempts a transfer is that the
+> recipient acts **on the developer's instructions**. Right answer, wrong route — and the wrong
+> route would mislead anyone applying it to a vendor that is NOT a processor.
+>
+> **A BULLET WORTH KNOWING FOR THIS APP SPECIFICALLY.** The list also counts *"From webview
+> which has been opened through your app… if your app is in control of code/behavior delivered
+> through that webview"*. CampHawk's shell **is** a webview we control (`server.url` →
+> camphawk.app), so every third party the web app reaches is in scope for this form — Clerk,
+> Stripe, Supabase, Resend, Twilio, Mapbox, Sentry, Vercel. **All of them are service providers
+> too**, so the answer is unchanged; but a future vendor that is not one would have to be
+> declared as shared even though it is only ever reached from the website.
 
 **Security practices section:**
 

@@ -58,8 +58,12 @@ Vercel (hosting, coarse IP location).
 > CLOSE.** RevenueCat is now named in the third-party list, in *Identifiers → User ID* and in
 > *Purchases → Purchase History*. What is NOT settled is whether receiving the Clerk user id
 > makes RevenueCat a **processor** (acting on our behalf, which is not "sharing") or a third
-> party in its own right. Apple's label has no "shared" axis so this bites hardest on Play —
-> see `docs/PLAY-STORE.md` §4, where the same question is recorded against the same rows.
+> party in its own right. **ANSWERED 2026-09-01 on the Play side: RevenueCat is a SERVICE
+> PROVIDER and nothing changed on that form** — Google's exemption list covers an entity that
+> "processes user data on behalf of the developer and based on the developer's instructions",
+> and defines "third party" as anyone other than the first party *or its service providers*.
+> See `docs/PLAY-STORE.md` §4 for the quoted text and for the reasoning that was wrong on the
+> way there. Apple's label has no "shared" axis at all, so nothing here needed deciding.
 >
 > **HOW THIS HAPPENED IS THE REUSABLE PART.** The line above reads *"Last audited 2026-07-28"*,
 > which predates RevenueCat entering the dependency tree by a month. **The header's own warning

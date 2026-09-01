@@ -4870,6 +4870,35 @@ open carrying the Feature E correction: **a correction applied to one copy is no
 
 ## Open / next session
 
+> ### PLAY: RELEASE 25 IS IN REVIEW (submitted 2026-09-01). NOTHING TO DO BUT WAIT.
+>
+> **Everything actionable on the Play path is finished.** US-only targeting applied, merchant
+> account and 15% enrolment done, bank verified, four products live, offering current, and the
+> Data safety question **answered — RevenueCat is a service provider under Google's own
+> exemption list, so nothing on that form changed** (`docs/PLAY-STORE.md` §4, with the text
+> quoted).
+>
+> **READ `Publishing overview` FOR "HAS THIS SHIPPED?", NOT the Dashboard or the app list.**
+> Both lagged on 2026-09-01, and `Production -> Track summary` said `Active · Latest release: 25`
+> over an **unsubmitted** release — it describes the TRACK, not the submission. That misreading
+> is written up in §0d because it produced a confident, wrong "we are live".
+>
+> **`Managed publishing` is OFF**, so approval publishes at 100% to the US with no second
+> prompt. No staged rollout was offered on a first release.
+>
+> **WHAT TO WATCH IS NOT THE STORE — IT IS THE FIRST REAL PURCHASE.** `event -> subscriptions
+> row -> hasAutocartEntitlement` has never executed, because `ignoreReason` correctly drops
+> every sandbox event. Check for `provider = 'google'` with a `store_transaction_id`, then the
+> entitlement flipping, then the paywall's *"Confirming your subscription…"* resolving — which
+> has also never happened. **Money moving with no row is the webhook, and it costs a paying
+> customer their subscription.**
+>
+> **APPLE IS UNCHANGED AND STILL GATED ON THE SMALL BUSINESS PROGRAM** — submitted 08-30 17:55
+> UTC, still only an acknowledgement in the inbox as of 08-31. `docs/STOREKIT-PLAN.md` §4e is
+> the ordered sequence for the moment it lands; §8 says do not create the products before then.
+
+
+
 > **START AT `docs/NEXT-SESSION.md`. NOTHING IS ASSIGNED; THE TOP ITEM IS A READING.**
 >
 > **0. A REAL HOLD IS QUEUED FOR 2026-08-29 08:00 PT, AND THE OWNER WANTS THE SITE.** Unit
@@ -8444,7 +8473,11 @@ already on this plan"**.
   a test device mint a paid subscription. So `subscribed` stays false and the app still gates
   watching. **Expect exactly this from a licence-tester purchase — do not hunt a broken
   webhook.** Still unproven: webhook → row → `hasAutocartEntitlement`, which only a REAL
-  production purchase exercises, and Play production reads **Inactive**.
+  production purchase exercises. **Play production release 25 was SUBMITTED 2026-09-01 and is
+  IN REVIEW** (`docs/PLAY-STORE.md` §0d), so this stops being blocked on a track the moment it
+  approves — and then runs for the first time on a stranger's purchase, carrying the two gaps
+  #218 left open: **HMAC is reported, not enforced**, and **out-of-order delivery is
+  unhandled**.
 - **THREE SEPARATE THINGS MADE THE PAYWALL UNUSABLE, ALL WITH A GREEN CONSOLE.** (1) No route in
   the app reached `/pricing` at all (#236). (2) The route, once added, was a paragraph of grey
   text in the slot the submit button occupies — read twice as *"there is no start watch"* (#237).
