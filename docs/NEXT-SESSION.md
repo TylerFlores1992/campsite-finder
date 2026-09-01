@@ -2,7 +2,19 @@
 
 *Rewritten 2026-08-25 evening; state refreshed **2026-09-01 evening**.*
 
-> ## READ FIRST — THE ANDROID HAND-OFF DEFECT IS EXPLAINED FROM RC'S SOURCE AND FIXED (#249)
+> ## READ FIRST — #249 WAS NOT ENOUGH; #250 REMOVES OUR OWN CLICK ON THE CALLBACK PAGE
+>
+> The first Android run on #249 held the window open (the notice fired) and RC still rendered
+> signed out on its home page. The trace: **the box WAS ticked** (keep-signed-in refuted), and
+> **our sign-in script clicked "Log in" on `/login/callback`** mid-exchange, producing a second
+> callback that booted into RC's `customerLogOut`. Fixed in #250 (script guard + `afterLoad`
+> skip) and instrumented: `rc-api` records step two's HTTP status and RC's Response code, and
+> `rc-session` carries `sso` so a mid-flow sign-out is a printed line. CLAUDE.md → "#249 WAS
+> NECESSARY AND NOT SUFFICIENT". **Expected next run:** no `signin-open` on the callback, one
+> callback document, `GetSSOLoggedInUser → HTTP 200 · RC Response 1`, `loggedIn: true`,
+> `close: session`, name in the header.
+
+> ## (superseded by the block above) THE ANDROID HAND-OFF DEFECT IS EXPLAINED FROM RC'S SOURCE AND FIXED (#249)
 >
 > **RC's sign-in is two steps, and we closed between them.** Okta's callback writes
 > `ssoAccessToken` (the token we capture) and then awaits `GetSSOLoggedInUser`; only that
