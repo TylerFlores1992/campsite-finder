@@ -46,9 +46,10 @@ test('both outage reasons count', () => {
 });
 
 test('an ORDINARY close does not hold — the hand-off worked, the user just did not finish', () => {
-  // `token`, `settled` and `timeout` all mean RC came up. Treating those as an outage would
-  // hold a site for every user who opened the link and changed their mind.
-  for (const reason of ['token', 'settled', 'timeout']) {
+  // `session` (the close since #249) and the three pre-#249 reasons all mean RC came up.
+  // Treating any as an outage would hold a site for every user who opened the link and
+  // changed their mind.
+  for (const reason of ['session', 'token', 'settled', 'timeout']) {
     assert.equal(base({ reports: [{ stage: 'close', detail: { reason } }] }), null, reason);
   }
 });

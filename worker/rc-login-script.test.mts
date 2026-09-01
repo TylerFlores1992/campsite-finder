@@ -368,7 +368,10 @@ test('a captured token clears the captcha prompt', () => {
   // 500-character window, so the guard passed against the regression it exists for. A window
   // measured in characters is a guess about layout; the next `setRcCheck(` is the actual end
   // of this branch's work.
-  const at = src.indexOf("setRcCheck('verified')");
+  // RE-ANCHORED 2026-09-01 (#249): `setRcCheck('verified')` moved out of the token branch —
+  // the gate flips on RC's own `rc-session` now — so the anchor is the line that IS still
+  // the token branch's: the deadline it records.
+  const at = src.indexOf('setTokenDeadline(');
   assert.ok(at !== -1);
   // THE BRANCH CLOSE, and getting here took three attempts, each verified by mutation. A
   // 500-character window reached into the `login-result` handler below, which has its own
