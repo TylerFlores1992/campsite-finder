@@ -267,17 +267,22 @@ export function reporter(): string {
     '      (document.body || document.documentElement).appendChild(d);',
     '    } catch (e) {}',
     '  }',
-    '  setInterval(function () {',
-    '    reportRcSession();',
-    '    if (rcSessionSaid === true) { var h = document.getElementById("camphawk-rc-hold"); if (h) h.remove(); return; }',
-    '    if (!rcNoticeShown && rcTokenAtMs !== null && Date.now() - rcTokenAtMs > RC_SETTLE_NOTICE_MS) {',
-    '      rcNoticeShown = true;',
-    '      showRcHoldNotice();',
-    '      send("settle-timeout", { held: true, waitedSec: Math.round((Date.now() - rcTokenAtMs) / 1000) });',
-    '    }',
-    '  }, 500);',
+    // INSTALL MUST NEVER THROW. The reporter is the first thing injected and everything else
+    // hangs off `window.__camphawkRc`; a ReferenceError here would take the token capture,
+    // the census and the cart status down with it. A page with no timers (a sandbox, or a
+    // hostile one) simply gets no watcher — the install report and `rcLoggedIn` still work.
+    '  try {',
+    '    setInterval(function () {',
+    '      reportRcSession();',
+    '      if (rcSessionSaid === true) { try { var h = document.getElementById("camphawk-rc-hold"); if (h) h.remove(); } catch (e) {} return; }',
+    '      if (!rcNoticeShown && rcTokenAtMs !== null && Date.now() - rcTokenAtMs > RC_SETTLE_NOTICE_MS) {',
+    '        rcNoticeShown = true;',
+    '        showRcHoldNotice();',
+    '        send("settle-timeout", { held: true, waitedSec: Math.round((Date.now() - rcTokenAtMs) / 1000) });',
+    '      }',
+    '    }, 500);',
+    '  } catch (e) {}',
     '  window.__camphawkRc = { send: send, scrub: scrub, hasStash: hasStash, href: href, jwtFacts: jwtFacts, onToken: null, signedIn: signedIn, rcLoggedIn: rcLoggedIn, bridged: !!bridge };',
-    '  reportRcSession();',
     '  // A run that ends on a repeat would otherwise lose the tail of the count.',
     '  window.addEventListener("pagehide", flush);',
     '  window.addEventListener("error", function (e) { send("error", { message: scrub(e && e.message) }); });',
@@ -319,6 +324,9 @@ export function reporter(): string {
     '    return log.apply(console, arguments);',
     '  };',
     '  send("injected", { href: href(), job: /camphawk-rc=/.test(location.hash) || hasStash() });',
+    // AFTER `injected`, never before: the first report is the one that proves the script ran at
+    // all, and every reader of this channel — and one guard — depends on it being first.
+    '  reportRcSession();',
     '})();',
   ].join('\n');
 }
