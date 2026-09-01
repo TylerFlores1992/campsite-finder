@@ -11,6 +11,7 @@
 import { query, mutate } from '@/lib/db/client';
 import { RC_RUNNER_STALE_MS } from '@/lib/health-thresholds';
 import { HOLD_LAPSE_MIN } from '@/lib/limits';
+import { rcOutageHoldReason, RC_OUTAGE_HOLD_NOTE } from '@/lib/rc-outage-hold';
 
 export type HoldStatus =
   | 'offered' | 'requested' | 'carted' | 'claiming' | 'released' | 'claimed' | 'expired' | 'failed';
@@ -1032,10 +1033,42 @@ export async function expireStaleHolds(holdMinutes = 45): Promise<{ expired: num
     `UPDATE rc_hold_requests SET status = 'expired', updated_at = NOW()
       WHERE status = 'offered' AND release_at < ${nowPacific} RETURNING id`,
   ).catch(() => []);
-  const toRelease = await query<HoldRequest>(
+  const carted = await query<HoldRequest & {
+    carted_at: string | null;
+    client_reports: unknown;
+    client_reported_at: string | null;
+  }>(
     `SELECT * FROM rc_hold_requests
       WHERE status = 'carted' AND carted_at < NOW() - ($1 || ' minutes')::interval`,
     [String(holdMinutes)],
   ).catch(() => []);
+
+  // HOLD THROUGH AN RC WEB-TIER OUTAGE. Releasing is right almost always — but not when the
+  // user physically cannot complete the hand-off, which is measured rather than guessed: RC's
+  // web app fails while its DATA API stays healthy (2026-08-30 and 09-01, both with
+  // `detect:reservecalifornia` green throughout, reading live availability). Releasing then
+  // hands the campsite back at the exact moment nobody can take it. The rules, the bound and
+  // the fail-toward-releasing default all live in `rcOutageHoldReason` — see there.
+  const now = new Date();
+  const toRelease: HoldRequest[] = [];
+  const heldIds: string[] = [];
+  for (const h of carted) {
+    const reason = rcOutageHoldReason({
+      reports: h.client_reports,
+      clientReportedAt: h.client_reported_at,
+      cartedAt: h.carted_at,
+      holdMinutes,
+      now,
+    });
+    if (reason) heldIds.push(h.id);
+    else toRelease.push(h);
+  }
+
+  // SAY SO ON THE ROW. A hold that outlives its window with no explanation is the dead-runner
+  // signature, and `last_attempt_note` is the field a human reads at 08:15 to tell a queue from
+  // an outage. Best-effort: a failed note must never turn a held hold into a released one, so
+  // it happens AFTER the decision and cannot affect it.
+  if (heldIds.length) await noteAttempt(heldIds, RC_OUTAGE_HOLD_NOTE).catch(() => {});
+
   return { expired: expired.length, toRelease };
 }
