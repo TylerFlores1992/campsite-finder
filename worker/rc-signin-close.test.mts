@@ -226,3 +226,32 @@ test('an absent count does not read as a missed match', () => {
   assert.match(r.text, /no checkbox on the page at all/,
     'an unreported count must take the no-box branch, not the missed-match one');
 });
+
+test('the readout actually USES both readings — a pure function nothing calls is inert', () => {
+  // FOUND BY MUTATION 2026-09-01, and it covered the sibling too. Replacing the readout's
+  // `keepSignedInReading(keep)` call with a literal passed the entire suite: every test
+  // above exercises the function directly, so none of them can see the one caller stop
+  // calling it. That is the fix-present-and-inert shape — the version that looks right in
+  // review and changes nothing — and CLAUDE.md records it costing this repo five separate
+  // times, including `6006428`, which claimed a fix it never made.
+  //
+  // `closeReasonReading` had exactly the same exposure and was never guarded either. Both
+  // are pinned here, because the argument for extracting them ("the branch that matters
+  // cannot be reached without a real hand-off") is precisely the argument for why nothing
+  // else will notice if the caller drops them.
+  const src = readFileSync('scripts/rc-holds-readout.mts', 'utf8')
+    // Comments quote these names to explain them; a guard that matched its own explanation
+    // would be satisfied by a file that only talked about calling them.
+    .replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  for (const fn of ['keepSignedInReading', 'closeReasonReading']) {
+    assert.match(src, new RegExp(`${fn}\\(`),
+      `${fn} must be CALLED by the readout, not merely imported`);
+  }
+  // And the result has to reach the screen. Calling it and discarding the answer is the
+  // same outcome with an extra step.
+  assert.match(src, /\$\{r\.level === 'warn' \? '⚠ ' : ''\}\$\{r\.text\}/,
+    'the keep-signed-in reading must be PRINTED, severity and all');
+  assert.match(src, /sign-in window closed: \$\{closeReason\} — \$\{reading\.text\}/,
+    'the close reading must be PRINTED');
+});

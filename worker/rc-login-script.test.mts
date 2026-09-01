@@ -957,6 +957,12 @@ test('a box that IS there is ticked, and says so', async () => {
   const keep = said.find((s) => s[0] === 'keep-signed-in');
   assert.ok(keep, 'the tick must report on the success path too, not only on the miss');
   assert.equal(keep![1].ticked, true, 'a visible, unchecked, name-matching box must be clicked');
+  // AND THE COUNT MUST REFLECT THE PAGE. Found by mutation: hardcoding `boxes: 0` passed the
+  // whole suite, because the no-box test asserts zero (trivially true) and this one only ever
+  // checked `ticked`. A permanently-zero count reads as "Okta never offered the option" on
+  // EVERY run — the exact branch that sends the next reader to fix the flow instead of the
+  // selector. The count is only worth reporting if it is measured.
+  assert.equal(keep![1].boxes, 1, 'the count must be the real number of candidates on the page');
   // The report must describe what HAPPENED, not what was intended. Asserting the click
   // separately is what stops a report that always says `ticked: true`.
   assert.equal((ctx.theBox as { clicks: number }).clicks, 1, 'the box must actually be clicked once');
