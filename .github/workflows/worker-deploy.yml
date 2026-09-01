@@ -60,6 +60,16 @@ on:
       - 'src/lib/rc-holds.ts'
       - 'src/lib/rc-holds-notify.ts'
       - 'src/lib/types.ts'
+      # FOUND 2026-09-01 BY FIXING THE GUARD, NOT BY NOTICING. worker-deploy-paths.test.mts
+      # only followed RELATIVE imports, so its "transitive" closure stopped at the first
+      # `@/lib/…` — which is how every file under src/ imports its siblings. Three of these
+      # four had been missing since before that test existed, and the poller compiles all of
+      # them: a change to health-thresholds or autocart-beta alone would have shipped to
+      # Vercel and not to Fly, leaving the site and the poller disagreeing with nothing red.
+      - 'src/lib/health-thresholds.ts'
+      - 'src/lib/autocart-beta.ts'
+      - 'src/lib/rc-outage-hold.ts'
+      - 'src/lib/campflare/types.ts'
       # A dependency change rebuilds the image.
       - 'package.json'
       - 'package-lock.json'

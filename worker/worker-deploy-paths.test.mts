@@ -76,8 +76,22 @@ function covered(file: string, globs: string[]): boolean {
  * in several files and is `src/lib/db/client.ts` on disk.
  */
 function resolveImport(fromFile: string, spec: string): string | null {
-  if (!spec.startsWith('.')) return null;
-  const base = path.join(path.dirname(fromFile), spec).replace(/\\/g, '/');
+  // `@/…` IS THE ALIAS EVERYTHING UNDER src/ USES, AND IGNORING IT MADE THIS WALK
+  // DIRECT-ONLY (found 2026-09-01). tsconfig maps `@/*` to `./src/*`. Worker files reach
+  // into src with RELATIVE paths, so those resolved and the closure looked healthy — but
+  // every file under `src/lib` imports its siblings as `@/lib/…`, so the walk stopped dead
+  // at the first hop and saw nothing transitively.
+  //
+  // The cost was exactly what this test exists to prevent: `src/lib/rc-outage-hold.ts`,
+  // imported by `rc-holds.ts` (which IS a trigger path), was invisible — so a change to it
+  // alone would ship to Vercel and NOT to Fly, and the site and the poller would disagree
+  // with nothing red anywhere. #146's own write-up calls this walk transitive "because a
+  // direct-only walk passes today"; it had been direct-only in practice from the start.
+  const spec2 = spec.startsWith('@/') ? `./src/${spec.slice(2)}` : spec;
+  if (!spec2.startsWith('.')) return null;
+  const base = spec.startsWith('@/')
+    ? spec2.replace(/^\.\//, '')
+    : path.join(path.dirname(fromFile), spec2).replace(/\\/g, '/');
   const stem = base.replace(/\.(js|mjs)$/, '');
   for (const cand of [`${stem}.ts`, `${stem}.mts`, `${stem}/index.ts`, `${stem}.tsx`]) {
     if (existsSync(cand)) return cand;
