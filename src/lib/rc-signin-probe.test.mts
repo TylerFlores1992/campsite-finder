@@ -607,7 +607,11 @@ test('rc-inject reports SSO calls by PATH only — the query carries the email a
 
 test('the readout prints step two and the mid-flow sign-out', () => {
   const src = code(readFileSync(new URL('../../scripts/rc-holds-readout.mts', import.meta.url), 'utf8'));
-  assert.match(src, /r\.stage === 'rc-api'/, 'step two calls are printed');
+  // THE LOOP MUST ITERATE, NOT MERELY EXIST. The first version of this guard pinned the
+  // predicate and the wording, and passed against `apiCalls.slice(0, 0)` — a loop over
+  // nothing, with every string still present. Twenty-somethingth time.
+  assert.match(src, /r\.stage === 'rc-api'/, 'step two calls are collected');
+  assert.match(src, /for \(const c of apiCalls\.slice\(-\d+\)\)/, 'and the LAST few are printed');
   assert.match(src, /NOT ok — RC refused it/, 'a refused step two is named as such');
   assert.match(src, /SIGNED THE SESSION OUT MID-FLOW/, 'customerLogOut is named when the flip shows it');
 });
