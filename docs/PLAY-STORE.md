@@ -71,11 +71,85 @@ Internal testing has no such gate and can be published immediately — do that f
 to prove the AAB uploads cleanly and because it is where the **country restriction** can
 be set today.
 
+## 0d. **PRODUCTION IS LIVE — 2026-09-01**
+
+Read off `Test and release -> Production -> Track summary`, which is the authoritative screen:
+
+```
+Active · Latest release: 25 (1.0) · 1 country / region · 4 installs
+```
+
+**So CampHawk is published on Google Play, United States only, on versionCode 25.** That build
+carries Play Billing and RevenueCat, and it is the one a real licence-tester purchase completed
+against on 2026-08-30.
+
+- **THE DASHBOARD DISAGREED FOR A WHILE, AND THE TRACK SUMMARY IS THE ONE TO BELIEVE.** During
+  the release the app list read *App status: Closed testing* and *Update status: Not yet sent for
+  review*, and the Dashboard's own checklist showed *"Send the release to Google for review"* and
+  *"Publish your app on Google Play"* unticked — while the Dashboard's Production panel already
+  said **Active**. Three surfaces, three answers. **`Production -> Track summary` is the one that
+  matched reality**; the others lag. Do not diagnose a release from the app list.
+- **THERE WAS NO STAGED ROLLOUT, AND NONE WAS OFFERED.** No rollout-percentage field appeared on
+  *Create production release -> Preview and confirm*, and Publishing overview described the change
+  as **`Start full rollout`**. **A first production release appears to go out at 100%** — plausibly
+  because there is no prior production release to roll out over, though that was not confirmed
+  against Google's documentation (`support.google.com` is outside this environment's egress
+  allowlist). **Expect a percentage on the next release, not on the first.**
+- **TWO RECOMMENDED ACTIONS ON THE RELEASE, NEITHER BLOCKING:** *"Edge-to-edge may not display for
+  all users"* and *"Your app uses deprecated APIs or parameters for edge-to-edge"*. Both are
+  Android 15+ edge-to-edge enforcement, which `targetSdkVersion 36` opts us into — see §0e.
+- **THE TWO WARNINGS ON THE BUNDLE WERE BENIGN** and were shipped deliberately: no deobfuscation
+  file (Capacitor ships `minifyEnabled false`, so there is nothing to deobfuscate) and no native
+  debug symbols (affects crash *readability*, never crash *rate*).
+
+**WHAT BEING LIVE CHANGES, WHICH IS MORE THAN IT SOUNDS:**
+
+1. **The webhook's back half is now load-bearing and has never executed.** `ignoreReason` drops
+   non-`PRODUCTION` events, so every test to date left no row. The chain event -> `subscriptions`
+   -> `hasAutocartEntitlement` runs for the first time on a stranger's purchase. Two known gaps
+   ride with it: **HMAC is reported, not enforced**, and **out-of-order delivery is unhandled**.
+2. **The Data safety form is now a live-app compliance item**, not a pre-submission one. §4's
+   open question — whether RevenueCat receiving the Clerk user id counts as *Shared* — is being
+   answered by silence today.
+3. **`LINKOUT_BY_STORE.android` still stays `false`.** Two of its three conditions are now met
+   (US-only, live in production) and the third is moot: with Play Billing in the app there is no
+   steering UI at all. **Being live is not a reason to revisit the flag.**
+
+### 0e. THE EDGE-TO-EDGE RECOMMENDATIONS — recorded, NOT diagnosed
+
+Release 25 carries two Play "recommended actions", both `User experience`, neither blocking:
+
+```
+Edge-to-edge may not display for all users
+Your app uses deprecated APIs or parameters for edge-to-edge
+```
+
+**Android 15 (API 35) enforces edge-to-edge for apps targeting it**, and §0a raised us to
+`targetSdkVersion 36` to clear Play's API-level deadline — so this arrives as a consequence of
+that bump rather than of anything anyone wrote. The app draws under the status and navigation
+bars unless insets are handled.
+
+**WHY THIS IS NOT A ONE-LINE FIX HERE, and why nothing is proposed:** the app is a **remote
+webview** (`server.url`), so the content under those bars is a web page, and the inset handling
+could belong in the native shell, in CSS (`viewport-fit=cover` plus `env(safe-area-inset-*)`),
+or in both. **Which one is wrong has not been established**, and nobody has looked at the app on
+an Android 15 device to see whether anything actually renders badly. Two warnings from a static
+scan are not an observation.
+
+**The honest next step is to LOOK at it** — a real Android 15+ handset, checking whether the
+header tucks under the status bar or the footer under the gesture bar. `docs/SETUP.md` records
+that the sandboxed browser cannot render this stack faithfully, so a screenshot from CI would
+not settle it either.
+
+**It is cosmetic until proven otherwise**, and it costs a web deploy to fix if it is CSS — which
+is the likelier half, and which reaches installed apps with no store release.
+
 ## 0c. Production access — **GRANTED** (confirmed in console 2026-08-24)
 
 > **GRANTED, and read off the console rather than reported second-hand.** The Dashboard shows
 > *"Congratulations! Your app has been granted Google Play production access"*. Production
 > itself reads **Inactive** — access is granted, no production release is published yet.
+> **(Superseded 2026-09-01: production is LIVE on release 25. See §0d.)**
 > Closed testing remains **Active, 1 track**; internal testing Active; open testing Inactive.
 >
 > **WHAT THIS UNBLOCKS:** §1's US-only country setting, which was verified on 2026-08-01 as
