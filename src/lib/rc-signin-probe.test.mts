@@ -557,3 +557,57 @@ test('no token, no notice — a signed-out page that nobody is signing into is n
   assert.ok(!out.sent.some((r) => r.stage === 'settle-timeout'));
   assert.ok(!out.byId['camphawk-rc-hold']);
 });
+
+// ---------------------------------------------------------------------------
+// 7. STEP TWO IS OBSERVED, AND A SIGN-OUT MID-FLOW IS VISIBLE (#250).
+// ---------------------------------------------------------------------------
+
+test('rc-session carries whether the Okta token is present, and reports its removal', (t) => {
+  t.after(() => mock.timers.reset());
+  mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'] });
+  const out = reporterPage({ ssoAccessToken: 'x' });
+  const first = out.sent.find((r) => r.stage === 'rc-session');
+  assert.equal(first?.detail?.sso, true);
+  assert.equal(first?.detail?.loggedIn, false);
+  // RC's customerLogOut deletes ssoAccessToken. That flip is the evidence of it firing.
+  delete out.data.ssoAccessToken;
+  mock.timers.tick(1_000);
+  const rc = out.sent.filter((r) => r.stage === 'rc-session');
+  assert.equal(rc.length, 2, 'the removal must be reported once');
+  assert.equal(rc[1].detail?.sso, false);
+  assert.equal(rc[1].detail?.loggedIn, false);
+});
+
+test("rc-inject's SSO observation is relayed as rc-api — path, status, RC's Response code, nothing else", () => {
+  const out = reporterPage({});
+  out.fire('message', { source: out.win, data: { __camphawk_api: {
+    path: 'https://calirdr.usedirect.com/RDR/rdr/fd/WebAccessCustomer/SSO/GetSSOLoggedInUser',
+    status: 200, rcResponse: 3, token: 'MUST-NOT-BE-RELAYED',
+  } } });
+  const api = out.sent.find((r) => r.stage === 'rc-api');
+  assert.ok(api, 'the observation must be relayed');
+  assert.deepEqual(Object.keys(api!.detail ?? {}).sort(), ['path', 'rcResponse', 'status']);
+  assert.equal(api!.detail?.status, 200);
+  assert.equal(api!.detail?.rcResponse, 3);
+  assert.ok(!JSON.stringify(out.sent).includes('MUST-NOT-BE-RELAYED'), 'unknown fields never cross');
+});
+
+test('rc-inject reports SSO calls by PATH only — the query carries the email and Okta subject', () => {
+  const src = readFileSync(new URL('../../extension/rc-inject.js', import.meta.url), 'utf8')
+    .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  const fn = src.slice(src.indexOf('function apiPath'), src.indexOf('function isSsoCall'));
+  assert.match(fn, /url\.origin \+ url\.pathname/, 'origin + pathname');
+  assert.doesNotMatch(fn, /url\.search|url\.href|url\.toString/, 'never the query — location.href is only the base for relative URLs');
+  const post = src.slice(src.indexOf('function postApi'), src.indexOf('// Re-broadcast'));
+  assert.match(post, /j\.Response/, "RC's Response code is read");
+  assert.doesNotMatch(post, /\.token|\.Token|accessToken/, 'the body\'s token is never read out');
+  assert.match(src, /isSsoCall\(u\)[\s\S]{0,120}loadend/, 'XHR (axios) responses are observed');
+  assert.match(src, /isSsoCall\(input\)/, 'fetch responses are observed too');
+});
+
+test('the readout prints step two and the mid-flow sign-out', () => {
+  const src = code(readFileSync(new URL('../../scripts/rc-holds-readout.mts', import.meta.url), 'utf8'));
+  assert.match(src, /r\.stage === 'rc-api'/, 'step two calls are printed');
+  assert.match(src, /NOT ok — RC refused it/, 'a refused step two is named as such');
+  assert.match(src, /SIGNED THE SESSION OUT MID-FLOW/, 'customerLogOut is named when the flip shows it');
+});

@@ -119,8 +119,8 @@ test('a user-driven exit marks the window gone and disarms the watchdog', () => 
 test('the bundle reports rc-session from customerId, as a BOOLEAN, and shows a notice if step two never finishes', () => {
   const src = readFileSync('src/lib/rc-precart-script.ts', 'utf8');
   assert.match(src, /localStorage\.getItem\("customerId"\)/, 'the signal is RC\'s own key');
-  assert.match(src, /send\("rc-session", \{ loggedIn: v, at: href\(\) \}\)/,
-    'reported as a boolean — never the id');
+  assert.match(src, /send\("rc-session", \{ loggedIn: v, sso: so, at: href\(\) \}\)/,
+    'reported as booleans — never the id, never the token');
   assert.doesNotMatch(src, /customerId: *get\(|customerId\) *\}|send\([^)]*customerId[^)]*getItem/,
     'the customer id value must never be reported');
   assert.match(src, /send\("settle-timeout", \{ held: true/, 'a stalled step two is reported, not closed');

@@ -397,6 +397,25 @@ if (handed.length) {
       ssoToken: sess?.ssoToken, rcToken: sess?.rcToken,
     });
     if (rcRead) console.log(`      ${rcRead.level === 'warn' ? '⚠ ' : ''}${rcRead.text}`);
+    // STEP TWO AS OBSERVED (#250): every SSO endpoint call rc-inject saw, with RC's answer.
+    // Absent lines mean the call never left — a different fault from RC refusing it.
+    const apiCalls = (h.client_reports ?? []).filter((r) => r.stage === 'rc-api');
+    for (const c of apiCalls.slice(-4)) {
+      const d = c.detail as { path?: string; status?: number; rcResponse?: number | null };
+      const name = String(d.path ?? '').split('/').slice(-2).join('/');
+      const rc = d.rcResponse == null ? '' : ` · RC Response ${d.rcResponse}${d.rcResponse === 1 ? ' (ok)' : ' (NOT ok — RC refused it)'}`;
+      console.log(`      step two: ${name} → HTTP ${d.status ?? '?'}${rc}`);
+    }
+    // A SIGN-OUT MID-FLOW: sso went true then false with loggedIn never true is RC's own
+    // customerLogOut firing — its interceptor met a request needing RC's token before step
+    // two had produced one.
+    const rcSessions = (h.client_reports ?? []).filter((r) => r.stage === 'rc-session')
+      .map((r) => r.detail as { loggedIn?: boolean; sso?: boolean });
+    const sawSso = rcSessions.some((d) => d.sso === true);
+    const lostSso = sawSso && rcSessions.findLast((d) => typeof d.sso === 'boolean')?.sso === false;
+    if (lostSso && !rcSessions.some((d) => d.loggedIn === true)) {
+      console.log('      ⚠ RC SIGNED THE SESSION OUT MID-FLOW: ssoAccessToken appeared and was then removed with customerId never written — customerLogOut fired (a request needed RC\'s token before step two produced one)');
+    }
     if (sess && sess.oktaToken !== undefined) {
       const live = typeof sess.oktaExpiresInSec === 'number' && sess.oktaExpiresInSec > 0;
       if (sess.oktaToken === 'jwt' && live) {

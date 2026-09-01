@@ -35,6 +35,24 @@
       if (m) setCartKey(m[1]);
     } catch {}
   }
+  // STEP TWO OF RC'S SIGN-IN, OBSERVED (2026-09-01, #250). RC's login is two steps: Okta's
+  // callback writes ssoAccessToken, then GET WebAccessCustomer/SSO/GetSSOLoggedInUser must
+  // return before RC writes customerId and renders signed in. Until now nothing recorded
+  // whether that call ran, or what it answered, so "step two never finished" was inferred
+  // from the absence of customerId. Report its PATH and STATUS and RC's own Response code.
+  // Never the query (it carries the account's email and Okta subject) and never the body
+  // (it carries RC's token) — one number is read out of it and the rest is not kept.
+  function apiPath(u) {
+    try { const url = new URL(typeof u === 'string' ? u : (u && u.url) || '', location.href); return url.origin + url.pathname; } catch { return ''; }
+  }
+  function isSsoCall(u) { return /\/SSO\//i.test(apiPath(u)); }
+  function postApi(u, status, text) {
+    try {
+      let rc = null;
+      try { const j = JSON.parse(text); if (j && typeof j.Response === 'number') rc = j.Response; } catch {}
+      window.postMessage({ __camphawk_api: { path: apiPath(u), status: Number(status) || 0, rcResponse: rc } }, '*');
+    } catch {}
+  }
   // Re-broadcast so a listener that attaches after RC's initial calls still gets them.
   let n = 0;
   const iv = setInterval(() => {
@@ -46,7 +64,16 @@
   // Capture ONLY the RC-specific "accesstoken" header — other services (Okta,
   // analytics) set "authorization" with different tokens that would 401 here.
   const openXHR = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function (m, u) { try { grabUrl(u); } catch {} return openXHR.apply(this, arguments); };
+  XMLHttpRequest.prototype.open = function (m, u) {
+    try {
+      grabUrl(u);
+      if (isSsoCall(u)) {
+        const xhr = this;
+        xhr.addEventListener('loadend', function () { postApi(u, xhr.status, xhr.responseText); });
+      }
+    } catch {}
+    return openXHR.apply(this, arguments);
+  };
   const setHdr = XMLHttpRequest.prototype.setRequestHeader;
   XMLHttpRequest.prototype.setRequestHeader = function (k, val) {
     try { if (String(k).toLowerCase() === 'accesstoken') post(val); } catch {}
@@ -67,7 +94,15 @@
         }
         if (init && init.body) grabBody(init.body);
       } catch {}
-      return origFetch.apply(this, arguments);
+      const p = origFetch.apply(this, arguments);
+      try {
+        if (isSsoCall(input) && p && p.then) {
+          p.then(function (res) {
+            try { res.clone().text().then(function (t) { postApi(input, res.status, t); }); } catch {}
+          }, function () { postApi(input, 0, ''); });
+        }
+      } catch {}
+      return p;
     };
   }
 })();
