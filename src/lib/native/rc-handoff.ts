@@ -299,6 +299,49 @@ const IAB_OPTIONS = [
  */
 const SIGN_IN_SETTLE_MS = 10_000;
 
+/**
+ * How long the webview may sit with NO `loadstop` at all before we take it down ourselves.
+ *
+ * ## WHY THIS EXISTS (2026-09-01)
+ *
+ * Reported repeatedly, and finally pinned down: RC's app regularly fails to render — its own
+ * "We're having trouble loading the application" screen, or nothing at all. On 2026-08-31 it
+ * took **three attempts and ~5 minutes**; the same happened mid-test on 08-30. Until now
+ * NOTHING in this file guarded that case:
+ *
+ *   - `loaderror` was reported and otherwise IGNORED — no retry, no close, no message.
+ *   - the only timer was `SIGN_IN_SETTLE_MS`, which arms only AFTER a live token, so a page
+ *     that never loads never arms anything.
+ *   - there is no `loadstart` listener, so "never started" and "started and hung" were the
+ *     same silence.
+ *
+ * So the user was left on a dead window whose Done button did not respond, and **force-quit
+ * was the only way out.**
+ *
+ * ## WHAT THIS DOES AND DOES NOT BUY — read this before trusting it
+ *
+ * The timer runs in the MAIN app's JS context, not in the InAppBrowser. That is deliberate:
+ * a wedged webview cannot run its own watchdog, which is the same reason `worker/claim.ts`
+ * and the keep-warm's own watchdog live outside the loop they guard.
+ *
+ * **It cannot save a fully wedged app.** Owner report, 2026-09-01: when it sticks, the RC page
+ * will not scroll AND the native Done button does not respond — so the renderer and the app's
+ * UI are both gone, and a `setTimeout` in the main webview will not fire either. That case is
+ * memory (see CLAUDE.md on RC's Okta navigations allocating 2.3-9.4 GB) and it needs a
+ * different answer.
+ *
+ * **What it does buy** is every case short of that: a slow load, a `loaderror`, RC's own
+ * trouble-loading screen, a network stall. Those are the common ones, they currently end in a
+ * force-quit as well, and after this they end in a message and a closed window. And it makes
+ * the event LEAVE A RECORD, which the fatal case never has — the page cannot report on a
+ * renderer that is gone, so today these freezes are invisible in `client_reports`.
+ *
+ * 20s: RC's healthy first paint is a couple of seconds. A load still unfinished at 20s is not
+ * going to be useful at 08:00, where the whole cart window is seconds wide. Long enough not to
+ * cut off a slow connection, short enough that nobody sits there wondering.
+ */
+const LOAD_WATCHDOG_MS = 20_000;
+
 async function injectableWebView(): Promise<null | {
   open: (
     url: string, code: string, onReport?: (r: RcReport) => void, closeOnToken?: boolean,
@@ -330,18 +373,36 @@ async function injectableWebView(): Promise<null | {
       let lastUrl = url;
       let settleTimer: ReturnType<typeof setTimeout> | null = null;
       let closedAlready = false;
+      // HAS THIS WEBVIEW EVER RENDERED ANYTHING? The load watchdog and the `loaderror` arm
+      // both turn on this one fact, and they need opposite things from it: the watchdog only
+      // guards the FIRST load, and `loaderror` only acts BEFORE one. See each for why.
+      let everLoaded = false;
       // ONE closer, so every path clears the timer and every path names its reason. Three
       // reasons, and they are the whole diagnostic: `token` is the ordinary already-signed-in
       // close, `settled` is RC leaving the callback under its own steam (the fix working),
       // and `timeout` is RC never leaving it. A hand-off that still fails will say which of
       // the three it took, which is what tells the next reader whether this was the right
       // half of the problem.
-      const closeOnce = (reason: 'token' | 'settled' | 'timeout') => {
+      const closeOnce = (reason: 'token' | 'settled' | 'timeout' | 'never-loaded' | 'load-error') => {
         if (closedAlready) return;
         closedAlready = true;
         if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
         onReport?.({ n: 0, stage: 'close', detail: { reason } });
         try { ref.close?.(); } catch { /* the user can close it themselves */ }
+      };
+      // THE LOAD WATCHDOG. Armed at open, disarmed by the FIRST loadstop.
+      //
+      // FIRST LOAD ONLY, and that bound is the whole design. Re-arming on every loadstop
+      // would make this "no navigation for 20s", which is what a user READING the page looks
+      // like — it would close the window under somebody halfway through checking their dates.
+      // A mid-flow hang is a different fault and this is not the instrument for it.
+      let loadTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+        loadTimer = null;
+        if (everLoaded || closedAlready) return;
+        closeOnce('never-loaded');
+      }, LOAD_WATCHDOG_MS);
+      const disarmLoadTimer = () => {
+        if (loadTimer) { clearTimeout(loadTimer); loadTimer = null; }
       };
       // THE REPORT CHANNEL, wired BEFORE the first injection — the plugin fires `message`
       // for anything the page posts through `cordova_iab`, and the injected reporter's very
@@ -403,6 +464,17 @@ async function injectableWebView(): Promise<null | {
         ref.addEventListener('loaderror', (ev) => {
           const e = ev as { message?: string; code?: number } | undefined;
           onReport({ n: 0, stage: 'loaderror', detail: { message: e?.message ?? '', code: e?.code ?? null } });
+          // ACT ON IT — until 2026-09-01 this was recorded and otherwise ignored, so a
+          // webview that failed outright sat there until the user force-quit the app.
+          //
+          // ONLY BEFORE A SUCCESSFUL LOAD. After one, the page is up and doing its job, and a
+          // later `loaderror` may be a sub-resource — an image, a font, one analytics beacon
+          // RC's own page failed to fetch. Closing a working hand-off over a missing icon at
+          // 08:00 would be far worse than the fault this arm exists for.
+          if (!everLoaded && !closedAlready) {
+            disarmLoadTimer();
+            closeOnce('load-error');
+          }
         });
         // A USER-DRIVEN CLOSE ENDS THE DEFERRAL TOO. Without this a pending timer fires on a
         // webview that is already gone — calling `close()` on a dead ref and, worse, emitting
@@ -410,6 +482,7 @@ async function injectableWebView(): Promise<null | {
         ref.addEventListener('exit', () => {
           closedAlready = true;
           if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+          disarmLoadTimer();
           onReport({ n: 0, stage: 'closed', detail: null });
         });
       }
@@ -425,6 +498,11 @@ async function injectableWebView(): Promise<null | {
         // WHICH PAGE THIS IS. The plugin puts it on the event; both platforms send it. It is
         // handed to `afterLoad` because a sign-in walks across several pages and the caller
         // has to be able to tell them apart — see the note below.
+        // RC RENDERED SOMETHING. Recorded before anything else on this path: the injection
+        // below can throw on a sick page, and a `catch` that skipped this would leave the
+        // watchdog armed and close a webview that had in fact come up.
+        everLoaded = true;
+        disarmLoadTimer();
         const at = String((ev as { url?: string } | undefined)?.url ?? '');
         if (at) lastUrl = at;
         // RC HAS LEFT THE SIGN-IN FLOW — this is the signal the deferred close waits for, and
