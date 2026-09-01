@@ -490,28 +490,45 @@ religious beliefs, sexual orientation, other personal info, health, fitness, mes
 photos, videos, audio, files, calendar, contacts, in-app search history, installed apps,
 web browsing history.
 
-> **THE TWO ROWS ARE CORRECTED (2026-08-30). THE "SHARED" ANSWER IS THE OPEN QUESTION AND IT
-> IS DELIBERATELY LEFT OPEN.** *User IDs* and *Purchase history* now name RevenueCat and no
-> longer claim Stripe handles a Play purchase — it does not; those land as
-> `store_transaction_id` + `provider` (migration 071).
+> **ANSWERED 2026-09-01: RevenueCat IS A SERVICE PROVIDER, SO NOTHING ON THIS FORM CHANGES.**
+> Both rows stay **collected, not shared**. Read off Google's own exemption list, reached from
+> the `View exemptions` link under the *'Shared'* definition on the Data safety Overview page:
 >
-> **WHAT IS NOT DECIDED: whether either row stays "collected, not shared".** This section's own
-> rule at the top says a processor acting on our behalf is not sharing. RevenueCat reads as a
-> billing processor by that rule — but it is a distinct third party receiving a user identifier,
-> and **answering this wrong is a Data-safety violation, not a listing nit.**
-> - **Do not copy the Stripe answer across on the assumption they are alike.** Stripe is reached
->   server-to-server from our own backend; RevenueCat is an SDK **inside the app** that is handed
->   the user id on the device, which is the fact pattern Play's definition turns on.
-> - **It could not be checked from the agent session that wrote this**: `support.google.com` and
->   `play.google` are outside this environment's egress allowlist (both returned `000` on
->   2026-08-24, re-confirmed 08-30). **Read Play's current definition in the console before the
->   next submission.**
+> > **Service providers.** Transferring user data to a "service provider" that processes it on
+> > behalf of the developer. *"Service provider" means an entity that processes user data on
+> > behalf of the developer and based on the developer's instructions.*
+> >
+> > **"Third party"** means any organization other than the first party **or its service
+> > providers**.
 >
-> **THIS IS THE MORE URGENT OF THE TWO STORE FORMS.** Play's four products are LIVE and a real
-> purchase has been made through them (2026-08-30); Apple's do not exist yet.
+> RevenueCat processes subscription state on our behalf, on our instructions — we configure it
+> with the Clerk user id, it records purchases and reports entitlements back to us. That is the
+> same relationship Stripe, Twilio, Resend and Sentry already have, and they are all declared
+> *not shared* on exactly this reasoning. **A second exemption covers the residual worry
+> independently**: RevenueCat's aggregate benchmarks fall under *Anonymous data* even if they
+> were counted as its own use.
 >
-> The same correction is applied in `docs/APP-STORE.md` §1 — in both, deliberately, because a
-> correction applied to one copy is not applied.
+> **THE ROWS' NOTES WERE STILL WRONG AND ARE FIXED ABOVE (2026-08-30)** — *Purchase history*
+> claimed Stripe handles every purchase, which is false for a Play purchase (`provider` +
+> `store_transaction_id`, migration 071). **Accuracy of our own record and the console answer
+> are different questions**, and only the second one turned out to need nothing.
+>
+> **THE TEST IS THE RELATIONSHIP, NOT THE TRANSPORT — and the session that answered this
+> argued the opposite twice before reading the page.** It reasoned that Stripe is reached
+> server-to-server from our backend while RevenueCat is an SDK handed the user id **on the
+> device**, and that this was "the fact pattern Play's definition turns on". **It is not.**
+> Google's list explicitly counts *"From your app libraries and SDKs"* and *"On-device transfer
+> to another app"* as sharing in the general case; what exempts a transfer is that the
+> recipient acts **on the developer's instructions**. Right answer, wrong route — and the wrong
+> route would mislead anyone applying it to a vendor that is NOT a processor.
+>
+> **A BULLET WORTH KNOWING FOR THIS APP SPECIFICALLY.** The list also counts *"From webview
+> which has been opened through your app… if your app is in control of code/behavior delivered
+> through that webview"*. CampHawk's shell **is** a webview we control (`server.url` →
+> camphawk.app), so every third party the web app reaches is in scope for this form — Clerk,
+> Stripe, Supabase, Resend, Twilio, Mapbox, Sentry, Vercel. **All of them are service providers
+> too**, so the answer is unchanged; but a future vendor that is not one would have to be
+> declared as shared even though it is only ever reached from the website.
 
 **Security practices section:**
 
