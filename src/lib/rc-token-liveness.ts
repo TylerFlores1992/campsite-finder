@@ -315,6 +315,37 @@ export function closeReasonReading(reason: string, signedInRun: boolean): CloseR
  */
 export type KeepSignedInReading = { level: 'info' | 'warn'; text: string };
 
+/**
+ * WHICH SIGN-IN PATH A RUN TOOK — the line that would have saved 2026-09-01.
+ *
+ * Okta has two entry points and the device's password manager decides which you get. Both
+ * end in a valid token, so every OUTCOME field matches; they differ four stages earlier, and
+ * on 09-01 two traces were compared field by field before anybody noticed:
+ *
+ *     identifier-first   signin-missing → email → password → submitted
+ *     password-first     signin-open    →         password → submitted
+ *
+ * The second skips Okta's identifier page, which is the only page carrying "Keep me signed
+ * in" — see `keepSignedInReading`. So this is not decoration: it names the precondition for
+ * the failure directly above, and it is derived from stages we already record.
+ *
+ * DERIVED FROM `email`, NOT FROM THE PLATFORM. The path is a property of the run, not of the
+ * device — iOS takes the password-first route whenever Okta remembers the account. Keying it
+ * on platform would encode the very confusion this exists to end.
+ */
+export function signInPathReading(stages: string[]): string | null {
+  const signedIn = stages.some((s) => s === 'password' || s === 'submitted');
+  // NO SIGN-IN, NO READING. An already-signed-in hand-off never visits Okta at all, and
+  // reporting "password-first" over it would invent a path nobody took — the absent-reading
+  // -as-a-negative shape this file records more than any other.
+  if (!signedIn) return null;
+  return stages.includes('email')
+    ? "sign-in path: IDENTIFIER-FIRST — Okta asked for the address, so the "
+      + '"Keep me signed in" box was on screen'
+    : "sign-in path: PASSWORD-FIRST — Okta remembered the account and skipped its identifier "
+      + 'page, which is the only page carrying "Keep me signed in"';
+}
+
 export function keepSignedInReading(d: {
   ticked?: boolean; boxes?: number; matched?: boolean; at?: string;
 }): KeepSignedInReading {

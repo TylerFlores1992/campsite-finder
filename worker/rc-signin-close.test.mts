@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { isMidSignIn, rcCloseAction, keepSignedInReading } from '../src/lib/rc-token-liveness';
+import { isMidSignIn, rcCloseAction, keepSignedInReading, signInPathReading } from '../src/lib/rc-token-liveness';
 
 const LIVE = { captured: true, expiresInSec: 3598 };
 const CALLBACK = 'https://www.reservecalifornia.com/login/callback?code=abc&state=xyz';
@@ -254,4 +254,50 @@ test('the readout actually USES both readings — a pure function nothing calls 
     'the keep-signed-in reading must be PRINTED, severity and all');
   assert.match(src, /sign-in window closed: \$\{closeReason\} — \$\{reading\.text\}/,
     'the close reading must be PRINTED');
+});
+
+// ── WHICH OKTA PATH A RUN TOOK ─────────────────────────────────────────────────────────
+
+test('the two Okta paths are distinguishable, and neither is keyed on platform', () => {
+  const ios = signInPathReading(['injected', 'signin-missing', 'email', 'password', 'submitted']);
+  const android = signInPathReading(['injected', 'signin-open', 'password', 'submitted']);
+  assert.ok(ios && android);
+  assert.match(ios!, /IDENTIFIER-FIRST/);
+  assert.match(android!, /PASSWORD-FIRST/);
+  // The password-first line must NAME the consequence, or it is trivia. It is the
+  // precondition for the keep-signed-in miss directly below it in the readout.
+  assert.match(android!, /Keep me signed in/,
+    'the reading has to say WHY the path matters, not merely which one it was');
+});
+
+test('a run with no sign-in gets NO path reading', () => {
+  // An already-signed-in hand-off never visits Okta. Reporting a path over it would invent
+  // one nobody took — the absent-reading-as-a-negative shape.
+  assert.equal(signInPathReading(['injected', 'session', 'idle', 'token']), null);
+  assert.equal(signInPathReading([]), null);
+});
+
+test('the path is derived from the STAGES, never from the platform', () => {
+  // THE WHOLE POINT. iOS takes the password-first route whenever Okta remembers the account,
+  // so keying this on the device would encode the exact confusion it exists to end — and
+  // would make an Android-only symptom look platform-caused when it is path-caused.
+  const src = readFileSync('src/lib/rc-token-liveness.ts', 'utf8');
+  const at = src.indexOf('export function signInPathReading');
+  assert.ok(at > -1, 'anchor not found');
+  const body = src.slice(at, src.indexOf('\n}', at));
+  assert.doesNotMatch(body, /ios|android|platform/i,
+    'the path reading must not consult the platform');
+  assert.match(body, /stages\.includes\('email'\)/,
+    "the discriminator is whether Okta's identifier page was reached");
+});
+
+test('the readout prints the path ABOVE the keep-signed-in line', () => {
+  // Order is the argument: password-first is the PRECONDITION for the box being absent, so
+  // reading the consequence first leaves the reader deriving the cause backwards.
+  const src = readFileSync('scripts/rc-holds-readout.mts', 'utf8')
+    .replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const p = src.indexOf('signInPathReading(');
+  const k = src.indexOf('keepSignedInReading(');
+  assert.ok(p > -1, 'the readout must call signInPathReading — a reading nothing prints is inert');
+  assert.ok(k > -1 && p < k, 'the path must be printed before the keep-signed-in reading');
 });

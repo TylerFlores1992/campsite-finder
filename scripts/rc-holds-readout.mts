@@ -28,7 +28,7 @@
  * extra morning of holds, silently.
  */
 import { query } from '../src/lib/db/client';
-import { closeReasonReading, keepSignedInReading } from '../src/lib/rc-token-liveness';
+import { closeReasonReading, keepSignedInReading, signInPathReading } from '../src/lib/rc-token-liveness';
 
 const hours = Number(process.argv.find((a) => a.startsWith('--hours='))?.split('=')[1] ?? 24);
 
@@ -337,6 +337,11 @@ if (handed.length) {
       const mark = reading.level === 'warn' ? '⚠ ' : '';
       console.log(`      ${mark}sign-in window closed: ${closeReason} — ${reading.text}`);
     }
+
+    // WHICH OKTA PATH THIS RUN TOOK. Printed ABOVE the keep-signed-in line because it is
+    // that line's precondition: password-first means the box was never on screen.
+    const pathLine = signInPathReading((h.client_reports ?? []).map((r) => r.stage));
+    if (pathLine) console.log(`      ${pathLine}`);
 
     // DID OKTA GET TOLD TO KEEP US SIGNED IN? (2026-09-01) The `idx` cookie comes from that
     // checkbox, and until now the tick returned a boolean nobody read — so "ticked it" and
