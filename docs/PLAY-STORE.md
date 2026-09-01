@@ -288,6 +288,13 @@ reads `Add 1 country / region: United States` with nothing to remove. That is th
 the "add the US first, then remove the others" ordering caution — Play refuses a track at zero
 countries — never came up, because there was nothing there.
 
+> **IT APPLIED — CONFIRMED IN THE CONSOLE 2026-09-01.** `Production -> Countries / regions`
+> reads **Targeted (1) · United States · ✓ Targeted** ("Includes 7 locations" — the US
+> territories, not an over-wide setting). **Nobody recorded the outcome for a week**, so the
+> paragraph below stood as the last word and reads as though the change may still be sitting
+> unsubmitted. It is not: this is settled, and `LINKOUT_BY_STORE.android`'s first condition is
+> met. The reasoning below is kept because it is how the change was made, not as open state.
+
 **IT IS STAGED, NOT APPLIED.** The change lands in *Publishing overview* under **Changes not yet
 submitted for review**, behind ~15 minutes of automated quick checks and then a manual
 `Submit N changes for review`. A country restriction is not instant and does not apply itself.
