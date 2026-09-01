@@ -4868,6 +4868,112 @@ open carrying the Feature E correction: **a correction applied to one copy is no
 - **The health endpoint's checks are keyed `name`, NOT `id`.** A summary filtering on `c.id`
   prints `undefined` for every check and silently drops the ones you were looking for.
 
+### iOS AND ANDROID DIVERGED ON ONE CAMPSITE EACH, AND THE INSTRUMENTS SAID THEY MATCHED (2026-09-01)
+Two real-site hand-offs eleven minutes apart, both carted at T+2s. **iOS worked — RC's header
+carried the owner's name and the cart was reachable. Android did not** — RC rendered *"Before
+booking, please sign in or create a profile"* and the cart asked him to log in. Owner-confirmed
+on both devices.
+- **EVERY OUTCOME FIELD MATCHED, AND THAT IS THE FINDING.** `✓ Added to cart`,
+  `cart read back: 1 entry`, `close: timeout`, and the okta census down to
+  `oktaKeys: 1 · oktaToken: none · storedToken: jwt · keySource: localStorage`. **The
+  instruments did not measure the thing that differed** — the house shape, arriving in the
+  diagnostics built to escape it. I reported the two platforms as "identical line for line"
+  on the strength of those fields and was wrong: the traces were identical, the outcomes were
+  not.
+- **THEY DIVERGE FOUR STAGES EARLIER, IN THE SIGN-IN.**
+  ```
+  iOS      signin-missing {candidates:6} → email → password → submitted
+  Android  signin-open {}                →         password → submitted
+  ```
+  Android never reached Okta's IDENTIFIER page: a password field was already on screen, so
+  `chFind(CH_PW_SELS)` matched and the caller skips the email step entirely. **Okta renders
+  "Keep me signed in" on the identifier step**, so there was no checkbox in the DOM and
+  `chKeepSignedIn` found nothing.
+- **THE TICK RETURNED A BOOLEAN NOBODY READ**, so "ticked it" and "there was no box on this
+  page" were the same silence — which is precisely why two runs with opposite outcomes
+  produced the same trace. It reports now (`keep-signed-in` → `{at, ticked, boxes, matched}`),
+  counts and a boolean, **never label text**: the sibling `signin-missing` already refuses
+  candidate text because RC's header carries the signed-in user's own name.
+- **WHY THE TICK IS LOAD-BEARING, from this file's own measurement.** 2026-08-09: the ported
+  login calls `keepSignedIn()` and the hand-rolled one never did, so *"every previous session
+  was established without 'Keep me signed in', so of course Okta issued nothing persistent"* —
+  `okta=GONE(404)` before, a ~12h session after. The function's comment says the `idx` cookie
+  comes from that box. A run without it still completes the OAuth exchange and mints a good
+  939-char access token — **which is why the cart POSTs succeed** — while leaving nothing for
+  RC's SPA to render a name from.
+- **CANDIDATE, NOT A FINDING.** What is established is that the tick did not happen; that it
+  is WHY the header is empty is inference from one prior measurement. **A hand-off reporting
+  `ticked` whose header is still empty refutes it outright.**
+- **PATH-DEPENDENT, NOT PLATFORM-DEPENDENT.** iOS fails identically on any run where Okta
+  remembers the account. Which page you land on is decided by the device's password manager
+  and Okta's cookies, not by our code — so "what is different on Android?" has the same answer
+  it has had all along: nothing, in our source.
+- **`signInPathReading` PRINTS THE PATH NOW**, above the keep-signed-in line because it is
+  that line's precondition. Derived from stages, **never from the platform** — keying it on
+  the device would encode the exact confusion it exists to end, and is pinned by a test.
+- Ten mutations, each grep-verified to APPLY. **Two survived the first round and both were
+  real gaps**: `boxes` hardcoded to `0` passed the whole suite (the no-box test asserts zero
+  trivially, the success test only checked `ticked`) — which would have read as "Okta never
+  offered the option" on EVERY run; and the readout dropping `keepSignedInReading` for a
+  literal passed too, because every test exercises the function directly. `closeReasonReading`
+  had the identical exposure and was never guarded either. Both pinned.
+- **TWO EXISTING GUARDS BROKE OVER UNCHANGED BEHAVIOUR AND WERE RE-ANCHORED, NOT RELAXED** —
+  one pinned the literal `chKeepSignedIn()` expression, the other an entire import line that a
+  second imported name invalidated. Twenty-somethingth time.
+
+#### ⚠ #248 CHANGED THE BASELINE TO INSTRUMENT THE THING THAT IS NOT THE BASELINE
+The standing instruction is that **iOS is the baseline**, and this change was written off an
+ANDROID observation while editing `src/lib/rc-login-script.ts` — **which iOS runs too**. Raised
+by the owner, and it is the right instinct: the danger is fixing the broken platform by
+disturbing the working one.
+- **It is the ONLY file in #248 that reaches either app.** The readout, the pure functions and
+  `docs/PLATFORM-PARITY.md` cannot affect a device.
+- **The behavioural delta was audited before merge and is essentially nil:** `chKeepSignedIn`
+  went from `{ b.click(); return true; }` to `{ matched = true; b.click(); ticked = true;
+  break; }` plus a `chSay`. Same click, same conditions, same short-circuit; **no caller reads
+  the return value**, and `chSay` swallows its own errors, so it cannot throw out of the tick.
+- **IF iOS REGRESSES, REVERT `rc-login-script.ts` ALONE.** Reverting the whole PR would take
+  the parity work with it, which is the half that stops this recurring.
+
+### WHERE iOS AND ANDROID ACTUALLY DIFFER — AUDITED, AND THE ANSWER REFRAMES THE QUESTION (2026-09-01)
+Asked for a deep search after the fourth "whoops, another difference" in three weeks. Full
+inventory in **`docs/PLATFORM-PARITY.md`**; the audit itself is the finding.
+- **THE EXPLICIT SURFACE IS TEN LINES IN FIVE FILES, AND NOT ONE IS IN THE RC HAND-OFF PATH.**
+  The UA sniff, `StatusBar.setBackgroundColor` (Android-only, **throws** on iOS), the hardware
+  back button, `LINKOUT_BY_STORE`, `IN_APP_PURCHASE_BY_STORE`, the RevenueCat key, and FCM's
+  `android: { priority: 'high' }`. `rc-login-script.ts`, `rc-precart-script.ts`,
+  `rc-token-liveness.ts` and `claim-gate.ts` contain **zero**.
+- **SO THERE IS NO LIST OF "ANDROID DIFFERENCES" TO FIND. Every bug that has cost us anything
+  was EMERGENT** — identical code behaving differently because a password manager pre-filled a
+  field, or a cookie store persists differently, or one Cordova plugin has two native
+  implementations. **No scanner can find those**, which is exactly why they arrive one at a
+  time, and why a test claiming to cover them would be a guard that inspects nothing while
+  reading as proof.
+- **`src/lib/platform-parity.test.mts` registers the explicit half** — every branch needs a
+  one-line reason, a new one fails the build, a stale registry entry fails too, and the RC path
+  is separately asserted branch-free. **Under `src/`, not `worker/`**, because `worker/**` is
+  the first entry in `worker-deploy.yml`'s `paths:` and a guard over web modules has no
+  business restarting both pollers.
+- **`worker/codemagic-assertions.test.mts` checks each build workflow ALONE and has never
+  compared the two.** Read the side-by-side rather than trusting it. The asymmetries are
+  benign and checked: iOS asserts the RevenueCat pod, Android asserts the Play Billing
+  permission in the merged manifest — different mechanisms, same property.
+
+#### THE BUILD NUMBERS ARE ON ONE SEQUENCE, AND THE TWO PHONES ARE THREE WEEKS APART
+**This invalidates every iOS-vs-Android comparison run so far.** The 09-01 traces read
+`[ios build 1.0 (21)]` and `[android build 1.0 (25)]`; this file dates build 21 to
+**2026-08-09**, and the Android build is from **08-29/30**. `@revenuecat/purchases-capacitor`
+landed on 08-29, so **the iPhone binary does not contain it at all.**
+- **`PROJECT_BUILD_NUMBER` IS PROJECT-WIDE, NOT PER-WORKFLOW**, so 21 really is older than 25.
+  `codemagic.yaml` asserted the opposite in **two** separate comments until 09-01. The disproof
+  was already in this file: `android-release` **build 8** produced **versionCode 16**, which a
+  per-workflow counter cannot do. Both comments corrected.
+- **SO "iOS IS THE BASELINE" IS CURRENTLY A BASELINE OF THREE-WEEK-OLD CODE.** A fresh iOS
+  build is the one thing that makes future comparisons mean anything — and it is needed anyway
+  for the already-decided Apple IAP work, which that binary predates.
+- **COMPARE THE BUILD NUMBERS BEFORE COMPARING ANYTHING ELSE.** They are in every hand-off
+  trace and in the diagnostics panel.
+
 ## Open / next session
 
 > ### PLAY: RELEASE 25 IS IN REVIEW (submitted 2026-09-01). NOTHING TO DO BUT WAIT.
@@ -4900,6 +5006,22 @@ open carrying the Feature E correction: **a correction applied to one copy is no
 
 
 > **START AT `docs/NEXT-SESSION.md`. NOTHING IS ASSIGNED; THE TOP ITEM IS A READING.**
+>
+> **-1. THE TWO-PHONE HAND-OFF TEST IS SET UP AND DELIBERATELY NOT RUN (2026-09-01 evening).**
+> The owner did not have the iPhone to hand, so this waits for tonight. #248 is merged/open
+> with the two new readout lines; the procedure is `docs/NEXT-SESSION.md` (read-first block)
+> and `docs/PLATFORM-PARITY.md` §3. **Expected if the candidate holds:** iOS
+> `IDENTIFIER-FIRST` + ticked, Android `PASSWORD-FIRST` + `no checkbox on the page at all`.
+> Anything else and the candidate is wrong — say so. **ASK FOR THE CART SCREEN on both**;
+> `cart read back: 1 entry` has never been corroborated by a human on either platform.
+>
+> **-0.5. IF iOS IS NOW BROKEN, revert `src/lib/rc-login-script.ts` ALONE** — #248 touched the
+> baseline to instrument Android, and that file is the only one in it that reaches an app. The
+> delta was audited as behaviourally nil; the entry above says exactly what changed.
+>
+> **-0.4. A FRESH iOS BUILD is the highest-value non-code action.** iOS is on a 2026-08-09
+> binary, so the "iOS is the baseline" comparison is three weeks stale and lacks RevenueCat.
+> Codemagic run, not a code change.
 >
 > **0. A REAL HOLD IS QUEUED FOR 2026-08-29 08:00 PT, AND THE OWNER WANTS THE SITE.** Unit
 > `43189` (`#94`, Morro Bay Upper Section), tapped 2026-08-28 11:46 PT by
