@@ -71,11 +71,122 @@ Internal testing has no such gate and can be published immediately — do that f
 to prove the AAB uploads cleanly and because it is where the **country restriction** can
 be set today.
 
+## 0d. RELEASE 25 IS **IN REVIEW** — submitted 2026-09-01
+
+*Publishing overview* reads **Changes in review** — *"Your changes are now in review. We may find
+additional issues when reviewing your app."* One item: **Production · 25 (1.0) · Start full
+rollout**, United States only.
+
+- **`Remove changes` IS AVAILABLE** while it sits in review, so the submission is reversible up
+  until approval. That is the lever if something needs to go in ahead of it.
+- **`Managed publishing` is OFF, so approval publishes immediately** at 100% to the US — there is
+  no hold-and-release step, and nobody is asked a second time.
+- **THE DATA SAFETY QUESTION WENT UNANSWERED INTO THIS SUBMISSION.** §4's open item — whether
+  RevenueCat receiving the Clerk user id counts as *Shared* — was not resolved before Submit. It
+  is **editable independently of the binary and needs no new release**, so it can be corrected
+  after the fact; what it costs is that the app publishes with a declaration that does not
+  mention RevenueCat while Play's four products are already taking money. **Close it rather than
+  letting approval close it by default.**
+
+### The staging history, and the reading rule it produced
+
+
+
+Release **25 (1.0)** is created, has passed Play's quick checks, and is sitting in
+*Publishing overview* under **Changes not yet submitted for review** with a live
+`Submit 1 change for review` button. **Nothing has been sent to Google.** United States only,
+`Start full rollout`.
+
+> ~~**PRODUCTION IS LIVE.** `Test and release -> Production -> Track summary` reads
+> `Active · Latest release: 25 (1.0) · 1 country / region · 4 installs`, so CampHawk is
+> published.~~ **WRONG, AND CORRECTED WITHIN THE HOUR.** Struck rather than deleted, because
+> "we are live" is exactly the sentence a later reader quotes as current state.
+
+**THE TRACK SUMMARY IS NOT THE AUTHORITY ON SUBMISSION STATE, AND I ASSERTED THAT IT WAS.**
+Four surfaces, and the split is not three-to-one by luck:
+
+| surface | reads | about |
+|---|---|---|
+| **Publishing overview** | *Changes not yet submitted for review* · `Submit 1 change` | **submission** |
+| App list | *Update status: Not yet sent for review* · *App status: Closed testing* | **submission** |
+| Dashboard checklist | *Send the release to Google for review* — unticked (3 of 5) | **submission** |
+| Production -> Track summary | `Active · Latest release: 25 (1.0) · 4 installs` | **track configuration** |
+
+**The three that agree are all describing submission; the one that disagreed is describing the
+TRACK.** `Active` flipped from `Inactive` when the track gained countries and a draft release —
+it does not mean a release is published, and `Latest release` names the newest release *attached*
+rather than the newest *live*. **The reasoning that picked it was that it had changed**, which is
+a reason to look, never a reason to believe.
+
+**SO: READ `Publishing overview` FOR "HAS THIS SHIPPED?"** It is the screen whose entire job is
+that question, and it is unambiguous in both directions.
+
+**The `4 installs` figure is unexplained and was NOT resolved** — plausibly the closed test's
+installs rolled into the track view. It is not evidence of a production release, and chasing it
+is not worth the time; do not read it as one.
+
+**NO STAGED ROLLOUT WAS OFFERED.** No rollout-percentage field on *Create production release ->
+Preview and confirm*, and the staged change reads **`Start full rollout`**. **A first production
+release appears to go out at 100%** — plausibly because there is no prior release to roll out
+over, though that was NOT confirmed against Google's documentation (`support.google.com` is
+outside this environment's egress allowlist). **Expect a percentage on the next release.**
+
+**TWO RECOMMENDED ACTIONS ON THE RELEASE, NEITHER BLOCKING** — the edge-to-edge pair in §0e. And
+the two bundle warnings were benign and shipped deliberately: no deobfuscation file (Capacitor
+ships `minifyEnabled false`, so there is nothing to deobfuscate) and no native debug symbols
+(affects crash *readability*, never crash *rate*).
+
+**WHAT IS ACTUALLY LEFT: press Submit — and settle Data safety FIRST.** `Managed publishing` is
+**off**, so approval publishes immediately with no hold-and-release step. Both changes batch into
+this one screen, and §4's open question — whether RevenueCat receiving the Clerk user id counts
+as *Shared* — should be answered before the app is public rather than after.
+
+**WHAT BECOMES LOAD-BEARING THE MOMENT IT PUBLISHES:**
+
+1. **The webhook's back half, which has never executed.** `ignoreReason` drops non-`PRODUCTION`
+   events, so every test to date left no row. The chain event -> `subscriptions` ->
+   `hasAutocartEntitlement` runs for the first time on a stranger's purchase, carrying two known
+   gaps: **HMAC is reported, not enforced**, and **out-of-order delivery is unhandled**.
+2. **Data safety stops being a form and becomes a live declaration.**
+3. **`LINKOUT_BY_STORE.android` still stays `false`.** Two of its three conditions are met and
+   the third is moot — with Play Billing in the app there is no steering UI at all. **Publishing
+   is not a reason to revisit the flag.**
+
+### 0e. THE EDGE-TO-EDGE RECOMMENDATIONS — recorded, NOT diagnosed
+
+Release 25 carries two Play "recommended actions", both `User experience`, neither blocking:
+
+```
+Edge-to-edge may not display for all users
+Your app uses deprecated APIs or parameters for edge-to-edge
+```
+
+**Android 15 (API 35) enforces edge-to-edge for apps targeting it**, and §0a raised us to
+`targetSdkVersion 36` to clear Play's API-level deadline — so this arrives as a consequence of
+that bump rather than of anything anyone wrote. The app draws under the status and navigation
+bars unless insets are handled.
+
+**WHY THIS IS NOT A ONE-LINE FIX HERE, and why nothing is proposed:** the app is a **remote
+webview** (`server.url`), so the content under those bars is a web page, and the inset handling
+could belong in the native shell, in CSS (`viewport-fit=cover` plus `env(safe-area-inset-*)`),
+or in both. **Which one is wrong has not been established**, and nobody has looked at the app on
+an Android 15 device to see whether anything actually renders badly. Two warnings from a static
+scan are not an observation.
+
+**The honest next step is to LOOK at it** — a real Android 15+ handset, checking whether the
+header tucks under the status bar or the footer under the gesture bar. `docs/SETUP.md` records
+that the sandboxed browser cannot render this stack faithfully, so a screenshot from CI would
+not settle it either.
+
+**It is cosmetic until proven otherwise**, and it costs a web deploy to fix if it is CSS — which
+is the likelier half, and which reaches installed apps with no store release.
+
 ## 0c. Production access — **GRANTED** (confirmed in console 2026-08-24)
 
 > **GRANTED, and read off the console rather than reported second-hand.** The Dashboard shows
 > *"Congratulations! Your app has been granted Google Play production access"*. Production
 > itself reads **Inactive** — access is granted, no production release is published yet.
+> **(Still true as of 2026-09-01. Release 25 is STAGED and unsubmitted — see §0d.)**
 > Closed testing remains **Active, 1 track**; internal testing Active; open testing Inactive.
 >
 > **WHAT THIS UNBLOCKS:** §1's US-only country setting, which was verified on 2026-08-01 as
