@@ -71,49 +71,67 @@ Internal testing has no such gate and can be published immediately — do that f
 to prove the AAB uploads cleanly and because it is where the **country restriction** can
 be set today.
 
-## 0d. **PRODUCTION IS LIVE — 2026-09-01**
+## 0d. THE PRODUCTION RELEASE IS STAGED, NOT PUBLISHED — 2026-09-01
 
-Read off `Test and release -> Production -> Track summary`, which is the authoritative screen:
+Release **25 (1.0)** is created, has passed Play's quick checks, and is sitting in
+*Publishing overview* under **Changes not yet submitted for review** with a live
+`Submit 1 change for review` button. **Nothing has been sent to Google.** United States only,
+`Start full rollout`.
 
-```
-Active · Latest release: 25 (1.0) · 1 country / region · 4 installs
-```
+> ~~**PRODUCTION IS LIVE.** `Test and release -> Production -> Track summary` reads
+> `Active · Latest release: 25 (1.0) · 1 country / region · 4 installs`, so CampHawk is
+> published.~~ **WRONG, AND CORRECTED WITHIN THE HOUR.** Struck rather than deleted, because
+> "we are live" is exactly the sentence a later reader quotes as current state.
 
-**So CampHawk is published on Google Play, United States only, on versionCode 25.** That build
-carries Play Billing and RevenueCat, and it is the one a real licence-tester purchase completed
-against on 2026-08-30.
+**THE TRACK SUMMARY IS NOT THE AUTHORITY ON SUBMISSION STATE, AND I ASSERTED THAT IT WAS.**
+Four surfaces, and the split is not three-to-one by luck:
 
-- **THE DASHBOARD DISAGREED FOR A WHILE, AND THE TRACK SUMMARY IS THE ONE TO BELIEVE.** During
-  the release the app list read *App status: Closed testing* and *Update status: Not yet sent for
-  review*, and the Dashboard's own checklist showed *"Send the release to Google for review"* and
-  *"Publish your app on Google Play"* unticked — while the Dashboard's Production panel already
-  said **Active**. Three surfaces, three answers. **`Production -> Track summary` is the one that
-  matched reality**; the others lag. Do not diagnose a release from the app list.
-- **THERE WAS NO STAGED ROLLOUT, AND NONE WAS OFFERED.** No rollout-percentage field appeared on
-  *Create production release -> Preview and confirm*, and Publishing overview described the change
-  as **`Start full rollout`**. **A first production release appears to go out at 100%** — plausibly
-  because there is no prior production release to roll out over, though that was not confirmed
-  against Google's documentation (`support.google.com` is outside this environment's egress
-  allowlist). **Expect a percentage on the next release, not on the first.**
-- **TWO RECOMMENDED ACTIONS ON THE RELEASE, NEITHER BLOCKING:** *"Edge-to-edge may not display for
-  all users"* and *"Your app uses deprecated APIs or parameters for edge-to-edge"*. Both are
-  Android 15+ edge-to-edge enforcement, which `targetSdkVersion 36` opts us into — see §0e.
-- **THE TWO WARNINGS ON THE BUNDLE WERE BENIGN** and were shipped deliberately: no deobfuscation
-  file (Capacitor ships `minifyEnabled false`, so there is nothing to deobfuscate) and no native
-  debug symbols (affects crash *readability*, never crash *rate*).
+| surface | reads | about |
+|---|---|---|
+| **Publishing overview** | *Changes not yet submitted for review* · `Submit 1 change` | **submission** |
+| App list | *Update status: Not yet sent for review* · *App status: Closed testing* | **submission** |
+| Dashboard checklist | *Send the release to Google for review* — unticked (3 of 5) | **submission** |
+| Production -> Track summary | `Active · Latest release: 25 (1.0) · 4 installs` | **track configuration** |
 
-**WHAT BEING LIVE CHANGES, WHICH IS MORE THAN IT SOUNDS:**
+**The three that agree are all describing submission; the one that disagreed is describing the
+TRACK.** `Active` flipped from `Inactive` when the track gained countries and a draft release —
+it does not mean a release is published, and `Latest release` names the newest release *attached*
+rather than the newest *live*. **The reasoning that picked it was that it had changed**, which is
+a reason to look, never a reason to believe.
 
-1. **The webhook's back half is now load-bearing and has never executed.** `ignoreReason` drops
-   non-`PRODUCTION` events, so every test to date left no row. The chain event -> `subscriptions`
-   -> `hasAutocartEntitlement` runs for the first time on a stranger's purchase. Two known gaps
-   ride with it: **HMAC is reported, not enforced**, and **out-of-order delivery is unhandled**.
-2. **The Data safety form is now a live-app compliance item**, not a pre-submission one. §4's
-   open question — whether RevenueCat receiving the Clerk user id counts as *Shared* — is being
-   answered by silence today.
-3. **`LINKOUT_BY_STORE.android` still stays `false`.** Two of its three conditions are now met
-   (US-only, live in production) and the third is moot: with Play Billing in the app there is no
-   steering UI at all. **Being live is not a reason to revisit the flag.**
+**SO: READ `Publishing overview` FOR "HAS THIS SHIPPED?"** It is the screen whose entire job is
+that question, and it is unambiguous in both directions.
+
+**The `4 installs` figure is unexplained and was NOT resolved** — plausibly the closed test's
+installs rolled into the track view. It is not evidence of a production release, and chasing it
+is not worth the time; do not read it as one.
+
+**NO STAGED ROLLOUT WAS OFFERED.** No rollout-percentage field on *Create production release ->
+Preview and confirm*, and the staged change reads **`Start full rollout`**. **A first production
+release appears to go out at 100%** — plausibly because there is no prior release to roll out
+over, though that was NOT confirmed against Google's documentation (`support.google.com` is
+outside this environment's egress allowlist). **Expect a percentage on the next release.**
+
+**TWO RECOMMENDED ACTIONS ON THE RELEASE, NEITHER BLOCKING** — the edge-to-edge pair in §0e. And
+the two bundle warnings were benign and shipped deliberately: no deobfuscation file (Capacitor
+ships `minifyEnabled false`, so there is nothing to deobfuscate) and no native debug symbols
+(affects crash *readability*, never crash *rate*).
+
+**WHAT IS ACTUALLY LEFT: press Submit — and settle Data safety FIRST.** `Managed publishing` is
+**off**, so approval publishes immediately with no hold-and-release step. Both changes batch into
+this one screen, and §4's open question — whether RevenueCat receiving the Clerk user id counts
+as *Shared* — should be answered before the app is public rather than after.
+
+**WHAT BECOMES LOAD-BEARING THE MOMENT IT PUBLISHES:**
+
+1. **The webhook's back half, which has never executed.** `ignoreReason` drops non-`PRODUCTION`
+   events, so every test to date left no row. The chain event -> `subscriptions` ->
+   `hasAutocartEntitlement` runs for the first time on a stranger's purchase, carrying two known
+   gaps: **HMAC is reported, not enforced**, and **out-of-order delivery is unhandled**.
+2. **Data safety stops being a form and becomes a live declaration.**
+3. **`LINKOUT_BY_STORE.android` still stays `false`.** Two of its three conditions are met and
+   the third is moot — with Play Billing in the app there is no steering UI at all. **Publishing
+   is not a reason to revisit the flag.**
 
 ### 0e. THE EDGE-TO-EDGE RECOMMENDATIONS — recorded, NOT diagnosed
 
@@ -149,7 +167,7 @@ is the likelier half, and which reaches installed apps with no store release.
 > **GRANTED, and read off the console rather than reported second-hand.** The Dashboard shows
 > *"Congratulations! Your app has been granted Google Play production access"*. Production
 > itself reads **Inactive** — access is granted, no production release is published yet.
-> **(Superseded 2026-09-01: production is LIVE on release 25. See §0d.)**
+> **(Still true as of 2026-09-01. Release 25 is STAGED and unsubmitted — see §0d.)**
 > Closed testing remains **Active, 1 track**; internal testing Active; open testing Inactive.
 >
 > **WHAT THIS UNBLOCKS:** §1's US-only country setting, which was verified on 2026-08-01 as

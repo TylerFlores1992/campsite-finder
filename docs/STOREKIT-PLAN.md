@@ -33,9 +33,8 @@ end-to-end exercise of anything in this file.
   app still asks for a subscription. **Expect exactly this from a licence-tester purchase and
   do not go hunting for a broken webhook.**
 - **STILL UNPROVEN: webhook → `subscriptions` row → `hasAutocartEntitlement`.** Only a REAL
-  production purchase exercises it. **Play production went LIVE on 2026-09-01** (release 25, US
-  only — `docs/PLAY-STORE.md` §0d), so this is no longer waiting on a track: it now runs for the
-  first time on a real customer's purchase. Its substitute until then is 17
+  production purchase exercises it. **Play production release 25 is STAGED and unsubmitted as of
+  2026-09-01** (`docs/PLAY-STORE.md` §0d) — one button away, not published. Its substitute is 17
   tests and 13 mutations (#218).
 - **A SANDBOX-ONLY ROUGH EDGE, RECORDED SO IT IS NOT FILED AS A HANG.** After a successful
   purchase the paywall shows *"Confirming your subscription…"* and waits for the server to
@@ -153,9 +152,8 @@ and it reaches installed apps immediately.
 - **NOT iOS.** `NEXT_PUBLIC_REVENUECAT_IOS_KEY` is unset — verified in the deployed bundle,
   not assumed — and Apple's four products do not exist yet (§8). A missing key is
   `unavailable`, so iOS keeps the §2c link-out untouched.
-- ~~**NOT Play production, which reads Inactive.** The closed test is the audience today.~~
-  **LIVE SINCE 2026-09-01** — release 25, United States, 4 installs (§0d). The audience is now
-  the public, not the closed test.
+- **NOT Play production.** Release 25 is created, has passed quick checks, and is STAGED in
+  Publishing overview awaiting `Submit` (§0d). The closed test is still the audience today.
 
 **AND THE SWITCH WAS HALF-OFF UNTIL THE SAME CHANGE FIXED IT.** `useStorePurchases()` is
 called above `StorePaywall`'s early return — React forbids a conditional hook — so while the
@@ -1395,7 +1393,7 @@ granting the first says nothing about the second.
 |---|---|
 | ⛔ **Create the subscriptions** | needs a **Google payments merchant account** first |
 | ✅ Set US-only on production | genuinely unblocked by the access grant |
-| ✅ A production release | **DONE 2026-09-01** — release 25 live, US only (§0d) |
+| 🔶 A production release | release 25 STAGED, unsubmitted as of 2026-09-01 (§0d) |
 | ⛔ Anything client-side | needs the billing library and a new AAB |
 
 ### 9g. The merchant account — Play's equivalent of Paid Applications
