@@ -286,7 +286,12 @@ test('the readout ROUTES through the shared reading rather than keeping its own 
   // keeps the ternary it was extracted from, and every test above would still pass — which
   // is how `closeOnToken` shipped guarded-but-wrong in #126.
   const src = code(readFileSync(new URL('../../scripts/rc-holds-readout.mts', import.meta.url), 'utf8'));
-  assert.match(src, /import \{ closeReasonReading \} from '\.\.\/src\/lib\/rc-token-liveness'/);
+  // ANCHORED ON THE IMPORTED NAME, NOT THE WHOLE LINE (re-anchored 2026-09-01). This pinned
+  // the import statement verbatim, so adding a SECOND reading to the same import failed the
+  // guard over behaviour that had not changed — the twenty-somethingth instance of a guard
+  // anchoring on the wrong thing. What matters is that the name comes from the shared
+  // module, which is exactly what a bare `const closeReasonReading = ...` copy would not.
+  assert.match(src, /import \{[^}]*\bcloseReasonReading\b[^}]*\} from '\.\.\/src\/lib\/rc-token-liveness'/);
   assert.match(src, /closeReasonReading\(closeReason, signedInHere\)/,
     'the readout must ASK, not decide');
   assert.match(src, /reading\.level === 'warn'/,
