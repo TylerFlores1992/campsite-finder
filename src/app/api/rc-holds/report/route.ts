@@ -52,7 +52,7 @@ function clean(raw: unknown): ClientReport[] {
     const out: Record<string, unknown> = {};
     if (detail && typeof detail === 'object') {
       for (const [k, v] of Object.entries(detail as Record<string, unknown>)) {
-        // TWELVE, BECAUSE THE `session` REPORT IS NOW ELEVEN AND SILENT TRUNCATION OF A
+        // FOURTEEN, BECAUSE THE `session` REPORT IS NOW ELEVEN AND SILENT TRUNCATION OF A
         // DIAGNOSTIC IS THE FAILURE THIS WHOLE INVESTIGATION KEEPS PAYING FOR. Object key
         // order is insertion order, so the four `okta*` fields added on 2026-08-31 sit at
         // the END — under the old ceiling they were exactly what got dropped, and the

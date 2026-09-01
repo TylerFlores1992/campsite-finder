@@ -28,7 +28,7 @@
  * extra morning of holds, silently.
  */
 import { query } from '../src/lib/db/client';
-import { closeReasonReading } from '../src/lib/rc-token-liveness';
+import { closeReasonReading, keepSignedInReading } from '../src/lib/rc-token-liveness';
 
 const hours = Number(process.argv.find((a) => a.startsWith('--hours='))?.split('=')[1] ?? 24);
 
@@ -336,6 +336,21 @@ if (handed.length) {
       const reading = closeReasonReading(closeReason, signedInHere);
       const mark = reading.level === 'warn' ? '⚠ ' : '';
       console.log(`      ${mark}sign-in window closed: ${closeReason} — ${reading.text}`);
+    }
+
+    // DID OKTA GET TOLD TO KEEP US SIGNED IN? (2026-09-01) The `idx` cookie comes from that
+    // checkbox, and until now the tick returned a boolean nobody read — so "ticked it" and
+    // "there was no box on this page" were the same silence, which is exactly why an iOS run
+    // that worked and an Android run that did not produced identical traces.
+    //
+    // LAST, not first, for the same reason the okta census below is: a sign-in can touch the
+    // identifier page and the password page, and the question is what the run ended up doing.
+    const keep = (h.client_reports ?? [])
+      .findLast((r) => r.stage === 'keep-signed-in')?.detail as
+        { ticked?: boolean; boxes?: number; matched?: boolean; at?: string } | undefined;
+    if (keep) {
+      const r = keepSignedInReading(keep);
+      console.log(`      ${r.level === 'warn' ? '⚠ ' : ''}${r.text}`);
     }
 
     // THE STORE THAT DECIDES WHETHER RC LOOKS SIGNED IN (2026-08-31). `storedToken` is RC's

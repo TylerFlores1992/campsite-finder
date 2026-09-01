@@ -171,8 +171,8 @@ function captchaProbeSource(): string {
  * injection. That separation is the whole reason the served bundle can be identical for
  * every user.
  *
- * Stages reported (names only, never values): `signin-open`, `captcha`, `email`, `password`,
- * `submitted`, `signed-in`, `failed`.
+ * Stages reported (names only, never values): `signin-open`, `signin-missing`, `captcha`,
+ * `keep-signed-in`, `email`, `password`, `submitted`, `signed-in`, `failed`.
  */
 export function loginScript(): string {
   return `
@@ -367,19 +367,48 @@ ${captchaProbeSource()}
     try { if (el.form && el.form.requestSubmit) el.form.requestSubmit(); } catch (e) {}
   }
 
-  /** The idx cookie comes from this box. Without it there is no Okta session to renew. */
-  function chKeepSignedIn() {
+  /**
+   * The idx cookie comes from this box. Without it there is no Okta session to renew.
+   *
+   * IT REPORTS NOW, AND THAT IS THE POINT (2026-09-01). It used to return a boolean nobody
+   * read, so "we ticked it" and "there was no box on this page to tick" were the same
+   * silence — the shape this file keeps paying for. Two hand-offs minutes apart, one that
+   * worked and one that did not, produced byte-identical traces because the one field that
+   * differed was never reported.
+   *
+   * WHY IT CAN LEGITIMATELY FIND NOTHING: Okta renders "Keep me signed in" on the
+   * IDENTIFIER step, and the caller skips that step entirely whenever a password field is
+   * already on the page (the pw = chFind(CH_PW_SELS) line above). So a run where Okta remembers
+   * the account goes straight to the password and there is no box in the DOM at all. That
+   * is not a failure of this function and must not read as one — hence the boxes count, so a miss
+   * over zero candidates and a miss over five are different findings.
+   *
+   * COUNTS AND A BOOLEAN, NEVER LABEL TEXT. Okta's checkbox labels are safe today, but the
+   * standing rule here is not to collect a field you would then have to filter, and the
+   * sibling signin-missing already refuses to report candidate text because RC's header
+   * carries the signed-in user's own name.
+   */
+  function chKeepSignedIn(where) {
+    var boxes = [];
+    var ticked = false;
+    var matched = false;
     try {
-      var boxes = Array.prototype.slice.call(
+      boxes = Array.prototype.slice.call(
         document.querySelectorAll('input[type="checkbox"]'));
       for (var i = 0; i < boxes.length; i++) {
         var b = boxes[i];
         if (b.offsetParent === null || b.checked) continue;
         var n = (b.name || '') + ' ' + (b.id || '');
-        if (/remember|keep/i.test(n) || boxes.length === 1) { b.click(); return true; }
+        if (/remember|keep/i.test(n) || boxes.length === 1) {
+          matched = true;
+          b.click();
+          ticked = true;
+          break;
+        }
       }
     } catch (e) {}
-    return false;
+    chSay('keep-signed-in', { at: where, ticked: ticked, boxes: boxes.length, matched: matched });
+    return ticked;
   }
 
   function chOktaError() {
@@ -463,7 +492,7 @@ ${captchaProbeSource()}
           // READ IT BACK. A field that silently holds something else is otherwise invisible,
           // and that is a documented rc-probe finding, not a hypothetical.
           if (user.value !== email) return done(false, 'email', 'the email field would not take the address');
-          chKeepSignedIn();
+          chKeepSignedIn('email');
           chSay('email', {});
           await chSettle();
           chSubmit(user);
@@ -480,7 +509,7 @@ ${captchaProbeSource()}
         // would put the secret in a comparison this file exists to keep it out of, and a
         // thrown TypeError inside that expression is precisely how a password reached the
         // database on 2026-08-16.
-        chKeepSignedIn();
+        chKeepSignedIn('password');
         chSay('password', {});
         await chSettle();
         chSubmit(pw);

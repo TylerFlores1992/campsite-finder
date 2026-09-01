@@ -277,3 +277,67 @@ export function closeReasonReading(reason: string, signedInRun: boolean): CloseR
   // negative — the shape this file records more often than any other.
   return { level: 'info', text: `unrecognised close reason — reported as sent, not interpreted` };
 }
+
+/**
+ * What a `keep-signed-in` report means.
+ *
+ * ## WHY THIS EXISTS (2026-09-01)
+ *
+ * Two hand-offs eleven minutes apart — iOS worked, Android did not, and the owner saw RC's
+ * header carry his name on one phone and "please sign in" on the other. Their traces were
+ * IDENTICAL on every field we record: `✓ Added to cart`, `cart read back: 1 entry`,
+ * `close: timeout`, and the same okta-store census. So the instruments did not measure the
+ * thing that differed, which is the failure this whole file exists to stop repeating.
+ *
+ * The one place the two runs diverged was upstream, in the stages:
+ *
+ *     iOS      signin-missing → email → password → submitted
+ *     Android  signin-open    →         password → submitted
+ *
+ * Android never saw Okta's IDENTIFIER page, because `chFind(CH_PW_SELS)` already matched a
+ * password field and the caller skips the email step entirely in that case. Okta renders
+ * "Keep me signed in" on the identifier step — so on that path there was no box in the DOM,
+ * and `chKeepSignedIn` silently found nothing.
+ *
+ * THAT MATTERS BECAUSE OF A MEASUREMENT THIS REPO ALREADY HAS. 2026-08-09: the ported login
+ * calls `keepSignedIn()` and the hand-rolled one never did, and "every previous session was
+ * established without 'Keep me signed in', so of course Okta issued nothing persistent" —
+ * `okta=GONE(404)` before, a ~12-hour Okta session after. The `idx` cookie comes from that
+ * box. A run without it can still complete the OAuth exchange and mint a perfectly good
+ * access token — which is why the cart POSTs succeed — while leaving no session for RC's
+ * SPA to render a name from.
+ *
+ * IT IS A CANDIDATE, NOT A FINDING, and the wording keeps it that way. What is established
+ * is only that the tick did not happen; that this is WHY the header is empty is inference,
+ * and three mechanisms guessed at in this area have each cost a test. What settles it is the
+ * next pair of runs: a hand-off reporting `ticked` whose header still shows nothing refutes
+ * it outright.
+ */
+export type KeepSignedInReading = { level: 'info' | 'warn'; text: string };
+
+export function keepSignedInReading(d: {
+  ticked?: boolean; boxes?: number; matched?: boolean; at?: string;
+}): KeepSignedInReading {
+  const where = d.at ? ` on the ${d.at} step` : '';
+  if (d.ticked) {
+    return { level: 'info', text: `"Keep me signed in" was ticked${where} — Okta should issue a persistent session` };
+  }
+  // ZERO BOXES AND SOME BOXES ARE DIFFERENT FINDINGS AND MUST NOT COLLAPSE. Zero means the
+  // page never offered the option — the skipped-identifier path above, which is the whole
+  // reason this reading exists. A non-zero count means the box was there and the match
+  // missed it, i.e. Okta reworded an attribute and the selector needs widening. One is a
+  // flow problem and one is a selector problem, and they have nothing to do with each other.
+  if ((d.boxes ?? 0) === 0) {
+    return {
+      level: 'warn',
+      text: `"Keep me signed in" was NOT ticked${where}: no checkbox on the page at all.`
+        + ' Okta renders it on the identifier step, which this run skipped — so this sign-in'
+        + ' likely left NO persistent session, and RC will render signed out',
+    };
+  }
+  return {
+    level: 'warn',
+    text: `"Keep me signed in" was NOT ticked${where}: ${d.boxes} checkbox(es) on the page and`
+      + ' none matched — the selector needs widening, not the flow',
+  };
+}
