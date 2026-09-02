@@ -251,7 +251,15 @@ workflows:
           xcode-project use-profiles
       - name: Increment build number
         # TestFlight rejects duplicate build numbers. PROJECT_BUILD_NUMBER is Codemagic's
-        # monotonically-increasing per-workflow counter, so each run gets a fresh number.
+        # monotonically-increasing PROJECT-WIDE counter, so each run gets a fresh number.
+        #
+        # PROJECT-WIDE, NOT PER-WORKFLOW, and this comment said the opposite until 2026-09-01.
+        # It matters because it decides whether an iOS build number and an Android one are
+        # comparable AT ALL: on one sequence, `ios 1.0 (21)` really is older than
+        # `android 1.0 (25)`, and on 09-01 those were the two builds in the field — three
+        # weeks and one native dependency apart, which confounded every "iOS vs Android"
+        # comparison anybody ran. The evidence is in CLAUDE.md: `android-release` build 8
+        # produced versionCode 16, which a per-workflow counter cannot do.
         script: |
           cd ios/App
           agvtool new-version -all "${PROJECT_BUILD_NUMBER:-1}" || true
@@ -417,7 +425,9 @@ workflows:
           echo "$GOOGLE_SERVICES_JSON_B64" | base64 --decode > android/app/google-services.json
       - name: Set the version code
         # Play rejects a duplicate versionCode. PROJECT_BUILD_NUMBER is Codemagic's
-        # monotonic per-workflow counter, same as the iOS build number.
+        # monotonic PROJECT-WIDE counter, shared with the iOS build number — so the two
+        # platforms' numbers sit on ONE sequence and are directly comparable. See the same
+        # correction in the iOS "Increment build number" step, and docs/PLATFORM-PARITY.md.
         #
         # `sed -i "expr" file` DID NOT WORK HERE AND FAILED SILENTLY. This workflow runs
         # on macOS (see instance_type — the plan has no Linux instance), and BSD sed's

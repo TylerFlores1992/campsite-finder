@@ -171,8 +171,8 @@ function captchaProbeSource(): string {
  * injection. That separation is the whole reason the served bundle can be identical for
  * every user.
  *
- * Stages reported (names only, never values): `signin-open`, `captcha`, `email`, `password`,
- * `submitted`, `signed-in`, `failed`.
+ * Stages reported (names only, never values): `signin-open`, `signin-missing`, `captcha`,
+ * `keep-signed-in`, `email`, `password`, `submitted`, `signed-in`, `failed`.
  */
 export function loginScript(): string {
   return `
@@ -367,19 +367,48 @@ ${captchaProbeSource()}
     try { if (el.form && el.form.requestSubmit) el.form.requestSubmit(); } catch (e) {}
   }
 
-  /** The idx cookie comes from this box. Without it there is no Okta session to renew. */
-  function chKeepSignedIn() {
+  /**
+   * The idx cookie comes from this box. Without it there is no Okta session to renew.
+   *
+   * IT REPORTS NOW, AND THAT IS THE POINT (2026-09-01). It used to return a boolean nobody
+   * read, so "we ticked it" and "there was no box on this page to tick" were the same
+   * silence — the shape this file keeps paying for. Two hand-offs minutes apart, one that
+   * worked and one that did not, produced byte-identical traces because the one field that
+   * differed was never reported.
+   *
+   * WHY IT CAN LEGITIMATELY FIND NOTHING: Okta renders "Keep me signed in" on the
+   * IDENTIFIER step, and the caller skips that step entirely whenever a password field is
+   * already on the page (the pw = chFind(CH_PW_SELS) line above). So a run where Okta remembers
+   * the account goes straight to the password and there is no box in the DOM at all. That
+   * is not a failure of this function and must not read as one — hence the boxes count, so a miss
+   * over zero candidates and a miss over five are different findings.
+   *
+   * COUNTS AND A BOOLEAN, NEVER LABEL TEXT. Okta's checkbox labels are safe today, but the
+   * standing rule here is not to collect a field you would then have to filter, and the
+   * sibling signin-missing already refuses to report candidate text because RC's header
+   * carries the signed-in user's own name.
+   */
+  function chKeepSignedIn(where) {
+    var boxes = [];
+    var ticked = false;
+    var matched = false;
     try {
-      var boxes = Array.prototype.slice.call(
+      boxes = Array.prototype.slice.call(
         document.querySelectorAll('input[type="checkbox"]'));
       for (var i = 0; i < boxes.length; i++) {
         var b = boxes[i];
         if (b.offsetParent === null || b.checked) continue;
         var n = (b.name || '') + ' ' + (b.id || '');
-        if (/remember|keep/i.test(n) || boxes.length === 1) { b.click(); return true; }
+        if (/remember|keep/i.test(n) || boxes.length === 1) {
+          matched = true;
+          b.click();
+          ticked = true;
+          break;
+        }
       }
     } catch (e) {}
-    return false;
+    chSay('keep-signed-in', { at: where, ticked: ticked, boxes: boxes.length, matched: matched });
+    return ticked;
   }
 
   function chOktaError() {
@@ -417,6 +446,22 @@ ${captchaProbeSource()}
     };
     return (async function () {
       try {
+        // NEVER TOUCH THE CALLBACK PAGE (2026-09-01, #250). On /login/callback RC's SDK is
+        // exchanging the OAuth code and RC's SPA is completing step two of its sign-in
+        // (GetSSOLoggedInUser -> customerId). This script is re-run on every navigation, and
+        // on that page it found no form, no session yet, and RC's "Log in" control -- and
+        // CLICKED IT, navigating away mid-exchange. Measured on both platforms: a second
+        // callback, and on Android a session that had persisted ssoCustomerName from the
+        // first exchange and no RC token, which is the state RC's own interceptor answers
+        // with customerLogOut and its home page. The user saw "Before booking, please sign
+        // in" over a locked campsite. Nothing on this page is ours to do; the outcome is
+        // reported by rc-session when customerId lands.
+        var chPath = '';
+        try { chPath = String((typeof location !== 'undefined' && location && location.pathname) || '').toLowerCase(); } catch (e) { chPath = ''; }
+        if (chPath.indexOf('/login/callback') === 0) {
+          chSay('callback-in-flight', {});
+          return done(true, 'callback-in-flight', 'RC is completing its own sign-in on the callback page');
+        }
         // ALREADY SIGNED IN is a success, and asking first is what stops us typing a
         // credential we did not need. The token capture is the authority; a form's absence
         // is not, because RC's SPA re-authenticates AFTER the page settles.
@@ -463,7 +508,7 @@ ${captchaProbeSource()}
           // READ IT BACK. A field that silently holds something else is otherwise invisible,
           // and that is a documented rc-probe finding, not a hypothetical.
           if (user.value !== email) return done(false, 'email', 'the email field would not take the address');
-          chKeepSignedIn();
+          chKeepSignedIn('email');
           chSay('email', {});
           await chSettle();
           chSubmit(user);
@@ -480,7 +525,7 @@ ${captchaProbeSource()}
         // would put the secret in a comparison this file exists to keep it out of, and a
         // thrown TypeError inside that expression is precisely how a password reached the
         // database on 2026-08-16.
-        chKeepSignedIn();
+        chKeepSignedIn('password');
         chSay('password', {});
         await chSettle();
         chSubmit(pw);

@@ -1,6 +1,141 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed **2026-08-31 06:00 PT**.*
+*Rewritten 2026-08-25 evening; state refreshed **2026-09-01 evening**.*
+
+> ## READ FIRST — #249 WAS NOT ENOUGH; #250 REMOVES OUR OWN CLICK ON THE CALLBACK PAGE
+>
+> The first Android run on #249 held the window open (the notice fired) and RC still rendered
+> signed out on its home page. The trace: **the box WAS ticked** (keep-signed-in refuted), and
+> **our sign-in script clicked "Log in" on `/login/callback`** mid-exchange, producing a second
+> callback that booted into RC's `customerLogOut`. Fixed in #250 (script guard + `afterLoad`
+> skip) and instrumented: `rc-api` records step two's HTTP status and RC's Response code, and
+> `rc-session` carries `sso` so a mid-flow sign-out is a printed line. CLAUDE.md → "#249 WAS
+> NECESSARY AND NOT SUFFICIENT". **Expected next run:** no `signin-open` on the callback, one
+> callback document, `GetSSOLoggedInUser → HTTP 200 · RC Response 1`, `loggedIn: true`,
+> `close: session`, name in the header.
+
+> ## (superseded by the block above) THE ANDROID HAND-OFF DEFECT IS EXPLAINED FROM RC'S SOURCE AND FIXED (#249)
+>
+> **RC's sign-in is two steps, and we closed between them.** Okta's callback writes
+> `ssoAccessToken` (the token we capture) and then awaits `GetSSOLoggedInUser`; only that
+> response writes **`customerId`**, which is the ONE key RC boots `isLoggedIn` from — and
+> `token captured` is the moment that request LEAVES, so every close rule raced its response.
+> Android's InAppBrowser kills the in-flight request on close (`about:blank`); iOS's only
+> dismisses the view. **That is the entire platform difference.** Full entry: CLAUDE.md →
+> "RC'S SIGN-IN IS TWO STEPS"; mechanism in `docs/PLATFORM-PARITY.md` §2a.
+>
+> **The fix: the window closes on `rc-session { loggedIn: true }` (= `customerId`) and on
+> nothing else. No timer.** The claim gate flips on the same signal. The census now reads
+> `customerId`, both tokens separately, and RC's real okta store (`@secure.s.okta-*`).
+>
+> **CORRECTIONS to the 09-01-evening readings below**, which are kept for the record:
+> the okta-store census was reading the wrong key (false negative every time); "Keep me
+> signed in" decides the NEXT sign-in's cost, not the header; cookies are irrelevant to RC's
+> login state. The keep-signed-in instrument is still right and still worth reading.
+>
+> **THE TEST — both phones.** Same procedure as below. New readout lines per hand-off:
+> `RC login: customerId PRESENT/ABSENT` and `close: session`. **Expected: both PRESENT, both
+> headers showing the name.** If Android reads ABSENT with the window closed, check the
+> `close` reason — `timeout`/`token` means a cached pre-#249 host. **Ask for the cart screen
+> on both** regardless.
+>
+> **#249 TOUCHED THE iOS BASELINE** (`rc-handoff.ts`, `rc-precart-script.ts`, `ClaimFlow.tsx`).
+> The change makes iOS wait for a signal it was already winning by luck; if iOS regresses, the
+> `close` reason and the `RC login` line will say why, and the revert is the PR.
+
+> ## (superseded, kept for the record) TWO REAL-SITE HAND-OFFS RAN 2026-09-01, AND THE PLATFORMS DIVERGED
+>
+> **iOS worked. Android did not.** Both carted at T+2s, both reported `✓ Added to cart` and
+> `cart read back: 1 entry`. On the iPhone RC's header carried the owner's name and the cart
+> was reachable; on the Pixel RC said *"Before booking, please sign in or create a profile"*
+> and the cart asked him to log in. Owner-confirmed on both devices, with a screenshot.
+>
+> ### THE INSTRUMENTS SAID THE TWO RUNS WERE IDENTICAL, AND THAT IS THE FINDING
+>
+> Every outcome field matched — `✓ Added to cart`, `cart read back: 1 entry`,
+> `close: timeout`, and the okta census down to
+> `oktaKeys: 1 · oktaToken: none · storedToken: jwt · keySource: localStorage`. **So the
+> instruments did not measure the thing that differed.** Do not compare outcome fields on
+> these two runs; they agree and they are agreeing about the wrong thing.
+>
+> The traces diverge **four stages earlier**, in the sign-in:
+>
+> ```
+> iOS      signin-missing {candidates:6} → email → password → submitted
+> Android  signin-open {}                →         password → submitted
+> ```
+>
+> Android never reached Okta's **identifier** page — a password field was already present, so
+> `chFind(CH_PW_SELS)` matched and the caller skips the email step. **Okta renders "Keep me
+> signed in" on the identifier step**, so there was no checkbox in the DOM and
+> `chKeepSignedIn` silently found nothing. That box issues the `idx` cookie; CLAUDE.md
+> measured on 2026-08-09 that without it Okta issues nothing persistent (`okta=GONE(404)`
+> before, ~12h session after). A run without it still completes the OAuth exchange and mints
+> a good 939-char token — **which is why the cart POSTs succeed** — leaving nothing for RC's
+> SPA to draw a name from.
+>
+> **IT IS A CANDIDATE, NOT A FINDING.** What is established is that the tick did not happen.
+> That it is WHY the header is empty is inference from one prior measurement. Three
+> mechanisms have been guessed at in this area and each cost a test. **A hand-off reporting
+> `ticked` whose header is still empty refutes it outright** — say so if that happens.
+>
+> **AND IT IS PATH-DEPENDENT, NOT PLATFORM-DEPENDENT.** iOS fails identically on any run
+> where Okta remembers the account. Which page you land on is decided by the device's
+> password manager and Okta's cookies, not by our code.
+>
+> ### ⚠ #248 MODIFIED THE BASELINE. IF iOS IS NOW BROKEN, THIS IS WHERE TO LOOK FIRST
+>
+> The owner's standing instruction is that **iOS is the baseline**, and #248 was written off
+> an ANDROID observation while touching `src/lib/rc-login-script.ts` — **which iOS runs too**.
+> That is the one file in #248 that reaches either app; everything else is the readout and
+> pure functions.
+>
+> **The behavioural delta was audited before merge and is essentially nil:** `chKeepSignedIn`
+> went from `{ b.click(); return true; }` to `{ matched = true; b.click(); ticked = true;
+> break; }` plus a `chSay`. Same click, same conditions, same short-circuit, no caller reads
+> the return value, and `chSay` swallows its own errors so it cannot throw out of the tick.
+>
+> **If iOS regresses anyway, revert `rc-login-script.ts` alone** — the readout, the pure
+> functions and `docs/PLATFORM-PARITY.md` are inert with respect to the app and can stay.
+> Do not revert the whole PR reflexively; the parity work is what stops this recurring.
+>
+> ### THE TEST TO RUN — BOTH PHONES, TONIGHT
+>
+> The owner did not have the iPhone to hand on 09-01 evening, so this is deliberately NOT
+> started. `docs/PLATFORM-PARITY.md` §3 is the procedure. In short:
+>
+> 1. `NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts --find --show 4` — **never invent
+>    a unit id**, and confirm the watch belongs to `tylerflores1992@gmail.com`.
+> 2. Check `autocart.rc_session` is live **with a fresh `checked Ns ago`** — a stale OK is
+>    what caused two uncarted holds on 09-01. If dead and `okta=ALIVE`, fire `test-login`
+>    (`npx tsx scripts/bot-ask.mts test-login`); it took ~90 seconds on 09-01.
+> 3. Queue one hold per phone with `--in 3`, wait for `carted`, hand over the claim link, and
+>    **open it in the app** (`canInject` is false in a browser and nothing is exercised).
+> 4. Read `scripts/rc-holds-readout.mts`. #248 prints two new lines per hand-off:
+>    `sign-in path: IDENTIFIER-FIRST | PASSWORD-FIRST` and the keep-signed-in verdict.
+> 5. **ASK FOR THE SCREEN.** `cart read back: 1 entry` is RC answering OUR question with OUR
+>    key and has never once been corroborated by a human on either platform.
+>
+> **Expected if the candidate holds:** iOS `IDENTIFIER-FIRST` + ticked; Android
+> `PASSWORD-FIRST` + `no checkbox on the page at all`. Anything else and the candidate is
+> wrong.
+>
+> ### THE CONFOUNDER THAT INVALIDATES EVERY COMPARISON SO FAR
+>
+> **The two phones are not running the same generation of native code.** iOS is `1.0 (21)`,
+> which CLAUDE.md dates to **2026-08-09**; Android is `1.0 (25)` from **08-29/30**. Three
+> weeks and one native dependency apart — `@revenuecat/purchases-capacitor` landed on 08-29,
+> so **the iPhone build does not contain it at all.**
+>
+> `PROJECT_BUILD_NUMBER` is **project-wide**, so those numbers are on one sequence and 21
+> really is older. `codemagic.yaml` claimed per-workflow in two comments until 09-01; the
+> disproof is in CLAUDE.md, where `android-release` build 8 produced versionCode 16.
+>
+> **So "iOS is the baseline" is currently a baseline of three-week-old code**, and a fresh
+> iOS build is the single thing that makes future comparisons mean anything. It is also
+> needed for the already-decided Apple IAP work, which that binary predates.
+
+*Superseded below: the 08-31 close-timing entry, which is still accurate and still merged.*
 
 > ## THE ONE OPEN THING: THE HAND-OFF LEAVES RC LOOKING SIGNED OUT
 >

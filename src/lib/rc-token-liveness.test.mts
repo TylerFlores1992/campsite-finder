@@ -101,11 +101,17 @@ const liveness = readFileSync(new URL('./rc-token-liveness.ts', import.meta.url)
 // The property is "the close goes through the shared liveness rule and rc-handoff does not
 // reimplement it", so that is what is asserted now: the handler delegates, the decision
 // consults the rule, and rc-handoff still reads no `captured` of its own.
+//
+// RE-ANCHORED AGAIN 2026-09-01 (#249). The close no longer consults token liveness AT ALL —
+// RC's own signal is `customerId`, reported as `rc-session { loggedIn }`, and a token (live
+// or not) is step one of a two-step sign-in. So "rcCloseAction consults mayCloseOnToken" is
+// not the property any more; "rcCloseAction gates on RC's signal and rc-handoff judges
+// nothing itself" is.
 test('the close goes through the shared rule, not rc-handoff\'s own captured check', () => {
   assert.match(handoff, /rcCloseAction\(\{/,
     'the message handler must delegate the close decision');
-  assert.match(liveness, /export function rcCloseAction[\s\S]{0,600}mayCloseOnToken\(detail\)/,
-    'rcCloseAction must consult the shared liveness rule');
+  assert.match(liveness, /export function rcCloseAction[\s\S]{0,900}stage !== 'rc-session'[\s\S]{0,400}loggedIn === true/,
+    "rcCloseAction must gate on RC's own rc-session signal");
   // The regression, stated as the thing that must NOT be there: a bare captured test
   // gating the close. Comments quoting the old form are stripped first so the guard is
   // never "fixed" by deleting the explanation of why it exists.
@@ -120,7 +126,10 @@ test('rc-handoff imports the shared module rather than copying the comparison', 
   // Named imports, not the whole line: the SET grows (isMidSignIn arrived with the deferred
   // close) and pinning the literal import statement is what broke this guard once already.
   assert.match(handoff, /import \{[^}]*\brcCloseAction\b[^}]*\} from '@\/lib\/rc-token-liveness'/);
-  assert.match(handoff, /import \{[^}]*\bisMidSignIn\b[^}]*\} from '@\/lib\/rc-token-liveness'/);
+  // `isMidSignIn` was imported here from #240 to #249 and is gone with the URL heuristic it
+  // served. Asserting its ABSENCE pins that the host has not quietly grown a second close
+  // rule beside the one `rcCloseAction` owns.
+  assert.doesNotMatch(handoff, /\bisMidSignIn\b/, 'the URL heuristic must not come back');
 });
 
 test('the GATE is deliberately not routed through this module — it has a different policy', () => {

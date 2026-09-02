@@ -4868,6 +4868,216 @@ open carrying the Feature E correction: **a correction applied to one copy is no
 - **The health endpoint's checks are keyed `name`, NOT `id`.** A summary filtering on `c.id`
   prints `undefined` for every check and silently drops the ones you were looking for.
 
+### iOS AND ANDROID DIVERGED ON ONE CAMPSITE EACH, AND THE INSTRUMENTS SAID THEY MATCHED (2026-09-01)
+Two real-site hand-offs eleven minutes apart, both carted at T+2s. **iOS worked — RC's header
+carried the owner's name and the cart was reachable. Android did not** — RC rendered *"Before
+booking, please sign in or create a profile"* and the cart asked him to log in. Owner-confirmed
+on both devices.
+- **EVERY OUTCOME FIELD MATCHED, AND THAT IS THE FINDING.** `✓ Added to cart`,
+  `cart read back: 1 entry`, `close: timeout`, and the okta census down to
+  `oktaKeys: 1 · oktaToken: none · storedToken: jwt · keySource: localStorage`. **The
+  instruments did not measure the thing that differed** — the house shape, arriving in the
+  diagnostics built to escape it. I reported the two platforms as "identical line for line"
+  on the strength of those fields and was wrong: the traces were identical, the outcomes were
+  not.
+- **THEY DIVERGE FOUR STAGES EARLIER, IN THE SIGN-IN.**
+  ```
+  iOS      signin-missing {candidates:6} → email → password → submitted
+  Android  signin-open {}                →         password → submitted
+  ```
+  Android never reached Okta's IDENTIFIER page: a password field was already on screen, so
+  `chFind(CH_PW_SELS)` matched and the caller skips the email step entirely. **Okta renders
+  "Keep me signed in" on the identifier step**, so there was no checkbox in the DOM and
+  `chKeepSignedIn` found nothing.
+- **THE TICK RETURNED A BOOLEAN NOBODY READ**, so "ticked it" and "there was no box on this
+  page" were the same silence — which is precisely why two runs with opposite outcomes
+  produced the same trace. It reports now (`keep-signed-in` → `{at, ticked, boxes, matched}`),
+  counts and a boolean, **never label text**: the sibling `signin-missing` already refuses
+  candidate text because RC's header carries the signed-in user's own name.
+- **WHY THE TICK IS LOAD-BEARING, from this file's own measurement.** 2026-08-09: the ported
+  login calls `keepSignedIn()` and the hand-rolled one never did, so *"every previous session
+  was established without 'Keep me signed in', so of course Okta issued nothing persistent"* —
+  `okta=GONE(404)` before, a ~12h session after. The function's comment says the `idx` cookie
+  comes from that box. A run without it still completes the OAuth exchange and mints a good
+  939-char access token — **which is why the cart POSTs succeed** — while leaving nothing for
+  RC's SPA to render a name from.
+- **CANDIDATE, NOT A FINDING.** What is established is that the tick did not happen; that it
+  is WHY the header is empty is inference from one prior measurement. **A hand-off reporting
+  `ticked` whose header is still empty refutes it outright.**
+- **PATH-DEPENDENT, NOT PLATFORM-DEPENDENT.** iOS fails identically on any run where Okta
+  remembers the account. Which page you land on is decided by the device's password manager
+  and Okta's cookies, not by our code — so "what is different on Android?" has the same answer
+  it has had all along: nothing, in our source.
+- **`signInPathReading` PRINTS THE PATH NOW**, above the keep-signed-in line because it is
+  that line's precondition. Derived from stages, **never from the platform** — keying it on
+  the device would encode the exact confusion it exists to end, and is pinned by a test.
+- Ten mutations, each grep-verified to APPLY. **Two survived the first round and both were
+  real gaps**: `boxes` hardcoded to `0` passed the whole suite (the no-box test asserts zero
+  trivially, the success test only checked `ticked`) — which would have read as "Okta never
+  offered the option" on EVERY run; and the readout dropping `keepSignedInReading` for a
+  literal passed too, because every test exercises the function directly. `closeReasonReading`
+  had the identical exposure and was never guarded either. Both pinned.
+- **TWO EXISTING GUARDS BROKE OVER UNCHANGED BEHAVIOUR AND WERE RE-ANCHORED, NOT RELAXED** —
+  one pinned the literal `chKeepSignedIn()` expression, the other an entire import line that a
+  second imported name invalidated. Twenty-somethingth time.
+
+#### ⚠ #248 CHANGED THE BASELINE TO INSTRUMENT THE THING THAT IS NOT THE BASELINE
+The standing instruction is that **iOS is the baseline**, and this change was written off an
+ANDROID observation while editing `src/lib/rc-login-script.ts` — **which iOS runs too**. Raised
+by the owner, and it is the right instinct: the danger is fixing the broken platform by
+disturbing the working one.
+- **It is the ONLY file in #248 that reaches either app.** The readout, the pure functions and
+  `docs/PLATFORM-PARITY.md` cannot affect a device.
+- **The behavioural delta was audited before merge and is essentially nil:** `chKeepSignedIn`
+  went from `{ b.click(); return true; }` to `{ matched = true; b.click(); ticked = true;
+  break; }` plus a `chSay`. Same click, same conditions, same short-circuit; **no caller reads
+  the return value**, and `chSay` swallows its own errors, so it cannot throw out of the tick.
+- **IF iOS REGRESSES, REVERT `rc-login-script.ts` ALONE.** Reverting the whole PR would take
+  the parity work with it, which is the half that stops this recurring.
+
+### RC'S SIGN-IN IS TWO STEPS, AND EVERY CLOSE RULE WE EVER SHIPPED RACED THE SECOND (2026-09-01, #249)
+The Android "no name, cart asks to log in" defect, open since 2026-08-29, **is explained from
+RC's own source and fixed** — and two of the readings I gave the owner the same evening were
+wrong. Found by fetching RC's SPA bundle (`index-BvrbWbr2.js`) and reading how it decides it is
+signed in, which nobody had done in a month of instrumenting our side of it.
+- **THE MECHANISM, from RC's code.** Okta's callback fires the `ProcessSSOLogin` thunk: it
+  writes `ssoCustomerName` + **`ssoAccessToken`** (the 939-char JWT we capture) with
+  `isLoggedIn: false`, then **awaits `GET WebAccessCustomer/SSO/GetSSOLoggedInUser`**. Only
+  that RESPONSE (`Ks`) writes **`customerId`**, `customerName`, **`accessToken` (RC's OWN
+  token, distinct from Okta's)** and `customerDetail`, sets `isLoggedIn: true`, and navigates
+  **client-side**. On boot: **`isLoggedIn: !!localStorage.getItem("customerId")`**. The header
+  name is `customerName`. The cart page's axios client requires RC's `accessToken`, and with it
+  null dispatches **`customerLogOut`, which also deletes `ssoAccessToken`** — the login prompt,
+  and why the Okta token has seemed to vanish.
+- **WE CLOSED BETWEEN THE STEPS, EVERY TIME.** `rc-inject.js` captures the token off RC's
+  outbound `accesstoken` header, and the first such call after the callback IS step two's
+  request. So `token captured` marks the instant step two LEAVES, and `closeOnToken` (#126),
+  the liveness gate (#152) and the `/login/callback` deferral with a 10s timer (#240) were all
+  the same race with different fuses. `settled` could never fire — the post-login navigation
+  is client-side, no `loadstop` — so both platforms closed on `timeout` every run.
+- **THE PLATFORM DIFFERENCE IS IN THE INAPPBROWSER PLUGIN.** Android's `closeDialog` navigates
+  the WebView to `about:blank`, killing the in-flight step-two request. iOS's `close` only
+  dismisses the view controller; the WKWebView keeps running until torn down later, so the
+  request finishes and writes `customerId`. **Not our code, not cookies, not the webview's
+  storage.** Read out of `node_modules/cordova-plugin-inappbrowser/src/{android,ios}`.
+- **TWO OF MY OWN 09-01 READINGS WERE WRONG, stated plainly.** (1) *"okta store empty — the
+  SDK never finished its half"*: RC wraps okta-auth-js's store in secure-ls under
+  **`@secure.s.okta-token-storage`**, and the census tested a bare `okta-` PREFIX, so it never
+  looked at the real store. False negative every time it printed, on both platforms.
+  (2) *"Keep me signed in" as the leading candidate*: it decides whether the NEXT sign-in is
+  cookie-answered (the 08-09 measurement stands); it does not decide the header. Right
+  observation, wrong mechanism — and I called it the leading candidate. (3) The cookie-store
+  theory is retired: RC writes no session cookies (the only `document.cookie` in its bundle is
+  axios's XSRF helper).
+- **THE FIX (A): close on `customerId`, and on nothing else.** The bundle reports
+  `rc-session { loggedIn }` — `!!customerId`, a BOOLEAN, never the id — on install and when it
+  flips. `rcCloseAction` closes on `true`; a token, live or not, on any page, is no longer a
+  reason; `isMidSignIn` and the settle timer are GONE, with a guard asserting exactly one
+  `setTimeout` remains (the load watchdog). **No timer closes a sign-in window any more — the
+  backstop WAS the defect.** If step two never finishes the bundle shows a notice in the window
+  ("when you see your name at the top, tap Done") and reports `settle-timeout { held: true }`;
+  that is the configuration the 08-31 hand bisect proved works. Already-signed-in pages close
+  at once (RC boots with `customerId`, reported on install).
+- **(B) THE CLAIM GATE FLIPS ON `rc-session`, NOT THE TOKEN.** `setRcCheck('verified')` moved
+  out of the token branch; the token still carries the deadline. This is the owner's
+  "verify they're in fact signed in" done against the fact RC itself uses.
+- **(C) THE CENSUS READS THE KEYS RC DECIDES ON.** `rcLoggedIn`, `ssoToken` and `rcToken`
+  reported separately (`storedToken: "jwt"` was satisfied by either and could not discriminate);
+  okta keys matched ANYWHERE in the name; a populated secure-ls store reads `encoded`, a third
+  shape between `jwt` and `none`. Route caps 14 → 18. `rcSessionReading` names the defect state
+  — *customerId ABSENT beside an Okta token* — as itself.
+- **EVERY OBSERVATION FITS**: the bisect (window left open → step two finishes → name shows,
+  survives Done + reopen), cart POSTs succeeding on both (the API accepts the Okta token alone),
+  the cart page prompting (interceptor, no RC token), RC's slow web tier making step two slow
+  enough to lose the race.
+- **NOT MEASURED YET:** that `customerId` was in fact absent after the failing Android run — no
+  earlier census read it. The mechanism is from RC's source and #249's first hand-off reads the
+  key directly; that run is the confirmation. **Guarded 14 ways**, each mutation grep-verified
+  to apply: the host ignoring the decision, closing on a token again, growing a timer back, the
+  gate flipping on the token, the id VALUE reported, the census reverting to a prefix, and more.
+  `rc-session-close.test.mts` drives the real seam with a stub InAppBrowser and a fake clock.
+- **TWO HARNESS DEFECTS CAUGHT BY RUNNING THEM.** The reporter's 500ms poll kept the sandbox
+  alive and hung the suite (unref'd now); and `window` inside a vm context is the contextified
+  proxy, not the raw sandbox, so a message with `source: ctx` correctly failed the reporter's
+  cross-frame check — the guard was right and the stub was wrong.
+
+### #249 WAS NECESSARY AND NOT SUFFICIENT: OUR SIGN-IN SCRIPT WAS CLICKING "LOG IN" ON THE CALLBACK PAGE (2026-09-01, #250)
+The first Android run on #249 held the window open — the new notice fired at 30s — and RC
+still rendered signed out, on its HOME page. Two readings from the trace, and the second is
+ours.
+- **THE KEEP-SIGNED-IN CANDIDATE IS REFUTED, EXACTLY THE WAY THE 09-01 ENTRY SAID IT WOULD
+  BE.** `keep-signed-in {at:"email", boxes:1, ticked:true}` — the box was on screen, it was
+  ticked, and the header was empty. It decides the NEXT sign-in's cost and nothing about the
+  header. Stop citing it for this defect.
+- **`signin-open {}` ON `/login/callback`, BOTH PLATFORMS.** `afterLoad` re-runs the sign-in
+  script on every navigation (deliberately — the 08-16 fix). On the callback it found no form,
+  no session yet (`ssoToken: none`, `@secure.s.okta-transaction-storage` present = exchange in
+  flight), and RC's "Log in" control — and clicked it, navigating to Okta mid-exchange. Okta
+  answered from the cookie, a SECOND callback followed, and the two documents are in the trace
+  (`opens: 64`, `opens: 65`). The iOS 08-31 trace shows the same two callbacks.
+- **WHY ANDROID LOST AND iOS DID NOT, and it is timing, not platform.** On Android the first
+  exchange had already COMPLETED before our click (`token ageSec:1` captured on callback #1 —
+  i.e. step two's request left), so `ssoCustomerName`/`ssoAccessToken` were persisted. The
+  second callback then booted with `isSsoLoggedIn: true` and no RC token — the state in which
+  RC's own request interceptor answers a request needing RC's token with **`customerLogOut`
+  and `Qt.navigation("/")`**: the home page in the screenshot, the "Before booking, please
+  sign in" notice, and the 56 authenticated calls the home page makes. On iOS the click landed
+  BEFORE the first exchange completed (no token on callback #1), so callback #2 booted clean.
+  Which side of the exchange our click lands on is a race; iOS won it. **Candidate mechanism
+  for the second half; the click itself is measured.**
+- **FIXED TWO WAYS.** The sign-in script does nothing on `/login/callback` and reports
+  `callback-in-flight` (a named terminal path through `done()` — the 08-16 rule); and
+  `afterLoad` returns null for the callback so a cached older bundle is never handed the
+  credential there. **`location` may be absent in a sandbox** — the guard threw a
+  ReferenceError into the outer catch on its first run and read as a failed sign-in.
+- **AND STEP TWO IS OBSERVED NOW.** `rc-inject.js` reports every `/SSO/` endpoint response as
+  `rc-api { path, status, rcResponse }` — origin+pathname only (the query carries the email
+  and Okta subject), one number read out of the body and the rest never kept. `rc-session`
+  carries `sso` beside `loggedIn`, so "ssoAccessToken appeared then vanished with customerId
+  never written" — customerLogOut firing — is a line in the readout instead of an inference.
+- **THE TEST HOLD WAS LEFT `carted`**; `expireStaleHolds(45)` releases it. Nine mutations,
+  each grep-verified to apply. **`\/` INSIDE A TEMPLATE LITERAL COLLAPSES TO `/`** — a regex
+  written that way in the emitted sign-in script produced `/^/login/callback/i` and stopped
+  the entire served bundle parsing; the suite caught it, a string test replaced it.
+
+### WHERE iOS AND ANDROID ACTUALLY DIFFER — AUDITED, AND THE ANSWER REFRAMES THE QUESTION (2026-09-01)
+Asked for a deep search after the fourth "whoops, another difference" in three weeks. Full
+inventory in **`docs/PLATFORM-PARITY.md`**; the audit itself is the finding.
+- **THE EXPLICIT SURFACE IS TEN LINES IN FIVE FILES, AND NOT ONE IS IN THE RC HAND-OFF PATH.**
+  The UA sniff, `StatusBar.setBackgroundColor` (Android-only, **throws** on iOS), the hardware
+  back button, `LINKOUT_BY_STORE`, `IN_APP_PURCHASE_BY_STORE`, the RevenueCat key, and FCM's
+  `android: { priority: 'high' }`. `rc-login-script.ts`, `rc-precart-script.ts`,
+  `rc-token-liveness.ts` and `claim-gate.ts` contain **zero**.
+- **SO THERE IS NO LIST OF "ANDROID DIFFERENCES" TO FIND. Every bug that has cost us anything
+  was EMERGENT** — identical code behaving differently because a password manager pre-filled a
+  field, or a cookie store persists differently, or one Cordova plugin has two native
+  implementations. **No scanner can find those**, which is exactly why they arrive one at a
+  time, and why a test claiming to cover them would be a guard that inspects nothing while
+  reading as proof.
+- **`src/lib/platform-parity.test.mts` registers the explicit half** — every branch needs a
+  one-line reason, a new one fails the build, a stale registry entry fails too, and the RC path
+  is separately asserted branch-free. **Under `src/`, not `worker/`**, because `worker/**` is
+  the first entry in `worker-deploy.yml`'s `paths:` and a guard over web modules has no
+  business restarting both pollers.
+- **`worker/codemagic-assertions.test.mts` checks each build workflow ALONE and has never
+  compared the two.** Read the side-by-side rather than trusting it. The asymmetries are
+  benign and checked: iOS asserts the RevenueCat pod, Android asserts the Play Billing
+  permission in the merged manifest — different mechanisms, same property.
+
+#### THE BUILD NUMBERS ARE ON ONE SEQUENCE, AND THE TWO PHONES ARE THREE WEEKS APART
+**This invalidates every iOS-vs-Android comparison run so far.** The 09-01 traces read
+`[ios build 1.0 (21)]` and `[android build 1.0 (25)]`; this file dates build 21 to
+**2026-08-09**, and the Android build is from **08-29/30**. `@revenuecat/purchases-capacitor`
+landed on 08-29, so **the iPhone binary does not contain it at all.**
+- **`PROJECT_BUILD_NUMBER` IS PROJECT-WIDE, NOT PER-WORKFLOW**, so 21 really is older than 25.
+  `codemagic.yaml` asserted the opposite in **two** separate comments until 09-01. The disproof
+  was already in this file: `android-release` **build 8** produced **versionCode 16**, which a
+  per-workflow counter cannot do. Both comments corrected.
+- **SO "iOS IS THE BASELINE" IS CURRENTLY A BASELINE OF THREE-WEEK-OLD CODE.** A fresh iOS
+  build is the one thing that makes future comparisons mean anything — and it is needed anyway
+  for the already-decided Apple IAP work, which that binary predates.
+- **COMPARE THE BUILD NUMBERS BEFORE COMPARING ANYTHING ELSE.** They are in every hand-off
+  trace and in the diagnostics panel.
 ### `trialing` COULD NEVER APPEAR, AND IT MADE TWO CORRECT NUMBERS LOOK LIKE THEFT (2026-09-02)
 
 Reported as *"admin shows 0 trialing but there should be a couple"* and *"MRR shows 12.50 but a
@@ -4982,6 +5192,39 @@ the watch is active.
 
 
 > **START AT `docs/NEXT-SESSION.md`. NOTHING IS ASSIGNED; THE TOP ITEM IS A READING.**
+>
+> **-3. #250 IS THE SECOND HALF — #249 held the window open and RC STILL signed out.** The
+> sign-in script was clicking "Log in" on `/login/callback` mid-exchange. Fixed and
+> instrumented; see "#249 WAS NECESSARY AND NOT SUFFICIENT". **The keep-signed-in candidate
+> is refuted** (ticked, header empty). Next Android run: expect NO `signin-open` on the
+> callback, ONE callback document, `rc-api GetSSOLoggedInUser → HTTP 200 · RC Response 1`,
+> then `rc-session loggedIn:true` and `close: session`. If `rc-api` shows a non-1 Response,
+> RC refused step two and the fault is on RC's side of the call — that is the next reading.
+>
+> **-2. #249 IS THE FIX FOR THE ANDROID HAND-OFF — TEST IT ON BOTH PHONES.** Close on RC's own
+> `customerId`; no timer; see "RC'S SIGN-IN IS TWO STEPS". The readout prints `RC login:
+> customerId PRESENT/ABSENT` per hand-off now. **Expected:** both phones `PRESENT`, both
+> headers showing the name, `close: session`. An Android run reading `ABSENT beside an Okta
+> token` with the window closed means the host is a cached pre-#249 one — check `close`'s
+> reason. **Web-side, no rebuild.** It touched the iOS baseline again (`rc-handoff.ts`,
+> `rc-precart-script.ts`, `ClaimFlow.tsx`); if iOS regresses, the revert is the whole PR and
+> the reason will be in `close`'s reason.
+>
+> **-1. THE TWO-PHONE HAND-OFF TEST IS SET UP AND DELIBERATELY NOT RUN (2026-09-01 evening).**
+> The owner did not have the iPhone to hand, so this waits for tonight. #248 is merged/open
+> with the two new readout lines; the procedure is `docs/NEXT-SESSION.md` (read-first block)
+> and `docs/PLATFORM-PARITY.md` §3. **Expected if the candidate holds:** iOS
+> `IDENTIFIER-FIRST` + ticked, Android `PASSWORD-FIRST` + `no checkbox on the page at all`.
+> Anything else and the candidate is wrong — say so. **ASK FOR THE CART SCREEN on both**;
+> `cart read back: 1 entry` has never been corroborated by a human on either platform.
+>
+> **-0.5. IF iOS IS NOW BROKEN, revert `src/lib/rc-login-script.ts` ALONE** — #248 touched the
+> baseline to instrument Android, and that file is the only one in it that reaches an app. The
+> delta was audited as behaviourally nil; the entry above says exactly what changed.
+>
+> **-0.4. A FRESH iOS BUILD is the highest-value non-code action.** iOS is on a 2026-08-09
+> binary, so the "iOS is the baseline" comparison is three weeks stale and lacks RevenueCat.
+> Codemagic run, not a code change.
 >
 > **0. A REAL HOLD IS QUEUED FOR 2026-08-29 08:00 PT, AND THE OWNER WANTS THE SITE.** Unit
 > `43189` (`#94`, Morro Bay Upper Section), tapped 2026-08-28 11:46 PT by

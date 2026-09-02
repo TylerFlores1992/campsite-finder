@@ -28,7 +28,7 @@
  * extra morning of holds, silently.
  */
 import { query } from '../src/lib/db/client';
-import { closeReasonReading } from '../src/lib/rc-token-liveness';
+import { closeReasonReading, keepSignedInReading, signInPathReading, rcSessionReading } from '../src/lib/rc-token-liveness';
 
 const hours = Number(process.argv.find((a) => a.startsWith('--hours='))?.split('=')[1] ?? 24);
 
@@ -314,15 +314,12 @@ if (handed.length) {
       console.log(`      cart not read back: ${unverified.reason}`);
     }
 
-    // WHY THE SIGN-IN WINDOW CLOSED (2026-08-31, #240). The bug was that we destroyed the
-    // webview ~2s in, while RC was still on `/login/callback` completing its OAuth
-    // exchange — so the session authenticated its own API calls and rendered SIGNED OUT.
-    // Every close names its reason now, and this is where that reason gets read.
-    //
-    // `token` IS AMBIGUOUS AND THE STAGES DISAMBIGUATE IT. With no sign-in before it, the
-    // user was already signed in and an immediate close is the correct, unchanged path.
-    // With a full sign-in before it, `isMidSignIn` has stopped matching — RC has moved its
-    // callback path and the 08-31 bug is back with nothing else red.
+    // WHY THE SIGN-IN WINDOW CLOSED. Since #249 (2026-09-01) the only ordinary reason is
+    // `session` — RC's own SPA reported `customerId` present. `token`, `settled` and
+    // `timeout` are pre-#249 hosts, each a race against RC's step-two request, and the
+    // reading names them as such rather than folding them in. `token` is still read against
+    // the stages: with no sign-in in the run it was the (accidentally safe) already-signed-in
+    // path; after a real sign-in it cut step two off.
     const closeReason = (h.client_reports ?? [])
       .findLast((r) => r.stage === 'close')?.detail?.reason as string | undefined;
     if (closeReason) {
@@ -336,6 +333,26 @@ if (handed.length) {
       const reading = closeReasonReading(closeReason, signedInHere);
       const mark = reading.level === 'warn' ? '⚠ ' : '';
       console.log(`      ${mark}sign-in window closed: ${closeReason} — ${reading.text}`);
+    }
+
+    // WHICH OKTA PATH THIS RUN TOOK. Printed ABOVE the keep-signed-in line because it is
+    // that line's precondition: password-first means the box was never on screen.
+    const pathLine = signInPathReading((h.client_reports ?? []).map((r) => r.stage));
+    if (pathLine) console.log(`      ${pathLine}`);
+
+    // DID OKTA GET TOLD TO KEEP US SIGNED IN? (2026-09-01) The `idx` cookie comes from that
+    // checkbox, and until now the tick returned a boolean nobody read — so "ticked it" and
+    // "there was no box on this page" were the same silence, which is exactly why an iOS run
+    // that worked and an Android run that did not produced identical traces.
+    //
+    // LAST, not first, for the same reason the okta census below is: a sign-in can touch the
+    // identifier page and the password page, and the question is what the run ended up doing.
+    const keep = (h.client_reports ?? [])
+      .findLast((r) => r.stage === 'keep-signed-in')?.detail as
+        { ticked?: boolean; boxes?: number; matched?: boolean; at?: string } | undefined;
+    if (keep) {
+      const r = keepSignedInReading(keep);
+      console.log(`      ${r.level === 'warn' ? '⚠ ' : ''}${r.text}`);
     }
 
     // THE STORE THAT DECIDES WHETHER RC LOOKS SIGNED IN (2026-08-31). `storedToken` is RC's
@@ -360,6 +377,7 @@ if (handed.length) {
     type SessionDetail = {
       at?: string; oktaToken?: string; oktaKeys?: number; oktaNames?: string;
       oktaExpiresInSec?: number | null; storedToken?: string;
+      ssoToken?: string; rcToken?: string; rcLoggedIn?: boolean;
     };
     const sessions = (h.client_reports ?? [])
       .filter((r) => r.stage === 'session')
@@ -369,6 +387,35 @@ if (handed.length) {
     // so it is the fallback rather than being silently dropped.
     const sess = sessions.findLast((d) => (d.at ?? '').includes('www.reservecalifornia.com'))
       ?? sessions.findLast((d) => d.at === undefined);
+    // RC'S OWN LOGIN STATE, FIRST — it is the fact the header and the cart page render from
+    // (2026-09-01). Taken from the last `rc-session` report if the bundle sent one, else from
+    // the census; both carry `rcLoggedIn` = `!!customerId` on RC's origin.
+    const lastRcSession = (h.client_reports ?? [])
+      .findLast((r) => r.stage === 'rc-session')?.detail as { loggedIn?: boolean } | undefined;
+    const rcRead = rcSessionReading({
+      rcLoggedIn: typeof lastRcSession?.loggedIn === 'boolean' ? lastRcSession.loggedIn : sess?.rcLoggedIn,
+      ssoToken: sess?.ssoToken, rcToken: sess?.rcToken,
+    });
+    if (rcRead) console.log(`      ${rcRead.level === 'warn' ? '⚠ ' : ''}${rcRead.text}`);
+    // STEP TWO AS OBSERVED (#250): every SSO endpoint call rc-inject saw, with RC's answer.
+    // Absent lines mean the call never left — a different fault from RC refusing it.
+    const apiCalls = (h.client_reports ?? []).filter((r) => r.stage === 'rc-api');
+    for (const c of apiCalls.slice(-4)) {
+      const d = c.detail as { path?: string; status?: number; rcResponse?: number | null };
+      const name = String(d.path ?? '').split('/').slice(-2).join('/');
+      const rc = d.rcResponse == null ? '' : ` · RC Response ${d.rcResponse}${d.rcResponse === 1 ? ' (ok)' : ' (NOT ok — RC refused it)'}`;
+      console.log(`      step two: ${name} → HTTP ${d.status ?? '?'}${rc}`);
+    }
+    // A SIGN-OUT MID-FLOW: sso went true then false with loggedIn never true is RC's own
+    // customerLogOut firing — its interceptor met a request needing RC's token before step
+    // two had produced one.
+    const rcSessions = (h.client_reports ?? []).filter((r) => r.stage === 'rc-session')
+      .map((r) => r.detail as { loggedIn?: boolean; sso?: boolean });
+    const sawSso = rcSessions.some((d) => d.sso === true);
+    const lostSso = sawSso && rcSessions.findLast((d) => typeof d.sso === 'boolean')?.sso === false;
+    if (lostSso && !rcSessions.some((d) => d.loggedIn === true)) {
+      console.log('      ⚠ RC SIGNED THE SESSION OUT MID-FLOW: ssoAccessToken appeared and was then removed with customerId never written — customerLogOut fired (a request needed RC\'s token before step two produced one)');
+    }
     if (sess && sess.oktaToken !== undefined) {
       const live = typeof sess.oktaExpiresInSec === 'number' && sess.oktaExpiresInSec > 0;
       if (sess.oktaToken === 'jwt' && live) {
@@ -376,6 +423,8 @@ if (handed.length) {
           + ' so a signed-out-looking page is NOT a missing session');
       } else if (sess.oktaToken === 'jwt') {
         console.log(`      ⚠ okta store: a token that expired ${Math.abs(sess.oktaExpiresInSec ?? 0)}s ago`);
+      } else if (sess.oktaToken === 'encoded') {
+        console.log(`      okta store: ${sess.oktaKeys} key(s), token store present but ENCODED (secure-ls) — populated, unreadable by design`);
       } else {
         console.log(`      ⚠ okta store: NO token in ${sess.oktaKeys} okta- key(s)`
           + `${sess.oktaNames ? ` (${sess.oktaNames})` : ''}`

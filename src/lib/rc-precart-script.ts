@@ -219,13 +219,76 @@ export function reporter(): string {
     '  var tokenSeen = false, tokenDeadlineMs = null;',
     '  function noteToken(f) {',
     '    tokenSeen = true;',
+    '    if (rcTokenAtMs === null) rcTokenAtMs = Date.now();',
     '    if (f && typeof f.expiresInSec === "number") tokenDeadlineMs = Date.now() + f.expiresInSec * 1000;',
     '  }',
     '  function signedIn() {',
     '    if (!tokenSeen) return false;',
     '    return tokenDeadlineMs === null || tokenDeadlineMs > Date.now();',
     '  }',
-    '  window.__camphawkRc = { send: send, scrub: scrub, hasStash: hasStash, href: href, jwtFacts: jwtFacts, onToken: null, signedIn: signedIn, bridged: !!bridge };',
+    // RC'S OWN "AM I SIGNED IN?" IS ONE KEY, AND IT IS NOT THE TOKEN (2026-09-01).
+    //
+    // Read out of RC's bundle: `isLoggedIn: !!localStorage.getItem("customerId")`. Its
+    // sign-in is two steps — Okta's callback writes `ssoAccessToken` (the JWT captured
+    // above) and then awaits `GetSSOLoggedInUser`, whose RESPONSE writes `customerId`,
+    // `customerName`, RC's own `accessToken` and `customerDetail`. The header name and
+    // `isLoggedIn` come from the second step. Every close rule this repo has shipped closed
+    // on the first, and the token is captured off step two's own request header — so
+    // "token captured" marks the moment step two LEAVES, and closing then races its
+    // response. Android's plugin kills the in-flight request on close; that is the whole
+    // "works on iOS, not on Android" story.
+    //
+    // So the host closes on THIS report and nothing else. Reported once on install (a page
+    // that boots already signed in closes at once — the 2026-08-12 stranded-when-it-worked
+    // case) and again when it flips. A BOOLEAN, never the id: a customer id is not a
+    // credential, but the standing rule is not to collect a value you would then have to
+    // filter.
+    '  function rcLoggedIn() { try { return !!localStorage.getItem("customerId"); } catch (e) { return false; } }',
+    // AND WHETHER STEP ONE'S TOKEN IS STILL THERE. RC's customerLogOut deletes ssoAccessToken;
+    // a report showing sso true then false, with loggedIn never true, is that exact event —
+    // the interceptor answering a request that needed RC's token with a sign-out. Presence
+    // only, a boolean; the census carries the shape.
+    '  function rcSso() { try { return !!localStorage.getItem("ssoAccessToken"); } catch (e) { return false; } }',
+    '  var rcSessionSaid = null;',
+    '  function reportRcSession() {',
+    '    var v = rcLoggedIn(), so = rcSso();',
+    '    var k = String(v) + "|" + String(so);',
+    '    if (rcSessionSaid === k) return;',
+    '    rcSessionSaid = k;',
+    '    send("rc-session", { loggedIn: v, sso: so, at: href() });',
+    '  }',
+    // IF STEP TWO NEVER FINISHES, THE WINDOW STAYS OPEN AND SAYS WHY. No timer closes it —
+    // closing was the defect. The 08-31 hand bisect established that a window left open,
+    // then closed by the user once the name is showing, yields a session that survives.
+    // The notice tells them exactly that. 30s after the first token with no customerId is
+    // the point at which "still finishing" is worth a sentence; it never acts on its own.
+    '  var RC_SETTLE_NOTICE_MS = 30000, rcTokenAtMs = null, rcNoticeShown = false;',
+    '  function showRcHoldNotice() {',
+    '    try {',
+    '      if (document.getElementById("camphawk-rc-hold")) return;',
+    '      var d = document.createElement("div");',
+    '      d.id = "camphawk-rc-hold";',
+    '      d.setAttribute("style", "position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#16603B;color:#FAF7F2;font:15px/1.4 -apple-system,system-ui,sans-serif;padding:12px 16px;box-shadow:0 2px 8px rgba(0,0,0,.3)");',
+    '      d.textContent = "CampHawk: ReserveCalifornia is still finishing your sign-in. When you see your name at the top of the page, tap Done.";',
+    '      (document.body || document.documentElement).appendChild(d);',
+    '    } catch (e) {}',
+    '  }',
+    // INSTALL MUST NEVER THROW. The reporter is the first thing injected and everything else
+    // hangs off `window.__camphawkRc`; a ReferenceError here would take the token capture,
+    // the census and the cart status down with it. A page with no timers (a sandbox, or a
+    // hostile one) simply gets no watcher — the install report and `rcLoggedIn` still work.
+    '  try {',
+    '    setInterval(function () {',
+    '      reportRcSession();',
+    '      if (rcLoggedIn()) { try { var h = document.getElementById("camphawk-rc-hold"); if (h) h.remove(); } catch (e) {} return; }',
+    '      if (!rcNoticeShown && rcTokenAtMs !== null && Date.now() - rcTokenAtMs > RC_SETTLE_NOTICE_MS) {',
+    '        rcNoticeShown = true;',
+    '        showRcHoldNotice();',
+    '        send("settle-timeout", { held: true, waitedSec: Math.round((Date.now() - rcTokenAtMs) / 1000) });',
+    '      }',
+    '    }, 500);',
+    '  } catch (e) {}',
+    '  window.__camphawkRc = { send: send, scrub: scrub, hasStash: hasStash, href: href, jwtFacts: jwtFacts, onToken: null, signedIn: signedIn, rcLoggedIn: rcLoggedIn, bridged: !!bridge };',
     '  // A run that ends on a repeat would otherwise lose the tail of the count.',
     '  window.addEventListener("pagehide", flush);',
     '  window.addEventListener("error", function (e) { send("error", { message: scrub(e && e.message) }); });',
@@ -257,6 +320,12 @@ export function reporter(): string {
     '      }',
     '    }',
     '    if (e.data.__camphawk_cartkey) send("cartkey", { captured: true });',
+    // STEP TWO, AS IT HAPPENED. rc-inject.js reports the SSO endpoints' path, HTTP status
+    // and RC's own Response code. Relayed as facts; the readout says what they mean.
+    '    if (e.data.__camphawk_api && typeof e.data.__camphawk_api === "object") {',
+    '      var a = e.data.__camphawk_api;',
+    '      send("rc-api", { path: String(a.path || "").slice(0, 120), status: Number(a.status) || 0, rcResponse: (typeof a.rcResponse === "number" ? a.rcResponse : null) });',
+    '    }',
     '  });',
     '  var log = console.log;',
     '  console.log = function () {',
@@ -267,6 +336,9 @@ export function reporter(): string {
     '    return log.apply(console, arguments);',
     '  };',
     '  send("injected", { href: href(), job: /camphawk-rc=/.test(location.hash) || hasStash() });',
+    // AFTER `injected`, never before: the first report is the one that proves the script ran at
+    // all, and every reader of this channel — and one guard — depends on it being first.
+    '  reportRcSession();',
     '})();',
   ].join('\n');
 }
@@ -398,6 +470,14 @@ export function sessionProbe(): string {
     // silent re-mint that beat us to the injection.
     '  var stored = get("ssoAccessToken") || get("accessToken");',
     '  var sf = stored ? R.jwtFacts(stored) : null;',
+    // THE TWO TOKENS ARE NOT THE SAME TOKEN, AND `storedToken` COULD NOT TELL THEM APART
+    // (2026-09-01). `ssoAccessToken` is Okta's JWT, written by step one of RC's sign-in.
+    // `accessToken` is RC's OWN token, written by step two beside `customerId`. A run that was
+    // cut off between the two has the first and not the second — and `storedToken: "jwt"`
+    // was satisfied by either, so it read "signed in" over the exact state that renders
+    // signed out. Reported separately now, with the key RC actually boots `isLoggedIn` from.
+    '  function shape(v) { if (!v) return "none"; var f = R.jwtFacts(v); return f && f.decodable ? "jwt" : "opaque"; }',
+    '  var ssoTok = get("ssoAccessToken"), rcTok = get("accessToken");',
     // THE STORE THAT ACTUALLY DECIDES WHETHER RC LOOKS SIGNED IN.
     //
     // `ssoAccessToken` and `accessToken` above are RC's OWN copies. okta-auth-js keeps its
@@ -430,7 +510,14 @@ export function sessionProbe(): string {
     '  try {',
     '    for (var oi = 0; oi < localStorage.length; oi++) {',
     '      var ok = localStorage.key(oi);',
-    '      if (!ok || String(ok).slice(0, 5).toLowerCase() !== "okta-") continue;',
+    // ANYWHERE IN THE KEY, NOT A PREFIX (2026-09-01). RC's `customerLogOut` removes
+    // `@secure.s.okta-token-storage` and `@secure.s.okta-cache-storage` — its okta-auth-js
+    // store is wrapped by secure-ls under an `@secure.s.` prefix. A prefix test on `okta-`
+    // matched only the `okta-original-uri-storage` breadcrumb, so every census this probe
+    // ever took reported the SDK store empty while never having looked at it. That reading
+    // was printed as "the SDK never finished its half" on both platforms on 09-01. It was a
+    // false negative each time.
+    '      if (!ok || String(ok).toLowerCase().indexOf("okta-") === -1) continue;',
     '      oktaN++;',
     // Bounded on both axes: eight names, forty characters each. okta-auth-js uses a handful
     // of fixed names, so anything past that is not this library and is not worth the room.
@@ -446,7 +533,12 @@ export function sessionProbe(): string {
     // a token we could not read where there is no token at all, and those are the two
     // readings this field exists to separate. `opaque` is reserved for something genuinely
     // JWT-shaped that will not decode.
-    '      if (!om) continue;',
+    // AN ENCODED STORE IS A THIRD SHAPE. secure-ls stores its values encoded, so a populated
+    // `@secure.s.okta-token-storage` does not match a JWT and must not read as `none` — that
+    // is the breadcrumb reading applied to the wrong key. A non-empty value under a name
+    // that is the token store, with no JWT visible, is reported as `encoded`: present,
+    // unreadable by design, and different from absent.
+    '      if (!om) { if (oraw.length > 40 && /okta-token-storage/i.test(String(ok)) && oktaTok === "none") oktaTok = "encoded"; continue; }',
     '      var of2 = R.jwtFacts(om[0]);',
     '      if (of2 && of2.decodable) { oktaTok = "jwt"; oktaExp = of2.expiresInSec; }',
     '      else oktaTok = "opaque";',
@@ -481,6 +573,9 @@ export function sessionProbe(): string {
     '    oktaNames: oktaNames.join(","),',
     '    oktaToken: oktaTok,',
     '    oktaExpiresInSec: oktaExp,',
+    '    ssoToken: shape(ssoTok),',
+    '    rcToken: shape(rcTok),',
+    '    rcLoggedIn: !!get("customerId"),',
     '  });',
     // The LIVE token is the one RC actually sends, caught off its own requests by
     // rc-inject.js. Recording its expiry — never the token — is what gives the NEXT open
