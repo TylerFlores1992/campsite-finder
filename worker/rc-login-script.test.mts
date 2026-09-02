@@ -1169,7 +1169,17 @@ test('a session that arrives DURING the wait ends it — the token lands after l
 // then reported a failure over a sign-in that was proceeding normally.
 
 /** A page whose password field arrives late, optionally behind a visible challenge. */
-function challengePage(opts: { pwAfterMs: number; challengeUntilMs?: number }) {
+function challengePage(opts: {
+  pwAfterMs: number;
+  /**
+   * When the challenge frame becomes visible. NON-ZERO BY DEFAULT AND THAT IS THE POINT:
+   * a challenge present at t=0 is caught by the PRE-FILL arm that already existed, so a
+   * fixture staging one there reports `captcha` without ever reaching the code under test.
+   * Mutation testing found exactly that — deleting the new report left the suite green.
+   */
+  challengeFromMs?: number;
+  challengeUntilMs?: number;
+}) {
   const ctx = loginSandbox();
   const said: [string, Record<string, unknown>][] = [];
   const started = (ctx.Date as DateConstructor).now();
@@ -1189,7 +1199,9 @@ function challengePage(opts: { pwAfterMs: number; challengeUntilMs?: number }) {
     },
     querySelectorAll: (sel: string) => {
       // The challenge frame, visible only while the puzzle is up.
-      if (sel.includes('recaptcha') && opts.challengeUntilMs && since() < opts.challengeUntilMs) {
+      const from = opts.challengeFromMs ?? 5_000;
+      if (sel.includes('recaptcha') && opts.challengeUntilMs
+          && since() >= from && since() < opts.challengeUntilMs) {
         return [{
           getBoundingClientRect: () => ({ width: 300, height: 400 }),
           parentElement: null,
@@ -1233,7 +1245,7 @@ test('the challenge extends the deadline ONCE, to a fixed point — never unboun
   // A puzzle nobody solves must still end. Refreshing the deadline per tick while the frame
   // is up is an unbounded wait wearing a timeout's clothes, and a window that never closes
   // strands the user — the 2026-08-12 bug by another door.
-  const p = challengePage({ pwAfterMs: 9_000_000, challengeUntilMs: 9_000_000 });
+  const p = challengePage({ pwAfterMs: 9_000_000, challengeFromMs: 5_000, challengeUntilMs: 9_000_000 });
   const r = await p.run();
   assert.equal(r.ok, false);
   assert.equal(r.stage, 'password', 'an unsolved challenge still ends as a named failure');

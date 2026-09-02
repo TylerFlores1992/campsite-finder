@@ -5001,6 +5001,60 @@ signed in, which nobody had done in a month of instrumenting our side of it.
   proxy, not the raw sandbox, so a message with `source: ctx` correctly failed the reporter's
   cross-frame check — the guard was right and the stub was wrong.
 
+### THE RUNNER HUNG IN THE PRE-RELEASE WAIT, ALIVE AND POLLING NOTHING (2026-09-02)
+A test hold failed with `error: "no cart at release time — the hold runner did not pick it up"`
+and `last_attempt_at` NULL — the 2026-08-07 dead-runner signature. It was not dead.
+```
+12:41:52   RC token acquired (live)
+12:41:52   ready for 1 hold(s) — holding 77.0s until 2026-09-02T05:43:09 PT
+           [nothing, ever]
+```
+- **`list-processes` SHOWED THE PROCESS ALIVE** (`node.exe rc-hold-runner.mjs`), so it WEDGED
+  rather than crashed. `supervise.ps1` restarts on EXIT only, so nothing recovered it; the Fly
+  `runner-watch` alarm needs a hold due inside 45 min and the sweep had just failed the only
+  hold there was. **It would have sat there indefinitely.** `restart-rc` fixed it in seconds and
+  the keep-warm minted a fresh 60-minute token unattended.
+- **THE CANDIDATE, AND IT IS A CARRIED-ACROSS OMISSION.** After `await sleep(wait)` the runner
+  calls `precartInPage`, which was a **bare `page.evaluate`**. `rc-token.evaluateWithin` was
+  written on 2026-08-17 precisely because Playwright's evaluate has NO timeout; the keep-warm
+  was fixed and `rc-hold-runner.mjs` used it **zero** times. A hazard recorded for one caller is
+  not recorded — the same shape as `attemptLogin`'s `isLive()` short-circuit.
+- **NOT PROVEN.** Nothing recorded which await it was, and a Playwright call failing to honour
+  its own timeout against a dead browser is still live. **The bound is worth having either way:**
+  an unbounded await in a loop with no wedge detector is a latent hang by construction, and the
+  cost is the whole runner rather than one cart.
+- **BOUNDED AT 60s** (`RC_CART_EVAL_TIMEOUT_MS`), not the module's 20: this is two POSTs from
+  inside the page and normally takes seconds, but it runs at 08:00:00 against a web tier that
+  has needed three attempts and five minutes to answer. **The bound catches a WEDGE, not a slow
+  morning.** A timeout reports `timedOut` and the runner names it as OURS — a wedged browser is
+  not an RC refusal — and the cart read-back still runs, because the POSTs may have landed and
+  what was lost is the answer.
+- **STILL MISSING: the runner has no wedge watchdog at all.** The keep-warm got one on 08-17
+  (bail and let the supervisor restart); this bound covers the identified call and nothing else.
+  That is the deeper fix and it is NOT built.
+- **BOT-SIDE, so it needs a box update before it means anything.**
+  `worker/rc-cart-timeout.test.mts`, seven guards.
+
+### A CHALLENGE BETWEEN THE EMAIL AND THE PASSWORD ABANDONED THE SIGN-IN (2026-09-02)
+Owner: *"RC opened. captcha. completed. I had to finish sign in by hand."* The trace names it:
+`email {}` then `login-result {ok:false, stage:"password", reason:"the password field never
+appeared"}`.
+- **THERE WERE CHALLENGE ARMS EITHER SIDE OF THE GAP AND NONE INSIDE IT.** Okta shows its
+  challenge AFTER the identifier is submitted, and `chWait(CH_PW_SELS, 20000)` was a flat
+  twenty seconds with no `chCaptchaVisible()` check — so a human solving a puzzle ran the clock
+  out and the run reported a failure over a sign-in that was proceeding normally.
+- **`chWaitPassword` extends the deadline ONCE, to a fixed point** (`CHALLENGE_WAIT_MS`, 5 min,
+  matching the pre-fill arm). Refreshing it per tick is an unbounded wait wearing a timeout's
+  clothes: an unsolved challenge must still end or the window never closes — 2026-08-12 by
+  another door.
+- **AND THE TAKEOVER ANNOUNCES ITSELF.** `captcha-cleared` is what says the script resumed;
+  without it "it resumed" and "the user finished by hand" were the same silence.
+- **TWO GUARDS WERE VACUOUS AND MUTATION TESTING FOUND BOTH.** The fixture staged the challenge
+  at t=0, where the PRE-EXISTING pre-fill arm reports `captcha` — so deleting the new report
+  left the suite green. The challenge now appears only after the email step. And the
+  "unbounded" mutation was EQUIVALENT: inside `seenAt === null`, `Date.now()` and `seenAt` are
+  the same instant, so it changed nothing; the real variant removes that guard.
+
 ### THE SIGN-IN'S "LONG PAUSE" WAS US HUNTING RC'S CONTROL ON OKTA'S PAGE (2026-09-02, #251)
 Reported by the owner after three successful Android hand-offs: *"RC opens and goes to login
 screen, there is a long pause before it clicks stay signed in and continues to password. I
