@@ -3,6 +3,7 @@ import { watchOpenings, withHoldLinks, withBookLinks } from '@/lib/watch-opening
 import { query, mutate } from '@/lib/db/client';
 import { resolveManageToken } from '@/lib/notifications/actions';
 import { applyMutes, cleanSiteIds } from '@/lib/watch-mutes';
+import { applyWatchDates, checkDateChange } from '@/lib/watch-dates';
 
 export const dynamic = 'force-dynamic';
 
@@ -135,7 +136,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   const watchId = await resolveManageToken(token);
   if (!watchId) return NextResponse.json({ error: 'invalid or expired link' }, { status: 404 });
 
-  const { op, siteId, mute, unmute } = await req.json().catch(() => ({}));
+  const { op, siteId, mute, unmute, startDate, endDate } = await req.json().catch(() => ({}));
 
   switch (op) {
     /**
@@ -159,6 +160,33 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
         return NextResponse.json({ error: 'mute or unmute required' }, { status: 400 });
       }
       await applyMutes(watchId, { mute: add, unmute: remove });
+      break;
+    }
+    /**
+     * Change the dates on an existing watch.
+     *
+     * The write is in `lib/watch-dates` because it also clears this watch's alert claims:
+     * `watch_site_alerts` has no dates in its key, so a claim won under the old window
+     * would keep suppressing a site under the new one — silently, since `claim.ts`
+     * re-alerts on a TRANSITION and a site that never closed never transitions. See that
+     * module for the full reasoning.
+     *
+     * The watch is re-read for its nights rather than trusting the caller, because
+     * whether the new window is long enough depends on the watch's own flex/min nights
+     * and this endpoint is authorised by a link anyone can hold.
+     */
+    case 'setDates': {
+      const current = await loadWatch(watchId);
+      if (!current) return NextResponse.json({ error: 'watch not found' }, { status: 404 });
+      const check = checkDateChange({
+        startDate,
+        endDate,
+        flexNights: current.flex_nights,
+        minNights: current.min_nights,
+        today: new Date().toISOString().slice(0, 10),
+      });
+      if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
+      await applyWatchDates(watchId, check.value);
       break;
     }
     case 'remove':
