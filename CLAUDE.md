@@ -3045,7 +3045,10 @@ out"** while the cart control asked them to **log in** — RC contradicting itse
   | 08-24 iOS | `✓ Added to cart` + `cart read back: 1 entry` | **no** |
   | 08-29 Android | `✓ Added to cart` + `cart read back: 1 entry` | **yes — and it was NOT there** |
 
-  **So `cart read back` has never once been corroborated by a human, on any platform.** The
+  ~~**So `cart read back` has never once been corroborated by a human, on any platform.**~~
+  **TRUE UNTIL 2026-09-02, WHEN AN ANDROID HAND-OFF WAS CONFIRMED ON RC'S OWN CART PAGE** —
+  header, badge and reservation — after #249/#250. Struck rather than deleted: read as
+  current it says the instrument has never been validated, and it has. The
   only visually-confirmed run predates the instrument *and* predates the code path: the cart
   navigation and the read-back both arrived on 2026-08-23 (#171), and 08-13's status line was
   *"review & check out on ReserveCalifornia"* with no navigation at all. **08-24 has exactly
@@ -3214,6 +3217,10 @@ booking"** on RC's home page.
   instrument attached has ever been corroborated by a human looking at RC's cart page**, so it
   may carry this identical defect and nobody would know. The comparison has no working control
   on either side; only the app-side census would produce one.
+  **STILL TRUE OF iOS ON 2026-09-02, AND NO LONGER TRUE OF ANDROID** — the Android side now has
+  the corroborated run this paragraph says neither had. iOS is the one still resting on an
+  unverified `cart read back`, and its binary is three weeks older; a fresh iOS build and one
+  corroborated iOS hand-off is what would finally give this comparison two working ends.
 
 #### THE FULL 80-REPORT TRACE, READ 2026-08-31 — the sign-in WORKS and the probe is blind
 The whole `client_reports` sequence for hold `TEST · 43832` was pulled and read in order. It
@@ -5001,6 +5008,41 @@ signed in, which nobody had done in a month of instrumenting our side of it.
   proxy, not the raw sandbox, so a message with `source: ctx` correctly failed the reporter's
   cross-frame check — the guard was right and the stub was wrong.
 
+### THE ANDROID HAND-OFF IS FIXED, AND A HUMAN FINALLY LOOKED AT THE CART (2026-09-02)
+Five real-site hand-offs were run on the Pixel across the day, against #249 + #250 + #252.
+**Three completed end to end**, one was interrupted by a CAPTCHA (fixed, below) and one was
+lost to a wedged runner (below). The third of them produced the reading this repo has been
+missing since 2026-08-13:
+```
+owner's screenshot of www.reservecalifornia.com/Customers/ShoppingCart
+  -> TYLER in the header          <- customerId is written; RC knows who this is
+  -> cart badge: 1
+  -> the reservation itself, the unit and dates we carted
+```
+- **`cart read back: 1 entry` IS CORROBORATED FOR THE FIRST TIME, ON ANY PLATFORM.** Three
+  separate entries in this file say it never has been — 08-29's table, the 08-24 iOS
+  correction, and `docs/PLATFORM-PARITY.md` §3. **Those are now stale and are struck where
+  they stand.** The line was always RC's answer to OUR question with OUR key; what was
+  missing was anybody checking that RC's own page agreed, and now one has.
+- **SO #249 AND #250 ARE THE FIX, AND THE MECHANISM READ OUT OF RC'S BUNDLE IS CONFIRMED
+  FROM THE OTHER END.** `customerId` present, header populated, cart openable — the exact
+  three things the two-step account predicts and the exact three that were absent on 08-29,
+  08-30 and 09-01.
+- **THE FIRST OF THE FIVE STILL FAILED, and the owner's own words are the diagnosis:**
+  *"the test worked. after a RC load freeze that crashed the app and another problem
+  loading. I came back later and it logged me in and successfully completed the hand-off."*
+  **RC's app tier, not ours.** Same shape as the 08-31 bisect (three attempts, ~5 minutes)
+  and the 08-30 mid-test outage. **At 08:00 that loses the site on its own, whatever we fix
+  about login state, and NOTHING IN THIS REPO MEASURES IT.** It is the largest un-instrumented
+  risk left on this path.
+- **THE RC SESSION DIED WITHIN ~2 MINUTES OF EVERY QUEUE, FOUR FOR FOUR.** Queue a hold ->
+  `dueHolds` serves it -> the runner takes the Chromium profile -> the keep-warm stands down
+  and loses the live token. That is the 2026-08-30 `persistLiveToken` case, and the recovery
+  is the ~11-minute stand-off (`RENEW_MIN_GAP_MS + 60s`) before the renewal retries. It cost
+  a `test-login` on most runs. **Working as designed and still the thing that makes testing
+  slow**; whether the persist actually reached the box is not established — that fix is
+  bot-side and the box's sha was not checked against it.
+
 ### THE RUNNER HUNG IN THE PRE-RELEASE WAIT, ALIVE AND POLLING NOTHING (2026-09-02)
 A test hold failed with `error: "no cart at release time — the hold runner did not pick it up"`
 and `last_attempt_at` NULL — the 2026-08-07 dead-runner signature. It was not dead.
@@ -5055,7 +5097,7 @@ appeared"}`.
   "unbounded" mutation was EQUIVALENT: inside `seenAt === null`, `Date.now()` and `seenAt` are
   the same instant, so it changed nothing; the real variant removes that guard.
 
-### THE SIGN-IN'S "LONG PAUSE" WAS US HUNTING RC'S CONTROL ON OKTA'S PAGE (2026-09-02, #251)
+### THE SIGN-IN'S "LONG PAUSE" WAS US HUNTING RC'S CONTROL ON OKTA'S PAGE (2026-09-02, #252)
 Reported by the owner after three successful Android hand-offs: *"RC opens and goes to login
 screen, there is a long pause before it clicks stay signed in and continues to password. I
 feel like an end user will assume it's failing and start to do things that could affect the
@@ -5351,7 +5393,30 @@ git checkout -q origin/master && npx tsx --test worker/hold-fixture-invisibility
 
 ## Open / next session
 
-> ### THE ONE ACTION: RUN THE RECONCILE. `trialing` STILL READS 0 AND THAT IS EXPECTED.
+> ### THE ONE ACTION: MERGE #255. THE ANDROID HAND-OFF IS FIXED AND HUMAN-VERIFIED.
+>
+> **`claude/rc-captcha-resume`, two commits, local verify 1618/1618.** Two independent fixes:
+> a CAPTCHA between the email and the password no longer abandons the sign-in (web-side —
+> reaches installed apps on a push), and the runner's cart `page.evaluate` is bounded at 60s
+> (**bot-side — inert until the mini-PC updates**, so ask for an update after merging and
+> confirm with `git-status` through `bot_commands`, never `autocart.bot_version`).
+> It carries a `worker/*.test.mts`, so **merging it deploys the worker and restarts both
+> pollers** — expected; check `poller.shards` after.
+>
+> **The 08-29 Android defect is CLOSED** — #249 + #250 + #252, and on 2026-09-02 an Android
+> hand-off was confirmed on RC's own cart page by the owner (header, badge, reservation).
+> That is the first human corroboration of `cart read back` on any platform.
+>
+> **Then, in order:** the runner has NO wedge watchdog (it sat alive polling nothing on 09-02;
+> #255 bounds one call, the general fix is the keep-warm's 08-17 pattern and is not built) ·
+> **RC's own app tier failing to render is the largest un-instrumented risk on this path** and
+> loses a site at 08:00 by itself · the RC session dies within ~2 min of every queue, four for
+> four, ~11 minutes to recover · "open the window and close it at once when already signed in"
+> (11s vs 12min, measured 08-21, not built) · **a fresh iOS build** — the iPhone is on 1.0 (21)
+> from 08-09, so iOS is now the platform with NO corroborated cart run.
+> `docs/NEXT-SESSION.md`'s read-first block is the ordered version of this.
+
+> ### ALSO OPEN: RUN THE RECONCILE. `trialing` STILL READS 0 AND THAT IS EXPECTED.
 >
 > The webhook fix (#251) is **forward-only** — it corrected what gets WRITTEN, not the rows
 > already stamped wrong. Both trials still read `active` and will only self-correct if and
@@ -5369,11 +5434,11 @@ git checkout -q origin/master && npx tsx --test worker/hold-fixture-invisibility
 > **`api.stripe.com` IS 403 AT THE AGENT PROXY**, which is why the reconcile is a route and
 > not a script: no session can reach Stripe, Vercel can.
 >
-> ### `#L080` RELEASES 2026-09-02 08:00 PT — OFFERED, UNTAPPED as of 06:50
+> ### `#L080` RELEASED 2026-09-02 08:00 PT AND EXPIRED UNTAPPED — not a fault
 >
-> Untapped offers queue nothing, so nothing is at risk and the update window is open. **If it
-> is tapped, the runner must be healthy by 08:00**; the session had 57m of token and Okta good
-> for ~12h at 06:50, so the T−30 repair is the cheap cookie-answered kind.
+> Nobody tapped it, so nothing was owed and nothing was carted. The overnight `TEST · 42546`
+> hand-off in the same window was clean: `close: session` and
+> `GetSSOLoggedInUser → HTTP 200 · RC Response 1` — the exact two lines #249/#250 predict.
 >
 > ### ~~A HOLD-SUITE TEST FAILS WHENEVER A HOLD IS LIVE~~ — FIXED 2026-09-02
 >
