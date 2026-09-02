@@ -5281,32 +5281,71 @@ git checkout -q origin/master && npx tsx --test worker/hold-fixture-invisibility
 
 ## Open / next session
 
+> ### THE ONE ACTION: RUN THE RECONCILE. `trialing` STILL READS 0 AND THAT IS EXPECTED.
+>
+> The webhook fix (#251) is **forward-only** — it corrected what gets WRITTEN, not the rows
+> already stamped wrong. Both trials still read `active` and will only self-correct if and
+> when Stripe sends an `updated` event for each.
+>
+> **Admin -> "Does our table match Stripe?" -> `Check against Stripe`, read the plan, then
+> `Apply`.** Preview is a separate press on purpose. It never writes `grandfathered`, never
+> treats absence from Stripe as cancellation, and never creates a row.
+>
+> **DO NOT re-derive the "Active 5 · 2 paying" panic.** Those two tiles read DIFFERENT
+> SYSTEMS — the status counts come from our database, MRR reads Stripe live via a list that
+> **excludes trialing**. Two correct numbers, one wrong column. And **a refund does not cancel
+> a Stripe subscription**, so "the refund didn't update MRR" is Stripe behaving normally.
+>
+> **`api.stripe.com` IS 403 AT THE AGENT PROXY**, which is why the reconcile is a route and
+> not a script: no session can reach Stripe, Vercel can.
+>
+> ### `#L080` RELEASES 2026-09-02 08:00 PT — OFFERED, UNTAPPED as of 06:50
+>
+> Untapped offers queue nothing, so nothing is at risk and the update window is open. **If it
+> is tapped, the runner must be healthy by 08:00**; the session had 57m of token and Okta good
+> for ~12h at 06:50, so the T−30 repair is the cheap cookie-answered kind.
+>
+> ### A HOLD-SUITE TEST FAILS WHENEVER A HOLD IS LIVE — NOT A FLAKE, NOT A REGRESSION
+>
+> `hold-fixture-invisibility` → *"a hold PAST the grace window really is gone"* asserts
+> `nextHoldRelease() === null`, which is a GLOBAL read. It fails deterministically for as long
+> as any hold is live, **including on unmodified `origin/master`** — that one command is the
+> discriminator. Full write-up above; deliberately not fixed, since scoping that assertion
+> means editing a safety-critical guard.
+>
+> ### ANOTHER SESSION IS ACTIVE ON THIS REPO AND ON THE MINI-PC
+>
+> It merged #250/#252 and ran `scripts/rc-test-hold.mts` twice during this session, which locks
+> a real campsite AND changes what every hold-reading test sees. `autocart.rc_runner` went
+> **fail** ("1 hold(s) due — these will be MISSED") for several minutes around 05:45 PT on that
+> session's `TEST · 42546`, then **recovered on its own** — `no holds due`, beat 13s, by 06:50.
+> **Recorded as transient and self-resolved, not as an incident.** The worker deploy was not
+> the cause: that restarts the FLY pollers, and the hold runner is on the mini-PC.
+>
+> **Announce before touching the box or running the hold script** — `docs/LANES.md`'s SERIAL
+> list exists for exactly this, and two lanes were live simultaneously.
+>
 > ### PLAY: RELEASE 25 IS IN REVIEW (submitted 2026-09-01). NOTHING TO DO BUT WAIT.
 >
-> **Everything actionable on the Play path is finished.** US-only targeting applied, merchant
-> account and 15% enrolment done, bank verified, four products live, offering current, and the
-> Data safety question **answered — RevenueCat is a service provider under Google's own
-> exemption list, so nothing on that form changed** (`docs/PLAY-STORE.md` §4, with the text
-> quoted).
+> Everything actionable on the Play path is finished — US-only targeting applied, merchant
+> account and 15% enrolment done, bank verified, four products live, offering current, Data
+> safety **answered** (RevenueCat is a service provider under Google's own exemption list, so
+> nothing on that form changed).
 >
-> **READ `Publishing overview` FOR "HAS THIS SHIPPED?", NOT the Dashboard or the app list.**
-> Both lagged on 2026-09-01, and `Production -> Track summary` said `Active · Latest release: 25`
-> over an **unsubmitted** release — it describes the TRACK, not the submission. That misreading
-> is written up in §0d because it produced a confident, wrong "we are live".
+> **READ `Publishing overview` FOR "HAS THIS SHIPPED?"**, not the Dashboard, the app list, or
+> `Production -> Track summary` — the last of those said `Active · Latest release: 25` over an
+> UNSUBMITTED release and produced a confident, wrong "we are live".
 >
-> **`Managed publishing` is OFF**, so approval publishes at 100% to the US with no second
-> prompt. No staged rollout was offered on a first release.
+> **WHAT TO WATCH IS THE FIRST REAL PURCHASE, NOT THE STORE.** `event -> subscriptions row ->
+> hasAutocartEntitlement` has never executed, because `ignoreReason` correctly drops every
+> sandbox event. Two gaps ride with it: **HMAC is reported, not enforced**, and **out-of-order
+> delivery is unhandled** (needs a migration; main's claimed block is 072-079).
 >
-> **WHAT TO WATCH IS NOT THE STORE — IT IS THE FIRST REAL PURCHASE.** `event -> subscriptions
-> row -> hasAutocartEntitlement` has never executed, because `ignoreReason` correctly drops
-> every sandbox event. Check for `provider = 'google'` with a `store_transaction_id`, then the
-> entitlement flipping, then the paywall's *"Confirming your subscription…"* resolving — which
-> has also never happened. **Money moving with no row is the webhook, and it costs a paying
-> customer their subscription.**
->
-> **APPLE IS UNCHANGED AND STILL GATED ON THE SMALL BUSINESS PROGRAM** — submitted 08-30 17:55
-> UTC, still only an acknowledgement in the inbox as of 08-31. `docs/STOREKIT-PLAN.md` §4e is
-> the ordered sequence for the moment it lands; §8 says do not create the products before then.
+> **APPLE IS GATED ON THE SMALL BUSINESS PROGRAM ALONE** — submitted 2026-08-30 17:55 UTC, only
+> an acknowledgement in the inbox. Check cheaply: `from:apple.com newer_than:3d`, expect
+> `developer@email.apple.com`. `docs/STOREKIT-PLAN.md` §4e is the ordered sequence for when it
+> lands; §8 says do not create the products before then.
+
 
 
 
