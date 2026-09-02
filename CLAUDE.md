@@ -5160,6 +5160,44 @@ the watch is active.
   `campground_id` rather than inventing one: a fixture row in `campgrounds` would be reachable
   from search.
 
+### `subscriptions` CAN BE RECONCILED AGAINST STRIPE NOW (2026-09-02)
+
+The webhook fix above is FORWARD-ONLY — it changes what gets written on the next checkout
+and does not repair rows already stamped wrong. Every trial in the table still read `active`,
+and would only correct itself if and when Stripe happened to send an `updated` event, which
+can be days. `GET/POST /api/admin/reconcile-subscriptions` + `src/lib/subscription-reconcile.ts`
+close that, and answer a standing question nobody could answer from a session: **does our
+table still match Stripe?**
+
+- **IT RUNS AS A ROUTE BECAUSE `api.stripe.com` IS 403 AT THE AGENT PROXY.** No session can
+  reconcile from here; Vercel reaches Stripe fine. That is the whole reason it is not a script.
+- **PER-ROW `retrieve`, NOT A DIFF AGAINST `subscriptions.list`.** A list omits long-canceled
+  subscriptions, so a row's absence from it is not evidence of anything — and `retrieve`
+  answers for a canceled subscription, which is the row most worth repairing.
+- **THREE RULES, AND THEY ARE ALL ABOUT WHAT IT REFUSES TO DO.** It never writes
+  `grandfathered` (migration 032's rule, one more writer obeying it). **Absence from Stripe is
+  NEVER cancellation** — a 404, a timeout and a real deletion all arrive as the same `null`,
+  and writing `canceled` for any of them revokes a paying customer over a blip, so those rows
+  are REPORTED. And it never creates a row: a subscription Stripe has and we do not is
+  reported, because writing one needs a Clerk id that may not be in its metadata and inventing
+  an entitlement is worse than reporting a gap.
+- **PREVIEW IS A SEPARATE PRESS AND IS THE DEFAULT.** `GET` reports, `POST` applies, and both
+  build the plan through the identical code path — a preview computed differently from the
+  thing it previews is not a preview. **The method is the switch, not a boolean in the body**,
+  which could arrive `false` and make the dangerous call indistinguishable from the safe one.
+- **THE PLANNING IS PURE AND THE STRIPE CALL IS NOT IN THE MODULE.** The caller hands facts in
+  already derived, which keeps `stripe-plans` — and its `import 'server-only'`, a throwing stub
+  under `node:test` — out of the file. A decision about who is entitled to what should not be
+  untestable because of an import.
+- `worker/subscription-reconcile.test.mts`, 11 tests, **six mutations each verified to APPLY
+  and to fail** — including absence treated as cancellation, a never-asked row counted as
+  unchanged, and the write reaching `grandfathered`. Totality is pinned too: every row lands in
+  exactly one of `changes`/`unchanged`/`unaccounted`, so none can be silently skipped while the
+  reconcile reports success.
+- **A STORE ROW IS NOT UNACCOUNTED.** Migration 071 rows have no `stripe_subscription_id`;
+  Stripe has never heard of them. Reporting them would make every reconcile look permanently
+  dirty once store billing has volume.
+
 ## Open / next session
 
 > ### PLAY: RELEASE 25 IS IN REVIEW (submitted 2026-09-01). NOTHING TO DO BUT WAIT.

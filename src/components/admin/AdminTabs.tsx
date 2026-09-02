@@ -844,6 +844,107 @@ function SmsDeliveryPanel({
 }
 
 /**
+ * "Does our subscriptions table still match Stripe?" — preview, then apply.
+ *
+ * THE TWO NUMBERS ON THIS PAGE READ DIFFERENT SYSTEMS. The status breakdown comes from our
+ * database; the MRR tile comes from Stripe live, via a list that EXCLUDES trialing. So a
+ * table full of trials mislabelled `active` shows up as "Active 5 · 2 paying", which reads
+ * as three people being given free subscriptions and is nothing of the kind. This is the
+ * button that settles it instead of inferring it by eye.
+ *
+ * PREVIEW IS A SEPARATE PRESS, and it is the default. This writes the column that decides
+ * who is entitled to auto-cart, so the first press only ever reports.
+ */
+function StripeReconcile() {
+  const [plan, setPlan] = useState<null | {
+    changes: { id: string; from: { status: string; tier: string }; to: { status: string; tier: string } }[];
+    unchanged: number;
+    unaccounted: string[];
+    unknownToUs: string[];
+  }>(null);
+  const [busy, setBusy] = useState<null | 'preview' | 'apply'>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  async function go(apply: boolean) {
+    setBusy(apply ? 'apply' : 'preview');
+    setNote(null);
+    try {
+      const res = await fetch('/api/admin/reconcile-subscriptions', {
+        method: apply ? 'POST' : 'GET',
+      });
+      const b = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setNote(b?.error ?? `Request failed (HTTP ${res.status}).`);
+      } else {
+        setPlan(b.plan ?? null);
+        if (apply) setNote(`Applied ${b.applied} row${b.applied === 1 ? '' : 's'}.`);
+      }
+    } catch (e) {
+      setNote(`Could not reach the server: ${(e as Error).message}`);
+    }
+    setBusy(null);
+  }
+
+  return (
+    <div className="mt-4 border-t border-ch-line pt-3">
+      <h3 className="mb-0.5 text-ch-label font-bold tracking-[.1em] text-ch-muted uppercase">
+        Does our table match Stripe?
+      </h3>
+      <p className="mb-2 text-ch-fine text-ch-muted">
+        Asks Stripe about every subscription we hold a row for and reports the differences.
+        A row Stripe can&rsquo;t account for is listed, never changed &mdash; absence isn&rsquo;t
+        cancellation.
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          onClick={() => void go(false)}
+          disabled={busy !== null}
+          className="rounded-ch border border-ch-line px-3 py-1.5 text-ch-meta font-bold text-ch-ink hover:bg-ch-surface disabled:opacity-60"
+        >
+          {busy === 'preview' ? 'Checking…' : 'Check against Stripe'}
+        </button>
+        {plan && plan.changes.length > 0 && (
+          <button
+            type="button"
+            onClick={() => void go(true)}
+            disabled={busy !== null}
+            className="rounded-ch border border-ch-line px-3 py-1.5 text-ch-meta font-bold text-ch-ink hover:bg-ch-surface disabled:opacity-60"
+          >
+            {busy === 'apply'
+              ? 'Applying…'
+              : `Apply ${plan.changes.length} change${plan.changes.length === 1 ? '' : 's'}`}
+          </button>
+        )}
+      </div>
+      {note && <p className="mt-2 text-ch-fine leading-normal text-ch-muted">{note}</p>}
+      {plan && (
+        <div className="mt-2 text-ch-fine leading-normal text-ch-muted">
+          <p>
+            {`${plan.changes.length} to change · ${plan.unchanged} already correct`}
+          </p>
+          {plan.changes.map((c) => (
+            <p key={c.id} className="mt-0.5 font-mono text-ch-fine">
+              {`${c.id.slice(0, 18)} ${c.from.status}/${c.from.tier} → ${c.to.status}/${c.to.tier}`}
+            </p>
+          ))}
+          {plan.unaccounted.length > 0 && (
+            <p className="mt-1.5">
+              {`${plan.unaccounted.length} row(s) Stripe couldn’t account for — reported, not changed.`}
+            </p>
+          )}
+          {plan.unknownToUs.length > 0 && (
+            <p className="mt-1.5">
+              {`${plan.unknownToUs.length} subscription(s) in Stripe we hold no row for.`}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * "Ring my phone" — the only canary that cannot be automated.
  *
  * The three delivery canaries above run themselves daily, because sending an email or a
@@ -1600,6 +1701,7 @@ function SystemHealthPanel({ data }: { data: AdminData }) {
         )}
 
         <AlarmTest />
+        <StripeReconcile />
         <RcWebviewTest />
         <BotUpdateButton />
         <BotDiagnostics />
