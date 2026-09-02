@@ -135,6 +135,12 @@ export function checkDateChange(input: {
  * `rc_hold_notified_keys` and its pre-067 scalar are cleared for the same reason as the
  * alert claims: they record "we already told this user about this release", which was an
  * answer about a stay they are no longer asking for.
+ *
+ * `notification_sent_at` goes too, and it is NOT vestigial — the poller stopped filtering
+ * on it, but `api/webhooks/campflare` still reads it as a ONE-HOUR COOLDOWN and returns
+ * early. Left standing, a stamp earned under the old dates would swallow the first
+ * Campflare notification for the new ones. Every column cleared here is the same shape:
+ * a suppression that was true of a stay the user has stopped asking about.
  */
 export async function applyWatchDates(watchId: string, dates: DateChange): Promise<void> {
   await mutate(
