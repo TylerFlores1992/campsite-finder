@@ -498,7 +498,13 @@ export default function ClaimFlow({ holdId, token }: { holdId: string; token: st
             // every retry of one step look like a new page. Same rule as the reporter's
             // `href()`, and for the same reason.
             let key = at;
-            try { const u = new URL(at); key = u.origin + u.pathname; } catch { /* keep raw */ }
+            let path = '';
+            try { const u = new URL(at); key = u.origin + u.pathname; path = u.pathname; } catch { /* keep raw */ }
+            // THE CALLBACK IS RC'S PAGE, NOT OURS (#250). The sign-in has nothing to do there
+            // and did something anyway — see rc-login-script.ts. The script guards itself
+            // too; this keeps a cached older bundle from being handed the credential on the
+            // one page where acting on it breaks the sign-in.
+            if (/^\/login\/callback/i.test(path)) return null;
             if (pages.has(key) || pages.size >= MAX_LOGIN_PAGES) return null;
             pages.add(key);
             return loginInvocation(email, password);

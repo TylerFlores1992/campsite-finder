@@ -446,6 +446,22 @@ ${captchaProbeSource()}
     };
     return (async function () {
       try {
+        // NEVER TOUCH THE CALLBACK PAGE (2026-09-01, #250). On /login/callback RC's SDK is
+        // exchanging the OAuth code and RC's SPA is completing step two of its sign-in
+        // (GetSSOLoggedInUser -> customerId). This script is re-run on every navigation, and
+        // on that page it found no form, no session yet, and RC's "Log in" control -- and
+        // CLICKED IT, navigating away mid-exchange. Measured on both platforms: a second
+        // callback, and on Android a session that had persisted ssoCustomerName from the
+        // first exchange and no RC token, which is the state RC's own interceptor answers
+        // with customerLogOut and its home page. The user saw "Before booking, please sign
+        // in" over a locked campsite. Nothing on this page is ours to do; the outcome is
+        // reported by rc-session when customerId lands.
+        var chPath = '';
+        try { chPath = String((typeof location !== 'undefined' && location && location.pathname) || '').toLowerCase(); } catch (e) { chPath = ''; }
+        if (chPath.indexOf('/login/callback') === 0) {
+          chSay('callback-in-flight', {});
+          return done(true, 'callback-in-flight', 'RC is completing its own sign-in on the callback page');
+        }
         // ALREADY SIGNED IN is a success, and asking first is what stops us typing a
         // credential we did not need. The token capture is the authority; a form's absence
         // is not, because RC's SPA re-authenticates AFTER the page settles.

@@ -979,3 +979,36 @@ test('both call sites name where they were — a tick on the password step is a 
   assert.match(src, /chKeepSignedIn\('email'\)/, 'the identifier step must name itself');
   assert.match(src, /chKeepSignedIn\('password'\)/, 'the password step must name itself');
 });
+
+// ── THE CALLBACK PAGE IS RC'S, NOT OURS (2026-09-01, #250) ─────────────────────────────
+//
+// Measured on both platforms: re-run on /login/callback, the script found no form and no
+// session yet and clicked RC's "Log in" — navigating away while RC's SDK was mid-exchange.
+// A second callback followed; on Android the first exchange had already persisted
+// ssoCustomerName, so the second boot ran RC's interceptor into customerLogOut and the home
+// page. The user saw "Before booking, please sign in" over a locked campsite.
+
+test('the sign-in script does NOTHING on /login/callback, and says so, before any other check', () => {
+  const src = stripComments(loginScript());
+  const body = src.slice(src.indexOf('return (async function'));
+  const guard = body.indexOf("chPath.indexOf('/login/callback') === 0");
+  const signedIn = body.indexOf('chSignedIn()');
+  const click = body.indexOf('found.click()');
+  assert.ok(guard !== -1, 'the callback guard must exist');
+  assert.ok(guard < signedIn && guard < click,
+    'the guard must run before the signed-in check and long before any click');
+  assert.match(body, /chSay\('callback-in-flight'/, 'not acting must still be a named report');
+  // A named terminal path, through done(), so the claim screen is told rather than left
+  // waiting on a verdict that never arrives — the 08-16 silent-terminal-path lesson.
+  assert.match(body, /return done\(true, 'callback-in-flight'/);
+});
+
+test('ClaimFlow does not hand the credential to the callback page at all', () => {
+  const src = readFileSync('src/components/v2/ClaimFlow.tsx', 'utf8')
+    .split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
+  const a = src.indexOf('afterLoad: (at: string) =>');
+  assert.ok(a !== -1);
+  const block = src.slice(a, src.indexOf('return loginInvocation(', a));
+  assert.match(block, /\/login\\\/callback[\s\S]{0,40}return null/,
+    'afterLoad must return null on the callback — a second guard for a cached older bundle');
+});

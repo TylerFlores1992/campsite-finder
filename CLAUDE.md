@@ -5001,6 +5001,45 @@ signed in, which nobody had done in a month of instrumenting our side of it.
   proxy, not the raw sandbox, so a message with `source: ctx` correctly failed the reporter's
   cross-frame check — the guard was right and the stub was wrong.
 
+### #249 WAS NECESSARY AND NOT SUFFICIENT: OUR SIGN-IN SCRIPT WAS CLICKING "LOG IN" ON THE CALLBACK PAGE (2026-09-01, #250)
+The first Android run on #249 held the window open — the new notice fired at 30s — and RC
+still rendered signed out, on its HOME page. Two readings from the trace, and the second is
+ours.
+- **THE KEEP-SIGNED-IN CANDIDATE IS REFUTED, EXACTLY THE WAY THE 09-01 ENTRY SAID IT WOULD
+  BE.** `keep-signed-in {at:"email", boxes:1, ticked:true}` — the box was on screen, it was
+  ticked, and the header was empty. It decides the NEXT sign-in's cost and nothing about the
+  header. Stop citing it for this defect.
+- **`signin-open {}` ON `/login/callback`, BOTH PLATFORMS.** `afterLoad` re-runs the sign-in
+  script on every navigation (deliberately — the 08-16 fix). On the callback it found no form,
+  no session yet (`ssoToken: none`, `@secure.s.okta-transaction-storage` present = exchange in
+  flight), and RC's "Log in" control — and clicked it, navigating to Okta mid-exchange. Okta
+  answered from the cookie, a SECOND callback followed, and the two documents are in the trace
+  (`opens: 64`, `opens: 65`). The iOS 08-31 trace shows the same two callbacks.
+- **WHY ANDROID LOST AND iOS DID NOT, and it is timing, not platform.** On Android the first
+  exchange had already COMPLETED before our click (`token ageSec:1` captured on callback #1 —
+  i.e. step two's request left), so `ssoCustomerName`/`ssoAccessToken` were persisted. The
+  second callback then booted with `isSsoLoggedIn: true` and no RC token — the state in which
+  RC's own request interceptor answers a request needing RC's token with **`customerLogOut`
+  and `Qt.navigation("/")`**: the home page in the screenshot, the "Before booking, please
+  sign in" notice, and the 56 authenticated calls the home page makes. On iOS the click landed
+  BEFORE the first exchange completed (no token on callback #1), so callback #2 booted clean.
+  Which side of the exchange our click lands on is a race; iOS won it. **Candidate mechanism
+  for the second half; the click itself is measured.**
+- **FIXED TWO WAYS.** The sign-in script does nothing on `/login/callback` and reports
+  `callback-in-flight` (a named terminal path through `done()` — the 08-16 rule); and
+  `afterLoad` returns null for the callback so a cached older bundle is never handed the
+  credential there. **`location` may be absent in a sandbox** — the guard threw a
+  ReferenceError into the outer catch on its first run and read as a failed sign-in.
+- **AND STEP TWO IS OBSERVED NOW.** `rc-inject.js` reports every `/SSO/` endpoint response as
+  `rc-api { path, status, rcResponse }` — origin+pathname only (the query carries the email
+  and Okta subject), one number read out of the body and the rest never kept. `rc-session`
+  carries `sso` beside `loggedIn`, so "ssoAccessToken appeared then vanished with customerId
+  never written" — customerLogOut firing — is a line in the readout instead of an inference.
+- **THE TEST HOLD WAS LEFT `carted`**; `expireStaleHolds(45)` releases it. Nine mutations,
+  each grep-verified to apply. **`\/` INSIDE A TEMPLATE LITERAL COLLAPSES TO `/`** — a regex
+  written that way in the emitted sign-in script produced `/^/login/callback/i` and stopped
+  the entire served bundle parsing; the suite caught it, a string test replaced it.
+
 ### WHERE iOS AND ANDROID ACTUALLY DIFFER — AUDITED, AND THE ANSWER REFRAMES THE QUESTION (2026-09-01)
 Asked for a deep search after the fourth "whoops, another difference" in three weeks. Full
 inventory in **`docs/PLATFORM-PARITY.md`**; the audit itself is the finding.
@@ -5072,6 +5111,14 @@ landed on 08-29, so **the iPhone binary does not contain it at all.**
 
 
 > **START AT `docs/NEXT-SESSION.md`. NOTHING IS ASSIGNED; THE TOP ITEM IS A READING.**
+>
+> **-3. #250 IS THE SECOND HALF — #249 held the window open and RC STILL signed out.** The
+> sign-in script was clicking "Log in" on `/login/callback` mid-exchange. Fixed and
+> instrumented; see "#249 WAS NECESSARY AND NOT SUFFICIENT". **The keep-signed-in candidate
+> is refuted** (ticked, header empty). Next Android run: expect NO `signin-open` on the
+> callback, ONE callback document, `rc-api GetSSOLoggedInUser → HTTP 200 · RC Response 1`,
+> then `rc-session loggedIn:true` and `close: session`. If `rc-api` shows a non-1 Response,
+> RC refused step two and the fault is on RC's side of the call — that is the next reading.
 >
 > **-2. #249 IS THE FIX FOR THE ANDROID HAND-OFF — TEST IT ON BOTH PHONES.** Close on RC's own
 > `customerId`; no timer; see "RC'S SIGN-IN IS TWO STEPS". The readout prints `RC login:

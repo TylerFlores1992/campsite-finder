@@ -244,12 +244,18 @@ export function reporter(): string {
     // credential, but the standing rule is not to collect a value you would then have to
     // filter.
     '  function rcLoggedIn() { try { return !!localStorage.getItem("customerId"); } catch (e) { return false; } }',
+    // AND WHETHER STEP ONE'S TOKEN IS STILL THERE. RC's customerLogOut deletes ssoAccessToken;
+    // a report showing sso true then false, with loggedIn never true, is that exact event —
+    // the interceptor answering a request that needed RC's token with a sign-out. Presence
+    // only, a boolean; the census carries the shape.
+    '  function rcSso() { try { return !!localStorage.getItem("ssoAccessToken"); } catch (e) { return false; } }',
     '  var rcSessionSaid = null;',
     '  function reportRcSession() {',
-    '    var v = rcLoggedIn();',
-    '    if (rcSessionSaid === v) return;',
-    '    rcSessionSaid = v;',
-    '    send("rc-session", { loggedIn: v, at: href() });',
+    '    var v = rcLoggedIn(), so = rcSso();',
+    '    var k = String(v) + "|" + String(so);',
+    '    if (rcSessionSaid === k) return;',
+    '    rcSessionSaid = k;',
+    '    send("rc-session", { loggedIn: v, sso: so, at: href() });',
     '  }',
     // IF STEP TWO NEVER FINISHES, THE WINDOW STAYS OPEN AND SAYS WHY. No timer closes it —
     // closing was the defect. The 08-31 hand bisect established that a window left open,
@@ -274,7 +280,7 @@ export function reporter(): string {
     '  try {',
     '    setInterval(function () {',
     '      reportRcSession();',
-    '      if (rcSessionSaid === true) { try { var h = document.getElementById("camphawk-rc-hold"); if (h) h.remove(); } catch (e) {} return; }',
+    '      if (rcLoggedIn()) { try { var h = document.getElementById("camphawk-rc-hold"); if (h) h.remove(); } catch (e) {} return; }',
     '      if (!rcNoticeShown && rcTokenAtMs !== null && Date.now() - rcTokenAtMs > RC_SETTLE_NOTICE_MS) {',
     '        rcNoticeShown = true;',
     '        showRcHoldNotice();',
@@ -314,6 +320,12 @@ export function reporter(): string {
     '      }',
     '    }',
     '    if (e.data.__camphawk_cartkey) send("cartkey", { captured: true });',
+    // STEP TWO, AS IT HAPPENED. rc-inject.js reports the SSO endpoints' path, HTTP status
+    // and RC's own Response code. Relayed as facts; the readout says what they mean.
+    '    if (e.data.__camphawk_api && typeof e.data.__camphawk_api === "object") {',
+    '      var a = e.data.__camphawk_api;',
+    '      send("rc-api", { path: String(a.path || "").slice(0, 120), status: Number(a.status) || 0, rcResponse: (typeof a.rcResponse === "number" ? a.rcResponse : null) });',
+    '    }',
     '  });',
     '  var log = console.log;',
     '  console.log = function () {',
