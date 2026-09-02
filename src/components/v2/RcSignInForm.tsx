@@ -157,6 +157,12 @@ export default function RcSignInForm({ onSubmit, busy, error, stage }: RcSignInF
       {/* THE ONE STAGE THE USER MUST ACT ON. Everything else is progress; a challenge is a
           job. The bot treats a CAPTCHA as a full stop because nobody is there at 07:30 —
           here somebody is holding the phone, which is the whole reason this path can ask. */}
+      {stage === "captcha-cleared" && (
+        <p role="status" className="mt-3 text-ch-body text-ch-muted">
+          Thanks — we have taken over again and are finishing the sign-in.
+        </p>
+      )}
+
       {stage === "captcha" && (
         <p role="status" className="mt-3 text-ch-body text-ch-alert">
           ReserveCalifornia is asking you to prove you are human. Solve it in the window that

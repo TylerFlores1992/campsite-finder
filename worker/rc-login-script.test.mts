@@ -1154,3 +1154,102 @@ test('a session that arrives DURING the wait ends it — the token lands after l
   assert.ok(!p.stages().includes('signin-missing'),
     'a session appearing mid-wait is not a missing control');
 });
+
+// ── A CHALLENGE BETWEEN THE EMAIL AND THE PASSWORD (2026-09-02) ────────────────────────
+//
+// Owner, on the fifth Android hand-off: "RC opened. captcha. completed. I had to finish sign
+// in by hand." The trace says exactly where it gave up:
+//
+//   email {}
+//   login-result {"ok":false,"stage":"password","reason":"the password field never appeared"}
+//
+// Okta shows its challenge AFTER the identifier is submitted. There are challenge arms either
+// side of that gap — before the email, after the password — and there was none inside it, so
+// `chWait(CH_PW_SELS, 20000)` ran a flat twenty seconds while a human solved the puzzle and
+// then reported a failure over a sign-in that was proceeding normally.
+
+/** A page whose password field arrives late, optionally behind a visible challenge. */
+function challengePage(opts: { pwAfterMs: number; challengeUntilMs?: number }) {
+  const ctx = loginSandbox();
+  const said: [string, Record<string, unknown>][] = [];
+  const started = (ctx.Date as DateConstructor).now();
+  const since = () => (ctx.Date as DateConstructor).now() - started;
+  const field = () => ({
+    value: '', focus() {}, blur() {}, dispatchEvent() {}, click() {},
+    get offsetParent() { return {}; },
+    setAttribute() {}, removeAttribute() {},
+  });
+  ctx.location = { hostname: 'signin.reservecalifornia.com', pathname: '/oauth2/v1/authorize' };
+  ctx.getComputedStyle = () => ({ visibility: 'visible', display: 'block', opacity: '1' });
+  ctx.document = {
+    querySelector: (sel: string) => {
+      const wantsPw = /passcode|password/i.test(sel);
+      if (wantsPw) return since() >= opts.pwAfterMs ? field() : null;
+      return /identifier|username|type="email"/i.test(sel) ? field() : null;
+    },
+    querySelectorAll: (sel: string) => {
+      // The challenge frame, visible only while the puzzle is up.
+      if (sel.includes('recaptcha') && opts.challengeUntilMs && since() < opts.challengeUntilMs) {
+        return [{
+          getBoundingClientRect: () => ({ width: 300, height: 400 }),
+          parentElement: null,
+        }];
+      }
+      return [];
+    },
+  };
+  ctx.window = {
+    __camphawkRc: {
+      send: (s: string, d: Record<string, unknown>) => { said.push([s, d]); },
+      signedIn: () => false,
+    },
+  };
+  ctx.HTMLInputElement = function () {};
+  ctx.HTMLTextAreaElement = function () {};
+  ctx.FocusEvent = function () {};
+  ctx.Event = function () {};
+  ctx.KeyboardEvent = function () {};
+  vm.runInContext(loginScript(), ctx);
+  return {
+    stages: () => said.map((s) => s[0]),
+    detail: (stage: string) => said.find((s) => s[0] === stage)?.[1],
+    run: () => vm.runInContext('window.__chRcLogin("a@b.com", "hunter2!")', ctx) as Promise<{ ok: boolean; stage: string }>,
+  };
+}
+
+test('a challenge solved between email and password is TAKEN BACK OVER, not abandoned', async () => {
+  // Two minutes of puzzle — comfortably past the ordinary 20s allowance, which is what made
+  // this a reported failure rather than a pause.
+  const p = challengePage({ pwAfterMs: 130_000, challengeUntilMs: 120_000 });
+  const r = await p.run();
+  assert.ok(p.stages().includes('captcha'), 'the user must be TOLD there is a challenge');
+  assert.ok(p.stages().includes('captcha-cleared'),
+    `the takeover must announce itself; got ${p.stages().join(',')}`);
+  assert.ok(p.stages().includes('password'), 'and the run must go on to type the password');
+  assert.notEqual(r.stage, 'password', 'it must not report "the password field never appeared"');
+});
+
+test('the challenge extends the deadline ONCE, to a fixed point — never unbounded', async () => {
+  // A puzzle nobody solves must still end. Refreshing the deadline per tick while the frame
+  // is up is an unbounded wait wearing a timeout's clothes, and a window that never closes
+  // strands the user — the 2026-08-12 bug by another door.
+  const p = challengePage({ pwAfterMs: 9_000_000, challengeUntilMs: 9_000_000 });
+  const r = await p.run();
+  assert.equal(r.ok, false);
+  assert.equal(r.stage, 'password', 'an unsolved challenge still ends as a named failure');
+  assert.ok(p.stages().includes('captcha'), 'and it still reported the challenge');
+  assert.ok(!p.stages().includes('captcha-cleared'), 'nothing was cleared, so nothing may claim it was');
+});
+
+test('with NO challenge the ordinary allowance is unchanged', async () => {
+  // The 20s default is Okta rendering its own next screen. A slower default would only make
+  // a genuinely broken sign-in take longer to report.
+  const quick = challengePage({ pwAfterMs: 2_000 });
+  await quick.run();
+  assert.ok(quick.stages().includes('password'));
+  assert.ok(!quick.stages().includes('captcha'), 'no challenge, no challenge report');
+
+  const late = challengePage({ pwAfterMs: 60_000 });
+  const r = await late.run();
+  assert.equal(r.stage, 'password', 'past the allowance with no challenge is still a failure');
+});

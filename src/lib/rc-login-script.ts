@@ -108,6 +108,27 @@ export const SIGNIN_MAX_NAME_LEN = 40;
  */
 export const SIGNIN_WAIT_MS = 12_000;
 
+/**
+ * How long Okta gets to render the password step after the identifier is submitted.
+ *
+ * Unchanged at twenty seconds for the ORDINARY path — this is Okta rendering its own next
+ * screen, and a longer default would just make a genuinely broken sign-in take longer to
+ * report. What changed is that a challenge appearing inside this window now extends it
+ * (`CHALLENGE_WAIT_MS`) instead of running the clock out.
+ */
+export const PASSWORD_WAIT_MS = 20_000;
+
+/**
+ * How long a HUMAN gets to solve a challenge before the run gives up.
+ *
+ * Five minutes, matching the arm that already guards the pre-email case — a person holding a
+ * phone at 08:00 is exactly who this path can ask, which is the whole reason the in-app
+ * sign-in survives where the bot's does not (the bot treats a CAPTCHA as a full stop because
+ * nobody is there). Bounded rather than open-ended: an unsolved challenge must still end, or
+ * the window never closes and the user is stranded — the 2026-08-12 bug by another door.
+ */
+export const CHALLENGE_WAIT_MS = 300_000;
+
 export const EMAIL_SELECTORS = [
   'input[name="identifier"]',            // Okta Identity Engine
   'input[name="username"]',              // Okta Classic
@@ -200,6 +221,8 @@ ${captchaProbeSource()}
   var CH_SIGNIN_TEXTS = ${JSON.stringify(SIGNIN_TEXTS)};
   var CH_SIGNIN_MAX_LEN = ${SIGNIN_MAX_NAME_LEN};
   var CH_SIGNIN_WAIT_MS = ${SIGNIN_WAIT_MS};
+  var CH_PW_WAIT_MS = ${PASSWORD_WAIT_MS};
+  var CH_CHALLENGE_WAIT_MS = ${CHALLENGE_WAIT_MS};
   var CH_EMAIL_SELS = ${JSON.stringify(EMAIL_SELECTORS)};
   var CH_PW_SELS = ${JSON.stringify(PASSWORD_SELECTORS)};
   var CH_ERR_SELS = ${JSON.stringify(ERROR_SELECTORS)};
@@ -234,6 +257,50 @@ ${captchaProbeSource()}
 
   function chWait(sels, ms) {
     return chWaitFor(function () { return chFind(sels); }, ms);
+  }
+
+  /*
+     WAIT FOR THE PASSWORD FIELD, AND HAND CONTROL BACK AFTER A CHALLENGE (2026-09-02).
+
+     Okta shows its challenge AFTER the identifier is submitted, which is a gap this script
+     had no eyes in: chWait(CH_PW_SELS, 20000) was a flat twenty seconds with no challenge
+     check, so a human solving a CAPTCHA ran the clock out and the run reported "the password
+     field never appeared" -- a failure, over a sign-in that was proceeding normally. There
+     are challenge arms either side of this (before the email, after the password) and none
+     in the middle. Measured on hold 9bcad26a: email submitted, then that exact line.
+
+     A CHALLENGE EXTENDS THE DEADLINE ONCE, TO A FIXED POINT. Refreshing it on every tick
+     while the frame is visible is an unbounded wait wearing a timeout's clothes -- the
+     window would never close if the challenge were never solved. Stamped from when the
+     challenge was FIRST seen, so solving it leaves the full allowance for Okta to render the
+     next step.
+
+     AND IT IS ANNOUNCED, BOTH WAYS. captcha is the one stage the claim screen renders a
+     message for, so the user is told what to do; captcha-cleared is what says the script
+     took over again, which is the fact that was missing when this failed -- "it resumed" and
+     "the user finished it by hand" were the same silence.
+  */
+  async function chWaitPassword() {
+    var deadline = Date.now() + CH_PW_WAIT_MS;
+    var seenAt = null;
+    for (;;) {
+      var el = chFind(CH_PW_SELS);
+      if (el) {
+        if (seenAt !== null) chSay('captcha-cleared', { after: 'email', waitedMs: Date.now() - seenAt });
+        return el;
+      }
+      // Okta can skip the password step entirely for a remembered device. The caller's own
+      // signed-in check handles it; returning here stops us waiting out a challenge deadline
+      // for a field that is never coming because the sign-in is already done.
+      if (chSignedIn()) return null;
+      if (chCaptchaVisible() && seenAt === null) {
+        seenAt = Date.now();
+        deadline = seenAt + CH_CHALLENGE_WAIT_MS;
+        chSay('captcha', { visible: true, after: 'email' });
+      }
+      if (Date.now() >= deadline) return null;
+      await new Promise(function (r) { setTimeout(r, 250); });
+    }
   }
 
   /*
@@ -544,7 +611,7 @@ ${captchaProbeSource()}
           chSay('email', {});
           await chSettle();
           chSubmit(user);
-          pw = await chWait(CH_PW_SELS, 20000);
+          pw = await chWaitPassword();
         }
         if (!pw) {
           if (chSignedIn()) return done(true, 'signed-in', 'signed in without a password step');
