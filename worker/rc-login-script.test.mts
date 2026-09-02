@@ -1030,9 +1030,14 @@ test('ClaimFlow does not hand the credential to the callback page at all', () =>
 // measured rather than described.
 
 /** A page that is Okta's or RC's, with a form and/or a sign-in control. */
-function hostPage(opts: { host: string; form?: boolean; control?: Btn; signedIn?: boolean }) {
+function hostPage(opts: {
+  host: string; form?: boolean; control?: Btn; signedIn?: boolean;
+  /** Sessions arrive AFTER loadstop. Flip to signed-in once the wait has polled this often. */
+  signedInAfterLooks?: number;
+}) {
   const ctx = loginSandbox();
   const said: [string, Record<string, unknown>][] = [];
+  let looks = 0;
   const field = () => ({
     value: '', focus() {}, blur() {}, dispatchEvent() {}, click() {},
     get offsetParent() { return {}; },
@@ -1059,7 +1064,12 @@ function hostPage(opts: { host: string; form?: boolean; control?: Btn; signedIn?
   ctx.window = {
     __camphawkRc: {
       send: (s: string, d: Record<string, unknown>) => { said.push([s, d]); },
-      signedIn: () => opts.signedIn === true,
+      signedIn: () => {
+        if (opts.signedIn === true) return true;
+        if (opts.signedInAfterLooks === undefined) return false;
+        looks += 1;
+        return looks > opts.signedInAfterLooks;
+      },
     },
   };
   ctx.HTMLInputElement = function () {};
@@ -1123,9 +1133,24 @@ test('every outcome of the wait reports how long it took', async () => {
   assert.equal(d.atOkta, false);
 });
 
-test('an already-signed-in session still short-circuits before either branch', async () => {
+test('an already-signed-in session short-circuits before the wait is even entered', async () => {
   const p = hostPage({ host: 'signin.reservecalifornia.com', form: true, signedIn: true });
   const r = await p.run() as { stage: string };
   assert.equal(r.stage, 'signed-in');
   assert.ok(!p.stages().includes('signin-form'), 'a live session outranks the form');
+});
+
+test('a session that arrives DURING the wait ends it — the token lands after loadstop', async () => {
+  // THIS GUARD REPLACES ONE THAT WAS VACUOUS, found by mutation. The version above stages a
+  // session that is live BEFORE the run, so it returns at the top-of-run check and never
+  // reaches the signed-in arm inside the wait predicate — deleting that arm left it green.
+  //
+  // The arm is real and this is the case for it: the token arrives with RC's first
+  // authenticated call, which is after loadstop, so a session can appear mid-wait. Without
+  // the arm this run polls to the deadline and reports a miss over a session that is fine.
+  const p = hostPage({ host: 'www.reservecalifornia.com', signedInAfterLooks: 2 });
+  const r = await p.run() as { stage: string };
+  assert.equal(r.stage, 'signed-in', `expected the wait to end on the session; got ${p.stages().join(',')}`);
+  assert.ok(!p.stages().includes('signin-missing'),
+    'a session appearing mid-wait is not a missing control');
 });
