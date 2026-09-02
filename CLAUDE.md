@@ -5001,6 +5001,55 @@ signed in, which nobody had done in a month of instrumenting our side of it.
   proxy, not the raw sandbox, so a message with `source: ctx` correctly failed the reporter's
   cross-frame check — the guard was right and the stub was wrong.
 
+### THE SIGN-IN'S "LONG PAUSE" WAS US HUNTING RC'S CONTROL ON OKTA'S PAGE (2026-09-02, #251)
+Reported by the owner after three successful Android hand-offs: *"RC opens and goes to login
+screen, there is a long pause before it clicks stay signed in and continues to password. I
+feel like an end user will assume it's failing and start to do things that could affect the
+login."* **He was right, and it was a defect rather than slowness.**
+- **THE MECHANISM.** On Okta's identifier page there is no password field yet, so the script
+  falls into `chWaitFor(chSignedIn() || chSignInControl(), SIGNIN_WAIT_MS)` — hunting **RC's
+  OWN "Log in / Sign up" control on `signin.reservecalifornia.com`, where it cannot exist.**
+  It burns the full **12 seconds**, reports `signin-missing`, and only then finds the email
+  field instantly. Every scripted sign-in has paid this, on both platforms.
+- **THE TRACE SAID SO AND NOBODY READ IT.** `signin-missing {candidates: 6}` — six anchors is
+  Okta's sparse page, not RC's header, which carries dozens. The number that identified the
+  page was in every trace since the field was added on 08-23.
+- **THE COST IS NOT THE TWELVE SECONDS, IT IS WHAT THE USER DOES IN THEM.** A hand-off screen
+  that looks hung is one where somebody starts pressing things, and this is the screen where
+  that loses a campsite. Same reasoning as the 08-09 claim-copy rule.
+- **FIXED BY WAITING FOR THE RIGHT THING PER HOST.** On Okta's host the FORM ends the wait; on
+  RC's host only RC's control does, unchanged. **A host check rather than "race everything",
+  deliberately:** RC's own pages carry a hidden login modal driving `customerLogin` — a
+  DIFFERENT flow from the Okta SSO everything here depends on. `chFind` requires
+  `offsetParent`, so a hidden modal cannot match today; accepting the form on RC's host anyway
+  would put that one CSS change away from typing the credential into the wrong form.
+- **EVERY BRANCH REPORTS `waitedMs` NOW.** The pause was invisible in the record — the miss was
+  reported and the twelve seconds spent producing it were not. A number makes the next one a
+  reading rather than a feeling.
+- **`location` MAY BE ABSENT IN A SANDBOX**, and a throw here lands in the outer catch and reads
+  as a failed sign-in. Read defensively, like the #250 callback guard beside it.
+- **THE SANDBOX CLOCK IS WHAT MAKES THIS TESTABLE**: `loginSandbox()` advances a virtual clock
+  by each `setTimeout` delay, so "it waited the full 12s" is an assertion rather than a slow
+  test. Six mutations, each grep-verified to apply.
+- **ONE GUARD WAS VACUOUS AND MUTATION TESTING FOUND IT.** "An already-signed-in session
+  short-circuits" staged a session live BEFORE the run, so it returned at the top-of-run check
+  and never reached the signed-in arm *inside* the wait predicate — deleting that arm left it
+  green. Replaced with a session that arrives DURING the wait, which is the case the arm exists
+  for (the token lands with RC's first authenticated call, after `loadstop`).
+- **A WEBVIEW-FREE LOGIN WAS CONSIDERED AND REJECTED, and the reasoning is worth keeping.**
+  RC's bundle shows what it would take: build Okta's `/authorize` with client_id, redirect_uri,
+  state, nonce and a PKCE challenge, drive Okta's IDX API with the credentials, exchange the
+  code, call `GetSSOLoggedInUser`, then write `ssoAccessToken`, `accessToken`, `customerId`,
+  `customerName` and `customerDetail` into the webview's storage. Three specific objections:
+  **a CAPTCHA becomes unhandleable** (no page to solve it on — a human holding the phone is
+  precisely why this path survives where the bot's does not); **scripted API sign-ins are what
+  provoke the anti-bot posture** that already cost this household IP twelve hours on 08-06; and
+  it breaks silently whenever RC changes a step, with the failure landing at 08:00.
+  **THE BETTER SHAPE OF THE SAME IDEA IS "open the window and close it at once when RC comes
+  back already signed in"** — a cookie-answered sign-in was measured at **11 seconds and +24 MB**
+  against twelve minutes for the password path (08-21). Not built; wants measuring on both
+  phones rather than assuming.
+
 ### #249 WAS NECESSARY AND NOT SUFFICIENT: OUR SIGN-IN SCRIPT WAS CLICKING "LOG IN" ON THE CALLBACK PAGE (2026-09-01, #250)
 The first Android run on #249 held the window open — the new notice fired at 30s — and RC
 still rendered signed out, on its HOME page. Two readings from the trace, and the second is

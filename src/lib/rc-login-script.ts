@@ -456,8 +456,13 @@ ${captchaProbeSource()}
         // with customerLogOut and its home page. The user saw "Before booking, please sign
         // in" over a locked campsite. Nothing on this page is ours to do; the outcome is
         // reported by rc-session when customerId lands.
-        var chPath = '';
+        var chPath = '', chAtOkta = false;
         try { chPath = String((typeof location !== 'undefined' && location && location.pathname) || '').toLowerCase(); } catch (e) { chPath = ''; }
+        // Okta's sign-in lives on its own subdomain of RC. Same host the close decision keys
+        // on (rc-token-liveness.isMidSignIn), and read the same defensive way -- location can
+        // be absent in a sandbox, and a throw here lands in the outer catch and reads as a
+        // failed sign-in.
+        try { chAtOkta = String((typeof location !== 'undefined' && location && location.hostname) || '').toLowerCase() === 'signin.reservecalifornia.com'; } catch (e) { chAtOkta = false; }
         if (chPath.indexOf('/login/callback') === 0) {
           chSay('callback-in-flight', {});
           return done(true, 'callback-in-flight', 'RC is completing its own sign-in on the callback page');
@@ -479,11 +484,38 @@ ${captchaProbeSource()}
           // first authenticated call, which is also after loadstop. Asking once, up top,
           // meant a signed-in user went hunting for a control RC does not render for them.
           // Whichever becomes true first ends the wait.
+          //
+          // WAIT FOR THE RIGHT THING, WHICH IS NOT THE SAME THING ON BOTH HOSTS
+          // (2026-09-02). RC's sign-in control exists on RC's OWN pages. On Okta's host we
+          // are already past it -- the form is what we are waiting for -- and hunting the
+          // control there could only ever run out the clock. It did: every sign-in spent the
+          // FULL 12s on Okta's identifier page before typing anything, reported
+          // signin-missing with 6 candidates (Okta's sparse page, not RC's header), and then
+          // found the email field instantly. The owner watched it and read it as failing,
+          // which is the dangerous part -- a user who thinks it has hung starts pressing
+          // things, and this is the one screen where that costs a campsite.
+          //
+          // Whichever becomes true first ends the wait, so the control path is unchanged and
+          // still costs nothing when RC has already painted its header.
+          var chWaitStart = Date.now();
           var found = await chWaitFor(function () {
-            return chSignedIn() ? 'signed-in' : chSignInControl();
+            if (chSignedIn()) return 'signed-in';
+            // THE FORM ONLY COUNTS ON OKTA'S HOST. RC's own pages carry a hidden login modal
+            // with its own email and password inputs -- a DIFFERENT flow (RC's customerLogin,
+            // not the Okta SSO this whole path depends on). chFind requires offsetParent, so
+            // a hidden modal cannot match today; accepting the form on RC's host anyway would
+            // make that one CSS change away from silently typing the credential into the
+            // wrong form.
+            if (chAtOkta) return (chFind(CH_EMAIL_SELS) || chFind(CH_PW_SELS)) ? 'form' : null;
+            return chSignInControl();
           }, CH_SIGNIN_WAIT_MS);
+          // HOW LONG IT ACTUALLY TOOK, on every branch. The pause was invisible in the trace
+          // -- signin-missing said the hunt failed and never said it had spent twelve seconds
+          // failing. A number here is what makes the next one a reading rather than a feeling.
+          var chWaited = Date.now() - chWaitStart;
           if (found === 'signed-in') return done(true, 'signed-in', 'already signed in');
-          if (found) { found.click(); chSay('signin-open', {}); }
+          if (found === 'form') chSay('signin-form', { waitedMs: chWaited });
+          else if (found) { found.click(); chSay('signin-open', { waitedMs: chWaited }); }
           // NOT FINDING IT IS A FACT, AND IT WAS SILENT. On the park page RC renders its own
           // sign-in control in the header; if the match misses, everything downstream waits
           // 15s for a form that will never come and the user watches a calendar. Report the
@@ -491,7 +523,7 @@ ${captchaProbeSource()}
           // had not rendered yet" can be told apart — 0 candidates means the DOM was empty.
           //
           // Never the candidates' text: RC's header carries the signed-in user's own name.
-          else chSay('signin-missing', { candidates: document.querySelectorAll('a, button').length });
+          else chSay('signin-missing', { candidates: document.querySelectorAll('a, button').length, waitedMs: chWaited, atOkta: chAtOkta });
         }
 
         // A challenge can appear before the form. The human is here; let them clear it.
