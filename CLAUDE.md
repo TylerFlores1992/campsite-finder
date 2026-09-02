@@ -5198,6 +5198,38 @@ table still match Stripe?**
   Stripe has never heard of them. Reporting them would make every reconcile look permanently
   dirty once store billing has volume.
 
+### A HOLD-SUITE TEST ASSERTS A GLOBAL, SO A LIVE TEST HOLD FAILS IT (2026-09-02)
+
+`hold-fixture-invisibility.test.mts` → *"a hold PAST the grace window really is gone"* asserts
+`nextHoldRelease() === null`. **`nextHoldRelease` is not scoped to the fixture** — it answers
+"what is the next hold release across the whole table" — so the assertion is only true when
+**no live hold exists anywhere**, which is a property of the database rather than of the code.
+
+It failed three times running while another session had queued a real test hold
+(`TEST · 42545`, rc-539, carted 22:33 PT, released by `expireStaleHolds(45)` about 45 minutes
+later). **The same suite fails identically on unmodified `origin/master`**, which is the check
+that separates this from a regression and takes one command:
+
+```
+git checkout -q origin/master && npx tsx --test worker/hold-fixture-invisibility.test.mts
+```
+
+- **IT IS NOT A FLAKE AND MUST NOT BE RE-RUN AWAY.** A flake is intermittent; this is
+  deterministic for as long as a hold is live, so "re-run and it passes" only works once the
+  hold clears. Reading it as a flake means waiting out a failure nobody understands.
+- **THE SAME SHAPE #202/#214 ALREADY RECORDED, ONE TABLE ALONG**: a real-DB guard whose
+  assertion is a DIFFERENT query from its fixture is only correct on an empty table. There
+  `holdsAhead(25)` was compared against unbounded `holdsAhead()`; here a fixture-scoped setup
+  is checked with a global read. **There are probably more; they surface one live hold at a
+  time.**
+- **NOT FIXED HERE, DELIBERATELY.** The honest repair is to assert something scoped to the
+  fixture — that this watch's hold is gone — and that is a change to a safety-critical guard
+  which should not be made in passing on an unrelated branch. Recorded so the next session
+  spends one command on it rather than twenty minutes.
+- **AND `scripts/rc-test-hold.mts` IS ON `docs/LANES.md`'s SERIAL LIST FOR THIS REASON.** It
+  locks a real campsite AND changes what every hold-reading test sees. Announce before running
+  it; a second lane's suite is the thing it breaks.
+
 ## Open / next session
 
 > ### PLAY: RELEASE 25 IS IN REVIEW (submitted 2026-09-01). NOTHING TO DO BUT WAIT.
