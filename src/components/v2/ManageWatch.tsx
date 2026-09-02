@@ -11,6 +11,7 @@ import SiteMuteList, { type MuteSite } from "./SiteMuteList";
 import { providerLabel, supportsAutoCart } from "./providers";
 import { divisionLabel, parseCampgroundName } from "./campground-name";
 import { formatRange, nightsBetween, type ISODate } from "@/components/ui/date";
+import DatePicker, { type DateRange } from "@/components/ui/DatePicker";
 
 /**
  * Manage one watch, in the redesign.
@@ -125,6 +126,8 @@ export default function ManageWatch({ token }: { token: string }) {
   const [removed, setRemoved] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [editingDates, setEditingDates] = useState(false);
+  const [draft, setDraft] = useState<DateRange>({ start: null, end: null });
 
   const load = useCallback(async () => {
     try {
@@ -159,23 +162,34 @@ export default function ManageWatch({ token }: { token: string }) {
 
   /** Whole-watch ops: stop, resume, remove. Muting goes through `changeMutes`. */
   const act = useCallback(
-    async (op: string) => {
+    async (op: string, extra?: Record<string, unknown>) => {
       setBusy(op);
+      setError(null);
       try {
         const r = await fetch(`/api/manage/${token}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ op }),
+          body: JSON.stringify({ op, ...extra }),
         });
-        if (!r.ok) throw new Error(String(r.status));
-        const d = (await r.json()) as { removed?: boolean; watch?: Watch };
+        const d = (await r.json().catch(() => ({}))) as {
+          removed?: boolean;
+          watch?: Watch;
+          error?: string;
+        };
+        // THE SERVER'S REASON, WHEN IT GAVE ONE. A rejected date change is the first op
+        // here that can fail for a reason the user can act on — "5 nights doesn't fit in
+        // that window" tells them what to do, where the old blanket "That didn't save"
+        // would have them retrying an edit that can never succeed.
+        if (!r.ok) throw new Error(d.error || "");
         if (d.removed) setRemoved(true);
         else if (d.watch) {
           setWatch(d.watch);
           setMuted(new Set(d.watch.muted_site_ids ?? []));
         }
-      } catch {
-        setError("That didn't save. Try again.");
+        return true;
+      } catch (e) {
+        setError((e as Error).message || "That didn't save. Try again.");
+        return false;
       } finally {
         setBusy(null);
       }
@@ -328,9 +342,56 @@ export default function ManageWatch({ token }: { token: string }) {
             </p>
           </div>
         )}
-        <p className="mt-2 text-ch-body font-bold text-ch-ink-2">
-          {flex ? `Any ${nights} nights, ${formatRange(start, end)}` : formatRange(start, end)}
-        </p>
+        {editingDates ? (
+          /* The SAME DatePicker `/new` and Explore mount, not a second date UI — two
+             drifting copies is how this app's date handling got into trouble before.
+             For a FLEXIBLE watch these dates are the search window and the nights are a
+             separate setting, so the label says so; for a fixed watch they are the stay
+             itself. Neither changes `flex_nights`: this control edits WHEN, never what. */
+          <div className="mt-2">
+            <DatePicker
+              value={draft}
+              onChange={setDraft}
+              label={flex ? "Search window" : "Trip dates"}
+              meta={flex ? `any ${nights} nights in this window` : undefined}
+            />
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <Button
+                size="sm"
+                disabled={busy === "setDates" || !draft.start || !draft.end}
+                onClick={() => {
+                  void (async () => {
+                    const saved = await act("setDates", {
+                      startDate: draft.start,
+                      endDate: draft.end,
+                    });
+                    // Stay OPEN on a rejection, with the reason showing and the dates
+                    // still in the field. Closing would discard what they typed and hide
+                    // the explanation of why it was refused.
+                    if (saved) setEditingDates(false);
+                  })();
+                }}
+              >
+                {busy === "setDates" ? "Saving…" : "Save dates"}
+              </Button>
+              <Button
+                variant="quiet"
+                size="sm"
+                disabled={busy === "setDates"}
+                onClick={() => {
+                  setEditingDates(false);
+                  setError(null);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-2 text-ch-body font-bold text-ch-ink-2">
+            {flex ? `Any ${nights} nights, ${formatRange(start, end)}` : formatRange(start, end)}
+          </p>
+        )}
         <p className="mt-0.5 text-ch-meta text-ch-muted">
           {[
             `${nights} ${nights === 1 ? "night" : "nights"}`,
@@ -357,6 +418,19 @@ export default function ManageWatch({ token }: { token: string }) {
             >
               Open on {providerLabel(watch.source, watch.campground_id)}
             </a>
+          )}
+          {!editingDates && (
+            <Button
+              variant="quiet"
+              size="sm"
+              onClick={() => {
+                setDraft({ start, end });
+                setError(null);
+                setEditingDates(true);
+              }}
+            >
+              Edit dates
+            </Button>
           )}
           <Button
             variant={watch.active ? "quiet" : "primary"}

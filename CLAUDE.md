@@ -5078,6 +5078,87 @@ landed on 08-29, so **the iPhone binary does not contain it at all.**
   for the already-decided Apple IAP work, which that binary predates.
 - **COMPARE THE BUILD NUMBERS BEFORE COMPARING ANYTHING ELSE.** They are in every hand-off
   trace and in the diagnostics panel.
+### `trialing` COULD NEVER APPEAR, AND IT MADE TWO CORRECT NUMBERS LOOK LIKE THEFT (2026-09-02)
+
+Reported as *"admin shows 0 trialing but there should be a couple"* and *"MRR shows 12.50 but a
+refund was issued so that didn't update"*. **One bug, and the second complaint was not a bug at
+all.**
+
+`src/app/api/webhooks/stripe/route.ts` hardcoded `status: 'active'` on
+`checkout.session.completed` — **the only event that CREATES a `subscriptions` row.** The line
+above it fetched the subscription to read the price for the tier and **threw `sub.status`
+away**. So a checkout that started a trial was recorded as active on day one, and the two only
+agreed again once the trial converted and an `updated` event happened to write the truth.
+`customer.subscription.created` was not handled at all.
+
+- **NOTHING WAS OVER-GRANTED, WHICH IS WHY IT SURVIVED.** `hasActiveSubscription` accepts
+  `('active','trialing')` alike, so entitlement was right throughout and only the REPORTING was
+  wrong — invisible until somebody reads a dashboard and disbelieves it.
+- **THE FACT WAS BEING PRODUCED AND DISCARDED**, which is this file's most-repeated shape: the
+  okta state stringified into prose, `notePlatform` emitting into a region that trimmed it,
+  `sendSms` throwing away the Twilio response body.
+
+**THE SECOND REPORT WAS THE SAME BUG WEARING A SCARIER FACE.** The admin's status breakdown
+(`Active 5`) reads OUR DATABASE; the MRR tile (`$12.50 · 2 paying`) reads **Stripe live**, via
+`subscriptions.list({ status: 'active' })` — **which EXCLUDES trialing**, as its own comment
+says. So "Active 5" beside "2 paying" reads as three missed cancellations, i.e. entitlements
+being given away, **and it was neither**. Both numbers were right about different things; the
+row status was the only lie.
+
+- **A REFUND DOES NOT CANCEL A STRIPE SUBSCRIPTION.** It returns money; the subscription stays
+  active and keeps billing. So "the refund didn't update MRR" describes Stripe behaving
+  normally, not a stale read — MRR has no cache to be stale.
+- **`api.stripe.com` IS 403 AT THE AGENT PROXY**, so the per-row mapping (which of the five are
+  trialing in Stripe) could NOT be confirmed from a session. The reconciliation above explains
+  every number without it, but it is an inference and is labelled as one.
+- `worker/stripe-webhook-status.test.mts`, five guards, **five mutations each verified to APPLY
+  and to fail** — including the status literal restored and `subscriptionFacts` split back into
+  two calls. The fallback is pinned as ENTITLED: this path is only reached from a completed
+  subscription checkout, so an unreadable Stripe response must not read as a revoked one.
+
+### DATES ARE EDITABLE ON `/manage/<token>` NOW — and the form was never the hard part (2026-09-02)
+
+`src/lib/watch-dates.ts` + a `setDates` op. The interesting half is that **`watch_site_alerts`
+is `PRIMARY KEY (watch_id, site_key)` and the dates are NOT in the key.**
+
+`worker/claim.ts` re-alerts only on a **transition** — it needs the hour AND a `CONTINUOUS_GAP`
+of not having seen the site open. So a claim won while the watch covered one window keeps
+standing after the user moves it to another, and a site that was open then and is open now looks
+like *"nothing changed"* and **stays silent**. A user who edited their dates would get no alerts
+for exactly the sites most likely to matter, with no error, no failed write, and a screen saying
+the watch is active.
+
+- **So a date change CLEARS that watch's claims**, plus `rc_hold_notified_keys`, its pre-067
+  scalar, and **`notification_sent_at` — which is NOT vestigial**: the poller stopped filtering
+  on it, but `api/webhooks/campflare` still reads it as a one-hour cooldown and returns early.
+  Every column cleared is the same shape: a suppression that was true of a stay the user has
+  stopped asking about. **One statement**, so the watch can never sit advertising new dates
+  behind old claims.
+- **IT DOES NOT TOUCH `active`.** A watch is inactive because the user paused it OR because
+  `expire-watches.ts` closed it, and **nothing records which** — there is no column that
+  distinguishes them, so auto-resuming would restart alerts for somebody who deliberately
+  stopped them. The screen already shows a `Paused` tag and a primary Resume beside the control.
+- **`Date.parse` ACCEPTS AN IMPOSSIBLE DAY AND SILENTLY ROLLS IT OVER** — `2026-02-31` becomes
+  March 3rd, `2026-02-29` in a non-leap year becomes March 1st. A parse check passes both and
+  **moves the user's watch by days with the screen reporting success.** The validator
+  round-trips instead: it is a real date only if formatting it back gives the same string.
+  **The test found this in the first version of the validator**, which is what a test is for.
+- **The refusal is the END date, not the start.** The poller runs `end_date > CURRENT_DATE` and
+  `expire-watches` closes exactly the complement, so accepting a window that ends today switches
+  the watch off within the hour with no explanation. A start date in the past is a real case and
+  is allowed — a window that began before today can still have nights left in it.
+- **The same `DatePicker` `/new` and Explore mount**, not a second date UI. And `act()` now
+  surfaces the SERVER's reason: *"this watch is looking for 5 nights, which does not fit in that
+  window"* tells the user what to do, where the old blanket *"That didn't save"* would have them
+  retrying an edit that can never succeed.
+- `worker/watch-dates.test.mts`, 11 tests, **real-DB for the write** because the clearing is one
+  statement and a test asserting a copy would assert the copy. Fixtures are `active = false`
+  (`loadWatches` filters `WHERE w.active = true`, so the production poller cannot see them
+  however far ahead their dates are set — and this feature sets future dates by construction, so
+  the usual past-`end_date` guard is unavailable) and carry a `__twd` user id, which
+  `REAL_USER`'s `LIKE 'user\_%'` excludes from every dashboard count. The fixture BORROWS a real
+  `campground_id` rather than inventing one: a fixture row in `campgrounds` would be reachable
+  from search.
 
 ## Open / next session
 

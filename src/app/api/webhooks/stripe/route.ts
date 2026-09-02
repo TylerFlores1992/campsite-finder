@@ -21,20 +21,34 @@ export async function POST(req: NextRequest) {
     case 'checkout.session.completed': {
       const session = event.data.object as Stripe.Checkout.Session;
       if (session.mode === 'subscription' && session.metadata?.clerk_user_id) {
-        // The session object carries no price — fetch the subscription to learn the
-        // tier. Non-fatal: on a Stripe blip the row is still written as 'base', and
-        // the first customer.subscription.updated event corrects it.
-        const tier = await tierOfSubscription(session.subscription as string);
+        // The session object carries neither the price nor the status, so fetch the
+        // subscription and take BOTH from it.
+        //
+        // STATUS WAS HARDCODED 'active' HERE UNTIL 2026-09-02, AND THE REAL VALUE WAS
+        // BEING FETCHED AND THROWN AWAY. This call already existed — it read the price
+        // for the tier and discarded `sub.status` — so a checkout that starts a TRIAL
+        // was written as active on its first day. Since `checkout.session.completed` is
+        // the only event that CREATES a row, `trialing` could essentially never appear:
+        // the admin's Trialing count read 0 while Stripe held several, and the two only
+        // agreed again once a trial converted and an `updated` event wrote the truth.
+        // A trial is entitled either way (`hasActiveSubscription` accepts both), so
+        // nothing was over- or under-granted — what was wrong was every report.
+        const facts = await subscriptionFacts(session.subscription as string);
         await upsertSubscription({
           userId: session.metadata.clerk_user_id,
           stripeCustomerId: session.customer as string,
           stripeSubscriptionId: session.subscription as string,
-          status: 'active',
-          tier,
+          status: facts.status,
+          tier: facts.tier,
         });
       }
       break;
     }
+    // `created` is handled because it is the only event that fires for a subscription
+    // made outside checkout. The upsert is idempotent on stripe_subscription_id, so a
+    // created/completed pair for the same subscription writes the same row twice rather
+    // than racing.
+    case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
       const sub = event.data.object as Stripe.Subscription;
@@ -67,16 +81,30 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ received: true });
 }
 
-/** Tier implied by a subscription's current price. 'base' when it can't be read —
- *  see the caller for why that failure mode is the right one. */
-async function tierOfSubscription(subscriptionId: string): Promise<PlanTier> {
+/** Status and tier as Stripe reports them right now.
+ *
+ *  ONE retrieve for both, deliberately: they were two facts from one call and only one
+ *  of them was being kept.
+ *
+ *  The fallbacks differ because the failure modes do. Tier falls back to 'base' so an
+ *  unreadable price surfaces as "paying premium, treated as base" — a complaint we can
+ *  fix — rather than free premium, which never surfaces. Status falls back to 'active'
+ *  because this is only ever reached from a COMPLETED subscription checkout, so the one
+ *  thing we do know is that they subscribed; 'active' and 'trialing' are both entitled,
+ *  so the fallback cannot change what anyone can do, only what the admin page reports. */
+async function subscriptionFacts(
+  subscriptionId: string
+): Promise<{ status: string; tier: PlanTier }> {
   const stripe = getStripe();
   try {
     const sub = await stripe.subscriptions.retrieve(subscriptionId);
-    return tierForPriceId(sub.items?.data?.[0]?.price?.id);
+    return { status: sub.status, tier: tierForPriceId(sub.items?.data?.[0]?.price?.id) };
   } catch (err) {
-    console.error('[stripe webhook] tier lookup failed, defaulting to base:', (err as Error).message);
-    return 'base';
+    console.error(
+      '[stripe webhook] subscription lookup failed, defaulting to active/base:',
+      (err as Error).message
+    );
+    return { status: 'active', tier: 'base' };
   }
 }
 
