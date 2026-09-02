@@ -1012,3 +1012,120 @@ test('ClaimFlow does not hand the credential to the callback page at all', () =>
   assert.match(block, /\/login\\\/callback[\s\S]{0,40}return null/,
     'afterLoad must return null on the callback — a second guard for a cached older bundle');
 });
+
+// ── THE TWELVE-SECOND PAUSE ON OKTA'S PAGE (2026-09-02) ────────────────────────────────
+//
+// Owner, after three successful hand-offs: "RC opens and goes to login screen, there is a
+// long pause before it clicks stay signed in and continues to password. I feel like an end
+// user will assume it's failing and start to do things that could affect the login."
+//
+// He was right, and it was a defect rather than slowness. `chSignInControl()` looks for RC's
+// OWN "Log in / Sign up" control. On `signin.reservecalifornia.com` that control does not
+// exist, so the hunt could only ever run out the clock — every sign-in spent the full
+// SIGNIN_WAIT_MS on Okta's identifier page before typing anything, then found the email field
+// instantly. The trace said `signin-missing {candidates: 6}`: six anchors is Okta's sparse
+// page, not RC's header.
+//
+// These run the REAL emitted script against a stub page, on a virtual clock, so the pause is
+// measured rather than described.
+
+/** A page that is Okta's or RC's, with a form and/or a sign-in control. */
+function hostPage(opts: { host: string; form?: boolean; control?: Btn; signedIn?: boolean }) {
+  const ctx = loginSandbox();
+  const said: [string, Record<string, unknown>][] = [];
+  const field = () => ({
+    value: '', focus() {}, blur() {}, dispatchEvent() {}, click() {},
+    get offsetParent() { return {}; },
+    setAttribute() {}, removeAttribute() {},
+  });
+  const wrap = (b: Btn) => ({
+    get innerText() { return b.visible ? b.name : ''; },
+    get textContent() { return b.name; },
+    get offsetParent() { return b.visible ? {} : null; },
+    getBoundingClientRect: () => ({ width: 90, height: 24 }),
+    click() { b.clicks += 1; },
+  });
+  ctx.location = { hostname: opts.host, pathname: '/oauth2/v1/authorize' };
+  ctx.document = {
+    // Only the credential selectors resolve, and only when this page has a form.
+    // EMAIL ONLY, which is what Okta's identifier page actually shows. Matching the password
+    // selectors too made `pw = chFind(CH_PW_SELS)` succeed at the top of the run, skipping
+    // the whole wait block this file exists to test — the stub was staging a page that does
+    // not occur.
+    querySelector: (sel: string) => (opts.form && /identifier|username|autocomplete="username"|type="email"/i.test(sel)
+      && !/passcode|password/i.test(sel) ? field() : null),
+    querySelectorAll: (sel: string) => (sel === 'a, button' && opts.control ? [wrap(opts.control)] : []),
+  };
+  ctx.window = {
+    __camphawkRc: {
+      send: (s: string, d: Record<string, unknown>) => { said.push([s, d]); },
+      signedIn: () => opts.signedIn === true,
+    },
+  };
+  ctx.HTMLInputElement = function () {};
+  ctx.HTMLTextAreaElement = function () {};
+  ctx.FocusEvent = function () {};
+  ctx.Event = function () {};
+  ctx.KeyboardEvent = function () {};
+  vm.runInContext(loginScript(), ctx);
+  const detail = (stage: string) => said.find((s) => s[0] === stage)?.[1];
+  return {
+    said,
+    detail,
+    stages: () => said.map((s) => s[0]),
+    run: () => vm.runInContext('window.__chRcLogin("a@b.com", "hunter2!")', ctx) as Promise<unknown>,
+  };
+}
+
+test("on Okta's own host the FORM ends the wait — no hunting a control that cannot be there", async () => {
+  const p = hostPage({ host: 'signin.reservecalifornia.com', form: true });
+  await p.run();
+  assert.ok(p.stages().includes('signin-form'), `expected signin-form; got ${p.stages().join(',')}`);
+  // THE PAUSE, MEASURED. The sandbox clock advances by each setTimeout's delay, so a run that
+  // polled to the deadline reports the full SIGNIN_WAIT_MS here. Before this change it did.
+  const waited = Number((p.detail('signin-form') as { waitedMs: number }).waitedMs);
+  assert.ok(waited < 1_000, `the form was on the page and the script still waited ${waited}ms`);
+  assert.ok(!p.stages().includes('signin-missing'),
+    'a form found is not a control missing — reporting the miss is what read as failing');
+});
+
+test("on RC's own host a form does NOT end the wait — only RC's control does", async () => {
+  // THE SAFETY PROPERTY, and the reason this is a host check rather than "race everything".
+  // RC's pages carry their own login modal with email and password inputs, driving RC's
+  // customerLogin — a DIFFERENT flow from the Okta SSO the whole hand-off depends on.
+  // chFind requires offsetParent today, so a hidden modal cannot match; accepting the form on
+  // RC's host anyway would put that one CSS change away from typing the credential into the
+  // wrong form.
+  const control = btn('Log in / Sign up');
+  const p = hostPage({ host: 'www.reservecalifornia.com', form: true, control });
+  await p.run();
+  assert.equal(control.clicks, 1, "RC's own control must be what is pressed");
+  assert.ok(p.stages().includes('signin-open'), `expected signin-open; got ${p.stages().join(',')}`);
+  assert.ok(!p.stages().includes('signin-form'), 'the form must not win on RC\'s host');
+});
+
+test('every outcome of the wait reports how long it took', async () => {
+  // The pause was invisible in the trace: `signin-missing` said the hunt failed and never
+  // said it had spent twelve seconds failing. A number is what makes the next one a reading.
+  const found = hostPage({ host: 'signin.reservecalifornia.com', form: true });
+  await found.run();
+  assert.equal(typeof (found.detail('signin-form') as { waitedMs?: unknown }).waitedMs, 'number');
+
+  const clicked = hostPage({ host: 'www.reservecalifornia.com', control: btn('Log in / Sign up') });
+  await clicked.run();
+  assert.equal(typeof (clicked.detail('signin-open') as { waitedMs?: unknown }).waitedMs, 'number');
+
+  // And a genuine miss still reports the miss, with the wait and which host it was on.
+  const missed = hostPage({ host: 'www.reservecalifornia.com' });
+  await missed.run();
+  const d = missed.detail('signin-missing') as { waitedMs?: unknown; atOkta?: unknown };
+  assert.equal(typeof d.waitedMs, 'number');
+  assert.equal(d.atOkta, false);
+});
+
+test('an already-signed-in session still short-circuits before either branch', async () => {
+  const p = hostPage({ host: 'signin.reservecalifornia.com', form: true, signedIn: true });
+  const r = await p.run() as { stage: string };
+  assert.equal(r.stage, 'signed-in');
+  assert.ok(!p.stages().includes('signin-form'), 'a live session outranks the form');
+});
