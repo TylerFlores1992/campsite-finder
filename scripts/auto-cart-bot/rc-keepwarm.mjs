@@ -2822,10 +2822,26 @@ async function warmResident() {
            * will not answer costs one timeout and never blocks the yield indefinitely —
            * the runner is asking because a site releases in seconds.
            */
+          /**
+           * EVERY OUTCOME SPEAKS (2026-09-03). `already-stored` used to be the silent one, so
+           * "storage already had it" and "the write path never reported" produced the same
+           * line — and the RC session died within ~2 minutes of all four queues on 09-02 with
+           * nothing in the log able to say which. It is split on liveness too: storage holding
+           * a DIFFERENT token from the live one means the handover is still dropping the
+           * fresher, which is this fix's own defect surviving inside it.
+           *
+           * The box's own `cleared 0 storage key(s)` rules that out for the 09-02 deaths —
+           * localStorage held no RC key at all, so this branch cannot have fired. Recorded as
+           * refuted rather than carried forward; what was missing was the ability to say so
+           * from the log rather than by inference.
+           */
           const kept = await persistLiveToken(page);
           log('→ hold runner wants the profile — closing and standing down'
             + (kept === 'written' ? ' (token written to storage so it survives the handover)'
-              : kept === 'no-token' ? ' (no live token to write down)' : ''));
+              : kept === 'no-token' ? ' (no live token to write down)'
+              : kept === 'already-stored-stale'
+                ? ' (⚠ storage holds an OLDER token than the live one — the handover drops the fresher)'
+                : ' (storage already held the token — nothing to write)'));
           break;
         }
         // A VISIBLE WINDOW GETS CLOSED. It is headful by design (RC fingerprints headless
