@@ -5271,10 +5271,26 @@ git checkout -q origin/master && npx tsx --test worker/hold-fixture-invisibility
   `holdsAhead(25)` was compared against unbounded `holdsAhead()`; here a fixture-scoped setup
   is checked with a global read. **There are probably more; they surface one live hold at a
   time.**
-- **NOT FIXED HERE, DELIBERATELY.** The honest repair is to assert something scoped to the
-  fixture — that this watch's hold is gone — and that is a change to a safety-critical guard
-  which should not be made in passing on an unrelated branch. Recorded so the next session
-  spends one command on it rather than twenty minutes.
+- ~~**NOT FIXED HERE, DELIBERATELY.**~~ **FIXED 2026-09-02 on its own branch**, which is what
+  "not in passing on an unrelated branch" was asking for. The repair is a **DELTA, not a
+  scoped copy of the query**: take `nextHoldRelease()` before inserting the fixture and after,
+  and assert the two agree. That asks the question the test means — *does adding a row past
+  the window change what the function reports?* — without reimplementing the predicate, which
+  is the trap the file's own header names (a test asserting a copy asserts the copy).
+  - **STILL NON-VACUOUS, and that was the thing to check.** The fixture sits ten minutes
+    beyond the floor, so it is earlier than every row the window can admit; widening the
+    bound makes it the new minimum and the delta moves. Verified by mutation, grep-checked to
+    apply: the grace widened to 99,999 minutes fails test 5, the 08-30 `release_at >= NOW()`
+    bug fails test 4, and `REAL_UNIT` as `false` fails tests 3 and 4.
+  - **THE TWO SIBLING ASSERTIONS WERE THE SAME DEFECT POINTING THE OTHER WAY.** *"a REAL
+    numeric unit id is still seen"* and *"inside the grace window is NOT invisible"* both read
+    `assert.ok(await nextHoldRelease())` — a GLOBAL truthy, satisfied by any live production
+    hold. So they did not fail on a live hold; they **passed vacuously**, on exactly the days
+    a real hold existed, which is when an `AND false` on `REAL_UNIT` would matter most. They
+    compare against the fixture's own `release_at` now.
+  - **REPRODUCED BEFORE AND AFTER, against a live hold rather than reasoning.** Master's
+    version fails `expected: ~ / actual: '2026-09-03T08:00:00'` — a genuine user hold for the
+    next morning — and the rewritten version passes 6/6 with the identical table state.
 - **AND `scripts/rc-test-hold.mts` IS ON `docs/LANES.md`'s SERIAL LIST FOR THIS REASON.** It
   locks a real campsite AND changes what every hold-reading test sees. Announce before running
   it; a second lane's suite is the thing it breaks.
@@ -5305,13 +5321,13 @@ git checkout -q origin/master && npx tsx --test worker/hold-fixture-invisibility
 > is tapped, the runner must be healthy by 08:00**; the session had 57m of token and Okta good
 > for ~12h at 06:50, so the T−30 repair is the cheap cookie-answered kind.
 >
-> ### A HOLD-SUITE TEST FAILS WHENEVER A HOLD IS LIVE — NOT A FLAKE, NOT A REGRESSION
+> ### ~~A HOLD-SUITE TEST FAILS WHENEVER A HOLD IS LIVE~~ — FIXED 2026-09-02
 >
-> `hold-fixture-invisibility` → *"a hold PAST the grace window really is gone"* asserts
-> `nextHoldRelease() === null`, which is a GLOBAL read. It fails deterministically for as long
-> as any hold is live, **including on unmodified `origin/master`** — that one command is the
-> discriminator. Full write-up above; deliberately not fixed, since scoping that assertion
-> means editing a safety-critical guard.
+> `hold-fixture-invisibility` asserted `nextHoldRelease() === null`, a GLOBAL read, so it
+> failed deterministically for as long as any hold was live — including on unmodified
+> `origin/master`. It is a **delta** against a baseline now, and its two sibling assertions
+> (which passed VACUOUSLY on a live hold, the more dangerous direction) compare against the
+> fixture's own release. Mutation-verified; full write-up above.
 >
 > ### ANOTHER SESSION IS ACTIVE ON THIS REPO AND ON THE MINI-PC
 >
