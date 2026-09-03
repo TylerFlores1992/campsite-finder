@@ -191,6 +191,40 @@ export function closeReasonReading(reason: string, signedInRun: boolean): CloseR
       text: "RC's own SPA reported signed in (customerId written) — the ordinary close since #249",
     };
   }
+  /**
+   * RC'S OWN WEB TIER FAILED FOR THIS PERSON, AND THE READOUT DID NOT KNOW ITS OWN SIGNAL.
+   *
+   * These two are written by the load watchdog in `rc-handoff.ts` — `never-loaded` when no
+   * `loadstop` arrived inside `LOAD_WATCHDOG_MS`, `load-error` when the webview reported one
+   * before it had rendered anything. `rc-outage-hold.ts` ACTS on them (it extends the sweep by
+   * `RC_OUTAGE_GRACE_MIN` rather than handing the campsite back while the user physically
+   * cannot take it), and this function — read by a human at 08:15 — called them
+   * *"unrecognised close reason"* at `info`.
+   *
+   * TWO CONSUMERS OF ONE FACT AND ONLY ONE OF THEM KNEW IT. That is the shape this file
+   * records more than any other, and the cost here is specific: the reader is told the
+   * hand-off ended for a reason nobody has a name for, when in fact it ended because RC
+   * would not render — which on 08-31 took three attempts and ~5 minutes, and at 08:00
+   * loses the site on its own.
+   *
+   * `warn`, not `fail`: nothing of ours is broken and there is nothing to fix in this repo.
+   * It is a real finding about RC and it must not read as a regression — the cry-wolf rule.
+   */
+  if (reason === 'never-loaded') {
+    return {
+      level: 'warn',
+      text: "RC's app never rendered — no loadstop inside the watchdog window, so the hand-off"
+        + ' was closed for them. Not our failure: RC\'s own web tier. The hold\'s sweep is'
+        + ' extended (rc-outage-hold) so the site is not handed back while they cannot take it',
+    };
+  }
+  if (reason === 'load-error') {
+    return {
+      level: 'warn',
+      text: "the webview reported a load error before RC had rendered anything — RC's web tier"
+        + ' again, and the same extended sweep applies',
+    };
+  }
   // EVERYTHING BELOW IS A PRE-#249 HOST. The bundle is served, so it updates on a push; the
   // host that names the close reason is part of the app's web bundle too, but a webview
   // that cached the old one can still send these. They are read as what they are — the
@@ -218,6 +252,48 @@ export function closeReasonReading(reason: string, signedInRun: boolean): CloseR
   // A future host may send a fifth; guessing which known case it resembles is how an absent
   // reading becomes a negative — the shape this file records more often than any other.
   return { level: 'info', text: `unrecognised close reason — reported as sent, not interpreted` };
+}
+
+/**
+ * HOW SLOW IS TOO SLOW FOR RC'S FIRST PAINT?
+ *
+ * Not a service level — a reading threshold. RC's healthy first paint is a couple of seconds;
+ * on 2026-08-31 it needed **three attempts and ~5 minutes**, and on 08-30 it failed mid-test.
+ * At 08:00 a load that takes this long loses the site whatever we get right afterwards, so a
+ * successful-but-slow load is a finding and not noise.
+ *
+ * BOUNDED FROM BOTH SIDES, and the upper bound is the load-bearing one. `LOAD_WATCHDOG_MS`
+ * in `lib/native/rc-handoff` closes a webview that has not rendered at all; a slow threshold
+ * at or above it could never fire on a SUCCESSFUL load, because no successful load can be
+ * slower than the watchdog that would have closed it — the instrument would be inert while
+ * looking present. `src/lib/rc-load-timing.test.mts` pins the inequality across both files,
+ * which is the only way to pin it: importing the constant back would be circular
+ * (`rc-handoff` imports `rcCloseAction` from here).
+ */
+export const RC_SLOW_LOAD_MS = 8_000;
+
+/**
+ * WHAT A SUCCESSFUL LOAD'S DURATION MEANS. Pure, for the reason its four siblings are: inline
+ * in the readout the branch that says "RC was struggling for this person" cannot be reached
+ * without a real hand-off in the database, so it would ship having never once run.
+ *
+ * @param ms milliseconds from `openRcHandoff` opening the window to RC's first `loadstop`.
+ * @returns null when there is no reading — an absent or nonsensical value is NOT a fast load.
+ */
+export function rcLoadReading(ms: unknown): CloseReading | null {
+  // A NON-READING IS NULL, NEVER ZERO. A missing or malformed `ms` rounded to 0 would report
+  // an instant load and drag every aggregate towards health — the absent-reading-as-a-positive
+  // shape, which this repo has paid for with `rc 0 MB` over a 312 MB profile.
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return null;
+  const s = (ms / 1000).toFixed(1);
+  if (ms >= RC_SLOW_LOAD_MS) {
+    return {
+      level: 'warn',
+      text: `RC took ${s}s to render — its own web tier struggling, not ours. At 08:00 this`
+        + ' is the margin the whole hand-off runs on',
+    };
+  }
+  return { level: 'info', text: `RC rendered in ${s}s` };
 }
 
 /**

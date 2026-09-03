@@ -28,7 +28,10 @@
  * extra morning of holds, silently.
  */
 import { query } from '../src/lib/db/client';
-import { closeReasonReading, keepSignedInReading, signInPathReading, rcSessionReading } from '../src/lib/rc-token-liveness';
+import {
+  closeReasonReading, keepSignedInReading, signInPathReading, rcSessionReading, rcLoadReading,
+} from '../src/lib/rc-token-liveness';
+import { rcLoadStats, describeRcLoadStats } from '../src/lib/rc-load-stats';
 
 const hours = Number(process.argv.find((a) => a.startsWith('--hours='))?.split('=')[1] ?? 24);
 
@@ -314,6 +317,18 @@ if (handed.length) {
       console.log(`      cart not read back: ${unverified.reason}`);
     }
 
+    // HOW LONG RC TOOK TO RENDER (2026-09-03). Host-side, so it exists even when the page
+    // was too sick to report on itself — which is the case worth having it for. Printed
+    // ABOVE the close reason because it is chronologically first and, when RC is struggling,
+    // it is the explanation for what the close says.
+    //
+    // THE FIRST, not the last: a hold reopened later contributes a second first-load timing,
+    // and the one that matters for "did this hand-off go well" is the one the user waited on.
+    const loadMs = (h.client_reports ?? [])
+      .find((r) => r.stage === 'rc-load')?.detail?.ms;
+    const loadRead = rcLoadReading(loadMs);
+    if (loadRead) console.log(`      ${loadRead.level === 'warn' ? '⚠ ' : ''}${loadRead.text}`);
+
     // WHY THE SIGN-IN WINDOW CLOSED. Since #249 (2026-09-01) the only ordinary reason is
     // `session` — RC's own SPA reported `customerId` present. `token`, `settled` and
     // `timeout` are pre-#249 hosts, each a race against RC's step-two request, and the
@@ -432,6 +447,19 @@ if (handed.length) {
           + ' — the SDK never finished its half of the sign-in');
       }
     }
+  }
+
+  // THE AGGREGATE — how often RC's own web tier is the problem, across the whole window.
+  //
+  // Every line above is about ONE hand-off, and RC failing to render was reported three times
+  // from a phone (2026-08-30, 08-31, 09-02) without anybody ever being able to say whether it
+  // was one hand-off in three or one in fifty. Those need different answers, so the count is
+  // the finding and not a nicety.
+  //
+  // `describeRcLoadStats` refuses a distribution it does not have, and prints the denominator
+  // when it does — "0 slow loads" over two plain-browser hand-offs is not a health reading.
+  for (const line of describeRcLoadStats(rcLoadStats(handed.map((h) => h.client_reports ?? [])))) {
+    console.log(`  ${line}`);
   }
   // THE ARRAY CAN HAVE A HOLE IN IT, and a reader who assumes otherwise misreads the order.
   // The trim keeps the head and the tail and drops the middle, so a hand-off longer than the

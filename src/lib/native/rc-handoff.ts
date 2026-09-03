@@ -358,6 +358,10 @@ async function injectableWebView(): Promise<null | {
       url: string, code: string, onReport?: (r: RcReport) => void, closeOnToken = false,
       afterLoad?: (url: string) => string | null,
     ) {
+      // WHEN WE ASKED RC FOR THE PAGE. Read BEFORE `open` so the number includes everything
+      // the user waits through, not just what happens after the plugin has a window. See the
+      // `rc-load` report at the first `loadstop` for what this is for.
+      const openedAt = Date.now();
       const ref = iab.open(url, '_blank', IAB_OPTIONS) as {
         addEventListener: (e: string, cb: (ev?: unknown) => void) => void;
         executeScript: (d: { code: string }, cb?: (r: unknown) => void) => void;
@@ -455,15 +459,42 @@ async function injectableWebView(): Promise<null | {
       // Fires again on every navigation, which is intended: RC's adopt path reloads, and a
       // re-injected reporter re-announces without re-installing (see the route).
       ref.addEventListener('loadstop', (ev?: unknown) => {
+        // RC RENDERED SOMETHING. Recorded before anything else on this path: the injection
+        // below can throw on a sick page, and a throw that skipped this would leave the
+        // watchdog armed and close a webview that had in fact come up.
+        //
+        // THE COMMENT SAID THIS AND THE CODE DID NOT, until 2026-09-03: `executeScript` was
+        // called on the line ABOVE, so a synchronous throw there produced exactly the failure
+        // the comment claims to prevent. The ordering is pinned by a test now.
+        const firstLoad = !everLoaded;
+        everLoaded = true;
+        disarmLoadTimer();
+        // HOW LONG RC TOOK TO BECOME USABLE — the number nothing in this repo had (2026-09-03).
+        //
+        // The load watchdog records the FAILURES (`never-loaded`, `load-error`) and RC's web
+        // tier failing to render was described as "the largest un-instrumented risk on this
+        // path" while it was in fact half-instrumented: a hand-off that took nineteen seconds
+        // and one that took two looked identical, because success was silent. So "RC is slow"
+        // stayed a feeling somebody reported rather than a distribution anybody could read.
+        //
+        // FIRST LOAD ONLY. Later `loadstop`s are the user or RC's SPA moving around, and their
+        // durations measure a different thing entirely; averaging them in would poison the one
+        // number this exists to produce. The watchdog is racing exactly this interval.
+        //
+        // HOST-SIDE (`n: 0`), so it survives the case that matters: a page too sick to run our
+        // reporter cannot report on itself, which is why these freezes were invisible.
+        //
+        // AFTER the watchdog is disarmed and BEFORE the injection, inside its own try. A
+        // diagnostic that can delay or break the thing it observes is not worth having, and
+        // this one sits on the cart path.
+        if (firstLoad) {
+          try { onReport?.({ n: 0, stage: 'rc-load', detail: { ms: Date.now() - openedAt } }); }
+          catch { /* a diagnostic must never cost the cart */ }
+        }
         ref.executeScript({ code });
         // WHICH PAGE THIS IS. The plugin puts it on the event; both platforms send it. It is
         // handed to `afterLoad` because a sign-in walks across several pages and the caller
         // has to be able to tell them apart — see the note below.
-        // RC RENDERED SOMETHING. Recorded before anything else on this path: the injection
-        // below can throw on a sick page, and a `catch` that skipped this would leave the
-        // watchdog armed and close a webview that had in fact come up.
-        everLoaded = true;
-        disarmLoadTimer();
         const at = String((ev as { url?: string } | undefined)?.url ?? '');
         // A SECOND, ONE-OFF INJECTION — this is where a credential goes, and the reason it is
         // separate from `code`.
