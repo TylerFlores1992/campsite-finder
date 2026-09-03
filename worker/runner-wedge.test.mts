@@ -117,7 +117,23 @@ test('the pre-release hold TICKS — three minutes of waiting is not a stall', (
    * hold several. A flat threshold clearing all of them would have to be so large it could
    * not free the profile before 08:00 — which is the only thing this watchdog is for.
    */
-  assert.match(RUNNER, /async function sleepTicking\(ms\)/, 'the ticking sleep must exist');
+  /**
+   * AND IT MUST ACTUALLY TICK. The first version of this file asserted only that
+   * `sleepTicking` was CALLED — so gutting its body to a plain sleep passed every test, which
+   * is the whole failure wearing the fix's name. Found by mutation, not by reading.
+   *
+   * Structural rather than behavioural because importing `rc-hold-runner.mjs` STARTS the
+   * runner, the same reason `claim.ts` and `hold-line.ts` had to be extracted. What can be
+   * pinned from here is that the wait is CHUNKED and that each chunk ticks.
+   */
+  const fn = RUNNER.slice(RUNNER.indexOf('async function sleepTicking(ms)'));
+  assert.ok(fn.startsWith('async function sleepTicking(ms)'), 'the ticking sleep must exist');
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.match(body, /await sleep\(Math\.min\(left, ([\d_]+)\)\);\n\s*tick\(\);/,
+    'every chunk of the wait must tick, or this is a plain sleep with a longer name');
+  const chunk = Number(/Math\.min\(left, ([\d_]+)\)/.exec(body)![1].replace(/_/g, ''));
+  assert.ok(chunk > 0 && chunk * 4 < envDefault(RUNNER, 'RC_RUNNER_HUNG_MS'),
+    `a ${chunk}ms chunk must sit well inside the stall threshold, or the wait itself trips it`);
   // Bounded by the two lines around it rather than by a brace — `${holds.length}` contains a
   // `}`, so the obvious `indexOf('}')` stops inside the template literal and slices nothing.
   const at = RUNNER.indexOf('const wait = Math.min(msUntilRelease');
