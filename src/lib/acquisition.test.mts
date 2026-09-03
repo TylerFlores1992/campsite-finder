@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { captureSource, parseSignupSource, SIGNUP_SOURCE_COOKIE } from './acquisition.ts';
+import { captureSource, parseSignupSource, SIGNUP_SOURCE_COOKIE } from './acquisition';
 
 const SELF = 'https://camphawk.app';
 

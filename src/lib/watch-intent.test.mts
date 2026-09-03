@@ -11,7 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { newWatchPath, signUpToWatchHref } from './watch-intent.ts';
+import { newWatchPath, signUpToWatchHref } from './watch-intent';
 
 const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 /** Comments quote the very shapes these tests forbid, so scan the CODE. */
