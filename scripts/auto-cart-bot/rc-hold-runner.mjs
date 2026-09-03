@@ -108,6 +108,81 @@ const ONCE = args.has('--once');
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * ── THE WEDGE WATCHDOG (2026-09-03) ──────────────────────────────────────────────────────
+ *
+ * THE RUNNER HAD NONE, AND ON 2026-09-02 IT SAT ALIVE POLLING NOTHING.
+ *
+ *     12:41:52   RC token acquired (live)
+ *     12:41:52   ready for 1 hold(s) — holding 77.0s until 2026-09-02T05:43:09 PT
+ *                [nothing, ever]
+ *
+ * `list-processes` showed the process alive, so it WEDGED rather than crashed.
+ * `supervise.ps1` restarts on EXIT only, so nothing recovered it; the Fly `runner-watch`
+ * alarm needs a hold due inside 45 minutes and the sweep had just failed the only hold
+ * there was. It would have sat there indefinitely.
+ *
+ * A WEDGED RUNNER IS WORSE THAN A DEAD ONE, AND THIS IS THE PART THAT IS NOT ABOUT CARTING.
+ * `withRCLocked` renews the profile lock from a `setInterval`, so a stalled pass goes on
+ * renewing it forever — the keep-warm can never take the profile back cooperatively and the
+ * RC session dies with nothing able to repair it. That is the 2026-08-10 keep-warm wedge
+ * exactly, mirrored. Releasing the lock on the way out is most of this guard's value.
+ *
+ * SAME PATTERN AS THE KEEP-WARM'S (2026-08-17), FOR THE SAME REASON: a timer is the only
+ * code proven to still be executing while the loop is stalled, so it is the only place a
+ * watchdog can live. The breadcrumb is what turns "it stopped" into "it stopped HERE" —
+ * four keep-warm wedges were recorded before that existed and none could say which await
+ * never returned.
+ *
+ * UNREF'd. An interval holds the event loop open, and `exitWhenDrained` deliberately sets
+ * the exit code and lets the loop finish rather than calling `process.exit` — so without
+ * this a `--once` run would never come back. Same trap the `else` on that branch records.
+ */
+const RUNNER_HUNG_MS = Number(process.env.RC_RUNNER_HUNG_MS || 4 * 60_000);
+let lastTick = Date.now();
+let step = 'starting up';
+let stepSince = Date.now();
+/** The heartbeat. Every path through a pass must reach one of these. */
+const tick = () => { lastTick = Date.now(); };
+/** The breadcrumb. It does NOT touch `lastTick` — see below. */
+const mark = (s) => { step = s; stepSince = Date.now(); tick(); };
+
+/**
+ * SLEEP THAT KEEPS THE CLOCK RUNNING.
+ *
+ * The pre-release hold is up to `MAX_RELEASE_WAIT_MS` (3 min) PER RELEASE GROUP, and a pass
+ * can hold several. A flat threshold that cleared all of them would have to be so large that
+ * it could not free the profile before 08:00, which is the only thing this guard is for. So
+ * the wait ticks instead — the loop really is advancing during it, and saying otherwise
+ * would be a watchdog firing on healthy work.
+ *
+ * `mark` is NOT called here, deliberately. The step must stay whatever the caller set, or the
+ * breadcrumb would read `waiting` for every wedge in the pass and name nothing.
+ */
+async function sleepTicking(ms) {
+  const until = Date.now() + ms;
+  for (;;) {
+    const left = until - Date.now();
+    if (left <= 0) return;
+    await sleep(Math.min(left, 20_000));
+    tick();
+  }
+}
+
+setInterval(() => {
+  const stalledMs = Date.now() - lastTick;
+  if (stalledMs <= RUNNER_HUNG_MS) return;
+  log(`✗ WEDGED — the hold runner has not advanced in ${Math.round(stalledMs / 60_000)}m.`);
+  log(`  Stalled in: ${step} (${Math.round((Date.now() - stepSince) / 1000)}s in that step).`);
+  // THE HALF THAT MATTERS EVEN IF NOTHING WAS DUE. A wedged pass renews the profile lock
+  // from its own timer, so until this runs the keep-warm cannot take the profile back and
+  // the RC session cannot be repaired. Idempotent and ownership-checked, so it is safe to
+  // call whether or not this process holds it.
+  log('  Releasing the profile and exiting so supervise.ps1 can restart us.');
+  releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
+  process.exit(1);
+}, 10_000).unref();
+
 /** Now, as an RC-style Pacific wall-clock string — the same shape as `release_at`. */
 function pacificNow() {
   const p = new Intl.DateTimeFormat('en-CA', {
@@ -191,6 +266,12 @@ async function pMap(items, limit, task) {
       if (!next) return;
       const [i, item] = next;
       try { await task(item, i); } catch { /* task reports its own failure */ }
+      // THE FAN-OUT IS PROGRESS, AND THE WATCHDOG HAS TO SEE IT. Twenty holds at
+      // CART_CONCURRENCY 4 is five rounds, each bounded at RC_CART_EVAL_TIMEOUT_MS (60s) —
+      // 300s of entirely legitimate work against a 240s stall threshold. Without this a full
+      // release window would trip the wedge guard on a morning that was working perfectly,
+      // which is the cry-wolf failure this repo has fixed three times.
+      tick();
     }
   });
   await Promise.all(workers);
@@ -579,6 +660,7 @@ async function smokeTest() {
 
 async function runPass() {
   let work;
+  mark('asking the feed for work');
   try {
     work = await feed();
   } catch (err) {
@@ -611,12 +693,15 @@ async function runPass() {
 
   log(`${claim.length} to hand over, ${cart.length} to cart, ${release.length} to release`);
 
+  mark('taking the Chromium profile');
   const outcome = await withRC(async (ctx, page, token) => {
+    mark('working in the browser');
     const headers = rcHeaders(token);
 
     // CLAIMS FIRST, ahead of everything. A user is on the claim page right now and
     // cannot take the site until we let go; every millisecond here is theirs, not ours.
     for (const h of claim) {
+      tick();
       if (!h.cartKey || !h.cartEntryKey) {
         log(`  ${h.unitName ?? h.unitId}: claim with no entry key — reporting released so the user is not stuck`);
         await report({ id: h.id, released: true, forClaim: true });
@@ -635,6 +720,7 @@ async function runPass() {
     // cart we miss, because it denies the site to everyone including the person who
     // asked for it.
     for (const h of release) {
+      tick();
       if (!h.cartKey || !h.cartEntryKey) {
         log(`  ${h.unitName ?? h.unitId}: no cart/entry key recorded — cannot release precisely, leaving it`);
         continue;
@@ -660,10 +746,14 @@ async function runPass() {
 
     for (const [releaseAt, holds] of ordered) {
       const wait = Math.min(msUntilRelease(releaseAt), MAX_RELEASE_WAIT_MS);
+      mark(`holding until ${releaseAt} PT`);
       if (wait > 0) {
         log(`  ready for ${holds.length} hold(s) — holding ${(wait / 1000).toFixed(1)}s until ${releaseAt} PT`);
-        await sleep(wait);
+        // TICKING, not `sleep`. Three minutes per release group is legitimate work, and a
+        // watchdog that counted it as a stall would fire on every healthy morning.
+        await sleepTicking(wait);
       }
+      mark(`carting ${holds.length} hold(s) for ${releaseAt} PT`);
       if (holds.length > 1) {
         log(`  carting ${holds.length} hold(s) ${Math.min(CART_CONCURRENCY, holds.length)} at a time`);
       }
@@ -762,5 +852,6 @@ if (ONCE) {
   exitWhenDrained(0);
 } else for (;;) {
   await runPass().catch((err) => log(`pass error: ${err.message}`));
-  await sleep(nextPollMs);
+  mark('idle between passes');
+  await sleepTicking(nextPollMs);
 }
