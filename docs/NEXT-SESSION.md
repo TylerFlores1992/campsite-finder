@@ -65,9 +65,11 @@
 > asymmetry `docs/PLATFORM-PARITY.md` was written about. It is also required for Apple IAP.
 > Codemagic run, not a code change.
 >
-> **Also outstanding, unchanged from 09-01 and unrelated:** run the subscriptions reconcile
-> (Admin -> "Does our table match Stripe?"), and `hold-fixture-invisibility` asserting a GLOBAL
-> `nextHoldRelease()` so it fails deterministically whenever any hold is live.
+> **Also outstanding, unrelated:** run the subscriptions reconcile (Admin -> "Does our table
+> match Stripe?"). **`hold-fixture-invisibility` is FIXED (#257)** — it asserted a GLOBAL
+> `nextHoldRelease()` and failed deterministically whenever any hold was live; it is a delta
+> against a baseline now, and its two sibling assertions (which passed VACUOUSLY on a live
+> hold — the more dangerous direction) compare against the fixture's own release.
 
 > ## (superseded — this is the fix, and it landed) #249 WAS NOT ENOUGH; #250 REMOVES OUR OWN CLICK ON THE CALLBACK PAGE
 >
