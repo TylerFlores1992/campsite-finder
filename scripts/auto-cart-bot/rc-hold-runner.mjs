@@ -27,6 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { precartInPage, findCartEntry, releaseEntry, NO_CART } from './rc-cart.mjs';
+import { shouldRetryBurst, describeBurst, BURST_BUDGET } from './cart-burst.mjs';
 import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder, forceProfileLock,
   requestProfile, clearProfileRequest,
@@ -747,18 +748,39 @@ async function runPass() {
     for (const [releaseAt, holds] of ordered) {
       const wait = Math.min(msUntilRelease(releaseAt), MAX_RELEASE_WAIT_MS);
       mark(`holding until ${releaseAt} PT`);
-      if (wait > 0) {
+      // DID *THIS* PASS ARRIVE BEFORE THE RELEASE? The gate on the whole fast lane below.
+      // A pass twelve minutes later is an ordinary retry and must not burst — see
+      // cart-burst.mjs for why that distinction is the difference between a fast lane and
+      // a hundred bursts against RC.
+      const waitedForRelease = wait > 0;
+      if (waitedForRelease) {
         log(`  ready for ${holds.length} hold(s) — holding ${(wait / 1000).toFixed(1)}s until ${releaseAt} PT`);
         // TICKING, not `sleep`. Three minutes per release group is legitimate work, and a
         // watchdog that counted it as a stall would fire on every healthy morning.
         await sleepTicking(wait);
       }
+      // THE MOMENT WE ARE MEASURING FROM, and the pool every hold in this group draws on.
+      // Shared rather than per-hold: carts run CART_CONCURRENCY at a time, so a per-hold
+      // budget multiplies by the number of holds.
+      const releaseMoment = Date.now();
+      let burstBudget = BURST_BUDGET;
       mark(`carting ${holds.length} hold(s) for ${releaseAt} PT`);
       if (holds.length > 1) {
         log(`  carting ${holds.length} hold(s) ${Math.min(CART_CONCURRENCY, holds.length)} at a time`);
       }
 
       await pMap(holds, CART_CONCURRENCY, async (h) => {
+      // THE FAST LANE. Bounded, gated on `waitedForRelease`, and drawing on the group's
+      // shared budget — see cart-burst.mjs, which owns every rule and is tested.
+      //
+      // Before 2026-09-03 this was ONE attempt, and the next came on the following feed
+      // poll: measured median 12s, max 24s. RC's locks lapse 3 to 28 seconds LATE (14 held
+      // units, none early), so the old behaviour fired into a lock that had not lapsed and
+      // then slept through most of the window in which the site existed.
+      let attempts = 0;
+      let burstNote = '';
+      for (;;) {
+      attempts += 1;
       try {
         // EACH HOLD GETS ITS OWN CART, and that is what lifts the capacity ceiling.
         //
@@ -800,8 +822,12 @@ async function runPass() {
           : { found: false, entryKey: null };
 
         if (check.found) {
-          log(`  ✓ held ${h.unitName ?? h.unitId} (${h.arrivalDate}) — entry ${check.entryKey}`);
+          const how = attempts > 1
+            ? ` — ${describeBurst({ attempts, elapsedMs: Date.now() - releaseMoment, won: true })}`
+            : '';
+          log(`  ✓ held ${h.unitName ?? h.unitId} (${h.arrivalDate}) — entry ${check.entryKey}${how}`);
           await report({ id: h.id, ok: true, cartKey, cartEntryKey: check.entryKey });
+          return;
         } else {
           // A WEDGED BROWSER IS NOT AN RC REFUSAL, and reporting it as one would send the
           // next reader to RC's side of a fault that is entirely ours. `timedOut` is the
@@ -811,16 +837,42 @@ async function runPass() {
           const why = result?.timedOut
             ? `the cart call did not answer within ${Math.round(result.timedOut / 1000)}s — the page was not responding`
             : (result?.submitted?.v?.error || `HTTP ${result?.submitted?.status}`);
-          log(`  ✗ could not hold ${h.unitName ?? h.unitId}: ${why}`);
+          // KEEP THE CART KEY ACROSS A FAST RETRY TOO. If the submit landed and only the
+          // read-back did not, the site is locked in THAT cart, and minting a fresh one on
+          // the next attempt would orphan it — the reason the slow lane already carries it.
+          if (cartKey) h.cartKey = cartKey;
+
+          const decision = shouldRetryBurst({
+            waitedForRelease,
+            elapsedMs: Date.now() - releaseMoment,
+            budgetLeft: burstBudget,
+            lastError: why,
+            timedOut: !!result?.timedOut,
+          });
+          if (decision.retry) {
+            burstBudget -= 1;
+            await sleepTicking(decision.waitMs);
+            continue;
+          }
+          burstNote = attempts > 1
+            ? ` (${describeBurst({ attempts, elapsedMs: Date.now() - releaseMoment, won: false, reason: decision.reason })})`
+            : '';
+          log(`  ✗ could not hold ${h.unitName ?? h.unitId}: ${why}${burstNote}`);
           // The cart key travels even though this failed. If the submit landed and only the
           // read-back did not, the site is locked in THAT cart and the retry has to return
           // to it -- see reportCartFailure. Sending null when there is no key is fine; the
           // server COALESCEs and never overwrites a good one.
-          await report({ id: h.id, ok: false, error: String(why).slice(0, 300), cartKey });
+          await report({ id: h.id, ok: false, error: `${String(why).slice(0, 240)}${burstNote}`.slice(0, 300), cartKey });
+          return;
         }
       } catch (err) {
+        // A THROW ENDS THE FAST LANE, always. It is not RC declining a lock that has not
+        // lapsed; it is the browser, the session or the network, and retrying those at
+        // half-second intervals makes every one of them worse.
         log(`  ✗ ${h.unitName ?? h.unitId} threw: ${err.message}`);
         await report({ id: h.id, ok: false, error: err.message.slice(0, 300) });
+        return;
+      }
       }
       });
     }

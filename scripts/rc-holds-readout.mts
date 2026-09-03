@@ -32,6 +32,7 @@ import {
   closeReasonReading, keepSignedInReading, signInPathReading, rcSessionReading, rcLoadReading,
 } from '../src/lib/rc-token-liveness';
 import { rcLoadStats, describeRcLoadStats } from '../src/lib/rc-load-stats';
+import { rcHoldOutcomeReading } from '../src/lib/rc-hold-outcome';
 
 const hours = Number(process.argv.find((a) => a.startsWith('--hours='))?.split('=')[1] ?? 24);
 
@@ -49,6 +50,7 @@ const holds = await query<{
   client_reports: Array<{ stage: string; detail: Record<string, unknown> | null }> | null;
   client_platform: string | null; client_app_build: string | null;
   cart_lag_s: number | null;
+  opened_after_s: number | null;
 }>(
   `SELECT r.id, r.unit_id, r.unit_name, r.arrival_date::text AS arrival, r.nights,
           r.release_at, r.status, r.error, c.name, u.email,
@@ -64,7 +66,32 @@ const holds = await query<{
           -- one is wrong on the other side of a DST boundary; Postgres owns those rules.
           EXTRACT(EPOCH FROM (
             r.carted_at - (r.release_at::timestamp AT TIME ZONE 'America/Los_Angeles')
-          ))::int AS cart_lag_s
+          ))::int AS cart_lag_s,
+          -- DID THE SITE EVER ACTUALLY OPEN? (2026-09-03)
+          --
+          -- RC refuses a cart with "The unit is not available for the date(s) specified"
+          -- whether the lock never lapsed, somebody else got there first, or we fired too
+          -- early -- one message, three meanings, and nothing could separate them. The
+          -- poller has been recording the answer the whole time: it stamps
+          -- watch_site_alerts when it sees a site open, on a 15-second cycle.
+          --
+          -- The site key is bare for a single-campground watch and campgroundId::unit for
+          -- a park watch (migration 070). BOTH shapes must match or every park watch's
+          -- sightings are silently invisible -- see siteKeyMatchesUnit, which is the same
+          -- rule and is what the tests pin.
+          --
+          -- NO BACKTICKS IN THIS COMMENT. The query is a template literal, so one ends the
+          -- string and the parse error surfaces on an unrelated line. Cost a build here.
+          --
+          -- Same Pacific conversion as cart_lag_s above, for the same reason.
+          (SELECT EXTRACT(EPOCH FROM (
+                    a.last_alert_at - (r.release_at::timestamp AT TIME ZONE 'America/Los_Angeles')
+                  ))::int
+             FROM watch_site_alerts a
+            WHERE a.watch_id = r.watch_id
+              AND (a.site_key = r.unit_id OR a.site_key LIKE '%::' || r.unit_id)
+              AND a.last_alert_at IS NOT NULL
+            ORDER BY a.last_alert_at ASC LIMIT 1) AS opened_after_s
      FROM rc_hold_requests r
      JOIN campgrounds c ON c.id = r.campground_id
      JOIN users u ON u.id = r.user_id
@@ -481,6 +508,29 @@ if (handed.length) {
   console.log('  establish the owner can SEE or check out that cart — 2026-08-29 it read 1');
   console.log('  entry while the cart UI asked a signed-in user to log in. The only proof of');
   console.log("  reachability is a human looking at RC's cart page. Ask for it."); 
+}
+
+// WAS IT EVER OURS TO LOSE? (2026-09-03)
+//
+// The most expensive ambiguity on this path: RC answers a cart it will not grant with the
+// same sentence whether the lock never lapsed, somebody beat us, or we fired early. On
+// 2026-09-03 that cost a full morning of analysis and still produced a guess.
+//
+// The poller's own sighting settles it, and it needs no new instrumentation -- see
+// rc-hold-outcome. Printed for every hold that did NOT cart, ahead of the missed-hold
+// block below, because it is the reason that block exists.
+const verdicts = holds
+  .map((h) => ({ h, r: rcHoldOutcomeReading({
+    tapped: !!h.requested_at,
+    carted: !!h.carted_at,
+    openedAfterS: h.opened_after_s,
+  }) }))
+  .filter((x) => x.r);
+if (verdicts.length) {
+  console.log('\nDID THE SITE ACTUALLY OPEN? — the poller\'s own record, per uncarted hold:');
+  for (const { h, r } of verdicts) {
+    console.log(`  ${r!.level === 'warn' ? '⚠ ' : ''}${h.unit_name ?? h.unit_id}: ${r!.text}`);
+  }
 }
 
 // The one state that is unambiguously broken: the user said yes, the moment came and

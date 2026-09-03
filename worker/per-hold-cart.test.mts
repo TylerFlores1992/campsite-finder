@@ -36,8 +36,16 @@ test('a failed attempt still records the cart it tried', () => {
   // did not leaves the entry in a cart nothing remembers, so the retry mints a fresh one,
   // looks in the wrong place, and the site sits orphaned until RC drops it. The old shared
   // cart got this right by accident.
-  assert.match(code(RUNNER), /ok: false, error: String\(why\)\.slice\(0, 300\), cartKey/,
-    'the runner must report the cart key on failure');
+  // RE-ANCHORED 2026-09-03, NOT RELAXED. This pinned the failure report's ENTIRE expression,
+  // so widening the error string to carry the burst summary broke it over behaviour that had
+  // not changed at all — the twenty-somethingth guard here to anchor on the wrong thing. What
+  // matters is that the RC-refusal report carries `cartKey`; the wording around it does not.
+  //
+  // Scoped to THAT report on purpose: the `catch` arm below it reports `ok: false` with no
+  // cart key, correctly — a throw may never have produced one — so a bare search for
+  // "ok: false ... cartKey" would be satisfied by the wrong call.
+  assert.match(code(RUNNER), /ok: false, error: [^\n]*?, cartKey \}\)/,
+    'the runner must report the cart key on the RC-refusal failure');
   assert.match(code(ROUTE), /reportCartFailure\([\s\S]{0,200}cartKey/,
     'the route must forward it');
   assert.match(code(HOLDS), /cart_key\s*=\s*COALESCE\(cart_key, \$4\)/,
