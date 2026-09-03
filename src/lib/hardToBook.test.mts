@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stateEntries } from './sitemap-sections';
 import { HARD_TO_BOOK, loadHardToBook } from './hardToBook';
 
 /**
@@ -21,7 +22,6 @@ import { HARD_TO_BOOK, loadHardToBook } from './hardToBook';
 const src = (p: string) => readFileSync(resolve(import.meta.dirname, '..', p), 'utf8');
 const PAGE = 'app/camping/hardest-to-book/page.tsx';
 const HUB = 'app/camping/page.tsx';
-const SITEMAP = 'app/sitemap.ts';
 
 test('every curated id still resolves in the live catalog', async () => {
   const groups = await loadHardToBook();
@@ -72,12 +72,20 @@ test('the page states that the list is curated, NOT measured', () => {
   );
 });
 
-test('the hub is reachable and submitted, not an orphan', () => {
+test('the hub is reachable and submitted, not an orphan', async () => {
   // A page nothing links to is a sitemap entry, not a destination — the same
   // reasoning that made /camping exist for the 47 state pages. Both halves are
   // pinned because either alone is inert.
   assert.match(src(HUB), /href="\/camping\/hardest-to-book"/, 'nothing links to the hub');
-  assert.match(src(SITEMAP), /camping\/hardest-to-book/, 'the hub is not in the sitemap');
+  // BEHAVIOURAL, NOT A SOURCE SCAN. This used to grep `app/sitemap.ts` for the path, which
+  // broke the moment the entries moved into `lib/sitemap-sections.ts` — over behaviour that
+  // had not changed at all. Loading the section asks the question the guard means to ask and
+  // cannot be invalidated by a refactor.
+  const sitemapUrls = (await stateEntries()).map((e) => String(e.url));
+  assert.ok(
+    sitemapUrls.includes('https://camphawk.app/camping/hardest-to-book'),
+    'the hub is not in the sitemap',
+  );
 });
 
 test('the page links out to the campground leaves — that is its whole job', () => {

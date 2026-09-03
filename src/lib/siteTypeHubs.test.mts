@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { siteTypeEntries, SITEMAP_SECTIONS } from './sitemap-sections';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -29,7 +30,6 @@ import { query } from './db/client';
 const src = (p: string) => readFileSync(resolve(import.meta.dirname, '..', p), 'utf8');
 const CAMPING_HUB = 'app/camping/page.tsx';
 const STATE_PAGE = 'app/camping/[state]/page.tsx';
-const SITEMAP = 'app/sitemap.ts';
 
 test('every configured site type exists in the catalog and is MULTI-SOURCE', async () => {
   for (const hub of SITE_TYPE_HUBS) {
@@ -133,9 +133,8 @@ test('hub totals equal the sum of the states it links to', async () => {
   }
 });
 
-test('the hubs are reachable and submitted, not orphans', () => {
+test('the hubs are reachable and submitted, not orphans', async () => {
   const hub = src(CAMPING_HUB);
-  const sitemap = src(SITEMAP);
   // ANCHORED ON THE HREF, NOT ON THE IDENTIFIER. The first version asserted that
   // "SITE_TYPE_HUBS" appeared in the file, which the IMPORT LINE satisfies on its
   // own — so replacing the actual `SITE_TYPE_HUBS.map(...)` with `[].map(...)`
@@ -148,12 +147,29 @@ test('the hubs are reachable and submitted, not orphans', () => {
     '/camping does not render links to the type hubs',
   );
   assert.match(hub, /SITE_TYPE_HUBS\.map/, 'the hub list is not driven by the config');
-  assert.match(sitemap, /siteTypeEntries/, 'the type pages are not in the sitemap');
-  assert.match(
-    sitemap,
-    /\.\.\.\(await siteTypeEntries\(\)\)/,
-    'siteTypeEntries is defined but never spread into the returned sitemap',
-  );
+  // BEHAVIOURAL: `siteTypeEntries` moved out of `app/sitemap.ts` into
+  // `lib/sitemap-sections.ts`, and a grep for the identifier broke over a pure refactor.
+  // Loading the section is the question actually being asked.
+  const typeUrls = (await siteTypeEntries()).map((e) => String(e.url));
+  for (const h of SITE_TYPE_HUBS) {
+    assert.ok(
+      typeUrls.includes(`https://camphawk.app/camping/${h.slug}`),
+      `/camping/${h.slug} is not in the sitemap`,
+    );
+  }
+  // AND THAT IT REACHES THE SITEMAP THE SITE ACTUALLY SERVES. A section can be perfect and
+  // never composed — the fix-present-but-inert shape — so this asserts membership of the
+  // flattened registry, which is exactly what `app/sitemap.ts` returns. The old version
+  // pinned the literal spread expression and broke when the composition became a `.map` over
+  // the registry, over behaviour that had not changed.
+  const whole = (await Promise.all(SITEMAP_SECTIONS.map((sec) => sec.load()))).flat();
+  const wholeUrls = whole.map((e) => String(e.url));
+  for (const h of SITE_TYPE_HUBS) {
+    assert.ok(
+      wholeUrls.includes(`https://camphawk.app/camping/${h.slug}`),
+      `/camping/${h.slug} is in its section but not in the composed sitemap`,
+    );
+  }
 });
 
 test('state pages link DOWN to their own type pages', () => {

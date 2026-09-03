@@ -21,6 +21,11 @@ const isPublicRoute = createRouteMatcher([
   '/api/rc-precart',
   '/robots.txt',
   '/sitemap.xml',
+  // Per-section sitemaps, submitted to Search Console alongside /sitemap.xml so coverage is
+  // reported per segment. They carry NO file extension, so the matcher below does not skip
+  // them the way it skips /sitemap.xml — and Clerk's auth.protect() answers 404, not 401, so
+  // without this Googlebot gets a 404 from a route that looks perfectly correct in source.
+  '/sitemaps/(.*)',
   // The app's free surface. Search is the funnel and must work signed-out;
   // /watches and /settings render their own account wall rather than 404ing,
   // which is what Clerk's auth.protect() would do (404, not 401).

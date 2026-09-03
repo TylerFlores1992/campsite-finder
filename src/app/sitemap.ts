@@ -1,144 +1,42 @@
 import type { MetadataRoute } from 'next';
-import { query } from '@/lib/db/client';
-import { stateSlug } from '@/lib/coverage';
-import { statesWithPages } from '@/lib/stateCampgrounds';
-import { SITE_TYPE_HUBS, statesForType } from '@/lib/siteTypeHubs';
+import { BASE, SITEMAP_SECTIONS, staticEntries } from '@/lib/sitemap-sections';
 
 /**
- * Sitemap, now including every campground.
+ * The whole sitemap, at `/sitemap.xml` — every URL, in one document.
  *
- * It used to list three URLs — home, terms, privacy — while 8,013 campground
- * pages sat undiscovered. Those pages are the entire long-tail SEO case ("kirk
- * creek campground availability" is winnable; "campsite reservations" is not),
- * and Google cannot rank what it has never been told exists.
+ * It used to list three URLs — home, terms, privacy — while 8,013 campground pages sat
+ * undiscovered. Those pages are the entire long-tail case ("kirk creek campground
+ * availability" is winnable; "campsite reservations" is not), and Google cannot rank what it
+ * has never been told exists.
  *
- * A DB HICCUP MUST NEVER BREAK THIS. That was the original file's stated reason
- * for staying static, and it still holds: a sitemap that 500s teaches Google to
- * stop asking. The query is wrapped, and a failure degrades to exactly the old
- * three-URL sitemap rather than to an error.
+ * A DB HICCUP MUST NEVER BREAK THIS. That was the original file's stated reason for staying
+ * static and it still holds: a sitemap that 500s teaches Google to stop asking. The loaders
+ * are wrapped, and a failure degrades to the hand-written pages rather than to an error.
  *
- * One file is enough — Google's limit is 50,000 URLs per sitemap and 8,013 is
- * comfortably inside it. If the catalog ever passes ~45k, split it with
- * generateSitemaps rather than truncating.
+ * ONE FILE IS STILL RIGHT HERE. Google's limit is 50,000 URLs per sitemap and 7,066 is
+ * comfortably inside it. The per-section sitemaps at `/sitemaps/<slug>` are NOT a split of
+ * this one — they are the same URLs served again, additively, so Search Console can report
+ * index coverage per segment. See `lib/sitemap-sections.ts` for why that is a measurement
+ * rather than a ranking change, and for the build output showing that converting this file to
+ * `generateSitemaps` would have deleted `/sitemap.xml` entirely.
  *
- * `lastModified` comes from last_synced_at, which is when we last refreshed the
- * row from the provider. It's honest — genuinely when the page's content could
- * have changed — and it's what stops Google re-crawling 8,013 unchanged pages.
+ * THE COMPOSITION IS OVER THE REGISTRY, NOT A HAND-WRITTEN LIST. A section added to
+ * `SITEMAP_SECTIONS` and forgotten here would serve at `/sitemaps/<slug>` while being absent
+ * from the sitemap actually submitted — two documents disagreeing about what the site is,
+ * which is precisely what makes the per-segment numbers meaningless.
  */
 
 export const revalidate = 86400; // once a day; the catalog moves slowly
 
-const BASE = 'https://camphawk.app';
-
-/**
- * Campground URLs point at /campground/<id>, which is now the redesigned,
- * server-rendered page. They were written this way before the swap precisely so
- * nothing would need resubmitting when it happened. See lib/seo.ts, which
- * builds the same canonical.
- */
-async function campgroundEntries(): Promise<MetadataRoute.Sitemap> {
-  const rows = await query<{ id: string; last_synced_at: string | null }>(
-    `SELECT id, last_synced_at::text
-       FROM campgrounds
-      WHERE reservable = true AND hidden = false
-      ORDER BY id`
-  );
-
-  return rows.map((r) => ({
-    url: `${BASE}/campground/${encodeURIComponent(r.id)}`,
-    lastModified: r.last_synced_at ? new Date(r.last_synced_at) : undefined,
-    changeFrequency: 'weekly' as const,
-    // Below the homepage, above boilerplate — these are what we want crawled
-    // after the front door.
-    priority: 0.7,
-  }));
-}
-
-/** State landing pages. Higher priority than a single campground: they're the
- *  hubs, and they're what carries crawl depth down to the 7,000 leaves. */
-async function stateEntries(): Promise<MetadataRoute.Sitemap> {
-  const states = await statesWithPages();
-  return [
-    { url: `${BASE}/camping`, changeFrequency: 'weekly' as const, priority: 0.8 },
-    // The curated hub. Same priority as a state page rather than higher: it is
-    // an editorial page, and inflating priority on the one page we wrote by hand
-    // is the kind of signal Google discounts wholesale when it sees it.
-    {
-      url: `${BASE}/camping/hardest-to-book`,
-      changeFrequency: 'monthly' as const,
-      priority: 0.8,
-    },
-    ...states
-      .map(({ code }) => stateSlug(code))
-      .filter((slug): slug is string => slug !== null)
-      .map((slug) => ({
-        url: `${BASE}/camping/${slug}`,
-        changeFrequency: 'weekly' as const,
-        priority: 0.8,
-      })),
-  ];
-}
-
-/**
- * Accommodation-type hubs and their per-state children — /camping/cabins,
- * /camping/group-camping, /camping/yurts. See lib/siteTypeHubs.ts for why these
- * three exist and what the Search Console evidence for them is.
- *
- * THE STATE CHILDREN ARE ENUMERATED FROM `statesForType`, NOT FROM THE FULL STATE
- * LIST. Only states clearing MIN_CAMPGROUNDS_FOR_STATE_PAGE render; listing the rest
- * would submit ~80 URLs that 404, which is the fastest way to teach Google the
- * sitemap is unreliable. Yurts qualify in four states and that is correct.
- */
-async function siteTypeEntries(): Promise<MetadataRoute.Sitemap> {
-  const out: MetadataRoute.Sitemap = [];
-  for (const hub of SITE_TYPE_HUBS) {
-    out.push({
-      url: `${BASE}/camping/${hub.slug}`,
-      changeFrequency: 'weekly' as const,
-      priority: 0.8,
-    });
-    for (const { code } of await statesForType(hub.siteType)) {
-      const slug = stateSlug(code);
-      if (!slug) continue;
-      out.push({
-        url: `${BASE}/camping/${hub.slug}/${slug}`,
-        changeFrequency: 'weekly' as const,
-        priority: 0.7,
-      });
-    }
-  }
-  return out;
-}
-
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const staticPages: MetadataRoute.Sitemap = [
-    { url: BASE, changeFrequency: 'daily', priority: 1 },
-    { url: `${BASE}/search`, changeFrequency: 'daily', priority: 0.9 },
-    { url: `${BASE}/pricing`, changeFrequency: 'weekly', priority: 0.8 },
-    { url: `${BASE}/terms`, changeFrequency: 'yearly', priority: 0.3 },
-    { url: `${BASE}/privacy`, changeFrequency: 'yearly', priority: 0.3 },
-    // Listed so the source citation is publicly discoverable, not just linked
-    // from the store descriptions. See src/lib/data-sources.ts.
-    { url: `${BASE}/sources`, changeFrequency: 'monthly', priority: 0.3 },
-    // THE ONE PAGE THAT EXPLAINS THE DIFFERENTIATOR, and it was in no sitemap at all
-    // until 2026-09-03. Auto-cart and the ReserveCalifornia 8am hold are what separate
-    // this from every alerts-only competitor — and from recreation.gov's own free
-    // cancellation alerts, which have existed since July 2024 — so the page describing
-    // them being uncrawled is the most expensive omission in this list. Priority sits
-    // with /pricing: it is a bottom-of-funnel page, read by somebody deciding whether
-    // to pay, not a listing page.
-    { url: `${BASE}/auto-cart`, changeFrequency: 'monthly', priority: 0.8 },
-  ];
-
   try {
-    return [
-      ...staticPages,
-      ...(await stateEntries()),
-      ...(await siteTypeEntries()),
-      ...(await campgroundEntries()),
-    ];
+    const sections = await Promise.all(SITEMAP_SECTIONS.map((s) => s.load()));
+    return sections.flat();
   } catch (err) {
-    console.error('[sitemap] campground query failed, serving static only:', err);
-    return staticPages;
+    console.error('[sitemap] section query failed, serving static only:', err);
+    return staticEntries();
   }
 }
+
+// Re-exported so nothing else has to reach past this file for the canonical origin.
+export { BASE };

@@ -9,6 +9,7 @@
  * shape has cost this repo six recorded times.
  */
 import { test } from 'node:test';
+import { staticEntries } from './sitemap-sections';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { newWatchPath, signUpToWatchHref } from './watch-intent';
@@ -114,7 +115,7 @@ test('every intent-holding component routes sign-up through watch-intent', () =>
 
 // ── /auto-cart: the page that explains the differentiator ────────────────────────────────
 
-test('/auto-cart describes BOTH lanes, and is reachable by a crawler', () => {
+test('/auto-cart describes BOTH lanes, and is reachable by a crawler', async () => {
   // It said recreation.gov four times and ReserveCalifornia zero times, and was in no
   // sitemap — so the single capability that separates this product from every alerts-only
   // competitor had no crawlable page describing it. Found 2026-09-03 by searching for it.
@@ -125,7 +126,11 @@ test('/auto-cart describes BOTH lanes, and is reachable by a crawler', () => {
   assert.match(meta, /Recreation\.gov/i, 'and Recreation.gov — it is one page for two lanes');
   assert.match(meta, /cancellation/i, 'the word somebody actually searches for');
 
-  assert.match(code('app/sitemap.ts'), /\/auto-cart/, 'the page is not in the sitemap');
+  // BEHAVIOURAL: the entries moved to `lib/sitemap-sections.ts`, and a grep for the path in
+  // `app/sitemap.ts` broke over a refactor that changed nothing. `staticEntries` needs no
+  // database, so this stays a pure test.
+  const pageUrls = (await staticEntries()).map((e) => String(e.url));
+  assert.ok(pageUrls.includes('https://camphawk.app/auto-cart'), 'the page is not in the sitemap');
 });
 
 test('/auto-cart says the hold is California only, and does not promise the other portals', () => {
