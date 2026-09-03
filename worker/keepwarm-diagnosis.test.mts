@@ -74,15 +74,24 @@ function reportBlock(): string {
 }
 
 /**
- * The two arms, sliced from their own conditions to the `return` that ends them. Short by
- * construction, so no character window is involved.
+ * The two arms, sliced from their own conditions to their OWN closing brace.
+ *
+ * NOT to the next `return;` — that was the first version, and a mutation restoring the old
+ * synchronous wedge arm (which has no `return`) made the slice run on into the runaway arm
+ * below, whose `!bailing` then satisfied an assertion about the wedge. A guard that slices
+ * between two anchors is broken by anything between them, silently and in the passing
+ * direction; this repo has paid for that shape more than once.
  */
 function arm(cond: string): string {
   const at = KEEPWARM.indexOf(cond);
   assert.ok(at > -1, `no arm matching: ${cond}`);
-  const end = KEEPWARM.indexOf('return;', at);
-  assert.ok(end > at, `arm did not end in a return: ${cond}`);
-  return KEEPWARM.slice(at, end);
+  const end = KEEPWARM.indexOf('\n      }', at);
+  assert.ok(end > at, `arm did not close: ${cond}`);
+  const body = KEEPWARM.slice(at, end);
+  // An arm is a handful of lines. A slice that has run past its own block is not an arm, and
+  // saying so here beats an assertion quietly passing on a neighbour's code.
+  assert.ok(body.split('\n').length < 15, `arm slice ran on (${body.split('\n').length} lines): ${cond}`);
+  return body;
 }
 
 /* ── 1. THE BREADCRUMB ──────────────────────────────────────────────────────────────── */
