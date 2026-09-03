@@ -132,9 +132,11 @@ test('a sentinel fixture is invisible to holdAtRisk — the phone does not ring'
 const UNREACHABLE_NUMERIC = '0';
 
 test('a REAL numeric unit id is still seen by both — the filter is not a blanket mute', async () => {
+  const releaseAt = pacific(1);
+  const before = await nextHoldRelease();
   await offerHold({
     watchId, userId, campgroundId, unitId: UNREACHABLE_NUMERIC, unitName: '#test',
-    arrivalDate: '2026-09-04', nights: 2, releaseAt: pacific(1),
+    arrivalDate: '2026-09-04', nights: 2, releaseAt,
   });
   // Straight to `carted`, never through `requested`. Going via requestHold would put a
   // numeric row in front of the live runner for however long the next statement takes.
@@ -142,7 +144,15 @@ test('a REAL numeric unit id is still seen by both — the filter is not a blank
     `UPDATE rc_hold_requests SET status = 'carted', carted_at = NOW()
       WHERE watch_id = $1 AND unit_id = $2`, [watchId, UNREACHABLE_NUMERIC]);
   try {
-    assert.ok(await nextHoldRelease(), 'a numeric unit id must still produce a release time');
+    // NOT `assert.ok(...)`. `nextHoldRelease` is a GLOBAL minimum, so a truthy answer is
+    // satisfied by any live production hold — the assertion would pass vacuously on every
+    // day somebody has a real hold queued, which is precisely when it is worth having.
+    // Our row releases in a minute, so it is the earliest thing in the table unless a real
+    // site is releasing inside the next sixty seconds; an `AND false` on REAL_UNIT leaves
+    // `after` equal to `before`, which is either null or an 08:00 release far later.
+    const after = await nextHoldRelease();
+    assert.ok(after !== null && after <= releaseAt,
+      `a numeric unit id must still produce a release time (got ${after}, baseline ${before})`);
     const risk = await holdAtRisk(45);
     assert.equal(risk?.hold?.unit_id, UNREACHABLE_NUMERIC,
       'a numeric unit id inside the window must still be able to ring the phone');
@@ -171,10 +181,12 @@ test('a hold still inside its grace window is NOT invisible once the release pas
    * REAL-DB, because the fix is one predicate inside one SQL statement and a test asserting a
    * copy would assert the copy.
    */
+  // PAST, but inside the grace window — the state that used to be invisible.
+  const releaseAt = pacific(-(HOLD_GRACE_MIN - 5));
+  const before = await nextHoldRelease();
   await offerHold({
     watchId, userId, campgroundId, unitId: UNREACHABLE_NUMERIC, unitName: '#test',
-    // PAST, but inside the grace window — the state that used to be invisible.
-    arrivalDate: '2026-09-04', nights: 2, releaseAt: pacific(-(HOLD_GRACE_MIN - 5)),
+    arrivalDate: '2026-09-04', nights: 2, releaseAt,
   });
   // Straight to `carted` for the same three reasons as the test above: `dueHolds` serves
   // only `requested`, so a numeric row never reaches the live runner.
@@ -182,10 +194,15 @@ test('a hold still inside its grace window is NOT invisible once the release pas
     `UPDATE rc_hold_requests SET status = 'carted', carted_at = NOW()
       WHERE watch_id = $1 AND unit_id = $2`, [watchId, UNREACHABLE_NUMERIC]);
   try {
+    // Our row already released, so it sorts ahead of every future hold in the table and a
+    // restored `release_at >= NOW()` leaves `after` equal to `before`. A bare truthy check
+    // could not tell the two apart while any real hold was queued.
+    const after = await nextHoldRelease();
     assert.ok(
-      await nextHoldRelease(),
+      after !== null && after <= releaseAt,
       'a hold whose release has passed but is still inside the grace window must remain ' +
-      'visible — it is exactly when the session repair is most needed',
+      `visible — it is exactly when the session repair is most needed (got ${after}, ` +
+      `baseline ${before})`,
     );
   } finally {
     await mutate(`DELETE FROM rc_hold_requests WHERE watch_id = $1 AND unit_id = $2`,
@@ -196,16 +213,29 @@ test('a hold still inside its grace window is NOT invisible once the release pas
 test('a hold PAST the grace window really is gone — the window is a window', async () => {
   // The other side, so widening cannot become "forever". A hold `dueHolds` will no longer
   // serve must not keep the update gate shut or the warm-up armed indefinitely.
+  //
+  // ── AND IT IS A DELTA, NOT `=== null` (2026-09-02) ──────────────────────────────────
+  // `nextHoldRelease` answers for the WHOLE table, so `=== null` is a claim about the
+  // database rather than about this row: it failed three runs in a row while another
+  // session had a real test hold queued, and it failed identically on unmodified master.
+  // Deterministic for as long as any hold is live, so a re-run does not clear it — which
+  // is worse than a flake, because it reads as a regression nobody can reproduce later.
+  // Comparing against the baseline asks the question the test means: does adding a row
+  // PAST the window change what the function reports? Still non-vacuous — this row sits
+  // ten minutes beyond the floor, so it is earlier than every row the window can admit,
+  // and dropping the bound makes it the new minimum.
+  const releaseAt = pacific(-(HOLD_GRACE_MIN + 10));
+  const before = await nextHoldRelease();
   await offerHold({
     watchId, userId, campgroundId, unitId: UNREACHABLE_NUMERIC, unitName: '#test',
-    arrivalDate: '2026-09-04', nights: 2, releaseAt: pacific(-(HOLD_GRACE_MIN + 10)),
+    arrivalDate: '2026-09-04', nights: 2, releaseAt,
   });
   await mutate(
     `UPDATE rc_hold_requests SET status = 'carted', carted_at = NOW()
       WHERE watch_id = $1 AND unit_id = $2`, [watchId, UNREACHABLE_NUMERIC]);
   try {
     assert.equal(
-      await nextHoldRelease(), null,
+      await nextHoldRelease(), before,
       'a hold past the grace window is finished and must not be reported as upcoming',
     );
   } finally {
