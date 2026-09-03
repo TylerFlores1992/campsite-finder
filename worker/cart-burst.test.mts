@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   shouldRetryBurst, isNotAvailable, describeBurst,
-  BURST_WINDOW_MS, BURST_GAP_MS, BURST_BUDGET,
+  BURST_WINDOW_MS, BURST_GAP_MS, BURST_BUDGET, BURST_LEAD_MS,
 } from '../scripts/auto-cart-bot/cart-burst.mjs';
 
 /** Strip comments — a guard must never pass or fail on the prose explaining it. */
@@ -119,12 +119,46 @@ test('the gap beats the slow lane without being a hammer', () => {
   assert.ok(BURST_GAP_MS <= 2_000, `no better than the 12s lane it replaces: ${BURST_GAP_MS}`);
 });
 
+// ---------------------------------------------------------------------------
+// 3b. The lane opens BEFORE the predicted release — because nothing has ever
+//     established that RC does not let go early.
+// ---------------------------------------------------------------------------
+
+test('the lane is open before T, and keeps trying there', () => {
+  // Every poller sighting is at or after T, and that is NOT evidence of "never early": the
+  // poller samples every 15s, so a flip at T-12s and one at T+3s produce the identical
+  // reading. The runner has never once asked before T, so there is no observation either.
+  const r = shouldRetryBurst({ ...base, elapsedMs: -12_000 });
+  assert.equal(r.retry, true, 'a refusal before T must not end the lane');
+});
+
+test('the lead covers the whole sampling blind spot it is derived from', () => {
+  // 15s is not a taste: it is exactly the poller's cadence, i.e. exactly the window in which
+  // an early flip is invisible. Shorter and the blind spot is still partly unexamined.
+  assert.ok(BURST_LEAD_MS >= 15_000, `leaves part of the 15s blind spot unasked: ${BURST_LEAD_MS}`);
+  // And bounded: 2026-08-08 measured a cart 85s early being refused, so a lead anywhere near
+  // that is spending requests on an answer we already have.
+  assert.ok(BURST_LEAD_MS <= 60_000, `so early it is just the old 85s mistake: ${BURST_LEAD_MS}`);
+});
+
+test('an early win is REPORTED as early — the measurement is the whole point', () => {
+  // A win at T-4.2s is the first direct evidence RC releases before its own prediction, and
+  // an unsigned formatter would print it as "T+4.2s" and bury the finding. This project has
+  // lost a diagnosis to a sign before.
+  assert.match(describeBurst({ attempts: 3, elapsedMs: -4_200, won: true }), /T-4\.2s/);
+  assert.match(describeBurst({ attempts: 3, elapsedMs: 4_200, won: true }), /T\+4\.2s/);
+});
+
 test('the total is bounded to something a WAF will not read as an attack', () => {
   assert.ok(BURST_BUDGET >= 10, `too small to cover the window: ${BURST_BUDGET}`);
   assert.ok(BURST_BUDGET <= 60, `too many requests in half a minute: ${BURST_BUDGET}`);
   // Each attempt is ~1s of round trips plus the gap, so this is the honest worst case.
-  const worst = Math.min(BURST_BUDGET, Math.ceil(BURST_WINDOW_MS / (BURST_GAP_MS + 1000)));
-  assert.ok(worst <= 40, `worst case ${worst} attempts in one window`);
+  // The lane now runs from T-LEAD to T+WINDOW, so the lead counts towards the worst case.
+  const span = BURST_LEAD_MS + BURST_WINDOW_MS;
+  const worst = Math.min(BURST_BUDGET, Math.ceil(span / (BURST_GAP_MS + 1000)));
+  assert.ok(worst <= 40, `worst case ${worst} attempts across ${span / 1000}s`);
+  assert.ok(BURST_BUDGET >= Math.ceil(span / (BURST_GAP_MS + 1000)) * 0.5,
+    'a budget that cannot reach the release moment stops the lane before the site opens');
 });
 
 // ---------------------------------------------------------------------------
@@ -136,6 +170,20 @@ test('the runner calls the shared decision rather than inlining its own', () => 
   const src = RUNNER();
   assert.match(src, /import \{[^}]*\bshouldRetryBurst\b[^}]*\} from '\.\/cart-burst\.mjs'/);
   assert.match(src, /shouldRetryBurst\(\{/, 'the cart path must ASK, not decide');
+});
+
+test('the runner wakes BEFORE the release and measures from T, not from waking', () => {
+  const src = RUNNER();
+  assert.match(src, /const early = Math\.max\(0, wait - BURST_LEAD_MS\);/,
+    'the sleep must stop short of the release');
+  assert.match(src, /await sleepTicking\(early\);/, 'and it must sleep that shortened time');
+  // T IS FIXED BEFORE THE SLEEP. `Date.now()` after waking makes T whenever we happened to
+  // wake — which with an early lead is 15 seconds wrong, in the direction that hides an
+  // early release. Same class of error as parsing a zone-less string with `new Date()`.
+  const rm = src.indexOf('const releaseMoment = Date.now() + wait;');
+  const slept = src.indexOf('await sleepTicking(early);');
+  assert.ok(rm > -1, 'the release instant must include the wait');
+  assert.ok(rm < slept, 'the release instant must be fixed before the sleep');
 });
 
 test('`waitedForRelease` is DERIVED from the actual wait, not passed as a constant', () => {

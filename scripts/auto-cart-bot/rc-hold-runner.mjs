@@ -27,7 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { precartInPage, findCartEntry, releaseEntry, NO_CART } from './rc-cart.mjs';
-import { shouldRetryBurst, describeBurst, BURST_BUDGET } from './cart-burst.mjs';
+import { shouldRetryBurst, describeBurst, BURST_BUDGET, BURST_LEAD_MS } from './cart-burst.mjs';
 import {
   waitForProfileLock, releaseProfileLockIfMine, renewProfileLock, profileLockHolder, forceProfileLock,
   requestProfile, clearProfileRequest,
@@ -747,6 +747,11 @@ async function runPass() {
 
     for (const [releaseAt, holds] of ordered) {
       const wait = Math.min(msUntilRelease(releaseAt), MAX_RELEASE_WAIT_MS);
+      // THE PREDICTED RELEASE AS A REAL INSTANT, fixed BEFORE the sleep so everything below
+      // measures from T itself. Taking `Date.now()` after the sleep would make T whenever we
+      // happened to wake, which is the same class of error as reading a zone-less string
+      // with `new Date()`.
+      const releaseMoment = Date.now() + wait;
       mark(`holding until ${releaseAt} PT`);
       // DID *THIS* PASS ARRIVE BEFORE THE RELEASE? The gate on the whole fast lane below.
       // A pass twelve minutes later is an ordinary retry and must not burst — see
@@ -754,15 +759,22 @@ async function runPass() {
       // a hundred bursts against RC.
       const waitedForRelease = wait > 0;
       if (waitedForRelease) {
-        log(`  ready for ${holds.length} hold(s) — holding ${(wait / 1000).toFixed(1)}s until ${releaseAt} PT`);
+        // WAKE EARLY, ON PURPOSE (2026-09-03). We sleep to T MINUS the lead, not to T.
+        //
+        // Nothing has ever established that RC does not let go before its own predicted
+        // release: the runner has never asked, and the poller's 15-second sampling cannot
+        // tell a flip at T-12s from one at T+3s. Opening the lane early costs refusals that
+        // are already routine and buys either the site or the first honest measurement of
+        // when the lock really lapses. cart-burst.mjs carries the reasoning.
+        const early = Math.max(0, wait - BURST_LEAD_MS);
+        log(`  ready for ${holds.length} hold(s) — holding ${(early / 1000).toFixed(1)}s`
+          + ` until ${(BURST_LEAD_MS / 1000).toFixed(0)}s before ${releaseAt} PT`);
         // TICKING, not `sleep`. Three minutes per release group is legitimate work, and a
         // watchdog that counted it as a stall would fire on every healthy morning.
-        await sleepTicking(wait);
+        await sleepTicking(early);
       }
-      // THE MOMENT WE ARE MEASURING FROM, and the pool every hold in this group draws on.
-      // Shared rather than per-hold: carts run CART_CONCURRENCY at a time, so a per-hold
-      // budget multiplies by the number of holds.
-      const releaseMoment = Date.now();
+      // The pool every hold in this group draws on. Shared rather than per-hold: carts run
+      // CART_CONCURRENCY at a time, so a per-hold budget multiplies by the number of holds.
       let burstBudget = BURST_BUDGET;
       mark(`carting ${holds.length} hold(s) for ${releaseAt} PT`);
       if (holds.length > 1) {

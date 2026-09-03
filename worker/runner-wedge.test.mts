@@ -141,10 +141,17 @@ test('the pre-release hold TICKS — three minutes of waiting is not a stall', (
   const end = RUNNER.indexOf('mark(`carting', at);
   assert.ok(end > at, 'the hold must still be followed by the carting breadcrumb');
   const block = RUNNER.slice(at, end);
-  assert.ok(block.split('\n').length < 12, `the hold slice ran on (${block.split('\n').length} lines)`);
-  assert.match(block, /await sleepTicking\(wait\)/,
+  assert.ok(block.split('\n').length < 20, `the hold slice ran on (${block.split('\n').length} lines)`);
+  // RE-ANCHORED 2026-09-03, NOT RELAXED. This pinned `sleepTicking(wait)` by its ARGUMENT,
+  // and the fast lane now sleeps to T minus a lead — `sleepTicking(early)` — so it broke
+  // over behaviour that had not changed at all. The property is the ticking SLEEP, never
+  // which variable it is handed.
+  assert.match(block, /await sleepTicking\(\w+\)/,
     'the pre-release hold must use the ticking sleep, or the watchdog fires on a working morning');
-  assert.ok(!/await sleep\(wait\)/.test(block), 'the plain sleep is the regression');
+  // STRONGER THAN IT WAS, too: the old negative named one variable, so renaming it hid the
+  // regression. `sleepTicking(` does not contain `sleep(`, so this catches the plain sleep
+  // whatever it is passed.
+  assert.ok(!/await sleep\(/.test(block), 'the plain sleep is the regression');
 });
 
 test('the fan-out and both sequential loops tick', () => {

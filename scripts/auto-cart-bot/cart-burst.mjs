@@ -17,20 +17,35 @@
  * And the same morning, at the same park, the poller watched `rc-542::42527` open at
  * 08:00:13 and be gone by its next 15-second cycle. Sites there are taken in seconds.
  *
- * ## WHEN RC ACTUALLY LETS GO — 14 held units, and not one was early
+ * ## WHEN RC ACTUALLY LETS GO — and why we do NOT know it is never early
  *
  * The lock's `availableAt` is a PREDICTION. Against the poller's own transition alerts for
- * held units we never carted (so the alert is the first sighting, not a re-alert after we
- * released):
+ * held units we never carted (so the alert is a first sighting, not a re-alert after we
+ * released a cart):
  *
  *     #133  T+3s   #133  T+3s   #133  T+4s   #133  T+4s
  *     #L045 T+10s  #L034 T+13s  #54   T+13s  #78   T+28s
  *
- * **Zero opened BEFORE the predicted release. They open late, by 3 to 28 seconds.** So the
- * old behaviour fired once at T+0 — into a lock that had not lapsed yet — and then waited
- * TWELVE SECONDS, which is most of the window in which these sites exist. Firing EARLY is
- * not the fix and never was: RC refuses an early cart with the identical message (measured
- * 2026-08-08, a cart 85 seconds early), so it would buy nothing and cost a false signal.
+ * Every sighting is at or after T. **THAT IS NOT THE SAME AS "NEVER EARLY", AND READING IT
+ * THAT WAY WAS WRONG (corrected 2026-09-03, on the owner's challenge).** The poller samples
+ * every FIFTEEN SECONDS, so an alert at T+3s means only that the first sample after the flip
+ * landed at T+3s — the flip itself is anywhere in (T-12s, T+3s]. Four of the eight readings
+ * above are entirely consistent with the site opening BEFORE the predicted release. The
+ * instrument's resolution swallows the whole question.
+ *
+ * Two things that would have settled it, and neither does:
+ *
+ *   - **We have never once asked.** The runner waits out `msUntilRelease` by design, so
+ *     there is exactly ONE early-cart observation in the project's history — 2026-08-08, at
+ *     85 seconds early, refused. That says 85s is too early. It says nothing about 5s.
+ *   - **RC's clock is not the culprit.** Measured 2026-09-03 across five round trips:
+ *     `rdapi.reservecalifornia.com`'s Date header is within ONE SECOND of ours. Gross skew
+ *     is ruled out at the edge (not at the booking tier, which nothing here can see).
+ *
+ * **So the burst starts BEFORE T, and that is how the question gets answered.** An early
+ * attempt costs one refusal — the same refusal the slow lane already absorbs, and no longer
+ * terminal since `reportCartFailure` — while a SUCCESS before T is a direct measurement of
+ * the true flip, to within the gap, which no amount of 15-second sampling could ever give.
  *
  * ## Why this is a separate module
  *
@@ -48,6 +63,20 @@
  * whole 20-minute grace, which is what catches the rare very-late lapse.
  */
 export const BURST_WINDOW_MS = Number(process.env.RC_BURST_WINDOW_MS || 30_000);
+
+/**
+ * How far BEFORE the predicted release the fast lane opens.
+ *
+ * DERIVED FROM THE POLLER'S OWN SAMPLING FLOOR, not picked. The poller samples every 15
+ * seconds, so a flip up to 15s before T is indistinguishable from one at T in every reading
+ * we have. Fifteen seconds is exactly the uncertainty, so it is exactly the lead.
+ *
+ * The cost is a handful of refusals — RC declining a lock that has not lapsed is the same
+ * answer the slow lane already absorbs, and since `reportCartFailure` it is no longer
+ * terminal. The gain is either the site, or the first real measurement of when RC actually
+ * lets go.
+ */
+export const BURST_LEAD_MS = Number(process.env.RC_BURST_LEAD_MS || 15_000);
 
 /** Gap between attempts inside the window. Each attempt is itself ~1s of RC round trips. */
 export const BURST_GAP_MS = Number(process.env.RC_BURST_GAP_MS || 500);
@@ -118,7 +147,9 @@ export function shouldRetryBurst({
  * distribution above.
  */
 export function describeBurst({ attempts, elapsedMs, won, reason = '' }) {
-  const t = (elapsedMs / 1000).toFixed(1);
-  if (won) return `won it on attempt ${attempts} at T+${t}s`;
-  return `${attempts} fast attempt(s) across ${t}s, then the slow lane — ${reason}`;
+  // SIGNED, because a negative one is the finding. `T-4.2s` means RC let go BEFORE its own
+  // predicted release — the thing 15-second sampling can never show and this lane can.
+  const t = `${elapsedMs < 0 ? '-' : '+'}${(Math.abs(elapsedMs) / 1000).toFixed(1)}`;
+  if (won) return `won it on attempt ${attempts} at T${t}s`;
+  return `${attempts} fast attempt(s) ending T${t}s, then the slow lane — ${reason}`;
 }
