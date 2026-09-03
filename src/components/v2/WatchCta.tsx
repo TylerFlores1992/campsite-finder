@@ -5,6 +5,7 @@ import { useNativeLinkout, SUBSCRIBE_HREF } from "./nativeSubscribe";
 import { useIsNativeApp } from "@/lib/native/context";
 import { buttonClasses, type ButtonVariant } from "@/components/ui/Button";
 import { useSubscription } from "./useSubscription";
+import { newWatchPath, signUpToWatchHref } from "@/lib/watch-intent";
 
 /**
  * "Start a watch" — the one control that offers the paid feature.
@@ -68,17 +69,7 @@ export default function WatchCta({
 
   if (subscribed || unknown) {
     return (
-      <Link
-        href={{
-          pathname: "/new",
-          query: {
-            ...(campgroundId ? { campground: campgroundId } : {}),
-            ...(startDate ? { start: startDate } : {}),
-            ...(endDate ? { end: endDate } : {}),
-          },
-        }}
-        className={cls}
-      >
+      <Link href={newWatchPath({ campgroundId, startDate, endDate })} className={cls}>
         {label}
       </Link>
     );
@@ -100,9 +91,13 @@ export default function WatchCta({
     );
   }
 
+  // THE CAMPGROUND AND DATES RIDE THROUGH SIGN-UP. This used to be a bare `/sign-up`, which
+  // threw away the exact destination built a few lines above and landed a brand-new account
+  // on an empty `/search` — asking the person with the highest intent in the product to find
+  // their campground a second time. See lib/watch-intent.
   if (!signedIn) {
     return (
-      <Link href="/sign-up" className={cls}>
+      <Link href={signUpToWatchHref({ campgroundId, startDate, endDate })} className={cls}>
         Sign up to watch
       </Link>
     );
