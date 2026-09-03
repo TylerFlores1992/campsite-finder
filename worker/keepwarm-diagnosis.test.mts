@@ -53,6 +53,38 @@ function envDefault(code: string, name: string): number {
   return factors.reduce((a, b) => a * b, 1);
 }
 
+/**
+ * THE SHARED REPORT BLOCK, SLICED BY ITS OWN BRACES rather than by a character count.
+ *
+ * These three guards used to slice from `stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB` and
+ * keep 1800/2200/2600 characters. That anchored them to the RUNAWAY arm and to the layout
+ * inside it — so when 2026-09-03 extracted the block into `reportAndBail` so the WEDGE arm
+ * could report too, all three went red over behaviour that had not merely survived but
+ * widened. A window measured in characters is a guess about layout; this is not.
+ *
+ * Anchoring here also makes them STRONGER: the block they assert about is now the one BOTH
+ * arms run, so a diagnostic dropped from either is a diagnostic dropped from both.
+ */
+function reportBlock(): string {
+  const at = KEEPWARM.indexOf('const reportAndBail = (why, tail) =>');
+  assert.ok(at > -1, 'the shared report block must exist — both bail arms run it');
+  const end = KEEPWARM.indexOf('\n      };', at);
+  assert.ok(end > at, 'could not find the end of reportAndBail');
+  return KEEPWARM.slice(at, end);
+}
+
+/**
+ * The two arms, sliced from their own conditions to the `return` that ends them. Short by
+ * construction, so no character window is involved.
+ */
+function arm(cond: string): string {
+  const at = KEEPWARM.indexOf(cond);
+  assert.ok(at > -1, `no arm matching: ${cond}`);
+  const end = KEEPWARM.indexOf('return;', at);
+  assert.ok(end > at, `arm did not end in a return: ${cond}`);
+  return KEEPWARM.slice(at, end);
+}
+
 /* ── 1. THE BREADCRUMB ──────────────────────────────────────────────────────────────── */
 
 test('marking a step does NOT reset the stall clock', () => {
@@ -126,11 +158,12 @@ test('a CDP call that never answers is a reading, not a crash', () => {
 test('the diagnostic can never delay the exit', () => {
   // The guard's job is to save the box. A diagnostic that can hold it up has inverted the
   // priority — which is precisely the mistake `rcFamilyMb` would have made in this same arm.
-  const arm = KEEPWARM.slice(KEEPWARM.indexOf('stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB'));
-  const block = arm.slice(0, 1800);
+  const block = reportBlock();
   assert.match(block, /collectHeapFacts\(ctx, residentPage, heapProbe\)\.catch/,
     'a failed collection must not prevent the bail');
-  assert.match(block, /bail\(/, 'the bail must still run afterwards');
+  assert.match(block, /bail\(tail\)/, 'the bail must still run afterwards');
+  assert.match(block, /setTimeout\(r, 4000\)/,
+    'the flush is raced against a bound — it must not be able to hold the profile lock open');
   const cdpTimeout = envDefault(HEAP, 'RC_HEAP_CDP_TIMEOUT_MS');
   const stall = envDefault(KEEPWARM, 'RC_KEEPWARM_MEM_STALL_MS');
   assert.ok(cdpTimeout * 4 < stall,
@@ -138,11 +171,66 @@ test('the diagnostic can never delay the exit', () => {
     + `inside the ${stall}ms stall window`);
 });
 
-test('the runaway arm cannot fire twice', () => {
-  // It is async now, and the timer fires every ten seconds — without a guard a slow heap read
-  // would queue a second and a third bail behind the first, each releasing the profile lock.
-  assert.match(KEEPWARM, /&& !bailing\)/);
-  assert.match(KEEPWARM, /bailing = true;/);
+test('NEITHER bail arm can fire twice', () => {
+  // Both are async now, and the timer fires every ten seconds — without a guard a slow heap
+  // read would queue a second and a third bail behind the first, each releasing the profile
+  // lock. The WEDGE arm needed this only from 2026-09-03: until then it called `bail`
+  // synchronously, so a second tick could never reach it, and making it report first is
+  // exactly what opened that window.
+  assert.match(arm('stalledMs > HUNG_MS'), /&& !bailing\)/, 'the wedge arm');
+  assert.match(arm('stalledMs > MEM_STALL_MS'), /&& !bailing\)/, 'the runaway arm');
+  assert.match(reportBlock(), /bailing = true;/,
+    'and the flag is set by the shared block, so neither arm can forget it');
+});
+
+test('BOTH bail arms report — the wedge one was missing until 2026-09-03', () => {
+  /**
+   * THE FIFTH MISSED RAMP, AND THE INSTRUMENT WAS BOLTED TO TWO OF THREE DOORS.
+   *
+   * On 2026-09-03 pid 6572 went 115 MB -> 8,743 MB and took COMMIT to 99%. It ended through
+   * the WEDGE arm (`Stalled in: reporting session health`, 631s) — which called `bail`
+   * directly, so `process.exit` discarded the OPEN segment that only
+   * `flushAllocRamps({ final: true })` takes, and `native_alloc_readings` gained no
+   * `trail-*` row. The trail was correct throughout; nothing ran it on that path.
+   *
+   * Same shape as `expireStaleHolds` living in a feed only a live runner polls, and as the
+   * size guard checked in the body of the loop it guards against.
+   */
+  assert.match(arm('stalledMs > HUNG_MS'), /reportAndBail\(/,
+    'a wedge must report before it exits — this is the arm a stalled loop actually reaches');
+  assert.match(arm('stalledMs > MEM_STALL_MS'), /reportAndBail\(/, 'and so must a runaway');
+  // The direct call is the regression, and it is what a tidy-up would reinstate.
+  for (const [name, cond] of [['wedge', 'stalledMs > HUNG_MS'], ['runaway', 'stalledMs > MEM_STALL_MS']]) {
+    assert.ok(!/(?<!report)[Bb]ail\(`|(?<!report)bail\('/.test(arm(cond)),
+      `the ${name} arm must go through reportAndBail, never call bail directly`);
+  }
+});
+
+test('the OPEN segment is taken on the way out, or a 9 GB ramp reports nothing', () => {
+  // `final: true` is the entire difference between the ordinary tick (ENDED segments only,
+  // because a renderer swap has happened and the peak is known) and an exit. A process that
+  // exits is one of the two ways a ramp ends without our ever seeing the swap.
+  assert.match(reportBlock(), /flushAllocRamps\(\{ final: true \}\)/,
+    'the shared block must flush the open segment');
+  assert.match(reportBlock(), /await Promise\.race\(\[/,
+    'and AWAIT it — process.exit kills a fire-and-forget POST, losing the reading');
+});
+
+test('the profile lock is released AFTER the report, not before it', () => {
+  /**
+   * DELIBERATE, AND THE OPPOSITE LOOKS LIKE CAUTION. Releasing early would get the hold
+   * runner onto the profile sooner — and our browser stays open until `process.exit`, so the
+   * runner would launch a SECOND Chromium on one `user-data-dir`. That is the corruption case
+   * the lock exists to prevent, and it would be bought for a few seconds of a stall already
+   * twelve minutes old.
+   */
+  const block = reportBlock();
+  assert.ok(!block.includes('releaseProfileLockIfMine'),
+    'the report must not release the lock — `bail` does that, last');
+  const bail = KEEPWARM.slice(KEEPWARM.indexOf('const bail = (why) =>'));
+  const release = bail.indexOf('releaseProfileLockIfMine');
+  const exit = bail.indexOf('process.exit(1)');
+  assert.ok(release > -1 && exit > release, 'bail releases the lock immediately before exiting');
 });
 
 test('the full snapshot is opt-in and taken EARLY, never at the peak', () => {
@@ -295,8 +383,7 @@ test('sampling never blocks the watchdog, and never piles up', () => {
 
 test('the trail is bounded and printed at the trip', () => {
   assert.match(KEEPWARM, /\.slice\(-TRAIL_KEEP\)/, 'the buffer must be bounded');
-  const arm = KEEPWARM.slice(KEEPWARM.indexOf('stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB'));
-  assert.match(arm.slice(0, 2200), /describeTrail\(heapTrail, Date\.now\(\)\)/,
+  assert.match(reportBlock(), /describeTrail\(heapTrail, Date\.now\(\)\)/,
     'the trip must print the trail — it is the reading that actually arrives');
 });
 
@@ -355,8 +442,7 @@ test('a collapsed RAM group shows its change, oldest to newest', () => {
 });
 
 test('both trails are printed at the trip', () => {
-  const arm = KEEPWARM.slice(KEEPWARM.indexOf('stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB'));
-  const block = arm.slice(0, 2600);
+  const block = reportBlock();
   assert.match(block, /describeTrail\(heapTrail/, 'the heap trail');
   assert.match(block, /describeRamTrail\(ramTrail/, 'and the one that spans the event');
 });
