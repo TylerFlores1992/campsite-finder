@@ -21,7 +21,7 @@ import RcSignInForm from './RcSignInForm';
  * carries the precart's own `load`/`submit`/`status` too and showing those under a sign-in
  * form would describe the wrong job. `rc-login-script.ts` is where these names come from.
  */
-const LOGIN_STAGES = new Set(['signin-open', 'signin-missing', 'captcha', 'email', 'password', 'submitted']);
+const LOGIN_STAGES = new Set(['signin-open', 'signin-form', 'signin-missing', 'captcha', 'captcha-cleared', 'email', 'password', 'submitted']);
 
 /**
  * How many distinct pages the sign-in may be handed the credentials on.

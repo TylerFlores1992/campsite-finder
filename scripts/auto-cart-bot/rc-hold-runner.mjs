@@ -713,7 +713,14 @@ async function runPass() {
           log(`  ✓ held ${h.unitName ?? h.unitId} (${h.arrivalDate}) — entry ${check.entryKey}`);
           await report({ id: h.id, ok: true, cartKey, cartEntryKey: check.entryKey });
         } else {
-          const why = result?.submitted?.v?.error || `HTTP ${result?.submitted?.status}`;
+          // A WEDGED BROWSER IS NOT AN RC REFUSAL, and reporting it as one would send the
+          // next reader to RC's side of a fault that is entirely ours. `timedOut` is the
+          // precart giving up on a page that would not answer; the cart may even have
+          // landed, which is why the read-back above still ran and why the retry keeps
+          // whatever cart key we do have.
+          const why = result?.timedOut
+            ? `the cart call did not answer within ${Math.round(result.timedOut / 1000)}s — the page was not responding`
+            : (result?.submitted?.v?.error || `HTTP ${result?.submitted?.status}`);
           log(`  ✗ could not hold ${h.unitName ?? h.unitId}: ${why}`);
           // The cart key travels even though this failed. If the submit landed and only the
           // read-back did not, the site is locked in THAT cart and the retry has to return

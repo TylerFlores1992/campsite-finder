@@ -18,8 +18,43 @@ export const CART_REMOVE_ENTRY =
 /** RC's own sentinel for "no cart yet". An empty string fails validation. */
 export const NO_CART = '00000000-0000-0000-0000-000000000000';
 
-export async function precartInPage(page, { unitId, arrival, nights, cartKey }) {
-return page.evaluate(
+/*
+   HOW LONG THE CART MAY TAKE BEFORE WE STOP WAITING FOR IT (2026-09-02).
+
+   Playwright's page.evaluate waits FOREVER: it needs an execution context, and a page whose
+   main thread is blocked or whose context is being replaced simply never provides one. Almost
+   every other Playwright call takes a timeout; this one does not, which is why it is the one
+   that gets written without a bound. rc-token's evaluateWithin was added on 2026-08-17 for
+   exactly this and the keep-warm was fixed; THIS caller -- the most release-critical call in
+   the product -- was never carried across. A hazard recorded for one caller is not recorded.
+
+   OBSERVED 2026-09-02: the runner logged "ready for 1 hold(s) - holding 77.0s", waited out the
+   lead, and then went silent for ever. It never carted, never polled the feed again, and
+   list-processes showed the node process still ALIVE. supervise.ps1 only restarts on exit, so
+   nothing recovered it; the Fly runner-watch alarm needs a hold due inside 45 minutes, and the
+   sweep had just failed the only hold there was. It would have sat there indefinitely.
+
+   NOT PROVEN that this evaluate is what hung -- nothing recorded which await it was, and a
+   Playwright call failing to honour its own timeout against a dead browser is still live. The
+   bound is worth having either way: an unbounded await in a loop with NO wedge detector is a
+   latent hang by construction, and the cost is the whole runner rather than one cart.
+
+   SIXTY SECONDS, not the module default of twenty. This is two POSTs to RC from inside the
+   page and normally takes a second or two, but it runs at 08:00:00 against a provider whose
+   web tier has needed three attempts and five minutes to answer. The bound exists to catch a
+   WEDGE, not to police a slow morning, so it sits far above anything a working cart does.
+
+   A TIMEOUT IS NOT A FAILED CART AND MUST NOT READ AS ONE. The two POSTs may well have landed;
+   what we lost is the answer. The caller re-reads the cart to decide either way, and reports
+   timedOut so the note says "we stopped waiting" rather than inventing an RC error.
+*/
+const CART_EVAL_TIMEOUT_MS = Number(process.env.RC_CART_EVAL_TIMEOUT_MS || 60_000);
+
+export async function precartInPage(page, { unitId, arrival, nights, cartKey }, opts = {}) {
+const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : CART_EVAL_TIMEOUT_MS;
+let timer;
+return Promise.race([
+page.evaluate(
   async ({ loadUrl, submitUrl, unitId, arrival, nights, cartKey, NO_CART }) => {
     const ls = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
     const token = ls('ssoAccessToken') || ls('accessToken');
@@ -209,7 +244,12 @@ return page.evaluate(
     };
   },
   { loadUrl: PRECART_LOAD, submitUrl: PRECART_SUBMIT, unitId, arrival, nights, cartKey, NO_CART }
-);
+),
+// The dangling evaluate is deliberately ABANDONED rather than awaited: it cannot be
+// cancelled, and the entire point is to let the caller's loop advance. Same rule as
+// evaluateWithin, whose header records why.
+new Promise((resolve) => { timer = setTimeout(() => resolve({ timedOut: timeoutMs }), timeoutMs); }),
+]).finally(() => clearTimeout(timer));
 }
 
 /**

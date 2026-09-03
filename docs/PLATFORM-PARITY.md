@@ -183,8 +183,12 @@ serve different flows to different agents. **Unmeasured** — do not assert it e
    diverged four stages earlier. The outcome fields are the ones that look decisive and are
    not.
 3. **Ask for the screen.** `cart read back: 1 entry` is RC answering *our* question with
-   *our* key. It has never once been corroborated by a human on either platform. The only
-   proof of reachability is somebody looking at RC's cart page.
+   *our* key. The only proof of reachability is somebody looking at RC's cart page.
+   **Corroborated on ANDROID for the first time on 2026-09-02** (header, cart badge and the
+   reservation, after #249/#250) — and **still never on iOS**, whose runs all rest on the
+   unverified line. That asymmetry is the reverse of the one this document was written about,
+   and it is why a fresh iOS build plus one corroborated iOS hand-off is the outstanding
+   action here.
 4. **A result on one platform is not a result on the other**, and the reverse is equally
    true: an Android-only symptom does not make the cause Android-specific. 2a looked like an
    Android bug for a day and is a path-dependent one.

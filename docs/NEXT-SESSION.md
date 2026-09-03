@@ -1,8 +1,77 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed **2026-09-01 evening**.*
+*Rewritten 2026-08-25 evening; state refreshed **2026-09-02 evening**.*
 
-> ## READ FIRST — #249 WAS NOT ENOUGH; #250 REMOVES OUR OWN CLICK ON THE CALLBACK PAGE
+> ## READ FIRST — THE ANDROID HAND-OFF IS FIXED AND HUMAN-VERIFIED. #255 IS OPEN.
+>
+> **The defect that has run since 2026-08-29 is closed.** #249 (close on RC's own
+> `customerId`, no timer) + #250 (stop clicking "Log in" on `/login/callback`) + #252 (stop
+> hunting RC's control on Okta's host — a flat 12-second pause on every sign-in). Five Android
+> hand-offs were run on 09-02: three completed end to end, and one was **confirmed on RC's own
+> cart page by the owner** — name in the header, cart badge 1, the reservation itself.
+> **That is the first human corroboration of `cart read back` on any platform**, and three
+> places in the docs that said it had never happened are now struck. CLAUDE.md → "THE ANDROID
+> HAND-OFF IS FIXED, AND A HUMAN FINALLY LOOKED AT THE CART".
+>
+> ### THE ONE ACTION: MERGE #255, THEN GET THE BOX UPDATED
+>
+> `claude/rc-captcha-resume`, two commits, local `npm run verify` **1618/1618**, every mutation
+> grep-verified to apply. Two independent fixes:
+> 1. **A CAPTCHA between the email and the password no longer abandons the sign-in.** Okta
+>    shows its challenge AFTER the identifier is submitted, and the password wait was a flat
+>    20s with no challenge check — so a human solving a puzzle ran the clock out and the run
+>    reported a failure over a sign-in that was proceeding fine. Reported by the owner on the
+>    fifth test. `chWaitPassword` extends ONCE to a fixed 5 minutes and reports
+>    `captcha-cleared` when it takes the login back. **Web-side — reaches installed apps on a
+>    push, no rebuild.**
+> 2. **The runner's cart call is bounded** (`RC_CART_EVAL_TIMEOUT_MS`, 60s). **BOT-SIDE — it is
+>    inert until the mini-PC updates**, so ask for an update (or a quiet-window run) after the
+>    merge, and confirm with `git-status` through `bot_commands`, never `autocart.bot_version`.
+>
+> **`worker/rc-cart-timeout.test.mts` is in that branch, so merging it fires a worker deploy and
+> restarts both pollers.** Expected and harmless; check `poller.shards` afterwards.
+>
+> ### THEN, IN ORDER OF WHAT IT BUYS
+>
+> **1. The runner has NO wedge watchdog, and that is the real fix.** On 09-02 the runner sat
+> alive in its pre-release wait and polled nothing, indefinitely — `last_attempt_at` NULL, the
+> 2026-08-07 dead-runner signature over a live process. `supervise.ps1` restarts on EXIT only.
+> `restart-rc` recovered it in seconds. #255's bound covers the ONE call identified as the
+> likely hang; the general fix is the keep-warm's 08-17 pattern (a watchdog in a timer that
+> bails so the supervisor restarts it), and it is not built. CLAUDE.md → "THE RUNNER HUNG IN
+> THE PRE-RELEASE WAIT".
+>
+> **2. RC'S OWN APP TIER IS THE LARGEST UN-INSTRUMENTED RISK ON THIS PATH.** The first of the
+> five tests was lost to it: *"a RC load freeze that crashed the app and another problem
+> loading"*, then it worked on a later attempt. Same shape as the 08-31 bisect (three attempts,
+> ~5 minutes) and the 08-30 mid-test outage. **At 08:00 that loses the site on its own**,
+> whatever we fix about login state, and nothing in this repo measures it.
+>
+> **3. The session dies within ~2 minutes of every queue — four for four.** Queue -> the runner
+> takes the Chromium profile -> the keep-warm stands down and loses the live token -> ~11
+> minutes (`RENEW_MIN_GAP_MS + 60s`) before the renewal retries. It cost a `test-login` on most
+> runs. This is the 2026-08-30 `persistLiveToken` case; **whether that fix is actually on the
+> box was never checked**, and it is one `git-status` away.
+>
+> **4. "Open the window and close it at once when RC comes back already signed in."** The
+> rejected webview-free login had a better-shaped sibling: a cookie-answered sign-in was
+> measured at **11 seconds and +24 MB** against twelve minutes for the password path (08-21).
+> Not built; wants measuring on both phones rather than assuming. The full-API version is
+> REJECTED with reasons — CLAUDE.md → "A WEBVIEW-FREE LOGIN WAS CONSIDERED AND REJECTED".
+>
+> **5. A fresh iOS build.** The iPhone is on **1.0 (21) from 2026-08-09** against Android's
+> **1.0 (25)**, so "iOS is the baseline" is a baseline of three-week-old code that predates
+> RevenueCat. **iOS is now the platform with NO corroborated cart run** — the reverse of the
+> asymmetry `docs/PLATFORM-PARITY.md` was written about. It is also required for Apple IAP.
+> Codemagic run, not a code change.
+>
+> **Also outstanding, unrelated:** run the subscriptions reconcile (Admin -> "Does our table
+> match Stripe?"). **`hold-fixture-invisibility` is FIXED (#257)** — it asserted a GLOBAL
+> `nextHoldRelease()` and failed deterministically whenever any hold was live; it is a delta
+> against a baseline now, and its two sibling assertions (which passed VACUOUSLY on a live
+> hold — the more dangerous direction) compare against the fixture's own release.
+
+> ## (superseded — this is the fix, and it landed) #249 WAS NOT ENOUGH; #250 REMOVES OUR OWN CLICK ON THE CALLBACK PAGE
 >
 > The first Android run on #249 held the window open (the notice fired) and RC still rendered
 > signed out on its home page. The trace: **the box WAS ticked** (keep-signed-in refuted), and
@@ -137,7 +206,7 @@
 
 *Superseded below: the 08-31 close-timing entry, which is still accurate and still merged.*
 
-> ## THE ONE OPEN THING: THE HAND-OFF LEAVES RC LOOKING SIGNED OUT
+> ## (CLOSED 2026-09-02 by #249/#250, kept for its trace analysis) THE HAND-OFF LEAVES RC LOOKING SIGNED OUT
 >
 > The bot is fine. It carts, it releases, the user's own session re-carts, and RC confirms it
 > holds the reservation. **What fails is that RC's page then shows no name in the corner and
