@@ -111,3 +111,50 @@ test('every intent-holding component routes sign-up through watch-intent', () =>
   assert.ok(scanned >= 2, `the selector matched only ${scanned} file(s) — it has stopped selecting`);
   assert.deepEqual(offenders, [], `these hold a campground or dates and discard them at sign-up: ${offenders.join(', ')}`);
 });
+
+// ── /auto-cart: the page that explains the differentiator ────────────────────────────────
+
+test('/auto-cart describes BOTH lanes, and is reachable by a crawler', () => {
+  // It said recreation.gov four times and ReserveCalifornia zero times, and was in no
+  // sitemap — so the single capability that separates this product from every alerts-only
+  // competitor had no crawlable page describing it. Found 2026-09-03 by searching for it.
+  const page = read('app/auto-cart/page.tsx');
+  const meta = page.slice(page.indexOf('export const metadata'), page.indexOf('function Step'));
+
+  assert.match(meta, /ReserveCalifornia/, 'the title and description must name ReserveCalifornia');
+  assert.match(meta, /Recreation\.gov/i, 'and Recreation.gov — it is one page for two lanes');
+  assert.match(meta, /cancellation/i, 'the word somebody actually searches for');
+
+  assert.match(code('app/sitemap.ts'), /\/auto-cart/, 'the page is not in the sitemap');
+});
+
+test('/auto-cart says the hold is California only, and does not promise the other portals', () => {
+  // `supportsRcHold` is `source === 'reservecalifornia'` and is narrower than
+  // `isUseDirectSource` ON PURPOSE: the bot signs in to ONE account and posts to
+  // reservecalifornia.com, so an Ohio or Virginia watcher offered a hold is a promise
+  // nothing on earth can perform. Two enforcers already exist in the product; a marketing
+  // page that implies otherwise is a third place to get it wrong.
+  const body = code('app/auto-cart/page.tsx');
+  assert.match(body, /only ReserveCalifornia gets holds/i);
+  for (const state of ['Ohio', 'Virginia', 'Arizona']) {
+    assert.ok(body.includes(state), `${state} is watched but cannot be held — say so`);
+  }
+  // States we do not cover at all. The page listed Texas, New York and Oregon for years.
+  for (const absent of ['Texas', 'New York', 'Oregon']) {
+    assert.ok(!body.includes(absent), `${absent} is not a UseDirect portal we watch`);
+  }
+});
+
+test('/auto-cart uses the shared beta wording rather than a paraphrase of its own', () => {
+  // The drift `lib/autocart-beta` exists to prevent: two forms of words, and the careful
+  // one quietly stops being the one people read. Anchored on the BODY, because the import
+  // line sits above everything and a paraphrase in the markup would leave it matching.
+  const src = read('app/auto-cart/page.tsx');
+  const body = src.slice(src.indexOf('export const metadata'));
+  assert.match(body, /AUTOCART_BETA_NOTE/, 'the RC section must render the shared note');
+  assert.match(body, /AUTOCART_BETA_SCOPE/, 'and say which lane is NOT in testing');
+  assert.ok(
+    !/still under testing|in testing right now|may not always work/i.test(body),
+    'a hand-written beta caveat has appeared beside the shared one',
+  );
+});

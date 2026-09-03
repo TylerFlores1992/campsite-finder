@@ -120,6 +120,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // Listed so the source citation is publicly discoverable, not just linked
     // from the store descriptions. See src/lib/data-sources.ts.
     { url: `${BASE}/sources`, changeFrequency: 'monthly', priority: 0.3 },
+    // THE ONE PAGE THAT EXPLAINS THE DIFFERENTIATOR, and it was in no sitemap at all
+    // until 2026-09-03. Auto-cart and the ReserveCalifornia 8am hold are what separate
+    // this from every alerts-only competitor — and from recreation.gov's own free
+    // cancellation alerts, which have existed since July 2024 — so the page describing
+    // them being uncrawled is the most expensive omission in this list. Priority sits
+    // with /pricing: it is a bottom-of-funnel page, read by somebody deciding whether
+    // to pay, not a listing page.
+    { url: `${BASE}/auto-cart`, changeFrequency: 'monthly', priority: 0.8 },
   ];
 
   try {
