@@ -554,17 +554,35 @@ export async function dropStoredToken(page) {
  * than an empty string — `readLiveToken` treats `''` as falsy, but a caller reading the raw
  * key would see a token-shaped nothing.
  *
- * @returns {Promise<'written'|'already-stored'|'no-token'>} what it did, for the log line.
+ * AND `already-stored` SPLITS IN TWO, because presence is not liveness (2026-09-03). Leaving
+ * a stored token alone is right when it IS the token we hold. When the SPA has silently
+ * re-minted, storage carries the older one and the handover still loses the fresher — the
+ * exact defect this function was written for, wearing the clothes of the fix. It is reported
+ * rather than acted on: overwriting a key RC's own SDK owns, on the release-critical path, is
+ * a bigger change than a log line and wants its own evidence.
+ *
+ * A BOOLEAN COMPARISON, INSIDE THE PAGE. Neither token leaves it. This repo has published a
+ * credential twice by collecting a field it then had to filter — an OAuth code on 2026-08-09,
+ * a password on 08-16 — so the rule is not to produce the value at all.
+ *
+ * @returns {Promise<'written'|'already-stored'|'already-stored-stale'|'no-token'>} what it
+ *   did, for the log line. `already-stored-stale` means storage held a DIFFERENT token from
+ *   the live one, so the handover is dropping the fresher of the two.
  */
 export async function persistLiveToken(page) {
   return evaluateWithin(page, ({ rcKeys }) => {
     try {
+      const live = typeof window.__camphawkRcToken === 'string' && window.__camphawkRcToken
+        ? window.__camphawkRcToken : null;
       for (const k of rcKeys) {
         const existing = localStorage.getItem(k);
-        if (existing) return 'already-stored';
+        // A BOOLEAN, never either value. `existing !== live` with a live token in hand means
+        // the SPA re-minted and storage is behind — which is the case that still loses a
+        // session across the handover, and which used to be indistinguishable from the
+        // healthy one because both returned the same word.
+        if (existing) return live && existing !== live ? 'already-stored-stale' : 'already-stored';
       }
-      const live = window.__camphawkRcToken;
-      if (typeof live !== 'string' || !live) return 'no-token';
+      if (!live) return 'no-token';
       localStorage.setItem(rcKeys[0], live);
       return 'written';
     } catch {

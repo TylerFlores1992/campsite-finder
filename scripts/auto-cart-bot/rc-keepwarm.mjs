@@ -1862,10 +1862,14 @@ const allocTrail = createAllocTrail();
  *
  * `final` is the difference between an ordinary tick and a teardown. On a tick only segments
  * that have ENDED are taken — a renderer swap has happened, so the peak is known and final. At
- * teardown and in the runaway bail the OPEN segment is taken too, because a browser replaced
- * by a recycle and a process that exits are the two ways a ramp ends without our ever seeing
- * the swap. Without that a nine-gigabyte ramp that kills the box reports nothing, which is the
+ * teardown and in EITHER bail arm the OPEN segment is taken too, because a browser replaced by
+ * a recycle and a process that exits are the two ways a ramp ends without our ever seeing the
+ * swap. Without that a nine-gigabyte ramp that kills the box reports nothing, which is the
  * failure this file exists to end.
+ *
+ * BOTH ARMS, AND THE WEDGE ONE WAS MISSING UNTIL 2026-09-03. `reportAndBail` is what makes
+ * that true; before it the wedge arm called `bail` directly, so the 9 GB ramp that ended
+ * through it stored nothing at all. See the comment on `reportAndBail`.
  *
  * THE CONTEXT NAMES THE RENDERER, and that is the open question it exists to settle: if the
  * gigabytes are on the RESIDENT page rather than the trip's throwaway tab, PR #142's cure is
@@ -1907,7 +1911,7 @@ function flushAllocRamps({ final = false, describeIfEmpty = false } = {}) {
   // returns only the last 16,000 characters. Noise here destroys the record it is meant to
   // preserve, which is exactly how the 08-23 attributions were lost.
   //
-  // `describeIfEmpty` rather than always: the BAIL arm already logs `describeAllocTrail`
+  // `describeIfEmpty` rather than always: the BAIL arms already log `describeAllocTrail`
   // unconditionally, so making this unconditional would print the same text twice, adjacent,
   // and read as a bug.
   if (final && describeIfEmpty && sent.length === 0) {
@@ -2543,8 +2547,84 @@ async function warmResident() {
         releaseProfileLockIfMine(PROFILE_DIR, LOCK_OWNER);
         process.exit(1);
       };
-      if (stalledMs > HUNG_MS) {
-        bail(`✗ WEDGED — the keep-warm loop has not advanced in ${Math.round(stalledMs / 60_000)}m.`);
+      /**
+       * THE DIAGNOSTIC BLOCK, AND IT BELONGS TO BOTH ARMS.
+       *
+       * It lived inline in the runaway arm and the wedge arm called `bail` directly — so a
+       * ramp that ended through the wedge reported nothing at all. On 2026-09-03 that is
+       * exactly what happened: pid 6572 went 115 MB → 8,743 MB and took COMMIT to 99%, the
+       * wedge fired at twelve minutes (`Stalled in: reporting session health`), and
+       * `native_alloc_readings` gained no `trail-*` row — because `process.exit` discarded the
+       * OPEN segment that only `flushAllocRamps({ final: true })` takes.
+       *
+       * FIFTH MISSED RAMP, AND THE INSTRUMENT WAS BOLTED TO TWO OF THREE DOORS. The trail was
+       * correct throughout; the teardown and the runaway arm reported it and the wedge arm —
+       * the arm a stalled loop actually reaches — did not. Same shape as `expireStaleHolds`
+       * living in a feed only a live runner polls.
+       *
+       * ORDERING IS LOAD-BEARING AND IS NOT AN OVERSIGHT. The profile lock is released inside
+       * `bail`, at the very end, so it is still held while this runs — deliberately. Our
+       * browser stays open until `process.exit`, so releasing early would let the hold runner
+       * launch a SECOND Chromium on one `user-data-dir`, which is the corruption case the lock
+       * exists to prevent. The cost is bounded: `collectHeapFacts` cannot exceed a few seconds
+       * and the flush is raced against four, against a stall already twelve minutes old.
+       */
+      const reportAndBail = (why, tail) => {
+        bailing = true;
+        void (async () => {
+          /**
+           * ASK THE RENDERER WHAT IT IS HOLDING, ON THE WAY OUT.
+           *
+           * This is the one moment the answer exists. `describeHeapFacts` splits JS heap from
+           * everything else, which is the fact that halves the candidate space — and the trip
+           * is the only occasion it can be sampled, because ten minutes later the process is
+           * gone and an hour later a healthy browser has nothing to say.
+           *
+           * BOUNDED, AND THE EXIT DOES NOT DEPEND ON IT. `collectHeapFacts` resolves rather
+           * than throws and cannot exceed a few seconds; whatever it returns, `bail` runs. A
+           * diagnostic that can delay the thing that saves the box has inverted the priority,
+           * which is the mistake `rcFamilyMb` in this same guard would have made.
+           */
+          const facts = await collectHeapFacts(ctx, residentPage, heapProbe).catch(() => null);
+          log(why);
+          log(`  ${describeHeapFacts(facts, null)}`);
+          // THE READING THAT ACTUALLY ARRIVES. The line above has failed twice, both times
+          // because the browser will not answer once it is this large; the trail is what was
+          // captured on the way in.
+          log(`  ${describeTrail(heapTrail, Date.now())}`);
+          // The trail that never stops answering. See ramTrail.
+          log(`  ${describeRamTrail(ramTrail, Date.now())}`);
+          // WHAT WAS ALLOCATING, not merely how much. This is the reading the whole Track A
+          // investigation has been waiting for, and these two arms are where a ramp ends
+          // without our seeing the renderer swap — so the OPEN segment is taken too.
+          log(`  ${describeAllocTrail(allocTrail.buffers(), Date.now())}`);
+          // AWAITED, AND BOUNDED. `bail` calls process.exit, which kills an in-flight POST —
+          // so the one reading this arm exists to capture would be lost to the exit that
+          // captures it. Bounded because a diagnostic that can delay releasing the profile
+          // lock has inverted the priority, which is the mistake `rcFamilyMb` would have made
+          // in this same arm: the lock staying held past 08:00 is what loses a cart.
+          await Promise.race([
+            flushAllocRamps({ final: true }),
+            new Promise((r) => setTimeout(r, 4000)),
+          ]).catch(() => {});
+          bail(tail);
+        })();
+      };
+      /**
+       * THE WEDGE ARM, CHECKED FIRST. A twelve-minute stall is the more specific diagnosis
+       * than a low-RAM reading taken during it, and both conditions are true at once on a
+       * ramp this size — so whichever is tested first is the one that names the event.
+       *
+       * `!bailing` is new and is required: this arm used to call `bail` synchronously, so a
+       * second tick could never reach it. It now returns while the report is in flight, and
+       * without the guard the timer would queue a second and a third bail behind the first.
+       */
+      if (stalledMs > HUNG_MS && !bailing) {
+        reportAndBail(
+          `✗ WEDGED — the keep-warm loop has not advanced in ${Math.round(stalledMs / 60_000)}m.`,
+          '  (see the wedged line above)',
+        );
+        return;
       }
       /**
        * THE RUNAWAY ARM. See LOW_RAM_MB: the size bound in the loop body cannot fire while the
@@ -2589,48 +2669,12 @@ async function warmResident() {
       // away is final, and this is the moment its peak would otherwise be discarded.
       flushAllocRamps();
       if (stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB && !bailing) {
-        bailing = true;
-        const why = `✗ RUNAWAY — stalled ${Math.round(stalledMs / 1000)}s with only ${Math.round(freeMb)} MB `
-                  + `of free RAM (floor ${LOW_RAM_MB} MB). Normal here is ~13,000 MB free and this `
-                  + 'browser has taken the box to 99% COMMIT twenty times in five days.';
-        /**
-         * ASK THE RENDERER WHAT IT IS HOLDING, ON THE WAY OUT.
-         *
-         * This is the one moment the answer exists. `describeHeapFacts` splits JS heap from
-         * everything else, which is the fact that halves the candidate space — and the trip
-         * is the only occasion it can be sampled, because ten minutes later the process is
-         * gone and an hour later a healthy browser has nothing to say.
-         *
-         * BOUNDED, AND THE EXIT DOES NOT DEPEND ON IT. `collectHeapFacts` resolves rather
-         * than throws and cannot exceed a few seconds; whatever it returns, `bail` runs. A
-         * diagnostic that can delay the thing that saves the box has inverted the priority,
-         * which is the mistake `rcFamilyMb` in this same guard would have made.
-         */
-        void (async () => {
-          const facts = await collectHeapFacts(ctx, residentPage, heapProbe).catch(() => null);
-          log(why);
-          log(`  ${describeHeapFacts(facts, null)}`);
-          // THE READING THAT ACTUALLY ARRIVES. The line above has failed twice, both times
-          // because the browser will not answer once it is this large; the trail is what was
-          // captured on the way in.
-          log(`  ${describeTrail(heapTrail, Date.now())}`);
-          // The trail that never stops answering. See ramTrail.
-          log(`  ${describeRamTrail(ramTrail, Date.now())}`);
-          // WHAT WAS ALLOCATING, not merely how much. This is the reading the whole Track A
-          // investigation has been waiting for, and this arm is one of the two places a ramp
-          // ends without our seeing the renderer swap — so the OPEN segment is taken too.
-          log(`  ${describeAllocTrail(allocTrail.buffers(), Date.now())}`);
-          // AWAITED, AND BOUNDED. `bail` calls process.exit, which kills an in-flight POST —
-          // so the one reading this arm exists to capture would be lost to the exit that
-          // captures it. Bounded because a diagnostic that can delay releasing the profile
-          // lock has inverted the priority, which is the mistake `rcFamilyMb` would have made
-          // in this same arm: the lock staying held past 08:00 is what loses a cart.
-          await Promise.race([
-            flushAllocRamps({ final: true }),
-            new Promise((r) => setTimeout(r, 4000)),
-          ]).catch(() => {});
-          bail('  (see the runaway line above)');
-        })();
+        reportAndBail(
+          `✗ RUNAWAY — stalled ${Math.round(stalledMs / 1000)}s with only ${Math.round(freeMb)} MB `
+          + `of free RAM (floor ${LOW_RAM_MB} MB). Normal here is ~13,000 MB free and this `
+          + 'browser has taken the box to 99% COMMIT twenty times in five days.',
+          '  (see the runaway line above)',
+        );
         return;
       }
       // Unchanged cadence. The timer got 12x faster so the checks above could bound a
@@ -2778,10 +2822,26 @@ async function warmResident() {
            * will not answer costs one timeout and never blocks the yield indefinitely —
            * the runner is asking because a site releases in seconds.
            */
+          /**
+           * EVERY OUTCOME SPEAKS (2026-09-03). `already-stored` used to be the silent one, so
+           * "storage already had it" and "the write path never reported" produced the same
+           * line — and the RC session died within ~2 minutes of all four queues on 09-02 with
+           * nothing in the log able to say which. It is split on liveness too: storage holding
+           * a DIFFERENT token from the live one means the handover is still dropping the
+           * fresher, which is this fix's own defect surviving inside it.
+           *
+           * The box's own `cleared 0 storage key(s)` rules that out for the 09-02 deaths —
+           * localStorage held no RC key at all, so this branch cannot have fired. Recorded as
+           * refuted rather than carried forward; what was missing was the ability to say so
+           * from the log rather than by inference.
+           */
           const kept = await persistLiveToken(page);
           log('→ hold runner wants the profile — closing and standing down'
             + (kept === 'written' ? ' (token written to storage so it survives the handover)'
-              : kept === 'no-token' ? ' (no live token to write down)' : ''));
+              : kept === 'no-token' ? ' (no live token to write down)'
+              : kept === 'already-stored-stale'
+                ? ' (⚠ storage holds an OLDER token than the live one — the handover drops the fresher)'
+                : ' (storage already held the token — nothing to write)'));
           break;
         }
         // A VISIBLE WINDOW GETS CLOSED. It is headful by design (RC fingerprints headless

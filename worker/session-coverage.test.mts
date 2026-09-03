@@ -358,3 +358,37 @@ test('the token is written to storage BEFORE the profile is handed over', () => 
   assert.match(src, /persistLiveToken,?[^}]*} from '\.\/rc-token\.mjs'|persistLiveToken/,
     'persistLiveToken must come from rc-token.mjs');
 });
+
+test('every outcome of the token write speaks, and the stale one is distinguishable', () => {
+  /**
+   * `already-stored` WAS THE SILENT ONE, and the log ternary handled only `written` and
+   * `no-token`. So "storage already had it" and "the write path never reported" produced the
+   * identical line — and on 2026-09-02 the RC session died within ~2 minutes of all four
+   * queues with nothing in the log able to say which had happened. The house shape:
+   * `status = 'sent'` meaning only "Twilio returned 2xx".
+   *
+   * AND PRESENCE IS NOT LIVENESS ONE LAYER DOWN. Leaving a stored token alone is right when it
+   * IS the token we hold; when the SPA has silently re-minted, storage carries the older one
+   * and the handover still drops the fresher — this fix's own defect surviving inside it.
+   * Reported, not acted on: overwriting a key RC's SDK owns, on the release-critical path, is
+   * a bigger change than a log line.
+   */
+  const token = read('rc-token.mjs');
+  assert.match(token, /'already-stored-stale'/,
+    'a stored token that differs from the live one must be a distinct outcome');
+  // A BOOLEAN COMPARISON INSIDE THE PAGE — neither token may leave it. An OAuth code reached
+  // the database on 2026-08-09 and a password on 08-16, both by collecting a value that then
+  // had to be filtered. The rule is not to produce it.
+  assert.match(token, /existing !== live \? 'already-stored-stale' : 'already-stored'/,
+    'the discriminator is a comparison, and it returns a word rather than either token');
+
+  const src = read('rc-keepwarm.mjs');
+  const yieldAt = src.indexOf("log('→ hold runner wants the profile");
+  const line = src.slice(yieldAt, src.indexOf('break;', yieldAt));
+  for (const outcome of ['written', 'no-token', 'already-stored-stale']) {
+    assert.ok(line.includes(`'${outcome}'`), `the yield log must name the ${outcome} case`);
+  }
+  // The remaining branch is the plain `already-stored` fallthrough, and it must not be the
+  // empty string it used to be — that is exactly the silence this test exists to end.
+  assert.ok(!/: ''\)\);/.test(line), 'no outcome may log nothing at all');
+});
