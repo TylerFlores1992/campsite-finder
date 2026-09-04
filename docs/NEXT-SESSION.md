@@ -100,11 +100,15 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > three `await tab.close()` calls were unbounded. Built: `bot_events` (075), `closeTabBounded`
 > (30s, reports `tripMs`/`closeMs`/`hung` on every close, asks for a recycle on a hang) and
 > `ramp-scan.mjs` (the full `memory` scan once per ramp at 3 GB, with kernel pool and
-> all-process private bytes). **Bot-side — needs a box update.** Then read
-> `scripts/bot-events-readout.mts` after the next ramp: `hung`/minutes of `closeMs` ⇒ the close
-> was the ten minutes; milliseconds ⇒ the renewal BODY is; `ALLPROC privateSumMB` vs `OS
-> commitUsedMB` names where the 35 GB is. CLAUDE.md → "THE ONSET IS A 35 GB COMMIT STEP".
-> **Track B still needs the owner's explicit word.**
+> all-process private bytes). **ON THE BOX since 22:19 UTC 09-04, and both fired within two
+> minutes** — read CLAUDE.md → "THE INSTRUMENTS FIRED WITHIN TWO MINUTES". The short version:
+> the close is 16 ms; the ramp is the RESIDENT renderer, not the tab's (#142 is aimed at the
+> wrong renderer); a ramp ends when the 12-minute wedge bail kills the process stalled in
+> `checkAndReport`; the 35 GB is committed-but-untouched non-private memory in a renderer with
+> 18,705 handles (shared sections, class unnamed); trigger candidate is the SPA's OWN
+> `prompt=none` autoRenew. **Next: count the resident page's requests (never bodies) and print
+> them in the bail; bail at ~2 min instead of 12 during a ramp. Track B may be the wrong lever
+> and still needs the owner's word either way.**
 >
 > *(Earlier reading, still true:)* The #210
 > discriminator was read on 09-04 and it is the **profiler** branch: the trail prints segments
@@ -391,7 +395,7 @@ because on 09-04 a whole incident came out of trusting a day-old checkout.***
 | Holds | **No holds DUE and one offer unanswered** (readout, 15:29 PT). Nobody tapped it, which is not a fault. `#L034` carted T+1.4s at the 08:00 release and was released at 08:09; its hand-off reads `cart read back: 1 entry`, `customerId PRESENT`, `close: session`. |
 | RC session | Healthy (`okta=ALIVE` to 09-05 10:09, token 17m, `src=live`). The rehearsal was **skipped** last night (`rc_login` warns at 12h) — a stand-down, not a failure; it PASSED on 09-04 03:01. `maybeAutoLogin` covers a release at T-30. |
 | Health | **18/19** at 22:30 UTC; only `rc_login` warns. `poller.shards` 3/3, `poller.capacity` 7/12, heartbeat 9s, 18 watches. |
-| Memory | **Track A is retired** (the profiler cannot see the bytes). The onset is a 35 GB commit step; `ramp-scan` and `tab-close` events are built and wait on a box update. `scripts/bot-events-readout.mts`. |
+| Memory | **Track A is retired.** `ramp-scan` + `tab-close` are LIVE on the box and have each reported once (22:21 / 22:2x UTC 09-04): the ramp is the RESIDENT renderer, the close is 16 ms, the 35 GB is untouched non-private commit (18.7k handles), a ramp ends at the 12-min wedge bail. `scripts/bot-events-readout.mts`. |
 | CI | **Two runs on 09-04 failed on fixture litter, not on the diff.** `rc-holds.test.mts` -> *"once the window has closed, a cart failure IS final"*, `already-failed` where `failed` was expected. Both times the same tree passed locally with no CI in flight. A force-push produced two runs and GitHub cancelled the first mid-suite; a killed run leaves its `__trh` rows, and #203's 10-minute age gate deliberately spares them. **Wait ten minutes, then re-run — do not lower that gate.** |
 
 **Two check-ins are scheduled and enabled — do not create duplicates.**

@@ -6082,8 +6082,11 @@ the two-minute `bot` series, at the onset tick (UTC):
 **THE RENEWAL TAB GETS ITS OWN RENDERER — the shared-renderer hypothesis is OUT.** `rc_procs`
 rises by one to three at every renewal, ramping or not (09-04 13:47: 8 → 9 → 11 → 8 across a
 renewal that did not ramp; 09-04 12:03: 9 → 10 at an onset), and the ramping renderer is a NEW
-pid at the onset on every event checked. So PR #142's cure is aimed at the right renderer, and
-the memory is not being handed back because **that renderer outlives the trip by ten minutes**
+pid at the onset on every event checked. ~~So PR #142's cure is aimed at the right renderer~~
+**WRONG WITHIN THE HOUR — see "THE INSTRUMENTS FIRED" below: the tab's renderer stayed FLAT and
+the ramp was the RESIDENT page's renderer.** The tab has its own renderer; the ramp is not in
+it. The rest of this paragraph stands as the reasoning that was tested and lost. The memory was
+not being handed back because **a renderer outlives the trip by ten minutes**
 — which is either the renewal's body timing out step by step (its bounded waits sum to several
 minutes) or `await tab.close()` never returning. **The keep-warm's own trail said a NON-ramping
 renewal on 09-04 held its tab for 741 seconds**, which is direct evidence the body alone can
@@ -6129,6 +6132,82 @@ in the series — a browser replacement — and differ only in one number nothin
   here cures anything: the bounded close shortens a ramp only if the close is what was holding
   it, and the scan names the 35 GB only. What changed is that Track B no longer waits on Track A
   (which can never answer) and that two cheaper hypotheses are being measured first.
+
+#### THE INSTRUMENTS FIRED WITHIN TWO MINUTES OF THE BOX UPDATING, AND THEY REVERSE THE PARAGRAPH ABOVE (2026-09-04 22:19–22:36 UTC)
+The box moved to `1e947ee` at 22:19:47. The keep-warm reopened its browser at 22:19:38; a ramp
+began before 22:20:13; the renewal ran 22:20:41–22:21:17; the loop then stalled and the 12-minute
+wedge watchdog killed the process at 22:31:51. Every instrument built today reported, and the
+memory series bracketed the whole event.
+```
+22:19:39  procs 7  rc   308  max gpu 14812   96 MB   commit  8,438      <- reopened 22:19:38, "token source: live"
+22:20:13  procs 7  rc 1,912  max renderer 2648 1,589 commit 46,596      <- BEFORE the renewal (22:20:41)
+22:21:40  procs 8  rc 3,741  renderer 2648  3,408    commit 48,117      <- the renewal tab is the 8th process
+22:31:46  procs 8  rc 9,014  renderer 2648  8,683    commit 53,452
+22:31:51  ✗ WEDGED — stalled 634s in "reporting session health" — exit 1, supervisor restart
+22:33:51  procs 9  rc   299                          commit  7,400      <- new browser
+```
+- **THE TAB CLOSE WAS NEVER THE PROBLEM — 16 MILLISECONDS.** First `tab-close` event: `renewal ·
+  tripMs 48,047 · closeMs 16 · hung false`. Hypothesis 1 above is dead on its first reading.
+- **THE RAMPING RENDERER WAS THE RESIDENT PAGE'S, NOT THE TAB'S — the paragraph above has it
+  backwards.** pid 2648 held 1,589 MB at 22:20:13, twenty-eight seconds before the renewal
+  started and before its tab existed (the process count went 7 → 8 only at 22:21:40). The
+  alloc trail says the same from the other side: `[renewal] −4 MB over 640s` (the tab's
+  renderer was FLAT) while `[resident]: EMPTY — that renderer answered no CDP call at all`.
+  **So PR #142's throwaway tab IS aimed at the wrong renderer for this event**, which is what
+  the 08-25 trail entry suspected and today's "the tab gets its own renderer" paragraph
+  wrongly closed. The tab does get its own renderer; the ramp is not in it.
+- **WHAT ENDS A RAMP IS THE WEDGE WATCHDOG, MEASURED.** `Stalled in: reporting session health
+  (634s in that step)` — `checkAndReport(ctx, page)` drives the RESIDENT page, whose renderer
+  had stopped answering, so the loop parked there until `HUNG_MS` (12 min) bailed the process.
+  That is the ten-to-twelve-minute ramp duration this file has puzzled over since 08-17: it is
+  `HUNG_MS`. Not the size guard (the loop never reached it), not the post-Okta recycle. The cost
+  of every bail is the session (`token source: none` after the restart) and a renewal.
+- **THE RAMP SCAN NAMES THE 35 GB, TO A CLASS.** Stored at 22:21:47 (rc family 3,741 MB):
+  ```
+  OS   commitUsedMB=48132   ALLPROC privateSumMB=8469 (220 processes)   gap 39,663 MB
+  PERF poolNonpagedMB=310   poolPagedMB=432     <- the kernel's share is under 750 MB
+  PAGEFILE allocatedMB=32955 currentMB=7        <- 40 GB committed and 7 MB of it ever paged
+  CHROME pid=2648 renderer privateMB=3509 pagedPoolKB=66580 handles=18705 threads=20
+  CHROME pid=1228 renderer privateMB=39   pagedPoolKB=778   handles=276
+  ```
+  **The commit is in no process's private bytes and not in the kernel pools, and it has never
+  been touched** (7 MB of pagefile in use against 40 GB charged). That is the signature of
+  **pagefile-backed shared-memory SECTIONS, committed but unwritten** — the one class of
+  allocation that private bytes never count, that the RAM arm can never see (untouched pages
+  cost no RAM), and that the sampling profiler cannot see (Track A, retired). The ramping
+  renderer holds **18,705 handles against ~250 for a healthy one, and 66 MB of paged pool
+  against 0.8 MB** — section objects are handles charged to paged pool. **CANDIDATE, arithmetic
+  only, not measured: ~18,700 regions of ~2 MB ≈ 37 GB ≈ the gap.** What creates them is not
+  named; a per-request data pipe in a request loop fits the shape and nothing has counted the
+  resident page's requests.
+- **THE TRIGGER CANDIDATE MOVED, AND IT IS NOT OURS.** The renewal logged `the app holds no
+  usable token (src=none)` at 22:20:41, sixty-three seconds after `token source: live` at
+  22:19:38. A token that vanishes from a page nobody touched is the 08-09 finding: RC's own
+  okta-auth-js `autoRenew` fires a hidden `authorize?prompt=none`, fails, and DELETES the
+  tokens. That round trip ran in the resident renderer at exactly the moment it began to ramp.
+  Twelve minutes later OUR click-through Okta trip in a fresh browser's throwaway tab renewed
+  the session (`✓ renewed by authorize: none → 3580s`) for **−89 MB and no ramp**. **Candidate,
+  labelled as one**: the SPA's own silent renewal is what ramps, and it ramps the page it runs
+  in. It is consistent with 08-19 (four of our Okta trips, no ramp) and with the hourly silent
+  re-mints that succeed without ramping — a FAILING silent renewal may be the specific case.
+- **WHAT THIS DOES TO THE PLAN.** Track B (replay OUR trip over `ctx.request`) removes a trip
+  that did not ramp tonight and leaves the resident page's own trips alone — **it may be the
+  wrong lever**, which is the reason it was held back, confirmed from the other direction.
+  Two cheaper next steps, neither built, both bot-side:
+  1. **Count the resident page's requests** (`page.on('request')`, path counts only, never a
+     body) and print the top paths in the wedge bail and the ramp scan. If the 18.7k handles
+     are a request loop, the count says so in one line.
+  2. **Bail sooner.** The resident renderer answering no CDP call for 60s while the rc family
+     is past 3 GB is a ramp in progress; `HUNG_MS` waits twelve minutes. A bail at two minutes
+     costs the same session the twelve-minute one costs and leaves ~7 GB less on the box.
+     **Not the RAM arm** — untouched commit never lowers free RAM, which is why it has sat out
+     sixteen consecutive ramps.
+  Blocking `prompt=none` on the resident page is the obvious cure and has a known cost: the
+  silent self-renewal that works most hours is the same mechanism. Measure (1) first.
+- **AND THE RENEWAL'S "did NOT ramp" VERDICT WAS PRINTED OVER A 723 MB LOSS.** The net trace's
+  three-way verdict uses a higher threshold than `NATIVE_ALLOC_RAMP_MB`, so the same trip was
+  called "not a ramp" on one line and stored as a ramp reading on the next. The RAM delta was
+  the resident page's, not the tab's — both instruments bracket the wall clock, not the target.
 
 **`rc_release_readings` (migration 076, APPLIED) + `--record`.** The daily release-window
 Routine (`trig_012K7iCrj1J9KspyqGucZSHC`, 07:56 PT through 09-11) now records one row per
@@ -6200,11 +6279,18 @@ tree, the deploy and the fleet were all correct.
 
 > ### 2026-09-04 EVENING — THE LEAK INSTRUMENTS ARE BUILT AND WAIT ON A BOX UPDATE
 >
-> Read "THE ONSET IS A 35 GB COMMIT STEP" directly above. **Bot-side** (`tab-close.mjs`,
-> `ramp-scan.mjs`, the keep-warm's three closes, `bot.mjs`'s sampler) is inert until the mini-PC
-> updates; **server-side** (migrations 075 + 076, both APPLIED; the route; two readouts) is live
-> on merge. After the update: the next ramp stores a `ramp-scan` row and every trip stores a
-> `tab-close` row — `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`. **The daily
+> Read "THE ONSET IS A 35 GB COMMIT STEP" and its sub-section "THE INSTRUMENTS FIRED" directly
+> above. **Merged (#273) and ON THE BOX (`1e947ee`, 22:19:47 UTC).** Within two minutes both
+> instruments reported: the tab close is **16 ms** (not the problem); the ramp is the **RESIDENT
+> page's renderer**, not the tab's, so #142 is aimed at the wrong renderer; what ends a ramp is
+> the **12-minute wedge bail** stalled in `checkAndReport` on the unresponsive resident page;
+> and the 35 GB is **committed, untouched, non-private memory** (pagefile 7 MB in use, kernel
+> pools <750 MB) in a renderer holding **18,705 handles** — shared sections, class not named.
+> Trigger candidate: the SPA's OWN `prompt=none` autoRenew in the resident page (token went
+> live → none in the 63s before the ramp); our click-through trip twelve minutes later did not
+> ramp. **Next, in order: count the resident page's requests (never bodies) and print them in
+> the bail; bail at ~2 min instead of 12 when the resident renderer stops answering during a
+> ramp.** `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`. **The daily
 > release-window Routine records now** (`--record`; `scripts/rc-release-readout.mts`); first
 > recorded run 09-05 07:56 PT. **Track B still needs the owner's word.** `POLL_MS` (§27, folded
 > above) is the cheapest open lever and needs a bot restart, not a deploy. **The iOS build
