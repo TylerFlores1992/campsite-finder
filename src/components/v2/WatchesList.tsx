@@ -6,6 +6,8 @@ import { buttonClasses } from "@/components/ui/Button";
 import Collapsible from "@/components/ui/Collapsible";
 import WatchCard, { type WatchCardWatch } from "./WatchCard";
 import HoldsPanel from "./HoldsPanel";
+import { useMyHolds } from "./useMyHolds";
+import { panelHolds } from "@/lib/hold-placement";
 import WatchCta from "./WatchCta";
 import { PlanOptionsButton } from "./SubscribeCta";
 import SetupNudges from "./SetupNudges";
@@ -48,6 +50,10 @@ export default function WatchesList() {
   // ordinary cap instead of flashing "unlimited" at everybody — undefined must
   // never read as "no limit", the same reason `unknown` is not "not subscribed".
   const [watchLimit, setWatchLimit] = useState<number | null>(WATCH_LIMIT);
+  // ONE fetch for the whole page. The panel and every card draw from the same list, so a
+  // hold declined on a card cannot still be sitting in the panel until its own poll comes
+  // round — which is what N independent fetches would have produced.
+  const { holds, dismiss } = useMyHolds();
 
   useEffect(() => {
     let cancelled = false;
@@ -150,7 +156,9 @@ export default function WatchesList() {
   if (error) {
     return (
       <>
-        <HoldsPanel className="mb-3.5" />
+        {/* NO CARDS ON THIS BRANCH, so every hold is an orphan and the panel shows all of
+            them. That is `panelHolds` with an empty set, not a special case. */}
+        <HoldsPanel holds={holds} onRemoved={dismiss} className="mb-3.5" />
         <p role="alert" className="text-ch-body text-ch-alert">
           {error}
         </p>
@@ -161,11 +169,18 @@ export default function WatchesList() {
   if (!watches || watches.length === 0) {
     return (
       <>
-        <HoldsPanel className="mb-3.5" />
+        {/* A HOLD OUTLIVES ITS WATCH — deleting a watch leaves its holds behind, so "no
+            watches yet" is a state a hold contradicts rather than precludes. Same rule as
+            the error branch: no cards, so nothing is filtered out. */}
+        <HoldsPanel holds={holds} onRemoved={dismiss} className="mb-3.5" />
         <FirstRun />
       </>
     );
   }
+
+  // WHICH CARDS ARE ON SCREEN. `panelHolds` keeps everything a card will NOT render, so
+  // this set is what makes an orphaned hold — one whose watch was deleted — still visible.
+  const watchIds = new Set(watches.map((w) => w.id));
 
   const stalledCount = watches.filter(
     (w) => w.campground_source && stalledSources.has(w.campground_source),
@@ -179,7 +194,7 @@ export default function WatchesList() {
       {/* FIRST. At 08:00 a site sitting in our cart outranks every other thing on this
           page, including a provider outage banner — the outage cannot be acted on and the
           hold has minutes left. */}
-      <HoldsPanel className="mb-3.5" />
+      <HoldsPanel holds={panelHolds(holds, watchIds)} onRemoved={dismiss} className="mb-3.5" />
 
       {stalledCount > 0 && stalledName?.campground_source && (
         <div className="mb-3.5 rounded-[13px] border border-[#E7C98C] bg-ch-ochre-soft px-3.5 py-3">
@@ -223,6 +238,8 @@ export default function WatchesList() {
             watch={w}
             stalledSources={stalledSources}
             sessionExpired={sessionExpired}
+            holds={holds}
+            onHoldRemoved={dismiss}
           />
         ))}
       </div>

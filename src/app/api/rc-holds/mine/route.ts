@@ -45,6 +45,14 @@ export const dynamic = 'force-dynamic';
  */
 export interface MyHold {
   id: string;
+  /**
+   * Which watch this belongs to, so the watches page can file it under that card.
+   *
+   * ADDED 2026-09-04, when the offered/queued lists moved off the top of the page and into
+   * the box with the rest of a watch's information. It is not a leak: every row here is
+   * already scoped `user_id = $1`, so the caller owns the watch this names.
+   */
+  watchId: string;
   status: string;
   /** What to call the site on screen — RC's human `#L006`, never its internal key. */
   unitLabel: string;
@@ -63,11 +71,18 @@ export interface MyHold {
   updatedAt: string | null;
   /**
    * Authorises removing this row — the watch's manage token, the SAME one that authorises
-   * releasing the site. Present only where a remove is honest: an `offered` row (declining
-   * genuinely retracts the offer and frees its capacity seat) and a `released` one (the
-   * hand-off is finished and the row is only history). Never on `carted`/`claiming`, where
-   * marking a row terminal would take a real campsite off the market and delete the last
-   * thing on screen pointing at it.
+   * releasing the site. Present only where a remove is HONEST, which is three of the five
+   * statuses:
+   *
+   *   `offered`   declining genuinely retracts the offer and frees its capacity seat and
+   *               its position in the line.
+   *   `requested` CANCELS it (added 2026-09-04 on the owner's ask). A different act from
+   *               declining and it carries a timing rule — see `cancelHold` — but the row
+   *               really does stop the bot carting, so the control is not a lie.
+   *   `released`  the hand-off is finished and the row is only history.
+   *
+   * Never on `carted`/`claiming`, where marking a row terminal would take a real campsite
+   * off the market and delete the last thing on screen pointing at it.
    */
   dismissToken?: string;
 }
@@ -111,6 +126,7 @@ export async function GET() {
   for (const r of rows) {
     const base: MyHold = {
       id: r.id,
+      watchId: r.watch_id,
       status: r.status,
       unitLabel: r.unit_name ?? r.unit_id,
       campgroundName: r.campground_name,
@@ -131,7 +147,13 @@ export async function GET() {
       // already emailed them, not a new capability.
       const m = await manageTokenFor(r.watch_id);
       if (m) base.dismissToken = m;
-    } else if (r.status !== 'requested') {
+    } else if (r.status === 'requested') {
+      // NO CLAIM URL — there is nothing to hand over until the bot has carted, and the
+      // claim screen tells a `requested` user that nothing is being held for them, which is
+      // true and reads as a fault. What it gets is the authorisation to CALL IT OFF.
+      const m = await manageTokenFor(r.watch_id);
+      if (m) base.dismissToken = m;
+    } else {
       const t = await manageTokenFor(r.watch_id);
       if (t) {
         base.claimUrl = `/claim/${r.id}?t=${encodeURIComponent(t)}`;

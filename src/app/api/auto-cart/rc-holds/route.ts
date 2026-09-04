@@ -11,6 +11,7 @@ import { query, mutate } from '@/lib/db/client';
 import { notifyHoldMissed } from '@/lib/rc-holds-notify';
 import { manageTokenFor } from '@/lib/notifications/actions';
 import { dispatchNotifications } from '@/lib/notifications';
+import { RC_HOLD_FEED_MAX_LEAD_SEC } from '@/lib/limits';
 
 export const dynamic = 'force-dynamic';
 // Long enough to cover the alarm's repeat call, which is scheduled with `after` and so
@@ -117,7 +118,13 @@ export async function GET(req: NextRequest) {
 
   // Lead time on purpose: the bot should be mid-request when the site frees, not
   // starting to think about it a second late. RC releases on the exact minute.
-  const lead = Math.min(600, Math.max(0, Number(req.nextUrl.searchParams.get('leadSeconds') ?? 90)));
+  // THE CEILING IS SHARED WITH `cancelHold`, which derives its cutoff from it: how early
+  // the feed may hand a row to the runner is exactly the question "can this still be
+  // called off?" has to answer. A second copy of 600 here would drift from that.
+  const lead = Math.min(
+    RC_HOLD_FEED_MAX_LEAD_SEC,
+    Math.max(0, Number(req.nextUrl.searchParams.get('leadSeconds') ?? 90)),
+  );
   // OPT-IN, because this is the 15-second hot path and only ONE caller wants it. The
   // keep-warm asks once every twenty minutes to decide whether tonight's login rehearsal
   // is due; the hold runner polls this same endpoint every 15s and would be paying for a

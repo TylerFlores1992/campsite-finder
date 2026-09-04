@@ -75,8 +75,14 @@ test('the watches list labels the offer too, above the button and not under it',
   // bot rather than set an alarm — reached from the app rather than from the alert — and
   // it carried no label at all. The SHORT note, because the long one pushes the button off
   // a phone screen in a list of several holds.
-  const file = read('src/components/v2/HoldsPanel.tsx');
-  const body = file.slice(file.indexOf('function HoldRow('));
+  // RE-ANCHORED 2026-09-04, not relaxed: `HoldRow` moved out of HoldsPanel into its own
+  // file when the watch cards began drawing it too. Left pointing at the old file this
+  // would slice from -1, read the whole (now rowless) component and fail on a correct
+  // tree — the "existing guard breaks over unchanged behaviour" shape recorded ~25 times.
+  const file = read('src/components/v2/HoldRow.tsx');
+  const at = file.indexOf('export default function HoldRow(');
+  assert.ok(at > -1, 'anchor missing — HoldRow was renamed or moved again');
+  const body = file.slice(at);
   const caveat = body.indexOf('AUTOCART_BETA_NOTE_SHORT');
   const promise = body.indexOf('Hold it for me');
   assert.ok(caveat > -1, 'the offer card must carry the beta note');
@@ -114,6 +120,10 @@ test('a beta BADGE never sits beside hand-written beta prose', () => {
   // mutation survived. Rendering the badge is what commits a surface to the shared words.
   const surfaces = [
     'src/components/v2/AutoCartSettings.tsx',
+    // The offer card's badge lives here now — HoldsPanel stays in the list anyway, because
+    // the rule is "IF a surface shows the badge THEN it must use the shared note", and a
+    // file that stops showing one simply drops out of `badged`.
+    'src/components/v2/HoldRow.tsx',
     'src/components/v2/HoldsPanel.tsx',
     'src/components/v2/RcHoldExplainer.tsx',
     'src/components/v2/HoldConfirm.tsx',

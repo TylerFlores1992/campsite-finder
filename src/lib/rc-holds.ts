@@ -10,7 +10,7 @@
 
 import { query, mutate } from '@/lib/db/client';
 import { RC_RUNNER_STALE_MS } from '@/lib/health-thresholds';
-import { HOLD_LAPSE_MIN } from '@/lib/limits';
+import { HOLD_LAPSE_MIN, HOLD_CANCEL_CUTOFF_MIN } from '@/lib/limits';
 import { rcOutageHoldReason, RC_OUTAGE_HOLD_NOTE } from '@/lib/rc-outage-hold';
 
 export type HoldStatus =
@@ -862,6 +862,72 @@ export async function declineHold(id: string): Promise<boolean> {
   } catch (err) {
     console.error('[rc-holds] declineHold failed:', (err as Error).message);
     return false;
+  }
+}
+
+/**
+ * "Actually, don't" — calling off a hold the user already queued.
+ *
+ * ## Why this exists, and why `declineHold` could not just be widened
+ *
+ * The panel gave `requested` no control at all, and this file's own header says why:
+ * *"`requested` is a commitment the bot is about to honour — retracting it is a CANCEL, a
+ * different act with a different confirmation, and getting it wrong at 07:59 loses a
+ * campsite."* The owner asked for the X on 2026-09-04. The honest way to give it is a
+ * second verb with the timing rule that made the objection true, not a wider `declineHold`.
+ *
+ * ## The three outcomes, because two of them are refusals and they mean different things
+ *
+ *   `cancelled`  the row was `requested`, comfortably ahead of its release, now `expired`
+ *   `too-late`   still queued, but inside `HOLD_CANCEL_CUTOFF_MIN` — the feed may already
+ *                have handed this row to the runner, so our database no longer decides
+ *   `not-queued` it moved on: carted, claimed, already cancelled. Never report as success.
+ *
+ * Collapsing `too-late` into `not-queued` would tell somebody at 07:55 that their hold had
+ * "already been acted on", which is a different and wrong story about what is happening.
+ *
+ * ## The race is safe; the cutoff is about not lying
+ *
+ * `markCarted` is `WHERE id = $1 AND status <> 'carted'`, so a cart landing after a cancel
+ * flips the row to `carted` anyway and `expireStaleHolds` releases the site 45 minutes
+ * later. Nothing is stranded and no campsite is lost — see `HOLD_CANCEL_CUTOFF_MIN`. What
+ * the cutoff buys is that the screen never says "cancelled" over a site the bot is seconds
+ * from carting.
+ *
+ * ## `expired`, and a note that says which
+ *
+ * The same choice `declineHold` made: `expired` is already terminal, already excluded from
+ * `holdWindowLoad` and from `/api/rc-holds/mine`, and a seventh status means a CHECK
+ * migration plus every consumer that enumerates them. The NOTE is what keeps a cancel
+ * distinguishable from a decline and from a lapse in the readout — three different events
+ * that would otherwise be one word.
+ */
+export async function cancelHold(id: string): Promise<'cancelled' | 'too-late' | 'not-queued'> {
+  try {
+    const rows = await mutate<{ id: string }>(
+      `UPDATE rc_hold_requests
+          SET status = 'expired', updated_at = NOW(),
+              last_attempt_note = 'cancelled by the user - they called off a queued hold from their watches page'
+        WHERE id = $1 AND status = 'requested'
+          AND release_at > to_char(
+                (NOW() + ($2 || ' minutes')::interval) AT TIME ZONE 'America/Los_Angeles',
+                'YYYY-MM-DD"T"HH24:MI:SS')
+        RETURNING id`,
+      [id, String(HOLD_CANCEL_CUTOFF_MIN)],
+    );
+    if (rows.length > 0) return 'cancelled';
+    // NOTHING CHANGED — now say WHICH of the two reasons. A second read rather than a
+    // cleverer single statement: the UPDATE has to stay simple enough to reason about at
+    // 07:59, and this path is already the one where nothing happened.
+    const [row] = await query<{ status: string }>(
+      `SELECT status FROM rc_hold_requests WHERE id = $1`, [id],
+    );
+    return row?.status === 'requested' ? 'too-late' : 'not-queued';
+  } catch (err) {
+    console.error('[rc-holds] cancelHold failed:', (err as Error).message);
+    // FAIL AS "NOT CANCELLED", never as success. A hold we could not call off is one the
+    // bot will still cart, and the screen must not say otherwise.
+    return 'not-queued';
   }
 }
 

@@ -33,9 +33,31 @@ test('the row still relies on shrink-0 and truncate, which is why the track must
   // If these ever go away the guard above is arguably unnecessary — but it is also harmless,
   // and the pairing is what makes the bug reproducible. Asserted so a future reader can see
   // the two halves belong together rather than deleting the odd-looking one.
-  const src = read('src/components/v2/HoldsPanel.tsx');
+  //
+  // THE PAIR NOW SPANS TWO FILES (2026-09-04). The row moved into `HoldRow.tsx` when the
+  // watch cards started drawing it too — one definition rather than a second copy — so the
+  // TRACK is in HoldsPanel and the CONTENT that overflows it is here. Re-anchored rather
+  // than relaxed: pointing this back at HoldsPanel would find nothing and pass, which is
+  // the vacuous-guard shape this project keeps paying for.
+  const src = read('src/components/v2/HoldRow.tsx');
   assert.match(src, /className="truncate text-ch-body font-bold"/);
   assert.match(src, /shrink-0 rounded-ch-chip/);
+});
+
+test('every surface that draws a hold row bounds its own track', () => {
+  // The row is shared now, so the overflow travels with it. A container that lays rows out
+  // in a grid must bound the track wherever it is — the watch card learned this for free by
+  // copying the class, and this is what stops the next one forgetting.
+  for (const f of ['src/components/v2/HoldsPanel.tsx', 'src/components/v2/WatchCard.tsx']) {
+    const src = read(f);
+    if (!src.includes('<HoldRow')) continue;
+    assert.ok(
+      !/className="grid gap-[\d.]+"[^>]*>\s*\{[^}]*\.map\(\(h/.test(src),
+      `${f} lays out hold rows in an unbounded grid track`,
+    );
+    assert.match(src, /grid-cols-\[minmax\(0,1fr\)\]/,
+      `${f} draws hold rows and must bound the track that holds them`);
+  }
 });
 
 /**

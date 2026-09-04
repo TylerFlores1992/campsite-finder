@@ -37,6 +37,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { query, mutate } from '../src/lib/db/client';
+import { readFileSync } from 'node:fs';
 import { offerHold, declineHold, requestHold, holdWindowLoad } from '../src/lib/rc-holds';
 
 const U = (n: string) => `__tpr${n}`;
@@ -204,4 +205,49 @@ test('capacity is counted per release — an old row cannot fill a new window', 
     before + 1,
     'an offer at THIS release must count',
   );
+});
+
+// ── the copies that are not offerHold ────────────────────────────────────────────────
+
+test('EVERY `ON CONFLICT` on rc_hold_requests names the same four columns', () => {
+  /**
+   * MIGRATION 074 BROKE TWO FILES NOBODY WOULD HAVE LOOKED AT, and only one of them has a
+   * test that runs by itself.
+   *
+   *   `worker/rc-client-reports.test.mts` — a fixture carrying its own hand-rolled copy of
+   *     offerHold's upsert. Caught, loudly, by the suite going red.
+   *   `scripts/rc-test-hold.mts` — the script that queues a REAL hold on a REAL campsite,
+   *     which is on docs/LANES.md's SERIAL list. Nothing runs it in CI, so it would have
+   *     thrown the next time somebody set up a live test, at whatever hour that happened
+   *     to be.
+   *
+   * `ON CONFLICT` needs a target matching a unique index EXACTLY, so every copy of that
+   * column list is a separate thing to keep in step with the index — and a copy in a script
+   * fails only when a human is already mid-task. The rule is mechanical because the failure
+   * is invisible from any one file.
+   */
+  const files = [
+    'src/lib/rc-holds.ts',
+    'worker/rc-client-reports.test.mts',
+    'scripts/rc-test-hold.mts',
+  ];
+  let checked = 0;
+  for (const f of files) {
+    const src = readFileSync(f, 'utf8');
+    for (const m of src.matchAll(/ON CONFLICT \(([^)]*)\) DO/g)) {
+      const cols = m[1].split(',').map((c) => c.trim());
+      // Only the ones on THIS table — the file may hold upserts on others.
+      if (!cols.includes('watch_id') || !cols.includes('unit_id')) continue;
+      checked++;
+      assert.deepEqual(
+        cols,
+        ['watch_id', 'unit_id', 'arrival_date', 'release_at'],
+        `${f} upserts rc_hold_requests on (${cols.join(', ')}), which no longer matches the ` +
+          'unique index. Postgres answers "no unique or exclusion constraint matching the ' +
+          'ON CONFLICT specification" — a throw, at whatever moment that code next runs.',
+      );
+    }
+  }
+  // A guard that inspected nothing would be indistinguishable from one that approved.
+  assert.ok(checked >= 3, `only found ${checked} upserts — the anchors have rotted`);
 });

@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import Card from "@/components/ui/Card";
+import Collapsible from "@/components/ui/Collapsible";
+import HoldRow, { type MyHold } from "./HoldRow";
+import { cardHolds } from "@/lib/hold-placement";
 import Tag from "@/components/ui/Tag";
 import Button, { buttonClasses } from "@/components/ui/Button";
 import { providerLabel, supportsAutoCart } from "./providers";
@@ -74,6 +77,14 @@ export interface WatchCardProps {
   stalledSources?: ReadonlySet<string>;
   /** Auto-cart is enabled but the rec.gov session is stale. */
   sessionExpired?: boolean;
+  /**
+   * Every hold the signed-in user has, from ONE fetch on the page — see `useMyHolds`. This
+   * component picks out its own, rather than each card fetching, so N cards cannot end up
+   * holding N answers that disagree about a hold somebody just declined.
+   */
+  holds?: MyHold[];
+  /** Called after a decline or cancel comes back ok, so the row disappears at once. */
+  onHoldRemoved?: (id: string) => void;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -124,7 +135,13 @@ function releaseLabel(releaseAt: string): string {
   return m ? `${h12}:${String(m).padStart(2, "0")} ${ampm}` : `${h12} ${ampm}`;
 }
 
-export default function WatchCard({ watch, stalledSources, sessionExpired }: WatchCardProps) {
+export default function WatchCard({
+  watch,
+  stalledSources,
+  sessionExpired,
+  holds,
+  onHoldRemoved,
+}: WatchCardProps) {
   const state = watchState(watch, stalledSources, sessionExpired);
   const source = watch.campground_source;
 
@@ -143,6 +160,36 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
   ]
     .filter(Boolean)
     .join(" · ");
+
+  // ONE definition of which holds are this card's — shared with the page-level panel, which
+  // renders precisely the complement. See `@/lib/hold-placement`.
+  const mine = cardHolds(holds ?? [], watch.id);
+
+  /**
+   * ONE SOURCE FOR THE CARD, badge and list alike.
+   *
+   * `watch.pending_holds` and the `holds` prop are two fetches of the SAME rows — identical
+   * predicate, `status IN ('offered','requested') AND release_at >= now` — but they refresh
+   * on different clocks. `pending_holds` rides `/api/watches`, fetched once when the page
+   * loads; `holds` rides `/api/rc-holds/mine`, polled every 20 seconds and updated the
+   * instant somebody declines or cancels. So a cancel used to empty the dropdown while the
+   * badge above it went on saying "Holding #96 · 8 AM" until the next page load — the same
+   * fact, twice, disagreeing on the one card whose job is to say what is happening.
+   *
+   * When the page supplies `holds` it is the fresher of the two and the card uses it for
+   * both. `pending_holds` stays the fallback for callers that render a card without the
+   * page around it (the screenshot preset, and anything server-rendered later), so this is
+   * a preference rather than a second requirement.
+   *
+   * The FLAT list, filtered — not `[...mine.requested, ...mine.offered]` — because the
+   * badge reads `[0].releaseAt` for its "· 8 AM" and both queries order by `release_at ASC`.
+   * Concatenating the two buckets would quietly name the wrong release.
+   */
+  const badgeHolds = holds
+    ? holds
+        .filter((h) => h.watchId === watch.id && (h.status === "offered" || h.status === "requested"))
+        .map((h) => ({ unitName: h.unitLabel, releaseAt: h.releaseAt, status: h.status }))
+    : (watch.pending_holds ?? []);
 
   const cardState =
     state === "hit" ? "hit" : state === "authexpired" ? "warn" : state === "paused" ? "paused" : "default";
@@ -166,11 +213,10 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
           {/* A hold is a different promise from an opening — it is not bookable yet, and
               saying "open" about it would send someone to a site they cannot take. */}
           {(() => {
-            const holds = watch.pending_holds ?? [];
-            if (!holds.length) return null;
-            const asked = holds.filter((h) => h.status === "requested");
-            const offered = holds.filter((h) => h.status === "offered");
-            const when = releaseLabel(holds[0].releaseAt);
+            if (!badgeHolds.length) return null;
+            const asked = badgeHolds.filter((h) => h.status === "requested");
+            const offered = badgeHolds.filter((h) => h.status === "offered");
+            const when = releaseLabel(badgeHolds[0].releaseAt);
             return (
               <>
                 {/* WHAT YOU ASKED FOR comes first and names the site: it is a commitment
@@ -281,6 +327,53 @@ export default function WatchCard({ watch, stalledSources, sessionExpired }: Wat
             {source ? providerLabel(source, watch.campground_id) : "This provider"}
             {" isn't responding. We're retrying — your other watches are unaffected."}
           </p>
+        </div>
+      )}
+
+      {/* THE HOLD LISTS LIVE IN THE CARD NOW (owner's ask, 2026-09-04): "move the available
+          holds and queued holds to the box all the other watch info is in".
+
+          They were stacked at the top of the page in `HoldsPanel`, which meant the more
+          watches you had the further down the page a site ALREADY IN OUR CART sat — and
+          that is the one thing on the screen with a fifteen-minute fuse. `offered` and
+          `requested` are both about tomorrow morning and neither can be acted on now, so
+          they belong beside the watch they came from. The panel keeps exactly what a card
+          will not show; see `@/lib/hold-placement`, which is written as the complement so
+          nothing can fall between the two.
+
+          COLLAPSED BY DEFAULT AND THE COUNT IS IN THE SUMMARY, so a card with four offers
+          is one line until somebody wants them. The badges above already say the count and
+          the release time at a glance — this is the detail behind that. */}
+      {(mine.offered.length > 0 || mine.requested.length > 0) && (
+        <div className="mt-3 grid gap-1.5 border-t border-ch-line pt-2.5">
+          {mine.offered.length > 0 && (
+            <Collapsible
+              label="Available to hold"
+              summary={`${mine.offered.length} site${mine.offered.length === 1 ? "" : "s"}`}
+            >
+              <div className="grid grid-cols-[minmax(0,1fr)] divide-y divide-ch-line">
+                {mine.offered.map((h, i) => (
+                  <div key={h.id} className={i === 0 ? "" : "pt-3"}>
+                    <HoldRow hold={h} variant="card" onRemoved={(id) => onHoldRemoved?.(id)} />
+                  </div>
+                ))}
+              </div>
+            </Collapsible>
+          )}
+          {mine.requested.length > 0 && (
+            <Collapsible
+              label="Queued for us to grab"
+              summary={`${mine.requested.length} site${mine.requested.length === 1 ? "" : "s"}`}
+            >
+              <div className="grid grid-cols-[minmax(0,1fr)] divide-y divide-ch-line">
+                {mine.requested.map((h, i) => (
+                  <div key={h.id} className={i === 0 ? "" : "pt-3"}>
+                    <HoldRow hold={h} variant="card" onRemoved={(id) => onHoldRemoved?.(id)} />
+                  </div>
+                ))}
+              </div>
+            </Collapsible>
+          )}
         </div>
       )}
 

@@ -232,8 +232,14 @@ async function main() {
        (watch_id, user_id, campground_id, unit_id, unit_name, arrival_date, nights, release_at,
         status, requested_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'requested', NOW())
-     ON CONFLICT (watch_id, unit_id, arrival_date) DO UPDATE
-       SET release_at = EXCLUDED.release_at, status = 'requested', requested_at = NOW(),
+     -- FOUR COLUMNS SINCE MIGRATION 074, and release_at can no longer be the thing
+     -- being SET because it is part of the key. Re-running this script with a new offset
+     -- therefore inserts a fresh row rather than recycling the last one, which is the
+     -- correct reading now: two different release times are two different test holds, and
+     -- the old row expires on its own. Left as an upsert so a re-run at the SAME offset
+     -- within the same second is still idempotent.
+     ON CONFLICT (watch_id, unit_id, arrival_date, release_at) DO UPDATE
+       SET status = 'requested', requested_at = NOW(),
            carted_at = NULL, cart_key = NULL, cart_entry_key = NULL, error = NULL,
            updated_at = NOW()
      RETURNING id`,
