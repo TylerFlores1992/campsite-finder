@@ -67,8 +67,20 @@ test('extra holds are offered but NOT separately alerted', () => {
   assert.ok(loop.length > 0, 'the extras are recorded in their own loop');
   const body = loop.slice(0, loop.indexOf('const held = heldUnits[0];'));
   assert.ok(!/dispatchNotifications/.test(body), 'and that loop must not send notifications');
-  assert.match(body, /offerHold\(/, 'it records offers only');
-  assert.match(body, /hasAutocartEntitlement/, 'gated by the same entitlement as the primary offer');
+  // RE-ANCHORED 2026-09-04, NOT RELAXED. The extras loop used to carry its own hand-rolled
+  // copy of the offer — `offerHold(` plus an entitlement check — and that copy had DRIFTED:
+  // it checked entitlement only, so it could offer a hold with the RC runner dead, past
+  // RC_HOLD_CAPACITY, or on a portal the bot holds no account for. Both paths go through
+  // `offerFor` now, so the assertion is that it uses the shared path rather than that it
+  // contains a second copy of one.
+  assert.match(body, /await offerFor\(extra\)/, 'it records offers only, via the shared path');
+  assert.ok(!/offerHold\(/.test(body), 'and must not grow a second hand-rolled copy of the offer');
+  // The entitlement gate moved one level out (read once per watch, fed to holdOfferDecision)
+  // rather than being asked once per extra — so assert it still governs, where it now lives.
+  const poller2 = readFileSync('worker/poller.ts', 'utf8');
+  assert.match(poller2, /const entitled = await hasAutocartEntitlement\(w\.user_id\)/);
+  assert.match(poller2, /holdOfferDecision\(\{[\s\S]{0,200}entitled,/,
+    'gated by the same entitlement as the primary offer');
 });
 
 test('a hold the user already asked for is never re-offered a button', () => {

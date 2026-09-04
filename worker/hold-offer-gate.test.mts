@@ -28,11 +28,23 @@ const holds = readFileSync('src/lib/rc-holds.ts', 'utf8');
 const code = (src: string) => src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
 
 test('the poller will not offer a hold without a live runner', () => {
+  // RE-ANCHORED 2026-09-04, NOT RELAXED. `mayHold` was replaced by `holdOfferDecision`
+  // when the offer moved above the claim gate, so the old `/const mayHold[\s\S]{0,160}bot.ok/`
+  // matched nothing, and this guard would have gone GREEN on a poller that had stopped
+  // consulting
+  // the heartbeat entirely. The property is unchanged: the fact must be COMPUTED and then
+  // actually FED to the decision — computing it and not using it is precisely the 2026-08-11
+  // bug, where the runner heartbeat existed the whole time and nothing read it.
   const body = code(poller);
   assert.match(body, /const bot = await rcBotUsable\(\)/);
-  // The gate has to be ON `mayHold`. Computing the fact and not using it is precisely the
-  // shape of the bug — the runner heartbeat existed the whole time and nothing consulted it.
-  assert.match(body, /const mayHold\s*=[\s\S]{0,160}bot\.ok/);
+  assert.match(body, /holdOfferDecision\(\{[\s\S]{0,200}botOk: bot\.ok/,
+    'bot.ok must be one of the facts holdOfferDecision judges');
+  // And the decision must actually gate the write, not merely be computed beside it.
+  const decided = body.indexOf('const decision = holdOfferDecision(');
+  const refused = body.indexOf('if (!decision.mayOffer', decided);
+  const offered = body.indexOf('await offerHold(', decided);
+  assert.ok(decided !== -1 && refused !== -1 && offered !== -1, 'could not locate the offer path');
+  assert.ok(refused < offered, 'a refused decision must return BEFORE offerHold is called');
 });
 
 test('the alert still goes out — only the button is withheld', () => {
@@ -43,15 +55,18 @@ test('the alert still goes out — only the button is withheld', () => {
   // Ordering by index, not a character window — a `{0,N}` window is a magic number that
   // silently stops asserting the moment the code between the two points grows.
   const declared = body.indexOf('let holdUrl: string | null = null;');
-  const gate = body.indexOf('const mayHold', declared);
+  const gate = body.indexOf('if (primaryOffer.offeredId)', declared);
   const dispatch = body.indexOf("kind: 'coming_soon'", gate);
   assert.ok(declared !== -1 && gate !== -1 && dispatch !== -1, 'could not locate the offer block');
   assert.ok(declared < gate && gate < dispatch, 'the gate must sit between holdUrl and the dispatch');
   // `holdUrl` is declared null and only ever assigned inside the gated branch, so a
-  // withheld button cannot take the alert with it.
+  // withheld button cannot take the alert with it. RE-ANCHORED on the offer RESULT rather
+  // than on `mayHold`, which no longer exists — the gates moved into holdOfferDecision when
+  // the offer itself moved above the claim gate.
   const between = body.slice(declared, dispatch);
   assert.equal((between.match(/holdUrl = /g) ?? []).length, 1, 'holdUrl must be set in exactly one place');
-  assert.match(between, /if \(mayHold[\s\S]*holdUrl = /, 'and that place must be inside the gate');
+  assert.match(between, /if \(primaryOffer\.offeredId\)[\s\S]*holdUrl = /,
+    'and that place must be inside the gate');
 });
 
 test('the tap tells the truth instead of refusing', () => {

@@ -35,6 +35,7 @@ import { SHARD_COUNT, LEASE_RENEW_MS, claimOrRenewShard, heldShard, ownsCampgrou
 import { leadDaysUntil } from './lead-time';
 import { heldCheckDue, clampHeldInterval, RC_HELD_CHECK_DEFAULT_MS, holdIsNewsworthy } from './held-cadence';
 import { claimHoldNotification, releaseHoldClaims } from './hold-claim';
+import { holdOfferDecision, describeHoldBlocker } from './hold-offer';
 import { rankHoldLine } from './hold-line';
 import { watchKey } from './watch-key';
 import { groupByWatch, alsoSitesFrom } from './alert-batch';
@@ -1183,6 +1184,12 @@ async function cycle(): Promise<void> {
   // ReserveCalifornia "coming soon" heads-up: a watched site is cancelled-but-held
   // and will release at a known time. Deduped per release time (separate from the
   // available claim, so the "now bookable" alert still fires when it opens).
+  // ONE READ FOR THE WHOLE PASS. `rcBotUsable()` takes no arguments — it asks whether the
+  // hold runner is beating — so asking it per watch was always redundant. It used to sit
+  // inside the claim-winning block, i.e. it was read at most once per release; now that the
+  // offer runs on every held check it would otherwise be read per watch per check.
+  const bot = await rcBotUsable();
+
   for (const w of rcWatches) {
     // NOT skipped when something is already available — see the held pass above. The
     // dedup that matters is `claimHoldNotification`, which is keyed on the RELEASE TIME,
@@ -1190,27 +1197,67 @@ async function cycle(): Promise<void> {
     // ordinary availability alerts the same watch sends.
     const heldUnits = rcHeld.get(watchKey(w));
     if (!heldUnits?.length) continue;
+
+    // BOTH OF THESE ARE PER WATCH, NOT PER UNIT, so they are read once here rather than
+    // inside `offerFor`. The entitlement check used to `break` the extras loop on a
+    // negative; hoisting it keeps that meaning (nothing is offered) without asking the
+    // same question once per held unit.
+    const portalOk = supportsRcHold(w.campground_source);
+    const entitled = await hasAutocartEntitlement(w.user_id).catch(() => false);
+
+    /**
+     * OFFER ONE HELD UNIT. Used by BOTH the extras loop and the primary unit, which is the
+     * point: they were two hand-rolled copies that had already drifted apart, and the
+     * primary's copy sat behind the notification claim so it got one attempt per release.
+     * See `worker/hold-offer.ts` for the whole account.
+     *
+     * IDEMPOTENT, so running it on every held check is free and self-healing. `offerHold`
+     * is an upsert whose `DO UPDATE ... WHERE status = 'offered'` re-returns the id while
+     * the row is still untapped and returns null once the user has answered — so a repeat
+     * call neither duplicates the row nor walks a tap backwards.
+     */
+    const offerFor = async (unit: (typeof heldUnits)[number]) => {
+      const arrivalDate = unit.dates[0] ?? w.start_date;
+      // CAPACITY IS PER UNIT AND MUST BE READ INSIDE THE LOOP: each offer consumes a seat,
+      // so the second extra has to see the first one's row. Skipped entirely when the unit
+      // is missing, which is the one blocker that needs no query to establish.
+      const load = unit.unitId == null ? 0 : await holdWindowLoad(unit.availableAt, {
+        watchId: w.id, unitId: String(unit.unitId), arrivalDate,
+      });
+      const decision = holdOfferDecision({
+        hasUnit: unit.unitId != null,
+        entitled,
+        botOk: bot.ok,
+        roomToHold: load < RC_HOLD_CAPACITY,
+        portalOk,
+      });
+      if (!decision.mayOffer || unit.unitId == null) {
+        return { offeredId: null as string | null, blockedBy: decision.blockedBy, load };
+      }
+      const offeredId = await offerHold({
+        watchId: w.id,
+        userId: w.user_id,
+        campgroundId: w.campground_id,
+        unitId: String(unit.unitId),
+        unitName: rcSiteLabel(unit.name, unit.unitId),
+        arrivalDate,
+        nights: unit.dates.length || 1,
+        releaseAt: unit.availableAt,
+      }).catch(() => null);
+      // RANK THE LINE AFTER EVERY OFFER, including the ones that send no alert. A contest
+      // is only visible once the second offer exists, and it can arrive on any cycle — on
+      // 2026-08-24 the rival watch was created three hours after the first offer went out.
+      await rankHoldLine(unit.availableAt, String(unit.unitId)).catch(() => []);
+      return { offeredId, blockedBy: null as null, load };
+    };
+
     // RECORD AN OFFER FOR EVERY held unit, so the watch page can list them all and each
     // has its own one-tap hold link — but ALERT about only the soonest. A text per site
     // on a four-cancellation morning is the notification flood migration 039 exists to
     // prevent, and the extra offers are one tap away in the app either way.
     for (const extra of heldUnits.slice(1)) {
       if (extra.unitId == null || !holdIsNewsworthy(extra.availableAt)) continue;
-      if (!(await hasAutocartEntitlement(w.user_id).catch(() => false))) break;
-      await offerHold({
-        watchId: w.id,
-        userId: w.user_id,
-        campgroundId: w.campground_id,
-        unitId: String(extra.unitId),
-        unitName: rcSiteLabel(extra.name, extra.unitId),
-        arrivalDate: extra.dates[0] ?? w.start_date,
-        nights: extra.dates.length || 1,
-        releaseAt: extra.availableAt,
-      }).catch(() => null);
-      // RANK THE LINE AFTER EVERY OFFER, including the ones that send no alert. A contest
-      // is only visible once the second offer exists, and it can arrive on any cycle — on
-      // 2026-08-24 the rival watch was created three hours after the first offer went out.
-      await rankHoldLine(extra.availableAt, String(extra.unitId)).catch(() => []);
+      await offerFor(extra);
     }
     const held = heldUnits[0];
     // A lock expiring in minutes is not a cancellation heads-up — see holdIsNewsworthy.
@@ -1241,6 +1288,22 @@ async function cycle(): Promise<void> {
     if (held.unitId != null) {
       await rankHoldLine(held.availableAt, String(held.unitId)).catch(() => []);
     }
+
+    // OFFER BEFORE THE CLAIM GATE — this is the 2026-09-04 fix, and it is the same shape as
+    // the re-rank directly above.
+    //
+    // This call used to live inside the claim-winning block below, so it ran ONCE per
+    // (watch, release, unit) and every later cycle `continue`d past it. `offerHold` is
+    // wrapped in `.catch(() => null)`, so a transient throw lost the offer for that release
+    // FOR EVER, silently, while the alert still went out — and nothing could recreate it,
+    // because the claim was already spent. That happened to Leo Carrillo #L034 on
+    // 2026-09-04 and the row had to be inserted by hand ten hours before the release.
+    //
+    // Above the gate it retries on every held check until it succeeds, which is what the
+    // extras loop has always done. Idempotent, so the repeat costs an upsert that returns
+    // the same id.
+    const primaryOffer = await offerFor(held);
+
     // SCOPED BY UNIT, NOT BY CAMPGROUND. Passing the campground here is what produced the
     // 2026-08-24 storm: one physical campsite that RC lists under two facilities became two
     // claims and two texts, every cycle. See claimHoldNotification.
@@ -1251,89 +1314,37 @@ async function cycle(): Promise<void> {
     );
     try {
       // THE OPT-IN. RC releases 99% of held sites at exactly 08:00, so we know the
-      // night before what opens and when — see findRCHeldUnit. Record the offer and
-      // hand the alert a "hold it for me" link; only a tap authorises the bot to cart,
-      // so we never take a site off the market that nobody asked for.
+      // night before what opens and when — see findRCHeldUnit. The offer row was recorded
+      // ABOVE the claim gate by `offerFor`; all that is left here is to hand the alert a
+      // "hold it for me" link. Only a tap authorises the bot to cart, so we never take a
+      // site off the market that nobody asked for.
+      //
+      // WHY THE GATES ARE NOT RE-DERIVED HERE. They live in `holdOfferDecision` and were
+      // applied once, in `offerFor`, for the primary unit and every extra alike. Asking
+      // again on this one path is how the two copies drifted in the first place: the extras
+      // loop checked only entitlement, so it could offer a hold while the RC runner was
+      // dead, past RC_HOLD_CAPACITY, or on a portal the bot has no account for.
+      //
+      // A blocked offer still sends the alert. That is deliberate and unchanged: "here is
+      // what opens tomorrow, book it yourself at 08:00" is the honest version of the same
+      // message, and a button that answers "we'll grab it" with nothing behind it costs a
+      // campsite AND stops the user watching.
       let holdUrl: string | null = null;
-      // Gated on the Auto-Cart plan, the SAME definition every other enforcer uses
-      // (lib/auth.hasAutocartEntitlement — active/trialing autocart or grandfathered,
-      // or is_beta). Holding a site consumes the one bot account's capacity, so it is
-      // plan work; and offering a button that then refuses on tap is worse than not
-      // offering it. Checked here AND in the action, because a link outlives the alert.
-      //
-      // AND THE BOT HAS TO BE THERE. On 2026-08-11 the RC runner and keep-warm stopped at
-      // 09:36 PT and the poller went on offering hold buttons for hours — one of them eight
-      // minutes before this was written. A tap would have answered "we'll grab it the moment
-      // it opens" with nothing running to do it, and the user would have stopped watching.
-      // The alert still goes out with no button, which is the honest version of the same
-      // message: here is what opens tomorrow, book it yourself at 08:00.
-      //
-      // FAILS CLOSED. `rcBotUsable` returns ok:false when it cannot read the heartbeat at
-      // all, and that is the right way round: a hold nobody honours costs a campsite, a
-      // missing button costs a convenience. Same direction as the entitlement catch above.
-      const bot = await rcBotUsable();
-      if (!bot.ok && held.unitId != null) {
-        console.log(
-          `[poller] watch ${w.id}: NOT offering a hold — the RC runner is absent ` +
-          `(${bot.beatAgeMs == null ? 'never beat' : `last beat ${Math.round(bot.beatAgeMs / 1000)}s ago`}). ` +
-          'Sending the coming-soon alert without a hold link.'
-        );
-      }
-      // AND THERE HAS TO BE ROOM. RC caps a cart at two sites and every hold we make goes
-      // into one cart, so a third offer for the same release is a promise we cannot keep.
-      // On 2026-08-13 three holds were queued for one 08:00 and the third was refused by RC
-      // in its own words. Withholding the button sends the ordinary coming-soon alert
-      // instead, which is what that user would have had anyway — and unlike a dead hold, it
-      // leaves them expecting to book it themselves.
-      const arrivalDate = held.dates[0] ?? w.start_date;
-      const load = held.unitId == null ? 0 : await holdWindowLoad(held.availableAt, {
-        watchId: w.id, unitId: String(held.unitId), arrivalDate,
-      });
-      const roomToHold = load < RC_HOLD_CAPACITY;
-      if (!roomToHold && held.unitId != null) {
-        console.log(
-          `[poller] watch ${w.id}: NOT offering a hold — ${load} site(s) already spoken for at ` +
-          `${held.availableAt} and we can hold ${RC_HOLD_CAPACITY}. Sending the coming-soon alert ` +
-          'without a hold link.'
-        );
-      }
-      // AND THE BOT MUST HAVE AN ACCOUNT ON THIS PORTAL. Detection covers all ten UseDirect
-      // portals because `Lock` is generic; the bot signs in to ONE ReserveCalifornia account
-      // and carts against reservecalifornia.com. See supportsRcHold — an Ohio watch would
-      // otherwise be offered a hold nothing can perform.
-      const holdablePortal = supportsRcHold(w.campground_source);
-      if (!holdablePortal && held.unitId != null) {
-        console.log(
-          `[poller] watch ${w.id}: NOT offering a hold — ${w.campground_source} is UseDirect but ` +
-          'the cart bot only holds a ReserveCalifornia account. Coming-soon alert without a hold link.'
-        );
-      }
-      const mayHold =
-        held.unitId != null && bot.ok && roomToHold && holdablePortal &&
-        (await hasAutocartEntitlement(w.user_id).catch(() => false));
-      if (mayHold && held.unitId != null) {
-        const offered = await offerHold({
-          watchId: w.id,
-          userId: w.user_id,
-          campgroundId: w.campground_id,
-          unitId: String(held.unitId),
-          unitName: rcSiteLabel(held.name, held.unitId),
-          arrivalDate,
-          nights: held.dates.length || 1,
-          releaseAt: held.availableAt,
-        }).catch(() => null);
-        // Ranked whether or not `offerHold` returned an id: no row back means the user has
-        // already tapped, and a hold that has been ACCEPTED is exactly the one whose place
-        // in the line matters most.
-        //
-        // KEPT ALONGSIDE THE PRE-CLAIM RE-RANK ABOVE, which cannot replace it: on this one
-        // cycle the row is created HERE, after that call has already run and found nothing.
-        // Without this the freshly offered hold waits a full cycle to be ranked. The two are
-        // idempotent, so ranking twice on the claim-winning pass costs a SELECT.
-        await rankHoldLine(held.availableAt, String(held.unitId)).catch(() => []);
-        // A missing hold link must never block the alert — the heads-up is useful on
-        // its own, and the user can still book manually at 8am.
-        if (offered) holdUrl = await actionUrlFor(w.id, 'hold', String(held.unitId)).catch(() => null);
+      if (primaryOffer.offeredId) {
+        holdUrl = await actionUrlFor(w.id, 'hold', String(held.unitId)).catch(() => null);
+      } else if (primaryOffer.blockedBy) {
+        // LOGGED HERE RATHER THAN IN `offerFor`, so the cadence is unchanged. `offerFor`
+        // now runs on every held check; this block runs once per release, which is what
+        // these three lines were always written for. A per-check version would print the
+        // same sentence every 15 seconds into a log `tail-log` truncates to 16,000
+        // characters — which is how the 2026-08-23 memory attributions were lost.
+        const line = describeHoldBlocker(primaryOffer.blockedBy, {
+          source: w.campground_source,
+          botBeatAgeMs: bot.beatAgeMs ?? null,
+          load: primaryOffer.load,
+          capacity: RC_HOLD_CAPACITY,
+        });
+        if (line) console.log(`[poller] watch ${w.id}: ${line}`);
       }
 
       await dispatchNotifications({

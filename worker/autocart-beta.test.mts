@@ -180,7 +180,11 @@ test('the poller enforces it, not only the UI', () => {
   // Same rule as every other auto-cart gate: checked where it would be spent. A UI that
   // merely declines to advertise still leaves the poller free to send the button.
   const poller = strip(read('worker/poller.ts'));
-  assert.match(poller, /const holdablePortal = supportsRcHold\(w\.campground_source\)/);
-  assert.match(poller, /mayHold =[\s\S]{0,200}holdablePortal/,
-    'holdablePortal must be one of the conjuncts that decide mayHold');
+  // RE-ANCHORED 2026-09-04, NOT RELAXED. `mayHold` became `holdOfferDecision` when the
+  // offer moved above the claim gate; left pointing at the old name this would have matched
+  // nothing and passed against a poller that had stopped checking the portal at all. Same
+  // property: the fact is computed AND fed to the decision that gates the write.
+  assert.match(poller, /const portalOk = supportsRcHold\(w\.campground_source\)/);
+  assert.match(poller, /holdOfferDecision\(\{[\s\S]{0,200}portalOk,/,
+    'portalOk must be one of the facts holdOfferDecision judges');
 });

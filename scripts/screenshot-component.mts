@@ -288,6 +288,18 @@ const PRESETS: Record<string, Preset> = {
     // closed state is one line and the question worth eyeballing is whether the rows fit
     // and whether the ✕ on a queued row is reachable on a phone.
     entry: `import WatchCard from '@/components/v2/WatchCard';
+      // BOTH BARS ARE CLICKED OPEN, because closed they are one line each and the
+      // questions worth eyeballing are whether a row FITS the card's width and whether
+      // the cancel control on a queued row is reachable on a phone. Neither is visible
+      // in the collapsed state, so a preset labelled "both open" that rendered them shut
+      // would be showing something it cannot show. Clicked rather than given a prop: a
+      // screenshot harness must not widen a component's production API, and the
+      // aria-expanded buttons are the same affordance a user presses. Pass --wait=700.
+      if (typeof window !== 'undefined') {
+        setTimeout(() => {
+          document.querySelectorAll('[aria-expanded="false"]').forEach((b) => b.click());
+        }, 300);
+      }
       const watch = {
         id: 'w1', campground_id: 'rc-583', campground_name: 'Morro Bay SP — Upper Section (sites 86-140)',
         campground_source: 'reservecalifornia', start_date: '2026-09-04', end_date: '2026-09-06',
