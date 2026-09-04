@@ -1,75 +1,63 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed **2026-09-02 evening**.*
+*Rewritten 2026-08-25 evening; state refreshed **2026-09-04 05:40 UTC** (main lane).*
 
-> ## READ FIRST — THE ANDROID HAND-OFF IS FIXED AND HUMAN-VERIFIED. #255 IS OPEN.
+> ## READ FIRST — THREE THINGS, AND THE FIRST IS A HABIT
 >
-> **The defect that has run since 2026-08-29 is closed.** #249 (close on RC's own
-> `customerId`, no timer) + #250 (stop clicking "Log in" on `/login/callback`) + #252 (stop
-> hunting RC's control on Okta's host — a flat 12-second pause on every sign-in). Five Android
-> hand-offs were run on 09-02: three completed end to end, and one was **confirmed on RC's own
-> cart page by the owner** — name in the header, cart badge 1, the reservation itself.
-> **That is the first human corroboration of `cart read back` on any platform**, and three
-> places in the docs that said it had never happened are now struck. CLAUDE.md → "THE ANDROID
-> HAND-OFF IS FIXED, AND A HUMAN FINALLY LOOKED AT THE CART".
+> **1. `git fetch origin master` BEFORE YOU BELIEVE ANY DIFF.** On 2026-09-04 this session
+> compared production's `rc_hold_requests_unique` against a day-old working tree, called the
+> live four-column index "drift", and had the owner run a `DROP`/`CREATE` back to three
+> columns. Master already carried **migration 074**, which widened that key deliberately. The
+> hold button was silently dead for **sixteen minutes** — `offerHold`'s `ON CONFLICT` had
+> nothing to match, threw `42P10`, and its own `catch` returned `null`. No offer was lost
+> (checked against every claim key) and no data was touched. **One fetch would have prevented
+> all of it.** CLAUDE.md → "I READ A STALE CHECKOUT AS PRODUCTION DRIFT".
 >
-> ### THE ONE ACTION: MERGE #255, THEN GET THE BOX UPDATED
+> **2. A REAL, TAPPED HOLD RELEASES AT 2026-09-04 08:00 PT, and it is the site we lost.**
+> `#L034` (unit 42527, Leo Carrillo rc-583), tapped 05:02 UTC — the retry of the campsite
+> lost on 09-03 to a 12-second retry gap. **The cart burst is on the box** (`d341139`, applied
+> 03:20 UTC), so this is its first real test on the case it was built for. Nothing further is
+> needed: the box cannot auto-update tonight (the quiet window and the 6h release gate cancel
+> out) and nothing bot-side is missing.
 >
-> `claude/rc-captcha-resume`, two commits, local `npm run verify` **1618/1618**, every mutation
-> grep-verified to apply. Two independent fixes:
-> 1. **A CAPTCHA between the email and the password no longer abandons the sign-in.** Okta
->    shows its challenge AFTER the identifier is submitted, and the password wait was a flat
->    20s with no challenge check — so a human solving a puzzle ran the clock out and the run
->    reported a failure over a sign-in that was proceeding fine. Reported by the owner on the
->    fifth test. `chWaitPassword` extends ONCE to a fixed 5 minutes and reports
->    `captcha-cleared` when it takes the login back. **Web-side — reaches installed apps on a
->    push, no rebuild.**
-> 2. **The runner's cart call is bounded** (`RC_CART_EVAL_TIMEOUT_MS`, 60s). **BOT-SIDE — it is
->    inert until the mini-PC updates**, so ask for an update (or a quiet-window run) after the
->    merge, and confirm with `git-status` through `bot_commands`, never `autocart.bot_version`.
+> **3. THE 07:50 PT MEASUREMENT ROUTINE FIRES INTO THE SAME RELEASE.**
+> `trig_012K7iCrj1J9KspyqGucZSHC`, one-shot, 14:50 UTC. It runs `scripts/rc-release-window.mts`
+> against Leo Carrillo's 48 locked nights at 2-second resolution — the first direct measurement
+> of when RC actually lets go, against a poller whose 15-second cadence cannot answer it.
+> **Read the limit recorded with it:** it measures WHEN RC RELEASES, not how long a site
+> survives; December at Leo Carrillo is not a contested morning.
 >
-> **`worker/rc-cart-timeout.test.mts` is in that branch, so merging it fires a worker deploy and
-> restarts both pollers.** Expected and harmless; check `poller.shards` afterwards.
+> ### AFTER THE MORNING, IN ORDER OF WHAT IT BUYS
 >
-> ### THEN, IN ORDER OF WHAT IT BUYS
+> **1. MERGE #255.** `claude/rc-captcha-resume`, two commits, local verify 1618/1618 — a
+> CAPTCHA between the email and password no longer abandons the sign-in (web-side), and the
+> runner's cart `page.evaluate` is bounded at 60s (**bot-side, inert until the box updates**;
+> confirm with `git-status` through `bot_commands`, never `autocart.bot_version`). It carries
+> a `worker/*.test.mts`, so merging fires a worker deploy — check `poller.shards` after.
 >
-> **1. The runner has NO wedge watchdog, and that is the real fix.** On 09-02 the runner sat
-> alive in its pre-release wait and polled nothing, indefinitely — `last_attempt_at` NULL, the
-> 2026-08-07 dead-runner signature over a live process. `supervise.ps1` restarts on EXIT only.
-> `restart-rc` recovered it in seconds. #255's bound covers the ONE call identified as the
-> likely hang; the general fix is the keep-warm's 08-17 pattern (a watchdog in a timer that
-> bails so the supervisor restarts it), and it is not built. CLAUDE.md → "THE RUNNER HUNG IN
-> THE PRE-RELEASE WAIT".
+> **2. The runner has NO wedge watchdog.** On 09-02 it sat alive in its pre-release wait and
+> polled nothing, indefinitely — `last_attempt_at` NULL, the 2026-08-07 dead-runner signature
+> over a live process. `supervise.ps1` restarts on EXIT only. #255 bounds the ONE call
+> identified as the likely hang; the general fix is the keep-warm's 08-17 pattern and is not
+> built.
 >
-> **2. RC'S OWN APP TIER IS THE LARGEST UN-INSTRUMENTED RISK ON THIS PATH.** The first of the
-> five tests was lost to it: *"a RC load freeze that crashed the app and another problem
-> loading"*, then it worked on a later attempt. Same shape as the 08-31 bisect (three attempts,
-> ~5 minutes) and the 08-30 mid-test outage. **At 08:00 that loses the site on its own**,
-> whatever we fix about login state, and nothing in this repo measures it.
+> **3. RC'S OWN APP TIER IS THE LARGEST UN-INSTRUMENTED RISK ON THIS PATH** — and it is now
+> partly instrumented. `never-loaded`/`load-error` have readings, a successful load reports
+> its milliseconds (`RC_SLOW_LOAD_MS` = 8s), and `rc-load-stats` aggregates across runs. What
+> is still missing is a corpus: **the first hand-off after this lands is the first data point.**
 >
-> **3. The session dies within ~2 minutes of every queue — four for four.** Queue -> the runner
-> takes the Chromium profile -> the keep-warm stands down and loses the live token -> ~11
-> minutes (`RENEW_MIN_GAP_MS + 60s`) before the renewal retries. It cost a `test-login` on most
-> runs. This is the 2026-08-30 `persistLiveToken` case; **whether that fix is actually on the
-> box was never checked**, and it is one `git-status` away.
->
-> **4. "Open the window and close it at once when RC comes back already signed in."** The
-> rejected webview-free login had a better-shaped sibling: a cookie-answered sign-in was
-> measured at **11 seconds and +24 MB** against twelve minutes for the password path (08-21).
-> Not built; wants measuring on both phones rather than assuming. The full-API version is
-> REJECTED with reasons — CLAUDE.md → "A WEBVIEW-FREE LOGIN WAS CONSIDERED AND REJECTED".
+> **4. The session dies within ~2 minutes of every queue — four for four**, then ~11 minutes
+> to recover. Whether the 08-30 `persistLiveToken` fix is actually on the box was never
+> checked, and it is one `git-status` away.
 >
 > **5. A fresh iOS build.** The iPhone is on **1.0 (21) from 2026-08-09** against Android's
 > **1.0 (25)**, so "iOS is the baseline" is a baseline of three-week-old code that predates
-> RevenueCat. **iOS is now the platform with NO corroborated cart run** — the reverse of the
-> asymmetry `docs/PLATFORM-PARITY.md` was written about. It is also required for Apple IAP.
-> Codemagic run, not a code change.
+> RevenueCat, and **iOS is now the platform with NO corroborated cart run.** Required for
+> Apple IAP anyway. Codemagic run, not a code change.
 >
-> **Also outstanding, unrelated:** run the subscriptions reconcile (Admin -> "Does our table
-> match Stripe?"). **`hold-fixture-invisibility` is FIXED (#257)** — it asserted a GLOBAL
-> `nextHoldRelease()` and failed deterministically whenever any hold was live; it is a delta
-> against a baseline now, and its two sibling assertions (which passed VACUOUSLY on a live
-> hold — the more dangerous direction) compare against the fixture's own release.
+> **Also outstanding, unrelated:** run the subscriptions reconcile (Admin → "Does our table
+> match Stripe?" → Check, read the plan, Apply). Six watches the dead-man's switch paused are
+> still paused and resuming them is the owner's call.
 
 > ## (superseded — this is the fix, and it landed) #249 WAS NOT ENOUGH; #250 REMOVES OUR OWN CLICK ON THE CALLBACK PAGE
 >

@@ -5497,28 +5497,202 @@ inactive, id like to stop doing that. Just keep the watch for the duration."*
   different file is caught where a missing-file check would pass. It is bidirectional.
 
 
+### A CAMPSITE WAS LOST TO A 12-SECOND RETRY GAP, AND THE FIX IS A BURST (2026-09-03, #261)
+`#L005` at Leo Carrillo was tapped for the 08:00 PT release and never carted. **Nothing was
+broken** — the runner was healthy and asked RC about a hundred times across the 20-minute
+grace, and RC refused every one with *"The unit is not available for the date(s) specified."*
+- **THE NUMBERS ARE OURS, NOT A GUESS.** Carts at quiet, arbitrary release times land at
+  T+1s to T+4s; the two at real 08:00 PT releases landed at **T+3s** and **T+6s**; and the
+  gap between our retries, measured from the runner's own log, is **min 10s, MEDIAN 12s, max
+  24s**. The same morning the poller watched `rc-542::42527` open at 08:00:13 and be gone by
+  its next 15-second cycle. **A 12-second gap sitting on top of a window that closes in
+  seconds is the whole loss.**
+- **THE OWNER'S OBJECTION IS WHAT PRODUCED THIS.** I had reported the retry cadence as
+  adequate; *"15 seconds could easily be enough for someone else to cart the site before
+  us"* is what made me measure the gap rather than assume it. **They were right and the
+  reasoning that said otherwise was mine.**
+- `scripts/auto-cart-bot/cart-burst.mjs`: **`BURST_LEAD_MS` 15s before the release through
+  `BURST_WINDOW_MS` 30s after, retrying every `BURST_GAP_MS` (500ms)** against a shared
+  `BURST_BUDGET` of 40 attempts. Outside that window the old cadence stands — the burst buys
+  the 45 seconds that matter and nothing else.
+- **THE LEAD IS THE CONTESTED HALF, AND IT IS DELIBERATE.** See the entry below: we do not
+  know that RC never releases early, so opening the lane at T−15s is the only way to be
+  asking when it does. The cost of an early ask is a refusal, which is free; the cost of not
+  asking is the site.
+- **`releaseMoment` is fixed BEFORE the sleep, never recomputed after it** — a deadline
+  computed on the far side of a wait is a deadline measured from the wrong instant.
+- **THE LOAD IS NEGLIGIBLE** and that was checked rather than waved through: ~60 requests
+  across 45 seconds, from the ONE residential IP the bot already uses, once per release.
+- **ON THE BOX SINCE 2026-09-04 03:20 UTC** (`d341139`, `bot_commit` confirmed, heartbeat
+  live). Untested in anger: the first real 08:00 release with the burst live is the reading.
+- `worker/cart-burst.test.mts`, 21 guards. **Two neighbouring guards broke over unchanged
+  behaviour and were re-anchored, not relaxed** — `per-hold-cart` pinned the failure report's
+  entire expression, and `runner-wedge` pinned `sleepTicking(wait)` by argument; the second
+  re-anchor made the negative STRONGER (`await sleep(` rather than `await sleep(wait)`).
+
+### "RC NEVER RELEASES EARLY" IS UNPROVABLE WITH THE INSTRUMENT WE HAVE (2026-09-03)
+Asked whether a site has ever become available before its predicted release. I answered
+**twice** and was wrong the first time; the correction is the finding.
+- **THE READINGS.** Eight poller transition alerts for held units we never carted (so each
+  is a first sighting rather than a re-alert after our own release): `#133` T+3s, T+3s, T+4s,
+  T+4s; `#L045` T+10s; `#L034` T+13s; `#54` T+13s; `#78` T+28s. **Every one at or after T.**
+- **AND THAT IS NOT THE SAME AS "NEVER EARLY".** The poller samples every **fifteen
+  seconds**, so an alert at T+3s means only that the first sample after the flip landed
+  there — the flip is anywhere in **(T−12s, T+3s]**. Four of the eight sit entirely inside
+  that blind spot. **The instrument's resolution swallows the question**, and my first answer
+  reported the sampling artefact as the finding.
+- **THE CART PATH CANNOT ANSWER IT EITHER.** The runner waits out `msUntilRelease` by design,
+  so the project's ENTIRE early-cart record is **one observation, 2026-08-08, at 85 seconds
+  early, refused.** That bounds 85s. It says nothing about 5s.
+- **CLOCK SKEW IS RULED OUT, MEASURED.** The owner's *"RC clock vs our clock could easily be
+  off a few seconds"* was worth taking seriously and does not hold: RC's edge `Date` header
+  agreed with ours to within **1 second, 5 for 5**. So the uncertainty is our SAMPLING, not
+  our clock — a distinction that changes which fix is worth building.
+- **THIS IS WHY THE BURST OPENS AT T−15s.** Not because early release is established, but
+  because it is *not excluded* and the cost of asking early is a refusal.
+
+### THE RELEASE WINDOW IS BEING MEASURED DIRECTLY (2026-09-04, #264) — RUN NOT YET READ
+`scripts/rc-release-window.mts` answers the question above at **2-second resolution** instead
+of fifteen, by polling RC's grid directly across a release.
+- **A BATCH IS WHAT MAKES IT CHEAP.** One `/search/grid` call returns the WHOLE facility —
+  69 units in 0.64s, measured — and at Leo Carrillo **48 locked nights across three
+  facilities release at the same instant**. One poll per facility per tick therefore measures
+  every releasing unit at once: a single morning yields more flip times than a month of
+  poller alerts.
+- **IT TALKS TO RDR DIRECTLY, DELIBERATELY.** `fetchGrid` routes through `/api/rc-proxy` —
+  Vercel — because Fly cannot reach the California RDR host. Using it here would spend
+  hundreds of invocations from the same lambda IP the poller uses, and those WAFs meter per
+  IP: **the instrument would degrade the thing it measures.**
+- **THREE RULES, EACH A WAY IT COULD LIE.** A failed poll is **UNKNOWN, never "free"** (a 403
+  recorded as availability manufactures a flip at exactly the moment the answer matters); a
+  flip is a **BRACKET** (`locked at X, free by Y`), never a midpoint, because a midpoint
+  invents precision the cadence does not have — which is the error the script exists to test;
+  and it **refuses a verdict it has not earned** (`THE QUESTION WAS NEVER REACHED`).
+- **THREE DEFECTS FOUND BY RUNNING IT, none by reading it.** (1) **The filter in the comment
+  was not in the code** — it claimed to track only units whose lock names THIS release, over
+  code that tracked every locked night; locks releasing next week would have sat "never
+  freed" for ever and dragged the denominator. A comment asserting a filter that is not
+  there, **in the instrument built to stop exactly that.** (2) It slept to the window's START
+  before checking the END had passed, so a closed window parked for ten hours. (3) *"We could
+  not look"* and *"there is nothing there"* printed the same sentence — and the likeliest
+  cause is the documented `NODE_USE_ENV_PROXY=1` omission, whose failure mode looks exactly
+  like an empty facility. **It cost me one wrong diagnosis before that message was fixed.**
+- **REHEARSED LIVE ten hours early**: 48 nights enumerated, 57 polls, 0 unreadable, 0 flipped
+  — the correct answer at that hour. **Flip detection itself is untried and can only be tried
+  at a release.**
+- **SCHEDULED: Routine `trig_012K7iCrj1J9KspyqGucZSHC`, one-shot, fires 2026-09-04 14:50 UTC
+  (07:50 PT).** It fetches the script from `origin/claude/release-window` if master lacks it,
+  so it was never at risk from the merge timing.
+- **THE OWNER NAMED ITS LIMIT AND WAS RIGHT:** *"I don't think this will give us a good tell
+  on how long each site stays free before someone takes it — there are too many sites
+  available to make this a high popularity site."* It measures **when RC lets go**, not **how
+  long a site survives**; Leo Carrillo in December is not contested. Do not read a long
+  survival time there as evidence about a contested morning.
+
+### THE THIRD SHARD (2026-09-04, #262)
+`poller.capacity` had been AMBER at **6/8 rec.gov campground-months across 2 machines** —
+five rec.gov watches consuming six slots, because a watch spanning two months costs two.
+**Over capacity is not an outage and nothing goes red for it**: every watch simply gets
+slower, silently, which is the worst shape a degradation can take for a product whose whole
+value is detection latency.
+- **CLONE FIRST, THEN RAISE THE COUNT — and it was done in that order and observed.** Machine
+  `805456c66d6578` was cloned at 03:50:54Z and idled correctly at `shard - of 2, 0/21
+  watches` until `SHARD_COUNT = 3` landed. That is the harmless transient the rule predicts,
+  seen rather than assumed. The reverse order leaves a third of the campgrounds polled by
+  nobody with everything else green.
+- `min_machines_running` moved with it, in the same commit, as its comment requires.
+
+### I READ A STALE CHECKOUT AS PRODUCTION DRIFT, AND BROKE THE HOLD BUTTON FOR SIXTEEN MINUTES (2026-09-04)
+The worst thing this session did, and it was done with the file that was supposed to prevent
+it open in front of me.
+- **WHAT I REPORTED.** `rc_hold_requests_unique` in production was `(watch_id, unit_id,
+  arrival_date, release_at)` — four columns — while `src/lib/db/migrations/043` and
+  `offerHold`'s `ON CONFLICT` in **my working tree** named three. I called that drift, and
+  handed the owner a `DROP INDEX` / `CREATE UNIQUE INDEX` to "restore" three columns. **They
+  ran it.**
+- **THE PRODUCTION INDEX WAS CORRECT AND MY CHECKOUT WAS A DAY OLD.** The other lane had
+  shipped **migration 074** hours earlier, deliberately widening the key so a campsite offered
+  once could be offered again at a later release (`#263`). Master already carried the
+  four-column `ON CONFLICT`. **I diffed production against a file master had superseded.**
+- **THE COST, MEASURED RATHER THAN ESTIMATED.** For the ~16 minutes the index was three
+  columns, `offerHold`'s four-column `ON CONFLICT` had nothing to match, threw `42P10`, was
+  swallowed by its own `catch`, and returned `null` — **coming-soon alerts going out with no
+  hold button, silently.** Reproduced afterwards with a sentinel row to confirm the mechanism
+  rather than infer it. Checked every claim key in `rc_hold_notified_keys` against the rows:
+  **no offer was lost** (the only orphans are the legacy `|*` wildcards from 067), and no data
+  was touched.
+- **POSTGRES REFUSED THE SECOND ATTEMPT, AND ITS ERROR NAMED THE PROOF.** `Key (watch_id,
+  unit_id, arrival_date)=(3230b556…, 42527, 2026-09-04) is duplicated` — **`#L034`, the site
+  we lost the day before**: expired unclaimed at the 09-03 release, locked again, released
+  again on 09-04. Two rows the three-column key cannot hold. **The database stated 074's
+  entire justification in a single error message.**
+- **THE "MYSTERIOUS REVERT" WAS 074 LANDING.** I watched the index go back to four columns
+  ~25 minutes later and reported it as something automated undoing the fix. It was the other
+  lane applying the migration properly, duplicate-checked and read back.
+- **THE RULE: `git fetch origin master` BEFORE CALLING PRODUCTION WRONG.** The whole
+  diagnosis rested on a local file, and one fetch would have shown the branch was behind. This
+  file's most-repeated shape is an absent reading treated as a negative; this is its sibling —
+  **a STALE reading treated as current** — and the remedy costs one command.
+- **AND IT IS THE FOLD-IN GAP FROM `docs/LANES.md` ARRIVING AS AN INCIDENT.** The other lane's
+  work was correct, merged and documented; nothing pointed the session that needed it at the
+  fact. `ls docs/NOTES-*.md` and `git fetch` are the two cheap habits that close it.
+
+### RC'S OWN LOAD IS INSTRUMENTED NOW (2026-09-04)
+Three gaps in the hand-off readout, all the house shape — a fact produced and thrown away.
+- **`never-loaded` and `load-error` had no reading.** `closeReasonReading` knew `token`,
+  `settled`, `timeout` and `session`; the two states meaning *RC's app never rendered* fell
+  through to the unrecognised branch, so **the largest un-instrumented risk on this path was
+  the one outcome the readout could not name.** Both are `warn` now.
+- **A SUCCESSFUL load reported no TIME.** `rc-handoff.ts` stamps `openedAt` before
+  `iab.open`, and reports `rc-load { ms }` on the **first** `loadstop` only. `rcLoadReading`
+  returns `null` for a non-number — **never 0**, which would read as an instant load.
+  `RC_SLOW_LOAD_MS` (8s) is the line between `info` and `warn`.
+- **AND THE ORDERING IN THE COMMENT WAS NOT IN THE CODE**, for the second time this session:
+  `loadstop` claimed `everLoaded`/`disarmLoadTimer` preceded the injection and they did not.
+  A mutation caught it only after the guard was re-anchored on an index comparison rather
+  than on presence.
+- **`src/lib/rc-load-stats.ts`** aggregates across runs and **refuses a distribution with no
+  samples**; the median is an OBSERVED value (lower-middle), never interpolated — inventing a
+  number between two real ones is the same error the flip-bracket rule forbids.
+- **`src/lib/rc-hold-outcome.ts` gates on `tapped` (`requested_at`), NOT on status.** The
+  status axis produced a false *"a race we lost"* on its first production run: a hold nobody
+  tapped is not a race, and reporting it as one manufactures a competitor.
+
+
 ## Open / next session
 
-> ### FIRST: MIGRATION 074 IS ALREADY APPLIED TO PRODUCTION. Its code is in PR #263.
+> ### THERE IS A REAL, TAPPED HOLD FOR 2026-09-04 08:00 PT, AND IT IS THE SITE WE LOST.
 >
-> The index widened before the commit landed, deliberately (see the entry above), so
-> **master's `offerHold` is currently one column behind the live index and its upsert
-> throws.** It FAILS CLOSED — the coming-soon alert still goes out, with no hold button —
-> but the gap closes only when #263 merges. There were zero live holds when it was applied.
+> **`#L034`, unit 42527, Leo Carrillo (rc-583), tapped 05:02 UTC.** It is the retry of the
+> campsite that was lost on 09-03 to the 12-second retry gap, and **the cart burst is on the
+> box** (`d341139`, applied 03:20 UTC, heartbeat live). So this morning is the burst's first
+> real test, on the case it was written for.
 >
-> **#263 also carries the owner's three 2026-09-04 asks**, each in its own commit: the
-> dead-man's switch deleted, the per-release hold key, and the holds moved into the watch
-> card with a cancel X on queued ones. It touches `worker/**` and `src/lib/rc-holds.ts`, so
-> **merging it deploys the worker and restarts both pollers** — check `poller.shards` after.
+> **NOTHING MORE IS NEEDED.** The box cannot auto-update tonight and that is fine: the quiet
+> window is 02:00–05:00 PT and the 6h release gate shuts at 02:00 PT, so they cancel out, and
+> nothing bot-side is missing. `maybeAutoLogin` restores the session at T−30.
 >
-> **SIX WATCHES THE DEAD-MAN'S SWITCH SWITCHED OFF ARE STILL OFF, and resuming them is the
-> owner's call, not a tidy-up.** Nothing distinguishes a row it auto-paused from one where
-> the user tapped "No, stop" — `cancel` never cleared `deadman_prompted_at`. The list is
-> `SELECT id, campground_id, end_date FROM watches WHERE active = false AND
-> deadman_prompted_at IS NOT NULL`; four have end dates still in the future.
+> **The 07:50 PT measurement Routine (`trig_012K7iCrj1J9KspyqGucZSHC`, one-shot, 14:50 UTC)
+> fires into the same release.** Read its output before drawing any conclusion about early
+> release — and read the LIMIT recorded with it: it measures when RC lets go, not how long a
+> site survives.
 >
-> **MIGRATION BLOCKS: the side lane took 072 AND 073 out of MAIN's block** (PR #258). Main's
-> remaining block is **075-079**; `docs/LANES.md` is updated.
+> ### READ THIS BEFORE CALLING PRODUCTION WRONG ABOUT ANYTHING
+>
+> `git fetch origin master` first. This session diffed the live `rc_hold_requests_unique`
+> against a day-old working tree, called the four-column index drift, and had the owner run a
+> `DROP`/`CREATE` that **broke the hold button for sixteen minutes.** Master already carried
+> migration 074's four-column key. One fetch would have shown it. Full write-up above.
+>
+> ### SIX WATCHES THE DEAD-MAN'S SWITCH SWITCHED OFF ARE STILL OFF — the owner's call
+>
+> Nothing distinguishes a row it auto-paused from one where the user tapped "No, stop" —
+> `cancel` never cleared `deadman_prompted_at`. The list is `SELECT id, campground_id,
+> end_date FROM watches WHERE active = false AND deadman_prompted_at IS NOT NULL`; four have
+> end dates still in the future. **Resuming them is a decision, not a tidy-up.**
+>
+> **MIGRATION BLOCKS: main `075-079`, side `080+`** — the side lane took 072 and 073 out of
+> main's block (#258) and main holds 074. `docs/LANES.md` is the authority.
 
 > ### THEN: MERGE #255. THE ANDROID HAND-OFF IS FIXED AND HUMAN-VERIFIED.
 >
