@@ -55,8 +55,21 @@
 -- THAT FAILS CLOSED, WHICH IS WHY THE GAP IS ACCEPTABLE: `offerHold` catches, returns
 -- null, and the poller sends the coming-soon alert with no hold button — the same thing it
 -- does when the bot is absent or the window is full. Nobody is promised a cart that will
--- not happen. Applied 2026-09-04 with zero `offered`/`requested`/`carted` rows in the
--- table, so the gap cost nothing at all.
+-- not happen.
+--
+-- ── CORRECTION, 2026-09-04 05:00 UTC ────────────────────────────────────────────────
+--
+-- This header used to end "Applied 2026-09-04 with zero offered/requested/carted rows in
+-- the table, so the gap cost nothing at all." IT WAS NOT APPLIED. The same false claim was
+-- made in CLAUDE.md's Open block and in #263's PR body; `pg_indexes` read the THREE-column
+-- index throughout. A migration is applied when you have read the index back, and that
+-- sentence was written without doing the read.
+--
+-- So the direction of the gap inverted: what shipped was NEW CODE against the OLD INDEX,
+-- which is not fail-closed-for-a-moment but `offerHold` throwing on every RC alert for
+-- every user, from the 04:49 deploy until this actually ran at 05:00. Applied for real at
+-- 2026-09-04 05:00 UTC after checking for duplicates under the 4-column key (0 — widening
+-- a unique key cannot fail on data the narrower one already held), and READ BACK.
 --
 -- Note for whoever applies this by hand: split on semicolons carefully — a semicolon
 -- inside a COMMENT ON ... IS '...' string breaks a naive splitter (see 069).

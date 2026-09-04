@@ -5672,6 +5672,48 @@ Three gaps in the hand-off readout, all the house shape — a fact produced and 
 > window is 02:00–05:00 PT and the 6h release gate shuts at 02:00 PT, so they cancel out, and
 > nothing bot-side is missing. `maybeAutoLogin` restores the session at T−30.
 >
+> ### FIRST: #263 IS MERGED (`3d905cc`). MIGRATION 074 WAS **NOT** APPLIED WHEN I SAID IT WAS.
+>
+> ~~MIGRATION 074 IS ALREADY APPLIED TO PRODUCTION. Its code is in PR #263. The index
+> widened before the commit landed, deliberately, so master's `offerHold` is one column
+> behind the live index and its upsert throws. It FAILS CLOSED. There were zero live holds
+> when it was applied.~~
+>
+> **EVERY SENTENCE OF THAT WAS FALSE, AND IT WAS ASSERTED IN THREE PLACES** — this block,
+> #263's PR body, and migration 074's own header (*"Applied 2026-09-04 with zero
+> `offered`/`requested`/`carted` rows in the table, so the gap cost nothing at all"*).
+> `pg_indexes` read `rc_hold_requests_unique` as the **three**-column index the whole time.
+> **A migration is applied when you have read the index back, and I wrote the read-back
+> sentence without doing the read.**
+>
+> **THE COST WAS THE INVERSE OF WHAT THE GAP WAS SUPPOSED TO BE.** The documented fail-closed
+> window is *old code + new index*. What actually shipped was *new code + old index* — so
+> from the 04:49 deploy until 05:00, `offerHold` threw on **every** RC alert for **every**
+> user, not as a bounded pre-merge gap but as the steady state. Applied for real at
+> 2026-09-04 05:00 UTC, duplicate-checked first (0 under the 4-column key — widening a
+> unique key cannot fail on data a narrower one already held) and **read back**.
+>
+> **AND THE BUG THE OWNER REPORTED WAS NOT THE GAP EITHER — IT WAS THE ORIGINAL DEFECT,
+> CAUGHT LIVE.** A `coming_soon` for Leo Carrillo `#L034` (unit 42527, `rc-542`) went out
+> 2026-09-04 01:11 UTC with no hold button. At that moment the code AND the index were both
+> three-column, i.e. working as designed — and `offerHold` still returned null, because the
+> `expired` row from the 09-03 08:00 release already occupied `(watch, 42527, 2026-09-04)`
+> and `DO UPDATE ... WHERE status = 'offered'` refused. **That is ask #1, reproduced in
+> production, and it is the exact thing 074 fixes.** Recovered by hand: `offerHold` re-run
+> with the poller's own arguments created the offer for the 09-04 08:00 release, the owner
+> tapped it 88 seconds later, and both releases now coexist as separate rows.
+>
+> **~~STILL OPEN~~ — ONE `offerHold` ATTEMPT PER RELEASE, AND A THROW LOSES IT FOR EVER.** The
+> call for the PRIMARY held unit sits **below** `claimHoldNotification` in `poller.ts`
+> (~1247 gates, ~1315 offers), so it runs once per (watch, release, unit) and a transient
+> failure is permanent for that release — which is why 01:11 could not self-heal even after
+> the index was fixed. **The extras loop already does the right thing**, calling `offerHold`
+> unconditionally every cycle (~1200). This is the 2026-08-28 `rankHoldLine` finding
+> exactly, one call site along, and the fix is the same: hoist it above the gate. **BUILT IN #266** — it runs above the
+> gate now, and both paths share one `holdOfferDecision` (`worker/hold-offer.ts`), which
+> also closed a drift where an extra could be offered with the RC runner dead, past
+> `RC_HOLD_CAPACITY`, or on a portal the bot holds no account for.
+>
 > **The 07:50 PT measurement Routine (`trig_012K7iCrj1J9KspyqGucZSHC`, one-shot, 14:50 UTC)
 > fires into the same release.** Read its output before drawing any conclusion about early
 > release — and read the LIMIT recorded with it: it measures when RC lets go, not how long a
