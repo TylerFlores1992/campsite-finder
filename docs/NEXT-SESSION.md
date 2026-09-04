@@ -108,14 +108,11 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > re-derive the "Active 5 · 2 paying" panic** — those tiles read different systems, and a
 > refund does not cancel a Stripe subscription.
 >
-> **6. `keepSignedInReading` is fed the WRONG report and warns on every healthy
-> identifier-first sign-in.** `rc-holds-readout.mts` takes `findLast`, and that path emits two
-> `keep-signed-in` reports — ticked at the identifier step, then correctly `boxes: 0` at the
-> password step where Okta never renders it. So a run that ticked the box prints *"NOT ticked …
-> no checkbox on the page at all"*, contradicting the `signInPathReading` line directly above
-> it. Verified on `#L034`. **Two lines plus a guard** — prefer the report with `boxes > 0`, fall
-> back to the last only when none had one. Fixture must stage BOTH reports or the test is
-> vacuous. CLAUDE.md → "AND `findLast` MAKES A TICKED BOX REPORT AS \"NO CHECKBOX AT ALL\"".
+> **6. ~~`keepSignedInReading` is fed the WRONG report~~ — FIXED IN #271, 2026-09-04.**
+> `pickKeepSignedInReport` prefers the report where the box existed; the readout calls it;
+> four mutations verified. Confirmed against the real `#L034` row, where the two lines now
+> agree instead of contradicting each other. Struck rather than deleted — this list is where a
+> shipped fix goes on reading as a task.
 >
 > **7. ~~The Chromium leak~~ — moved to item 1**, because the discriminator was read and the
 > answer changes what is worth building. Still uncured; still the owner's standing ask.
