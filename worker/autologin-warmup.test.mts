@@ -183,7 +183,8 @@ test('the warm-up runs in a throwaway tab that is always closed', () => {
   assert.match(body, /ctx\.newPage\(\)/, 'the trip must get its own page');
   const fin = body.indexOf('} finally {');
   assert.ok(fin > -1, 'the close must be in a finally, not on the happy path');
-  assert.match(body.slice(fin), /tab\.close\(\)/);
+  // The bounded close (tab-close.mjs, 2026-09-04) — a bare `tab.close()` is the regression.
+  assert.match(body.slice(fin), /closeTabBounded\(tab, \{ label: 'warmup'/);
 });
 
 test('the tab is what the login and the failure shot are bound to', () => {

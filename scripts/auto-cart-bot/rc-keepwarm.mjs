@@ -97,6 +97,7 @@ import { pacificHour, hoursUntilRelease } from './update-guard.mjs';
 import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 import { takeSample } from './memory-sample.mjs';
+import { closeTabBounded, takePendingRecycle } from './tab-close.mjs';
 import {
   attachHeapProbe, collectHeapFacts, describeHeapFacts, writeHeapSnapshot,
   sampleHeap, describeTrail, describeRamTrail, TRAIL_KEEP,
@@ -1006,6 +1007,8 @@ async function maybeWarmupLogin(ctx, page) {
     return null;
   });
   if (!tab) return warmupSkip('could not open a warm-up tab — nothing was spent');
+  const tripStartedAt = Date.now();
+  let tripRam = null;
 
   /**
    * SAMPLE THE ONE OKTA TRIP NOTHING WAS WATCHING — see rc-native-sampler.mjs.
@@ -1125,6 +1128,7 @@ async function maybeWarmupLogin(ctx, page) {
       // correction the auto-login's sampler had to make: a tab-lifetime pair would include
       // the resident-page reload above, which is a renderer this profile cannot see.
       const ram = trace?.ram ? trace.ram.afterMb - trace.ram.beforeMb : null;
+      tripRam = ram;
       const diff = diffProfiles(profBefore, profAfter);
       log(renderProfile(diff, ram));
       // 'warmup' IS THE ALLOW-LISTED SPELLING (src/lib/native-alloc.ts). The server keeps a
@@ -1145,7 +1149,9 @@ async function maybeWarmupLogin(ctx, page) {
     // kept deliberately — `takeRamps` reports a segment once its target is no longer open, so
     // this is exactly what makes the tab's peak final and reportable on the next tick.
     allocTrail.unregister('warmup');
-    await tab.close().catch(() => {});
+    // BOUNDED, AND TIMED — see tab-close.mjs. An unbounded close against a renderer that is
+    // not answering is indistinguishable from a slow trip in the memory series.
+    await closeTabBounded(tab, { label: 'warmup', startedAt: tripStartedAt, ramMb: tripRam, log, report: reportBotEvent });
   }
   return true;
 }
@@ -1359,6 +1365,8 @@ async function maybeAutoLogin(ctx, page) {
   if (!tab) {
     return autoLoginSkip('could not open a sign-in tab — the browser may be unwell; nothing was spent');
   }
+  const tripStartedAt = Date.now();
+  let tripRam = null;
 
   /**
    * NAME THE ALLOCATION ON THE BIGGEST TRIP THERE IS — see rc-native-sampler.mjs.
@@ -1612,6 +1620,7 @@ async function maybeAutoLogin(ctx, page) {
       // correction where sampling starts: a tab-lifetime pair would include the resident-page
       // reload, which this profile cannot see.
       const ram = trace?.ram ? trace.ram.afterMb - trace.ram.beforeMb : null;
+      tripRam = ram;
       const diff = diffProfiles(profBefore, profAfter);
       log(renderProfile(diff, ram));
       // AND SEND IT IF IT RAMPED. The log is where these readings went to die.
@@ -1631,7 +1640,8 @@ async function maybeAutoLogin(ctx, page) {
     // kept deliberately — `takeRamps` reports a segment once its target is no longer open, so
     // this is exactly what makes the tab's peak final and reportable on the next tick.
     allocTrail.unregister('auto-login');
-    await tab.close().catch(() => {});
+    // BOUNDED, AND TIMED — see tab-close.mjs.
+    await closeTabBounded(tab, { label: 'auto-login', startedAt: tripStartedAt, ramMb: tripRam, log, report: reportBotEvent });
     // THE ATTEMPT REACHED A VERDICT — clear the in-flight mark so the next process does not
     // read it as a kill and refund an attempt that was genuinely spent. In the `finally`
     // because every branch above, including the refunding ones, is a verdict: the thing this
@@ -1948,6 +1958,20 @@ function reportNativeAlloc(context, diff, ramMb) {
     () => log(`  (allocation reading stored — ${context}, ${ramMb} MB of free RAM)`),
     (e) => log(`  (could not store the allocation reading: ${e.message})`),
   );
+}
+
+/**
+ * A BOT EVENT (migration 075) — a rare, structured observation with no series of its own.
+ * Today: the `tab-close` timing from `closeTabBounded`. Fire-and-forget by design, like
+ * `reportNativeAlloc`: reaching camphawk.app is not this process's job.
+ */
+function reportBotEvent(kind, detail, text = null) {
+  if (!TOKEN) return Promise.resolve();
+  return fetch(`${CAMPHAWK_URL}/api/auto-cart/rc-holds`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+    body: JSON.stringify({ source: 'rc-keepwarm', event: { kind, detail, text } }),
+  }).then(() => {}, (e) => log(`  (could not store the ${kind} event: ${e.message})`));
 }
 
 /**
@@ -2908,6 +2932,16 @@ async function warmResident() {
          * 08:00:00 outranks tidying up memory, and a window somebody closed needs the reopen
          * for its own reasons. BEFORE the size scan, so this costs no PowerShell spawn.
          */
+        // A TAB CLOSE THAT WAS GIVEN UP ON — see tab-close.mjs. Read here, beside `oktaTrip`
+        // and for the same reason: this is the one place every trip's aftermath reaches, and
+        // it sits after the runner's preemption so a cart never waits behind a tidy-up. The
+        // tab's renderer belongs to nobody now; the reopen is the only thing that ends it.
+        const hungClose = takePendingRecycle();
+        if (hungClose) {
+          lastRecycleAt = Date.now();
+          log(`♻ recycling the browser — ${hungClose}.`);
+          break;
+        }
         if (oktaTrip) {
           lastRecycleAt = Date.now();
           log(`♻ recycling the browser — ${oktaTrip} took it through Okta.`);
@@ -3087,6 +3121,8 @@ async function warmResident() {
               log(`  ✗ could not open a renewal tab: ${e.message} — the browser may be unwell; retrying at the schedule's pace`);
               return null;
             });
+            const tripStartedAt = Date.now();
+            let tripRam = null;
             if (!tab) {
               renewal = recordRenewal(renewal, { token, now: Date.now(), renewed: false });
             } else try {
@@ -3147,6 +3183,7 @@ async function warmResident() {
             if (sampling.ok) {
               const profAfter = await readNativeProfile(sampler);
               const ram = trace?.ram ? trace.ram.afterMb - trace.ram.beforeMb : null;
+              tripRam = ram;
               const diff = diffProfiles(profBefore, profAfter);
               log(renderProfile(diff, ram));
               // AND SEND IT IF IT RAMPED. The log is where these readings went to die.
@@ -3263,7 +3300,10 @@ async function warmResident() {
               mark('renew:close-tab');
               // OFF THE TRAIL BEFORE THE TAB GOES — see the same line in `maybeWarmupLogin`.
               allocTrail.unregister('renewal');
-              await tab.close().catch(() => {});
+              // BOUNDED, AND TIMED — see tab-close.mjs. Every recorded ramp's renderer was
+              // this tab's own and outlived the trip by ten minutes; whether that is the
+              // body or this await is the number the event carries.
+              await closeTabBounded(tab, { label: 'renewal', startedAt: tripStartedAt, ramMb: tripRam, log, report: reportBotEvent });
             }
           }
         }

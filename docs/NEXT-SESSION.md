@@ -67,7 +67,20 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >
 > ### AFTER THE MORNING, IN ORDER OF WHAT IT BUYS
 >
-> **1. THE LEAK — TRACK A IS RETIRED AND TRACK B IS THE ONLY PLAN LEFT.** The #210
+> **1. THE LEAK — THE ONSET IS A 35 GB COMMIT STEP, AND THE INSTRUMENTS FOR IT ARE BUILT
+> (09-04 evening).** Every ramp's first sample shows commit jumping ~7.5 → ~40-46 GB inside one
+> two-minute tick with ~3.5 GB of it in chrome.exe private bytes; the renewal tab gets its OWN
+> renderer (procs +1..+3 at every renewal — the shared-renderer hypothesis is out); and the
+> three `await tab.close()` calls were unbounded. Built: `bot_events` (075), `closeTabBounded`
+> (30s, reports `tripMs`/`closeMs`/`hung` on every close, asks for a recycle on a hang) and
+> `ramp-scan.mjs` (the full `memory` scan once per ramp at 3 GB, with kernel pool and
+> all-process private bytes). **Bot-side — needs a box update.** Then read
+> `scripts/bot-events-readout.mts` after the next ramp: `hung`/minutes of `closeMs` ⇒ the close
+> was the ten minutes; milliseconds ⇒ the renewal BODY is; `ALLPROC privateSumMB` vs `OS
+> commitUsedMB` names where the 35 GB is. CLAUDE.md → "THE ONSET IS A 35 GB COMMIT STEP".
+> **Track B still needs the owner's explicit word.**
+>
+> *(Earlier reading, still true:)* The #210
 > discriminator was read on 09-04 and it is the **profiler** branch: the trail prints segments
 > of 1-74 MB (so CDP works and the transport was never the problem), and four return-path
 > readings covering ramping windows attribute **5-17 MB against 690-801 MB of free RAM lost in
@@ -96,12 +109,12 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > nothing to write"*, i.e. it ran and found nothing to do. That is the fix behaving correctly on
 > a healthy session and says nothing about the failing case.
 >
-> **4. A fresh iOS build — AND IT CANNOT BE STARTED FROM A SESSION.** The iPhone is on
-> **1.0 (21) from 2026-08-09** against Android's **1.0 (25)**, so "iOS is the baseline" is a
-> baseline of three-week-old code that predates RevenueCat, and **iOS is now the platform with
-> NO corroborated cart run.** Required for Apple IAP anyway. `api.codemagic.io` answers **403 to
-> CONNECT at the agent proxy**, so this is an owner action (or an allowlist change) rather than
-> something to keep carrying as an agent task.
+> **4. ~~A fresh iOS build~~ — THE BUILD EXISTS; THE PHONE HAS NOT INSTALLED IT.** `iOS ·
+> TestFlight` #12 built 2026-08-29 with RevenueCat compiled in (STOREKIT-PLAN.md), the same day
+> as Android 25. The 09-01 trace's `1.0 (21)` is what the iPhone is RUNNING, not the newest
+> binary — and nothing native-side changed after 08-29 (#231, #248 predate the build). **Install
+> TestFlight #12 on the iPhone; read the build number in the next hand-off trace.** No Codemagic
+> run is needed. (`api.codemagic.io` is still 403 at the proxy, which only matters if one is.)
 >
 > **5. Run the Stripe reconcile** (Admin → "Does our table match Stripe?" → Check, read the
 > plan, Apply). The webhook fix is forward-only, so both trials still read `active`. **Do not
@@ -331,15 +344,15 @@ because on 09-04 a whole incident came out of trusting a day-old checkout.***
 
 | | |
 |---|---|
-| Master | **`6b5c10a`** plus **#266**. 09-04 landed a lot: #262 `SHARD_COUNT` 2 -> 3, #263 re-offer holds per release (migration 074) + holds in the watch card + the dead-man's switch removed, #264 the RC release-window measurement, #265 docs, #266 the `offerHold` gate hoist. |
+| Master | **`5cbad43`** plus this branch (leak instruments, 075/076, `--record`). Earlier 09-04: #262 `SHARD_COUNT` 2 -> 3, #263, #264, #265, #266, #269, #271, #272. Previously: 09-04 landed a lot: #262 `SHARD_COUNT` 2 -> 3, #263 re-offer holds per release (migration 074) + holds in the watch card + the dead-man's switch removed, #264 the RC release-window measurement, #265 docs, #266 the `offerHold` gate hoist. |
 | Mini-PC | **`d341139`** against web `6b5c10a`; `bot_version` warns with *"No bot-side code in the gap"*, the documented not-worth-acting-on case. Confirm with `bot-ask git-status`, **never** `autocart.bot_version` — it is COALESCEd and can sit stale beside a live heartbeat. |
 | Fly worker | both shards beating, `poller.shards` ok. `SHARD_COUNT` is **3** now. Redeploys on every `worker/**` merge. |
 | Open PRs | **#258** (side lane: acquisition instrumentation, holds migrations 072-073). |
 | Open issues | **none** |
-| Migrations | highest is **074**, applied and read back 05:00 UTC 09-04 — read the correction in its own header: it was applied, reverted by the other lane, then re-applied. **Main's block is `075-079`; the side lane's is `080+`.** |
+| Migrations | highest is **076** (`075_bot_events`, `076_rc_release_readings`, both applied and read back 09-04 evening; 074 applied 05:00 UTC 09-04 — read the correction in its own header: it was applied, reverted by the other lane, then re-applied. **Main's block is now `077-079`; the side lane's is `080+`.** |
 | Holds | **NONE live** (checked 08:25 PT). `#L034` carted T+1.4s at the 08:00 release and was released to the owner at 08:09. No fixture rows in `rc_hold_requests`. |
 | RC session | Healthy. The rehearsal was **skipped** last night (`rc_login` warns at 12h) — a stand-down, not a failure. `maybeAutoLogin` covers a release at T-30. |
-| Memory | **Track A still has zero `trail-*` readings.** The discriminator has never run; §2 is how to read the next ramp. |
+| Memory | **Track A is retired** (the profiler cannot see the bytes). The onset is a 35 GB commit step; `ramp-scan` and `tab-close` events are built and wait on a box update. `scripts/bot-events-readout.mts`. |
 | CI | **Two runs on 09-04 failed on fixture litter, not on the diff.** `rc-holds.test.mts` -> *"once the window has closed, a cart failure IS final"*, `already-failed` where `failed` was expected. Both times the same tree passed locally with no CI in flight. A force-push produced two runs and GitHub cancelled the first mid-suite; a killed run leaves its `__trh` rows, and #203's 10-minute age gate deliberately spares them. **Wait ten minutes, then re-run — do not lower that gate.** |
 
 **Two check-ins are scheduled and enabled — do not create duplicates.**

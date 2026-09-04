@@ -115,8 +115,8 @@ recorded as fact; the other half would come from evidence quietly disappearing.
 
 ## Migrations
 
-`src/lib/db/migrations/NNN_name.sql`. **Highest is `074_hold_per_release.sql` (MAIN lane,
-2026-09-04).** The main lane's original block 060-069 filled on 2026-08-28 with
+`src/lib/db/migrations/NNN_name.sql`. **Highest is `076_rc_release_readings.sql` (MAIN lane,
+2026-09-04 evening; 075 is `bot_events`).** The main lane's original block 060-069 filled on 2026-08-28 with
 `069_line_priority.sql`, and the side lane holds `070_watch_campgrounds.sql`.
 
 > **AND 071 IS EXACTLY THE NUMBER THIS SECTION SAID NOT TO TAKE.** It read *"Do not simply
@@ -128,7 +128,7 @@ recorded as fact; the other half would come from evidence quietly disappearing.
 > number" loses to the obvious next number, and that the fix is to have a claimed block
 > standing at all times rather than a prohibition.
 
-**BLOCKS, RESTATED 2026-09-04: main `075–079`, side `080+`.**
+**BLOCKS, RESTATED 2026-09-04 (evening): main `077–079`, side `080+`.** Main took 075 and 076 the same day.
 
 > **THE SIDE LANE TOOK 072 AND 073 OUT OF MAIN'S BLOCK** (PR #258, 2026-09-03) — so
 > main's block is four numbers shorter than it was claimed as, and 074 is main's

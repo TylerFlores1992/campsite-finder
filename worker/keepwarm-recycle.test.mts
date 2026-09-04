@@ -345,8 +345,11 @@ test('the renewal runs in a THROWAWAY TAB, closed whatever happens', () => {
   assert.ok(tabAt > -1, 'the renewal must open its tab BEFORE the trip it wraps');
   const finallyAt = code.indexOf('} finally {', tabAt);
   assert.ok(finallyAt > tabAt, 'the tab block must carry a finally');
-  assert.match(code.slice(finallyAt, finallyAt + 300), /await tab\.close\(\)\.catch\(/,
-    'and the finally must close the tab');
+  // The bounded close (tab-close.mjs, 2026-09-04): sliced to the END of the finally block,
+  // not a character window — the comment above the call grew and a window would have broken.
+  const finallyEnd = code.indexOf('\n            }\n', finallyAt);
+  assert.match(code.slice(finallyAt, finallyEnd > finallyAt ? finallyEnd : finallyAt + 900), /await closeTabBounded\(tab, \{ label: 'renewal'/,
+    'and the finally must close the tab — through the bounded close, never a bare tab.close()');
   const noTab = code.slice(code.indexOf('if (!tab) {', tabAt));
   assert.match(noTab.slice(0, 200), /recordRenewal\(renewal, \{ token, now: Date\.now\(\), renewed: false \}\)/,
     'a tab that cannot open must still be recorded, or the schedule cannot pace the retry');

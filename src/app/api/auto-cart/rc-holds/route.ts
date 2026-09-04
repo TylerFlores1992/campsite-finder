@@ -7,6 +7,7 @@ import { recordBotCommandResult } from '@/lib/bot-commands';
 import { botControlFor } from '@/lib/bot-control';
 import { recordMemorySample } from '@/lib/chromium-memory';
 import { recordNativeAlloc } from '@/lib/native-alloc';
+import { recordBotEvent } from '@/lib/bot-events';
 import { query, mutate } from '@/lib/db/client';
 import { notifyHoldMissed } from '@/lib/rc-holds-notify';
 import { manageTokenFor } from '@/lib/notifications/actions';
@@ -318,6 +319,16 @@ export async function POST(req: NextRequest) {
   if (body?.nativeAlloc && typeof body.nativeAlloc === 'object') {
     await recordNativeAlloc(body.nativeAlloc);
     return NextResponse.json({ ok: true, state: 'native-alloc-recorded' });
+  }
+
+  // ── ONE BOT EVENT (migration 075) ────────────────────────────────────────────────────
+  // A ramp scan the rec.gov bot took by itself, or a tab-close timing from the keep-warm.
+  // Same family as the two readings above and stored for the same reason: `tail-log`
+  // returns 16,000 characters and the lines that answer these questions roll out of it
+  // hours before anyone reads them. Returns before the hold work for the same reason too.
+  if (body?.event && typeof body.event === 'object') {
+    await recordBotEvent(body.event, typeof body.source === 'string' ? body.source : null);
+    return NextResponse.json({ ok: true, state: 'event-recorded' });
   }
 
   // MAY THIS PROCESS SPAWN THE UPDATER? Claimed at the point of USE, never granted on read.

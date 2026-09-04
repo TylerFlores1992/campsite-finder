@@ -55,6 +55,7 @@
  * `--release` is RC's own zone-less PACIFIC wall clock, exactly as the Lock field reports it.
  */
 import { pacificWallClockToUtcMs } from '../worker/held-cadence';
+import { facilityReading, recordFacilityReading, type NightFlip } from '../src/lib/rc-release-readings';
 
 const RDR = 'https://california-rdr.prod.cali.rd12.recreation-management.tylerapp.com/rdr';
 
@@ -66,6 +67,14 @@ const RELEASE = arg('release') ?? '';
 const LEAD_S = Number(arg('lead', '90'));
 const AFTER_S = Number(arg('after', '240'));
 const EVERY_MS = Number(arg('every', '2000'));
+/**
+ * `--record` writes one row per facility to `rc_release_readings` (migration 076) AFTER the
+ * reading is printed, so the seven runs of a daily Routine can be read side by side instead
+ * of from seven ephemeral transcripts. Needs the database, i.e. NODE_USE_ENV_PROXY=1 — the
+ * same variable the polls already need. A run that never reached the question records
+ * nothing: an empty day is "not measured", never "RC released nothing".
+ */
+const RECORD = process.argv.includes('--record');
 
 if (!FACILITIES.length || !RELEASE) {
   console.error('need --facilities=539,542 and --release=2026-09-04T08:00:00');
@@ -170,6 +179,10 @@ const flips = new Map<string, Flip>();
 for (const k of tracked.keys()) flips.set(k, { lastLockedAt: null, firstFreeAt: null, retakenAt: null });
 
 let polls = 0, failed = 0;
+// Per facility too, because a row is per facility and "0 of 194 unreadable" for the whole run
+// hides a facility that answered nothing all window.
+const perFacility = new Map<string, { polls: number; failed: number }>();
+for (const f of FACILITIES) perFacility.set(`rc-${f}`, { polls: 0, failed: 0 });
 const until = releaseMs + AFTER_S * 1000;
 const startAt = releaseMs - LEAD_S * 1000;
 // CHECK THE END BEFORE SLEEPING TO THE START. Reversed, a window that has already closed
@@ -189,7 +202,8 @@ while (Date.now() < until) {
     const at = Date.now();
     const p = await poll(f, START, END);
     polls++;
-    if (!p.ok) { failed++; continue; }           // rule 1: unknown, never "free"
+    perFacility.get(`rc-${f}`)!.polls++;
+    if (!p.ok) { failed++; perFacility.get(`rc-${f}`)!.failed++; continue; }  // rule 1: unknown, never "free"
     for (const [key, flip] of flips) {
       if (tracked.get(key)!.facility !== `rc-${f}`) continue;
       if (p.locked.has(key)) {
@@ -250,4 +264,31 @@ if (freed.length) {
     ? `${taken} of ${freed.length} were taken again inside the window.`
     : 'None was re-taken inside the window — so this run says NOTHING about how fast a\n'
       + 'contested site goes. These are low-demand nights; that reading needs a popular one.');
+}
+
+// ── Phase 4: persist, if asked ───────────────────────────────────────────────
+// After the printout, never instead of it, and only for a run that reached the question:
+// the verdict arms above exit before this point on THE QUESTION WAS NEVER REACHED.
+if (RECORD) {
+  const toS = (ms: number | null) => (ms == null ? null : (ms - releaseMs) / 1000);
+  let stored = 0;
+  for (const f of FACILITIES) {
+    const facility = `rc-${f}`;
+    const nights: NightFlip[] = [];
+    for (const [key, flip] of flips) {
+      const t = tracked.get(key)!;
+      if (t.facility !== facility) continue;
+      nights.push({ name: t.name, date: t.date, lockedS: toS(flip.lastLockedAt), freeS: toS(flip.firstFreeAt), retakenS: toS(flip.retakenAt) });
+    }
+    if (nights.length === 0) continue;                 // excluded in phase 1, or nothing locked
+    const pf = perFacility.get(facility) ?? { polls: 0, failed: 0 };
+    const reading = facilityReading(facility, nights, pf.polls, pf.failed);
+    try {
+      await recordFacilityReading(RELEASE, reading);
+      stored++;
+    } catch (e) {
+      console.log(`  ✗ could not record ${facility}: ${(e as Error).message}`);
+    }
+  }
+  console.log(`\nrecorded ${stored} facility row(s) to rc_release_readings for ${RELEASE} — read them with scripts/rc-release-readout.mts`);
 }

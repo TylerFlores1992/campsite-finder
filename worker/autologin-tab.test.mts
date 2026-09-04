@@ -53,8 +53,14 @@ test('the sign-in navigates a throwaway tab, not the resident page', () => {
 
 test('the tab is closed in a finally — that close IS the reclaim', () => {
   const body = autoLoginBody();
-  assert.match(body, /\}\s*finally\s*\{[\s\S]{0,600}await tab\.close\(\)/,
+  // RE-ANCHORED 2026-09-04: the close is `closeTabBounded` now (tab-close.mjs), so a guard
+  // pinning `await tab.close()` by expression went red over a change that made the close
+  // STRONGER. Anchored on the finally block and the bounded call, not a character window.
+  const fin = body.indexOf('} finally {');
+  assert.ok(fin > -1, 'the close must be in a finally');
+  assert.match(body.slice(fin), /await closeTabBounded\(tab, \{ label: 'auto-login'/,
     'a thrown login, a failed screenshot or a failed report must not leave the tab parked');
+  assert.doesNotMatch(body, /await tab\.close\(\)/, 'and never an unbounded close — see tab-close.mjs');
 });
 
 test('EVERY page-taking call inside the attempt is bound to the tab', () => {

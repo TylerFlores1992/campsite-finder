@@ -135,7 +135,7 @@ test('the warm-up reports its reading, and reports it before closing the tab', (
   // alive, and `saveFailureShot` photographs it.
   const body = bodyOf('maybeWarmupLogin');
   const report = body.indexOf('reportNativeAlloc(');
-  const close = body.indexOf('tab.close()');
+  const close = body.indexOf("closeTabBounded(tab, { label: 'warmup'");   // the bounded close, 2026-09-04
   assert.ok(report > -1, 'the warm-up must store its reading, not merely log it');
   assert.ok(close > report, 'the reading must be taken and sent BEFORE the tab is closed');
   const fin = body.indexOf('} finally {');
