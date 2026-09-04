@@ -5061,7 +5061,7 @@ on both devices.
   one pinned the literal `chKeepSignedIn()` expression, the other an entire import line that a
   second imported name invalidated. Twenty-somethingth time.
 
-#### AND `findLast` MAKES A TICKED BOX REPORT AS "NO CHECKBOX AT ALL" (2026-09-04) — NOT FIXED
+#### AND `findLast` MAKES A TICKED BOX REPORT AS "NO CHECKBOX AT ALL" (2026-09-04) — ~~NOT FIXED~~ FIXED IN #271
 The instrument above got its first identifier-first run on a real hold, and **it reported the
 opposite of what happened.** From `client_reports` on `#L034`, in order:
 ```
@@ -5092,9 +5092,19 @@ n:10  keep-signed-in   {at:"password", boxes:0, ticked:false, matched:false}  <-
   whether the NEXT sign-in is the 11-second cookie-answered kind or the 12-minute password
   variant — so the warn argues for a cost we are not paying, and would argue for it on every
   identifier-first run for ever.
-- **NOT FIXED — recorded, and it is a two-line change plus a guard.** The fixture must stage
-  BOTH reports in order, or a test asserting the ticked case passes on a single-report run and
-  measures nothing, which is the vacuous-guard shape this file has recorded twenty-odd times.
+- ~~**NOT FIXED**~~ — **FIXED THE SAME DAY (#271).** `pickKeepSignedInReport` in
+  `src/lib/rc-token-liveness.ts` prefers the report where the box EXISTED and falls back to the
+  last only when none had one, which keeps the genuine password-first warn. A pure function
+  rather than a line in the script, for the reason `closeReasonReading` and `signInPathReading`
+  are. **The fixtures stage BOTH reports** — a single-report fixture passes against `findLast`
+  and measures nothing, which is the vacuous-guard shape this file has recorded twenty-odd
+  times. Four mutations, each asserted to APPLY and verified to fail: the picker always taking
+  the last, the fallback dropped, `boxes > 0` widened to `>= 0`, and the readout reverting to
+  `findLast`. **Guards under `src/`, not `worker/`**, so it fires no worker deploy.
+- **VERIFIED ON THE REAL ROW, not only the fixture.** `rc-holds-readout.mts` against production
+  now prints, for the same `#L034` that was reported backwards:
+  `sign-in path: IDENTIFIER-FIRST …` then `"Keep me signed in" was ticked on the email step`.
+  The two lines agree.
 - **AND IT DOES NOT REFUTE THE 09-01 CANDIDATE.** That entry says a hand-off reporting `ticked`
   whose header is still empty refutes it outright. This run reported `ticked` **and** the header
   was populated (`customerId PRESENT`, `GetSSOLoggedInUser → HTTP 200 · RC Response 1`,
