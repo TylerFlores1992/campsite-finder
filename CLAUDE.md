@@ -5391,9 +5391,136 @@ git checkout -q origin/master && npx tsx --test worker/hold-fixture-invisibility
   locks a real campsite AND changes what every hold-reading test sees. Announce before running
   it; a second lane's suite is the thing it breaks.
 
+### A HOLD OFFER WAS ONE ROW PER CAMPSITE, FOR EVER (migration 074, 2026-09-04)
+Reported by the owner: *"We currently only offer a hold once to users, and if the site
+becomes available again they dont see it."* Exactly right, and the mechanism was one index.
+- **`rc_hold_requests_unique` WAS (watch_id, unit_id, arrival_date) — NO RELEASE IN IT.**
+  `offerHold`'s `ON CONFLICT (…) DO UPDATE … WHERE status = 'offered'` therefore still
+  matched once the row went terminal, the DO UPDATE refused, `offerHold` returned null, the
+  poller withheld the button, and **nothing existed for the watch page to list.** One row
+  was the whole history of a (watch, unit, arrival) for the life of the watch:
+  a decline, a lapse at 08:00, or a **transient RC cart failure** each retired that campsite
+  permanently. Production carried **50 `expired` and 9 `failed`** rows in exactly that state.
+- **The `WHERE status = 'offered'` guard was never the bug and must stay.** Within one
+  release a re-alert still has to leave a tapped row alone. Widening the key does not
+  replace it; that is mutation-tested separately.
+- **A DECLINE STILL STANDS FOR ITS OWN RELEASE**, which is what the user said no to — and
+  what keeps the X on an offer meaning anything. Only a *new* release is a new offer.
+- **THE MIGRATION AND THE CODE ARE TIGHTER THAN USUAL.** `ON CONFLICT (a,b,c)` needs an
+  index on exactly (a,b,c), so between the index widening and the new `offerHold` deploying
+  the old upsert raises *"no unique or exclusion constraint matching the ON CONFLICT
+  specification"*. **That fails CLOSED** — caught, null, alert sent with no button, exactly
+  as when the bot is absent — which is why the gap was acceptable. Applied with zero
+  offered/requested/carted rows in the table.
+- **THERE WERE TWO MORE HAND-ROLLED COPIES OF THAT CONFLICT TARGET, and the second is the
+  dangerous one.** `worker/rc-client-reports.test.mts` (a fixture — caught loudly by CI) and
+  **`scripts/rc-test-hold.mts`**, which queues a REAL hold on a REAL campsite and is on
+  `docs/LANES.md`'s SERIAL list. **Nothing runs that script in CI**, so it would have thrown
+  the next time somebody set up a live test, at whatever hour that happened to be.
+  `hold-per-release.test.mts` now asserts every `ON CONFLICT` on this table names the same
+  four columns.
+- **AND IT EXPOSED A NEIGHBOUR'S FIXTURE BUG.** `rc-holds.test.mts`'s *"re-offering the same
+  opening does not duplicate it"* called `pacific(120)` **twice** — two strings formatted to
+  the second from two reads of `Date.now()`. With the release in the key those are two
+  different releases and correctly get two rows: **the fixture was describing "the same
+  opening" with a value that was not stable across the two calls**, and the assertion only
+  held before because the release was not in the key at all.
+- **MIGRATION NUMBERING: the side lane took 072 AND 073 out of MAIN's block** (PR #258,
+  2026-09-03), which is why this is 074. Main's remaining block is **075-079**.
+
+### HOLDS MOVED INTO THE WATCH CARD, AND A QUEUED ONE CAN BE CALLED OFF (2026-09-04)
+- **WHAT MOVED: `offered` and `requested` only**, as two collapsed bars with counts in the
+  summary. **`carted`/`claiming`/`released` STAY at the top of the page** — a real campsite
+  in a real cart with ~15 minutes on it, and stacking tomorrow's decisions above it pushed
+  the thing with a fuse further down the page the busier a user got.
+- **`src/lib/hold-placement.ts` IS THE COMPLEMENT, NOT AN URGENCY TEST.** The panel keeps
+  whatever no card will draw. That one phrasing is what keeps the **orphans** — an offer
+  whose watch was deleted, or every hold when `/api/watches` fails while
+  `/api/rc-holds/mine` succeeds — and it is why the panel still renders in `WatchesList`'s
+  error and "no watches yet" branches. A totality test asserts every hold appears **exactly
+  once**; an unrecognised status shows up in the panel rather than vanishing.
+- **THE X ON A QUEUED HOLD IS A SECOND VERB, NOT A WIDER `declineHold`.** This file already
+  said why `requested` had no control: *"retracting it is a CANCEL, a different act with a
+  different confirmation, and getting it wrong at 07:59 loses a campsite."*
+  - **`cancelHold` RETURNS THREE OUTCOMES AND TWO ARE REFUSALS THAT MEAN DIFFERENT THINGS.**
+    `too-late` (inside `HOLD_CANCEL_CUTOFF_MIN`) vs `not-queued` (it moved on). Collapsing
+    them would tell somebody at 07:55 that their hold had already been carted — a wrong
+    story about what is happening, which is the class of lie that kept the control off.
+  - **THE RACE IS SAFE, SO THE CUTOFF IS ABOUT HONESTY.** `markCarted` is
+    `WHERE status <> 'carted'`, so a cart landing after a cancel flips the row to `carted`
+    **with its cart key** and `expireStaleHolds` releases the site. Nothing is stranded —
+    asserted, not argued.
+  - **`HOLD_CANCEL_CUTOFF_MIN` IS DERIVED FROM `RC_HOLD_FEED_MAX_LEAD_SEC`**, which the feed
+    route now reads instead of its own literal 600. Two copies of that number is how
+    `nextHoldRelease` came to disagree with `dueHolds` about whether a hold still existed.
+- **`HoldRow` IS ONE DEFINITION NOW.** The panel and the card both draw it; `variant` changes
+  chrome and nothing else. A second copy of the row that decides whether somebody trusts the
+  bot at 08:00 is how `content-rc.js` spent months telling users to click a cart icon.
+- **THE CARD HAD TWO SOURCES FOR THE SAME FACT AND THEY DISAGREED.** `pending_holds` (from
+  `/api/watches`, fetched once) and the `holds` prop (from `/api/rc-holds/mine`, polled every
+  20s) are the same rows under the same predicate on different clocks — so a cancel emptied
+  the dropdown while the badge above went on saying "Holding #96 · 8 AM" until the next page
+  load. The live list wins when the page supplies it; `pending_holds` stays the fallback for
+  a card rendered without the page around it.
+- **TWO EXISTING GUARDS BROKE OVER THE EXTRACTION AND WERE RE-ANCHORED, NOT RELAXED.**
+  `holds-panel-layout` and `autocart-beta` both sliced into `HoldsPanel.tsx` for markup that
+  now lives in `HoldRow.tsx`; left pointing at the old file **both would have read nothing
+  and passed.** Each was re-verified failing against the regression it exists for. ~27th time.
+- **BOTH BARS ARE CLOSED BY DEFAULT**, which is what was asked ("a drop down bar for both")
+  and what reclaims the space the report was about. The badges above already carry the count
+  and the release time. Preset `ch-watch-holds` renders the card; `ch-holds` now renders what
+  the panel keeps, including an orphan.
+- **AND I PUT BACKTICKS IN A SQL COMMENT INSIDE A TEMPLATE LITERAL** — the trap recorded in
+  the park-watch entry, in the same session that read it. `tsc` catches it; nothing else does.
+
+### THE DEAD-MAN'S SWITCH IS GONE (2026-09-04)
+Owner: *"We send text and emails asking if users are still interested in a site if it is
+inactive, id like to stop doing that. Just keep the watch for the duration."*
+- **IT WAS NOT BOUNDING ANYTHING THAT WAS NOT ALREADY BOUNDED.** A watch has an end —
+  `end_date` — `worker/expire-watches.ts` closes it the hour it passes, and the poller's own
+  filter is `end_date > CURRENT_DATE`. A watch has never been able to outlive its trip. What
+  the sweep did was cancel watches their owners still wanted, and ask a question by SMS that
+  somebody watching a September weekend in August has no reason to answer.
+- **IT HAD DONE THAT IN PRODUCTION.** Six watches sit `active = false` carrying a
+  `deadman_prompted_at`; a seventh (Carpinteria SB — Santa Rosa, end date 2026-11-26) was
+  prompted on 09-02 and was five days from being switched off.
+- **THE `keep`/`cancel`/`reopen` RESOLVERS STAY.** An emailed link is durable — the same rule
+  that makes the RC hold action re-check entitlement — so a prompt already in an inbox must
+  still resolve.
+- **`watches.deadman_prompted_at` STAYS, UNREAD.** It is the only record of which watches this
+  paused, and **nothing distinguishes a row it switched off from one where the owner tapped
+  "No, stop"** — `cancel` never cleared the column. Dropping it would destroy the evidence for
+  a decision (resume them? which ones?) that is the owner's.
+- **THE GUARD IS ON THE WRITE, NOT ON THE FILE.** `deadman_prompted_at = NOW()` is what ARMS
+  the auto-pause; `= NULL` is a clear and stays legal. `src/lib/no-deadman-sweep.test.mts`
+  scans src/, worker/ and scripts/ for the arming expression, so the same logic pasted into a
+  different file is caught where a missing-file check would pass. It is bidirectional.
+
+
 ## Open / next session
 
-> ### THE ONE ACTION: MERGE #255. THE ANDROID HAND-OFF IS FIXED AND HUMAN-VERIFIED.
+> ### FIRST: MIGRATION 074 IS ALREADY APPLIED TO PRODUCTION. Its code is in PR #262.
+>
+> The index widened before the commit landed, deliberately (see the entry above), so
+> **master's `offerHold` is currently one column behind the live index and its upsert
+> throws.** It FAILS CLOSED — the coming-soon alert still goes out, with no hold button —
+> but the gap closes only when #262 merges. There were zero live holds when it was applied.
+>
+> **#262 also carries the owner's three 2026-09-04 asks**, each in its own commit: the
+> dead-man's switch deleted, the per-release hold key, and the holds moved into the watch
+> card with a cancel X on queued ones. It touches `worker/**` and `src/lib/rc-holds.ts`, so
+> **merging it deploys the worker and restarts both pollers** — check `poller.shards` after.
+>
+> **SIX WATCHES THE DEAD-MAN'S SWITCH SWITCHED OFF ARE STILL OFF, and resuming them is the
+> owner's call, not a tidy-up.** Nothing distinguishes a row it auto-paused from one where
+> the user tapped "No, stop" — `cancel` never cleared `deadman_prompted_at`. The list is
+> `SELECT id, campground_id, end_date FROM watches WHERE active = false AND
+> deadman_prompted_at IS NOT NULL`; four have end dates still in the future.
+>
+> **MIGRATION BLOCKS: the side lane took 072 AND 073 out of MAIN's block** (PR #258). Main's
+> remaining block is **075-079**; `docs/LANES.md` is updated.
+
+> ### THEN: MERGE #255. THE ANDROID HAND-OFF IS FIXED AND HUMAN-VERIFIED.
 >
 > **`claude/rc-captcha-resume`, two commits, local verify 1618/1618.** Two independent fixes:
 > a CAPTCHA between the email and the password no longer abandons the sign-in (web-side —
