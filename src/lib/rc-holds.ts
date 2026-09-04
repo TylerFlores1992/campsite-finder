@@ -35,10 +35,36 @@ export interface HoldRequest {
 /**
  * Record that we told someone about an upcoming release.
  *
- * Idempotent per (watch, unit, arrival): a re-alert for the same opening updates the row
- * rather than stacking duplicates. It deliberately does NOT reset a status that has moved
- * on — if the user already tapped, a later alert must not walk them back to `offered` and
- * silently discard their answer.
+ * Idempotent per (watch, unit, arrival, RELEASE): a re-alert for the same opening carries
+ * the same `release_at` and updates that row rather than stacking duplicates. It
+ * deliberately does NOT reset a status that has moved on — if the user already tapped, a
+ * later alert must not walk them back to `offered` and silently discard their answer.
+ *
+ * ## THE RELEASE IS IN THE KEY, AND IT WAS NOT (migration 074, 2026-09-04)
+ *
+ * The conflict target used to be the bare triple, so ONE ROW was the whole history of a
+ * (watch, unit, arrival) for ever. The `WHERE status = 'offered'` guard then refused every
+ * later offer for that campsite — correctly for the opening it was written about, and
+ * catastrophically for the next one:
+ *
+ *   * declined Tuesday's 08:00 release -> `expired` -> the site is cancelled again a
+ *     fortnight later and releases at a different 08:00: **no offer, no button, no row,
+ *     and nothing anywhere said so**;
+ *   * nobody tapped and `expire-holds` retired it: same;
+ *   * the bot tried and RC refused -> `failed`: same, and a transient RC failure
+ *     permanently retired that campsite for that watch.
+ *
+ * The owner reported it as "we only offer a hold once to users, and if the site becomes
+ * available again they don't see it". Production carried 50 `expired` and 9 `failed` rows,
+ * each one a campsite that could never be offered again for the life of its watch.
+ *
+ * A decline still stands for the release it was made against, which is what the user
+ * actually said no to. Two rows for one campsite are two different releases, and they
+ * cannot both be carted: `dueHolds` serves one hold per (release_at, unit_id) and refuses
+ * a unit that already has a live hold.
+ *
+ * **The DO UPDATE guard is load-bearing and must stay.** Widening the key does not replace
+ * it — within a single release a re-alert still has to leave a tapped row alone.
  */
 export async function offerHold(input: {
   watchId: string;
@@ -55,9 +81,8 @@ export async function offerHold(input: {
       `INSERT INTO rc_hold_requests
          (watch_id, user_id, campground_id, unit_id, unit_name, arrival_date, nights, release_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT (watch_id, unit_id, arrival_date) DO UPDATE
-         SET release_at = EXCLUDED.release_at,
-             unit_name  = COALESCE(EXCLUDED.unit_name, rc_hold_requests.unit_name),
+       ON CONFLICT (watch_id, unit_id, arrival_date, release_at) DO UPDATE
+         SET unit_name  = COALESCE(EXCLUDED.unit_name, rc_hold_requests.unit_name),
              nights     = EXCLUDED.nights,
              updated_at = NOW()
          WHERE rc_hold_requests.status = 'offered'

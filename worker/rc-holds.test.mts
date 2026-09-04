@@ -115,8 +115,15 @@ const offer = (unitId: string, releaseAt: string) =>
   });
 
 test('an offer is created, and re-offering the same opening does not duplicate it', async () => {
-  const a = await offer(U('9001'), pacific(120));
-  const b = await offer(U('9001'), pacific(120));
+  // ONE `pacific(120)`, NOT TWO — and it is the release that makes it "the same opening".
+  // `pacific()` reads Date.now() and formats to the second, so two calls straddle a second
+  // boundary now and then. Since migration 074 put `release_at` in the unique key, two
+  // strings a second apart are two DIFFERENT releases and correctly get two rows: the
+  // fixture was describing "the same opening" with a value that was not stable across the
+  // two calls. The property being asserted is unchanged and is now actually exercised.
+  const release = pacific(120);
+  const a = await offer(U('9001'), release);
+  const b = await offer(U('9001'), release);
   assert.ok(a, 'first offer should insert');
   assert.equal(b, a, 're-alerting the same opening must update, not stack a second row');
   const rows = await query<{ n: string }>(
