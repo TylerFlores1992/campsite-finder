@@ -55,14 +55,34 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >   only. A `--record` flag plus a small table is the fix and is **not built**.
 > - **Health 17/19**, both warns benign — `bot_version` drift with *"no bot-side code in the
 >   gap"*, and `rc_login` reporting the rehearsal skipped.
+> - **The mini-PC is on `d341139` and is FULLY CURRENT bot-side** (checked 09-04 by
+>   `bot-ask git-status`; `git log d341139..origin/master -- scripts/auto-cart-bot/ mini-pc/` is
+>   empty). So the wedge watchdog, `persistLiveToken`, `describeIfEmpty` and the cart burst are
+>   all live. **Use `git-status`, never `autocart.bot_version`** — that field COALESCEs and can
+>   show a stale sha beside a live heartbeat.
+> - **`api.codemagic.io` IS 403 AT THE AGENT PROXY** (policy denial to CONNECT, confirmed
+>   09-04), so **no session can trigger or inspect an iOS build from here** even though
+>   `CODEMAGIC_API_TOKEN` is set and is a plausible 43-character token. Presence is not
+>   reachability. The iOS build is an owner action, or the host must allowlist that host.
 >
 > ### AFTER THE MORNING, IN ORDER OF WHAT IT BUYS
 >
-> **1. The runner has NO wedge watchdog.** On 09-02 it sat alive in its pre-release wait and
-> polled nothing, indefinitely — `last_attempt_at` NULL, the 2026-08-07 dead-runner signature
-> over a live process. `supervise.ps1` restarts on EXIT only. #255 bounds the ONE call
-> identified as the likely hang; the general fix is the keep-warm's 08-17 pattern (a watchdog
-> in a timer that bails so the supervisor restarts it) and **it is not built**.
+> **1. THE LEAK — TRACK A IS RETIRED AND TRACK B IS THE ONLY PLAN LEFT.** The #210
+> discriminator was read on 09-04 and it is the **profiler** branch: the trail prints segments
+> of 1-74 MB (so CDP works and the transport was never the problem), and four return-path
+> readings covering ramping windows attribute **5-17 MB against 690-801 MB of free RAM lost in
+> the same window**. `Memory.startSampling` cannot see this allocation. **Ramps are also back to
+> nine in 52 hours** — the 08-22 "one in thirty hours" is stale — with the RAM arm sitting out
+> all nine (closest approach 240 MB), and **commit going 7.6 GB → 47.3 GB with ~30 GB of it
+> unattributed**, which is unresolved and is either the most urgent thing here or a WMI proxy
+> artifact. **One `bot-ask memory` during a ramp settles that**, and ramps arrive every 5-6
+> hours, so nothing has to be staged. CLAUDE.md → "THE TRAIL ANSWERED, AND IT IS THE PROFILER".
+> **Track B still needs the owner's explicit word.**
+>
+> ~~**The runner has NO wedge watchdog.**~~ **It has had one since 2026-09-03 (`96aee1e`) and
+> the box runs it** (`d341139`, confirmed by `git-status`). Struck rather than deleted: this
+> stood at the top of this list for a day after it shipped, which is the cost this file exists
+> to prevent.
 >
 > **2. RC's own app tier is the largest un-instrumented risk on this path** — and it is now
 > partly instrumented. `never-loaded`/`load-error` have readings, a successful load reports
@@ -70,13 +90,18 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > is missing is a corpus: **the first hand-off after that landed is the first data point.**
 >
 > **3. The RC session dies within ~2 minutes of every queue — four for four**, then ~11
-> minutes to recover. Whether the 08-30 `persistLiveToken` fix is on the box was never
-> checked, and it is one `bot-ask git-status` away.
+> minutes to recover. **The 08-30 `persistLiveToken` fix IS on the box** (checked 09-04:
+> `d341139`, three occurrences), so the remaining question is whether it helps, not whether it
+> is deployed — and the 09-04 log shows the yield reporting *"storage already held the token —
+> nothing to write"*, i.e. it ran and found nothing to do. That is the fix behaving correctly on
+> a healthy session and says nothing about the failing case.
 >
-> **4. A fresh iOS build.** The iPhone is on **1.0 (21) from 2026-08-09** against Android's
-> **1.0 (25)**, so "iOS is the baseline" is a baseline of three-week-old code that predates
-> RevenueCat, and **iOS is now the platform with NO corroborated cart run.** Required for
-> Apple IAP anyway. Codemagic run, not a code change.
+> **4. A fresh iOS build — AND IT CANNOT BE STARTED FROM A SESSION.** The iPhone is on
+> **1.0 (21) from 2026-08-09** against Android's **1.0 (25)**, so "iOS is the baseline" is a
+> baseline of three-week-old code that predates RevenueCat, and **iOS is now the platform with
+> NO corroborated cart run.** Required for Apple IAP anyway. `api.codemagic.io` answers **403 to
+> CONNECT at the agent proxy**, so this is an owner action (or an allowlist change) rather than
+> something to keep carrying as an agent task.
 >
 > **5. Run the Stripe reconcile** (Admin → "Does our table match Stripe?" → Check, read the
 > plan, Apply). The webhook fix is forward-only, so both trials still read `active`. **Do not
@@ -92,8 +117,8 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > back to the last only when none had one. Fixture must stage BOTH reports or the test is
 > vacuous. CLAUDE.md → "AND `findLast` MAKES A TICKED BOX REPORT AS \"NO CHECKBOX AT ALL\"".
 >
-> **7. The Chromium leak is the owner's standing ask and is still uncured.** Track A's trail
-> has never caught a ramp (§2). **Track B is designed and deliberately NOT started** (§6).
+> **7. ~~The Chromium leak~~ — moved to item 1**, because the discriminator was read and the
+> answer changes what is worth building. Still uncured; still the owner's standing ask.
 >
 > ### DECIDED — do not re-raise
 >

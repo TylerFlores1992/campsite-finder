@@ -2730,10 +2730,123 @@ it is most of them.
   destroys the record it exists to preserve, which is exactly how the 08-23 attributions were
   lost.
 
+### THE TRAIL ANSWERED, AND IT IS THE PROFILER — TRACK A CANNOT SEE THESE BYTES (2026-09-04)
+#210 shipped a discriminator with two branches and the box has had it since 2026-08-28
+(`d341139` contains `5e399b3`, confirmed by `git-status` rather than `autocart.bot_version`).
+It has now been read, and **`EMPTY — that renderer answered no CDP call at all` is NOT what
+came back.** From `tail-log rc-keepwarm`, a teardown on 2026-09-04 (the log stamps UTC; this is
+08:09 PT, the hold runner preempting the profile after the 08:00 cart):
+```
+15:09:37 → hold runner wants the profile — closing and standing down
+15:09:37   alloc trail [resident],   renderer only, newest first: 2s ago   -25 MB over 1198s (RAM +10 MB)
+           alloc trail [renewal],    renderer only, newest first: 4192s ago 42 MB over 741s  (RAM  -5 MB)
+           alloc trail [auto-login], renderer only, newest first: 2371s ago 74 MB (one sample only)
+```
+- **THE RENDERER ANSWERS CDP FINE, SO THE TRANSPORT WAS NEVER THE PROBLEM.** Every registered
+  target reported segments with sample windows and RAM deltas. The first branch — *"the trail
+  needs a different TRANSPORT"* — is **out**, and with it the reason to build one.
+- **THE NUMBERS ARE 1 TO 74 MB.** That is the second branch in as many words: *"a line naming
+  segments with sub-400 MB growth means the sampling profiler cannot see these bytes."*
+  `NATIVE_ALLOC_RAMP_MB` is 400, which is why `trail-*` rows have never appeared and never
+  could. **The instrument is not silent — it is measuring a quantity that excludes the leak.**
+- **THE TEARDOWNS ALONE WOULD NOT LICENSE THAT, AND `native_alloc_readings` IS WHAT DOES.**
+  Those browsers were not ramping, so reading them as an elimination would be the 2026-08-19
+  false elimination again. The RETURN-PATH readings are the evidence, because
+  `trace.ram.beforeMb/afterMb` and `profBefore`/`profAfter` bracket the **same call**:
+
+  | reading (PT) | context | free RAM lost | renderer attributed |
+  |---|---|---|---|
+  | 09-03 09:28 | renewal | **−801 MB** | **17 MB** |
+  | 09-03 06:16 | renewal | −690 MB | 5 MB |
+  | 09-02 21:19 | renewal | −698 MB | 10 MB |
+  | 09-02 02:02 | renewal | −697 MB | 15 MB |
+
+  Each of those windows is the ONSET of a ramp that went on to 8-9 GB. **One to two per cent
+  attributed, same window, four for four.**
+- **SO `Memory.startSampling` DOES NOT SEE THIS ALLOCATION.** Every reading Track A has ever
+  produced was measuring something else, which is also why the 08-24 warm-up reading (103 MB of
+  422) and the 08-28 note (13-109 MB against 5-9 GB) looked like near-misses rather than the
+  same fact five times. **It retires the instrument; it does not name what allocates.**
+- **WHAT IS NOT CLOSED: a teardown following an actual ramp.** `tail-log` reaches back about
+  four hours and the newest ramp was five and a half old, so 09-03 17:59 and 09-04 05:13 had
+  both rolled out. That would be a cleaner confirmation and is now a formality rather than the
+  question — the ramping-window evidence above is what carries it.
+- **WHAT THIS LEAVES.** Track B — replay the Okta trip over `ctx.request`, no renderer — is the
+  only remaining plan, and it is still **not started and still needs the owner's word**. The
+  reasoning that held it back was *"the renderer-only sampler cannot see the browser-process
+  share, so if the growth is there `ctx.request` may be the wrong lever"*; that is **weakened,
+  not removed**, because it rested on Track A eventually answering and Track A cannot answer.
+
+#### AND THE RAMPS ARE NOT RARE ANY MORE — NINE IN 52 HOURS (2026-09-04)
+The 2026-08-22 entry reads *"one ramp in thirty hours … roughly a 5x reduction"*. **That is
+stale**, and the caveat written beside it is what came true: *every "not reproduced this
+session" reading was a window that happened to miss one.* From `chromium_memory_samples`:
+```
+09-02 02:13  8,957 MB      09-03 06:24  8,196 MB      09-04 05:13  9,368 MB
+09-02 05:50  8,015 MB      09-03 07:32  8,294 MB
+09-02 09:03  9,352 MB      09-03 09:37  8,449 MB
+09-02 21:29  9,065 MB      09-03 17:59  9,410 MB
+```
+- **One every 5-6 hours, all 8-9.4 GB, all a single `renderer` pid**, climbing ~800-900 MB per
+  2-minute sample for 10-12 minutes, then the whole family drops to ~200-300 MB on a new pid.
+- **THE RAM ARM SAT OUT ALL NINE.** Free-RAM troughs 2,240 / 2,847 / 3,967 / 4,127 / 4,448 /
+  4,602 / 4,729 / 4,738 / 5,349 MB against a 2,000 MB floor — closest approach **240 MB**. With
+  the six already recorded that is **fifteen consecutive ramps** it has not fired on.
+- **THE RAMPING RENDERER IS A pid THAT DID NOT EXIST A MINUTE EARLIER**, on all four checked.
+  Before each ramp the largest RC process is the `gpu-process` at ~95-115 MB and the family sits
+  at 280-320 MB; then a new renderer pid appears and is immediately the largest. Before the
+  09-03 06:24 ramp the family read `rc_procs: 0` for eight minutes. **An observation, not a
+  mechanism** — a browser generation being replaced, the throwaway tab's own renderer, and the
+  2-minute cadence quantising the onset all fit it, and they need different fixes.
+
+#### AND COMMIT GOES TO 47 GB FOR 9 GB OF CHROME — UNEXPLAINED, AND IT IS THE 08-12 SHAPE
+The same samples, raw rather than as a percentage:
+```
+09-04 05:01   rc   306 MB   commit  7,609 / 31,580 MB   free RAM 10,712 MB
+09-04 05:03   rc 3,624 MB   commit 40,458 / 40,854 MB   free RAM  6,794 MB
+09-04 05:13   rc 9,368 MB   commit 47,265 / 48,061 MB   free RAM  3,967 MB
+09-04 05:15   rc   207 MB   commit  7,355 / 31,580 MB   free RAM 11,022 MB
+```
+- **THE "97-99% COMMIT" IN EVERY RAMP ROW IS AN ARTIFACT — DO NOT QUOTE IT.** Windows grows the
+  system-managed pagefile as fast as the commit is taken, so the LIMIT chases the USED figure
+  and the ratio stays pinned near 100% all the way up and back down. The ratio is not measuring
+  pressure here; the absolute figures are. Earlier entries quoting 82/88/89/99% were reading a
+  series where the pagefile was not doing this — **check the limit column before comparing.**
+- **THE ABSOLUTE FIGURES ARE WORSE THAN THE PERCENTAGE READS.** Commit used goes
+  **7.6 GB → 47.3 GB** and back, five or six times a day. On 2026-08-12 commit exhaustion is
+  what stopped `supervise.ps1` starting a shell, took every remote lever with it, and ended
+  with the box being power-cycled by hand.
+- **AND ~30 GB OF IT IS UNATTRIBUTED.** `rc_mb` sums `Get-Process.PrivateMemorySize64` — private
+  *committed* bytes — over chrome.exe on our profile dirs, and it accounts for 9.4 GB of the 40.
+  `recgov_mb` and `other_mb` are both 0.
+- **THREE READINGS, AND THE DATA CANNOT SEPARATE THEM. DO NOT WRITE ONE IN.** Either the box
+  really is committing ~40 GB (materially worse than "a 9 GB ramp", and then the most urgent
+  thing in this file); or `Win32_OperatingSystem`'s `TotalVirtualMemorySize`/`FreeVirtualMemory`
+  — which is where these two columns come from **by choice**, because the perf counters are
+  localised and can be disabled — is a proxy that does not mean what the column names say; or
+  the process scan is blind to some of it, which an unelevated WMI query genuinely can be and
+  which this table does not record.
+- **WHAT WOULD SETTLE IT: one `bot-ask memory` DURING a ramp.** It prints the same OS figures
+  alongside the per-process list, so a 40 GB commit is either explained by what it names or is
+  confirmed unattributed. Ramps arrive every 5-6 hours; **nobody has to stage one.**
+- **IT ALSO EXPLAINS WHY THE RAM ARM CANNOT FIRE, AND THAT IS NOT AN ARGUMENT FOR LOWERING THE
+  FLOOR.** The allocation goes to the pagefile, so free RAM never falls far — the arm is
+  watching the one resource that is *not* running out. The 08-19 arithmetic that chose 2,000 MB
+  mapped free RAM onto COMMIT percentages from a series where the pagefile behaved differently,
+  and that mapping no longer holds. **Lowering the trip point is the change that killed a
+  working repair on 08-19.** The honest move is a SECOND trigger on commit-used, and it is a
+  deliberate decision with a measurement behind it, not a patch.
+
 ### THE LEAK — WHERE IT ACTUALLY STANDS (2026-08-22)
 **Read this before building anything memory-related. Nothing shipped so far is a cure.** The size
 guard, the RAM arm, the heap trail, the post-Okta recycle, the orphan sweep, the throwaway tab and
 now the warm-up are containment or **relocation**. The owner's standing ask is to fix it.
+
+> **TRACK A IS RETIRED AS OF 2026-09-04 — read the section directly above before this one.** The
+> sampling profiler cannot see this allocation (1-74 MB of segments, and 5-17 MB attributed
+> against 690-801 MB of free RAM lost in the same window, four for four). Everything below about
+> Track A describes an instrument that was never going to answer; the ESTABLISHED paragraph and
+> Track B are unaffected.
 
 **ESTABLISHED.** The ramp is triggered by the **Okta navigation** — a controlled comparison, not a
 correlation (08-18: three token-less renewals ten minutes apart; only the one that clicked through
@@ -5130,9 +5243,19 @@ and `last_attempt_at` NULL — the 2026-08-07 dead-runner signature. It was not 
   morning.** A timeout reports `timedOut` and the runner names it as OURS — a wedged browser is
   not an RC refusal — and the cart read-back still runs, because the POSTs may have landed and
   what was lost is the answer.
-- **STILL MISSING: the runner has no wedge watchdog at all.** The keep-warm got one on 08-17
-  (bail and let the supervisor restart); this bound covers the identified call and nothing else.
-  That is the deeper fix and it is NOT built.
+- ~~**STILL MISSING: the runner has no wedge watchdog at all.**~~ **BUILT 2026-09-03 (`96aee1e`)
+  AND ON THE BOX** — `d341139` contains it, confirmed by `git-status` and not by
+  `autocart.bot_version`, which is a hint. `RC_RUNNER_HUNG_MS` (4 min) in an **unref'd**
+  `setInterval` (an interval holds the event loop open, and `--once` sets an exit code rather
+  than calling `process.exit`), with the keep-warm's 08-17 breadcrumb — `mark`, which
+  deliberately does NOT reset `lastTick`, or entering a step would postpone the watchdog that
+  exists to catch a step never finishing — and `sleepTicking`, so a legitimate 3-minute
+  pre-release hold is not read as a stall. **Releasing the profile lock on the way out is most
+  of its value:** a wedged pass renews that lock from its own timer, so until the bail runs the
+  keep-warm can never take the profile back and the RC session cannot be repaired.
+  `worker/runner-wedge.test.mts`. Struck rather than deleted — *"the deeper fix is NOT built"*
+  is exactly the sentence that gets quoted as a task, and it was, in two other files, for a day
+  after it shipped.
 - **BOT-SIDE, so it needs a box update before it means anything.**
   `worker/rc-cart-timeout.test.mts`, seven guards.
 
@@ -5951,8 +6074,9 @@ Three gaps in the hand-off readout, all the house shape — a fact produced and 
 > hand-off was confirmed on RC's own cart page by the owner (header, badge, reservation).
 > That is the first human corroboration of `cart read back` on any platform.
 >
-> **Then, in order:** the runner has NO wedge watchdog (it sat alive polling nothing on 09-02;
-> #255 bounds one call, the general fix is the keep-warm's 08-17 pattern and is not built) ·
+> **Then, in order:** ~~the runner has NO wedge watchdog~~ — **it has had one since 09-03
+> (`96aee1e`) and the box runs it**; struck rather than deleted, because it stood at the top of
+> two files' to-do lists for a day after it shipped ·
 > **RC's own app tier failing to render is the largest un-instrumented risk on this path** and
 > loses a site at 08:00 by itself · the RC session dies within ~2 min of every queue, four for
 > four, ~11 minutes to recover · "open the window and close it at once when already signed in"
