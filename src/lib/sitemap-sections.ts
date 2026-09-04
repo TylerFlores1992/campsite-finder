@@ -121,6 +121,13 @@ export async function staticEntries(): Promise<MetadataRoute.Sitemap> {
     // the most expensive omission in this list. Priority with /pricing: it is bottom of
     // funnel, read by somebody deciding whether to pay.
     { url: `${BASE}/auto-cart`, changeFrequency: 'monthly', priority: 0.8 },
+    // The problem-intent pages (2026-09-04). They target the query class the owner named —
+    // "how to get a campsite that's sold out", "campsite cancellation alert app" — which is
+    // NOT the bet falsified on 2026-08-25: that one retargeted 6,934 facility TITLES onto
+    // "Cancellations", and its evidence was about which queries those pages surface against.
+    // Nothing has tested a dedicated page. Priority with /auto-cart: bottom of funnel.
+    { url: `${BASE}/sold-out-campsite`, changeFrequency: 'monthly', priority: 0.8 },
+    { url: `${BASE}/campsite-cancellation-alerts`, changeFrequency: 'monthly', priority: 0.8 },
     { url: `${BASE}/terms`, changeFrequency: 'yearly', priority: 0.3 },
     { url: `${BASE}/privacy`, changeFrequency: 'yearly', priority: 0.3 },
     // Listed so the source citation is publicly discoverable, not just linked from the store

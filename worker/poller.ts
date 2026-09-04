@@ -29,7 +29,7 @@ try {
 }
 
 import { query, mutate, sqlit } from '../src/lib/db/client';
-import { getAvailabilityFromRecGov, hasAvailabilityInRange, recgovBreakerOpen } from '../src/lib/availability/recgov';
+import { getAvailabilityFromRecGov, recgovBreakerOpen } from '../src/lib/availability/recgov';
 import * as recgovScheduler from './recgov-scheduler';
 import { SHARD_COUNT, LEASE_RENEW_MS, claimOrRenewShard, heldShard, ownsCampground } from './shard';
 import { leadDaysUntil } from './lead-time';
@@ -46,6 +46,7 @@ import { findReserveAmericaOpen } from '../src/lib/availability/reserveamerica';
 import { findGoingToCampOpen } from '../src/lib/availability/goingtocamp';
 import { isGoingToCampSource, GOINGTOCAMP_PROVIDERS } from '../src/lib/sources/goingtocamp/providers';
 import { findTnscOpen } from '../src/lib/availability/tnsc';
+import { wholeStayOpen } from '../src/lib/availability/whole-stay';
 import { isTnscSource } from '../src/lib/sources/tnsc/providers';
 import { fetchLocations } from '../src/lib/sources/goingtocamp/client';
 import { syncAllGoingToCamp } from '../src/lib/sources/goingtocamp/sync';
@@ -345,18 +346,6 @@ function probeArrival(leadDays: number): { start: string; end: string } {
   return { start, end: e.toISOString().slice(0, 10) };
 }
 
-/** Whole-stay availability for any source, dispatching to the same adapters the
- *  poll cycle uses. True = a bookable stay exists across [start, end). */
-/** `null` = we never found out (throttled / breaker open), which must NOT be recorded
- *  as "no opening" — that is the same lie the search page was telling. */
-async function probeWholeStayOpen(source: string, campgroundId: string, start: string, end: string, nights: number): Promise<boolean | null> {
-  if (isUseDirectSource(source)) return !!(await findRCOpenUnit(campgroundId, start, end, nights));
-  if (isGoingToCampSource(source)) return !!(await findGoingToCampOpen(campgroundId, start, end, nights));
-  if (isTnscSource(source)) return !!(await findTnscOpen(campgroundId, start, end, nights));
-  if (source === 'reserveamerica') return !!(await findReserveAmericaOpen(campgroundId, start, end, nights));
-  return hasAvailabilityInRange(campgroundId, start, end, nights); // rec.gov
-}
-
 /** Probe every active roster target once across the standard lead windows and
  *  record the results. Non-overlapping and best-effort. */
 async function probeRosterIfDue(): Promise<void> {
@@ -385,7 +374,7 @@ async function probeRosterIfDue(): Promise<void> {
     const spreadMs = Math.min(PROBE_INTERVAL_MS * PROBE_SPREAD_FRACTION, PROBE_SPREAD_MAX_MS);
     await pacedForEach(tasks, spreadMs, PROBE_CONCURRENCY, async ({ t, w }) => {
       try {
-        const open = await probeWholeStayOpen(t.source, t.campground_id, w.start, w.end, PROBE_NIGHTS);
+        const open = await wholeStayOpen(t.source, t.campground_id, w.start, w.end, PROBE_NIGHTS);
         // Unknown is not a data point. Recording it as `false` would quietly poison the
         // likelihood buckets with throttle noise, which is worse than a smaller sample.
         if (open === null) return;

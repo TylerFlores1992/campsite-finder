@@ -12,6 +12,7 @@ import { panelHolds } from "@/lib/hold-placement";
 import WatchCta from "./WatchCta";
 import { PlanOptionsButton } from "./SubscribeCta";
 import SetupNudges from "./SetupNudges";
+import NewWatchOutlook from "./NewWatchOutlook";
 import { providerLabel } from "./providers";
 
 /**
@@ -215,6 +216,7 @@ export default function WatchesList() {
           this page was never told their alerting was half-configured. One component,
           one definition; a second copy here would drift from it within a month. */}
       <SetupNudges className="mb-3.5" />
+      <NewWatchOutlook className="mb-3.5" />
 
       <div className="mb-3.5 flex items-center gap-2.5 rounded-[13px] border border-ch-line bg-ch-card px-3.5 py-3">
         <div className="flex-1">
