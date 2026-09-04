@@ -5499,14 +5499,14 @@ inactive, id like to stop doing that. Just keep the watch for the duration."*
 
 ## Open / next session
 
-> ### FIRST: MIGRATION 074 IS ALREADY APPLIED TO PRODUCTION. Its code is in PR #262.
+> ### FIRST: MIGRATION 074 IS ALREADY APPLIED TO PRODUCTION. Its code is in PR #263.
 >
 > The index widened before the commit landed, deliberately (see the entry above), so
 > **master's `offerHold` is currently one column behind the live index and its upsert
 > throws.** It FAILS CLOSED — the coming-soon alert still goes out, with no hold button —
-> but the gap closes only when #262 merges. There were zero live holds when it was applied.
+> but the gap closes only when #263 merges. There were zero live holds when it was applied.
 >
-> **#262 also carries the owner's three 2026-09-04 asks**, each in its own commit: the
+> **#263 also carries the owner's three 2026-09-04 asks**, each in its own commit: the
 > dead-man's switch deleted, the per-release hold key, and the holds moved into the watch
 > card with a cancel X on queued ones. It touches `worker/**` and `src/lib/rc-holds.ts`, so
 > **merging it deploys the worker and restarts both pollers** — check `poller.shards` after.
