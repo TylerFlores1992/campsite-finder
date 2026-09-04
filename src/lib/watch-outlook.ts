@@ -8,37 +8,62 @@
  * has been cancelled, which is not something we can do anything about. This says so
  * once, at the moment they would otherwise start wondering.
  *
- * ── WHAT THE DATA ACTUALLY SAYS, AND WHAT IT DOES NOT ─────────────────────────────
+ * ── THE TIMING CLAIM, AND WHERE IT COMES FROM (2026-09-04) ────────────────────────
  *
- * The ask this was built from was "tell them cancellations are unlikely until about
- * two weeks out". **OUR OWN DATA DOES NOT SUPPORT THAT, and one reading of it says
- * the opposite** — so the copy here makes no claim about lead time at all. Measured
- * 2026-09-04 against `availability_observations` (13,261 watch-driven rows and the
- * 137k frozen Feature E roster rows, 2026-07-22 → 2026-09-04), counting TRANSITIONS
- * — an observation whose predecessor for the same (campground, arrival, nights) was
- * fully booked, i.e. an actual opening appearing, not a stay that was never sold out:
+ * The copy says most cancellations come in the last week or two before a trip. **That
+ * claim rests on EXTERNAL data, not ours**, and the distinction matters because an
+ * earlier version of this file asserted the opposite from our own numbers and was
+ * wrong to.
  *
- *   ROSTER (502 campgrounds, hourly, the only well-powered windows we have)
- *     lead 14-20d   418 openings / 62,747 checks   0.67%
- *     lead 42-48d   378 openings / 36,360 checks   1.04%
- *     lead 49-55d   258 openings / 22,326 checks   1.16%
+ * WHAT SUPPORTS IT:
+ *   · Campsite Tonight (Mike Lee) analysed ~32,000 Yosemite reservations, 2023-24,
+ *     and reports a **27% spike in cancellations in the seven days before check-in**.
+ *     That is a year of a six-month-window campground — exactly the population this
+ *     note is shown for. (Read via SF Chronicle's coverage and search excerpts; the
+ *     blog itself is egress-blocked from this environment.)
+ *   · The Dyrt's 2023 camper survey found only **42.7% of campers used every
+ *     reservation they made**, driven by deliberate over-booking — which is the
+ *     mechanism: people book at six months, decide near the date, and drop the rest.
+ *   · Refund cliffs concentrate it. **ReserveCalifornia, since 2026-07-01, refunds in
+ *     full only 7+ days out**, takes the first night at 2-6 days and everything inside
+ *     2 days — and most live CampHawk watches are RC. Recreation.gov's only cliff is
+ *     at 1-2 days. A deadline is a reason to cancel ON a particular day.
+ *   · Campnab and CampCancel both say it in prose (CampCancel names two to six weeks);
+ *     Outdoorithm describes three waves at 10-14, 7 and 1-3 days from 233 cancellations
+ *     of their own. Consistent direction, no published distribution behind any of them.
  *
- * A fully-booked stay six to eight weeks out opened on ~1.6x MORE checks than one two
- * to three weeks out. Whatever governs cancellations here, "they start about two weeks
- * out" is not it.
+ * ── WHAT OUR OWN DATA DOES AND DOES NOT COVER ────────────────────────────────────
  *
- * THE REAL-WATCH POPULATION CANNOT RESCUE THE PREMISE EITHER, AND THE REASON IS THE
- * INTERESTING PART. Restricted to the campgrounds our users actually watch, the split
- * looks spectacular — 26 openings in 2,666 checks inside 14 days against 1 in 5,503
- * beyond it, on the same 11 stays observed as they counted down. **Then check where
- * the events came from: 32 of those 34 openings are ONE campground (234330).** Every
- * other watched campground recorded zero in both bands. So that 50x is one park's
- * behaviour wearing a population's clothes — the confound this repo keeps paying for,
- * and it is why the number is not in the copy.
+ * Measured against `availability_observations`, counting TRANSITIONS — an observation
+ * whose predecessor for the same (campground, arrival, nights) was fully booked, i.e.
+ * an opening actually appearing, never a stay that was simply never sold out:
  *
- * WHAT IS SUPPORTED, and it is all the notice needs: on a stay that is already fully
- * booked, an opening is a rare per-check event at every lead time we can measure, so a
- * long wait is the ordinary case rather than a symptom.
+ *   ROSTER (502 campgrounds, hourly, frozen 2026-07-30)
+ *     lead  0-13d      8 /   1,073 checks   0.75%   <- ESSENTIALLY UNSAMPLED
+ *     lead 14-20d    418 /  62,747          0.67%
+ *     lead 42-55d    636 /  58,686          1.08%
+ *
+ * **THE TWO WELL-POWERED BANDS ARE 2-3 WEEKS AND 6-8 WEEKS, AND THE FAR ONE IS
+ * BUSIER.** That is a real finding and it is not what this note claims — the note is
+ * about the LAST week or two, and the roster put 1,073 checks there against 121,433
+ * in the two bands it did sample. **It could not see the window the claim is about.**
+ * An earlier version of this header read that gap as a refutation of the premise; it
+ * is an absence of evidence, which is the shape this repo keeps mistaking for a
+ * negative reading.
+ *
+ * The thin short-lead data we do have leans the other way, and is quoted only as a
+ * lean: roster 4-13 days is 7 / 565 (1.24%), the highest rate of any band bar one of
+ * 470 checks. The watch-driven recorder shows 34 openings inside 13 days against 7
+ * beyond — but **32 of those 34 are ONE campground (234330, Silver Lake at June
+ * Lake)**, so it is one park's behaviour wearing a population's clothes and settles
+ * nothing on its own.
+ *
+ * WHAT WOULD SETTLE IT: short-lead coverage on booked-out six-month-window parks —
+ * either waiting on the watch-driven recorder (free, but only ~13 campgrounds) or
+ * seeding a SMALL roster at leads of 3/7/10/14 days. The 07-30 stop was about cost
+ * (~15,700 Vercel invocations/day across 502 proxied targets); rec.gov targets are
+ * fetched directly by the worker against its own budget, so a small rec.gov-only
+ * roster is a different cost question. **Not taken — it is the owner's call.**
  *
  * ── THE GATES ────────────────────────────────────────────────────────────────────
  *
@@ -52,10 +77,9 @@
  * 2026-07-31, and here it would tell someone to be patient about a stay they could
  * have booked in the next thirty seconds. Three states, always.
  *
- * The lead gate is NOT a claim about when cancellations happen — see above. It is a
- * claim about how long this person is about to wait, which is the only thing the
- * notice is for. A stay inside a fortnight resolves either way soon enough that the
- * note would be noise.
+ * The lead gate is about how long THIS PERSON is about to wait. A stay inside a
+ * fortnight is already in the window the copy points at, so the note would be telling
+ * them to wait for a period that has started — noise, not reassurance.
  */
 
 /** Lead time beyond which a silent watch is long enough to need explaining. */
@@ -84,9 +108,10 @@ export function watchOutlook({ leadDays, available }: WatchOutlookFacts): WatchO
 }
 
 /**
- * The words. Kept here rather than in the component so the guards can assert what is
- * NOT said — specifically that no lead-time cliff is promised, because the copy is the
- * only place the unsupported claim could come back.
+ * The words. Kept here rather than in the component so the guards can assert both what
+ * is said and what is not: the timing claim is EXTERNAL evidence (see the header) and
+ * must stay qualitative, because the only thing that could creep back in is a number
+ * nothing licenses.
  */
 export const OUTLOOK_HEADING = "You're watching a stay that's fully booked";
 
@@ -94,9 +119,10 @@ export function outlookBody(leadDays: number): string {
   const weeks = Math.round(leadDays / 7);
   const when = weeks >= 2 ? `about ${weeks} weeks away` : `${leadDays} days away`;
   return (
-    `Every site for these dates is taken right now, and your trip is ${when} — so it may be ` +
-    `a long quiet stretch before anything changes. That's normal: an opening only happens ` +
-    `when somebody else cancels, and on a booked-out stay that's rare on any given day. ` +
-    `We re-check every 15 seconds and alert you the moment one appears, however long that takes.`
+    `Every site for these dates is taken right now, and your trip is ${when}. An opening ` +
+    `only happens when somebody else cancels — and most cancellations come in the last ` +
+    `week or two before a trip, as plans firm up and refund deadlines pass. So expect it ` +
+    `to be quiet until then. We re-check every 15 seconds and alert you the moment a ` +
+    `site frees up.`
   );
 }

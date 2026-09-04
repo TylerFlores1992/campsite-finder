@@ -5821,36 +5821,71 @@ Three gaps in the hand-off readout, all the house shape — a fact produced and 
   tapped is not a race, and reporting it as one manufactures a competitor.
 
 
-### "CANCELLATIONS DON'T START UNTIL TWO WEEKS OUT" IS FOLK WISDOM AND OUR DATA SAYS OTHERWISE (2026-09-04)
+### ~~"CANCELLATIONS DON'T START UNTIL TWO WEEKS OUT" IS FOLK WISDOM AND OUR DATA SAYS OTHERWISE~~ — I MEASURED THE WRONG WINDOW (2026-09-04)
 Asked to warn a new watcher, after creating a far-out watch, that cancellations are unlikely
-until about two weeks out — *"or whatever our data tells us"*. **It tells us the opposite.**
-Measured off `availability_observations`, counting TRANSITIONS (an observation whose
-predecessor for the same (campground, arrival, nights) was fully booked — a thing that was
-gone coming back, never a stay that was simply never sold out):
+until about two weeks out — *"or whatever our data tells us"*. ~~**It tells us the opposite.**~~
+**IT TELLS US ALMOST NOTHING ABOUT THAT WINDOW, AND I REPORTED THE GAP AS A REFUTATION.**
+Struck rather than deleted: "our data says otherwise" is exactly the sentence a later reader
+quotes, and it was wrong. Measured off `availability_observations`, counting TRANSITIONS (an
+observation whose predecessor for the same (campground, arrival, nights) was fully booked — a
+thing that was gone coming back, never a stay that was simply never sold out):
 
-    ROSTER, 502 campgrounds, hourly, the only well-powered windows we have
-      lead 14-20d   418 openings / 62,747 checks   0.67%
-      lead 42-48d   378 openings / 36,360 checks   1.04%
-      lead 49-55d   258 openings / 22,326 checks   1.16%
+    ROSTER, 502 campgrounds, hourly, frozen 2026-07-30
+      lead  0-13d       8 openings /   1,073 checks   0.75%   <- ESSENTIALLY UNSAMPLED
+      lead 14-20d     418 openings /  62,747 checks   0.67%
+      lead 42-55d     636 openings /  58,686 checks   1.08%
 
-A booked-out stay six to eight weeks out opened on **~1.6x MORE** hourly checks than one two to
-three weeks out. Whatever governs cancellations, "they start about two weeks out" is not it.
-- **THE REAL-WATCH POPULATION LOOKS LIKE IT RESCUES THE PREMISE, AND THAT IS THE TRAP.**
-  Restricted to campgrounds our users actually watch, and to the 11 stays observed across both
-  bands as they counted down: **26 openings in 2,666 checks inside 14 days against 1 in 5,503
-  beyond it** — a 50x split, within-series, so not a population confound. **Then check where
-  the events came from: 32 of those 34 openings are ONE campground (`234330`).** Every other
-  watched campground recorded zero in both bands. One park's behaviour wearing a population's
-  clothes, and I was a paragraph from writing it up as the finding.
-- **WHAT IS SUPPORTED, and it is all the notice needed:** on a stay that is already fully
-  booked an opening is a rare per-check event at every lead time we can measure. Across the
-  whole roster: **1,100 openings in 125,118 checks — 0.9%** (`src/lib/openings-stat.ts`, which
-  the two new marketing pages render; it is the one number in this category nobody else has).
+- **THE TWO WELL-POWERED BANDS ARE 2-3 WEEKS AND 6-8 WEEKS, AND THE FAR ONE IS BUSIER.** That
+  finding stands and is worth keeping. **What does not follow is the headline.** The premise is
+  about the LAST week or two, and the roster put **1,073 checks there against 121,433** in the
+  two bands it did sample. It could not see the window the claim is about, and I read that
+  silence as a negative — the single most-repeated shape in this file, committed while writing
+  a section about it.
+- **THE OWNER PUSHED BACK WITH A MECHANISM AND WAS RIGHT.** *"People book six months in advance,
+  then decide close to the dates… if something comes up they cancel (normally close to the date
+  of the reservation) and we snag it."* Every external source agrees:
+  - **Campsite Tonight (Mike Lee), ~32,000 Yosemite reservations 2023-24: a 27% SPIKE in
+    cancellations in the seven days before check-in.** A year of a six-month-window campground,
+    which is exactly this population. (Read via SF Chronicle coverage and search excerpts —
+    `blog.campsitetonight.app` is egress-blocked here, as are campnab.com, thedyrt.com,
+    arvie.com, outdoorithm.com, campcancel.com and laviezine.com. **WebFetch fails on all of
+    them; WebSearch is the only way in.**)
+  - **The Dyrt 2023: only 42.7% of campers used every reservation they made** — deliberate
+    over-booking, which IS the owner's mechanism measured from the other end.
+  - **RC's refund cliff is a reason to cancel on a particular day**: since 2026-07-01 it refunds
+    in full only 7+ days out, takes the first night at 2-6 days, everything inside 2. Most live
+    CampHawk watches are RC. Recreation.gov's only cliff is 1-2 days.
+  - Campnab and CampCancel say it in prose (CampCancel names two to six weeks); Outdoorithm
+    describes waves at 10-14, 7 and 1-3 days from 233 cancellations of their own. **No published
+    distribution behind any of them** — consistent direction, not independent measurements.
+- **AND THE THIN SHORT-LEAD DATA WE DO HOLD LEANS THE OWNER'S WAY.** Roster 4-13 days is
+  **7 / 565 (1.24%)**, the highest rate of any band bar one of 470 checks. The watch-driven
+  recorder shows **34 openings inside 13 days against 7 beyond**. Both are quoted as leans and
+  neither settles anything: **32 of those 34 are ONE campground (`234330`, Silver Lake at June
+  Lake)** — one park's behaviour wearing a population's clothes, and I was a paragraph from
+  writing that 50x up as the finding before checking where the events came from.
+- **WHAT IS SUPPORTED ON OUR OWN NUMBERS, and it is the marketing one:** on a stay that is
+  already fully booked an opening is a rare per-check event at every lead time we can measure.
+  Across the whole roster: **1,100 openings in 125,118 checks — 0.9%** (`src/lib/openings-stat.ts`,
+  which the two new problem-intent pages render; it is the one number in this category nobody
+  else has).
+- **WHAT WOULD SETTLE IT: short-lead coverage on booked-out six-month-window parks.** Either
+  wait on the watch-driven recorder (free, ~13 campgrounds, mostly silent) or seed a SMALL
+  roster at leads of 3/7/10/14 days. The 07-30 stop was about COST — ~15,700 Vercel invocations
+  a day across 502 proxied UseDirect targets — and **rec.gov targets do not route through
+  `/api/rc-proxy` at all**, so a small rec.gov-only roster is a different cost question against
+  the worker's own budget. **Not taken; it is the owner's call.**
 - **SHIPPED: a one-shot note on `/watches` after a watch is created** (`lib/watch-outlook`,
-  `GET /api/watches/<id>/outlook`, `NewWatchOutlook`). It says openings need somebody else to
-  cancel and that we are still checking — **and makes no lead-time claim**, guarded by a test
-  that fails if one comes back. The lead gate stays at 14 days because it is a claim about how
-  long this person is about to WAIT, which is the only thing the note is for.
+  `GET /api/watches/<id>/outlook`, `NewWatchOutlook`). It says an opening needs somebody else to
+  cancel, **that most cancellations come in the last week or two as plans firm up and refund
+  deadlines pass**, and that we are still checking every 15 seconds. The lead gate stays at 14
+  days: inside a fortnight the reader is already IN the window the copy points at, so the note
+  would be telling them to wait for a period that has started.
+- **THE GUARD WAS INVERTED, NOT RELAXED.** It used to fail on any lead-time claim, on the
+  strength of the reading struck above — so the guard PINNED the mistake, which is the
+  `held-offer-scope` shape (a test requiring the bug). It now fails if the timing claim is
+  dropped, and separately if a NUMBER appears: nothing we or anyone else publishes licenses a
+  probability in that sentence, and a percentage is what a disappointed user quotes back.
 - **`available === null` IS SILENT**, and so is a division of a park watch we could not read.
   Rounding either to "nothing is free" tells somebody to settle in for a long wait about a
   stay they could book in thirty seconds — the 2026-07-31 Moab lie, one layer up.

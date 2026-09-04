@@ -63,18 +63,28 @@ test('AVAILABILITY OUTRANKS LEAD TIME, both ways', () => {
   assert.equal(watchOutlook({ leadDays: 1, available: true }).show, false);
 });
 
-test('THE COPY PROMISES NO LEAD-TIME CLIFF — our data does not support one', () => {
-  // The ask was "tell them cancellations are unlikely until about two weeks out". The
-  // roster measurement says a booked-out stay 6-8 weeks out opened on ~1.6x MORE
-  // hourly checks than one 2-3 weeks out (1.04-1.16% vs 0.67%, 418 and 636 events over
-  // 502 campgrounds), and the real-watch split that appears to show the cliff is 32 of
-  // 34 events from a single campground. So the words must not claim it.
+test('THE COPY MAY NAME THE WINDOW AND MAY NOT QUANTIFY IT', () => {
+  // THIS GUARD WAS INVERTED ON 2026-09-04, DELIBERATELY. It used to assert that the
+  // copy promised NO lead-time cliff, on the strength of our roster showing 6-8 weeks
+  // out busier than 2-3 weeks out. That reading was wrong about the question: the
+  // roster put 1,073 checks inside 13 days against 121,433 in the two bands it did
+  // sample, so it never measured the window the claim is about. External data does —
+  // Campsite Tonight's ~32,000 Yosemite reservations show a 27% cancellation spike in
+  // the seven days before check-in — and RC's 7-day refund cliff is a mechanism for it.
+  // See the header of watch-outlook.ts for the full sourcing.
+  //
+  // WHAT IS STILL FORBIDDEN IS A NUMBER. Nothing we hold licenses a probability, and a
+  // percentage in this note would be the one sentence a disappointed user quotes back.
   const body = `${OUTLOOK_HEADING} ${outlookBody(40)}`.toLowerCase();
-  for (const claim of ['until about two weeks', 'until two weeks', 'pick up', 'closer to your', 'start about']) {
-    assert.ok(!body.includes(claim), `the copy must not claim a lead-time cliff: found "${claim}"`);
+  for (const claim of ['unlikely', 'no chance', "won't happen", 'never', '%', 'odds', 'chance of', 'guarantee']) {
+    assert.ok(!body.includes(claim), `the copy must not quantify or promise: found "${claim}"`);
   }
-  // What it MUST say instead: an opening needs somebody else to cancel, and we keep
-  // checking. Both are supported, and both are the reason it stops reading as a fault.
+  assert.ok(!/\d+ *(percent|in \d)/.test(body), 'no rate, in any spelling');
+
+  // REQUIRED. The timing claim is the thing the owner asked for and the thing the
+  // external evidence supports; dropping it silently would leave the note saying only
+  // "it may be quiet", which is what it said before anyone went and checked.
+  assert.ok(body.includes('week or two'), 'the copy must name the window cancellations cluster in');
   assert.ok(body.includes('cancels'), 'the copy must say an opening depends on a cancellation');
   assert.ok(body.includes('15 seconds'), 'the copy must say we are still checking');
 });
