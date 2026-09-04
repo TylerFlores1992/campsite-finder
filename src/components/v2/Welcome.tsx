@@ -52,6 +52,22 @@ export default function Welcome() {
   const next = params.get("next") || "/search";
   const justSubscribed = params.get("subscribed") === "1";
 
+  // WHERE THIS ACCOUNT CAME FROM, stamped once (migration 072). This is the only moment it
+  // can be: `document.referrer` lives on the page they LANDED on and is long gone by here,
+  // so `AcquisitionCapture` stashed it in a cookie on the first pageview and this hands that
+  // cookie to the server. Fire-and-forget on its own effect, never inside the Promise.all
+  // below: a diagnostic must not be able to delay — or fail — the screen it observes, and a
+  // 401 here (someone opened /welcome with no session) is an ordinary outcome, not an error.
+  //
+  // WHY HERE AND NOT IN `syncUser`: this runs on every authenticated page load, and a POST
+  // per page view to write a column that can only be written once is a cost with no buyer.
+  // The gap that leaves is an account that never reaches this screen; the write is idempotent
+  // (`WHERE signup_source IS NULL`) precisely so a second caller can be added if that shows up
+  // in the readout as a population of NULLs that ought not to be.
+  useEffect(() => {
+    fetch("/api/user/signup-source", { method: "POST" }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     Promise.all([

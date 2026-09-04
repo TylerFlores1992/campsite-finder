@@ -3,6 +3,7 @@ import { Inter, Bitter, Nunito_Sans } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import AcquisitionCapture from "@/components/AcquisitionCapture";
 import NativeBridge from "@/components/NativeBridge";
 import NativeOffline from "@/components/NativeOffline";
 import { NativeAppProvider } from "@/lib/native/context";
@@ -119,6 +120,12 @@ export default function RootLayout({
             <NativeBridge />
             <NativeOffline />
           </NativeAppProvider>
+          {/* Records the first page of a visit, so a signup can be attributed to the
+              page that produced it. HERE and not in the (app) layout: the SEO pages
+              this exists to measure — /camping, the type hubs, /campground/<id> —
+              sit outside that route group, so mounting it there would miss exactly
+              the traffic it was built for. Client-only; nothing request-time. */}
+          <AcquisitionCapture />
           <Analytics />
           <SpeedInsights />
         </body>

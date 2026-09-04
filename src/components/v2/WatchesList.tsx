@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/Button";
+import { signUpToWatchHref } from "@/lib/watch-intent";
 import Collapsible from "@/components/ui/Collapsible";
 import WatchCard, { type WatchCardWatch } from "./WatchCard";
 import HoldsPanel from "./HoldsPanel";
@@ -275,7 +276,10 @@ function AccountWall() {
         ))}
       </ol>
       <div className="mt-4 grid gap-2">
-        <Link href="/sign-up" className={buttonClasses({ fullWidth: true })}>
+        {/* Lands on the New watch screen, not an empty /search: this wall is reached by
+            someone who came to see their watches, so the first thing after signing up is
+            creating one. No campground to carry here — /new picks it. See lib/watch-intent. */}
+        <Link href={signUpToWatchHref({})} className={buttonClasses({ fullWidth: true })}>
           Start 7-day free trial
         </Link>
         {/* Between the trial and Sign in, same size as both — see PlanOptionsButton. */}

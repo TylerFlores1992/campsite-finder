@@ -48,8 +48,28 @@ The old pages and 14 orphaned components are **deleted**; `/v2` no longer exists
 
 ## SEO (added 2026-07-27, live since the swap lifted the layout `noindex`)
 Server-rendered campground pages + per-page metadata (`lib/seo.ts`), JSON-LD
-(`lib/jsonld.ts`), 47 state landing pages, dynamic sitemap (~7,387 URLs). Guard with
-`NODE_USE_ENV_PROXY=1 npx tsx scripts/seo-check.mts`. Search Console is connected.
+(`lib/jsonld.ts`), 46 state landing pages, 3 accommodation-type hubs + 69 per-state
+children (`lib/siteTypeHubs.ts`), dynamic sitemap (**7,066 URLs**, read 2026-09-03). Guard
+with `NODE_USE_ENV_PROXY=1 npx tsx scripts/seo-check.mts`. Search Console is connected.
+
+> **MARKETING AND GROWTH LIVE IN `docs/GROWTH.md` — START THERE, NOT HERE.** This file is
+> about the poller and the RC flow; that one carries the user/subscriber numbers, the
+> Search Console baseline and its three-way reading rule, the competitive picture
+> (**recreation.gov has shipped its own free cancellation alerts** since July 2024), and
+> what is open. `docs/GROWTH-LISTINGS.md` is the outreach packet beside it.
+>
+> **A CANCELLATION RETARGET WAS TRIED AND FALSIFIED IN A DAY (2026-08-25).** Titles were
+> moved from "camping availability" onto "Cancellations"; a Search Console filter for
+> `cancel` returns NO DATA across 1,000 rows, and 23 of the top 25 queries by impressions
+> carry a camping/campground token. Reverted, with the guards in
+> `src/lib/seo-retarget.test.mts` INVERTED so reinstating it fails a test. The full account
+> is in the header of `src/lib/seo.ts`. **Do not re-run it.**
+>
+> **THE AXIS IS OBSCURITY, NOT SOURCE.** The pages that reach page one are a Juneau Forest
+> Service cabin (7.5), a Clear Lake cabin colony (8.6) and an Afton wall tent (8.9) — while
+> everything with real volume sits at 44-87. We win where we are the only result specific
+> enough, which is why the accommodation-type hubs exist and why the national-park hub
+> (`/camping/hardest-to-book`) is flagged unvalidated rather than repeated.
 
 ## Roadmap A–E — ALL SHIPPED (2026-07-22)
 A alert-health canary · B verified deep-links · C flexible dates · D smarter notifications

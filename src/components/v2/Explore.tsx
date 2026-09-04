@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import Button, { buttonClasses } from "@/components/ui/Button";
+import { newWatchPath, signUpToWatchHref } from "@/lib/watch-intent";
 import Chip from "@/components/ui/Chip";
 import DatePicker, { type DateRange } from "@/components/ui/DatePicker";
 import FilterPanel, { EMPTY_FILTERS, type FilterValue } from "@/components/ui/FilterPanel";
@@ -760,9 +761,22 @@ export default function Explore() {
                     seconds of a cancellation.
                   </p>
                   {/* A guest can't create a watch, so send them where the next
-                      step actually is instead of into a 402 they can't read. */}
+                      step actually is instead of into a 402 they can't read —
+                      and the DATES ride along through sign-up. A bare `/sign-up`
+                      here landed a new account on an empty `/search` with the
+                      range they had just picked discarded. See lib/watch-intent. */}
                   <Link
-                    href={guest ? "/sign-up" : "/new"}
+                    href={
+                      guest
+                        ? signUpToWatchHref({
+                            startDate: range.start ?? undefined,
+                            endDate: range.end ?? undefined,
+                          })
+                        : newWatchPath({
+                            startDate: range.start ?? undefined,
+                            endDate: range.end ?? undefined,
+                          })
+                    }
                     className={buttonClasses({ className: "px-5" })}
                   >
                     {guest ? "Start 7-day free trial" : "Create a watch"}
