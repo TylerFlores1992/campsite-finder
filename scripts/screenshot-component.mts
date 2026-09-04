@@ -257,28 +257,67 @@ const PRESETS: Record<string, Preset> = {
     frame: 'max-w-lg w-full mx-auto',
   },
   'ch-holds': {
-    label: 'HoldsPanel — the four live states, and which one gets a remove button',
-    // ONE ROW PER STATUS, because the whole design question here is which rows may be
-    // dismissed. Only `released` carries the ✕: the bot has let go, so there is nothing
-    // left to strand. `carted` deliberately has none — hiding a row while a real campsite
-    // sits in a real cart is the 2026-08-13 leak with a button on it.
+    label: 'HoldsPanel — what is left at the top of the page once the cards take the rest',
+    // THE PANEL IS THE LIVE-FUSE LIST NOW (2026-09-04). `offered` and `requested` moved
+    // onto the watch cards — see `ch-watch-holds` — so what belongs here is a real campsite
+    // in a real cart plus anything ORPHANED, which is what the third row is: an offer whose
+    // watch is not on the page, so no card will draw it.
+    //
+    // `released` carries the ✕ (the bot has let go, nothing left to strand); `carted`
+    // deliberately has none, because hiding a row while a real campsite sits in a real cart
+    // is the 2026-08-13 leak with a button on it.
     entry: `import HoldsPanel from '@/components/v2/HoldsPanel';
-      if (typeof window !== 'undefined') {
-        window.fetch = async () => ({ ok: true, status: 200, json: async () => ({ holds: [
-          { id: '1', status: 'released', unitLabel: '#L108', campgroundName: 'Leo Carrillo SP - Canyon Campground',
-            arrivalDate: '2026-09-04', nights: 1, releaseAt: '2026-09-01T08:00:00', cartedAt: null,
-            claimUrl: '/claim/1?t=demotoken' },
-          { id: '2', status: 'carted', unitLabel: '#035', campgroundName: 'South Carlsbad SB - Northern End',
-            arrivalDate: '2026-09-06', nights: 2, releaseAt: '2026-09-01T08:00:00', cartedAt: '2026-09-01T15:00:02Z',
-            claimUrl: '/claim/2?t=demotoken' },
-          { id: '3', status: 'requested', unitLabel: '#C218', campgroundName: 'Carpinteria SB - Santa Cruz',
-            arrivalDate: '2026-09-12', nights: 1, releaseAt: '2026-09-02T08:00:00', cartedAt: null },
-          { id: '4', status: 'offered', unitLabel: '#042', campgroundName: 'Silver Lake Campground',
-            arrivalDate: '2026-09-20', nights: 3, releaseAt: '2026-09-03T08:00:00', cartedAt: null,
-            holdUrl: '/w/demotoken' },
-        ] }) });
-      }
-      export const node = <HoldsPanel />;`,
+      const holds = [
+        { id: '1', watchId: 'w1', status: 'released', unitLabel: '#L108', campgroundName: 'Leo Carrillo SP - Canyon Campground',
+          arrivalDate: '2026-09-04', nights: 1, releaseAt: '2026-09-01T08:00:00', cartedAt: null,
+          updatedAt: null, claimUrl: '/claim/1?t=demotoken', dismissToken: 'demotoken' },
+        { id: '2', watchId: 'w1', status: 'carted', unitLabel: '#035', campgroundName: 'South Carlsbad SB - Northern End',
+          arrivalDate: '2026-09-06', nights: 2, releaseAt: '2026-09-01T08:00:00', cartedAt: '2026-09-01T15:00:02Z',
+          updatedAt: null, claimUrl: '/claim/2?t=demotoken' },
+        { id: '3', watchId: 'deleted-watch', status: 'offered', unitLabel: '#042', campgroundName: 'Silver Lake Campground',
+          arrivalDate: '2026-09-20', nights: 3, releaseAt: '2026-09-03T08:00:00', cartedAt: null,
+          updatedAt: null, holdUrl: '/w/demotoken', dismissToken: 'demotoken' },
+      ];
+      export const node = <HoldsPanel holds={holds} onRemoved={() => {}} />;`,
+    frame: 'max-w-md w-full mx-auto',
+  },
+  'ch-watch-holds': {
+    label: 'WatchCard — the available and queued lists inside the box, both open',
+    // The owner's 2026-09-04 ask, rendered: "move the available holds and queued holds to
+    // the box all the other watch info is in", as two dropdown bars. Shown OPEN because the
+    // closed state is one line and the question worth eyeballing is whether the rows fit
+    // and whether the ✕ on a queued row is reachable on a phone.
+    entry: `import WatchCard from '@/components/v2/WatchCard';
+      const watch = {
+        id: 'w1', campground_id: 'rc-583', campground_name: 'Morro Bay SP — Upper Section (sites 86-140)',
+        campground_source: 'reservecalifornia', start_date: '2026-09-04', end_date: '2026-09-06',
+        flex_nights: null, flex_days: null, site_type: null, auto_cart: false, active: true,
+        manage_token: 'demotoken',
+        pending_holds: [
+          { unitId: '43191', unitName: '#96', releaseAt: '2026-09-08T08:00:00', status: 'requested' },
+          { unitId: '43187', unitName: '#92', releaseAt: '2026-09-08T08:00:00', status: 'offered' },
+        ],
+      };
+      const holds = [
+        { id: 'a', watchId: 'w1', status: 'offered', unitLabel: '#92', campgroundName: 'Morro Bay SP',
+          arrivalDate: '2026-09-04', nights: 2, releaseAt: '2026-09-08T08:00:00', cartedAt: null,
+          updatedAt: null, holdUrl: '/w/demotoken', dismissToken: 'demotoken' },
+        { id: 'b', watchId: 'w1', status: 'offered', unitLabel: '#101', campgroundName: 'Morro Bay SP',
+          arrivalDate: '2026-09-04', nights: 2, releaseAt: '2026-09-08T08:00:00', cartedAt: null,
+          updatedAt: null, holdUrl: '/w/demotoken', dismissToken: 'demotoken' },
+        { id: 'c', watchId: 'w1', status: 'requested', unitLabel: '#96', campgroundName: 'Morro Bay SP',
+          arrivalDate: '2026-09-04', nights: 2, releaseAt: '2026-09-08T08:00:00', cartedAt: null,
+          updatedAt: null, dismissToken: 'demotoken' },
+      ];
+      export const node = (
+        <>
+          <WatchCard watch={watch} holds={holds} onHoldRemoved={() => {}} />
+          <p className="mt-3 text-ch-fine text-ch-muted">
+            Open both dropdowns. The ✕ on a queued row cancels; the offered rows keep
+            &ldquo;Hold it for me&rdquo; with the beta note above it.
+          </p>
+        </>
+      );`,
     frame: 'max-w-md w-full mx-auto',
   },
   'ch-claim': {

@@ -42,7 +42,7 @@ name: Verify
 # `lint` to the `verify` script — it costs 17s and belongs here once it is clean.
 #
 # Setup (one time): none. NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY
-# are already repo secrets (nightly-sync.yml and deadman.yml use them).
+# are already repo secrets (nightly-sync.yml uses them too).
 
 on:
   push:

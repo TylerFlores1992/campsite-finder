@@ -132,3 +132,35 @@ export const RC_HOLD_CAPACITY = RC_SITES_PER_CART * RC_MAX_CARTS;
  * about how long RC actually holds an unclaimed cart.
  */
 export const HOLD_LAPSE_MIN = Number(process.env.HOLD_LAPSE_MIN ?? 180);
+
+/**
+ * The widest lead `/api/auto-cart/rc-holds` will serve a queued hold to the bot on.
+ *
+ * The runner asks for 90 seconds; this is the ceiling the route clamps a `?leadSeconds=`
+ * override to. It matters outside the feed because it answers the only question a "call
+ * this hold off" button has to get right: **could the runner already be holding this row?**
+ * Past this much before a release, it could — the row is in a browser on the mini-PC and
+ * our database no longer decides what happens to it.
+ *
+ * Lives here, not in the route, so `cancelHold` can derive its cutoff from the real number
+ * rather than carrying a second copy of it. A second copy is how `nextHoldRelease` came to
+ * disagree with `dueHolds` about whether a hold still existed.
+ */
+export const RC_HOLD_FEED_MAX_LEAD_SEC = 600;
+
+/**
+ * How close to its release a QUEUED hold may still be cancelled, in minutes.
+ *
+ * DERIVED, NOT CHOSEN. The feed may hand the runner a row up to
+ * `RC_HOLD_FEED_MAX_LEAD_SEC` early, and the runner polls on its own ~15-second cadence on
+ * top of that, so a cancel inside this window is one our database cannot honour: the bot
+ * has the row and will cart.
+ *
+ * THE RACE IS SAFE, WHICH IS WHY THIS IS ABOUT HONESTY RATHER THAN SAFETY. `markCarted` is
+ * `WHERE id = $1 AND status <> 'carted'`, so a cart landing after a cancel simply flips the
+ * row to `carted` and `expireStaleHolds` releases the site 45 minutes later — nothing is
+ * stranded. What the cutoff prevents is the screen saying "cancelled" over a campsite the
+ * bot is seconds from putting in a cart, which is precisely the lie that kept a remove
+ * button off `offered` rows until there was a real decline behind it.
+ */
+export const HOLD_CANCEL_CUTOFF_MIN = Math.ceil(RC_HOLD_FEED_MAX_LEAD_SEC / 60) + 2;

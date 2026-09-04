@@ -1,0 +1,70 @@
+-- 074: a hold offer belongs to a RELEASE, not to a campsite.
+--
+-- Migration numbering: main's claimed block is 072-079 (docs/LANES.md) and the SIDE lane
+-- took 072 and 073 out of it on 2026-09-03, so this is 074.
+--
+-- ── THE BUG, reported by the owner 2026-09-04 ────────────────────────────────────────
+--
+--   "We currently only offer a hold once to users, and if the site becomes available
+--    again they don't see it."
+--
+-- Exactly right, and the mechanism is this index. `rc_hold_requests_unique` is
+-- (watch_id, unit_id, arrival_date) — no release in it — and `offerHold`'s upsert is
+--
+--     ON CONFLICT (watch_id, unit_id, arrival_date) DO UPDATE
+--        SET ... WHERE rc_hold_requests.status = 'offered'
+--
+-- so the moment a row leaves `offered` the conflict target still matches and the DO UPDATE
+-- refuses. `offerHold` returns null, the poller withholds the button, and there is no row
+-- for `/api/rc-holds/mine` or the watch card to list.
+--
+-- That WHERE clause is right and stays: a re-alert must never walk a user who has already
+-- tapped back to `offered` and silently discard their answer. What was wrong is that the
+-- row it protects was the whole history of a (watch, unit, arrival) FOR EVER, so:
+--
+--   * declined an offer for Tuesday's 08:00 release -> `expired` -> the site is cancelled
+--     again a fortnight later and releases at a different 08:00: NO OFFER, silently.
+--   * nobody tapped and the release passed -> `expired` by expire-holds: same.
+--   * the bot tried and RC refused -> `failed`: same, and this is the worst one — a
+--     transient RC failure permanently retired that campsite for that watch.
+--
+-- Production on 2026-09-04: 50 `expired` and 9 `failed` rows, every one of them a
+-- (watch, unit, arrival) that could never be offered again for the life of the watch.
+--
+-- ── THE FIX ─────────────────────────────────────────────────────────────────────────
+--
+-- Put `release_at` in the key. Each distinct release gets its own row, so a fresh lock on
+-- the same campsite is a fresh offer — while a decline still stands for the release it was
+-- made against, which is the thing the user actually said no to.
+--
+-- The original index's reasoning survives intact, one level narrower: "a re-alert for the
+-- same opening must update the existing row rather than stack duplicates — otherwise a
+-- user who taps once could be carted twice, and the bot would hold two entries it only
+-- knows how to release one of." A re-alert for the SAME OPENING carries the same
+-- `release_at`, so it still lands on the same row. Two rows now means two genuinely
+-- different releases, which cannot both be carted: `dueHolds` serves one hold per
+-- (release_at, unit_id) and, since #201, refuses a unit that already has a live hold.
+--
+-- ── APPLY THIS IMMEDIATELY BEFORE MERGING THE CODE ──────────────────────────────────
+--
+-- Migration first, then the code, as always — but the two are tighter here than usual,
+-- because `ON CONFLICT (a, b, c)` needs a unique index on exactly (a, b, c). In the gap
+-- between this running and the new `offerHold` deploying, the old three-column upsert
+-- raises "no unique or exclusion constraint matching the ON CONFLICT specification".
+--
+-- THAT FAILS CLOSED, WHICH IS WHY THE GAP IS ACCEPTABLE: `offerHold` catches, returns
+-- null, and the poller sends the coming-soon alert with no hold button — the same thing it
+-- does when the bot is absent or the window is full. Nobody is promised a cart that will
+-- not happen. Applied 2026-09-04 with zero `offered`/`requested`/`carted` rows in the
+-- table, so the gap cost nothing at all.
+--
+-- Note for whoever applies this by hand: split on semicolons carefully — a semicolon
+-- inside a COMMENT ON ... IS '...' string breaks a naive splitter (see 069).
+
+DROP INDEX IF EXISTS rc_hold_requests_unique;
+
+CREATE UNIQUE INDEX IF NOT EXISTS rc_hold_requests_unique
+  ON rc_hold_requests (watch_id, unit_id, arrival_date, release_at);
+
+COMMENT ON INDEX rc_hold_requests_unique IS
+  'One offer per (watch, unit, arrival, RELEASE). The release is in the key so a campsite locked again later is a new offer rather than silently nothing — a terminal row used to retire that campsite for the life of the watch. A re-alert for the same opening carries the same release_at and still updates in place.';

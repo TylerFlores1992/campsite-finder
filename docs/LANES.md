@@ -110,8 +110,8 @@ recorded as fact; the other half would come from evidence quietly disappearing.
 
 ## Migrations
 
-`src/lib/db/migrations/NNN_name.sql`. **Highest is `071_subscription_provider.sql` (MAIN
-lane, #218, 2026-08-29).** The main lane's original block 060-069 filled on 2026-08-28 with
+`src/lib/db/migrations/NNN_name.sql`. **Highest is `074_hold_per_release.sql` (MAIN lane,
+2026-09-04).** The main lane's original block 060-069 filled on 2026-08-28 with
 `069_line_priority.sql`, and the side lane holds `070_watch_campgrounds.sql`.
 
 > **AND 071 IS EXACTLY THE NUMBER THIS SECTION SAID NOT TO TAKE.** It read *"Do not simply
@@ -123,8 +123,17 @@ lane, #218, 2026-08-29).** The main lane's original block 060-069 filled on 2026
 > number" loses to the obvious next number, and that the fix is to have a claimed block
 > standing at all times rather than a prohibition.
 
-**BLOCKS AS OF 2026-08-30, claimed here so neither lane has to ask: main `072–079`, side
-`080+`.** Take the next free number INSIDE YOUR OWN BLOCK and do not reach past its end
+**BLOCKS, RESTATED 2026-09-04: main `075–079`, side `080+`.**
+
+> **THE SIDE LANE TOOK 072 AND 073 OUT OF MAIN'S BLOCK** (PR #258, 2026-09-03) — so
+> main's block is four numbers shorter than it was claimed as, and 074 is main's
+> (`074_hold_per_release.sql`). **Nothing collided**, because main happened not to need
+> a number that week; it is a near miss, not an incident, and
+> `worker/migration-numbers.test.mts` was correctly green because there was no
+> duplicate. The lesson is the same one the 071 near miss taught, from the other side:
+> a block claimed in a file nobody re-reads loses to the next free number. **Restate
+> the block here whenever you take one, and take it from YOUR OWN.**
+ Take the next free number INSIDE YOUR OWN BLOCK and do not reach past its end
 without claiming a new one out loud. **Two sessions each writing the same number is a
 collision git merges CLEANLY and Postgres does not.**
 

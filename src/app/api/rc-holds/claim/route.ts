@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db/client';
-import { startClaim, getHold, markClaimed, declineHold } from '@/lib/rc-holds';
+import { startClaim, getHold, markClaimed, declineHold, cancelHold } from '@/lib/rc-holds';
+import { HOLD_CANCEL_CUTOFF_MIN } from '@/lib/limits';
 import { bookingLink } from '@/lib/booking-url';
 
 export const dynamic = 'force-dynamic';
@@ -122,24 +123,59 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * "No thanks" — decline an offer that has not been taken up.
+ * "No thanks" — dropping a hold before the bot acts on it.
  *
  * Authorised by the SAME hold id + manage token that authorises releasing the site, per
  * this route's own rule: never weaker than the authorisation for the more consequential
  * act on the same row.
  *
- * `declineHold` refuses anything past `offered`, and a refusal is reported as one. Saying
- * "removed" over a hold the bot is about to cart would be exactly the lie that kept this
- * control off the panel in the first place.
+ * ## TWO ACTS, NOT ONE, and the verb dispatches on the row's own status
+ *
+ * `offered` -> `declineHold`. Nobody has committed to anything; the offer is retracted and
+ * its capacity seat and line position go back.
+ *
+ * `requested` -> `cancelHold`. The owner asked for this on 2026-09-04. It is a genuinely
+ * different act: the user already said yes and the bot is going to cart at 08:00, so
+ * calling it off has a TIMING RULE that declining does not — past
+ * `HOLD_CANCEL_CUTOFF_MIN` the feed may already have handed the row to the runner and our
+ * database no longer decides what happens. `cancelHold` returns which of the two refusals
+ * applies, and they are reported as different things: telling somebody at 07:55 that their
+ * hold had "already been acted on" is a wrong story about what is happening, and the whole
+ * reason `requested` had no button until now was that a control which appears to cancel
+ * and does not is worse than no control.
+ *
+ * Everything else refuses. `carted`/`claiming` hold a real campsite in a real cart, and
+ * marking one terminal here does not release it — that is the 2026-08-13 leak with a
+ * button on it.
  */
 export async function DELETE(req: NextRequest) {
   const { id, token } = await req.json().catch(() => ({}));
   const hold = await authorise(String(id ?? ''), String(token ?? ''));
   if (!hold) return NextResponse.json({ error: 'not found' }, { status: 404 });
+
+  if (hold.status === 'requested') {
+    const outcome = await cancelHold(hold.id);
+    if (outcome === 'cancelled') return NextResponse.json({ ok: true, cancelled: true });
+    // 409 either way — nothing changed — but the REASON is the useful part, and `reason`
+    // is what lets the panel say "too close to the release" rather than "already acted on".
+    return NextResponse.json(
+      {
+        error:
+          outcome === 'too-late'
+            ? 'too close to the release to call this off'
+            : 'this hold has already been acted on',
+        reason: outcome,
+        status: hold.status,
+        cutoffMinutes: HOLD_CANCEL_CUTOFF_MIN,
+      },
+      { status: 409 },
+    );
+  }
+
   const declined = await declineHold(hold.id);
   if (!declined) {
     return NextResponse.json(
-      { error: 'this hold has already been acted on', status: hold.status },
+      { error: 'this hold has already been acted on', reason: 'not-offered', status: hold.status },
       { status: 409 },
     );
   }

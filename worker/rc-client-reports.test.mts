@@ -42,7 +42,11 @@ async function fixture() {
     `INSERT INTO rc_hold_requests
        (watch_id, user_id, campground_id, unit_id, unit_name, arrival_date, nights, release_at)
      VALUES ($1, $2, $3, $4, $5, '2099-01-02', 1, '2099-01-01T08:00:00')
-     ON CONFLICT (watch_id, unit_id, arrival_date) DO UPDATE SET unit_name = EXCLUDED.unit_name
+     -- FOUR COLUMNS SINCE MIGRATION 074: the unique key carries release_at now, so a
+     -- campsite locked again for a later release is a new offer rather than silently
+     -- nothing. ON CONFLICT needs a target matching an index exactly, and this
+     -- hand-rolled copy of offerHold's own statement threw the moment the index widened.
+     ON CONFLICT (watch_id, unit_id, arrival_date, release_at) DO UPDATE SET unit_name = EXCLUDED.unit_name
      RETURNING id`,
     [w.id, w.user_id, w.campground_id, SENTINEL, SENTINEL],
   );
