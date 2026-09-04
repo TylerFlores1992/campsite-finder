@@ -5821,6 +5821,67 @@ Three gaps in the hand-off readout, all the house shape — a fact produced and 
   tapped is not a race, and reporting it as one manufactures a competitor.
 
 
+### "CANCELLATIONS DON'T START UNTIL TWO WEEKS OUT" IS FOLK WISDOM AND OUR DATA SAYS OTHERWISE (2026-09-04)
+Asked to warn a new watcher, after creating a far-out watch, that cancellations are unlikely
+until about two weeks out — *"or whatever our data tells us"*. **It tells us the opposite.**
+Measured off `availability_observations`, counting TRANSITIONS (an observation whose
+predecessor for the same (campground, arrival, nights) was fully booked — a thing that was
+gone coming back, never a stay that was simply never sold out):
+
+    ROSTER, 502 campgrounds, hourly, the only well-powered windows we have
+      lead 14-20d   418 openings / 62,747 checks   0.67%
+      lead 42-48d   378 openings / 36,360 checks   1.04%
+      lead 49-55d   258 openings / 22,326 checks   1.16%
+
+A booked-out stay six to eight weeks out opened on **~1.6x MORE** hourly checks than one two to
+three weeks out. Whatever governs cancellations, "they start about two weeks out" is not it.
+- **THE REAL-WATCH POPULATION LOOKS LIKE IT RESCUES THE PREMISE, AND THAT IS THE TRAP.**
+  Restricted to campgrounds our users actually watch, and to the 11 stays observed across both
+  bands as they counted down: **26 openings in 2,666 checks inside 14 days against 1 in 5,503
+  beyond it** — a 50x split, within-series, so not a population confound. **Then check where
+  the events came from: 32 of those 34 openings are ONE campground (`234330`).** Every other
+  watched campground recorded zero in both bands. One park's behaviour wearing a population's
+  clothes, and I was a paragraph from writing it up as the finding.
+- **WHAT IS SUPPORTED, and it is all the notice needed:** on a stay that is already fully
+  booked an opening is a rare per-check event at every lead time we can measure. Across the
+  whole roster: **1,100 openings in 125,118 checks — 0.9%** (`src/lib/openings-stat.ts`, which
+  the two new marketing pages render; it is the one number in this category nobody else has).
+- **SHIPPED: a one-shot note on `/watches` after a watch is created** (`lib/watch-outlook`,
+  `GET /api/watches/<id>/outlook`, `NewWatchOutlook`). It says openings need somebody else to
+  cancel and that we are still checking — **and makes no lead-time claim**, guarded by a test
+  that fails if one comes back. The lead gate stays at 14 days because it is a claim about how
+  long this person is about to WAIT, which is the only thing the note is for.
+- **`available === null` IS SILENT**, and so is a division of a park watch we could not read.
+  Rounding either to "nothing is free" tells somebody to settle in for a long wait about a
+  stay they could book in thirty seconds — the 2026-07-31 Moab lie, one layer up.
+- **`probeWholeStayOpen` MOVED OUT OF `worker/poller.ts`** to
+  `src/lib/availability/whole-stay.ts` as `wholeStayOpen`, because importing the poller starts
+  it — the same extraction as `claim.ts`, `hold-claim.ts`, `hold-line.ts` and
+  `held-cadence.ts`. The poller imports it; a guard fails if it grows a private copy back.
+- 15 guards, 14 mutations each verified to APPLY and to fail.
+
+### TWO PROBLEM-INTENT PAGES, AND THEY ARE NOT THE FALSIFIED BET (2026-09-04)
+`/sold-out-campsite` and `/campsite-cancellation-alerts`. **The 2026-08-25 falsification does
+not cover them**, and the distinction is the whole reason they were built: that one retargeted
+the TITLES of 6,934 existing facility pages onto "Cancellations", and its evidence was about
+which queries *those pages* surface against. A dedicated page for `campsite cancellation alert
+app` is a different page answering a different query, and nothing here has ever tested one.
+`seo.ts`'s own header calls its reading #1 *"weaker than 'nobody searches this'"*.
+- **TWO, NOT "a few dozen".** Forty near-identical problem pages on a two-month-old domain is
+  the doorway pattern, which is what thin templating already bought once.
+- **THE CEILING IS LINKS, NOT COPY** (`docs/GROWTH.md` §6): nothing external links here, so
+  expect impressions at ~position 50 rather than clicks for months. **Do not read a flat line
+  as a content problem and rewrite the pages.**
+- **The category page names recreation.gov's own free alerts, deliberately** — they have
+  existed since July 2024 and anyone comparing tools finds them in a minute. **No price
+  comparison with a named competitor**, per `docs/GROWTH.md` §5, and a guard enforces it.
+- **Every campground page now carries an UNCONDITIONAL exit link to the guide.** The existing
+  state link sat inside `{stateName && stateSlug &&`, so leaves in the three states with no
+  landing page had no exits at all — the case that file's own comment says to avoid.
+  **A position-only guard for this SURVIVED its first mutation** (wrapping the link in a
+  *different* condition kept it above the state guard); it asserts that nothing conditional
+  stands between the section and the link now. Full write-up in `docs/GROWTH.md` §3a.
+
 ## Open / next session
 
 > ### THE 09-04 08:00 RELEASE CARTED AND WAS HANDED OVER — `#L034`, T+1.4s

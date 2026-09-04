@@ -105,6 +105,25 @@ export default async function CampingIndexPage() {
           {" covers Yosemite, Zion, Acadia and 15 more parks whose sites go in minutes — and how a cancellation is the realistic way in."}
         </p>
 
+        {/* The two problem-intent pages, linked here for the same reason as the hub above:
+            a page nothing points at is a sitemap entry rather than a destination. They
+            answer the query somebody types BEFORE they know a tool like this exists,
+            which is a different visitor from the one browsing states. */}
+        <p className="mt-3 max-w-[70ch] rounded-ch-card border border-ch-line bg-ch-card p-4 text-ch-body leading-relaxed text-ch-ink-2 shadow-ch-card">
+          {"Already found it booked out? "}
+          <Link href="/sold-out-campsite" className="font-semibold text-ch-green hover:underline">
+            What actually works when a campground is sold out
+          </Link>
+          {", and "}
+          <Link
+            href="/campsite-cancellation-alerts"
+            className="font-semibold text-ch-green hover:underline"
+          >
+            how campsite cancellation alerts work
+          </Link>
+          {" — including the free options worth checking first."}
+        </p>
+
         <ul className="mt-7 grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
           {rows.map((r) => (
             <li key={r.slug} className="flex justify-between gap-3 border-b border-ch-line py-2">

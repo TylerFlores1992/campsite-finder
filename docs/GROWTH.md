@@ -124,6 +124,55 @@ page one, with no photo and no description. **Unwinnable; do not spend a session
 
 ---
 
+## 3a. PROBLEM-INTENT PAGES ARE NOT WHAT WAS FALSIFIED (2026-09-04)
+
+The owner's ask: *"Target the problem, not the campground name. Nobody types 'Leo Carrillo SP
+Canyon Campground'. They type 'how to get a campsite that's sold out', 'campsite cancellation
+alert app', 'Yosemite campground fully booked what now'."*
+
+**Section 3 above reads like a refusal of that and it is not one.** They are different pages
+answering different queries, and only one of them has been tested:
+
+| | what was tried | what the evidence was about |
+|---|---|---|
+| **Falsified 08-25** | the TITLES of 6,934 existing facility pages retargeted onto "Cancellations" | which queries *those pages* surface against — `<campground> cancellations` |
+| **Untested** | a dedicated page for `campsite cancellation alert app` / `campground fully booked what now` | a different query class, on a page that did not exist |
+
+`src/lib/seo.ts`'s own header labels reading #1 as *"weaker than 'nobody searches this'"*, and
+reading #2 — 23 of the top 25 queries carry a camping token — is a statement about **who
+currently arrives**, which is a function of what we currently rank for. Neither says a
+problem-intent page cannot work, and **nothing in this repo has tested one.**
+
+**SHIPPED: TWO PAGES, NOT "a few dozen".** `/sold-out-campsite` (the guide) and
+`/campsite-cancellation-alerts` (the category page). Two that are worth reading can be judged;
+forty near-identical ones are the doorway pattern, and this site has already learned once what
+thin templating buys against a query class with no demonstrated demand. If these move, the next
+ones write themselves.
+
+**THE HONEST CEILING IS UNCHANGED AND IS SECTION 6's:** nothing external links to this domain,
+so expect impressions at ~position 50 rather than clicks, for months. They are worth having
+anyway — they are the pages a human would link to, they are where the statistic below lives,
+and they convert whoever does land. **Do not read a flat line as a content problem and rewrite
+them; the constraint is links.**
+
+**A MEASURED STATISTIC NOBODY ELSE HAS** (`src/lib/openings-stat.ts`). Every competitor asserts
+that cancellations happen; none says how often, because saying so needs somebody to have
+watched sold-out campgrounds around the clock and counted. From `availability_observations`,
+2026-07-22 → 2026-09-04: **1,100 openings across 125,118 hourly checks of 502 hard-to-book
+campgrounds — 0.9%** — counting only TRANSITIONS (a stay that had been fully booked becoming
+bookable), never a stay that was simply never sold out. It is the one thing on those pages that
+cannot be copied from a blog post, and it is checkable — the query is in `lib/watch-outlook`'s
+header.
+
+**AND THE SAME QUERY KILLED THE FOLK WISDOM IT WAS RUN TO CONFIRM.** The ask that produced it
+was to tell new watchers that cancellations are unlikely until about two weeks out. On the only
+well-powered windows we have, a booked-out stay **6-8 weeks out opened on MORE checks than one
+2-3 weeks out** (1.04-1.16% against 0.67%, 418 and 636 events over 502 campgrounds). The
+real-watch population appears to show the cliff spectacularly — 26 openings in 2,666 checks
+inside 14 days against 1 in 5,503 beyond it — until you check where the events came from: **32
+of those 34 are ONE campground.** Do not put a lead-time cliff in copy; a guard in
+`src/lib/watch-outlook.test.mts` fails if anyone does.
+
 ## 4. What shipped (all on master, `53f1476`)
 
 - **The reverted metadata**, plus the inverted guards described above.

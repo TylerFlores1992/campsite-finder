@@ -9,6 +9,11 @@ const isPublicRoute = createRouteMatcher([
   '/terms',
   '/sms-opt-in',
   '/auto-cart',
+  // The two problem-intent SEO pages. A visitor arriving from a search result has no
+  // session, and Clerk's auth.protect() answers 404 rather than 401 — so an unlisted
+  // marketing page is a page Google crawls, indexes, and then serves as a dead link.
+  '/sold-out-campsite',
+  '/campsite-cancellation-alerts',
   // Where the campground data comes from. Google Play requires an accessible link
   // to the official source of any government information an app shows, and the
   // store listing points here — a reviewer opens it signed out, so a 404 from

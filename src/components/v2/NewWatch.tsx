@@ -367,7 +367,13 @@ export default function NewWatch({
       // and no reason to say yes (see NativeBridge). No-op on the web — nothing
       // listens there.
       window.dispatchEvent(new CustomEvent("camphawk:watch-created"));
-      router.push("/watches");
+
+      // THE NEW WATCH'S ID RIDES ACROSS so /watches can explain a long silence before
+      // the user starts wondering whether we are broken (see lib/watch-outlook). It is
+      // a hint, not a promise: a response we cannot parse, or an old server that does
+      // not return an id, simply navigates as it always did.
+      const created = (await r.json().catch(() => null)) as { id?: string } | null;
+      router.push(created?.id ? `/watches?new=${encodeURIComponent(created.id)}` : "/watches");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't create the watch");
     } finally {

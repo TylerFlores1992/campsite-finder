@@ -72,8 +72,23 @@ export default function CampgroundOpenings({
         ))}
       </div>
 
+      {/* AN EXIT THAT IS NOT CONDITIONAL. The state line below is inside a guard —
+          three states have no landing page — so a campground in one of them had a leaf
+          page with no exits at all, which is the case the comment above says to avoid.
+          This also gives the problem-intent guide an internal link from every one of the
+          ~6,900 campground pages, which is the strongest internal signal this site has
+          to give and costs a reader nothing: it is the next thing to read when the grid
+          above says the answer is no. */}
+      <p className="mt-4 text-ch-meta text-ch-muted">
+        {"Fully booked? "}
+        <Link href="/sold-out-campsite" className="font-semibold text-ch-green hover:underline">
+          {"What actually works when a campground is sold out"}
+        </Link>
+        {"."}
+      </p>
+
       {stateName && stateSlug && (
-        <p className="mt-4 text-ch-meta text-ch-muted">
+        <p className="mt-2 text-ch-meta text-ch-muted">
           {"Also booked out? See "}
           <Link
             href={`/camping/${stateSlug}`}
