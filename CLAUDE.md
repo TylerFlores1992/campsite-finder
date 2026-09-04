@@ -4928,6 +4928,45 @@ on both devices.
   one pinned the literal `chKeepSignedIn()` expression, the other an entire import line that a
   second imported name invalidated. Twenty-somethingth time.
 
+#### AND `findLast` MAKES A TICKED BOX REPORT AS "NO CHECKBOX AT ALL" (2026-09-04) — NOT FIXED
+The instrument above got its first identifier-first run on a real hold, and **it reported the
+opposite of what happened.** From `client_reports` on `#L034`, in order:
+```
+n:7   signin-open      {waitedMs:1015}
+n:7   signin-form      {waitedMs:251}
+n:8   keep-signed-in   {at:"email",    boxes:1, ticked:true,  matched:true}   <- it WAS ticked
+n:10  keep-signed-in   {at:"password", boxes:0, ticked:false, matched:false}  <- expected
+```
+- **AN IDENTIFIER-FIRST RUN EMITS TWO REPORTS, AND THE SECOND IS ALWAYS EMPTY BY DESIGN.**
+  Okta renders the box on the identifier step only, so reaching the password step and finding
+  `boxes: 0` is the CORRECT observation there and carries no information. `rc-holds-readout.mts`
+  takes `findLast`, so it reads that one — and prints *"NOT ticked on the password step: no
+  checkbox on the page at all … so this sign-in likely left NO persistent session"* over a run
+  that ticked it.
+- **THE LINE DIRECTLY ABOVE IT CONTRADICTS IT, WHICH IS HOW IT WAS CAUGHT.**
+  `signInPathReading` prints IDENTIFIER-FIRST on the same run, and the warn's own text asserts
+  *"the identifier step, which this run skipped"* — of a run that did not skip it. Two lines
+  from one readout stating incompatible things about one sign-in.
+- **THE `findLast` COMMENT REASONS IT OUT AND REACHES THE WRONG ANSWER**, which is why it will
+  survive a review: *"a sign-in can touch the identifier page and the password page, and the
+  question is what the run ended up doing."* True of the okta census beneath it (one store, two
+  readings, the later one wins) and **false here** — these are two DIFFERENT pages being asked
+  a question only one of them can answer, so the later reading is not fresher, it is
+  inapplicable. **The rule wanted is "the report where the box EXISTED"**: prefer `boxes > 0`,
+  fall back to the last only when none had one, which is the genuine password-first case this
+  reading was built for.
+- **IT COST A WRONG REPORT TO THE OWNER THE SAME MORNING**, on the one field that decides
+  whether the NEXT sign-in is the 11-second cookie-answered kind or the 12-minute password
+  variant — so the warn argues for a cost we are not paying, and would argue for it on every
+  identifier-first run for ever.
+- **NOT FIXED — recorded, and it is a two-line change plus a guard.** The fixture must stage
+  BOTH reports in order, or a test asserting the ticked case passes on a single-report run and
+  measures nothing, which is the vacuous-guard shape this file has recorded twenty-odd times.
+- **AND IT DOES NOT REFUTE THE 09-01 CANDIDATE.** That entry says a hand-off reporting `ticked`
+  whose header is still empty refutes it outright. This run reported `ticked` **and** the header
+  was populated (`customerId PRESENT`, `GetSSOLoggedInUser → HTTP 200 · RC Response 1`,
+  `close: session`), which is the candidate holding, not failing.
+
 #### ⚠ #248 CHANGED THE BASELINE TO INSTRUMENT THE THING THAT IS NOT THE BASELINE
 The standing instruction is that **iOS is the baseline**, and this change was written off an
 ANDROID observation while editing `src/lib/rc-login-script.ts` — **which iOS runs too**. Raised
@@ -5531,6 +5570,11 @@ grace, and RC refused every one with *"The unit is not available for the date(s)
   re-anchor made the negative STRONGER (`await sleep(` rather than `await sleep(wait)`).
 
 ### "RC NEVER RELEASES EARLY" IS UNPROVABLE WITH THE INSTRUMENT WE HAVE (2026-09-03)
+> **ANSWERED 2026-09-04, AND THE ANSWER IS THAT IT DOES.** One facility's flip bracket is
+> **entirely before T** — see "IT RAN, AND RC RELEASES EARLY" two sections down. Everything
+> below stands as written: it is about what the POLLER can and cannot see, and that is
+> unchanged. It is the reason a second instrument had to be built.
+
 Asked whether a site has ever become available before its predicted release. I answered
 **twice** and was wrong the first time; the correction is the finding.
 - **THE READINGS.** Eight poller transition alerts for held units we never carted (so each
@@ -5551,7 +5595,7 @@ Asked whether a site has ever become available before its predicted release. I a
 - **THIS IS WHY THE BURST OPENS AT T−15s.** Not because early release is established, but
   because it is *not excluded* and the cost of asking early is a refusal.
 
-### THE RELEASE WINDOW IS BEING MEASURED DIRECTLY (2026-09-04, #264) — RUN NOT YET READ
+### THE RELEASE WINDOW IS BEING MEASURED DIRECTLY (2026-09-04, #264) — AND IT ANSWERED
 `scripts/rc-release-window.mts` answers the question above at **2-second resolution** instead
 of fifteen, by polling RC's grid directly across a release.
 - **A BATCH IS WHAT MAKES IT CHEAP.** One `/search/grid` call returns the WHOLE facility —
@@ -5580,14 +5624,112 @@ of fifteen, by polling RC's grid directly across a release.
 - **REHEARSED LIVE ten hours early**: 48 nights enumerated, 57 polls, 0 unreadable, 0 flipped
   — the correct answer at that hour. **Flip detection itself is untried and can only be tried
   at a release.**
-- **SCHEDULED: Routine `trig_012K7iCrj1J9KspyqGucZSHC`, one-shot, fires 2026-09-04 14:50 UTC
-  (07:50 PT).** It fetches the script from `origin/claude/release-window` if master lacks it,
-  so it was never at risk from the merge timing.
+- ~~**SCHEDULED: Routine `trig_012K7iCrj1J9KspyqGucZSHC`, one-shot, fires 2026-09-04 14:50 UTC
+  (07:50 PT).**~~ **THAT FIRING MEASURED NOTHING AND REPORTED `SUCCEEDED`** — see "THE ROUTINE
+  FIRED, REPORTED SUCCEEDED, AND MEASURED NOTHING" below. The same trigger is now a **daily
+  cron at 07:56 PT** through 2026-09-11. Struck rather than deleted: read as current it says a
+  measurement was scheduled and taken, and it was scheduled and lost.
 - **THE OWNER NAMED ITS LIMIT AND WAS RIGHT:** *"I don't think this will give us a good tell
   on how long each site stays free before someone takes it — there are too many sites
   available to make this a high popularity site."* It measures **when RC lets go**, not **how
   long a site survives**; Leo Carrillo in December is not contested. Do not read a long
   survival time there as evidence about a contested morning.
+
+
+#### IT RAN, AND RC RELEASES EARLY — 45 NIGHTS, 582 POLLS, 0 UNREADABLE (2026-09-04)
+The first direct reading. It retires the question the entry above says the poller structurally
+could not answer, and it does it with a bracket that never touches T.
+```
+EARLIEST free  -0.2s   MEDIAN  +0.5s   LATEST  +1.1s
+rc-583   locked -2.2s -> free -0.2s    8 nights   <- the whole bracket is NEGATIVE
+rc-539   locked -1.6s -> free +0.5s   21 nights
+rc-542   locked -0.9s -> free +1.1s   16 nights   <- the facility #L034 is in
+45 of 47 nights flipped - 2 never freed - 4 re-taken inside the window, quickest within 61.5s
+```
+- **ONE FACILITY SETTLES IT AND THE OTHER TWO DO NOT.** `rc-583`'s last locked observation is
+  T−2.2s and its first free one is T−0.2s, so the flip lies in **(−2.2s, −0.2s] — entirely
+  before the release.** `rc-539` and `rc-542` straddle T and say nothing either way. **Quote
+  rc-583, not the median**: a median of +0.5s across three facilities is an average of one
+  proven-early bracket and two undecided ones, and reads as "on time" when the finding is the
+  opposite.
+- **SO THE BURST'S T−15s LEAD IS JUSTIFIED ON EVIDENCE NOW, NOT ON "NOT EXCLUDED".** #261
+  opened the lane early because early release was *not ruled out*; it is now **observed**. Do
+  not shorten the lead as a tidy-up — the 15s exists to be asking when this happens, and the
+  cost of an early ask is a refusal, which is free.
+- **FACILITIES FLIP ATOMICALLY, AND THAT IS THE NEW FACT.** Every night in a facility shares
+  one bracket, and the three facilities are separated by ~1.3s from each other. So RC is not
+  releasing per-unit — it is flipping a facility's whole locked inventory in one action, and
+  the three ran in sequence. That is why a single grid poll per facility measures every
+  releasing unit at once, and it is what makes the instrument cheap.
+- **`#L034`'s OWN FLIP IS INFERRED, NOT MEASURED — labelled because the temptation is real.**
+  Its three nights were **not** among the 47 tracked, so there is no direct bracket for it.
+  What there is: it sits in `rc-542`, whose bracket is (−0.9s, +1.1s], and it **carted at
+  T+1.44s**. Under facility-atomicity the site was free somewhere between 0.34s and 2.3s
+  before the cart landed. **That is inference resting on a finding from the same run**, which
+  is fine to record and wrong to quote as a measured flip time.
+- **T+1.44s IS THE FASTEST CART AT A REAL 08:00 RELEASE AND IT IS ONE OBSERVATION.** The two
+  before it were T+3s and T+6s under the 12-second retry gap. Consistent with the burst
+  working; not proof that it is what did it. A second morning tells the difference.
+- **THE 4 RE-TAKEN NIGHTS ARE NOT CLEAN EVIDENCE OF CONTENTION.** Free then locked again
+  inside the window is what a competitor looks like — and it is also what **our own cart**
+  looks like from the grid's side. The run cannot separate them, and at least one of our own
+  carts landed in that facility in that window. Do not report "someone else took four sites
+  in a minute" from this.
+- **THE OWNER'S RECORDED LIMIT STILL BINDS.** It measures **when RC lets go**, never **how
+  long a site survives**. The 61.5s figure is the shortest observed gap to a re-lock in one
+  window at one park, not a survival time.
+
+#### THE ROUTINE FIRED, REPORTED SUCCEEDED, AND MEASURED NOTHING (2026-09-04)
+The reading above nearly did not happen, and the failure is the house shape arriving in the
+scheduling layer.
+```
+14:50:14Z  trig_012K7iCrj1J9KspyqGucZSHC fires
+14:52:22Z  run finishes - ROUTINE_RUN_STATUS_SUCCEEDED
+14:58:30Z  the measurement window would have opened (T-90s)
+```
+- **IT REPORTED SUCCESS SIX MINUTES BEFORE ITS OWN WINDOW OPENED.** The fired agent could not
+  hold the script in the foreground — **the Bash tool's ceiling is 600 seconds** and a 07:50
+  fire needs ~15 minutes of wall clock — so it backgrounded the run and ended its turn. **A
+  fresh-session Routine's container is reclaimed when the turn ends**, taking the backgrounded
+  process with it. Nothing errored anywhere.
+- **`SUCCEEDED` MEANT ONLY "THE AGENT'S TURN ENDED WITHOUT THROWING".** Same family as
+  `status = 'sent'` meaning only "Twilio returned 2xx", one layer further out: the scheduler's
+  own success signal cannot see whether the work happened.
+- **CAUGHT BY ASKING, WITH THREE MINUTES TO SPARE.** The owner asked whether the monitoring was
+  set up at 07:54; the run was already logged `SUCCEEDED` and the answer looked like yes. It
+  was re-run by hand in time. **Do not read a green Routine run as a measurement taken** — read
+  the output.
+- **FIXED BY MOVING THE FIRE TIME, NOT BY BACKGROUNDING BETTER.** 07:56 puts the whole run at
+  ~8 minutes, inside the ceiling, so it can be foreground. The prompt now carries
+  `run_in_background: false, timeout: 600000` and names this failure so the next agent does not
+  reinvent the workaround that caused it.
+
+#### IT IS A DAILY CRON FOR A WEEK NOW (2026-09-04) — with two gaps recorded, not papered over
+Owner: *"make it a daily cron for a week then we should have plenty of info."*
+`trig_012K7iCrj1J9KspyqGucZSHC` is `56 14 * * *` (07:56 PT), first fire **2026-09-05**, and it
+**self-disables on any Pacific date ≥ 2026-09-12.**
+- **THE DATE IS NO LONGER HARDCODED** —
+  `--release=$(TZ=America/Los_Angeles date +%F)T08:00:00`. A daily Routine carrying a fixed
+  date measures the same morning seven times and reports `THE QUESTION WAS NEVER REACHED`
+  six of them, which reads as the instrument failing.
+- **THE INDEPENDENT BACKSTOP MAY BE INERT, AND IT SAID SO ITSELF.**
+  `trig_01FtjDWmMS8PvGQ8z1TSYbHQ` is a one-shot at 2026-09-12 14:00Z whose only job is to
+  disable the measurement Routine from outside. Its create call returned *"this trigger stores
+  no MCP connectors, so the sessions it fires will run without connector (`mcp__<server>__*`)
+  tools"* — and `mcp__Claude_Code_Remote__update_trigger` is the one tool it needs. **So the
+  load-bearing stop is the self-disable inside the measurement prompt, and the backstop is a
+  hope.** Recorded rather than assumed, because a backstop that reports success at doing
+  nothing is the fix-present-and-inert shape this file has now paid for six times.
+- **NOTHING PERSISTS THE READINGS, AND THAT IS THE REAL GAP.** Seven runs print to stdout in
+  seven ephemeral fresh sessions. There is no table, no file that survives the container, and
+  no way to put day 1 beside day 7 except opening seven transcripts by hand — which is exactly
+  how the 08-23 attributions were lost to a 16,000-character `tail-log` window before PR #169
+  moved readings into Postgres. **"Plenty of info" needs the readings COMPARABLE, and they are
+  not.** The fix is a small table plus a `--record` flag on `rc-release-window.mts`; it is
+  **NOT BUILT**, deliberately, and raised rather than assumed.
+- **THE 09-04 BASELINE IS IN THE PROMPT** so each run can be read against it rather than in
+  isolation, along with the four reading rules above (quote the negative bracket, not the
+  median; facility-atomic; re-locks are not contention; unreadable is never free).
 
 ### THE THIRD SHARD (2026-09-04, #262)
 `poller.capacity` had been AMBER at **6/8 rec.gov campground-months across 2 machines** —
@@ -5739,10 +5881,17 @@ Three gaps in the hand-off readout, all the house shape — a fact produced and 
 > also closed a drift where an extra could be offered with the RC runner dead, past
 > `RC_HOLD_CAPACITY`, or on a portal the bot holds no account for.
 >
-> **The 07:50 PT measurement Routine (`trig_012K7iCrj1J9KspyqGucZSHC`, one-shot, 14:50 UTC)
-> fires into the same release.** Read its output before drawing any conclusion about early
-> release — and read the LIMIT recorded with it: it measures when RC lets go, not how long a
-> site survives.
+> **THE MEASUREMENT RAN AND RC RELEASES EARLY.** The 07:50 one-shot reported `SUCCEEDED` and
+> measured nothing (a 15-minute script against the Bash tool's 600s ceiling, backgrounded, and
+> the container reclaimed with the turn); it was re-run by hand in time. `rc-583`'s flip
+> bracket is **(−2.2s, −0.2s] — entirely before the release**, and facilities flip atomically.
+> **Quote that bracket, never the +0.5s median.** The same trigger is now a **daily cron at
+> 07:56 PT, 09-05 through 09-11**, self-disabling on 09-12. Two gaps are recorded with it and
+> neither is fixed: the independent disabler Routine **stores no MCP connectors and may be
+> inert**, and **nothing persists the readings** — seven runs print to stdout in seven
+> ephemeral sessions, so day 1 cannot be put beside day 7 without opening seven transcripts.
+> The LIMIT recorded with the instrument still binds: it measures when RC lets go, not how
+> long a site survives.
 >
 > ### READ THIS BEFORE CALLING PRODUCTION WRONG ABOUT ANYTHING
 >
@@ -5761,7 +5910,14 @@ Three gaps in the hand-off readout, all the house shape — a fact produced and 
 > **MIGRATION BLOCKS: main `075-079`, side `080+`** — the side lane took 072 and 073 out of
 > main's block (#258) and main holds 074. `docs/LANES.md` is the authority.
 
-> ### THEN: MERGE #255. THE ANDROID HAND-OFF IS FIXED AND HUMAN-VERIFIED.
+> ### ~~THEN: MERGE #255.~~ **#255 MERGED 2026-09-03** — THE ANDROID HAND-OFF IS FIXED AND HUMAN-VERIFIED.
+>
+> **Struck rather than deleted: it sat at the top of this block as an action for a day after
+> it landed**, which is the same shape as the "the fix is designed and NOT built" line that
+> outlived #201 by two days. **`git fetch origin master` and check the PR state before
+> treating a line here as a task.** The bot-side half (the 60s cart bound) is only live if the
+> box moved after the merge — `git-status` through `bot_commands` answers that, never
+> `autocart.bot_version`.
 >
 > **`claude/rc-captcha-resume`, two commits, local verify 1618/1618.** Two independent fixes:
 > a CAPTCHA between the email and the password no longer abandons the sign-in (web-side —

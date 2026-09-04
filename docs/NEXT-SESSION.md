@@ -10,7 +10,21 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > `released`, `last_attempt_note` NULL, i.e. the claim-driven hand-off and not a timeout. It
 > was the retry of the campsite lost on 09-03 and the cart burst's first real test.
 >
-> **2. TWO MAIN-LANE SESSIONS RAN AT ONCE AND WROTE CONTRADICTORY ACCOUNTS OF ONE INDEX.**
+> **2. RC RELEASES EARLY — MEASURED, AND ONLY ONE OF THE THREE BRACKETS SAYS SO.** The direct
+> instrument ran (582 polls, 0 unreadable, 45 of 47 nights). `rc-583`'s flip lies in
+> **(−2.2s, −0.2s], entirely before T**; `rc-539` and `rc-542` straddle it and decide nothing.
+> **Quote rc-583, never the +0.5s median** — the median averages one proven-early bracket with
+> two undecided ones and reads as "on time". Facilities flip **atomically**, ~1.3s apart. That
+> justifies the burst's T−15s lead on evidence rather than on "not excluded", so do not shorten
+> it. `#L034`'s own flip is **inferred** from facility-atomicity, not measured — its nights
+> were not among the 47.
+>
+> **2b. THE ROUTINE THAT WAS MEANT TO TAKE IT REPORTED `SUCCEEDED` AND TOOK NOTHING.** A
+> 15-minute script against the Bash tool's 600-second ceiling: the fired agent backgrounded it
+> and ended its turn, and a fresh-session container is reclaimed with the turn. It was re-run
+> by hand with three minutes to spare. **A green Routine run is not a measurement taken.**
+>
+> **3. TWO MAIN-LANE SESSIONS RAN AT ONCE AND WROTE CONTRADICTORY ACCOUNTS OF ONE INDEX.**
 > `docs/LANES.md` divides main from side and had no rule for two of the same lane; it does
 > now. One applied migration 074, the other diffed the live index against a day-old checkout,
 > called it drift and had the owner revert it (~16 min with the hold button silently dead),
@@ -21,7 +35,7 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > CLAUDE.md → "TWO SESSIONS WROTE CONTRADICTORY ACCOUNTS OF ONE INDEX" and "I READ A STALE
 > CHECKOUT AS PRODUCTION DRIFT".
 >
-> **3. `git fetch origin master` AND `git log --oneline origin/master -10` BEFORE ANYTHING.**
+> **4. `git fetch origin master` AND `git log --oneline origin/master -10` BEFORE ANYTHING.**
 > Three PRs merged on the morning of 09-04 that neither session saw. This is the habit that
 > would have prevented item 2 outright, and it costs one command.
 >
@@ -33,6 +47,12 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > - **Migration 074 is applied**, four columns, read back.
 > - **Open PRs:** the side lane's **#258** (acquisition instrumentation, holds migrations
 >   072-073). **Migration blocks: main `075-079`, side `080+`.**
+> - **The release-window instrument is a daily cron**, `trig_012K7iCrj1J9KspyqGucZSHC`,
+>   `56 14 * * *` (07:56 PT), **09-05 through 09-11**, self-disabling on 09-12. Two gaps
+>   recorded and neither fixed: the independent disabler (`trig_01FtjDWmMS8PvGQ8z1TSYbHQ`)
+>   **stores no MCP connectors and may be inert**, so the self-disable in the prompt is the
+>   load-bearing stop; and **nothing persists the readings** — seven ephemeral sessions, stdout
+>   only. A `--record` flag plus a small table is the fix and is **not built**.
 > - **Health 17/19**, both warns benign — `bot_version` drift with *"no bot-side code in the
 >   gap"*, and `rc_login` reporting the rehearsal skipped.
 >
@@ -63,7 +83,16 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > re-derive the "Active 5 · 2 paying" panic** — those tiles read different systems, and a
 > refund does not cancel a Stripe subscription.
 >
-> **6. The Chromium leak is the owner's standing ask and is still uncured.** Track A's trail
+> **6. `keepSignedInReading` is fed the WRONG report and warns on every healthy
+> identifier-first sign-in.** `rc-holds-readout.mts` takes `findLast`, and that path emits two
+> `keep-signed-in` reports — ticked at the identifier step, then correctly `boxes: 0` at the
+> password step where Okta never renders it. So a run that ticked the box prints *"NOT ticked …
+> no checkbox on the page at all"*, contradicting the `signInPathReading` line directly above
+> it. Verified on `#L034`. **Two lines plus a guard** — prefer the report with `boxes > 0`, fall
+> back to the last only when none had one. Fixture must stage BOTH reports or the test is
+> vacuous. CLAUDE.md → "AND `findLast` MAKES A TICKED BOX REPORT AS \"NO CHECKBOX AT ALL\"".
+>
+> **7. The Chromium leak is the owner's standing ask and is still uncured.** Track A's trail
 > has never caught a ramp (§2). **Track B is designed and deliberately NOT started** (§6).
 >
 > ### DECIDED — do not re-raise
