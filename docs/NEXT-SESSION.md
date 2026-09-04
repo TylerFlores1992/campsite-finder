@@ -1,6 +1,6 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-04 09:15 PT** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-04 15:30 PT** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
 > ## READ FIRST — THE MORNING WORKED, AND TWO SESSIONS COLLIDED WRITING IT UP
@@ -45,21 +45,47 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >   `claimHoldNotification`, so a transient throw lost the hold button for that release for
 >   ever) plus one shared `holdOfferDecision` for the primary and extras paths.
 > - **Migration 074 is applied**, four columns, read back.
-> - **Open PRs:** the side lane's **#258** (acquisition instrumentation, holds migrations
->   072-073). **Migration blocks: main `075-079`, side `080+`.**
+> - **NO OPEN PRs and one open ISSUE (#243, the worker deploy going red over a healthy fleet)**,
+>   checked 2026-09-04 22:25 UTC. #258 is MERGED (`15ecb23`) — the line that said it was open
+>   outlived its own merge by three commits. **Migration blocks: main `077-079`, side `080+`**
+>   (`docs/LANES.md` is the authority; main took 075 and 076 on the evening of 09-04).
+> - **THE POST-CREATE OUTLOOK NOTE SHIPPED (#270) AND HAS NEVER BEEN SEEN IN PRODUCTION.** It
+>   explains the quiet stretch after somebody watches a stay that is already booked solid, and
+>   says most cancellations land in the last week or two. **Three conditions, all required, or
+>   it is silent by design:** lead **> 14 days**, **every** site booked, and availability we
+>   could actually read. To test: create a watch for a booked-out campground starting ~40 days
+>   out (that renders "about 6 weeks away"), which lands you on `/watches?new=<id>` where the
+>   note is. Faster: visit `/watches?new=<any owned watch id>` — the component does not care
+>   that the watch is old. **To see WHY it is silent, open `/api/watches/<id>/outlook` in the
+>   signed-in browser** (Clerk-authed, so a browser and not curl): `silent` names the rule —
+>   `arriving-soon`, `already-available`, or `availability-unknown`. **A blank screen is the
+>   designed default, not a render failure**; `availability-unknown` in particular means the
+>   portal read failed, and telling somebody to settle in for a long wait about a stay they
+>   could book in thirty seconds is the failure the silence prevents.
 > - **The release-window instrument is a daily cron**, `trig_012K7iCrj1J9KspyqGucZSHC`,
 >   `56 14 * * *` (07:56 PT), **09-05 through 09-11**, self-disabling on 09-12. Two gaps
 >   recorded and neither fixed: the independent disabler (`trig_01FtjDWmMS8PvGQ8z1TSYbHQ`)
 >   **stores no MCP connectors and may be inert**, so the self-disable in the prompt is the
->   load-bearing stop; and **nothing persists the readings** — seven ephemeral sessions, stdout
->   only. A `--record` flag plus a small table is the fix and is **not built**.
-> - **Health 17/19**, both warns benign — `bot_version` drift with *"no bot-side code in the
->   gap"*, and `rc_login` reporting the rehearsal skipped.
-> - **The mini-PC is on `d341139` and is FULLY CURRENT bot-side** (checked 09-04 by
->   `bot-ask git-status`; `git log d341139..origin/master -- scripts/auto-cart-bot/ mini-pc/` is
->   empty). So the wedge watchdog, `persistLiveToken`, `describeIfEmpty` and the cart burst are
->   all live. **Use `git-status`, never `autocart.bot_version`** — that field COALESCEs and can
->   show a stale sha beside a live heartbeat.
+>   load-bearing stop; and ~~nothing persists the readings~~ — **that half is BUILT and merged
+>   in #273**: `--record`, migration 076 `rc_release_readings`, `scripts/rc-release-readout.mts`,
+>   and the Routine's prompt passes the flag. **First recorded run is 09-05 07:56 PT.** The
+>   inert-disabler gap is the one still open.
+> - **Health 18/19 at 22:30 UTC** — the `bot_version` warn cleared when the box took `1e947ee`.
+>   The one remaining warn is `rc_login`: *"no rehearsal has PASSED in 19h09m — last night was
+>   skipped"*. **A skip is a stand-down, not a failure** (it refuses when the session is live,
+>   because a pass that proved nothing is worse than none), and it last PASSED on 09-04.
+> - **THE MINI-PC IS ON `1e947ee` — THE SAME SHA AS MASTER — SO #273's LEAK INSTRUMENTS ARE
+>   LIVE, NOT INERT** (22:30 UTC 09-04; `autocart.bot_version` reads *"mini-PC and web are both
+>   on 1e947ee"*). `tab-close.mjs`, `ramp-scan.mjs`, the keep-warm's three bounded closes and
+>   `bot.mjs`'s ramp sampler are all running, alongside the wedge watchdog, `persistLiveToken`,
+>   `describeIfEmpty` and the cart burst. **So the next ramp should store its own `ramp-scan`
+>   row and every trip a `tab-close` row** — `NODE_USE_ENV_PROXY=1 npx tsx
+>   scripts/bot-events-readout.mts` is the first thing worth reading next session, and an empty
+>   table after a ramp is itself a finding.
+> - **`autocart.bot_version` IS TRUSTWORTHY IN THIS ONE DIRECTION AND THE USUAL WARNING STILL
+>   HOLDS.** It COALESCEs, so it can preserve an OLD sha beside a live heartbeat — but it
+>   cannot invent master's newest one, so *"both on `1e947ee`"* can only have come from the box
+>   reporting it. **A sha that lags still needs `bot-ask git-status` to settle.**
 > - **`api.codemagic.io` IS 403 AT THE AGENT PROXY** (policy denial to CONNECT, confirmed
 >   09-04), so **no session can trigger or inspect an iOS build from here** even though
 >   `CODEMAGIC_API_TOKEN` is set and is a plausible 43-character token. Presence is not
@@ -99,8 +125,20 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >
 > **2. RC's own app tier is the largest un-instrumented risk on this path** — and it is now
 > partly instrumented. `never-loaded`/`load-error` have readings, a successful load reports
-> its milliseconds (`RC_SLOW_LOAD_MS` = 8s), and `rc-load-stats` aggregates across runs. What
-> is missing is a corpus: **the first hand-off after that landed is the first data point.**
+> its milliseconds (`RC_SLOW_LOAD_MS` = 8s), and `rc-load-stats` aggregates across runs.
+> ~~What is missing is a corpus: the first hand-off after that landed is the first data
+> point.~~ **THE FIRST DATA POINTS ARE IN**: the 09-04 hand-off reports *"RC LOAD: 2 timing(s)
+> across 1 of 1 hand-off(s) — median 0.2s, slowest 0.6s"* and *"No hand-off failed to render RC
+> in this window."* **Two timings is not a corpus and 0.6s is not the risk** — the failure this
+> instrument exists for is the three-attempts-and-five-minutes case seen by hand on 08-30 and
+> 08-31, which needs a bad morning to appear. What has changed is that the next one will be a
+> number instead of an anecdote.
+>
+> **Seen in the same readout, and already recorded:** #271's `pickKeepSignedInReport` fix reads
+> correctly on `#L034` — *"'Keep me signed in' was ticked on the email step"* beside *"sign-in
+> path: IDENTIFIER-FIRST"*, the two lines agreeing where they used to contradict each other.
+> CLAUDE.md carries it under "VERIFIED ON THE REAL ROW". **Nothing to do; noted so a second
+> session does not re-verify it.**
 >
 > **3. The RC session dies within ~2 minutes of every queue — four for four**, then ~11
 > minutes to recover. **The 08-30 `persistLiveToken` fix IS on the box** (checked 09-04:
@@ -336,7 +374,7 @@ because reverting it looks like a tidy-up.
 
 ## 4. State
 
-*Refreshed **2026-09-04 09:15 PT**, against production. This table has twice been left
+*Refreshed **2026-09-04 15:30 PT**, against production. This table has twice been left
 describing a state the repo had left behind, and one of those rows was **"Holds: none live"
 while a real hold was queued** — which reads as permission to run `npm test` and restart the
 box. **Re-read it rather than trusting it, and re-date it when you do — and `git fetch` first,
@@ -344,14 +382,15 @@ because on 09-04 a whole incident came out of trusting a day-old checkout.***
 
 | | |
 |---|---|
-| Master | **`5cbad43`** plus this branch (leak instruments, 075/076, `--record`). Earlier 09-04: #262 `SHARD_COUNT` 2 -> 3, #263, #264, #265, #266, #269, #271, #272. Previously: 09-04 landed a lot: #262 `SHARD_COUNT` 2 -> 3, #263 re-offer holds per release (migration 074) + holds in the watch card + the dead-man's switch removed, #264 the RC release-window measurement, #265 docs, #266 the `offerHold` gate hoist. |
-| Mini-PC | **`d341139`** against web `6b5c10a`; `bot_version` warns with *"No bot-side code in the gap"*, the documented not-worth-acting-on case. Confirm with `bot-ask git-status`, **never** `autocart.bot_version` — it is COALESCEd and can sit stale beside a live heartbeat. |
+| Master | **`1e947ee`** (#273: leak instruments, migrations 075/076, `--record`). Earlier 09-04: #262 `SHARD_COUNT` 2 -> 3, #263, #264, #265, #266, #269, #271, #272. Previously: 09-04 landed a lot: #262 `SHARD_COUNT` 2 -> 3, #263 re-offer holds per release (migration 074) + holds in the watch card + the dead-man's switch removed, #264 the RC release-window measurement, #265 docs, #266 the `offerHold` gate hoist. |
+| Mini-PC | **`1e947ee`, level with master** (22:30 UTC 09-04) — so #273's leak instruments are LIVE. A LAGGING sha still needs `bot-ask git-status`, because `autocart.bot_version` COALESCEs; a sha equal to master's newest cannot be a stale reading. |
 | Fly worker | both shards beating, `poller.shards` ok. `SHARD_COUNT` is **3** now. Redeploys on every `worker/**` merge. |
-| Open PRs | **#258** (side lane: acquisition instrumentation, holds migrations 072-073). |
-| Open issues | **none** |
+| Open PRs | **none** (checked 22:25 UTC 09-04). #258 merged as `15ecb23`. |
+| Open issues | **#243** — worker-deploy goes red when Fly REPLACES a machine rather than updating it. Cosmetic-but-corrosive: it is the cry-wolf shape, and the fix must not weaken the heartbeat check. |
 | Migrations | highest is **076** (`075_bot_events`, `076_rc_release_readings`, both applied and read back 09-04 evening; 074 applied 05:00 UTC 09-04 — read the correction in its own header: it was applied, reverted by the other lane, then re-applied. **Main's block is now `077-079`; the side lane's is `080+`.** |
-| Holds | **NONE live** (checked 08:25 PT). `#L034` carted T+1.4s at the 08:00 release and was released to the owner at 08:09. No fixture rows in `rc_hold_requests`. |
-| RC session | Healthy. The rehearsal was **skipped** last night (`rc_login` warns at 12h) — a stand-down, not a failure. `maybeAutoLogin` covers a release at T-30. |
+| Holds | **No holds DUE and one offer unanswered** (readout, 15:29 PT). Nobody tapped it, which is not a fault. `#L034` carted T+1.4s at the 08:00 release and was released at 08:09; its hand-off reads `cart read back: 1 entry`, `customerId PRESENT`, `close: session`. |
+| RC session | Healthy (`okta=ALIVE` to 09-05 10:09, token 17m, `src=live`). The rehearsal was **skipped** last night (`rc_login` warns at 12h) — a stand-down, not a failure; it PASSED on 09-04 03:01. `maybeAutoLogin` covers a release at T-30. |
+| Health | **18/19** at 22:30 UTC; only `rc_login` warns. `poller.shards` 3/3, `poller.capacity` 7/12, heartbeat 9s, 18 watches. |
 | Memory | **Track A is retired** (the profiler cannot see the bytes). The onset is a 35 GB commit step; `ramp-scan` and `tab-close` events are built and wait on a box update. `scripts/bot-events-readout.mts`. |
 | CI | **Two runs on 09-04 failed on fixture litter, not on the diff.** `rc-holds.test.mts` -> *"once the window has closed, a cart failure IS final"*, `already-failed` where `failed` was expected. Both times the same tree passed locally with no CI in flight. A force-push produced two runs and GitHub cancelled the first mid-suite; a killed run leaves its `__trh` rows, and #203's 10-minute age gate deliberately spares them. **Wait ten minutes, then re-run — do not lower that gate.** |
 

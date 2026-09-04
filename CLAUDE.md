@@ -6179,6 +6179,23 @@ rather than guessed.
   `campgrounds` 9,359 seq scans reading 73M tuples. Cheap and not the bill; worth understanding
   before the next growth step.
 
+### A TOOL-CALL PARAMETER LEAKED ITS OWN CLOSING TAGS INTO MASTER'S HISTORY (2026-09-04)
+The `commit_message` handed to `mcp__github__merge_pull_request` for #270 carried two extra
+lines — `</commit_message>` and `</invoke>` — so the squash commit `96de0b0` ends with the XML
+that framed the call instead of with prose. **Inert**: nothing reads a commit body, and the
+tree, the deploy and the fleet were all correct.
+- **CHECK THE TAIL OF A LONG PARAMETER BEFORE SENDING IT.** The defect is invisible at the call
+  site and permanent in the artifact — it costs one glance to prevent and cannot be undone
+  cheaply, which is the same trade as the trailing space after a `.ps1` backtick.
+- **AND IT WAS DELIBERATELY NOT FIXED — asked and answered 2026-09-04. Do not re-raise.** The
+  repair is `git commit --amend` on a commit already on master plus a force-push, which
+  (a) **rewrites shared history another active lane was building on** — of ~200 remote
+  branches, `claude/main-lane-setup-check-yxqkwc` contained that exact SHA — (b) re-triggers
+  Vercel and risks a `worker-deploy.yml` run restarting all three pollers, and (c) leaves
+  PR #270's merged-commit link pointing at a SHA that no longer exists. **Two inert lines do
+  not buy any of that.** `CH_ALLOW_MASTER_PUSH=1` stays unspent: `docs/LANES.md` reserves it
+  for a genuine incident, and a cosmetic blemish in a commit body is not one.
+
 ## Open / next session
 
 > ### 2026-09-04 EVENING — THE LEAK INSTRUMENTS ARE BUILT AND WAIT ON A BOX UPDATE
