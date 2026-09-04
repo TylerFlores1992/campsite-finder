@@ -5910,7 +5910,14 @@ Three gaps in the hand-off readout, all the house shape — a fact produced and 
 > **MIGRATION BLOCKS: main `075-079`, side `080+`** — the side lane took 072 and 073 out of
 > main's block (#258) and main holds 074. `docs/LANES.md` is the authority.
 
-> ### THEN: MERGE #255. THE ANDROID HAND-OFF IS FIXED AND HUMAN-VERIFIED.
+> ### ~~THEN: MERGE #255.~~ **#255 MERGED 2026-09-03** — THE ANDROID HAND-OFF IS FIXED AND HUMAN-VERIFIED.
+>
+> **Struck rather than deleted: it sat at the top of this block as an action for a day after
+> it landed**, which is the same shape as the "the fix is designed and NOT built" line that
+> outlived #201 by two days. **`git fetch origin master` and check the PR state before
+> treating a line here as a task.** The bot-side half (the 60s cart bound) is only live if the
+> box moved after the merge — `git-status` through `bot_commands` answers that, never
+> `autocart.bot_version`.
 >
 > **`claude/rc-captcha-resume`, two commits, local verify 1618/1618.** Two independent fixes:
 > a CAPTCHA between the email and the password no longer abandons the sign-in (web-side —
