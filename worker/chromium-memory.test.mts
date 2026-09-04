@@ -234,7 +234,9 @@ test('keepSessionsWarm actually takes the forced sample, INSIDE the browser bloc
 
   // And the source must survive the post() closure — bound as a constant 'bot', every forced
   // reading would land in the series it is meant to be told apart from.
-  assert.match(bot, /post:\s*\(memory,\s*source\s*=\s*'bot'\)\s*=>\s*reportControl\(\{\s*memory,\s*source\s*\}\)/,
+  // The post grew a second step on 2026-09-04 (the ramp scan, see ramp-scan.mjs); the property
+  // pinned here is unchanged — the sample is reported with the source it was TAKEN with.
+  assert.match(bot, /post:\s*async\s*\(memory,\s*source\s*=\s*'bot'\)\s*=>\s*\{\s*await reportControl\(\{\s*memory,\s*source\s*\}\);/,
     "bot.mjs's post() must forward the source rather than hard-coding 'bot'");
 });
 

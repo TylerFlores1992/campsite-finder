@@ -6050,8 +6050,149 @@ app` is a different page answering a different query, and nothing here has ever 
   *different* condition kept it above the state guard); it asserts that nothing conditional
   stands between the section and the link now. Full write-up in `docs/GROWTH.md` §3a.
 
+### THE ONSET IS A 35 GB COMMIT STEP, THE TAB HAS ITS OWN RENDERER, AND THE INSTRUMENTS FOR BOTH ARE BUILT (2026-09-04)
+Asked what to do about the leak — more tests, Track B, or other. Read the memory series around
+every onset since 09-01 before answering, and it changed the answer.
+
+**EVERY RAMP HAS THE SAME FIRST SAMPLE, ELEVEN FOR ELEVEN.** From `chromium_memory_samples`,
+the two-minute `bot` series, at the onset tick (UTC):
+```
+09-04 12:01:02  procs 9   rc   306 MB  renderer 118   commit  7,609 / 17,150   free 10,712
+09-04 12:03:07  procs 10  rc 3,624 MB  renderer 3,061 commit 40,458 / 40,854   free  6,794   <- ONE tick
+09-04 12:13:08  procs 10  rc 9,368 MB  renderer 8,322 commit 47,265 / 48,061   free  3,967
+09-04 12:15:13  procs 7   rc   207 MB  renderer 57    commit  7,355 / 31,580   free 11,022   <- replaced
+```
+- **COMMIT JUMPS ~7.5 GB → ~40-46 GB INSIDE ONE TWO-MINUTE TICK, while the rc family's private
+  bytes account for ~3.5 GB of it.** Then both climb together at ~450 MB/min to ~52 GB / ~9.4 GB
+  and the browser is replaced. So **~35 GB of commit appears at the onset and is attributed to
+  nothing the series can see** — the series sums PRIVATE bytes over OUR chrome.exe. Same shape
+  on 09-01 09:03, 09-01 18:13, 09-02 09:03, 12:42, 15:53, 09-03 04:19, 14:30, 16:28, 09-04 00:49
+  and 12:03. The 09-04 note above ("commit goes to 47 GB for 9 GB of Chrome — unexplained")
+  was reading the peak; the step is at the onset, and it is a STEP, not a climb.
+- **THE COMMIT LIMIT CHASES IT** (17,150 → 40,854 → 48,061 MB and back to 31,580), which is the
+  system-managed pagefile growing to satisfy a real commit charge. Windows does not grow the
+  pagefile for a reservation; something asked for 35 GB of commit and got it.
+- **THREE READINGS FIT AND THEY HAVE DIFFERENT FIXES — do not write one in.** A pagefile-backed
+  shared section a renderer created (private bytes never count those; Chromium's mojo, GPU and
+  discardable-memory buffers are all sections); kernel pool (no process owns it); or
+  `Win32_OperatingSystem`'s virtual-memory figures being a proxy that does not mean what the
+  column says. The `memory` command's full scan separates them and has only ever run when a
+  human typed it.
+
+**THE RENEWAL TAB GETS ITS OWN RENDERER — the shared-renderer hypothesis is OUT.** `rc_procs`
+rises by one to three at every renewal, ramping or not (09-04 13:47: 8 → 9 → 11 → 8 across a
+renewal that did not ramp; 09-04 12:03: 9 → 10 at an onset), and the ramping renderer is a NEW
+pid at the onset on every event checked. So PR #142's cure is aimed at the right renderer, and
+the memory is not being handed back because **that renderer outlives the trip by ten minutes**
+— which is either the renewal's body timing out step by step (its bounded waits sum to several
+minutes) or `await tab.close()` never returning. **The keep-warm's own trail said a NON-ramping
+renewal on 09-04 held its tab for 741 seconds**, which is direct evidence the body alone can
+take twelve minutes; it does not say what a ramping one does.
+
+**`await tab.close().catch(() => {})` WAS UNBOUNDED AT ALL THREE SITES** (renewal, auto-login,
+warm-up). Playwright launches Chromium with the hang monitor off, so a renderer that will not
+run its unload handlers is never force-killed on our behalf, and a close against one can wait
+for ever. A close that hangs for ten minutes and a body that takes ten minutes end the same way
+in the series — a browser replacement — and differ only in one number nothing recorded.
+
+**BUILT (this PR), THREE INSTRUMENTS AND ONE TABLE:**
+1. **`bot_events` (migration 075, APPLIED)** — kind + jsonb detail + capped text, allow-listed
+   kinds, NUL-stripped. `src/lib/bot-events.ts`; the rc-holds route stores `body.event` before
+   the hold work. Readout: `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`.
+2. **`scripts/auto-cart-bot/tab-close.mjs` — `closeTabBounded`.** Every throwaway tab closes
+   under `TAB_CLOSE_MS` (30s); a close that does not return is given up on, logged loudly, and
+   asks the resident loop for a recycle (`takePendingRecycle`, read beside `oktaTrip`, AFTER the
+   runner's preemption). **Every close is reported** as a `tab-close` event with `tripMs`,
+   `closeMs`, `hung`, `ramMb` — hung or not, because the healthy baseline is what makes a bad
+   number readable. `worker/tab-close.test.mts`, nine guards.
+3. **`scripts/auto-cart-bot/ramp-scan.mjs`.** The first periodic sample that reads the rc family
+   past `RAMP_SCAN_MB` (3,000) makes `bot.mjs` run a full scan ONCE (20-min cooldown, one per
+   ramp) and store it as a `ramp-scan` event: OS commit from the sampler's own class, the
+   perf-counter commit and **kernel pool** figures (`Win32_PerfRawData_PerfOS_Memory`, wrapped),
+   the pagefile, **private bytes summed over EVERY process** (the discriminator: near the commit
+   figure ⇒ process-attributable, read TOP; far below ⇒ shared sections or kernel), and per
+   chrome.exe on our profiles: type, private, working set, virtual size, pool charges, **handle
+   count** (a renderer holding tens of thousands of handles is holding sections). At the onset
+   the box is at ~40% commit and PowerShell still spawns; at 99% it does not.
+   `worker/ramp-scan.test.mts`, thirteen guards. Twelve mutations across the three, each
+   verified to APPLY and caught. **Seven existing guards broke over unchanged behaviour** —
+   they pinned `await tab.close()` by expression, and the change made the close STRONGER.
+   Re-anchored on the bounded call (not a character window) and each re-verified to fail
+   against a bare close restored at its site. Twenty-somethingth time.
+- **BOT-SIDE, so inert until the box updates.** Then: the next ramp (every 5-6 h) yields one
+  `ramp-scan` row and the next renewal yields `tab-close` rows. **HOW TO READ THEM:** `hung:
+  true` or `closeMs` in minutes ⇒ the close was the ten minutes and the recycle now ends it
+  early; `closeMs` in milliseconds beside `tripMs` in minutes ⇒ the BODY is slow and the fix
+  is inside `renewSession`'s waits. In the scan, `ALLPROC privateSumMB` against `OS
+  commitUsedMB` is the first line to read.
+- **TRACK B IS STILL THE CURE FOR THE RENEWAL PATH and still needs the owner's word.** Nothing
+  here cures anything: the bounded close shortens a ramp only if the close is what was holding
+  it, and the scan names the 35 GB only. What changed is that Track B no longer waits on Track A
+  (which can never answer) and that two cheaper hypotheses are being measured first.
+
+**`rc_release_readings` (migration 076, APPLIED) + `--record`.** The daily release-window
+Routine (`trig_012K7iCrj1J9KspyqGucZSHC`, 07:56 PT through 09-11) now records one row per
+facility — the BRACKET (latest still-locked, earliest free), never a midpoint; `split_brackets`
+for a non-atomic facility; NULL for an absence; nothing at all for a run that never reached the
+question. Readout: `NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-release-readout.mts`. The Routine's
+prompt carries `--record` and says to report the `recorded N facility row(s)` line. The
+independent disabler (`trig_01FtjDWmMS8PvGQ8z1TSYbHQ`) is unchanged and may still be inert;
+the measurement Routine's own self-disable on 09-12 is the load-bearing stop.
+
+**THE iOS BUILD WAS NEVER MISSING — THE PHONE HAS NOT INSTALLED IT.** Three entries in this file
+and `docs/NEXT-SESSION.md` said a fresh iOS build was the highest-value non-code action. `iOS ·
+TestFlight` #12 built and shipped on **2026-08-29** with RevenueCat compiled in
+(`docs/STOREKIT-PLAN.md`), the same day as Android build 25. The 09-01 trace reading `[ios build
+1.0 (21)]` means the iPhone was still running the 08-09 binary, not that no newer one existed.
+Nothing native-side has changed since 08-29 (`git log` on `codemagic.yaml`, `capacitor.config.ts`,
+`package.json`, `ios/`, `android/` since then: #231 and #248, both pre-build). **The action is
+to install TestFlight #12 on the iPhone and check the build number in the next hand-off trace**,
+not to run Codemagic. Struck where it was claimed.
+
+### SUPABASE EGRESS WAS 2.1x THE FREE LIMIT AND 60% OF IT WAS `bot.mjs` POLLING EVERY 2s (side-lane §27, 2026-08-24; folded 2026-09-04)
+Folded from `docs/NOTES-claude-side-lane-setup-f7bpe2.md` §27, which sat unreferenced for
+eleven days. Supabase sent a Fair Use warning — 11.81 GB of 5.5 GB — and the side lane measured
+rather than guessed.
+- **IT IS CALL COUNT, NOT PAYLOAD.** 3.4 PostgREST requests/second live, ~290,000/day, ~1.4 KB
+  each. `pg_stat_statements` is the instrument: summing `calls` on `query LIKE 'select
+  set_config%'` gives total API requests, because every call goes through `exec_select`/`exec_dml`.
+- **THE DOMINANT LOOP IS `bot.mjs` at `POLL_MS = 2000`, FOUR ROUND TRIPS PER TICK**: the
+  heartbeat UPDATE, the roster SELECT, `botUpdateState()` and `claimBotCommands()` (inside
+  `botControlFor`). 43,200 polls/day × 4 ≈ 173,000 requests ≈ 59% of the total ≈ 7 GB of the
+  11.81 — servicing a feed that is nearly always empty (essentially ONE rec.gov watch; 73
+  `autocart_jobs` rows lifetime). Cadence confirmed from `autocart_bot_heartbeat.beat_at`
+  advancing 20.1s in 20s.
+- **TUNING ALONE DOES NOT GET UNDER 5 GB** (`POLL_MS` 2000 → 15000 projects ~5.7 GB/month), so
+  the recommendation was upgrade AND fix. **UPGRADED TO PRO ($25/mo) ON 2026-08-24**; the 402
+  deadline is gone. The Costs tab had NO Supabase row and NO Fly row — migration 024's $0
+  placeholders had been deleted as a tidy-up, and migration 030 dropped `ended_at`, so deleting
+  a row is the only way to remove one and it leaves no reminder. Both re-added (Supabase $25
+  from 08-24; Fly $5.11 from 08-01, a judgement call from the upcoming invoice).
+- **`POLL_MS` REMAINS OPEN AND IS STILL WORTH DOING** — a headroom-and-tidiness job now, not an
+  emergency. Cheapest lever: `POLL_MS` in the mini-PC's `.env` (read at start; needs a bot
+  restart, no deploy) at 10-15s, costing ≤13s of rec.gov auto-cart pickup latency on one watch
+  against a 15s detection loop. Real fix: the four-round-trips shape — heartbeat every Nth tick,
+  control channel on a longer cadence than the job feed (`scripts/auto-cart-bot/bot.mjs` +
+  `src/lib/bot-control.ts`, main lane). **Do NOT reach for the roster query's shape**; it is one
+  SELECT of ≤200 rows and is not the problem.
+- Catalogued, not investigated: `watch_campgrounds` 3.6M seq scans on a 5-row table,
+  `campgrounds` 9,359 seq scans reading 73M tuples. Cheap and not the bill; worth understanding
+  before the next growth step.
+
 ## Open / next session
 
+> ### 2026-09-04 EVENING — THE LEAK INSTRUMENTS ARE BUILT AND WAIT ON A BOX UPDATE
+>
+> Read "THE ONSET IS A 35 GB COMMIT STEP" directly above. **Bot-side** (`tab-close.mjs`,
+> `ramp-scan.mjs`, the keep-warm's three closes, `bot.mjs`'s sampler) is inert until the mini-PC
+> updates; **server-side** (migrations 075 + 076, both APPLIED; the route; two readouts) is live
+> on merge. After the update: the next ramp stores a `ramp-scan` row and every trip stores a
+> `tab-close` row — `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`. **The daily
+> release-window Routine records now** (`--record`; `scripts/rc-release-readout.mts`); first
+> recorded run 09-05 07:56 PT. **Track B still needs the owner's word.** `POLL_MS` (§27, folded
+> above) is the cheapest open lever and needs a bot restart, not a deploy. **The iOS build
+> exists (TestFlight #12, 08-29); the iPhone needs to install it.**
+>
 > ### THE 09-04 08:00 RELEASE CARTED AND WAS HANDED OVER — `#L034`, T+1.4s
 >
 > **Unit 42527, Leo Carrillo, `campground_id` `rc-542` read off the row.** Carted
@@ -6186,8 +6327,10 @@ app` is a different page answering a different query, and nothing here has ever 
 > **RC's own app tier failing to render is the largest un-instrumented risk on this path** and
 > loses a site at 08:00 by itself · the RC session dies within ~2 min of every queue, four for
 > four, ~11 minutes to recover · "open the window and close it at once when already signed in"
-> (11s vs 12min, measured 08-21, not built) · **a fresh iOS build** — the iPhone is on 1.0 (21)
-> from 08-09, so iOS is now the platform with NO corroborated cart run.
+> (11s vs 12min, measured 08-21, not built) · ~~**a fresh iOS build** — the iPhone is on 1.0 (21)
+> from 08-09, so iOS is now the platform with NO corroborated cart run.~~ **THE BUILD EXISTS —
+> TestFlight #12, 2026-08-29, RevenueCat compiled in; the iPhone has not INSTALLED it** (owner,
+> 09-04). Install it and read the build number in the next hand-off trace.
 > `docs/NEXT-SESSION.md`'s read-first block is the ordered version of this.
 
 > ### ALSO OPEN: RUN THE RECONCILE. `trialing` STILL READS 0 AND THAT IS EXPECTED.
@@ -6289,9 +6432,11 @@ app` is a different page answering a different query, and nothing here has ever 
 > baseline to instrument Android, and that file is the only one in it that reaches an app. The
 > delta was audited as behaviourally nil; the entry above says exactly what changed.
 >
-> **-0.4. A FRESH iOS BUILD is the highest-value non-code action.** iOS is on a 2026-08-09
+> ~~**-0.4. A FRESH iOS BUILD is the highest-value non-code action.** iOS is on a 2026-08-09
 > binary, so the "iOS is the baseline" comparison is three weeks stale and lacks RevenueCat.
-> Codemagic run, not a code change.
+> Codemagic run, not a code change.~~ **WRONG SINCE THE DAY IT WAS WRITTEN: TestFlight #12 built
+> on 2026-08-29 with RevenueCat in it.** The 09-01 trace's `1.0 (21)` is the binary on the PHONE,
+> not the newest binary. Install it; no Codemagic run is needed unless native code changes.
 >
 > **0. A REAL HOLD IS QUEUED FOR 2026-08-29 08:00 PT, AND THE OWNER WANTS THE SITE.** Unit
 > `43189` (`#94`, Morro Bay Upper Section), tapped 2026-08-28 11:46 PT by

@@ -25,6 +25,7 @@ import { planRetry, retryDue, repairOwed, giveUpState, shouldBootstrapRepair } f
 import { acquireProfileLock, releaseProfileLock, profileLockHolder } from './profile-lock.mjs';
 import { makeControlChannel } from './control-channel.mjs';
 import { createSampler } from './memory-sample.mjs';
+import { createRampScan } from './ramp-scan.mjs';
 import { makeWatchdogTrigger, WATCHDOG_TRIGGER_MS } from './watchdog-trigger.mjs';
 import { loadEnv } from './load-env.mjs';
 
@@ -165,8 +166,18 @@ async function reportControl(body) {
  * costs one PowerShell spawn every two minutes and no new plumbing, no new credential and no
  * new endpoint.
  */
+const rampScan = createRampScan({
+  post: (event) => reportControl({ event, source: 'bot' }),
+  log,
+});
 const sampleMemory = createSampler({
-  post: (memory, source = 'bot') => reportControl({ memory, source }),
+  // THE SAMPLE FIRST, THEN THE RAMP SCAN — see ramp-scan.mjs. The scan reads the sample it
+  // is handed, runs at most once per ramp, and is awaited here so the sampler's own
+  // in-flight guard covers it; a scan that fails is a log line and never a lost sample.
+  post: async (memory, source = 'bot') => {
+    await reportControl({ memory, source });
+    await rampScan(memory);
+  },
   log,
 });
 

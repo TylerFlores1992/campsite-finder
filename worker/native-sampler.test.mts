@@ -416,7 +416,8 @@ test('the auto-login reads the profile BEFORE closing the tab', () => {
   // once (verified) before being anchored properly — the twenty-second instance of this shape,
   // and the second in this file in one sitting.
   const read = AUTOLOGIN.indexOf('const profAfter = await readNativeProfile(');
-  const close = AUTOLOGIN.indexOf('tab.close()');
+  // The bounded close (tab-close.mjs, 2026-09-04) is the close now.
+  const close = AUTOLOGIN.indexOf("closeTabBounded(tab, { label: 'auto-login'");
   assert.ok(read > -1, 'the after-reading must be taken');
   assert.ok(close > -1, 'the tab must still be closed');
   assert.ok(read < close, 'the profile must be read while the renderer still exists');
@@ -488,7 +489,9 @@ test('the trace is logged pass or fail', () => {
   const at = AUTOLOGIN.indexOf('describeTrace(trace)');
   assert.ok(at > -1, 'the trace must be rendered');
   assert.ok(at > fin, 'and from the finally, so no branch or throw can skip it');
-  assert.ok(at < AUTOLOGIN.indexOf('tab.close()'), 'before the tab is closed');
+  const closeAt = AUTOLOGIN.indexOf("closeTabBounded(tab, { label: 'auto-login'");
+  assert.ok(closeAt > -1, 'the tab must still be closed, through the bounded close');
+  assert.ok(at < closeAt, 'before the tab is closed');
   // PIN THE CONDITION, NOT JUST THE POSITION. Placement alone let a mutation gating the log on
   // `autoLogin.spent > 0` through this test (it was caught by a sibling, which is luck, not
   // coverage). The only thing the line may depend on is whether a trace EXISTS.
