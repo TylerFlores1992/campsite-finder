@@ -6,6 +6,11 @@ There are two Claude sessions in this repo. This file is the whole coordination 
 It is deliberately short and mechanical: the parts that matter are enforced by a hook and
 two tests, because a convention that lives only in prose is one nobody notices breaking.
 
+**"Two" is the assumption, not a guarantee — on 2026-09-04 there were two MAIN lanes and
+neither knew it.** Nothing in a branch name, a hook or a test distinguishes them, and
+`ListAgents` cannot see a sibling on another machine. See "TWO SESSIONS CAN BE THE *SAME*
+LANE" below before trusting anything here to be the only writer.
+
 ## Branches
 
 **Neither session works on `master`.**
@@ -167,6 +172,37 @@ starting any of these, and wait for the other lane to finish:
   worse than a slow queue: it trains both sessions to re-run CI without looking.
 
 Land changes between test runs rather than during one.
+
+## TWO SESSIONS CAN BE THE *SAME* LANE, AND ON 2026-09-04 TWO MAIN LANES COLLIDED
+
+This file divides **main** from **side** and says nothing about two sessions of the same lane.
+On 2026-09-04 there were two main-lane sessions, neither aware of the other, and the cost was
+not a merge conflict — it was **two confident, first-person, mutually exclusive accounts of the
+same production index written into `CLAUDE.md` on the same day.** One session applied migration
+074; the other diffed the live index against a day-old checkout, called it drift and had the
+owner revert it; the first then re-applied it and wrote up "it was never applied", which the
+second wrote up as "a mysterious revert". Full write-ups are in `CLAUDE.md` under "TWO SESSIONS
+WROTE CONTRADICTORY ACCOUNTS OF ONE INDEX" and "I READ A STALE CHECKOUT AS PRODUCTION DRIFT".
+
+**THE BRANCH NAME IS THE LANE TOKEN AND IT DOES NOT DISTINGUISH TWO OF ONE LANE.** `claude/a`
+and `claude/b` are both main. There is nothing in a branch name, a hook or a test that notices.
+
+**AND `ListAgents` DOES NOT TELL YOU.** It lists only sessions on the local machine, so a
+cloud-run sibling is invisible and **an empty list is not exclusive use of the database.** It
+was read as one that day, twice.
+
+Three habits, each one command, in the order they would have caught it:
+
+1. **`git fetch origin master` before believing any diff**, and especially before calling
+   production wrong. The whole revert rested on a local file that master had superseded.
+2. **`git log --oneline origin/master -10` at the start of a session.** Three PRs merged that
+   morning by the other lane and neither session saw the other's.
+3. **`ls docs/NOTES-*.md` and re-read `CLAUDE.md`'s Open block before appending to it** — an
+   Open block that already describes today under a different account is the tell.
+
+**A read-back is not enough and that is the sharp part.** The index WAS read back, correctly,
+and still produced a false account: a read-back proves the state at one instant and says
+nothing about who else is writing. Only the fetch closes it.
 
 ## Talking to the other session
 
