@@ -29,7 +29,8 @@
  */
 import { query } from '../src/lib/db/client';
 import {
-  closeReasonReading, keepSignedInReading, signInPathReading, rcSessionReading, rcLoadReading,
+  closeReasonReading, keepSignedInReading, pickKeepSignedInReport, signInPathReading,
+  rcSessionReading, rcLoadReading,
 } from '../src/lib/rc-token-liveness';
 import { rcLoadStats, describeRcLoadStats } from '../src/lib/rc-load-stats';
 import { rcHoldOutcomeReading } from '../src/lib/rc-hold-outcome';
@@ -387,11 +388,18 @@ if (handed.length) {
     // "there was no box on this page" were the same silence, which is exactly why an iOS run
     // that worked and an Android run that did not produced identical traces.
     //
-    // LAST, not first, for the same reason the okta census below is: a sign-in can touch the
-    // identifier page and the password page, and the question is what the run ended up doing.
-    const keep = (h.client_reports ?? [])
-      .findLast((r) => r.stage === 'keep-signed-in')?.detail as
-        { ticked?: boolean; boxes?: number; matched?: boolean; at?: string } | undefined;
+    // WHICH OF THE TWO REPORTS ANSWERS IT IS NOT OBVIOUS, AND `findLast` GOT IT WRONG — the
+    // rule and what it cost are in `pickKeepSignedInReport`. Short version: an identifier-first
+    // sign-in emits one report per step, only the identifier step can carry an answer, and the
+    // password step's honest `boxes: 0` was being printed as "no checkbox on the page at all"
+    // over runs that had ticked it. A missing `detail` is dropped rather than defaulted, or an
+    // empty object would render that same warn about a report that said nothing.
+    const keep = pickKeepSignedInReport(
+      (h.client_reports ?? [])
+        .filter((r) => r.stage === 'keep-signed-in')
+        .map((r) => r.detail)
+        .filter((d): d is Record<string, unknown> => !!d && typeof d === 'object'),
+    );
     if (keep) {
       const r = keepSignedInReading(keep);
       console.log(`      ${r.level === 'warn' ? '⚠ ' : ''}${r.text}`);

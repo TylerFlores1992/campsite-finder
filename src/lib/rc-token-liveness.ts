@@ -396,6 +396,52 @@ export function signInPathReading(stages: string[]): string | null {
       + 'page, which is the only page carrying "Keep me signed in"';
 }
 
+/** One `keep-signed-in` report's detail, as the sign-in bundle emits it. */
+export type KeepSignedInDetail = {
+  ticked?: boolean; boxes?: number; matched?: boolean; at?: string;
+};
+
+/**
+ * WHICH `keep-signed-in` REPORT ANSWERS THE QUESTION — AND IT IS NOT THE LAST ONE (2026-09-04).
+ *
+ * An IDENTIFIER-FIRST sign-in emits TWO of these, and only one of them can carry an answer:
+ *
+ *     {at: 'email',    boxes: 1, ticked: true }   <- the box was there, and we ticked it
+ *     {at: 'password', boxes: 0, ticked: false}   <- Okta never renders it on this step
+ *
+ * `rc-holds-readout.mts` took `findLast` and reasoned it out in its own comment: *"a sign-in
+ * can touch the identifier page and the password page, and the question is what the run ended
+ * up doing."* That is right about the okta census printed beneath it — one store, two readings,
+ * the later one is fresher — and WRONG here, because these are two DIFFERENT PAGES being asked
+ * a question only one of them can answer. The later reading is not fresher; it is inapplicable.
+ *
+ * WHAT IT COST. On the 2026-09-04 hand-off for `#L034` the trace read `boxes: 1, ticked: true`
+ * at the identifier step and `boxes: 0` at the password step, and the readout printed *"NOT
+ * ticked … no checkbox on the page at all"* — directly beneath its own `signInPathReading`
+ * line saying IDENTIFIER-FIRST, and about the one field that decides whether the NEXT sign-in
+ * is the 11-second cookie-answered kind or the 12-minute password variant. It would have said
+ * that on every identifier-first sign-in for ever.
+ *
+ * SO THE REPORT WHERE THE BOX EXISTED WINS. The fallback to the last is what keeps the genuine
+ * PASSWORD-FIRST case — no page ever offered one — reading as the warn it should be; dropping
+ * it would silence a real finding, which is the worse direction of the two.
+ *
+ * A PURE FUNCTION AND NOT A LINE IN THE SCRIPT, for the reason `closeReasonReading` and
+ * `signInPathReading` are: the branch that matters cannot be reached without a real hand-off
+ * in the database, so inline it would ship having never once run.
+ */
+export function pickKeepSignedInReport(
+  reports: readonly KeepSignedInDetail[],
+): KeepSignedInDetail | undefined {
+  if (reports.length === 0) return undefined;
+  // LAST with a box rather than first: if two pages ever offered one, the later observation is
+  // the fresher answer to the SAME question. Okta renders it once, so today these agree.
+  for (let i = reports.length - 1; i >= 0; i--) {
+    if ((reports[i].boxes ?? 0) > 0) return reports[i];
+  }
+  return reports[reports.length - 1];
+}
+
 export function keepSignedInReading(d: {
   ticked?: boolean; boxes?: number; matched?: boolean; at?: string;
 }): KeepSignedInReading {

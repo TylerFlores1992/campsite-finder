@@ -16,7 +16,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { rcTokenLiveness, mayCloseOnToken } from './rc-token-liveness';
+import {
+  rcTokenLiveness, mayCloseOnToken, keepSignedInReading, pickKeepSignedInReport,
+  type KeepSignedInDetail,
+} from './rc-token-liveness';
 
 // ---------------------------------------------------------------------------
 // The rule itself.
@@ -138,4 +141,72 @@ test('the GATE is deliberately not routed through this module — it has a diffe
   const claim = readFileSync(new URL('../components/v2/ClaimFlow.tsx', import.meta.url), 'utf8');
   assert.doesNotMatch(claim, /mayCloseOnToken/,
     'the gate must not adopt the close policy — see claim-release-truth.test.mts');
+});
+
+// ---------------------------------------------------------------------------
+// WHICH `keep-signed-in` REPORT THE READOUT SHOULD READ (2026-09-04).
+//
+// The reading function was fine; the SELECTION feeding it was not. `rc-holds-readout.mts`
+// took `findLast`, and an identifier-first sign-in emits one report per step — so the
+// password step's honest `boxes: 0` was printed as "no checkbox on the page at all" over
+// runs that had ticked the box, contradicting the `signInPathReading` line directly above.
+//
+// THE FIXTURES STAGE BOTH REPORTS, which is the whole point: a test that stages one report
+// passes against `findLast` and measures nothing. That vacuous shape is the one this file's
+// own history keeps recording, so it is what these are written against.
+// ---------------------------------------------------------------------------
+
+/** The real trace from `#L034`, 2026-09-04 — the run that was reported backwards. */
+const IDENTIFIER_FIRST: KeepSignedInDetail[] = [
+  { at: 'email', boxes: 1, ticked: true, matched: true },
+  { at: 'password', boxes: 0, ticked: false, matched: false },
+];
+
+test('THE 09-04 REPORT: an identifier-first run is read off the step that HAD the box', () => {
+  const picked = pickKeepSignedInReport(IDENTIFIER_FIRST);
+  assert.equal(picked?.at, 'email', 'the password step cannot answer a question Okta never asked there');
+  // Stated through the READING, not just the pick, because the reading is what a human sees
+  // at 08:15 and the defect was a sentence, not a field.
+  const r = keepSignedInReading(picked!);
+  assert.equal(r.level, 'info');
+  assert.match(r.text, /was ticked/);
+  assert.doesNotMatch(r.text, /no checkbox on the page at all/,
+    'this is the exact sentence the readout printed over a run that ticked it');
+});
+
+test('a genuine password-first run still warns — the fallback is load-bearing', () => {
+  // ONE report, `boxes: 0`, because Okta went straight to the password form. Nothing here
+  // ever had a box, so there is no better report to prefer and the warn is the finding.
+  const picked = pickKeepSignedInReport([{ at: 'password', boxes: 0, ticked: false }]);
+  assert.equal(picked?.at, 'password');
+  assert.equal(keepSignedInReading(picked!).level, 'warn');
+});
+
+test('no report with a box anywhere still returns one — silence is the worse direction', () => {
+  // Two steps, neither offering the box. Returning `undefined` here would print NOTHING,
+  // which reads as "the run did not report" — a different fact from "Okta never offered it".
+  const picked = pickKeepSignedInReport([
+    { at: 'email', boxes: 0, ticked: false },
+    { at: 'password', boxes: 0, ticked: false },
+  ]);
+  assert.equal(picked?.at, 'password');
+  assert.equal(keepSignedInReading(picked!).level, 'warn');
+});
+
+test('no reports at all is undefined, not a fabricated warn', () => {
+  assert.equal(pickKeepSignedInReport([]), undefined);
+});
+
+test('STRUCTURAL: the readout uses the shared picker and not findLast on this stage', () => {
+  const readout = readFileSync(new URL('../../scripts/rc-holds-readout.mts', import.meta.url), 'utf8');
+  assert.match(readout, /import \{[^}]*\bpickKeepSignedInReport\b[^}]*\} from '\.\.\/src\/lib\/rc-token-liveness'/,
+    'the readout must import the rule rather than keeping its own copy');
+  assert.match(readout, /const keep = pickKeepSignedInReport\(/,
+    'and must actually call it — the fix-present-and-inert shape');
+  // The regression as the thing that must NOT be there. Comments are stripped first, because
+  // the new comment quotes `findLast` to explain why it was wrong and a guard that fails on
+  // its own explanation gets "fixed" by deleting the explanation.
+  const code = readout.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  assert.doesNotMatch(code, /findLast\(\(r\) => r\.stage === 'keep-signed-in'\)/,
+    'findLast reads the password step, which cannot answer this question');
 });
