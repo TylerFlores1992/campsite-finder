@@ -1,520 +1,97 @@
 # Next session — start here
 
-*Rewritten 2026-08-25 evening; state refreshed **2026-09-04 05:40 UTC** (main lane).*
+*Rewritten 2026-08-25; state refreshed **2026-09-04 09:15 PT** (main lane). This is a
+HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
-> ## READ FIRST — THREE THINGS, AND THE FIRST IS A HABIT
+> ## READ FIRST — THE MORNING WORKED, AND TWO SESSIONS COLLIDED WRITING IT UP
 >
-> **1. `git fetch origin master` BEFORE YOU BELIEVE ANY DIFF.** On 2026-09-04 this session
-> compared production's `rc_hold_requests_unique` against a day-old working tree, called the
-> live four-column index "drift", and had the owner run a `DROP`/`CREATE` back to three
-> columns. Master already carried **migration 074**, which widened that key deliberately. The
-> hold button was silently dead for **sixteen minutes** — `offerHold`'s `ON CONFLICT` had
-> nothing to match, threw `42P10`, and its own `catch` returned `null`. No offer was lost
-> (checked against every claim key) and no data was touched. **One fetch would have prevented
-> all of it.** CLAUDE.md → "I READ A STALE CHECKOUT AS PRODUCTION DRIFT".
+> **1. `#L034` CARTED AT T+1.4s AND WAS HANDED OVER.** Unit 42527, Leo Carrillo, carted
+> 15:00:01.4 UTC against a 15:00:00 release and released to the owner at 15:09:41 — status
+> `released`, `last_attempt_note` NULL, i.e. the claim-driven hand-off and not a timeout. It
+> was the retry of the campsite lost on 09-03 and the cart burst's first real test.
 >
-> **2. A REAL, TAPPED HOLD RELEASES AT 2026-09-04 08:00 PT, and it is the site we lost.**
-> `#L034` (unit 42527, Leo Carrillo rc-583), tapped 05:02 UTC — the retry of the campsite
-> lost on 09-03 to a 12-second retry gap. **The cart burst is on the box** (`d341139`, applied
-> 03:20 UTC), so this is its first real test on the case it was built for. Nothing further is
-> needed: the box cannot auto-update tonight (the quiet window and the 6h release gate cancel
-> out) and nothing bot-side is missing.
+> **2. TWO MAIN-LANE SESSIONS RAN AT ONCE AND WROTE CONTRADICTORY ACCOUNTS OF ONE INDEX.**
+> `docs/LANES.md` divides main from side and had no rule for two of the same lane; it does
+> now. One applied migration 074, the other diffed the live index against a day-old checkout,
+> called it drift and had the owner revert it (~16 min with the hold button silently dead),
+> the first re-applied it and wrote "it was never applied", which the second wrote up as "a
+> mysterious revert". **Neither read-back was wrong and both accounts were.** The missing
+> command was `git fetch origin master`, and the missing fact was that **`ListAgents` lists
+> only sessions on THIS machine — an empty list is not exclusive use of the database.**
+> CLAUDE.md → "TWO SESSIONS WROTE CONTRADICTORY ACCOUNTS OF ONE INDEX" and "I READ A STALE
+> CHECKOUT AS PRODUCTION DRIFT".
 >
-> **3. THE 07:50 PT MEASUREMENT ROUTINE FIRES INTO THE SAME RELEASE.**
-> `trig_012K7iCrj1J9KspyqGucZSHC`, one-shot, 14:50 UTC. It runs `scripts/rc-release-window.mts`
-> against Leo Carrillo's 48 locked nights at 2-second resolution — the first direct measurement
-> of when RC actually lets go, against a poller whose 15-second cadence cannot answer it.
-> **Read the limit recorded with it:** it measures WHEN RC RELEASES, not how long a site
-> survives; December at Leo Carrillo is not a contested morning.
+> **3. `git fetch origin master` AND `git log --oneline origin/master -10` BEFORE ANYTHING.**
+> Three PRs merged on the morning of 09-04 that neither session saw. This is the habit that
+> would have prevented item 2 outright, and it costs one command.
+>
+> ### THE STATE
+>
+> - **#266 merged** — the `offerHold` gate hoist (it ran once per release below
+>   `claimHoldNotification`, so a transient throw lost the hold button for that release for
+>   ever) plus one shared `holdOfferDecision` for the primary and extras paths.
+> - **Migration 074 is applied**, four columns, read back.
+> - **Open PRs:** the side lane's **#258** (acquisition instrumentation, holds migrations
+>   072-073). **Migration blocks: main `075-079`, side `080+`.**
+> - **Health 17/19**, both warns benign — `bot_version` drift with *"no bot-side code in the
+>   gap"*, and `rc_login` reporting the rehearsal skipped.
 >
 > ### AFTER THE MORNING, IN ORDER OF WHAT IT BUYS
 >
-> **1. MERGE #255.** `claude/rc-captcha-resume`, two commits, local verify 1618/1618 — a
-> CAPTCHA between the email and password no longer abandons the sign-in (web-side), and the
-> runner's cart `page.evaluate` is bounded at 60s (**bot-side, inert until the box updates**;
-> confirm with `git-status` through `bot_commands`, never `autocart.bot_version`). It carries
-> a `worker/*.test.mts`, so merging fires a worker deploy — check `poller.shards` after.
->
-> **2. The runner has NO wedge watchdog.** On 09-02 it sat alive in its pre-release wait and
+> **1. The runner has NO wedge watchdog.** On 09-02 it sat alive in its pre-release wait and
 > polled nothing, indefinitely — `last_attempt_at` NULL, the 2026-08-07 dead-runner signature
 > over a live process. `supervise.ps1` restarts on EXIT only. #255 bounds the ONE call
-> identified as the likely hang; the general fix is the keep-warm's 08-17 pattern and is not
-> built.
+> identified as the likely hang; the general fix is the keep-warm's 08-17 pattern (a watchdog
+> in a timer that bails so the supervisor restarts it) and **it is not built**.
 >
-> **3. RC'S OWN APP TIER IS THE LARGEST UN-INSTRUMENTED RISK ON THIS PATH** — and it is now
+> **2. RC's own app tier is the largest un-instrumented risk on this path** — and it is now
 > partly instrumented. `never-loaded`/`load-error` have readings, a successful load reports
 > its milliseconds (`RC_SLOW_LOAD_MS` = 8s), and `rc-load-stats` aggregates across runs. What
-> is still missing is a corpus: **the first hand-off after this lands is the first data point.**
+> is missing is a corpus: **the first hand-off after that landed is the first data point.**
 >
-> **4. The session dies within ~2 minutes of every queue — four for four**, then ~11 minutes
-> to recover. Whether the 08-30 `persistLiveToken` fix is actually on the box was never
-> checked, and it is one `git-status` away.
+> **3. The RC session dies within ~2 minutes of every queue — four for four**, then ~11
+> minutes to recover. Whether the 08-30 `persistLiveToken` fix is on the box was never
+> checked, and it is one `bot-ask git-status` away.
 >
-> **5. A fresh iOS build.** The iPhone is on **1.0 (21) from 2026-08-09** against Android's
+> **4. A fresh iOS build.** The iPhone is on **1.0 (21) from 2026-08-09** against Android's
 > **1.0 (25)**, so "iOS is the baseline" is a baseline of three-week-old code that predates
 > RevenueCat, and **iOS is now the platform with NO corroborated cart run.** Required for
 > Apple IAP anyway. Codemagic run, not a code change.
 >
-> **Also outstanding, unrelated:** run the subscriptions reconcile (Admin → "Does our table
-> match Stripe?" → Check, read the plan, Apply). Six watches the dead-man's switch paused are
-> still paused and resuming them is the owner's call.
+> **5. Run the Stripe reconcile** (Admin → "Does our table match Stripe?" → Check, read the
+> plan, Apply). The webhook fix is forward-only, so both trials still read `active`. **Do not
+> re-derive the "Active 5 · 2 paying" panic** — those tiles read different systems, and a
+> refund does not cancel a Stripe subscription.
+>
+> **6. The Chromium leak is the owner's standing ask and is still uncured.** Track A's trail
+> has never caught a ramp (§2). **Track B is designed and deliberately NOT started** (§6).
+>
+> ### DECIDED — do not re-raise
+>
+> - **The six watches the dead-man's switch paused stay paused** (asked and answered 09-04).
+> - **Do NOT queue a test hold to force a memory ramp.** Three arrived free in thirty hours
+>   and all three were missed; a staged one locks a real campsite.
 
-> ## (superseded — this is the fix, and it landed) #249 WAS NOT ENOUGH; #250 REMOVES OUR OWN CLICK ON THE CALLBACK PAGE
->
-> The first Android run on #249 held the window open (the notice fired) and RC still rendered
-> signed out on its home page. The trace: **the box WAS ticked** (keep-signed-in refuted), and
-> **our sign-in script clicked "Log in" on `/login/callback`** mid-exchange, producing a second
-> callback that booted into RC's `customerLogOut`. Fixed in #250 (script guard + `afterLoad`
-> skip) and instrumented: `rc-api` records step two's HTTP status and RC's Response code, and
-> `rc-session` carries `sso` so a mid-flow sign-out is a printed line. CLAUDE.md → "#249 WAS
-> NECESSARY AND NOT SUFFICIENT". **Expected next run:** no `signin-open` on the callback, one
-> callback document, `GetSSOLoggedInUser → HTTP 200 · RC Response 1`, `loggedIn: true`,
-> `close: session`, name in the header.
-
-> ## (superseded by the block above) THE ANDROID HAND-OFF DEFECT IS EXPLAINED FROM RC'S SOURCE AND FIXED (#249)
->
-> **RC's sign-in is two steps, and we closed between them.** Okta's callback writes
-> `ssoAccessToken` (the token we capture) and then awaits `GetSSOLoggedInUser`; only that
-> response writes **`customerId`**, which is the ONE key RC boots `isLoggedIn` from — and
-> `token captured` is the moment that request LEAVES, so every close rule raced its response.
-> Android's InAppBrowser kills the in-flight request on close (`about:blank`); iOS's only
-> dismisses the view. **That is the entire platform difference.** Full entry: CLAUDE.md →
-> "RC'S SIGN-IN IS TWO STEPS"; mechanism in `docs/PLATFORM-PARITY.md` §2a.
->
-> **The fix: the window closes on `rc-session { loggedIn: true }` (= `customerId`) and on
-> nothing else. No timer.** The claim gate flips on the same signal. The census now reads
-> `customerId`, both tokens separately, and RC's real okta store (`@secure.s.okta-*`).
->
-> **CORRECTIONS to the 09-01-evening readings below**, which are kept for the record:
-> the okta-store census was reading the wrong key (false negative every time); "Keep me
-> signed in" decides the NEXT sign-in's cost, not the header; cookies are irrelevant to RC's
-> login state. The keep-signed-in instrument is still right and still worth reading.
->
-> **THE TEST — both phones.** Same procedure as below. New readout lines per hand-off:
-> `RC login: customerId PRESENT/ABSENT` and `close: session`. **Expected: both PRESENT, both
-> headers showing the name.** If Android reads ABSENT with the window closed, check the
-> `close` reason — `timeout`/`token` means a cached pre-#249 host. **Ask for the cart screen
-> on both** regardless.
->
-> **#249 TOUCHED THE iOS BASELINE** (`rc-handoff.ts`, `rc-precart-script.ts`, `ClaimFlow.tsx`).
-> The change makes iOS wait for a signal it was already winning by luck; if iOS regresses, the
-> `close` reason and the `RC login` line will say why, and the revert is the PR.
-
-> ## (superseded, kept for the record) TWO REAL-SITE HAND-OFFS RAN 2026-09-01, AND THE PLATFORMS DIVERGED
->
-> **iOS worked. Android did not.** Both carted at T+2s, both reported `✓ Added to cart` and
-> `cart read back: 1 entry`. On the iPhone RC's header carried the owner's name and the cart
-> was reachable; on the Pixel RC said *"Before booking, please sign in or create a profile"*
-> and the cart asked him to log in. Owner-confirmed on both devices, with a screenshot.
->
-> ### THE INSTRUMENTS SAID THE TWO RUNS WERE IDENTICAL, AND THAT IS THE FINDING
->
-> Every outcome field matched — `✓ Added to cart`, `cart read back: 1 entry`,
-> `close: timeout`, and the okta census down to
-> `oktaKeys: 1 · oktaToken: none · storedToken: jwt · keySource: localStorage`. **So the
-> instruments did not measure the thing that differed.** Do not compare outcome fields on
-> these two runs; they agree and they are agreeing about the wrong thing.
->
-> The traces diverge **four stages earlier**, in the sign-in:
->
-> ```
-> iOS      signin-missing {candidates:6} → email → password → submitted
-> Android  signin-open {}                →         password → submitted
-> ```
->
-> Android never reached Okta's **identifier** page — a password field was already present, so
-> `chFind(CH_PW_SELS)` matched and the caller skips the email step. **Okta renders "Keep me
-> signed in" on the identifier step**, so there was no checkbox in the DOM and
-> `chKeepSignedIn` silently found nothing. That box issues the `idx` cookie; CLAUDE.md
-> measured on 2026-08-09 that without it Okta issues nothing persistent (`okta=GONE(404)`
-> before, ~12h session after). A run without it still completes the OAuth exchange and mints
-> a good 939-char token — **which is why the cart POSTs succeed** — leaving nothing for RC's
-> SPA to draw a name from.
->
-> **IT IS A CANDIDATE, NOT A FINDING.** What is established is that the tick did not happen.
-> That it is WHY the header is empty is inference from one prior measurement. Three
-> mechanisms have been guessed at in this area and each cost a test. **A hand-off reporting
-> `ticked` whose header is still empty refutes it outright** — say so if that happens.
->
-> **AND IT IS PATH-DEPENDENT, NOT PLATFORM-DEPENDENT.** iOS fails identically on any run
-> where Okta remembers the account. Which page you land on is decided by the device's
-> password manager and Okta's cookies, not by our code.
->
-> ### ⚠ #248 MODIFIED THE BASELINE. IF iOS IS NOW BROKEN, THIS IS WHERE TO LOOK FIRST
->
-> The owner's standing instruction is that **iOS is the baseline**, and #248 was written off
-> an ANDROID observation while touching `src/lib/rc-login-script.ts` — **which iOS runs too**.
-> That is the one file in #248 that reaches either app; everything else is the readout and
-> pure functions.
->
-> **The behavioural delta was audited before merge and is essentially nil:** `chKeepSignedIn`
-> went from `{ b.click(); return true; }` to `{ matched = true; b.click(); ticked = true;
-> break; }` plus a `chSay`. Same click, same conditions, same short-circuit, no caller reads
-> the return value, and `chSay` swallows its own errors so it cannot throw out of the tick.
->
-> **If iOS regresses anyway, revert `rc-login-script.ts` alone** — the readout, the pure
-> functions and `docs/PLATFORM-PARITY.md` are inert with respect to the app and can stay.
-> Do not revert the whole PR reflexively; the parity work is what stops this recurring.
->
-> ### THE TEST TO RUN — BOTH PHONES, TONIGHT
->
-> The owner did not have the iPhone to hand on 09-01 evening, so this is deliberately NOT
-> started. `docs/PLATFORM-PARITY.md` §3 is the procedure. In short:
->
-> 1. `NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-test-hold.mts --find --show 4` — **never invent
->    a unit id**, and confirm the watch belongs to `tylerflores1992@gmail.com`.
-> 2. Check `autocart.rc_session` is live **with a fresh `checked Ns ago`** — a stale OK is
->    what caused two uncarted holds on 09-01. If dead and `okta=ALIVE`, fire `test-login`
->    (`npx tsx scripts/bot-ask.mts test-login`); it took ~90 seconds on 09-01.
-> 3. Queue one hold per phone with `--in 3`, wait for `carted`, hand over the claim link, and
->    **open it in the app** (`canInject` is false in a browser and nothing is exercised).
-> 4. Read `scripts/rc-holds-readout.mts`. #248 prints two new lines per hand-off:
->    `sign-in path: IDENTIFIER-FIRST | PASSWORD-FIRST` and the keep-signed-in verdict.
-> 5. **ASK FOR THE SCREEN.** `cart read back: 1 entry` is RC answering OUR question with OUR
->    key and has never once been corroborated by a human on either platform.
->
-> **Expected if the candidate holds:** iOS `IDENTIFIER-FIRST` + ticked; Android
-> `PASSWORD-FIRST` + `no checkbox on the page at all`. Anything else and the candidate is
-> wrong.
->
-> ### THE CONFOUNDER THAT INVALIDATES EVERY COMPARISON SO FAR
->
-> **The two phones are not running the same generation of native code.** iOS is `1.0 (21)`,
-> which CLAUDE.md dates to **2026-08-09**; Android is `1.0 (25)` from **08-29/30**. Three
-> weeks and one native dependency apart — `@revenuecat/purchases-capacitor` landed on 08-29,
-> so **the iPhone build does not contain it at all.**
->
-> `PROJECT_BUILD_NUMBER` is **project-wide**, so those numbers are on one sequence and 21
-> really is older. `codemagic.yaml` claimed per-workflow in two comments until 09-01; the
-> disproof is in CLAUDE.md, where `android-release` build 8 produced versionCode 16.
->
-> **So "iOS is the baseline" is currently a baseline of three-week-old code**, and a fresh
-> iOS build is the single thing that makes future comparisons mean anything. It is also
-> needed for the already-decided Apple IAP work, which that binary predates.
-
-*Superseded below: the 08-31 close-timing entry, which is still accurate and still merged.*
-
-> ## (CLOSED 2026-09-02 by #249/#250, kept for its trace analysis) THE HAND-OFF LEAVES RC LOOKING SIGNED OUT
->
-> The bot is fine. It carts, it releases, the user's own session re-carts, and RC confirms it
-> holds the reservation. **What fails is that RC's page then shows no name in the corner and
-> asks the user to log in when they open the cart.** A site is locked and the person told it is
-> theirs cannot reach it — the worst shape this product has, because it also makes them stop
-> watching.
->
-> ### What the 08-31 trace eliminated
->
-> The full 80-report `client_reports` sequence was read in order (CLAUDE.md → "THE FULL
-> 80-REPORT TRACE"). Two obvious explanations are **out**:
->
-> - **"The sign-in did not take."** No — `storedToken` goes `none` → `jwt` with a full 3,598s
->   in one second on the callback page, and **the app-side bundle never writes a token**, so
->   RC's own SPA minted and stored that.
-> - **"There is no session."** No — `rc-inject.js` rebroadcasts on every RC API call carrying an
->   `accesstoken` header, and the trace collapses **sixty-plus** of them against the two our
->   precart makes. RC's app is authenticating its own traffic throughout.
->
-> So: **RC's app is making authenticated calls with a live token while its own UI renders signed
-> out.** Something decides the second state that nobody has looked at.
->
-> ### BISECTED 2026-08-31 — it is the CLOSE TIMING, and the fix is built
->
-> The owner ran the ADMIN probe, which passes **no `closeOnToken`** so its window stays open.
-> Signed in by hand: **TYLER in the header**, account menu with LOGOUT, cart reachable, Your
-> Reservations reachable. Pressed Done, reopened: **name still there.** So a close and a reopen
-> are INNOCENT — the only variable left is *when*, and the trace shows us closing 2s in while
-> still on `/login/callback`, the page where RC completes its OAuth exchange.
->
-> **Fixed** — `isMidSignIn` + `rcCloseAction` defer the close until RC leaves the flow, with a
-> bounded timer, and every close names its reason (`token` / `settled` / `timeout`). Web-side,
-> so it reaches the installed app on a push. **The next hand-off is the test**, and the reason
-> is what it will say.
->
-> **STILL NOT ELIMINATED:** the manual sign-in was hand-typed, not script-driven. If a hand-off
-> fails while reporting `close {reason:'settled'}`, this was the wrong half and the fill is
-> next. Full write-up: CLAUDE.md → "BISECTED BY HAND, AND IT IS THE CLOSE TIMING".
->
-> ### THE TEST NEEDS NO HOLD ANY MORE — TWO BUTTONS IN THE ADMIN PANEL
->
-> The fix is LIVE (#240, `6331471`, web-side so installed apps have it). Reaching it used to
-> need a live 8am hold, i.e. **locking a real campsite** and shutting the update window. It
-> does not now: the admin probe drives the same `openRcHandoff` seam with no hold, and it
-> just never passed `closeOnToken`.
->
-> **Admin → System Health → Alerting → "Can we sign in to RC in the app?"**, and it must be
-> opened **from inside the CampHawk app** — from a browser `canInject` is false and it tests
-> nothing.
->
-> | button | what it is |
-> |---|---|
-> | **Open ReserveCalifornia** | the CONTROL, unchanged — window stays open, which is what bisected this on 08-31 |
-> | **Open it and close like the claim screen** | the claim screen's behaviour: `closeOnToken: true`, so the deferred close runs |
->
-> **SIGN OUT OF RC IN THAT WEBVIEW FIRST, or the run measures nothing** — a live session
-> closes on the home page, never reaches the callback, and reports `token` for the innocent
-> reason. Then read the final `close` line in the panel:
->
-> | reason | means |
-> |---|---|
-> | `settled` | RC left the callback under its own steam — **the fix working** |
-> | `timeout` | RC never left it in 10s — the backstop fired, and that is itself a finding |
-> | `token` | closed at once. **AMBIGUOUS — read the stages above it.** |
->
-> **`token` is two different things.** With no `signin-open`/`email`/`password` before it you
-> were simply already signed in: correct, unchanged, and not a test. After a real sign-in it
-> means `isMidSignIn` has stopped matching — RC moved its callback path and the 08-31 bug is
-> back **with nothing else red**. The readout says which and marks the bad one.
->
-> **THEN OPEN RC'S CART PAGE AND LOOK FOR YOUR NAME IN THE CORNER.** That is still the only
-> proof of reachability there has ever been. `cart read back` is RC answering OUR question
-> with OUR key, and on 08-29 it said one entry over a cart nobody could open.
->
-> ### AND THE SECOND INSTRUMENT IS BUILT, so one press splits the whole space
->
-> Phase 1 below is done. `sessionProbe` read `ssoAccessToken`/`accessToken` — **RC's OWN
-> copies** — while okta-auth-js decides login state from its own `okta-` store. It now
-> reports that store's **names, count, token shape and expiry; never a value**, plus the
-> ORIGIN it was taken on. Both the admin panel and `rc-holds-readout.mts` print it.
->
-> **THE ORIGIN IS NOT DECORATION — read the right one.** `localStorage` is per-origin and a
-> sign-in walks across two; hold 43832 produced **eleven** `session` reports, from both
-> `www.reservecalifornia.com` and `signin.reservecalifornia.com`. The readout scores the
-> **last** report on **RC's own** origin: the last, because the question is what the store
-> holds AFTER the sign-in, and the first is the park page where an empty store is the correct
-> and boring answer; RC's own origin, because a census on the signin origin describes storage
-> the SPA never reads. Scoring either wrong one manufactures a false confirmation.
->
-> - **`okta-` empty beside a live `ssoAccessToken`** ⇒ the SDK never finished its half; the
->   fix is in the sign-in completion.
-> - **`okta-` populated** ⇒ the SPA has everything and the problem is the **free-floating
->   cart** (`CustomerId: 0`, 08-06). Different investigation. `attached` reads `null` because
->   RC does not return `CustomerId` there, so **it cannot discriminate and still needs
->   replacing.**
->
-> A real hand-off records the same facts against the hold for free, so the next 08:00 answers
-> it too — but nobody has to wait for one, and nobody has to lock a campsite to ask.
->
-> ### A RED WORKER DEPLOY MAY BE A HEALTHY FLEET (issue #243)
->
-> The post-deploy step restarts pre-deploy machine IDs, and Fly *replaces* an unreachable
-> machine rather than updating it — so the id is gone, the state reads empty, and it tries to
-> start a machine that does not exist. **Check `/api/health/status` before treating a red
-> worker deploy as an outage**; on 08-31 the fleet was 2/2 shards and beating throughout.
->
-> ### AND A SEPARATE RISK NOTHING MEASURES
->
-> RC's app took **three attempts and ~5 minutes** to render, including its own "trouble
-> loading" screen — the same as mid-test on 08-30. **At 08:00 that loses the site on its own**,
-> whatever we fix about login state.
->
-> ### The hypothesis that led here — kept for the reasoning
->
-> `sessionProbe` reads exactly two keys, `ssoAccessToken` and `accessToken`. **Those are RC's
-> OWN copies.** CLAUDE.md's 08-15 entry already establishes that **okta-auth-js keeps its own
-> store under `okta-` and decides login state from THAT on boot** — which is why
-> `dropStoredToken` had to be widened past those two keys. **So every reading taken so far is
-> blind to the store that drives the header name and the cart page's login prompt.**
->
-> If that holds, the suspect is **`closeOnToken`**: the trace shows the sign-in webview closing
-> ~2s after the token is captured, which may be before okta-auth-js's `parseFromUrl()` →
-> `tokenManager.setTokens()` completes. **It is not to be simply deleted** — it was itself the
-> fix for the 08-12 "stranded when it WORKED" bug.
->
-> ### The plan
->
-> ~~**Phase 1 — one instrument, one hand-off, splits the space.** Extend `sessionProbe` to
-> report the `okta-*` keys.~~ **BUILT 2026-08-31 — see the block at the top.** Struck rather
-> than deleted, because read as current it sends the next session to build an instrument that
-> is already live and already printed by the readout.
->
-> - **`okta-*` EMPTY while `ssoAccessToken` holds a live JWT** ⇒ hypothesis confirmed; the fix
->   is in the sign-in completion (close on the SDK store being populated, token capture as
->   fallback, with a timeout so a hang cannot strand anyone at 08:00).
-> - **`okta-*` POPULATED** ⇒ the SPA has everything and the problem is the **free-floating
->   cart** (`CustomerId: 0`, the 08-06 finding). Different investigation, different fix. Note
->   `attached` reads `null` because RC does not return `CustomerId` on `load/shoppingcart`, so
->   **that field cannot discriminate and needs replacing with something that can.**
->
-> **Phase 2 — the fix, chosen by the reading, not before.**
->
-> **Phase 3 — the acceptance test is a human looking at RC's cart page.** Nothing else has ever
-> proved reachability, and `cart read back` demonstrably does not (08-29).
->
-> ### Worth fixing beside it
->
-> **The trace hit the 80-report cap and the middle was dropped.** The token rebroadcast ate ~63
-> of 80 slots *after* the consecutive-duplicate collapse, because `token` and `cartkey`
-> alternate and only consecutive repeats collapse. **We are destroying the evidence this
-> investigation runs on, on every hand-off.**
->
-> ### Cheaper than any of it: bisect the flow by hand
->
-> The instrument needs a hand-off to produce a reading, and a hand-off needs a human. That human
-> can answer most of this for free while they are there, by checking RC's page at each step
-> instead of only at the end:
->
-> 1. Immediately after the in-app sign-in completes, **before anything is carted — is the name
->    in the top-right of RC's page?**
-> 2. If yes: it is present after sign-in and lost later. Check again after the webview closes
->    and reopens, and again after the cart POSTs. **Whichever step loses it is the bug**, and
->    that is a much smaller search than the whole flow.
-> 3. If no: the sign-in never produced a UI-visible session at all, which points straight at the
->    SDK-store hypothesis and makes Phase 1 a confirmation rather than a search.
->
-> **This is the highest-value thing anyone can do and it costs one hand-off.** It does not need
-> a build, a deploy, or the instrument.
-
-> ### READ THIS FIRST — 2026-08-30 SUPERSEDES ITEM 0 BELOW
->
-> **The 08-29 release is long past and there are ZERO live holds and zero offers.** Item 0 and
-> the older State rows describe 08-28. They are kept for the reasoning, not the state.
->
-> **THE SERIAL RULES ARE OFF.** `npm test`, a test hold, and a box update are all fine — the
-> 6h release gate is open because nothing is queued. The 08-28 table said the opposite and
-> would have stopped you for no reason.
->
-> **Master and the mini-PC are both `65f5583`.** Six fixes landed 08-30 (#230, #234, #235) from
-> four defects, **two of them caused by the earlier fixes of the same day**. Full write-up:
-> CLAUDE.md → "A CAMPSITE WAS LOST TO A TWO-SECOND MARGIN".
->
-> **The open question is the hand-off, and it is NOT the bot** — see the block at the very top
-> of this file, which supersedes this paragraph. `keySource: "localStorage"` killed the
-> cart-key theory; the 08-31 trace then eliminated "the sign-in did not take" and "there is no
-> session" as well, and named the `okta-*` SDK store as the thing nothing has looked at.
-> **It is NOT Android-specific**: neither injected script carries a functional platform branch,
-> and no iOS run was ever corroborated by a human either.
->
-> **`ListAgents` cannot see the side lane** — it lists only sessions on THIS machine. An empty
-> list is not exclusive use of the production database; a side-lane merge cost a CI run on
-> 08-30. Announce before merging, as `docs/LANES.md` requires.
-
-> ## NOTHING IS ASSIGNED. A REAL HOLD IS QUEUED FOR THE MORNING, AND THE READING IS STILL WAITING.
->
-> **0. THE 08-29 08:00 PT RELEASE IS LIVE AND THE OWNER WANTS THE SITE.** Unit `43189`
-> (`#94`, Morro Bay SP — Upper Section, arrival 2026-09-04), tapped 2026-08-28 11:46 PT by
-> `tylerflores1992@gmail.com`. **Nothing further is needed from anyone.** The box needs no
-> update (#214 was worker- and web-side only) and `maybeAutoLogin` restores the session at
-> T−30, i.e. 07:30 PT.
->
-> The line, as the production poller wrote it after #214 deployed:
->
-> ```
-> rank 1  tylerflores1992@gmail.com      offered
-> rank 2  tylerflores1992@gmail.com      requested   <- the tapped row, and what dueHolds serves
-> rank 3  melinda.flores0501@yahoo.com   offered
-> rank 4  iamtylerflores12345@yahoo.com  offered
-> ```
->
-> **If a rival taps overnight, expect ONE cart and the other rows left `requested` and
-> uncarted. That is the line working, not a dead runner** — read `last_attempt_note` first;
-> it now carries "another watcher is ahead of you". That would also be **#201's
-> one-live-hold-per-unit rule's first live exercise**, which is still untested in anger.
->
-> **1. THE OWNER RANKS FIRST BY DESIGN NOW (migration 069, #214).** `users.line_priority` is
-> read ahead of the rotation ticket and watch age; `tylerflores1992@gmail.com` is the only
-> flagged account. **This is a deliberate thumb on the scale, not a bug** — it was asked for
-> and reaffirmed after the cost was shown. `melinda.flores0501` (a paying subscriber) is
-> family, which settled it; `suziegrieve03` and `cam1234123` are NOT family and also lose to
-> it, which was raised and accepted. Full entry in `CLAUDE.md`; the reasoning is in migration
-> 069's own header so it reads as a decision rather than something to "fix".
->
-> **Do not "make priority consistent" with `line_seq` by freezing it onto the hold** — that
-> would pin a revoked override onto every hold in flight, and the asymmetry is documented at
-> the read site.
->
-> **THE MAIN LANE'S MIGRATION BLOCK IS FULL.** 069 took the last of 060-069 and the side lane
-> holds 070. **Claim a new block out loud before taking a number** — `071` is what both lanes
-> would reach for, and a duplicate is a collision git merges cleanly and Postgres does not.
->
-> **2. THE RAMP (§2) — THE NEXT ONE ANSWERS A QUESTION NOW.** The trail has produced no
-> reading across **four** ramps (08-25 20:22, 08-26 21:24 at 9,112 MB / 100% COMMIT, 08-28
-> 02:01 at 8,981 MB, 08-28 08:13→08:23 at **8,987 MB**). The "segment never ends" theory is **ruled
-> out** — on 08-28 02:01 `max_pid` went 14596 → 7812 at 02:15, so the teardown ran and
-> `final: true` does include the open segment. **#210 shipped the discriminator and the box
-> has it (`5e399b3`, applied 08-28 08:44).** After the next ramp, read the teardown line in
-> `logs\rc-keepwarm.log`:
->
-> - `EMPTY — that renderer answered no CDP call at all` → the trail needs a different
->   **transport**, not a different trigger.
-> - segments present, growth under 400 MB → **the sampling profiler cannot see these bytes**,
->   Track A is measuring a quantity that excludes the leak, and Track B stops being optional.
-> - a `trail-*` row in `native_alloc_readings` → the bar was crossed and it finally worked.
->
-> **STILL NOTHING SINCE THE BOX UPDATED at 08:44 PT — re-checked 2026-08-28 12:00 PT**:
-> 110 samples since the update, peak **469 MB**, newest 12:01. The three ramps inside the
-> last 40h (08-26 21:24 at 9,112 MB, 08-28 02:01 at 8,981 MB, 08-28 08:13 at 8,987 MB) are
-> all the ALREADY-RECORDED ones and all predate the update; the 08:13 one ended ~08:25,
-> nineteen minutes before it. **Quote the "since 08:23" qualifier if you quote the count** —
-> without it "zero over 1,200 MB in 26h" is false, because that window contains two 9 GB
-> ramps. The
-> diagnostic has never run, so an empty `native_alloc_readings` is expected and is NOT a fifth
-> miss. Ramp cadence is **11 onsets in 6 days, gaps 5-28h** (the last two were 02:01 and 08:13,
-> ~6h apart), so expect an answer within a day.
-> **Do NOT try to stage one**; §2b has the measurement that retires the obvious plan.
->
-> **3. WHAT IS OPEN RIGHT NOW: NOTHING.** Master is **`ba0753d`**, the mini-PC is on
-> **`5e399b3`**, **every GitHub issue is closed and no PR is open.** One tapped hold and three
-> untapped offers for 08-29 08:00 PT (§0). Health is 17/19 at 15:50 and **both warns are the
-> documented benign cases**: `autocart.rc_session` (no token, `okta=ALIVE` — the token lives
-> ~1h and is legitimately dead between releases, and a repair would be the cheap
-> cookie-answered one), and `autocart.bot_version` (box `5e399b3` vs web `ba0753d`, **"No
-> bot-side code in the gap"** — the case this file records as not worth acting on).
->
-> **`detect:ridb` FLIPS TO A THIRD WARN INTERMITTENTLY** — *"recgov: backing off — our
-> throttle breaker is open"*. It read `ok` and `warn` in two samples sixty seconds apart on
-> 08-28. That is the breaker doing its job, not a new fault; do not chase it unless it sticks.
->
-> **DO NOT RUN `npm run verify` WHILE CI IS RUNNING — INCLUDING WHILE WAITING FOR IT.** Both
-> hit the production DB. On 08-28 a docs-only PR failed on `rc-client-reports.test.mts`
-> because a local verify started at 09:38:05 overlapped a CI run at 09:37:21-09:40:41, and
-> both delete the same fixed `SENTINEL`. **#203 does not cover this** — it fixed `LIKE` prefix
-> sweeps in the hold suites; a suite with one fixed sentinel deleted by exact id is still
-> mutually destructive between two runs of itself, as are `sync-claim` and `ridb-photos`.
-> Recorded, not fixed. A re-run is the right response when the diff cannot touch the code, the
-> suite passes alone, and the overlap is named.
->
-> **AND DO NOT PUSH AGAIN WHILE YOUR OWN CI IS STILL RUNNING — A SECOND PUSH IS A SECOND RUN.**
-> The same PR failed a second time with no local verify anywhere near it: a push 7.5 minutes
-> after the previous one triggered cancel-on-push, which killed a run **mid-suite**. A killed
-> run runs no cleanup, and its rows are seconds old — which is exactly the age #203's
-> `offered_at < NOW() - interval '10 minutes'` gate deliberately spares, so the next run
-> inherits them. **Do not lower that interval**; it is what stops a starting run wiping a
-> running one (issue #76). Re-running locally on the same sha with no CI in flight gave
-> 1381/1381, which is how litter was told from a regression.
->
-> **`worker/**` IS A WORKER-DEPLOY TRIGGER PATH.** "Only test files" is NOT an exemption — that
-> was asserted twice on 08-27 and was wrong both times. Read `paths:` in `worker-deploy.yml`
-> before claiming a merge is deploy-free.
->
-> **4. MERGING #180 MEANS THE NEXT ANDROID BUILD FAILS, ON PURPOSE.** Already merged.
-> `codemagic.yaml` asserts `com.android.vending.BILLING` reaches the merged manifest, and
-> `@revenuecat/purchases-capacitor` is not a dependency yet — so it exits 1 until RevenueCat
-> lands. Play's Subscriptions page has no create button without that permission, so the gate is
-> the point; it does block an Android hotfix meanwhile.
->
-> **5. THE REAL WORK LEFT, in the order it is worth doing.**
-> - **Track B (§6)** — replay the Okta trip over `ctx.request`, no renderer. Designed,
->   deliberately not started, **needs the owner's explicit go-ahead.** It is surgery on the
->   one path between a queued hold and a missed cart.
-> - **The trail's TRIGGER** (§2). Two ramps missed. The next move is the trigger, not the
->   sampler — and the owner has said they do not want more aftermath instrumentation, so
->   ask before building.
-> - ~~**`rankHoldLine`'s note never reaches a row tapped after ranking.**~~ **FIXED
->   2026-08-28.** The cause was not in `hold-line.ts` at all: the primary held unit's
->   `rankHoldLine` call sat inside the block gated by `claimHoldNotification`, so the line
->   was ranked exactly ONCE per offer and no later tap was ever seen. It re-ranks above the
->   gate now, like the extras loop always has.
-> - **`reclaimLapsedHolds` marks a hold `expired` while KEEPING `cart_key`**, so it never
->   releases on RC. The premise that blocked it — "RC's cart lapse is unmeasured" — is
->   **retired**: on 08-25 `expireStaleHolds(45)` released an unclaimed hold at exactly 45
->   minutes, HTTP 200, with the entry key. The moment a site returns to the market is one we
->   choose and already know.
-> - **`cart read back` is unproven on ANDROID.** Needs a human with the app on a real hold.
-> - **A watch created before migration 070 covers less of a park than its name suggests** —
->   see the entry in CLAUDE.md. Backfill or say so on the card; both are decisions.
-
-*Delete this file once the trail has captured a real ramp AND the App Store version has a
-decision. It is a handover, not a permanent doc, and a stale one reads like current state.*
+> ## SUPERSEDED HANDOVERS — deleted 2026-09-04, and here is where they went
+>
+> Roughly 450 lines of 2026-08-29 → 09-04 handover sat here: the Android hand-off
+> investigation, the two-phone divergence, the trace analyses, and the queued-hold checklists
+> for three mornings that have since happened. **They were lists of ACTIONS, and every one is
+> closed** — #248, #249, #250, #252, #255, #262, #263, #264, #265 and #266 are merged, and on
+> 2026-09-02 an Android hand-off was confirmed on RC's own cart page by the owner (header,
+> badge, reservation), the first human corroboration of `cart read back` on any platform.
+>
+> **The FINDINGS are all in `CLAUDE.md` under their own headings** — "RC'S SIGN-IN IS TWO
+> STEPS", "#249 WAS NECESSARY AND NOT SUFFICIENT", "iOS AND ANDROID DIVERGED ON ONE CAMPSITE
+> EACH", "THE ANDROID HAND-OFF IS FIXED, AND A HUMAN FINALLY LOOKED AT THE CART", "WHERE iOS
+> AND ANDROID ACTUALLY DIFFER". Nothing was lost; a stale to-do list read as current costs a
+> session in a way a stale finding does not, which is the whole reason this file is allowed to
+> be deleted and `CLAUDE.md` is not.
+>
+> **One rule from them is not dated and is kept:** if iOS regresses, revert
+> `src/lib/rc-login-script.ts` ALONE — #248 touched the iOS baseline to instrument Android and
+> that file is the only one in it that reaches an app; reverting the whole PR takes the parity
+> work with it.
 
 ---
 
@@ -577,125 +154,17 @@ NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-ask.mts git-status      # what the box 
 
 ---
 
-## 1. THE DOUBLE-CART BUG — ~~the top item, and it is not built~~ **FIXED IN #201**
+## 1. ~~The double-cart bug~~ — FIXED IN #201; the write-up is in CLAUDE.md
 
-> **THIS HEADING SAID "it is not built" FOR TWO DAYS AFTER THE FIX LANDED.** Struck
-> rather than deleted: a "NOT built" on the top item is exactly the sentence a later
-> reader quotes as current state, which is the cost this handover exists to prevent.
-> Everything below is the ORIGINAL write-up, kept because its timestamps and its
-> account of why the old test could not catch it are still the record. **There is no
-> work in it.** `dueHolds` carries the temporal `NOT EXISTS` and `hold-line.test.mts`
-> calls it twice with a status change in between.
+`dueHolds` carries a temporal `NOT EXISTS` over the live statuses, so the rule is *one live
+hold per unit* rather than *one served per call*, and `hold-line.test.mts` calls `dueHolds`
+twice with a status change in between. **There is no work here.** The full account — including
+why the old test structurally could not catch it — is in CLAUDE.md under "THE FAIRNESS LINE
+SERVED BOTH RIVALS".
 
-The 08-26 contest ran and **the line failed at the one thing it exists for.** Both rivals'
-holds carted, from the box's own log:
-
-```
-15:00:02  ✓ held #123 (2026-09-04) — entry ae877ae5-9ee1-479b-bec9-4d9f610ae718
-15:00:13  0 to hand over, 1 to cart, 0 to release      <- the NEXT poll
-15:00:17  ✓ held #123 (2026-09-04) — entry 6f0863e0-78d7-4cd2-9ec6-22ffc02f1351
-```
-
-**`DISTINCT ON (release_at, unit_id)` de-dupes within ONE query.** The runner polls every 15s,
-so the moment rank 1 left `requested`, rank 2 became the top row for that unit.
-
-**The fix:** `dueHolds` must exclude any `(release_at, unit_id)` that already has a **live**
-hold (`carted` or `claiming`) — *one live hold per unit*, not *one served per call*.
-
-**Why the existing test could not catch it:** `hold-line.test.mts` calls `dueHolds` ONCE and
-asserts one row comes back. That is true and always was. **The new test must call it twice
-with a status change in between.**
-
-This is the most release-critical query in the product. Not a drive-by.
-
-### 1a. ~~The rank-2 row carried no note~~ — FIXED 2026-08-28
-`rankHoldLine` wrote "another watcher is ahead of you" only to rows already `requested`. The
-runner-up was `offered` when the line was ranked and was tapped fourteen seconds later; nothing
-re-ranked afterwards. **So a contest that went wrong read as two successful carts.**
-
-**The cause was the CALL SITE, not the function.** For the primary held unit `rankHoldLine` sat
-inside the block gated by `claimHoldNotification` — once per (watch, release, unit) — so the
-line was ranked a single time in the life of an offer. The extras loop has always re-ranked
-every cycle. It now re-ranks above the gate, and rows already carrying the note are skipped so
-a per-cycle rank cannot restamp `last_attempt_at` every 15s all night.
-
-**Measured, not assumed: the behavioural test does not catch this.** It passes against
-master's `hold-line.ts`; only the structural guard (`rankHoldLine` before
-`claimHoldNotification(w.id` in stripped source) fails against the real defect.
-
-### 1b. A dead session strands a carted site — the 08-13 leak, recurring
-Both carted rows sat `carted` for **78 minutes** with `released_at` NULL and
-`last_attempt_note = "RC session is dead — needs a human sign-in"`. The release loop lives
-inside `withRC`, so a dead session skips it; `reclaimLapsedHolds` only marks the row `expired`
-at 180 min and **keeps `cart_key`, never releasing on RC.**
-
-**`test-login` is the remote lever and it works**: queued 09:18:30 → session `ok` 09:20:24 →
-both released by 09:22:29. Rationed one per 6h on the box's clock, refuses within 6h of a
-release. It is the ONLY remote way to restore a dead session, because the renewal cannot when
-Okta is GONE.
-
-### 1c. THE TWO TEST HOLDS RAN — and answered half of what they were for
-
-Queued 09:36 PT 08-26, one per account, on **different** units so the double-cart was not
-re-triggered. Morro Bay Lower Section, unit 43106 (`tylerflores1992`) and 43112
-(`iamtylerflores12345`), arrival 2026-12-08.
-
-**What they proved.** Both carted within seconds, and **both released cleanly at 45 minutes**
-(`released unclaimed — nobody came for it`) with the session healthy. That is
-`expireStaleHolds(45)` working end to end — the contrast with §1b, where a dead session left
-two rows stranded for 78 minutes, is the whole point.
-
-**What they did NOT prove.** Neither claim link was opened in the app, so the hand-off was not
-exercised. ~~**`cart read back` is still proven on iOS only; Android has never been run.**~~
-**ANSWERED 2026-08-29 AND 08-30, AND THE ANSWER RETIRES THE INSTRUMENT RATHER THAN EXTENDING
-IT.** Android ran it four times and reported `cart read back: 1 entry` — while the owner,
-holding the phone, was shown an empty cart and a sign-in prompt. So the reading is RC's answer
-to OUR question asked with OUR key, and says nothing about whether RC's own page can see the
-cart. **It has never once been corroborated by a human on any platform**, iOS included: the
-only visually-confirmed run (08-13) predates both the read-back and the cart navigation. See
-`CLAUDE.md` → "`cart read back` NEVER PROVED THE OWNER COULD REACH THE CART".
-**The live open question is the one under it:** RC returns `entries: 1` for our key while its
-UI treats the session as signed out — with `keySource: "localStorage"` (so the SPA had the key)
-and a live 939-char token (so there is a session). **Both leading theories are dead and no
-mechanism is named.** It still needs a human with the app.
-
-To repeat the setup: `scripts/rc-test-hold.mts --find` for real unit ids (never invent one),
-then `--watch <id> --unit <n> --arrival <date> --in <min>`. Use the watch whose REPRESENTATIVE
-campground contains the unit, or the hold row is labelled with the wrong facility. **A live hold
-blocks `npm test`, box restarts and the update window.**
-
----
-
-## OLD — the contest write-up, kept for its timestamps
-
-The fairness line's first real test. One physical site, two users, **both tapped**:
-
-    unit 43086 "#123", rc-583 (Morro Bay Upper Section), release 2026-08-26 08:00 PT
-
-    tylerflores1992      watch 08-24 12:45:30   ticket 0 -> 297   RANK 1   requested 05:02:40
-    iamtylerflores12345  watch 08-26 05:07:46   ticket 0          RANK 2   requested 05:51:09
-
-```bash
-NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-holds-readout.mts
-```
-
-**What SHOULD have happened.** `dueHolds` serves one row per (release, unit) — the lowest
-`line_rank` among the `requested` ones — so the main account carts at ~T+2s and the rank-2 row
-stays `requested` and **uncarted**.
-
-**THAT IS THE LINE WORKING, AND IT LOOKS EXACTLY LIKE AN OUTAGE.** A `requested` hold sitting
-past its release is otherwise the signature of a dead runner (2026-08-07). The discriminator is
-`last_attempt_note` — and see the gap below, because on this particular row it may be empty.
-
-**THE ROTATION IS THE HALF WORTH READING.** `hold_offer_seq` on the winner went 0 → 297 while
-the runner-up stayed at 0, so the next contest between them inverts. Until now the "they go to
-the bottom of the list" rule had only ever been asserted by a test.
-
-**A REAL GAP, FOUND WHILE SETTING THIS UP — FIXED 2026-08-28, see §1a.** `rankHoldLine` wrote
-the "another watcher is ahead of you" note only to rows already `requested`. At 05:50:55 the
-runner-up's row was still `offered`; it was tapped fourteen seconds later, and nothing re-ranked
-the line unless another offer for that unit arrived. **So the rank-2 row could carry no note at
-all** — which is the one state the readout uses to tell a queue from an outage.
+> This heading said *"it is not built"* for two days after the fix landed. That is the cost
+> this handover exists to prevent: a "NOT built" on the top item is exactly the sentence a
+> later reader quotes as current state.
 
 ---
 
@@ -803,22 +272,24 @@ because reverting it looks like a tidy-up.
 
 ## 4. State
 
-*Refreshed **2026-08-28 22:15 PT**, against production. This table has twice been left
+*Refreshed **2026-09-04 09:15 PT**, against production. This table has twice been left
 describing a state the repo had left behind, and one of those rows was **"Holds: none live"
 while a real hold was queued** — which reads as permission to run `npm test` and restart the
-box. **Re-read it rather than trusting it, and re-date it when you do.***
+box. **Re-read it rather than trusting it, and re-date it when you do — and `git fetch` first,
+because on 09-04 a whole incident came out of trusting a day-old checkout.***
 
 | | |
 |---|---|
-| Master | **`65f5583`** (#235), 2026-08-30. Recent: #230 seconds-based coverage + headroom + crash handlers, #234 `persistLiveToken` + stand-off resize, #235 no destructive repair near a release + `nextHoldRelease` grace window. Side lane: #236 Play IAP paywall route. |
-| Mini-PC | **`65f5583`**, applied 12:47 PT 08-30 in ~22 seconds, confirmed by `bot-ask git-status` (never `autocart.bot_version` — COALESCEd, can sit stale beside a live heartbeat). **Level with master.** |
-| Fly worker | redeployed on every `worker/**` merge since #204; both shards beating. |
-| Open PRs | **#238** (docs: the `keySource` correction) and this audit's PR. |
-| Open issues | **none — every issue is closed** |
-| Migrations | highest applied **070**. **The main lane's block 060-069 is FULL** — `069_line_priority.sql` took the last number. The next main-lane migration must **claim a new block out loud** before taking a number; two lanes both reaching for `071` is a collision git merges cleanly and Postgres does not. |
-| Holds | **NONE. Zero live holds, zero offers** (checked 13:30 PT 08-30). The 08-29 release passed; four test holds were run and deleted on 08-30 and **no campsite was ever locked by them**. Two sites ARE locked in the owner's own phone cart from the hand-off tests — unreleasable by design (we never store the phone's key) and they lapse on RC's schedule, as both 08-29 sites did within a day. |
-| RC session | **Healthy at 22:13 PT** — `OK for 2h12m`, token 59m, `okta=ALIVE` to 17:01Z. The rehearsal PASSED at 03:01 on both 08-28 and 08-29. `maybeAutoLogin` covers the release at T−30 (07:30 PT). |
-| Memory | **No ramp since 08:23 PT 08-28 — ~14 hours quiet**, the longest stretch yet (1,011 samples in 30h, zero over 1,200 MB, newest 277 MB). Within the recorded 5-28h gap range, so it is not evidence of a cure. **Track A still has zero `trail-*` readings**; the discriminator has never run. |
+| Master | **`6b5c10a`** plus **#266**. 09-04 landed a lot: #262 `SHARD_COUNT` 2 -> 3, #263 re-offer holds per release (migration 074) + holds in the watch card + the dead-man's switch removed, #264 the RC release-window measurement, #265 docs, #266 the `offerHold` gate hoist. |
+| Mini-PC | **`d341139`** against web `6b5c10a`; `bot_version` warns with *"No bot-side code in the gap"*, the documented not-worth-acting-on case. Confirm with `bot-ask git-status`, **never** `autocart.bot_version` — it is COALESCEd and can sit stale beside a live heartbeat. |
+| Fly worker | both shards beating, `poller.shards` ok. `SHARD_COUNT` is **3** now. Redeploys on every `worker/**` merge. |
+| Open PRs | **#258** (side lane: acquisition instrumentation, holds migrations 072-073). |
+| Open issues | **none** |
+| Migrations | highest is **074**, applied and read back 05:00 UTC 09-04 — read the correction in its own header: it was applied, reverted by the other lane, then re-applied. **Main's block is `075-079`; the side lane's is `080+`.** |
+| Holds | **NONE live** (checked 08:25 PT). `#L034` carted T+1.4s at the 08:00 release and was released to the owner at 08:09. No fixture rows in `rc_hold_requests`. |
+| RC session | Healthy. The rehearsal was **skipped** last night (`rc_login` warns at 12h) — a stand-down, not a failure. `maybeAutoLogin` covers a release at T-30. |
+| Memory | **Track A still has zero `trail-*` readings.** The discriminator has never run; §2 is how to read the next ramp. |
+| CI | **Two runs on 09-04 failed on fixture litter, not on the diff.** `rc-holds.test.mts` -> *"once the window has closed, a cart failure IS final"*, `already-failed` where `failed` was expected. Both times the same tree passed locally with no CI in flight. A force-push produced two runs and GitHub cancelled the first mid-suite; a killed run leaves its `__trh` rows, and #203's 10-minute age gate deliberately spares them. **Wait ten minutes, then re-run — do not lower that gate.** |
 
 **Two check-ins are scheduled and enabled — do not create duplicates.**
 `trig_01NdJC1SvSDwxZZroAooVKnU` fires **07:40 PT** into a fresh session;

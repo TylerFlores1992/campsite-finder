@@ -5661,47 +5661,72 @@ Three gaps in the hand-off readout, all the house shape — a fact produced and 
 
 ## Open / next session
 
-> ### THERE IS A REAL, TAPPED HOLD FOR 2026-09-04 08:00 PT, AND IT IS THE SITE WE LOST.
+> ### THE 09-04 08:00 RELEASE CARTED AND WAS HANDED OVER — `#L034`, T+1.4s
 >
-> **`#L034`, unit 42527, Leo Carrillo (rc-583), tapped 05:02 UTC.** It is the retry of the
-> campsite that was lost on 09-03 to the 12-second retry gap, and **the cart burst is on the
-> box** (`d341139`, applied 03:20 UTC, heartbeat live). So this morning is the burst's first
-> real test, on the case it was written for.
+> **Unit 42527, Leo Carrillo, `campground_id` `rc-542` read off the row.** Carted
+> **15:00:01.4 UTC** against a 15:00:00 release and **released to the owner at 15:09:41** —
+> status `released`, `last_attempt_note` NULL, i.e. the claim-driven hand-off and not a
+> timeout. It was the retry of the campsite lost on 09-03, and the cart burst was on the box
+> (`d341139`), so it is also the burst's first real test on the case it was built for.
 >
-> **NOTHING MORE IS NEEDED.** The box cannot auto-update tonight and that is fine: the quiet
-> window is 02:00–05:00 PT and the 6h release gate shuts at 02:00 PT, so they cancel out, and
-> nothing bot-side is missing. `maybeAutoLogin` restores the session at T−30.
+> **The offer it ran on had to be inserted BY HAND ten hours earlier**, which is what the two
+> entries below are about.
 >
-> ### FIRST: #263 IS MERGED (`3d905cc`). MIGRATION 074 WAS **NOT** APPLIED WHEN I SAID IT WAS.
+> ### TWO SESSIONS WROTE CONTRADICTORY ACCOUNTS OF ONE INDEX INTO THIS FILE, ON THE SAME DAY
 >
-> ~~MIGRATION 074 IS ALREADY APPLIED TO PRODUCTION. Its code is in PR #263. The index
-> widened before the commit landed, deliberately, so master's `offerHold` is one column
-> behind the live index and its upsert throws. It FAILS CLOSED. There were zero live holds
-> when it was applied.~~
+> **This is the finding, and it outranks either account.** On 2026-09-04 two MAIN-LANE
+> sessions ran concurrently — `docs/LANES.md` divides main from side and says nothing about
+> two of the same lane — and each wrote a confident, first-person, mutually exclusive story
+> about `rc_hold_requests_unique` into the Open block. Neither knew the other existed:
+> `ListAgents` lists only sessions on THIS machine, so an empty list is not exclusive use of
+> the database and never was.
 >
-> **EVERY SENTENCE OF THAT WAS FALSE, AND IT WAS ASSERTED IN THREE PLACES** — this block,
-> #263's PR body, and migration 074's own header (*"Applied 2026-09-04 with zero
-> `offered`/`requested`/`carted` rows in the table, so the gap cost nothing at all"*).
-> `pg_indexes` read `rc_hold_requests_unique` as the **three**-column index the whole time.
-> **A migration is applied when you have read the index back, and I wrote the read-back
-> sentence without doing the read.**
+> **The other lane's account is the better-supported one and it supersedes mine.** See "I READ
+> A STALE CHECKOUT AS PRODUCTION DRIFT" below: they diffed production against a day-old
+> working tree, called the live FOUR-column index drift, had the owner `DROP`/`CREATE` it back
+> to three, and the hold button was silently dead for sixteen minutes. **Postgres then refused
+> their second attempt naming `#L034`'s duplicate key** — direct, unarguable evidence, and the
+> thing my account has no equivalent of.
 >
-> **THE COST WAS THE INVERSE OF WHAT THE GAP WAS SUPPOSED TO BE.** The documented fail-closed
-> window is *old code + new index*. What actually shipped was *new code + old index* — so
-> from the 04:49 deploy until 05:00, `offerHold` threw on **every** RC alert for **every**
-> user, not as a bounded pre-merge gap but as the steady state. Applied for real at
-> 2026-09-04 05:00 UTC, duplicate-checked first (0 under the 4-column key — widening a
-> unique key cannot fail on data a narrower one already held) and **read back**.
+> ### ~~MIGRATION 074 WAS NOT APPLIED WHEN I SAID IT WAS~~ — I WAS READING THE OTHER LANE'S REVERT
 >
-> **AND THE BUG THE OWNER REPORTED WAS NOT THE GAP EITHER — IT WAS THE ORIGINAL DEFECT,
-> CAUGHT LIVE.** A `coming_soon` for Leo Carrillo `#L034` (unit 42527, `rc-542`) went out
-> 2026-09-04 01:11 UTC with no hold button. At that moment the code AND the index were both
-> three-column, i.e. working as designed — and `offerHold` still returned null, because the
-> `expired` row from the 09-03 08:00 release already occupied `(watch, 42527, 2026-09-04)`
-> and `DO UPDATE ... WHERE status = 'offered'` refused. **That is ask #1, reproduced in
-> production, and it is the exact thing 074 fixes.** Recovered by hand: `offerHold` re-run
-> with the poller's own arguments created the offer for the 09-04 08:00 release, the owner
-> tapped it 88 seconds later, and both releases now coexist as separate rows.
+> ~~EVERY SENTENCE OF THAT WAS FALSE … `pg_indexes` read `rc_hold_requests_unique` as the
+> three-column index the whole time. A migration is applied when you have read the index back,
+> and I wrote the read-back sentence without doing the read.~~
+>
+> **THE PREMISE IS WRONG. 074 *WAS* APPLIED, THEN REVERTED BY THE OTHER LANE, AND MY READ SAW
+> THE POST-REVERT STATE.** "The three-column index the whole time" is a claim about a window I
+> could not see the start of. What I actually did at 05:00 UTC was **re-apply** it — which the
+> other lane then observed and wrote up as *"the mysterious revert"*, i.e. they and I were each
+> narrating the other's edit as an anomaly.
+>
+> **SO THE LESSON I DREW WAS THE WRONG ONE, AND THE RIGHT ONE IS CHEAPER.** I wrote "a
+> migration is applied when you have read the index back" — true, and I did read it back, and
+> it still produced a false account. **The reading that was missing was `git fetch origin
+> master`**, which is the rule the other lane's entry lands on independently. A read-back
+> proves the state at that instant; it says nothing about who else is writing.
+>
+> **WHAT SURVIVES UNCHANGED:** the index is four columns now, duplicate-checked (0 rows under
+> the four-column key — widening a unique key cannot fail on data a narrower one already held)
+> and read back at 2026-09-04 05:00 UTC.
+>
+> ### AND `#L034`'s 01:11 MISS NOW HAS TWO CANDIDATES, NOT ONE — do not write either in
+>
+> A `coming_soon` for `#L034` went out 2026-09-04 01:11 UTC **with no hold button**, because
+> `offerHold` returned null. I recorded that as the ORIGINAL three-column-key defect reproduced
+> live. **That reading assumed a three-column index, which the correction above says was
+> probably four at 01:11.** The two candidates:
+>
+> 1. **The documented fail-closed gap** — index already widened by the original apply, code
+>    still three-column (#263 merged 04:49 UTC), so `ON CONFLICT` matched no index and threw.
+> 2. **The original defect** — the `expired` row from the 09-03 08:00 release occupying
+>    `(watch, 42527, 2026-09-04)` so `DO UPDATE ... WHERE status = 'offered'` refused.
+>
+> **Which one is NOT ESTABLISHED**, because nobody recorded when the original apply ran and
+> Postgres keeps no DDL history. Candidate 1 is the leading one on the other lane's evidence.
+> **Both are fixed** — 074 for the second, and the code/index pair now agreeing for the first.
+> The recovery is unaffected either way: `offerHold` re-run by hand with the poller's own
+> arguments created the offer, the owner tapped it 88 seconds later, and it carted at T+1.4s.
 >
 > **~~STILL OPEN~~ — ONE `offerHold` ATTEMPT PER RELEASE, AND A THROW LOSES IT FOR EVER.** The
 > call for the PRIMARY held unit sits **below** `claimHoldNotification` in `poller.ts`

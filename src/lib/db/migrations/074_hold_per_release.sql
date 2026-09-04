@@ -57,19 +57,33 @@
 -- does when the bot is absent or the window is full. Nobody is promised a cart that will
 -- not happen.
 --
--- ── CORRECTION, 2026-09-04 05:00 UTC ────────────────────────────────────────────────
+-- ── APPLIED, REVERTED, RE-APPLIED — the record, corrected twice ─────────────────────
 --
--- This header used to end "Applied 2026-09-04 with zero offered/requested/carted rows in
--- the table, so the gap cost nothing at all." IT WAS NOT APPLIED. The same false claim was
--- made in CLAUDE.md's Open block and in #263's PR body; `pg_indexes` read the THREE-column
--- index throughout. A migration is applied when you have read the index back, and that
--- sentence was written without doing the read.
+-- This header briefly said "Applied 2026-09-04 with zero offered/requested/carted rows in
+-- the table", and was then rewritten to say "IT WAS NOT APPLIED". BOTH ARE WRONG, and the
+-- second was written by the person correcting the first, which is why the whole sequence
+-- is kept here rather than tidied to the answer.
 --
--- So the direction of the gap inverted: what shipped was NEW CODE against the OLD INDEX,
--- which is not fail-closed-for-a-moment but `offerHold` throwing on every RC alert for
--- every user, from the 04:49 deploy until this actually ran at 05:00. Applied for real at
--- 2026-09-04 05:00 UTC after checking for duplicates under the 4-column key (0 — widening
--- a unique key cannot fail on data the narrower one already held), and READ BACK.
+-- WHAT ACTUALLY HAPPENED. It WAS applied. A second main-lane session then diffed the live
+-- four-column index against a day-old working tree, called it drift, and had the owner
+-- DROP/CREATE it back to three columns — for ~16 minutes `offerHold`'s four-column
+-- ON CONFLICT matched no index, threw 42P10, and was swallowed by its own catch, so
+-- coming-soon alerts went out with no hold button. A read of `pg_indexes` at 05:00 UTC then
+-- saw THREE columns, concluded "never applied", and re-applied it — which that session in
+-- turn observed and wrote up as "a mysterious revert". Each was narrating the other's edit
+-- as an anomaly. Postgres refused their restore attempt naming #L034's duplicate key, which
+-- is the one piece of unarguable evidence in the whole affair and states this migration's
+-- justification in a single error message.
+--
+-- THE LESSON IS NOT "READ THE INDEX BACK". That was done, and it still produced a false
+-- account, because a read-back proves the state at one instant and says nothing about who
+-- else is writing. The missing reading was `git fetch origin master` — and, for the session
+-- that could not see the other at all, that `ListAgents` lists only sessions on the local
+-- machine, so an empty list is not exclusive use of the database.
+--
+-- CURRENT STATE: four columns, duplicate-checked (0 rows under the four-column key —
+-- widening a unique key cannot fail on data the narrower one already held) and read back at
+-- 2026-09-04 05:00 UTC. The 08:00 release that morning carted at T+1.4s.
 --
 -- Note for whoever applies this by hand: split on semicolons carefully — a semicolon
 -- inside a COMMENT ON ... IS '...' string breaks a naive splitter (see 069).
