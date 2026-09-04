@@ -43,7 +43,17 @@ primary_region = "iad"
   # unpolled until a machine arrives. The reverse transient (N machines still at
   # SHARD_COUNT=1) is harmless — everyone polls everything, the alerting claim dedupes
   # the alerts, and each IP stays at its own normal rate.
-  SHARD_COUNT = "2"
+  # 2 -> 3 on 2026-09-04. `poller.capacity` had been AMBER at 6/8 rec.gov
+  # campground-months: five rec.gov watches were consuming six slots (a watch
+  # spanning two months costs two), leaving us one or two watches from over
+  # capacity. Over capacity is not an outage and nothing goes red for it — every
+  # watch simply gets slower, silently, which is the worst shape a degradation can
+  # take for a product whose whole value is detection latency.
+  #
+  # Machine 805456c66d6578 was cloned FIRST (2026-09-04 03:51Z) and idled correctly
+  # at `shard - of 2, 0/21 watches` until this landed — which is the transient this
+  # comment's own ordering rule predicts, observed rather than assumed.
+  SHARD_COUNT = "3"
   # Lead-time tiering (2026-08-01). A rec.gov campground-month whose first wanted
   # night is more than HOT_LEAD_DAYS out tolerates a COLD_MAX_AGE_MS-old cached
   # reading instead of demanding a fresh fetch every 15s cycle (~1 req/min instead
@@ -83,7 +93,7 @@ primary_region = "iad"
   auto_start_machines = false
   # Matches SHARD_COUNT: every shard needs a live machine or its campgrounds are
   # polled by nobody. Raise both together when adding capacity.
-  min_machines_running = 2
+  min_machines_running = 3
 
 # Readiness check on the poller's /health, which reports 503 once heartbeats stop
 # landing (a wedged-but-"started" machine — the 2026-07-22 incident). This surfaces
