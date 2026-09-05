@@ -77,3 +77,60 @@ test('the release time comes from the CLAIMED nights only', () => {
   ];
   assert.equal(heldStayRun(held, 9, flex(2))?.availableAt, '2026-08-07T08:00:00');
 });
+
+// ---------------------------------------------------------------------------
+// NO NIGHT THAT HAS ALREADY BEGUN BY THE RELEASE (2026-09-05)
+//
+// #L003 at Leo Carrillo: offered 13:10 PT on Sep 4 for a three-night stay ARRIVING Sep 4,
+// releasing 08:00 on Sep 5. The user tapped it and waited for a morning that could not
+// deliver — at 08:00 the runner asked RC for a stay whose first night was the night
+// before, and RC refused every attempt of the grace window. The failure looked exactly
+// like losing a race, which is what the hold readout called it.
+// ---------------------------------------------------------------------------
+
+test('a stay whose first night is past at the release is not offered at all', () => {
+  // The live #L003 shape: three held nights, all released the morning AFTER the first.
+  const held = [
+    slice('2026-09-04', '2026-09-05T08:00:00'),
+    slice('2026-09-05', '2026-09-05T08:00:00'),
+    slice('2026-09-06', '2026-09-05T08:00:00'),
+  ];
+  // A fixed three-night watch asked for Sep 4-6. Two of those nights survive, which is
+  // not the stay they asked for, so silence — the same rule as a partly-held window.
+  assert.equal(heldStayRun(held, 3, FIXED), null);
+});
+
+test('the bookable remainder is still offered, with the arrival moved forward', () => {
+  // Same nights, but a flexible two-night watch. Sep 5-6 really is free at 08:00 on
+  // Sep 5, so dropping the whole offer would throw away a stay somebody can have.
+  const held = [
+    slice('2026-09-04', '2026-09-05T08:00:00'),
+    slice('2026-09-05', '2026-09-05T08:00:00'),
+    slice('2026-09-06', '2026-09-05T08:00:00'),
+  ];
+  const run = heldStayRun(held, 9, flex(2));
+  // NOT ['2026-09-04', '2026-09-05'], which is what the first pass picks.
+  assert.deepEqual(run?.dates, ['2026-09-05', '2026-09-06']);
+  assert.equal(run?.availableAt, '2026-09-05T08:00:00');
+});
+
+test('a night releasing on its own morning is kept — RC sells a same-day arrival', () => {
+  // MEASURED, not assumed: #L034 carted at T+1.4s on 2026-09-04 with release 08:00 Sep 4
+  // against an arrival of Sep 4. The cutoff is `>=` and treating it as `>` would have
+  // silenced the one hold this system has actually won.
+  const sameDay = [slice('2026-09-04', '2026-09-04T08:00:00')];
+  assert.deepEqual(heldStayRun(sameDay, 1, FIXED)?.dates, ['2026-09-04']);
+});
+
+test('re-picking is a fixed point, not one trim — the survivors carry their own locks', () => {
+  // Dropping Sep 4 leaves Sep 5-6, and Sep 6 frees three days later than Sep 5 did. So
+  // the release MOVES OUT when the run is re-picked, and Sep 5 is then past as well.
+  // A single trim would return Sep 5-6 against a Sep 9 release: a stay advertised for a
+  // morning four days after its first night, which is the bug wearing a smaller hat.
+  const held = [
+    slice('2026-09-04', '2026-09-05T08:00:00'),
+    slice('2026-09-05', '2026-09-05T08:00:00'),
+    slice('2026-09-06', '2026-09-09T08:00:00'),
+  ];
+  assert.equal(heldStayRun(held, 9, flex(2)), null);
+});
