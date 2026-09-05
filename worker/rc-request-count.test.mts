@@ -209,3 +209,28 @@ test('the kind is allow-listed on the server and the readout renders it', () => 
   assert.match(READOUT, /REQUEST LOOP/, 'and say what a hot top path means');
   assert.match(READOUT, /flat:/, 'and what flat counts mean — both answers are readings');
 });
+
+// THE READOUT MUST NOT CREDIT A RAMP TO THE LOOP (2026-09-05).
+//
+// The loop branch read "IS A REQUEST LOOP — the trigger is named" and it was written off ONE
+// bail. Hours earlier a ramp with 197 requests in eleven hours carried the identical 32 GB
+// mapping signature, so a loop is present in some ramps and absent from others and cannot be
+// their cause. That sentence is the shape this file records over and over — a repair credited
+// to the wrong mechanism — and it is the sentence a later reader quotes.
+//
+// Pinned as a REFUSAL rather than as wording: the branch must still name the loop (it is a real
+// observation worth fixing) and must state the counter-example beside it.
+test('the loop verdict reports the loop and REFUSES the causal claim', () => {
+  const at = READOUT.indexOf('is a REQUEST LOOP');
+  assert.ok(at > -1, 'the loop branch must still name a hot path — a loop is a real finding');
+  // Comments stripped first: this branch explains what it refuses, so a guard reading them
+  // would fail on its own explanation and be "fixed" by deleting it.
+  const branch = READOUT.slice(at, READOUT.indexOf('} else {', at))
+    .split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  assert.doesNotMatch(branch, /the trigger is named/,
+    'a loop is not the ramp\'s trigger — a ramp with a flat counter carried the same signature');
+  assert.match(branch, /NOT THE RAMP.{0,2}S CAUSE/,
+    'the refusal must be in the output, not only in a comment nobody reading the readout sees');
+  assert.match(branch, /flat counter/,
+    'and it must carry the counter-example, or the refusal reads as hedging rather than evidence');
+});

@@ -6443,9 +6443,11 @@ nobody had reached.**
   reason is now the health verdict rather than the innocence of the idle tab.
 
 #### WHAT THE NEXT RAMP ANSWERS, AND WHAT TO STOP DOING
-- **Expect `✗ RAMP` at ~2 minutes and `reason: 'bail:ramp'`.** The wedge NOT firing at twelve is
-  the same fact from the other side. If the wedge fires again, condition B is the one standing
-  down and `.memory-latest.json` is where to look.
+- ~~**Expect `✗ RAMP` at ~2 minutes and `reason: 'bail:ramp'`.**~~ **IT FIRED, WITHIN TWO AND A
+  HALF MINUTES OF THE BOX UPDATING** — peak **3,702 MB against 8,879 MB** twelve hours earlier,
+  two minutes against twelve, and the wedge did not fire, which is the same fact from the other
+  side. The arm is proven. If a later ramp ends at twelve minutes instead, condition B is the
+  one standing down and `.memory-latest.json` is where to look.
 - **The remaining unexplained fact is the ~35-40 GB of commit that belongs to no process's
   private bytes and is not kernel pool.** Every instrument so far has looked at private bytes,
   the JS heap, free RAM or renderer allocation sites, and the memory is in none of them. The one
@@ -6455,9 +6457,59 @@ nobody had reached.**
   **Not built**, and it is the only instrument still worth building.
 - **DO NOT build Track B.** It replaces the renewal's Okta trip, and that trip is measured flat
   (`[renewal] -4 MB over 640s`). It was already doubly weakened; this is the third reason.
-- **`~18,700 handles × 2 MB ≈ 37 GB` IS ARITHMETIC, NOT A MEASUREMENT.** `HandleCount` counts
-  every kernel handle — events, threads, files, sections — so the match to the gap may be
-  coincidence. Do not quote it as the mechanism.
+- ~~**`~18,700 handles × 2 MB ≈ 37 GB` IS ARITHMETIC, NOT A MEASUREMENT.**~~ Still arithmetic,
+  and it now has four data points and a tighter form that does not rest on the handle count at
+  all — see "THE 32 GB IS ONE FIXED MAPPING" directly below. Struck rather than deleted because
+  the caution was right and the reader who acts on it would now skip the finding.
+
+#### THE 32 GB IS ONE FIXED MAPPING, AND THE REQUEST LOOP IS NOT THE CAUSE — FOUR FOR FOUR (2026-09-05)
+The new arm fired on its first ramp, and its `request-counts` event named a loop:
+**18,392 of 18,409 lifetime requests on `rdapi.reservecalifornia.com/api/webaccessfacility/futurebookingstartsendsdates`**,
+~46/s, on a browser two minutes old. I nearly wrote that up as the trigger. **It is not**, and
+the four `ramp-scan` rows say so in one column.
+
+| ramp (PT) | peak `rc` | requests | ramping renderer `virtualMB` | pagedPool | handles |
+|---|---|---|---|---|---|
+| 09-04 15:21 | 3,741 | — | **3,727,549** | 66,580 KB | 18,705 |
+| 09-04 19:34 | 4,776 | — | **3,727,556** | 66,591 KB | 19,379 |
+| 09-05 07:31 | **8,879** | **197 in ELEVEN HOURS** | **3,727,556** | 66,579 KB | 18,698 |
+| 09-05 12:13 | 3,702 | **18,409 in two minutes** | **3,727,550** | 66,554 KB | 17,005 |
+| *healthy renderer, same scans* | 16-78 | | **3,694,7xx** | 767-810 KB | 210-397 |
+
+- **THE RAMPING RENDERER'S VIRTUAL SIZE EXCEEDS A HEALTHY ONE'S BY 32,780 MB, AND THE FOUR
+  READINGS AGREE TO WITHIN 7 MB.** That is not growth, it is **one fixed ~32 GiB mapping**. It
+  is present in the ramp with 18,392 hits on one path and in the ramp with 197 requests in
+  eleven hours, so **a loop cannot be the cause of an event it is absent from.** The 09-05 07:31
+  reading is the counter-example and it was taken by the same instrument on the same day.
+- **AND THE COMMIT STEP IS THE SAME MAPPING SEEN FROM THE OS.** Both 09-05 events step in ONE
+  two-minute tick: 7,513 → 47,823 MB (07:29→07:31) and 9,096 → 43,356 MB (12:12→12:13), while
+  the rc family moves only 290 → 3,203 and 313 → 1,885. **~35-40 GB of commit against ~2-3 GB
+  of private bytes, and a 32 GB mapping sitting in the renderer's address space.** The pagefile
+  grows to match and reports `currentMB=56` / `peakMB=198` — i.e. **40 GB charged and under
+  200 MB ever written to disk**, which is what a committed-but-largely-untouched mapping looks
+  like. The private bytes then climb at ~450 MB/min as the pages are actually touched.
+- **SO THE SEQUENCE IS: map ~32 GB at once, then write into it steadily until something kills
+  it.** Every instrument that has ever been pointed at this measured the SECOND half — private
+  bytes, the JS heap, free RAM, allocation sites, request counts — which is why five of them in
+  a row reported nothing. The first half happens between two samples and shows up only as a
+  step.
+- **A LOOP IS STILL WORTH FIXING ON ITS OWN.** 18k requests in two minutes to one RDR endpoint
+  is our residential IP hammering ReserveCalifornia, which is the address that has eaten a
+  12-hour block. It is a separate problem with a separate fix, and it is not this one.
+- **THE HANDLE ARITHMETIC NOW LINES UP, AND IS STILL NOT A MEASUREMENT.** The handle count
+  exceeds a healthy renderer's by ~16,700 and 32,780 MB / 16,700 ≈ **2.0 MB each** — the shape
+  of ~16k pagefile-backed sections of 2 MB. `HandleCount` counts every kind of handle, so this
+  is a coincidence that fits, not evidence. **What settles it is the committed-region walk**
+  (`VirtualQueryEx` bucketed by `MEM_PRIVATE`/`MEM_MAPPED`/`MEM_IMAGE` with a size histogram),
+  which would show one 32 GB region or ~16k 2 MB ones and name its type. It remains the only
+  instrument worth building, and it is now a yes/no question rather than a fishing trip.
+- **ONE CANDIDATE, LABELLED AS ONE, AND IT IS NOT NEW — it is the one this file already had
+  left over.** "Chromium's own handling of the occluded window." RC's home page loads
+  `js.arcgis.com/4.30/...` and renders a WebGL map, and GPU transfer / shared-image buffers are
+  exactly the 2 MB pagefile-backed segment shape. **Nothing tests it yet.** Do not write it in
+  as the mechanism; three mechanisms have been guessed on this leak and each cost a session.
+- **AND IT DOES NOT REOPEN PARKING THE RESIDENT PAGE.** That is refused by `checkAndReport`'s
+  localStorage rule, which is a different objection and still holds.
 
 #### THREE FIGURES IN THIS FILE THAT CANNOT ALL BE TRUE (2026-09-05)
 Read before quoting any of them.
@@ -6556,6 +6608,35 @@ tree, the deploy and the fleet were all correct.
 
 ## Open / next session
 
+> ### 2026-09-05 EVENING — THE ARM FIRED, AND THE LEAK IS ONE FIXED 32 GB MAPPING
+>
+> **The RAMP arm fired within two and a half minutes of the box reaching `0029c22`** — peak
+> **3,702 MB against 8,879 MB** that morning, two minutes against twelve, `reason: 'bail:ramp'`,
+> and the wedge did not fire. **First containment in this investigation to act on a ramp.**
+>
+> **The finding is in the `ramp-scan` rows, not the request counts.** Four ramps, four for four:
+> the ramping renderer's `virtualMB` is **3,727,55x** against a healthy renderer's **3,694,7xx**
+> — a fixed **32,780 MB ± 7 MB** — with paged pool ~66.5 MB and ~17-19k handles, while every
+> healthy renderer in the same scan reads ~770 KB and ~250 handles. The ~35-40 GB commit step
+> that appears in one two-minute tick IS that mapping, and the pagefile shows **40 GB charged
+> with under 200 MB ever written**. Private bytes then climb at ~450 MB/min as the pages are
+> touched. **Read "THE 32 GB IS ONE FIXED MAPPING" above before doing anything.**
+>
+> **THE REQUEST LOOP IS NOT THE CAUSE, and I nearly wrote that it was.** The first bail named
+> 18,392 hits on `futurebookingstartsendsdates` in two minutes; the ramp twelve hours earlier
+> carried **197 requests in eleven hours** and the identical 32 GB signature. The readout's
+> verdict line said "the trigger is named" and now refuses the causal claim, guarded. **The loop
+> is still real and still worth fixing on its own** — 18k requests in two minutes from the
+> residential IP that has eaten a 12-hour block — but it is a different problem.
+>
+> **NEXT, AND IT IS NOW A YES/NO QUESTION:** the committed-region walk of the ramping renderer
+> (`VirtualQueryEx` bucketed by `MEM_PRIVATE`/`MEM_MAPPED`/`MEM_IMAGE` with a size histogram),
+> from `ramp-scan.mjs`'s existing 3 GB trigger. It would show one 32 GB region or ~16k of 2 MB
+> and name its type. **Not built.** One candidate is on the board and is NOT established: RC's
+> home page renders a WebGL ArcGIS map, and GPU shared-image buffers have that shape.
+>
+> **Still: do not build Track B, and do not park the resident page.**
+>
 > ### 2026-09-05 — THE BAIL ARM WAS INERT, THE REQUEST COUNTER ANSWERED, AND A BAIL COST THE SESSION
 >
 > Read "IT FIRED, AND THE THIRD OF THOSE THREE IS WHAT HAPPENED" and the three sections after

@@ -131,14 +131,22 @@ if (counts.length === 0) {
     const lead = top[0];
     if (full && lead) {
       if (lead.recent >= LOOP_HITS) {
-        console.log(`  >>> ${lead.recent} hits on one path in ${win}s IS A REQUEST LOOP — the trigger is named: ${lead.key}`);
+        console.log(`  >>> ${lead.recent} hits on one path in ${win}s is a REQUEST LOOP: ${lead.key}`);
+        // NOT "the trigger is named", which is what this line said until 2026-09-05 and what a
+        // single bail talked me into. Two ramps hours apart carry the IDENTICAL 32 GB mapping
+        // signature (virtualMB 3,727,55x against a healthy renderer's 3,694,7xx, paged pool
+        // ~66.5 MB, ~17-19k handles) and one of them had 18,392 hits on one path while the other
+        // had 197 requests in ELEVEN HOURS. A loop cannot be the cause of an event it is absent
+        // from. Report the loop as a real observation and refuse the causal claim.
+        console.log('      A LOOP IS NOT THE RAMP\'S CAUSE — a ramp with a flat counter (09-05 07:31, 197 requests');
+        console.log('      in 11h) carried the same 32 GB mapping. Worth fixing on its own; do not credit the ramp to it.');
         if (/oauth2|\/authorize|\/SSO\//i.test(lead.key)) {
-          console.log('      That is the SPA\'s own silent renewal. Blocking prompt=none on the resident page is the cure to');
+          console.log('      That is the SPA\'s own silent renewal. Blocking prompt=none on the resident page is a cure to');
           console.log('      weigh — known cost: the silent self-renewal that works most hours is the same mechanism.');
         }
       } else {
-        console.log(`  >>> flat: the busiest path had ${lead.recent} hits in ${win}s. The sections are NOT per-request;`);
-        console.log('      the next candidate is Chromium\'s own handling of the occluded window — a different investigation.');
+        console.log(`  >>> flat: the busiest path had ${lead.recent} hits in ${win}s, so no loop ran here.`);
+        console.log('      Ramps happen with and without one — see the 32 GB mapping entry in CLAUDE.md.');
       }
     }
   };
