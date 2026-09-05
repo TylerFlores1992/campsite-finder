@@ -6344,6 +6344,14 @@ unchanged behaviour and were re-anchored, not relaxed**: `warmup-sampler` pinned
 with the request-counts POST), and `chromium-memory` pinned `post()`'s FIRST statement (the file
 write now precedes it). Each re-verified failing against the regression it exists for.
 
+**MERGED AS #277 (`04c613b`) AND ON THE BOX SINCE 2026-09-05 03:26 UTC** — `git-status` read
+`HEAD 04c613b`, the worker deploy went green with 3/3 shards held and a fresh heartbeat, the new
+keep-warm logged `alloc trail: resident renderer armed` and `token source: live` at 03:26:26, and
+`bot.mjs` restarted the same second with no `could not write` line while the memory series went
+on posting. **`REQUEST COUNTS: 0` at 03:33 is the expected state, not a miss**: the update's
+`stop-all` kills the keep-warm rather than tearing it down, so the first event arrives at the
+first reopen (a profile yield, a recycle, or a bail), and the first `✗ RAMP` needs a ramp.
+
 **HOW TO READ THE FIRST FIRING.** `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`
 has a REQUEST COUNTS section; read the `bail` rows first, teardowns are the baseline. In
 `logs\rc-keepwarm.log` a `✗ RAMP` line at ~2 minutes says the arm fired — **and the WEDGE arm
