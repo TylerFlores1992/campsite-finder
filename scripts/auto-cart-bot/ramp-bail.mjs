@@ -54,7 +54,7 @@ export const RAMP_READING_MAX_AGE_MS_DEFAULT = 5 * 60_000;
  * half a file. Never throws — a failed write is a log line, and the reader's age gate turns a
  * stale file into UNKNOWN rather than into a reading.
  * @param {string} file
- * @param {{ rcMb?: number|null, maxPid?: number|null, maxType?: string|null }} sample
+ * @param {{ rcMb?: number|null, maxPid?: number|null, maxType?: string|null, [k: string]: unknown }} sample
  * @param {{ now?: () => number, log?: (l: string) => void }} [opts]
  */
 export function writeLatestMemory(file, sample, { now = () => Date.now(), log = () => {} } = {}) {
