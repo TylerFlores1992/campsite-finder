@@ -6209,6 +6209,90 @@ memory series bracketed the whole event.
   called "not a ramp" on one line and stored as a ramp reading on the next. The RAM delta was
   the resident page's, not the tab's — both instruments bracket the wall clock, not the target.
 
+#### THE NEXT TWO ARE DESIGNED AND NOT BUILT — the request counter and the two-minute bail (2026-09-04, evening)
+Written so a fresh session builds from anchors that were checked in source at `a852a32`,
+rather than re-deriving them. **Both are bot-side** (`scripts/auto-cart-bot/`), so nothing
+here is live until the box updates (`requestBotUpdate`, confirmed by `bot-ask git-status`,
+never by `autocart.bot_version`). Neither cures anything; they name the trigger and shorten
+the ramp.
+
+**1. THE RESIDENT-PAGE REQUEST COUNTER** — a pure module (`rc-request-count.mjs`) plus wiring.
+- **Attach `page.on('request', …)` where `residentPage = page` is assigned** (`rc-keepwarm.mjs`,
+  inside `warmResident`'s try, just after `ctx.pages()[0] ?? ctx.newPage()`), so it is
+  re-attached on every reopen — a browser life is a new context. Playwright delivers subframe
+  requests on the same event, and that is load-bearing: okta-auth-js's `prompt=none` renewal
+  runs in a hidden iframe, and it is the trigger candidate.
+- **Key = `origin + pathname`, and REUSE the normaliser `okta-net-trace.mjs` already has** (its
+  header says why: Okta's callback carries `code=` in the query, and this repo published one on
+  2026-08-09). Never the query, never a header, never `response.body()` — buffering a payload
+  into this process on a page suspected of moving gigabytes is the cure arriving as the disease.
+- **Two windows, because a loop is a RATE**: lifetime-of-browser counts and a rolling two-minute
+  count per path. Cap distinct paths (~200; past the cap count under `<other>`) so a path with an
+  id baked into it cannot grow the map for ever.
+- **Print the top ten by two-minute count in THREE places**: `reportAndBail` beside
+  `describeAllocTrail` (every bail arm), the teardown flush (`flushAllocRamps({ final: true,
+  describeIfEmpty: true })` at the end of `warmResident`), and on a hung close. Post the same
+  as a **`request-counts` bot event** — add the kind to `BOT_EVENT_KINDS` in
+  `src/lib/bot-events.ts` (`worker/bot-events.test.mts` pins the list by value) and render it in
+  `scripts/bot-events-readout.mts`. From the timer, `reportBotEvent` is fire-and-forget; from a
+  bail it must be **awaited and bounded** the way `flushAllocRamps` is (a 4s race), or
+  `process.exit` kills the POST that carries the one reading the arm exists for.
+- **Do not try to join it to the ramp scan.** The scan runs in `bot.mjs` and cannot see the
+  keep-warm's counter; the `at` timestamps in `bot_events` line the two up.
+
+**2. THE TWO-MINUTE BAIL** — a NEW arm in the watchdog timer (`const renew = setInterval(…)` in
+`warmResident`), placed AFTER the WEDGE arm and BEFORE the RAM arm. **Both existing arms stay
+exactly as they are**; `HUNG_MS` must go on tolerating a full unattended sign-in.
+- **Condition A — the resident renderer has answered no CDP call for `RC_KEEPWARM_RAMP_STALL_MS`
+  (default 120 s).** The signal already exists and needs no new request: `sampleHeap` returns
+  `null` on `no answer in 2000ms` (`TRAIL_TIMEOUT_MS`, `rc-heap.mjs`), so `heapTrail` simply
+  stops growing — read the age of its newest sample. **Requires `heapProbe` and at least one
+  prior sample; otherwise the condition is UNKNOWN and the arm stands down.** An empty trail is
+  "never answered", which is the fresh-launch state, not a ramp. The throwaway tabs have their
+  own renderers (measured 09-04), so a live Okta trip does not silence the resident page — this
+  arm cannot fire on a working sign-in the way the RAM arm did on 08-19.
+- **Condition B — the rc family is past `RC_KEEPWARM_RAMP_MB` (default 3000, the threshold
+  `ramp-scan.mjs` already uses).** **THE TIMER MUST NOT SPAWN**: `rcFamilyMb()` runs PowerShell,
+  and spawning is what fails first at high commit (see the `LOW_RAM_MB` comment). The
+  non-spawning source is the reading `bot.mjs` already takes every two minutes: have the
+  sampler's `post` (`createSampler({ post: … })` in `bot.mjs`) also write the sample to a file in
+  the bot directory (`.memory-latest.json` — `{at, rcMb, maxPid, maxType}`, written to a temp
+  name then `renameSync` so a reader never sees half a file), and read it in the timer with
+  `readFileSync` — a file read is not a spawn. **Age-gate it: a reading older than ~5 minutes is
+  UNKNOWN → stand down.** `os.freemem()` cannot serve here: untouched commit never lowers free
+  RAM, which is exactly why the RAM arm has sat out sixteen consecutive ramps.
+- **BOTH CONDITIONS, ALWAYS** — the rule the RAM arm was written under. A silent renderer alone is
+  RC's app tier failing to render for five minutes (observed 08-31 and 09-02); a big family alone
+  is a ramp the loop may still be advancing through, which the size arm in the loop body handles
+  once the loop returns. Neither alone earns spending the session.
+- **Action: go through `reportAndBail` exactly like the other two arms** — heap facts, both
+  trails, the alloc flush awaited and bounded, the request counts, then `bail` (release the
+  profile lock, `process.exit(1)`) — under a line naming the arm:
+  `✗ RAMP — resident renderer silent Ns, rc family N MB (reading Ns old)`. **The cost is the same
+  session the twelve-minute bail costs today**; what it buys is a two-minute ramp instead of
+  twelve, ~7 GB less commit on the box, and the request counts taken at the onset rather than at
+  the peak.
+- **Three things NOT to do, each recorded as having cost a working repair**: do not lower
+  `LOW_RAM_MB` (08-19); do not put the check in the loop body (structurally unreachable during a
+  ramp — the size arm's whole history); do not "simplify" the two arms into one.
+- **Guards.** `worker/keepwarm-recycle.test.mts` already pins `WATCHDOG_MS ≤ 15s`, the RAM arm's
+  both-conditions rule and the `LOW_RAM_MB` bounds, and `envDefault` there has misread a
+  threshold TWICE (`60_000`, then `40 * 60_000`) — read it before adding constants. Extend with,
+  each mutation-verified to APPLY and to fail: the new arm is in the TIMER and not the loop body;
+  it requires both conditions; it stands down on an unknown (no file, stale file, empty trail);
+  it sits between the WEDGE and RAM arms; it goes through `reportAndBail`; `bot.mjs` writes the
+  file atomically from the sampler's post; the counter is attached at the resident-page site and
+  keys on `origin + pathname` with no query. **Commit before mutating.** `worker/**` guards fire
+  a worker deploy on merge — expected; check `poller.shards` after.
+- **HOW TO READ THE FIRST FIRING.** A `✗ RAMP` line at ~2 minutes with a `request-counts` event
+  whose top two-minute path is Okta's `/oauth2/v1/authorize` or an RC `/SSO/` endpoint at
+  hundreds of hits ⇒ **a request loop, and the trigger is named** — then blocking `prompt=none`
+  on the resident page is the cure to weigh (known cost: the silent self-renewal that works most
+  hours is the same mechanism). Flat counts (tens, spread across RC's ordinary API) ⇒ the sections
+  are not per-request and the next candidate is Chromium's own handling of the occluded window,
+  which is a different investigation. **Either answer is a reading; "no bail fired" is not** —
+  the box needs a ramp (every 5-6 h) after the update, and the readout says which arm ended it.
+
 **`rc_release_readings` (migration 076, APPLIED) + `--record`.** The daily release-window
 Routine (`trig_012K7iCrj1J9KspyqGucZSHC`, 07:56 PT through 09-11) now records one row per
 facility — the BRACKET (latest still-locked, earliest free), never a midpoint; `split_brackets`
@@ -6290,7 +6374,11 @@ tree, the deploy and the fleet were all correct.
 > live → none in the 63s before the ramp); our click-through trip twelve minutes later did not
 > ramp. **Next, in order: count the resident page's requests (never bodies) and print them in
 > the bail; bail at ~2 min instead of 12 when the resident renderer stops answering during a
-> ramp.** `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`. **The daily
+> ramp — BOTH DESIGNED, NOT BUILT, with every anchor checked in source: read "THE NEXT TWO ARE
+> DESIGNED AND NOT BUILT" under "THE ONSET IS A 35 GB COMMIT STEP" before writing a line.** The
+> memory condition for the bail must come from a FILE `bot.mjs` writes, never a spawn in the
+> timer and never `os.freemem()`. No new ramp had arrived by 02:30 UTC 09-05 (the readout still
+> shows one scan, one close). `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`. **The daily
 > release-window Routine records now** (`--record`; `scripts/rc-release-readout.mts`); first
 > recorded run 09-05 07:56 PT. **Track B still needs the owner's word.** `POLL_MS` (§27, folded
 > above) is the cheapest open lever and needs a bot restart, not a deploy. **The iOS build

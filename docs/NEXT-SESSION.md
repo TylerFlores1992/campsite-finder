@@ -1,6 +1,6 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-04 15:30 PT** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-04 19:35 PT** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
 > ## READ FIRST — THE MORNING WORKED, AND TWO SESSIONS COLLIDED WRITING IT UP
@@ -107,8 +107,14 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > `checkAndReport`; the 35 GB is committed-but-untouched non-private memory in a renderer with
 > 18,705 handles (shared sections, class unnamed); trigger candidate is the SPA's OWN
 > `prompt=none` autoRenew. **Next: count the resident page's requests (never bodies) and print
-> them in the bail; bail at ~2 min instead of 12 during a ramp. Track B may be the wrong lever
-> and still needs the owner's word either way.**
+> them in the bail; bail at ~2 min instead of 12 during a ramp — BOTH ARE DESIGNED AND NOT
+> BUILT.** The design, with every anchor checked in source, is CLAUDE.md → "THE NEXT TWO ARE
+> DESIGNED AND NOT BUILT" (under "THE ONSET IS A 35 GB COMMIT STEP"): the counter attaches
+> where `residentPage = page` is set and keys on `origin + pathname` via `okta-net-trace.mjs`'s
+> normaliser; the bail is a THIRD timer arm between WEDGE and RAM, on "resident renderer silent
+> ≥120s" (the `heapTrail` going stale) AND "rc family > 3 GB" read from a FILE `bot.mjs`'s
+> sampler writes — never a spawn in the timer, never `os.freemem()`, never a lower `LOW_RAM_MB`.
+> Both bot-side. Track B may be the wrong lever and still needs the owner's word either way.**
 >
 > *(Earlier reading, still true:)* The #210
 > discriminator was read on 09-04 and it is the **profiler** branch: the trail prints segments
