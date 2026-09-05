@@ -66,7 +66,11 @@ function envDefault(code: string, name: string): number {
  * arms run, so a diagnostic dropped from either is a diagnostic dropped from both.
  */
 function reportBlock(): string {
-  const at = KEEPWARM.indexOf('const reportAndBail = (why, tail) =>');
+  // THE NAME, NOT THE PARAMETER LIST. This anchored on `(why, tail) =>` and went red on
+  // 2026-09-05 when a third parameter was added so each arm could name itself in its event —
+  // six guards at once, over a block whose contents had not changed. A signature is layout,
+  // which is the same mistake the comment above records about character windows.
+  const at = KEEPWARM.indexOf('const reportAndBail = ');
   assert.ok(at > -1, 'the shared report block must exist — both bail arms run it');
   const end = KEEPWARM.indexOf('\n      };', at);
   assert.ok(end > at, 'could not find the end of reportAndBail');

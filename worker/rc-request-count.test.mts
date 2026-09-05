@@ -162,14 +162,17 @@ test('the counter is attached where residentPage is assigned, so every reopen re
 });
 
 test('the bail prints the counts beside the alloc trail and AWAITS the request-counts event inside the bounded race', () => {
-  const rb = KW.indexOf('const reportAndBail = (why, tail) => {');
+  // THE NAME, NOT THE PARAMETER LIST — see keepwarm-diagnosis.test.mts's reportBlock().
+  const rb = KW.indexOf('const reportAndBail = ');
   assert.ok(rb > -1);
   const body = KW.slice(rb, KW.indexOf('bail(tail);', rb));
   const trail = body.indexOf('describeAllocTrail(allocTrail.buffers()');
   const counts = body.indexOf('describeRequestCounts(requestCounter)');
   assert.ok(trail > -1 && counts > trail, 'the counts are printed after the alloc trail, in the same block');
   const race = body.indexOf('await Promise.race([');
-  const post = body.indexOf("reportBotEvent('request-counts', requestCounter.snapshot({ reason: 'bail' }))");
+  // The reason carries the ARM since 2026-09-05 (`bail:ramp`), because all three reported a
+  // bare `bail` and which one fired could only be inferred from the clock.
+  const post = body.indexOf("reportBotEvent('request-counts', requestCounter.snapshot({ reason: `bail:");
   const timeout = body.indexOf('setTimeout(r, 4000)');
   assert.ok(race > -1 && post > race && timeout > post,
     'the POST must sit inside the awaited, bounded race — process.exit kills an unawaited POST and an unbounded one holds the profile lock');
@@ -181,8 +184,13 @@ test('the teardown prints ONE compact line and posts under reason teardown, insi
   const body = KW.slice(fin, KW.indexOf('await ctx?.close()', fin));
   assert.match(body, /describeRequestCounts\(requestCounter, \{ compact: true \}\)/,
     'the teardown fires on every reopen into a 16k tail-log — it must be the compact form');
+  // THE SNAPSHOT IS TAKEN BEFORE THE RACE SINCE 2026-09-05, because the same object decides
+  // whether this teardown is worth reporting at all — a browser that lived under a minute is
+  // the runner preempting the profile, and reporting those flooded a 16k `tail-log`. The
+  // reason is still `teardown`; what moved is where the object is built.
+  assert.match(body, /requestCounter\.snapshot\(\{ reason: 'teardown' \}\)/, 'still posted under reason teardown');
   const race = body.indexOf('await Promise.race([');
-  const post = body.indexOf("reportBotEvent('request-counts', requestCounter.snapshot({ reason: 'teardown' }))");
+  const post = body.indexOf("reportBotEvent('request-counts', teardown)");
   assert.ok(race > -1 && post > race && post < body.indexOf('setTimeout(r, 4000)'), 'posted inside the same bounded race as the alloc flush');
 });
 
