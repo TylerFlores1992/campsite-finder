@@ -447,3 +447,154 @@ test('the recycle reuses the reopen path and is not gated on the cooldown', () =
   assert.ok(!/lastRecycleAt < RECYCLE_COOLDOWN_MS/.test(block),
     'gating on the cooldown would skip a recycle after a real 2 GB allocation');
 });
+
+// ── THE RAMP ARM (2026-09-05) — see scripts/auto-cart-bot/ramp-bail.mjs ──────────────────
+//
+// What ends a ramp is the twelve-minute wedge arm (measured 09-04 22:31: `Stalled in:
+// reporting session health (634s)`), because the RAM arm cannot see untouched commit and the
+// size arm sits in the loop body. This arm ends it at two minutes on two readings the timer
+// already has or can take without spawning: the heap trail's newest sample (renderer silence)
+// and the file bot.mjs's sampler writes (rc family). Both conditions, always; either UNKNOWN
+// stands down. The two arms it sits between are untouched, and that is asserted too.
+
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  writeLatestMemory, readLatestMemory, rampBailDecision, rampBailLine, MEMORY_LATEST_FILE,
+  RAMP_STALL_MS_DEFAULT, RAMP_MB_DEFAULT, RAMP_READING_MAX_AGE_MS_DEFAULT,
+} from '../scripts/auto-cart-bot/ramp-bail.mjs';
+import { RAMP_SCAN_MB } from '../scripts/auto-cart-bot/ramp-scan.mjs';
+import { SAMPLE_EVERY_MS } from '../scripts/auto-cart-bot/memory-sample.mjs';
+
+const BOT_SRC = readFileSync('scripts/auto-cart-bot/bot.mjs', 'utf8');
+const botCode = BOT_SRC.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+const RB_SRC = readFileSync('scripts/auto-cart-bot/ramp-bail.mjs', 'utf8');
+const rbCode = RB_SRC.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+const timerBody = () => {
+  const timer = code.slice(code.indexOf('const renew = setInterval('));
+  return timer.slice(0, timer.indexOf('}, WATCHDOG_MS);'));
+};
+
+const probe = {};
+const trailAt = (...ats: number[]) => ats.map((at) => ({ at, jsHeapMb: 16, nodes: 1700 }));
+const known = (rcMb: number, ageMs = 30_000) => ({ known: true, rcMb, ageMs, at: 0, maxPid: 1, maxType: 'renderer' });
+
+test('RAMP: it fires only when the renderer is silent AND the family is over the bar', () => {
+  const now = () => 1_000_000;
+  const base = { heapProbe: probe, now, stallMs: 120_000, thresholdMb: 3000 };
+  const silentTrail = trailAt(now() - 130_000);
+  const liveTrail = trailAt(now() - 130_000, now() - 5_000);
+  assert.equal(rampBailDecision({ ...base, heapTrail: silentTrail, memory: known(3500) }).fire, true);
+  assert.equal(rampBailDecision({ ...base, heapTrail: silentTrail, memory: known(2900) }).fire, false,
+    'silent alone is RC\'s app tier failing to render (observed 08-31, 09-02) — not a ramp');
+  assert.equal(rampBailDecision({ ...base, heapTrail: liveTrail, memory: known(3500) }).fire, false,
+    'big alone is a ramp the loop may still be advancing through, which the size arm handles');
+  assert.equal(rampBailDecision({ ...base, heapTrail: liveTrail, memory: known(2900) }).fire, false);
+  const d = rampBailDecision({ ...base, heapTrail: silentTrail, memory: known(3500, 40_000) });
+  assert.deepEqual([d.silentMs, d.rcMb, d.readingAgeMs], [130_000, 3500, 40_000]);
+  assert.match(rampBailLine(d), /✗ RAMP — resident renderer silent 130s, rc family 3500 MB \(reading 40s old\)/);
+});
+
+test('RAMP: every UNKNOWN stands down — no probe, an empty trail, a missing or stale or figureless reading', () => {
+  const now = () => 1_000_000;
+  const base = { now, stallMs: 120_000, thresholdMb: 3000 };
+  const silentTrail = trailAt(now() - 130_000);
+  assert.equal(rampBailDecision({ ...base, heapProbe: null, heapTrail: silentTrail, memory: known(9000) }).fire, false, 'no probe');
+  assert.equal(rampBailDecision({ ...base, heapProbe: probe, heapTrail: [], memory: known(9000) }).fire, false,
+    'an EMPTY trail is "never answered" — the fresh-launch state, not a ramp');
+  assert.equal(rampBailDecision({ ...base, heapProbe: probe, heapTrail: silentTrail, memory: { known: false, why: 'no memory reading on disk' } }).fire, false);
+  const stale = rampBailDecision({ ...base, heapProbe: probe, heapTrail: silentTrail, memory: { known: false, why: 'memory reading 400s old (max 300s)', ageMs: 400_000 } });
+  assert.equal(stale.fire, false, 'a sampler that has stopped is not a family that has shrunk');
+  assert.match(stale.why, /400s old/);
+});
+
+test('RAMP: the file round-trips, is written atomically, and goes UNKNOWN when stale or figureless', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ramp-bail-'));
+  try {
+    const file = join(dir, MEMORY_LATEST_FILE);
+    let t = 5_000_000;
+    const now = () => t;
+    assert.equal(readLatestMemory(file, { now }).known, false, 'missing file');
+    assert.equal(writeLatestMemory(file, { rcMb: 3624, maxPid: 2648, maxType: 'renderer', commitUsedMb: 46000 }, { now }), true);
+    assert.deepEqual(readdirSync(dir), [MEMORY_LATEST_FILE], 'no temp file survives the rename — a reader must never see half a file');
+    t += 60_000;
+    const r = readLatestMemory(file, { now, maxAgeMs: 300_000 });
+    assert.deepEqual({ known: r.known, rcMb: r.rcMb, ageMs: r.ageMs, maxPid: r.maxPid, maxType: r.maxType },
+      { known: true, rcMb: 3624, ageMs: 60_000, maxPid: 2648, maxType: 'renderer' });
+    t += 300_000;
+    const stale = readLatestMemory(file, { now, maxAgeMs: 300_000 });
+    assert.equal(stale.known, false);
+    assert.match(String(stale.why), /old/);
+    // A scan that failed writes null, and null is UNKNOWN — never zero, never "under the bar".
+    writeLatestMemory(file, { rcMb: null, maxPid: null, maxType: null }, { now });
+    const nul = readLatestMemory(file, { now, maxAgeMs: 300_000 });
+    assert.equal(nul.known, false);
+    assert.match(String(nul.why), /no rc figure/);
+    writeFileSync(file, '{not json');
+    assert.equal(readLatestMemory(file, { now }).known, false, 'unparseable');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.match(rbCode, /writeFileSync\(tmp, body\);\s*fs\.renameSync\(tmp, file\)/,
+    'temp name THEN rename — a direct write to the final path is what the reader could catch half-written');
+});
+
+test('RAMP: the arm lives in the TIMER, between the WEDGE arm and the RAM arm, and both of those are unchanged', () => {
+  const body = timerBody();
+  const wedge = body.indexOf('stalledMs > HUNG_MS');
+  const ramp = body.indexOf('rampBailDecision({');
+  const ram = body.indexOf('stalledMs > MEM_STALL_MS && freeMb < LOW_RAM_MB');
+  assert.ok(wedge > -1 && ramp > -1 && ram > -1, 'all three arms must be in the timer');
+  assert.ok(wedge < ramp && ramp < ram, `order must be WEDGE, RAMP, RAM — got ${[wedge, ramp, ram]}`);
+  assert.equal(code.indexOf('rampBailDecision(', code.indexOf('}, WATCHDOG_MS);')), -1,
+    'the check must not ALSO live in the loop body — the loop is by definition not advancing during a ramp');
+  assert.match(body, /if \(ramp\.fire\) \{\s*reportAndBail\(rampBailLine\(ramp\)/,
+    'it goes through reportAndBail like the other two — heap facts, both trails, the alloc flush, the request counts, THEN bail');
+});
+
+test('RAMP: the memory reading is a FILE read from the timer — never a spawn, never os.freemem()', () => {
+  const body = timerBody();
+  assert.match(body, /readLatestMemory\(MEMORY_LATEST_PATH, \{ maxAgeMs: RAMP_READING_MAX_AGE_MS \}\)/,
+    'the timer reads the sampler\'s file with the age gate');
+  assert.ok(!/rcFamilyMb|takeSample|execFile|spawn/.test(body), 'spawning is what fails first at high commit');
+  const arm = body.slice(body.indexOf('readLatestMemory('), body.indexOf('if (ramp.fire)'));
+  assert.ok(!/freeMb|os\.freemem/.test(arm), 'untouched commit never lowers free RAM — sixteen ramps the RAM arm sat out say so');
+  assert.match(code, /const MEMORY_LATEST_PATH = path\.join\(HERE, MEMORY_LATEST_FILE\)/, 'the file sits beside the bot scripts, where bot.mjs writes it');
+});
+
+test('RAMP: bot.mjs writes the file from the sampler\'s post, BEFORE anything that can fail over the network', () => {
+  const post = botCode.indexOf('post: async (memory, source');
+  assert.ok(post > -1);
+  const block = botCode.slice(post, botCode.indexOf('rampScan(memory)', post));
+  const write = block.indexOf('writeLatestMemory(path.join(__dirname, MEMORY_LATEST_FILE), memory');
+  const report = block.indexOf('reportControl({ memory, source })');
+  assert.ok(write > -1, 'the sampler must write the file, or the ramp arm reads UNKNOWN for ever and never fires');
+  assert.ok(report > -1 && write < report, 'the local file first — a POST that fails must not cost the local reading');
+});
+
+test('RAMP: the bars are measured, and the defaults agree with the modules they mirror', () => {
+  const stall = envDefault('RC_KEEPWARM_RAMP_STALL_MS');
+  const bar = envDefault('RC_KEEPWARM_RAMP_MB');
+  const maxAge = envDefault('RC_KEEPWARM_RAMP_READING_MAX_AGE_MS');
+  const hung = envDefault('RC_KEEPWARM_HUNG_MS');
+  assert.equal(stall, RAMP_STALL_MS_DEFAULT);
+  assert.equal(bar, RAMP_MB_DEFAULT);
+  assert.equal(maxAge, RAMP_READING_MAX_AGE_MS_DEFAULT);
+  assert.ok(stall >= 60_000, `${stall}ms would fire on RC's app tier taking a minute to render`);
+  assert.ok(stall < hung, 'the whole point is to beat the twelve-minute wedge');
+  assert.equal(bar, RAMP_SCAN_MB, 'the same bar the ramp scan triggers on, so the two readings describe one event');
+  assert.ok(bar >= 1500, `${bar} MB is within reach of a healthy family (~300 MB baseline, 1,500 size-guard line)`);
+  assert.ok(maxAge >= 2 * SAMPLE_EVERY_MS, 'one missed sampler tick must not make the reading UNKNOWN');
+  assert.ok(maxAge <= 10 * 60_000, 'a reading older than that is a stopped sampler, not a family that shrank');
+  // THE TWO NEIGHBOURS ARE UNTOUCHED. Lowering the RAM floor killed a working repair on
+  // 08-19; shortening HUNG_MS would kill a full unattended sign-in.
+  assert.equal(hung, 12 * 60_000, 'HUNG_MS must stay at twelve minutes');
+  assert.equal(envDefault('RC_KEEPWARM_LOW_RAM_MB'), 2000, 'LOW_RAM_MB must stay at 2000');
+});
+
+test('RAMP: the sampler\'s file is ignored by git, like every other reading on the box', () => {
+  const ignore = readFileSync('scripts/auto-cart-bot/.gitignore', 'utf8');
+  assert.match(ignore, /^\.memory-latest\.json$/m);
+});

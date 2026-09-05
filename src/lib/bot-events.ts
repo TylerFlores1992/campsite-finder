@@ -15,6 +15,13 @@
  *                 `tab.close()` that hangs for ten minutes look identical in the memory
  *                 series; this is the number that separates them.
  *
+ *   `request-counts`  rc-keepwarm's count of the RESIDENT page's requests — `origin +
+ *                 pathname` keys, lifetime and rolling two-minute counts, top ten — taken at a
+ *                 bail, at the teardown and on a hung close. The 09-04 ramp scan put ~35 GB of
+ *                 untouched shared-section commit on a renderer holding 18,705 handles; if
+ *                 that is a request loop, the top path here names the endpoint. `reason`
+ *                 says which of the three took it. Never a query, never a body.
+ *
  * THE RULES ARE THE SAME AS `native-alloc.ts`, ONE TABLE OVER: the kind is allow-listed so a
  * caller with the token cannot put arbitrary text on an admin readout; the detail is capped;
  * the text is capped and stripped of control characters, because Postgres text cannot hold a
@@ -24,7 +31,7 @@
  */
 import { mutate, query } from '@/lib/db/client';
 
-export const BOT_EVENT_KINDS = ['ramp-scan', 'tab-close'] as const;
+export const BOT_EVENT_KINDS = ['ramp-scan', 'tab-close', 'request-counts'] as const;
 export type BotEventKind = (typeof BOT_EVENT_KINDS)[number];
 const KINDS = new Set<string>(BOT_EVENT_KINDS);
 

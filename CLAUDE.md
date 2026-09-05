@@ -6209,7 +6209,11 @@ memory series bracketed the whole event.
   called "not a ramp" on one line and stored as a ramp reading on the next. The RAM delta was
   the resident page's, not the tab's — both instruments bracket the wall clock, not the target.
 
-#### THE NEXT TWO ARE DESIGNED AND NOT BUILT — the request counter and the two-minute bail (2026-09-04, evening)
+#### ~~THE NEXT TWO ARE DESIGNED AND NOT BUILT~~ — BUILT 2026-09-05, see the section after this one
+**Struck the day after it was written, and kept because the anchors below are what the build
+followed.** Both instruments shipped in the next section; read that for what is live and how to
+read the first firing. The three "do not" rules at the end are unchanged and were obeyed.
+
 Written so a fresh session builds from anchors that were checked in source at `a852a32`,
 rather than re-deriving them. **Both are bot-side** (`scripts/auto-cart-bot/`), so nothing
 here is live until the box updates (`requestBotUpdate`, confirmed by `bot-ask git-status`,
@@ -6293,6 +6297,83 @@ exactly as they are**; `HUNG_MS` must go on tolerating a full unattended sign-in
   which is a different investigation. **Either answer is a reading; "no bail fired" is not** —
   the box needs a ramp (every 5-6 h) after the update, and the readout says which arm ended it.
 
+#### BOTH ARE BUILT — the request counter and the two-minute bail (2026-09-05)
+Built from the anchors above, every one checked in source at `98809e5` before a line was
+written, and each held. **Bot-side, so inert until the box updates** — confirm with
+`npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version`.
+
+**1. `scripts/auto-cart-bot/rc-request-count.mjs`.** Attached at `residentPage = page`, so a
+reopen gets a fresh counter and "lifetime" is the life of that browser. Keys are `origin +
+pathname` through the net trace's own `safeUrl` — the counter has no scrubber because it has
+nothing to scrub: no query, no header, no body, ever. Lifetime and rolling two-minute counts,
+200 distinct paths then `<other>`, and the window is bounded in entries too — an overflowed
+count is printed as `≥N`, a floor, because a loop hot enough to overflow it is exactly the case.
+**Printed in three places and posted as a `request-counts` bot event from each**, with
+`reason` saying which: the bail (full ten lines, POST awaited inside the same bounded race as
+the alloc flush — `process.exit` kills an unawaited POST), the teardown (ONE compact line, since
+it fires on every reopen into a 16k `tail-log`; the event carries the full top ten), and a hung
+close. **Measured against a real Chromium before shipping:** seven `fetch`es from inside an
+iframe were counted on `page.on('request')`, which is what makes okta-auth-js's hidden
+`prompt=none` frame visible, and a `?code=` on every URL reached no key.
+
+**2. `scripts/auto-cart-bot/ramp-bail.mjs` + a THIRD arm in the watchdog timer**, after WEDGE
+and before RAM, both of which are byte-for-byte as they were and pinned that way (`HUNG_MS`
+12 min, `LOW_RAM_MB` 2000). Condition A is the age of the heap trail's newest sample — `sampleHeap`
+returns null on `no answer`, so the trail stops growing and its age IS the silence; no probe or
+an empty trail is UNKNOWN (fresh launch). Condition B is the rc family read from
+**`.memory-latest.json`**, which `bot.mjs`'s sampler now writes on every sample, before the POST,
+as a temp name then `renameSync`; older than five minutes or carrying no figure is UNKNOWN. **The
+timer still never spawns and this arm never reads `os.freemem()`** — untouched commit does not
+move it, which is why the RAM arm sat out sixteen ramps. Both conditions, always; any UNKNOWN
+stands down; it goes through `reportAndBail` like the other two, under
+`✗ RAMP — resident renderer silent Ns, rc family N MB (reading Ns old)`. Defaults
+`RC_KEEPWARM_RAMP_STALL_MS` 120s, `RC_KEEPWARM_RAMP_MB` 3000 (the same bar `ramp-scan.mjs`
+triggers on, pinned equal so the two readings describe one event),
+`RC_KEEPWARM_RAMP_READING_MAX_AGE_MS` 5 min.
+
+**Guards.** `worker/rc-request-count.test.mts` (14) and eight `RAMP:` tests appended to
+`worker/keepwarm-recycle.test.mts`. **Nineteen mutations, each asserted to APPLY and each
+caught** — the arm moved below the RAM arm, `&&` → `||`, the age gate removed, an empty trail
+read as silent, `bail` called directly, the file written after the POST, the key keeping its
+query, the counter never attached, the bail dropping its POST, the cap removed, the readout
+dropping the section, a non-atomic write, the kind not allow-listed, the teardown printing the
+full block, the window never pruning, a hard-coded memory figure, `HUNG_MS` shortened,
+`LOW_RAM_MB` lowered, and stale memory treated as known. **Two existing guards broke over
+unchanged behaviour and were re-anchored, not relaxed**: `warmup-sampler` pinned
+`await Promise.race([` as the 400 characters before the flush (the flush now shares that race
+with the request-counts POST), and `chromium-memory` pinned `post()`'s FIRST statement (the file
+write now precedes it). Each re-verified failing against the regression it exists for.
+
+**HOW TO READ THE FIRST FIRING.** `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`
+has a REQUEST COUNTS section; read the `bail` rows first, teardowns are the baseline. In
+`logs\rc-keepwarm.log` a `✗ RAMP` line at ~2 minutes says the arm fired — **and the WEDGE arm
+not firing at 12 is the same fact from the other side.** A `request-counts` event whose top
+two-minute path is Okta's `/oauth2/v1/authorize` or an RC `/SSO/` endpoint at hundreds of hits
+⇒ **a request loop, trigger named**, and blocking `prompt=none` on the resident page is the cure
+to weigh (known cost: the silent self-renewal that works most hours is the same mechanism).
+Flat counts (tens, spread across RC's ordinary API) ⇒ the sections are not per-request and the
+next candidate is Chromium's own handling of the occluded window. **Either is a reading; "no
+bail fired" is not** — the box needs a ramp after the update (every 5-6 h). Three ways the arm
+can stay silent through a real ramp, each visible: the box has not updated (`git-status`); no
+`.memory-latest.json` yet (the sampler writes one within two minutes of `bot.mjs` restarting);
+or the renderer kept answering CDP while it ramped, in which case the heap trail keeps growing
+and the twelve-minute wedge still ends it — that would itself be a finding, and the request
+counts arrive at the teardown regardless.
+
+**THE VERIFY RUN LOST ONE REAL-DB TEST TO A CONCURRENT CI SUITE, AND CI ON MASTER IS RED FOR
+THE SAME REASON.** `expire-holds` → *"a requested hold whose release passed long ago is failed"*
+returned 0 rows once and passed 6/6 alone; the diff cannot reach that code. The docs-only
+merge of #276 fired the Verify suite **twice at once** (the master push at 02:43:27Z and the
+branch push at 02:43:48Z), overlapping the start of this session's local verify; both CI runs
+failed (25 and 21) and the one failure name inside the log window is *"once the window has
+closed, a cart failure IS final"* with `'already-failed'` — the signature this file already
+records for two suites on one database. **A merge produces two pushes and therefore two runs;
+`docs/LANES.md`'s rule covers it and nobody can serialise GitHub's own pair.** A second
+candidate for the expire-holds row, recorded not chosen: Fly's own `expire-holds` timer runs
+the same predicate over every row every 60s and would fail the fixture first, after which the
+test's scoped UPDATE matches nothing — the `reclaimLapsedHolds` test-versus-production shape,
+one function over.
+
 **`rc_release_readings` (migration 076, APPLIED) + `--record`.** The daily release-window
 Routine (`trig_012K7iCrj1J9KspyqGucZSHC`, 07:56 PT through 09-11) now records one row per
 facility — the BRACKET (latest still-locked, earliest free), never a midpoint; `split_brackets`
@@ -6372,12 +6453,13 @@ tree, the deploy and the fleet were all correct.
 > pools <750 MB) in a renderer holding **18,705 handles** — shared sections, class not named.
 > Trigger candidate: the SPA's OWN `prompt=none` autoRenew in the resident page (token went
 > live → none in the 63s before the ramp); our click-through trip twelve minutes later did not
-> ramp. **Next, in order: count the resident page's requests (never bodies) and print them in
-> the bail; bail at ~2 min instead of 12 when the resident renderer stops answering during a
-> ramp — BOTH DESIGNED, NOT BUILT, with every anchor checked in source: read "THE NEXT TWO ARE
-> DESIGNED AND NOT BUILT" under "THE ONSET IS A 35 GB COMMIT STEP" before writing a line.** The
-> memory condition for the bail must come from a FILE `bot.mjs` writes, never a spawn in the
-> timer and never `os.freemem()`. No new ramp had arrived by 02:30 UTC 09-05 (the readout still
+> ramp. ~~**Next, in order: count the resident page's requests … bail at ~2 min instead of 12 …
+> BOTH DESIGNED, NOT BUILT**~~ — **BOTH BUILT 2026-09-05 (this session), see "BOTH ARE BUILT" under
+> "THE ONSET IS A 35 GB COMMIT STEP"**: `rc-request-count.mjs` attached to the resident page and
+> a third watchdog arm reading the heap trail's age and `.memory-latest.json`, which `bot.mjs`
+> writes every sample. **Bot-side — needs a box update, confirmed by `git-status`.** The first
+> `✗ RAMP` line and its `request-counts` event are the reading; the readout says which way it
+> went. No new ramp had arrived by 02:30 UTC 09-05 (the readout still
 > shows one scan, one close). `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`. **The daily
 > release-window Routine records now** (`--record`; `scripts/rc-release-readout.mts`); first
 > recorded run 09-05 07:56 PT. **Track B still needs the owner's word.** `POLL_MS` (§27, folded

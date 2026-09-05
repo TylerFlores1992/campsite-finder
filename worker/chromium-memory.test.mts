@@ -236,8 +236,16 @@ test('keepSessionsWarm actually takes the forced sample, INSIDE the browser bloc
   // reading would land in the series it is meant to be told apart from.
   // The post grew a second step on 2026-09-04 (the ramp scan, see ramp-scan.mjs); the property
   // pinned here is unchanged — the sample is reported with the source it was TAKEN with.
-  assert.match(bot, /post:\s*async\s*\(memory,\s*source\s*=\s*'bot'\)\s*=>\s*\{\s*await reportControl\(\{\s*memory,\s*source\s*\}\);/,
+  // And a third step on 2026-09-05 (the .memory-latest.json write for the ramp arm, see
+  // ramp-bail.mjs), which sits BEFORE the POST — so the property is pinned on the post's
+  // body rather than on its first statement. Re-anchored, not relaxed: a `source: 'bot'`
+  // literal inside the post still fails here.
+  const postAt = bot.search(/post:\s*async\s*\(memory,\s*source\s*=\s*'bot'\)\s*=>\s*\{/);
+  assert.ok(postAt > -1, "bot.mjs's post() must take the source as a parameter defaulting to 'bot'");
+  const postBody = bot.slice(postAt, bot.indexOf('rampScan(memory)', postAt));
+  assert.match(postBody, /await reportControl\(\{\s*memory,\s*source\s*\}\);/,
     "bot.mjs's post() must forward the source rather than hard-coding 'bot'");
+  assert.ok(!/source:\s*'bot'/.test(postBody), "bot.mjs's post() must not hard-code source: 'bot'");
 });
 
 test('a verdict is refused until enough pairs can actually be compared', () => {
