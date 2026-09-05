@@ -157,21 +157,62 @@ export function heldStayRun(
 ): { dates: string[]; availableAt: string } | null {
   const flexible = flex?.nights != null && flex.nights > 0;
   const runLength = flexible ? flex!.nights! : minNights;
-  const dates = held.map((s) => s.Date);
-  // Flexible reports the MATCHED RUN, not every held night of the window. The run is what
-  // the alert names and what the hold offer carts, so reporting the whole window would
-  // queue a cart for nights the user never asked for.
-  const run = flexible
-    ? findQualifyingRun(dates, runLength, flex!.days)
-    : hasConsecutiveRun(dates, runLength) ? dates : null;
-  if (!run || !run.length) return null;
-  const inRun = new Set(run);
-  const slices = held.filter((s) => inRun.has(s.Date));
-  // The release time is the LATEST lock across the nights we are claiming — the stay is
-  // not bookable until the last of them frees, and promising the earliest would send the
-  // user (and the bot) at a moment when part of the stay is still locked.
-  const availableAt = slices.reduce((max, s) => (s.Lock! > max ? s.Lock! : max), slices[0].Lock!);
-  return { dates: run, availableAt };
+
+  // Nights we are still willing to claim. It shrinks only when the run turns out to
+  // contain a night that is already in the past at the release the run itself implies —
+  // see the fixed point below.
+  let pool = held;
+
+  // Bounded by the number of held nights: every pass that does not return drops at least
+  // the offending night from `pool`, so this cannot spin.
+  for (let guard = 0; guard <= held.length; guard++) {
+    const dates = pool.map((s) => s.Date);
+    // Flexible reports the MATCHED RUN, not every held night of the window. The run is what
+    // the alert names and what the hold offer carts, so reporting the whole window would
+    // queue a cart for nights the user never asked for.
+    const run = flexible
+      ? findQualifyingRun(dates, runLength, flex!.days)
+      : hasConsecutiveRun(dates, runLength) ? dates : null;
+    if (!run || !run.length) return null;
+    const inRun = new Set(run);
+    const slices = pool.filter((s) => inRun.has(s.Date));
+    // The release time is the LATEST lock across the nights we are claiming — the stay is
+    // not bookable until the last of them frees, and promising the earliest would send the
+    // user (and the bot) at a moment when part of the stay is still locked.
+    const availableAt = slices.reduce((max, s) => (s.Lock! > max ? s.Lock! : max), slices[0].Lock!);
+
+    // NO NIGHT MAY HAVE ALREADY BEGUN BY THE TIME THE STAY RELEASES (2026-09-05).
+    //
+    // Leo Carrillo #L003 was offered at 13:10 PT on Sep 4 for a three-night stay ARRIVING
+    // Sep 4, releasing 08:00 on Sep 5. Nothing required the run's FIRST night to be on or
+    // after the LATEST lock, so the two disagreed by a day: the user tapped the offer and
+    // waited, and at 08:00 the runner asked RC for a stay whose first night was the night
+    // before. RC refused every attempt of the 20-minute grace window with "The unit is not
+    // available for the date(s) specified." **No burst, lead or retry could have won it —
+    // there was nothing to win**, and the readout reported it as a race we lost.
+    //
+    // That is the worst shape this product has: a user who believes a site is being held
+    // for them STOPS WATCHING, which is the rule every claim-screen decision has followed
+    // since 2026-08-09. Silence would have cost them nothing.
+    //
+    // `>=`, NOT `>`, AND THAT BOUNDARY IS MEASURED. #L034 carted at T+1.4s on 2026-09-04
+    // with release 08:00 Sep 4 against an arrival of Sep 4 — RC sells a same-day arrival,
+    // so a night releasing on its own morning is bookable and must not be dropped.
+    //
+    // Both sides are Pacific wall clock — `release_at` is zone-less Pacific TEXT and the
+    // grid's dates are bare YYYY-MM-DD — so this is a string compare and deliberately not
+    // date arithmetic. Converting either side is how a seven-hour error gets in.
+    const releaseDate = availableAt.slice(0, 10);
+    if (run[0] >= releaseDate) return { dates: run, availableAt };
+
+    // Re-pick over what is left rather than merely trimming: dropping a night changes
+    // which nights the run covers, and the survivors carry their own locks, so the release
+    // can move in EITHER direction. Only a run whose first night is on or after its own
+    // release is self-consistent. A fixed watch that loses a night usually falls out here
+    // via hasConsecutiveRun, which is correct — it asked for the whole stay.
+    pool = pool.filter((s) => s.Date >= releaseDate);
+  }
+  return null;
 }
 
 /**
