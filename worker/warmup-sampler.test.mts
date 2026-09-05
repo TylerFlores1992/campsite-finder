@@ -239,7 +239,11 @@ test('the runaway bail waits for the reading to leave the box', () => {
   assert.ok(flush > -1, 'the bail must flush the OPEN segment — a ramp that kills the browser '
     + 'never produces the renderer swap that would make its segment final');
   const before = body.slice(0, flush);
-  assert.match(before.slice(-400), /await Promise\.race\(\[\s*$/,
+  // The flush may share the bounded wait with the request-counts POST (`Promise.allSettled`
+  // inside the race, 2026-09-05) — what must not change is that the race is AWAITED and the
+  // flush is inside it. Re-anchored rather than relaxed: an unawaited race, or a flush moved
+  // outside it, still fails here.
+  assert.match(before.slice(-400), /await Promise\.race\(\[\s*(Promise\.allSettled\(\[\s*)?$/,
     'the flush must be awaited, and bounded — an unawaited POST dies with process.exit, and an '
     + 'unbounded one delays releasing the profile lock, which is what loses a cart at 08:00');
 });

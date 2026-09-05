@@ -27,7 +27,8 @@ test('the kind is allow-listed — anything else stores as NULL, never as what t
   assert.equal(eventKind('tab-close'), 'tab-close');
   assert.equal(eventKind('<script>'), null);
   assert.equal(eventKind(42), null);
-  assert.deepEqual([...BOT_EVENT_KINDS].sort(), ['ramp-scan', 'tab-close']);
+  assert.equal(eventKind('request-counts'), 'request-counts');
+  assert.deepEqual([...BOT_EVENT_KINDS].sort(), ['ramp-scan', 'request-counts', 'tab-close']);
 });
 
 test('text loses every control character except newline and tab, and is capped', () => {

@@ -98,6 +98,8 @@ import { loadEnv } from './load-env.mjs';
 import { exitWhenDrained } from './exit-clean.mjs';
 import { takeSample } from './memory-sample.mjs';
 import { closeTabBounded, takePendingRecycle } from './tab-close.mjs';
+import { createRequestCounter, describeRequestCounts } from './rc-request-count.mjs';
+import { readLatestMemory, rampBailDecision, rampBailLine, MEMORY_LATEST_FILE } from './ramp-bail.mjs';
 import {
   attachHeapProbe, collectHeapFacts, describeHeapFacts, writeHeapSnapshot,
   sampleHeap, describeTrail, describeRamTrail, TRAIL_KEEP,
@@ -554,6 +556,21 @@ const LOW_RAM_MB = Number(process.env.RC_KEEPWARM_LOW_RAM_MB || 2000);
  * that is merely slow does not also drain 9 GB of RAM.
  */
 const MEM_STALL_MS = Number(process.env.RC_KEEPWARM_MEM_STALL_MS || 60_000);
+/**
+ * THE RAMP ARM'S TWO BARS — see ramp-bail.mjs. Measured 2026-09-04 22:19: what ends a ramp is
+ * the twelve-minute WEDGE arm, stalled in `checkAndReport` on a resident renderer that had
+ * stopped answering CDP, and the RAM arm cannot fire on it because the ~35 GB is committed and
+ * untouched. This arm reads the renderer's silence off the heap trail (condition A) and the rc
+ * family off the FILE bot.mjs's sampler writes (condition B) — a file read, never a spawn.
+ * BOTH conditions, always; either UNKNOWN stands down. `HUNG_MS` and `LOW_RAM_MB` are
+ * untouched: the wedge arm still tolerates a full unattended sign-in, and lowering the RAM
+ * floor is what killed a working repair on 08-19.
+ */
+const RAMP_STALL_MS = Number(process.env.RC_KEEPWARM_RAMP_STALL_MS || 120_000);
+const RAMP_MB = Number(process.env.RC_KEEPWARM_RAMP_MB || 3000);
+const RAMP_READING_MAX_AGE_MS = Number(process.env.RC_KEEPWARM_RAMP_READING_MAX_AGE_MS || 5 * 60_000);
+// Beside the bot scripts, where bot.mjs writes it. `HERE` is this directory.
+const MEMORY_LATEST_PATH = path.join(HERE, MEMORY_LATEST_FILE);
 
 /**
  * How often the watchdog timer runs.
@@ -2543,6 +2560,13 @@ async function warmResident() {
     let heapTrail = [];
     let heapInFlight = false;
     /**
+     * THE RESIDENT PAGE'S REQUESTS, counted from the moment the page exists. Attached where
+     * `residentPage = page` is assigned, so a reopen — a new context, a new page — gets a new
+     * counter and "lifetime" means the life of THIS browser. Read in the bail, at the teardown
+     * and on a hung close; see rc-request-count.mjs for what it may and may not record.
+     */
+    const requestCounter = createRequestCounter();
+    /**
      * THE FREE-RAM TRAIL, AND WHY IT IS THE ONE THAT CAN TIME THE ONSET.
      *
      * The heap trail froze the instant the ramp began — its newest sample was 123s old against
@@ -2622,13 +2646,20 @@ async function warmResident() {
           // investigation has been waiting for, and these two arms are where a ramp ends
           // without our seeing the renderer swap — so the OPEN segment is taken too.
           log(`  ${describeAllocTrail(allocTrail.buffers(), Date.now())}`);
+          // WHAT THE RESIDENT PAGE WAS ASKING FOR. If the 18.7k handles are a request loop,
+          // the top path by two-minute count names it — see rc-request-count.mjs.
+          log(`  ${describeRequestCounts(requestCounter)}`);
           // AWAITED, AND BOUNDED. `bail` calls process.exit, which kills an in-flight POST —
           // so the one reading this arm exists to capture would be lost to the exit that
           // captures it. Bounded because a diagnostic that can delay releasing the profile
           // lock has inverted the priority, which is the mistake `rcFamilyMb` would have made
           // in this same arm: the lock staying held past 08:00 is what loses a cart.
+          // The request counts ride the same bounded wait, for the same reason.
           await Promise.race([
-            flushAllocRamps({ final: true }),
+            Promise.allSettled([
+              flushAllocRamps({ final: true }),
+              reportBotEvent('request-counts', requestCounter.snapshot({ reason: 'bail' })),
+            ]),
             new Promise((r) => setTimeout(r, 4000)),
           ]).catch(() => {});
           bail(tail);
@@ -2649,6 +2680,30 @@ async function warmResident() {
           '  (see the wedged line above)',
         );
         return;
+      }
+      /**
+       * THE RAMP ARM — after the wedge arm, before the RAM arm, and both of those are exactly
+       * as they were. See ramp-bail.mjs for the two conditions and why either one alone is
+       * the cry-wolf failure. It reads the heap trail's newest sample (already taken on this
+       * tick, below) and the sampler's file — NEVER `rcFamilyMb()`, which spawns, and never
+       * `os.freemem()`, which untouched commit does not move. Not gated on `stalledMs`: the
+       * loop may still be advancing early in a ramp, and a resident renderer that has stopped
+       * answering while the family is past 3 GB is a ramp whichever await the loop is in.
+       */
+      if (!bailing) {
+        let memory;
+        try {
+          memory = readLatestMemory(MEMORY_LATEST_PATH, { maxAgeMs: RAMP_READING_MAX_AGE_MS });
+        } catch (e) {
+          memory = { known: false, why: `memory reading failed: ${e?.message ?? e}` };
+        }
+        const ramp = rampBailDecision({
+          heapTrail, heapProbe, memory, stallMs: RAMP_STALL_MS, thresholdMb: RAMP_MB,
+        });
+        if (ramp.fire) {
+          reportAndBail(rampBailLine(ramp), '  (see the ramp line above)');
+          return;
+        }
       }
       /**
        * THE RUNAWAY ARM. See LOW_RAM_MB: the size bound in the loop body cannot fire while the
@@ -2748,6 +2803,8 @@ async function warmResident() {
       await installTokenCapture(ctx);
       const page = ctx.pages()[0] ?? (await ctx.newPage());
       residentPage = page;
+      // Re-attached on every reopen: a browser life is a new context and a new page.
+      requestCounter.attach(page);
       mark('initial RC load');
       await page.goto(RC_HOME, { waitUntil: 'domcontentloaded', timeout: 45_000 });
       // Before anything can go wrong with it. A failure returns null and the trip falls back
@@ -2940,6 +2997,11 @@ async function warmResident() {
         if (hungClose) {
           lastRecycleAt = Date.now();
           log(`♻ recycling the browser — ${hungClose}.`);
+          // A renderer that would not answer its close is the shape a ramp has; say what the
+          // resident page was doing. Fire-and-forget from the loop — the teardown below is
+          // bounded and reports too.
+          log(`  ${describeRequestCounts(requestCounter)}`);
+          void reportBotEvent('request-counts', requestCounter.snapshot({ reason: 'hung-close' }));
           break;
         }
         if (oktaTrip) {
@@ -3329,8 +3391,16 @@ async function warmResident() {
       // so it never fired, and this `finally` is where that browser was replaced. Without the
       // description a 9 GB ramp leaves nothing but silence here, which is indistinguishable
       // from a quiet night.
+      //
+      // THE REQUEST COUNTS RIDE THE SAME FLUSH. One COMPACT line here, because this fires on
+      // every reopen and `tail-log` returns 16,000 characters; the full ten-line block is the
+      // bail's and the hung close's. The event carries the whole top ten either way.
+      log(`  ${describeRequestCounts(requestCounter, { compact: true })}`);
       await Promise.race([
-        flushAllocRamps({ final: true, describeIfEmpty: true }),
+        Promise.allSettled([
+          flushAllocRamps({ final: true, describeIfEmpty: true }),
+          reportBotEvent('request-counts', requestCounter.snapshot({ reason: 'teardown' })),
+        ]),
         new Promise((r) => setTimeout(r, 4000)),
       ]).catch(() => {});
       await ctx?.close().catch(() => {});

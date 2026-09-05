@@ -26,6 +26,7 @@ import { acquireProfileLock, releaseProfileLock, profileLockHolder } from './pro
 import { makeControlChannel } from './control-channel.mjs';
 import { createSampler } from './memory-sample.mjs';
 import { createRampScan } from './ramp-scan.mjs';
+import { writeLatestMemory, MEMORY_LATEST_FILE } from './ramp-bail.mjs';
 import { makeWatchdogTrigger, WATCHDOG_TRIGGER_MS } from './watchdog-trigger.mjs';
 import { loadEnv } from './load-env.mjs';
 
@@ -175,6 +176,11 @@ const sampleMemory = createSampler({
   // is handed, runs at most once per ramp, and is awaited here so the sampler's own
   // in-flight guard covers it; a scan that fails is a log line and never a lost sample.
   post: async (memory, source = 'bot') => {
+    // THE FILE FIRST, before anything that can fail over the network. rc-keepwarm's two-minute
+    // ramp arm reads it (see ramp-bail.mjs) because its timer must never spawn PowerShell;
+    // this is the one reading of the rc family that already exists without one. Atomic
+    // (temp name, then rename) so the reader never sees half a file; the reader age-gates it.
+    writeLatestMemory(path.join(__dirname, MEMORY_LATEST_FILE), memory, { log });
     await reportControl({ memory, source });
     await rampScan(memory);
   },

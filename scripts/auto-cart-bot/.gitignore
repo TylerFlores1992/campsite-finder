@@ -23,3 +23,6 @@ rc-handoff-read.json
 rc-release-read.json
 .rc-probe-profile-c/
 .rc-bot-profile/
+# The sampler's newest reading, written by bot.mjs for rc-keepwarm's ramp arm (ramp-bail.mjs).
+.memory-latest.json
+.memory-latest.json.*.tmp
