@@ -477,35 +477,43 @@ const timerBody = () => {
   return timer.slice(0, timer.indexOf('}, WATCHDOG_MS);'));
 };
 
-const probe = {};
-const trailAt = (...ats: number[]) => ats.map((at) => ({ at, jsHeapMb: 16, nodes: 1700 }));
 const known = (rcMb: number, ageMs = 30_000) => ({ known: true, rcMb, ageMs, at: 0, maxPid: 1, maxType: 'renderer' });
 
-test('RAMP: it fires only when the renderer is silent AND the family is over the bar', () => {
-  const now = () => 1_000_000;
-  const base = { heapProbe: probe, now, stallMs: 120_000, thresholdMb: 3000 };
-  const silentTrail = trailAt(now() - 130_000);
-  const liveTrail = trailAt(now() - 130_000, now() - 5_000);
-  assert.equal(rampBailDecision({ ...base, heapTrail: silentTrail, memory: known(3500) }).fire, true);
-  assert.equal(rampBailDecision({ ...base, heapTrail: silentTrail, memory: known(2900) }).fire, false,
-    'silent alone is RC\'s app tier failing to render (observed 08-31, 09-02) — not a ramp');
-  assert.equal(rampBailDecision({ ...base, heapTrail: liveTrail, memory: known(3500) }).fire, false,
+test('RAMP: it fires only when the LOOP IS STALLED and the family is over the bar', () => {
+  const base = { stallMs: 120_000, thresholdMb: 3000 };
+  assert.equal(rampBailDecision({ ...base, stalledMs: 130_000, memory: known(3500) }).fire, true);
+  assert.equal(rampBailDecision({ ...base, stalledMs: 130_000, memory: known(2900) }).fire, false,
+    'a stalled loop alone is an unattended sign-in doing its job — HUNG_MS tolerates twelve minutes of it');
+  assert.equal(rampBailDecision({ ...base, stalledMs: 5_000, memory: known(3500) }).fire, false,
     'big alone is a ramp the loop may still be advancing through, which the size arm handles');
-  assert.equal(rampBailDecision({ ...base, heapTrail: liveTrail, memory: known(2900) }).fire, false);
-  const d = rampBailDecision({ ...base, heapTrail: silentTrail, memory: known(3500, 40_000) });
-  assert.deepEqual([d.silentMs, d.rcMb, d.readingAgeMs], [130_000, 3500, 40_000]);
-  assert.match(rampBailLine(d), /✗ RAMP — resident renderer silent 130s, rc family 3500 MB \(reading 40s old\)/);
+  assert.equal(rampBailDecision({ ...base, stalledMs: 5_000, memory: known(2900) }).fire, false);
+  const d = rampBailDecision({ ...base, stalledMs: 130_000, memory: known(3500, 40_000) });
+  assert.deepEqual([d.stalledMs, d.rcMb, d.readingAgeMs], [130_000, 3500, 40_000]);
+  assert.match(rampBailLine(d), /✗ RAMP — the loop has not advanced in 130s, rc family 3500 MB \(reading 40s old\)/);
 });
 
-test('RAMP: every UNKNOWN stands down — no probe, an empty trail, a missing or stale or figureless reading', () => {
-  const now = () => 1_000_000;
-  const base = { now, stallMs: 120_000, thresholdMb: 3000 };
-  const silentTrail = trailAt(now() - 130_000);
-  assert.equal(rampBailDecision({ ...base, heapProbe: null, heapTrail: silentTrail, memory: known(9000) }).fire, false, 'no probe');
-  assert.equal(rampBailDecision({ ...base, heapProbe: probe, heapTrail: [], memory: known(9000) }).fire, false,
-    'an EMPTY trail is "never answered" — the fresh-launch state, not a ramp');
-  assert.equal(rampBailDecision({ ...base, heapProbe: probe, heapTrail: silentTrail, memory: { known: false, why: 'no memory reading on disk' } }).fire, false);
-  const stale = rampBailDecision({ ...base, heapProbe: probe, heapTrail: silentTrail, memory: { known: false, why: 'memory reading 400s old (max 300s)', ageMs: 400_000 } });
+test('RAMP: condition A is the LOOP, never the renderer — the swap that made this arm fire at all', () => {
+  // 2026-09-05, this arm's first ramp: onset 07:30, exit 07:42. Twelve minutes is HUNG_MS to
+  // the minute, i.e. the WEDGE arm — while `ramp-scan` had already triggered at 07:31:28 with
+  // the family at 3,203 MB. Condition B was satisfiable eleven minutes before the exit and
+  // this arm still did not fire, because the renderer went on answering Performance.getMetrics
+  // all the way to 8,879 MB. An instrument gated on a signal that does not change during the
+  // event is the failure this whole investigation keeps repeating.
+  assert.equal(/heapTrail|heapProbe/.test(rbCode), false,
+    'the CDP-silence inputs are GONE, not merely unused — a caller that still passes them would read as working');
+  assert.match(rbCode, /Number\.isFinite\(Number\(stalledMs\)\)/,
+    'the stall is the first condition and a non-number is UNKNOWN');
+  // The timer must hand it the SAME clock the wedge and runaway arms read.
+  assert.match(timerBody(), /rampBailDecision\(\{\s*stalledMs,/,
+    'the arm reads the timer\'s own stalledMs, not a second clock of its own');
+});
+
+test('RAMP: every UNKNOWN stands down — a missing, stale or figureless reading, and a stall that is not a number', () => {
+  const base = { stallMs: 120_000, thresholdMb: 3000 };
+  assert.equal(rampBailDecision({ ...base, stalledMs: undefined, memory: known(9000) }).fire, false,
+    'no stall reading is UNKNOWN, never zero');
+  assert.equal(rampBailDecision({ ...base, stalledMs: 130_000, memory: { known: false, why: 'no memory reading on disk' } }).fire, false);
+  const stale = rampBailDecision({ ...base, stalledMs: 130_000, memory: { known: false, why: 'memory reading 400s old (max 300s)', ageMs: 400_000 } });
   assert.equal(stale.fire, false, 'a sampler that has stopped is not a family that has shrunk');
   assert.match(stale.why, /400s old/);
 });
@@ -597,4 +605,62 @@ test('RAMP: the bars are measured, and the defaults agree with the modules they 
 test('RAMP: the sampler\'s file is ignored by git, like every other reading on the box', () => {
   const ignore = readFileSync('scripts/auto-cart-bot/.gitignore', 'utf8');
   assert.match(ignore, /^\.memory-latest\.json$/m);
+});
+
+
+// ---------------------------------------------------------------------------
+// WHAT A BAIL COSTS, AND WHAT IT SAYS IT WAS (2026-09-05)
+// ---------------------------------------------------------------------------
+
+test('BAIL: the live token is written down FIRST, and the persist is bounded', () => {
+  // `readLiveToken` prefers `window.__camphawkRcToken`, which lives in page memory and dies
+  // with the process — so every bail spent the RC session as well as the browser, and the
+  // measured recovery is ~11 minutes. A bail at 07:53 therefore cost a cart. The runner's
+  // preemption path has called this since 2026-08-30; the bail arms never did.
+  const body = code.slice(code.indexOf('const reportAndBail = '));
+  const block = body.slice(0, body.indexOf('bail(tail);'));
+  const persist = block.indexOf('persistLiveToken(residentPage)');
+  assert.ok(persist > -1, 'the bail persists the live token');
+  // FIRST. Everything after it is a reading about a process that is about to die, and on a
+  // ramping renderer each of those can spend seconds.
+  for (const later of ['collectHeapFacts(', 'describeTrail(', 'describeAllocTrail(', 'flushAllocRamps(']) {
+    const at = block.indexOf(later);
+    assert.ok(at > -1 && at > persist, `${later} must come AFTER the token is written down`);
+  }
+  // BOUNDED — that renderer may not answer at all, and a persist that delays releasing the
+  // profile lock past 08:00 has inverted the priority this block is otherwise careful about.
+  assert.match(block, /Promise\.race\(\[\s*persistLiveToken\(residentPage\)[\s\S]{0,140}setTimeout\(\(\) => r\('timeout'\), 2000\)/,
+    'the persist is INSIDE a race with a short timeout, not merely near one');
+});
+
+test('BAIL: every arm names itself in the event it posts', () => {
+  // All three reported `reason: 'bail'`, so on 2026-09-05 which one fired could only be
+  // inferred from the clock, and the log window that would have settled it had rolled.
+  assert.match(code, /reason: `bail:\$\{arm \?\? 'unknown'\}`/, 'the event carries the arm');
+  const timer = timerBody();
+  for (const arm of ["'wedge'", "'ramp'", "'runaway'"]) {
+    assert.ok(timer.includes(arm), `the ${arm} arm passes its name`);
+  }
+  // An unnamed caller must not be silently filed as one of the three.
+  assert.equal(/reason: `bail:\$\{arm\}`/.test(code), false, 'an absent arm reads as unknown, never as undefined');
+});
+
+test('TEARDOWN: a short reopen reports nothing, is COUNTED, and never suppresses the flush', () => {
+  // The hold runner preempts the profile every ~15s while it retries a cart. On 2026-09-05
+  // that ran this `finally` about a hundred times in twenty-one minutes, and `tail-log`
+  // returns 16,000 characters — so the window shrank to ~2 minutes and the bail those
+  // readings exist beside had already rolled out of it.
+  const fin = code.slice(code.indexOf('const teardown = requestCounter.snapshot('));
+  const block = fin.slice(0, fin.indexOf('await ctx?.close()'));
+  assert.match(block, /teardown\.ageMs >= TEARDOWN_MIN_MS/, 'the gate is the browser\'s life');
+  assert.match(block, /suppressedTeardowns \+= 1/, 'a suppressed teardown is counted, not dropped');
+  assert.match(block, /short reopen\(s\) not reported/, 'and the count rides the next one that speaks');
+  // THE FLUSH IS NEVER SUPPRESSED, only its description. A ramp can end on a short-lived
+  // browser and `flushAllocRamps` is what stores it.
+  assert.match(block, /flushAllocRamps\(\{ final: true, describeIfEmpty: worthReporting \}\)/,
+    'the flush runs either way; only describeIfEmpty is gated');
+  // The counter must live across browser lives or it can never count anything.
+  const decl = code.indexOf('let suppressedTeardowns = 0;');
+  assert.ok(decl > -1 && decl < code.indexOf('for (;;) {'), 'it is declared outside the browser loop');
+  assert.match(SRC, /RC_KEEPWARM_TEARDOWN_MIN_MS \|\| 60_000/, 'sixty seconds, above the runner\'s ~15s cadence');
 });

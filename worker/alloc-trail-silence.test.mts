@@ -62,17 +62,35 @@ test('THE TEARDOWN ASKS FOR THE DESCRIPTION — it is the arm a real ramp lands 
   // `flushAllocRamps({ final: true })` and deliberately does NOT pass this, because it logs
   // `describeAllocTrail` unconditionally a few lines earlier. Asserting on the file as a
   // whole would pass if only the bail had it, which is the arm that already worked.
-  const at = kw.indexOf('describeIfEmpty: true');
+  // GATED ON THE BROWSER'S LIFE SINCE 2026-09-05, not dropped. The hold runner preempts the
+  // profile every ~11s while it retries a cart, so an unconditional description ran about a
+  // hundred times in twenty-one minutes and shrank `tail-log`'s 16,000-character window to
+  // about two minutes — burying the bail it exists beside. A ramping browser is never caught
+  // by that gate: a ramp is a ten-to-twelve-minute climb and the gate is sixty seconds, which
+  // the assertion below pins so the two can never cross.
+  const at = kw.indexOf('describeIfEmpty: worthReporting');
   assert.ok(at > -1,
     'no caller asks a final flush to describe an empty trail, so a 9 GB ramp still leaves '
     + 'nothing but silence at the teardown — which is what three ramps already did');
-  const near = kw.slice(Math.max(0, at - 600), at + 200);
-  assert.match(near, /flushAllocRamps\(\{\s*final:\s*true,\s*describeIfEmpty:\s*true\s*\}\)/,
-    'describeIfEmpty must be passed to a FINAL flush — on an ordinary tick the open segment '
-    + 'is not taken, so an empty result there is the normal state and not a finding');
-  assert.match(near, /ctx\?\.close\(\)|releaseProfileLockIfMine|finally/,
-    "it belongs in warmResident's teardown, where every `break` that replaces the browser "
-    + 'lands — that is the moment the trail dies and an untaken reading is lost');
+  // THE GATE MUST STAY FAR BELOW A RAMP. A ramp is a ten-to-twelve-minute climb; sixty
+  // seconds is the runner's preemption cadence plus margin. If this threshold ever grew past
+  // a ramp's duration, a real event's teardown would be suppressed and this guard would still
+  // pass — so the number is pinned here, not only where it is declared.
+  assert.match(kw, /RC_KEEPWARM_TEARDOWN_MIN_MS \|\| (\d[\d_]*)/, 'the gate is a named env default');
+  const gateMs = Number(RegExp.$1.replace(/_/g, ''));
+  assert.ok(gateMs > 0 && gateMs <= 120_000,
+    `the teardown gate is ${gateMs} ms — past two minutes it starts suppressing real ramps`);
+  // SLICED, NOT WINDOWED. This kept 600 characters either side of the flag and broke on
+  // 2026-09-05 when a comment was added above it — a window measured in characters is a guess
+  // about layout, which is the mistake keepwarm-diagnosis.test.mts records twice over.
+  const finallyAt = kw.indexOf('} finally {', kw.indexOf('async function warmResident'));
+  assert.ok(finallyAt > -1, "warmResident's teardown must exist");
+  const teardown = kw.slice(finallyAt, kw.indexOf('await ctx?.close()', finallyAt));
+  assert.match(teardown, /flushAllocRamps\(\{\s*final:\s*true,\s*describeIfEmpty:\s*worthReporting\s*\}\)/,
+    "describeIfEmpty must be passed to a FINAL flush IN warmResident's teardown — that is where "
+    + 'every `break` that replaces the browser lands, and the moment the trail dies. On an '
+    + 'ordinary tick the open segment is not taken, so an empty result there is the normal '
+    + 'state and not a finding');
 });
 
 test('THE BAIL DOES NOT ALSO PASS IT — the same text twice reads as a bug', () => {

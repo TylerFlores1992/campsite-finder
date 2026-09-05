@@ -569,6 +569,15 @@ const MEM_STALL_MS = Number(process.env.RC_KEEPWARM_MEM_STALL_MS || 60_000);
 const RAMP_STALL_MS = Number(process.env.RC_KEEPWARM_RAMP_STALL_MS || 120_000);
 const RAMP_MB = Number(process.env.RC_KEEPWARM_RAMP_MB || 3000);
 const RAMP_READING_MAX_AGE_MS = Number(process.env.RC_KEEPWARM_RAMP_READING_MAX_AGE_MS || 5 * 60_000);
+/**
+ * How long a browser must have lived before its teardown is worth a line and an event.
+ *
+ * The hold runner preempts the profile every ~15 seconds while it retries a cart, so a
+ * teardown that reports unconditionally floods `tail-log`'s 16,000-character window at
+ * exactly the hour somebody is reading it. Sixty seconds is comfortably above that cadence
+ * and far below anything a real browser life reaches. See the teardown block.
+ */
+const TEARDOWN_MIN_MS = Number(process.env.RC_KEEPWARM_TEARDOWN_MIN_MS || 60_000);
 // Beside the bot scripts, where bot.mjs writes it. `HERE` is this directory.
 const MEMORY_LATEST_PATH = path.join(HERE, MEMORY_LATEST_FILE);
 
@@ -2491,6 +2500,12 @@ async function warmResident() {
   // in there would reset on the very event it exists to rate-limit and bound nothing —
   // the same reason renewal-schedule's ration lives at module scope.
   let lastRecycleAt = 0;
+  /**
+   * Short reopens whose teardown said nothing, carried to the next one that does. OUTSIDE the
+   * browser loop deliberately: it counts ACROSS browser lives, which is the only place the
+   * number means anything. See the teardown block.
+   */
+  let suppressedTeardowns = 0;
   for (;;) {
     if (!(await waitForProfileLock(PROFILE_DIR, LOCK_OWNER, 60_000))) {
       const held = profileLockHolder(PROFILE_DIR);
@@ -2617,9 +2632,34 @@ async function warmResident() {
        * exists to prevent. The cost is bounded: `collectHeapFacts` cannot exceed a few seconds
        * and the flush is raced against four, against a stall already twelve minutes old.
        */
-      const reportAndBail = (why, tail) => {
+      const reportAndBail = (why, tail, arm) => {
         bailing = true;
         void (async () => {
+          /**
+           * WRITE THE TOKEN DOWN BEFORE ANYTHING ELSE. FIRST, AND BOUNDED.
+           *
+           * `readLiveToken` prefers `window.__camphawkRcToken` — the capture hook's copy off
+           * RC's own outbound header — and that lives in PAGE MEMORY and dies with the
+           * process. So every bail has been spending the RC session as well as the browser:
+           * the next process comes up `token source: none`, `planRenewal` waits out its
+           * floor, and the measured recovery is ~11 minutes. A bail at 07:53 therefore costs
+           * a cart, not merely a browser.
+           *
+           * The runner's preemption path has done this since 2026-08-30 for exactly this
+           * reason; the bail arms never did. It is the same one call.
+           *
+           * IT GOES BEFORE THE DIAGNOSTICS, NOT AFTER. Everything below is a reading about a
+           * process that is about to die; this is the only step with product value, and on a
+           * ramping renderer the ones below can each spend seconds. Bounded at 2s of its own
+           * because that renderer may not answer at all, and a persist that delays releasing
+           * the profile lock past 08:00 has inverted the priority this whole block is
+           * careful about.
+           */
+          const kept = await Promise.race([
+            persistLiveToken(residentPage).catch(() => 'error'),
+            new Promise((r) => setTimeout(() => r('timeout'), 2000)),
+          ]);
+          log(`  token on the way out: ${kept}`);
           /**
            * ASK THE RENDERER WHAT IT IS HOLDING, ON THE WAY OUT.
            *
@@ -2658,7 +2698,11 @@ async function warmResident() {
           await Promise.race([
             Promise.allSettled([
               flushAllocRamps({ final: true }),
-              reportBotEvent('request-counts', requestCounter.snapshot({ reason: 'bail' })),
+              // THE ARM NAMES ITSELF. All three arms reported `reason: 'bail'`, so on
+              // 2026-09-05 which one fired could only be inferred from the clock — twelve
+              // minutes being `HUNG_MS` to the minute — and the log window that would have
+              // settled it had already rolled. One word.
+              reportBotEvent('request-counts', requestCounter.snapshot({ reason: `bail:${arm ?? 'unknown'}` })),
             ]),
             new Promise((r) => setTimeout(r, 4000)),
           ]).catch(() => {});
@@ -2678,17 +2722,21 @@ async function warmResident() {
         reportAndBail(
           `✗ WEDGED — the keep-warm loop has not advanced in ${Math.round(stalledMs / 60_000)}m.`,
           '  (see the wedged line above)',
+          'wedge',
         );
         return;
       }
       /**
        * THE RAMP ARM — after the wedge arm, before the RAM arm, and both of those are exactly
        * as they were. See ramp-bail.mjs for the two conditions and why either one alone is
-       * the cry-wolf failure. It reads the heap trail's newest sample (already taken on this
-       * tick, below) and the sampler's file — NEVER `rcFamilyMb()`, which spawns, and never
-       * `os.freemem()`, which untouched commit does not move. Not gated on `stalledMs`: the
-       * loop may still be advancing early in a ramp, and a resident renderer that has stopped
-       * answering while the family is past 3 GB is a ramp whichever await the loop is in.
+       * the cry-wolf failure. It reads `stalledMs` — the same clock the two arms either side
+       * of it use — and the sampler's file. NEVER `rcFamilyMb()`, which spawns, and never
+       * `os.freemem()`, which untouched commit does not move.
+       *
+       * CONDITION A WAS CDP SILENCE AND THAT MADE THIS ARM INERT ON ITS FIRST RAMP (09-05,
+       * ramp at 07:30, exit at 07:42 = `HUNG_MS`, with the family past 3 GB from 07:31). The
+       * renderer kept answering `Performance.getMetrics` all the way to 8,879 MB. The loop's
+       * own stall is the signal both observed ramps actually produced.
        */
       if (!bailing) {
         let memory;
@@ -2698,10 +2746,10 @@ async function warmResident() {
           memory = { known: false, why: `memory reading failed: ${e?.message ?? e}` };
         }
         const ramp = rampBailDecision({
-          heapTrail, heapProbe, memory, stallMs: RAMP_STALL_MS, thresholdMb: RAMP_MB,
+          stalledMs, memory, stallMs: RAMP_STALL_MS, thresholdMb: RAMP_MB,
         });
         if (ramp.fire) {
-          reportAndBail(rampBailLine(ramp), '  (see the ramp line above)');
+          reportAndBail(rampBailLine(ramp), '  (see the ramp line above)', 'ramp');
           return;
         }
       }
@@ -2753,6 +2801,7 @@ async function warmResident() {
           + `of free RAM (floor ${LOW_RAM_MB} MB). Normal here is ~13,000 MB free and this `
           + 'browser has taken the box to 99% COMMIT twenty times in five days.',
           '  (see the runaway line above)',
+          'runaway',
         );
         return;
       }
@@ -3395,11 +3444,38 @@ async function warmResident() {
       // THE REQUEST COUNTS RIDE THE SAME FLUSH. One COMPACT line here, because this fires on
       // every reopen and `tail-log` returns 16,000 characters; the full ten-line block is the
       // bail's and the hung close's. The event carries the whole top ten either way.
-      log(`  ${describeRequestCounts(requestCounter, { compact: true })}`);
+      //
+      // A SHORT-LIVED BROWSER REPORTS NOTHING, AND THE COUNT OF THOSE RIDES THE NEXT ONE.
+      // On 2026-09-05 the hold runner took the profile every ~11 seconds through its retry
+      // window, so this `finally` ran about a hundred times in twenty-one minutes and each
+      // pass logged a compact line plus an alloc-trail line. `tail-log` returns 16,000
+      // characters, so the window shrank to about two minutes — and the bail those readings
+      // exist beside had already rolled out of it by the time anyone looked. The instrument
+      // buried the event it was built to explain.
+      //
+      // A REOPEN THIS SHORT HAS NOTHING TO SAY: the browser booted RC's SPA and was taken
+      // away again, so the counts are the same 87 requests every time and the trail has one
+      // sample. `suppressedTeardowns` carries them forward rather than dropping them —
+      // "nothing was reported" and "sixty teardowns were suppressed" are different facts and
+      // silence would make them the same one.
+      //
+      // THE FLUSH ITSELF IS NEVER SUPPRESSED, only its description. A ramp can end on a
+      // short-lived browser, and `flushAllocRamps` is what stores it.
+      const teardown = requestCounter.snapshot({ reason: 'teardown' });
+      const worthReporting = teardown.ageMs >= TEARDOWN_MIN_MS;
+      if (worthReporting) {
+        const skipped = suppressedTeardowns;
+        suppressedTeardowns = 0;
+        log(`  ${describeRequestCounts(requestCounter, { compact: true })}`
+          + (skipped ? ` (+${skipped} short reopen(s) not reported)` : ''));
+        teardown.suppressedSince = skipped;
+      } else {
+        suppressedTeardowns += 1;
+      }
       await Promise.race([
         Promise.allSettled([
-          flushAllocRamps({ final: true, describeIfEmpty: true }),
-          reportBotEvent('request-counts', requestCounter.snapshot({ reason: 'teardown' })),
+          flushAllocRamps({ final: true, describeIfEmpty: worthReporting }),
+          worthReporting ? reportBotEvent('request-counts', teardown) : Promise.resolve(),
         ]),
         new Promise((r) => setTimeout(r, 4000)),
       ]).catch(() => {});
