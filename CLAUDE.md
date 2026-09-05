@@ -6368,6 +6368,112 @@ or the renderer kept answering CDP while it ramped, in which case the heap trail
 and the twelve-minute wedge still ends it — that would itself be a finding, and the request
 counts arrive at the teardown regardless.
 
+#### IT FIRED, AND THE THIRD OF THOSE THREE IS WHAT HAPPENED (2026-09-05)
+The paragraph above names three ways the arm could stay silent through a real ramp. **The third
+one came true within hours of it being written**, and the same morning answered the question the
+request counter was built for.
+```
+07:30       ramp onset, resident renderer, browser 676m old (launched at the 03:26 UTC update)
+07:31:28    ramp-scan triggers: rc 3203 MB, commit 47,823/48,577, free RAM 7,244
+07:41       peak 8,879 MB
+07:42:00    bail — request-counts {reason:'bail', 0 in 120s / 197 lifetime, 78 paths}
+```
+- **THE REQUEST COUNTER ANSWERED FLAT, AND THAT RETIRES A CANDIDATE THIS FILE ASSERTED THREE
+  TIMES.** Zero requests in the 120s before the bail; **197 across the browser's ENTIRE eleven
+  hours**; the busiest paths are Split's feature-flag SDK (`splitChanges` 27, `memberships` 20,
+  `auth` 18, `sse` 14) and Okta (`userinfo` 13, `authorize` 11, `token` 11). **Eleven authorize
+  calls in eleven hours is the ordinary hourly renewal, not a loop.** The readout's own verdict:
+  *"flat: the busiest path had 0 hits in 120s. The sections are NOT per-request; the next
+  candidate is Chromium's own handling of the occluded window — a different investigation."*
+  So the ~18,700 handles are not one-per-request, and "network/IPC buffering in a request loop"
+  is finally tested rather than asserted.
+- **THE ARM DID NOT FIRE. TWELVE MINUTES IS `HUNG_MS` TO THE MINUTE**, so the WEDGE arm ended it
+  — while condition B had been satisfiable since 07:31. Condition A was **CDP silence on the
+  resident renderer**, and that renderer went on answering `Performance.getMetrics` all the way
+  to 8,879 MB. An instrument gated on a signal that does not change during the event: the same
+  shape as every retired instrument above, in the arm built to escape them.
+- **WHICH ARM FIRED CANNOT BE READ BACK, AND THAT IS THE SECOND DEFECT.** All three arms posted
+  `reason: 'bail'`, and `tail-log`'s 16,000-character window had rolled — because the hold
+  runner preempted the profile every ~11 seconds through its retry window, so the teardown ran
+  about **a hundred times in twenty-one minutes**, each printing a compact request-counts line
+  and an alloc-trail line. **The instrument buried the event it was built to explain.** The
+  arithmetic is the evidence here, not a log line.
+- **FIXED (this change): condition A is now the LOOP'S OWN STALL** — `Date.now() - lastTick`,
+  the same clock the wedge and runaway arms read, never UNKNOWN, and the signal both observed
+  ramps actually produced (634s in `checkAndReport` on 09-04, the full twelve minutes on 09-05).
+  **Both-conditions survives the swap deliberately** and this is not the RAM arm's rule being
+  weakened: the loop-body size guard already acts on `rcFamilyMb` alone at 1,500 MB and can
+  RECYCLE, which is cheaper than the exit this arm spends, so this arm exists only for the case
+  that guard cannot reach. Each arm now names itself (`reason: 'bail:ramp'`), and a teardown on
+  a browser that lived under `TEARDOWN_MIN_MS` (60s) reports nothing but is **counted forward**
+  (`+N short reopen(s) not reported`) — silence and suppression must not read the same.
+
+#### EVERY BAIL WAS ALSO SPENDING THE RC SESSION (2026-09-05)
+`bail()` wrote the abnormal-exit marker, printed the breadcrumb, released the profile lock and
+exited. **It never wrote the token down.** `readLiveToken` prefers `window.__camphawkRcToken`,
+the capture hook's copy off RC's own outbound header, which lives in PAGE MEMORY and dies with
+the process — so the next process comes up `token source: none`, `planRenewal` waits out its
+floor, and the measured recovery is ~11 minutes. **A bail at 07:53 therefore cost a cart, not
+merely a browser**, and the two-minute arm above would have made bails MORE frequent.
+- `persistLiveToken(residentPage)` now runs **first and bounded at 2s**. It is the same one call
+  the runner's preemption path has made since 2026-08-30 for the identical reason.
+- **FIRST, not last.** Everything else in that block is a reading about a process that is about
+  to die; this is the only step with product value, and on a ramping renderer each diagnostic
+  can spend seconds. Bounded because that renderer may not answer at all, and a persist that
+  delays releasing the profile lock past 08:00 has inverted the priority.
+- **It is what makes the two-minute arm safe to want.** A bail that costs a browser is an
+  inconvenience; a bail that costs the session is a hazard, and it was the second one.
+
+#### PARKING THE RESIDENT PAGE OFF RC'S SPA — PROPOSED, AND REFUSED BY THE CODE (2026-09-05)
+The 08-17 entry closes this with *"the idle tab is measured innocent … **Do not revisit without
+new evidence**"*, and 09-04 supplied exactly that evidence: the renderer that grows is the
+RESIDENT page's, and the throwaway tab's read `-4 MB over 640s`. Both halves of the old
+rejection are now known wrong. **So it was revisited, and it fails for a different reason that
+nobody had reached.**
+- **`checkAndReport` cannot report a dead session from a parked page.** The branch is explicit:
+  `if (live === false && source === 'localStorage')` → *"A FAILURE ON A localStorage TOKEN
+  PROVES NOTHING. That copy is not what the app sends, so a 401 from it is our stale read, not
+  RC's verdict."* Park the page and `source` is `localStorage` **for ever**, so the verdict is
+  permanently INCONCLUSIVE — and that verdict is what drives `autocart.rc_session`, the 07:40
+  pre-flight and `holdAtRisk`'s phone alarm. **Parking silences the alarm, quietly.**
+- Making it work needs the meaning of the most safety-critical verdict in the system to change
+  ("the SPA is parked, so localStorage IS authoritative"). That is a deliberate change with its
+  own guards, not a memory experiment.
+- **Recorded so the next reader does not spend the same hour.** The prohibition stands, and its
+  reason is now the health verdict rather than the innocence of the idle tab.
+
+#### WHAT THE NEXT RAMP ANSWERS, AND WHAT TO STOP DOING
+- **Expect `✗ RAMP` at ~2 minutes and `reason: 'bail:ramp'`.** The wedge NOT firing at twelve is
+  the same fact from the other side. If the wedge fires again, condition B is the one standing
+  down and `.memory-latest.json` is where to look.
+- **The remaining unexplained fact is the ~35-40 GB of commit that belongs to no process's
+  private bytes and is not kernel pool.** Every instrument so far has looked at private bytes,
+  the JS heap, free RAM or renderer allocation sites, and the memory is in none of them. The one
+  measurement that could name it is a **committed-region walk of the ramping renderer** —
+  `VirtualQueryEx` bucketed by `MEM_PRIVATE`/`MEM_MAPPED`/`MEM_IMAGE` with a region-size
+  histogram, from `ramp-scan.mjs`'s existing 3 GB trigger so it never spawns at the peak.
+  **Not built**, and it is the only instrument still worth building.
+- **DO NOT build Track B.** It replaces the renewal's Okta trip, and that trip is measured flat
+  (`[renewal] -4 MB over 640s`). It was already doubly weakened; this is the third reason.
+- **`~18,700 handles × 2 MB ≈ 37 GB` IS ARITHMETIC, NOT A MEASUREMENT.** `HandleCount` counts
+  every kernel handle — events, threads, files, sections — so the match to the gap may be
+  coincidence. Do not quote it as the mechanism.
+
+#### THREE FIGURES IN THIS FILE THAT CANNOT ALL BE TRUE (2026-09-05)
+Read before quoting any of them.
+- **GROWTH RATE is quoted four ways**: ~2,400 MB/min (08-17), ~400 MB/min over eleven minutes
+  (08-23, which explicitly revises the first), ~840 MB/min (08-24), ~450 MB/min (09-04). The
+  08-17 figure came from a 2-minute sampler bracketing a shorter event and survives verbatim in
+  later summaries. **The eleven-minute climbs are the better-sampled ones.**
+- **WHAT ENDS A RAMP had three incompatible accounts** — a browser replacement, the size arm
+  firing on the next iteration, and the wedge bail. **Settled 09-04 and again 09-05: it is
+  `HUNG_MS`.** The earlier events were never instrumented well enough to say, and their
+  `gpu-process` pid changes are consistent with a wedge bail plus a supervisor restart.
+- **EVERY COMMIT PERCENTAGE FROM 08-22 TO 08-28 IS AN ARTIFACT.** The system-managed pagefile
+  grows as fast as the commit is taken, so the limit chases the used figure and the ratio pins
+  near 100% all the way up and back down. 82%, 88%, 89%, 95%, 99% and 100% are **not comparable
+  to each other**. Use the absolute figures and check the limit column.
+
 **THE VERIFY RUN LOST ONE REAL-DB TEST TO A CONCURRENT CI SUITE, AND CI ON MASTER IS RED FOR
 THE SAME REASON.** `expire-holds` → *"a requested hold whose release passed long ago is failed"*
 returned 0 rows once and passed 6/6 alone; the diff cannot reach that code. The docs-only
@@ -6450,6 +6556,23 @@ tree, the deploy and the fleet were all correct.
 
 ## Open / next session
 
+> ### 2026-09-05 — THE BAIL ARM WAS INERT, THE REQUEST COUNTER ANSWERED, AND A BAIL COST THE SESSION
+>
+> Read "IT FIRED, AND THE THIRD OF THOSE THREE IS WHAT HAPPENED" and the three sections after
+> it. In short: the request counter's first reading is **flat** (0 in 120s, 197 in eleven
+> hours, eleven Okta authorize calls in eleven hours), so the request-loop candidate this file
+> asserted three times is **tested and dead**. The two-minute arm did **not** fire — twelve
+> minutes is `HUNG_MS` to the minute — because its condition A was CDP silence and the renderer
+> kept answering all the way to 8,879 MB; it now reads the loop's own stall. And **every bail
+> was spending the RC session**, because `bail()` never wrote the live token down; it does now,
+> first and bounded, which is what makes a two-minute bail safe to want. **Bot-side: none of it
+> is live until the box updates** — confirm with `bot-ask git-status`, never
+> `autocart.bot_version`. **Parking the resident page off the SPA was revisited with the new
+> evidence the old prohibition asked for, and REFUSED by `checkAndReport`'s localStorage rule**
+> — it would silence `autocart.rc_session` and the phone alarm for ever. The only instrument
+> still worth building is a committed-region walk of the ramping renderer; **do not build
+> Track B.**
+>
 > ### 2026-09-04 EVENING — THE LEAK INSTRUMENTS ARE BUILT AND WAIT ON A BOX UPDATE
 >
 > Read "THE ONSET IS A 35 GB COMMIT STEP" and its sub-section "THE INSTRUMENTS FIRED" directly
