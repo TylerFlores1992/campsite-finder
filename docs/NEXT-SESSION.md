@@ -62,13 +62,18 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >   designed default, not a render failure**; `availability-unknown` in particular means the
 >   portal read failed, and telling somebody to settle in for a long wait about a stay they
 >   could book in thirty seconds is the failure the silence prevents.
-> - **The release-window instrument is a daily cron**, `trig_012K7iCrj1J9KspyqGucZSHC`,
->   `56 14 * * *` (07:56 PT), **09-05 through 09-11**, self-disabling on 09-12. Two gaps
+> - **The release-window instrument is a daily cron**, **`trig_01MDTcr2WFDqX6dCsi7gVDPG`**,
+>   `56 14 * * *` (07:56 PT), self-disabling on 09-12. **THE ID CHANGED ON 09-05** — the
+>   original (`trig_012K7iCrj1J9KspyqGucZSHC`) fired into a fresh session with **no repository
+>   attached**, so it could not run the script; it was replaced with one bound to a session that
+>   has the checkout. **Read `list_triggers` before acting on any id written down here.** Two gaps
 >   recorded and neither fixed: the independent disabler (`trig_01FtjDWmMS8PvGQ8z1TSYbHQ`)
 >   **stores no MCP connectors and may be inert**, so the self-disable in the prompt is the
 >   load-bearing stop; and ~~nothing persists the readings~~ — **that half is BUILT and merged
 >   in #273**: `--record`, migration 076 `rc_release_readings`, `scripts/rc-release-readout.mts`,
->   and the Routine's prompt passes the flag. **First recorded run is 09-05 07:56 PT.** The
+>   and the Routine's prompt passes the flag. **First recorded run is 09-06 07:56 PT**, under the new id;
+>   09-05's fired under the dead one and recorded nothing, so `rc-release-readout.mts` reading
+>   zero rows on 09-05 is the expected state and not the `--record` path being broken. The
 >   inert-disabler gap is the one still open.
 > - **Health 18/19 at 22:30 UTC** — the `bot_version` warn cleared when the box took `1e947ee`.
 >   The one remaining warn is `rc_login`: *"no rehearsal has PASSED in 19h09m — last night was
