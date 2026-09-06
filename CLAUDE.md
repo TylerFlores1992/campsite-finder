@@ -6443,21 +6443,127 @@ nobody had reached.**
   reason is now the health verdict rather than the innocence of the idle tab.
 
 #### WHAT THE NEXT RAMP ANSWERS, AND WHAT TO STOP DOING
-- **Expect `✗ RAMP` at ~2 minutes and `reason: 'bail:ramp'`.** The wedge NOT firing at twelve is
-  the same fact from the other side. If the wedge fires again, condition B is the one standing
-  down and `.memory-latest.json` is where to look.
+- ~~**Expect `✗ RAMP` at ~2 minutes and `reason: 'bail:ramp'`.**~~ **IT FIRED, WITHIN TWO AND A
+  HALF MINUTES OF THE BOX UPDATING** — peak **3,702 MB against 8,879 MB** twelve hours earlier,
+  two minutes against twelve, and the wedge did not fire, which is the same fact from the other
+  side. The arm is proven. If a later ramp ends at twelve minutes instead, condition B is the
+  one standing down and `.memory-latest.json` is where to look.
 - **The remaining unexplained fact is the ~35-40 GB of commit that belongs to no process's
   private bytes and is not kernel pool.** Every instrument so far has looked at private bytes,
   the JS heap, free RAM or renderer allocation sites, and the memory is in none of them. The one
   measurement that could name it is a **committed-region walk of the ramping renderer** —
   `VirtualQueryEx` bucketed by `MEM_PRIVATE`/`MEM_MAPPED`/`MEM_IMAGE` with a region-size
   histogram, from `ramp-scan.mjs`'s existing 3 GB trigger so it never spawns at the peak.
-  **Not built**, and it is the only instrument still worth building.
+  ~~**Not built**, and it is the only instrument still worth building.~~ **BUILT 2026-09-05 —
+  see "THE WALK IS BUILT" below.** Struck rather than deleted: "not built" on the instrument
+  everything else is waiting for is exactly the sentence a later reader quotes as a task.
 - **DO NOT build Track B.** It replaces the renewal's Okta trip, and that trip is measured flat
   (`[renewal] -4 MB over 640s`). It was already doubly weakened; this is the third reason.
-- **`~18,700 handles × 2 MB ≈ 37 GB` IS ARITHMETIC, NOT A MEASUREMENT.** `HandleCount` counts
-  every kernel handle — events, threads, files, sections — so the match to the gap may be
-  coincidence. Do not quote it as the mechanism.
+- ~~**`~18,700 handles × 2 MB ≈ 37 GB` IS ARITHMETIC, NOT A MEASUREMENT.**~~ Still arithmetic,
+  and it now has four data points and a tighter form that does not rest on the handle count at
+  all — see "THE 32 GB IS ONE FIXED MAPPING" directly below. Struck rather than deleted because
+  the caution was right and the reader who acts on it would now skip the finding.
+
+#### THE 32 GB IS ONE FIXED MAPPING, AND THE REQUEST LOOP IS NOT THE CAUSE — FOUR FOR FOUR (2026-09-05)
+The new arm fired on its first ramp, and its `request-counts` event named a loop:
+**18,392 of 18,409 lifetime requests on `rdapi.reservecalifornia.com/api/webaccessfacility/futurebookingstartsendsdates`**,
+~46/s, on a browser two minutes old. I nearly wrote that up as the trigger. **It is not**, and
+the four `ramp-scan` rows say so in one column.
+
+| ramp (PT) | peak `rc` | requests | ramping renderer `virtualMB` | pagedPool | handles |
+|---|---|---|---|---|---|
+| 09-04 15:21 | 3,741 | — | **3,727,549** | 66,580 KB | 18,705 |
+| 09-04 19:34 | 4,776 | — | **3,727,556** | 66,591 KB | 19,379 |
+| 09-05 07:31 | **8,879** | **197 in ELEVEN HOURS** | **3,727,556** | 66,579 KB | 18,698 |
+| 09-05 12:13 | 3,702 | **18,409 in two minutes** | **3,727,550** | 66,554 KB | 17,005 |
+| *healthy renderer, same scans* | 16-78 | | **3,694,7xx** | 767-810 KB | 210-397 |
+
+- **THE RAMPING RENDERER'S VIRTUAL SIZE EXCEEDS A HEALTHY ONE'S BY 32,780 MB, AND THE FOUR
+  READINGS AGREE TO WITHIN 7 MB.** That is not growth, it is **one fixed ~32 GiB mapping**. It
+  is present in the ramp with 18,392 hits on one path and in the ramp with 197 requests in
+  eleven hours, so **a loop cannot be the cause of an event it is absent from.** The 09-05 07:31
+  reading is the counter-example and it was taken by the same instrument on the same day.
+- **AND THE COMMIT STEP IS THE SAME MAPPING SEEN FROM THE OS.** Both 09-05 events step in ONE
+  two-minute tick: 7,513 → 47,823 MB (07:29→07:31) and 9,096 → 43,356 MB (12:12→12:13), while
+  the rc family moves only 290 → 3,203 and 313 → 1,885. **~35-40 GB of commit against ~2-3 GB
+  of private bytes, and a 32 GB mapping sitting in the renderer's address space.** The pagefile
+  grows to match and reports `currentMB=56` / `peakMB=198` — i.e. **40 GB charged and under
+  200 MB ever written to disk**, which is what a committed-but-largely-untouched mapping looks
+  like. The private bytes then climb at ~450 MB/min as the pages are actually touched.
+- **SO THE SEQUENCE IS: map ~32 GB at once, then write into it steadily until something kills
+  it.** Every instrument that has ever been pointed at this measured the SECOND half — private
+  bytes, the JS heap, free RAM, allocation sites, request counts — which is why five of them in
+  a row reported nothing. The first half happens between two samples and shows up only as a
+  step.
+- **A LOOP IS STILL WORTH FIXING ON ITS OWN.** 18k requests in two minutes to one RDR endpoint
+  is our residential IP hammering ReserveCalifornia, which is the address that has eaten a
+  12-hour block. It is a separate problem with a separate fix, and it is not this one.
+- **THE HANDLE ARITHMETIC NOW LINES UP, AND IS STILL NOT A MEASUREMENT.** The handle count
+  exceeds a healthy renderer's by ~16,700 and 32,780 MB / 16,700 ≈ **2.0 MB each** — the shape
+  of ~16k pagefile-backed sections of 2 MB. `HandleCount` counts every kind of handle, so this
+  is a coincidence that fits, not evidence. **What settles it is the committed-region walk**
+  (`VirtualQueryEx` bucketed by `MEM_PRIVATE`/`MEM_MAPPED`/`MEM_IMAGE` with a size histogram),
+  which would show one 32 GB region or ~16k 2 MB ones and name its type. **BUILT 2026-09-05**,
+  and it was always a yes/no question rather than a fishing trip.
+- **ONE CANDIDATE, LABELLED AS ONE, AND IT IS NOT NEW — it is the one this file already had
+  left over.** "Chromium's own handling of the occluded window." RC's home page loads
+  `js.arcgis.com/4.30/...` and renders a WebGL map, and GPU transfer / shared-image buffers are
+  exactly the 2 MB pagefile-backed segment shape. **Nothing tests it yet.** Do not write it in
+  as the mechanism; three mechanisms have been guessed on this leak and each cost a session.
+- **AND IT DOES NOT REOPEN PARKING THE RESIDENT PAGE.** That is refused by `checkAndReport`'s
+  localStorage rule, which is a different objection and still holds.
+
+#### THE WALK IS BUILT — IT ASKS THE PROCESS, AND IT REFUSES RATHER THAN ANSWERING SMALL (2026-09-05)
+`ramp-scan.mjs` now ends in a `VirtualQueryEx` walk of the ramping renderer's whole address
+space, off the existing 3 GB trigger. It emits `VMWALK` / `VMREGION` / `VMHIST` / `VMTOP`, and
+between them they answer the two questions the four scans left: **ONE ~32 GB region or ~16k of
+2 MB** (the histogram), and **MEM_MAPPED or MEM_PRIVATE** (the region totals).
+- **IT WALKS A CONTROL BESIDE THE TARGET, AND THAT IS NOT A NICETY.** 32,780 MB is a
+  *difference*; with one term, *"the ramping renderer holds a 32 GB mapping"* cannot be told
+  from *"every renderer does"*. Target = the largest by private bytes, which at the trigger IS
+  the ramping one (3,061 MB against ~100 MB for everything else in the same scan); control = an
+  ordinary renderer. **Selected inside PowerShell**, so nothing is interpolated in from Node —
+  the fixed-script rule that file has had since it was written.
+- **EVERY WAY IT CAN FAIL PRINTS ITSELF.** A 32-bit host (which can only see a 32-bit slice of
+  a 64-bit address space), a failed `Add-Type`, a refused `OpenProcess` — each is a line naming
+  itself, and **none of them yields an empty region list**, which would read as *"there is no
+  32 GB mapping"*. That is the absent-reading-as-a-negative shape this file has paid for more
+  than any other, and here it would retire the investigation with a false negative.
+- **A TRUNCATED WALK SAYS SO ON THE HEALTHY PATH TOO** (`regions=`, `iters=`, `capped=`), or a
+  floor and a total read identically.
+- **IT GOES LAST IN THE SCRIPT.** `execFile` hands back the stdout it buffered even when it
+  kills the child on timeout, so every reading above it is already printed and safe; a walk
+  that hangs costs the walk and nothing else. Timeout 45s → 90s for the `csc.exe` compile plus
+  two walks, and still under the sampler's own two-minute cadence, so the worst case is one
+  skipped tick, once per ramp.
+- **IT QUERIES AND NEVER READS.** No `ReadProcessMemory`, no minidump — region metadata only.
+  Same rule as the multi-GB heap snapshot and `response.body()`: an instrument that copies the
+  memory it measures into this process is the cure arriving as part of the disease. And a
+  renderer's pages are RC session material, i.e. a field we would then have to filter.
+- **THE READOUT REFUSES A VERDICT THAT DOES NOT DOMINATE, and rendering a fixture is what
+  caught that.** Without the share gate the leading bucket was named whatever it carried, so
+  the CONTROL — an ordinary renderer with 18% in one bucket — was told it held *"a SWARM of
+  per-object shared-memory sections"*. A verdict that fires on every input fires on the one
+  process whose whole job is to be normal. It also prints the target-minus-control **EXCESS**
+  on one line: two blocks and a reader doing the subtraction is how a control stops working.
+- **HOW TO READ THE FIRST ONE.** `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`.
+  A handful of regions carrying the bulk ⇒ **ONE mapping**, and the question becomes what maps
+  a single 32 GB region. Thousands of equal ones ⇒ **per-object shared-memory sections**, and
+  the ~16,700 excess handles stop being arithmetic. `commit/mapped` vs `commit/private` says
+  which side of the shared/private line it is on. **Compare the EXCESS with the OS commit step
+  in the same scan** — if they agree, the walk has named the 35 GB.
+- **BOT-SIDE, so it is inert until the box updates**, and then it needs one ramp. Ramps arrive
+  every ~5 hours in the day (09-04 15:21, 19:34; 09-05 07:31, 12:13 PT) and about twelve
+  overnight. `npx tsx scripts/bot-ask.mts git-status` is what says the box has it —
+  **never `autocart.bot_version`**, which COALESCEs and can show a stale sha beside a live
+  heartbeat.
+- `worker/ramp-scan.test.mts`, eleven mutations, each grep-verified to APPLY and each caught.
+  **One guard was wrong at baseline and it is the recorded shape:** the 32-bit refusal was
+  pinned by a 120-character proximity window from `Is64BitProcess`, which reached the ADD-TYPE
+  refusal on the next line — so deleting the one it names passed. Anchored on the literal that
+  carries both the flag and the sentence. **And one of the mutations did not apply** (it moved
+  a line that was not the walk), which is a green proving nothing; redone so it genuinely
+  reorders the script.
 
 #### THREE FIGURES IN THIS FILE THAT CANNOT ALL BE TRUE (2026-09-05)
 Read before quoting any of them.
@@ -6556,6 +6662,43 @@ tree, the deploy and the fleet were all correct.
 
 ## Open / next session
 
+> ### 2026-09-05 EVENING — THE ARM FIRED, AND THE LEAK IS ONE FIXED 32 GB MAPPING
+>
+> **The RAMP arm fired within two and a half minutes of the box reaching `0029c22`** — peak
+> **3,702 MB against 8,879 MB** that morning, two minutes against twelve, `reason: 'bail:ramp'`,
+> and the wedge did not fire. **First containment in this investigation to act on a ramp.**
+>
+> **The finding is in the `ramp-scan` rows, not the request counts.** Four ramps, four for four:
+> the ramping renderer's `virtualMB` is **3,727,55x** against a healthy renderer's **3,694,7xx**
+> — a fixed **32,780 MB ± 7 MB** — with paged pool ~66.5 MB and ~17-19k handles, while every
+> healthy renderer in the same scan reads ~770 KB and ~250 handles. The ~35-40 GB commit step
+> that appears in one two-minute tick IS that mapping, and the pagefile shows **40 GB charged
+> with under 200 MB ever written**. Private bytes then climb at ~450 MB/min as the pages are
+> touched. **Read "THE 32 GB IS ONE FIXED MAPPING" above before doing anything.**
+>
+> **THE REQUEST LOOP IS NOT THE CAUSE, and I nearly wrote that it was.** The first bail named
+> 18,392 hits on `futurebookingstartsendsdates` in two minutes; the ramp twelve hours earlier
+> carried **197 requests in eleven hours** and the identical 32 GB signature. The readout's
+> verdict line said "the trigger is named" and now refuses the causal claim, guarded. **The loop
+> is still real and still worth fixing on its own** — 18k requests in two minutes from the
+> residential IP that has eaten a 12-hour block — but it is a different problem.
+>
+> **THE COMMITTED-REGION WALK IS BUILT (2026-09-05 evening) AND IS WAITING ON TWO THINGS: a box
+> update, then one ramp.** `VirtualQueryEx` over the ramping renderer's whole address space,
+> off the existing 3 GB trigger, with an ordinary renderer walked beside it as a CONTROL — see
+> "THE WALK IS BUILT" above for how to read the first one. It shows ONE 32 GB region or ~16k of
+> 2 MB and names the type. **Bot-side, so it is inert until the mini-PC moves** — confirm with
+> `npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version`. Then it needs a ramp:
+> **~5 hours apart in the day**, twelve overnight, so the first reading lands within a few hours
+> of the update. One candidate is on the board and is NOT established: RC's home page renders a
+> WebGL ArcGIS map, and GPU shared-image buffers have that shape.
+>
+> **AN EMPTY REGION LIST WOULD BE A REFUSAL, NEVER AN ANSWER.** A 32-bit host, a failed
+> `Add-Type` and a refused `OpenProcess` each print themselves. If the readout says the walk did
+> not run, read the reason — do not read it as "no 32 GB mapping was found".
+>
+> **Still: do not build Track B, and do not park the resident page.**
+>
 > ### 2026-09-05 — THE BAIL ARM WAS INERT, THE REQUEST COUNTER ANSWERED, AND A BAIL COST THE SESSION
 >
 > Read "IT FIRED, AND THE THIRD OF THOSE THREE IS WHAT HAPPENED" and the three sections after
