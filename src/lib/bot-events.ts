@@ -116,3 +116,35 @@ export async function recentBotEvents(
     [kind, String(Math.max(1, Math.floor(hours))), limit],
   );
 }
+
+/**
+ * WHICH OF THE THREE TOOK A `request-counts` READING — a PREFIX test, never an equality one.
+ *
+ * Every arm reported the bare `'bail'` until 2026-09-05, when #280 made each one name itself
+ * (`bail:ramp`, `bail:wedge`, …) so that which arm fired could be READ rather than inferred
+ * from the clock — twelve minutes being `HUNG_MS` to the minute — after the log window that
+ * would have settled it had already rolled. The readout's classifier was not moved with it.
+ *
+ * So from that commit until 2026-09-06 EVERY bail fell through to `other`, with two live
+ * consequences on the one instrument the leak investigation now depends on:
+ *
+ *   - the summary printed `0 at a bail` over two real bails, and
+ *   - the bail rows — the ONLY readings taken DURING a ramp — printed LAST, below the
+ *     teardowns the section header calls the baseline.
+ *
+ * That is this file's most-repeated shape: an absent reading standing in for a negative. A
+ * reader following `docs/NEXT-SESSION.md`'s own instruction ("read the `bail` rows first,
+ * teardowns are the baseline") would have concluded the arm never fired.
+ *
+ * `bail:` and not `bail`, so a future `bailout` cannot be swept in; the bare `'bail'` stays
+ * matched because rows written before #280 carry it and are still real bails. The full reason
+ * is what gets PRINTED either way, so the arm name is never lost.
+ */
+export type RequestCountReason = 'bail' | 'hung-close' | 'teardown' | 'other';
+
+export function requestCountReason(raw: unknown): RequestCountReason {
+  const r = typeof raw === 'string' ? raw : '';
+  if (r === 'bail' || r.startsWith('bail:')) return 'bail';
+  if (r === 'hung-close' || r === 'teardown') return r;
+  return 'other';
+}

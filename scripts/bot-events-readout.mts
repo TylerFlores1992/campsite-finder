@@ -46,7 +46,9 @@
  * NO EVENTS IS THE ORDINARY STATE until the box has updated to code that sends them, and
  * for ramp scans until a ramp has happened since. The absence is an absence, not a reading.
  */
-import { recentBotEvents, type BotEventRow } from '@/lib/bot-events';
+import {
+  recentBotEvents, requestCountReason, type BotEventRow, type RequestCountReason,
+} from '@/lib/bot-events';
 
 const arg = (name: string, dflt: string): string => {
   const i = process.argv.indexOf(`--${name}`);
@@ -276,11 +278,15 @@ if (counts.length === 0) {
   console.log('  torn down or bailed since. A teardown happens on every reopen, so this stays empty only');
   console.log('  while the box has not updated.');
 } else {
-  const byReason = (r: string) => counts.filter((c) => d(c).reason === r);
+  // ONE classifier, not two filters that can drift apart — which is exactly how they did.
+  // The bail arms name themselves (`bail:ramp`), so an equality test on 'bail' matched none of
+  // them: the summary read `0 at a bail` over real bails and they printed last, below the
+  // teardowns. See `requestCountReason`.
+  const byReason = (r: RequestCountReason) => counts.filter((c) => requestCountReason(d(c).reason) === r);
   const bails = byReason('bail');
   const hungs = byReason('hung-close');
   const tears = byReason('teardown');
-  const other = counts.filter((c) => !['bail', 'hung-close', 'teardown'].includes(String(d(c).reason)));
+  const other = byReason('other');
   console.log(`  ${bails.length} at a bail, ${hungs.length} on a hung close, ${tears.length} at a teardown${other.length ? `, ${other.length} other` : ''}.`);
   const show = (c: BotEventRow, full: boolean) => {
     const x = d(c);

@@ -6556,6 +6556,39 @@ request counter was built for.
   a browser that lived under `TEARDOWN_MIN_MS` (60s) reports nothing but is **counted forward**
   (`+N short reopen(s) not reported`) — silence and suppression must not read the same.
 
+##### AND NAMING THE ARM MADE THE READOUT COUNT ZERO BAILS (2026-09-06)
+The line above is the fix; this is what it broke one file over. `scripts/bot-events-readout.mts`
+classified `request-counts` rows with `reason === 'bail'`, an EQUALITY test, and the arms now
+post `bail:ramp`. So from #280 until 2026-09-06 **no bail was ever counted as one.**
+- **THE SUMMARY READ `0 at a bail` WITH TWO REAL BAILS PRINTED UNDER IT** — verified by running
+  it, not by reading the code. Both 09-05 bails fell through to `other`.
+- **AND THE ORDERING IS THE MORE EXPENSIVE HALF, because the count at least looks wrong.** The
+  section header promises *"Bails first — they are the reading taken during a ramp"*; `other`
+  renders LAST, so the only readings taken DURING a ramp printed at the bottom, below the
+  teardowns the same header calls the baseline. `docs/NEXT-SESSION.md` tells the next session to
+  *"read the `bail` rows first, teardowns are the baseline"* — followed literally against a
+  summary saying zero, that reads as **the arm never fired**, on the one instrument the leak
+  investigation now depends on.
+- **THE HOUSE SHAPE, AND THE SECOND TIME IN TWO DAYS FROM THE SAME COMMIT.** An absent reading
+  standing in for a negative. #280 also had to teach the readout that a bail is not a teardown;
+  what it did not do was move the classifier with the vocabulary it changed.
+- **ONE CLASSIFIER NOW, AND THAT IS THE ACTUAL REPAIR.** There were TWO filters — `byReason` and
+  a separately hand-written `!['bail','hung-close','teardown'].includes(...)` for `other` — which
+  is how they drifted apart while each looked right. `requestCountReason` in `src/lib/bot-events.ts`
+  is the single definition and both buckets derive from it.
+- **`bail:` AND NOT `bail`.** A bare prefix would sweep in a future `bailout`; the bare word
+  `'bail'` stays matched because pre-#280 rows carry it and are real bails. Miscounting in the
+  other direction is the same error wearing different clothes.
+- `src/lib/bot-events-reason.test.mts`, **eight mutations, each verified to APPLY and to fail** —
+  the equality test restored, the prefix widened, the bare word dropped, unknowns swept into
+  `bail`, the readout reverting to its own equality filter, `other` becoming a second list, and
+  the bails rendered after the baseline. **The ordering mutation had to be redone**: the first
+  version DELETED the bail render loop, so it tripped the "all three loops present" assertion
+  instead of the ordering one — a catch that proves nothing about the rule it claims to guard.
+- **GUARDS UNDER `src/`, NOT `worker/`**, checked against `worker-deploy.yml`'s `paths:` rather
+  than remembered: `scripts/**` and `src/lib/bot-events.ts` are in neither list, so **this
+  restarts no poller.**
+
 #### EVERY BAIL WAS ALSO SPENDING THE RC SESSION (2026-09-05)
 `bail()` wrote the abnormal-exit marker, printed the breadcrumb, released the profile lock and
 exited. **It never wrote the token down.** `readLiveToken` prefers `window.__camphawkRcToken`,
@@ -6631,6 +6664,17 @@ the four `ramp-scan` rows say so in one column.
   is present in the ramp with 18,392 hits on one path and in the ramp with 197 requests in
   eleven hours, so **a loop cannot be the cause of an event it is absent from.** The 09-05 07:31
   reading is the counter-example and it was taken by the same instrument on the same day.
+- **AND THE OTHER DIRECTION IS NOW MEASURED TOO — A LOOP WITH NO RAMP (2026-09-05 09:47 PT).**
+  The entry above rests on a ramp with no loop. The teardown at 09:47:06 PT is its mirror:
+  **19,008 hits on `futurebookingstartsendsdates` in 120 seconds**, on a browser 0m old — and
+  `chromium_memory_samples` across that whole window reads **227 MB, then 209, 208, 208**, with
+  no ramp-scan triggered because the family never came near the 3,000 MB bar. **A loop running
+  at full rate cost nothing.** So the two are independent in BOTH directions, and the decoupling
+  no longer rests on a single counter-example. **Do not soften this back to "probably not the
+  cause"** — it is measured twice, from opposite sides.
+- **THE LOOP IS STILL WORTH FIXING AND IS STILL A SEPARATE FIX.** ~19,000 requests in two
+  minutes to one RDR endpoint is our residential IP, which has eaten a 12-hour block once. That
+  is the reason to act on it; the memory is not.
 - **AND THE COMMIT STEP IS THE SAME MAPPING SEEN FROM THE OS.** Both 09-05 events step in ONE
   two-minute tick: 7,513 → 47,823 MB (07:29→07:31) and 9,096 → 43,356 MB (12:12→12:13), while
   the rc family moves only 290 → 3,203 and 313 → 1,885. **~35-40 GB of commit against ~2-3 GB
@@ -6756,6 +6800,14 @@ EXCESS 37277 MB   vs the OS commit step of ~40 GB in the same scan
   Same signature, opposite traffic.
 - **THE RAMP ARM ENDED IT AGAIN**: `bail:ramp`, peak **4,915 MB** against 8-9 GB before the arm
   existed, and the twelve-minute wedge did not fire.
+- **AND #280's TWO-MINUTE BAIL DOES NOT STARVE THE 3 GB SCAN — the worry was real and it is
+  settled twice over.** The arm now cuts a ramp at ~2 min and ~3.7 GB where it used to run
+  twelve minutes to 9 GB, so it could in principle exit before the scan's threshold was
+  crossed. It cannot: `RAMP_SCAN_MB` and `RAMP_MB_DEFAULT` are both **3000 and pinned equal**,
+  and the bail reads the very `.memory-latest.json` the sampler writes, so the bail cannot
+  become eligible before the scan has already triggered. The scan also runs in `bot.mjs`, which
+  the bail — which exits the keep-warm — does not kill. **Empirically: the 12:14 PT bailed ramp
+  produced a scan, and this 20:29 one produced a scan AND the walk.**
 - **ONE READING CAVEAT, so nobody chases it.** The CONTROL prints its own verdict line —
   *"70% … in the 16-256M bucket, 3 region(s): ONE mapping"* — which is the share gate
   describing an ordinary renderer's normal reservations, not a finding about the control. **The
@@ -6981,6 +7033,12 @@ tree, the deploy and the fleet were all correct.
 > for per-process roots, histogram and owners). **Join on the pid** — check the dump's lead pid
 > against the ramp-scan's walk TARGET for the same event, or a dump of a healthy renderer reads
 > as a finding.
+>
+> **THE READOUT COUNTED ZERO BAILS UNTIL 2026-09-06 — fixed (see "AND NAMING THE ARM MADE THE
+> READOUT COUNT ZERO BAILS").** The arms post `bail:ramp` and the classifier tested `=== 'bail'`,
+> so the summary said `0 at a bail` over two real ones and printed them LAST, under the
+> teardowns. It reads `2 at a bail` and renders them first now. **An older transcript showing
+> `0 at a bail` is that bug, not a quiet box.**
 >
 > **THE RDR BURST IS THE NEXT REAL BUG, AND IT IS NOT THE LEAK.** ~19,000 requests to one RDR
 > path in the first **15-26 seconds** of a browser's life — **738 and 848 req/s**, from the
