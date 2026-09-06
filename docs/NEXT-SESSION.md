@@ -17,17 +17,23 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > a process the walk says holds 32 GB of `commit/mapped` ⇒ they are **not**, which eliminates
 > discardable, mojo and the GPU transfer path **together**. The readout prints both.
 >
-> **THREE STEPS, IN ORDER:**
-> 1. **Merge the PR.** It carries a `worker/*.test.mts`, so the merge **fires a worker deploy
->    and restarts all three pollers** — expected; check `poller.shards` is 3/3 after.
-> 2. **Update the box** (Admin → "Update now", or a quiet-window run) and confirm with
->    `npx tsx scripts/bot-ask.mts git-status`, **never `autocart.bot_version`**, which
->    COALESCEs and shows a stale sha beside a live heartbeat. **Nothing fires until the box has
->    it** — it is all bot-side.
-> 3. **Wait for a ramp.** `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`, MEMORY
->    DUMPS section; `--all` for the per-process roots, histogram and owners. **Do NOT queue a
->    test hold to force one** — three arrived free in thirty hours once and all three were
->    missed, and a staged one locks a real campsite.
+> **MERGED (#285, `5399000`), ON THE BOX, AND ITS FIRST READING IS IN.** The fleet came back
+> 3/3 shards with a 2s heartbeat; the mini-PC took the sha at 07:56 PT (`bot-ask git-status`,
+> not `autocart.bot_version`); and the first baseline landed at **07:59:33 — 332 ms, 8
+> processes, `gpu/transfer_memory — 5 MB across 13`.**
+>
+> **THAT CLOSES THE WINDOWS HALF OF THE VALIDATION CAVEAT.** The probe could only show the
+> instrument reads a real trace on Linux; this shows the dump arrives on the box, the folding
+> works and **the ownership edges resolve to a named subsystem there too**. On a healthy box
+> the lead is the GPU process rather than a renderer, which is the expected shape, and the
+> `2-4M` bucket already holds one 2 MB mapping — so that size is ordinary in small numbers and
+> it is the COUNT that will matter.
+>
+> **SO THE ONLY STEP LEFT IS TO WAIT FOR A RAMP.**
+> `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`, MEMORY DUMPS section; `--all`
+> for the per-process roots, histogram and owners. **Do NOT queue a test hold to force one** —
+> three arrived free in thirty hours once and all three were missed, and a staged one locks a
+> real campsite.
 >
 > **HOW TO READ IT.** `discardable/segment` at ~32 GB is the answer this investigation has been
 > reaching for. `(no ownership edge)` at ~32 GB is a third finding and a new question — base
