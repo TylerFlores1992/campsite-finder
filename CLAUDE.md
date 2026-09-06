@@ -6454,7 +6454,9 @@ nobody had reached.**
   measurement that could name it is a **committed-region walk of the ramping renderer** —
   `VirtualQueryEx` bucketed by `MEM_PRIVATE`/`MEM_MAPPED`/`MEM_IMAGE` with a region-size
   histogram, from `ramp-scan.mjs`'s existing 3 GB trigger so it never spawns at the peak.
-  **Not built**, and it is the only instrument still worth building.
+  ~~**Not built**, and it is the only instrument still worth building.~~ **BUILT 2026-09-05 —
+  see "THE WALK IS BUILT" below.** Struck rather than deleted: "not built" on the instrument
+  everything else is waiting for is exactly the sentence a later reader quotes as a task.
 - **DO NOT build Track B.** It replaces the renewal's Okta trip, and that trip is measured flat
   (`[renewal] -4 MB over 640s`). It was already doubly weakened; this is the third reason.
 - ~~**`~18,700 handles × 2 MB ≈ 37 GB` IS ARITHMETIC, NOT A MEASUREMENT.**~~ Still arithmetic,
@@ -6501,8 +6503,8 @@ the four `ramp-scan` rows say so in one column.
   of ~16k pagefile-backed sections of 2 MB. `HandleCount` counts every kind of handle, so this
   is a coincidence that fits, not evidence. **What settles it is the committed-region walk**
   (`VirtualQueryEx` bucketed by `MEM_PRIVATE`/`MEM_MAPPED`/`MEM_IMAGE` with a size histogram),
-  which would show one 32 GB region or ~16k 2 MB ones and name its type. It remains the only
-  instrument worth building, and it is now a yes/no question rather than a fishing trip.
+  which would show one 32 GB region or ~16k 2 MB ones and name its type. **BUILT 2026-09-05**,
+  and it was always a yes/no question rather than a fishing trip.
 - **ONE CANDIDATE, LABELLED AS ONE, AND IT IS NOT NEW — it is the one this file already had
   left over.** "Chromium's own handling of the occluded window." RC's home page loads
   `js.arcgis.com/4.30/...` and renders a WebGL map, and GPU transfer / shared-image buffers are
@@ -6510,6 +6512,58 @@ the four `ramp-scan` rows say so in one column.
   as the mechanism; three mechanisms have been guessed on this leak and each cost a session.
 - **AND IT DOES NOT REOPEN PARKING THE RESIDENT PAGE.** That is refused by `checkAndReport`'s
   localStorage rule, which is a different objection and still holds.
+
+#### THE WALK IS BUILT — IT ASKS THE PROCESS, AND IT REFUSES RATHER THAN ANSWERING SMALL (2026-09-05)
+`ramp-scan.mjs` now ends in a `VirtualQueryEx` walk of the ramping renderer's whole address
+space, off the existing 3 GB trigger. It emits `VMWALK` / `VMREGION` / `VMHIST` / `VMTOP`, and
+between them they answer the two questions the four scans left: **ONE ~32 GB region or ~16k of
+2 MB** (the histogram), and **MEM_MAPPED or MEM_PRIVATE** (the region totals).
+- **IT WALKS A CONTROL BESIDE THE TARGET, AND THAT IS NOT A NICETY.** 32,780 MB is a
+  *difference*; with one term, *"the ramping renderer holds a 32 GB mapping"* cannot be told
+  from *"every renderer does"*. Target = the largest by private bytes, which at the trigger IS
+  the ramping one (3,061 MB against ~100 MB for everything else in the same scan); control = an
+  ordinary renderer. **Selected inside PowerShell**, so nothing is interpolated in from Node —
+  the fixed-script rule that file has had since it was written.
+- **EVERY WAY IT CAN FAIL PRINTS ITSELF.** A 32-bit host (which can only see a 32-bit slice of
+  a 64-bit address space), a failed `Add-Type`, a refused `OpenProcess` — each is a line naming
+  itself, and **none of them yields an empty region list**, which would read as *"there is no
+  32 GB mapping"*. That is the absent-reading-as-a-negative shape this file has paid for more
+  than any other, and here it would retire the investigation with a false negative.
+- **A TRUNCATED WALK SAYS SO ON THE HEALTHY PATH TOO** (`regions=`, `iters=`, `capped=`), or a
+  floor and a total read identically.
+- **IT GOES LAST IN THE SCRIPT.** `execFile` hands back the stdout it buffered even when it
+  kills the child on timeout, so every reading above it is already printed and safe; a walk
+  that hangs costs the walk and nothing else. Timeout 45s → 90s for the `csc.exe` compile plus
+  two walks, and still under the sampler's own two-minute cadence, so the worst case is one
+  skipped tick, once per ramp.
+- **IT QUERIES AND NEVER READS.** No `ReadProcessMemory`, no minidump — region metadata only.
+  Same rule as the multi-GB heap snapshot and `response.body()`: an instrument that copies the
+  memory it measures into this process is the cure arriving as part of the disease. And a
+  renderer's pages are RC session material, i.e. a field we would then have to filter.
+- **THE READOUT REFUSES A VERDICT THAT DOES NOT DOMINATE, and rendering a fixture is what
+  caught that.** Without the share gate the leading bucket was named whatever it carried, so
+  the CONTROL — an ordinary renderer with 18% in one bucket — was told it held *"a SWARM of
+  per-object shared-memory sections"*. A verdict that fires on every input fires on the one
+  process whose whole job is to be normal. It also prints the target-minus-control **EXCESS**
+  on one line: two blocks and a reader doing the subtraction is how a control stops working.
+- **HOW TO READ THE FIRST ONE.** `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`.
+  A handful of regions carrying the bulk ⇒ **ONE mapping**, and the question becomes what maps
+  a single 32 GB region. Thousands of equal ones ⇒ **per-object shared-memory sections**, and
+  the ~16,700 excess handles stop being arithmetic. `commit/mapped` vs `commit/private` says
+  which side of the shared/private line it is on. **Compare the EXCESS with the OS commit step
+  in the same scan** — if they agree, the walk has named the 35 GB.
+- **BOT-SIDE, so it is inert until the box updates**, and then it needs one ramp. Ramps arrive
+  every ~5 hours in the day (09-04 15:21, 19:34; 09-05 07:31, 12:13 PT) and about twelve
+  overnight. `npx tsx scripts/bot-ask.mts git-status` is what says the box has it —
+  **never `autocart.bot_version`**, which COALESCEs and can show a stale sha beside a live
+  heartbeat.
+- `worker/ramp-scan.test.mts`, eleven mutations, each grep-verified to APPLY and each caught.
+  **One guard was wrong at baseline and it is the recorded shape:** the 32-bit refusal was
+  pinned by a 120-character proximity window from `Is64BitProcess`, which reached the ADD-TYPE
+  refusal on the next line — so deleting the one it names passed. Anchored on the literal that
+  carries both the flag and the sentence. **And one of the mutations did not apply** (it moved
+  a line that was not the walk), which is a green proving nothing; redone so it genuinely
+  reorders the script.
 
 #### THREE FIGURES IN THIS FILE THAT CANNOT ALL BE TRUE (2026-09-05)
 Read before quoting any of them.
@@ -6629,11 +6683,19 @@ tree, the deploy and the fleet were all correct.
 > is still real and still worth fixing on its own** — 18k requests in two minutes from the
 > residential IP that has eaten a 12-hour block — but it is a different problem.
 >
-> **NEXT, AND IT IS NOW A YES/NO QUESTION:** the committed-region walk of the ramping renderer
-> (`VirtualQueryEx` bucketed by `MEM_PRIVATE`/`MEM_MAPPED`/`MEM_IMAGE` with a size histogram),
-> from `ramp-scan.mjs`'s existing 3 GB trigger. It would show one 32 GB region or ~16k of 2 MB
-> and name its type. **Not built.** One candidate is on the board and is NOT established: RC's
-> home page renders a WebGL ArcGIS map, and GPU shared-image buffers have that shape.
+> **THE COMMITTED-REGION WALK IS BUILT (2026-09-05 evening) AND IS WAITING ON TWO THINGS: a box
+> update, then one ramp.** `VirtualQueryEx` over the ramping renderer's whole address space,
+> off the existing 3 GB trigger, with an ordinary renderer walked beside it as a CONTROL — see
+> "THE WALK IS BUILT" above for how to read the first one. It shows ONE 32 GB region or ~16k of
+> 2 MB and names the type. **Bot-side, so it is inert until the mini-PC moves** — confirm with
+> `npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version`. Then it needs a ramp:
+> **~5 hours apart in the day**, twelve overnight, so the first reading lands within a few hours
+> of the update. One candidate is on the board and is NOT established: RC's home page renders a
+> WebGL ArcGIS map, and GPU shared-image buffers have that shape.
+>
+> **AN EMPTY REGION LIST WOULD BE A REFUSAL, NEVER AN ANSWER.** A 32-bit host, a failed
+> `Add-Type` and a refused `OpenProcess` each print themselves. If the readout says the walk did
+> not run, read the reason — do not read it as "no 32 GB mapping was found".
 >
 > **Still: do not build Track B, and do not park the resident page.**
 >
