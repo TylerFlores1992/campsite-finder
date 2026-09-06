@@ -5859,8 +5859,18 @@ scheduling layer.
 
 #### IT IS A DAILY CRON FOR A WEEK NOW (2026-09-04) — with two gaps recorded, not papered over
 Owner: *"make it a daily cron for a week then we should have plenty of info."*
-`trig_012K7iCrj1J9KspyqGucZSHC` is `56 14 * * *` (07:56 PT), first fire **2026-09-05**, and it
-**self-disables on any Pacific date ≥ 2026-09-12.**
+**`trig_01MDTcr2WFDqX6dCsi7gVDPG`** is `56 14 * * *` (07:56 PT) and it **self-disables on any
+Pacific date ≥ 2026-09-12.** First RECORDED fire is **2026-09-06**, not 09-05.
+- **THE ID CHANGED ON 2026-09-05 AND THE OLD ONE IS DEAD.** `trig_012K7iCrj1J9KspyqGucZSHC`
+  fired into a fresh session with **no repository attached**, so it could not run the script at
+  all — it was replaced with a Routine bound to a session that has the checkout. **Every earlier
+  mention of that id in this file is historical**, and `mcp__Claude_Code_Remote__update_trigger`
+  cannot change `persistent_session_id`, so the fix had to be a delete-and-recreate. This is the
+  second time an ID written into this file went stale within days (issue #181 was the first):
+  **read `list_triggers` before acting on any trigger id here.**
+- **`rc_release_readings` READING ZERO ROWS ON 2026-09-05 IS THE EXPECTED STATE, NOT A FAULT.**
+  The replacement's first firing is 09-06 07:56 PT. `scripts/rc-release-readout.mts` says as
+  much in its own empty-case text; do not read it as the `--record` path being broken.
 - **THE DATE IS NO LONGER HARDCODED** —
   `--release=$(TZ=America/Los_Angeles date +%F)T08:00:00`. A daily Routine carrying a fixed
   date measures the same morning seven times and reports `THE QUESTION WAS NEVER REACHED`
@@ -6595,7 +6605,8 @@ test's scoped UPDATE matches nothing — the `reclaimLapsedHolds` test-versus-pr
 one function over.
 
 **`rc_release_readings` (migration 076, APPLIED) + `--record`.** The daily release-window
-Routine (`trig_012K7iCrj1J9KspyqGucZSHC`, 07:56 PT through 09-11) now records one row per
+Routine (**`trig_01MDTcr2WFDqX6dCsi7gVDPG`** — the id changed on 09-05, see above; 07:56 PT
+through 09-11) now records one row per
 facility — the BRACKET (latest still-locked, earliest free), never a midpoint; `split_brackets`
 for a non-atomic facility; NULL for an absence; nothing at all for a run that never reached the
 question. Readout: `NODE_USE_ENV_PROXY=1 npx tsx scripts/rc-release-readout.mts`. The Routine's
@@ -6683,19 +6694,27 @@ tree, the deploy and the fleet were all correct.
 > is still real and still worth fixing on its own** — 18k requests in two minutes from the
 > residential IP that has eaten a 12-hour block — but it is a different problem.
 >
-> **THE COMMITTED-REGION WALK IS BUILT (2026-09-05 evening) AND IS WAITING ON TWO THINGS: a box
-> update, then one ramp.** `VirtualQueryEx` over the ramping renderer's whole address space,
-> off the existing 3 GB trigger, with an ordinary renderer walked beside it as a CONTROL — see
-> "THE WALK IS BUILT" above for how to read the first one. It shows ONE 32 GB region or ~16k of
-> 2 MB and names the type. **Bot-side, so it is inert until the mini-PC moves** — confirm with
-> `npx tsx scripts/bot-ask.mts git-status`, never `autocart.bot_version`. Then it needs a ramp:
-> **~5 hours apart in the day**, twelve overnight, so the first reading lands within a few hours
-> of the update. One candidate is on the board and is NOT established: RC's home page renders a
-> WebGL ArcGIS map, and GPU shared-image buffers have that shape.
+> **THE COMMITTED-REGION WALK IS LIVE ON THE BOX AND IS WAITING ON ONE RAMP** (#281, merged as
+> `2ecaca8`; applied to the mini-PC 2026-09-06 01:10 UTC in 22 seconds and confirmed by
+> `bot-ask git-status`, not by `autocart.bot_version`). `VirtualQueryEx` over the ramping
+> renderer's whole address space, off the existing 3 GB trigger, with an ordinary renderer
+> walked beside it as a CONTROL — see "THE WALK IS BUILT" above for how to read the first one.
+> It shows ONE 32 GB region or ~16k of 2 MB and names the type. Ramps arrive **~5 hours apart in
+> the day** and twelve overnight, so the first reading is due within hours. One candidate is on
+> the board and is NOT established: RC's home page renders a WebGL ArcGIS map, and GPU
+> shared-image buffers have that shape.
 >
 > **AN EMPTY REGION LIST WOULD BE A REFUSAL, NEVER AN ANSWER.** A 32-bit host, a failed
-> `Add-Type` and a refused `OpenProcess` each print themselves. If the readout says the walk did
-> not run, read the reason — do not read it as "no 32 GB mapping was found".
+> `Add-Type`, a refused `OpenProcess` and a caught throw each print themselves. If the readout
+> says the walk did not run, read the reason — do not read it as "no 32 GB mapping was found".
+> The last of those four was a defect fixed after the walk was written and before it shipped:
+> the catch named the failure and the four emissions below it ran anyway, so a walk that threw
+> printed `status=error` and then `status=ok regions=` with empty totals — which the readout
+> counts as a completed walk that found nothing. `$ok` gates them now.
+>
+> **THE FLEET IS HEALTHY AFTER THE MERGE'S WORKER DEPLOY: 3/3 shards held, heartbeat 4s, 18 of
+> 19 checks ok.** The one warn is `rc_login`, standing down inside its once-per-20h gate having
+> passed on 09-05 — a stand-down, not a failure.
 >
 > **Still: do not build Track B, and do not park the resident page.**
 >
@@ -6735,8 +6754,9 @@ tree, the deploy and the fleet were all correct.
 > `✗ RAMP` line and its `request-counts` event are the reading; the readout says which way it
 > went. No new ramp had arrived by 02:30 UTC 09-05 (the readout still
 > shows one scan, one close). `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`. **The daily
-> release-window Routine records now** (`--record`; `scripts/rc-release-readout.mts`); first
-> recorded run 09-05 07:56 PT. **Track B still needs the owner's word.** `POLL_MS` (§27, folded
+> release-window Routine records now** (`--record`; `scripts/rc-release-readout.mts`); **first
+> recorded run is 09-06 07:56 PT under a NEW trigger id — 09-05's fired under the old one, into
+> a session with no repository attached, and recorded nothing.** **Track B still needs the owner's word.** `POLL_MS` (§27, folded
 > above) is the cheapest open lever and needs a bot restart, not a deploy. **The iOS build
 > exists (TestFlight #12, 08-29); the iPhone needs to install it.**
 >
