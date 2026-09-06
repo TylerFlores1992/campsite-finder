@@ -1,55 +1,71 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-05 19:40 PT** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-06** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
-> ## THE ONE THING TO DO FIRST — READ THE REGION WALK
+> ## THE WALK ANSWERED — 16,387 MAPPED SECTIONS OF 2 MB (read 2026-09-06)
 >
-> **The committed-region walk is LIVE ON THE BOX and armed. It needs one ramp, and then one
-> command.** Everything else below is older context.
+> **The committed-region walk fired on its first ramp and named the class of the 32 GB.** The
+> assignment that stood here is DONE; what follows is the reading and what it leaves open.
 >
 > ```
 > NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts
 > ```
 >
-> **WHAT IT ANSWERS.** Four `ramp-scan` readings agree to within **7 MB** that the ramping
-> renderer's virtual size exceeds a healthy renderer's by a FIXED **32,780 MB**, with ~66.5 MB
-> of paged pool and ~17-19k handles against ~770 KB and ~250. The OS commits ~40 GB and the
-> pagefile shows under 200 MB ever written — committed, **untouched**, pagefile-backed shared
-> sections, which is the one class of allocation that private bytes, free RAM and the CDP
-> sampling profiler all structurally exclude. That is why five instruments in a row reported
-> nothing. The walk asks the process directly, with a CONTROL renderer beside it because
-> 32,780 MB is a DIFFERENCE.
+> ```
+> TARGET  pid=16004 renderer privateMB=4587  regions=81143  capped=False
+>   committed 37680 MB across 49056 region(s) — image 310 · mapped 32852 · private 4518
+>   2-4M      32779 MB across 16387 region(s)   <- 87% of the committed bytes
+>   handles=19002   pagedPoolKB=66586
+> CONTROL pid=8712  renderer privateMB=16    regions=898
+>   committed   403 MB — image 310 · mapped 84 · private 9    handles=213
+> EXCESS 37277 MB      OS commit step in the same scan ~40 GB
+> PAGEFILE allocatedMB=33992 currentMB=0 peakMB=0
+> ```
 >
-> **HOW TO READ IT, and the readout prints these verdicts itself rather than leaving you to
-> derive them:**
-> - **A handful of regions carrying the bulk ⇒ ONE mapping.** The question becomes what maps a
->   single region that size. The standing candidate — NOT established, do not write it in — is
->   RC's home page rendering a WebGL ArcGIS map, whose GPU shared-image buffers have that shape.
-> - **Thousands of same-sized regions ⇒ a SWARM of per-object sections**, and the ~16,700
->   excess handles stop being arithmetic (32,780 MB / 16,700 ≈ 2.0 MB each).
-> - **`commit/mapped` vs `commit/private`** says which side of the shared/private line it is on.
-> - **Compare the EXCESS line with the OS commit step in the same scan.** If they agree, the
->   walk has named the 35 GB.
+> **WHAT IS NOW SETTLED.**
+> - **It is `commit/mapped`** — 16,549 mapped regions / 32,852 MB against the control's 74 / 84.
+>   Pagefile-backed shared-memory SECTIONS, charged and **never written** (`currentMB=0`), which
+>   is why private bytes, free RAM, the JS heap and the CDP sampling profiler were all
+>   structurally blind. Five instruments, one reason.
+> - **A SWARM, not one mapping.** That fork is closed. 32,779 MB / 16,387 ≈ **2.0 MB each**, and
+>   the `~16,700 excess handles × 2 MB` figure carried for two days as "arithmetic, not a
+>   measurement" is now a measurement — handles 19,002 against 213, two independent counts
+>   agreeing.
+> - **The private half is the smaller half.** `commit/private` 4,518 MB is the ~450 MB/min of
+>   pages being touched — all the memory series ever saw. The 32.8 GB arrives in one step at the
+>   onset and shows up only as a commit jump.
+>
+> **WHAT IS OPEN, AND IT IS NOW THE WHOLE QUESTION: what creates ~16.4k live 2 MB sections and
+> never releases them.** Untested candidates — Chromium discardable shared memory (allocates in
+> segments, exactly this shape), shared-image/GPU transfer buffers, mojo data pipes. RC's home
+> page renders a WebGL ArcGIS map and that candidate is unchanged, neither strengthened nor
+> ruled out. **Three mechanisms have been guessed on this leak and each cost a session — do not
+> write one in.**
+>
+> **A SECOND WALK IS FREE CORROBORATION.** Ramps arrive ~5 hours apart in the day and about
+> twelve overnight; nothing needs building and nothing needs staging. **Do NOT queue a test hold
+> to force one** — three arrived free in thirty hours once and all three were missed, and a
+> staged one locks a real campsite.
 >
 > **AN EMPTY REGION LIST IS A REFUSAL, NEVER AN ANSWER.** A 32-bit host, a failed `Add-Type`, a
-> refused `OpenProcess` and a caught throw each print themselves by name. If the readout says
-> the walk did not run, **read the reason** — do not read it as "no 32 GB mapping was found".
-> The readout also distinguishes *this scan predates the walk* from *the walk refused*.
+> refused `OpenProcess` and a caught throw each print themselves by name, and the readout
+> distinguishes *this scan predates the walk* from *the walk refused*. **Read the reason.**
 >
-> **THE READOUT REFUSES A VERDICT THAT DOES NOT DOMINATE** (a 60% share gate). That was caught
-> by rendering a fixture, not by reading the code: without it the CONTROL — an ordinary
-> renderer with 18% in one bucket — was told it held "a SWARM of per-object shared-memory
-> sections", i.e. the verdict fired on every input including the one process whose whole job is
-> to be normal.
+> **ONE READING CAVEAT.** The CONTROL prints its own verdict line (*"70% … 3 region(s): ONE
+> mapping"*) — that is the 60% share gate describing an ordinary renderer's normal reservations,
+> not a finding about the control. **The EXCESS line carries the comparison.**
 >
-> **THE RDR REQUEST LOOP IS NOT THIS LEAK'S CAUSE, and the temptation to say so is real.** One
-> bail named **18,392 requests in two minutes** on
-> `rdapi.reservecalifornia.com/api/webaccessfacility/futurebookingstartsendsdates`. The ramp
-> twelve hours earlier carried **197 requests in ELEVEN HOURS** and the identical 32 GB
-> signature, so a loop cannot cause an event it is absent from. The loop is still real and
-> still worth fixing on its own merits — it is our residential IP, which has eaten a 12-hour
-> block once — but it is a **separate problem with a separate fix.**
+> **THE RDR REQUEST LOOP IS NOT THIS LEAK'S CAUSE — now confirmed from a third direction.** This
+> ramp's counter was **flat** (`0 in 120s / 109 lifetime`, browser 125m old) and carried the
+> identical 32,779 MB, while the 12:14 PT ramp ran **18,392 requests** on
+> `rdapi.reservecalifornia.com/api/webaccessfacility/futurebookingstartsendsdates` and carried
+> the same signature. Same mapping, opposite traffic. The loop is still real and still worth
+> fixing on its own merits — it is our residential IP, which has eaten a 12-hour block once —
+> but it is a **separate problem with a separate fix.**
+>
+> **THE RAMP ARM ENDED IT AGAIN**: `bail:ramp`, peak **4,915 MB** against 8-9 GB before the arm
+> existed, and the twelve-minute wedge did not fire.
 >
 > **STILL FORBIDDEN, each for a recorded reason:** do not build **Track B** (it replaces the
 > renewal's Okta trip, measured flat at `-4 MB over 640s`, and is now weakened three ways); do
@@ -58,25 +74,19 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > (that change killed a working repair on 08-19, and untouched commit never moves free RAM,
 > which is why the RAM arm has sat out sixteen consecutive ramps).
 >
-> ### STATE AT 2026-09-05 19:40 PT
+> ### STATE AT 2026-09-06
 >
 > | | |
 > |---|---|
-> | master | `aebaf13` |
+> | master | `6fdd1de` plus this write-up |
 > | mini-PC | `2ecaca8`, confirmed by `bot-ask git-status` — **never** `autocart.bot_version`, which COALESCEs and shows a stale sha beside a live heartbeat |
 > | fleet | 3/3 shards held, heartbeat 4s, **18 of 19** checks ok |
-> | box | flat at ~278 MB, commit 7.1/17.1 GB — the pre-ramp baseline |
 > | holds | none queued, so the 6h update gate is open |
-> | open PRs | none |
+> | migrations | highest **076**; main's block is **077-079**, side's is **080+** |
 >
-> - **#281 merged (`2ecaca8`)** — the walk. Applied to the box in **22 seconds**.
-> - **#282 merged (`aebaf13`)** — the trigger-id correction below.
+> - **#281 (`2ecaca8`) the walk · #282 (`aebaf13`) the trigger id · #283 (`6fdd1de`) handover.**
 > - **The one warn is `rc_login`**, standing down inside its once-per-20h gate having passed on
 >   09-05. **A stand-down is not a failure**; do not chase it.
-> - **Last ramp 12:14 PT.** Cadence is ~5-6 h in the day and about twelve overnight, with an
->   observed spread of 5-28 h — so a quiet evening is not a cure and not a fault. **Do NOT
->   queue a test hold to force one**: three arrived free in thirty hours once and all three
->   were missed, and a staged one locks a real campsite.
 >
 > ### THE RELEASE-WINDOW TRIGGER ID CHANGED — read `list_triggers`, never a doc
 >

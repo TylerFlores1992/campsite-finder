@@ -6575,6 +6575,55 @@ between them they answer the two questions the four scans left: **ONE ~32 GB reg
   a line that was not the walk), which is a green proving nothing; redone so it genuinely
   reorders the script.
 
+#### IT ANSWERED ON ITS FIRST RAMP: 16,387 MAPPED SECTIONS OF 2 MB (2026-09-05 20:29 PT)
+The box took `2ecaca8` at 01:10 UTC and the walk fired on the next ramp, ~2h20m later. **The
+32,780 MB is a SWARM, it is `mapped`, and the handle arithmetic this file has carried as
+"arithmetic, not a measurement" for two days is now a measurement.**
+```
+TARGET  pid=16004 renderer privateMB=4587  regions=81143  capped=False
+  committed 37680 MB across 49056 region(s) — image 310 · mapped 32852 · private 4518
+  2-4M      32779 MB across 16387 region(s)   <- 87% of the committed bytes
+  64K-1M     2375 MB across 18179 region(s)
+  handles=19002   pagedPoolKB=66586
+CONTROL pid=8712  renderer privateMB=16    regions=898
+  committed   403 MB across   635 region(s) — image 310 · mapped 84 · private 9
+  handles=213     pagedPoolKB=770
+EXCESS 37277 MB   vs the OS commit step of ~40 GB in the same scan
+```
+- **THE CLASS IS SETTLED: `commit/mapped`, 16,549 regions / 32,852 MB against the control's
+  74 / 84 MB.** Pagefile-backed shared-memory sections, which is exactly what the pagefile
+  figures predicted from the other side — this scan reads `allocatedMB=33992, currentMB=0,
+  peakMB=0`: **34 GB charged and not one byte ever written.** That is why private bytes, free
+  RAM, the JS heap and the sampling profiler were all blind to it, five instruments in a row.
+- **A SWARM, NOT ONE MAPPING — and that was a real fork.** The readout's own reading rule said
+  a handful of regions ⇒ ask what maps a single 32 GB region; thousands of equal ones ⇒
+  per-object sections. It is **16,387 regions in the 2-4M bucket**, so the second branch, and
+  the first is dead. `32,779 MB / 16,387 ≈ 2.0 MB` — the figure that was inferred from
+  `~16,700 excess handles × 2 MB` on 09-05 and correctly labelled a coincidence that fits.
+  Handles are 19,002 against 213, an excess of ~18,789 against 16,387 regions: **the two
+  independent counts agree.**
+- **THE PRIVATE HALF IS THE CLIMB, AND IT IS THE SMALLER HALF.** `commit/private` is 4,518 MB
+  — the ~450 MB/min of pages actually being touched, which is all the memory series ever saw.
+  The 32.8 GB it never saw is the mapping arriving in one step at the onset.
+- **WHAT CREATES THEM IS STILL NOT ESTABLISHED — do not write one in.** What is now known is
+  that something in that renderer holds ~16.4k live two-megabyte pagefile-backed sections and
+  does not release them. Candidates, none tested: Chromium's discardable shared memory (which
+  allocates in segments and is exactly this shape), shared-image/GPU transfer buffers, or mojo
+  data pipes. **RC's home page renders a WebGL ArcGIS map** and that candidate is unchanged by
+  this — it is now a much better-aimed question, not an answer. Three mechanisms have been
+  guessed on this leak and each cost a session.
+- **THE REQUEST LOOP IS NOT IT, CONFIRMED FROM A THIRD DIRECTION.** This ramp's counter was
+  **flat** — `0 in 120s / 109 lifetime` on a browser 125 minutes old — and it carried the same
+  32,779 MB in the same bucket as the 12:14 PT ramp that ran 18,392 requests on one RDR path.
+  Same signature, opposite traffic.
+- **THE RAMP ARM ENDED IT AGAIN**: `bail:ramp`, peak **4,915 MB** against 8-9 GB before the arm
+  existed, and the twelve-minute wedge did not fire.
+- **ONE READING CAVEAT, so nobody chases it.** The CONTROL prints its own verdict line —
+  *"70% … in the 16-256M bucket, 3 region(s): ONE mapping"* — which is the share gate
+  describing an ordinary renderer's normal reservations, not a finding about the control. **The
+  EXCESS line is what carries the comparison**; the per-process verdicts are there to be read
+  against each other.
+
 #### THREE FIGURES IN THIS FILE THAT CANNOT ALL BE TRUE (2026-09-05)
 Read before quoting any of them.
 - **GROWTH RATE is quoted four ways**: ~2,400 MB/min (08-17), ~400 MB/min over eleven minutes
@@ -6673,7 +6722,27 @@ tree, the deploy and the fleet were all correct.
 
 ## Open / next session
 
-> ### 2026-09-05 EVENING — THE ARM FIRED, AND THE LEAK IS ONE FIXED 32 GB MAPPING
+> ### 2026-09-06 — THE WALK ANSWERED: 16,387 MAPPED SECTIONS OF 2 MB
+>
+> **The committed-region walk fired on its first ramp (09-05 20:29 PT) and named the class.**
+> The ramping renderer holds **16,387 committed regions in the 2-4M bucket totalling
+> 32,779 MB — 87% of its committed bytes — and they are `commit/mapped`**, i.e. pagefile-backed
+> shared-memory SECTIONS. Control renderer in the same scan: 403 MB committed, 74 mapped
+> regions, 213 handles. Excess **37,277 MB** against an OS commit step of ~40 GB, and the
+> pagefile read **34 GB charged, `currentMB=0, peakMB=0`** — charged and never written, which
+> is why private bytes, free RAM, the JS heap and the sampling profiler were all blind to it.
+> **A SWARM, not one mapping** — that fork is closed, and the `~16,700 handles x 2 MB` figure
+> this file carried as arithmetic is now a measurement (handles 19,002 vs 213).
+> **Read "IT ANSWERED ON ITS FIRST RAMP" above before doing anything.**
+>
+> **WHAT CREATES THEM IS STILL NOT ESTABLISHED, AND THAT IS THE WHOLE REMAINING QUESTION.**
+> Something in that renderer holds ~16.4k live 2 MB pagefile-backed sections and never releases
+> them. Untested candidates: Chromium discardable shared memory (allocates in segments — this
+> exact shape), shared-image/GPU transfer buffers, mojo data pipes. RC's home page renders a
+> WebGL ArcGIS map and that candidate is unchanged. **Three mechanisms have been guessed on this
+> leak and each cost a session — do not write one in.**
+>
+> **THE PRIOR EVENING'S FRAMING, STILL ACCURATE AND NOW SUPERSEDED IN ITS HEADLINE:**
 >
 > **The RAMP arm fired within two and a half minutes of the box reaching `0029c22`** — peak
 > **3,702 MB against 8,879 MB** that morning, two minutes against twelve, `reason: 'bail:ramp'`,
@@ -6694,16 +6763,15 @@ tree, the deploy and the fleet were all correct.
 > is still real and still worth fixing on its own** — 18k requests in two minutes from the
 > residential IP that has eaten a 12-hour block — but it is a different problem.
 >
-> **THE COMMITTED-REGION WALK IS LIVE ON THE BOX AND IS WAITING ON ONE RAMP. ONE COMMAND READS
+> **THE COMMITTED-REGION WALK IS LIVE ON THE BOX AND HAS NOW BEEN READ. ONE COMMAND READS
 > IT:** `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts` (#281, merged as
 > `2ecaca8`; applied to the mini-PC 2026-09-06 01:10 UTC in 22 seconds and confirmed by
 > `bot-ask git-status`, not by `autocart.bot_version`). `VirtualQueryEx` over the ramping
 > renderer's whole address space, off the existing 3 GB trigger, with an ordinary renderer
 > walked beside it as a CONTROL — see "THE WALK IS BUILT" above for how to read the first one.
-> It shows ONE 32 GB region or ~16k of 2 MB and names the type. Ramps arrive **~5 hours apart in
-> the day** and twelve overnight, so the first reading is due within hours. One candidate is on
-> the board and is NOT established: RC's home page renders a WebGL ArcGIS map, and GPU
-> shared-image buffers have that shape.
+> It showed **~16k of 2 MB, mapped** — see the 09-06 block at the top of this section. Ramps
+> arrive **~5 hours apart in the day** and twelve overnight, so a second walk is cheap
+> corroboration and needs nothing built.
 >
 > **AN EMPTY REGION LIST WOULD BE A REFUSAL, NEVER AN ANSWER.** A 32-bit host, a failed
 > `Add-Type`, a refused `OpenProcess` and a caught throw each print themselves. If the readout
@@ -6717,7 +6785,7 @@ tree, the deploy and the fleet were all correct.
 > 19 checks ok.** The one warn is `rc_login`, standing down inside its once-per-20h gate having
 > passed on 09-05 — a stand-down, not a failure.
 >
-> **STATE AT 2026-09-05 19:40 PT:** master `aebaf13`, mini-PC `2ecaca8`, **no open PRs**, **no
+> **STATE AT 2026-09-05 19:40 PT (superseded — see the 09-06 block above):** master `aebaf13`, mini-PC `2ecaca8`, **no open PRs**, **no
 > holds queued** (so the 6h update gate is open), migrations highest **076** with main's block
 > `077-079`. The box is flat at ~278 MB with commit 7.1/17.1 GB — the pre-ramp baseline. Last
 > ramp **12:14 PT**; cadence is ~5-6 h in the day and about twelve overnight, with an observed
