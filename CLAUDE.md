@@ -5963,6 +5963,115 @@ Three gaps in the hand-off readout, all the house shape — a fact produced and 
   status axis produced a false *"a race we lost"* on its first production run: a hold nobody
   tapped is not a race, and reporting it as one manufactures a competitor.
 
+#### AND THE ALL-CLEAR HAD NO FLOOR — ONE HAND-OFF SAID WHAT FIFTY WOULD (2026-09-06)
+The corpus was read for the first time, over thirty days rather than the default twenty-four,
+and the instrument built to answer *"one hand-off in three or one in fifty?"* answered it from
+a sample of **one**:
+```
+RC LOAD: 2 timing(s) across 1 of 11 hand-off(s) — median 0.2s, slowest 0.6s
+  (10 hand-off(s) reported no timing — an older client bundle or a plain browser)
+  No hand-off failed to render RC in this window.        <- over ELEVEN hand-offs, ONE of which could speak
+```
+- **THE SIZING IS THE FINDING, AND IT IS SMALLER THAN ANYONE HAD ASSUMED.** Eleven hand-offs
+  in thirty days, **seven of them TEST fixtures**, and the timing instrument landed on
+  2026-09-03 — *after* nearly every hand-off that has ever happened. So the standing question
+  (**how often does RC's own web tier lose us a hand-off?**) has a corpus of **one timed
+  hand-off, zero failures**, and at ~1 real hand-off every few days it needs weeks, not days.
+  `docs/NEXT-SESSION.md` quoted *"median 0.2s, slowest 0.6s"* as *"the first data points are
+  in"*; that is two samples from a single session and it has not moved since.
+- **`else if (s.samples > 0)` WAS THE WHOLE BUG.** The module's own header says *"the
+  denominator is the point"* and applies that rule to the DISTRIBUTION (it refuses a median
+  with no samples) — and then gated the all-clear on there being any sample at all. **This is
+  `SMS_MIN_SAMPLE = 10` ("2 of 3 dropped is 67% and means nothing"), `MIN_RENEWAL_TESTS`, and
+  `recgov-429-profile.mts` refusing until all 24 hours have data — the rule written down three
+  times and not applied in the fourth place that needed it.**
+- **THE FLOOR IS ONE-DIRECTIONAL, AND THAT ASYMMETRY IS THE POINT.** An **observed** failure is
+  a fact at any sample size and still reports at any count; an **absence** of failures is only
+  evidence once enough hand-offs could have produced one. Applying the floor to both would
+  suppress the reading somebody has to act on, which is the worse error by a distance —
+  pinned by its own test, and the mutation that adds the floor to the outage branch is the
+  one that matters.
+- **THE DENOMINATOR IS `runsTimed`, NOT `handoffs`.** A close reason only reaches us from a
+  #249-or-later host, so a hand-off that reported no timing **could not have reported an
+  outage either** — "no hand-off failed" over eleven when one could speak is a subset
+  presented as the whole, which is exactly what the timing-gap line two branches above already
+  refuses to do. Guarded: twenty untimed hand-offs must not carry a corpus of four over the
+  floor.
+- **`RC_LOAD_MIN_TIMED_RUNS = 5`, BOUNDED FROM BOTH SIDES.** Not ten: hand-offs run at ~eleven
+  a month and a floor this corpus cannot reach replaces one wrong sentence with **none at
+  all**, for ever. Counted in HAND-OFFS and never in samples — a hold opened four times gives
+  four readings of ONE session's experience of RC, which is why `runsTimed` exists.
+- **VERIFIED BY RENDERING IT AGAINST THE REAL CORPUS**, which is the only way a verdict bug
+  ever is: it now prints *"TOO THIN TO SIZE: 1 hand-off(s) could report an outage (floor is
+  5) … Widen the window with --hours= before reading anything into it."* Six mutations, each
+  grep-verified to APPLY and each caught. **The pre-existing guard asserting the all-clear on
+  a single hand-off PINNED THE BUG** and was inverted rather than relaxed — the
+  `held-offer-scope` shape, where a test required the defect.
+- **THERE IS A 100x SAMPLER SITTING UNUSED, AND IT IS A PROXY — recorded, not built.** The
+  keep-warm loads RC's app on the box every renewal (~48/day, `network trace: 133
+  response(s), 10.6 MB declared` three times in one log read on 09-06, all successful) and
+  the reading exists only in a log that rolls at 16,000 characters. **It measures RC's app
+  tier from a desktop on a home connection, not a phone at 08:00**, so it can never replace
+  the hand-off corpus — what it could do is tell a *"RC was down for everyone"* morning from a
+  *"RC was slow for this phone"* one, which today nothing can. Same shape as the okta state
+  and `notePlatform`: a fact produced and discarded.
+
+### THE RDR LOOP IS A LOAD-TIME BURST AT ~800 REQ/S, NOT A 150/S POLL (2026-09-06)
+The request counter's first loud reading was written up as *"18,392 requests in two minutes"*.
+**Both events carry an `ageMs`, and it changes the size of the problem by an order of
+magnitude.** Two events in 113, both to
+`rdapi.reservecalifornia.com/api/webaccessfacility/futurebookingstartsendsdates`:
+```
+09-05 16:47 teardown   ageMs 25,750   19,008 of 19,025 lifetime, ALL inside the window   -> 738 req/s
+09-05 19:14 bail:ramp  ageMs 135,097  18,392 of 18,409 lifetime, 5,596 in the last 120s
+                         => 12,796 in the first 15.1s                                    -> 848 req/s
+```
+- **IT IS A BURST AT PAGE LOAD AND IT IS OVER IN SECONDS.** Both events sit in the first 15-26
+  seconds of a browser's life, and in event B the rate collapses from ~848/s to ~47/s once the
+  first fifteen seconds pass. **"18,392 in two minutes" (≈153/s) is the average of a burst and
+  the quiet after it**, and it is the figure the next reader would size a fix against.
+- **~800 REQUESTS A SECOND FROM THE RESIDENTIAL IP THAT HAS EATEN A 12-HOUR BLOCK ONCE.** That
+  is the risk, and it is not the leak: the 09-06 03:29 ramp carried **4 lifetime requests on its
+  busiest path** and the identical 32,779 MB signature. Confirmed unrelated, twice.
+- **IT IS CONDITIONAL, AND WHAT GATES IT IS NOT ESTABLISHED — do not write one in.** Two of 113
+  events over fourteen days. The 09-05 15:1x series is a runner-preemption window with a
+  teardown every ~10.7 seconds — about a hundred browser lives — and **not one of them burst**
+  (`GetCMSContentDetail=3`, `settings=2`, `websitesettings=2`). Whatever distinguishes a
+  bursting load from a quiet one is the question, and both bursts are cold RC home-page loads
+  (`config.json`, `load/enterprise`, the arcgis css, `distinct: 16`) while the quiet ones are
+  not. **That is a correlation over two events.**
+- **THE COUNTER CANNOT ANSWER "WHY", AND THE MISSING FIELD IS THE STATUS.** `page.on('request')`
+  sees the path and never the answer, so **a retry loop against a 401 and an SPA asking 19,000
+  times on purpose are the same reading** — and they need opposite fixes. This file has carried
+  *"a retry loop in RC's SPA against a token that expired"* as a candidate since 2026-08-17 and
+  it is still untested. **The next instrument is counting by (path, STATUS)** off
+  `page.on('response')` — a status code is not a credential and none of the
+  never-collect-a-field-you-must-filter rules touch it. **NOT BUILT.**
+- **DO NOT REACH FOR BLOCKING IT FIRST.** Intercepting RC's own requests on the resident page —
+  the page whose session an 08:00 cart depends on — to stop traffic whose cause is unknown is
+  the change that trades a rate-limit risk for a missed cart. Name the cause, then decide.
+- **AND THE BURST IS INVISIBLE UNLESS A TEARDOWN HAPPENS TO FOLLOW IT.** The counter reports at
+  a teardown, a bail or a hung close; a burst that fires at load and ends fifteen seconds later
+  is only ever seen because the browser happened to be torn down soon after. **Two observations
+  is a floor on how often this happens, never a count.**
+
+#### AND ITEM 3 — "THE SESSION DIES WITHIN ~2 MINUTES OF EVERY QUEUE" — IS INSTRUMENTED AND UNANSWERED (2026-09-06)
+Checked in source rather than waited on. **The instrument shipped 2026-09-03 and every outcome
+of the yield now speaks**, including a fourth that did not exist when the four deaths were
+recorded: `already-stored-stale` — storage holds a DIFFERENT token from the live one, i.e.
+*this fix's own defect surviving inside it*, **reported and deliberately not acted on** (over-
+writing a key RC's own SDK owns, on the release-critical path, wants its own evidence).
+- **NO FAILING QUEUE HAS HAPPENED SINCE.** The only queue after it (09-04, `#L034`) reported
+  `already-stored` — *"storage already held the token — nothing to write"* — which is the fix
+  behaving correctly on a healthy session and says nothing about the failing case. **It cannot
+  be answered without a queue; there is nothing to build.**
+- **AND WHAT IS KILLING THE SESSION TODAY IS A DIFFERENT MECHANISM, so do not read one as the
+  other.** As of 09-06 the box is dead for 2h+ with **no hold queued at all**: `okta session
+  GONE (404)`, seven consecutive failed renewals, backoff at 30m. That is the ordinary
+  between-releases state — the token lives ~1h and `maybeAutoLogin` restores it at T−30 — and
+  **the printed remedy (`rc-login.bat`) force-kills the Chromium the token lives in**, which is
+  the 2026-08-16 07:33 cry-wolf shape. Nothing is at risk and no human errand is warranted.
+
 #### AND IT DID IT AGAIN, BY A DIFFERENT ROUTE — A SIGHTING FROM YESTERDAY (2026-09-06)
 Reading the hold readout while waiting on CI: `#L003` at Leo Carrillo failed at the 09-05
 release, and the verdict line read *"THE SITE DID OPEN (**T+-64337s**, seen by the poller) and

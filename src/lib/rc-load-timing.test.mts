@@ -25,7 +25,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { closeReasonReading, rcLoadReading, RC_SLOW_LOAD_MS } from './rc-token-liveness';
-import { rcLoadStats, describeRcLoadStats } from './rc-load-stats';
+import { rcLoadStats, describeRcLoadStats, RC_LOAD_MIN_TIMED_RUNS } from './rc-load-stats';
 import { RC_OUTAGE_GRACE_MIN } from './rc-outage-hold';
 
 /** Strip comments — a guard must never pass or fail on the prose explaining it. */
@@ -251,13 +251,55 @@ test('the gap between timed and total hand-offs is itself printed', () => {
   assert.match(lines, /1 hand-off\(s\) reported no timing/);
 });
 
-test('failures are surfaced with a count, and a clean window says so explicitly', () => {
+test('an observed failure is reported at ANY count — the floor is one-directional', () => {
+  // THE ASYMMETRY IS THE POINT. A failure seen once is a fact; an absence of failures over
+  // one hand-off is not. A floor applied to both would suppress the reading somebody has to
+  // act on, which is the worse of the two errors by a distance.
   const bad = describeRcLoadStats(rcLoadStats([[load(1000), closed('never-loaded')]])).join('\n');
   assert.match(bad, /⚠/);
   assert.match(bad, /never got RC to render/);
-  const good = describeRcLoadStats(rcLoadStats([[load(1000), closed('session')]])).join('\n');
-  assert.match(good, /No hand-off failed to render/,
+  assert.doesNotMatch(bad, /TOO THIN/i, 'a real outage is never downgraded to "not enough data"');
+});
+
+test('ONE clean hand-off is NOT an all-clear — it says the corpus is too thin', () => {
+  // THE BUG THIS INVERTS, MEASURED. On 2026-09-06 the readout printed "No hand-off failed to
+  // render RC in this window" over 30 days holding ELEVEN hand-offs of which exactly ONE
+  // carried a timing. That is the module's own "one in three or one in fifty?" question
+  // answered with a clean bill from a sample of one — the SMS_MIN_SAMPLE lesson, unapplied.
+  const lines = describeRcLoadStats(rcLoadStats([[load(1000), closed('session')]])).join('\n');
+  assert.match(lines, /TOO THIN TO SIZE/);
+  assert.match(lines, /--hours=/, 'and it must name the way to widen the corpus');
+  assert.doesNotMatch(lines, /None of the .* failed to render/,
+    'the all-clear is exactly what a sample of one may not say');
+});
+
+test('at the floor it IS an all-clear, and its denominator is the runs that could report', () => {
+  const runs = Array.from({ length: RC_LOAD_MIN_TIMED_RUNS }, () => [load(1000), closed('session')]);
+  const lines = describeRcLoadStats(rcLoadStats(runs)).join('\n');
+  assert.match(lines, new RegExp(`None of the ${RC_LOAD_MIN_TIMED_RUNS} hand-off\\(s\\) that could report`),
     'an explicit all-clear, so an absent line is never read as one');
+  assert.doesNotMatch(lines, /TOO THIN/i);
+});
+
+test('the all-clear counts TIMED runs, never the untimed ones beside them', () => {
+  // A close reason only reaches us from a #249-or-later host, so a hand-off that reported no
+  // timing could not have reported an outage either. Counting those in the denominator is a
+  // subset presented as the whole — and it is what would make a thin corpus look deep.
+  const runs = [
+    ...Array.from({ length: RC_LOAD_MIN_TIMED_RUNS - 1 }, () => [load(1000), closed('session')]),
+    ...Array.from({ length: 20 }, () => [closed('session')]),
+  ];
+  const lines = describeRcLoadStats(rcLoadStats(runs)).join('\n');
+  assert.match(lines, /TOO THIN TO SIZE/,
+    'twenty untimed hand-offs must not carry a corpus of four over the floor');
+});
+
+test('the floor is bounded from BOTH sides', () => {
+  // Too low and it is not a floor. Too high and it can never be reached — hand-offs run at
+  // roughly eleven a month, most of them test fixtures, so a section that is permanently
+  // silent has replaced one wrong sentence with none at all.
+  assert.ok(RC_LOAD_MIN_TIMED_RUNS >= 3, 'a floor of one or two is not a floor');
+  assert.ok(RC_LOAD_MIN_TIMED_RUNS <= 10, 'a floor this corpus cannot reach says nothing, for ever');
 });
 
 // ---------------------------------------------------------------------------
