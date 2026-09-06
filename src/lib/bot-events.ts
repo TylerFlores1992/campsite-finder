@@ -1,7 +1,7 @@
 /**
  * BOT EVENTS — rare, structured observations from the mini-PC (migration 075).
  *
- * Two kinds today, and the reason for each is in the migration's header:
+ * Four kinds today, and the reason for each is in the migration's header:
  *
  *   `ramp-scan`   bot.mjs took the full `memory` scan by itself, the first time the periodic
  *                 sample saw the rc Chromium family past RAMP_SCAN_MB. `detail` carries the
@@ -22,6 +22,15 @@
  *                 that is a request loop, the top path here names the endpoint. `reason`
  *                 says which of the three took it. Never a query, never a body.
  *
+ *   `mem-dump`    rc-keepwarm asked Chromium's own memory-infra tracer who owns the shared
+ *                 memory in each of its processes — once as a baseline and once when the rc
+ *                 family crosses the ramp threshold. The committed-region walk named the CLASS
+ *                 of the 32 GB (16,387 pagefile-backed sections of ~2 MB) and cannot name what
+ *                 created them, because Windows records no owner for an anonymous section.
+ *                 `detail` carries the lead process's totals; `text` carries the per-process
+ *                 roots, size histogram and OWNER attribution. A small `shared_memory` total
+ *                 beside a 32 GB mapped process is a reading too — see rc-mem-dump.mjs.
+ *
  * THE RULES ARE THE SAME AS `native-alloc.ts`, ONE TABLE OVER: the kind is allow-listed so a
  * caller with the token cannot put arbitrary text on an admin readout; the detail is capped;
  * the text is capped and stripped of control characters, because Postgres text cannot hold a
@@ -31,7 +40,7 @@
  */
 import { mutate, query } from '@/lib/db/client';
 
-export const BOT_EVENT_KINDS = ['ramp-scan', 'tab-close', 'request-counts'] as const;
+export const BOT_EVENT_KINDS = ['ramp-scan', 'tab-close', 'request-counts', 'mem-dump'] as const;
 export type BotEventKind = (typeof BOT_EVENT_KINDS)[number];
 const KINDS = new Set<string>(BOT_EVENT_KINDS);
 

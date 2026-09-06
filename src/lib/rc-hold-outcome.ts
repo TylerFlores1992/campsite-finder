@@ -34,7 +34,41 @@
  * Rounding it up to "it never opened" would be the absent-reading-as-a-negative failure this
  * codebase records more often than any other, committed by the very function built to stop
  * somebody committing it by hand.
+ *
+ * ## AND A SIGHTING FROM A DIFFERENT DAY IS NOT A RACE (2026-09-06)
+ *
+ * Second false verdict from this function, by a different route. `#L003` at Leo Carrillo
+ * failed at the 09-05 release and the readout announced *"THE SITE DID OPEN (T+-64337s, seen
+ * by the poller) and we did not get it — somebody else carted it first."* **-64,337 seconds is
+ * seventeen hours and fifty-nine minutes BEFORE the release.** The caller hands over the delta
+ * between the pair's `watch_site_alerts` row and the release, and that column is the LAST
+ * alert for a (watch, site) pair rather than a history — so it can sit on either side of any
+ * particular release, and a sighting from the previous day says nothing whatever about who
+ * took the site on this one.
+ *
+ * The double sign in `T+-64337s` was the tell, and the verdict was manufacturing a competitor
+ * out of it — the same words this function's `tapped` gate was added to stop it printing.
+ *
+ * **THE BOUND IS NOT `>= 0`, AND THAT MATTERS: RC RELEASES EARLY.** Measured 2026-09-04 with
+ * 582 polls at 2-second resolution, `rc-583`'s flip bracket is (-2.2s, -0.2s] — entirely
+ * before T. A sighting a second or two ahead of the release IS the release, which is why the
+ * cart burst opens its lane at T-15s on that evidence. So the window is generous on the early
+ * side by exactly that much and the decision lives HERE, in the tested function, rather than
+ * being a second copy of the number inside the caller's SQL.
  */
+
+/**
+ * How far BEFORE the release a sighting can be and still be this release.
+ *
+ * 15 seconds, the same lead the cart burst opens on, and for the same measured reason.
+ * Anything earlier describes a different opening.
+ */
+export const RELEASE_SIGHTING_WINDOW_S = 15;
+
+/** `T+3s` / `T-2s`, never `T+-64337s`. The double sign is what exposed the bug above. */
+export function formatRelativeToRelease(seconds: number): string {
+  return seconds < 0 ? `T-${Math.abs(seconds)}s` : `T+${seconds}s`;
+}
 
 /** Both shapes a site key takes: bare for a single-campground watch, namespaced for a park. */
 export function siteKeyMatchesUnit(siteKey: string, unitId: string): boolean {
@@ -94,12 +128,31 @@ export function rcHoldOutcomeReading(input: HoldOutcomeInput): HoldOutcome | nul
   // A SIGHTING IS A NUMBER, AND 0 IS A REAL ONE. `openedAfterS != null`, never a truthiness
   // test: a site seen open in the same second as the release is the sharpest case there is,
   // and `if (openedAfterS)` would silently file it as "never opened".
-  if (openedAfterS != null) {
-    const when = `T+${openedAfterS}s`;
+  if (openedAfterS != null && openedAfterS >= -RELEASE_SIGHTING_WINDOW_S) {
+    const when = formatRelativeToRelease(openedAfterS);
     return {
       level: 'warn',
       text: `THE SITE DID OPEN (${when}, seen by the poller) and we did not get it — somebody`
         + ` else carted it first.${tried} This is a race we lost, not a lock that never lapsed.`,
+    };
+  }
+
+  /**
+   * A SIGHTING FROM BEFORE THE WINDOW IS NOT EVIDENCE ABOUT THIS RELEASE — see the header.
+   * Reported rather than discarded, because "the only sighting on file is from yesterday" is
+   * itself worth knowing when somebody is diagnosing at 08:15, and `info` rather than `warn`
+   * because nothing here says anything went wrong.
+   */
+  if (openedAfterS != null) {
+    // Seconds under a minute: `0m BEFORE this release (T-16s)` reads as a rounding artifact
+    // rather than a duration, and this line's whole job is to make the age obvious at a glance.
+    const abs = Math.abs(openedAfterS);
+    const when = abs < 60 ? `${abs}s` : abs < 7200 ? `${Math.round(abs / 60)}m` : `${Math.round(abs / 3600)}h`;
+    return {
+      level: 'info',
+      text: `the only sighting on file is ${when} BEFORE this release (${formatRelativeToRelease(openedAfterS)}),`
+        + ` so it describes a different opening and says nothing about who took this one.${tried}`
+        + ' No competitor is implied — the poller keeps one last-alert timestamp per site, not a history.',
     };
   }
 

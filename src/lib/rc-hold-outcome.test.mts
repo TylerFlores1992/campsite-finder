@@ -13,7 +13,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { rcHoldOutcomeReading, siteKeyMatchesUnit } from './rc-hold-outcome';
+import {
+  rcHoldOutcomeReading, siteKeyMatchesUnit, RELEASE_SIGHTING_WINDOW_S, formatRelativeToRelease,
+} from './rc-hold-outcome';
 
 function code(path: string): string {
   return readFileSync(new URL(path, import.meta.url), 'utf8')
@@ -120,4 +122,41 @@ test('the query matches BOTH site-key shapes and converts the zone correctly', (
   assert.match(q, /AT TIME ZONE 'America\/Los_Angeles'/, 'or the delta is seven hours out');
   assert.match(q, /ORDER BY a\.last_alert_at ASC/,
     'the FIRST alert is the transition; the last is a re-alert after we released a cart');
+});
+
+/**
+ * A SIGHTING FROM A DIFFERENT DAY IS NOT A RACE — the second false verdict this function
+ * produced in production, three days after the first. `#L003` failed at the 09-05 release and
+ * the readout announced a lost race on the strength of an alert seventeen hours EARLIER.
+ */
+test('a sighting long before the release is not a race, and does not invent a competitor', () => {
+  const r = rcHoldOutcomeReading({ tapped: true, carted: false, openedAfterS: -64_337 })!;
+  assert.equal(r.level, 'info', 'nothing here says anything went wrong');
+  assert.doesNotMatch(r.text, /race we lost/i);
+  assert.doesNotMatch(r.text, /somebody\s+else carted it first/i);
+  assert.match(r.text, /BEFORE this release/);
+  assert.match(r.text, /18h/, 'the age is what makes it obvious at a glance');
+  // And it is still REPORTED: "the only sighting on file is from yesterday" is worth knowing.
+  assert.ok(r.text.length > 40);
+});
+
+test('RC releases EARLY, so a sighting seconds ahead of T is still this release', () => {
+  // Measured 2026-09-04, 582 polls at 2s resolution: rc-583's flip bracket is (-2.2s, -0.2s],
+  // entirely before T. A `>= 0` bound would file the sharpest evidence there is as a different
+  // opening — which is why the window is the cart burst's own T-15s lead and not zero.
+  for (const s of [-1, -2, -15]) {
+    const r = rcHoldOutcomeReading({ tapped: true, carted: false, openedAfterS: s })!;
+    assert.match(r.text, /race we lost/, `${s}s before the release is the release`);
+  }
+  const outside = rcHoldOutcomeReading({ tapped: true, carted: false, openedAfterS: -16 })!;
+  assert.doesNotMatch(outside.text, /race we lost/);
+  assert.equal(RELEASE_SIGHTING_WINDOW_S, 15);
+});
+
+test('the delta is rendered with ONE sign — `T+-64337s` is what exposed the bug', () => {
+  assert.equal(formatRelativeToRelease(3), 'T+3s');
+  assert.equal(formatRelativeToRelease(0), 'T+0s');
+  assert.equal(formatRelativeToRelease(-2), 'T-2s');
+  const r = rcHoldOutcomeReading({ tapped: true, carted: false, openedAfterS: -2 })!;
+  assert.doesNotMatch(r.text, /\+-/);
 });
