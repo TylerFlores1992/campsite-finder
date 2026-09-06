@@ -6961,6 +6961,47 @@ tree, the deploy and the fleet were all correct.
 
 ## Open / next session
 
+> ### 2026-09-06 EVENING — NOTHING IS ASSIGNED; THE LEAK IS WAITING ON A RAMP
+>
+> **Master `2233420`, mini-PC `5399000`, no open PRs, no holds queued (so the 6h update gate is
+> open), migrations highest 076 with main's block 077-079.** Health 16/19: `rc_session` (dead
+> between releases — the token lives ~1h), `bot_version` (box vs web) and `rc_login` (a
+> stand-down inside its once-per-20h gate) are all documented-benign. **The gap between box and
+> web is docs plus one web-side file, so the box needs no update** — checked by reading the two
+> commits, not by trusting `autocart.bot_version`.
+>
+> **THE LEAK: everything that can be built IS built, and the next move is to read, not to
+> write.** The walk named the class (16,387 mapped 2 MB sections, 32,779 MB); the memory dump
+> that can name the OWNER is on the box with one baseline and **no ramp row yet**; and the box
+> has been flat at ~330 MB for **~14 hours** (last ramp 09-05 20:29 PT). The observed spread is
+> **5-28 hours**, so a quiet evening is neither a cure nor a fault — every "not reproduced this
+> session" reading in this file was a window that missed one. **Do NOT queue a test hold to
+> force one.** One command reads it:
+> `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts` (MEMORY DUMPS section; `--all`
+> for per-process roots, histogram and owners). **Join on the pid** — check the dump's lead pid
+> against the ramp-scan's walk TARGET for the same event, or a dump of a healthy renderer reads
+> as a finding.
+>
+> **THE RDR BURST IS THE NEXT REAL BUG, AND IT IS NOT THE LEAK.** ~19,000 requests to one RDR
+> path in the first **15-26 seconds** of a browser's life — **738 and 848 req/s**, from the
+> residential IP that has eaten a 12-hour block once. Conditional (two events in 113 over
+> fourteen days; ~100 browser lives in one preemption window did not burst) and what gates it is
+> **not established**. **The missing field is the STATUS**: `page.on('request')` never sees the
+> answer, so a retry loop against a 401 and an SPA asking on purpose are the same reading and
+> need opposite fixes. Count by `(path, status)` off `page.on('response')` — **NOT BUILT** — and
+> **do not reach for blocking the requests first.**
+>
+> **THE RELEASE-WINDOW ROUTINE MOVED TO 07:54 PT WITH `--after=120`** (`trig_01MDTcr2WFDqX6dCsi7gVDPG`,
+> self-disabling 09-12). Both prior firings were lost — 09-05 to a fresh session with no repo,
+> 09-06 to a busy bound session — so drain time went ~1.75 → ~3.75 min, paid for by halving the
+> polling window, because **moving the fire earlier spends the 600s Bash ceiling ONE FOR ONE**
+> (the script sleeps in-process until the window opens). It costs nothing observed: every 09-04
+> flip landed inside T+1.1s. **First recorded firing is 09-07 07:54 PT**, and
+> `rc_release_readings` reading zero rows before then is the expected state.
+>
+> **STILL FORBIDDEN, each for a recorded reason:** Track B, parking the resident page, lowering
+> `LOW_RAM_MB`, and staging a ramp.
+
 > ### 2026-09-06 — THE WALK ANSWERED: 16,387 MAPPED SECTIONS OF 2 MB
 >
 > **The committed-region walk fired on its first ramp (09-05 20:29 PT) and named the class.**
@@ -6987,9 +7028,12 @@ tree, the deploy and the fleet were all correct.
 > `shared_memory` histogram **in the walk's own buckets**, and the OWNER of each mapping off the
 > ownership graph. **Both branches are answers** — a ~32 GB `shared_memory` total names the
 > subsystem, and a small one retires discardable, mojo and the GPU transfer path together.
-> **BOT-SIDE, so it needs a box update and then a ramp**; a `baseline` row per browser life
-> with no `ramp` row is it working on a quiet box, and an empty table after a ramp is a miss
-> with a named reason in the box log.
+> **IT IS ON THE BOX (`5399000`, 07:56 PT) AND ITS FIRST BASELINE LANDED AT 07:59:33** — 332 ms,
+> 8 processes, `gpu/transfer_memory — 5 MB across 13`, i.e. the dump arrives on Windows, the
+> folding works and the ownership edges resolve to a named subsystem there too. **Only a ramp is
+> left.** As of 09-06 18:00 UTC there is **one `baseline` row and no `ramp` row**, which is it
+> working on a quiet box — a `baseline` per browser life with no `ramp` is the expected state,
+> and an empty table AFTER a ramp is a miss with a named reason in the box log.
 >
 > **THE PRIOR EVENING'S FRAMING, STILL ACCURATE AND NOW SUPERSEDED IN ITS HEADLINE:**
 >
