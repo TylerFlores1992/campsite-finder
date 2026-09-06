@@ -194,6 +194,20 @@ test('a throw inside one walk costs that reading and not the handle, the control
   assert.ok(RAMP_SCAN_PS.includes("New-Object 'ChMem+MBI'"), 'the nested type name stays quoted');
 });
 
+test('a caught throw does NOT then print a success line beneath its own error', () => {
+  // The catch names the failure; the emissions below it would still run, so a walk that threw
+  // printed `status=ok regions=` with empty totals right after `status=error`. The readout
+  // counts `VMWALK ` lines, so that reads as a COMPLETED walk that found nothing — an absent
+  // reading wearing an answer's clothes, which is the one thing this instrument must refuse.
+  const arm = RAMP_SCAN_PS.indexOf('$ok = $true');
+  const caught = RAMP_SCAN_PS.indexOf('} catch { $ok = $false;');
+  const gate = RAMP_SCAN_PS.indexOf('if ($ok) {');
+  const okLine = RAMP_SCAN_PS.indexOf('status=ok regions=');
+  assert.ok(arm > -1, 'the no-throw flag is armed before the try');
+  assert.ok(caught > arm, 'the catch clears it');
+  assert.ok(gate > caught && gate < okLine, 'and the success emissions sit behind it');
+});
+
 test('a CONTROL process is walked beside the target, because the finding is a DIFFERENCE', () => {
   // 32,780 MB is an EXCESS over a healthy renderer. With one term, `the ramping one holds a
   // 32 GB mapping` cannot be told from `every renderer does`.

@@ -161,6 +161,11 @@ export const RAMP_SCAN_PS = [
   "  if ($h -eq [IntPtr]::Zero) { 'VMWALK pid=' + $tp.Pid + ' status=open-failed err=' + [Runtime.InteropServices.Marshal]::GetLastWin32Error(); continue };",
   // The try starts AFTER the open and ends BEFORE the close, so a throw inside the walk costs
   // one process's reading and never the handle, the other process, or the END marker.
+  // $ok is what stops a caught throw printing a success line beneath its own error line.
+  // Without it a failed walk emits `status=ok regions=` with empty totals, which the readout
+  // would read as a completed walk that found nothing — an absent reading wearing an answer's
+  // clothes, which is the one shape this whole instrument exists to refuse.
+  '  $ok = $true;',
   '  try {',
   "  $mbi = New-Object 'ChMem+MBI';",
   '  $sz = [IntPtr][Runtime.InteropServices.Marshal]::SizeOf($mbi);',
@@ -196,16 +201,18 @@ export const RAMP_SCAN_PS = [
   // process the box cannot afford to be asked twice.
   '    $next = $ba + $rs; if ($next -le $addr.ToInt64()) { break }; $addr = [IntPtr]$next;',
   '  };',
-  "  } catch { 'VMWALK pid=' + $tp.Pid + ' status=error ' + $_.Exception.Message };",
+  "  } catch { $ok = $false; 'VMWALK pid=' + $tp.Pid + ' status=error ' + $_.Exception.Message };",
   '  [void][ChMem]::CloseHandle($h);',
   // `capped` is printed on the healthy path too: a truncated walk and a complete one must
   // never read the same, which is the absent-reading-as-a-negative shape this file exists to
   // avoid. Same for `regions` and `iters`.
+  '  if ($ok) {',
   "  'VMWALK pid=' + $tp.Pid + ' type=' + $tp.Ty + ' privateMB=' + [int]($tp.Priv / 1MB) + ' status=ok regions=' + $regions + ' iters=' + $it + ' capped=' + $capped;",
   "  foreach ($k in ($tot.Keys | Sort-Object)) { 'VMREGION pid=' + $tp.Pid + ' ' + $k + ' count=' + $cnt[$k] + ' totalMB=' + [int]($tot[$k] / 1MB) };",
   "  foreach ($k in ($hist.Keys | Sort-Object)) { 'VMHIST pid=' + $tp.Pid + ' commit ' + $k + ' count=' + $hcnt[$k] + ' totalMB=' + [int]($hist[$k] / 1MB) };",
   '  $bt = @($big | Sort-Object -Property Size -Descending | Select-Object -First 10);',
   "  foreach ($bg in $bt) { 'VMTOP pid=' + $tp.Pid + ' base=0x' + $bg.Base.ToString('x') + ' sizeMB=' + [int]($bg.Size / 1MB) + ' ' + $bg.St + '/' + $bg.Ty };",
+  '  };',
   '};',
   "'END';",
 ].join(' ');
