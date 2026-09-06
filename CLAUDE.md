@@ -6631,6 +6631,17 @@ the four `ramp-scan` rows say so in one column.
   is present in the ramp with 18,392 hits on one path and in the ramp with 197 requests in
   eleven hours, so **a loop cannot be the cause of an event it is absent from.** The 09-05 07:31
   reading is the counter-example and it was taken by the same instrument on the same day.
+- **AND THE OTHER DIRECTION IS NOW MEASURED TOO — A LOOP WITH NO RAMP (2026-09-05 09:47 PT).**
+  The entry above rests on a ramp with no loop. The teardown at 09:47:06 PT is its mirror:
+  **19,008 hits on `futurebookingstartsendsdates` in 120 seconds**, on a browser 0m old — and
+  `chromium_memory_samples` across that whole window reads **227 MB, then 209, 208, 208**, with
+  no ramp-scan triggered because the family never came near the 3,000 MB bar. **A loop running
+  at full rate cost nothing.** So the two are independent in BOTH directions, and the decoupling
+  no longer rests on a single counter-example. **Do not soften this back to "probably not the
+  cause"** — it is measured twice, from opposite sides.
+- **THE LOOP IS STILL WORTH FIXING AND IS STILL A SEPARATE FIX.** ~19,000 requests in two
+  minutes to one RDR endpoint is our residential IP, which has eaten a 12-hour block once. That
+  is the reason to act on it; the memory is not.
 - **AND THE COMMIT STEP IS THE SAME MAPPING SEEN FROM THE OS.** Both 09-05 events step in ONE
   two-minute tick: 7,513 → 47,823 MB (07:29→07:31) and 9,096 → 43,356 MB (12:12→12:13), while
   the rc family moves only 290 → 3,203 and 313 → 1,885. **~35-40 GB of commit against ~2-3 GB
