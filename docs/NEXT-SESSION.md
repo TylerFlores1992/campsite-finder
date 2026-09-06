@@ -1,9 +1,99 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-04 19:35 PT** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-05 19:40 PT** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
-> ## READ FIRST — THE MORNING WORKED, AND TWO SESSIONS COLLIDED WRITING IT UP
+> ## THE ONE THING TO DO FIRST — READ THE REGION WALK
+>
+> **The committed-region walk is LIVE ON THE BOX and armed. It needs one ramp, and then one
+> command.** Everything else below is older context.
+>
+> ```
+> NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts
+> ```
+>
+> **WHAT IT ANSWERS.** Four `ramp-scan` readings agree to within **7 MB** that the ramping
+> renderer's virtual size exceeds a healthy renderer's by a FIXED **32,780 MB**, with ~66.5 MB
+> of paged pool and ~17-19k handles against ~770 KB and ~250. The OS commits ~40 GB and the
+> pagefile shows under 200 MB ever written — committed, **untouched**, pagefile-backed shared
+> sections, which is the one class of allocation that private bytes, free RAM and the CDP
+> sampling profiler all structurally exclude. That is why five instruments in a row reported
+> nothing. The walk asks the process directly, with a CONTROL renderer beside it because
+> 32,780 MB is a DIFFERENCE.
+>
+> **HOW TO READ IT, and the readout prints these verdicts itself rather than leaving you to
+> derive them:**
+> - **A handful of regions carrying the bulk ⇒ ONE mapping.** The question becomes what maps a
+>   single region that size. The standing candidate — NOT established, do not write it in — is
+>   RC's home page rendering a WebGL ArcGIS map, whose GPU shared-image buffers have that shape.
+> - **Thousands of same-sized regions ⇒ a SWARM of per-object sections**, and the ~16,700
+>   excess handles stop being arithmetic (32,780 MB / 16,700 ≈ 2.0 MB each).
+> - **`commit/mapped` vs `commit/private`** says which side of the shared/private line it is on.
+> - **Compare the EXCESS line with the OS commit step in the same scan.** If they agree, the
+>   walk has named the 35 GB.
+>
+> **AN EMPTY REGION LIST IS A REFUSAL, NEVER AN ANSWER.** A 32-bit host, a failed `Add-Type`, a
+> refused `OpenProcess` and a caught throw each print themselves by name. If the readout says
+> the walk did not run, **read the reason** — do not read it as "no 32 GB mapping was found".
+> The readout also distinguishes *this scan predates the walk* from *the walk refused*.
+>
+> **THE READOUT REFUSES A VERDICT THAT DOES NOT DOMINATE** (a 60% share gate). That was caught
+> by rendering a fixture, not by reading the code: without it the CONTROL — an ordinary
+> renderer with 18% in one bucket — was told it held "a SWARM of per-object shared-memory
+> sections", i.e. the verdict fired on every input including the one process whose whole job is
+> to be normal.
+>
+> **THE RDR REQUEST LOOP IS NOT THIS LEAK'S CAUSE, and the temptation to say so is real.** One
+> bail named **18,392 requests in two minutes** on
+> `rdapi.reservecalifornia.com/api/webaccessfacility/futurebookingstartsendsdates`. The ramp
+> twelve hours earlier carried **197 requests in ELEVEN HOURS** and the identical 32 GB
+> signature, so a loop cannot cause an event it is absent from. The loop is still real and
+> still worth fixing on its own merits — it is our residential IP, which has eaten a 12-hour
+> block once — but it is a **separate problem with a separate fix.**
+>
+> **STILL FORBIDDEN, each for a recorded reason:** do not build **Track B** (it replaces the
+> renewal's Okta trip, measured flat at `-4 MB over 640s`, and is now weakened three ways); do
+> not **park the resident page** (refused by `checkAndReport`'s localStorage rule — it would
+> silence `autocart.rc_session` and the phone alarm permanently); do not lower **`LOW_RAM_MB`**
+> (that change killed a working repair on 08-19, and untouched commit never moves free RAM,
+> which is why the RAM arm has sat out sixteen consecutive ramps).
+>
+> ### STATE AT 2026-09-05 19:40 PT
+>
+> | | |
+> |---|---|
+> | master | `aebaf13` |
+> | mini-PC | `2ecaca8`, confirmed by `bot-ask git-status` — **never** `autocart.bot_version`, which COALESCEs and shows a stale sha beside a live heartbeat |
+> | fleet | 3/3 shards held, heartbeat 4s, **18 of 19** checks ok |
+> | box | flat at ~278 MB, commit 7.1/17.1 GB — the pre-ramp baseline |
+> | holds | none queued, so the 6h update gate is open |
+> | open PRs | none |
+>
+> - **#281 merged (`2ecaca8`)** — the walk. Applied to the box in **22 seconds**.
+> - **#282 merged (`aebaf13`)** — the trigger-id correction below.
+> - **The one warn is `rc_login`**, standing down inside its once-per-20h gate having passed on
+>   09-05. **A stand-down is not a failure**; do not chase it.
+> - **Last ramp 12:14 PT.** Cadence is ~5-6 h in the day and about twelve overnight, with an
+>   observed spread of 5-28 h — so a quiet evening is not a cure and not a fault. **Do NOT
+>   queue a test hold to force one**: three arrived free in thirty hours once and all three
+>   were missed, and a staged one locks a real campsite.
+>
+> ### THE RELEASE-WINDOW TRIGGER ID CHANGED — read `list_triggers`, never a doc
+>
+> `trig_012K7iCrj1J9KspyqGucZSHC` is **dead**: it fired into a fresh session with **no
+> repository attached**, so it could not run the script at all. The live one is
+> **`trig_01MDTcr2WFDqX6dCsi7gVDPG`** (`56 14 * * *`, 07:56 PT, self-disabling on 09-12).
+> `update_trigger` cannot change `persistent_session_id`, so delete-and-recreate was the only
+> path — the second time in two weeks an id written into these files went stale within days.
+>
+> **So `rc_release_readings` holding ZERO rows on 09-05 is the EXPECTED state, not a broken
+> `--record` path.** The first recorded firing is **09-06 07:56 PT**. `rc-release-readout.mts`
+> says as much in its own empty-case text; read it before diagnosing.
+
+> ## THEN: THE 09-04 MORNING WORKED, AND TWO SESSIONS COLLIDED WRITING IT UP
+>
+> *(This was the READ FIRST block until 09-05. It is still current and still worth reading —
+> the walk above simply outranks it. Items 3 and 4 are habits, not history.)*
 >
 > **1. `#L034` CARTED AT T+1.4s AND WAS HANDED OVER.** Unit 42527, Leo Carrillo, carted
 > 15:00:01.4 UTC against a 15:00:00 release and released to the owner at 15:09:41 — status
@@ -285,7 +375,19 @@ SERVED BOTH RIVALS".
 
 ---
 
-## 2. THE ASSIGNMENT — read the next ramp
+## 2. ~~THE ASSIGNMENT — read the next ramp~~ — SUPERSEDED; Track A is RETIRED
+
+> **READ THE TOP BLOCK INSTEAD.** This section is the 2026-08-25 assignment and its subject —
+> the CDP sampling profiler — was **retired on 2026-09-04**: it reports 1-74 MB of segments
+> against 690-801 MB of free RAM lost in the same window, four for four, so it is measuring a
+> quantity that structurally excludes this leak. `NATIVE_ALLOC_RAMP_MB` is 400, which is why
+> `trail-*` rows have never appeared and never could. **The instrument is not silent — it was
+> never going to answer.**
+>
+> Kept rather than deleted because it is the fullest write-up of how the trail works and of the
+> three ways it can look silent, and because "the trail has not yet seen a ramp" is exactly the
+> sentence a later reader would quote as a live task. **The live assignment is the committed-
+> region walk at the top of this file.**
 
 `scripts/auto-cart-bot/rc-alloc-trail.mjs` samples the allocation profile **on the watchdog
 tick**, keeps a 20-minute window, and reports a segment's peak when it ends (plus a flush at
@@ -388,6 +490,12 @@ because reverting it looks like a tidy-up.
 ---
 
 ## 4. State
+
+> **SUPERSEDED BY THE TABLE IN THE TOP BLOCK, refreshed 2026-09-05 19:40 PT.** Master is
+> `aebaf13`, the mini-PC is `2ecaca8`, there are **no open PRs and no holds queued**, migrations
+> are unchanged (highest **076**; main's block is `077-079`), and health is 18/19 with only
+> `rc_login` warning. The rows below are the 09-04 reading and are kept for the detail in them
+> — **re-read production rather than either table.**
 
 *Refreshed **2026-09-04 15:30 PT**, against production. This table has twice been left
 describing a state the repo had left behind, and one of those rows was **"Holds: none live"

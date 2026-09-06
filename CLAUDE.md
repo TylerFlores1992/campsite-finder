@@ -6694,7 +6694,8 @@ tree, the deploy and the fleet were all correct.
 > is still real and still worth fixing on its own** — 18k requests in two minutes from the
 > residential IP that has eaten a 12-hour block — but it is a different problem.
 >
-> **THE COMMITTED-REGION WALK IS LIVE ON THE BOX AND IS WAITING ON ONE RAMP** (#281, merged as
+> **THE COMMITTED-REGION WALK IS LIVE ON THE BOX AND IS WAITING ON ONE RAMP. ONE COMMAND READS
+> IT:** `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts` (#281, merged as
 > `2ecaca8`; applied to the mini-PC 2026-09-06 01:10 UTC in 22 seconds and confirmed by
 > `bot-ask git-status`, not by `autocart.bot_version`). `VirtualQueryEx` over the ramping
 > renderer's whole address space, off the existing 3 GB trigger, with an ordinary renderer
@@ -6715,6 +6716,14 @@ tree, the deploy and the fleet were all correct.
 > **THE FLEET IS HEALTHY AFTER THE MERGE'S WORKER DEPLOY: 3/3 shards held, heartbeat 4s, 18 of
 > 19 checks ok.** The one warn is `rc_login`, standing down inside its once-per-20h gate having
 > passed on 09-05 — a stand-down, not a failure.
+>
+> **STATE AT 2026-09-05 19:40 PT:** master `aebaf13`, mini-PC `2ecaca8`, **no open PRs**, **no
+> holds queued** (so the 6h update gate is open), migrations highest **076** with main's block
+> `077-079`. The box is flat at ~278 MB with commit 7.1/17.1 GB — the pre-ramp baseline. Last
+> ramp **12:14 PT**; cadence is ~5-6 h in the day and about twelve overnight, with an observed
+> spread of **5-28 h**, so a quiet evening is neither a cure nor a fault. **Do NOT queue a test
+> hold to force one** — three arrived free in thirty hours once and all three were missed, and a
+> staged one locks a real campsite.
 >
 > **Still: do not build Track B, and do not park the resident page.**
 >
