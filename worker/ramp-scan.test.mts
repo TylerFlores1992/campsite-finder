@@ -180,6 +180,20 @@ test('every way the walk can fail PRINTS ITSELF — it never answers with an emp
     'the walk must be gated on the flag those refusals set, or it runs against a missing type');
 });
 
+test('a throw inside one walk costs that reading and not the handle, the control or END', () => {
+  // Without the try, a PowerShell exception mid-walk takes the SECOND process's walk and the
+  // END marker with it — so a scan whose readings all succeeded would report `complete: false`.
+  // The Node side catches either way; what this buys is that the failure is ONE named line.
+  const t = RAMP_SCAN_PS.indexOf('try {', RAMP_SCAN_PS.indexOf('foreach ($tp in $targets)'));
+  const caught = RAMP_SCAN_PS.indexOf('status=error');
+  const close = RAMP_SCAN_PS.indexOf('CloseHandle($h)');
+  assert.ok(t > -1 && caught > t, 'the walk body must be wrapped and the catch must name itself');
+  assert.ok(close > caught, 'CloseHandle sits OUTSIDE the try, so a throw still releases the handle');
+  // A nested type name relies on argument-mode parsing treating `+` as part of the word, and
+  // this script cannot be run from here to find out. Quoted, it is unambiguous everywhere.
+  assert.ok(RAMP_SCAN_PS.includes("New-Object 'ChMem+MBI'"), 'the nested type name stays quoted');
+});
+
 test('a CONTROL process is walked beside the target, because the finding is a DIFFERENCE', () => {
   // 32,780 MB is an EXCESS over a healthy renderer. With one term, `the ramping one holds a
   // 32 GB mapping` cannot be told from `every renderer does`.

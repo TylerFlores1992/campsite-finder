@@ -159,7 +159,10 @@ export const RAMP_SCAN_PS = [
   '  $h = [ChMem]::OpenProcess(1024, $false, $tp.Pid);',
   '  if ($h -eq [IntPtr]::Zero) { $h = [ChMem]::OpenProcess(4096, $false, $tp.Pid) };',
   "  if ($h -eq [IntPtr]::Zero) { 'VMWALK pid=' + $tp.Pid + ' status=open-failed err=' + [Runtime.InteropServices.Marshal]::GetLastWin32Error(); continue };",
-  '  $mbi = New-Object ChMem+MBI;',
+  // The try starts AFTER the open and ends BEFORE the close, so a throw inside the walk costs
+  // one process's reading and never the handle, the other process, or the END marker.
+  '  try {',
+  "  $mbi = New-Object 'ChMem+MBI';",
   '  $sz = [IntPtr][Runtime.InteropServices.Marshal]::SizeOf($mbi);',
   '  $addr = [IntPtr]::Zero; $it = 0; $cap = 400000; $regions = 0; $capped = $false;',
   '  $tot = @{}; $cnt = @{}; $hist = @{}; $hcnt = @{}; $big = @();',
@@ -193,6 +196,7 @@ export const RAMP_SCAN_PS = [
   // process the box cannot afford to be asked twice.
   '    $next = $ba + $rs; if ($next -le $addr.ToInt64()) { break }; $addr = [IntPtr]$next;',
   '  };',
+  "  } catch { 'VMWALK pid=' + $tp.Pid + ' status=error ' + $_.Exception.Message };",
   '  [void][ChMem]::CloseHandle($h);',
   // `capped` is printed on the healthy path too: a truncated walk and a complete one must
   // never read the same, which is the absent-reading-as-a-negative shape this file exists to
