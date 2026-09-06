@@ -53,6 +53,31 @@ export interface RcLoadStats {
   loadError: number;
 }
 
+/**
+ * HOW MANY TIMED HAND-OFFS BEFORE AN ALL-CLEAR MEANS ANYTHING (2026-09-06).
+ *
+ * The header above says the denominator is the point, and then the all-clear line was gated
+ * on `samples > 0` — so ONE hand-off produced the identical sentence to fifty. Read over the
+ * real corpus on 2026-09-06 it printed *"No hand-off failed to render RC in this window"*
+ * across **11 hand-offs in 30 days of which exactly ONE carried a timing**, which is the very
+ * "one in three or one in fifty?" question this module exists to answer, answered with a
+ * clean bill from a sample of one.
+ *
+ * It is the rule already applied three times elsewhere and not here: `SMS_MIN_SAMPLE = 10`
+ * ("2 of 3 dropped is 67% and means nothing"), `MIN_RENEWAL_TESTS`, and
+ * `recgov-429-profile.mts` refusing a verdict until all 24 hours have data.
+ *
+ * FIVE, not ten: a hand-off is rare — eleven in thirty days, and most of those were test
+ * fixtures — so a floor sized like the SMS one would never be reached and the section would
+ * be permanently silent, which is its own way of saying nothing. Five is enough that one bad
+ * morning is visible as a fraction and few enough to be reachable within weeks.
+ *
+ * COUNTED IN HAND-OFFS, NOT SAMPLES. A hold opened four times contributes four timings and
+ * they are four readings of ONE session's experience of RC — `runsTimed` exists precisely
+ * because those are not independent trials.
+ */
+export const RC_LOAD_MIN_TIMED_RUNS = 5;
+
 function reasonOf(r: RcLoadReport): string | null {
   if (r.stage !== 'close') return null;
   const reason = (r.detail as { reason?: unknown } | null)?.reason;
@@ -129,12 +154,28 @@ export function describeRcLoadStats(s: RcLoadStats): string[] {
     }
   }
 
+  // THE TWO DIRECTIONS ARE NOT SYMMETRIC, AND THAT ASYMMETRY IS THE WHOLE POINT.
+  // An OBSERVED failure is a fact at any sample size and is reported at any count —
+  // suppressing one under a floor would be the opposite error and a far worse one, because
+  // it is the reading somebody has to act on. An ABSENCE of failures is only evidence once
+  // enough hand-offs could have reported one.
   if (outages > 0) {
     out.push(`  ⚠ ${outages} hand-off(s) never got RC to render at all`
       + ` (${s.neverLoaded} timed out, ${s.loadError} errored). Those holds keep their site`);
     out.push('    for an extra grace window — see rc-outage-hold.');
+  } else if (s.runsTimed >= RC_LOAD_MIN_TIMED_RUNS) {
+    // THE DENOMINATOR IS `runsTimed`, NOT `handoffs`. A close reason only reaches us from a
+    // #249-or-later host, so a hand-off that reported no timing could not have reported an
+    // outage either — saying "no hand-off failed" over all of them is a subset presented as
+    // the whole, which is the mistake the timing gap line two branches up already avoids.
+    out.push(`  None of the ${s.runsTimed} hand-off(s) that could report failed to render RC.`);
   } else if (s.samples > 0) {
-    out.push('  No hand-off failed to render RC in this window.');
+    // NOT AN ALL-CLEAR, AND IT SAYS SO. This is the honest state of the corpus for now: the
+    // instrument landed on 2026-09-03, after nearly every hand-off that has ever happened.
+    out.push(`  TOO THIN TO SIZE: ${s.runsTimed} hand-off(s) could report an outage`
+      + ` (floor is ${RC_LOAD_MIN_TIMED_RUNS}), so "no failures" here is not`);
+    out.push('    evidence RC is reliable — only that the few we can see were fine.');
+    out.push('    Widen the window with --hours= before reading anything into it.');
   }
   return out;
 }

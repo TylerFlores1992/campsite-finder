@@ -152,13 +152,27 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >
 > `trig_012K7iCrj1J9KspyqGucZSHC` is **dead**: it fired into a fresh session with **no
 > repository attached**, so it could not run the script at all. The live one is
-> **`trig_01MDTcr2WFDqX6dCsi7gVDPG`** (`56 14 * * *`, 07:56 PT, self-disabling on 09-12).
+> **`trig_01MDTcr2WFDqX6dCsi7gVDPG`** (`54 14 * * *`, 07:54 PT, self-disabling on 09-12).
 > `update_trigger` cannot change `persistent_session_id`, so delete-and-recreate was the only
 > path — the second time in two weeks an id written into these files went stale within days.
 >
-> **So `rc_release_readings` holding ZERO rows on 09-05 is the EXPECTED state, not a broken
-> `--record` path.** The first recorded firing is **09-06 07:56 PT**. `rc-release-readout.mts`
-> says as much in its own empty-case text; read it before diagnosing.
+> ~~**So `rc_release_readings` holding ZERO rows on 09-05 is the EXPECTED state.** The first
+> recorded firing is **09-06 07:56 PT**.~~ **09-06 WAS LOST TOO, AND THE TABLE IS STILL EMPTY.**
+> It fired on time (`last_fired_at 14:56:29Z`) into a session that was **mid-turn on other
+> work**, so the message queued and the window passed. Two firings, two different failures —
+> 09-05 a fresh session with no repo, 09-06 a busy bound session.
+>
+> **MOVED 2026-09-06: the Routine now fires 07:54 PT (`54 14 * * *`) with `--after=120`.**
+> Drain time from fire to the window opening was only ~1.75 minutes; it is ~3.75 now. **Moving
+> the fire earlier spends ceiling budget ONE FOR ONE** — the script sleeps in-process until the
+> window opens, and the run must finish inside the Bash tool's 600s — so halving `--after` is
+> what pays for it. The run stays ~480s, exactly the margin that has always worked. **It costs
+> nothing observed**: on 09-04 every flip landed inside T+1.1s and the fastest re-lock was
+> 61.5s, both far inside 120. The reasoning is in the Routine's own prompt so nobody
+> "restores" 240. **Do not go earlier still** — the remaining 120s of slack is what stops a
+> cut-off run, which is the failure that reports SUCCEEDED while measuring nothing.
+>
+> **First recorded firing is now 09-07 07:54 PT**, and five days of the week remain.
 
 > ## THEN: THE 09-04 MORNING WORKED, AND TWO SESSIONS COLLIDED WRITING IT UP
 >
@@ -223,7 +237,7 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >   portal read failed, and telling somebody to settle in for a long wait about a stay they
 >   could book in thirty seconds is the failure the silence prevents.
 > - **The release-window instrument is a daily cron**, **`trig_01MDTcr2WFDqX6dCsi7gVDPG`**,
->   `56 14 * * *` (07:56 PT), self-disabling on 09-12. **THE ID CHANGED ON 09-05** — the
+>   `54 14 * * *` (07:54 PT — moved from 07:56 on 09-06), self-disabling on 09-12. **THE ID CHANGED ON 09-05** — the
 >   original (`trig_012K7iCrj1J9KspyqGucZSHC`) fired into a fresh session with **no repository
 >   attached**, so it could not run the script; it was replaced with one bound to a session that
 >   has the checkout. **Read `list_triggers` before acting on any id written down here.** Two gaps
@@ -231,7 +245,7 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >   **stores no MCP connectors and may be inert**, so the self-disable in the prompt is the
 >   load-bearing stop; and ~~nothing persists the readings~~ — **that half is BUILT and merged
 >   in #273**: `--record`, migration 076 `rc_release_readings`, `scripts/rc-release-readout.mts`,
->   and the Routine's prompt passes the flag. **First recorded run is 09-06 07:56 PT**, under the new id;
+>   and the Routine's prompt passes the flag. **First recorded run is 09-07 07:54 PT**, under the new id (09-05 and 09-06 were both lost);
 >   09-05's fired under the dead one and recorded nothing, so `rc-release-readout.mts` reading
 >   zero rows on 09-05 is the expected state and not the `--record` path being broken. The
 >   inert-disabler gap is the one still open.
@@ -271,10 +285,19 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > wrong renderer); a ramp ends when the 12-minute wedge bail kills the process stalled in
 > `checkAndReport`; the 35 GB is committed-but-untouched non-private memory in a renderer with
 > 18,705 handles (shared sections, class unnamed); trigger candidate is the SPA's OWN
-> `prompt=none` autoRenew. **Next: count the resident page's requests (never bodies) and print
-> them in the bail; bail at ~2 min instead of 12 during a ramp — BOTH ARE DESIGNED AND NOT
-> BUILT.** The design, with every anchor checked in source, is CLAUDE.md → "THE NEXT TWO ARE
-> DESIGNED AND NOT BUILT" (under "THE ONSET IS A 35 GB COMMIT STEP"): the counter attaches
+> `prompt=none` autoRenew. ~~**Next: count the resident page's requests and bail at ~2 min —
+> BOTH ARE DESIGNED AND NOT BUILT.**~~ **BOTH SHIPPED IN #277 (`04c613b`) AND HAVE BEEN ON THE
+> BOX SINCE 2026-09-05 03:26 UTC, AND BOTH HAVE ANSWERED.** Struck rather than deleted: read as
+> current it sends the next session to build what is already running, which is the cost this
+> file exists to prevent — and it read that way for a day. **The request counter came back
+> FLAT** (`0 in 120s / 109 lifetime` on a browser eleven hours old, carrying the identical
+> 32,779 MB signature as a ramp that ran 18,392 hits on one RDR path), which retires the
+> request-loop candidate this file asserted three times. **The bail fired** — peak 3,702 MB
+> against 8,879 MB twelve hours earlier, two minutes against twelve. And **the committed-region
+> walk (#281) then named the class**: 16,387 mapped sections of 2 MB, 32,779 MB, 87% of the
+> renderer's committed bytes. See CLAUDE.md → "THE WALK ANSWERED". The original design notes,
+> with every anchor checked in source, are still at CLAUDE.md → "THE NEXT TWO ARE DESIGNED AND
+> NOT BUILT" (itself struck): the counter attaches
 > where `residentPage = page` is set and keys on `origin + pathname` via `okta-net-trace.mjs`'s
 > normaliser; the bail is a THIRD timer arm between WEDGE and RAM, on "resident renderer silent
 > ≥120s" (the `heapTrail` going stale) AND "rc family > 3 GB" read from a FILE `bot.mjs`'s
@@ -298,6 +321,24 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > stood at the top of this list for a day after it shipped, which is the cost this file exists
 > to prevent.
 >
+> **1a. THE RDR REQUEST BURST — real, unrelated to the leak, and the next actual bug.** RC's
+> SPA on the resident page fires ~19,000 requests at
+> `rdapi.reservecalifornia.com/api/webaccessfacility/futurebookingstartsendsdates` **in the
+> first 15-26 seconds of a browser's life — 738 and 848 requests per second**, from the
+> residential IP that has eaten a 12-hour block once. **It is a load-time BURST, not the
+> ~153/s poll the first write-up implied** — that figure averaged the burst with the quiet
+> after it. Two events in 113 over fourteen days, and the ~100 browser lives in the 09-05
+> 15:1x preemption window did NOT burst, so **it is conditional and what gates it is not
+> established.** Confirmed twice not to be the leak (a ramp with 4 lifetime requests on its
+> busiest path carried the identical 32,779 MB signature).
+> **THE MISSING FIELD IS THE STATUS**: `page.on('request')` never sees the answer, so a retry
+> loop against a 401 — a candidate carried since 2026-08-17 and never tested — and an SPA
+> asking 19,000 times on purpose are the same reading, and they need opposite fixes. **Count
+> by (path, STATUS) off `page.on('response')`; a status code is not a credential. NOT BUILT.**
+> **Do not reach for blocking the requests first** — intercepting RC's own traffic on the page
+> an 08:00 cart depends on, to stop traffic whose cause is unknown, trades a rate-limit risk
+> for a missed cart. CLAUDE.md → "THE RDR LOOP IS A LOAD-TIME BURST".
+
 > **2. RC's own app tier is the largest un-instrumented risk on this path** — and it is now
 > partly instrumented. `never-loaded`/`load-error` have readings, a successful load reports
 > its milliseconds (`RC_SLOW_LOAD_MS` = 8s), and `rc-load-stats` aggregates across runs.
@@ -308,6 +349,20 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > instrument exists for is the three-attempts-and-five-minutes case seen by hand on 08-30 and
 > 08-31, which needs a bad morning to appear. What has changed is that the next one will be a
 > number instead of an anecdote.
+>
+> **SIZED ON 2026-09-06, AND IT IS THINNER THAN THAT READS.** Run over THIRTY days rather than
+> the 24h default (`--hours=720`): **11 hand-offs, 7 of them TEST fixtures, exactly ONE carrying
+> a timing, zero failures.** The timing instrument landed 09-03, after nearly every hand-off
+> that has ever happened, so the corpus is one hand-off deep and grows at ~1 real hand-off every
+> few days. **The line quoted above was ALSO printing "No hand-off failed to render RC in this
+> window" over all eleven** — an all-clear from a sample of one, gated on `samples > 0` with no
+> floor, in the module whose own header says the denominator is the point. Fixed:
+> `RC_LOAD_MIN_TIMED_RUNS = 5`, one-directional (an observed failure still reports at ANY
+> count), denominator `runsTimed` not `handoffs`. CLAUDE.md → "AND THE ALL-CLEAR HAD NO FLOOR".
+> **Nothing further to build here — it needs hand-offs, or the proxy sampler noted there
+> (the keep-warm loads RC's app ~48x a day and throws every reading away; it measures a desktop
+> on a home connection, so it can never replace the phone corpus, only tell "RC was down for
+> everyone" from "RC was slow for this phone").**
 >
 > **Seen in the same readout, and already recorded:** #271's `pickKeepSignedInReport` fix reads
 > correctly on `#L034` — *"'Keep me signed in' was ticked on the email step"* beside *"sign-in
@@ -321,6 +376,17 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > is deployed — and the 09-04 log shows the yield reporting *"storage already held the token —
 > nothing to write"*, i.e. it ran and found nothing to do. That is the fix behaving correctly on
 > a healthy session and says nothing about the failing case.
+>
+> **CHECKED IN SOURCE 2026-09-06: THE INSTRUMENT IS COMPLETE AND THERE IS NOTHING TO BUILD.**
+> Every outcome of the yield speaks as of 09-03, including a fourth the four deaths predate —
+> `already-stored-stale`, meaning storage holds an OLDER token than the live one, i.e. **this
+> fix's own defect surviving inside it**, reported and deliberately not acted on. **No failing
+> queue has happened since**, so the question is unanswerable without one. **And what is killing
+> the session today is a DIFFERENT mechanism — do not read one as the other:** on 09-06 the box
+> is dead 2h+ with **no hold queued at all**, `okta=GONE(404)`, seven consecutive failed
+> renewals, backoff at 30m. That is the ordinary between-releases state (token ~1h,
+> `maybeAutoLogin` restores it at T−30) and **the printed remedy `rc-login.bat` force-kills the
+> Chromium the token lives in** — the 08-16 07:33 cry-wolf shape. No human errand is warranted.
 >
 > **4. ~~A fresh iOS build~~ — THE BUILD EXISTS; THE PHONE HAS NOT INSTALLED IT.** `iOS ·
 > TestFlight` #12 built 2026-08-29 with RevenueCat compiled in (STOREKIT-PLAN.md), the same day
