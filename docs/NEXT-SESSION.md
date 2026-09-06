@@ -35,6 +35,20 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > three arrived free in thirty hours once and all three were missed, and a staged one locks a
 > real campsite.
 >
+> **AND THE READOUT COUNTED ZERO BAILS UNTIL 2026-09-06 — fixed, and worth knowing because the
+> output changes.** The arms name themselves (`bail:ramp`) and the classifier tested `=== 'bail'`,
+> so every bail fell into `other`: the summary said `0 at a bail` over two real ones and printed
+> them LAST, below the teardowns this file calls the baseline. Read literally, "read the `bail`
+> rows first" against a summary saying zero says **the arm never fired**. It now reads `2 at a
+> bail` and renders them first. Full entry: CLAUDE.md → **"AND NAMING THE ARM MADE THE READOUT
+> COUNT ZERO BAILS"**. Nothing about the box or the data changed — only what the readout said
+> about it.
+>
+> **THE INSTRUMENT IS ARMED AND ITS CADENCE IS CONFIRMED (checked 2026-09-06 ~11:50 PT).** The
+> box updated at 14:56 UTC, `max_pid` moved to the current browser in the same minute, and the
+> single `baseline` dump landed at 14:59:33 — **three minutes into the one browser life there
+> has been since.** So one baseline and no ramp row is the instrument working, not a miss.
+>
 > **HOW TO READ IT.** `discardable/segment` at ~32 GB is the answer this investigation has been
 > reaching for. `(no ownership edge)` at ~32 GB is a third finding and a new question — base
 > shared memory holds them and nothing in Chromium claims them. A small total is the second
