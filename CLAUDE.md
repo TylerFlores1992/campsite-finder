@@ -6734,8 +6734,18 @@ mapping, and whichever subsystem owns that mapping adds an edge to it.
   spoke. Every process that DID answer is named with its pid, the readout says to check that
   pid against the region walk's TARGET for the same event, and the small-reading verdict names
   the hazard before it names the conclusion.
-- **BOT-SIDE, so it is inert until the box updates**, and then it needs a ramp. Confirm with
-  `npx tsx scripts/bot-ask.mts git-status`, **never `autocart.bot_version`**.
+- **IT FIRED ON THE BOX THE SAME DAY, AND THE WINDOWS HALF OF THE CAVEAT IS CLOSED.** The
+  mini-PC took `5399000` at 07:56 PT and the first baseline landed at **07:59:33 — 332 ms, 8
+  processes, and `gpu/transfer_memory — 5 MB across 13`.** So on Windows the dump arrives, the
+  per-process folding works and **the ownership edges resolve to a named subsystem**, which is
+  precisely what the Linux probe could not establish and what the native sampler's burn made
+  worth doubting. The lead on a healthy box is the **GPU process**, not a renderer, which is
+  the expected shape when nothing is ramping — and the `2-4M` bucket already holds one 2 MB
+  mapping, so that size is ordinary in small numbers and it is the COUNT that will matter.
+- **WHAT IS STILL OPEN IS THE ONE THING ONLY A RAMP CAN ANSWER**: whether the ramping
+  renderer's 16.4k sections appear in `shared_memory` at all. Both branches remain answers.
+- **BOT-SIDE, so it was inert until the box updated**, and it still needs a ramp. Confirm the
+  sha with `npx tsx scripts/bot-ask.mts git-status`, **never `autocart.bot_version`**.
 - **HOW TO READ THE FIRST ONE.** `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`,
   MEMORY DUMPS section, `ramp` phase first and the `baseline` from the same browser under it;
   `--all` prints the per-process roots, histogram and owners. **Check the lead pid against the
