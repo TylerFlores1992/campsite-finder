@@ -3,6 +3,60 @@
 *Rewritten 2026-08-25; state refreshed **2026-09-06** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
+> ## THE OWNER QUESTION IS INSTRUMENTED — merge, update the box, wait for a ramp (2026-09-06)
+>
+> **The walk said WHAT the 32 GB is; nothing on the Windows side can say WHO ASKED FOR IT** —
+> a pagefile-backed anonymous section records no creator. So the next reading asks Chromium:
+> `Tracing.requestMemoryDump` at `detailed` level, folded to per-process allocator roots, a
+> size histogram of `shared_memory` mappings **in the walk's own buckets**, and the OWNER of
+> each mapping off the dump's ownership graph. Full entry: CLAUDE.md → **"THE WALK CANNOT NAME
+> AN OWNER, SO ASK CHROMIUM"**. Do not re-derive it.
+>
+> **BOTH BRANCHES ARE ANSWERS.** `shared_memory` ≈ 32 GB with ~16k dumps in `2-4M` ⇒ the
+> sections ARE base shared memory and the owner column names the subsystem. Tens of MB, beside
+> a process the walk says holds 32 GB of `commit/mapped` ⇒ they are **not**, which eliminates
+> discardable, mojo and the GPU transfer path **together**. The readout prints both.
+>
+> **THREE STEPS, IN ORDER:**
+> 1. **Merge the PR.** It carries a `worker/*.test.mts`, so the merge **fires a worker deploy
+>    and restarts all three pollers** — expected; check `poller.shards` is 3/3 after.
+> 2. **Update the box** (Admin → "Update now", or a quiet-window run) and confirm with
+>    `npx tsx scripts/bot-ask.mts git-status`, **never `autocart.bot_version`**, which
+>    COALESCEs and shows a stale sha beside a live heartbeat. **Nothing fires until the box has
+>    it** — it is all bot-side.
+> 3. **Wait for a ramp.** `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`, MEMORY
+>    DUMPS section; `--all` for the per-process roots, histogram and owners. **Do NOT queue a
+>    test hold to force one** — three arrived free in thirty hours once and all three were
+>    missed, and a staged one locks a real campsite.
+>
+> **HOW TO READ IT.** `discardable/segment` at ~32 GB is the answer this investigation has been
+> reaching for. `(no ownership edge)` at ~32 GB is a third finding and a new question — base
+> shared memory holds them and nothing in Chromium claims them. A small total is the second
+> branch above. **Check the lead pid against the ramp-scan's walk for the same event**: a dump
+> of a healthy renderer says nothing, and the pid is the join key. A `baseline` row from the
+> same browser is the control; 32 GB is a difference.
+>
+> **AND EXPECT A BASELINE BEFORE ANY RAMP.** One fires ~3 minutes into every browser life, so
+> the table filling with `baseline` rows and no `ramp` row is the instrument working on a quiet
+> box, not a miss. An empty table after a ramp IS a miss — read the box log for the named
+> refusal (`memory dump (ramp) did not run: …`).
+>
+> ### WHAT THE BOX WAS DOING WHILE THIS WAS BUILT
+>
+> - **NO RAMP FOR ~11 HOURS** (09-05 20:29 PT → 09-06 07:30, hourly peaks 347-503 MB, commit
+>   back to ~7.4/17 GB). The observed spread is 5-28 h, so that is neither a cure nor a fault
+>   — and every "not reproduced this session" reading in this file was a window that missed
+>   one. **There is exactly ONE walk**, the 09-05 20:29 one; a second is free corroboration
+>   whenever the next ramp lands.
+> - **The box is on `6fdd1de`, not `2ecaca8`** — newer than the last handover said, and both
+>   contain the walk. Read `git-status`, not a doc.
+> - **Health 16/19, three warns, all documented-benign**: `rc_session` (dead between releases,
+>   the token lives ~1h), `bot_version` (box vs web, *"No bot-side code in the gap"*),
+>   `rc_login` (a stand-down inside its once-per-20h gate, not a failure).
+> - **`bot_events` fixture rows** were inserted under source `__mdfixture` to render the new
+>   readout section and **deleted immediately** (4 → 0, verified). Nothing else reads that
+>   table.
+
 > ## THE WALK ANSWERED — 16,387 MAPPED SECTIONS OF 2 MB (read 2026-09-06)
 >
 > **The committed-region walk fired on its first ramp and named the class of the 32 GB.** The

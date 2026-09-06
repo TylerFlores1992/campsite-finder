@@ -5963,6 +5963,35 @@ Three gaps in the hand-off readout, all the house shape — a fact produced and 
   status axis produced a false *"a race we lost"* on its first production run: a hold nobody
   tapped is not a race, and reporting it as one manufactures a competitor.
 
+#### AND IT DID IT AGAIN, BY A DIFFERENT ROUTE — A SIGHTING FROM YESTERDAY (2026-09-06)
+Reading the hold readout while waiting on CI: `#L003` at Leo Carrillo failed at the 09-05
+release, and the verdict line read *"THE SITE DID OPEN (**T+-64337s**, seen by the poller) and
+we did not get it — somebody else carted it first. This is a race we lost."*
+- **-64,337 seconds is seventeen hours and fifty-nine minutes BEFORE the release.** The caller
+  hands over the delta between the pair's `watch_site_alerts` row and the release, and
+  **`last_alert_at` is one mutable column per (watch, site) — the LAST alert, not a history** —
+  so it sits wherever it happens to sit relative to any given release. The `ORDER BY
+  last_alert_at ASC LIMIT 1` reads as picking the earliest of many and is a no-op over one row.
+- **THE DOUBLE SIGN WAS THE TELL**, and the test for it is one line. `T+${n}s` with a negative
+  `n` is a formatting bug that was carrying a false finding.
+- **THE FIX IS NOT `>= 0`, BECAUSE RC RELEASES EARLY.** `rc-583`'s measured flip bracket is
+  **(−2.2s, −0.2s] — entirely before T**, so a sighting a second or two ahead of the release IS
+  the release. The window is **`RELEASE_SIGHTING_WINDOW_S = 15`**, the same lead the cart burst
+  opens on and for the same measured reason. Outside it the reading is reported as what it is —
+  *"the only sighting on file is 18h BEFORE this release … no competitor is implied"* — at
+  `info`, because nothing about it says anything went wrong.
+- **THE DECISION LIVES IN THE PURE FUNCTION, not in the caller's SQL.** Narrowing the query
+  would put the same 15 seconds in two places, which is how `nextHoldRelease` came to disagree
+  with `dueHolds`; and the function is the half that has tests.
+- Six mutations, each verified to APPLY and to fail — including the window back to `>= 0` (the
+  version that looks obviously right and discards the sharpest evidence there is), the window
+  widened to a day, the double sign restored, and the pre-window reading downgraded to silence
+  or promoted to `warn`.
+- **Two of the guards failed on their first run and both were the COPY, not the logic**: the
+  new text said *"Not a race we lost"* and tripped the assertion that the phrase must not
+  appear at all, and a 16-second delta rendered as `0m BEFORE this release`, which reads as a
+  rounding artifact rather than a duration. Both are what a reader sees at 08:15.
+
 
 ### ~~"CANCELLATIONS DON'T START UNTIL TWO WEEKS OUT" IS FOLK WISDOM AND OUR DATA SAYS OTHERWISE~~ — I MEASURED THE WRONG WINDOW (2026-09-04)
 Asked to warn a new watcher, after creating a far-out watch, that cancellations are unlikely
@@ -6624,6 +6653,97 @@ EXCESS 37277 MB   vs the OS commit step of ~40 GB in the same scan
   EXCESS line is what carries the comparison**; the per-process verdicts are there to be read
   against each other.
 
+#### THE WALK CANNOT NAME AN OWNER, SO ASK CHROMIUM (2026-09-06) — built, not yet fired
+The walk answered *what* the 32 GB is and there is no Windows API that answers *who asked for
+it*: a pagefile-backed anonymous section has no name and no creator recorded. Chromium knows.
+`Tracing.requestMemoryDump` at `detailed` level makes every process emit its allocator dumps —
+`malloc`, `v8`, `partition_alloc`, `discardable`, `gpu`, `skia`, `mojo`, `shared_memory` — and
+an OWNERSHIP GRAPH: `base::SharedMemoryTracker` emits one `shared_memory/<guid>` dump per
+mapping, and whichever subsystem owns that mapping adds an edge to it.
+- **BOTH BRANCHES ARE ANSWERS, and that is why it is worth taking on the reading that
+  attributes nothing.** `shared_memory` ≈ 32 GB with ~16k dumps in the 2-4M bucket ⇒ the
+  sections ARE base shared memory and the owner column names the subsystem. `shared_memory`
+  in the tens of MB, beside a process the walk says holds 32 GB of `commit/mapped` ⇒ they are
+  **not** base shared memory, which eliminates discardable, mojo and the GPU transfer path
+  **together** and points outside Chromium's tracked allocators. The readout prints the second
+  verdict as loudly as the first, and a mutation deleting it is caught.
+- **THE BUCKETS ARE THE WALK'S BUCKETS, boundaries included** — `-lt` on the first two and
+  `-le` after, mirrored from `ramp-scan.mjs`'s PowerShell. The whole point is that "16,387
+  regions in 2-4M" and "N mappings in 2-4M" describe one population or visibly do not; nearly
+  the same boundaries would make that comparison a guess.
+- **MEASURED BEFORE IT WAS WRITTEN, and the measurement does not reach the box.** Against a
+  real Chromium: **~200 ms** end to end, and thirty WebGL texture uploads came back attributed
+  to `gpu/transfer_memory` — i.e. the edges resolve and name a real subsystem.
+  `scripts/auto-cart-bot/mem-dump-probe.mjs` is that check, kept and re-runnable, and it
+  **refuses a verdict** on every path where the question was not reached. **THAT IS LINUX AND
+  THE BOX IS WINDOWS**, which is the native sampler's exact burn — validated in the dev
+  container, symbolization absent in production. What a green probe establishes is that the
+  instrument reads a real trace; **whether the 2 MB sections go through
+  `base::SharedMemoryMapping` at all is precisely the open question**, so a small
+  `shared_memory` total is the second branch above and not the instrument failing.
+- **WHERE IT FIRES, and every clause was decided by something already recorded here.** From
+  the watchdog TIMER, never the loop body (a check in the body is unreachable during a ramp —
+  four times in this file). From the SAME `memory` reading and the SAME `>` comparison the
+  RAMP arm just made, so the dump and the bail cannot land on different sides of one event.
+  **BEFORE the bail rather than inside it**: the ramp arm needs a 120s stall on top of the same
+  threshold, so this runs ~2 minutes ahead of the exit — which is what gives a fire-and-forget
+  POST time to land and keeps a multi-second diagnostic off the path that releases the profile
+  lock. Fire-and-forget with an in-flight flag, like the heap trail beside it.
+- **A BASELINE AND A RAMP READING PER BROWSER LIFE**, because 32 GB is a DIFFERENCE — the same
+  reason the walk grew a control. The baseline waits `MEM_DUMP_BASELINE_AFTER_MS` (3 min) so it
+  describes a browser that has actually loaded RC; the ramp reading never waits.
+- **A REFUSAL DOES NOT SPEND THE PHASE.** Tracing already started, a browser that will not
+  answer, `success: false` — each is named in the log and leaves the phase retryable, because a
+  refusal is not a reading. An empty `shared_memory` total and "we could not ask" point in
+  opposite directions.
+- **TWO DEFECTS THE GUARDS FOUND, and neither was reachable by reading the code.**
+  1. **The cleanup `Tracing.end` was unbounded.** A browser already established as not
+     answering hangs it, `takeMemoryDump` never resolves, and the caller's in-flight flag never
+     clears — so the instrument would fire once per browser life and report nothing ever after.
+     **A hang inside the cleanup of a bounded operation is a hang.** `MEM_DUMP_CLEANUP_MS`.
+  2. **`jsonb` DOES NOT PRESERVE OBJECT KEY ORDER** — it re-sorts by key LENGTH. The roots were
+     stored size-sorted as an object and came back
+     `malloc · discardable · shared_memory · partition_alloc`, printing the 32 GB allocator
+     THIRD where a reader takes the first as the largest. They are an ARRAY now. **Caught by
+     inserting a fixture row, rendering the real readout and reading it**, which is the only
+     way a formatting bug ever is — the same method that caught the RAM trail printing its
+     oldest value against its newest timestamp.
+- **AND CHROMIUM'S OWN `shared_memory` ROOT RIDES BESIDE OUR SUM**, with the readout printing a
+  warning only when they disagree. Two views of one population, so a gap is a fold that missed
+  mappings — the only cross-check available on Windows, where the probe cannot run.
+- **AN EXISTING GUARD CAUGHT A NAME COLLISION, AND IT WAS RIGHT TO.** The browser-life marker
+  was called `browserOpenedAt`, which is the AGE RECYCLE's variable —
+  `keepwarm-diagnosis.test.mts` fails on that token by name because that feature was built,
+  measured useless the same night and removed. Renamed rather than the guard narrowed: a
+  variable with that name in this file is exactly how a reversed decision gets re-taken by
+  somebody who never read why.
+- **`git checkout --` DESTROYED THE RENAME MID-MUTATION-RUN, for the fourth recorded time.**
+  The revert goes to HEAD, and HEAD did not have it. **Commit before mutating** — it is written
+  down, it was read this session, and it still happened.
+- `worker/rc-mem-dump.test.mts`, **23 mutations, each asserted to APPLY and each caught. Two
+  survived the first round and both were the guards, not the code**: every fixture had either a
+  good hex size or no attrs at all, so `hexBytes` returning **0** from its unparseable branch
+  was unexercised; and the readout guard matched `NOT base shared memory` — a line the mutation
+  did not touch — so deleting the small-reading verdict left it green. **A guard that matches a
+  neighbouring sentence is measuring the neighbour.**
+- **AN ABSENT PROCESS IS NOT A SMALL ONE, and that is the one false elimination this
+  instrument can manufacture.** The dump is COORDINATED by the browser process and each child
+  contributes its own, so a renderer that will not answer is **missing** from the result rather
+  than reported as empty — and a lead process with a small `shared_memory` total would then be
+  read as "the sections are not base shared memory" when the ramping renderer simply never
+  spoke. Every process that DID answer is named with its pid, the readout says to check that
+  pid against the region walk's TARGET for the same event, and the small-reading verdict names
+  the hazard before it names the conclusion.
+- **BOT-SIDE, so it is inert until the box updates**, and then it needs a ramp. Confirm with
+  `npx tsx scripts/bot-ask.mts git-status`, **never `autocart.bot_version`**.
+- **HOW TO READ THE FIRST ONE.** `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts`,
+  MEMORY DUMPS section, `ramp` phase first and the `baseline` from the same browser under it;
+  `--all` prints the per-process roots, histogram and owners. **Check the lead pid against the
+  ramp-scan's walk for the same event** — a dump of a healthy renderer says nothing, and the
+  pid is the join key. `discardable/segment` at ~32 GB would be the answer this whole
+  investigation has been reaching for; `(no ownership edge)` at ~32 GB means base shared memory
+  holds them and nothing in Chromium claims them, which is a third finding and a new question.
+
 #### THREE FIGURES IN THIS FILE THAT CANNOT ALL BE TRUE (2026-09-05)
 Read before quoting any of them.
 - **GROWTH RATE is quoted four ways**: ~2,400 MB/min (08-17), ~400 MB/min over eleven minutes
@@ -6741,6 +6861,16 @@ tree, the deploy and the fleet were all correct.
 > exact shape), shared-image/GPU transfer buffers, mojo data pipes. RC's home page renders a
 > WebGL ArcGIS map and that candidate is unchanged. **Three mechanisms have been guessed on this
 > leak and each cost a session — do not write one in.**
+>
+> **AND THE INSTRUMENT THAT CAN ANSWER IT IS BUILT (2026-09-06) — see "THE WALK CANNOT NAME AN
+> OWNER, SO ASK CHROMIUM".** No Windows API records the creator of an anonymous section, so the
+> dump asks Chromium: `Tracing.requestMemoryDump` at `detailed`, folded to allocator roots, a
+> `shared_memory` histogram **in the walk's own buckets**, and the OWNER of each mapping off the
+> ownership graph. **Both branches are answers** — a ~32 GB `shared_memory` total names the
+> subsystem, and a small one retires discardable, mojo and the GPU transfer path together.
+> **BOT-SIDE, so it needs a box update and then a ramp**; a `baseline` row per browser life
+> with no `ramp` row is it working on a quiet box, and an empty table after a ramp is a miss
+> with a named reason in the box log.
 >
 > **THE PRIOR EVENING'S FRAMING, STILL ACCURATE AND NOW SUPERSEDED IN ITS HEADLINE:**
 >

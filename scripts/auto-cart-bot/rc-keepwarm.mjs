@@ -100,6 +100,7 @@ import { takeSample } from './memory-sample.mjs';
 import { closeTabBounded, takePendingRecycle } from './tab-close.mjs';
 import { createRequestCounter, describeRequestCounts } from './rc-request-count.mjs';
 import { readLatestMemory, rampBailDecision, rampBailLine, MEMORY_LATEST_FILE } from './ramp-bail.mjs';
+import { takeMemoryDump, renderMemDump, summariseMemDump } from './rc-mem-dump.mjs';
 import {
   attachHeapProbe, collectHeapFacts, describeHeapFacts, writeHeapSnapshot,
   sampleHeap, describeTrail, describeRamTrail, TRAIL_KEEP,
@@ -569,6 +570,14 @@ const MEM_STALL_MS = Number(process.env.RC_KEEPWARM_MEM_STALL_MS || 60_000);
 const RAMP_STALL_MS = Number(process.env.RC_KEEPWARM_RAMP_STALL_MS || 120_000);
 const RAMP_MB = Number(process.env.RC_KEEPWARM_RAMP_MB || 3000);
 const RAMP_READING_MAX_AGE_MS = Number(process.env.RC_KEEPWARM_RAMP_READING_MAX_AGE_MS || 5 * 60_000);
+/**
+ * HOW OLD THE BROWSER MUST BE BEFORE ITS BASELINE MEMORY DUMP IS WORTH TAKING.
+ *
+ * The baseline is a CONTROL, and a control taken ten seconds after launch describes a browser
+ * that has not loaded RC yet — which is not the thing the ramping renderer is being compared
+ * against. Three minutes is past the initial load and long before any ramp has been observed.
+ */
+const MEM_DUMP_BASELINE_AFTER_MS = Number(process.env.RC_MEM_DUMP_BASELINE_AFTER_MS || 3 * 60_000);
 /**
  * How long a browser must have lived before its teardown is worth a line and an event.
  *
@@ -2575,6 +2584,28 @@ async function warmResident() {
     let heapTrail = [];
     let heapInFlight = false;
     /**
+     * THE MEMORY-INFRA DUMP — one baseline and one ramp reading per browser life.
+     *
+     * The committed-region walk named the CLASS of the 32 GB (16,387 pagefile-backed sections
+     * of 2 MB) and cannot name what created them, because Windows does not record that for an
+     * anonymous section. Chromium does. See rc-mem-dump.mjs for the two branches the reading
+     * can take and why the small one is an answer too.
+     *
+     * `memDumpBrowserSince` is a browser life, not the process's: it and the flags reset where
+     * `residentPage` is assigned, so a reopen — a profile yield, a recycle, a bail's restart —
+     * gets its own pair.
+     *
+     * NAMED FOR THIS AND NOT `browserOpenedAt`, WHICH IS RESERVED. That identifier belonged to
+     * the AGE RECYCLE — built 2026-08-18, measured useless the same night (localStorage
+     * survives a browser restart, so it landed in the same renewal cell) and removed — and
+     * `keepwarm-diagnosis.test.mts` fails on the token by name so it cannot come back by
+     * accident. It caught this on the first full run, which is the guard working: a variable
+     * called `browserOpenedAt` in this file is exactly how that decision gets re-taken by
+     * somebody who never read why it was reversed.
+     */
+    let memDumpBrowserSince = 0;
+    let memDump = { baseline: false, ramp: false, inFlight: false };
+    /**
      * THE RESIDENT PAGE'S REQUESTS, counted from the moment the page exists. Attached where
      * `residentPage = page` is assigned, so a reopen — a new context, a new page — gets a new
      * counter and "lifetime" means the life of THIS browser. Read in the bail, at the teardown
@@ -2594,6 +2625,63 @@ async function warmResident() {
      * currently a candidate on three matching firings and not a finding.
      */
     let ramTrail = [];
+    /**
+     * TAKE ONE MEMORY-INFRA DUMP, AT MOST ONCE PER PHASE PER BROWSER LIFE.
+     *
+     * FIRED FROM THE TIMER, NOT THE LOOP BODY, and for the same reason every other arm here
+     * is: during a ramp the loop is by definition not advancing, so a check in the body is
+     * structurally unreachable at the only moment it matters. That mistake has been made in
+     * this file four times.
+     *
+     * FIRE AND FORGET WITH AN IN-FLIGHT FLAG, like the heap trail beside it. The timer must
+     * never await — being the one thing still executing is its whole value — and a browser in
+     * a ramp can take the full timeout, so without the flag the attempts pile up one per tick.
+     *
+     * IT READS THE SAME `memory` OBJECT THE RAMP ARM JUST READ, so the dump and the bail agree
+     * about what "the family is over the threshold" means. Two copies of that comparison is
+     * how `nextHoldRelease` came to disagree with `dueHolds` about whether a hold existed.
+     *
+     * AND IT FIRES BEFORE THE BAIL, NOT INSIDE IT. The ramp arm needs a 120s stall on top of
+     * this same threshold, so this typically runs ~2 minutes ahead of the exit — which is what
+     * gives a fire-and-forget POST time to land, and what keeps a multi-second diagnostic off
+     * the path that releases the profile lock. A dump inside `reportAndBail` would be spending
+     * the one budget that loses a cart when it overruns.
+     */
+    const maybeMemoryDump = (memory) => {
+      if (memDump.inFlight || !heapProbe || !memory?.known) return;
+      // `>` and not `>=`, matching rampBailDecision's own `big` exactly. Two comparisons
+      // that differ by one megabyte would put the dump and the bail on different sides of
+      // the same event, which is the disagreement this whole call site exists to avoid.
+      const over = memory.rcMb > RAMP_MB;
+      const phase = over ? 'ramp' : 'baseline';
+      if (memDump[phase]) return;
+      // The baseline is a CONTROL and wants a browser that has actually loaded RC — see
+      // MEM_DUMP_BASELINE_AFTER_MS. The ramp reading is never delayed by it: an event that
+      // arrives inside three minutes is exactly the one worth having.
+      if (!over && Date.now() - memDumpBrowserSince < MEM_DUMP_BASELINE_AFTER_MS) return;
+      memDump[phase] = true;
+      memDump.inFlight = true;
+      void takeMemoryDump(heapProbe)
+        .then((r) => {
+          if (!r.ok) {
+            // NAMED, ALWAYS. "the dump refused" and "the dump ran and found no shared memory"
+            // are opposite findings and a silence would merge them.
+            log(`  memory dump (${phase}) did not run: ${r.why}`);
+            // Retryable: a refusal is not a reading, so the phase is not spent.
+            memDump[phase] = false;
+            return;
+          }
+          const detail = summariseMemDump(r.folded, phase);
+          const lead = detail.lead;
+          log(`  memory dump (${phase}) in ${r.ms}ms — ${lead
+            ? `pid ${lead.pid} holds ${lead.shmMb} MB of shared memory across ${lead.shmCount} mapping(s)`
+            + `${lead.topOwner ? `, biggest owner ${lead.topOwner.owner}` : ', no owner named'}`
+            : 'no process reported allocators'}${r.partial ? ` (partial: ${r.partial})` : ''}`);
+          return reportBotEvent('mem-dump', { ...detail, ms: r.ms, partial: r.partial ?? null }, renderMemDump(r.folded));
+        })
+        .catch(() => {})
+        .finally(() => { memDump.inFlight = false; });
+    };
     const renew = setInterval(() => {
       const stalledMs = Date.now() - lastTick;
       const bail = (why) => {
@@ -2752,6 +2840,9 @@ async function warmResident() {
           reportAndBail(rampBailLine(ramp), '  (see the ramp line above)', 'ramp');
           return;
         }
+        // THE SAME READING, ONE ARM LATER. See maybeMemoryDump: it is what asks Chromium who
+        // owns the 32 GB the region walk can only measure.
+        maybeMemoryDump(memory);
       }
       /**
        * THE RUNAWAY ARM. See LOW_RAM_MB: the size bound in the loop body cannot fire while the
@@ -2852,6 +2943,11 @@ async function warmResident() {
       await installTokenCapture(ctx);
       const page = ctx.pages()[0] ?? (await ctx.newPage());
       residentPage = page;
+      // A BROWSER LIFE BEGINS HERE, and the memory dump's two phases are per life — see
+      // memDump. Reset with the counter below and for the same reason: a reopen is a new
+      // context, a new page and a new renderer, so last life's baseline describes nothing.
+      memDumpBrowserSince = Date.now();
+      memDump = { baseline: false, ramp: false, inFlight: false };
       // Re-attached on every reopen: a browser life is a new context and a new page.
       requestCounter.attach(page);
       mark('initial RC load');

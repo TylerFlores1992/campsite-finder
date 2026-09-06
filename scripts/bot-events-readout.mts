@@ -26,6 +26,17 @@
  *               ordinary API) mean the sections are not per-request. Read the `bail` ones
  *               first: a `teardown` fires on every reopen and is mostly the healthy baseline.
  *
+ *   mem-dump    WHO OWNS THE SHARED MEMORY? The walk names the class of the 32 GB — ~16k
+ *               pagefile-backed sections of 2 MB — and cannot name what created them. This is
+ *               Chromium's own answer: per-process allocator roots, a size histogram of its
+ *               `shared_memory` mappings in THE SAME BUCKETS the walk uses, and the OWNER of
+ *               each mapping from the dump's ownership graph. Read the `ramp` phase against
+ *               the `baseline` from the same browser. A big `shared_memory` total with a named
+ *               owner is the answer; a SMALL one beside a process the walk says holds 32 GB of
+ *               mapped commit is also an answer — it means the sections are not base shared
+ *               memory at all, which eliminates discardable, mojo and the GPU transfer path
+ *               together. Absent until a ramp has happened on a box running rc-mem-dump.mjs.
+ *
  *   tab-close   Is the throwaway tab's close hanging? `closeMs` beside `tripMs`, per trip.
  *               A healthy close is milliseconds. A close that took minutes — or `hung: true`
  *               — is the renderer refusing to answer, and it is why the throwaway-tab cure
@@ -44,10 +55,11 @@ const arg = (name: string, dflt: string): string => {
 const hours = Math.max(1, Number(arg('hours', '72')) || 72);
 const showAll = process.argv.includes('--all');
 
-const [scans, closes, counts] = await Promise.all([
+const [scans, closes, counts, dumps] = await Promise.all([
   recentBotEvents('ramp-scan', hours, showAll ? 50 : 3),
   recentBotEvents('tab-close', hours, showAll ? 500 : 40),
   recentBotEvents('request-counts', hours, showAll ? 200 : 40),
+  recentBotEvents('mem-dump', hours, showAll ? 50 : 6),
 ]);
 
 const pt = (iso: string) => new Date(iso).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', hour12: false });
@@ -149,6 +161,86 @@ for (const s of scans) {
   }
 
   for (const l of lines) console.log(`    ${l}`);
+}
+
+/**
+ * MEMORY DUMPS. The reading the region walk cannot take: Chromium's own attribution of the
+ * shared-memory mappings whose 2 MB swarm the walk measured from the outside.
+ *
+ * Ramp phase first — it is the event — then the baseline it is a change from.
+ */
+const SHM_ANSWER_MB = 4_000;
+console.log(`\nMEMORY DUMPS: ${dumps.length}${showAll ? '' : ' (newest 6; --all for more)'}`);
+if (dumps.length === 0) {
+  console.log('  none. Ordinary until the box runs rc-mem-dump.mjs AND a ramp has happened since —');
+  console.log('  the baseline needs a browser three minutes old, the ramp reading needs the rc family');
+  console.log('  past the bar. Check chromium_memory_samples for a ramp before reading this as silence.');
+} else {
+  const showDump = (row: BotEventRow) => {
+    const x = d(row);
+    const lead = (x.lead ?? null) as null | Record<string, any>;
+    console.log(`\n  ${pt(row.at)} PT  ${String(x.phase ?? '?')}  ${x.processes ?? '?'} process(es)  ${x.ms ?? '?'}ms`
+      + `${x.partial ? `  ⚠ PARTIAL (${x.partial})` : ''}${x.edgesCapped ? '  ⚠ ownership edges CAPPED' : ''}`);
+    if (!lead) {
+      console.log('  >>> no process reported allocators — the dump ran and Chromium said nothing.');
+      console.log('      That is a refusal wearing a reading\'s clothes; read the box log for the reason.');
+    } else {
+      console.log(`      lead pid ${lead.pid} (${lead.mainThread ?? 'thread unknown'}) — shared_memory `
+        + `${lead.shmMb} MB across ${lead.shmCount} mapping(s)`);
+      if (lead.topBucket) {
+        console.log(`      biggest bucket ${lead.topBucket.bucket}: ${lead.topBucket.mb} MB across ${lead.topBucket.n} mapping(s)`);
+      }
+      console.log(`      biggest owner  ${lead.topOwner
+        ? `${lead.topOwner.owner} — ${lead.topOwner.mb} MB across ${lead.topOwner.n}`
+        : 'none: no ownership edge named one'}`);
+      if (lead.unownedMb) console.log(`      unowned        ${lead.unownedMb} MB — mapped, with no edge claiming it`);
+      // AN ARRAY, biggest first. It was an object until a rendered fixture showed jsonb had
+      // re-sorted the keys by LENGTH, putting the largest allocator third.
+      const roots = (Array.isArray(lead.roots) ? lead.roots : []) as Array<{ name: string; mb: number | null }>;
+      const shown = roots.map((r) => `${r.name} ${r.mb === null ? 'notReported' : `${r.mb}MB`}`).join(' · ');
+      if (shown) console.log(`      roots          ${shown}`);
+      // A CROSS-CHECK, PRINTED ONLY WHEN IT FAILS. Chromium's own `shared_memory` root total
+      // and our sum over its per-mapping children describe the same population; a gap means
+      // the fold missed mappings, and on Windows this is the only check available.
+      if (typeof lead.shmRootMb === 'number' && Math.abs(lead.shmRootMb - Number(lead.shmMb)) > Math.max(8, lead.shmRootMb * 0.05)) {
+        console.log(`      ⚠ Chromium's own shared_memory root reads ${lead.shmRootMb} MB against our ${lead.shmMb} MB —`);
+        console.log('        the fold is missing mappings, so treat the owner attribution as partial.');
+      }
+      /**
+       * THE VERDICT, AND BOTH BRANCHES ARE ANSWERS. This is the whole reason the dump is worth
+       * taking on the reading where it attributes nothing: the walk has already established
+       * that the ramping renderer holds ~32 GB of MAPPED commit, so a `shared_memory` total in
+       * the tens of MB is not a failure — it says those sections never went through
+       * `base::SharedMemoryMapping`, which retires discardable, mojo and the GPU transfer path
+       * in one line. Only the `ramp` phase is entitled to either verdict; a baseline is a
+       * control and is supposed to look ordinary.
+       */
+      if (x.phase === 'ramp') {
+        if (Number(lead.shmMb) >= SHM_ANSWER_MB) {
+          console.log(`  >>> the sections ARE base shared memory (${lead.shmMb} MB of it), so the OWNER column`);
+          console.log(`      names the subsystem that created them${lead.topOwner ? `: ${lead.topOwner.owner}` : ' — and none is named, which is itself the next question'}.`);
+        } else {
+          console.log(`  >>> only ${lead.shmMb} MB of tracked shared memory on the lead process. Read that against`);
+          console.log('      the region walk in the ramp-scan for the SAME event: if the walk says ~32 GB of');
+          console.log('      commit/mapped and this says tens of MB, the sections are NOT base shared memory —');
+          console.log('      which eliminates discardable, mojo and the GPU transfer path together.');
+          console.log('      FIRST: is the ramping renderer\'s pid in the MDPROC list at all (--all)? The dump is');
+          console.log('      coordinated by the browser process and a renderer that will not answer is MISSING');
+          console.log('      from it, not empty — and missing read as small is the one false elimination this');
+          console.log('      instrument can manufacture. Join on the pid in the ramp-scan\'s region walk.');
+        }
+      }
+    }
+    if (showAll && row.text) for (const l of row.text.split('\n')) console.log(`    ${l}`);
+  };
+  const ramps = dumps.filter((r) => d(r).phase === 'ramp');
+  const bases = dumps.filter((r) => d(r).phase !== 'ramp');
+  for (const r of ramps) showDump(r);
+  if (bases.length) {
+    console.log(`\n  baselines (the control${showAll ? '' : ', newest 2'}):`);
+    for (const r of (showAll ? bases : bases.slice(0, 2))) showDump(r);
+  }
+  if (!showAll) console.log('\n  (--all prints the per-process roots, histogram and owners.)');
 }
 
 console.log(`\nTAB CLOSES: ${closes.length}${showAll ? '' : ' (newest 40; --all for more)'}`);
