@@ -3,7 +3,7 @@
 *Rewritten 2026-08-25; state refreshed **2026-09-06** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
-> ## THE OWNER QUESTION IS INSTRUMENTED — merge, update the box, wait for a ramp (2026-09-06)
+> ## THE OWNER QUESTION IS INSTRUMENTED, IT IS ON THE BOX — WAIT FOR A RAMP (2026-09-06)
 >
 > **The walk said WHAT the 32 GB is; nothing on the Windows side can say WHO ASKED FOR IT** —
 > a pagefile-backed anonymous section records no creator. So the next reading asks Chromium:
@@ -134,19 +134,41 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > (that change killed a working repair on 08-19, and untouched commit never moves free RAM,
 > which is why the RAM arm has sat out sixteen consecutive ramps).
 >
-> ### STATE AT 2026-09-06
+> ### STATE AT 2026-09-06, 18:00 UTC (end of session)
 >
 > | | |
 > |---|---|
-> | master | `6fdd1de` plus this write-up |
-> | mini-PC | `2ecaca8`, confirmed by `bot-ask git-status` — **never** `autocart.bot_version`, which COALESCEs and shows a stale sha beside a live heartbeat |
-> | fleet | 3/3 shards held, heartbeat 4s, **18 of 19** checks ok |
+> | master | `2233420` |
+> | mini-PC | `5399000` — **the gap to master is docs plus one web-side file, so no box update is needed** (read the two commits; `autocart.bot_version` COALESCEs and can show a stale sha beside a live heartbeat) |
+> | open PRs | **none** |
+> | fleet | **16 of 19** checks ok, three warns, all documented-benign |
 > | holds | none queued, so the 6h update gate is open |
 > | migrations | highest **076**; main's block is **077-079**, side's is **080+** |
 >
-> - **#281 (`2ecaca8`) the walk · #282 (`aebaf13`) the trigger id · #283 (`6fdd1de`) handover.**
-> - **The one warn is `rc_login`**, standing down inside its once-per-20h gate having passed on
->   09-05. **A stand-down is not a failure**; do not chase it.
+> - **#281 (`2ecaca8`) the walk · #282 (`aebaf13`) the trigger id · #283 (`6fdd1de`) handover ·
+>   #285 (`5399000`) the memory dump · #286 (`a93829e`) it fired on the box · #287 (`2233420`)
+>   the RC-load floor.** Only #285 is bot-side.
+> - **The three warns:** `rc_session` (RC rejects the token — the ordinary between-releases
+>   state, the token lives ~1h and `maybeAutoLogin` restores it at T−30), `bot_version` (box vs
+>   web, *"No bot-side code in the gap"*), `rc_login` (a stand-down inside its once-per-20h
+>   gate). **A stand-down is not a failure**; do not chase any of the three, and in particular
+>   **do not act on `rc_session`'s printed remedy** — `rc-login.bat` force-kills the Chromium
+>   the token lives in.
+>
+> ### THE LEAK IS WAITING ON A RAMP — one command, nothing to build
+>
+> **No ramp since 09-05 20:29 PT (~14 hours), flat at ~330 MB, commit 41-42%.** The observed
+> spread is **5-28 hours**, so that is neither a cure nor a fault. The memory dump is on the box
+> and has **one `baseline` row (07:59:33 PT) and no `ramp` row** — the expected state on a quiet
+> box, not a miss.
+>
+> ```
+> NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts     # MEMORY DUMPS; --all for owners
+> ```
+>
+> **Join on the pid**: check the dump's lead pid against the ramp-scan's walk TARGET for the same
+> event. A dump of a healthy renderer says nothing, and on a quiet box the lead is the GPU
+> process rather than a renderer.
 >
 > ### THE RELEASE-WINDOW TRIGGER ID CHANGED — read `list_triggers`, never a doc
 >
