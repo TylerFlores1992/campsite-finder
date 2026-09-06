@@ -140,7 +140,7 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > |---|---|
 > | master | `2233420` |
 > | mini-PC | `5399000` — **the gap to master is docs plus one web-side file, so no box update is needed** (read the two commits; `autocart.bot_version` COALESCEs and can show a stale sha beside a live heartbeat) |
-> | open PRs | **none** |
+> | open PRs | **none** once this handover merges |
 > | fleet | **16 of 19** checks ok, three warns, all documented-benign |
 > | holds | none queued, so the 6h update gate is open |
 > | migrations | highest **076**; main's block is **077-079**, side's is **080+** |
@@ -649,10 +649,10 @@ because reverting it looks like a tidy-up.
 
 ## 4. State
 
-> **SUPERSEDED BY THE TABLE IN THE TOP BLOCK, refreshed 2026-09-05 19:40 PT.** Master is
-> `aebaf13`, the mini-PC is `2ecaca8`, there are **no open PRs and no holds queued**, migrations
-> are unchanged (highest **076**; main's block is `077-079`), and health is 18/19 with only
-> `rc_login` warning. The rows below are the 09-04 reading and are kept for the detail in them
+> **SUPERSEDED BY THE TABLE IN THE TOP BLOCK, refreshed 2026-09-06 18:00 UTC.** The reading
+> below is 09-05 19:40 PT: master was `aebaf13`, the mini-PC `2ecaca8`, **no open PRs and no
+> holds queued**, migrations unchanged (highest **076**; main's block `077-079`), health 18/19
+> with only `rc_login` warning. The rows below are the 09-04 reading and are kept for the detail in them
 > — **re-read production rather than either table.**
 
 *Refreshed **2026-09-04 15:30 PT**, against production. This table has twice been left
