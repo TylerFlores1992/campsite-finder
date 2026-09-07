@@ -173,6 +173,29 @@ starting any of these, and wait for the other lane to finish:
 
 Land changes between test runs rather than during one.
 
+## AND A THIRD WRITER NO LANE STARTS: THE NIGHTLY RIDB SYNC (2026-09-07)
+
+Everything above is a thing a *session* does, so the remedy is a session waiting. **The
+Nightly RIDB Sync is none of those** — it is a scheduled Action that writes the production
+catalog and is started by nobody. On 2026-09-07 it ran **14:36:48 → 15:15:04Z, thirty-eight
+and a half minutes**, and #292's CI test window (15:03 → 15:09:56) sat **entirely inside it**.
+CI failed 1 of 1950.
+
+- **The same commit passed 1950/1950 locally twice** (a full `verify` and a dedicated run,
+  both overlapping the sync by only ~2 minutes) and **passed on a CI re-run once the sync had
+  finished.** Three greens against one red, with the overlap the only variable.
+- **It is the `reclaimLapsedHolds` shape one table along**: the second writer is not a second
+  test run, it is production — so serialising the lanes cannot prevent it, and no amount of
+  announcing helps.
+- **`ridb-photos`, `sync-claim` and the catalog suites are the exposed ones**, being the
+  fixed-sentinel suites this file and CLAUDE.md already record as mutually destructive.
+- **WHAT TO DO: check whether it is running before reading a red CI as a regression.**
+  `actions_list` → `nightly-sync.yml` gives its window in one call. A run that spans the whole
+  test window is a named mechanism; a run that does not, is not, and then the red is yours.
+- **Do NOT "fix" this by moving the schedule.** The sync is real work with its own reasons for
+  when it runs, and a red CI you can explain in one call is cheaper than a catalog that syncs
+  at a worse hour. Recorded, not changed.
+
 ## TWO SESSIONS CAN BE THE *SAME* LANE, AND ON 2026-09-04 TWO MAIN LANES COLLIDED
 
 This file divides **main** from **side** and says nothing about two sessions of the same lane.

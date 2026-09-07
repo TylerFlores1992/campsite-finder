@@ -939,6 +939,23 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
     one patiently waiting, which is this file's most-repeated shape. **To wait on CI, poll the
     GitHub MCP tools; `curl` to a `/repos/` endpoint cannot work here** — and per the correction
     above, do not conclude otherwise from `/user` answering.
+- **A RED CI'S FAILING TEST NAME CAN BE UNREACHABLE, AND IT WAS ON 2026-09-07.**
+  `mcp__github__get_job_logs` caps at about **5,000 lines / 312 KB no matter what `tail_lines`
+  says** — 6,000 and 30,000 returned byte-identical output. The `verify` job emits ~6 TAP lines
+  per test across 1,950 tests, so the cap covers roughly the last 800 tests: the window opened
+  at `ok 1121` and the one failure was below it. **`not ok` appeared ZERO times in everything
+  the tool would return, over a job reporting `# fail 1`.**
+  - **So "which test failed?" has no answer through the CI log here.** Do not read a zero count
+    as "no failure" — that is the absent-reading-as-a-negative shape, handed to you by the
+    tooling rather than by the code.
+  - **REPRODUCE LOCALLY WITH THE OUTPUT IN A FILE INSTEAD**: `npm test > log 2>&1` then grep
+    `^not ok`. That is the only route to the name, and it doubles as the pass-alone evidence a
+    legitimate re-run needs.
+  - The three conditions still decide whether a re-run is honest — the diff cannot touch the
+    code, the suite passes alone, and the mechanism is named — and **the third can be satisfied
+    without the test name**: on 09-07 the Nightly RIDB Sync spanned CI's entire test window,
+    which is a named writer, and the re-run went green once it had finished. See
+    `docs/LANES.md` → "A THIRD WRITER NO LANE STARTS".
 - **The credentials are process env vars — THERE IS NO `.env` FILE.** `grep`ping `.env*`
   finds nothing and looks exactly like "no credentials here". It isn't; check
   `printenv`. Cost a wrong "I can't build here" call on 2026-07-29 with Clerk, Stripe,
@@ -5894,6 +5911,33 @@ Pacific date ≥ 2026-09-12.** First RECORDED fire is **2026-09-06**, not 09-05.
   isolation, along with the four reading rules above (quote the negative bracket, not the
   median; facility-atomic; re-locks are not contention; unreadable is never free).
 
+##### THREE FIRINGS, THREE LOSSES, AND THE THIRD IS THE ONE THE 07:54 MOVE WAS MEANT TO STOP (2026-09-07)
+`rc_release_readings` still holds **zero rows**. 09-05 was lost to a fresh session with no
+repository; 09-06 to a bound session mid-turn; **09-07 to a bound session mid-turn again**, which
+is the failure the move to 07:54 and `--after=120` was bought to prevent.
+- **THE DRAIN TOLERANCE IS ~3.75 MINUTES AND A BUSY TURN IS LONGER.** The message arrived
+  **14:54:51Z**; the window ran **14:58:30 → 15:02:00Z**; the session was inside a single tool
+  call waiting on `npm run verify`. The run finally started at **15:02:09Z — nine seconds after
+  the window closed.**
+- **AND NO "NOTIFICATIONS PENDING" NOTICE EVER SURFACED.** The only system messages in that
+  span were `<task-notification>` blocks for backgrounded Bash commands. The Routine's message
+  was found by calling `ReadNotifications` **on my own initiative**, eight minutes late. So a
+  bound-session Routine can sit queued, silently, behind one long tool call — and "it fires
+  into its own session and needs nothing from here" (which is what the session was handed) is
+  **false and is what made it safe to ignore.** It fires into THIS session and needs the turn.
+- **RUNNING IT AFTERWARDS CANNOT ANSWER THE QUESTION, and the script says so rather than
+  guessing.** At 15:02:09 all three facilities read `0 locked night(s) for this release` (with
+  6 rc-539 nights locked for other times) and it refused: `THE QUESTION WAS NEVER REACHED`.
+  **That is not "RC released nothing"** — nights released at 15:00 no longer read as locked, so
+  after T the two are indistinguishable. Which is precisely why it must run before T.
+- **DO NOT TWEAK THE SCHEDULE AGAIN.** That instruction is already recorded, it has now been
+  paid for a third time, and moving the fire earlier spends the 600s Bash ceiling one for one.
+  **The recorded remedy is to RUN IT BY HAND**, on a day somebody is present, before 07:58:30 PT.
+- **THE STRUCTURAL FIX IS A DECISION, NOT A TIDY-UP.** A fresh session per fire has the repo
+  problem (09-05); a bound session has the busy problem (09-06, 09-07). What would close it is
+  a fresh session **with the checkout attached**, which is an environment question nobody has
+  answered. Raised, not chosen.
+
 ### THE THIRD SHARD (2026-09-04, #262)
 `poller.capacity` had been AMBER at **6/8 rec.gov campground-months across 2 machines** —
 five rec.gov watches consuming six slots, because a watch spanning two months costs two.
@@ -7110,9 +7154,15 @@ tree, the deploy and the fleet were all correct.
 
 > ### 2026-09-07 — THE RAMP CAME, THE DUMP FIRED, AND IT MEASURED THE WRONG BROWSER
 >
-> **Master `1fb0082`+ on `claude/main-lane-setup-check-yxqkwc`, mini-PC `6a76677` (it updated —
-> `bot_version` reads both on the same sha), no open PRs, no holds queued.** Health is better
-> than the last block predicted: `rc_session` and `bot_version` are **ok**, not warn.
+> **Master `3867988` (#291 + #292 merged), no holds queued, migrations still highest 076 with
+> main's block 077-079.** Health: `rc_session` and `bot_version` were **ok**, not the warns the
+> previous block predicted.
+>
+> **THE BOX NEEDS AN UPDATE AND BOTH OF THIS DAY'S FIXES ARE BOT-SIDE.** It was on `6a76677`,
+> which predates the `notBefore` gate (#291) and the status counter (#292). Until it updates,
+> a `ramp` dump can still fire against a fresh browser after a bail, and the readout will keep
+> printing `statuses not reported`. **Confirm with `npx tsx scripts/bot-ask.mts git-status`,
+> never `autocart.bot_version`.**
 >
 > **THE 22-HOUR DROUGHT BROKE AT 09-07 02:03 PT and the memory dump fired its `ramp` phase for
 > the first time. THE READING IS VOID — do not quote it.** The join the readout tells you to
@@ -7140,9 +7190,13 @@ tree, the deploy and the fleet were all correct.
 > counter). **The missing field is still the STATUS** — count by `(path, status)` off
 > `page.on('response')`, **NOT BUILT** — and still do not reach for blocking the requests first.
 >
-> **THE RELEASE-WINDOW ROUTINE fires today 07:54 PT (14:54 UTC), its first RECORDED firing.** It
-> fires into its own session and needs nothing from here; `rc_release_readings` reading zero rows
-> before then is expected.
+> **THE RELEASE-WINDOW ROUTINE FIRED AT 07:54 PT AND WAS LOST — the third in a row, and it does
+> NOT fire into its own session.** It is bound to the MAIN session, so it needs that session's
+> turn; this one was inside a single tool call waiting on `npm run verify`, no
+> "notifications pending" notice ever surfaced, and the run started nine seconds after the
+> window closed. `rc_release_readings` is still empty after three firings. **Do not tweak the
+> schedule — the recorded remedy is to run it by hand before 07:58:30 PT.** Full account:
+> "THREE FIRINGS, THREE LOSSES".
 >
 > ### 2026-09-06 EVENING — NOTHING IS ASSIGNED; THE LEAK IS WAITING ON A RAMP
 >

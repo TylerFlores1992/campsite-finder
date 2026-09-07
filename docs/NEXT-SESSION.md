@@ -318,10 +318,18 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >   **stores no MCP connectors and may be inert**, so the self-disable in the prompt is the
 >   load-bearing stop; and ~~nothing persists the readings~~ — **that half is BUILT and merged
 >   in #273**: `--record`, migration 076 `rc_release_readings`, `scripts/rc-release-readout.mts`,
->   and the Routine's prompt passes the flag. **First recorded run is 09-07 07:54 PT**, under the new id (09-05 and 09-06 were both lost);
->   09-05's fired under the dead one and recorded nothing, so `rc-release-readout.mts` reading
->   zero rows on 09-05 is the expected state and not the `--record` path being broken. The
->   inert-disabler gap is the one still open.
+>   and the Routine's prompt passes the flag. ~~**First recorded run is 09-07 07:54 PT**~~
+>   **— 09-07 WAS LOST TOO, AND THAT IS THREE FOR THREE.** It is bound to the MAIN session, so it
+>   needs that session's TURN: on 09-07 the message arrived at 14:54:51Z while the session sat in
+>   one tool call waiting on `npm run verify`, **no "notifications pending" notice ever
+>   surfaced**, and the run started nine seconds after the window closed. `rc_release_readings`
+>   is still EMPTY, so a zero-row readout remains the expected state — it is not the `--record`
+>   path being broken. **DO NOT TWEAK THE SCHEDULE AGAIN** (recorded, now paid for three times;
+>   moving the fire earlier spends the 600s Bash ceiling one for one). **The remedy is to RUN IT
+>   BY HAND before 07:58:30 PT on a day somebody is present** — the command is in the Routine
+>   prompt and in CLAUDE.md. The structural fix (a fresh session WITH the checkout attached) is
+>   an environment question nobody has answered; raised, not chosen. The inert-disabler gap is
+>   still open beside it.
 > - **Health 18/19 at 22:30 UTC** — the `bot_version` warn cleared when the box took `1e947ee`.
 >   The one remaining warn is `rc_login`: *"no rehearsal has PASSED in 19h09m — last night was
 >   skipped"*. **A skip is a stand-down, not a failure** (it refuses when the session is live,
