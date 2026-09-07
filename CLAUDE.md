@@ -7015,20 +7015,31 @@ tree, the deploy and the fleet were all correct.
 
 > ### 2026-09-06 EVENING — NOTHING IS ASSIGNED; THE LEAK IS WAITING ON A RAMP
 >
-> **Master `2233420`, mini-PC `5399000`, no open PRs, no holds queued (so the 6h update gate is
+> **Master `bf294bd`, mini-PC `5399000`, no open PRs, no holds queued (so the 6h update gate is
 > open), migrations highest 076 with main's block 077-079.** Health 16/19: `rc_session` (dead
 > between releases — the token lives ~1h), `bot_version` (box vs web) and `rc_login` (a
 > stand-down inside its once-per-20h gate) are all documented-benign. **The gap between box and
-> web is docs plus one web-side file, so the box needs no update** — checked by reading the two
-> commits, not by trusting `autocart.bot_version`.
+> web is docs, one web-side file and the readout, so the box needs no update** — checked by
+> reading the commits, not by trusting `autocart.bot_version`.
+>
+> **THE PACIFIC DATE LAGS UTC BY SEVEN HOURS AND THE ROUTINES ARE PACIFIC.** At 01:45 UTC on
+> 09-07 it is still 18:45 PT on 09-06, so a 07:54 PT Routine is thirteen hours out rather than
+> missed. Read the Pacific clock before calling a scheduled firing lost.
 >
 > **THE LEAK: everything that can be built IS built, and the next move is to read, not to
 > write.** The walk named the class (16,387 mapped 2 MB sections, 32,779 MB); the memory dump
 > that can name the OWNER is on the box with one baseline and **no ramp row yet**; and the box
-> has been flat at ~330 MB for **~14 hours** (last ramp 09-05 20:29 PT). The observed spread is
-> **5-28 hours**, so a quiet evening is neither a cure nor a fault — every "not reproduced this
-> session" reading in this file was a window that missed one. **Do NOT queue a test hold to
-> force one.** One command reads it:
+> has been flat at ~310 MB for **~22 hours** (last ramp 09-05 20:29 PT), with a 16-hour peak of
+> 647 MB against the 3,000 MB trigger. The observed spread is **5-28 hours**, so this sits at the
+> top of the range and is still neither a cure nor a fault — every "not reproduced this session"
+> reading in this file was a window that missed one. **Do NOT queue a test hold to force one.**
+>
+> **ONE BASELINE AND NO RAMP ROW IS THE INSTRUMENT WORKING, and the cadence is now confirmed two
+> independent ways.** The box updated at 14:56 UTC and the baseline landed at 14:59:33, three
+> minutes in; and there have been **zero `request-counts` events in sixteen hours** — those fire
+> at every teardown and a teardown happens on every browser reopen, so the resident browser has
+> had ONE continuous life and one baseline is exactly right. The 34 `tab-close` rows in that
+> window are throwaway renewal tabs, which do not tear the browser down. One command reads it:
 > `NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts` (MEMORY DUMPS section; `--all`
 > for per-process roots, histogram and owners). **Join on the pid** — check the dump's lead pid
 > against the ramp-scan's walk TARGET for the same event, or a dump of a healthy renderer reads

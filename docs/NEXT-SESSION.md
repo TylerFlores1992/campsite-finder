@@ -1,6 +1,6 @@
 # Next session — start here
 
-*Rewritten 2026-08-25; state refreshed **2026-09-06** (main lane). This is a
+*Rewritten 2026-08-25; state refreshed **2026-09-06 evening** (main lane). This is a
 HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 
 > ## THE OWNER QUESTION IS INSTRUMENTED, IT IS ON THE BOX — WAIT FOR A RAMP (2026-09-06)
@@ -148,20 +148,25 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > (that change killed a working repair on 08-19, and untouched commit never moves free RAM,
 > which is why the RAM arm has sat out sixteen consecutive ramps).
 >
-> ### STATE AT 2026-09-06, 18:00 UTC (end of session)
+> ### STATE AT 2026-09-06, 18:45 PT / 09-07 01:45 UTC (end of session)
+>
+> **THE PACIFIC DATE IS STILL 09-06.** UTC has rolled over and Pacific has not, so the 07:54 PT
+> release-window Routine has **not fired yet** — it is ~13 hours out, not missed.
 >
 > | | |
 > |---|---|
-> | master | `2233420` |
-> | mini-PC | `5399000` — **the gap to master is docs plus one web-side file, so no box update is needed** (read the two commits; `autocart.bot_version` COALESCEs and can show a stale sha beside a live heartbeat) |
-> | open PRs | **none** once this handover merges |
+> | master | `bf294bd` |
+> | mini-PC | `5399000` — **the gap to master is docs, one web-side file and the readout, so no box update is needed** (read the two commits; `autocart.bot_version` COALESCEs and can show a stale sha beside a live heartbeat) |
+> | open PRs | **none** |
 > | fleet | **16 of 19** checks ok, three warns, all documented-benign |
 > | holds | none queued, so the 6h update gate is open |
 > | migrations | highest **076**; main's block is **077-079**, side's is **080+** |
 >
 > - **#281 (`2ecaca8`) the walk · #282 (`aebaf13`) the trigger id · #283 (`6fdd1de`) handover ·
 >   #285 (`5399000`) the memory dump · #286 (`a93829e`) it fired on the box · #287 (`2233420`)
->   the RC-load floor.** Only #285 is bot-side.
+>   the RC-load floor · #288 (`169341d`) handover · #289 (`bf294bd`) the bail-count fix.**
+>   Only #285 is bot-side; **#289 fired no worker deploy**, verified after the fact against
+>   `worker-deploy.yml`'s run list and not merely predicted.
 > - **The three warns:** `rc_session` (RC rejects the token — the ordinary between-releases
 >   state, the token lives ~1h and `maybeAutoLogin` restores it at T−30), `bot_version` (box vs
 >   web, *"No bot-side code in the gap"*), `rc_login` (a stand-down inside its once-per-20h
@@ -171,10 +176,18 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >
 > ### THE LEAK IS WAITING ON A RAMP — one command, nothing to build
 >
-> **No ramp since 09-05 20:29 PT (~14 hours), flat at ~330 MB, commit 41-42%.** The observed
-> spread is **5-28 hours**, so that is neither a cure nor a fault. The memory dump is on the box
-> and has **one `baseline` row (07:59:33 PT) and no `ramp` row** — the expected state on a quiet
-> box, not a miss.
+> **No ramp since 09-05 20:29 PT — ~22 hours as of 18:45 PT on 09-06**, flat at ~310 MB with a
+> 16-hour peak of 647 MB against the 3,000 MB trigger, commit 41-42%. The observed spread is
+> **5-28 hours**, so this is at the top of the range and still neither a cure nor a fault —
+> every "not reproduced this session" reading in `CLAUDE.md` was a window that missed one.
+>
+> **THE INSTRUMENT IS ARMED AND ITS CADENCE IS CONFIRMED TWICE, so one `baseline` row and no
+> `ramp` row is it working rather than a miss.** Yesterday: the box updated at 14:56 UTC and the
+> baseline landed at **14:59:33**, three minutes in. Today, the cleaner check — **zero
+> `request-counts` events in sixteen hours.** Those fire at every teardown and a teardown happens
+> on every browser reopen, so the resident browser has had **one continuous life** and one
+> baseline is exactly right. (34 `tab-close` rows in the same window are throwaway renewal tabs,
+> which do not tear the browser down.)
 >
 > ```
 > NODE_USE_ENV_PROXY=1 npx tsx scripts/bot-events-readout.mts     # MEMORY DUMPS; --all for owners
@@ -209,6 +222,17 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > cut-off run, which is the failure that reports SUCCEEDED while measuring nothing.
 >
 > **First recorded firing is now 09-07 07:54 PT**, and five days of the week remain.
+>
+> **IT FIRES INTO A BOUND SESSION, AND THAT IS THE FAILURE MODE — not the cron.** Both the
+> release-window Routine and the 08:15 outcome one carry
+> `persistent_session_id: session_01EfFNmVeERM5XfWwfuW1DyP`. Binding fixed 09-05's "no repository
+> attached"; it is what caused 09-06's loss, because a bound session that is **mid-turn** when the
+> message arrives queues it until the window has passed. **So the single thing that makes 09-07
+> record is that session being idle at 07:54 PT.** Nothing in the repo can enforce that. If a
+> third firing is lost, the honest fix is not another schedule tweak — it is that a measurement
+> needing a quiet agent at a fixed minute is the wrong shape, and the script should be run by
+> hand once instead. Checked 09-06 evening: both Routines enabled, `next_run_at` 09-07 14:54Z and
+> 15:15Z, prompt carries `--record`, `--after=120` and the dynamic `$(TZ=…date +%F)` date.
 
 > ## THEN: THE 09-04 MORNING WORKED, AND TWO SESSIONS COLLIDED WRITING IT UP
 >
