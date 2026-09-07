@@ -32,6 +32,16 @@
  *   figure is then a lower bound, which is printed as one rather than as a count.
  * • Subframes ride the same `page.on('request')` event in Playwright, and that is
  *   load-bearing: okta-auth-js's `prompt=none` renewal runs in a hidden iframe.
+ * • THE STATUS IS COUNTED, AND IT IS THE FIELD THAT DECIDES THE FIX. `page.on('request')`
+ *   never sees the answer, so a retry loop against a 401 and an SPA asking on purpose are the
+ *   SAME reading — and they need opposite fixes. A status code is not a credential and none
+ *   of the never-collect-a-field-you-must-filter rules touch it. Counted LIFETIME only, with
+ *   no second rolling window: the RATE is already answered by `recent`, the question here is
+ *   the MIX, and a parallel window would double the per-request objects held by the one
+ *   process suspected of allocating gigabytes. The instrument must not become the disease.
+ * • A REQUEST WITH NO ANSWER IS ITS OWN FINDING, so `requestfailed` is counted too and the
+ *   readout compares the answers against the asks. 49,000 asks and 200 answers is a third
+ *   story again, and without this it would read as a 200 loop with a small denominator.
  *
  * A pure module for the reason `tab-close.mjs` and `renewal-schedule.mjs` are: importing
  * `rc-keepwarm.mjs` starts the keep-warm loop, and this has arms that only run during a ramp.
@@ -45,20 +55,28 @@ export const REQUEST_MAX_PATHS = Number(process.env.RC_REQUEST_MAX_PATHS || 200)
 /** Entries the rolling window may hold before the oldest are dropped. */
 export const REQUEST_WINDOW_CAP = Number(process.env.RC_REQUEST_WINDOW_CAP || 50_000);
 export const OTHER_KEY = '<other>';
+/** Distinct statuses kept per path before the rest fold into `<other>`. Bounds a server that
+ *  answers with a thousand different codes; nothing real needs more than a handful. */
+export const REQUEST_MAX_STATUSES = Number(process.env.RC_REQUEST_MAX_STATUSES || 8);
+/** A request Chromium never got an answer to — aborted, refused, DNS, or the page going away. */
+export const FAILED_KEY = 'failed';
 export const TOP_N = 10;
 
 /**
- * @param {{ now?: () => number, windowMs?: number, maxPaths?: number, windowCap?: number }} [opts]
+ * @param {{ now?: () => number, windowMs?: number, maxPaths?: number, windowCap?: number, maxStatuses?: number }} [opts]
  */
 export function createRequestCounter({
   now = () => Date.now(), windowMs = REQUEST_WINDOW_MS,
   maxPaths = REQUEST_MAX_PATHS, windowCap = REQUEST_WINDOW_CAP,
+  maxStatuses = REQUEST_MAX_STATUSES,
 } = {}) {
   const startedAt = now();
   /** @type {Map<string, number>} */
   const lifetime = new Map();
   /** @type {{ at: number, key: string }[]} the rolling window, oldest first */
   let recent = [];
+  /** @type {Map<string, Map<string|number, number>>} path -> status -> count, LIFETIME */
+  const statuses = new Map();
   let overflowed = false;
   let total = 0;
 
@@ -91,16 +109,60 @@ export function createRequestCounter({
   }
 
   /**
-   * Attach to a Playwright page. The handler is a plain function so a page that is already
+   * Record what came back for one request: an HTTP status, or FAILED_KEY when Chromium never
+   * got an answer. The STATUS ONLY — never a header, never a body.
+   *
+   * The path is keyed through the same `keyFor`, so an answer folds into `<other>` exactly
+   * where its ask did and the two can always be compared. A response cannot arrive for a path
+   * the request did not already record, so this never grows the path map on its own.
+   */
+  function recordAnswer(url, status) {
+    const key = keyFor(url);
+    let byStatus = statuses.get(key);
+    if (!byStatus) { byStatus = new Map(); statuses.set(key, byStatus); }
+    // AN UNREADABLE STATUS IS NOT A ZERO. `Number(null)` is 0 and `Number.isFinite(0)` is
+    // true, so a coercing check records "answered 0" — a real-looking answer sitting beside
+    // real codes. Require the number Playwright actually hands back.
+    const raw = status === FAILED_KEY ? FAILED_KEY
+      : (typeof status === 'number' && Number.isFinite(status)) ? status : null;
+    const k = raw === null ? OTHER_KEY : (byStatus.has(raw) || byStatus.size < maxStatuses) ? raw : OTHER_KEY;
+    byStatus.set(k, (byStatus.get(k) ?? 0) + 1);
+  }
+
+  /**
+   * Attach to a Playwright page. The handlers are plain functions so a page that is already
    * gone (a closed context throws on `.on`) costs a log line and not the loop.
+   *
+   * THREE EVENTS, AND THE THIRD IS NOT OPTIONAL. `response` alone would count a loop that is
+   * never answered as no loop at all, and a request Chromium refused outright is exactly the
+   * shape a retry storm has.
    * @returns {() => void} detach
    */
   function attach(page) {
     const handler = (req) => {
       try { record(typeof req?.url === 'function' ? req.url() : String(req)); } catch { /* never throw into Playwright */ }
     };
+    const onResponse = (res) => {
+      try { recordAnswer(typeof res?.url === 'function' ? res.url() : String(res), typeof res?.status === 'function' ? res.status() : null); } catch { /* never throw into Playwright */ }
+    };
+    const onFailed = (req) => {
+      try { recordAnswer(typeof req?.url === 'function' ? req.url() : String(req), FAILED_KEY); } catch { /* never throw into Playwright */ }
+    };
     page.on('request', handler);
-    return () => { try { page.off('request', handler); } catch { /* gone */ } };
+    page.on('response', onResponse);
+    page.on('requestfailed', onFailed);
+    return () => {
+      try { page.off('request', handler); } catch { /* gone */ }
+      try { page.off('response', onResponse); } catch { /* gone */ }
+      try { page.off('requestfailed', onFailed); } catch { /* gone */ }
+    };
+  }
+
+  /** One path's answers, biggest first, as a plain object so it survives `jsonb`. */
+  function statusesFor(key) {
+    const byStatus = statuses.get(key);
+    if (!byStatus) return {};
+    return Object.fromEntries([...byStatus.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => [String(k), v]));
   }
 
   /** Top keys by ROLLING count, then lifetime. `recent` is a lower bound when overflowed. */
@@ -109,7 +171,9 @@ export function createRequestCounter({
     prune(t);
     const rolling = new Map();
     for (const e of recent) rolling.set(e.key, (rolling.get(e.key) ?? 0) + 1);
-    const rows = [...lifetime.entries()].map(([key, life]) => ({ key, recent: rolling.get(key) ?? 0, lifetime: life }));
+    const rows = [...lifetime.entries()].map(([key, life]) => ({
+      key, recent: rolling.get(key) ?? 0, lifetime: life, statuses: statusesFor(key),
+    }));
     rows.sort((a, b) => (b.recent - a.recent) || (b.lifetime - a.lifetime) || a.key.localeCompare(b.key));
     return rows.slice(0, n);
   }
@@ -133,7 +197,28 @@ export function createRequestCounter({
     };
   }
 
-  return { record, attach, top, snapshot, get windowMs() { return windowMs; } };
+  return { record, recordAnswer, attach, top, snapshot, get windowMs() { return windowMs; } };
+}
+
+/**
+ * One path's answers as `401x75190 - failed x5`, biggest first. Empty when nothing came back,
+ * which the caller must render as its own state — see `answerGap`.
+ */
+export function formatStatuses(statuses) {
+  const e = Object.entries(statuses ?? {});
+  if (e.length === 0) return '';
+  return e.sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}x${v}`).join(' ');
+}
+
+/**
+ * How many of a path's asks came back with anything at all. A loop nobody answers is a
+ * different finding from a loop answered 200, and both are different from a 401 retry storm —
+ * so the count is returned rather than a verdict, and the caller says which.
+ */
+export function answerGap(row) {
+  const answered = Object.values(row?.statuses ?? {}).reduce((n, v) => n + (Number(v) || 0), 0);
+  const asked = Number(row?.lifetime) || 0;
+  return { asked, answered, missing: Math.max(0, asked - answered) };
 }
 
 /**
@@ -156,7 +241,11 @@ export function describeRequestCounts(counter, { n = TOP_N, compact = false } = 
   }
   const lines = [head];
   for (const r of s.top) {
-    lines.push(`    ${String(r.recent).padStart(6)} in ${win}s  ${String(r.lifetime).padStart(7)} lifetime  ${r.key}`);
+    const mix = formatStatuses(r.statuses);
+    const g = answerGap(r);
+    // NEVER blank: "nothing came back" and "we did not look" would otherwise read alike.
+    const answers = mix ? `${mix}${g.missing ? ` (+${g.missing} unanswered)` : ''}` : 'no answer recorded';
+    lines.push(`    ${String(r.recent).padStart(6)} in ${win}s  ${String(r.lifetime).padStart(7)} lifetime  ${r.key}  ${answers}`);
   }
   return lines.join('\n');
 }

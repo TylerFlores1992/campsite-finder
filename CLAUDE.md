@@ -6055,6 +6055,40 @@ magnitude.** Two events in 113, both to
   is only ever seen because the browser happened to be torn down soon after. **Two observations
   is a floor on how often this happens, never a count.**
 
+#### A THIRD BURST, BIGGER, AND THE STATUS IS COUNTED NOW (2026-09-07)
+The 09-07 02:03 bail carried **≥49,237 hits in 120s / 75,195 lifetime** on
+`futurebookingstartsendsdates`, on a browser **three minutes old** — against 18,392 and 19,008
+before. So it is three events in fifteen days, not two, and the largest by a factor of two and a
+half.
+- **THE `≥` IS THE INSTRUMENT SATURATING, AND THE REAL FIGURE IS UNKNOWN.**
+  `REQUEST_WINDOW_CAP` is 50,000 entries and the window held 49,237, so the two-minute count is
+  a **lower bound that is within 2% of its own ceiling** — quote it as a floor, never as a rate.
+  Raising the cap costs per-request objects in the one process suspected of allocating
+  gigabytes; the honest fix is per-second buckets (120 × 200 counters, exact and bounded) and
+  it is **NOT BUILT**.
+- ~~**The next instrument is counting by (path, STATUS) … NOT BUILT.**~~ **BUILT 2026-09-07.**
+  `page.on('response')` and `page.on('requestfailed')` feed a **LIFETIME** status count per path
+  — no second rolling window, because the RATE is already answered by `recent` and the question
+  here is the MIX; a parallel window would double the per-request objects held by the suspect
+  process. `loopAnswerReading` (`src/lib/bot-events.ts`) turns it into the sentence, and the
+  readout prints it under the loop verdict.
+- **A REQUEST WITH NO ANSWER IS ITS OWN FINDING**, which is why `requestfailed` is counted and
+  the readout prints the asks against the answers. **49,000 asks and 200 answers is a third
+  story again**, and without the gap it reads as a 200 loop with a small denominator.
+- **ABSENT IS NOT EMPTY.** A row written by a bundle older than this carries no `statuses` key
+  at all and reports as `not-reported`. Rounding that to "nothing came back" would report every
+  historical burst as a finding, falsely — the house shape, in the instrument built to end a
+  different instance of it.
+- **HOW TO READ THE NEXT BURST.** `401`/`403` dominant ⇒ a **retry loop against a rejection**,
+  and the fix is the auth state it retries with — **not blocking the requests**. `2xx` dominant
+  ⇒ RC's SPA **asking on purpose and being served**, and the fix is the request pattern. Mostly
+  `failed` ⇒ Chromium refusing them, which is a third investigation. No dominant code ⇒ the
+  readout says so and names nothing, because a spread is not a story.
+- **IT STILL SAYS NOTHING ABOUT THE LEAK, and the 09-07 event is why that holds.** That ramp had
+  the biggest loop yet AND the same 32 GB mapping as the 09-05 20:29 ramp, whose counter was
+  **flat** (0 in 120s, 109 lifetime). Independent in both directions, now three times over.
+- **BOT-SIDE, so it reads `statuses not reported` until the box updates.**
+
 #### AND ITEM 3 — "THE SESSION DIES WITHIN ~2 MINUTES OF EVERY QUEUE" — IS INSTRUMENTED AND UNANSWERED (2026-09-06)
 Checked in source rather than waited on. **The instrument shipped 2026-09-03 and every outcome
 of the yield now speaks**, including a fourth that did not exist when the four deaths were
