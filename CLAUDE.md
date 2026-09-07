@@ -5894,6 +5894,33 @@ Pacific date ≥ 2026-09-12.** First RECORDED fire is **2026-09-06**, not 09-05.
   isolation, along with the four reading rules above (quote the negative bracket, not the
   median; facility-atomic; re-locks are not contention; unreadable is never free).
 
+##### THREE FIRINGS, THREE LOSSES, AND THE THIRD IS THE ONE THE 07:54 MOVE WAS MEANT TO STOP (2026-09-07)
+`rc_release_readings` still holds **zero rows**. 09-05 was lost to a fresh session with no
+repository; 09-06 to a bound session mid-turn; **09-07 to a bound session mid-turn again**, which
+is the failure the move to 07:54 and `--after=120` was bought to prevent.
+- **THE DRAIN TOLERANCE IS ~3.75 MINUTES AND A BUSY TURN IS LONGER.** The message arrived
+  **14:54:51Z**; the window ran **14:58:30 → 15:02:00Z**; the session was inside a single tool
+  call waiting on `npm run verify`. The run finally started at **15:02:09Z — nine seconds after
+  the window closed.**
+- **AND NO "NOTIFICATIONS PENDING" NOTICE EVER SURFACED.** The only system messages in that
+  span were `<task-notification>` blocks for backgrounded Bash commands. The Routine's message
+  was found by calling `ReadNotifications` **on my own initiative**, eight minutes late. So a
+  bound-session Routine can sit queued, silently, behind one long tool call — and "it fires
+  into its own session and needs nothing from here" (which is what the session was handed) is
+  **false and is what made it safe to ignore.** It fires into THIS session and needs the turn.
+- **RUNNING IT AFTERWARDS CANNOT ANSWER THE QUESTION, and the script says so rather than
+  guessing.** At 15:02:09 all three facilities read `0 locked night(s) for this release` (with
+  6 rc-539 nights locked for other times) and it refused: `THE QUESTION WAS NEVER REACHED`.
+  **That is not "RC released nothing"** — nights released at 15:00 no longer read as locked, so
+  after T the two are indistinguishable. Which is precisely why it must run before T.
+- **DO NOT TWEAK THE SCHEDULE AGAIN.** That instruction is already recorded, it has now been
+  paid for a third time, and moving the fire earlier spends the 600s Bash ceiling one for one.
+  **The recorded remedy is to RUN IT BY HAND**, on a day somebody is present, before 07:58:30 PT.
+- **THE STRUCTURAL FIX IS A DECISION, NOT A TIDY-UP.** A fresh session per fire has the repo
+  problem (09-05); a bound session has the busy problem (09-06, 09-07). What would close it is
+  a fresh session **with the checkout attached**, which is an environment question nobody has
+  answered. Raised, not chosen.
+
 ### THE THIRD SHARD (2026-09-04, #262)
 `poller.capacity` had been AMBER at **6/8 rec.gov campground-months across 2 machines** —
 five rec.gov watches consuming six slots, because a watch spanning two months costs two.
@@ -7140,9 +7167,13 @@ tree, the deploy and the fleet were all correct.
 > counter). **The missing field is still the STATUS** — count by `(path, status)` off
 > `page.on('response')`, **NOT BUILT** — and still do not reach for blocking the requests first.
 >
-> **THE RELEASE-WINDOW ROUTINE fires today 07:54 PT (14:54 UTC), its first RECORDED firing.** It
-> fires into its own session and needs nothing from here; `rc_release_readings` reading zero rows
-> before then is expected.
+> **THE RELEASE-WINDOW ROUTINE FIRED AT 07:54 PT AND WAS LOST — the third in a row, and it does
+> NOT fire into its own session.** It is bound to the MAIN session, so it needs that session's
+> turn; this one was inside a single tool call waiting on `npm run verify`, no
+> "notifications pending" notice ever surfaced, and the run started nine seconds after the
+> window closed. `rc_release_readings` is still empty after three firings. **Do not tweak the
+> schedule — the recorded remedy is to run it by hand before 07:58:30 PT.** Full account:
+> "THREE FIRINGS, THREE LOSSES".
 >
 > ### 2026-09-06 EVENING — NOTHING IS ASSIGNED; THE LEAK IS WAITING ON A RAMP
 >
