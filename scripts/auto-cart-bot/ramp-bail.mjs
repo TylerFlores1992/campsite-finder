@@ -113,6 +113,8 @@ export function writeLatestMemory(file, sample, { now = () => Date.now(), log = 
  * and BOTH arms stand down — the rule they already follow everywhere else. It costs at most
  * one sampler cadence (2 min) against a `maxAgeMs` of 5 and a ramp that takes ~10 minutes to
  * peak, and the bail needs 120s of stall on top, so nothing real is lost.
+ * @param {string} file
+ * @param {{ now?: () => number, maxAgeMs?: number, notBefore?: number|null }} [opts]
  * @returns {{ known: boolean, why?: string, at?: number, ageMs?: number, rcMb?: number|null, maxPid?: unknown, maxType?: unknown }}
  */
 export function readLatestMemory(file, { now = () => Date.now(), maxAgeMs = RAMP_READING_MAX_AGE_MS_DEFAULT, notBefore = null } = {}) {
