@@ -7154,9 +7154,15 @@ tree, the deploy and the fleet were all correct.
 
 > ### 2026-09-07 — THE RAMP CAME, THE DUMP FIRED, AND IT MEASURED THE WRONG BROWSER
 >
-> **Master `1fb0082`+ on `claude/main-lane-setup-check-yxqkwc`, mini-PC `6a76677` (it updated —
-> `bot_version` reads both on the same sha), no open PRs, no holds queued.** Health is better
-> than the last block predicted: `rc_session` and `bot_version` are **ok**, not warn.
+> **Master `3867988` (#291 + #292 merged), no holds queued, migrations still highest 076 with
+> main's block 077-079.** Health: `rc_session` and `bot_version` were **ok**, not the warns the
+> previous block predicted.
+>
+> **THE BOX NEEDS AN UPDATE AND BOTH OF THIS DAY'S FIXES ARE BOT-SIDE.** It was on `6a76677`,
+> which predates the `notBefore` gate (#291) and the status counter (#292). Until it updates,
+> a `ramp` dump can still fire against a fresh browser after a bail, and the readout will keep
+> printing `statuses not reported`. **Confirm with `npx tsx scripts/bot-ask.mts git-status`,
+> never `autocart.bot_version`.**
 >
 > **THE 22-HOUR DROUGHT BROKE AT 09-07 02:03 PT and the memory dump fired its `ramp` phase for
 > the first time. THE READING IS VOID — do not quote it.** The join the readout tells you to
