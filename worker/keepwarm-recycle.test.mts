@@ -595,8 +595,12 @@ test('RAMP: the browser-life gate reaches BOTH arms, because they share one read
     'read, then the bail, then the dump — the dump must not get its own ungated figure');
   // browserLifeSince is set where the browser life begins, so the gate cannot outlive a reopen.
   const open = code.indexOf('residentPage = page;');
-  const set = code.indexOf('browserLifeSince = Date.now();', open);
-  assert.ok(set > open && set - open < 600, 'the marker must reset with the browser, or it gates the wrong life');
+  // The ASSIGNMENT, unconditional and on its own line. `indexOf` of the bare statement also
+  // matches the tail of `if (!browserLifeSince) browserLifeSince = Date.now();` — a marker
+  // that latches on the FIRST browser and gates every reopen after it against the wrong life.
+  // That mutation survived this guard's first version, which is why it is a regex now.
+  assert.match(code.slice(open, open + 600), /\n\s*browserLifeSince = Date\.now\(\);/,
+    'the marker must reset unconditionally with the browser, or it gates the wrong life');
 });
 
 test('RAMP: the arm lives in the TIMER, between the WEDGE arm and the RAM arm, and both of those are unchanged', () => {

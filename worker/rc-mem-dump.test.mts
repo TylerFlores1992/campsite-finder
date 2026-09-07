@@ -361,7 +361,9 @@ test('each phase fires at most once per BROWSER life, and the flags reset with t
   const open = KW.indexOf('residentPage = page;');
   const reset = KW.indexOf('memDump = { baseline: false, ramp: false, inFlight: false };', open);
   assert.ok(reset > open && reset - open < 600, 'the reset must sit with the browser-life marker, or last life\'s baseline describes nothing');
-  assert.match(KW.slice(open, reset + 200), /browserLifeSince = Date\.now\(\)/);
+  // Unconditional, on its own line: a bare match also accepts `if (!browserLifeSince) ...`,
+  // which latches on the first browser and never resets. Verified by mutation 2026-09-07.
+  assert.match(KW.slice(open, reset + 200), /\n\s*browserLifeSince = Date\.now\(\);/);
 });
 
 test('a refusal does not spend the phase — it is not a reading', () => {
