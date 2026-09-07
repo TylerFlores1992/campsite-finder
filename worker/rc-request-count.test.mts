@@ -110,20 +110,69 @@ test('top is ordered by the ROLLING count, then lifetime — a loop that started
 });
 
 test('attach counts every request the page emits, and a handler that throws never reaches Playwright', () => {
-  const handlers: Array<(r: unknown) => void> = [];
+  const bound = new Map<string, (r: unknown) => void>();
   const page = {
-    on: (ev: string, h: (r: unknown) => void) => { assert.equal(ev, 'request'); handlers.push(h); },
-    off: (_ev: string, h: (r: unknown) => void) => { handlers.splice(handlers.indexOf(h), 1); },
+    on: (ev: string, h: (r: unknown) => void) => { bound.set(ev, h); },
+    off: (ev: string, _h: (r: unknown) => void) => { bound.delete(ev); },
   };
   const c = createRequestCounter({ now: clock().now });
   const detach = c.attach(page);
-  assert.equal(handlers.length, 1);
-  handlers[0]({ url: () => 'https://a.test/main' });
-  handlers[0]({ url: () => 'https://signin.reservecalifornia.com/oauth2/v1/authorize?prompt=none' }); // a subframe request rides the same event
-  handlers[0]({ url: () => { throw new Error('gone'); } });   // must not throw out of the handler
+  // THREE EVENTS. `response` alone would count a loop nobody answers as no loop; `request`
+  // alone is the reading that could not tell a 401 storm from an SPA asking on purpose.
+  assert.deepEqual([...bound.keys()].sort(), ['request', 'requestfailed', 'response']);
+  const req = bound.get('request')!;
+  req({ url: () => 'https://a.test/main' });
+  req({ url: () => 'https://signin.reservecalifornia.com/oauth2/v1/authorize?prompt=none' }); // a subframe request rides the same event
+  req({ url: () => { throw new Error('gone'); } });   // must not throw out of the handler
   assert.equal(c.snapshot().lifetimeTotal, 2);
+  bound.get('response')!({ url: () => 'https://a.test/main', status: () => 401 });
+  bound.get('requestfailed')!({ url: () => 'https://a.test/main' });
+  bound.get('response')!({ url: () => { throw new Error('gone'); }, status: () => 200 });
+  assert.deepEqual(c.top()[0].statuses, { 401: 1, failed: 1 }, 'answers land on the path that asked');
   detach();
-  assert.equal(handlers.length, 0, 'detach removes the handler');
+  assert.equal(bound.size, 0, 'detach removes ALL THREE — a leaked handler outlives the page it counts');
+});
+
+test('the status is counted per path, keyed the same way the ask was — never a header, never a body', () => {
+  const c = createRequestCounter({ now: clock().now });
+  // The query is stripped on the answer exactly as on the ask, or the two could never be
+  // compared and Okta's `code=` would arrive by the back door.
+  c.record('https://signin.reservecalifornia.com/login/callback?code=SECRET&state=x');
+  c.recordAnswer('https://signin.reservecalifornia.com/login/callback?code=SECRET&state=x', 200);
+  const row = c.top()[0];
+  assert.equal(row.key, 'https://signin.reservecalifornia.com/login/callback');
+  assert.deepEqual(row.statuses, { 200: 1 });
+  assert.ok(!JSON.stringify(c.snapshot()).includes('SECRET'), 'no query survives into the event detail');
+});
+
+test('an unreadable status is not a zero, and the statuses per path are capped', () => {
+  const c = createRequestCounter({ now: clock().now, maxStatuses: 3 });
+  c.record('https://a.test/x');
+  // "answered with 0" beside real codes would read as a real answer.
+  c.recordAnswer('https://a.test/x', null);
+  c.recordAnswer('https://a.test/x', 'nonsense');
+  assert.deepEqual(c.top()[0].statuses, { '<other>': 2 });
+  for (const st of [200, 401, 500, 502, 503]) c.recordAnswer('https://a.test/x', st);
+  const s = c.top()[0].statuses as Record<string, number>;
+  assert.ok(!('502' in s) && !('503' in s), 'past the cap new statuses fold into <other>');
+  assert.equal(s['200'], 1, 'statuses seen before the cap keep counting');
+});
+
+test('answers are LIFETIME and never grow the path map — the window is the rate, the mix is not', () => {
+  const t = clock();
+  const c = createRequestCounter({ now: t.now, maxPaths: 2 });
+  for (const k of ['a', 'b']) { c.record(`https://a.test/${k}`); c.recordAnswer(`https://a.test/${k}`, 200); }
+  // A third path folds into <other> on the ask, and its ANSWER must fold to the same place.
+  c.record('https://a.test/c');
+  c.recordAnswer('https://a.test/c', 401);
+  const other = c.top().find((r) => r.key === '<other>');
+  assert.deepEqual(other?.statuses, { 401: 1 }, 'an answer folds exactly where its ask did');
+  assert.equal(c.snapshot().distinct, 3, 'and never adds a path of its own');
+  // The rolling window forgets; the mix does not. That asymmetry is the design: a second
+  // rolling window would double the per-request objects held by the suspect process.
+  t.advance(200_000);
+  assert.equal(c.top().find((r) => r.key === 'https://a.test/a')?.recent, 0);
+  assert.deepEqual(c.top().find((r) => r.key === 'https://a.test/a')?.statuses, { 200: 1 });
 });
 
 test('describe: an empty counter says so; the compact form is ONE line; the full form is one line per path', () => {

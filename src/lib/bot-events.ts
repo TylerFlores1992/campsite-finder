@@ -148,3 +148,74 @@ export function requestCountReason(raw: unknown): RequestCountReason {
   if (r === 'hung-close' || r === 'teardown') return r;
   return 'other';
 }
+
+/**
+ * WHAT KIND OF LOOP — the reading `page.on('request')` alone could never take.
+ *
+ * The RDR burst has been observed at 19,008 / 18,392 / ≥49,237 hits on one path inside two
+ * minutes, from the residential IP that has eaten a 12-hour block once. Until the status was
+ * counted, "RC's SPA retrying against a rejection" and "RC's SPA asking on purpose" were the
+ * SAME reading — and they need opposite fixes: the first is an auth state to repair, the
+ * second is a request pattern to stop making.
+ *
+ * ABSENT IS NOT EMPTY, and that distinction is the whole reason this is a function rather
+ * than a ternary at the call site. A row written by a bundle older than this change carries
+ * NO `statuses` key at all; a row that carries `{}` is a page whose asks were never answered.
+ * Rounding the first to the second would report every historical burst as "nothing came back",
+ * which is a finding, and a false one.
+ */
+export type LoopAnswerKind = 'not-reported' | 'unanswered' | 'rejected' | 'ok' | 'failed' | 'mixed';
+
+export function loopAnswerReading(
+  row: { lifetime?: unknown; statuses?: Record<string, number> | null | undefined } | null | undefined,
+): { kind: LoopAnswerKind; text: string } {
+  const statuses = row?.statuses;
+  if (statuses == null) {
+    return {
+      kind: 'not-reported',
+      text: 'this bundle does not report statuses — an older box. Until it updates, a retry loop '
+        + 'and an SPA asking on purpose are the same reading.',
+    };
+  }
+  const entries = Object.entries(statuses).filter(([, v]) => Number(v) > 0);
+  const answered = entries.reduce((n, [, v]) => n + Number(v), 0);
+  const asked = Number(row?.lifetime) || 0;
+  const missing = Math.max(0, asked - answered);
+  if (answered === 0) {
+    return {
+      kind: 'unanswered',
+      text: `nothing came back for any of the ${asked} ask(s) — Chromium is not being answered at all, `
+        + 'which is neither of the two candidates and is its own finding.',
+    };
+  }
+  const [topStatus, topCount] = entries.sort((a, b) => b[1] - a[1])[0];
+  const share = topCount / answered;
+  const tail = missing > 0 ? ` (${missing} of ${asked} ask(s) got no answer at all)` : '';
+  // A dominant code is a story; a spread is not, and saying so beats naming the largest slice.
+  if (share < 0.8) {
+    return { kind: 'mixed', text: `no single answer dominates (top ${topStatus} at ${Math.round(share * 100)}%)${tail}.` };
+  }
+  if (topStatus === 'failed') {
+    return {
+      kind: 'failed',
+      text: `${Math.round(share * 100)}% of the answers are Chromium REFUSING the request${tail} — `
+        + 'look at what is aborting them before looking at RC.',
+    };
+  }
+  const code = Number(topStatus);
+  if (code === 401 || code === 403) {
+    return {
+      kind: 'rejected',
+      text: `${Math.round(share * 100)}% answered ${code}${tail} — this is a RETRY LOOP AGAINST A REJECTION. `
+        + 'The fix is the auth state it is retrying with, NOT blocking the requests.',
+    };
+  }
+  if (code >= 200 && code < 400) {
+    return {
+      kind: 'ok',
+      text: `${Math.round(share * 100)}% answered ${code}${tail} — RC's SPA is asking on purpose and being served. `
+        + 'Nothing is failing, so the fix is the request pattern, not the auth state.',
+    };
+  }
+  return { kind: 'mixed', text: `${Math.round(share * 100)}% answered ${code}${tail}.` };
+}

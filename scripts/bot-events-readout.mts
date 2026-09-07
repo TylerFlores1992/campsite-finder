@@ -47,7 +47,7 @@
  * for ramp scans until a ramp has happened since. The absence is an absence, not a reading.
  */
 import {
-  recentBotEvents, requestCountReason, type BotEventRow, type RequestCountReason,
+  recentBotEvents, requestCountReason, loopAnswerReading, type BotEventRow, type RequestCountReason,
 } from '@/lib/bot-events';
 
 const arg = (name: string, dflt: string): string => {
@@ -270,7 +270,7 @@ if (closes.length === 0) {
  * REQUEST COUNTS. Bails first — they are the reading taken during a ramp — then hung closes,
  * then the newest few teardowns as the baseline to read them against.
  */
-type TopRow = { key: string; recent: number; lifetime: number };
+type TopRow = { key: string; recent: number; lifetime: number; statuses?: Record<string, number> };
 const LOOP_HITS = 100;
 console.log(`\nREQUEST COUNTS: ${counts.length}${showAll ? '' : ' (newest 40; --all for more)'}`);
 if (counts.length === 0) {
@@ -297,7 +297,10 @@ if (counts.length === 0) {
       + `${lower}${x.recentTotal ?? '?'} in ${win}s / ${x.lifetimeTotal ?? '?'} lifetime  ${x.distinct ?? '?'} path(s)${x.capped ? ' (capped)' : ''}`);
     const rows = full ? top : top.slice(0, 3);
     for (const r of rows) {
-      console.log(`      ${String(r.recent).padStart(6)} in ${win}s  ${String(r.lifetime).padStart(7)} lifetime  ${r.key}`);
+      // Answers beside asks. Blank would make "nothing came back" and "an older bundle that
+      // never reported" the same line, which is the distinction loopAnswerReading exists for.
+      const mix = r.statuses ? (Object.entries(r.statuses).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}x${v}`).join(' ') || 'no answers') : 'statuses not reported';
+      console.log(`      ${String(r.recent).padStart(6)} in ${win}s  ${String(r.lifetime).padStart(7)} lifetime  ${r.key}  ${mix}`);
     }
     const lead = top[0];
     if (full && lead) {
@@ -311,6 +314,8 @@ if (counts.length === 0) {
         // from. Report the loop as a real observation and refuse the causal claim.
         console.log('      A LOOP IS NOT THE RAMP\'S CAUSE — a ramp with a flat counter (09-05 07:31, 197 requests');
         console.log('      in 11h) carried the same 32 GB mapping. Worth fixing on its own; do not credit the ramp to it.');
+        // WHICH KIND of loop, which is the field page.on('request') could never see.
+        console.log(`      ANSWERS: ${loopAnswerReading(lead).text}`);
         if (/oauth2|\/authorize|\/SSO\//i.test(lead.key)) {
           console.log('      That is the SPA\'s own silent renewal. Blocking prompt=none on the resident page is a cure to');
           console.log('      weigh — known cost: the silent self-renewal that works most hours is the same mechanism.');

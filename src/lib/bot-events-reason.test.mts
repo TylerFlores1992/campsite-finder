@@ -16,7 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { requestCountReason } from './bot-events';
+import { requestCountReason, loopAnswerReading } from './bot-events';
 
 function code(path: string): string {
   return readFileSync(new URL(path, import.meta.url), 'utf8')
@@ -81,4 +81,59 @@ test('bails are printed BEFORE the teardown baseline', () => {
   assert.ok(showBails > -1 && showTears > -1 && showOther > -1, 'all three render loops present');
   assert.ok(showBails < showTears, 'bails must render before the teardown baseline');
   assert.ok(showTears < showOther, 'the unrecognised bucket stays last');
+});
+
+/**
+ * WHICH KIND OF LOOP. `page.on('request')` never sees the answer, so until the status was
+ * counted "a retry loop against a rejection" and "the SPA asking on purpose" were the same
+ * reading — and they need opposite fixes.
+ */
+test('an absent statuses field is NOT an empty one — the older-box case must not read as a finding', () => {
+  // The house shape: an absent reading standing in for a negative. A row from a bundle older
+  // than this change carries no `statuses` key; reporting that as "nothing came back" would
+  // make every historical burst look like Chromium being ignored.
+  assert.equal(loopAnswerReading({ lifetime: 19008 }).kind, 'not-reported');
+  assert.equal(loopAnswerReading({ lifetime: 19008, statuses: null }).kind, 'not-reported');
+  assert.match(loopAnswerReading({ lifetime: 19008 }).text, /older box/);
+  // And the genuinely-empty case is its own kind, with the ask count in it.
+  const none = loopAnswerReading({ lifetime: 19008, statuses: {} });
+  assert.equal(none.kind, 'unanswered');
+  assert.match(none.text, /19008 ask/);
+});
+
+test('a rejection loop and a served loop are told apart, and the rejection names the wrong fix', () => {
+  const rejected = loopAnswerReading({ lifetime: 49237, statuses: { 401: 49230, failed: 7 } });
+  assert.equal(rejected.kind, 'rejected');
+  assert.match(rejected.text, /RETRY LOOP AGAINST A REJECTION/);
+  // The standing instruction is "do not reach for blocking the requests first".
+  assert.match(rejected.text, /NOT blocking the requests/);
+  const ok = loopAnswerReading({ lifetime: 49237, statuses: { 200: 49237 } });
+  assert.equal(ok.kind, 'ok');
+  assert.match(ok.text, /asking on purpose/);
+  assert.notEqual(rejected.text, ok.text, 'the two candidates must not render the same sentence');
+});
+
+test('Chromium refusing is a third answer, and a spread names no cause at all', () => {
+  assert.equal(loopAnswerReading({ lifetime: 900, statuses: { failed: 890, 200: 10 } }).kind, 'failed');
+  // No dominant code is not a story. Naming the largest slice of a spread is how a tidy
+  // explanation gets recorded as a finding.
+  const mixed = loopAnswerReading({ lifetime: 100, statuses: { 200: 50, 401: 30, 500: 20 } });
+  assert.equal(mixed.kind, 'mixed');
+  assert.match(mixed.text, /no single answer dominates/);
+});
+
+test('asks with no answer are counted beside the answers, never folded into them', () => {
+  // 49,000 asks answered 200 twelve times is a different finding from a 200 loop.
+  const r = loopAnswerReading({ lifetime: 49237, statuses: { 200: 12 } });
+  assert.match(r.text, /49225 of 49237 ask\(s\) got no answer/);
+});
+
+test('the readout calls it — a verdict nothing renders is a verdict nobody reads', () => {
+  // The fix-present-and-inert shape: the function can be perfect and the readout still print
+  // only "a REQUEST LOOP", which is the sentence that could not tell the two candidates apart.
+  const readout = code('../../scripts/bot-events-readout.mts');
+  assert.match(readout, /loopAnswerReading\(lead\)/, 'the loop branch must render the answer reading');
+  const loop = readout.indexOf('is a REQUEST LOOP');
+  const answers = readout.indexOf('loopAnswerReading(lead)');
+  assert.ok(loop > -1 && answers > loop, 'it belongs with the loop verdict it qualifies');
 });
