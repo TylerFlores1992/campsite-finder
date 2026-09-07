@@ -939,6 +939,23 @@ this date, which is how every RC fetch could fail every 15s indefinitely.
     one patiently waiting, which is this file's most-repeated shape. **To wait on CI, poll the
     GitHub MCP tools; `curl` to a `/repos/` endpoint cannot work here** — and per the correction
     above, do not conclude otherwise from `/user` answering.
+- **A RED CI'S FAILING TEST NAME CAN BE UNREACHABLE, AND IT WAS ON 2026-09-07.**
+  `mcp__github__get_job_logs` caps at about **5,000 lines / 312 KB no matter what `tail_lines`
+  says** — 6,000 and 30,000 returned byte-identical output. The `verify` job emits ~6 TAP lines
+  per test across 1,950 tests, so the cap covers roughly the last 800 tests: the window opened
+  at `ok 1121` and the one failure was below it. **`not ok` appeared ZERO times in everything
+  the tool would return, over a job reporting `# fail 1`.**
+  - **So "which test failed?" has no answer through the CI log here.** Do not read a zero count
+    as "no failure" — that is the absent-reading-as-a-negative shape, handed to you by the
+    tooling rather than by the code.
+  - **REPRODUCE LOCALLY WITH THE OUTPUT IN A FILE INSTEAD**: `npm test > log 2>&1` then grep
+    `^not ok`. That is the only route to the name, and it doubles as the pass-alone evidence a
+    legitimate re-run needs.
+  - The three conditions still decide whether a re-run is honest — the diff cannot touch the
+    code, the suite passes alone, and the mechanism is named — and **the third can be satisfied
+    without the test name**: on 09-07 the Nightly RIDB Sync spanned CI's entire test window,
+    which is a named writer, and the re-run went green once it had finished. See
+    `docs/LANES.md` → "A THIRD WRITER NO LANE STARTS".
 - **The credentials are process env vars — THERE IS NO `.env` FILE.** `grep`ping `.env*`
   finds nothing and looks exactly like "no credentials here". It isn't; check
   `printenv`. Cost a wrong "I can't build here" call on 2026-07-29 with Clerk, Stripe,
