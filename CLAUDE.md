@@ -6915,6 +6915,67 @@ mapping, and whichever subsystem owns that mapping adds an edge to it.
   investigation has been reaching for; `(no ownership edge)` at ~32 GB means base shared memory
   holds them and nothing in Chromium claims them, which is a third finding and a new question.
 
+##### IT FIRED ON A RAMP AND MEASURED THE WRONG BROWSER (2026-09-07) — the join says NO
+The line above says the open question is *"whether the ramping renderer's 16.4k sections appear
+in `shared_memory` at all"*, and tells you to **check the lead pid against the ramp-scan's walk
+for the same event**. The first ramp dump arrived on 2026-09-07 and that check answers **no**:
+```
+02:03:24  ramp-scan   walk TARGET pid 9912 renderer — 31,407 MB commit/mapped in 15,663 regions
+                      (the browser process that generation is pid 3836)
+02:03:46  bail:ramp   the keep-warm exits; that whole browser generation dies
+02:04:0x              supervise.ps1 restarts it; a NEW browser comes up
+02:04:03  mem-dump    phase=ramp, 7 process(es): 7316 2960 6376 13324 10176 7660 14400
+                      lead 7316 (CrBrowserMain) — shared_memory 2 MB across 35 mapping(s)
+02:07:03  mem-dump    phase=baseline, lead 7316 — THE SAME LEAD PID, three minutes later
+```
+- **ZERO OVERLAP WITH THE RAMPING GENERATION, and the baseline is what proves it.** 9912 is
+  absent, 3836 is absent, and the `ramp` dump's lead is the same pid the BASELINE reports on the
+  browser that replaced them. The box log has that browser announcing itself at `09:04:08` UTC
+  (`Leave this browser window ALONE`), i.e. 02:04:08 PT. **The dump is of the browser that came
+  up after the bail**, and it is a healthy one.
+- **SO IT ELIMINATES NOTHING.** The readout's small-reading verdict — *"the sections are NOT base
+  shared memory, which eliminates discardable, mojo and the GPU transfer path together"* — is
+  rendered over this row and **must not be quoted**. This is the exact false elimination
+  `rc-mem-dump.mjs` names in its own text, arriving on the instrument's first firing.
+- **THE CAUSE IS THE READING, NOT THE DUMP.** `.memory-latest.json` is written by `bot.mjs` on a
+  2-minute cadence, totals the whole rc FAMILY, and is accepted up to **five minutes** old. A
+  bail kills the browser and the supervisor restarts within seconds, so the newest sample on
+  disk is still the dead generation's — 39s old, `rcMb 3414`, comfortably inside the age gate —
+  and `maybeMemoryDump` reads `3414 > 3000` and fires `ramp` against a browser five seconds old.
+  **Fresh is not the same as ABOUT THIS BROWSER**, and nothing was checking the difference.
+- **THE BAIL ARM HAD THE SAME EXPOSURE AND A WORSE OUTCOME.** It needs a 120s stall on top of the
+  same threshold — and a fresh browser can stall that long, because RC's app tier has needed five
+  minutes to render (recorded three times) — while the dead generation's reading is still under
+  five minutes old. It would then **exit the process over a browser that no longer exists**, and
+  `supervise.ps1` stops loudly after five exits in ten minutes. Never observed; structural.
+- **FIXED ONCE, IN `readLatestMemory`**, because both arms read the same object one arm apart and
+  that invariant is pinned. `notBefore` is the current browser's start (`browserLifeSince`, set
+  where `residentPage` is assigned): a sample taken before this browser existed cannot be about
+  it, so it is UNKNOWN and **both arms stand down** — the rule they already follow everywhere.
+  It costs at most one sampler cadence against a five-minute gate, a ramp that takes ~10 minutes
+  to peak, and a bail that needs 120s of stall on top, so nothing real is lost.
+  - **AFTER the age check**, so a genuinely stale reading keeps the more general reason; what is
+    left on this branch is the dangerous case, fresh and about the wrong browser.
+  - `memDumpBrowserSince` is renamed **`browserLifeSince`** because it is no longer the dump's
+    alone. `browserOpenedAt` stays reserved — that is the removed age recycle's name, and
+    `keepwarm-diagnosis.test.mts` still fails on the token.
+  - **BOT-SIDE, so the false ramp dump can recur until the box updates.** Until then, join on the
+    pid before reading any `ramp` row.
+- **A MUTATION SURVIVED, AND IT IS THE HOUSE SHAPE IN A GUARD WRITTEN THE SAME HOUR.** The marker
+  check was `code.indexOf('browserLifeSince = Date.now();')` — which also matches the TAIL of
+  `if (!browserLifeSince) browserLifeSince = Date.now();`, a marker that latches on the first
+  browser and gates every reopen after it against the wrong life. **The pre-existing sibling in
+  `rc-mem-dump.test.mts` had the identical weakness and passed against the same mutation.** Both
+  pin the unconditional assignment (`/\n\s*browserLifeSince = Date\.now\(\);/`) now. Pin the
+  statement, not a token inside it.
+- **AND THE WORKER TYPECHECK CAUGHT WHAT THE TESTS COULD NOT**: `notBefore = null` infers as type
+  `null`, so every numeric call site was an error `tsc` on the root config never sees. That is
+  `tsconfig.worker.json` doing the job it was added for.
+- **HOW TO READ THE NEXT ONE.** A `ramp` dump is trustworthy by construction once the box has
+  this — but **make the join anyway**: the dump's `MDPROC` pids against the ramp-scan's walk
+  TARGET for the same event. A ramp dump whose process set does not contain the walk's target is
+  void, whatever its numbers say.
+
 #### THREE FIGURES IN THIS FILE THAT CANNOT ALL BE TRUE (2026-09-05)
 Read before quoting any of them.
 - **GROWTH RATE is quoted four ways**: ~2,400 MB/min (08-17), ~400 MB/min over eleven minutes
@@ -7013,6 +7074,42 @@ tree, the deploy and the fleet were all correct.
 
 ## Open / next session
 
+> ### 2026-09-07 — THE RAMP CAME, THE DUMP FIRED, AND IT MEASURED THE WRONG BROWSER
+>
+> **Master `1fb0082`+ on `claude/main-lane-setup-check-yxqkwc`, mini-PC `6a76677` (it updated —
+> `bot_version` reads both on the same sha), no open PRs, no holds queued.** Health is better
+> than the last block predicted: `rc_session` and `bot_version` are **ok**, not warn.
+>
+> **THE 22-HOUR DROUGHT BROKE AT 09-07 02:03 PT and the memory dump fired its `ramp` phase for
+> the first time. THE READING IS VOID — do not quote it.** The join the readout tells you to
+> make answers no: the region walk names the ramping renderer **pid 9912** (browser process
+> 3836); the dump reports **7316, 2960, 6376, 13324, 10176, 7660, 14400** and its lead 7316 is
+> the same lead the BASELINE reports three minutes later. A `bail:ramp` at 02:03:46 killed that
+> generation and the supervisor brought up a new browser, which is what got dumped. **Full
+> account and the fix: "IT FIRED ON A RAMP AND MEASURED THE WRONG BROWSER".**
+>
+> **SO THE SMALL-READING VERDICT IS NOT AN ANSWER.** *"2 MB … the sections are NOT base shared
+> memory, which eliminates discardable, mojo and the GPU transfer path together"* is rendered
+> over a healthy fresh browser. **The open question is exactly where it was**: whether the
+> ramping renderer's 16.4k sections appear in `shared_memory` at all. Both branches still answer.
+>
+> **FIXED, AND IT IS BOT-SIDE — the false ramp dump can recur until the box updates.**
+> `readLatestMemory` gained `notBefore` (the browser-life start), so a sample taken before this
+> browser existed is UNKNOWN and **both arms stand down**. The bail arm had the same exposure and
+> a worse outcome — it would have exited the process over a dead browser. **Until the box has it,
+> join on the pid before reading any `ramp` row**, and after it, join anyway.
+>
+> **THE RDR BURST GOT BIGGER AND IT IS STILL THE NEXT REAL BUG.** The 09-07 bail carried
+> **49,237 hits in 120s / 75,195 lifetime** on `futurebookingstartsendsdates`, on a browser three
+> minutes old — against 18,392 and 19,008 before. Still measured independent of the leak in both
+> directions (that same 09-07 ramp is the one WITH a loop; 09-05 20:29 ramped with a flat
+> counter). **The missing field is still the STATUS** — count by `(path, status)` off
+> `page.on('response')`, **NOT BUILT** — and still do not reach for blocking the requests first.
+>
+> **THE RELEASE-WINDOW ROUTINE fires today 07:54 PT (14:54 UTC), its first RECORDED firing.** It
+> fires into its own session and needs nothing from here; `rc_release_readings` reading zero rows
+> before then is expected.
+>
 > ### 2026-09-06 EVENING — NOTHING IS ASSIGNED; THE LEAK IS WAITING ON A RAMP
 >
 > **Master `bf294bd`, mini-PC `5399000`, no open PRs, no holds queued (so the 6h update gate is
@@ -7027,15 +7124,18 @@ tree, the deploy and the fleet were all correct.
 > missed. Read the Pacific clock before calling a scheduled firing lost.
 >
 > **THE LEAK: everything that can be built IS built, and the next move is to read, not to
-> write.** The walk named the class (16,387 mapped 2 MB sections, 32,779 MB); the memory dump
-> that can name the OWNER is on the box with one baseline and **no ramp row yet**; and the box
-> has been flat at ~310 MB for **~22 hours** (last ramp 09-05 20:29 PT), with a 16-hour peak of
+> write.** The walk named the class (16,387 mapped 2 MB sections, 32,779 MB); ~~the memory dump
+> that can name the OWNER is on the box with one baseline and **no ramp row yet**~~ **— A RAMP
+> ARRIVED 09-07 02:03 PT AND THE DUMP FIRED ON IT AND MEASURED THE WRONG BROWSER; see the 09-07
+> block above** — and the box
+> had been flat at ~310 MB for **~22 hours** (last ramp 09-05 20:29 PT), with a 16-hour peak of
 > 647 MB against the 3,000 MB trigger. The observed spread is **5-28 hours**, so this sits at the
 > top of the range and is still neither a cure nor a fault — every "not reproduced this session"
 > reading in this file was a window that missed one. **Do NOT queue a test hold to force one.**
 >
-> **ONE BASELINE AND NO RAMP ROW IS THE INSTRUMENT WORKING, and the cadence is now confirmed two
-> independent ways.** The box updated at 14:56 UTC and the baseline landed at 14:59:33, three
+> ~~**ONE BASELINE AND NO RAMP ROW IS THE INSTRUMENT WORKING**~~ **— TRUE OF THE QUIET BOX IT
+> DESCRIBED, AND NOT OF WHAT CAME NEXT: the ramp row that arrived is VOID.** The cadence
+> reasoning below still stands and is why the drought was real: The box updated at 14:56 UTC and the baseline landed at 14:59:33, three
 > minutes in; and there have been **zero `request-counts` events in sixteen hours** — those fire
 > at every teardown and a teardown happens on every browser reopen, so the resident browser has
 > had ONE continuous life and one baseline is exactly right. The 34 `tab-close` rows in that

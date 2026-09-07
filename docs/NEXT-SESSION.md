@@ -44,10 +44,23 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 > COUNT ZERO BAILS"**. Nothing about the box or the data changed — only what the readout said
 > about it.
 >
-> **THE INSTRUMENT IS ARMED AND ITS CADENCE IS CONFIRMED (checked 2026-09-06 ~11:50 PT).** The
+> **IT FIRED ON A RAMP ON 2026-09-07 AND MEASURED THE WRONG BROWSER. THE READING IS VOID.**
+> The drought broke at 02:03 PT. The region walk names the ramping renderer **pid 9912**
+> (browser process 3836); a `bail:ramp` at 02:03:46 killed that generation; the supervisor
+> brought up a new browser; and the `ramp` dump at 02:04:03 reports **7316, 2960, 6376, 13324,
+> 10176, 7660, 14400** — with lead 7316 identical to the lead the BASELINE reports three minutes
+> later. **Zero overlap with the ramping generation.** Cause: `.memory-latest.json` is written by
+> another process about the whole rc family and accepted up to five minutes old, so after a bail
+> the newest sample describes the browser that just died. Fixed with `notBefore` on
+> `readLatestMemory` — **bot-side, so it can recur until the box updates.** Full account:
+> CLAUDE.md → **"IT FIRED ON A RAMP AND MEASURED THE WRONG BROWSER"**.
+>
+> ~~**THE INSTRUMENT IS ARMED AND ITS CADENCE IS CONFIRMED (checked 2026-09-06 ~11:50 PT).** The
 > box updated at 14:56 UTC, `max_pid` moved to the current browser in the same minute, and the
 > single `baseline` dump landed at 14:59:33 — **three minutes into the one browser life there
-> has been since.** So one baseline and no ramp row is the instrument working, not a miss.
+> has been since.** So one baseline and no ramp row is the instrument working, not a miss.~~
+> **Accurate for the quiet box it described; struck because it reads as "a ramp row would be a
+> finding", and the first one was not.**
 >
 > **HOW TO READ IT.** `discardable/segment` at ~32 GB is the answer this investigation has been
 > reaching for. `(no ownership edge)` at ~32 GB is a third finding and a new question — base
@@ -155,8 +168,8 @@ HANDOVER, not a permanent doc — `CLAUDE.md` owns every finding.*
 >
 > | | |
 > |---|---|
-> | master | `bf294bd` |
-> | mini-PC | `5399000` — **the gap to master is docs, one web-side file and the readout, so no box update is needed** (read the two commits; `autocart.bot_version` COALESCEs and can show a stale sha beside a live heartbeat) |
+> | master | `6a76677` (the table below was written by the PR that merged its predecessor — trust `git`, not this row) |
+> | mini-PC | **`6a76677` — it has since updated and matches master; the `notBefore` fix is NOT on it yet** (was `5399000`, when the gap to master was docs, one web-side file and the readout, so no box update was needed) (read the two commits; `autocart.bot_version` COALESCEs and can show a stale sha beside a live heartbeat) |
 > | open PRs | **none** |
 > | fleet | **16 of 19** checks ok, three warns, all documented-benign |
 > | holds | none queued, so the 6h update gate is open |

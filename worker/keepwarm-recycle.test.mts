@@ -549,6 +549,60 @@ test('RAMP: the file round-trips, is written atomically, and goes UNKNOWN when s
     'temp name THEN rename — a direct write to the final path is what the reader could catch half-written');
 });
 
+test('RAMP: a reading taken before this browser opened is UNKNOWN — it describes the one before it', () => {
+  // 2026-09-07: a bail killed the browser at 02:03:46 and the process restarted seconds later.
+  // The newest sample on disk was the DEAD generation's, 39s old and well inside the 5-minute
+  // age gate, so the dump fired its `ramp` phase against a browser five seconds old and stored
+  // 2 MB of shared memory as the ramp's own reading. Fresh is not the same as ABOUT THIS BROWSER.
+  const dir = mkdtempSync(join(tmpdir(), 'ramp-notbefore-'));
+  try {
+    const file = join(dir, MEMORY_LATEST_FILE);
+    let t = 5_000_000;
+    const now = () => t;
+    writeLatestMemory(file, { rcMb: 3414, maxPid: 9912, maxType: 'renderer' }, { now });
+    const sampledAt = t;
+    t += 39_000;
+    const opts = { now, maxAgeMs: 300_000 };
+    // The browser that reading is about.
+    assert.equal(readLatestMemory(file, { ...opts, notBefore: sampledAt - 1000 }).rcMb, 3414,
+      'a browser older than the sample is the one the sample describes');
+    // The browser that replaced it. Same file, same age, and it says nothing about this one.
+    const after = readLatestMemory(file, { ...opts, notBefore: sampledAt + 34_000 });
+    assert.equal(after.known, false, 'a sample from before this browser existed cannot be about it');
+    assert.match(String(after.why), /predates this browser by 34s/);
+    // Absent means unchanged: no marker yet is not a claim that the reading is wrong.
+    assert.equal(readLatestMemory(file, opts).known, true, 'no notBefore gates nothing');
+    assert.equal(readLatestMemory(file, { ...opts, notBefore: 0 }).known, true, 'before any browser opened, nothing is gated');
+    // Age keeps priority, so a sampler that has stopped still reports as stopped.
+    t += 300_000;
+    assert.match(String(readLatestMemory(file, { ...opts, notBefore: sampledAt + 34_000 }).why), /old/,
+      'a stale reading keeps the more general reason');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('RAMP: the browser-life gate reaches BOTH arms, because they share one reading', () => {
+  const body = timerBody();
+  // The dump and the bail read one object, one arm apart. Two reads would be two chances to
+  // gate one and forget the other — and the forgotten one is the arm that exits the process.
+  assert.equal((body.match(/readLatestMemory\(/g) ?? []).length, 1,
+    'ONE read in the timer, or the two arms can disagree about which browser the figure is about');
+  const read = body.indexOf('readLatestMemory(');
+  const decide = body.indexOf('rampBailDecision(');
+  const dump = body.indexOf('maybeMemoryDump(memory)');
+  assert.ok(read > -1 && decide > read && dump > decide,
+    'read, then the bail, then the dump — the dump must not get its own ungated figure');
+  // browserLifeSince is set where the browser life begins, so the gate cannot outlive a reopen.
+  const open = code.indexOf('residentPage = page;');
+  // The ASSIGNMENT, unconditional and on its own line. `indexOf` of the bare statement also
+  // matches the tail of `if (!browserLifeSince) browserLifeSince = Date.now();` — a marker
+  // that latches on the FIRST browser and gates every reopen after it against the wrong life.
+  // That mutation survived this guard's first version, which is why it is a regex now.
+  assert.match(code.slice(open, open + 600), /\n\s*browserLifeSince = Date\.now\(\);/,
+    'the marker must reset unconditionally with the browser, or it gates the wrong life');
+});
+
 test('RAMP: the arm lives in the TIMER, between the WEDGE arm and the RAM arm, and both of those are unchanged', () => {
   const body = timerBody();
   const wedge = body.indexOf('stalledMs > HUNG_MS');
@@ -564,8 +618,8 @@ test('RAMP: the arm lives in the TIMER, between the WEDGE arm and the RAM arm, a
 
 test('RAMP: the memory reading is a FILE read from the timer — never a spawn, never os.freemem()', () => {
   const body = timerBody();
-  assert.match(body, /readLatestMemory\(MEMORY_LATEST_PATH, \{ maxAgeMs: RAMP_READING_MAX_AGE_MS \}\)/,
-    'the timer reads the sampler\'s file with the age gate');
+  assert.match(body, /readLatestMemory\(MEMORY_LATEST_PATH, \{ maxAgeMs: RAMP_READING_MAX_AGE_MS, notBefore: browserLifeSince \}\)/,
+    'the timer reads the sampler\'s file with the age gate AND the browser-life gate');
   assert.ok(!/rcFamilyMb|takeSample|execFile|spawn/.test(body), 'spawning is what fails first at high commit');
   const arm = body.slice(body.indexOf('readLatestMemory('), body.indexOf('if (ramp.fire)'));
   assert.ok(!/freeMb|os\.freemem/.test(arm), 'untouched commit never lowers free RAM — sixteen ramps the RAM arm sat out say so');

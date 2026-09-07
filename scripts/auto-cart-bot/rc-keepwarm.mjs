@@ -2591,9 +2591,11 @@ async function warmResident() {
      * anonymous section. Chromium does. See rc-mem-dump.mjs for the two branches the reading
      * can take and why the small one is an answer too.
      *
-     * `memDumpBrowserSince` is a browser life, not the process's: it and the flags reset where
+     * `browserLifeSince` is a browser life, not the process's: it and the flags reset where
      * `residentPage` is assigned, so a reopen — a profile yield, a recycle, a bail's restart —
-     * gets its own pair.
+     * gets its own pair. It is READ BY BOTH ARMS now, as `notBefore` on the memory reading:
+     * a sample taken before this browser existed describes the one before it, and after a bail
+     * that is exactly what sits on disk. See readLatestMemory for what that cost on 09-07.
      *
      * NAMED FOR THIS AND NOT `browserOpenedAt`, WHICH IS RESERVED. That identifier belonged to
      * the AGE RECYCLE — built 2026-08-18, measured useless the same night (localStorage
@@ -2603,7 +2605,7 @@ async function warmResident() {
      * called `browserOpenedAt` in this file is exactly how that decision gets re-taken by
      * somebody who never read why it was reversed.
      */
-    let memDumpBrowserSince = 0;
+    let browserLifeSince = 0;
     let memDump = { baseline: false, ramp: false, inFlight: false };
     /**
      * THE RESIDENT PAGE'S REQUESTS, counted from the moment the page exists. Attached where
@@ -2658,7 +2660,7 @@ async function warmResident() {
       // The baseline is a CONTROL and wants a browser that has actually loaded RC — see
       // MEM_DUMP_BASELINE_AFTER_MS. The ramp reading is never delayed by it: an event that
       // arrives inside three minutes is exactly the one worth having.
-      if (!over && Date.now() - memDumpBrowserSince < MEM_DUMP_BASELINE_AFTER_MS) return;
+      if (!over && Date.now() - browserLifeSince < MEM_DUMP_BASELINE_AFTER_MS) return;
       memDump[phase] = true;
       memDump.inFlight = true;
       void takeMemoryDump(heapProbe)
@@ -2829,7 +2831,7 @@ async function warmResident() {
       if (!bailing) {
         let memory;
         try {
-          memory = readLatestMemory(MEMORY_LATEST_PATH, { maxAgeMs: RAMP_READING_MAX_AGE_MS });
+          memory = readLatestMemory(MEMORY_LATEST_PATH, { maxAgeMs: RAMP_READING_MAX_AGE_MS, notBefore: browserLifeSince });
         } catch (e) {
           memory = { known: false, why: `memory reading failed: ${e?.message ?? e}` };
         }
@@ -2946,7 +2948,7 @@ async function warmResident() {
       // A BROWSER LIFE BEGINS HERE, and the memory dump's two phases are per life — see
       // memDump. Reset with the counter below and for the same reason: a reopen is a new
       // context, a new page and a new renderer, so last life's baseline describes nothing.
-      memDumpBrowserSince = Date.now();
+      browserLifeSince = Date.now();
       memDump = { baseline: false, ramp: false, inFlight: false };
       // Re-attached on every reopen: a browser life is a new context and a new page.
       requestCounter.attach(page);

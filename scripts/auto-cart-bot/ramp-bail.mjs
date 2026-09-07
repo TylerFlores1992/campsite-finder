@@ -97,9 +97,27 @@ export function writeLatestMemory(file, sample, { now = () => Date.now(), log = 
 /**
  * Read the sampler's newest reading. Anything missing, unparseable or stale is UNKNOWN, with
  * the reason attached so the log can say which.
+ *
+ * `notBefore` IS THE CURRENT BROWSER'S START, AND A READING OLDER THAN IT DESCRIBES THE
+ * BROWSER BEFORE IT. The sampler is a different process on a 2-minute cadence and it totals
+ * the whole rc FAMILY, so after a bail — which kills the browser and restarts this process
+ * within seconds — the newest reading on disk is still the dead generation's, and it is well
+ * inside `maxAgeMs`. That is not hypothetical: on 2026-09-07 the memory dump fired its `ramp`
+ * phase against a browser five seconds old, on a 39-second-old reading of the browser that had
+ * just been killed, and stored 2 MB of shared memory as if it were the ramp's own reading —
+ * which is the ONE false elimination this instrument can manufacture (see rc-mem-dump.mjs).
+ * The bail arm has the same exposure and a worse outcome: it would exit the process on a
+ * reading about a browser that no longer exists.
+ *
+ * A reading taken before this browser existed cannot be about this browser, so it is UNKNOWN
+ * and BOTH arms stand down — the rule they already follow everywhere else. It costs at most
+ * one sampler cadence (2 min) against a `maxAgeMs` of 5 and a ramp that takes ~10 minutes to
+ * peak, and the bail needs 120s of stall on top, so nothing real is lost.
+ * @param {string} file
+ * @param {{ now?: () => number, maxAgeMs?: number, notBefore?: number|null }} [opts]
  * @returns {{ known: boolean, why?: string, at?: number, ageMs?: number, rcMb?: number|null, maxPid?: unknown, maxType?: unknown }}
  */
-export function readLatestMemory(file, { now = () => Date.now(), maxAgeMs = RAMP_READING_MAX_AGE_MS_DEFAULT } = {}) {
+export function readLatestMemory(file, { now = () => Date.now(), maxAgeMs = RAMP_READING_MAX_AGE_MS_DEFAULT, notBefore = null } = {}) {
   let raw;
   try { raw = fs.readFileSync(file, 'utf8'); } catch { return { known: false, why: 'no memory reading on disk' }; }
   let j;
@@ -108,6 +126,11 @@ export function readLatestMemory(file, { now = () => Date.now(), maxAgeMs = RAMP
   if (!Number.isFinite(at)) return { known: false, why: 'memory reading carries no time' };
   const ageMs = now() - at;
   if (ageMs > maxAgeMs) return { known: false, why: `memory reading ${Math.round(ageMs / 1000)}s old (max ${Math.round(maxAgeMs / 1000)}s)`, at, ageMs };
+  // AFTER the age check, so a genuinely old reading keeps the more general reason. What is
+  // left here is the dangerous case: FRESH, and about the wrong browser.
+  if (Number.isFinite(Number(notBefore)) && at < Number(notBefore)) {
+    return { known: false, why: `memory reading predates this browser by ${Math.round((Number(notBefore) - at) / 1000)}s — it describes the one before it`, at, ageMs };
+  }
   const rcMb = j?.rcMb == null ? null : Number(j.rcMb);
   if (rcMb == null || !Number.isFinite(rcMb)) return { known: false, why: 'memory reading has no rc figure', at, ageMs };
   return { known: true, at, ageMs, rcMb, maxPid: j?.maxPid ?? null, maxType: j?.maxType ?? null };
