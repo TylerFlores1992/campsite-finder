@@ -296,11 +296,17 @@ if (counts.length === 0) {
     console.log(`\n  ${pt(c.at)} PT  ${String(x.reason ?? '?')}  browser ${Math.round(Number(x.ageMs ?? 0) / 60_000)}m old  `
       + `${lower}${x.recentTotal ?? '?'} in ${win}s / ${x.lifetimeTotal ?? '?'} lifetime  ${x.distinct ?? '?'} path(s)${x.capped ? ' (capped)' : ''}`);
     const rows = full ? top : top.slice(0, 3);
+    // ALL OR NOTHING PER EVENT: a bundle that reports statuses gives every row at least `{}`.
+    // So when none has them the event predates the change, and the ANSWERS line below says so
+    // once — repeating "statuses not reported" on ten rows is the noise that buries the line
+    // worth reading, which is the same argument the teardown's compact form is built on.
+    const reported = top.some((r) => r.statuses);
     for (const r of rows) {
-      // Answers beside asks. Blank would make "nothing came back" and "an older bundle that
-      // never reported" the same line, which is the distinction loopAnswerReading exists for.
-      const mix = r.statuses ? (Object.entries(r.statuses).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}x${v}`).join(' ') || 'no answers') : 'statuses not reported';
-      console.log(`      ${String(r.recent).padStart(6)} in ${win}s  ${String(r.lifetime).padStart(7)} lifetime  ${r.key}  ${mix}`);
+      // `no answers` and a missing field are DIFFERENT states, so an empty mix is never blank.
+      const mix = reported
+        ? `  ${Object.entries(r.statuses ?? {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}x${v}`).join(' ') || 'no answers'}`
+        : '';
+      console.log(`      ${String(r.recent).padStart(6)} in ${win}s  ${String(r.lifetime).padStart(7)} lifetime  ${r.key}${mix}`);
     }
     const lead = top[0];
     if (full && lead) {

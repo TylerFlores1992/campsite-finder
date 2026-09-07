@@ -137,3 +137,13 @@ test('the readout calls it — a verdict nothing renders is a verdict nobody rea
   const answers = readout.indexOf('loopAnswerReading(lead)');
   assert.ok(loop > -1 && answers > loop, 'it belongs with the loop verdict it qualifies');
 });
+
+test('the per-row mix is all-or-nothing per event, and an empty mix is never blank', () => {
+  const readout = code('../../scripts/bot-events-readout.mts');
+  // A bundle that reports statuses gives EVERY row at least `{}`, so `some` decides for the
+  // whole event. Testing each row instead would print "statuses not reported" ten times and
+  // bury the one ANSWERS line worth reading.
+  assert.match(readout, /const reported = top\.some\(\(r\) => r\.statuses\)/);
+  // "no answers" and a missing field are different states; a blank would merge them.
+  assert.match(readout, /\|\| 'no answers'/);
+});
